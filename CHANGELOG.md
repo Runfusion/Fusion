@@ -2,6 +2,49 @@
 
 User-facing release notes aggregated across all packages. This file is auto-synced from each `packages/*/CHANGELOG.md` by `scripts/release.mjs` — do not edit by hand.
 
+## 0.78.0-beta.2
+
+### Highlights
+
+- Reviewers are judge-only by default and must emit a verdict to approve a gate
+- Cloud Link pairs and self-tunnels: fn serve starts cloudflared and heartbeats the URL every 20s
+- Planning runs on main, so AI concurrency no longer eats worktree capacity
+- Dashboard terminal works on macOS with no native compile step
+- Tasks stuck waiting on a finished file-scope blocker now clear themselves
+
+### Breaking
+
+- Reviewers are judge-only by default: inline reviewer fixes are off, a machine-readable verdict is required to pass a review gate, and Code Review remediation is bounded by a revision cap.
+- The concurrency resolver and API no longer report a single effective limit or binding knob; admission now classifies whether a task consumes a worktree.
+- 32-bit Linux terminal payloads are no longer supported.
+
+### New
+
+- Linked Fusion instances start a Cloudflare tunnel automatically. `fn serve` and `fn dashboard` point `cloudflared` at the bound dashboard port and heartbeat candidate URLs — including host rotations — every 20 seconds, so Cloud Link keeps working when the URL changes. `fn cloud heartbeat` with no `--url` does the same until you stop it.
+- New `fn cloud` CLI for device pairing: `pair-start`, `pair-complete`, `heartbeat`, `status`, and `unlink`, with device state in `~/.fusion/cloud-link.json`. Remote login redeems a cloud ticket against your configured cloud endpoint and issues a short-lived token. Point it at an endpoint with `FUSION_CLOUD_HTTP_URL` or `--http`.
+- Tasks are planned on main before any worktree is created, so planning no longer holds a worktree slot and AI concurrency is capped separately from worktree capacity.
+- Quick Chat controls now minimize and restore every open chat window together.
+- Reusable chat snippets: save them in Skills & Snippets and insert them with a slash command from any dashboard composer.
+- Mobile New Task moved to the header edge, and artifact images gained zoom controls — wheel, pinch, keyboard, double-click, and drag-to-pan.
+- PostgreSQL backups now carry migration bookkeeping and restore it with rollback protection.
+
+### Fixed
+
+- Reviewer output without a verdict can no longer approve a review gate; prose approval is gone from both the workflow-step and reviewer parsers.
+- File-scope overlap waits clear automatically once the blocking task finishes, reconciled across self-healing, completion fan-out, and scheduler dispatch.
+- The dashboard terminal runs on macOS without manually compiling native code, using script-free platform packages verified against the lockfile.
+- Misnumbered plan steps no longer rerun completed work, and step dependency annotations now line up with their numbered headings.
+- Terminal task failures survive temporary storage outages and restarts instead of being lost.
+- Interrupted step sessions recover in place without discarding completed work.
+- Multi-repository landing progress now shows in Task Detail's Details tab instead of the header.
+- Skills and Chat Snippets are separate responsive tabs with per-tab counts and refresh actions.
+- Dismissed update notices stay dismissed per release across dashboard sessions.
+- PostgreSQL backup pair listing is fixed, and native restore validates paired dumps, retains rollback evidence, and enforces project-only retention.
+
+### Internal
+
+- Folder ZIP downloads migrated to the archiver 8 ESM API.
+
 ## 0.78.0-beta.1
 
 ### Highlights
