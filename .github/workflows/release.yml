@@ -155,7 +155,7 @@ jobs:
           fi
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: ${{ matrix.binary }}
           path: |
@@ -227,7 +227,7 @@ jobs:
           }
 
       - name: Upload desktop Windows artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: fusion-desktop-windows
           path: |
@@ -331,7 +331,7 @@ jobs:
           done
 
       - name: Upload desktop macOS artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: fusion-desktop-macos
           path: |
@@ -422,7 +422,7 @@ jobs:
           done
 
       - name: Upload desktop Linux artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.1
         with:
           # Single glob set covers both linux-x64 and linux-arm64 artifact filenames.
           name: fusion-desktop-linux
@@ -581,7 +581,7 @@ jobs:
           done
 
       - name: Upload Android artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: fusion-android-apk
           path: |
