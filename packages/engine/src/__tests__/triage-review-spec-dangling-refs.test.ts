@@ -87,10 +87,51 @@ describe("triage deterministic plan validation for dangling references", () => {
       const processor = new TriageProcessor(store, rootDir);
       const failure = await (processor as any).validateGeneratedPrompt(
         taskId,
-        "## Steps\n### Step 1: Create\n- Read .fusion/tasks/FN-5112/notes.md\n\n**Artifacts:**\n- `.fusion/tasks/FN-5112/notes.md` (new)\n",
+        "## Steps\n### Step 0: Create\n- Read .fusion/tasks/FN-5112/notes.md\n\n**Artifacts:**\n- `.fusion/tasks/FN-5112/notes.md` (new)\n",
       );
 
       expect(failure).toBeNull();
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects one-based, gapped, and duplicate step-heading sequences", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "fusion-triage-step-numbering-"));
+    try {
+      const store = createMockStore();
+      const processor = new TriageProcessor(store, rootDir);
+
+      for (const prompt of [
+        "## Steps\n### Step 1: First\n### Step 2: Second\n",
+        "## Steps\n### Step 0: First\n### Step 2: Third\n",
+        "## Steps\n### Step 0: First\n### Step 0: Duplicate\n",
+      ]) {
+        await expect((processor as any).validateGeneratedPrompt("FN-5112", prompt)).resolves.toContain(
+          "contiguous 0-based execution indices",
+        );
+      }
+      expect(store.logEntry).toHaveBeenCalledWith(
+        "FN-5112",
+        "Generated plan validation failed: invalid step heading numbering",
+      );
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts contiguous zero-based and heading-free prompts", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "fusion-triage-step-numbering-ok-"));
+    try {
+      const processor = new TriageProcessor(createMockStore(), rootDir);
+      await expect((processor as any).validateGeneratedPrompt(
+        "FN-5112",
+        "## Steps\n### Step 0: First\n### Step 1: Second\n",
+      )).resolves.toBeNull();
+      await expect((processor as any).validateGeneratedPrompt(
+        "FN-5112",
+        "## Steps\n### First\n- plain heading\n",
+      )).resolves.toBeNull();
     } finally {
       await rm(rootDir, { recursive: true, force: true });
     }
