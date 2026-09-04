@@ -3258,6 +3258,14 @@ export async function createPiAgentSessionRaw(options: AgentOptions): Promise<Ag
   // cleared on every exit of that swap, so a later fallback swap outside the
   // walk-down keeps the ORIGINAL configured level.
   let degradedThinkingLevel: string | undefined;
+  /*
+  FNXC:ThinkingEffortFallback 2026-09-04-04:55:
+  Last effort actually applied to the live session. Later prompts must walk down
+  FROM this rung: reconstructing activeThinkingLevel from the original fallback
+  config retried an already-rejected adjacent rung, and a 429 on that redundant
+  attempt exited before a supported lower rung ran.
+  */
+  let sessionThinkingLevel: string | undefined;
   const applyThinkingLevelIfSupported = (targetSession: AgentSession, sourceModel: string): void => {
     /*
      * FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
@@ -3272,6 +3280,7 @@ export async function createPiAgentSessionRaw(options: AgentOptions): Promise<Ag
     }
     try {
       (targetSession as PromptableSession).setThinkingLevel(effectiveThinkingLevel as any);
+      sessionThinkingLevel = effectiveThinkingLevel;
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       if (!isThinkingReasoningConflictError(message)) {
@@ -3516,9 +3525,10 @@ export async function createPiAgentSessionRaw(options: AgentOptions): Promise<Ag
       // (fallbackThinkingLevel set, defaultThinkingLevel absent) leaves
       // primaryThinkingLevel undefined and must still be degradable — the
       // primary's level is irrelevant once the fallback is the active session.
-      const activeThinkingLevel = usingFallback
-        ? options.fallbackThinkingLevel ?? options.defaultThinkingLevel
-        : primaryThinkingLevel;
+      const activeThinkingLevel = sessionThinkingLevel
+        ?? (usingFallback
+          ? options.fallbackThinkingLevel ?? options.defaultThinkingLevel
+          : primaryThinkingLevel);
       if (
         activeThinkingLevel
         && !thinkingCompatibilityDisabled
@@ -3614,6 +3624,25 @@ export async function createPiAgentSessionRaw(options: AgentOptions): Promise<Ag
         || ((degradedRetryError !== null
             || primaryThinkingLevel === THINKING_LEVEL_LADDER[THINKING_LEVEL_LADDER.length - 1])
           && isReasoningEffortRejectionError(fallbackClassificationMessage));
+      const retryPrimaryAfterFallback = async (): Promise<void> => {
+        /*
+         * FNXC:ModelFallback 2026-07-16-00:00:
+         * Once a distinct fallback has failed, retry the primary exactly once regardless
+         * of whether the fallback error is retryable or a context/compaction failure.
+         * Resetting `usingFallback` ensures the final primary receives primary thinking.
+         *
+         * FNXC:ThinkingEffortFallback 2026-09-04-04:55:
+         * Restore the configured primary effort too. The fallback walk mutates
+         * primaryThinkingLevel, and a 429 while creating the lower-effort
+         * fallback session used to throw that 429 while usingFallback, skipping
+         * this bounded final-primary retry entirely.
+         */
+        usingFallback = false;
+        primaryThinkingLevel = options.defaultThinkingLevel;
+        degradedThinkingLevel = undefined;
+        const primaryRetrySession = await swapPromptSession(selectedModel);
+        await promptSessionAndCheck(primaryRetrySession, prompt, effectivePromptOptions);
+      };
       if (!fallbackModel || usingFallback || !retryableFallbackFailure) {
         // FNXC:ThinkingEffortFallback 2026-08-26-15:20 (review fix): when a
         // degraded retry already ran and failed, its error is the current
@@ -3627,6 +3656,20 @@ export async function createPiAgentSessionRaw(options: AgentOptions): Promise<Ag
         // terminal ModelFallbackExhaustedError contract the no-distinct-
         // fallback branch below uses instead of a raw rejection triage's
         // generic catch-all would re-admit into an endless cycle.
+        if (
+          usingFallback
+          && selectedModel
+          && hasDistinctFallback
+          && retryableFallbackFailure
+          && !isReasoningEffortRejectionError(fallbackClassificationMessage)
+        ) {
+          try {
+            await retryPrimaryAfterFallback();
+            return;
+          } catch (primaryRetryErr: unknown) {
+            throw makeFallbackExhaustedError("prompt-time", 3, primaryRetryErr);
+          }
+        }
         if (isReasoningEffortRejectionError(fallbackClassificationMessage)) {
           throw makeFallbackExhaustedError("prompt-time", 1, fallbackClassificationError);
         }
@@ -3645,16 +3688,8 @@ export async function createPiAgentSessionRaw(options: AgentOptions): Promise<Ag
         await promptSessionAndCheck(fallbackSession, prompt, effectivePromptOptions);
         return;
       } catch (_fallbackErr: unknown) {
-        /*
-         * FNXC:ModelFallback 2026-07-16-00:00:
-         * Once a distinct fallback has failed, retry the primary exactly once regardless
-         * of whether the fallback error is retryable or a context/compaction failure.
-         * Resetting `usingFallback` ensures the final primary receives primary thinking.
-         */
-        usingFallback = false;
         try {
-          const primaryRetrySession = await swapPromptSession(selectedModel);
-          await promptSessionAndCheck(primaryRetrySession, prompt, effectivePromptOptions);
+          await retryPrimaryAfterFallback();
           return;
         } catch (primaryRetryErr: unknown) {
           throw makeFallbackExhaustedError("prompt-time", 3, primaryRetryErr);

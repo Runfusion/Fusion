@@ -1601,6 +1601,177 @@ describe("session failure diagnostics", () => {
     }
   });
 
+  // FNXC:ThinkingEffortFallback 2026-09-04-04:55:
+  // Sparse support: the model rejects max AND the adjacent xhigh rung but
+  // accepts high. The walk must not stop after latching the first drop.
+  it("walks past an unsupported adjacent fallback rung to a lower supported effort", async () => {
+    const createAgentSessionMock = vi.mocked(createAgentSession);
+    const rejection = () => new Error("400 invalid_request_error: reasoning_effort is not supported");
+    const fallbackPrompt = vi.fn().mockRejectedValue(rejection());
+    const xhighPrompt = vi.fn().mockRejectedValue(rejection());
+    const highSetThinkingLevel = vi.fn();
+    const highPrompt = vi.fn().mockResolvedValue(undefined);
+    const fallbackSession = {
+      model: { provider: "test", id: "fallback-model" },
+      prompt: fallbackPrompt,
+      subscribe: vi.fn(),
+      dispose: vi.fn(),
+      setThinkingLevel: vi.fn(),
+      sessionFile: undefined,
+    } as unknown as AgentSession;
+    const xhighSession = {
+      model: { provider: "test", id: "fallback-model" },
+      prompt: xhighPrompt,
+      subscribe: vi.fn(),
+      dispose: vi.fn(),
+      setThinkingLevel: vi.fn(),
+      sessionFile: undefined,
+    } as unknown as AgentSession;
+    const highSession = {
+      model: { provider: "test", id: "fallback-model" },
+      prompt: highPrompt,
+      subscribe: vi.fn(),
+      dispose: vi.fn(),
+      setThinkingLevel: highSetThinkingLevel,
+      sessionFile: undefined,
+    } as unknown as AgentSession;
+    createAgentSessionMock.mockReset();
+    createAgentSessionMock
+      .mockRejectedValueOnce(new Error("429 Too Many Requests"))
+      .mockResolvedValueOnce({ session: fallbackSession } as any)
+      .mockResolvedValueOnce({ session: xhighSession } as any)
+      .mockResolvedValueOnce({ session: highSession } as any);
+    const { session } = await createFnAgent({
+      cwd: "/test/project",
+      systemPrompt: "Test sparse fallback effort rungs",
+      defaultProvider: "test",
+      defaultModelId: "primary-model",
+      fallbackProvider: "test",
+      fallbackModelId: "fallback-model",
+      defaultThinkingLevel: "max",
+    });
+    await expect((session as any).promptWithFallback("Run task")).resolves.toBeUndefined();
+    expect(highSetThinkingLevel).toHaveBeenCalledWith("high");
+    expect(highPrompt).toHaveBeenCalledTimes(1);
+    expect(createAgentSessionMock.mock.calls[3][0]).toEqual(expect.objectContaining({
+      model: expect.objectContaining({ provider: "test", id: "fallback-model" }),
+    }));
+  });
+
+  // FNXC:ThinkingEffortFallback 2026-09-04-04:55:
+  // After a fallback session successfully degrades max → xhigh, a later prompt
+  // must walk from the APPLIED xhigh rung. Reconstructing max retries xhigh;
+  // a 429 on that redundant attempt used to exit before high ran.
+  it("starts a later fallback prompt from the applied effort instead of the original fallback config", async () => {
+    const createAgentSessionMock = vi.mocked(createAgentSession);
+    const rejection = () => new Error("400 invalid_request_error: reasoning_effort is not supported");
+    const fallbackPrompt = vi.fn().mockRejectedValue(rejection());
+    const xhighPrompt = vi.fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(rejection());
+    let laterLevel: string | undefined;
+    const laterSetThinkingLevel = vi.fn((level: string) => {
+      laterLevel = level;
+    });
+    const laterPrompt = vi.fn(async () => {
+      if (laterLevel === "high") return;
+      throw new Error("429 Too Many Requests");
+    });
+    const fallbackSession = {
+      model: { provider: "test", id: "fallback-model" },
+      prompt: fallbackPrompt,
+      subscribe: vi.fn(),
+      dispose: vi.fn(),
+      setThinkingLevel: vi.fn(),
+      sessionFile: undefined,
+    } as unknown as AgentSession;
+    const xhighSession = {
+      model: { provider: "test", id: "fallback-model" },
+      prompt: xhighPrompt,
+      subscribe: vi.fn(),
+      dispose: vi.fn(),
+      setThinkingLevel: vi.fn(),
+      sessionFile: undefined,
+    } as unknown as AgentSession;
+    const laterSession = {
+      model: { provider: "test", id: "fallback-model" },
+      prompt: laterPrompt,
+      subscribe: vi.fn(),
+      dispose: vi.fn(),
+      setThinkingLevel: laterSetThinkingLevel,
+      sessionFile: undefined,
+    } as unknown as AgentSession;
+    createAgentSessionMock.mockReset();
+    createAgentSessionMock
+      .mockRejectedValueOnce(new Error("429 Too Many Requests"))
+      .mockResolvedValueOnce({ session: fallbackSession } as any)
+      .mockResolvedValueOnce({ session: xhighSession } as any)
+      .mockResolvedValueOnce({ session: laterSession } as any);
+    const { session } = await createFnAgent({
+      cwd: "/test/project",
+      systemPrompt: "Test fallback applied-effort persistence",
+      defaultProvider: "test",
+      defaultModelId: "primary-model",
+      fallbackProvider: "test",
+      fallbackModelId: "fallback-model",
+      fallbackThinkingLevel: "max",
+    });
+    await expect((session as any).promptWithFallback("Run task")).resolves.toBeUndefined();
+    await expect((session as any).promptWithFallback("Run task again")).resolves.toBeUndefined();
+    expect(laterSetThinkingLevel).toHaveBeenCalledWith("high");
+    expect(laterPrompt).toHaveBeenCalledTimes(1);
+  });
+
+  // FNXC:ThinkingEffortFallback 2026-09-04-04:55:
+  // Already on the fallback, an effort rejection whose lower-rung replacement
+  // session fails to create with a retryable 429 must still receive the
+  // bounded final-primary retry instead of throwing the raw 429.
+  it("retries the primary when fallback effort-degrade session creation fails with 429", async () => {
+    const createAgentSessionMock = vi.mocked(createAgentSession);
+    const fallbackPrompt = vi.fn().mockRejectedValue(
+      new Error("400 invalid_request_error: reasoning_effort is not supported"),
+    );
+    const primaryRetrySetThinkingLevel = vi.fn();
+    const primaryRetryPrompt = vi.fn().mockResolvedValue(undefined);
+    const fallbackSession = {
+      model: { provider: "test", id: "fallback-model" },
+      prompt: fallbackPrompt,
+      subscribe: vi.fn(),
+      dispose: vi.fn(),
+      setThinkingLevel: vi.fn(),
+      sessionFile: undefined,
+    } as unknown as AgentSession;
+    const primaryRetrySession = {
+      model: { provider: "test", id: "primary-model" },
+      prompt: primaryRetryPrompt,
+      subscribe: vi.fn(),
+      dispose: vi.fn(),
+      setThinkingLevel: primaryRetrySetThinkingLevel,
+      sessionFile: undefined,
+    } as unknown as AgentSession;
+    createAgentSessionMock.mockReset();
+    createAgentSessionMock
+      .mockRejectedValueOnce(new Error("429 Too Many Requests"))
+      .mockResolvedValueOnce({ session: fallbackSession } as any)
+      .mockRejectedValueOnce(new Error("429 Too Many Requests"))
+      .mockResolvedValueOnce({ session: primaryRetrySession } as any);
+    const { session } = await createFnAgent({
+      cwd: "/test/project",
+      systemPrompt: "Test fallback degrade 429 final primary retry",
+      defaultProvider: "test",
+      defaultModelId: "primary-model",
+      fallbackProvider: "test",
+      fallbackModelId: "fallback-model",
+      defaultThinkingLevel: "max",
+    });
+    await expect((session as any).promptWithFallback("Run task")).resolves.toBeUndefined();
+    expect(primaryRetryPrompt).toHaveBeenCalledTimes(1);
+    expect(primaryRetrySetThinkingLevel).toHaveBeenCalledWith("max");
+    expect(createAgentSessionMock.mock.calls[3][0]).toEqual(expect.objectContaining({
+      model: expect.objectContaining({ provider: "test", id: "primary-model" }),
+    }));
+  });
+
 
   // FNXC:ThinkingEffortFallback 2026-08-26-15:20 (review fix): the degraded
   // retry's error is the CURRENT failure. When it is not fallback-eligible the
