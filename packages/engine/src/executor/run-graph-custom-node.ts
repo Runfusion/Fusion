@@ -318,6 +318,47 @@ export function preserveOutcomeFindingsFromReviewOutput(outcome: WorkflowStepOut
   return parsedReviewOutput.findings?.length ? { ...outcome, findings: parsedReviewOutput.findings } : outcome;
 }
 
+/*
+FNXC:Identity 2026-09-04-08:21:
+Worktree acquire must attribute to the same column-override / routed principal the node will
+execute as. `cfg.agentId` is only own-settings fallback. `resolveEffectiveAgent` is pure and
+`columnBinding` is already in hand; graph principal is already on `graphContext`. Column-agent
+session adoption (persona/model) stays after checkout mint — this helper returns the id only.
+*/
+export function resolveGraphCustomNodeWorktreePrincipal(input: {
+  cfg: Record<string, unknown>;
+  columnBinding?: WorkflowColumnAgent;
+  graphContext?: Record<string, unknown>;
+}): {
+  principalAgentId: string | undefined;
+  effective: ReturnType<typeof resolveEffectiveAgent>;
+} {
+  const ownAgentId = typeof input.cfg.agentId === "string" && input.cfg.agentId.trim()
+    ? input.cfg.agentId.trim()
+    : undefined;
+  const modelProvider = typeof input.cfg.modelProvider === "string" && input.cfg.modelProvider.trim()
+    ? input.cfg.modelProvider.trim()
+    : undefined;
+  const modelId = typeof input.cfg.modelId === "string" && input.cfg.modelId.trim()
+    ? input.cfg.modelId.trim()
+    : undefined;
+  const ownModelComplete = Boolean(modelProvider && modelId);
+  const graphPrincipalRaw = input.graphContext?.["workflow:principal-agent-id"];
+  const graphPrincipal = typeof graphPrincipalRaw === "string" && graphPrincipalRaw.trim()
+    ? graphPrincipalRaw.trim()
+    : undefined;
+  const effective = resolveEffectiveAgent({
+    binding: input.columnBinding,
+    ownAgentId,
+    ownModelProvider: ownModelComplete ? modelProvider : undefined,
+    ownModelId: ownModelComplete ? modelId : undefined,
+  });
+  return {
+    principalAgentId: effective.source === "column-agent" ? effective.agentId : (graphPrincipal ?? ownAgentId),
+    effective,
+  };
+}
+
 export async function runGraphCustomNode(
   deps: RunGraphCustomNodeDeps,
   node: WorkflowIrNode,
@@ -328,7 +369,11 @@ export async function runGraphCustomNode(
   outputLanguage?: ResolvedTaskOutputLanguage,
 ): Promise<WorkflowNodeResult> {
     const cfg = node.config ?? {};
-    const nodePrincipalAgentId = typeof cfg.agentId === "string" && cfg.agentId.trim() ? cfg.agentId.trim() : undefined;
+    const { principalAgentId: nodePrincipalAgentId, effective } = resolveGraphCustomNodeWorktreePrincipal({
+      cfg,
+      columnBinding,
+      graphContext,
+    });
     let live = await deps.store.getTask(nodeTask.id);
 
     const staleInput = await deps.resolveWorkflowInputMarkerForGraphNode(live, node.id);
@@ -620,21 +665,9 @@ export async function runGraphCustomNode(
     let modelId = typeof cfg.modelId === "string" && cfg.modelId.trim() ? cfg.modelId : undefined;
 
     // ── Column-agent binding (plan U3, KTD-2/KTD-3) ──────────────────────────
-    // When the node's declared column names an agent, the CORE resolver decides
-    // whether the column agent supersedes (override) or defers to the node's own
-    // settings — we never reimplement precedence. The node's own `cfg.agentId`
-    // and complete model pair feed the resolver as "own settings" (KTD-5).
-    const ownModelComplete = Boolean(modelProvider && modelId);
-    const effective = resolveEffectiveAgent({
-      binding: columnBinding,
-      ownAgentId: typeof cfg.agentId === "string" && cfg.agentId.trim() ? cfg.agentId.trim() : undefined,
-      ownModelProvider: ownModelComplete ? modelProvider : undefined,
-      ownModelId: ownModelComplete ? modelId : undefined,
-    });
-    // The effective executor identity: a column agent supersedes the node's own
-    // `executor: "agent"` adoption wholesale (identity + model + persona). When
-    // the resolver yields the column agent, we run the column-agent adoption
-    // path below INSTEAD of the node's own agent branch.
+    // Reuse the early `effective` result so worktree attribution and session
+    // adoption cannot drift. Persona/model adoption still happens here, after
+    // checkout mint.
     const columnAgentId = effective.source === "column-agent" ? effective.agentId : undefined;
     const columnAgentMode = columnBinding?.mode;
 
