@@ -69,8 +69,10 @@ exit 0
   await chmod(pgRestorePath, 0o755);
   const projectFilename = "fusion-pg-20260831-120000.dump";
   const centralFilename = "fusion-central-pg-20260831-120000.dump";
+  const migrationsFilename = "fusion-migrations-pg-20260831-120000.dump";
   const projectPath = join(backupDir, projectFilename);
   const centralPath = join(backupDir, centralFilename);
+  const migrationsPath = join(backupDir, migrationsFilename);
   const manager = new BackupManager(fusionDir, {
     connectionString: embeddedUrl,
     pgDumpPath,
@@ -88,8 +90,10 @@ exit 0
     backupDir,
     projectFilename,
     centralFilename,
+    migrationsFilename,
     projectPath,
     centralPath,
+    migrationsPath,
     failRollbackMarker,
     actions,
   };
@@ -150,17 +154,40 @@ describe("PostgreSQL paired restore orchestration", () => {
       ]);
       expect(actions[2]).toMatch(/^DUMP fusion-pre-restore-pg-/);
       expect(actions[3]).toMatch(/^DUMP fusion-central-pre-restore-pg-/);
-      expect(actions[4]).toMatch(/^LIST fusion-pre-restore-pg-/);
-      expect(actions[5]).toMatch(/^LIST fusion-central-pre-restore-pg-/);
-      expect(actions[6]).toMatch(
-        new RegExp(`^RESTORE ${fixture.projectFilename} .*--single-transaction`),
-      );
-      expect(actions[7]).toMatch(
-        new RegExp(`^RESTORE ${fixture.centralFilename} .*--single-transaction`),
-      );
+      expect(actions[4]).toMatch(/^DUMP fusion-migrations-pre-restore-pg-/);
+      expect(actions[5]).toMatch(/^LIST fusion-pre-restore-pg-/);
+      expect(actions[6]).toMatch(/^LIST fusion-central-pre-restore-pg-/);
+      expect(actions[7]).toMatch(new RegExp(`^RESTORE ${fixture.projectFilename} .*--single-transaction`));
+      expect(actions[8]).toMatch(new RegExp(`^RESTORE ${fixture.centralFilename} .*--single-transaction`));
     } finally {
       await rm(root, { recursive: true, force: true });
     }
+  });
+
+  it("restores migration bookkeeping after project and central from a complete stem", async () => {
+    const root = await mkdtemp(join(tmpdir(), "fusion-migration-restore-"));
+    try {
+      const fixture = await createRestoreFixture(root);
+      await writeFile(fixture.projectPath, "project-source");
+      await writeFile(fixture.centralPath, "central-source");
+      await writeFile(fixture.migrationsPath, "migrations-source");
+      const result = await fixture.manager.restoreBackup(fixture.projectFilename);
+      expect(result.migrationBookkeeping).toBe("restored");
+      const restores = (await fixture.actions()).filter((action) => action.startsWith("RESTORE "));
+      expect(restores.map((action) => action.split(" ")[1])).toEqual([fixture.projectFilename, fixture.centralFilename, fixture.migrationsFilename]);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it("refuses bookkeeping restores without a pre-restore rollback source before client mutation", async () => {
+    const root = await mkdtemp(join(tmpdir(), "fusion-migration-refusal-"));
+    try {
+      const fixture = await createRestoreFixture(root);
+      await writeFile(fixture.projectPath, "project-source");
+      await writeFile(fixture.centralPath, "central-source");
+      await writeFile(fixture.migrationsPath, "migrations-source");
+      await expect(fixture.manager.restoreBackup(fixture.projectFilename, { createPreRestoreBackup: false })).rejects.toThrow(/createPreRestoreBackup: false.*requires/i);
+      expect(await fixture.actions()).toEqual([]);
+    } finally { await rm(root, { recursive: true, force: true }); }
   });
 
   it("rejects a missing or corrupt central sibling before backup creation or restore", async () => {
@@ -215,7 +242,7 @@ describe("PostgreSQL paired restore orchestration", () => {
       expect(restores[0]).toContain(fixture.projectFilename);
       expect(restores[1]).toContain(fixture.centralFilename);
       expect(restores[2]).toMatch(/^RESTORE fusion-pre-restore-pg-/);
-      expect(restores).toHaveLength(3);
+      expect(restores).toHaveLength(4);
       expect((await fixture.manager.listBackupPairs()).some(
         (pair) => pair.project?.filename.startsWith("fusion-pre-restore-pg-")
           && pair.central?.filename.startsWith("fusion-central-pre-restore-pg-"),
