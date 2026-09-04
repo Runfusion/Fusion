@@ -16,6 +16,7 @@ import {
   type RestoreMigrationCatalog,
 } from "../postgres/restore-migration-reconcile.js";
 import {
+  AGENT_RATING_PROJECT_ISOLATION_VERSION,
   ANALYTICS_ISOLATION_SCHEMA_VERSION,
   AUTOMATION_ISOLATION_SCHEMA_VERSION,
   CHAT_SESSION_PINS_VERSION,
@@ -517,6 +518,39 @@ describe("PostgreSQL paired restore orchestration", () => {
       expect(await catalog.columnExists("project.todo_lists", "owner_project_id")).toBe(true);
       expect(await catalog.columnExists("project.research_runs", "owner_project_id")).toBe(true);
       expect(catalog.hasApplied(OWNER_PROJECT_ID_SPLIT_VERSION)).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("unstamps 0054/0055 agent_ratings.project_id when later sentinels exist", async () => {
+    const allRelations = RESTORED_SCHEMA_RELATION_SENTINELS.flatMap((sentinel) => [...(sentinel.relations ?? [])]);
+    const catalogAtDetect = createRestoreCatalog(
+      allRelations,
+      sentinelColumnsExcept(AGENT_RATING_PROJECT_ISOLATION_VERSION),
+    );
+    expect(await detectRestoredSchemaRewindFloor(catalogAtDetect)).toBe(AGENT_RATING_PROJECT_ISOLATION_VERSION);
+    expect(await catalogAtDetect.columnExists("project.agent_ratings", "project_id")).toBe(false);
+    expect(await catalogAtDetect.columnExists("project.messages", "archived")).toBe(true);
+
+    const root = await mkdtemp(join(tmpdir(), "fusion-restore-0054-ratings-"));
+    try {
+      const catalog = createRestoreCatalog(
+        allRelations,
+        sentinelColumnsExcept(AGENT_RATING_PROJECT_ISOLATION_VERSION),
+      );
+      const fixture = await createRestoreFixture(root, {
+        reconcileRestoredMigrations: () => reconcileRestoredSchemaMigrations(catalog),
+      });
+      await writeFile(fixture.projectPath, "pre-0054-project");
+      await writeFile(fixture.centralPath, "central-source");
+      expect(await catalog.columnExists("project.agent_ratings", "project_id")).toBe(false);
+      expect(catalog.hasApplied(AGENT_RATING_PROJECT_ISOLATION_VERSION)).toBe(true);
+
+      await fixture.manager.restoreBackup(fixture.projectFilename, { createPreRestoreBackup: false });
+
+      expect(await catalog.columnExists("project.agent_ratings", "project_id")).toBe(true);
+      expect(catalog.hasApplied(AGENT_RATING_PROJECT_ISOLATION_VERSION)).toBe(true);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

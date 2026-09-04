@@ -17,6 +17,11 @@
  * floor jumps to a later miss and leaves 0011 stamped. Replay then skips the
  * domain column and todo/chat/research queries fail.
  *
+ * FNXC:PostgresBackup 2026-09-04-07:51:
+ * 0054 adds `project.agent_ratings.project_id`; 0000 still has no such column.
+ * Without that sentinel a pre-0054 dump leaves 0054/0055 stamped and rating
+ * reads/deletes fail. Rewinding from 0054 also unstamps 0055's partition repair.
+ *
  * Unstamp and baseline replay share one transaction so a failed apply cannot
  * leave `public.fusion_schema_migrations` rewound while project/archive still
  * reflects the restored dump.
@@ -34,6 +39,7 @@ import {
   applySchemaBaseline,
   AI_MERGE_REVIEW_RECONCILIATION_VERSION,
   AGENT_ACTIVITY_EVENTS_VERSION,
+  AGENT_RATING_PROJECT_ISOLATION_VERSION,
   ANALYTICS_ISOLATION_SCHEMA_VERSION,
   AUTOMATION_ISOLATION_SCHEMA_VERSION,
   BULK_COMPLETION_REFUSAL_AT_VERSION,
@@ -182,6 +188,7 @@ export const RESTORED_SCHEMA_RELATION_SENTINELS: readonly RestoredSchemaRelation
       "project.project_insights",
       "project.project_insight_runs",
       "project.cli_sessions",
+      "project.agent_ratings",
     ],
   },
   { version: AUTOMATION_ISOLATION_SCHEMA_VERSION, columns: [{ relation: "project.automations", column: "project_id" }] },
@@ -245,6 +252,10 @@ export const RESTORED_SCHEMA_RELATION_SENTINELS: readonly RestoredSchemaRelation
   { version: SPEC_LOCK_DRIFT_REPORT_VERSION, relations: ["project.spec_locks"] },
   { version: MEMORY_RECALL_RECORDS_VERSION, relations: ["project.memory_recall_records"] },
   { version: MISSION_FEATURE_SPEC_ALIGNMENT_VERSION, columns: [{ relation: "project.mission_features", column: "spec_alignment" }] },
+  {
+    version: AGENT_RATING_PROJECT_ISOLATION_VERSION,
+    columns: [{ relation: "project.agent_ratings", column: "project_id" }],
+  },
   { version: MESSAGE_ARCHIVE_SCHEMA_VERSION, columns: [{ relation: "project.messages", column: MESSAGE_ARCHIVED_SQL_COLUMN }] },
   {
     version: WORKSPACE_COORDINATION_LEASES_SCHEMA_VERSION,
