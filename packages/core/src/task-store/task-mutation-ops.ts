@@ -29,6 +29,7 @@ import {validateSettingValuePatch, WorkflowSettingRejectionError} from "../workf
 import "../builtin-traits.js";
 import {toJson} from "../db/db.js";
 import { isPostgresUniqueError } from "../db/postgres-errors.js";
+import { isSafeWorkspaceWorktreeDirSegment } from "../tasks/worktree-layout.js";
 import {resolveSameAgentDuplicateIntake} from "./task-creation.js";
 import {type TaskRow, TASK_COLUMN_DESCRIPTORS} from "../task-store/persistence.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
@@ -917,7 +918,9 @@ export async function pinWorkspaceWorktreeDirSegmentImpl(
   segment: string,
 ): Promise<{ task: Task; segment: string; minted: boolean; claimed: boolean }> {
   const candidate = segment.trim();
-  if (!candidate) throw new Error(`Cannot pin an empty workspace worktree directory segment for ${id}`);
+  if (!isSafeWorkspaceWorktreeDirSegment(candidate)) {
+    throw new Error(`Cannot pin an unsafe workspace worktree directory segment for ${id}`);
+  }
   return store.withTaskLock(id, async () => {
     const layer = store.asyncLayer!;
     let snapshot: Task | undefined;

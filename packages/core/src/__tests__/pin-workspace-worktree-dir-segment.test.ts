@@ -119,4 +119,11 @@ describe("pinWorkspaceWorktreeDirSegmentImpl project scope", () => {
     const result = await pinWorkspaceWorktreeDirSegmentImpl(store as never, "FN-3520", "foo");
     expect(result).toMatchObject({ minted: false, claimed: false, segment: "foo" });
   });
+
+  it("refuses a traversal segment before writing", async () => {
+    const { store, whereClauses } = createPinStore("proj-alpha");
+    await expect(pinWorkspaceWorktreeDirSegmentImpl(store as never, "FN-3520", "../../outside"))
+      .rejects.toThrow(/unsafe workspace worktree directory segment/);
+    expect(whereClauses).toHaveLength(0);
+  });
 });

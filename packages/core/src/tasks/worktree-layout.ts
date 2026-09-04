@@ -178,6 +178,21 @@ export function slugifyWorktreeSegment(value: string): string {
     .replace(/^-|-$/g, "");
 }
 
+/*
+FNXC:WorkspaceWorktree 2026-09-04-07:51:
+A workspace directory segment is one path component. Generic `updateTask` is still a first-mint
+fallback for stores without `pinWorkspaceWorktreeDirSegment`; without this check a plugin can
+persist `../../outside` write-once and every later checkout follows it. Empty, `.`/`..`, separators,
+and absolute paths are refused. The dedicated pin writer uses the same predicate.
+*/
+export function isSafeWorkspaceWorktreeDirSegment(segment: string): boolean {
+  const candidate = segment.trim();
+  if (!candidate || candidate === "." || candidate === "..") return false;
+  if (candidate.includes("..") || candidate.includes("/") || candidate.includes("\\")) return false;
+  if (isAbsolute(candidate)) return false;
+  return true;
+}
+
 function reservedSegmentKey(value: string): string {
   return value.toLowerCase().replace(/^\.+/, "");
 }
