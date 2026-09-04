@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
-import { homedir } from "node:os";
+import { mkdtempSync, rmSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   assertWorkspaceRepoRelPath,
   isStrictDescendantPath,
@@ -17,12 +18,38 @@ import {
 } from "../tasks/worktree-layout.js";
 
 describe("workspace worktree layout", () => {
-  const workspace = "/tmp/PRD-1234-my-slug";
-  const context = { workspaceRootDir: workspace, repoRelPath: "api" };
+  /*
+  FNXC:Worktrees 2026-09-04-04:42:
+  Layout fixtures compare path strings only. Build them under mkdtemp so ThreatCrush does not treat literal /tmp and /var/tmp names as CWE-377 predictable temp files.
+  */
+  let tmpRoot: string;
+  let workspace: string;
+  let repoRoot: string;
+  let treesRoot: string;
+  let unsafeRoot: string;
+  let emojiRoot: string;
+  let altSafeRootA: string;
+  let altSafeRootB: string;
+  let context: { workspaceRootDir: string; repoRelPath: string };
+
+  beforeAll(() => {
+    tmpRoot = mkdtempSync(join(tmpdir(), "wt-layout-"));
+    workspace = join(tmpRoot, "PRD-1234-my-slug");
+    repoRoot = join(tmpRoot, "repo");
+    treesRoot = join(tmpRoot, "trees");
+    unsafeRoot = join(tmpRoot, "PRD-1234 My Slug");
+    emojiRoot = join(tmpRoot, "🧪");
+    altSafeRootA = join(tmpRoot, "a", "PRD-1234-my-slug");
+    altSafeRootB = join(tmpRoot, "b", "PRD-1234-my-slug");
+    context = { workspaceRootDir: workspace, repoRelPath: "api" };
+  });
+
+  afterAll(() => {
+    rmSync(tmpRoot, { recursive: true, force: true });
+  });
 
   it("defaults singular and workspace repositories under .fusion/worktrees", () => {
-    const repoRoot = "/tmp/repo";
-    expect(resolveWorktreesDirLayout(repoRoot, undefined)).toBe("/tmp/repo/.fusion/worktrees");
+    expect(resolveWorktreesDirLayout(repoRoot, undefined)).toBe(join(repoRoot, ".fusion", "worktrees"));
     expect(resolveWorktreesDirLayout(join(workspace, "api"), undefined, context)).toBe(join(workspace, "api", ".fusion", "worktrees"));
     expect(resolveWorkspaceTaskWorktreeDir(repoRoot, undefined, "FN-1")).toBe(join(repoRoot, ".fusion", "worktrees", "fn-1"));
   });
@@ -30,18 +57,17 @@ describe("workspace worktree layout", () => {
   it("resolves configured roots once at the workspace and groups repositories", () => {
     expect(resolveWorktreesDirLayout(join(workspace, "api"), { worktreesDir: "../trees/{repo}" } as any, context))
       .toBe(resolve(workspace, "../trees/PRD-1234-my-slug/PRD-1234-my-slug/api"));
-    expect(resolveWorktreesDirLayout(join(workspace, "api"), { worktreesDir: "/var/tmp/trees" } as any, context))
-      .toBe("/var/tmp/trees/PRD-1234-my-slug/api");
+    expect(resolveWorktreesDirLayout(join(workspace, "api"), { worktreesDir: treesRoot } as any, context))
+      .toBe(join(treesRoot, "PRD-1234-my-slug", "api"));
     expect(resolveWorktreesDirLayout(join(workspace, "api"), { worktreesDir: "~/.trees" } as any, context))
       .toBe(join(homedir(), ".trees/PRD-1234-my-slug/api"));
   });
 
   it("preserves safe workspace names and hashes unsafe names deterministically", () => {
     expect(workspaceWorktreeGroupSegment(workspace)).toBe("PRD-1234-my-slug");
-    const unsafeRoot = "/tmp/PRD-1234 My Slug";
     expect(workspaceWorktreeGroupSegment(unsafeRoot)).toBe(`PRD-1234-My-Slug-${createHash("sha256").update(resolve(unsafeRoot)).digest("hex").slice(0, 8)}`);
-    expect(workspaceWorktreeGroupSegment("/tmp/🧪")).toMatch(/^workspace-[a-f0-9]{8}$/);
-    expect(workspaceWorktreeGroupSegment("/a/PRD-1234-my-slug")).toBe(workspaceWorktreeGroupSegment("/b/PRD-1234-my-slug"));
+    expect(workspaceWorktreeGroupSegment(emojiRoot)).toMatch(/^workspace-[a-f0-9]{8}$/);
+    expect(workspaceWorktreeGroupSegment(altSafeRootA)).toBe(workspaceWorktreeGroupSegment(altSafeRootB));
   });
 
   it("separates nested repository paths from lossy flattened names", () => {
@@ -51,18 +77,19 @@ describe("workspace worktree layout", () => {
   });
 
   it("returns configured or primary-plus-legacy root candidates", () => {
-    expect(resolveWorktreesDirCandidates("/tmp/repo", { worktreesDir: "trees" } as any)).toEqual(["/tmp/repo/trees"]);
-    expect(resolveWorktreesDirCandidates("/tmp/repo", undefined)).toEqual([
-      "/tmp/repo/.fusion/worktrees",
-      resolveLegacyWorktreesDirLayout("/tmp/repo"),
+    expect(resolveWorktreesDirCandidates(repoRoot, { worktreesDir: "trees" } as any)).toEqual([join(repoRoot, "trees")]);
+    expect(resolveWorktreesDirCandidates(repoRoot, undefined)).toEqual([
+      join(repoRoot, ".fusion", "worktrees"),
+      resolveLegacyWorktreesDirLayout(repoRoot),
     ]);
   });
 
   it("accepts only strict descendant paths", () => {
-    expect(isStrictDescendantPath("/tmp/repo/.fusion/worktrees", "/tmp/repo/.fusion/worktrees/fn-1")).toBe(true);
-    expect(isStrictDescendantPath("/tmp/repo/.fusion/worktrees", "/tmp/repo/.fusion/worktrees")).toBe(false);
-    expect(isStrictDescendantPath("/tmp/repo/.fusion/worktrees", "/tmp/repo/.fusion/worktrees-sibling/fn-1")).toBe(false);
-    expect(isStrictDescendantPath("/tmp/repo/.fusion/worktrees", "/tmp/repo/.fusion/worktrees/../outside")).toBe(false);
+    const worktrees = join(repoRoot, ".fusion", "worktrees");
+    expect(isStrictDescendantPath(worktrees, join(worktrees, "fn-1"))).toBe(true);
+    expect(isStrictDescendantPath(worktrees, worktrees)).toBe(false);
+    expect(isStrictDescendantPath(worktrees, join(repoRoot, ".fusion", "worktrees-sibling", "fn-1"))).toBe(false);
+    expect(isStrictDescendantPath(worktrees, join(worktrees, "..", "outside"))).toBe(false);
   });
 
   it("resolves one task directory with repository-relative children", () => {
@@ -70,8 +97,8 @@ describe("workspace worktree layout", () => {
     expect(defaultTaskDir).toBe(join(workspace, ".fusion", "worktrees", "fn-158"));
     expect(resolveWorkspaceRepoWorktreePath(defaultTaskDir, "apps/web")).toBe(join(defaultTaskDir, "apps", "web"));
 
-    const configuredTaskDir = resolveWorkspaceTaskWorktreeDir(workspace, { worktreesDir: "/var/tmp/trees" } as any, "FN-158");
-    expect(configuredTaskDir).toBe("/var/tmp/trees/PRD-1234-my-slug/fn-158");
+    const configuredTaskDir = resolveWorkspaceTaskWorktreeDir(workspace, { worktreesDir: treesRoot } as any, "FN-158");
+    expect(configuredTaskDir).toBe(join(treesRoot, "PRD-1234-my-slug", "fn-158"));
     expect(() => resolveWorkspaceRepoWorktreePath(defaultTaskDir, "../outside")).toThrow();
   });
 
