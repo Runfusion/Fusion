@@ -1546,7 +1546,7 @@ describe("StepSessionExecutor", () => {
         worktreePath: "/project/.worktrees/main",
         rootDir: "/project",
         settings: makeSettings({ maxParallelSteps: 1 }),
-        agentStore: { saveRun } as any,
+        agentStore: { saveRun, getAgent: vi.fn(async (id) => id === "column-agent" ? { id } : null) } as any,
         effectiveAgentId: "column-agent",
       } as any);
 
@@ -1606,7 +1606,7 @@ describe("StepSessionExecutor", () => {
         worktreePath: "/project/.worktrees/main",
         rootDir: "/project",
         settings: makeSettings({ maxParallelSteps: 1 }),
-        agentStore: { saveRun } as any,
+        agentStore: { saveRun, getAgent: vi.fn(async (id) => id === "assigned-agent" ? { id } : null) } as any,
       } as any);
 
       // FNXC:EngineTests 2026-07-09-06:00:
@@ -1632,24 +1632,25 @@ describe("StepSessionExecutor", () => {
       expect(saveRun.mock.calls.map((call) => call[0].status)).toEqual(["active", "failed"]);
     });
 
-    it("uses assigned-agent and fallback executor identities for workflow activity runs", async () => {
+    it("uses roster-proven assigned-agent and executor-role identities for workflow activity runs", async () => {
       const prompt = makeStepPrompt("FN-7402", 1);
       const runExecutor = async (taskOverrides: Partial<TaskDetail>) => {
         const saveRun = vi.fn().mockResolvedValue(undefined);
+        const roster = [{ id: "assigned-agent" }, { id: "built-in-executor", role: "executor", roles: ["executor"], metadata: { builtInWorkflowRole: true, workflowRole: "executor" } }];
         mockedCreateFnAgent.mockResolvedValueOnce({ session: makeMockSession() } as any);
         const executor = new StepSessionExecutor({
           taskDetail: makeTaskDetail({ id: "FN-7402", prompt, steps: [{ name: "Step 0", status: "pending" }], ...taskOverrides }),
           worktreePath: "/project/.worktrees/main",
           rootDir: "/project",
           settings: makeSettings({ maxParallelSteps: 1 }),
-          agentStore: { saveRun } as any,
+          agentStore: { saveRun, getAgent: vi.fn(async (id) => roster.find((agent) => agent.id === id) ?? null), listAgents: vi.fn(async () => roster) } as any,
         } as any);
         await executor.executeAll();
         return saveRun.mock.calls[0]?.[0];
       };
 
       await expect(runExecutor({ assignedAgentId: "assigned-agent" })).resolves.toMatchObject({ agentId: "assigned-agent" });
-      await expect(runExecutor({ assignedAgentId: undefined })).resolves.toMatchObject({ agentId: "executor" });
+      await expect(runExecutor({ assignedAgentId: undefined })).resolves.toMatchObject({ agentId: "built-in-executor" });
     });
 
     it("continues workflow execution when workflow activity publication is unavailable or failing", async () => {
@@ -1672,7 +1673,7 @@ describe("StepSessionExecutor", () => {
         worktreePath: "/project/.worktrees/main",
         rootDir: "/project",
         settings: makeSettings({ maxParallelSteps: 1 }),
-        agentStore: { saveRun } as any,
+        agentStore: { saveRun, getAgent: vi.fn(async () => ({ id: "assigned-agent" })) } as any,
       } as any);
 
       await expect(withFailingStore.executeAll()).resolves.toMatchObject([{ success: true }]);

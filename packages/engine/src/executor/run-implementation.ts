@@ -1323,9 +1323,13 @@ export async function runImplementation(
            */
           credentialInstanceId: detail.credentialInstanceId,
           resolveCredentialInstanceRetarget: nextStepInstance,
-          // Attribute the per-step run auditor to the column agent when it governs
-          // (U4); absent → StepSessionExecutor falls back to assignedAgentId.
-          effectiveAgentId: stepColumnAgent?.agent.id,
+          /*
+          FNXC:ColumnAgent 2026-09-04-14:11:
+          The effective step identity is the governing column agent or the authoritative assignee.
+          Both are existence-proved reads; with empty project.boards the column seam is absent, so
+          retaining only it lost attribution for every assigned task.
+          */
+          effectiveAgentId: stepIdentityAgent?.id,
           actionGateContext: deps.buildActionGateContext(task.id, stepIdentityAgent, settings.defaultAgentPermissionPolicy),
           permanentAgentGating: deps.buildPermanentAgentGatingContext(task.id, stepIdentityAgent, settings.defaultAgentPermissionPolicy),
           // FNXC:McpConfig 2026-06-25-23:03: Per-step workflow sessions are an executor lane, so they inherit the task's resolved MCP set from the effective step identity agent and never re-read or log plaintext secret values.
