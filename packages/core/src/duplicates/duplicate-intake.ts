@@ -1,4 +1,5 @@
 import { isTerminalColumnRole, type ColumnRoleTraitFlags } from "../column-roles.js";
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "../identity/mutation-context.js";
 import { computeContentFingerprint, findDuplicateMatches, tokenize } from "./duplicate-detection.js";
 import type { ColumnId } from "../types.js";
 import type { TaskStore } from "../store.js";
@@ -307,6 +308,13 @@ export function findSameAgentDuplicates(
   );
 }
 
+/*
+FNXC:Identity 2026-08-09-03:04 (U18):
+Duplicate intake runs inside the create path, so the honest actor is whoever created the task - but
+`createTask`'s own callers (dashboard routes, CLI, engine triage) do not carry one until U9/U11/U13,
+so threading it here would only propagate an absence. Marked instead, and threading becomes a
+one-line change per helper once the create callers are real.
+*/
 export async function archiveAsSameAgentDuplicate(
   store: TaskStore,
   taskId: string,
@@ -317,6 +325,7 @@ export async function archiveAsSameAgentDuplicate(
     taskId,
     "Auto-archived as same-agent duplicate",
     `Duplicate of recently-filed sibling task(s): ${siblingIds.join(", ")}`,
+    UNATTRIBUTED_MUTATION_CONTEXT,
   );
   // FN-4892: store-side intake path does activity-only emission; run-audit requires runId+agentId context from engine callers.
   await store.recordActivity({
@@ -325,7 +334,7 @@ export async function archiveAsSameAgentDuplicate(
     details: "Auto-archived as same-agent duplicate during intake",
     metadata: { siblingTaskIds: siblingIds, scores },
   });
-  await store.moveTask(taskId, await resolveArchiveTargetForTask(store, taskId));
+  await store.moveTask(taskId, await resolveArchiveTargetForTask(store, taskId), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
 }
 
 /**
@@ -355,6 +364,7 @@ export async function flagSameAgentDuplicate(
     taskId,
     "Flagged as same-agent duplicate",
     `Near-duplicate of recently-filed sibling task(s): ${siblingIds.join(", ")} (not archived — autoArchiveDuplicateTasksEnabled is off)`,
+    UNATTRIBUTED_MUTATION_CONTEXT,
   );
   // FN-7658: reuse the existing duplicate activity type with a `source` disambiguator
   // rather than inventing a schema-unknown activity type; run-audit consumers already
@@ -370,7 +380,7 @@ export async function flagSameAgentDuplicate(
     nearDuplicateOf: canonicalId,
     nearDuplicateScore: scores[canonicalId] ?? null,
   };
-  await store.updateTask(taskId, { sourceMetadataPatch });
+  await store.updateTask(taskId, { sourceMetadataPatch }, UNATTRIBUTED_MUTATION_CONTEXT);
   // Return the applied patch so the in-memory task object held by the createTask
   // caller (which was written to disk BEFORE this flag runs) can be kept in sync
   // without a redundant re-fetch.
@@ -412,14 +422,14 @@ export async function flagTriageDuplicate(
     duplicateSource: "triage-marker",
     nearDuplicateDismissed: isTriageDuplicateKeepAcknowledged(existing?.sourceMetadata, canonicalId),
   };
-  await store.logEntry(taskId, "Flagged as triage duplicate", `Duplicate marker points to ${canonicalId}; awaiting operator decision`);
+  await store.logEntry(taskId, "Flagged as triage duplicate", `Duplicate marker points to ${canonicalId}; awaiting operator decision`, UNATTRIBUTED_MUTATION_CONTEXT);
   await store.recordActivity({
     type: "task:auto-archived-duplicate",
     taskId,
     details: "Flagged (not deleted) as triage-marker duplicate",
     metadata: { canonicalTaskId: canonicalId, source: "triage-marker-flagged" },
   });
-  await store.updateTask(taskId, { sourceMetadataPatch });
+  await store.updateTask(taskId, { sourceMetadataPatch }, UNATTRIBUTED_MUTATION_CONTEXT);
   return sourceMetadataPatch;
 }
 

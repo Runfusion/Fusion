@@ -1,4 +1,4 @@
-import { TaskStore, COLUMNS, COLUMN_LABELS, MAX_TASK_MESSAGE_LENGTH, resolveProjectColumnsForRoles, TERMINAL_ROLES, resolveReviewColumns, resolveTaskLifecycleColumns, resolveWorkflowIrForTask, CentralCore, buildAutoPauseClearPatch, buildManualRetryResetPatch, extractIntentSignature, findNearDuplicates, getTaskDuplicateLineage, isValidRepoSlug, isWorkspaceTask, reconcileDeterministicDuplicate, resolveTaskGithubTracking, runDeterministicDuplicateGuard, evaluateArchiveTaskLiveness, describeArchiveLiveness, TaskIsLiveError, type Settings, type Column, type ColumnId, type StepStatus, type AgentLogType, type AgentLogEntry, type IntentSignature, type NearDuplicateCandidate, type NearDuplicateMatch, type TaskDependencyMutation } from "@fusion/core";
+import { TaskStore, COLUMNS, COLUMN_LABELS, MAX_TASK_MESSAGE_LENGTH, resolveProjectColumnsForRoles, TERMINAL_ROLES, resolveReviewColumns, resolveTaskLifecycleColumns, resolveWorkflowIrForTask, CentralCore, buildAutoPauseClearPatch, buildManualRetryResetPatch, extractIntentSignature, findNearDuplicates, getTaskDuplicateLineage, isValidRepoSlug, isWorkspaceTask, reconcileDeterministicDuplicate, resolveTaskGithubTracking, runDeterministicDuplicateGuard, evaluateArchiveTaskLiveness, describeArchiveLiveness, TaskIsLiveError, type Settings, type Column, type ColumnId, type StepStatus, type AgentLogType, type AgentLogEntry, type IntentSignature, type NearDuplicateCandidate, type NearDuplicateMatch, type TaskDependencyMutation, mutationContextForAgent, toRunMutationContext } from "@fusion/core";
 import { isInReviewMissingWorktreeSessionStartFailure, runAiMerge, landWorkspaceTask, withWorkspaceMergeDispatchLease, installBaselineArchiveWorktreeDisposer, clearOwnedMergeStamp, reconcileUnownedStaleMergeStamp } from "@fusion/engine";
 import { createInterface } from "node:readline/promises";
 import type { PlanningQuestion, PlanningSummary } from "@fusion/core";
@@ -1601,7 +1601,10 @@ export async function runTaskArchive(id: string, projectName?: string, options: 
 export async function runTaskUnarchive(id: string, projectName?: string) {
   // FNXC:CliBoardMutation 2026-07-09-00:00 (FN-7734): single board write.
   await withBoardWrite(projectName, { id, action: "unarchive task" }, async (context) => {
-    const task = await context.store.unarchiveTask(id);
+    const task = await context.store.unarchiveTask(
+      id,
+      mutationContextForAgent("cli", `synthetic-cli-unarchive-${id}-${Date.now()}`),
+    );
 
     console.log();
     console.log(`  ✓ Unarchived ${task.id} → ${columnLabel(task.column)}`);
@@ -1851,13 +1854,13 @@ export async function runTaskDelete(id: string, force?: boolean, allowResurrecti
   try {
     await retryBoardCall(context, id, "delete task", () => context.store.deleteTask(id, {
       allowResurrection: allowResurrection === true,
-      auditContext: {
+      auditContext: toRunMutationContext({
         // FNXC:TaskDeleteAttribution 2026-07-26-14:30: `fn task delete` prompts a human for
         // confirmation at a terminal, so it is an operator surface, not unattributed automation.
         agentId: "cli",
         runId: `synthetic-cli-delete-${id}-${Date.now()}`,
-        callerKind: "operator-cli",
-      },
+        callerKind: "operator-cli" as const,
+      }),
     }));
     console.log();
     console.log(`  ✓ Deleted ${id}`);

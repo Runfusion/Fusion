@@ -3,6 +3,7 @@
  * Active-session / step / CLI / configured-command bookkeeping facades peeled from
  * TaskExecutor (U4). Sits above pure worktree facades so executor.ts stays impl/bags thin.
  */
+import { toRunMutationContext } from "@fusion/core";
 import * as impl from "./impl-bindings.js";
 import * as bags from "./deps-bags.js";
 import * as constants from "./executor-constants.js";
@@ -35,7 +36,10 @@ export abstract class TaskExecutorSessionFacades extends TaskExecutorWorktreePur
   protected registerSubagentSession(taskId: string, session: Parameters<typeof impl.registerSubagentSessionImpl>[2]): void { impl.registerSubagentSessionImpl(this.activeSubagentSessions, taskId, session); }
   protected unregisterSubagentSession(taskId: string, session: Parameters<typeof impl.unregisterSubagentSessionImpl>[2]): void { impl.unregisterSubagentSessionImpl(this.activeSubagentSessions, taskId, session); }
   protected disposeSubagentsForTask(taskId: string, reason: string): void { impl.disposeSubagentsForTaskImpl(this.activeSubagentSessions, taskId, reason); }
-  protected getRunContextFor(taskId: string) { return this.currentRunContexts.get(taskId); }
+  protected getRunContextFor(taskId: string) {
+    const ctx = this.currentRunContexts.get(taskId);
+    return ctx ? toRunMutationContext(ctx) : undefined;
+  }
   protected safeLogEntry(taskId: string, message: string): void { impl.safeLogEntryImpl(bags.buildStoreRunContextDeps(this), taskId, message); }
   protected markPausedAborted(...args: FacadeRestArgs<typeof impl.markPausedAbortedImpl>): void { impl.markPausedAbortedImpl(bags.buildMarkPausedAbortedDeps(this), ...args); }
   protected markCompletionFinalized(taskId: string): void { impl.markCompletionFinalizedImpl(bags.buildPauseAbortMarkerDeps(this), taskId); }

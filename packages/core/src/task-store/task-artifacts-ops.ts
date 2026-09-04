@@ -14,6 +14,7 @@ import { emitBoundedRunAudit } from "../run-audit/emit-bounded-run-audit.js";
 import { TaskStore } from "../store.js";
 import { buildPatchnodeEntryInput } from "../board/patchnode.js";
 import { appendPatchnodeEntryInTransaction } from "./async/async-patchnode.js";
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "../identity/mutation-context.js";
 import { resolveProjectColumnsForRoles } from "../project-lane-vocabulary.js";
 import {declaresAnyLifecycleTrait, resolveReviewColumns, resolveTaskLifecycleColumns} from "../workflows/workflow-lifecycle-traits.js";
 import {resolveWorkflowIrForTask} from "../workflows/workflow-ir-resolver.js";
@@ -690,7 +691,7 @@ export async function emitUsageEventImpl(store: TaskStore, event: UsageEventInpu
 
 export async function addSteeringCommentImpl(store: TaskStore, id: string, text: string, author: "user" | "agent" = "user", runContext?: RunMutationContext): Promise<Task> {
     // Write to unified comments (skip refinement — steering is for agent injection, not follow-up tasks)
-    const task = await store.addComment(id, text, author, { skipRefinement: true }, runContext);
+    const task = await store.addComment(id, text, author, { skipRefinement: true }, runContext ?? UNATTRIBUTED_MUTATION_CONTEXT);
 
     // Also write to steeringComments so the executor's real-time injection listener can detect new entries
     const updated = await store.withTaskLock(id, async () => {

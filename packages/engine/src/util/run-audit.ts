@@ -11,9 +11,10 @@
  * that enables correlation of mutations back to the specific run that caused them:
  *
  * ```typescript
- * interface EngineRunContext {
+ * interface EngineRunContext extends RunMutationContext {
  *   runId: string;           // Stable run identifier (heartbeat run ID, or synthetic for executor/merger)
  *   agentId: string;          // Agent performing the mutation
+ *   actor: ActorContext;     // Required by 1/5; derived from agentId via toRunMutationContext
  *   taskId?: string;          // Task being operated on (if applicable)
  *   phase?: string;           // Execution phase: "heartbeat", "execute", "merge-attempt-N"
  *   source?: string;          // Invocation source: "timer", "on_demand", "assignment", etc.
@@ -41,11 +42,22 @@
  * This ensures manual/non-run paths are unaffected by audit instrumentation.
  */
 
-import type { TaskStore, RunAuditEventInput } from "@fusion/core";
+import {
+  type ActorContext,
+  type RunAuditEventInput,
+  type RunMutationContext,
+  type TaskStore,
+} from "@fusion/core";
 import { emitBoundedRunAudit, emitBoundedRunAuditWithOutcome, type BoundedRunAuditResult } from "./emit-bounded-run-audit.js";
 
-/** Structured context for a run correlation ID. */
-export interface EngineRunContext {
+/**
+ * Structured context for a run correlation ID.
+ *
+ * FNXC:Identity 2026-08-24-02:20:
+ * Extends `RunMutationContext` so engine carriers satisfy the required `actor` field 1/5 added.
+ * Construction sites use `toRunMutationContext` (core) to derive `actor` from the lane's `agentId`.
+ */
+export interface EngineRunContext extends RunMutationContext {
   /** Stable run identifier. For heartbeat runs, this is the AgentHeartbeatRun.id.
    *  For executor/merger runs, this is a synthetic ID (e.g., "exec-{taskId}-{timestamp}" or "merge-{taskId}-{timestamp}"). */
   runId: string;
@@ -60,6 +72,14 @@ export interface EngineRunContext {
   /** Invocation source for heartbeat runs (e.g., "timer", "on_demand", "assignment"). */
   source?: string;
 }
+
+/**
+ * FNXC:Identity 2026-08-24-02:20:
+ * Construction shape for engine run carriers. `actor` is filled from `agentId` by
+ * {@link createRunAuditor} / {@link toRunMutationContext} so main's object literals typecheck
+ * against 1/5 without restacking 2/5–5/5.
+ */
+export type EngineRunContextInput = Omit<EngineRunContext, "actor"> & { actor?: ActorContext };
 
 // ── Git mutation types ─────────────────────────────────────────────────────────
 
@@ -1189,7 +1209,7 @@ export interface RunAuditor {
  * @param store - TaskStore instance (must expose `recordRunAuditEvent`)
  * @param context - Active run context, or null/undefined for non-run paths
  */
-export function createRunAuditor(store: TaskStore, context: EngineRunContext | null | undefined): RunAuditor {
+export function createRunAuditor(store: TaskStore, context: EngineRunContextInput | null | undefined): RunAuditor {
   // No-op auditor for non-run paths
   if (!context) {
     return {

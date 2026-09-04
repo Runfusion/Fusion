@@ -3493,7 +3493,7 @@ export function createTaskDeleteTool(store: TaskStore): ToolDefinition {
         const task = await store.deleteTask(params.id, {
           allowResurrection: params.allowResurrection === true,
           removeLineageReferences: params.removeLineageReferences === true,
-          auditContext: { agentId: "chat", runId: `chat-delete-${params.id}-${Date.now()}`, taskId: params.id },
+          auditContext: fusionCore.toRunMutationContext({ agentId: "chat", runId: `chat-delete-${params.id}-${Date.now()}`, taskId: params.id, callerKind: "agent-tool" as const }),
         });
         return { content: [{ type: "text" as const, text: `Deleted ${task.id}` }], details: { taskId: task.id } };
       } catch (err: unknown) {

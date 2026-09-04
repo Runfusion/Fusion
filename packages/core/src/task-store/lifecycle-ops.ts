@@ -9,6 +9,7 @@ import { emitBoundedRunAudit } from "../run-audit/emit-bounded-run-audit.js";
  * instance as its first parameter and performs byte-identical work.
  */
 import {TaskStore, storeLog, RECONCILE_ORPHAN_TASK_DIR_MAX_AGE_MS, WORKFLOW_COMPILED_STEP_TEMPLATE_PREFIX} from "../store.js";
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "../identity/mutation-context.js";
 import {planLegacyAdoption} from "../db/legacy-adoption.js";
 import {and, eq, sql} from "drizzle-orm";
 import {
@@ -257,7 +258,8 @@ export async function adoptLegacyTaskRowsOnOpen(store: TaskStore): Promise<numbe
         mutationPlanned = true;
         if (task.userPaused === true) continue;
         try {
-          await store.updateTask(task.id, plan.patch);
+          // FNXC:Identity 2026-08-09-03:04 (U18): KTD-8 legacy adoption runs at store open with no caller at all (U13).
+          await store.updateTask(task.id, plan.patch, UNATTRIBUTED_MUTATION_CONTEXT);
           adopted += 1;
         } catch (error) {
           storeLog.warn("Legacy adoption failed for task during store open", {

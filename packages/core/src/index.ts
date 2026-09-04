@@ -1031,6 +1031,17 @@ export {
   // boundaries can return 404 instead of 500 for an unknown task id.
   TaskNotFoundError,
   isTaskNotFoundError,
+  /*
+  FNXC:Authorization 2026-08-09-03:04:
+  The typed permission denial has to be reachable from the ROOT barrel, not just `store.ts`:
+  @fusion/engine and @fusion/dashboard import from `@fusion/core`, and a symbol re-exported
+  only through `store.ts` is invisible to them (this is why `TaskSelfDeleteError` is still
+  unreachable outside core). Without this line the engine has no way to discriminate a denial
+  except by matching its prose, which is exactly the failure mode the typed error removes.
+  */
+  PermissionDeniedError,
+  isPermissionDeniedError,
+  PERMISSION_DENIED_ERROR_CODE,
   TombstonedTaskResurrectionError,
   MergeQueueTaskNotFoundError,
   MergeQueueInvalidColumnError,
@@ -3137,6 +3148,197 @@ export {
   isTaskExecutionSessionPrincipal,
   taskExecutionTaskCreationRefusalText,
 } from "./agents/task-execution-task-creation.js";
+
+/*
+FNXC:Identity 2026-08-09-03:04:
+The actor model (KTD1/R1). Exported from core because every package that mutates state must be able
+to name who is calling: the engine lanes, the dashboard routes, and the pi extension all construct a
+`RunMutationContext`, and a second copy of `ActorRef` in any of them would reintroduce exactly the
+vocabulary fragmentation this model exists to collapse.
+*/
+export {
+  BOOTSTRAP_ACTOR,
+  BOOTSTRAP_ACTOR_CONTEXT,
+  BOOTSTRAP_ACTOR_ID,
+  actorContextForAgent,
+  AMBIGUOUS_ACTOR_ID,
+  UNATTRIBUTED_ACTOR,
+  UNATTRIBUTED_ACTOR_CONTEXT,
+  UNATTRIBUTED_ACTOR_ID,
+  isUnattributedActorContext,
+  RESERVED_ACTOR_IDS,
+  NON_ACTIVE_ACTOR_STATUSES,
+  ReservedActorIdError,
+  isReservedActorId,
+  isActiveActor,
+  toActorRef,
+  evaluateDelegatedPermission,
+  actorKindFromApprovalActorType,
+  approvalActorTypeFromActorKind,
+  actorRefFromApprovalSnapshot,
+  approvalSnapshotFromActorRef,
+  actorRefFromConfigChangedBy,
+  configChangedByFromActorRef,
+  actorRefFromWorkflowMoveActor,
+  workflowMoveActorFromActorRef,
+  displayActorKindFromDeleteCallerKind,
+  type Actor,
+  type ActorContext,
+  type ActorKind,
+  type ActorRef,
+  type ActorStatus,
+  type DelegationDecision,
+  type DelegationDenialReason,
+} from "./identity/actor.js";
+export {
+  UNATTRIBUTED_MUTATION_CONTEXT,
+  UNATTRIBUTED_RUN_AGENT_ID,
+  UNATTRIBUTED_RUN_ID,
+  mutationContextForAgent,
+  toRunMutationContext,
+} from "./identity/mutation-context.js";
+export {
+  createActor,
+  getActor,
+  getActiveActor,
+  getActorsForAudit,
+  listActiveActors,
+  listAllActors,
+  updateActorDisplayName,
+  setActorStatus,
+  suspendActor,
+  tombstoneActor,
+  revokeActorSessions,
+  revokeActorCredentials,
+  revokeActorRoleGrants,
+  grantActorRole,
+  revokeActorRole,
+  listActiveRoleGrants,
+  listAllRoleGrants,
+  listActiveSessionIds,
+  listActiveCredentialIds,
+  type ActorRoleGrant,
+  type CreateActorInput,
+} from "./identity/actor-store.js";
+/*
+FNXC:Identity 2026-08-09-03:04:
+The `identity.enabled` gate is process-level and daemon-global (never per-project), so the flag lives
+on globalThis and both the engine and the separately-bundled extension read the same value.
+*/
+export {
+  isIdentityEnabled,
+  setIdentityEnabled,
+  __resetIdentityEnabledForTests,
+} from "./identity/identity-enabled.js";
+/*
+FNXC:IdentityPermissions 2026-08-09-03:04:
+The unified permission catalog (U4). Exported from core because the enforcement seam is core's
+mutation surface (R15) and because the engine's read-only shadow evaluation consumes it during the
+Phase 4 shadow period — `agent-permissions.ts` and `agent-permission-policy.ts` stay authoritative
+and exported alongside it until U19b retargets the gate and deletes them.
+*/
+export {
+  PERMISSION_CATALOG,
+  ADMINISTRATIVE_PERMISSIONS,
+  RUNTIME_ACTION_PERMISSIONS,
+  ACTION_CATEGORY_PERMISSIONS,
+  EXEMPT_FLOOR_SOURCE,
+  isCatalogPermission,
+  getPermissionCatalogEntry,
+  listPermissionCatalog,
+  catalogPermissionForAgentPermission,
+  broaderDisposition,
+  narrowerDisposition,
+  resolveGrantSetForRoles,
+  roleDefinitionForAgentCapability,
+  grantSetFromAgentPermissionPolicy,
+  classifyGitCommandForPermissions,
+  defaultPermissionInvocationClassifier,
+  classifyPermissionInvocation,
+  setPermissionInvocationClassifier,
+  __resetPermissionInvocationClassifierForTests,
+  permissionForClassification,
+  can,
+  computePermissionApprovalDedupeKey,
+  resolvePermissionApprovalOutcome,
+  evaluateGrantAuthority,
+  validateBootstrapSeed,
+  type CatalogPermission,
+  type PermissionCatalogEntry,
+  type PermissionDisposition,
+  type PermissionGrant,
+  type ResolvedGrantSet,
+  type RoleDefinition,
+  type PermissionResourceType,
+  type InvocationClassification,
+  type PermissionInvocation,
+  type PermissionInvocationClassifier,
+  type PermissionDecision,
+  type PermissionDecisionSource,
+  type PermissionApprovalOutcome,
+  type CanInput,
+  type GrantAuthorityDecision,
+  type GrantDenialReason,
+  type EvaluateGrantAuthorityInput,
+  type SeedRow,
+  type SeedDenialReason,
+  type SeedValidationResult,
+} from "./identity/permissions.js";
+
+/*
+FNXC:Identity 2026-08-09-03:04:
+U6 — the credential, token, and session services. The password path and the machine-token path are
+exported from SEPARATE modules on purpose (KTD4): a slow KDF is correct for a password and
+catastrophic for a token presented on every request. Re-exporting them from one barrel is fine;
+merging their implementations is not, and `identity-credentials.test.ts` asserts the separation.
+*/
+export {
+  PASSWORD_SCRYPT_PARAMS,
+  PASSWORD_KEY_LENGTH,
+  PASSWORD_SALT_LENGTH,
+  hashPassword,
+  hashPasswordSync,
+  verifyPassword,
+  verifyPasswordSync,
+  passwordNeedsRehash,
+} from "./identity/credentials.js";
+export {
+  TOKEN_PREFIX,
+  TOKEN_HMAC_KEY_ENV,
+  TOKEN_LOOKUP_ID_BYTES,
+  TOKEN_SECRET_BYTES,
+  tokenHmacKeyFromSecret,
+  resolveTokenHmacKey,
+  isTokenHmacKeyConfigured,
+  hashTokenSecret,
+  mintToken,
+  parseToken,
+  verifyToken,
+  verifyTokenSecret,
+  type TokenPrefix,
+  type ParsedToken,
+  type MintedToken,
+} from "./identity/tokens.js";
+export {
+  HUMAN_SESSION_POLICY,
+  AGENT_SESSION_POLICY,
+  createSession,
+  startSession,
+  verifySession,
+  authorizeAgentToolCall,
+  renewAgentSession,
+  rotateSessionForPrivilegeChange,
+  revokeSession,
+  getSession,
+  listSessionsForActor,
+  type SessionKind,
+  type ActorSession,
+  type IssuedSession,
+  type CreateSessionInput,
+  type VerifySessionOptions,
+  type SessionVerification,
+  type SessionRejectionReason,
+} from "./identity/sessions.js";
 
 export { pruneTaskLifecycleEvents } from "./task-store/task-lifecycle-event-retention.js";
 

@@ -11,6 +11,7 @@
  */
 
 import { TaskStore } from "../store.js";
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "../identity/mutation-context.js";
 import {
   isBuiltinWorkflowEnabled,
   isBuiltinWorkflowId,
@@ -328,8 +329,13 @@ export function suppressWatcherImpl(store: TaskStore, filePath: string): void {
 }
 
 export async function addTaskCommentImpl(store: TaskStore, id: string, text: string, author: string): Promise<Task> {
-    // Delegate to unified addComment method
-    return store.addComment(id, text, author);
+    /*
+    FNXC:Identity 2026-08-09-03:04 (U18):
+    `author` is a free-text display string ("user", an agent name), NOT an authenticated identity, so
+    it must not be laundered into an actor id - that is exactly the self-reported-attribution trap
+    R21 names on the delete path. The real actor reaches `addTaskComment`'s callers in U9/U11.
+    */
+    return store.addComment(id, text, author, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
 }
 
 export function hasActiveTaskImpl(store: TaskStore, taskId: string): boolean {
