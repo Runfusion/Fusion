@@ -19,6 +19,7 @@ import type { Settings, TaskDetail, TaskStore, WorkflowIrNode, WorkspaceConfig }
 import type { WorkflowNodePreparationRequirement } from "../workflows/workflow-graph-executor.js";
 import type { EngineRunContext } from "../util/run-audit.js";
 import { resolveWorkspaceConfigOnce } from "./workspace-config-resolver.js";
+import { nodeConfigPrincipalAgentId } from "./ensure-graph-custom-node-worktree.js";
 
 export type PrepareGraphNodeExecutionDeps = {
   store: TaskStore;
@@ -33,6 +34,7 @@ export type PrepareGraphNodeExecutionDeps = {
     settings: Settings,
     nodeId: string,
     refreshStaleBase?: boolean,
+    principalAgentId?: string | null,
   ) => Promise<TaskDetail>;
 };
 
@@ -64,5 +66,17 @@ export async function prepareGraphNodeExecution(
       deps.runContextFor(live.id),
     );
   }
-  await deps.ensureGraphCustomNodeWorktree(taskForAcquisition, settings, node.id, executionCodeNode);
+  /*
+  FNXC:Identity 2026-09-04-08:13:
+  Checkout mint happens before column-agent adoption. Pass the node's own `config.agentId` when
+  present so first-executable custom-node acquires are not silently attributed to the task assignee.
+  Column-bound principals stay in `run-graph-custom-node` after the worktree exists.
+  */
+  await deps.ensureGraphCustomNodeWorktree(
+    taskForAcquisition,
+    settings,
+    node.id,
+    executionCodeNode,
+    nodeConfigPrincipalAgentId(node),
+  );
 }
