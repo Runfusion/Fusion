@@ -16,7 +16,7 @@ import {
 } from "../workflows/workflow-lifecycle-traits.js";
 import {resolveWorkflowIrForTask} from "../workflows/workflow-ir-resolver.js";
 import {InvalidFileScopeError, SelfSpawnedDependencyError, detectSelfSpawnedDependency} from "./errors.js";
-import {mkdir, readFile, stat} from "node:fs/promises";
+import {mkdir, readFile, stat, unlink} from "node:fs/promises";
 import {join} from "node:path";
 import {existsSync} from "node:fs";
 import type {Task, Column, TaskLogEntry, RunMutationContext, TaskRecommendation} from "../types.js";
@@ -86,6 +86,52 @@ function assertValidRecommendations(value: unknown): asserts value is TaskRecomm
     if (ids.has(candidate.id)) throw new Error("recommendations must have unique ids");
     ids.add(candidate.id);
   }
+}
+
+/*
+FNXC:PromptReadBack 2026-09-04-07:51:
+After PROMPT.md is durable, prompt-derived declaredSymbols must land on the task row in the same
+success boundary. Retry the follow-up row write so a later read sees matching symbols. If every
+attempt fails, restore the previous PROMPT.md (or remove a newly created file) before rejecting so
+updateTask cannot leave new file contents paired with previous declaredSymbols.
+*/
+const PROMPT_DERIVED_SYMBOLS_PERSIST_ATTEMPTS = 3;
+
+async function persistPromptDerivedDeclaredSymbols(
+  store: TaskStore,
+  dir: string,
+  task: Task,
+  promptPath: string,
+  previousPromptContents: string | null,
+  priorDeclaredSymbols: Task["declaredSymbols"],
+): Promise<void> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= PROMPT_DERIVED_SYMBOLS_PERSIST_ATTEMPTS; attempt++) {
+    try {
+      await store.atomicWriteTaskJsonWithAudit(dir, task, undefined, undefined);
+      return;
+    } catch (error) {
+      lastError = error;
+      storeLog.warn(
+        `[prompt-symbols] deferred declaredSymbols persist for ${task.id} attempt ${attempt}/${PROMPT_DERIVED_SYMBOLS_PERSIST_ATTEMPTS}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+  try {
+    if (previousPromptContents === null) {
+      if (existsSync(promptPath)) await unlink(promptPath);
+      task.prompt = undefined;
+    } else {
+      await writePromptFileAtomic(promptPath, previousPromptContents);
+      task.prompt = previousPromptContents;
+    }
+    task.declaredSymbols = priorDeclaredSymbols;
+  } catch (restoreError) {
+    storeLog.warn(
+      `[prompt-symbols] failed to restore previous PROMPT.md for ${task.id}: ${restoreError instanceof Error ? restoreError.message : String(restoreError)}`,
+    );
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
 export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updates: Parameters<TaskStore["updateTask"]>[1], runContext?: RunMutationContext,): Promise<Task> {
@@ -1243,7 +1289,11 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       The task-row commit is the observable scope-generation fence. Publish PROMPT.md only after it,
       so no reader can dispatch work from a new heading paired with the preceding scope generation.
       */
+      let previousPromptContents: string | null = null;
       if (updates.prompt !== undefined) {
+        if (persistPromptDerivedSymbols && existsSync(promptPath)) {
+          previousPromptContents = await readFile(promptPath, "utf-8");
+        }
         await writePromptFileAtomic(promptPath, updates.prompt);
         /*
         FNXC:PromptReadBack 2026-09-04-05:45:
@@ -1263,7 +1313,14 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
         const prior = JSON.stringify(priorDeclaredSymbols ?? []);
         const next = JSON.stringify(task.declaredSymbols ?? []);
         if (prior !== next) {
-          await store.atomicWriteTaskJsonWithAudit(dir, task, undefined, undefined);
+          await persistPromptDerivedDeclaredSymbols(
+            store,
+            dir,
+            task,
+            promptPath,
+            previousPromptContents,
+            priorDeclaredSymbols,
+          );
         }
       }
 
