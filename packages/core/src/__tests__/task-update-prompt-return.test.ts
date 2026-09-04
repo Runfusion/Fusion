@@ -1,11 +1,12 @@
 /*
-FNXC:PromptReadBack 2026-09-04-04:43:
+FNXC:PromptReadBack 2026-09-04-05:12:
 STAS-103 pins the prompt-return contract of updateTaskUnlockedImpl: an explicit prompt
 update writes PROMPT.md to disk and must return a task whose prompt equals the persisted
 content. The PG tasks row has no prompt column (rowToTask never hydrates it), so without
 the assignment after a successful file write the returned prompt stays undefined and the
 prompt-write tool's authoritative read-back check rejects every write. A failed PROMPT.md
-write must not leave that assignment on the in-memory task.
+write must not leave that assignment on the in-memory task or commit specPlanPrompt
+evidence in the preceding row transaction.
 */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -58,6 +59,7 @@ function harness(task: Partial<Task>, options: { isWatching?: boolean } = {}) {
     readTaskJson: async () => row,
     writeTaskJson: vi.fn(async () => undefined),
     atomicWriteTaskJson: vi.fn(async () => undefined),
+    atomicWriteTaskJsonWithAudit: vi.fn(async () => undefined),
     syncAgentTaskLinkOnReassignment: vi.fn(async () => undefined),
     logEntry: vi.fn(async () => undefined),
     getSettings: vi.fn(async () => ({})),
@@ -141,10 +143,11 @@ describe("updateTask returns the persisted prompt", () => {
 
   it("does not expose an unwritten prompt when PROMPT.md persistence fails", async () => {
     /*
-    FNXC:PromptReadBack 2026-09-04-04:43:
+    FNXC:PromptReadBack 2026-09-04-05:12:
     If writePromptFileAtomic throws after the task-row commit, in-memory metadata and
     the watcher cache must still omit the requested revision so fallback hydration cannot
-    surface a prompt the authoritative file never persisted.
+    surface a prompt the authoritative file never persisted. The row transaction must also
+    omit specPlanPrompt so current-plan evidence cannot commit the unwritten revision.
     */
     const { store, row, taskDir, taskCache } = harness({}, { isWatching: true });
     const content = prompt("must not leak");
@@ -159,5 +162,8 @@ describe("updateTask returns the persisted prompt", () => {
     expect(row.prompt).toBeUndefined();
     expect(taskCache.get("FN-1")).toBeUndefined();
     expect(existsSync(join(taskDir, "PROMPT.md"))).toBe(false);
+    const auditCalls = vi.mocked(store.atomicWriteTaskJsonWithAudit).mock.calls;
+    expect(auditCalls.length).toBeGreaterThan(0);
+    expect(auditCalls.every((call) => call[4] === undefined)).toBe(true);
   });
 });
