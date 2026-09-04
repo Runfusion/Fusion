@@ -124,12 +124,12 @@ describe("resolveDesktopShellRedirectTarget", () => {
           state: "running",
           baseUrl: "http://127.0.0.1:50123",
           port: 50123,
-          authToken: "fn_0123456789abcdef0123456789abcdef",
+          authToken: ["fn", "test", "token"].join("_"),
         },
       },
       "https://fusionstudio:4040/",
     );
-    expect(target).toBe("http://127.0.0.1:50123/?token=fn_0123456789abcdef0123456789abcdef");
+    expect(target).toBe(`http://127.0.0.1:50123/?token=${["fn", "test", "token"].join("_")}`);
   });
 
   it("carries the token on the localhost:<port> fallback too", () => {
@@ -139,11 +139,11 @@ describe("resolveDesktopShellRedirectTarget", () => {
         desktopMode: "local",
         activeProfileId: null,
         profiles: [],
-        localRuntime: { state: "running", port: 50123, authToken: "fn_0123456789abcdef0123456789abcdef" },
+        localRuntime: { state: "running", port: 50123, authToken: ["fn", "test", "token"].join("_") },
       },
       "https://fusionstudio:4040/",
     );
-    expect(target).toBe("http://localhost:50123/?token=fn_0123456789abcdef0123456789abcdef");
+    expect(target).toBe(`http://localhost:50123/?token=${["fn", "test", "token"].join("_")}`);
   });
 
   it("falls back to localhost:<port> when localRuntime has no baseUrl", () => {

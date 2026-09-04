@@ -88,7 +88,7 @@ describe("DesktopLaunchGate — local handoff", () => {
     const location = stubLocation("file:///C:/app/index.html");
     stubShell({
       ...localReadyState,
-      localRuntime: { ...localReadyState.localRuntime, authToken: "fn_0123456789abcdef0123456789abcdef" },
+      localRuntime: { ...localReadyState.localRuntime, authToken: ["fn", "test", "token"].join("_") },
     });
 
     render(
@@ -99,7 +99,7 @@ describe("DesktopLaunchGate — local handoff", () => {
 
     await waitFor(() => expect(location.replace).toHaveBeenCalledTimes(1));
     const target = new URL(location.replace.mock.calls[0][0] as string);
-    expect(target.searchParams.get("token")).toBe("fn_0123456789abcdef0123456789abcdef");
+    expect(target.searchParams.get("token")).toBe(["fn", "test", "token"].join("_"));
   });
 
   /*

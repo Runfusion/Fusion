@@ -1,4 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { PermissionDeniedError } from "@fusion/core";
 import type { TaskDetail, WorkflowIr } from "@fusion/core";
 
@@ -29,6 +32,10 @@ requires the CODE to be carried across that flattening as well:
 */
 
 const now = "2026-08-09T03:04:00.000Z";
+const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "fusion-permission-denied-"));
+afterEach(() => {
+  fs.rmSync(tmpRoot, { recursive: true, force: true });
+});
 
 function task(overrides: Partial<TaskDetail> = {}): TaskDetail {
   return {
@@ -42,7 +49,7 @@ function task(overrides: Partial<TaskDetail> = {}): TaskDetail {
     log: [],
     branch: "fusion/fn-permission-denied",
     baseBranch: "main",
-    worktree: "/tmp/fusion-fn-permission-denied",
+    worktree: path.join(tmpRoot, "fusion-fn-permission-denied"),
     status: null,
     error: null,
     paused: false,
@@ -118,7 +125,7 @@ describe("handleGraphFailure preserves a permission denial's message", () => {
       maxWorktrees: 4,
       pollIntervalMs: 15000,
     });
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = new TaskExecutor(store, tmpRoot);
 
     await (executor as unknown as {
       handleGraphFailure: (t: TaskDetail, r: unknown) => Promise<void>;

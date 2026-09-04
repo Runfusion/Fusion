@@ -20,20 +20,28 @@ Three invariants, one per failure mode this stage could regress into:
      were collapsed into the total form those probes would silently become unconditionally true.
 */
 
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import "./executor-test-helpers.js";
 import { TaskExecutor } from "../executor.js";
 import { actorContextForAgent, UNATTRIBUTED_MUTATION_CONTEXT, type RunMutationContext } from "@fusion/core";
 import { createMockStore, resetExecutorMocks } from "./executor-test-helpers.js";
 
 describe("executor mutation-context carrier (U18 Stage C)", () => {
+  let tmpRoot: string;
   beforeEach(() => {
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "fusion-executor-ctx-"));
     resetExecutorMocks();
+  });
+  afterEach(() => {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
   });
 
   function makeExecutor() {
     const store = createMockStore();
-    const executor = new TaskExecutor(store, "/tmp/test") as unknown as {
+    const executor = new TaskExecutor(store, tmpRoot) as unknown as {
       runContextFor: (taskId: string, fallbackAgentId?: string | null) => RunMutationContext;
       getRunContextFor: (taskId: string) => RunMutationContext | undefined;
       currentRunContexts: Map<string, RunMutationContext>;

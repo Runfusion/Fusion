@@ -71,6 +71,9 @@ const GIT_COMMAND_CORPUS = [
   "ls -la",
   "pnpm test",
   "echo hi && git commit -m x",
+  "git status && git commit -m x",
+  "git commit -m x && git status",
+  "git status && git diff && git commit -m x",
   "cat file.txt | grep git",
   "",
 ];
@@ -121,6 +124,18 @@ describe("core git classifier parity", () => {
         command,
         ...(classifyGitCommand(command) ?? { null: true }),
       });
+    }
+  });
+
+  it("marks compound shell commands write-enabled when any git segment mutates", () => {
+    const compounds = [
+      "git status && git commit -m x",
+      "git commit -m x && git status",
+      "git status && git diff && git commit -m x",
+    ];
+    for (const command of compounds) {
+      expect(classifyGitCommandForPermissions(command)?.write).toBe(true);
+      expect(classifyGitCommand(command)?.write).toBe(true);
     }
   });
 });

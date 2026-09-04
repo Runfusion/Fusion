@@ -3479,7 +3479,13 @@ export function createTaskUnarchiveTool(store: TaskStore): ToolDefinition {
   };
 }
 
-export function createTaskDeleteTool(store: TaskStore): ToolDefinition {
+/*
+FNXC:Identity 2026-09-04-05:05:
+fn_task_delete used to hard-code agentId "chat" and a generated run id, so a non-chat
+caller was recorded as the wrong actor and could not be correlated with the active run.
+The caller supplies the live RunMutationContext; auditContext and deleteTask both use it.
+*/
+export function createTaskDeleteTool(store: TaskStore, runContext: import("@fusion/core").RunMutationContext): ToolDefinition {
   return {
     name: "fn_task_delete",
     label: "Delete Task",
@@ -3493,7 +3499,12 @@ export function createTaskDeleteTool(store: TaskStore): ToolDefinition {
         const task = await store.deleteTask(params.id, {
           allowResurrection: params.allowResurrection === true,
           removeLineageReferences: params.removeLineageReferences === true,
-          auditContext: { agentId: "chat", runId: `chat-delete-${params.id}-${Date.now()}`, taskId: params.id },
+          auditContext: {
+            agentId: runContext.agentId,
+            runId: runContext.runId,
+            taskId: params.id,
+            actor: runContext.actor,
+          },
         }, runContext);
         return { content: [{ type: "text" as const, text: `Deleted ${task.id}` }], details: { taskId: task.id } };
       } catch (err: unknown) {
@@ -3503,7 +3514,7 @@ export function createTaskDeleteTool(store: TaskStore): ToolDefinition {
   };
 }
 
-export function createTaskRetryTool(store: TaskStore): ToolDefinition {
+export function createTaskRetryTool(store: TaskStore, runContext: import("@fusion/core").RunMutationContext): ToolDefinition {
   return {
     name: "fn_task_retry",
     label: "Retry Task",
@@ -3538,7 +3549,7 @@ export function createTaskRetryTool(store: TaskStore): ToolDefinition {
   };
 }
 
-export function createTaskPauseTool(store: TaskStore): ToolDefinition {
+export function createTaskPauseTool(store: TaskStore, runContext: import("@fusion/core").RunMutationContext): ToolDefinition {
   return {
     name: "fn_task_pause",
     label: "Pause Task",
@@ -3555,7 +3566,7 @@ export function createTaskPauseTool(store: TaskStore): ToolDefinition {
   };
 }
 
-export function createTaskUnpauseTool(store: TaskStore): ToolDefinition {
+export function createTaskUnpauseTool(store: TaskStore, runContext: import("@fusion/core").RunMutationContext): ToolDefinition {
   return {
     name: "fn_task_unpause",
     label: "Unpause Task",
