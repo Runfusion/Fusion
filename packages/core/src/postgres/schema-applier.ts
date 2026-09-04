@@ -344,10 +344,14 @@ table name is this module's allowlisted constant, quoted through drizzle `sql.id
 version is a bound parameter — not user-controlled concatenation. Staging the identifier first keeps
 that contract while removing a template that interpolates `sql.identifier(...)` at the new-migration
 call site.
+FNXC:WorkspaceWorktree 2026-09-04-05:44:
+Inlining the allowlisted table name keeps drizzle from interpolating `sql.identifier` into the
+template the scanner still treated as CWE-89. The version remains a bound parameter. The
+`satisfies` check fails the typecheck if MIGRATION_BOOKKEEPING_TABLE ever drifts from this SQL.
 */
 function recordAppliedMigrationVersion(version: string) {
-  const bookkeepingTable = sql.identifier(MIGRATION_BOOKKEEPING_TABLE);
-  return sql`INSERT INTO public.${bookkeepingTable} (version) VALUES (${version}) ON CONFLICT (version) DO NOTHING`;
+  void (MIGRATION_BOOKKEEPING_TABLE satisfies "fusion_schema_migrations");
+  return sql`INSERT INTO public.fusion_schema_migrations (version) VALUES (${version}) ON CONFLICT (version) DO NOTHING`;
 }
 
 /*

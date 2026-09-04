@@ -1,4 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createSharedPgTaskStoreTestHarness, pgDescribe, type SharedPgTaskStoreHarness } from "../../__test-utils__/pg-test-harness.js";
 
 const pgTest = pgDescribe;
@@ -35,5 +38,38 @@ pgTest("workspace worktree directory segment claim (PostgreSQL)", () => {
     const released = await store.pinWorkspaceWorktreeDirSegment(rival.id, "foo");
     expect(released).toMatchObject({ segment: "foo", minted: true, claimed: true });
     expect((await store.getTask(rival.id)).workspaceWorktreeDirSegment).toBe("foo");
+  });
+
+  it("does not reclaim a live successor's segment when unarchiving a holder with surviving paths", async () => {
+    /*
+    FNXC:WorkspaceWorktree 2026-09-04-05:44:
+    Restore used to write the tombstone's pin while clearing `deleted_at`. Surviving workspace
+    paths made that write happen even after a successor had claimed the released name, so the
+    live-only unique index aborted unarchive. Leave the restored pin null when the name is live.
+    */
+    const store = h.store();
+    const surviving = await mkdtemp(join(tmpdir(), "fusion-segment-restore-"));
+    try {
+      await mkdir(join(surviving, "repo-a"));
+      const holder = await store.createTask({ description: "archived holder with surviving checkout" });
+      await store.pinWorkspaceWorktreeDirSegment(holder.id, "foo");
+      await store.updateTask(holder.id, {
+        workspaceWorktrees: { "repo-a": { worktreePath: join(surviving, "repo-a"), branch: "fusion/a" } },
+      } as never);
+      await store.archiveTask(holder.id, { cleanup: false });
+
+      const successor = await store.createTask({ description: "owns foo after archive" });
+      expect(await store.pinWorkspaceWorktreeDirSegment(successor.id, "foo")).toMatchObject({
+        segment: "foo",
+        minted: true,
+        claimed: true,
+      });
+
+      const restored = await store.unarchiveTask(holder.id);
+      expect(restored.workspaceWorktreeDirSegment).toBeUndefined();
+      expect((await store.getTask(successor.id)).workspaceWorktreeDirSegment).toBe("foo");
+    } finally {
+      await rm(surviving, { recursive: true, force: true });
+    }
   });
 });
