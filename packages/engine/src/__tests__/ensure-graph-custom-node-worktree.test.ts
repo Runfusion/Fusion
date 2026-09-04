@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { mutationContextForAgent } from "@fusion/core";
 import type { Settings, TaskDetail, TaskStore, WorkspaceConfig } from "@fusion/core";
 import { ensureGraphCustomNodeWorktree } from "../executor/ensure-graph-custom-node-worktree.js";
+import { resolveGraphCustomNodeWorktreePrincipal } from "../executor/run-graph-custom-node.js";
 import { runContextForTotal } from "../executor/run-context-for.js";
 import { captureBaseCommitSha } from "../executor/worktree-git-refs.js";
 import { acquireTaskWorktree, acquireWorkspaceTaskWorktrees } from "../worktree/worktree-acquisition.js";
@@ -179,5 +180,87 @@ describe("ensureGraphCustomNodeWorktree first-node identity", () => {
     expect(runContext?.agentId).not.toBe("executor");
     expect(runContext?.runId).not.toBe("unknown");
     expect(mockedCaptureBase.mock.calls[0]?.[5]?.agentId).toBe("node-agent");
+  });
+
+  it("resolves column-override principal over node and task agents", () => {
+    const resolved = resolveGraphCustomNodeWorktreePrincipal({
+      cfg: { agentId: "node-agent" },
+      columnBinding: { mode: "override", agentId: "column-agent" },
+      graphContext: { "workflow:principal-agent-id": "pool-agent" },
+    });
+    expect(resolved.principalAgentId).toBe("column-agent");
+    expect(resolved.effective).toEqual({ source: "column-agent", agentId: "column-agent" });
+  });
+
+  it("resolves graph principal when there is no column override", () => {
+    const resolved = resolveGraphCustomNodeWorktreePrincipal({
+      cfg: { agentId: "node-agent" },
+      graphContext: { "workflow:principal-agent-id": "pool-agent" },
+    });
+    expect(resolved.principalAgentId).toBe("pool-agent");
+    expect(resolved.effective.source).toBe("own-settings");
+  });
+
+  it("attributes empty-map acquire to column-override principal, not node or task agent", async () => {
+    mockedAcquireTask.mockResolvedValue({
+      worktreePath: "/workspace/.fusion/worktrees/fn-3430",
+      branch: "fusion/fn-3430",
+      source: "fresh",
+      hydrated: false,
+      isResume: false,
+    } as Awaited<ReturnType<typeof acquireTaskWorktree>>);
+    mockedCaptureBase.mockResolvedValue(undefined);
+    const { principalAgentId } = resolveGraphCustomNodeWorktreePrincipal({
+      cfg: { agentId: "node-agent" },
+      columnBinding: { mode: "override", agentId: "column-agent" },
+    });
+
+    await ensureGraphCustomNodeWorktree(
+      graphNodeAcquireDeps(),
+      task({ assignedAgentId: "task-agent" }),
+      settings,
+      "custom-first",
+      false,
+      principalAgentId,
+    );
+
+    const runContext = mockedAcquireTask.mock.calls[0]?.[0]?.runContext;
+    expect(runContext?.agentId).toBe("column-agent");
+    expect(runContext?.actor?.actor?.id).toBe("column-agent");
+    expect(runContext?.runId).toMatch(/^workflow-node-worktree-FN-3430-/);
+    expect(runContext?.agentId).not.toBe("node-agent");
+    expect(runContext?.agentId).not.toBe("task-agent");
+    expect(runContext?.agentId).not.toBe("executor");
+  });
+
+  it("attributes empty-map acquire to graph principal when there is no column override", async () => {
+    mockedAcquireTask.mockResolvedValue({
+      worktreePath: "/workspace/.fusion/worktrees/fn-3430",
+      branch: "fusion/fn-3430",
+      source: "fresh",
+      hydrated: false,
+      isResume: false,
+    } as Awaited<ReturnType<typeof acquireTaskWorktree>>);
+    mockedCaptureBase.mockResolvedValue(undefined);
+    const { principalAgentId } = resolveGraphCustomNodeWorktreePrincipal({
+      cfg: { agentId: "node-agent" },
+      graphContext: { "workflow:principal-agent-id": "pool-agent" },
+    });
+
+    await ensureGraphCustomNodeWorktree(
+      graphNodeAcquireDeps(),
+      task({ assignedAgentId: "task-agent" }),
+      settings,
+      "custom-first",
+      false,
+      principalAgentId,
+    );
+
+    const runContext = mockedAcquireTask.mock.calls[0]?.[0]?.runContext;
+    expect(runContext?.agentId).toBe("pool-agent");
+    expect(runContext?.actor?.actor?.id).toBe("pool-agent");
+    expect(runContext?.runId).toMatch(/^workflow-node-worktree-FN-3430-/);
+    expect(runContext?.agentId).not.toBe("node-agent");
+    expect(runContext?.agentId).not.toBe("task-agent");
   });
 });
