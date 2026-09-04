@@ -5,6 +5,7 @@ import type { ActivityAnalytics, ColorTheme, SignalsAnalytics, ThemeMode, TokenA
 import { api, fetchCodebaseMetrics, withProjectId, type CodebaseMetrics } from "../../api/legacy";
 import { formatBytes } from "../../utils/formatBytes";
 import { DateRangePicker, defaultPresets, rangeFromPreset, type DateRange } from "./DateRangePicker";
+import { CommandCenterSectionNav } from "./CommandCenterSectionNav";
 import { getCommandCenterState, saveCommandCenterState } from "../../hooks/modalPersistence";
 import { LoadingSpinner } from "../LoadingSpinner";
 import { TaskVerificationStatus } from "../TaskVerificationStatus";
@@ -617,49 +618,6 @@ export function CommandCenter({
     if (!subViews.some((view) => view.id === activeTab)) setActiveTab("overview");
   }, [activeTab, subViews]);
 
-  const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
-
-  const focusTab = useCallback(
-    (index: number) => {
-      const clamped = (index + subViews.length) % subViews.length;
-      setActiveTab(subViews[clamped].id);
-      tabRefs.current[clamped]?.focus();
-    },
-    [subViews],
-  );
-
-  const onTabKeyDown = useCallback(
-    (e: React.KeyboardEvent, index: number) => {
-      switch (e.key) {
-        case "ArrowRight":
-        case "ArrowDown":
-          e.preventDefault();
-          focusTab(index + 1);
-          break;
-        case "ArrowLeft":
-        case "ArrowUp":
-          e.preventDefault();
-          focusTab(index - 1);
-          break;
-        case "Home":
-          e.preventDefault();
-          focusTab(0);
-          break;
-        case "End":
-          e.preventDefault();
-          focusTab(subViews.length - 1);
-          break;
-        case "Enter":
-        case " ":
-          e.preventDefault();
-          setActiveTab(subViews[index].id);
-          break;
-        default:
-          break;
-      }
-    },
-    [focusTab, subViews],
-  );
 
   function renderActiveTab() {
     switch (activeTab) {
@@ -748,42 +706,17 @@ export function CommandCenter({
           <Gauge size={20} />
           {t("commandCenter.heading", "Dashboard")}
         </h2>
+        <CommandCenterSectionNav
+          sections={subViews}
+          activeId={activeTab}
+          onSelect={(id) => setActiveTab(id as SubViewId)}
+        />
         <DateRangePicker value={range} onChange={setRange} />
       </header>
 
       <div
-        className="cc-tablist"
-        role="tablist"
-        aria-label={t("commandCenter.tablistLabel", "Dashboard sections")}
-      >
-        {subViews.map((sub, index) => {
-          const selected = sub.id === activeTab;
-          return (
-            <button
-              key={sub.id}
-              ref={(el) => {
-                tabRefs.current[index] = el;
-              }}
-              role="tab"
-              id={`cc-tab-${sub.id}`}
-              aria-selected={selected}
-              aria-controls={`cc-tabpanel-${sub.id}`}
-              tabIndex={selected ? 0 : -1}
-              className={`cc-tab${selected ? " active" : ""}`}
-              onClick={() => setActiveTab(sub.id)}
-              onKeyDown={(e) => onTabKeyDown(e, index)}
-              data-testid={`command-center-tab-${sub.id}`}
-            >
-              {sub.label}
-            </button>
-          );
-        })}
-      </div>
-
-      <div
-        role="tabpanel"
-        id={`cc-tabpanel-${activeTab}`}
-        aria-labelledby={`cc-tab-${activeTab}`}
+        role="region"
+        aria-label={subViews.find((view) => view.id === activeTab)?.label ?? activeTab}
         tabIndex={0}
         className="cc-tabpanel"
         data-testid={`command-center-panel-${activeTab}`}

@@ -30,6 +30,7 @@ import type { TaskStore } from "@fusion/core";
 import {
   resolveTaskMergeTarget,
   resolveTaskPrHeadBranch,
+  resolveWorktreesDirLayout,
   getCurrentRepo,
   getPushRepo,
   isBranchGroupMemberLanded,
@@ -78,7 +79,6 @@ import { activeSessionRegistry, resolveIntegrationBranch, resolveIntegrationRemo
 import type {
   CreateGroupPrFn,
   SyncGroupPrFn,
-  WorktreePool,
   PrNodeGithubOps,
   PrReconcileGithubOps,
   PrReconcileFetchResult,
@@ -429,14 +429,14 @@ export async function refreshAutomatedPrHead(
     */
     // Keep retained failed-cleanup worktrees under the bounded project worktree
     // area, where the existing native worktree reconciliation can discover them.
-    const refreshWorktreesDir = join(root, ".worktrees");
-    await mkdir(refreshWorktreesDir, { recursive: true });
     /*
-    FNXC:PullRequestFreshness 2026-08-09-02:44:
-    Refresh worktrees use a deterministic managed path and a durable path reservation.
-    A failed removal quarantines that path; a later refresh reconciles the exact
-    inactive checkout before it can reuse the branch or path.
+    FNXC:PullRequestFreshness 2026-08-30-15:06:
+    PR refresh callers do not receive resolved project settings, so this path deliberately
+    follows only the shared default. New refresh worktrees must use `.fusion/worktrees` so
+    engine sweeps discover them alongside ordinary task checkouts.
     */
+    const refreshWorktreesDir = resolveWorktreesDirLayout(root, undefined);
+    await mkdir(refreshWorktreesDir, { recursive: true });
     temporary = join(
       refreshWorktreesDir,
       `pr-refresh-${createHash("sha256").update(input.headBranch).digest("hex").slice(0, 16)}`,
@@ -1085,26 +1085,13 @@ async function hasCommitsRelativeToBranch(cwd: string, branch: string, baseBranc
  * Clean up worktree and branch artifacts after a successful merge.
  * Both operations are best-effort; errors are logged but don't propagate.
  */
-/**
- * @param options.pool Optional runtime worktree pool; FN-5455/FN-4954 require best-effort
- * release before force-removing merged PR worktrees.
- */
 export async function cleanupMergedTaskArtifacts(
   cwd: string,
   task: Pick<TaskDetail, "id" | "worktree">,
-  options?: { pool?: WorktreePool },
 ): Promise<void> {
   const branch = getTaskBranchName(task.id);
 
   if (task.worktree) {
-    if (options?.pool) {
-      try {
-        options.pool.release(task.worktree, task.id);
-      } catch {
-        // Best-effort cleanup — release may fail if pool state is already divergent.
-      }
-    }
-
     try {
       activeSessionRegistry.unregisterPath(task.worktree);
     } catch {
@@ -1144,9 +1131,8 @@ async function finalizePullRequestMerge(
   task: TaskDetail,
   prInfo: PrInfo,
   message = "Pull request merged",
-  pool?: WorktreePool,
 ): Promise<void> {
-  await cleanupMergedTaskArtifacts(cwd, task, { pool });
+  await cleanupMergedTaskArtifacts(cwd, task);
   await store.updateTask(task.id, { status: null, mergeRetries: 0 });
   const movedTask = await store.moveTask(task.id, await resolveCompleteTargetForTask(store, task.id));
   const mergedTask = movedTask ?? (await store.getTask(task.id));
@@ -1181,10 +1167,9 @@ async function finalizeNoOpMergeTask(
   cwd: string,
   task: TaskDetail,
   reason: string,
-  pool?: WorktreePool,
 ): Promise<void> {
   const branch = task.branch ?? getTaskBranchName(task.id);
-  await cleanupMergedTaskArtifacts(cwd, task, { pool });
+  await cleanupMergedTaskArtifacts(cwd, task);
   await store.updateTask(task.id, { status: null, mergeRetries: 0 });
   const movedTask = await store.moveTask(task.id, await resolveCompleteTargetForTask(store, task.id));
   const mergedTask = movedTask ?? (await store.getTask(task.id));
@@ -1245,7 +1230,6 @@ export async function processPullRequestMergeTask(
   taskId: string,
   github: GitHubOperations,
   getTaskMergeBlocker: TaskMergeBlockerFn,
-  pool?: WorktreePool,
   signal?: AbortSignal,
 ): Promise<ProcessPullRequestResult> {
   const task = await store.getTask(taskId);
@@ -1389,7 +1373,7 @@ export async function processPullRequestMergeTask(
           const message = err instanceof Error ? err.message : String(err);
           if (message.includes("No commits between")) {
             await store.updateBranchGroup(branchGroup.id, { prState: "none", prNumber: null, prUrl: null });
-            await finalizeNoOpMergeTask(store, cwd, task, "No group pull request created (no commits vs base) — finalizing as no-op", pool);
+            await finalizeNoOpMergeTask(store, cwd, task, "No group pull request created (no commits vs base) — finalizing as no-op");
             return "skipped";
           }
           throw err;
@@ -1425,7 +1409,7 @@ export async function processPullRequestMergeTask(
     if (mergeStatus.prInfo.status === "merged") {
       for (const member of members) {
         const memberDetail = await store.getTask(member.id);
-        await finalizePullRequestMerge(store, cwd, memberDetail, refreshedPrInfo, "Group pull request merged", pool);
+        await finalizePullRequestMerge(store, cwd, memberDetail, refreshedPrInfo, "Group pull request merged");
       }
       await store.updateBranchGroup(branchGroup.id, { status: "finalized", prState: "merged" });
       return "merged";
@@ -1498,7 +1482,7 @@ export async function processPullRequestMergeTask(
     }
     for (const member of members) {
       const memberDetail = await store.getTask(member.id);
-      await finalizePullRequestMerge(store, cwd, memberDetail, mergedPr, "Group pull request merged", pool);
+      await finalizePullRequestMerge(store, cwd, memberDetail, mergedPr, "Group pull request merged");
     }
     await store.updateBranchGroup(branchGroup.id, { status: "finalized", prState: "merged" });
     return "merged";
@@ -1555,7 +1539,7 @@ export async function processPullRequestMergeTask(
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       if (message.includes("No commits between")) {
-        await finalizeNoOpMergeTask(store, cwd, task, "No pull request created (no commits vs base) — finalizing as no-op", pool);
+        await finalizeNoOpMergeTask(store, cwd, task, "No pull request created (no commits vs base) — finalizing as no-op");
         return "skipped";
       }
       throw err;
@@ -1582,7 +1566,7 @@ export async function processPullRequestMergeTask(
   await store.updatePrInfo(task.id, refreshedPrInfo);
 
   if (mergeStatus.prInfo.status === "merged") {
-    await finalizePullRequestMerge(store, cwd, task, prInfo, "Pull request merged", pool);
+    await finalizePullRequestMerge(store, cwd, task, prInfo, "Pull request merged");
     return "merged";
   }
 
@@ -1693,7 +1677,6 @@ export async function processPullRequestMergeTask(
         task,
         refreshedAfterFailure,
         "Pull request already merged after merge command failed; reconciled task state from GitHub",
-        pool,
       );
       return "merged";
     }
@@ -1717,6 +1700,6 @@ export async function processPullRequestMergeTask(
     await store.updateTask(task.id, { status: "awaiting-pr-checks" });
     return "waiting";
   }
-  await finalizePullRequestMerge(store, cwd, task, mergedPr, "Pull request merged", pool);
+  await finalizePullRequestMerge(store, cwd, task, mergedPr, "Pull request merged");
   return "merged";
 }

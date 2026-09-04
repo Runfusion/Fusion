@@ -3,7 +3,11 @@ import { promisify } from "node:util";
 import { join } from "node:path";
 import type { Settings, Task } from "@fusion/core";
 import { resolveWorkspaceRepoBaseBranch } from "./workspace-base-branch.js";
-import { computeReviewDiffFingerprint } from "./review-diff-fingerprint.js";
+import {
+  computeReviewDiffFingerprint,
+  REVIEW_DIFF_GIT_MAX_BUFFER_BYTES,
+  REVIEW_DIFF_GIT_TIMEOUT_MS,
+} from "./review-diff-fingerprint.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -26,7 +30,12 @@ export interface WorkspaceReviewEvidenceCapture {
 }
 
 async function git(args: string[], cwd: string): Promise<string> {
-  const { stdout } = await execFileAsync("git", args, { cwd, encoding: "utf8" });
+  const { stdout } = await execFileAsync("git", args, {
+    cwd,
+    encoding: "utf8",
+    maxBuffer: REVIEW_DIFF_GIT_MAX_BUFFER_BYTES,
+    timeout: REVIEW_DIFF_GIT_TIMEOUT_MS,
+  });
   return stdout.trim();
 }
 

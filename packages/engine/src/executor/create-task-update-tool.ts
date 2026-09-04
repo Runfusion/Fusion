@@ -26,6 +26,7 @@ const taskUpdateParams = Type.Object({
     STEP_STATUSES.map((s) => Type.Literal(s)),
     { description: "New status: pending, in-progress, done, or skipped. Required when step is set." },
   )),
+  summary: Type.Optional(Type.String({ description: "2-4 plain-language sentences describing what THIS step actually delivered (files/behavior changed, verification run). Required when status is 'done'. Shown to the operator in the task History tab." })),
   dependencies: Type.Optional(Type.Array(Type.String(), {
     description: "Optional task dependency array. Replaces existing dependencies. Pass ['FN-001', 'FN-002'] to set dependencies. Pass [] to clear all dependencies. Omit parameter to preserve existing dependencies.",
   })),
@@ -70,7 +71,7 @@ export function createTaskUpdateTool(
         "The board updates in real-time.",
       parameters: taskUpdateParams,
       execute: async (_id: string, params: Static<typeof taskUpdateParams>) => {
-        const { step, status, dependencies, custom_fields } = params;
+        const { step, status, summary, dependencies, custom_fields } = params;
 
         // Bare-call guard (P1 api-contract): a call with none of
         // step/status/dependencies/custom_fields silently no-op'd, which the
@@ -271,7 +272,9 @@ export function createTaskUpdateTool(
           await store.updateTask(taskId, { dependencies });
         }
 
-        const task = await store.updateStep(taskId, stepIndex, status as StepStatus);
+        const task = summary === undefined
+          ? await store.updateStep(taskId, stepIndex, status as StepStatus)
+          : await store.updateStep(taskId, stepIndex, status as StepStatus, { summary });
         const stepInfo = task.steps[stepIndex];
         if (!stepInfo) {
           return {
@@ -305,7 +308,7 @@ export function createTaskUpdateTool(
             executorLog.warn(
               `${taskId}: no-progress churn detected ` +
               `(ignoredStepUpdates=${ignoredStepUpdates}, stuckKillStreak=${task.stuckKillCount ?? 0}) — ` +
-              `escalating to STUCK_NO_PROGRESS_CHURN`,
+              "triggering in-place stuck-session recovery",
             );
           }
 
@@ -321,7 +324,10 @@ export function createTaskUpdateTool(
         return {
           content: [{
             type: "text" as const,
-            text: `Step ${step} (${stepInfo.name}) → ${persistedStatus}. Progress: ${progress}/${task.steps.length} done.`,
+            text: `Step ${step} (${stepInfo.name}) → ${persistedStatus}. Progress: ${progress}/${task.steps.length} done.` +
+              (status === "done" && !summary?.trim()
+                ? " No step summary recorded — call fn_task_update again for this step with `summary` to record what it delivered."
+                : ""),
           }],
           details: {},
         };

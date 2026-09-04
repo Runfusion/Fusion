@@ -42,9 +42,7 @@ describe("registerConfigMcpPiSettingsRoutes", () => {
     expect(response.body).toEqual({
       maxConcurrent: 6,
       maxWorktrees: 2,
-      effectiveMaxConcurrent: 2,
       worktreeLimitEnabled: true,
-      concurrencyBindingKnob: "maxWorktrees",
       rootDir: "/workspace",
     });
   });
@@ -56,9 +54,7 @@ describe("registerConfigMcpPiSettingsRoutes", () => {
     expect(response.body).toEqual({
       maxConcurrent: 2,
       maxWorktrees: 4,
-      effectiveMaxConcurrent: 2,
       worktreeLimitEnabled: true,
-      concurrencyBindingKnob: "maxConcurrent",
       rootDir: "/workspace",
     });
   });
@@ -69,7 +65,7 @@ describe("registerConfigMcpPiSettingsRoutes", () => {
     registerConfigMcpPiSettingsRoutes({ router: app, getProjectContext: async () => ({ store }), rethrowAsApiError(error: unknown): never { throw error; } } as unknown as ApiRoutesContext);
 
     const response = await request(app, "GET", "/config");
-    expect(response.body).toMatchObject({ maxConcurrent: 2, maxWorktrees: 4, effectiveMaxConcurrent: 2, concurrencyBindingKnob: "maxConcurrent" });
+    expect(response.body).toMatchObject({ maxConcurrent: 2, maxWorktrees: 4, worktreeLimitEnabled: true });
   });
 
   it("lists only provider-filtered valid project plugin MCP contributions", async () => {

@@ -5,7 +5,6 @@ export interface MobileBarKeyboardFlagsInput {
   anyModalOpen: boolean;
   /** True when a fullscreen mobile overlay owns keyboard/viewport layout. */
   overlayOpen: boolean;
-  isIOS: boolean;
 }
 
 export interface MobileBarKeyboardFlags {
@@ -22,7 +21,8 @@ This now applies to BOTH iOS and Android. Previously `footerHidden` was iOS-only
 
 FN-5707's original Android concern (stripping nav padding mid-focus could make Android Chrome treat the focused input as moving and dismiss the keyboard) is mitigated because the strip is keyed off `keyboardOpen`, which only flips true AFTER the visualViewport has settled into its keyboard-open size — not during the focus transition.
 
-`footerKeyboardOpen` (the footer `bottom: 0` collapse class) stays iOS-only: it is only meaningful when the footer is still rendered (e.g. over a modal), and Android's resizes-content keeps the stacked position correct in that case.
+FNXC:MobileChatKeyboardLayout 2026-09-01-05:36:
+The footer bottom reservation is only correct while the nav bar is on screen. Use the nav bar's unsettled-tolerant trigger for the footer collapse on both platforms; otherwise a rendered footer rises with an empty mobile-nav-height and safe-area band beneath it.
 
 Fullscreen mobile overlays (for example Quick Chat's sheet) own their own visual viewport handling. Treat them like modals for board-layout padding so overlay-local keyboards never shift the underlying board.
 */
@@ -32,7 +32,6 @@ export function computeMobileBarKeyboardFlags({
   keyboardFocusPending,
   anyModalOpen,
   overlayOpen,
-  isIOS,
 }: MobileBarKeyboardFlagsInput): MobileBarKeyboardFlags {
   /*
   FNXC:MobileChatKeyboardLayout 2026-08-23-18:14:
@@ -41,7 +40,7 @@ export function computeMobileBarKeyboardFlags({
   const boardLayoutSuppressed = anyModalOpen || overlayOpen;
   const footerHidden = isMobile && keyboardOpen && !boardLayoutSuppressed;
   const navKeyboardOpen = isMobile && (keyboardOpen || keyboardFocusPending);
-  const footerKeyboardOpen = isMobile && keyboardOpen && isIOS;
+  const footerKeyboardOpen = isMobile && (keyboardOpen || keyboardFocusPending);
 
   return {
     footerHidden,

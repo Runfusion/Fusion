@@ -16,6 +16,7 @@ export interface DockTaskListProps {
   onReviseTask?: (task: Task) => void;
   onUpdateTask?: (id: string, updates: { title?: string; description?: string; dependencies?: string[]; dismissNearDuplicate?: boolean; githubTracking?: { enabled?: boolean } }) => Promise<Task>;
   onDeleteTask?: (id: string, options?: { removeDependencyReferences?: boolean; removeLineageReferences?: boolean; githubIssueAction?: GithubIssueAction; allowResurrection?: boolean }) => Promise<Task>;
+  onOpenChatWithPrefill?: (prefillText: string) => void;
   addToast?: (message: string, type?: ToastType) => void;
   prAuthAvailable?: boolean;
   autoMergeEnabled?: boolean;
@@ -47,6 +48,7 @@ export function DockTaskList({ columnFlagsByTaskId,
   onDeleteTask,
   onReviseTask,
   onUpdateTask,
+  onOpenChatWithPrefill,
   addToast = () => {},
   prAuthAvailable = false,
   autoMergeEnabled = false,
@@ -147,6 +149,7 @@ export function DockTaskList({ columnFlagsByTaskId,
             onDeleteTask={onDeleteTask}
             onReviseTask={onReviseTask}
             onUpdateTask={onUpdateTask}
+            onOpenChatWithPrefill={onOpenChatWithPrefill}
             addToast={addToast}
             prAuthAvailable={prAuthAvailable}
             autoMergeEnabled={autoMergeEnabled}

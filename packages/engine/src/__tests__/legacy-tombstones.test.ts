@@ -122,6 +122,13 @@ const DELETED_SYMBOLS: Array<{ symbol: string; why: string }> = [
   { symbol: "WORKFLOW_PARITY_OBSERVED_MUTATION", why: "run-audit mutation for the deleted dual-observe chain; nothing emits it" },
   { symbol: "WORKFLOW_PARITY_DRIFT_MUTATION", why: "run-audit mutation for the deleted dual-observe chain; nothing emits it" },
   { symbol: "getWorkflowParitySummary", why: "aggregated parity run-audit rows that no emitter writes" },
+  // FN-217 removes every healer that moves or terminalizes lifecycle state; only in-place stuck-session wakeup remains.
+  { symbol: "recoverGhostReviewTasks", why: "review liveness cannot move a card backward without REVISE" },
+  { symbol: "recoverStaleIncompleteReviewTasks", why: "incomplete review work cannot be bounced by a timeout sweep" },
+  { symbol: "autoRecoverTerminalFailures", why: "generic failure retries contradicted graph ownership and revision routing" },
+  { symbol: "recoverInProgressLimbo", why: "WIP liveness is owned only by the in-place stuck-session detector" },
+  { symbol: "recoverNoProgressNoTaskDoneFailures", why: "zero-progress recovery may wake in place but cannot requeue or terminalize" },
+  { symbol: "checkStuckBudget", why: "stuck-session recovery is unbounded and cannot park work for a human" },
 ];
 
 /** Strip block and line comments so an explanatory tombstone note is not read as a live reference. */

@@ -260,7 +260,7 @@ describe("auto-merge proven finalization helper", () => {
       dependencies: [],
       steps: [{ status: "done" }],
       currentStep: 0,
-      log: [{ action: "AI merge (workspace): all 2 sub-repo(s) landed" }],
+      log: [{ action: "AI merge (workspace): aggregate=all-landed; task → done; repo-a {status=landed; sha=workspace-landed-sha; dependency-sync=ran}; repo-b {status=landed; sha=workspace-landed-sha; dependency-sync=ran}" }],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       mergeDetails: {
@@ -1692,7 +1692,7 @@ describe("aiMergeTask — no-op short-circuit", () => {
 
     expect(result.merged).toBe(true);
     expect(result.noOp).toBe(true);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-3834-NOOP", "done");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-3834-NOOP", "done", expect.objectContaining({ workflowMoveSource: "merger-complete-task" }));
     expect(store.updateTask).toHaveBeenCalledWith(
       "FN-3834-NOOP",
       expect.objectContaining({
@@ -1735,7 +1735,7 @@ describe("aiMergeTask — empty squash merge (branch already merged via dep)", (
     // Agent should NOT have been spawned
     expect(mockedCreateFnAgent).not.toHaveBeenCalled();
     // Task should still be moved to done
-    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done", expect.objectContaining({ workflowMoveSource: "merger-complete-task" }));
   });
 
   it("does not record commitSha when squash is empty (would be pre-merge HEAD)", async () => {
@@ -3148,7 +3148,7 @@ describe("aiMergeTask post-squash audit gate", () => {
       squashSha: "mergedcommit123",
     });
     expect(store.appendAgentLog).toHaveBeenCalledWith("FN-050", "post-squash audit clean", "status", undefined, "merger");
-    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done", expect.objectContaining({ workflowMoveSource: "merger-complete-task" }));
   });
 
   it("routes multi-substantive auto branches through rebase range audit", async () => {
@@ -3354,7 +3354,7 @@ describe("aiMergeTask post-squash audit gate", () => {
 
     await aiMergeTask(store, "/tmp/root", "FN-050");
 
-    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done", expect.objectContaining({ workflowMoveSource: "merger-complete-task" }));
     expect(store.appendAgentLog).toHaveBeenCalledWith(
       "FN-050",
       expect.stringContaining("post-rebase audit overlap cleared by deterministic verification"),
@@ -3399,7 +3399,7 @@ describe("aiMergeTask post-squash audit gate", () => {
 
     await expect(aiMergeTask(store, "/tmp/root", "FN-050")).rejects.toThrow(/post-rebase range audit blocked auto-completion/);
 
-    expect(store.moveTask).not.toHaveBeenCalledWith("FN-050", "done");
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-050", "done", expect.objectContaining({ workflowMoveSource: "merger-complete-task" }));
     expect(store.updateTask).toHaveBeenCalledWith("FN-050", { status: null });
   });
 
@@ -3442,7 +3442,7 @@ describe("aiMergeTask post-squash audit gate", () => {
 
     await aiMergeTask(store, "/tmp/root", "FN-050");
 
-    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done", expect.objectContaining({ workflowMoveSource: "merger-complete-task" }));
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("could not resolve post-merge audit verification tree for ref landedcommit002"));
     warnSpy.mockRestore();
   });
@@ -3590,7 +3590,7 @@ describe("aiMergeTask post-squash audit gate", () => {
 
     expect(result.merged).toBe(true);
     expect(mockedAuditSquashMerge).not.toHaveBeenCalled();
-    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done", expect.objectContaining({ workflowMoveSource: "merger-complete-task" }));
     expect(
       vi.mocked(store.appendAgentLog).mock.calls.some(([, message]) => String(message).includes("post-squash audit clean") || String(message).includes("post-squash audit blocked auto-completion")),
     ).toBe(false);
@@ -3688,7 +3688,7 @@ describe("aiMergeTask post-squash audit gate", () => {
     const result = await aiMergeTask(store, "/tmp/root", "FN-050");
 
     expect(result.merged).toBe(true);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done", expect.objectContaining({ workflowMoveSource: "merger-complete-task" }));
     expect(
       vi.mocked(store.appendAgentLog).mock.calls.some(([, message, type]) => type === "tool_error" && String(message).includes("audit blocked auto-completion")),
     ).toBe(false);
@@ -3707,7 +3707,7 @@ describe("aiMergeTask post-squash audit gate", () => {
 
     expect(result.merged).toBe(true);
     expect(mockedAuditSquashMerge).not.toHaveBeenCalled();
-    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done", expect.objectContaining({ workflowMoveSource: "merger-complete-task" }));
     expect(
       vi.mocked(store.appendAgentLog).mock.calls.some(([, message]) => String(message).includes("post-squash audit blocked auto-completion")),
     ).toBe(false);

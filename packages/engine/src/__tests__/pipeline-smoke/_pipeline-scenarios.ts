@@ -27,6 +27,7 @@ export interface PipelineScenario {
   readonly arrange: PipelineScenarioDriver;
   readonly act: PipelineScenarioDriver;
   readonly recovery?: PipelineScenarioDriver;
+  readonly recoveryExpectedTerminal?: PipelineTerminalState;
   readonly invariants: readonly string[];
   readonly codingFloorReason?: string;
 }
@@ -254,15 +255,30 @@ export const PIPELINE_SCENARIOS: readonly PipelineScenario[] = [
       "no approval records that it verified nothing",
     ],
   },
+  {
+    id: "S21",
+    title: "MRG-058 external disk exhaustion freezes and resumes exact work",
+    workflows: ["builtin:coding"],
+    expectedTerminal: "blocked",
+    arrange: PIPELINE_SCENARIO_DRIVERS.s21Arrange,
+    act: PIPELINE_SCENARIO_DRIVERS.s21Act,
+    recovery: PIPELINE_SCENARIO_DRIVERS.s21Recovery,
+    recoveryExpectedTerminal: "parked",
+    invariants: [
+      "five commits and completed steps remain retained while blocked",
+      "worktree capacity remains leased across repeated observations",
+      "Retry resumes the interrupted Testing and Verification node",
+    ],
+  },
 ] as const;
 
 export function assertPipelineScenarioTable(scenarios: readonly PipelineScenario[] = PIPELINE_SCENARIOS): void {
-  if (scenarios.length !== 20) {
-    throw new Error(`Pipeline smoke requires exactly 20 scenarios; received ${scenarios.length}.`);
+  if (scenarios.length !== 21) {
+    throw new Error(`Pipeline smoke requires exactly 21 scenarios; received ${scenarios.length}.`);
   }
   const ids = new Set(scenarios.map((scenario) => scenario.id));
   if (ids.size !== scenarios.length || [...ids].some((id, index) => id !== `S${String(index + 1).padStart(2, "0")}`)) {
-    throw new Error("Pipeline smoke scenario ids must be the distinct contiguous range S01 through S19.");
+    throw new Error("Pipeline smoke scenario ids must be the distinct contiguous range S01 through S21.");
   }
   for (const scenario of scenarios) {
     if ((scenario.expectedTerminal === "parked" || scenario.expectedTerminal === "manual-hold") && !scenario.recovery) {

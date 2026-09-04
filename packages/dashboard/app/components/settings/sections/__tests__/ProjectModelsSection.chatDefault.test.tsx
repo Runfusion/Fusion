@@ -114,6 +114,7 @@ describe("ProjectModelsSection Chat default settings", () => {
     renderSection();
 
     expect(screen.getByRole("heading", { name: "Chat" })).toBeInTheDocument();
+    expect(screen.getByTestId("project-models-chat-kind")).toBeInTheDocument();
     expect(screen.getByTestId("project-models-chat-model")).toBeInTheDocument();
     expect(screen.getByTestId("mock-model-host-chatDefaultModel")).toHaveAttribute("data-default-thinking", "medium");
   });

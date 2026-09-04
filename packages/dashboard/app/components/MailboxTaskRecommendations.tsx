@@ -108,7 +108,12 @@ export function MailboxTaskRecommendations({
       const createdTaskId = recommendation.createdTaskId ?? createdIds[actionKey];
       const creating = creatingActions[actionKey] === true;
       const failed = errorActions[actionKey] === true;
-      return <article className="mailbox-task-recommendations__item card" key={recommendation.id}>
+      /*
+      FNXC:MailboxTaskCards 2026-09-01-05:06:
+      The board `.card` primitive imposes raw-pixel padding, hover repaint, container sizing, and
+      non-selectable text that are wrong for a mail reading surface; this card owns its tokenized treatment.
+      */
+      return <article className="mailbox-task-recommendations__item" key={recommendation.id}>
         <div className="mailbox-task-recommendations__content">
           <div className="mailbox-task-recommendations__heading"><h3>{recommendation.title}</h3><span>{recommendation.category}</span></div>
           <p>{recommendation.description}</p>

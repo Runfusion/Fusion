@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Task, WorkflowIr } from "@fusion/core";
-import { resolveStepReopenPolicy } from "@fusion/core";
+import {
+  evaluateStepLedgerSeal,
+  resolveStepReopenPolicy,
+  STEP_LEDGER_REOPEN_MARKER_PREFIX,
+} from "@fusion/core";
 
 import { cleanupMergeStateForReverification } from "../executor/cleanup-merge-state.js";
 import { reopenLastStepForRevision } from "../executor/reopen-last-step-for-revision.js";
@@ -12,7 +16,16 @@ function task(steps: Task["steps"]): Task {
     column: "in-progress",
     worktree: "/tmp/fn-180",
     steps,
+    log: [],
   } as Task;
+}
+
+const COMPLETION_MARKER = "Task marked done by agent";
+
+function reopenActions(task: Task): string[] {
+  return (task.log ?? [])
+    .map((entry) => entry.action)
+    .filter((action) => action.startsWith(STEP_LEDGER_REOPEN_MARKER_PREFIX));
 }
 
 /*
@@ -29,20 +42,105 @@ describe("FN-180 step reopen single authority", () => {
       { name: "Documentation & Delivery", status: "done" },
     ]);
     const store = {
-      updateStep: vi.fn(async (_id: string, index: number, status: string) => {
-        live.steps[index]!.status = status as Task["steps"][number]["status"];
+      updateTaskAtomic: vi.fn(async (_id: string, mutate: (current: Task) => Partial<Task> | null) => {
+        const patch = mutate(live);
+        if (patch) Object.assign(live, patch);
+        return live;
       }),
-      updateTask: vi.fn(),
     };
 
     await expect(reopenLastStepForRevision(store as never, live.id, live)).resolves.toEqual({
-      index: 2,
+      index: 3,
       name: "Documentation & Delivery",
-      indexes: [2],
+      indexes: [3],
     });
-    expect(store.updateStep).toHaveBeenCalledTimes(1);
-    expect(store.updateStep).toHaveBeenCalledWith(live.id, 2, "pending");
-    expect(live.steps.map((step) => step.status)).toEqual(["done", "done", "pending"]);
+    expect(store.updateTaskAtomic).toHaveBeenCalledTimes(1);
+    expect(live.steps.map((step) => [step.name, step.status])).toEqual([
+      ["Implementation", "done"],
+      ["Testing & Verification", "done"],
+      ["Documentation & Delivery", "done"],
+      ["Documentation & Delivery", "pending"],
+    ]);
+    expect(live.currentStep).toBe(3);
+  });
+
+  it("reopens a completed ledger exactly once with the trailing replay append", async () => {
+    const live = task([
+      { name: "Implementation", status: "done" },
+      { name: "Testing & Verification", status: "done" },
+    ]);
+    live.log = [{ timestamp: "2026-09-01T00:00:00.000Z", action: COMPLETION_MARKER }];
+    const store = {
+      updateTaskAtomic: vi.fn(async (_id: string, mutate: (current: Task) => Partial<Task> | null) => {
+        const patch = mutate(live);
+        if (patch) Object.assign(live, patch);
+        return live;
+      }),
+    };
+
+    expect(evaluateStepLedgerSeal(live.log).sealed).toBe(true);
+    await reopenLastStepForRevision(store as never, live.id, live);
+
+    expect(reopenActions(live)).toHaveLength(1);
+    expect(evaluateStepLedgerSeal(live.log).sealed).toBe(false);
+    expect(live.steps.at(-1)).toEqual({ name: "Testing & Verification", status: "pending" });
+  });
+
+  it("does not stamp a live implementation session", async () => {
+    const live = task([{ name: "Implementation", status: "done" }]);
+    live.log = [{ timestamp: "2026-09-01T00:00:00.000Z", action: "Executor using model: test/model" }];
+    const store = {
+      updateTaskAtomic: vi.fn(async (_id: string, mutate: (current: Task) => Partial<Task> | null) => {
+        const patch = mutate(live);
+        if (patch) Object.assign(live, patch);
+        return live;
+      }),
+    };
+
+    await reopenLastStepForRevision(store as never, live.id, live);
+
+    expect(reopenActions(live)).toEqual([]);
+    expect(live.steps.at(-1)).toEqual({ name: "Implementation", status: "pending" });
+  });
+
+  it("does not append or stamp a replay while pending work is already queued", async () => {
+    const live = task([
+      { name: "Implementation", status: "done" },
+      { name: "Existing correction", status: "pending" },
+    ]);
+    live.log = [{ timestamp: "2026-09-01T00:00:00.000Z", action: COMPLETION_MARKER }];
+    const originalSteps = live.steps;
+    const store = {
+      updateTaskAtomic: vi.fn(async (_id: string, mutate: (current: Task) => Partial<Task> | null) => {
+        const patch = mutate(live);
+        if (patch) Object.assign(live, patch);
+        return live;
+      }),
+    };
+
+    await expect(reopenLastStepForRevision(store as never, live.id, live)).resolves.toBeNull();
+    expect(live.steps).toBe(originalSteps);
+    expect(live.steps).toHaveLength(2);
+    expect(reopenActions(live)).toEqual([]);
+    expect(evaluateStepLedgerSeal(live.log).sealed).toBe(true);
+  });
+
+  it("resets the cursor without growing or stamping an all-pending checklist", async () => {
+    const live = task([{ name: "Queued work", status: "pending" }]);
+    live.currentStep = 8;
+    live.log = [{ timestamp: "2026-09-01T00:00:00.000Z", action: COMPLETION_MARKER }];
+    const store = {
+      updateTaskAtomic: vi.fn(async (_id: string, mutate: (current: Task) => Partial<Task> | null) => {
+        const patch = mutate(live);
+        if (patch) Object.assign(live, patch);
+        return live;
+      }),
+    };
+
+    await expect(reopenLastStepForRevision(store as never, live.id, live)).resolves.toBeNull();
+    expect(live.steps).toHaveLength(1);
+    expect(live.currentStep).toBe(0);
+    expect(reopenActions(live)).toEqual([]);
   });
 
   it("uses the editor-authored IR policy instead of a workflow id", () => {

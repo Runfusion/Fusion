@@ -61,10 +61,10 @@ export function GlobalGeneralSection({ form, setForm }: GlobalGeneralSectionProp
         descriptor={{
           key: "persistAgentToolOutput",
           label: t("settings.globalGeneral.saveToolOutputInAgentLogs", " Save tool output in agent logs "),
-          help: t("settings.globalGeneral.whenDisabledToolRowsAreStillLoggedBut", " When disabled, tool rows are still logged but detailed tool payloads are omitted. Very large tool payloads may still be clipped even when this stays enabled. Default: disabled. "),
+          help: t("settings.globalGeneral.whenDisabledToolRowsAreStillLoggedBut", " When disabled, tool rows are still logged but detailed tool payloads are omitted. Very large tool payloads may still be clipped even when this stays enabled. Default: enabled. "),
           scope: "global",
         }}
-        value={form.persistAgentToolOutput === true}
+        value={form.persistAgentToolOutput !== false}
         onChange={(v) => setForm((f) => ({ ...f, persistAgentToolOutput: v === true }))}
       />
       <SettingsToggleRow

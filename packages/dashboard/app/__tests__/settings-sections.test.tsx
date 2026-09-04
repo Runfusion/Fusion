@@ -270,7 +270,7 @@ describe("WorktreesSection", () => {
     const onAdd = vi.fn();
     render(
       <WorktreesSection
-        form={{ recycleWorktrees: false, worktreeCopyFiles: [".env"] } as SettingsFormState}
+        form={{ worktreeCopyFiles: [".env"] } as SettingsFormState}
         setForm={vi.fn()}
         gitRemotes={[]}
         worktrunkInstall={worktrunkInstall}
@@ -318,7 +318,7 @@ describe("WorktreesSection", () => {
   it("enables the Max Worktrees control while worktrees are on", () => {
     render(
       <WorktreesSection
-        form={{ recycleWorktrees: false, worktreeCopyFiles: [], maxWorktrees: 4, worktreeLimitEnabled: true } as SettingsFormState}
+        form={{ worktreeCopyFiles: [], maxWorktrees: 4, worktreeLimitEnabled: true } as SettingsFormState}
         setForm={vi.fn()}
         {...worktreeCapacityProps}
       />,
@@ -329,7 +329,7 @@ describe("WorktreesSection", () => {
   it("disables the Max Worktrees control while worktrees are off", () => {
     render(
       <WorktreesSection
-        form={{ recycleWorktrees: false, worktreeCopyFiles: [], maxWorktrees: 4, worktreeLimitEnabled: false } as SettingsFormState}
+        form={{ worktreeCopyFiles: [], maxWorktrees: 4, worktreeLimitEnabled: false } as SettingsFormState}
         setForm={vi.fn()}
         {...worktreeCapacityProps}
       />,
@@ -343,7 +343,7 @@ describe("WorktreesSection", () => {
     // on — and the control would grey out with no one having asked for it.
     render(
       <WorktreesSection
-        form={{ recycleWorktrees: false, worktreeCopyFiles: [], maxWorktrees: 4 } as SettingsFormState}
+        form={{ worktreeCopyFiles: [], maxWorktrees: 4 } as SettingsFormState}
         setForm={vi.fn()}
         {...worktreeCapacityProps}
       />,
@@ -355,12 +355,12 @@ describe("WorktreesSection", () => {
   it("toggling the worktree limit off writes worktreeLimitEnabled false", () => {
     const setForm = vi.fn((updater: SettingsFormState | ((prev: SettingsFormState) => SettingsFormState)) =>
       typeof updater === "function"
-        ? updater({ recycleWorktrees: false, worktreeLimitEnabled: true } as SettingsFormState)
+        ? updater({ worktreeLimitEnabled: true } as SettingsFormState)
         : updater,
     );
     render(
       <WorktreesSection
-        form={{ recycleWorktrees: false, worktreeCopyFiles: [], maxWorktrees: 4, worktreeLimitEnabled: true } as SettingsFormState}
+        form={{ worktreeCopyFiles: [], maxWorktrees: 4, worktreeLimitEnabled: true } as SettingsFormState}
         setForm={setForm}
         {...worktreeCapacityProps}
       />,
@@ -373,14 +373,14 @@ describe("WorktreesSection", () => {
   it("renders and toggles the board worktree grouping checkbox", () => {
     const setForm = vi.fn((updater: SettingsFormState | ((prev: SettingsFormState) => SettingsFormState)) => {
       if (typeof updater === "function") {
-        return updater({ recycleWorktrees: false, showWorktreeGrouping: false } as SettingsFormState);
+        return updater({ showWorktreeGrouping: false } as SettingsFormState);
       }
       return updater;
     });
 
     render(
       <WorktreesSection
-        form={{ recycleWorktrees: false, showWorktreeGrouping: false, worktreeCopyFiles: [] } as SettingsFormState}
+        form={{ showWorktreeGrouping: false, worktreeCopyFiles: [] } as SettingsFormState}
         setForm={setForm}
         gitRemotes={[]}
         worktrunkInstall={worktrunkInstall}
@@ -404,7 +404,7 @@ describe("WorktreesSection", () => {
   it("keeps an empty copy-file row reachable when the setting is undefined", () => {
     render(
       <WorktreesSection
-        form={{ recycleWorktrees: false, worktreeCopyFiles: undefined } as SettingsFormState}
+        form={{ worktreeCopyFiles: undefined } as SettingsFormState}
         setForm={vi.fn()}
         gitRemotes={[]}
         worktrunkInstall={worktrunkInstall}
@@ -421,63 +421,6 @@ describe("WorktreesSection", () => {
     expect(screen.getByRole("button", { name: "Browse file to copy into new worktrees" })).toBeInTheDocument();
   });
 
-  /*
-  FNXC:TaskPinnedWorktrees 2026-07-16-00:00: recycleWorktrees and worktreeNaming:"task-id" are mutually
-  exclusive; the UI enforces this bidirectionally so the conflicting state is unreachable.
-  */
-  function renderWorktrees(form: Partial<SettingsFormState>) {
-    return render(
-      <WorktreesSection
-        form={{ worktreeCopyFiles: [], ...form } as SettingsFormState}
-        setForm={vi.fn()}
-        gitRemotes={[]}
-        worktrunkInstall={worktrunkInstall}
-        worktrunkInstallVerified={true}
-        onOpenWorktreesDirPicker={vi.fn()}
-        onWorktreeCopyFileChange={vi.fn()}
-        onRemoveWorktreeCopyFile={vi.fn()}
-        onAddWorktreeCopyFile={vi.fn()}
-        onOpenWorktreeCopyFilePicker={vi.fn()}
-      />,
-    );
-  }
-
-  it("disables the recycle toggle when worktree naming is task-id (mutually exclusive)", () => {
-    renderWorktrees({ recycleWorktrees: false, worktreeNaming: "task-id" });
-    const recycle = screen.getByLabelText(/Recycle worktrees/i) as HTMLInputElement;
-    expect(recycle.disabled).toBe(true);
-    expect(recycle.checked).toBe(false);
-    // The naming select stays enabled so the operator can switch away from task-id.
-    const naming = screen.getByLabelText(/Worktree Naming Style/i) as HTMLSelectElement;
-    expect(naming.disabled).toBe(false);
-    expect(naming.value).toBe("task-id");
-  });
-
-  it("disables the naming select when recycling is on (mutually exclusive)", () => {
-    renderWorktrees({ recycleWorktrees: true, worktreeNaming: "random" });
-    const naming = screen.getByLabelText(/Worktree Naming Style/i) as HTMLSelectElement;
-    expect(naming.disabled).toBe(true);
-    const recycle = screen.getByLabelText(/Recycle worktrees/i) as HTMLInputElement;
-    expect(recycle.disabled).toBe(false);
-    expect(recycle.checked).toBe(true);
-  });
-
-  it("leaves both controls editable when neither conflicting value is set", () => {
-    renderWorktrees({ recycleWorktrees: false, worktreeNaming: "random" });
-    expect((screen.getByLabelText(/Recycle worktrees/i) as HTMLInputElement).disabled).toBe(false);
-    expect((screen.getByLabelText(/Worktree Naming Style/i) as HTMLSelectElement).disabled).toBe(false);
-  });
-
-  it("legacy conflict (both set): keeps the recycle toggle enabled+checked so it can be repaired", () => {
-    // Runtime treats this state as recycling (pinning off); the UI mirrors that and offers an escape hatch —
-    // turning recycling off re-enables the naming select. Both controls must never lock together.
-    renderWorktrees({ recycleWorktrees: true, worktreeNaming: "task-id" });
-    const recycle = screen.getByLabelText(/Recycle worktrees/i) as HTMLInputElement;
-    expect(recycle.disabled).toBe(false);
-    expect(recycle.checked).toBe(true);
-    const naming = screen.getByLabelText(/Worktree Naming Style/i) as HTMLSelectElement;
-    expect(naming.disabled).toBe(true);
-  });
 });
 
 describe("GlobalModelsSection", () => {

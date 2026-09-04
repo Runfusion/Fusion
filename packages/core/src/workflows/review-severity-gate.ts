@@ -16,11 +16,11 @@ Severity is mapped onto operator-facing priority labels (P0=critical, P1=high, P
 can speak in priorities without introducing a third severity vocabulary alongside this one and the
 Compound Engineering skill's P0-P3 table.
 
-FAIL-CLOSED CONTRACT (load-bearing, do not relax):
-A REVISE that carries NO findings at all, or that carries a finding with NO severity, is never
-downgraded. Prose-only reviewers (custom nodes, older workflows, malformed-JSON fallbacks) and reviewers
-that decline to classify must keep their blocking power — otherwise this gate would silently disarm
-every review that does not opt into the structured contract.
+FNXC:ReviewSeverityGate 2026-08-28-07:48:
+A REVISE has blocking power only when it carries at least one actionable (open) finding. A finding-less
+or all-resolved rejection cannot produce a remediation step, so blocking it would create an
+unrepairable review loop. Open findings remain fail-closed on severity: an unclassified open finding
+still blocks, while classified findings continue to respect the configured threshold.
 */
 
 import type { WorkflowReviewFinding, WorkflowReviewFindingSeverity, WorkflowReviewKind } from "../types.js";
@@ -103,13 +103,18 @@ export function resolveReviewBlockingSeverity({
   return DEFAULT_BLOCKING_SEVERITY_BY_REVIEW_KIND[reviewKind];
 }
 
+/** True when a persisted review finding can produce remediation work. */
+export function isActionableReviewFinding(finding: WorkflowReviewFinding): boolean {
+  return isOpenWorkflowReviewFinding(finding);
+}
+
 /**
  * Whether a single finding blocks at the given threshold.
  *
- * An UNCLASSIFIED finding always blocks — see the fail-closed contract in the module header.
+ * An UNCLASSIFIED actionable finding always blocks — see the contract in the module header.
  */
 export function isBlockingFinding(finding: WorkflowReviewFinding, threshold: ReviewBlockingSeverity): boolean {
-  if (!isOpenWorkflowReviewFinding(finding)) return false;
+  if (!isActionableReviewFinding(finding)) return false;
   if (threshold === "any") return true;
   if (!finding.severity) return true;
   return SEVERITY_RANK[finding.severity] >= SEVERITY_RANK[threshold];
@@ -143,19 +148,12 @@ export interface ReviewSeverityGateResult<V = string | undefined> {
  */
 export function applyReviewSeverityGate({ verdict, findings, threshold }: ReviewSeverityGateInput): ReviewSeverityGateResult {
   const all = findings ?? [];
-  const open = all.filter(isOpenWorkflowReviewFinding);
-  const resolved = all.filter((finding) => !isOpenWorkflowReviewFinding(finding));
+  const open = all.filter(isActionableReviewFinding);
+  const resolved = all.filter((finding) => !isActionableReviewFinding(finding));
   const blocking = open.filter((finding) => isBlockingFinding(finding, threshold));
   const advisory = open.filter((finding) => !isBlockingFinding(finding, threshold));
 
   if (verdict !== "REVISE") return { verdict, downgraded: false, blocking, advisory, resolved };
-  // Fail closed: an unstructured REVISE keeps its blocking power.
-  /*
-  FNXC:ReviewSeverityGate 2026-08-11-19:39:
-  Resolution is audit metadata, never authority to rewrite an explicit REVISE. Receipts avoid
-  no-op rework through remediation's do-not-redo block while an all-resolved REVISE stays fail-closed.
-  */
-  if (all.length === 0 || (open.length === 0 && resolved.length > 0)) return { verdict, downgraded: false, blocking, advisory, resolved };
   if (blocking.length > 0) return { verdict, downgraded: false, blocking, advisory, resolved };
 
   return { verdict: "APPROVE_WITH_NOTES", downgraded: true, blocking, advisory, resolved };

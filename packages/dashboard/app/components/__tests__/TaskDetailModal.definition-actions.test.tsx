@@ -18,6 +18,7 @@ import {
   noopMove,
   noopOpenDetail,
   mockConfirm,
+  mockConfirmWithSelect,
   mockUsePluginUiSlots,
   expectBaseRule,
   readDashboardStylesSource,
@@ -26,7 +27,7 @@ import {
 import { TaskDetailModal, TaskDetailContent } from "../TaskDetailModal";
 import { FileBrowserProvider } from "../../context/FileBrowserContext";
 import { readBoardWorkflowSelection, removeBoardWorkflowSelection, writeBoardWorkflowSelection } from "../../utils/boardWorkflowSelection";
-import type { Task } from "@fusion/core";
+import { MAX_TASK_MESSAGE_LENGTH, type Task } from "@fusion/core";
 
 function PauseDetailHarness({ mobileHeaderMode }: { mobileHeaderMode?: "back" }) {
   const [task, setTask] = useState(() => makeTask({ id: "FN-UNPAUSE", column: "todo", paused: true, userPaused: true }));
@@ -301,14 +302,10 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      // FNXC:CostAndTerminalTabs FN-7820 (commit 937650472) added the "Cost" tab; FN-7826 (commit 17d7bd19e) made the
-      // interactive "Terminal" tab always available. A subsequent reorder (TaskDetailModal.tsx ~L4417) moved both into
-      // the operator flow as Comments → Terminal → Cost → Artifacts, so neither "Cost after Chat" nor "Terminal at end"
-      // holds anymore. In-progress tasks show exactly 13 tabs:
-      // Activity, Chat, Plan, Changes, Review, Comments, Terminal, Cost, Artifacts, Model, Workflow, Stats, Routing
+      // FN-244 keeps Summary and Stats near the task's primary work tabs and removes duplicate utility tabs.
       const tabs = document.querySelectorAll(".detail-tab");
       expect(Array.from(tabs).map(t => t.textContent)).toEqual([
-        "Activity", "Chat", "Plan", "Dependencies", "Attachments", "Changes", "Review", "Comments", "Terminal", "Cost", "Artifacts", "Model", "Workflow", "Stats", "Routing", "Details", "Debug",
+        "Activity", "Chat", "Plan", "Changes", "Summary", "Stats", "Review", "Comments", "Dependencies", "Artifacts", "Model", "Workflow", "Details", "Terminal",
       ]);
       // Commits tab should NOT be present for non-done tasks
       expect(screen.queryByText("Commits")).toBeNull();
@@ -327,11 +324,10 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      // FNXC:CostAndTerminalTabs see note above: Terminal then Cost sit between Comments and Artifacts.
-      // In-progress task with workflow steps: 13 tabs (Review after Changes, Workflow after Model)
+      // Workflow configuration does not change the consolidated built-in tab order.
       const tabs = document.querySelectorAll(".detail-tab");
       expect(Array.from(tabs).map(t => t.textContent)).toEqual([
-        "Activity", "Chat", "Plan", "Dependencies", "Attachments", "Changes", "Review", "Comments", "Terminal", "Cost", "Artifacts", "Model", "Workflow", "Stats", "Routing", "Details", "Debug",
+        "Activity", "Chat", "Plan", "Changes", "Summary", "Stats", "Review", "Comments", "Dependencies", "Artifacts", "Model", "Workflow", "Details", "Terminal",
       ]);
     });
 
@@ -351,11 +347,10 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      // FNXC:CostAndTerminalTabs see note above. Done task adds Summary after Chat; Terminal then Cost between Comments and Artifacts.
-      // Done task with commit SHA: Activity, Chat, Summary, Plan, Changes, Review, Comments, Terminal, Cost, Artifacts, Model, Workflow, Stats, Routing (14 tabs, no Commits)
+      // Completed work uses the same consolidated order, with landed facts inside Changes.
       const tabs = document.querySelectorAll(".detail-tab");
       expect(Array.from(tabs).map(t => t.textContent)).toEqual([
-        "Activity", "Chat", "Summary", "Plan", "Dependencies", "Attachments", "Changes", "Review", "Comments", "Terminal", "Cost", "Artifacts", "Model", "Workflow", "Stats", "Routing", "Details", "Debug",
+        "Activity", "Chat", "Plan", "Changes", "Summary", "Stats", "Review", "Comments", "Dependencies", "Artifacts", "Model", "Workflow", "Details", "Terminal",
       ]);
       // Commits tab should NOT be present
       expect(screen.queryByText("Commits")).toBeNull();
@@ -378,11 +373,10 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      // FNXC:CostAndTerminalTabs see note above.
-      // Done task with workflow steps and commit SHA: 14 tabs including Summary, Terminal, Cost and Review (no Commits)
+      // Workflow steps do not change the completed-work inventory.
       const tabs = document.querySelectorAll(".detail-tab");
       expect(Array.from(tabs).map(t => t.textContent)).toEqual([
-        "Activity", "Chat", "Summary", "Plan", "Dependencies", "Attachments", "Changes", "Review", "Comments", "Terminal", "Cost", "Artifacts", "Model", "Workflow", "Stats", "Routing", "Details", "Debug",
+        "Activity", "Chat", "Plan", "Changes", "Summary", "Stats", "Review", "Comments", "Dependencies", "Artifacts", "Model", "Workflow", "Details", "Terminal",
       ]);
       // Commits tab should NOT be present
       expect(screen.queryByText("Commits")).toBeNull();
@@ -415,9 +409,9 @@ describe("TaskDetailModal", () => {
       );
 
       const triageTabs = document.querySelectorAll(".detail-tab");
-      // FNXC:CostAndTerminalTabs see note above. Triage has no Changes tab; Terminal then Cost between Comments and Artifacts.
+      // Pre-implementation tasks omit Changes but retain Summary and Stats.
       expect(Array.from(triageTabs).map(t => t.textContent)).toEqual([
-        "Activity", "Chat", "Plan", "Dependencies", "Attachments", "Review", "Comments", "Terminal", "Cost", "Artifacts", "Model", "Workflow", "Stats", "Routing", "Details", "Debug",
+        "Activity", "Chat", "Plan", "Summary", "Stats", "Review", "Comments", "Dependencies", "Artifacts", "Model", "Workflow", "Details", "Terminal",
       ]);
 
       triageRender.unmount();
@@ -435,9 +429,9 @@ describe("TaskDetailModal", () => {
       );
 
       const todoTabs = document.querySelectorAll(".detail-tab");
-      // FNXC:CostAndTerminalTabs see FN-7820/FN-7826 note above (todo, same as triage).
+      // Todo uses the same pre-implementation inventory as triage.
       expect(Array.from(todoTabs).map(t => t.textContent)).toEqual([
-        "Activity", "Chat", "Plan", "Dependencies", "Attachments", "Review", "Comments", "Terminal", "Cost", "Artifacts", "Model", "Workflow", "Stats", "Routing", "Details", "Debug",
+        "Activity", "Chat", "Plan", "Summary", "Stats", "Review", "Comments", "Dependencies", "Artifacts", "Model", "Workflow", "Details", "Terminal",
       ]);
     });
 
@@ -581,11 +575,11 @@ describe("TaskDetailModal", () => {
       expect(screen.queryByText(/Awaiting release authorization/i)).toBeNull();
     });
 
-    it("does not show approval buttons when task is not in triage", () => {
+    it("does not show approval buttons when task is outside the planning lane", () => {
       render(
         <TaskDetailModal
           task={makeTask({
-            column: "todo",
+            column: "in-progress",
             status: "awaiting-approval",
             prompt: "# Task Spec",
           })}
@@ -866,7 +860,7 @@ describe("TaskDetailModal", () => {
       expect(screen.queryByRole("menuitem", { name: "Duplicate" })).toBeNull();
     });
 
-    it("clicking Duplicate shows confirmation dialog", () => {
+    it("clicking Duplicate shows confirmation dialog", async () => {
             mockConfirm.mockResolvedValue(false);
 
       render(
@@ -888,10 +882,10 @@ describe("TaskDetailModal", () => {
 
       fireEvent.click(screen.getByRole("menuitem", { name: "Duplicate" }));
 
-      expect(mockConfirm).toHaveBeenCalledWith({
+      await waitFor(() => expect(mockConfirm).toHaveBeenCalledWith({
         title: "Duplicate Task",
-        message: "Duplicate FN-001? This will create a new task in Triage with the same description and prompt.",
-      });
+        message: "Duplicate FN-001? This will create a new task with the same description and prompt.",
+      }));
 
     });
 
@@ -921,10 +915,46 @@ describe("TaskDetailModal", () => {
       fireEvent.click(screen.getByRole("menuitem", { name: "Duplicate" }));
 
       await waitFor(() => {
-        expect(mockDuplicate).toHaveBeenCalledWith("FN-001");
+        expect(mockDuplicate).toHaveBeenCalledWith("FN-001", undefined);
         expect(onClose).toHaveBeenCalled();
       });
 
+    });
+
+    it("forwards the selected workflow from the Task Detail duplicate action", async () => {
+      const { fetchBoardWorkflows } = await import("../../api");
+      vi.mocked(fetchBoardWorkflows).mockResolvedValue({
+        flagEnabled: true,
+        defaultWorkflowId: "wf-a",
+        workflows: [
+          { id: "wf-a", name: "Workflow A", columns: [] },
+          { id: "wf-b", name: "Workflow B", columns: [] },
+        ],
+        taskWorkflowIds: { "FN-001": "wf-a" },
+      });
+      mockConfirmWithSelect.mockResolvedValueOnce({ choice: "primary", checkboxValue: false, selectValue: "wf-b" });
+      const onDuplicateTask = vi.fn().mockResolvedValue({ id: "FN-002" } as Task);
+
+      render(
+        <TaskDetailModal
+          task={makeTask({ id: "FN-001" })}
+          initialTab="definition"
+          onClose={noop}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          onDuplicateTask={onDuplicateTask}
+          addToast={noop}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Actions" }));
+      fireEvent.click(screen.getByRole("menuitem", { name: "Duplicate" }));
+
+      await waitFor(() => expect(onDuplicateTask).toHaveBeenCalledWith("FN-001", { workflowId: "wf-b" }));
+      expect(mockConfirmWithSelect).toHaveBeenCalledWith(expect.objectContaining({
+        select: expect.objectContaining({ defaultValue: "wf-a" }),
+      }));
     });
 
     it("mobile task popup Actions menu selects the shared pause callback once and dismisses", async () => {
@@ -1294,7 +1324,7 @@ describe("TaskDetailModal", () => {
       expect(screen.queryByRole("menuitem", { name: "Unpause" })).toBeNull();
     });
 
-    it("does NOT render Actions dropdown for a non-paused, non-awaiting-approval, non-retryable triage task", () => {
+    it("renders the stage-aware Actions dropdown for a mutable triage task", async () => {
       render(
         <TaskDetailModal
           task={makeTask({ column: "triage", paused: false, status: "todo" })}
@@ -1307,7 +1337,9 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      expect(screen.queryByRole("button", { name: "Actions" })).toBeNull();
+      const actions = screen.getByRole("button", { name: "Actions" });
+      await userEvent.click(actions);
+      expect(screen.getByRole("menu")).toBeInTheDocument();
     });
 
     it("clicking Refine opens the refinement modal", () => {
@@ -1352,7 +1384,7 @@ describe("TaskDetailModal", () => {
 
       fireEvent.click(screen.getByRole("menuitem", { name: "Refine" }));
 
-      expect(screen.getByText("0/2000 characters")).toBeTruthy();
+      expect(screen.getByText(`0/${MAX_TASK_MESSAGE_LENGTH} characters`)).toBeTruthy();
     });
 
     it("character counter updates when typing feedback", async () => {
@@ -1379,7 +1411,7 @@ describe("TaskDetailModal", () => {
         fireEvent.change(textarea, { target: { value: "Need to fix the error handling" } });
       });
 
-      expect(screen.getByText("30/2000 characters")).toBeTruthy();
+      expect(screen.getByText(`30/${MAX_TASK_MESSAGE_LENGTH} characters`)).toBeTruthy();
     });
 
     it("submit button is disabled when feedback is empty", () => {

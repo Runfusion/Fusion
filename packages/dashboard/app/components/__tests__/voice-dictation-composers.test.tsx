@@ -56,9 +56,8 @@ const chatState = {
   loadMoreMessages: vi.fn(), hasMoreMessages: false, searchQuery: "", setSearchQuery: vi.fn(), filteredSessions: [chatSession],
   agentsMap: new Map(),
 };
-let activeRoom: any = null;
 vi.mock("../../hooks/useChat", async (importOriginal) => ({ ...(await importOriginal<typeof import("../../hooks/useChat")>()), useChat: () => chatState }));
-vi.mock("../../hooks/useChatRooms", () => ({ useChatRooms: () => ({ rooms: activeRoom ? [activeRoom] : [], roomsLoading: false, roomsError: null, activeRoom, activeRoomMembers: [], messages: [], messagesLoading: false, selectRoom: vi.fn(), createRoom: vi.fn(), deleteRoom: vi.fn(), sendRoomMessage: vi.fn(), clearRoom: vi.fn(), refreshRooms: vi.fn() }) }));
+vi.mock("../../hooks/useChatRooms", () => ({ useChatRooms: () => ({ rooms: [], roomsLoading: false, roomsError: null, activeRoom: null, activeRoomMembers: [], messages: [], messagesLoading: false, selectRoom: vi.fn(), createRoom: vi.fn(), deleteRoom: vi.fn(), sendRoomMessage: vi.fn(), clearRoom: vi.fn(), refreshRooms: vi.fn() }) }));
 vi.mock("../../hooks/useNavigationHistory", async (importOriginal) => ({ ...(await importOriginal<typeof import("../../hooks/useNavigationHistory")>()), useNavigationHistoryContext: () => ({ pushNav: vi.fn(), replaceCurrent: vi.fn() }) }));
 vi.mock("../../api", async (importOriginal) => ({ ...(await importOriginal<typeof import("../../api")>()), fetchAiSession: (...args: unknown[]) => mockFetchAiSession(...args), fetchSettings: vi.fn().mockResolvedValue({}), fetchAgents: vi.fn().mockResolvedValue([]), fetchDiscoveredSkills: vi.fn().mockResolvedValue([]), fetchTasks: vi.fn().mockResolvedValue([]), searchFiles: vi.fn().mockResolvedValue({ files: [] }) }));
 
@@ -92,7 +91,7 @@ function ControlledTaskForm() {
 function QuickChatVoicePath() {
   const [open, setOpen] = useState(false);
   return <>
-    <QuickChatFAB open={open} onOpenChange={setOpen} />
+    <QuickChatFAB open={open} onToggle={() => setOpen((current) => !current)} />
     {open && <ChatView projectId="project-1" addToast={vi.fn()} floating />}
   </>;
 }
@@ -120,19 +119,11 @@ FN-054 made Chat list-first: a composer exists only inside an explicitly opened 
 every real ChatView surface in this inventory must drill in from the list before a mic can render.
 */
 function openDirectThread() {
-  // The Direct/Rooms scope is persisted, so re-assert Direct before drilling in.
-  fireEvent.click(screen.getByTestId("chat-sidebar-scope-direct"));
   fireEvent.click(screen.getByTestId(`chat-session-${chatSession.id}`));
 }
 
-function openRoomThread() {
-  fireEvent.click(screen.getByTestId("chat-sidebar-scope-rooms"));
-  fireEvent.click(screen.getByTestId(`chat-room-item-${activeRoom.slug}`));
-}
-
 const primarySurfaceRenders = [
-  { name: "ChatView primary composer", render: () => { activeRoom = null; const result = render(<ChatView projectId="project-1" addToast={vi.fn()} />); openDirectThread(); return result; } },
-  { name: "ChatView secondary room composer", render: () => { activeRoom = { id: "room-1", slug: "room-1", name: "Room" }; const result = render(<ChatView projectId="project-1" addToast={vi.fn()} />); openRoomThread(); return result; } },
+  { name: "ChatView primary composer", render: () => { const result = render(<ChatView projectId="project-1" addToast={vi.fn()} />); openDirectThread(); return result; } },
   { name: "StandardChatSurface correction composer", render: () => { const result = render(<StandardChatMessageItem message={{ id: "message-1", role: "user", content: "Populated", createdAt: "2026-07-24T00:00:00.000Z" } as any} forcePlain={false} agentName="Agent" hideAssistantIdentity={false} showAssistantModelTag={false} activeSessionId="session-1" canEdit onEditMessage={vi.fn()} />); fireEvent.click(screen.getByRole("button", { name: /edit/i })); return result; } },
   { name: "QuickChatFAB-opened shared ChatView composer", render: () => { const result = render(<QuickChatVoicePath />); fireEvent.click(screen.getByTestId("quick-chat-fab")); openDirectThread(); return result; } },
   { name: "ComposeChatPanel request composer", render: () => render(<ComposeChatPanel embeds={[]} draftBody="" onUseDraft={vi.fn()} onClose={vi.fn()} />) },
@@ -174,9 +165,8 @@ async function exerciseRealComposer(renderSurface: () => ReturnType<typeof rende
 
 describe("voice dictation composer inventory", () => {
   beforeEach(async () => {
-    /* FNXC:ChatNavigation 2026-08-23-17:20: ChatView persists its Direct/Rooms scope, so a room surface would otherwise leak the rooms scope into the next case. */
     localStorage.clear();
-    vi.clearAllMocks(); activeRoom = null; voiceProjectIds.length = 0;
+    vi.clearAllMocks(); voiceProjectIds.length = 0;
     await act(async () => { setVoice({ enabled: true, supported: true, state: "idle", partialText: "", finalText: "", error: undefined }); });
   });
   afterEach(cleanup);

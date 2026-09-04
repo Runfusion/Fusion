@@ -32,6 +32,7 @@ import {
   resolveAgentProvisioningPolicy,
   TASK_PRIORITIES,
   MAX_TASK_LIST_TEXT_CHARS,
+  MAX_TASK_MESSAGE_LENGTH,
   resolveSecretAccessPolicy,
   getProjectRootFromWorktree,
   resolveWorktreesDirLayout,
@@ -85,7 +86,7 @@ import {
   traitListParams,
   isInReviewMissingWorktreeSessionStartFailure,
   normalizeAgentLogPaging,
-  renderAgentLogEntries,
+  buildTaskAgentLogReadText,
   createAgentTask,
   evaluateAgentActionGate,
   resolveGateOutcome,
@@ -2356,10 +2357,16 @@ export default function kbExtension(pi: ExtensionAPI) {
 
   // ── fn_task_logs_read ───────────────────────────────────────────
 
+  /*
+  FNXC:TaskLogsRead 2026-08-29-05:00:
+  FN-253 makes tool detail default-persisted. This pi registration must use the shared engine builder
+  so its per-row preview, whole-response cap, and explicit full-detail escape hatch cannot drift from
+  task-bound and chat agent readers.
+  */
   pi.registerTool({
     name: "fn_task_logs_read",
     label: "fn: Read Task Logs",
-    description: "Read a task's full persisted agent log with pagination and optional type filtering.",
+    description: "Read a task's persisted agent log with pagination and optional type filtering. Tool detail is previewed per row by default; detail: full lifts the row preview while the whole response remains bounded.",
     promptSnippet: "Read persisted agent logs for a Fusion task",
     parameters: Type.Object({
       id: Type.String({ description: "Task ID (e.g. FN-001)" }),
@@ -2369,6 +2376,9 @@ export default function kbExtension(pi: ExtensionAPI) {
         Type.Literal("text"), Type.Literal("status"), Type.Literal("tool"),
         Type.Literal("thinking"), Type.Literal("tool_result"), Type.Literal("tool_error"),
       ], { description: "Only return entries of this agent-log type." })),
+      detail: Type.Optional(Type.Union([
+        Type.Literal("preview"), Type.Literal("full"),
+      ], { description: "Tool-detail mode. Preview (default) bounds each detail row; full lifts that row preview while the whole response remains bounded." })),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const store = await getStore(ctx.cwd);
@@ -2377,10 +2387,14 @@ export default function kbExtension(pi: ExtensionAPI) {
         store.getAgentLogs(params.id, { limit, offset, type: params.type }),
         store.getAgentLogCount(params.id, { type: params.type }),
       ]);
-      const filter = params.type ? `, type=${params.type}` : "";
-      const header = `Agent log: ${entries.length}/${total} entries (limit=${limit}, offset=${offset}${filter})`;
       return {
-        content: [{ type: "text", text: entries.length > 0 ? `${header}\n\n${renderAgentLogEntries(entries)}` : `${header}\n\n(no matching log entries)` }],
+        content: [{ type: "text", text: buildTaskAgentLogReadText(entries, {
+          total,
+          limit,
+          offset,
+          type: params.type,
+          detail: params.detail,
+        }) }],
         details: { taskId: params.id, total, limit, offset, type: params.type },
       };
     },
@@ -2885,7 +2899,7 @@ export default function kbExtension(pi: ExtensionAPI) {
       feedback: Type.String({ 
         description: "Description of what needs to be refined or improved",
         minLength: 1,
-        maxLength: 2000,
+        maxLength: MAX_TASK_MESSAGE_LENGTH,
       }),
     }),
 

@@ -354,6 +354,112 @@ describe("task snapshot lifecycle freshness", () => {
   });
 });
 
+describe("task prompt retention", () => {
+  const current = {
+    ...createInProgressTask("FN-PROMPT", Date.parse("2026-08-05T10:00:00.000Z")),
+    prompt: "# Loaded plan\n\n## What This Delivers\n\nStable summary",
+  } as Task;
+
+  it("retains a loaded plan for a newer sparse empty prompt", () => {
+    const incoming = {...current, prompt: "", updatedAt: "2026-08-05T10:01:00.000Z"} as Task;
+
+    expect(mergeTaskSnapshot(current, incoming).prompt).toBe(current.prompt);
+  });
+
+  it("retains a loaded plan for a newer sparse undefined prompt", () => {
+    const incoming = {...current, prompt: undefined, updatedAt: "2026-08-05T10:01:00.000Z"} as Task;
+
+    expect(mergeTaskSnapshot(current, incoming).prompt).toBe(current.prompt);
+  });
+
+  it("allows a full snapshot to clear a loaded plan", () => {
+    const incoming = {...current, prompt: "", updatedAt: "2026-08-05T10:01:00.000Z"} as Task;
+
+    expect(mergeTaskSnapshot(current, incoming, {fullSnapshot: true}).prompt).toBe("");
+  });
+
+  it("adopts a newer sparse non-blank plan", () => {
+    const incoming = {...current, prompt: "# Rewritten plan", updatedAt: "2026-08-05T10:01:00.000Z"} as Task;
+
+    expect(mergeTaskSnapshot(current, incoming).prompt).toBe("# Rewritten plan");
+  });
+
+  it.each(["", undefined] as const)(
+    "does not introduce a prompt key from a sparse %s prompt on a slim current row",
+    (prompt) => {
+      const slimCurrent = {...current} as Task & {prompt?: string};
+      delete slimCurrent.prompt;
+      const incoming = {...slimCurrent, prompt, updatedAt: "2026-08-05T10:01:00.000Z"} as Task;
+
+      const merged = mergeTaskSnapshot(slimCurrent, incoming);
+      expect(Object.prototype.hasOwnProperty.call(merged, "prompt")).toBe(false);
+    },
+  );
+});
+
+describe("activity journal retention", () => {
+  const journal = [{ timestamp: "2026-08-05T10:00:00.000Z", action: "Created task" }];
+  const current = {
+    ...createInProgressTask("FN-JOURNAL", Date.parse("2026-08-05T10:00:00.000Z")),
+    prompt: "# Complete task detail",
+    log: journal,
+  } as Task;
+
+  it("retains a populated journal for a newer stripped payload that carries a prompt", () => {
+    const incoming = {
+      ...current,
+      prompt: "# Board prompt",
+      log: [],
+      updatedAt: "2026-08-05T10:01:00.000Z",
+    } as Task;
+
+    expect(mergeTaskSnapshot(current, incoming).log).toEqual(journal);
+  });
+
+  it("retains a populated journal for a stripped payload with no prompt", () => {
+    const incoming = {
+      ...current,
+      prompt: undefined,
+      log: [],
+      updatedAt: "2026-08-05T10:01:00.000Z",
+    } as Task;
+
+    expect(mergeTaskSnapshot(current, incoming).log).toEqual(journal);
+  });
+
+  it("retains a populated journal for an authoritative task:moved payload", () => {
+    const incoming = {
+      ...current,
+      column: "in-review",
+      columnMovedAt: "2026-08-05T10:01:00.000Z",
+      log: [],
+      updatedAt: "2026-08-05T10:01:00.000Z",
+    } as Task;
+
+    expect(mergeTaskSnapshot(current, incoming, { authoritativeMove: true }).log).toEqual(journal);
+  });
+
+  it("uses a populated authoritative detail journal", () => {
+    const detailJournal = [{ timestamp: "2026-08-05T10:01:00.000Z", action: "Updated task" }];
+    const incoming = { ...current, log: detailJournal, updatedAt: "2026-08-05T10:01:00.000Z" } as Task;
+
+    expect(mergeTaskSnapshot(current, incoming, { fullSnapshot: true }).log).toEqual(detailJournal);
+  });
+
+  it("allows an authoritative empty detail journal to clear a populated cached journal", () => {
+    const incoming = { ...current, log: [], updatedAt: "2026-08-05T10:01:00.000Z" } as Task;
+
+    expect(mergeTaskSnapshot(current, incoming, { fullSnapshot: true }).log).toEqual([]);
+  });
+
+  it("uses an older populated authoritative detail journal over an empty stripped row", () => {
+    const emptyCurrent = { ...current, log: [], updatedAt: "2026-08-05T10:01:00.000Z" } as Task;
+    const olderDetail = { ...current, updatedAt: "2026-08-05T10:00:00.000Z" } as Task;
+
+    expect(mergeTaskSnapshot(emptyCurrent, olderDetail, { fullSnapshot: true }).log).toEqual(journal);
+  });
+});
+
 describe("useTasks hydration freshness (dataAsOfMs)", () => {
   it("reports the envelope savedAt, not now, on the first render after a 2-hour discard", () => {
     const savedAt = seedSnapshot([createInProgressTask("FN-1", Date.now() - TWO_HOURS_MS)], TWO_HOURS_MS);

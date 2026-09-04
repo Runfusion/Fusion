@@ -21,7 +21,7 @@
 
 .mailbox-structural-report,
 .mailbox-structural-approval {
-  border: var(--border) solid var(--border-subtle);
+  border: var(--btn-border-width) solid var(--border-subtle);
   border-radius: var(--radius-md);
   margin-block-start: var(--space-md);
   padding: var(--space-md);
@@ -33,7 +33,7 @@
 }
 
 .mailbox-report-section + .mailbox-report-section {
-  border-block-start: var(--border) solid var(--border-subtle);
+  border-block-start: var(--btn-border-width) solid var(--border-subtle);
   margin-block-start: var(--space-md);
   padding-block-start: var(--space-md);
 }

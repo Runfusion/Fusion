@@ -23,7 +23,7 @@
  * - `activeSubagentSessions`: Reviewer subagent sessions — disposed with parent kill paths.
  * - `pausedAborted`: Tasks that were paused mid-execution (to avoid marking them as "failed").
  * - `depAborted`: Tasks that had a dependency added mid-execution (abort + discard worktree).
- * - `stuckAborted`: Tasks killed by stuck task detector. Value = shouldRequeue (budget not exhausted).
+ * - `stuckAborted`: Tasks whose dead session was disposed and must resume in place after unwind.
  * - `userCanceledTaskIds`: Tasks explicitly canceled by user move (in-progress → todo).
  * - `graphExecuteSelfRequeued`: Run-local marker: graph execute self-requeued for recoverable repair (outer failure sink must not overwrite).
  * - `loopRecoveryState`: In-memory loop recovery state per task (compact-and-resume attempts; reset at execute finally).

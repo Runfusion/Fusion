@@ -78,9 +78,10 @@ function dispatchPointerEvent(
   type: string,
   clientX: number,
   clientY = 0,
+  pointerType: "touch" | "mouse" = "touch",
 ): void {
   scroller.dispatchEvent(
-    new PointerEvent(type, { clientX, clientY, pointerId: 1, isPrimary: true, bubbles: true, cancelable: true }),
+    new PointerEvent(type, { clientX, clientY, pointerType, pointerId: 1, isPrimary: true, bubbles: true, cancelable: true }),
   );
 }
 
@@ -866,6 +867,59 @@ describe("useColumnScrollSnap", () => {
       vi.advanceTimersByTime(500);
     });
     expect(scroller.scrollLeft).toBe(0);
+  });
+
+  it("ignores mouse pointer sequences without capturing, suspending native snap, or settling", () => {
+    const scroller = createScroller(3, 30);
+    renderHook(() => useColumnScrollSnap(scroller, { mobileOnly: true, isUserInteraction: () => true }));
+
+    act(() => {
+      dispatchPointerEvent(scroller, "pointerdown", 200, 0, "mouse");
+      dispatchPointerEvent(scroller, "pointermove", 160, 0, "mouse");
+      scroller.scrollLeft = 45;
+      scroller.dispatchEvent(new Event("scroll"));
+      dispatchPointerEvent(scroller, "pointerup", 160, 0, "mouse");
+      vi.advanceTimersByTime(500);
+    });
+
+    expect(scroller.setPointerCapture).not.toHaveBeenCalled();
+    expect(scroller.style.scrollSnapType).not.toBe("none");
+    expect(scroller.scrollLeft).toBe(45);
+  });
+
+  it("continues to page an equivalent touch pointer sequence", () => {
+    const scroller = createScroller(3, 0);
+    renderHook(() => useColumnScrollSnap(scroller, { mobileOnly: true, isUserInteraction: () => true }));
+
+    act(() => {
+      dispatchPointerEvent(scroller, "pointerdown", 200);
+      dispatchPointerEvent(scroller, "pointermove", 160);
+      scroller.scrollLeft = 30;
+      scroller.dispatchEvent(new Event("scroll"));
+      dispatchPointerEvent(scroller, "pointerup", 160);
+    });
+    settleAfterMomentum();
+
+    expect(scroller.setPointerCapture).toHaveBeenCalledWith(1);
+    expect(scroller.scrollLeft).toBe(COLUMN_WIDTH);
+  });
+
+  it("does not let a mouse pointerup settle an active touch gesture", () => {
+    const scroller = createScroller(3, 0);
+    renderHook(() => useColumnScrollSnap(scroller, { mobileOnly: true, isUserInteraction: () => true }));
+
+    act(() => {
+      dispatchPointerEvent(scroller, "pointerdown", 200);
+      dispatchPointerEvent(scroller, "pointermove", 160);
+      scroller.scrollLeft = 30;
+      scroller.dispatchEvent(new Event("scroll"));
+      dispatchPointerEvent(scroller, "pointerup", 160, 0, "mouse");
+    });
+    expect(scroller.scrollLeft).toBe(30);
+
+    act(() => dispatchPointerEvent(scroller, "pointerup", 160));
+    settleAfterMomentum();
+    expect(scroller.scrollLeft).toBe(COLUMN_WIDTH);
   });
 
   /*

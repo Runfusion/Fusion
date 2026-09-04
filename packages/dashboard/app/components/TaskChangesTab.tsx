@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { isCompleteColumnRole, isReviewColumnRole, isWipColumnRole } from "../utils/columnRoles";
 import { useTranslation } from "react-i18next";
-import { FileCode, ChevronDown, ChevronRight, ChevronLeft, AlertCircle, GitCommit, WrapText, Maximize2 } from "lucide-react";
+import { FileCode, ChevronDown, ChevronRight, ChevronLeft, AlertCircle, WrapText, Maximize2 } from "lucide-react";
 import type { MergeDetails, ColumnId } from "@fusion/core";
 import { LoadingSpinner } from "./LoadingSpinner";
 import { getErrorMessage } from "@fusion/core";
@@ -62,7 +62,6 @@ function getStatusLabel(status: "added" | "modified" | "deleted" | "unknown"): s
 function renderModifiedFilesFallback(
   fileList: string[],
   isDone: boolean,
-  mergeDetails?: MergeDetails,
   source: "landed" | "execution" = "execution",
   t?: ReturnType<typeof useTranslation>["t"],
 ) {
@@ -70,21 +69,6 @@ function renderModifiedFilesFallback(
     t ? t(key, defaultValue, options) : defaultValue;
   return (
     <div className="detail-section task-changes-tab">
-      {isDone && mergeDetails && (
-        <div className="commit-diff-meta">
-          {mergeDetails.commitSha && (
-            <div className="commit-diff-sha">
-              <GitCommit size={14} />
-              <code>{mergeDetails.commitSha.slice(0, 7)}</code>
-            </div>
-          )}
-          {mergeDetails.mergedAt && (
-            <div className="commit-diff-timestamp">
-              {getT("taskChanges.merged", "Merged {{date}}", { date: new Date(mergeDetails.mergedAt).toLocaleString() })}
-            </div>
-          )}
-        </div>
-      )}
       <div className="task-changes-state task-changes-state--empty">
         <FileCode size={24} />
         <p>{getT(`taskChanges.fileCount`, "{{count}} file{{plural}} changed.", { count: fileList.length, plural: fileList.length === 1 ? "" : "s" })}</p>
@@ -337,7 +321,7 @@ export function TaskChangesTab({ columnFlags, taskId, worktree, projectId, colum
   // standard empty/populated rendering below.
   if (!isDone && !worktree && !isWorkspace && files.length === 0) {
     if (modifiedFiles && modifiedFiles.length > 0) {
-      return renderModifiedFilesFallback(modifiedFiles, false, undefined, "execution", t);
+      return renderModifiedFilesFallback(modifiedFiles, false, "execution", t);
     }
 
     return (
@@ -360,7 +344,7 @@ export function TaskChangesTab({ columnFlags, taskId, worktree, projectId, colum
         ? mergeDetails.landedFiles
         : modifiedFiles;
       if (doneFallbackFiles && doneFallbackFiles.length > 0) {
-        return renderModifiedFilesFallback(doneFallbackFiles, true, mergeDetails, mergeDetails?.landedFiles?.length ? "landed" : "execution", t);
+        return renderModifiedFilesFallback(doneFallbackFiles, true, mergeDetails?.landedFiles?.length ? "landed" : "execution", t);
       }
 
       const summaryFiles = mergeDetails?.filesChanged;
@@ -384,7 +368,7 @@ export function TaskChangesTab({ columnFlags, taskId, worktree, projectId, colum
     }
 
     if (!isDone && modifiedFiles && modifiedFiles.length > 0) {
-      return renderModifiedFilesFallback(modifiedFiles, isDone, mergeDetails, "execution", t);
+      return renderModifiedFilesFallback(modifiedFiles, isDone, "execution", t);
     }
 
     return (
@@ -405,30 +389,11 @@ export function TaskChangesTab({ columnFlags, taskId, worktree, projectId, colum
 
   return (
     <div className="detail-section task-changes-tab">
-      {/* Commit metadata for done tasks */}
-      {isDone && mergeDetails && (
-        <div className="commit-diff-meta">
-          {mergeDetails.commitSha && (
-            <div className="commit-diff-sha">
-              <GitCommit size={14} />
-              <code>{mergeDetails.commitSha.slice(0, 7)}</code>
-            </div>
-          )}
-          {mergeDetails.mergeCommitMessage && (
-            <div className="commit-diff-message">{mergeDetails.mergeCommitMessage}</div>
-          )}
-          {mergeDetails.mergedAt && (
-            <div className="commit-diff-timestamp">
-              {t("taskChanges.mergedAt", "Merged {{date}}", { date: new Date(mergeDetails.mergedAt).toLocaleString() })}
-            </div>
-          )}
-          {mergeDetails.noOpVerifiedShortCircuit && (
-            <div className="text-muted">{t("taskChanges.noOpShortCircuit", "Verified short-circuit — work was already on main (rebase walked foreign commits).")}</div>
-          )}
-          {mergeDetails.landedFilesCaptureFallback === "attribution-failed" && (
-            <div className="text-muted">{t("taskChanges.attributionFailed", "Landed-files set may include foreign commits (attribution unavailable).")}</div>
-          )}
-        </div>
+      {isDone && mergeDetails?.noOpVerifiedShortCircuit && (
+        <div className="text-muted">{t("taskChanges.noOpShortCircuit", "Verified short-circuit — work was already on main (rebase walked foreign commits).")}</div>
+      )}
+      {isDone && mergeDetails?.landedFilesCaptureFallback === "attribution-failed" && (
+        <div className="text-muted">{t("taskChanges.attributionFailed", "Landed-files set may include foreign commits (attribution unavailable).")}</div>
       )}
 
       {renderChangesHeader()}

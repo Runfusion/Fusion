@@ -5,6 +5,7 @@
  * Extracted from types.ts; re-exported from the browser-safe types barrel.
  */
 
+import type { WorkflowStepNotRunReason } from "../../workflows/workflow-step-results.js";
 import type { ThinkingLevel } from "../board/board.js";
 
 /*
@@ -101,6 +102,8 @@ export interface WorkflowStep {
   prompt: string;
   /** Tool set available to prompt-mode workflow agents. Defaults to readonly. */
   toolMode?: WorkflowStepToolMode;
+  /** In-memory graph-node config: named MCP servers allowed for this readonly step. */
+  readonlyMcpServers?: string[];
   /** Name of a skill to load into this step's session (e.g.
    *  "compound-engineering:ce-work"). When set, the step session loads the named
    *  skill (discovery + selection) and the engine injects the Fusion workflow-step
@@ -296,6 +299,12 @@ export interface WorkflowStepResult {
   /** Execution status */
   status: "passed" | "failed" | "advisory_failure" | "skipped" | "pending";
   /**
+   * FNXC:ReviewVerdictAuthority 2026-09-02-19:25:
+   * True when this execution owed a structured JSON verdict. Absence identifies a legacy or
+   * non-review result and preserves its prior status-only merge semantics.
+   */
+  verdictRequired?: boolean;
+  /**
    * Author-declared direct-review category snapshotted when a supported top-level
    * graph node starts. Absent preserves historical and non-review semantics.
    */
@@ -315,8 +324,32 @@ export interface WorkflowStepResult {
    */
   remediationArchivedAt?: string;
   remediationArchivedFromStatus?: WorkflowStepResult["status"];
+  /*
+   * FNXC:LifecycleContainment 2026-08-30-12:57:
+   * FN-267 makes automatic remediation admission an owner-scoped lease on one review-input
+   * episode. A claim with no reason is in flight and reclaimable after its staleness floor; a
+   * claim with a fixed refusal reason suppresses only that exact input; owner matching prevents a
+   * displaced runner from clearing or condemning its successor's review round.
+   */
+  remediationAttemptSignature?: string;
+  remediationAttemptOwner?: string;
+  remediationAttemptClaimedAt?: string;
+  remediationRefusedReason?: "no-actionable-findings" | "upstream-out-of-scope" | "unclassified-gate-no-reopen" | "appender-declined";
+  /*
+   * FNXC:WorkflowStepNotRun 2026-08-28-14:13:
+   * A gate that did not execute is persisted as terminal `status: "skipped"` plus a fixed-enum
+   * reason. `passed` is reserved for a check that actually ran and passed, while the closed reason
+   * vocabulary prevents arbitrary prose from entering persisted workflow-step state.
+   */
+  notRunReason?: WorkflowStepNotRunReason;
   /** Durable input identity used to detect a repeated review over unchanged code or plan text. */
   reviewInputFingerprint?: string;
+  /**
+   * FNXC:ReviewConvergence 2026-08-28-10:57:
+   * This is the commit the review actually inspected, anchoring the next same-gate round's
+   * changed-since summary. It is absent on legacy results written before this field existed.
+   */
+  reviewedCommitSha?: string;
   /** Arbitration provenance is only written by the fenced single-gate ruling writer. */
   arbitrationDecision?: "UPHOLD_REVIEW" | "UPHOLD_IMPLEMENTER" | "SPLIT";
   arbitrationBindingFindingCount?: number;
@@ -400,7 +433,7 @@ export interface WorkflowStepResult {
    */
   supersededAt?: string;
   /** Machine-readable reason the result stopped being current. */
-  supersededReason?: "dependency-change";
+  supersededReason?: "dependency-change" | "respecify";
   /*
    * FNXC:PlanReviewConvergence 2026-08-04-06:35 (FN-8768):
    * Number of terminal REVISE results recorded in the current Plan Review

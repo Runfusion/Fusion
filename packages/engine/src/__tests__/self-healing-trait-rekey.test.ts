@@ -1,15 +1,9 @@
 /*
 FNXC:WorkflowLifecycleTraits 2026-07-19-06:45 (U6 / KTD-10 / R8):
-Characterization + trait-rekey coverage for self-healing's recovery rebound.
-autoRecoverWorktreeSessionStartFailure now requeues a recovered card to the
-workflow's KTD-10 trait-derived backlog column (hold → intake → first) instead of
-the literal "todo":
-  - builtin:coding resolves to `todo` (its hold column) — BYTE-IDENTICAL to the
-    pre-cutover literal (R8 evidence for the recovery surface).
-  - a custom workflow that renamed / omitted `todo` lands the recovered card in a
-    valid backlog column per KTD-10 fallback ordering.
-The test invokes the exported helper directly with a fake store so the assertion
-does not depend on the full sweep pipeline.
+Characterization + trait-rekey coverage for self-healing's worktree-session repair.
+Recovery clears stale metadata but retains the card's current workflow column; workflow
+vocabulary resolution can no longer turn cleanup into a backward lifecycle move. The legacy
+`requeue-todo` outcome name remains for caller compatibility only.
 */
 import { describe, expect, it, vi } from "vitest";
 import "@fusion/core"; // register built-in traits
@@ -52,11 +46,12 @@ async function recover(store: TaskStore, task: Task) {
 }
 
 describe("self-healing recovery rebound — trait re-key (U6/KTD-10)", () => {
-  it("requeues to `todo` for builtin:coding (R8 byte-identical)", async () => {
-    const store = fakeStore({ selection: undefined }); // no selection → builtin:coding
+  it("retains the builtin task in its current lane", async () => {
+    const store = fakeStore({ selection: undefined });
     const result = await recover(store, recoveredTask());
     expect(result.outcome).toBe("requeue-todo");
-    expect(store.moveTask).toHaveBeenCalledWith("FN-R1", "todo", expect.objectContaining({ recoveryRehome: true }));
+    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(store.logEntry).toHaveBeenCalledWith("FN-R1", expect.stringContaining("retained in in-progress"));
   });
 
   it("requeues to the custom workflow's HOLD column (KTD-10) instead of literal todo", async () => {
@@ -73,8 +68,9 @@ describe("self-healing recovery rebound — trait re-key (U6/KTD-10)", () => {
       edges: [],
     } as WorkflowIr;
     const store = fakeStore({ selection: { workflowId: "custom:wf", stepIds: [] }, ir: customIr });
-    await recover(store, recoveredTask());
-    expect(store.moveTask).toHaveBeenCalledWith("FN-R1", "backlog", expect.objectContaining({ recoveryRehome: true }));
+    await recover(store, recoveredTask({ column: "doing" }));
+    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(store.logEntry).toHaveBeenCalledWith("FN-R1", expect.stringContaining("retained in doing"));
   });
 
   it("falls back to the intake column when the custom workflow has no hold column", async () => {
@@ -90,11 +86,12 @@ describe("self-healing recovery rebound — trait re-key (U6/KTD-10)", () => {
       edges: [],
     } as WorkflowIr;
     const store = fakeStore({ selection: { workflowId: "custom:nohold", stepIds: [] }, ir: noHoldIr });
-    await recover(store, recoveredTask());
-    expect(store.moveTask).toHaveBeenCalledWith("FN-R1", "inbox", expect.objectContaining({ recoveryRehome: true }));
+    await recover(store, recoveredTask({ column: "doing" }));
+    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(store.logEntry).toHaveBeenCalledWith("FN-R1", expect.stringContaining("retained in doing"));
   });
 
-  it("keeps the legacy `todo` fallback when IR resolution fails", async () => {
+  it("does not need a fallback column when workflow resolution fails", async () => {
     const store = {
       updateTask: vi.fn(async () => ({})),
       logEntry: vi.fn(async () => undefined),
@@ -103,16 +100,13 @@ describe("self-healing recovery rebound — trait re-key (U6/KTD-10)", () => {
       getTaskWorkflowSelection: vi.fn(() => { throw new Error("selection unavailable"); }),
     } as unknown as TaskStore;
     await recover(store, recoveredTask());
-    expect(store.moveTask).toHaveBeenCalledWith("FN-R1", "todo", expect.objectContaining({ recoveryRehome: true }));
+    expect(store.moveTask).not.toHaveBeenCalled();
   });
 
-  it("preserves progress on the rebound when the card has step progress", async () => {
+  it("preserves progress while repairing in place", async () => {
     const store = fakeStore({ selection: undefined });
     await recover(store, recoveredTask({ steps: [{ id: "s1", title: "x", status: "done" } as never] }));
-    expect(store.moveTask).toHaveBeenCalledWith(
-      "FN-R1",
-      "todo",
-      expect.objectContaining({ recoveryRehome: true, preserveProgress: true }),
-    );
+    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(store.updateTask).toHaveBeenCalledWith("FN-R1", expect.not.objectContaining({ steps: expect.anything() }));
   });
 });

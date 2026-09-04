@@ -100,6 +100,18 @@ function renderAuthSection(providers: AuthProvider[], overrides: Partial<Authent
 }
 
 describe("AuthenticationSection", () => {
+  it("renders a provider-agnostic device-code panel without a manual-code shell", () => {
+    renderAuthSection(
+      [{ id: "openai-codex", name: "OpenAI Codex", authenticated: false, type: "oauth", loginInProgress: true }],
+      {
+        deviceCodes: { "openai-codex": { userCode: "ABCD-1234", verificationUri: "https://auth.openai.com/codex/device" } },
+      },
+    );
+
+    expect(screen.getByTestId("auth-device-code-openai-codex")).toHaveTextContent("Enter this code to continue");
+    expect(screen.getByText("ABCD-1234")).toBeInTheDocument();
+    expect(screen.queryByTestId("auth-manual-code-openai-codex")).not.toBeInTheDocument();
+  });
   beforeEach(() => {
     vi.clearAllMocks();
   });

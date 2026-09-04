@@ -137,7 +137,10 @@
     "toolEntriesHidden_other": "",
     "toolsOff": "工具：關閉",
     "toolsOn": "工具：開啟",
-    "usingDefault": "使用預設值"
+    "usingDefault": "使用預設值",
+    "missingToolDetailHint": "Some tool details are unavailable. They may have been recorded while detail saving was disabled; check Settings → Global General to save future tool details.",
+    "showLessDetail": "Show less {{detailLabel}}",
+    "showMoreDetail": "Show more {{detailLabel}}{{lineCount}}"
   },
   "agentMention": {
     "membersOf": "#{{roomName}} 的成員",
@@ -1200,10 +1203,10 @@
       "capacityExhausted": "",
       "guardRejected": "",
       "mergeBlocked": "",
-      "promoteRejected": "",
       "unknownColumn": "",
       "unplannedForExecution": "",
-      "workflowMismatch": ""
+      "workflowMismatch": "",
+      "staleMovePrecondition": ""
     },
     "todo": "待辦",
     "triage": "分診",
@@ -1426,7 +1429,13 @@
     "quoteMessage": "引用訊息",
     "agentRepliesFailed": "部分代理無法回覆：{{agents}}",
     "noDefaultModelConfigured": "請先在設定中設定預設聊天模型，再建立對話。",
-    "newChatOpenInNewWindowHint": ""
+    "newChatOpenInNewWindowHint": "",
+    "minimizeAllChats": "最小化所有聊天",
+    "restoreAllChats": "還原所有聊天",
+    "slashSuggestions": "斜線建議",
+    "loadingSlashSuggestions": "正在載入建議…",
+    "snippetSuggestion": "插入已儲存的提示詞",
+    "snippetSuggestions": "片段建議"
   },
   "chatRooms": {
     "error": {
@@ -1528,10 +1537,6 @@
     "pauseHint_one": "",
     "pauseHint_other": "",
     "preserveProgressTitle": "保留進度？",
-    "promoteUnplannedCancel": "",
-    "promoteUnplannedConfirm": "",
-    "promoteUnplannedMessage": "",
-    "promoteUnplannedTitle": "",
     "replanAll": "全部重新規劃",
     "replanAllHint_one": "Replan {{count}} task{{plural}} from its original description",
     "replanAllHint_other": "Replan {{count}} task{{plural}} from its original description",
@@ -1947,6 +1952,7 @@
       "rangeNote": "Time range filters loaded events; it is not sent to the server.",
       "openTask": "Open task {{taskId}}",
       "openAgent": "Open agent {{agentId}}",
+      "workflowGateNotRun": "Workflow gate not executed",
       "eventTypes": {
         "task:started": "Task started",
         "task:handed-off": "Task handed off",
@@ -3102,7 +3108,7 @@
     "selectProject": "選擇專案",
     "settings": "設定",
     "showScripts": "顯示指令碼",
-    "skillsView": "技能",
+    "skillsView": "技能與片段",
     "startAiEngine": "啟動 AI 引擎",
     "stashRecoveryView": "儲藏還原",
     "stopAiEngine": "停止 AI 引擎",
@@ -3725,7 +3731,11 @@
     "shortstatTitle": "最終提交簡統計；如需查看所有工作提交的完整著陸差異，請參閱「變更」分頁。",
     "smartPull": "智慧拉取",
     "status": "狀態",
-    "title": "合併詳情"
+    "title": "合併詳情",
+    "targetBranch": "",
+    "strategy": "",
+    "method": "",
+    "noOpReason": ""
   },
   "mesh": {
     "ariaLabel": "節點網格拓撲可視化",
@@ -4218,13 +4228,14 @@
     "settings": "設定",
     "showScriptsAriaLabel": "顯示腳本",
     "sidebarAriaLabel": "",
-    "skills": "技能",
+    "skills": "技能與片段",
     "stashRecovery": "暫存恢復",
     "tasks": "任務",
     "terminal": "終端機",
     "todos": "待辦",
     "usage": "用量",
-    "workflows": "工作流程"
+    "workflows": "工作流程",
+    "patchnode": ""
   },
   "newTaskModal": {
     "addDependencies": "新增相依性",
@@ -5873,6 +5884,7 @@
       "copiedCodeToClipboard": "已複製代碼到剪貼簿",
       "copyCode": "複製代碼",
       "enterCodeOnGitHub": "在 GitHub 上輸入此代碼",
+      "enterCodeToContinue": "",
       "failedToCopyCode": "複製代碼失敗，請手動從上方框中複製",
       "groupAuthenticated": "已驗證",
       "groupAvailable": "可用",
@@ -5890,6 +5902,7 @@
       "manualPasteTitle": "注意——需要手動貼回",
       "noProviders": "沒有可用的提供商",
       "openGitHub": "開啟 GitHub",
+      "openVerificationPage": "",
       "pasteRedirectUrlFirst": "請先貼上完整的重新導向 URL 或授權碼。",
       "reopenOnboarding": "重新開啟引導向導",
       "refreshModels": "重新整理模型",
@@ -5910,7 +5923,8 @@
       "anthropicPreferenceApiKey": "API key",
       "anthropicPreferenceSubscription": "Claude subscription",
       "credentialInUse": "In use",
-      "credentialOverridden": "Overridden below"
+      "credentialOverridden": "Overridden below",
+      "legacyAnthropicOAuthNotice": ""
     },
     "authentication": {
       "enterAPIKey": "",
@@ -6192,7 +6206,7 @@
       "saveToolOutputInAgentLogs": "",
       "updates": "",
       "weekly": "",
-      "whenDisabledToolRowsAreStillLoggedBut": "",
+      "whenDisabledToolRowsAreStillLoggedBut": " When disabled, tool rows are still logged but detailed tool payloads are omitted. Very large tool payloads may still be clipped even when this stays enabled. Default: enabled. ",
       "whenEnabledFusionChecksNpmForNewVersions": "",
       "whenEnabledTheDashboardProbesForAGlobally": "",
       "gitLabEnabledHint": "",
@@ -6275,7 +6289,9 @@
       "openRouterRoutingOnlyHint": "",
       "openRouterAllowFallbacksHint": "",
       "openRouterRoutingSortHint": "",
-      "requireParametersHint": ""
+      "requireParametersHint": "",
+      "fastAndCheapModel": "快速且經濟的模型",
+      "fastAndCheapModelHelp": "在此選擇一個用於快速編輯的低價模型。建立任務時，快速模式將使用它。"
     },
     "header": {
       "discord": "Discord",
@@ -6718,17 +6734,13 @@
       "prTitlePromptInstructionsHelp": "",
       "prDescriptionPromptInstructionsHelp": "",
       "chatHeading": "Chat",
-      "chatDescription": "Choose the default target for new Direct chats and whether New Chat should prompt or immediately use that default.",
-      "chatNewSessionMode": "New Chat behavior",
-      "chatNewSessionModePrompt": "Prompt for model each time",
-      "chatNewSessionModeAlwaysDefault": "Always use configured default",
-      "chatNewSessionModeHelp": "Prompt mode opens New Chat with this default preselected. Always-default mode skips the dialog when the configured default is complete.",
+      "chatDescription": "Choose the default target for new Direct chats. New Chat always creates the conversation immediately from this default.",
       "chatDefaultKind": "Chat default target",
       "chatDefaultKindModel": "Model",
       "chatDefaultKindAgent": "Agent",
       "chatDefaultModel": "Chat Default Model",
       "selectChatDefaultModel": "Select a chat default model",
-      "chatDefaultModelHelp": "Model-mode New Chat uses the built-in Fusion chat agent with this provider/model pair. Leave empty to fall back to prompting.",
+      "chatDefaultModelHelp": "Model-mode New Chat uses the built-in Fusion chat agent with this provider/model pair. Leave empty to use the project or global default model.",
       "chatDefaultAgent": "Chat Default Agent",
       "loadingAgents": "Loading agents…",
       "selectChatDefaultAgent": "Select a chat default agent",
@@ -7010,27 +7022,21 @@
       "maxWorktrees": "",
       "worktreeLimitEnabled": "",
       "worktreeLimitEnabledHelp": "",
-      "offByDefaultOptInWhenEnabledCompleted": "",
       "openApprovals": "開啟審批",
       "optionalLeaveBlankToAutoResolveFusionWill": "",
       "optionalSupports": "",
       "pnpmInstallFrozenLockfile": "",
-      "randomNamesEGSwiftFalcon": "",
       "rebaseFromRemoteBeforeMerge": "",
       "rebaseRemote": "",
-      "recycleWorktrees": "",
       "selectWorktreesDir": "選取工作樹目錄",
       "shellCommandToRunInEachNewWorktree": "",
       "stopsOnWorktrunkErrorsForExplicitOperatorRecovery": "",
-      "taskIDEGFN042": "",
-      "taskTitleEGFixLoginBug": "",
       "tryAgain": "重試",
       "useGitDefault": "",
       "whenEnabledTheMergerFetchesFromTheConfigured": "",
       "whenUnsetOnlyAffectsNewlyCreatedWorktrees": "",
       "whichRemoteToFetchForThePreMerge": "",
       "worktreeInitCommand": "",
-      "worktreeNamingStyle": "",
       "worktrees": "",
       "worktreesDirectory": "",
       "worktrunk": "",
@@ -7039,10 +7045,7 @@
       "worktrunkIntegration": "",
       "worktreesPickerNote": "",
       "showWorktreeGroupingHelp": "",
-      "copyFilesHelp": "",
-      "namingStyleNotApplicableWhenRecycling": "",
-      "howToNameFreshWorktreeDirectories": "",
-      "recycleNotApplicableWithTaskIdNaming": ""
+      "copyFilesHelp": ""
     },
     "fileBrowser": {
       "currentDirectory": "",
@@ -7564,7 +7567,7 @@
     "catalogSection": "技能目錄",
     "catalogUnavailable": "目錄暫時無法使用。請稍後重試。",
     "closeDetail": "關閉技能詳情",
-    "closeView": "關閉技能視圖",
+    "closeView": "關閉技能與片段視圖",
     "disabled": "技能已停用",
     "disableSkill": "停用 {{name}}",
     "discovered": "已發現",
@@ -7597,7 +7600,7 @@
     "removeSkill": "刪除 {{name}}",
     "searchLabel": "搜尋技能",
     "searchPlaceholder": "搜尋技能...",
-    "title": "技能",
+    "title": "技能與片段",
     "toggleError": "切換技能失敗",
     "toggleFailed": "切換技能失敗: {{message}}",
     "viewDetails": "查看 {{name}} 的詳情",
@@ -7613,7 +7616,31 @@
     "filter": "Filter skills",
     "noMatches": "No matching skills",
     "loadError": "Skills could not be loaded.",
-    "hiddenUnavailable": "Hidden skills include disabled or not-discovered entries"
+    "hiddenUnavailable": "Hidden skills include disabled or not-discovered entries",
+    "snippetsReservedName": "此名稱已保留給聊天命令。",
+    "snippetsInvalidName": "請使用 1–48 個字母、數字、底線或連字號。",
+    "snippetsPromptRequired": "請輸入此片段的提示詞。",
+    "snippetsPromptTooLong": "提示詞最多可包含 {{count}} 個字元。",
+    "snippetsDuplicateName": "已存在同名片段。",
+    "snippetsLimitReached": "最多可儲存 {{count}} 個片段。",
+    "snippetsSaveError": "無法儲存片段。請重新整理後再試一次。",
+    "snippetsDeleteError": "無法刪除片段。請重新整理後再試一次。",
+    "snippetsTitle": "聊天片段",
+    "snippetsCount": "已儲存 {{count}} 個",
+    "snippetsDescription": "儲存可重複使用的提示詞，然後在任何聊天中輸入 /名稱，即可插入而不會傳送。",
+    "snippetsLoading": "正在載入片段...",
+    "snippetsLoadError": "無法重新整理片段。仍顯示上次載入的清單。",
+    "snippetsFormLabel": "聊天片段編輯器",
+    "snippetsNameLabel": "名稱",
+    "snippetsNameHelp": "字母、數字、底線或連字號；最多 48 個字元。",
+    "snippetsPromptLabel": "提示詞",
+    "snippetsPromptHelp": "{{count}} / {{max}} 個字元",
+    "snippetsSaving": "正在儲存...",
+    "snippetsSaveChanges": "儲存變更",
+    "snippetsAdd": "新增片段",
+    "snippetsEmpty": "尚未儲存片段。",
+    "snippetsEdit": "編輯 /{{name}}",
+    "snippetsDelete": "刪除 /{{name}}"
   },
   "specEditor": {
     "edit": "編輯",
@@ -7945,7 +7972,8 @@
       "btn": "複製",
       "message": "複製 {{id}}？這將在 Triage 中建立一個具有相同描述和提示詞的新任務。",
       "success": "已複製 {{id}} → {{newId}}",
-      "title": "複製任務"
+      "title": "複製任務",
+      "workflowLabel": ""
     },
     "edit": {
       "autosaveHint": "編輯時自動儲存更改",
@@ -8151,7 +8179,7 @@
       "createBtn": "建立精化任務",
       "creating": "正在建立...",
       "feedbackRequired": "請輸入描述需要精化內容的反饋",
-      "feedbackTooLong": "反饋不能超過 2000 字元",
+      "feedbackTooLong": "",
       "help": "描述需要精化或改善的內容...",
       "modalTitle": "精化",
       "placeholder": "在此輸入您的反饋...",
@@ -8159,11 +8187,13 @@
     },
     "reset": {
       "btn": "重置",
-      "confirmMessage": "這將清除 {{id}} 的所有進度並從頭開始。繼續？",
-      "resetSuccess": "已重置 {{id}} — 將分配新的運行"
-    },
-    "respecify": {
-      "btn": "重新規範"
+      "confirmMessage": "Restart this task from nothing but the original request. Its plan, worktree, branch and commits, and reviews are permanently deleted and cannot be recovered.",
+      "resetSuccess": "已重置 {{id}} — 將分配新的運行",
+      "confirmTitle": "Reset this task?",
+      "descriptionHelp": "",
+      "descriptionLabel": "",
+      "descriptionRequired": "",
+      "submitting": ""
     },
     "retries": {
       "branchConflict": "分支衝突恢復",
@@ -8194,7 +8224,18 @@
     "retriesLabel": "重試次數（恢復 / 工作流程 / 合併 / 任務完成）",
     "retry": {
       "btn": "重試",
-      "retried": "已重試 {{id}}"
+      "retried": "已重試 {{id}}",
+      "confirmTitle": "Retry this stage?",
+      "confirmLabel": "Retry",
+      "planConfirmMessage": "Rebuild the plan from the original request. This card stays in its current column.",
+      "implementationConfirmMessage": "Discard the in-flight work and start it again on the approved plan. This card stays in its current column.",
+      "reviewConfirmMessage": "Discard the review verdicts and review the produced work again. This card stays in its current column.",
+      "genericConfirmMessage": "Repeat the current stage and keep this card in its current column.",
+      "planSuccess": "Planning will restart in this column.",
+      "implementationSuccess": "Work will restart in this column.",
+      "reviewSuccess": "Review will run again in this column.",
+      "genericSuccess": "This stage will restart in its current column.",
+      "pendingAutomaticRecovery": "Automatic recovery is pending. You can Retry now to restart this stage."
     },
     "runtimeLinks": "執行時連結",
     "runtimeStatus": "執行時狀態",
@@ -8258,10 +8299,8 @@
       "worktreeTerminal": "終端",
       "workflow": "工作流程",
       "summary": "Summary",
-      "cost": "",
       "recommendations": "",
       "dependencies": "",
-      "attachments": "",
       "details": "",
       "debug": ""
     },
@@ -8296,30 +8335,7 @@
     "workflowTimedSteps": "工作流程計時步驟",
     "yes": "是",
     "summaryTab": {
-      "agentWorkHeading": "Work done by agents",
-      "cachedTokens": "Cached",
-      "changedHeading": "What changed",
-      "commit": "Commit",
-      "completedSteps": "Completed steps",
-      "completionHeading": "Completion summary",
-      "cost": "Cost",
-      "costUnavailable": "No pricing for this model",
-      "deletions": "Removed",
-      "filesChanged": "Files",
-      "inputTokens": "Input",
-      "insertions": "Added",
-      "model": "Model",
-      "noAgentWork": "No completed steps or workflow results are available for this task.",
-      "noChangedFiles": "No changed-file list is available for this task.",
-      "noCompletionSummary": "No completion summary was recorded for this task.",
-      "noTokenUsage": "No token usage recorded for this task yet.",
-      "outputTokens": "Output",
-      "retries": "Agents retried this task {{count}} time{{plural}}.",
-      "tokenCostHeading": "Token usage & cost",
-      "totalCost": "Total cost",
-      "totalTokens": "Total",
-      "unknownModel": "(unknown)",
-      "workflowResults": "Workflow results"
+      "agentWorkHeading": "Work done by agents"
     },
     "gitlabTracking": {
       "collapse": "",
@@ -8400,6 +8416,12 @@
     },
     "debug": {
       "none": ""
+    },
+    "details": {
+      "expandRouting": "",
+      "collapseRouting": "",
+      "expandDebug": "",
+      "collapseDebug": ""
     }
   },
   "taskDocuments": {
@@ -8627,7 +8649,16 @@
     "attachFileFailed": "附加 {{fileName}} 失敗：{{error}}",
     "awaitingApproval": "等待核准",
     "baseBranch": "基礎",
-    "blockedByTooltip": "被 {{taskId}} 阻擋（檔案重疊）",
+    "blockedByTooltip": "正在等待 {{taskId}}（檔案重疊）",
+    "externalBlock": {
+      "title": "已阻擋",
+      "unknownCode": "未分類",
+      "genericMessage": "外部障礙需要操作員處理",
+      "explain": "解釋此錯誤",
+      "explainPrompt": "請解釋錯誤 {{error}} 及其解決方法。",
+      "resuming": "正在恢復…",
+      "retry": "重試"
+    },
     "branch": "分支",
     "branchMetadata": "分支中繼資料",
     "branchProgress": "",
@@ -8752,9 +8783,6 @@
     "prNodeTitle": "",
     "prNodeWithNumber": "",
     "projectDefaultLocal": "專案預設 / 本機",
-    "promote": "",
-    "promoteTask": "",
-    "promoting": "",
     "queued": "佇列中",
     "refine": "優化",
     "refineAddDetails": "新增細節",
@@ -8840,7 +8868,15 @@
     "revise": "",
     "dismissDuplicateFlag": "Mark the duplicate flag for {{id}} as read",
     "nearDuplicateHeldTitle": "Flagged as a duplicate of {{id}}. This task stays paused until you clear this flag or delete it.",
-    "duplicateDismissFailed": "Failed to clear the duplicate flag for {{taskId}}: {{error}}"
+    "duplicateDismissFailed": "Failed to clear the duplicate flag for {{taskId}}: {{error}}",
+    "planApproval": {
+      "approve": "",
+      "approveFailed": "",
+      "approving": "",
+      "copy": "",
+      "replanCapCopy": "",
+      "title": ""
+    }
   },
   "terminal": {
     "arrowKeysLabel": "",
@@ -9088,7 +9124,15 @@
     "statusSkipped": "",
     "submitAndResume": "",
     "submitting": "",
-    "waitingForOutput": ""
+    "waitingForOutput": "",
+    "aggregateNotFullyExecuted": "Not fully executed",
+    "notRunReasonExecutionModeSkip": "fast mode skipped this check",
+    "notRunReasonNotConfigured": "no test or build command is configured",
+    "notRunReasonRepositoryContextUnresolved": "the workspace repository context could not be resolved",
+    "notRunReasonToolingUnavailable": "a required tool was unavailable",
+    "statusNotRunWithReason": "Not executed — {{reason}}",
+    "summaryNotExecuted_one": "{{count}} not executed",
+    "summaryNotExecuted_other": "{{count}} not executed"
   },
   "workflowColumns": {
     "add": "",
@@ -9541,7 +9585,8 @@
     "missingOutput": "",
     "missingOutputTimestamp": "",
     "statusUpdate": "",
-    "statusUpdateTimestamp": ""
+    "statusUpdateTimestamp": "",
+    "toolDetailsMissing": "Some tool details are unavailable. They may have been recorded while detail saving was disabled; check Settings → Global General to save future tool details."
   },
   "engineBanner": {
     "body": "The engine for this project is not running, so task automation and live updates may be paused. Start it now to reconnect the dashboard.",
@@ -9720,6 +9765,78 @@
     "openTask": "",
     "close": "",
     "loading": "",
-    "retry": ""
+    "retry": "",
+    "zoomIn": "",
+    "zoomOut": "",
+    "resetZoom": "",
+    "zoomLevel": ""
+  },
+  "taskHistory": {
+    "stage": {
+      "plan": "",
+      "code": "",
+      "review": ""
+    },
+    "empty": {
+      "plan": "",
+      "code": "",
+      "review": ""
+    },
+    "entry": {
+      "noBody": "",
+      "completionSummary": "",
+      "stepReport": "",
+      "merged": "",
+      "noOpMerge": "",
+      "verdictNoNotes": "",
+      "duration": ""
+    },
+    "meta": {
+      "commit": "",
+      "targetBranch": "",
+      "strategy": "",
+      "method": "",
+      "files": "",
+      "insertions": "",
+      "deletions": "",
+      "pr": "",
+      "noOpReason": ""
+    },
+    "loading": "",
+    "verdict": {
+      "approve": "",
+      "approve-with-notes": "",
+      "revise": "",
+      "close-no-op": "",
+      "passed": "",
+      "failed": "",
+      "advisory-failure": "",
+      "skipped": "",
+      "pending": ""
+    }
+  },
+  "patchnode": {
+    "cancelled": "",
+    "empty": "",
+    "entryCount_one": "",
+    "entryCount_other": "",
+    "error": "",
+    "loadMore": "",
+    "loading": "",
+    "loadingMore": "",
+    "noResults": "",
+    "retry": "",
+    "reverted": "",
+    "searchAriaLabel": "",
+    "searchPlaceholder": "",
+    "title": "",
+    "today": "",
+    "yesterday": ""
+  },
+  "toolCallDetails": {
+    "line": "line",
+    "lines": "lines",
+    "showLess": "Show less",
+    "showMore": "Show more ({{count}} {{lineLabel}})"
   }
 }

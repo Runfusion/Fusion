@@ -29,7 +29,7 @@ passing, so they do not pin the fix on their own.
 */
 import { describe, expect, it, vi } from "vitest";
 import type { Task } from "../types.js";
-import { holdsRepairFileScopeLease, TaskStore } from "../store.js";
+import { classifyRepairFileScopeLease, holdsRepairFileScopeLease, TaskStore } from "../store.js";
 
 /** A board whose hold lane is `backlog`, wip `building`, review `signoff`, complete `shipped`. */
 const RENAMED_IR = {
@@ -39,6 +39,21 @@ const RENAMED_IR = {
     { id: "building", name: "Building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
     { id: "signoff", name: "Sign-off", traits: [{ trait: "merge" }] },
     { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+    { id: "vault", name: "Vault", traits: [{ trait: "archived" }] },
+  ],
+};
+
+/** Multiple membership lanes exercise the distinction between a move target and a role set. */
+const MULTI_LEASE_IR = {
+  version: "v2", id: "wf-multi-lease", name: "multi lease", nodes: [], edges: [],
+  columns: [
+    { id: "backlog", name: "Backlog", traits: [{ trait: "intake" }, { trait: "hold" }] },
+    { id: "building-primary", name: "Building primary", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+    { id: "building-secondary", name: "Building secondary", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+    { id: "signoff-primary", name: "Sign-off primary", traits: [{ trait: "merge" }] },
+    { id: "signoff-secondary", name: "Sign-off secondary", traits: [{ trait: "merge" }] },
+    { id: "shipped-primary", name: "Shipped primary", traits: [{ trait: "complete" }] },
+    { id: "shipped-secondary", name: "Shipped secondary", traits: [{ trait: "complete" }] },
     { id: "vault", name: "Vault", traits: [{ trait: "archived" }] },
   ],
 };
@@ -58,7 +73,7 @@ function card(id: string, column: string, extra: Record<string, unknown> = {}): 
   } as unknown as Task;
 }
 
-function harness(tasks: Task[], ir: unknown, subject: Task) {
+function harness(tasks: Task[], ir: unknown, subject: Task, scopes: Record<string, string[]> = {}) {
   const selection = { workflowId: "wf-renamed", stepIds: [] as string[] };
   let irReads = 0;
   const updates: Array<Record<string, unknown>> = [];
@@ -66,7 +81,7 @@ function harness(tasks: Task[], ir: unknown, subject: Task) {
     getTask: vi.fn(async (id: string) => tasks.find((t) => t.id === id) ?? subject),
     listTasks: vi.fn(async () => tasks),
     getSettings: vi.fn(async () => ({ overlapIgnorePaths: [] })),
-    parseFileScopeFromPrompt: vi.fn(async () => ["src/shared.ts"]),
+    parseFileScopeFromPrompt: vi.fn(async (taskId: string) => scopes[taskId] ?? ["src/shared.ts"]),
     updateTaskAtomic: vi.fn(async (_id: string, mutate: (t: Task) => unknown) => {
       const patch = mutate(subject);
       if (patch) updates.push(patch as Record<string, unknown>);
@@ -114,6 +129,22 @@ describe("holdsRepairFileScopeLease resolves the candidate's own lanes", () => {
   });
 });
 
+describe("classifyRepairFileScopeLease", () => {
+  const lanes = {
+    wip: "building",
+    review: "signoff",
+    terminal: new Set(["shipped", "vault"]),
+  };
+
+  it("keeps failed review and worktree-less WIP work leased while releasing terminal and cleaned review cards", () => {
+    expect(classifyRepairFileScopeLease(card("FN-1", "signoff", { status: "failed", worktree: "/wt" }), lanes)).toBe("active");
+    expect(classifyRepairFileScopeLease(card("FN-1", "building"), lanes)).toBe("active");
+    expect(classifyRepairFileScopeLease(card("FN-1", "signoff"), lanes)).toBe("none");
+    expect(classifyRepairFileScopeLease(card("FN-1", "backlog", { worktree: "/wt" }), lanes)).toBe("dormant");
+    expect(classifyRepairFileScopeLease(card("FN-1", "shipped", { worktree: "/wt" }), lanes)).toBe("none");
+  });
+});
+
 describe("repairOverlapBlocker resolves the board's own lanes", () => {
   it("accepts a card sitting in a RENAMED hold lane", async () => {
     // Pre-fix: `backlog` !== "todo" → "not a repairable todo state", and the repair stopped here.
@@ -138,15 +169,108 @@ describe("repairOverlapBlocker resolves the board's own lanes", () => {
     expect(result.message).not.toContain("not a repairable todo");
   });
 
-  it("treats a blocker in a RENAMED complete lane as finished, not as a live lease holder", async () => {
-    // Pre-fix the blocker's lease check ran on literals, so a finished blocker could still read as
-    // active and the card stayed blocked.
+  it("refuses repair while a failed review blocker still owns a worktree", async () => {
     const subject = card("FN-1", "backlog", { overlapBlockedBy: "FN-2" });
-    const { run } = harness([subject, card("FN-2", "shipped")], RENAMED_IR, subject);
+    const { run } = harness(
+      [subject, card("FN-2", "signoff", { status: "failed", worktree: "/wt/fn-2" })],
+      RENAMED_IR,
+      subject,
+    );
 
     const result = await run();
 
-    expect(result.reason).not.toBe("scopes-still-overlap");
+    expect(result.reason).toBe("scopes-still-overlap");
+  });
+
+  it("retains a workspace review blocker while any repository checkout exists", async () => {
+    const subject = card("FN-1", "backlog", { overlapBlockedBy: "FN-2" });
+    const { run } = harness(
+      [
+        subject,
+        card("FN-2", "signoff", {
+          status: "failed",
+          workspaceWorktrees: { "repo-a": { worktreePath: "/wt/fn-2/repo-a" } },
+        }),
+      ],
+      RENAMED_IR,
+      subject,
+    );
+
+    await expect(run()).resolves.toMatchObject({ reason: "scopes-still-overlap" });
+  });
+
+  it("matches a workspace blocker's unprefixed scope against the candidate's qualified repository path", async () => {
+    const subject = card("FN-1", "backlog", { overlapBlockedBy: "FN-2" });
+    const { run } = harness(
+      [
+        subject,
+        card("FN-2", "signoff", {
+          status: "failed",
+          workspaceWorktrees: { "repo-a": { worktreePath: "/wt/fn-2/repo-a" } },
+        }),
+      ],
+      RENAMED_IR,
+      subject,
+      { "FN-1": ["repo-a/src/shared.ts"], "FN-2": ["src/shared.ts"] },
+    );
+
+    await expect(run()).resolves.toMatchObject({ reason: "scopes-still-overlap" });
+  });
+
+  it("clears a workspace review blocker after its repository checkouts are removed", async () => {
+    const subject = card("FN-1", "backlog", { overlapBlockedBy: "FN-2" });
+    const { run } = harness(
+      [subject, card("FN-2", "signoff", { status: "failed", workspaceWorktrees: {} })],
+      RENAMED_IR,
+      subject,
+    );
+
+    await expect(run()).resolves.toMatchObject({ repaired: true, reason: "repaired" });
+  });
+
+  it("repairs a terminal blocker and a review blocker whose worktree is gone", async () => {
+    for (const blocker of [
+      card("FN-2", "shipped", { worktree: "/wt/fn-2" }),
+      card("FN-2", "signoff", { status: "failed" }),
+    ]) {
+      const subject = card("FN-1", "backlog", { overlapBlockedBy: blocker.id });
+      const { run } = harness([subject, blocker], RENAMED_IR, subject);
+
+      const result = await run();
+
+      expect(result.repaired).toBe(true);
+      expect(result.reason).not.toBe("scopes-still-overlap");
+    }
+  });
+
+  it.each([
+    ["a secondary WIP lane without a worktree", card("FN-2", "building-secondary"), "scopes-still-overlap"],
+    ["a secondary review lane with a worktree", card("FN-2", "signoff-secondary", { worktree: "/wt/fn-2", priority: "low" }), "scopes-still-overlap"],
+    ["a secondary terminal lane", card("FN-2", "shipped-secondary", { worktree: "/wt/fn-2", priority: "urgent" }), "repaired"],
+  ])("uses every selected-workflow role lane for overlap repair: %s", async (_description, blocker, expectedReason) => {
+    const subject = card("FN-1", "backlog", { overlapBlockedBy: blocker.id });
+    const { run } = harness([subject, blocker], MULTI_LEASE_IR, subject);
+
+    const result = await run();
+
+    expect(result.reason).toBe(expectedReason);
+  });
+
+  it("reroutes a stale blocker to a secondary WIP holder", async () => {
+    const subject = card("FN-1", "backlog", { overlapBlockedBy: "FN-2", status: "queued" });
+    const { run, updates } = harness(
+      [
+        subject,
+        card("FN-2", "shipped-primary"),
+        card("FN-3", "building-secondary"),
+      ],
+      MULTI_LEASE_IR,
+      subject,
+    );
+
+    await run();
+
+    expect(updates[updates.length - 1]).toMatchObject({ overlapBlockedBy: "FN-3" });
   });
 
   it("counts a dependency in a RENAMED complete lane as resolved", async () => {
@@ -165,13 +289,7 @@ describe("repairOverlapBlocker resolves the board's own lanes", () => {
     expect(updates[updates.length - 1]).not.toHaveProperty("blockedBy");
   });
 
-  it("still reports a dependency that is genuinely unfinished", async () => {
-    /*
-    FN-3 is PAUSED deliberately. An unpaused card in the wip lane holds a file-scope lease, so the
-    repair reroutes the overlap blocker to it rather than reporting a dependency — which is correct,
-    and is what this case asserted by accident on the first run. Pausing it removes the lease so the
-    dependency half of the repair is the thing under test.
-    */
+  it("reroutes to a paused WIP blocker because it retains its file-scope lease", async () => {
     const subject = card("FN-1", "backlog", { overlapBlockedBy: "FN-2", dependencies: ["FN-3"], status: "queued" });
     const { run, updates } = harness(
       [subject, card("FN-2", "shipped"), card("FN-3", "building", { paused: true })],
@@ -181,6 +299,6 @@ describe("repairOverlapBlocker resolves the board's own lanes", () => {
 
     await run();
 
-    expect(updates[updates.length - 1]).toMatchObject({ blockedBy: "FN-3" });
+    expect(updates[updates.length - 1]).toMatchObject({ overlapBlockedBy: "FN-3" });
   });
 });

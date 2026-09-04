@@ -8,7 +8,7 @@
  */
 import { resolve } from "node:path";
 import type { Task, TaskStore } from "@fusion/core";
-import { isWorkspaceTask, loadWorkspaceConfig, resolveReboundTarget, resolveWorkflowIrForTask } from "@fusion/core";
+import { isWorkspaceTask, loadWorkspaceConfig } from "@fusion/core";
 import { hasUsableWorktreeShape } from "../worktree/worktree-pool.js";
 import {
   classifyMissingWorktreeSessionStartFailure,
@@ -179,22 +179,17 @@ export async function autoRecoverWorktreeSessionStartFailure(
     ? `retry budget reset from ${task.worktreeSessionRetryCount ?? 0}/${MAX_WORKTREE_SESSION_RETRIES}`
     : `attempt ${nextCount}/${MAX_WORKTREE_SESSION_RETRIES}`;
   /*
-  FNXC:WorkflowLifecycleTraits 2026-07-19-06:30 (U6 / KTD-10):
-  Requeue the recovered card to the workflow's TRAIT-derived backlog column (hold →
-  intake → first), not the literal "todo".
+  FNXC:LifecycleContainment 2026-08-28-03:03:
+  FN-207 resolves recovery relative to the live source role: review returns to WIP and WIP returns
+  to hold. No hold/intake/first-column fallback is allowed when the adjacent target is absent.
   */
-  let reboundColumn = "todo";
-  try {
-    reboundColumn = resolveReboundTarget(await resolveWorkflowIrForTask(store, task.id)) ?? "todo";
-  } catch {
-    // Keep the legacy literal on any IR-resolution failure.
-  }
+  const recoveryColumn = task.column;
   await store.logEntry(
     task.id,
     noProgress
-      ? `Auto-recovered (no-progress): session-start refused unusable worktree${staleWorktree ? ` (${staleWorktree})` : ""} — cleared stale session metadata and requeued to ${reboundColumn} (${attemptLabel}, failure: ${failureExcerpt})`
+      ? `Auto-recovered (no-progress): session-start refused unusable worktree${staleWorktree ? ` (${staleWorktree})` : ""} — cleared stale session metadata and retained in ${recoveryColumn} (${attemptLabel}, failure: ${failureExcerpt})`
       : hasMismatchedLiveWorktree && !forceClearWorktreeMetadata
-        ? `Auto-recovered: stale resume referenced unusable worktree (${missingWorktreePath}) while the recorded task worktree ${staleWorktree} is still a live checkout — cleared stale session metadata and requeued to ${reboundColumn} (${attemptLabel}, failure: ${failureExcerpt})`
+        ? `Auto-recovered: stale resume referenced unusable worktree (${missingWorktreePath}) while the recorded task worktree ${staleWorktree} is still a live checkout — cleared stale session metadata and retained in ${recoveryColumn} (${attemptLabel}, failure: ${failureExcerpt})`
         /*
         FNXC:MissingWorktreeRecovery 2026-07-26-08:35:
         Name WHICH path was unusable when the recorded worktree and the session path differ.
@@ -203,13 +198,8 @@ export async function autoRecoverWorktreeSessionStartFailure(
           staleWorktree && (!missingWorktreePath || resolve(staleWorktree) !== resolve(missingWorktreePath))
             ? `; the recorded task worktree ${staleWorktree} is ${recordedWorktreeStillUsable ? "still present" : "gone too"}`
             : ""
-        } — cleared stale session metadata${clearWorktreeMetadata && !branchIsRederivable ? ` (kept non-canonical branch ${task.branch})` : ""} and requeued to ${reboundColumn} (${attemptLabel}, failure: ${failureExcerpt})`,
+        } — cleared stale session metadata${clearWorktreeMetadata && !branchIsRederivable ? ` (kept non-canonical branch ${task.branch})` : ""} and retained in ${recoveryColumn} (${attemptLabel}, failure: ${failureExcerpt})`,
   );
-  if (noProgress) {
-    // #1411: backward recovery move — recoveryRehome skips order-derived adjacency.
-    await store.moveTask(task.id, reboundColumn, { moveSource: "engine", recoveryRehome: true });
-  } else {
-    await store.moveTask(task.id, reboundColumn, { preserveProgress: true, moveSource: "engine", recoveryRehome: true });
-  }
+  // Legacy outcome name retained for callers; lifecycle recovery itself is in-place.
   return { outcome: "requeue-todo", retries: nextCount, classification };
 }

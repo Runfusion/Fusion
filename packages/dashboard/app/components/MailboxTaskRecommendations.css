@@ -1,9 +1,87 @@
-.mailbox-task-recommendations { margin-block: var(--space-2); display: grid; gap: var(--space-2); }
-.mailbox-task-recommendations__item { display: grid; gap: var(--space-3); padding: var(--space-3); }
-.mailbox-task-recommendations__heading { display: flex; align-items: center; gap: var(--space-2); }
-.mailbox-task-recommendations__heading h3, .mailbox-task-recommendations__content p { margin: 0; }
-.mailbox-task-recommendations__heading span { border: var(--border-width) solid var(--color-border); border-radius: var(--radius-md); padding-inline: var(--space-2); background: var(--color-surface); }
-.mailbox-task-recommendations__action { display: grid; gap: var(--space-2); justify-items: start; }
-.mailbox-task-recommendations__error { color: var(--color-error); }
-.mailbox-task-recommendations__unavailable { margin-block: var(--space-2); color: var(--color-warning); }
-@media (max-width: 768px) { .mailbox-task-recommendations .btn { inline-size: 100%; } }
+/*
+FNXC:MailboxTaskCards 2026-09-01-05:06:
+Mailbox task cards must reference only defined dashboard tokens because an undefined custom property
+silently invalidates its declaration and previously erased card padding, spacing, borders, and backgrounds.
+*/
+.mailbox-task-recommendations {
+  display: grid;
+  gap: var(--space-sm);
+  margin-block: var(--space-md);
+}
+
+.mailbox-task-recommendations__item {
+  background: var(--card);
+  border: var(--btn-border-width) solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  display: grid;
+  gap: var(--space-sm);
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+  padding: var(--space-md);
+}
+
+.mailbox-task-recommendations__content {
+  display: grid;
+  gap: var(--space-xs);
+}
+
+.mailbox-task-recommendations__heading {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+.mailbox-task-recommendations__heading h3 {
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-tight);
+  margin: 0;
+}
+
+.mailbox-task-recommendations__heading span {
+  background: var(--surface);
+  border: var(--btn-border-width) solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  padding: calc(var(--space-xs) / 2) var(--space-xs);
+  white-space: nowrap;
+}
+
+.mailbox-task-recommendations__content p {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
+  margin: 0;
+}
+
+.mailbox-task-recommendations__action {
+  display: grid;
+  gap: var(--space-sm);
+  justify-items: start;
+}
+
+.mailbox-task-recommendations__error {
+  color: var(--color-error);
+  font-size: var(--font-size-xs);
+}
+
+.mailbox-task-recommendations__unavailable {
+  color: var(--color-warning);
+  font-size: var(--font-size-sm);
+  margin-block: var(--space-md);
+}
+
+@media (max-width: 768px) {
+  .mailbox-task-recommendations__item {
+    padding: var(--space-sm);
+  }
+
+  .mailbox-task-recommendations .btn {
+    inline-size: 100%;
+  }
+
+  .mailbox-task-recommendations__action {
+    justify-items: stretch;
+  }
+}

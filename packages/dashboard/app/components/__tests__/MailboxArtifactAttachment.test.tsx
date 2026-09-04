@@ -3,13 +3,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MailboxArtifactAttachment } from "../MailboxArtifactAttachment";
 import { artifactMediaUrlWithToken } from "../../api";
 
+const { mockArtifactImageViewer } = vi.hoisted(() => ({ mockArtifactImageViewer: vi.fn() }));
+
 vi.mock("../../api", () => ({
   artifactMediaUrlWithToken: vi.fn((id: string, projectId?: string) => `/api/artifacts/${id}/media${projectId ? `?projectId=${projectId}&` : "?"}fn_token=daemon-token`),
 }));
 
 vi.mock("../ArtifactImageViewer", () => ({
   ArtifactImage: ({ title, onError }: { title: string; onError?: () => void }) => <img alt={title} src="blob:secure-preview" onError={onError} />,
-  ArtifactImageViewer: ({ title, onClose }: { title: string; onClose: () => void }) => <div role="dialog"><img alt={title} src="blob:secure-preview" /><button type="button" aria-label="Close image artifact preview" onClick={onClose}>Close</button></div>,
+  ArtifactImageViewer: (props: { artifactId: string; projectId?: string; title: string; onClose: () => void }) => {
+    mockArtifactImageViewer(props);
+    return <div role="dialog"><img alt={props.title} src="blob:secure-preview" /><button type="button" aria-label="Close image artifact preview" onClick={props.onClose}>Close</button></div>;
+  },
 }));
 
 const mockArtifactMediaUrlWithToken = vi.mocked(artifactMediaUrlWithToken);
@@ -18,6 +23,7 @@ describe("MailboxArtifactAttachment", () => {
   beforeEach(() => {
     cleanup();
     mockArtifactMediaUrlWithToken.mockClear();
+    mockArtifactImageViewer.mockClear();
   });
   afterEach(() => cleanup());
 
@@ -37,6 +43,13 @@ describe("MailboxArtifactAttachment", () => {
     expect(image).toHaveAttribute("src", "blob:secure-preview");
     fireEvent.click(screen.getAllByRole("button", { name: "Open artifact: Screenshot" }).at(-1)!);
     expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(mockArtifactImageViewer).toHaveBeenCalledWith(expect.objectContaining({
+      artifactId: "art-image",
+      projectId: "proj-1",
+      title: "Screenshot",
+      onClose: expect.any(Function),
+    }));
+    expect(Object.keys(mockArtifactImageViewer.mock.calls[0][0]).sort()).toEqual(["artifactId", "onClose", "projectId", "title"]);
     expect(document.body.innerHTML).not.toContain("fn_token");
     expect(document.body.innerHTML).not.toContain("daemon-token");
   });

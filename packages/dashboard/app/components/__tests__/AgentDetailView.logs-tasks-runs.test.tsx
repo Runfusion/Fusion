@@ -157,7 +157,7 @@ describe("Logs tab", () => {
     expect(viewerText.indexOf("Middle entry")).toBeLessThan(viewerText.indexOf("Newest entry"));
   });
 
-  it("renders tool details collapsed by default", async () => {
+  it("shows a visible clamped run-log payload with a working reveal control", async () => {
     const latestRun = {
       id: "run-1003",
       agentId: "agent-001",
@@ -165,6 +165,7 @@ describe("Logs tab", () => {
       endedAt: null,
       status: "active",
     } as AgentHeartbeatRun;
+    const detail = Array.from({ length: 7 }, (_, index) => `line ${index + 1}`).join("\n");
     mockFetchAgent.mockResolvedValue(createMockAgent({
       taskId: undefined,
       activeRun: latestRun,
@@ -177,7 +178,7 @@ describe("Logs tab", () => {
         taskId: "agent-run",
         type: "tool",
         text: "ls -la packages/",
-        detail: "very long tool output",
+        detail,
       },
     ]);
 
@@ -191,9 +192,45 @@ describe("Logs tab", () => {
 
     fireEvent.click(await screen.findByText("Logs"));
     await screen.findByText("ls -la packages/");
+    const content = await screen.findByTestId("tool-detail-content");
     const toggle = await screen.findByTestId("tool-detail-toggle");
+    expect(content).toBeVisible();
+    expect(content).toHaveTextContent("line 7");
+    expect(content).toHaveClass("agent-log-tool-detail-content--preview");
     expect(toggle).toHaveAttribute("aria-expanded", "false");
-    expect(screen.getByTestId("agent-log-viewer")).toBeInTheDocument();
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(content).not.toHaveClass("agent-log-tool-detail-content--preview");
+  });
+
+  it("explains historical detail-less run rows but not excerpt-only fallback rows", async () => {
+    const latestRun = {
+      id: "run-1004",
+      agentId: "agent-001",
+      startedAt: "2024-01-01T00:00:00.000Z",
+      endedAt: "2024-01-01T00:02:00.000Z",
+      status: "completed",
+    } as AgentHeartbeatRun;
+    mockFetchAgent.mockResolvedValue(createMockAgent({ taskId: undefined, activeRun: latestRun, completedRuns: [] }));
+    mockFetchAgentRuns.mockResolvedValue([latestRun]);
+    mockFetchAgentRunLogs.mockResolvedValue([
+      { timestamp: "2024-01-01T00:01:00.000Z", taskId: "FN-001", type: "tool", text: "read" },
+      { timestamp: "2024-01-01T00:01:01.000Z", taskId: "FN-001", type: "tool_result", text: "read" },
+    ]);
+
+    const view = render(<AgentDetailView agentId="agent-001" onClose={vi.fn()} addToast={vi.fn()} />);
+    fireEvent.click(await screen.findByText("Logs"));
+    await waitFor(() => expect(screen.getByTestId("agent-log-missing-detail-hint")).toBeInTheDocument());
+
+    mockFetchAgentRunLogs.mockResolvedValue([
+      { timestamp: "2024-01-01T00:01:00.000Z", taskId: "agent-run", type: "text", text: "stdout excerpt" },
+      { timestamp: "2024-01-01T00:01:01.000Z", taskId: "agent-run", type: "tool_error", text: "stderr", detail: "stderr excerpt" },
+    ]);
+    view.unmount();
+    render(<AgentDetailView agentId="agent-001" onClose={vi.fn()} addToast={vi.fn()} />);
+    fireEvent.click(await screen.findByText("Logs"));
+    await waitFor(() => expect(screen.getByText("stdout excerpt")).toBeInTheDocument());
+    expect(screen.queryByTestId("agent-log-missing-detail-hint")).toBeNull();
   });
 });
 
@@ -434,6 +471,13 @@ describe("Runs Tab — click to show logs", () => {
     const mockLogs: AgentLogEntry[] = [
       { timestamp: "2024-01-01T00:01:00.000Z", taskId: "FN-001", text: "Starting task execution", type: "text" },
       { timestamp: "2024-01-01T00:02:00.000Z", taskId: "FN-001", text: "Read file: src/index.ts", type: "tool" },
+      {
+        timestamp: "2024-01-01T00:03:00.000Z",
+        taskId: "FN-001",
+        text: "fn_run_verification",
+        type: "tool_result",
+        detail: Array.from({ length: 7 }, (_, index) => `result ${index + 1}`).join("\n"),
+      },
     ];
     mockFetchAgentRunLogs.mockResolvedValue(mockLogs);
 
@@ -471,6 +515,12 @@ describe("Runs Tab — click to show logs", () => {
     await waitFor(() => {
       expect(screen.getByText("Starting task execution")).toBeInTheDocument();
     });
+    const content = screen.getByTestId("tool-detail-content");
+    expect(content).toBeVisible();
+    expect(content).toHaveTextContent("result 7");
+    expect(content).toHaveClass("agent-log-tool-detail-content--preview");
+    fireEvent.click(screen.getByTestId("tool-detail-toggle"));
+    expect(content).not.toHaveClass("agent-log-tool-detail-content--preview");
   });
 
   it("shows loading state while fetching run logs", async () => {

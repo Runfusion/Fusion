@@ -1,10 +1,9 @@
 /*
 FNXC:MainContent 2026-06-24-00:00:
-MainContent is the presentational switch for the dashboard's main content area, extracted verbatim from AppInner's renderMainContent(). It is a pure switch on taskView/viewMode returning the existing <PageErrorBoundary>/<Suspense> subtrees unchanged. The lazy view chunks (and their leading-underscore inventory convention) stay declared in App.tsx per the docs guard and are threaded in as props; the eager ChatView.css import remains in App.tsx so the styles bundle into the main CSS file.
+MainContent is the dashboard main-content router extracted from AppInner's render path. Its hook-free switch still owns every ordinary destination, while Board, List, and Chat yield to MainViewKeepAlive so visited project views preserve local state without remaining active behind another route. The lazy view chunks (and their leading-underscore inventory convention) stay declared in App.tsx per the docs guard and are threaded in as props; the eager ChatView.css import remains in App.tsx so the styles bundle into the main CSS file.
 */
 import { Suspense, useCallback, useEffect, useState } from "react";
 import type { NativeStructurePreviewResult, NativeStructureRef, Task, TaskDetail } from "@fusion/core";
-import { Board } from "../Board";
 import { TaskCard } from "../TaskCard";
 import { ListView } from "../ListView";
 import { TaskDetailContent } from "../TaskDetailModal";
@@ -16,7 +15,6 @@ import { IdeationPanel } from "../command-center/IdeationPanel";
 import type { NativeStructureCandidate } from "../MessageComposer";
 import { PageErrorBoundary } from "../ErrorBoundary";
 import { BackendConnectionErrorPage } from "../BackendConnectionErrorPage";
-import { CapacityRiskBanner } from "../CapacityRiskBanner";
 import { HeaderWorkflowSwitcherSlot } from "../HeaderWorkflowSwitcherSlot";
 import { GraphWorkflowSwitcherSlot, filterTasksByGraphWorkflowSelection } from "../GraphWorkflowSwitcherSlot";
 import { PluginDashboardViewHost } from "../../plugins/PluginDashboardViewHost";
@@ -27,6 +25,7 @@ import { attachNativeStructureRefToDrag } from "../../utils/nativeStructureDrag"
 import type { DetailTaskTab } from "../../hooks/useModalManager";
 import type { SectionId } from "../SettingsModal";
 import type { MainContentProps } from "./types";
+import { MainViewKeepAlive, isKeepAliveMainViewId, type KeepAliveMainViewId } from "./MainViewKeepAlive";
 
 /*
 FNXC:CommandCenterAgentActivity 2026-08-10-01:54:
@@ -35,7 +34,8 @@ A monotonic request id makes repeated clicks for the same agent observable to Ag
 let agentAnchorRequestSeq = 0;
 export function nextAgentAnchorRequestId(): number { return ++agentAnchorRequestSeq; }
 
-export function MainContent({
+export function MainContent(props: MainContentProps) {
+  const {
   columnFlagsByTaskId,
   showBackendConnectionErrorPage,
   projectsError,
@@ -90,7 +90,6 @@ export function MainContent({
   prAuthAvailable,
   autoMerge,
   mergeStrategy,
-  planAutoApproveEnabled,
   settingsLoaded,
   openTasksInRightSidebar,
   openMobileTasksInPopup,
@@ -99,12 +98,7 @@ export function MainContent({
   taskDetailChatFirst,
   chatMessageLayout,
   skillsEnabled,
-  experimentalFeatures,
-  setQuickChatOpen,
-  chatComposerPrefill,
-  onOpenSessionInNewWindow,
   mailComposerPrefill,
-  onSendAsReport,
   onOpenChatWithPrefill,
   setMailboxUnreadCount,
   setMissionTargetId,
@@ -139,41 +133,23 @@ export function MainContent({
   handleGitHubImport,
   devServerEnabled,
   mainPanelDetailTask,
-  filteredBoardTasks,
-  maxConcurrent,
-  effectiveMaxConcurrent,
-  showWorktreeGrouping,
   moveTask,
   pauseTask,
-  openBoardTaskDetail,
   openTaskDetailInMainPanel,
-  openGroupModalWithNav,
   handleBoardQuickCreate,
   openNewTaskWithNav,
-  toggleAutoMerge,
-  togglePlanAutoApprove,
   globalPaused,
   updateTask,
   retryTask,
-  archiveTask,
-  unarchiveTask,
+    archiveTask,
   revertTask,
   deleteTask,
-  archiveAllDone,
-  loadArchivedTasks,
-  loadMoreArchivedTasks,
-  changeArchivedSortMode,
-  archivedSortMode,
-  archivedHasMore,
-  archivedLoadingMore,
   searchQuery,
   availableModels,
   favoriteProviders,
   favoriteModels,
-  handleOpenDetailWithTab,
   handleToggleFavorite,
   handleToggleModelFavorite,
-  staleHighFanoutBlockerAgeThresholdMs,
   lastFetchTimeMs,
   openCreateWorkflowWithNav,
   sidebarActive,
@@ -185,17 +161,13 @@ export function MainContent({
   resetTask,
   duplicateTask,
   unpauseTask,
-  capacityRiskBannerEnabled,
-  capacityRiskDismissed,
-  capacityRiskSignal,
-  handleDismissCapacityRisk,
   AgentsView,
-  ChatView,
   CommandCenter,
   DevServerView,
   DocumentsView,
   EvalsView,
   GoalsView,
+  PatchnodeView,
   InsightsView,
   MemoryView,
   PullRequestView,
@@ -206,7 +178,7 @@ export function MainContent({
   _ImportTasksView,
   _SettingsView,
   _WorkflowEditorView,
-}: MainContentProps) {
+  } = props;
   const [missionWorkflowId, setMissionWorkflowId] = useState<string | null>(null);
   const [nativeStructureCandidates, setNativeStructureCandidates] = useState<NativeStructureCandidate[]>([]);
 
@@ -294,6 +266,41 @@ export function MainContent({
     }
   }, [handleChangeTaskView, setGoalAnchorId, setMissionTargetId]);
 
+  const projectKey = currentProject?.id ?? "all-projects";
+  const selectedKeepAliveId: KeepAliveMainViewId | null = isKeepAliveMainViewId(taskView)
+    ? taskView
+    : taskView === "task-detail" && mainPanelDetailTask === null
+      ? "board"
+      : null;
+  const earlyHidden = viewMode !== "project" || showBackendConnectionErrorPage;
+  const [keepAliveViews, setKeepAliveViews] = useState<{ projectKey: string; ids: KeepAliveMainViewId[] }>(
+    () => ({ projectKey, ids: [] }),
+  );
+  const previousIds = keepAliveViews.projectKey === projectKey ? keepAliveViews.ids : [];
+  const mountedKeepAliveIds = !earlyHidden && selectedKeepAliveId && !previousIds.includes(selectedKeepAliveId)
+    ? [...previousIds, selectedKeepAliveId]
+    : previousIds;
+  if (keepAliveViews.projectKey !== projectKey || mountedKeepAliveIds !== keepAliveViews.ids) {
+    setKeepAliveViews({ projectKey, ids: mountedKeepAliveIds });
+  }
+
+  /*
+  FNXC:MainViewKeepAlive 2026-08-30-19:05:
+  The overview and backend-error pages must deactivate retained views as well as hide them.
+  Fold that early-hide condition into activeId here, rather than passing a second visibility input,
+  so a hidden Board cannot retain the shared header slot and hidden Chat cannot mark messages read.
+  */
+  const activeKeepAliveId = earlyHidden ? null : selectedKeepAliveId;
+  const mainViewKeepAlive = (
+    <MainViewKeepAlive
+      activeId={activeKeepAliveId}
+      mountedIds={mountedKeepAliveIds}
+      projectKey={projectKey}
+      mainContentProps={props}
+    />
+  );
+
+  const renderSwitchView = () => {
   if (showBackendConnectionErrorPage) {
     return (
       <BackendConnectionErrorPage
@@ -447,6 +454,7 @@ export function MainContent({
                 taskColumnFlags={columnFlagsByTaskId?.get(task.id)}
                 projectId={currentProject?.id}
                 onOpenDetail={openPluginTaskDetail}
+                onOpenChatWithPrefill={onOpenChatWithPrefill}
                 addToast={addToast}
                 onUpdateTask={updateTask}
                 prAuthAvailable={prAuthAvailable}
@@ -488,33 +496,12 @@ export function MainContent({
   }
 
   if (taskView === "chat") {
-    return (
-      <PageErrorBoundary>
-        <Suspense fallback={null}>
-          {/*
-          FNXC:ProjectSwitchModalReset 2026-07-23-00:00:
-          Key embedded Chat by project, mirroring Quick Chat's FN-8257 FloatingWindow key and
-          the embedded Planning view. taskView persists per project, so when both projects last
-          used Chat the component survived a swap: useChat refetched the session LIST on
-          projectId change but never reset activeSession/messages or closed the live stream, so
-          project A's open conversation kept rendering (and streaming) under project B. The
-          remount closes the stream via unmount cleanup and restores project B's own persisted
-          active session.
-          */}
-          <ChatView
-            key={currentProject?.id ?? "all-projects"}
-            addToast={addToast}
-            projectId={currentProject?.id}
-            experimentalFeatures={experimentalFeatures}
-            initialComposerDraft={chatComposerPrefill?.text}
-            initialComposerDraftNonce={chatComposerPrefill?.nonce}
-            onPopOut={() => setQuickChatOpen(true)}
-            onOpenSessionInNewWindow={onOpenSessionInNewWindow}
-            onSendAsReport={onSendAsReport}
-          />
-        </Suspense>
-      </PageErrorBoundary>
-    );
+    /*
+    FNXC:MainViewKeepAlive 2026-08-30-19:05:
+    Embedded Chat yields ownership to the retained host, keyed by project there so project changes
+    still reset conversations while ordinary navigation only hides the live instance.
+    */
+    return null;
   }
 
   if (taskView === "mailbox") {
@@ -747,6 +734,21 @@ export function MainContent({
     );
   }
 
+  if (taskView === "patchnode") {
+    return (
+      <PageErrorBoundary>
+        <Suspense fallback={null}>
+          <PatchnodeView
+            projectId={currentProject?.id}
+            onOpenTaskDetail={(taskId) => fetchTaskDetail(taskId, currentProject?.id)
+              .then((task) => openDetailTask(task as TaskDetail))
+              .catch(() => undefined)}
+          />
+        </Suspense>
+      </PageErrorBoundary>
+    );
+  }
+
   if (taskView === "goalsView") {
     if (!settingsLoaded || !goalsEnabled) {
       return null;
@@ -884,64 +886,12 @@ export function MainContent({
       ? (boardTask ? mergeTaskSnapshot(mainPanelDetailTask, boardTask) : mainPanelDetailTask)
       : null;
     if (!liveDetailTask) {
-      return (
-        <PageErrorBoundary>
-          <Board
-            tasks={filteredBoardTasks}
-            projectId={currentProject?.id}
-            maxConcurrent={maxConcurrent}
-            effectiveMaxConcurrent={effectiveMaxConcurrent}
-            showWorktreeGrouping={showWorktreeGrouping}
-            onMoveTask={moveTask}
-            onPauseTask={pauseTask}
-            onOpenDetail={openBoardTaskDetail}
-            onOpenRefine={(task) => openDetailTask(task, undefined, { initialAction: "refine" })}
-            onOpenGroupModal={openGroupModalWithNav}
-            addToast={addToast}
-            onQuickCreate={handleBoardQuickCreate}
-            onNewTask={openNewTaskWithNav}
-            onPlanningMode={openPlanningWithInitialPlanWithNav}
-            autoMerge={autoMerge}
-            mergeStrategy={mergeStrategy}
-            onToggleAutoMerge={toggleAutoMerge}
-            planAutoApproveEnabled={planAutoApproveEnabled}
-            onTogglePlanAutoApprove={togglePlanAutoApprove}
-            globalPaused={globalPaused}
-            onUpdateTask={updateTask}
-            onRetryTask={retryTask}
-            onUnpauseTask={unpauseTask}
-            onResetTask={resetTask}
-            onDuplicateTask={duplicateTask}
-            onMergeTask={mergeTask}
-            onArchiveTask={archiveTask}
-            onUnarchiveTask={unarchiveTask}
-            onRevertTask={revertTask}
-            onReviseTask={(task) => modalManager.openNewTaskWithDescription(task.description)}
-            onDeleteTask={deleteTask}
-            onArchiveAllDone={archiveAllDone}
-            onLoadArchivedTasks={loadArchivedTasks}
-            onLoadMoreArchivedTasks={loadMoreArchivedTasks}
-            archivedSortMode={archivedSortMode}
-            onArchivedSortModeChange={changeArchivedSortMode}
-            archivedHasMore={archivedHasMore}
-            archivedLoadingMore={archivedLoadingMore}
-            searchQuery={searchQuery}
-            availableModels={availableModels}
-            onOpenDetailWithTab={handleOpenDetailWithTab}
-            favoriteProviders={favoriteProviders}
-            favoriteModels={favoriteModels}
-            onToggleFavorite={handleToggleFavorite}
-            onToggleModelFavorite={handleToggleModelFavorite}
-            staleHighFanoutBlockerAgeThresholdMs={staleHighFanoutBlockerAgeThresholdMs}
-            onOpenMission={handleOpenMission}
-            lastFetchTimeMs={lastFetchTimeMs}
-            prAuthAvailable={prAuthAvailable}
-            onOpenWorkflowEditor={openWorkflowEditorWithNav}
-            onCreateWorkflow={openCreateWorkflowWithNav}
-            workflowControlsInHeader={sidebarActive || isMobile}
-          />
-        </PageErrorBoundary>
-      );
+      /*
+      FNXC:MainViewKeepAlive 2026-08-30-19:05:
+      Empty task detail returns to the already-retained Board rather than mounting a second Board.
+      selectedKeepAliveId treats this fallback as Board ownership before this switch executes.
+      */
+      return null;
     }
     return (
       <PageErrorBoundary>
@@ -974,9 +924,10 @@ export function MainContent({
               onReviseTask={(task) => modalManager.openNewTaskWithDescription(task.description)}
               onMergeTask={mergeTask}
               onRetryTask={retryTask}
+              onOpenChatWithPrefill={onOpenChatWithPrefill}
               onPauseTask={pauseTask}
               onUnpauseTask={unpauseTask}
-              onResetTask={resetTask}
+            onResetTask={resetTask}
               onDuplicateTask={duplicateTask}
               /*
               FNXC:Navigation 2026-06-22-09:00:
@@ -1002,70 +953,23 @@ export function MainContent({
   }
 
   if (taskView === "board") {
-    return (
-      <PageErrorBoundary>
-        {capacityRiskBannerEnabled && !capacityRiskDismissed ? (
-          <CapacityRiskBanner signal={capacityRiskSignal} onDismiss={handleDismissCapacityRisk} />
-        ) : null}
-        <Board
-          tasks={filteredBoardTasks}
-          projectId={currentProject?.id}
-          maxConcurrent={maxConcurrent}
-          effectiveMaxConcurrent={effectiveMaxConcurrent}
-          showWorktreeGrouping={showWorktreeGrouping}
-          onMoveTask={moveTask}
-          onPauseTask={pauseTask}
-          onOpenDetail={openBoardTaskDetail}
-          onOpenRefine={(task) => openDetailTask(task, undefined, { initialAction: "refine" })}
-          onOpenGroupModal={openGroupModalWithNav}
-          addToast={addToast}
-          onQuickCreate={handleBoardQuickCreate}
-          onNewTask={openNewTaskWithNav}
-          onPlanningMode={openPlanningWithInitialPlanWithNav}
-          autoMerge={autoMerge}
-          mergeStrategy={mergeStrategy}
-          onToggleAutoMerge={toggleAutoMerge}
-          planAutoApproveEnabled={planAutoApproveEnabled}
-          onTogglePlanAutoApprove={togglePlanAutoApprove}
-          globalPaused={globalPaused}
-          onUpdateTask={updateTask}
-          onRetryTask={retryTask}
-          onUnpauseTask={unpauseTask}
-          onResetTask={resetTask}
-          onDuplicateTask={duplicateTask}
-          onMergeTask={mergeTask}
-          onArchiveTask={archiveTask}
-          onUnarchiveTask={unarchiveTask}
-          onRevertTask={revertTask}
-          onReviseTask={(task) => modalManager.openNewTaskWithDescription(task.description)}
-          onDeleteTask={deleteTask}
-          onArchiveAllDone={archiveAllDone}
-          onLoadArchivedTasks={loadArchivedTasks}
-          onLoadMoreArchivedTasks={loadMoreArchivedTasks}
-          archivedSortMode={archivedSortMode}
-          onArchivedSortModeChange={changeArchivedSortMode}
-          archivedHasMore={archivedHasMore}
-          archivedLoadingMore={archivedLoadingMore}
-          searchQuery={searchQuery}
-          availableModels={availableModels}
-          onOpenDetailWithTab={handleOpenDetailWithTab}
-          favoriteProviders={favoriteProviders}
-          favoriteModels={favoriteModels}
-          onToggleFavorite={handleToggleFavorite}
-          onToggleModelFavorite={handleToggleModelFavorite}
-          staleHighFanoutBlockerAgeThresholdMs={staleHighFanoutBlockerAgeThresholdMs}
-          onOpenMission={handleOpenMission}
-          lastFetchTimeMs={lastFetchTimeMs}
-          prAuthAvailable={prAuthAvailable}
-          onOpenWorkflowEditor={openWorkflowEditorWithNav}
-          onCreateWorkflow={openCreateWorkflowWithNav}
-          workflowControlsInHeader={sidebarActive || isMobile}
-        />
-      </PageErrorBoundary>
-    );
+    /*
+    FNXC:MainViewKeepAlive 2026-08-30-19:05:
+    The canonical Board route yields ownership to MainViewKeepAlive. Its capacity banner remains
+    a sibling inside that host, so hidden Board state cannot leave standalone visible chrome.
+    */
+    return null;
   }
 
-  // List view
+  // List remains the fallback for disabled destinations that do not own a dedicated switch branch.
+  if (taskView === "list") {
+    /*
+    FNXC:MainViewKeepAlive 2026-08-30-19:05:
+    The canonical List route yields ownership to the retained host. Non-list fallback routes still
+    render this switch-owned ListView, so a disabled feature cannot create a duplicate retained list.
+    */
+    return null;
+  }
   return (
     <PageErrorBoundary>
       <ListView
@@ -1073,6 +977,7 @@ export function MainContent({
         projectId={currentProject?.id}
         onMoveTask={moveTask}
         onRetryTask={retryTask}
+        onOpenChatWithPrefill={onOpenChatWithPrefill}
         onDeleteTask={deleteTask}
         onReviseTask={(task) => modalManager.openNewTaskWithDescription(task.description)}
         onPauseTask={pauseTask}
@@ -1080,7 +985,7 @@ export function MainContent({
         onArchiveTask={archiveTask}
         onRevertTask={revertTask}
         onMergeTask={mergeTask}
-        onResetTask={resetTask}
+            onResetTask={resetTask}
         onDuplicateTask={duplicateTask}
         onRefinementCreated={(task) => ingestCreatedTasks([task])}
         onOpenDetail={(task, options) => openDetailTask(task, undefined, options)}
@@ -1107,5 +1012,13 @@ export function MainContent({
         workflowControlsInHeader={sidebarActive || isMobile}
       />
     </PageErrorBoundary>
+  );
+  };
+
+  return (
+    <>
+      {mainViewKeepAlive}
+      {renderSwitchView()}
+    </>
   );
 }

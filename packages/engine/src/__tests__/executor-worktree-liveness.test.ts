@@ -138,7 +138,7 @@ describe("FN-4114 worktree liveness assertion", () => {
         classification: "repo-root",
         observed: "/repo",
         observedRealpath: "/repo",
-        expected: "/repo/.worktrees/* (usable, registered)",
+        expected: "/repo/.fusion/worktrees/* (usable, registered)",
         registered: ["/repo", "/repo/.worktrees/swift-falcon"],
         registeredContainsObserved: true,
         invalidCheckoutPath: "repo-root",
@@ -150,7 +150,7 @@ describe("FN-4114 worktree liveness assertion", () => {
 
   it("FN-6922 proceeds when acquisition self-heals a repo-root assignment to a fresh worktree", async () => {
     vi.spyOn(worktreeAcquisition, "acquireTaskWorktree").mockResolvedValue({
-      worktreePath: "/repo/.worktrees/fn-6922-fresh",
+      worktreePath: "/repo/.fusion/worktrees/fn-6922-fresh",
       branch: "fusion/fn-4114",
       source: "fresh",
       hydrated: true,

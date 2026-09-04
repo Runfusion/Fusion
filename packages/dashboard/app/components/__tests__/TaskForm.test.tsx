@@ -95,6 +95,67 @@ function renderTaskForm(props: Partial<React.ComponentProps<typeof TaskForm>> = 
   return { ...result, props: mergedProps };
 }
 
+const FAST_OPTIONAL_STEPS = [
+  { templateId: "code-review", name: "Code Review", phase: "pre-merge" as const, defaultOn: true },
+  { templateId: "manual-smoke", name: "Manual smoke", phase: "pre-merge" as const, defaultOn: false },
+];
+const TASK_FORM_TEST_NOOP = () => {};
+
+interface FastModeTaskFormHarnessProps {
+  initialExecutionMode?: "standard" | "fast";
+  initialEnabledWorkflowSteps?: string[];
+  onExecutionModeChange?: (mode: "standard" | "fast") => void;
+  onEnabledWorkflowStepsChange?: NonNullable<React.ComponentProps<typeof TaskForm>["onEnabledWorkflowStepsChange"]>;
+}
+
+/** Holds create-form values in state so Fast transitions use the same controlled flow as New Task. */
+function FastModeTaskFormHarness({
+  initialExecutionMode = "standard",
+  initialEnabledWorkflowSteps = ["code-review"],
+  onExecutionModeChange = TASK_FORM_TEST_NOOP,
+  onEnabledWorkflowStepsChange = TASK_FORM_TEST_NOOP,
+}: FastModeTaskFormHarnessProps) {
+  const [executionMode, setExecutionMode] = useState(initialExecutionMode);
+  const [enabledWorkflowSteps, setEnabledWorkflowSteps] = useState(initialEnabledWorkflowSteps);
+
+  return (
+    <TaskForm
+      mode="create"
+      description=""
+      onDescriptionChange={TASK_FORM_TEST_NOOP}
+      dependencies={[]}
+      onDependenciesChange={TASK_FORM_TEST_NOOP}
+      executorModel=""
+      onExecutorModelChange={TASK_FORM_TEST_NOOP}
+      validatorModel=""
+      onValidatorModelChange={TASK_FORM_TEST_NOOP}
+      presetMode="default"
+      onPresetModeChange={TASK_FORM_TEST_NOOP}
+      selectedPresetId=""
+      onSelectedPresetIdChange={TASK_FORM_TEST_NOOP}
+      selectedWorkflowId="wf-explicit"
+      onWorkflowIdChange={TASK_FORM_TEST_NOOP}
+      pendingImages={[]}
+      onImagesChange={TASK_FORM_TEST_NOOP}
+      tasks={[]}
+      addToast={TASK_FORM_TEST_NOOP}
+      isActive
+      reviewLevel={undefined}
+      onReviewLevelChange={TASK_FORM_TEST_NOOP}
+      executionMode={executionMode}
+      onExecutionModeChange={(nextMode) => {
+        onExecutionModeChange(nextMode);
+        setExecutionMode(nextMode);
+      }}
+      enabledWorkflowSteps={enabledWorkflowSteps}
+      onEnabledWorkflowStepsChange={(nextIds, meta) => {
+        onEnabledWorkflowStepsChange(nextIds, meta);
+        setEnabledWorkflowSteps(nextIds);
+      }}
+    />
+  );
+}
+
 async function openWorkflowDropdown() {
   const trigger = await screen.findByTestId("task-workflow-dropdown-trigger");
   fireEvent.click(trigger);
@@ -299,6 +360,130 @@ describe("TaskForm", () => {
     fireEvent.change(screen.getByTestId("task-form-execution-mode-select"), { target: { value: "fast" } });
     expect(onExecutionModeChange).toHaveBeenCalledWith("fast");
     expect(onEnabledWorkflowStepsChange).toHaveBeenCalledWith([], expect.objectContaining({ optionalStepsAvailable: true }));
+  });
+
+  it("restores optional steps through the inline Fast control", async () => {
+    const { fetchWorkflowOptionalSteps } = await import("../../api");
+    vi.mocked(fetchWorkflowOptionalSteps).mockResolvedValue(FAST_OPTIONAL_STEPS as any);
+    const onExecutionModeChange = vi.fn();
+    const onEnabledWorkflowStepsChange = vi.fn();
+    render(
+      <FastModeTaskFormHarness
+        onExecutionModeChange={onExecutionModeChange}
+        onEnabledWorkflowStepsChange={onEnabledWorkflowStepsChange}
+      />,
+    );
+
+    const trigger = await screen.findByTestId("task-form-inline-optional-steps");
+    await waitFor(() => expect(trigger).toHaveTextContent("Steps: 1 selected"));
+    onEnabledWorkflowStepsChange.mockClear();
+
+    fireEvent.click(screen.getByTestId("task-form-inline-fast"));
+    await waitFor(() => expect(trigger).toHaveTextContent("Steps: none"));
+    fireEvent.click(screen.getByTestId("task-form-inline-fast"));
+
+    await waitFor(() => expect(trigger).toHaveTextContent("Steps: 1 selected"));
+    expect(onExecutionModeChange).toHaveBeenNthCalledWith(1, "fast");
+    expect(onExecutionModeChange).toHaveBeenNthCalledWith(2, "standard");
+    expect(onEnabledWorkflowStepsChange).toHaveBeenLastCalledWith(
+      ["code-review"],
+      { optionalStepsAvailable: true, source: "user" },
+    );
+  });
+
+  it("restores optional steps through the Advanced execution-mode select", async () => {
+    const { fetchWorkflowOptionalSteps } = await import("../../api");
+    vi.mocked(fetchWorkflowOptionalSteps).mockResolvedValue(FAST_OPTIONAL_STEPS as any);
+    const onEnabledWorkflowStepsChange = vi.fn();
+    render(<FastModeTaskFormHarness onEnabledWorkflowStepsChange={onEnabledWorkflowStepsChange} />);
+
+    const trigger = await screen.findByTestId("task-form-inline-optional-steps");
+    await waitFor(() => expect(trigger).toHaveTextContent("Steps: 1 selected"));
+    onEnabledWorkflowStepsChange.mockClear();
+    fireEvent.click(screen.getByTestId("task-form-more-options-toggle"));
+
+    const executionModeSelect = await screen.findByTestId("task-form-execution-mode-select");
+    fireEvent.change(executionModeSelect, { target: { value: "fast" } });
+    await waitFor(() => expect(trigger).toHaveTextContent("Steps: none"));
+    fireEvent.change(executionModeSelect, { target: { value: "standard" } });
+
+    await waitFor(() => expect(trigger).toHaveTextContent("Steps: 1 selected"));
+    expect(onEnabledWorkflowStepsChange).toHaveBeenLastCalledWith(
+      ["code-review"],
+      { optionalStepsAvailable: true, source: "user" },
+    );
+  });
+
+  it("merges a step selected while Fast is active after the pre-Fast selection", async () => {
+    const { fetchWorkflowOptionalSteps } = await import("../../api");
+    vi.mocked(fetchWorkflowOptionalSteps).mockResolvedValue(FAST_OPTIONAL_STEPS as any);
+    const onEnabledWorkflowStepsChange = vi.fn();
+    render(<FastModeTaskFormHarness onEnabledWorkflowStepsChange={onEnabledWorkflowStepsChange} />);
+
+    const trigger = await screen.findByTestId("task-form-inline-optional-steps");
+    await waitFor(() => expect(trigger).toHaveTextContent("Steps: 1 selected"));
+    fireEvent.click(screen.getByTestId("task-form-inline-fast"));
+    await waitFor(() => expect(trigger).toHaveTextContent("Steps: none"));
+    fireEvent.click(trigger);
+    fireEvent.click(await screen.findByTestId("wf-optional-steps-dropdown-option-manual-smoke"));
+    await waitFor(() => expect(trigger).toHaveTextContent("Steps: 1 selected"));
+    fireEvent.click(screen.getByTestId("task-form-inline-fast"));
+
+    await waitFor(() => expect(trigger).toHaveTextContent("Steps: 2 selected"));
+    expect(onEnabledWorkflowStepsChange).toHaveBeenLastCalledWith(
+      ["code-review", "manual-smoke"],
+      { optionalStepsAvailable: true, source: "user" },
+    );
+  });
+
+  it("falls back to default-on optional steps when metadata resolves during Fast", async () => {
+    const { fetchWorkflowOptionalSteps } = await import("../../api");
+    let resolveOptionalSteps: (steps: typeof FAST_OPTIONAL_STEPS) => void = () => {};
+    vi.mocked(fetchWorkflowOptionalSteps).mockReturnValue(new Promise((resolve) => {
+      resolveOptionalSteps = resolve;
+    }) as any);
+    const onEnabledWorkflowStepsChange = vi.fn();
+    render(<FastModeTaskFormHarness onEnabledWorkflowStepsChange={onEnabledWorkflowStepsChange} />);
+
+    await waitFor(() => expect(fetchWorkflowOptionalSteps).toHaveBeenCalledWith("wf-explicit", undefined));
+    fireEvent.click(screen.getByTestId("task-form-inline-fast"));
+    await act(async () => {
+      resolveOptionalSteps(FAST_OPTIONAL_STEPS);
+    });
+
+    const trigger = await screen.findByTestId("task-form-inline-optional-steps");
+    await waitFor(() => expect(trigger).toHaveTextContent("Steps: none"));
+    fireEvent.click(screen.getByTestId("task-form-inline-fast"));
+
+    await waitFor(() => expect(trigger).toHaveTextContent("Steps: 1 selected"));
+    expect(onEnabledWorkflowStepsChange).toHaveBeenLastCalledWith(
+      ["code-review"],
+      { optionalStepsAvailable: true, source: "user" },
+    );
+  });
+
+  it("leaves edit-mode optional workflow steps untouched when switching to Standard", async () => {
+    const { fetchWorkflowOptionalSteps } = await import("../../api");
+    vi.mocked(fetchWorkflowOptionalSteps).mockResolvedValue(FAST_OPTIONAL_STEPS as any);
+    const onExecutionModeChange = vi.fn();
+    const onEnabledWorkflowStepsChange = vi.fn();
+    renderTaskForm({
+      mode: "edit",
+      onWorkflowIdChange: undefined,
+      executionMode: "fast",
+      onExecutionModeChange,
+      optionalStepsWorkflowId: "wf-edit",
+      enabledWorkflowSteps: ["manual-smoke"],
+      onEnabledWorkflowStepsChange,
+    });
+
+    await screen.findByTestId("task-form-edit-optional-steps");
+    fireEvent.click(screen.getByTestId("task-form-more-options-toggle"));
+    fireEvent.change(screen.getByTestId("task-form-execution-mode-select"), { target: { value: "standard" } });
+
+    expect(onExecutionModeChange).toHaveBeenCalledTimes(1);
+    expect(onExecutionModeChange).toHaveBeenCalledWith("standard");
+    expect(onEnabledWorkflowStepsChange).not.toHaveBeenCalled();
   });
 
   it("seeds no optional steps when loading resolves after Fast is selected", async () => {
@@ -893,6 +1078,21 @@ describe("TaskForm description-adjacent actions layout (FN-781)", () => {
     renderTaskForm({});
     expect(screen.queryByTestId("task-form-inline-start")).toBeNull();
     expect(screen.getByTestId("task-form-description-actions").querySelector("button:empty")).toBeNull();
+  });
+
+  it("marks only icon-only create actions with the compact sizing class", () => {
+    renderTaskForm({
+      onExecutionModeChange: vi.fn(),
+      executionMode: "standard",
+      onPriorityChange: vi.fn(),
+      onPlanningMode: vi.fn(),
+    });
+
+    expect(screen.getByTestId("task-form-inline-fast")).toHaveClass("task-form-inline-icon-btn");
+    expect(screen.getByTestId("task-form-inline-priority")).toHaveClass("task-form-inline-icon-btn");
+    expect(screen.getByTestId("task-form-inline-attach")).not.toHaveClass("task-form-inline-icon-btn");
+    expect(screen.getByTestId("task-form-inline-models")).not.toHaveClass("task-form-inline-icon-btn");
+    expect(screen.getByTestId("task-form-plan-button")).not.toHaveClass("task-form-inline-icon-btn");
   });
 
   it("does not render description-actions or Start in edit mode", () => {

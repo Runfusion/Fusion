@@ -1,6 +1,15 @@
-import { slugify } from "./worktree-names.js";
 export type JiraBranchNameResult = { ok: true; branchName: string } | { ok: false; reason: "invalid_key" | "invalid_template" | "empty_result"; message: string };
 export function normalizeJiraIssueKey(raw: string): string | null { const normalized = raw.trim().replace(/\s+/gu, "").toUpperCase(); return /^[A-Z][A-Z0-9_]*-\d+$/u.test(normalized) ? normalized : null; }
-function summarySlug(value: string | null | undefined): string { const slug = slugify(value ?? ""); if (slug.length <= 60) return slug; const cutoff = slug.lastIndexOf("-", 60); return (cutoff > 0 ? slug.slice(0, cutoff) : slug.slice(0, 60)).replace(/-+$/u, ""); }
+function summarySlug(value: string | null | undefined): string {
+  const slug = (value ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+  if (slug.length <= 60) return slug;
+  const cutoff = slug.lastIndexOf("-", 60);
+  return (cutoff > 0 ? slug.slice(0, cutoff) : slug.slice(0, 60)).replace(/-+$/u, "");
+}
 /** FNXC:JiraBranchNaming 2026-08-20-04:47: FN-9165 derives a readable candidate only; the route reuses FN-9161's write-boundary git ref validator instead of duplicating it here. */
 export function deriveJiraBranchName(input: { issueKey: string; summary?: string | null; template?: string }): JiraBranchNameResult { const key = normalizeJiraIssueKey(input.issueKey); if (!key) return { ok: false, reason: "invalid_key", message: "Enter a valid JIRA issue key." }; const template = input.template?.trim() || "feature/{key}-{summary}"; if (/\{(?!key\}|summary\})[^}]*\}/u.test(template)) return { ok: false, reason: "invalid_template", message: "JIRA branch template supports only {key} and {summary}." }; let branchName = template.replace(/\{key\}/gu, key).replace(/\{summary\}/gu, summarySlug(input.summary)); branchName = branchName.replace(/-+\//gu, "/").replace(/\/+/gu, "/").replace(/-+/gu, "-").split("/").map((part) => part.replace(/^-+|[-.]+$/gu, "")).filter(Boolean).join("/"); return branchName ? { ok: true, branchName } : { ok: false, reason: "empty_result", message: "JIRA template produced an empty branch name." }; }

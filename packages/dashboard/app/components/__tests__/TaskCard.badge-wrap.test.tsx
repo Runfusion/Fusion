@@ -22,6 +22,7 @@ vi.mock("lucide-react", () => ({
   Trash2: () => null,
   RotateCw: () => null,
   Zap: () => null,
+  ShieldCheck: () => null,
   AlertTriangle: () => null,
   ArrowDown: ({ style }: { style?: React.CSSProperties }) => <svg className="lucide-arrow-down" style={style} />,
   Flag: ({ style }: { style?: React.CSSProperties }) => <svg className="lucide-flag" style={style} />,
@@ -406,6 +407,7 @@ describe("TaskCard badge wrapping (FN-5162)", () => {
         onOpenDetail={noop}
         addToast={noop}
         onMoveTask={async () => makeTask()}
+        onDuplicateTask={async () => makeTask()}
       />,
     );
 
@@ -461,6 +463,7 @@ describe("TaskCard badge wrapping (FN-5162)", () => {
         onOpenDetail={noop}
         addToast={noop}
         onMoveTask={async () => makeTask()}
+        onDuplicateTask={async () => makeTask()}
       />,
     );
 
@@ -538,6 +541,7 @@ describe("TaskCard badge wrapping (FN-5162)", () => {
         onOpenDetail={noop}
         addToast={noop}
         onMoveTask={async () => makeTask()}
+        onDuplicateTask={async () => makeTask()}
       />,
     );
 
@@ -557,6 +561,7 @@ describe("TaskCard badge wrapping (FN-5162)", () => {
         onOpenDetailWithTab={noop}
         addToast={noop}
         onMoveTask={async () => makeTask()}
+        onDuplicateTask={async () => makeTask()}
       />,
     );
 
@@ -846,6 +851,7 @@ describe("TaskCard badge wrapping (FN-5162)", () => {
         onOpenDetail={noop}
         addToast={noop}
         onMoveTask={async () => makeTask()}
+        onDuplicateTask={async () => makeTask()}
         workflowBadge={{ workflowId: "wf-narrow", workflowName: "A workflow badge with an intentionally long name" }}
       />,
     );

@@ -376,5 +376,14 @@ describe("createFusionAuthStorage — concurrent cross-process coordination", ()
       instanceB.getApiKey("anthropic-subscription"),
     ])).resolves.toEqual(["alias-rotated-access", "alias-rotated-access"]);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    const persisted = readAuthFile(homeDir);
+    expect(persisted.anthropic).toMatchObject({
+      access: "alias-rotated-access",
+      refresh: "next-alias-refresh",
+    });
+    expect(persisted["anthropic-subscription"]).toMatchObject({
+      access: "alias-rotated-access",
+      refresh: "next-alias-refresh",
+    });
   });
 });

@@ -42,6 +42,8 @@ export interface SessionBoundaryDescriptor {
   writableRoot: string | null;
   projectRoot: string;
   readOnlyRoots?: readonly string[];
+  /** Absolute roots writable under an otherwise read-only boundary. */
+  writableAllowlist?: readonly string[];
   repoRoots?: readonly { repoRelPath: string; repoRootDir: string }[];
 }
 
@@ -180,6 +182,9 @@ export interface AgentRuntimeOptions {
    * logging server contents.
    */
   mcpServers?: AgentRuntimeMcpServerConfig[];
+  /** Read-only MCP opt-in and server narrowing; MCP-incapable runtimes ignore both without logging definitions. */
+  allowMcpToolsInReadonly?: boolean;
+  readonlyMcpServerAllowlist?: string[];
   /** Optional task-scoped environment variables for session-local subprocesses. */
   taskEnv?: NodeJS.ProcessEnv;
   /**

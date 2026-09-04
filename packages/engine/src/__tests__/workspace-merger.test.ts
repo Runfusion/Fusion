@@ -679,7 +679,7 @@ describeIfGit("landWorkspaceTask — per-repo merge loop (Phase C U1)", () => {
    * REVERTED it (ahead of main, net-zero, tip NOT an ancestor) has zero landed sub-repos and no
    * already-landed proof. It must be blocked back to todo with error — NOT laundered into `done`.
    */
-  it("FN-8141: blocks a commit-expected all-empty (reverted) workspace to todo, not done", async () => {
+  it("FN-8141: keeps a commit-expected all-empty workspace in review without a WIP target", async () => {
     fx = await createWorkspaceFixture(["repo-a", "repo-b"]);
     addRepoRevertedBranch(fx, "repo-a");
     addRepoRevertedBranch(fx, "repo-b");
@@ -704,8 +704,13 @@ describeIfGit("landWorkspaceTask — per-repo merge loop (Phase C U1)", () => {
     expect(result.finalizeBlockedReason).toEqual(expect.stringContaining("operator review required"));
     for (const r of result.repos) expect(r.status).toBe("empty");
 
-    // Moved back to todo with error set; never moved done and never emitted task:merged.
-    expect(store.moveTaskCalls).toEqual([{ id: TASK_ID, column: "todo" }]);
+    /*
+    FNXC:LifecycleContainment 2026-08-30-09:14:
+    A review-owned finalize block may move only to a WIP column declared by the task workflow.
+    This structural fixture deliberately has no workflow resolver, so containment keeps it in review
+    instead of guessing `in-progress`; it still never visits Planning or emits task:merged.
+    */
+    expect(store.moveTaskCalls).toEqual([]);
     expect(store.updateTask).toHaveBeenCalledWith(
       TASK_ID,
       expect.objectContaining({ error: expect.stringContaining("operator review required") }),

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { getActiveRuntimeMs, getTotalAgentActiveMs, getWallClockSinceFirstExecutionMs } from "../taskTiming";
+import { buildStepDurations, formatDurationMs, getActiveRuntimeMs, getTotalAgentActiveMs, getWallClockSinceFirstExecutionMs } from "../taskTiming";
 
 describe("taskTiming helpers", () => {
   it("returns persisted plus live segment for in-progress tasks", () => {
@@ -125,6 +125,83 @@ you are watching it.
 REVERT PROOF, measured: restore `task.column === "in-progress"` in `getActiveRuntimeMs` and the
 renamed-lane cases below fail.
 */
+describe("step-report duration helpers", () => {
+  const entry = (timestamp: string, action: string) => ({ timestamp, action });
+
+  it("formats shared duration strings at the milliseconds, seconds, and minutes boundaries", () => {
+    expect(formatDurationMs(999)).toBe("999 ms");
+    expect(formatDurationMs(1_000)).toBe("1.0 s");
+    expect(formatDurationMs(59_000)).toBe("59.0 s");
+    expect(formatDurationMs(60_000)).toBe("1m 0s");
+  });
+
+  it("returns elapsed time for a normal implementation-step transition", () => {
+    const durations = buildStepDurations([
+      entry("2026-08-29T10:00:00.000Z", "Step 0 (Preflight) → in-progress"),
+      entry("2026-08-29T10:00:15.000Z", "Step 0 (Preflight) → done"),
+    ]);
+
+    expect(durations.get(0, "Preflight")).toBe(15_000);
+  });
+
+  it("retains the first opening transition when progress is logged twice", () => {
+    const durations = buildStepDurations([
+      entry("2026-08-29T10:00:00.000Z", "Step 0 (Preflight) → in-progress"),
+      entry("2026-08-29T10:00:05.000Z", "Step 0 (Preflight) → in-progress"),
+      entry("2026-08-29T10:00:15.000Z", "Step 0 (Preflight) → done"),
+    ]);
+
+    expect(durations.get(0, "Preflight")).toBe(15_000);
+  });
+
+  it("does not synthesize duration when a trimmed log lacks the opening transition", () => {
+    const durations = buildStepDurations([
+      entry("2026-08-29T10:00:15.000Z", "Step 0 (Preflight) → done"),
+    ]);
+
+    expect(durations.get(0, "Preflight")).toBeUndefined();
+  });
+
+  it("does not render duration for a still-running step", () => {
+    const durations = buildStepDurations([
+      entry("2026-08-29T10:00:00.000Z", "Step 0 (Preflight) → in-progress"),
+    ]);
+
+    expect(durations.get(0, "Preflight")).toBeUndefined();
+  });
+
+  it("sums closed segments for a retried step", () => {
+    const durations = buildStepDurations([
+      entry("2026-08-29T10:00:00.000Z", "Step 0 (Preflight) → in-progress"),
+      entry("2026-08-29T10:00:10.000Z", "Step 0 (Preflight) → done"),
+      entry("2026-08-29T10:00:20.000Z", "Step 0 (Preflight) → in-progress"),
+      entry("2026-08-29T10:00:25.000Z", "Step 0 (Preflight) → skipped"),
+    ]);
+
+    expect(durations.get(0, "Preflight")).toBe(15_000);
+  });
+
+  it("ignores non-transition activity text that happens to mention a step", () => {
+    const durations = buildStepDurations([
+      entry("2026-08-29T10:00:00.000Z", "Reset stuck-kill streak (forward progress: step 0 (Preflight) → done)"),
+      entry("2026-08-29T10:00:01.000Z", "[integrity-warning] graph-source updateStep suppressed: step 0 (Preflight) → done blocked by unmet dependency step 0 (pending)"),
+      entry("2026-08-29T10:00:02.000Z", "Ignored out-of-order done for step 0 (Preflight) — earlier step 0 (Preflight) is still pending"),
+      entry("2026-08-29T10:00:03.000Z", "Step 0 (Preflight) recovered as done on resume — code review had already approved before the engine stopped"),
+    ]);
+
+    expect(durations.get(0, "Preflight")).toBeUndefined();
+  });
+
+  it("falls back to step index when a renamed report differs from the recorded transition", () => {
+    const durations = buildStepDurations([
+      entry("2026-08-29T10:00:00.000Z", "Step 0 (Preflight) → in-progress"),
+      entry("2026-08-29T10:00:15.000Z", "Step 0 (Preflight) → done"),
+    ]);
+
+    expect(durations.get(0, "Renamed preflight")).toBe(15_000);
+  });
+});
+
 describe("active-time resolves the card's own wip lane", () => {
   const WIP_FLAGS = { countsTowardWip: true } as never;
   const NOW = Date.parse("2026-07-31T12:00:00Z");

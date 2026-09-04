@@ -4,7 +4,6 @@
  * Injects rootDir/store/tryCreateWorktree so the free helper stays free of class state.
  */
 import type { Settings } from "@fusion/core";
-import { generateWorktreeName } from "../worktree/worktree-names.js";
 import { resolveTaskWorktreePath } from "../worktree/worktree-paths.js";
 import { extractWorktreeConflictInfo } from "./worktree-conflict-info.js";
 
@@ -47,7 +46,9 @@ export async function tryFreshWorktreeAfterLiveConflict(
   const conflictStartPoint = branch;
   for (let suffix = 2; suffix <= 6; suffix++) {
     const suffixedBranch = `${branch}-${suffix}`;
-    const newPath = resolveTaskWorktreePath(deps.rootDir, settings, generateWorktreeName(deps.rootDir, settings));
+    // FNXC:TaskWorktreeNames 2026-08-29-08:51: a task has one durable
+    // directory identity even while its branch-conflict recovery retries.
+    const newPath = resolveTaskWorktreePath(deps.rootDir, settings, taskId.toLowerCase());
     try {
       await deps.store.logEntry(
         taskId,

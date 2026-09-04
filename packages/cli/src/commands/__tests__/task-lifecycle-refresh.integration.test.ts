@@ -123,7 +123,7 @@ describe("refreshAutomatedPrHead local git fixture", () => {
     expect(git(remote, "show", `refs/heads/${head}:feature.txt`)).toBe("feature");
     expect(git(remote, "show", `refs/heads/${head}:sentinel.txt`)).toBe("late integration security fix");
     expect(git(root, "branch", "--show-current")).toBe("main");
-    expect(git(root, "worktree", "list", "--porcelain")).not.toContain("/.worktrees/pr-refresh-");
+    expect(git(root, "worktree", "list", "--porcelain")).not.toContain("/.fusion/worktrees/pr-refresh-");
   });
 
   it("refuses a head checked out at the primary project root", async () => {
@@ -150,7 +150,7 @@ describe("refreshAutomatedPrHead local git fixture", () => {
     expect(refreshed.refreshed).toBe(true);
     assertPublishedSentinel(remote, head);
     expect(git(taskWorktree, "branch", "--show-current")).toBe(head);
-    expect(git(root, "worktree", "list", "--porcelain")).not.toContain("/.worktrees/pr-refresh-");
+    expect(git(root, "worktree", "list", "--porcelain")).not.toContain("/.fusion/worktrees/pr-refresh-");
   });
 
   it("materializes a remote-only head and refuses a missing head without GitHub boundaries", async () => {
@@ -194,7 +194,7 @@ describe("refreshAutomatedPrHead local git fixture", () => {
 
     expect(git(root, "rev-parse", `refs/heads/${head}`)).toBe(originalHead);
     expect(git(remote, "rev-parse", `refs/heads/${head}`)).toBe(remoteMain);
-    expect(git(root, "worktree", "list", "--porcelain")).not.toContain("/.worktrees/pr-refresh-");
+    expect(git(root, "worktree", "list", "--porcelain")).not.toContain("/.fusion/worktrees/pr-refresh-");
   });
 
   it("refuses to overwrite a head that advanced before refresh observes its push lease", async () => {

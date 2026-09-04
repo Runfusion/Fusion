@@ -1,4 +1,4 @@
-import { TaskStore, COLUMNS, COLUMN_LABELS, resolveProjectColumnsForRoles, TERMINAL_ROLES, resolveReviewColumns, resolveTaskLifecycleColumns, resolveWorkflowIrForTask, CentralCore, buildAutoPauseClearPatch, buildManualRetryResetPatch, extractIntentSignature, findNearDuplicates, getTaskDuplicateLineage, isValidRepoSlug, isWorkspaceTask, reconcileDeterministicDuplicate, resolveTaskGithubTracking, runDeterministicDuplicateGuard, evaluateArchiveTaskLiveness, describeArchiveLiveness, TaskIsLiveError, type Settings, type Column, type ColumnId, type StepStatus, type AgentLogType, type AgentLogEntry, type IntentSignature, type NearDuplicateCandidate, type NearDuplicateMatch, type TaskDependencyMutation } from "@fusion/core";
+import { TaskStore, COLUMNS, COLUMN_LABELS, MAX_TASK_MESSAGE_LENGTH, resolveProjectColumnsForRoles, TERMINAL_ROLES, resolveReviewColumns, resolveTaskLifecycleColumns, resolveWorkflowIrForTask, CentralCore, buildAutoPauseClearPatch, buildManualRetryResetPatch, extractIntentSignature, findNearDuplicates, getTaskDuplicateLineage, isValidRepoSlug, isWorkspaceTask, reconcileDeterministicDuplicate, resolveTaskGithubTracking, runDeterministicDuplicateGuard, evaluateArchiveTaskLiveness, describeArchiveLiveness, TaskIsLiveError, type Settings, type Column, type ColumnId, type StepStatus, type AgentLogType, type AgentLogEntry, type IntentSignature, type NearDuplicateCandidate, type NearDuplicateMatch, type TaskDependencyMutation } from "@fusion/core";
 import { isInReviewMissingWorktreeSessionStartFailure, runAiMerge, landWorkspaceTask, withWorkspaceMergeDispatchLease, installBaselineArchiveWorktreeDisposer, clearOwnedMergeStamp, reconcileUnownedStaleMergeStamp } from "@fusion/engine";
 import { createInterface } from "node:readline/promises";
 import type { PlanningQuestion, PlanningSummary } from "@fusion/core";
@@ -19,6 +19,12 @@ import { retryOnLock, LockRetryExhaustedError } from "../lock-retry.js";
 
 const STEP_STATUSES: StepStatus[] = ["pending", "in-progress", "done", "skipped"];
 let archiveForceOverride = false;
+
+/*
+FNXC:TaskMessageLength 2026-08-29-08:02:
+CLI refine, comment, and steer commands must use the same shared upper bound as dashboard routes and
+composers, so pasted operator instructions are admitted consistently on every task-text surface.
+*/
 
 /** #1403: display a column's label, falling back to the raw id for
  *  workflow-defined custom columns that have no legacy label. */
@@ -841,7 +847,7 @@ export async function runTaskUpdate(id: string, stepStr: string, status: string,
   // wrap resolution+write in one retryable unit via `withBoardWrite`, closing
   // the resolved store on every attempt.
   await withBoardWrite(projectName, { id, action: "update step" }, async (context) => {
-    const task = await context.store.updateStep(id, stepIndex, status as StepStatus);
+    const task = await context.store.updateStep(id, stepIndex, status as StepStatus, { operatorOverride: true });
 
     const step = task.steps[stepIndex];
     console.log();
@@ -916,6 +922,9 @@ const ANSI = {
   gray: "\x1b[90m",
 };
 
+/** Maximum single-line tool detail length that stays compact beside its header. */
+const CLI_INLINE_DETAIL_MAX = 120;
+
 /**
  * Format a timestamp for display (locale time string)
  */
@@ -923,9 +932,21 @@ function formatTimestamp(timestamp: string): string {
   return new Date(timestamp).toLocaleTimeString();
 }
 
-/**
- * Format a single agent log entry for display
- */
+function formatToolDetail(detail: string | undefined): string {
+  if (!detail) return "";
+  if (!detail.includes("\n") && detail.length <= CLI_INLINE_DETAIL_MAX) {
+    return ` (${detail})`;
+  }
+  const block = detail.split(/\r?\n/).map((line) => `    ${line}`).join("\n");
+  return `\n${ANSI.dim}${ANSI.gray}${block}${ANSI.reset}`;
+}
+
+/*
+FNXC:CliTaskLogs 2026-08-29-04:55:
+FN-253 makes tool arguments and results default-persisted. Keep short single-line details inline,
+but render longer or multiline payloads as one indented, dimmed block so each log entry remains one
+console.log call while terminal readers can scan the complete bounded durable payload.
+*/
 function formatLogEntry(entry: AgentLogEntry): string {
   const ts = formatTimestamp(entry.timestamp);
   const agent = entry.agent ? `[${entry.agent.toUpperCase()}] ` : "";
@@ -936,11 +957,11 @@ function formatLogEntry(entry: AgentLogEntry): string {
     case "thinking":
       return `${ANSI.dim}${ANSI.gray}  ${ts} ${agent}[THINK] ${entry.text}${ANSI.reset}`;
     case "tool":
-      return `  ${ts} ${agent}[TOOL] ${entry.text}${entry.detail ? ` (${entry.detail})` : ""}`;
+      return `  ${ts} ${agent}[TOOL] ${entry.text}${formatToolDetail(entry.detail)}`;
     case "tool_result":
-      return `  ${ts} ${agent}[RESULT] ${entry.text}${entry.detail ? ` (${entry.detail})` : ""}`;
+      return `  ${ts} ${agent}[RESULT] ${entry.text}${formatToolDetail(entry.detail)}`;
     case "tool_error":
-      return `${ANSI.red}  ${ts} ${agent}[ERROR] ${entry.text}${entry.detail ? ` (${entry.detail})` : ""}${ANSI.reset}`;
+      return `${ANSI.red}  ${ts} ${agent}[ERROR] ${entry.text}${formatToolDetail(entry.detail)}${ANSI.reset}`;
     default:
       return `  ${ts} ${agent}${entry.text}`;
   }
@@ -1525,13 +1546,11 @@ export async function runTaskRefine(id: string, feedbackArg?: string, projectNam
     process.exit(1);
   }
 
-  // Validate length (matches API validation)
-  if (feedback.length > 2000) {
-    console.error("Feedback must be 2000 characters or less");
+  const trimmedFeedback = feedback.trim();
+  if (trimmedFeedback.length > MAX_TASK_MESSAGE_LENGTH) {
+    console.error(`Feedback must be ${MAX_TASK_MESSAGE_LENGTH} characters or less`);
     process.exit(1);
   }
-
-  const trimmedFeedback = feedback.trim();
 
   // FNXC:CliBoardMutation 2026-07-09-00:00 (FN-7734): single board write.
   await withBoardWrite(projectName, { id, action: "refine task" }, async (context) => {
@@ -2278,8 +2297,8 @@ export async function runTaskComment(id: string, message?: string, author = "use
   }
 
   const trimmed = text.trim();
-  if (trimmed.length > 2000) {
-    console.error("Error: Comment must be between 1 and 2000 characters");
+  if (trimmed.length > MAX_TASK_MESSAGE_LENGTH) {
+    console.error(`Error: Comment must be between 1 and ${MAX_TASK_MESSAGE_LENGTH} characters`);
     process.exit(1);
   }
 
@@ -2336,8 +2355,8 @@ export async function runTaskSteer(id: string, message?: string, projectName?: s
   }
 
   const trimmed = text.trim();
-  if (trimmed.length > 2000) {
-    console.error("Error: Message must be between 1 and 2000 characters");
+  if (trimmed.length > MAX_TASK_MESSAGE_LENGTH) {
+    console.error(`Error: Message must be between 1 and ${MAX_TASK_MESSAGE_LENGTH} characters`);
     process.exit(1);
   }
 

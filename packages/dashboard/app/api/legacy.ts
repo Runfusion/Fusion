@@ -1395,6 +1395,7 @@ export {
   unarchiveInsight,
   updateInsight,
 } from "./system/insights.js";
+export { fetchPatchnode } from "./system/patchnode.js";
 export type {
   InsightsListResponse,
   RunsListResponse,
@@ -1416,6 +1417,7 @@ export {
   startFnBinaryLinkLocal,
   startFnBinaryUseGlobal,
   startSystemRebuild,
+  startSystemSourceUpdate,
 } from "./system/system-panel.js";
 export type {
   ResearchFindingPromotionInput,

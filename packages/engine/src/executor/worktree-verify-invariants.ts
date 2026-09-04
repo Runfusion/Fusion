@@ -128,7 +128,7 @@ export async function verifyWorktreeInvariants(
         ok: false,
         reason: "no_commits",
         observed: "0 acquired sub-repo worktrees",
-        expected: "at least one acquired sub-repo worktree (fn_acquire_repo_worktree), or a no-op completion sentinel / noCommitsExpected",
+        expected: "at least one configured sub-repo task worktree, or a no-op completion sentinel / noCommitsExpected",
       };
     }
     const workspacePromptContent = (task as Task & { prompt?: unknown }).prompt;

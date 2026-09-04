@@ -17,17 +17,9 @@ vi.mock("../../api", async (importOriginal) => ({
 const taskCardRenderSpy = vi.fn();
 
 vi.mock("../TaskCard", () => ({
-  TaskCard: React.memo(({ task, onPromote, isPromoting }: { task: Task; onPromote?: (taskId: string) => Promise<void>; isPromoting?: boolean }) => {
+  TaskCard: React.memo(({ task }: { task: Task }) => {
     taskCardRenderSpy(task.id);
-    return (
-      <div data-testid={`task-${task.id}`}>
-        {onPromote && (
-          <button type="button" data-testid={`card-promote-${task.id}`} disabled={isPromoting} onClick={() => void onPromote(task.id)}>
-            {isPromoting ? "Promoting…" : "Promote"}
-          </button>
-        )}
-      </div>
-    );
+    return <div data-testid={`task-${task.id}`} />;
   }),
 }));
 vi.mock("../WorktreeGroup", () => ({
@@ -351,140 +343,6 @@ describe("Column workflow mode (U9)", () => {
     expect(document.querySelector(".column-menu")).not.toBeNull();
   });
 
-
-
-  it("renders a Promote affordance on hold-column cards", () => {
-    render(
-      <Column
-        {...defaultProps}
-        column={"hold-col" as ColumnType}
-        workflowMode
-        columnDisplayName="Hold"
-        columnFlags={{ hold: true }}
-        onPromote={vi.fn().mockResolvedValue(undefined)}
-        tasks={[{ ...makeTask("FN-7"), column: "hold-col" as ColumnType }]}
-      />,
-    );
-    expect(screen.getByTestId("card-promote-FN-7")).toBeDefined();
-  });
-
-  /*
-  FNXC:BoardPromote 2026-07-25-04:55:
-  The unplanned-for-execution rejection must (a) render real copy rather than the
-  raw `board.rejection.unplannedForExecution` key and (b) offer the operator an
-  explicit force override. Declining leaves the card held; confirming re-issues
-  the promote with `{ force: true }`.
-  */
-  function renderHoldColumnWithPromote(onPromote: (taskId: string, options?: { force?: boolean }) => Promise<void>) {
-    return render(
-      <Column
-        {...defaultProps}
-        column={"hold-col" as ColumnType}
-        workflowMode
-        columnDisplayName="Hold"
-        columnFlags={{ hold: true }}
-        onPromote={onPromote}
-        tasks={[{ ...makeTask("FN-7"), column: "hold-col" as ColumnType }]}
-      />,
-    );
-  }
-
-  const unplannedRejection = {
-    details: {
-      code: "unplanned-for-execution",
-      messageKey: "board.rejection.unplannedForExecution",
-      retryable: true,
-      forceable: true,
-    },
-  };
-
-  it("offers an override on unplanned-for-execution and keeps the card held when declined", async () => {
-    const onPromote = vi.fn().mockRejectedValue(unplannedRejection);
-    mockConfirm.mockResolvedValue(false);
-    renderHoldColumnWithPromote(onPromote);
-
-    fireEvent.click(screen.getByTestId("card-promote-FN-7"));
-
-    await waitFor(() => expect(mockConfirm).toHaveBeenCalled());
-    expect(mockConfirm.mock.calls[0][0]).toMatchObject({
-      title: "Start execution anyway?",
-      confirmLabel: "Start Anyway",
-      cancelLabel: "Keep Waiting",
-      danger: true,
-    });
-    expect(mockConfirm.mock.calls[0][0].message).toContain("FN-7");
-
-    await waitFor(() => expect(screen.getByTestId("column-inline-feedback")).toBeDefined());
-    // Real copy, never the raw i18n key (the FN-8471 regression).
-    expect(screen.getByTestId("column-inline-feedback").textContent).not.toContain("board.rejection");
-    expect(screen.getByTestId("column-inline-feedback").textContent).toContain("plan review");
-    expect(onPromote).toHaveBeenCalledTimes(1);
-    expect(onPromote).toHaveBeenCalledWith("FN-7");
-  });
-
-  it("re-promotes with force once the operator confirms the override", async () => {
-    const onPromote = vi.fn()
-      .mockRejectedValueOnce(unplannedRejection)
-      .mockResolvedValueOnce(undefined);
-    mockConfirm.mockResolvedValue(true);
-    renderHoldColumnWithPromote(onPromote);
-
-    fireEvent.click(screen.getByTestId("card-promote-FN-7"));
-
-    await waitFor(() => expect(onPromote).toHaveBeenCalledTimes(2));
-    expect(onPromote).toHaveBeenLastCalledWith("FN-7", { force: true });
-    expect(screen.queryByTestId("column-inline-feedback")).toBeNull();
-  });
-
-  it("does not offer an override for a capacity rejection", async () => {
-    const onPromote = vi.fn().mockRejectedValue({
-      details: { code: "capacity-exhausted", messageKey: "board.rejection.capacityExhausted", retryable: true },
-    });
-    renderHoldColumnWithPromote(onPromote);
-
-    fireEvent.click(screen.getByTestId("card-promote-FN-7"));
-    await waitFor(() => expect(screen.getByTestId("column-inline-feedback")).toBeDefined());
-    expect(mockConfirm).not.toHaveBeenCalled();
-    expect(onPromote).toHaveBeenCalledTimes(1);
-  });
-
-  it("#1410: clears the inline capacity banner when the task list changes via SSE", async () => {
-    const onPromote = vi.fn().mockRejectedValue({
-      details: { code: "capacity-exhausted", retryable: true },
-    });
-    const holdTask = { ...makeTask("FN-7"), column: "hold-col" as ColumnType };
-    const { rerender } = render(
-      <Column
-        {...defaultProps}
-        column={"hold-col" as ColumnType}
-        workflowMode
-        columnDisplayName="Hold"
-        columnFlags={{ hold: true }}
-        onPromote={onPromote}
-        tasks={[holdTask]}
-      />,
-    );
-
-    // Trigger a capacity-exhausted promote → inline banner appears.
-    fireEvent.click(screen.getByTestId("card-promote-FN-7"));
-    await waitFor(() => expect(screen.getByTestId("column-inline-feedback")).toBeDefined());
-    expect(screen.getByTestId("column-inline-feedback").textContent).toContain("capacity");
-
-    // An SSE-driven task list change (occupant moved out) re-renders the column
-    // with a different roster → the stale banner is cleared.
-    rerender(
-      <Column
-        {...defaultProps}
-        column={"hold-col" as ColumnType}
-        workflowMode
-        columnDisplayName="Hold"
-        columnFlags={{ hold: true }}
-        onPromote={onPromote}
-        tasks={[{ ...makeTask("FN-8"), column: "hold-col" as ColumnType }]}
-      />,
-    );
-    await waitFor(() => expect(screen.queryByTestId("column-inline-feedback")).toBeNull());
-  });
 });
 
 describe("Column worktree grouping setting", () => {

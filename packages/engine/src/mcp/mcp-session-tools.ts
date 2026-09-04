@@ -14,6 +14,8 @@ export interface McpSessionToolset {
   dispose: () => Promise<void>;
   connected: string[];
   skipped: Array<{ name: string; reason: string }>;
+  /** Generated pi tool name to raw configured MCP server name. */
+  serverByToolName?: ReadonlyMap<string, string>;
 }
 
 export interface McpSessionClient {
@@ -88,6 +90,13 @@ export async function connectMcpSessionTools(
   const clients: McpSessionClient[] = [];
   const closedClients = new WeakSet<McpSessionClient>();
   const usedToolNames = new Set<string>();
+  /*
+   * FNXC:McpConfig 2026-09-01-06:06:
+   * Read-only MCP policy needs an authoritative tool-to-server origin. Sanitization lowercases and
+   * collapses characters while collision handling adds __2/__3 suffixes, so generated tool names
+   * are a lossy encoding and must never be parsed for a security predicate.
+   */
+  const serverByToolName = new Map<string, string>();
   let disposed = false;
 
   const closeOnce = async (client: McpSessionClient): Promise<void> => {
@@ -147,7 +156,9 @@ export async function connectMcpSessionTools(
             opts.logger?.log?.(connectMsg);
           }
           for (const tool of listedTools) {
-            tools.push(wrapMcpTool(server.name, tool, client, usedToolNames));
+            const wrappedTool = wrapMcpTool(server.name, tool, client, usedToolNames);
+            tools.push(wrappedTool);
+            serverByToolName.set(wrappedTool.name, server.name);
           }
           break;
         } catch (error) {
@@ -175,7 +186,7 @@ export async function connectMcpSessionTools(
     }
   }
 
-  return { tools, connected, skipped, dispose: closeAll };
+  return { tools, connected, skipped, serverByToolName, dispose: closeAll };
 }
 
 function normalizeMaxAttempts(value: number | undefined): number {

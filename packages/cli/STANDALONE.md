@@ -173,8 +173,8 @@ dist/
 ├── client/               # Dashboard web assets (required)
 └── runtime/              # Native terminal assets (required for terminal)
     └── darwin-arm64/     # Platform-specific subdirectory
-        ├── pty.node      # Native PTY module
-        └── spawn-helper  # Unix spawn helper (macOS/Linux only)
+        ├── pty.node      # Unix native PTY module
+        └── spawn-helper  # Present in the macOS package
 ```
 
 **Platform-specific subdirectories:**
@@ -187,14 +187,14 @@ dist/
 **Important:** When distributing or moving the binary, ensure the `client/` and `runtime/` directories are copied alongside it. Terminal functionality will gracefully degrade (return HTTP 503) if runtime assets are missing — the dashboard will continue to work but terminal sessions won't be available.
 
 **How it works:**
-When the dashboard starts from a Bun-compiled binary, it attempts to set up native module resolution so `@homebridge/node-pty-prebuilt-multiarch` (aliased as `node-pty`) can find its platform-specific `.node` file. This involves:
-1. Copying the staged `pty.node` from `runtime/<platform>/` to a temp directory (`/tmp/fn-bunfs-<pid>/fn/prebuilds/<platform>/`)
+When the dashboard starts from a Bun-compiled binary, it attempts to set up native module resolution so `@lydell/node-pty` (aliased as `node-pty`) can find its platform-specific native payload. This involves:
+1. Copying the complete staged `prebuilds/<platform>-<arch>/` payload from `runtime/<platform>-<arch>/` to a temp directory (`/tmp/fn-bunfs-<pid>/fn/prebuilds/<platform>-<arch>/`). Linux packages provide `pty.node`; macOS additionally provides `spawn-helper`; Windows provides the ConPTY files (`conpty.node`, `conpty_console_list.node`, and `conpty/`).
 2. Attempting to create a symlink at `/$bunfs/root` pointing to the temp directory (Unix platforms)
 3. If the symlink can't be created (e.g., macOS permissions), pre-loading the native module via `process.dlopen()`
 
 During the build (`bun run build.ts`), native assets are sourced from:
-- **Host platform**: `node_modules/node-pty/build/Release/pty.node` (placed by `prebuild-install` at install time)
-- **Linux cross-compile targets**: `node_modules/node-pty/prebuilds/linux-<arch>/node.abi<N>.node` (bundled in the fork's npm tarball)
+- **Host platform**: `@lydell/node-pty-<platform>-<arch>/prebuilds/<platform>-<arch>/pty.node` (a script-free optional platform package)
+- **Linux cross-compile targets**: the integrity-verified `@lydell/node-pty-<platform>-<arch>` cache payload when the target OS is not installed locally
 
 If all resolution methods fail, terminal creation gracefully returns `null`, which the HTTP layer converts to a 503 Service Unavailable response.
 

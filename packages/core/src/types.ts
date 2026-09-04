@@ -103,6 +103,13 @@ export {
   DEFAULT_TASK_PRIORITY,
 };
 export type { ThinkingLevel, Column, ColumnId, TaskPriority };
+export type {
+  PatchnodeEntryKind,
+  PatchnodeEntry,
+  PatchnodeDay,
+  PatchnodeFeed,
+  PatchnodeQuery,
+} from "./types/task/patchnode.js";
 
 import {
   MERGE_REQUEST_STATES,
@@ -394,6 +401,7 @@ import type {
   AgentLogType,
   ArchiveAgentLogMode,
   TaskStep,
+  TaskStepReport,
   RunMutationContext,
   TaskLogEntry,
   WorkflowTransitionNotificationMarker,
@@ -412,6 +420,7 @@ export type {
   AgentLogType,
   ArchiveAgentLogMode,
   TaskStep,
+  TaskStepReport,
   RunMutationContext,
   TaskLogEntry,
   WorkflowTransitionNotificationMarker,
@@ -557,6 +566,16 @@ export type {
   GoalCitation,
   GoalCitationFilter,
 };
+
+export {
+  EXTERNAL_BLOCK_STATUS,
+  EXTERNAL_BLOCK_PAUSE_REASON,
+  isTaskExternallyBlocked,
+  buildTaskExternalBlockPatch,
+  buildTaskExternalBlockClearPatch,
+  formatTaskExternalBlockReason,
+} from "./tasks/task-external-block.js";
+export type { TaskExternalBlock, TaskExternalBlockOrigin } from "./tasks/task-external-block.js";
 
 // ── task-core ──────────────────────────────────────────────────────────
 // FNXC:CodeOrganization 2026-07-22-14:00: Peels live in types/task-core.ts
@@ -728,6 +747,13 @@ import {
   resolvePersistAgentThinkingLog,
   sanitizeCliAgentSettings,
   sanitizeCliAgentsSettings,
+  normalizeChatSnippetName,
+  normalizeChatSnippets,
+  readChatSnippets,
+  CHAT_SNIPPET_RESERVED_NAMES,
+  CHAT_SNIPPET_MAX_ENTRIES,
+  CHAT_SNIPPET_MAX_NAME_LENGTH,
+  CHAT_SNIPPET_MAX_PROMPT_LENGTH,
   sanitizeMcpServers,
   CLI_AGENT_ADAPTER_IDS,
   CLI_AGENT_AUTONOMY_MODES,
@@ -749,6 +775,13 @@ export {
   resolvePersistAgentThinkingLog,
   sanitizeCliAgentSettings,
   sanitizeCliAgentsSettings,
+  normalizeChatSnippetName,
+  normalizeChatSnippets,
+  readChatSnippets,
+  CHAT_SNIPPET_RESERVED_NAMES,
+  CHAT_SNIPPET_MAX_ENTRIES,
+  CHAT_SNIPPET_MAX_NAME_LENGTH,
+  CHAT_SNIPPET_MAX_PROMPT_LENGTH,
   sanitizeMcpServers,
   CLI_AGENT_ADAPTER_IDS,
   CLI_AGENT_AUTONOMY_MODES,
@@ -794,6 +827,7 @@ import type {
   DashboardKeyboardShortcuts,
   BackupSettingsMigrationCandidate,
   BackupSettingsMigrationConflict,
+  ChatSnippet,
   GlobalSettings,
   CliAgentSettings,
   RemoteAccessProvidersConfig,
@@ -845,6 +879,7 @@ export type {
   DashboardKeyboardShortcuts,
   BackupSettingsMigrationCandidate,
   BackupSettingsMigrationConflict,
+  ChatSnippet,
   GlobalSettings,
   CliAgentSettings,
   RemoteAccessProvidersConfig,
@@ -1110,6 +1145,12 @@ FNXC:AutomationTools 2026-06-26-00:00:
 Dashboard source-checkout builds alias @fusion/core to this frontend-safe module, so mirror the automation AI-step tool catalog here as a runtime export for UI selectors.
 */
 export const AUTOMATION_SELECTABLE_TOOLS = ["Read", "Bash", "Edit", "Write", "Grep", "Find", "Ls"] as const;
+
+/*
+FNXC:TaskMessageLength 2026-08-29-08:02:
+Operator-authored task text for steering comments, task comments, refinement, and spec-revision feedback must not be capped below direct chat, which has no character limit and is bounded by its 2 MiB JSON envelope. This 100,000-character limit matches the task-document content cap and stays inside that envelope even for worst-case multibyte, JSON-escaped input.
+*/
+export const MAX_TASK_MESSAGE_LENGTH = 100_000;
 
 /** Snapshot of the last blocked state for a task, used for dedup comparison. */
 export interface BlockedStateSnapshot {

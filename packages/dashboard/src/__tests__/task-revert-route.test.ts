@@ -211,6 +211,7 @@ function createMockStore(
     getTaskCommitAssociationsByLineageId: vi.fn().mockResolvedValue([]),
     createTask,
     findOpenRevertTaskForSource,
+    recordPatchnodeRevert: vi.fn().mockResolvedValue(null),
     updateTask: vi.fn().mockImplementation(async (_id: string, updates: { sourceMetadataPatch?: Record<string, unknown> }) => {
       if (updates.sourceMetadataPatch) {
         task.sourceMetadata = { ...task.sourceMetadata, ...updates.sourceMetadataPatch };
@@ -263,9 +264,16 @@ describe("POST /tasks/:id/revert", () => {
     const res = await REQUEST(createApp(store), "POST", `/api/tasks/${task.id}/revert`);
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ mode: "git", clean: true, revertCommitSha: "abc123" });
+    expect(store.recordPatchnodeRevert as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(task.id, {
+      occurredAt: expect.any(String),
+      revertCommitSha: "abc123",
+    });
     expect(store.updateTask as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(task.id, {
       sourceMetadataPatch: expect.objectContaining({ revertedAt: expect.any(String), revertedCommitSha: "abc123" }),
     });
+    expect((store.recordPatchnodeRevert as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]).toBeLessThan(
+      (store.updateTask as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]!,
+    );
     expect(performTaskRevertMock).toHaveBeenCalledTimes(1);
   });
 
@@ -277,9 +285,39 @@ describe("POST /tasks/:id/revert", () => {
     const res = await REQUEST(createApp(store), "POST", `/api/tasks/${task.id}/revert`);
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ mode: "git", clean: true, alreadyReverted: true });
+    expect(store.recordPatchnodeRevert as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
     expect(store.updateTask as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(task.id, {
       sourceMetadataPatch: expect.objectContaining({ revertedAt: expect.any(String) }),
     });
+  });
+
+  /*
+  FNXC:TaskRevert 2026-08-28-22:17:
+  Original delivery → revert → re-delivery → already-reverted retry. The retry cancelled nothing new, so it must re-affirm the FIRST cancellation episode pinned to the delivery in effect then, and must NOT restamp the latest-only marker — a fresh marker re-points reconciliation at the live re-delivery and erases shipped work from the day it shipped on.
+  */
+  it("re-affirms the recorded cancellation instead of cancelling a re-delivery on an already-reverted retry", async () => {
+    const firstRevertedAt = "2026-08-28T12:00:00.000Z";
+    const task = makeTask({
+      column: "done",
+      summary: "second delivery",
+      sourceMetadata: { revertedAt: firstRevertedAt, revertedCommitSha: "first-revert" },
+    } as Partial<Task>);
+    const store = createMockStore(task);
+    performTaskRevertMock.mockResolvedValue({ mode: "git", clean: true, alreadyReverted: true });
+
+    const res = await REQUEST(createApp(store), "POST", `/api/tasks/${task.id}/revert`);
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ mode: "git", clean: true, alreadyReverted: true });
+    expect(store.recordPatchnodeRevert as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(task.id, {
+      occurredAt: firstRevertedAt,
+      revertCommitSha: "first-revert",
+      pairWithDeliveryAtOrBefore: true,
+    });
+    expect(store.updateTask as ReturnType<typeof vi.fn>).not.toHaveBeenCalledWith(
+      task.id,
+      expect.objectContaining({ sourceMetadataPatch: expect.anything() }),
+    );
+    expect(task.sourceMetadata).toMatchObject({ revertedAt: firstRevertedAt, revertedCommitSha: "first-revert" });
   });
 
   it("mode:'git' returns a conflicting result without creating an AI-undo follow-up task (FN-7524: default mode is now 'auto', which DOES fall back to AI on conflict — explicit 'git' is required to preserve the FN-7523 git-only contract)", async () => {

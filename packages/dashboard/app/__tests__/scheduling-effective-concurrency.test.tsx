@@ -25,7 +25,7 @@ function SchedulingHarness({ initial }: { initial: Partial<SettingsFormState> })
   );
 }
 
-describe("SchedulingSection effective concurrency affordance", () => {
+describe("SchedulingSection independent agent concurrency affordance", () => {
   it("accepts the shared 1–50 range through the rendered settings control", async () => {
     const user = userEvent.setup();
     render(<SchedulingHarness initial={{}} />);
@@ -35,12 +35,12 @@ describe("SchedulingSection effective concurrency affordance", () => {
 
     expect(input).toHaveValue(12);
     expect(input).toHaveAttribute("max", "50");
-    expect(screen.getByText("Default: 2. The effective ceiling is the lower of Max Concurrent Tasks and Max Worktrees while worktree limiting is on.")).toBeInTheDocument();
+    expect(screen.getByText("Default: 2. Caps every AI-active task, including planning, independently of Max Worktrees.")).toBeInTheDocument();
   });
 
-  it("renders the worktree binding explanation only while the worktree gate binds", () => {
+  it("never presents Max Worktrees as a binding agent ceiling", () => {
     const { rerender } = render(<SchedulingHarness initial={{ maxConcurrent: 8, maxWorktrees: 4, worktreeLimitEnabled: true }} />);
-    expect(screen.getByText("Effective concurrency ceiling: 4, bound by Max Worktrees.")).toBeInTheDocument();
+    expect(screen.queryByText(/Effective concurrency ceiling/)).not.toBeInTheDocument();
 
     rerender(<SchedulingHarness key="worktree-limit-off" initial={{ maxConcurrent: 8, maxWorktrees: 4, worktreeLimitEnabled: false }} />);
     expect(screen.queryByText(/Effective concurrency ceiling/)).not.toBeInTheDocument();

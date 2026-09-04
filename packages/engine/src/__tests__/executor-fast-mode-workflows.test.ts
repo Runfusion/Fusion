@@ -7,7 +7,7 @@
 // injection surface (fn_review_step is deleted in both modes) vs mandatory fn_task_done.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import "./executor-test-helpers.js";
-import { getBuiltinWorkflow } from "@fusion/core";
+import { FAST_LANE_STEP_NAME, getBuiltinWorkflow } from "@fusion/core";
 import { TaskExecutor } from "../executor.js";
 import { resolveExternalExecutionCheckoutRoute } from "../execution/external-execution-checkout.js";
 import { WorkflowGraphTaskRunner } from "../workflows/workflow-graph-task-runner.js";
@@ -18,6 +18,7 @@ import {
   mockedExistsSync,
   mockedExec,
   mockedStatSync,
+  mockExecuteAll,
   resetExecutorMocks,
 } from "./executor-test-helpers.js";
 
@@ -183,7 +184,61 @@ describe("fast mode workflow/runtime invariants", () => {
     }
   });
 
-  it("graph executor with a custom workflow skips custom pre-merge prompt/gate nodes in fast mode", async () => {
+  /*
+  FNXC:WorkflowStepNotRun 2026-08-28-14:47:
+  The production implementation completion path must distinguish an absent verification command
+  from a configured command that passed. Both paths remain non-blocking, but only the former writes
+  the durable NOTHING WAS VERIFIED log before handing completion back to the workflow graph.
+  */
+  it.each([
+    { name: "no commands", configured: false },
+    { name: "a passing command", configured: true },
+  ])("keeps production implementation completion honest with $name", async ({ configured }) => {
+    const worktree = "/tmp/test/.worktrees/fn-226";
+    const liveTask = task({
+      id: "FN-226",
+      executionMode: "standard",
+      worktree,
+      branch: "fusion/fn-226",
+      steps: [{ name: "Implement", status: "done" }],
+    });
+    const { store, executor } = makeExecutorForTask(liveTask);
+    store.getSettings.mockResolvedValue({
+      autoMerge: false,
+      runStepsInNewSessions: true,
+      ...(configured ? { testCommand: "pnpm test:focused" } : {}),
+      experimentalFeatures: { workflowGraphExecutor: true },
+    });
+    mockExecuteAll.mockResolvedValue([{ stepIndex: 0, success: true, retries: 0 }]);
+    const verification = vi
+      .spyOn(executor as never as { runExecutorDeterministicVerification: () => unknown }, "runExecutorDeterministicVerification")
+      .mockResolvedValue({ allPassed: true });
+
+    const graphCompletion = vi.fn();
+    const reportImplementationExit = vi.fn();
+    await (executor as any).runImplementation(
+      liveTask,
+      graphCompletion,
+      reportImplementationExit,
+    );
+    const logLines = store.logEntry.mock.calls.map((call: unknown[]) => String(call[1] ?? ""));
+
+    expect(graphCompletion).toHaveBeenCalledOnce();
+    expect(graphCompletion).toHaveBeenCalledWith({ modifiedFiles: [] });
+    expect(reportImplementationExit).toHaveBeenCalledWith("complete-from-live-files");
+    expect(store.moveTask).not.toHaveBeenCalled();
+    if (configured) {
+      expect(verification).toHaveBeenCalledTimes(1);
+      expect(logLines.some((line: string) => line.includes("NOTHING WAS VERIFIED"))).toBe(false);
+    } else {
+      expect(verification).not.toHaveBeenCalled();
+      expect(logLines).toContain(
+        "[verification] Deterministic verification not executed because no test or build command is configured — NOTHING WAS VERIFIED.",
+      );
+    }
+  });
+
+  it("falls back to standard custom execution when a Fast workflow has no implementation node", async () => {
     const { store, executor } = makeExecutorForTask(task({ executionMode: "fast", worktree: "/tmp/wt" }));
     const executeStep = vi.spyOn(executor as any, "executeWorkflowStep").mockResolvedValue({ success: true });
     const executeScript = vi.spyOn(executor as any, "executeScriptWorkflowStep").mockResolvedValue({ success: true });
@@ -220,15 +275,15 @@ describe("fast mode workflow/runtime invariants", () => {
       },
       seams: (executor as any).createAuthoritativeWorkflowSeams({}),
       primitives: (executor as any).createAuthoritativeWorkflowPrimitives({ experimentalFeatures: { workflowGraphExecutor: true } }),
-      runCustomNode: (node, nodeTask, context) => (executor as any).runGraphCustomNode(node, nodeTask, {}, undefined),
+      runCustomNode: (node, nodeTask, context) => (executor as any).runGraphCustomNode(node, nodeTask, {}, undefined, context),
     });
 
     const result = await runner.run(task({ id: "FN-6226", executionMode: "fast" }), { experimentalFeatures: { workflowGraphExecutor: true } });
     expect(result.disposition).toBe("completed");
     expect(result.visitedNodeIds).toEqual(["start", "custom-review", "custom-gate"]);
-    expect(executeStep).not.toHaveBeenCalled();
+    expect(executeStep).toHaveBeenCalledTimes(2);
     expect(executeScript).not.toHaveBeenCalled();
-    expect(store.logEntry).toHaveBeenCalledWith(
+    expect(store.logEntry).not.toHaveBeenCalledWith(
       "FN-6226",
       "Fast mode — custom graph node 'custom-review' skipped",
       undefined,
@@ -621,7 +676,7 @@ describe("fast mode workflow/runtime invariants", () => {
     expect(seams.merge).toHaveBeenCalledTimes(1);
   });
 
-  it("raw fast mode skips skill executor nodes when primitives are unavailable", async () => {
+  it("raw Fast mode falls back to an unsupported skill-only workflow", async () => {
     const runCustomNode = vi.fn(async () => ({ outcome: "success", value: "ran-skill" }));
     const runner = new WorkflowGraphTaskRunner({
       store: {
@@ -663,7 +718,7 @@ describe("fast mode workflow/runtime invariants", () => {
 
     expect(result.disposition).toBe("completed");
     expect(result.visitedNodeIds).toEqual(["start", "skill-review"]);
-    expect(runCustomNode).not.toHaveBeenCalled();
+    expect(runCustomNode).toHaveBeenCalledTimes(1);
   });
 
   it("raw fast mode still invokes non-executable review seam nodes", async () => {
@@ -732,7 +787,7 @@ describe("fast mode workflow/runtime invariants", () => {
     expect(runCustomNode).not.toHaveBeenCalled();
   });
 
-  it("fast builtin:coding executes explicitly selected optional-group template nodes", async () => {
+  it("fast builtin:coding bypasses explicitly selected pre-merge optional-group template nodes", async () => {
     const calls: string[] = [];
     const prompt = "# Task\n\n## Steps\n\n### Step 1: Do the work\n- [ ] edit files";
     const taskSteps = [{ name: "Do the work", status: "pending" }];
@@ -770,8 +825,9 @@ describe("fast mode workflow/runtime invariants", () => {
     }), { experimentalFeatures: { workflowGraphExecutor: true } });
 
     expect(result.disposition).toBe("completed");
-    expect(result.visitedNodeIds).toContain("browser-verification::browser-verification-step");
-    expect(calls).toContain("custom:browser-verification-step");
+    expect(result.visitedNodeIds).toContain("browser-verification");
+    expect(result.visitedNodeIds).not.toContain("browser-verification::browser-verification-step");
+    expect(calls).not.toContain("custom:browser-verification-step");
     expect(result.visitedNodeIds).toContain("code-review");
     expect(result.visitedNodeIds).not.toContain("code-review::code-review-step");
   });
@@ -900,7 +956,7 @@ describe("fast mode workflow/runtime invariants", () => {
     expect(store.moveTask).toHaveBeenCalledWith("FN-1165-NOOP", "done", expect.objectContaining({ preserveProgress: true }));
   });
 
-  it("fast builtin:coding executes plain Steps-section headings from fast triage specs", async () => {
+  it("fast builtin:coding ignores plan headings and executes one synthetic occurrence", async () => {
     const calls: string[] = [];
     const prompt = `# Task
 
@@ -933,7 +989,7 @@ describe("fast mode workflow/runtime invariants", () => {
       },
       seams,
       parseStepsDeps: {
-        readArtifact: async (_target, key) => key === "PROMPT.md" ? prompt : undefined,
+        readArtifact: vi.fn(async (_target, key) => key === "PROMPT.md" ? prompt : undefined),
         writeSteps: async (target, steps) => {
           target.steps = steps;
         },
@@ -941,18 +997,19 @@ describe("fast mode workflow/runtime invariants", () => {
       runCustomNode: vi.fn(async () => ({ outcome: "success" })),
     });
 
-    const result = await runner.run(task({
+    const fastTask = task({
       id: "FN-7260",
       executionMode: "fast",
       enabledWorkflowSteps: [],
       prompt,
-    }), { experimentalFeatures: { workflowGraphExecutor: true } });
+    });
+    const result = await runner.run(fastTask, { experimentalFeatures: { workflowGraphExecutor: true } });
 
     expect(result.disposition).toBe("completed");
     expect(result.visitedNodeIds).toContain("steps#0:step-execute");
-    expect(result.visitedNodeIds).toContain("steps#1:step-execute");
-    expect(result.visitedNodeIds).toContain("steps#2:step-execute");
-    expect(calls).toEqual(["step-execute:0", "step-execute:1", "step-execute:2"]);
+    expect(result.visitedNodeIds).not.toContain("steps#1:step-execute");
+    expect(calls).toEqual(["step-execute:0"]);
+    expect(fastTask.steps).toEqual([{ name: FAST_LANE_STEP_NAME, status: "pending" }]);
     expect(seams.merge).toHaveBeenCalledTimes(1);
   });
 
@@ -987,9 +1044,17 @@ describe("fast mode workflow/runtime invariants", () => {
       task({ executionMode: "fast" }),
       {},
       undefined,
+      { "workflow:fast-lane-active": true },
     );
 
-    expect(result).toMatchObject({ outcome: "success", value: "workflow-step-skipped" });
+    expect(result).toMatchObject({
+      outcome: "success",
+      value: "workflow-step-skipped",
+      contextPatch: {
+        notRunReason: "execution-mode-skip",
+        output: expect.stringContaining("NOTHING WAS VERIFIED"),
+      },
+    });
     expect(executeStep).not.toHaveBeenCalled();
     expect(executeScript).not.toHaveBeenCalled();
   });
@@ -1012,7 +1077,7 @@ describe("fast mode workflow/runtime invariants", () => {
     expect(executeStep).toHaveBeenCalledTimes(1);
   });
 
-  it.each(["prompt", "script", "gate"])("executes optional-group template %s nodes in fast mode", async (kind) => {
+  it.each(["prompt", "script", "gate"])("keeps post-merge optional-group template %s nodes executable in fast mode", async (kind) => {
     const { executor } = makeExecutorForTask(task({ executionMode: "fast", worktree: "/tmp/wt" }));
     const executeStep = vi.spyOn(executor as any, "executeWorkflowStep").mockResolvedValue({ success: true });
     const executeScript = vi.spyOn(executor as any, "executeScriptWorkflowStep").mockResolvedValue({ success: true });
@@ -1023,7 +1088,7 @@ describe("fast mode workflow/runtime invariants", () => {
       task({ executionMode: "fast" }),
       {},
       undefined,
-      { "workflow:optionalGroupActive": "browser-verification" },
+      { "workflow:optionalGroupActive": "post-merge-verification", "workflow:fast-lane-active": true },
     );
 
     expect(result).toMatchObject({ outcome: "success" });
@@ -1057,7 +1122,7 @@ describe("fast mode workflow/runtime invariants", () => {
   // covered above by the custom-node tests ("skips custom %s nodes in fast mode")
   // and by builtin-coding-workflow-step-results.test.ts (graph recording path).
 
-  it("re-enters graph recovery for fast completed tasks with unsatisfied explicit optional steps", async () => {
+  it("does not re-enter graph recovery for Fast completed tasks with stale explicit optional selections", async () => {
     const liveTask = task({
       id: "FN-7283-RECOVERY",
       executionMode: "fast",
@@ -1074,7 +1139,7 @@ describe("fast mode workflow/runtime invariants", () => {
     const recovered = await executor.recoverCompletedTask(liveTask as any);
 
     expect(recovered).toBe(true);
-    expect(graph).toHaveBeenCalledWith(liveTask);
+    expect(graph).not.toHaveBeenCalled();
   });
 
   /*

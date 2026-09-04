@@ -31,7 +31,7 @@ export async function runExecutorDeterministicVerification(
 
   if (!testCommand && !buildCommand) {
     executorLog.debug(`${task.id}: no test/build commands configured — skipping verification`);
-    return { allPassed: true };
+    return { allPassed: true, notRun: true };
   }
 
   const parts: string[] = [];

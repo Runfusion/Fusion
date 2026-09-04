@@ -1,4 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("../worktree/review-diff-fingerprint.js", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../worktree/review-diff-fingerprint.js")>(),
+  resolveContentReviewInputProof: vi.fn(async () => ({ kind: "fingerprint", fingerprint: "review-proof" })),
+}));
+
 import { WorkflowGraphExecutor } from "../workflows/workflow-graph-executor.js";
 import { persistWorkflowStepResult } from "../executor/execute-workflow-graph.js";
 import { TaskExecutor } from "../executor.js";
@@ -125,7 +131,7 @@ describe("review finding supersession production carrier", () => {
   });
 
   it("carries prompt and optional-group exits through their distinct graph writers into the same sink", async () => {
-    const patch = { findings: JSON.parse(RAW_REVIEW).findings, supersededFindingSourceWorkflowStepId: "cleanup-review", supersededFindingIds: ["c1", "c2", "c3"] };
+    const patch = { findings: JSON.parse(RAW_REVIEW).findings, reviewInputFingerprint: "review-proof", supersededFindingSourceWorkflowStepId: "cleanup-review", supersededFindingIds: ["c1", "c2", "c3"] };
     for (const node of [
       { id: "prompt-review", kind: "prompt", config: { name: "Prompt review", reviewKind: "code" } },
       {

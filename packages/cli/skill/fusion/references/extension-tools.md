@@ -56,7 +56,7 @@ Show full details for a task including steps, progress, and log entries.
 
 ### fn_task_logs_read
 
-Read a task's full persisted agent log with pagination and optional type filtering.
+Read a task's persisted agent log with pagination and optional type filtering. Tool detail is previewed per row by default; detail: full lifts the row preview while the whole response remains bounded.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -64,6 +64,7 @@ Read a task's full persisted agent log with pagination and optional type filteri
 | `limit` | number | — | Maximum matching entries to return (default 100). |
 | `offset` | number | — | Number of matching entries to skip from newest (default 0). |
 | `type` | union | — | Only return entries of this agent-log type. |
+| `detail` | union | — | Tool-detail mode. Preview (default) bounds each detail row; full lifts that row preview while the whole response remains bounded. |
 
 ### fn_task_attach
 

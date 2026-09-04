@@ -12,7 +12,7 @@ query ambiguous once the trigger stopped being a mobile-only affordance.
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, act, waitFor, cleanup } from "@testing-library/react";
+import { render, screen, fireEvent, act, waitFor, cleanup, within } from "@testing-library/react";
 
 // FNXC:Markdown 2026-06-23-03:30: Mock the heavy `mermaid` library so the shared
 // markdown pipeline's MermaidDiagram resolves without loading the real renderer.
@@ -1779,7 +1779,7 @@ describe("TaskDetailModal", () => {
     expect(screen.getByRole("menuitem", { name: "Retry" })).toBeTruthy();
   });
 
-  it("does NOT render Retry button when task status is not 'failed'", () => {
+  it("renders Retry for a live task even when its status is not failed", () => {
     render(
       <TaskDetailModal
         initialTab="definition"
@@ -1794,10 +1794,9 @@ describe("TaskDetailModal", () => {
       />,
     );
 
-    // No Retry should be visible in the Actions dropdown
     const actionsBtn = screen.getByRole("button", { name: "Actions" });
     fireEvent.click(actionsBtn);
-    expect(screen.queryByRole("menuitem", { name: "Retry" })).toBeNull();
+    expect(screen.getByRole("menuitem", { name: "Retry" })).toBeInTheDocument();
   });
 
   it("does NOT render Retry button when onRetryTask is not provided", () => {
@@ -1817,7 +1816,7 @@ describe("TaskDetailModal", () => {
     expect(screen.queryByText("Retry")).toBeNull();
   });
 
-  it("suppresses failure alert and Retry actions while a stale failed task has automatic recovery pending", () => {
+  it("shows the failure alert and Retry actions while automatic recovery is pending", () => {
     render(
       <TaskDetailModal
         initialTab="definition"
@@ -1837,10 +1836,12 @@ describe("TaskDetailModal", () => {
       />,
     );
 
-    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByRole("alert")).toHaveTextContent("Transient provider error");
+    expect(screen.getByText("Automatic recovery is pending. You can Retry now to restart this stage.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry with a different model/node" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Actions" }));
-    expect(screen.queryByRole("menuitem", { name: "Retry" })).toBeNull();
-    expect(screen.queryByText("Retry with a different model/node")).toBeNull();
+    expect(screen.getByRole("menuitem", { name: "Retry" })).toBeInTheDocument();
   });
 
   describe("retry action uniqueness for in-review failed tasks", () => {
@@ -1963,7 +1964,7 @@ describe("TaskDetailModal", () => {
 
       // Only one toast — the success toast, no info toast
       expect(addToast).toHaveBeenCalledTimes(1);
-      expect(addToast).toHaveBeenCalledWith("Retried FN-099", "success");
+      expect(addToast).toHaveBeenCalledWith("This stage will restart in its current column.", "success");
     });
 
     it("shows exactly one error toast when retry fails", async () => {
@@ -2933,10 +2934,11 @@ describe("TaskDetailModal", () => {
       expect(screen.getByText("Runtime status")).toBeInTheDocument();
       expect(screen.getAllByText("Fast").length).toBeGreaterThan(0);
       expectSingleStatsRuntimeStatus("executing");
-      expect(screen.getByText((1200).toLocaleString())).toBeInTheDocument();
-      expect(screen.getByText((450).toLocaleString())).toBeInTheDocument();
-      expect(screen.getByText((210).toLocaleString())).toBeInTheDocument();
-      expect(screen.getByText((1860).toLocaleString())).toBeInTheDocument();
+      const statsPanel = screen.getByRole("region", { name: "Task execution statistics" });
+      expect(within(statsPanel).getByText((1200).toLocaleString())).toBeInTheDocument();
+      expect(within(statsPanel).getByText((450).toLocaleString())).toBeInTheDocument();
+      expect(within(statsPanel).getByText((210).toLocaleString())).toBeInTheDocument();
+      expect(within(statsPanel).getByText((1860).toLocaleString())).toBeInTheDocument();
       const firstUsed = document.querySelector('time[datetime="2026-04-24T09:00:00.000Z"]');
       const lastUsed = document.querySelector('time[datetime="2026-04-24T10:15:00.000Z"]');
       expect(firstUsed).toBeTruthy();

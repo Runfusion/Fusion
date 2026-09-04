@@ -19,7 +19,6 @@ const defaultSettings = {
   directMergeCommitStrategy: "auto",
   pushAfterMerge: false,
   pushRemote: "origin",
-  recycleWorktrees: false,
   worktreeInitCommand: "",
   testCommand: "",
   buildCommand: "",

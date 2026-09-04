@@ -124,7 +124,7 @@ describe("seedDashboardProviders", () => {
 
   it("keeps native Kimi K3 available through the installed pi model registry", async () => {
     // FNXC:ModelCatalog 2026-08-12-20:46: FN-9007 keeps catalog coverage on Pi
-    // 0.84.1's real built-in registry, not a hand-written Kimi fixture.
+    // 0.84.4's real built-in registry, not a hand-written Kimi fixture.
     const modelRegistry = await createInMemoryModelRegistry();
     await modelRegistry.refresh();
 
@@ -137,6 +137,41 @@ describe("seedDashboardProviders", () => {
       contextWindow: 1_048_576,
       maxTokens: 131_072,
     });
+  });
+
+  it("keeps every Muse Spark surface selectable through the installed Pi registry", async () => {
+    const modelRegistry = await createInMemoryModelRegistry();
+    const surfaces = [
+      ["openrouter", "meta/muse-spark-1.1", "openai-completions"],
+      ["openrouter", "meta/muse-spark-1.2", "openai-completions"],
+      ["openrouter", "meta/muse-spark-1.2-contributor", "openai-completions"],
+      ["vercel-ai-gateway", "meta/muse-spark-1.1", "anthropic-messages"],
+      ["vercel-ai-gateway", "meta/muse-spark-1.2", "anthropic-messages"],
+      ["vercel-ai-gateway", "meta/muse-spark-1.2-contributor", "anthropic-messages"],
+      ["opencode-go", "muse-spark-1.2-contributor", "openai-responses"],
+      ["opencode", "muse-spark-1.2", "openai-responses"],
+      ["opencode", "muse-spark-1.2-contributor-free", "openai-responses"],
+    ] as const;
+
+    for (const [provider, id, api] of surfaces) {
+      expect(modelRegistry.find(provider, id)).toMatchObject({
+        provider,
+        id,
+        api,
+        reasoning: true,
+        contextWindow: 1_048_576,
+      });
+    }
+
+    expect(modelRegistry.find("openrouter", "meta/muse-spark-1.2")?.thinkingLevelMap).toMatchObject({
+      off: null,
+      low: "low",
+      medium: "medium",
+      high: "high",
+      xhigh: "xhigh",
+      max: null,
+    });
+    expect(modelRegistry.find("vercel-ai-gateway", "meta/muse-spark-1.2")?.thinkingLevelMap).toBeUndefined();
   });
 
   it("hands each real registry an isolated custom-provider catalog", async () => {

@@ -28,9 +28,10 @@ vi.mock("lucide-react", () => ({
   Paperclip: () => null,
   ArrowDown: () => null,
   ArrowUp: () => null,
-  Flag: () => null,
+  Flag: () => <svg />,
   TriangleAlert: () => null,
-  Zap: () => null,
+  Zap: () => <svg />,
+  ShieldCheck: () => null,
   Brain: () => null,
   Server: () => null,
   Cpu: () => null,
@@ -46,7 +47,6 @@ vi.mock("../../api", () => ({
   checkDuplicateTasks: vi.fn().mockResolvedValue([]),
   fetchGitRemotes: vi.fn().mockResolvedValue([]),
   fetchBoardWorkflows: vi.fn().mockResolvedValue({ flagEnabled: true, defaultWorkflowId: "builtin:coding", workflows: [], taskWorkflowIds: {} }),
-  fetchWorkspaceRepos: vi.fn().mockResolvedValue({ repos: [] }),
   apiFetchGitHubIssues: vi.fn().mockResolvedValue([]),
   apiFetchGitHubPulls: vi.fn().mockResolvedValue([]),
   fetchModels: vi.fn().mockResolvedValue({ models: [
@@ -156,6 +156,18 @@ describe("NewTaskModal", () => {
       viewportHeight: null,
       viewportOffsetTop: 0,
     });
+  });
+
+  it.each(["mobile", "desktop"] as const)("keeps the priority quick action accessible in the %s action row", (viewportMode) => {
+    mockViewportMode = viewportMode;
+    renderNewTaskModal();
+
+    const actions = screen.getByTestId("task-form-description-actions");
+    const priority = screen.getByTestId("task-form-inline-priority");
+    expect(actions).toContainElement(priority);
+    expect(priority).toHaveAttribute("aria-label", expect.stringMatching(/^Priority:/));
+    expect(priority).toHaveAttribute("title", expect.stringMatching(/^Priority:/));
+    expect(actions.querySelector("button:empty")).toBeNull();
   });
 
   it("restores desktop body density only for the 768px tablet resize class", () => {
@@ -563,6 +575,28 @@ describe("NewTaskModal", () => {
     expect(Array.from(select.options).map((option) => option.value)).toEqual(["standard", "fast"]);
   });
 
+  it("omits plan approval across successive submissions while Fast still toggles", async () => {
+    const onCreateTask = vi.fn().mockResolvedValue(makeTask("FN-234"));
+    renderNewTaskModal({ onCreateTask, projectId: "project-1" });
+    expect(screen.queryByTestId("task-form-plan-approval-toggle")).toBeNull();
+
+    const fastToggle = screen.getByTestId("task-form-inline-fast");
+    fireEvent.click(fastToggle);
+    expect(fastToggle).toHaveAttribute("aria-pressed", "true");
+    fireEvent.change(screen.getByPlaceholderText("What needs to be done?"), { target: { value: "First ordinary task" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
+    await waitFor(() => expect(onCreateTask).toHaveBeenCalledTimes(1));
+    expect(onCreateTask.mock.calls[0]?.[0]).toMatchObject({ executionMode: "fast" });
+    expect(onCreateTask.mock.calls[0]?.[0]).not.toHaveProperty("requirePlanApproval");
+
+    await waitFor(() => expect(screen.getByPlaceholderText("What needs to be done?")).toHaveValue(""));
+    expect(screen.getByTestId("task-form-inline-fast")).toHaveAttribute("aria-pressed", "false");
+    fireEvent.change(screen.getByPlaceholderText("What needs to be done?"), { target: { value: "Second ordinary task" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
+    await waitFor(() => expect(onCreateTask).toHaveBeenCalledTimes(2));
+    expect(onCreateTask.mock.calls[1]?.[0]).not.toHaveProperty("requirePlanApproval");
+  });
+
   it("includes executionMode fast in the create payload when Fast is selected", async () => {
     const { props } = renderNewTaskModal();
 
@@ -849,6 +883,31 @@ describe("NewTaskModal", () => {
           expect.objectContaining({ enabledWorkflowSteps: ["browser-verification"] }),
         );
       });
+    });
+
+    it.each(["mobile", "desktop"] as const)("restores default-on steps in the %s New Task layout after Fast is disabled", async (viewport) => {
+      const { fetchWorkflows, fetchWorkflowOptionalSteps } = await import("../../api");
+      mockViewportMode = viewport;
+      vi.mocked(fetchWorkflows).mockResolvedValue([WF]);
+      vi.mocked(fetchWorkflowOptionalSteps).mockResolvedValue([{ ...STEP, defaultOn: true }]);
+
+      const { props } = renderNewTaskModal();
+      fireEvent.change(screen.getByPlaceholderText("What needs to be done?"), { target: { value: "Restore Fast selection" } });
+      await chooseWorkflowOption("wf-x");
+
+      const trigger = await screen.findByTestId("task-form-inline-optional-steps");
+      await waitFor(() => expect(trigger).toHaveTextContent("Steps: 1 selected"));
+      const executionModeSelect = screen.getByTestId("task-form-execution-mode-select");
+      fireEvent.change(executionModeSelect, { target: { value: "fast" } });
+      await waitFor(() => expect(trigger).toHaveTextContent("Steps: none"));
+      fireEvent.change(executionModeSelect, { target: { value: "standard" } });
+      await waitFor(() => expect(trigger).toHaveTextContent("Steps: 1 selected"));
+
+      fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
+      await waitFor(() => expect(props.onCreateTask).toHaveBeenCalledTimes(1));
+      const payload = vi.mocked(props.onCreateTask).mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(payload.enabledWorkflowSteps).toEqual(["browser-verification"]);
+      expect(payload).not.toHaveProperty("executionMode");
     });
 
     it("keeps exactly one inline optional-steps trigger when Advanced is expanded", async () => {

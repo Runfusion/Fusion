@@ -39,7 +39,6 @@ function createSyncStoreWithStaleWorkflowCounter(): TaskStore {
     db,
     nextWorkflowDefinitionId() { return nextWorkflowDefinitionIdImpl(store as TaskStore); },
     assertWorkflowIrTraitsValid() {},
-    workflowDefinitionsCache: null,
   };
   return store as unknown as TaskStore;
 }

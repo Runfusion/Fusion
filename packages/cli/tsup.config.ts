@@ -423,7 +423,7 @@ const cliBuildConfig = {
     options.conditions = [...(options.conditions || []), "source"];
   },
   noExternal: [/^@fusion\//, /^@fusion-plugin-examples\//],
-  // Native module: leave node-pty (aliased to @homebridge fork) out of the
+  // Native module: leave node-pty (aliased to @lydell/node-pty) out of the
   // bundle. esbuild can't statically resolve its conditional native require()s
   // (build/Release/pty.node, build/Debug/conpty.node, ...).
   //
@@ -437,7 +437,7 @@ const cliBuildConfig = {
   // resolved at runtime from node_modules, exactly like node-pty above.
   external: [
     "node-pty",
-    "@homebridge/node-pty-prebuilt-multiarch",
+    "@lydell/node-pty",
     "dockerode",
     "ssh2",
     "cpu-features",

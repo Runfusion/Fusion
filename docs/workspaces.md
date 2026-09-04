@@ -7,7 +7,7 @@ A workspace is one Fusion project whose root is **not** a Git repository and who
 | Concern | Single-repository project | Workspace project |
 | --- | --- | --- |
 | Project root | Git repository | Browse-only non-Git parent directory |
-| Task checkout | One root worktree | One on-demand worktree per configured sub-repository |
+| Task checkout | One task-ID worktree | One task-ID worktree per configured sub-repository |
 | Landing | One merge | Per-repository, non-atomic land loop |
 | Recovery | Single merge recovery | Per-repository landing proof and partial-land recovery |
 
@@ -45,7 +45,7 @@ The configuration file is written by registration, repository initialization, th
 
 In **Settings → General → Workspace repositories**, choose a detected candidate or enter a direct-child directory and select **Add**. The same operation is available to integrations as `POST /api/git/workspace-repos` with `{ "repo": "api" }`. Adds are idempotent. Fusion requires an in-root direct child that is a real Git work tree and rejects excluded names (`node_modules`, `.fusion`, `.git`, `.pi`, `.worktrees`), absolute paths, and escapes.
 
-A running task picks up a newly added member on its next `fn_acquire_repo_worktree` call without restarting the engine. Membership only grows during a live run: a failed or empty refresh preserves the last known-good members; removals require an engine restart. Tasks already in review or merging refuse late acquisition to avoid bypassing review; create a follow-up task instead.
+Workspace membership is captured when a task begins. Fusion acquires every configured member for that task, so adding or removing a repository affects later tasks rather than changing a running task's checkout set. Create a follow-up task when newly configured repository work is needed.
 
 ## The workspaceMode setting
 
@@ -55,11 +55,27 @@ An explicit `workspaceMode: false` in `.fusion/config.json` prevents `ensureGitR
 
 ## How a workspace task executes
 
-A workspace task owns one task directory containing a child Git worktree for each repository in its confirmed scope. That directory is the session cwd, the single isolation-boundary root, and (when enabled) the sandbox writable root; there is no positional coordinator repository. Repository-relative paths such as `api/src/server.ts` therefore work naturally in one session. The singular `task.worktree` field remains unset for workspace tasks.
+A workspace task owns one task directory containing a child Git worktree for **every repository configured in** `.fusion/workspace.json`. Fusion acquires that complete set when the task starts, using the task ID for each checkout name, and keeps the set stable for the task lifetime. That directory is the session cwd, the single isolation-boundary root, and (when enabled) the sandbox writable root; there is no positional coordinator repository. Repository-relative paths such as `api/src/server.ts` therefore work naturally in one session. The singular `task.worktree` field remains unset for workspace tasks.
 
-Planning and prompt-based Plan Review run at the non-Git workspace root under a declared `read-only-root` boundary. They acquire no branches or leases, retain task-store tools so they can persist the plan and confirm `## Repository Scope`, and cannot write into the operator checkout. Workspace Plan Review scripts are rejected because configured scripts cannot yet receive that declared read-only boundary. Execution acquires only the confirmed scope afterwards. The engine declares the boundary kind directly rather than inferring it from a path shape, so configured `worktreesDir` layouts fail closed instead of disabling containment.
+Planning, prompt-based Plan Review, implementation, and read-only graph gates run from that task directory under a `workspace-task-dir` boundary. The boundary declares every configured child repository and never permits a session to fall back to the operator checkout. Workspace Plan Review scripts remain unsupported because the script runner cannot yet receive this multi-root boundary.
 
-`fn_acquire_repo_worktree` returns the repository-relative child worktree for an allowed mid-flight scope extension. Fusion adds acquired member paths to the active-worktree set, and reuses remembered worktrees across resume or restart. Tasks already in flight with the legacy per-repository layout retain that layout for their lifetime; Fusion does not move their worktrees on disk.
+Agents do not choose, acquire, or extend individual repository checkouts. `.fusion/workspace.json` is the single source of membership; the durable repository scope is a confirmed snapshot for review evidence and landing, not a planner heading or an operator selection.
+
+### Dispatch-time base refresh
+
+At implementation dispatch, Fusion refreshes each configured repository checkout onto that repository's recorded base branch. This also runs after a task is released from a file-overlap hold, so work resumes from the latest landed base rather than the one captured when its checkout was first acquired. A dirty checkout, rebase conflict, or unresolvable base keeps its local base unchanged and defers rebase/conflict handling to the merge lane; these refresh outcomes do not block execution. Worktrunk-backed checkouts are not refreshed.
+
+### File overlap in workspace mode
+
+A workspace task retains its file-scope claim while any per-repository checkout exists, including while it waits in a review or hold lane. Prefer repository-qualified `## File Scope` entries such as `api/src/server.ts`. An unprefixed entry such as `src/server.ts` is conservatively interpreted as applying inside every configured repository, so it still serializes work against a repository-qualified peer.
+
+### Dependency readiness before Plan Review
+
+Every fresh member worktree performs a bounded root-level dependency bootstrap. Fusion recognizes Node (`pnpm`, npm, Yarn, Bun), Python (`uv`, Poetry, Pipenv, pip), Rust, Go, PHP, Ruby, .NET, Maven, Gradle, Elixir, Dart/Flutter, and Swift manifests. A row runs only when its required binary is available on `PATH`; a plain static repository with no manifest or lock evidence starts no command and is `not-needed`.
+
+Fusion records readiness in `<private-git-dir>/fusion-dependency-install.json`, so it never appears in Git status. A configured `worktreeInitCommand` is authoritative and replaces inferred rows. Unknown package-manager evidence (named manifests such as `flake.nix` and a bounded root-level lockfile/declaration shape rule) is `unrecognized`, not dependency-free. The planner receives the affected repository and evidence, then uses the planning-only `fn_install_worktree_dependencies` tool to run an engine-observed install or record a reasoned `none` decision.
+
+Before prompt Plan Review dispatches, Fusion retries deterministic rows once. Any `unresolved` or `unrecognized` member returns the ordinary Plan Review `REVISE` beginning `Dependencies are not installed.`; the existing revision budget and `planReviewReplanCap` replan the task, then park it at `awaiting-approval` with `awaitingApprovalReason: "plan-review-replan-cap"` if exhausted. A missing or unreadable probe is `not-determined`, logged, and does not block review.
 
 ### Custom working branches
 
@@ -75,13 +91,15 @@ The choice is pinned per repository at acquisition. The recorded `WorkspaceWorkt
 
 ## Review and verification
 
-Fusion captures changes per acquired sub-repository, not from the non-Git root. Modified file paths are repository-prefixed, such as `api/src/server.ts`, and each member is diffed against its own base. Per-repository branch attribution, contamination, and worktree-invariant checks apply to those member worktrees. `fn_run_verification` can select a repository explicitly and records the selected repository with its command result.
+Fusion captures changes per acquired sub-repository, not from the non-Git root. Modified file paths are repository-prefixed, such as `api/src/server.ts`, and each member is diffed against its own base. Per-repository branch attribution, contamination, and worktree-invariant checks apply to those member worktrees. A workspace Code Review evaluates every modified in-scope repository before returning one aggregate verdict, with repository-qualified findings and an outcome for each reviewed member. `fn_run_verification` can select a repository explicitly and records the selected repository with its command result.
 
 ## Merging: the per-repo land loop
 
 `landWorkspaceTask` processes configured/acquired repositories in a deterministic per-repository loop. Each repository lands on **its own local integration ref**; a shared workspace integration branch is not used. This means the operation is non-atomic: an earlier repository can land before a later repository fails.
 
 Each repository uses the same `landOneRepo` / `landSquash` mechanic as a single-repository project, with that repository's main checkout as `projectRootDir`. When the integration branch is checked out with local edits, `merger.allowDirtyLocalCheckoutSync` applies identically: enabled stashes tracked and untracked edits, fast-forwards, then restores them; disabled refuses the land before the ref advances.
+
+`pushAfterMerge` also governs workspace publication. When it is off, every member lands only on its local integration ref: Fusion does not create fence refs, land intents, or remote branch writes. When it is on, each member resolves and publishes to its own selected remote under the normal workspace fence contract; `pushRemote` remains a direct-merge setting and does not select a workspace member remote.
 
 The CLI command `fn task merge` reports each repository as `landed`, `empty`, or `failed`, and exits non-zero for a partial land. Fusion finalizes the task to `done` only after every member has either landed or has no changes to land. A partial result remains recoverable and must be treated as an operator-visible state, not as one atomic merge.
 
@@ -117,13 +135,22 @@ There is an important route/helper distinction when auto-merge is off. `revertWo
 
 ## Archiving and cleanup
 
+A successful workspace merge cleans up after itself. When every acquired sub-repository lands, finalization removes each recorded member worktree under the same landing proof the single-repository lane uses, then removes the emptied workspace task directory (and emptied intermediate parents for nested repository keys), so a merged, done task leaves no orphan folder under `.fusion/worktrees/<task-id>/`. The gate is conservative in the direction that protects work: a member holding uncommitted or unverifiable content is preserved with its reason written to the task log, and a preserved member keeps the parent directory. A partial land removes nothing, because the retry still needs those checkouts. Cleanup failures are recorded and never turn a proven landing into a merge failure; the periodic sweep converges anything left behind, including tasks that completed before this behavior shipped.
+
 Archiving a workspace task synchronously removes every recorded member worktree. Fusion holds a per-repository reservation through disposal and branch cleanup. A failed removal is quarantined so a later acquisition can reconcile the orphan; successful siblings are released. `archiveTask(..., { cleanup: false })` intentionally retains worktrees, while self-healing remains a backstop. For the task lifecycle details, see [Workspace worktree cleanup on archive](./task-management.md#workspace-worktree-cleanup-on-archive).
+
+## Task Reset
+
+Reset returns a workspace task to fresh planning. It fences active task runtime owners, removes every recorded per-repository worktree, removes the empty workspace task directory when possible, replaces the current plan with a bootstrap prompt containing the confirmed original request, and clears the task's workspace coordination leases and land intents. It then publishes the same task with no steps or lifecycle status into the lane where a new idea starts: the Planning/hold lane for a manual-intake workflow, or the intake lane otherwise.
+
+Reset retains the task ID, title, confirmed description, dependencies, workflow selection, comments, attachments, operator-authored documents, and logs. It deletes task-owned local branches in each repository while preserving operator-supplied and shared-group branches, and clears discarded-run presentation state such as size, pull-request information, token spend, step reports, and transition markers. A live, foreign, unsafe, or unprovable repository is reported as an actionable per-repository conflict, and the same live and foreign-holder checks cover the workspace task directory itself. If a holder appears at that directory during repository cleanup, Fusion retains the directory and current plan, reports incomplete cleanup, and does not publish fresh Planning state.
 
 ## Limitations and known sharp edges
 
 - Landing is non-atomic. A later failure does not undo earlier local integration-ref advances; use task logs, per-repository history, and `landedSha` proof before retrying or manually recovering.
 - A requested base can resolve in some members and not others. Inspect the per-repository Task Detail base/fallback marker and task log before manually coordinating a mixed workspace.
-- Exclusivity is per sub-repository. Two workspace tasks can work in different members concurrently, but cannot acquire or land the same member at the same time.
+- Acquisition exclusivity is per sub-repository and short-lived. The durable lease covers only the `git worktree add` critical section, then releases, so tasks may work concurrently in their own member worktrees after startup.
+- With `pushAfterMerge` off, cross-node land exclusivity rests on the durable per-repository lease and local ref compare-and-swap because no shared remote write occurs.
 - Detection is intentionally shallow. A Git repository nested below a non-repository direct child is not a workspace member until you restructure or configure a valid direct-child entry.
 
 ## Troubleshooting
@@ -132,13 +159,9 @@ Archiving a workspace task synchronously removes every recorded member worktree.
 
 `detectWorkspaceRepos` only scans one level. Ensure the repository is a direct child, is not named `node_modules`, `.fusion`, `.git`, or `.pi`, has a `.git` marker, and succeeds as a real Git work tree. Remove or investigate a stray `.git` at the workspace root rather than initializing it: the root should remain non-Git.
 
-### `fn_acquire_repo_worktree` reports an unknown repository
+### A configured repository is unavailable or busy
 
-Add the repository in **Settings → General → Workspace repositories** (or through `POST /api/git/workspace-repos`), then retry immediately. The repository must be a valid direct-child Git work tree. Tasks already in review or merging require a follow-up task.
-
-### `fn_acquire_repo_worktree` reports busy
-
-Another task is temporarily acquiring or landing that same member. Fusion preserves the prepared worktree and shows a bounded Waiting state naming the holder; retry the tool shortly, or continue with a different configured member. Do not edit the shared repository checkout while waiting.
+Fusion acquires the complete configured member set when the task starts. If a member is unknown, invalid, or leased by another task, startup waits or fails visibly without silently dropping that repository. Repair workspace configuration or wait for the holder to release the member, then retry the task; do not edit the shared repository checkout.
 
 ### A task is failed after partial land
 
@@ -150,7 +173,7 @@ Check `.fusion/config.json`: explicit `workspaceMode: false` is the guard that s
 
 ## Worktree layout
 
-When `worktreesDir` is unset, workspace members keep the existing `<member>/.worktrees/<name>` layout. When it is configured, Fusion resolves the configured root once from the workspace root and creates each native member checkout at `<configured-root>/<workspace>/<repo>/<name>`. A safe workspace directory basename is preserved verbatim; unsafe names use a sanitized segment plus a deterministic eight-character hash. Nested or unsafe member paths use the same sanitized-and-hashed rule, preventing flattened-name collisions.
+When `worktreesDir` is unset, workspace tasks use `<workspace>/.fusion/worktrees/<lowercased-task-id>/<repo>` for every member checkout. A pre-existing member `.worktrees/` root remains honored by containment and cleanup sweeps while the setting stays unset, and recorded paths are never migrated. When it is configured, Fusion resolves the configured root once from the workspace root and creates each native member checkout at `<configured-root>/<workspace>/<repo>/<lowercased-task-id>`. A safe workspace directory basename is preserved verbatim; unsafe names use a sanitized segment plus a deterministic eight-character hash. Nested or unsafe member paths use the same sanitized-and-hashed rule, preventing flattened-name collisions.
 
 Fusion writes `.fusion-workspace-root` only while acquiring an external shared root. It rejects a second, different workspace root with the same safe basename rather than sharing the group; configure another root or rename one workspace. The marker never resolves paths and is only a deletion veto. Recorded worktree paths remain authoritative, so existing checkouts are not migrated. Grouped paths are forward-derived and never converted back to a project root by parent trimming. `.ai-merge` remains at the ungrouped configured root. Workspace directory sweeps do not reclaim by walking groups; archive and workspace recovery reclaim recorded member paths addressably.
 
@@ -160,12 +183,12 @@ Workspace tasks retain the operator-supplied shared branch-name flow. When JIRA 
 
 ## Task repository scope
 
-Configured repositories are acquired before planning for availability, but acquisition is not task intent. Each workspace task starts with an explicit repository-scope proposal (an operator selection is already confirmed); planning confirms the final scope in `## Repository Scope`. A clean scoped repository is reported as **No changes — not reviewed** and creates no review, landing, or partial-land obligation. Reviews and landing use only scoped repositories with qualified modified-file evidence.
+Every configured repository is acquired for the task; checkout acquisition is not task intent. Planning proposes and Plan Review confirms the final repository scope in `## Repository Scope`, including the dependency assessment required before execution. A clean scoped repository is reported as **No changes — not reviewed** and creates no review, landing, or partial-land obligation. Reviews and landing use only scoped repositories with qualified modified-file evidence.
 
-An executor that needs another repository before landing records a scope extension and its reason. Once a land intent or landing exists, new acquisition remains refused and should be handled by a follow-up task. A workspace task normally has no singular `task.worktree`: member worktrees are the only routing authority, so Fusion never creates a worktree at the non-Git workspace root.
+A task that needs work in a repository added after it started requires a follow-up task. A workspace task normally has no singular `task.worktree`: member worktrees are the only routing authority, so Fusion never creates a worktree at the non-Git workspace root.
 
 ## Workspace review evidence and landing
 
-Code Review captures the complete binary diff from each repository's recorded base to its task branch. Landing consumes that same repository-qualified file list and fingerprint. A clean acquired repository is recorded as `NOT_REVIEWED`; acquiring a checkout alone never creates a landing or approval obligation.
+Code Review captures the complete binary diff from each repository's recorded base to its task branch. One episode reviews every modified in-scope repository and reports one verdict covering all per-repository outcomes and findings; clean acquired repositories are recorded as `NOT_REVIEWED`. An ordinary repository reviewer failure is named as not covered by a verdict while other repository findings remain visible. An approval carrying non-blocking notes still approves without another remediation round. An approving workspace Code Review publishes durable per-repository evidence through the dedicated store writer together with its qualified modified-file capture; if that publication cannot be persisted, Fusion reports the review as unavailable rather than approved. A reviewer provider failure, such as a rate limit or transient outage, ends the episode as unavailable and the bounded retry reruns the whole episode rather than publishing a rejection assembled from only part of the workspace. Landing consumes that same repository-qualified file list and fingerprint. Acquiring a checkout alone never creates a landing or approval obligation.
 
 If a modified repository lacks approval, Fusion reports `approval-missing`; if its approved diff no longer matches, it reports `content-changed`. Both diagnostics identify the repository and files, preserve completed work, and automatically route the task back through Code Review rather than exhausting merge retries. Repository/base-ref preparation errors are environment failures: Fusion keeps the Git cause, retries the environment lane only, and Retry resumes that lane without charging a reviewer provider.

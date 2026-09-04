@@ -30,6 +30,14 @@ describe("agent-session-helpers test mode overrides", () => {
       provider: "mock",
       modelId: "scripted",
     });
+    expect(resolveExecutorSessionModel(undefined, undefined, {
+      ...settings,
+      fastCheapProvider: "anthropic",
+      fastCheapModelId: "claude-haiku",
+    }, assignedAgentRuntimeConfig, undefined, "fast")).toEqual({
+      provider: "mock",
+      modelId: "scripted",
+    });
     expect(resolvePlanningSessionModel("openai", "gpt-4.1", settings, assignedAgentRuntimeConfig)).toEqual({
       provider: "mock",
       modelId: "scripted",

@@ -25,6 +25,10 @@ import {
   type EngineSingletonLock,
 } from "./project/engine-singleton-lock.js";
 import { runtimeLog } from "./logger.js";
+import {
+  preserveAllRemoteTunnelsForSupervisedRestart,
+  shutdownAllRemoteTunnels,
+} from "./remote-access/remote-tunnel-service.js";
 
 /**
  * Options shared across all engines created by the manager.
@@ -62,6 +66,18 @@ export interface EngineManagerOptions {
 
 /** Default interval for background reconciliation (30 seconds). */
 export const DEFAULT_RECONCILIATION_INTERVAL_MS = 30_000;
+
+/**
+ * FNXC:RemoteAccess 2026-09-01-02:54:
+ * Shutdown intent, threaded from the only place that knows it: the dashboard sets its exit code to
+ * FUSION_RESTART_EXIT_CODE when a restart was REQUESTED. It is passed as an argument rather than read
+ * from the environment on purpose — FUSION_RESTART_SUPERVISED is inherited by every child process, and
+ * trusting it once already produced the "restart does nothing" bug (see hasLiveSupervisingParent).
+ */
+export interface StopAllOptions {
+  /** True when this process is exiting for a supervisor that will relaunch it immediately. */
+  supervisedRestart?: boolean;
+}
 
 export class ProjectEngineManager {
   private engines = new Map<string, ProjectEngine>();
@@ -278,7 +294,7 @@ export class ProjectEngineManager {
   }
 
   /** Gracefully stop all engines and reconciliation. */
-  async stopAll(): Promise<void> {
+  async stopAll(options: StopAllOptions = {}): Promise<void> {
     this.beginDrain();
 
     /*
@@ -291,6 +307,44 @@ export class ProjectEngineManager {
     } catch (error) {
       runtimeLog.warn(`Failed to persist local node offline before engine shutdown: ${error instanceof Error ? error.message : String(error)}`);
     }
+
+    /*
+    FNXC:RemoteAccess 2026-08-31-07:08:
+    Remote tunnels are process-lifetime, not engine-lifetime (see remote-tunnel-service.ts), so THIS
+    is the only path that stops them — `engine.stop()` no longer does, which is what lets "Stop
+    engine"/"Restart engine" leave the operator's public URL alive. Run it before engine.stop() while
+    each TaskStore is still open, so the "was running on shutdown" marker persists and restore-on-start
+    can bring the tunnel back.
+    */
+    /*
+    FNXC:RemoteAccess 2026-09-01-02:54:
+    A SUPERVISED RESTART IS NOT A SHUTDOWN. `supervisedRestart` is set when the dashboard is exiting with
+    FUSION_RESTART_EXIT_CODE for a supervisor that will relaunch it seconds later (Command Center
+    "Restart", and "Update from source", which ends in the same exit). Killing the tunnel there took the
+    operator's public URL down on every routine restart — observed twice, container healthy, URL dead.
+    Only a genuine process/container exit stops it.
+    */
+    const supervisedRestart = options.supervisedRestart === true;
+    const tunnelShutdowns = Array.from(this.engines.entries()).map(
+      async ([id, engine]) => {
+        try {
+          await engine.shutdownRemoteTunnelForProcessExit({ supervisedRestart });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          runtimeLog.warn(`Engine ${id} remote tunnel ${supervisedRestart ? "handover" : "shutdown"} error: ${message}`);
+        }
+      },
+    );
+    await Promise.all(tunnelShutdowns);
+    // Sweep any tunnel whose engine is already gone (e.g. a paused project) so no child process
+    // outlives this one publishing a port nothing serves — or, across a supervised restart, so it is
+    // released rather than killed.
+    const sweep = supervisedRestart
+      ? preserveAllRemoteTunnelsForSupervisedRestart()
+      : shutdownAllRemoteTunnels();
+    await sweep.catch((err) => {
+      runtimeLog.warn(`Remote tunnel sweep error: ${err instanceof Error ? err.message : String(err)}`);
+    });
 
     const stops = Array.from(this.engines.entries()).map(
       async ([id, engine]) => {

@@ -116,10 +116,11 @@ describe("fn_task_done recommendation validation", () => {
     const { store, task, tool } = createProductionTaskDoneTool(3, undefined, true);
     const blocked = await tool.execute("call-required-blocked", {
       outcome: "blocked",
-      reason: "Waiting for the upstream API contract.",
+      obstacle: "outside-worktree",
+      reason: "ECONNRESET while waiting for the upstream API contract.",
     });
 
-    expect(blocked.content[0].text).toContain("Task parked as blocked");
+    expect(blocked.content[0].text).toContain("Task frozen as Blocked");
     expect((await store.getTask(task.id)).recommendations).toBeUndefined();
   });
 
@@ -226,10 +227,11 @@ describe("fn_task_done recommendation validation", () => {
 
     const blocked = await tool.execute("call-blocked", {
       outcome: "blocked",
-      reason: "Waiting for the upstream API contract.",
+      obstacle: "outside-worktree",
+      reason: "ECONNRESET while waiting for the upstream API contract.",
       recommendations: [recommendation],
     });
-    expect(blocked.content[0].text).toContain("Task parked as blocked");
+    expect(blocked.content[0].text).toContain("Task frozen as Blocked");
     expect((await store.getTask(task.id)).recommendations).toBeUndefined();
   });
 

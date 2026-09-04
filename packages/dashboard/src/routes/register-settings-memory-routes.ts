@@ -37,8 +37,6 @@ import {
   resolveTitleSummarizerSettingsModel,
   resolveWorktrunkSettings,
   requiresWorktrunkInstallVerification,
-  isRecycleWorktreeNamingConflict,
-  RECYCLE_WORKTREE_NAMING_CONFLICT_MESSAGE,
   scheduleQmdProjectMemoryRefresh,
   searchProjectMemory,
   syncBackupRoutine,
@@ -60,8 +58,11 @@ import {
 import {
   buildSessionSkillContextSync,
   createFnAgent as engineCreateFnAgent,
+  getRemoteTunnelService,
   probeWorktrunk,
+  remoteTunnelScopeKey,
   resolveWorktrunkBinary,
+  type RemoteTunnelService,
 } from "@fusion/engine";
 import QRCode from "qrcode";
 import crypto from "node:crypto";
@@ -516,6 +517,32 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
     return token;
   }
 
+  /*
+  FNXC:RemoteAccess 2026-08-31-07:08:
+  Remote access must not depend on an attached engine. Incident: "Stop engine" killed the Tailscale
+  funnel AND left the project durably paused, so the very control that would restart the engine was
+  unreachable — the operator lost the box. The tunnel now lives in a process-lifetime per-project
+  service (@fusion/engine remote-tunnel-service), so every remote route resolves it directly.
+
+  When an engine IS attached the routes still go through the engine's own tunnel methods (which now
+  delegate to the very same service), so there is exactly one code path in production; this resolver is
+  the engine-less fallback. It takes the engine's service when one is available rather than re-deriving
+  the key, so the two paths can never land on two different services — that would mean two tunnels for
+  one project.
+  */
+  function resolveTunnelService(ctx: {
+    store: typeof store;
+    engine: { remoteTunnelService?: () => RemoteTunnelService } | undefined;
+    projectId?: string;
+  }): RemoteTunnelService {
+    const fromEngine = ctx.engine?.remoteTunnelService?.();
+    if (fromEngine) return fromEngine;
+    return getRemoteTunnelService(remoteTunnelScopeKey({
+      projectId: ctx.projectId ?? null,
+      rootDir: ctx.store.getRootDir?.() ?? null,
+    }));
+  }
+
   function getCurrentTunnelUrl(engine: unknown): string | null {
     const manager = (engine as {
       getRemoteTunnelManager?: () => { getStatus?: () => { url?: string | null } } | undefined;
@@ -733,25 +760,6 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
         }
       }
 
-      // FNXC:TaskPinnedWorktrees 2026-07-16-00:00: recycleWorktrees and worktreeNaming:"task-id" are mutually
-      // exclusive. Validate the RESOLVED next state (current merged with this partial patch) so a clean 400 is
-      // returned before the store backstop throws. Only fetch current settings when one of the two fields moves.
-      if (
-        Object.prototype.hasOwnProperty.call(clientSettings, "recycleWorktrees")
-        || Object.prototype.hasOwnProperty.call(clientSettings, "worktreeNaming")
-      ) {
-        const currentForWorktreeCheck = await scopedStore.getSettings();
-        const nextRecycle = Object.prototype.hasOwnProperty.call(clientSettings, "recycleWorktrees")
-          ? clientSettings.recycleWorktrees
-          : currentForWorktreeCheck.recycleWorktrees;
-        const nextNaming = Object.prototype.hasOwnProperty.call(clientSettings, "worktreeNaming")
-          ? clientSettings.worktreeNaming
-          : currentForWorktreeCheck.worktreeNaming;
-        if (isRecycleWorktreeNamingConflict({ recycleWorktrees: nextRecycle, worktreeNaming: nextNaming })) {
-          throw badRequest(RECYCLE_WORKTREE_NAMING_CONFLICT_MESSAGE);
-        }
-      }
-
       /*
       FNXC:Workspace 2026-08-15-05:28:
       This dashboard-only preflight explains an unachievable enable. The universal publish seam
@@ -814,14 +822,9 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
         throw err;
       }
       const errorMessage = err instanceof Error ? err.message : String(err);
-      // FNXC:TaskPinnedWorktrees 2026-07-16-12:30: the recycleWorktrees/worktreeNaming mutual-exclusion
-      // backstop lives in store.updateSettings, so it can fire for edge cases the route pre-check misses
-      // (e.g. a null-clear that resolves to a conflicting fallback). Classify it as a 400 client error here
-      // alongside the other validation messages so it never surfaces as a 500.
       const status = (
         errorMessage.includes("modelPresets")
         || errorMessage.includes("must include both provider and modelId")
-        || errorMessage.includes("mutually exclusive")
         || errorMessage.includes("enabledBuiltinWorkflowIds")
         || errorMessage.includes("requireTaskRecommendations must be a boolean")
       ) ? 400 : 500;
@@ -938,11 +941,11 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
 
   router.get("/remote/status", async (req, res) => {
     try {
-      const { store: scopedStore, engine } = await getProjectContext(req);
+      const { store: scopedStore, engine, projectId } = await getProjectContext(req);
       const settings = await scopedStore.getSettings();
-      const manager = engine?.getRemoteTunnelManager();
-      const tunnelStatus = manager?.getStatus();
-      const restore = engine?.getRemoteTunnelRestoreDiagnostics();
+      const tunnelService = engine ? undefined : resolveTunnelService({ store: scopedStore, engine, projectId });
+      const tunnelStatus = engine ? engine.getRemoteTunnelManager()?.getStatus() : tunnelService?.getStatus();
+      const restore = engine ? engine.getRemoteTunnelRestoreDiagnostics() : tunnelService?.getRestoreDiagnostics();
 
       const activeProvider = tunnelStatus?.provider ?? settings.remoteAccess?.activeProvider ?? null;
       const tunnelState = tunnelStatus?.state ?? "stopped";
@@ -952,7 +955,7 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
       }
 
       const externalTunnel = tunnelState === "stopped"
-        ? await engine?.detectExternalTunnel()
+        ? (engine ? await engine.detectExternalTunnel() : await tunnelService?.detectExternal(scopedStore) ?? null)
         : null;
 
       res.json({
@@ -1017,7 +1020,7 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
 
   router.post("/remote/tunnel/start", async (req, res) => {
     try {
-      const { store: scopedStore, engine } = await getProjectContext(req);
+      const { store: scopedStore, engine, projectId } = await getProjectContext(req);
       const settings = await scopedStore.getSettings();
       const provider = settings.remoteAccess?.activeProvider ?? null;
       if (!provider) {
@@ -1049,29 +1052,19 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
 
       /*
       FNXC:RemoteAuth 2026-08-19-01:10:
-      NO SILENT FAKE "STARTING". Without an engine nothing can start, and this used to answer
-      `{state:"starting"}` anyway — so the UI showed a tunnel coming up that never would, settling to
-      `stopped` with `lastError: null` and no way to tell a broken tunnel from an unmanaged one. The
-      operator hit exactly this: repeated starts, always stopped, never an error. It is reachable in
-      a container whose launch directory is not the registered project, because an unscoped request
-      falls back to a launch-dir store with no engine.
+      NO SILENT FAKE "STARTING". This route once answered `{state:"starting"}` when it could not act,
+      so the UI showed a tunnel coming up that never would. Whatever this route reports is the truth.
 
-      Still 200 and still idempotent — a dashboard legitimately runs without an engine (--no-engine),
-      and an error there would be wrong — but the state is now the truth (`stopped`, not `starting`)
-      and carries the reason, which the UI already renders from lastError.
+      FNXC:RemoteAccess 2026-08-31-07:08:
+      The engine-unavailable bail is GONE. A tunnel no longer needs an engine: the process-lifetime
+      service starts one from the scoped store alone. That bail was reachable in exactly the state the
+      operator got stuck in — engine stopped, project paused, no engine attachable — and it made
+      remote access unrecoverable from the UI, which is also how they reached the box. Prerequisite
+      and config failures still surface through the catch below, so nothing is silently faked.
       */
-      if (!engine) {
-        res.json({
-          state: "stopped",
-          provider,
-          url: null,
-          lastError: "No engine is attached to this request's project scope — pass ?projectId= for the project whose tunnel should start",
-          lastErrorCode: "REMOTE_TUNNEL_ENGINE_UNAVAILABLE",
-        });
-        return;
-      }
-
-      const status = await engine.startRemoteTunnel();
+      const status = engine
+        ? await engine.startRemoteTunnel()
+        : await resolveTunnelService({ store: scopedStore, engine, projectId }).start(scopedStore);
       res.json({
         state: status.state,
         provider: status.provider,
@@ -1093,16 +1086,13 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
 
   router.post("/remote/tunnel/stop", async (req, res) => {
     try {
-      const { store: scopedStore, engine } = await getProjectContext(req);
-      const settings = await scopedStore.getSettings();
-      const provider = settings.remoteAccess?.activeProvider ?? null;
+      const { store: scopedStore, engine, projectId } = await getProjectContext(req);
 
-      if (!engine) {
-        res.json({ state: "stopped", provider });
-        return;
-      }
-
-      const status = await engine.stopRemoteTunnel();
+      // FNXC:RemoteAccess 2026-08-31-07:08: symmetric with start — stopping a tunnel must not require
+      // an engine either, or a tunnel started engine-lessly could never be stopped from the UI.
+      const status = engine
+        ? await engine.stopRemoteTunnel()
+        : await resolveTunnelService({ store: scopedStore, engine, projectId }).stop(scopedStore);
       res.json({
         state: status.state,
         provider: status.provider,
@@ -1118,9 +1108,12 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
 
   router.post("/remote/tunnel/kill-external", async (req, res) => {
     try {
-      const { engine } = await getProjectContext(req);
+      const { store: scopedStore, engine, projectId } = await getProjectContext(req);
+      // FNXC:RemoteAccess 2026-08-31-07:08: engine-independent, like start/stop.
       if (engine) {
         await engine.killExternalTunnel();
+      } else {
+        await resolveTunnelService({ store: scopedStore, engine, projectId }).killExternal(scopedStore);
       }
       res.json({ ok: true });
     } catch (err: unknown) {

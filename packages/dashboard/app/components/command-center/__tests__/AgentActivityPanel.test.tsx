@@ -11,6 +11,7 @@ vi.mock("../../../api", () => ({ getAgentActivity }));
 vi.mock("../../../sse-bus", () => ({ subscribeSse }));
 
 import { AgentActivityPanel } from "../AgentActivityPanel";
+import { resolveAgentActivityPresentation } from "../agentActivityPresentation";
 
 const range = { from: null, to: null, preset: "all" };
 const event = (seq: string, overrides: Partial<AgentActivityEvent> = {}): AgentActivityEvent => ({
@@ -33,6 +34,27 @@ describe("AgentActivityPanel", () => {
   beforeEach(() => {
     getAgentActivity.mockReset().mockResolvedValue({ events: [event("2")], nextCursor: null });
     subscribeSse.mockReset().mockReturnValue(vi.fn());
+  });
+
+  it("resolves and renders a not-run gate distinctly from a passed gate", async () => {
+    expect(resolveAgentActivityPresentation("workflow:gate-passed", { notRun: true })).toMatchObject({
+      labelKey: "commandCenter.agentActivity.workflowGateNotRun",
+      fallbackLabel: "Workflow gate not executed",
+      color: "var(--text-muted)",
+    });
+    getAgentActivity.mockResolvedValueOnce({
+      events: [event("2", {
+        type: "workflow:gate-passed",
+        summary: "Verification did not run",
+        metadata: { stepId: "custom", status: "skipped", attempt: 0, notRun: true },
+      })],
+      nextCursor: null,
+    });
+
+    render(<AgentActivityPanel projectId="project" range={range} />);
+
+    await screen.findByText("Workflow gate not executed");
+    expect(screen.queryByText("Workflow gate passed")).not.toBeInTheDocument();
   });
 
   it("renders a seeded live row and prepends an SSE row without refetching", async () => {

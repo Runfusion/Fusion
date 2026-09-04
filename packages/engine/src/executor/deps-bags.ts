@@ -146,8 +146,11 @@ export function buildExecuteWorkflowGraphDeps(host: any): any {
       "graphToolFailureRunCursors", "graphUnattendedRuns", "outerConcurrencyClaims",
       // FNXC:AgentActivityStream 2026-08-15-22:15: FN-8864 gate-attribution retention map (restored post-wave-18).
       "workflowGateActivityPrincipals",
+      // FNXC:WorkflowLifecycle 2026-08-31-06:41: per-run abort-marker reset at run birth.
+      "userCanceledTaskIds",
     ]),
     ...facadeMethods(host, [
+      "clearPausedAborted",
       "getRunContextFor", "advanceNoMergeWorkflowToCompleteColumn", "applyGraphRethinkReset",
       "buildBranchPersistence", "buildCodeNodeRunner", "buildColumnBoundaryHooks", "buildForeachWorktreeDeps",
       "buildParseStepsDeps", "buildStepInstancePersistence", "createAuthoritativeWorkflowPrimitives",
@@ -172,6 +175,7 @@ export function buildHandleGraphFailureDeps(host: any): any {
       "activeWorktrees", "completionFinalizedTaskIds", "graphExecuteSelfRequeued",
       "graphToolFailureRunCursors", "pausedAborted", "pausedAbortProvenance", "userCanceledTaskIds",
       "executing", "resumingUnpaused", "activeSessions", "activeStepExecutors",
+      "deferredTerminalParksInFlight",
       "activeWorkflowStepSessions", "activeCliTaskSessions", "activeWorkflowGraphAbortControllers",
     ]),
     ...facadeMethods(host, [
@@ -184,7 +188,7 @@ export function buildHandleGraphFailureDeps(host: any): any {
       "isRequiredArtifactRecoveryProtected", "isRetryableBenignMergePauseAbort",
       "parkCompletedBlockedTask", "persistTokenUsage", "reenterPausedAbortedWorkflowNode",
       "resolveResumeLanes", "routeGraphFailureToExecutionResume", "routeGraphMergeFailureToRetry",
-      "routeImplementationIncompleteMergeGraphFailure", "routeResetParsePinMismatchToRetry",
+      "requestPreMergeOptionalStepFix", "routeImplementationIncompleteMergeGraphFailure", "routeResetParsePinMismatchToRetry",
       "routeRetryableRemediationGraphFailureToPreMergeFix", "routeUnusableWorktreeGraphFailureToRecovery",
       "safeLogEntry",
     ]),
@@ -301,6 +305,10 @@ export function buildRunImplementationDeps(
       "resolveInstructionsForRole", "finalizeAlreadyReviewedTask",
       "handleBranchConflict", "handleNonContinuableSessionRetry", "resumeApprovalAfterUnwindIfNeeded",
     ]),
+    reexecuteTaskInPlace: async (taskId: string) => {
+      const live = await host.store.getTask(taskId);
+      setTimeout(() => { void host.execute(live); }, 0);
+    },
     sharedWorkerTools: buildSharedWorkerToolsDeps(host),
   };
   return defineLiveWorkspaceConfig(bag, host);
@@ -312,6 +320,7 @@ export function buildRunGraphCustomNodeDeps(host: any): any {
     ensureWorkspaceConfig: withWorkspaceResolver(host),
     options: host.options as { pluginRunner?: unknown; [k: string]: unknown },
     graphUnattendedRuns: host.graphUnattendedRuns,
+    runConfiguredCommand: pure.runConfiguredCommand,
     ...facadeMethods(host, [
       "getRunContextFor",
       "adoptColumnAgentForNode", "buildInjectedRuntimeEnv", "ensureGraphCustomNodeWorktree",
@@ -412,6 +421,10 @@ export function buildMarkStuckAbortedDeps(host: any): any {
       "hasActiveWorktreeBinding",
     ]),
     ensureWorkspaceConfig: withWorkspaceResolver(host),
+    reexecuteTaskInPlace: async (taskId: string) => {
+      const live = await host.store.getTask(taskId);
+      setTimeout(() => { void host.execute(live); }, 0);
+    },
   };
   return defineLiveWorkspaceConfig(bag, host);
 }
@@ -465,7 +478,6 @@ export function buildEnsureGraphCustomNodeWorktreeDeps(host: any, runConfiguredC
     ...facadeMethods(host, [
       "getRunContextFor", "addActiveWorktree", "registerConfiguredCommandController", "unregisterConfiguredCommandController",
     ]),
-    pool: host.options.pool,
     secretsStore: host.options.secretsStore,
     createWorktree: (
       branch: string, path: string, taskId: string, startPoint?: string, allowSibling?: boolean,
@@ -802,7 +814,7 @@ export function buildExecuteCoreDeps(host: any): any {
     releaseSemaphore: () => { host.options.semaphore?.release(); },
     ...facadeMethods(host, [
       "clearStalePauseAbortBeforeDispatch", "blockOuterDispatchWhenDependenciesUnmet",
-      "executeWorkflowGraph",
+      "blockOuterDispatchWhenFileScopeLeaseHeld", "executeWorkflowGraph",
     ]),
   };
 }
@@ -1069,6 +1081,10 @@ export function buildMarkPausedAbortedDeps(host: any): any {
 export function buildResumeOrphanedDeps(host: any): any {
   return {
     ...facadeFields(host, ["store", "executing", "recoveringCompleted"]),
+    // FNXC:MergeRetryReliability 2026-08-29-17:00 (CodeRabbit L1331): the
+    // deferred-park intent reader must resolve the same tasks dir fallback
+    // the handleGraphFailure writer uses when the store has no getTasksDir.
+    rootDir: host.rootDir,
     processWideGraphRouting: host.constructor.processWideGraphRouting as Set<string>,
     ...facadeMethods(host, [
       "listWipLaneTasks", "clearResumeFailureState", "recoverApprovedStepsOnResume",
@@ -1482,7 +1498,9 @@ export function buildStaleLockRecoveryDeps(host: any): any {
 export function buildRecoverFailedPreMergeWorkflowStepDeps(host: any): any {
   return {
     store: host.store,
-    ...facadeMethods(host, ["getRunContextFor", "resolveFailedPreMergeWorkflowStepBudget", "sendTaskBackForFix"]),
+    ...facadeMethods(host, [
+      "getRunContextFor", "resolveFailedPreMergeWorkflowStepBudget", "appendReviewRemediationSteps", "sendTaskBackForFix",
+    ]),
   };
 }
 

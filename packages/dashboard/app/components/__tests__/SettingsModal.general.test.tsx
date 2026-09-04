@@ -1295,10 +1295,13 @@ describe("SettingsModal", () => {
     // Read-only default-render assertions are merged into one rendered
     // instance to avoid re-rendering the full modal per pure-display check.
     it("renders default global logging fields and helper text", async () => {
+      const { persistAgentToolOutput: _omittedToolOutput, ...settingsWithoutToolOutput } = defaultSettings;
+      mockFetchSettings.mockResolvedValue(settingsWithoutToolOutput);
+      mockFetchSettingsByScope.mockResolvedValue({ global: settingsWithoutToolOutput, project: {} });
       renderModal({ initialSection: "global-general" });
       await waitForSettingsModalReady();
 
-      // Global modal outside-dismiss and persistAgentToolOutput default to unchecked; Star-on-GitHub control absent.
+      // Global modal outside-dismiss stays unchecked while unset tool-output persistence uses its enabled default.
       expect(screen.getByRole("checkbox", { name: "Dismiss modals by clicking outside" })).not.toBeChecked();
       /*
       FNXC:SettingsHelp 2026-07-15-22:10:
@@ -1306,7 +1309,7 @@ describe("SettingsModal", () => {
       The assertion's intent is unchanged: this row's help must come from the primitive, not hand-rolled markup.
       */
       expect(screen.getByText(/Default: disabled, to prevent accidental dismissal/i).closest(".settings-help-bubble")).toBeTruthy();
-      expect(screen.getByRole("checkbox", { name: "Save tool output in agent logs" })).not.toBeChecked();
+      expect(screen.getByRole("checkbox", { name: "Save tool output in agent logs" })).toBeChecked();
       expect(screen.getByRole("checkbox", { name: "Enable proactive task-chat updates" })).not.toBeChecked();
       expect(screen.queryByRole("checkbox", { name: /Show "Star on GitHub" button in Settings header/i })).toBeNull();
 
@@ -1346,6 +1349,17 @@ describe("SettingsModal", () => {
 
       expect(screen.getByRole("combobox", { name: "Global default tracking repo" })).toBeInTheDocument();
       expect(screen.getByText(/Projects inherit this value when they do not set a project default tracking repo/i)).toBeInTheDocument();
+    });
+
+    it("uses the enabled effective default when fetched global settings omit the key", async () => {
+      const { persistAgentToolOutput: _omittedToolOutput, ...settingsWithoutToolOutput } = defaultSettings;
+      mockFetchSettings.mockResolvedValue(settingsWithoutToolOutput);
+      mockFetchSettingsByScope.mockResolvedValue({ global: settingsWithoutToolOutput, project: {} });
+
+      renderModal({ initialSection: "global-general" });
+      await waitForSettingsModalReady();
+
+      expect(screen.getByRole("checkbox", { name: "Save tool output in agent logs" })).toBeChecked();
     });
 
     it("reflects persisted checked value from global settings", async () => {
@@ -1471,7 +1485,7 @@ describe("SettingsModal", () => {
       vi.useRealTimers();
 
       const globalPayload = mockUpdateGlobalSettings.mock.calls[0]?.[0] as Record<string, unknown>;
-      expect(globalPayload.persistAgentToolOutput).toBe(true);
+      expect(globalPayload.persistAgentToolOutput).toBe(false);
       if (mockUpdateSettings.mock.calls.length > 0) {
         const projectPayload = mockUpdateSettings.mock.calls[0]?.[0] as Record<string, unknown>;
         expect(projectPayload.persistAgentToolOutput).toBeUndefined();

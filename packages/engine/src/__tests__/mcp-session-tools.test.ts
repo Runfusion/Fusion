@@ -178,6 +178,26 @@ describe("connectMcpSessionTools", () => {
     expect(toolset.tools).toEqual([]);
   });
 
+  it("records raw server origins for sanitized tool-name collisions", async () => {
+    const clients = new Map([
+      ["Code Nav", fakeClient(["lookup"])],
+      ["code_nav", fakeClient(["lookup"])],
+    ]);
+    const toolset = await connectMcpSessionTools([stdioServer("Code Nav"), stdioServer("code_nav")], {
+      clientFactory: (server) => clients.get(server.name)!,
+      transportFactory,
+    });
+
+    expect(toolset.tools.map((tool) => tool.name)).toEqual([
+      "mcp__code_nav__lookup",
+      "mcp__code_nav__lookup__2",
+    ]);
+    expect(toolset.serverByToolName).toEqual(new Map([
+      ["mcp__code_nav__lookup", "Code Nav"],
+      ["mcp__code_nav__lookup__2", "code_nav"],
+    ]));
+  });
+
   it("deduplicates sanitized server and tool name collisions deterministically", () => {
     const used = new Set<string>();
     expect(uniqueMcpToolName("a.b", "bash", used)).toBe("mcp__a_b__bash");

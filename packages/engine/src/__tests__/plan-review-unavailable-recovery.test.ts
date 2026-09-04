@@ -88,7 +88,7 @@ describe("FN-4068 baseline — plan review UNAVAILABLE", () => {
 
   it("retries on the same model with stricter verdict instruction when fallback model is not configured", async () => {
     const first = buildSession("No parseable verdict here.");
-    const second = buildSession("### Verdict: APPROVE\n### Summary\nRecovered.");
+    const second = buildSession("### Verdict: APPROVE\n### Summary\nRecovered.\n{\"verdict\":\"APPROVE\",\"notes\":\"Recovered with structured output.\"}");
     mockedCreateResolvedAgentSession
       .mockResolvedValueOnce(first)
       .mockResolvedValueOnce(second);
@@ -107,7 +107,7 @@ describe("FN-4068 baseline — plan review UNAVAILABLE", () => {
     expect(result.verdict).toBe("APPROVE");
     expect(mockedCreateResolvedAgentSession).toHaveBeenCalledTimes(2);
     expect(second.session.prompt).toHaveBeenCalledWith(
-      expect.stringContaining('Respond with exactly one of: APPROVE | REVISE | RETHINK on a line starting with "Verdict:"'),
+      expect.stringContaining("End your response with exactly one trailing JSON object"),
     );
   });
 });

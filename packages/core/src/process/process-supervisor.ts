@@ -330,8 +330,42 @@ export function superviseSpawn(
   };
 }
 
+/**
+ * FNXC:RemoteAccess 2026-09-01-02:54:
+ * Hand a supervised child OVER to the machine, so this process exiting no longer kills it.
+ *
+ * `installHandlers()` registers a `process.on("exit")` hook that SIGTERMs the process group of every
+ * registered child, plus signal handlers that do the same. That is correct for the children this
+ * process owns — verification runs, dev servers, tools — but it is exactly wrong for the Tailscale
+ * funnel across a SUPERVISED RESTART: the dashboard exits with FUSION_RESTART_EXIT_CODE and the
+ * supervisor relaunches it seconds later, so killing remote access on the way out takes the operator's
+ * only route to the box down with it (measured twice on the operator's container: dashboard healthy
+ * after restart, public URL dead). Releasing removes the entry from the kill registry WITHOUT
+ * signalling anything, so the detached child (its own process group leader) is simply reparented to
+ * the supervisor and keeps running.
+ *
+ * Returns false when the pid is unknown — nothing was released and the caller must not claim it was.
+ *
+ * Callers own the released process from here on: `waitExit()` still settles on close, but no
+ * lifetime timer and no parent-death teardown apply any more.
+ */
+export function releaseSupervisedChild(pid: number | undefined): boolean {
+  if (typeof pid !== "number") {
+    return false;
+  }
+  const entry = registry.get(pid);
+  if (!entry) {
+    return false;
+  }
+  clearLifetimeTimer(entry);
+  registry.delete(pid);
+  log.debug(`released pid=${pid} pgid=${entry.pgid ?? "n/a"} from parent-death supervision`);
+  return true;
+}
+
 export const ProcessSupervisor = {
   superviseSpawn,
+  releaseSupervisedChild,
 } as const;
 
 export function __getProcessSupervisorStateForTests(): { registrySize: number; handlersInstalled: boolean } {

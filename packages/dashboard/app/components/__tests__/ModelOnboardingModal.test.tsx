@@ -1397,6 +1397,29 @@ describe("ModelOnboardingModal", () => {
       expect(screen.getByText(/OpenAI may redirect to a localhost callback/)).toBeTruthy();
     });
 
+    it("skips the manual-paste confirmation for remote Codex device code", async () => {
+      mockFetchAuthStatus.mockResolvedValueOnce({
+        providers: [{ id: "openai-codex", name: "OpenAI Codex", authenticated: false, type: "oauth", requiresManualCode: false }],
+      });
+      mockLoginProvider.mockResolvedValueOnce({
+        url: "https://auth.openai.com/codex/device",
+        deviceCode: { userCode: "ABCD-1234", verificationUri: "https://auth.openai.com/codex/device" },
+      });
+
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: /Advanced provider settings/ })).toBeTruthy();
+      });
+      fireEvent.click(screen.getByRole("button", { name: /Advanced provider settings/ }));
+      const codexCard = await screen.findByTestId("onboarding-provider-card-openai-codex");
+      fireEvent.click(within(codexCard).getByRole("button", { name: "Login" }));
+
+      expect(await within(codexCard).findByText("ABCD-1234")).toBeTruthy();
+      expect(mockConfirm).not.toHaveBeenCalled();
+      expect(screen.queryByTestId("provider-login-dialog-openai-codex")).toBeNull();
+      expect(within(codexCard).queryByTestId("auth-manual-code-openai-codex")).toBeNull();
+    });
+
     it("saves API key when Save is clicked", async () => {
       render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 

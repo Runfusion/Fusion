@@ -46,6 +46,14 @@ See the [2026-07-14 PostgreSQL runtime cutover review](./postgres-migration-revi
 
 ## Soft-deleted tasks (FN-5105)
 
+### Patchnode ledger (FN-227)
+
+`project.patchnode_entries` is a permanent, project-scoped, append-only delivery ledger. It deliberately has no foreign key to `project.tasks`, no row-expiry job or size cap, and its feed query never joins or filters through task rows. Those deviations let captured titles and completion summaries remain readable after a task is soft-deleted, archived, and finally hard-deleted by archive cleanup.
+
+Both completion writers insert the entry inside the same transaction that persists the completion-lane move. The occurrence key is that delivery's `columnMovedAt`: the next move overwrites this scalar, changes the lane, and permits later summary edits, so a post-commit or best-effort capture could become unrecoverable immediately. The transactional insert therefore fails the move when it cannot commit; retrying an uncommitted move is safer than silently losing shipped history.
+
+Archive captures any missing legacy delivery inside its archive transaction before soft deletion. Archive cleanup consults the existing cold snapshot and captures before rewriting that snapshot or hard-deleting the task row; a capture failure leaves the archived row intact for retry. `reconcilePatchnodeLedger` is insert-only and re-arms every 15 minutes to backfill current completion rows, latest-only legacy revert markers, and archived rows whose cold snapshot preserves a completion `preArchiveColumn`. It is a backlog convenience, not the live guarantee. A delivery completed and superseded before Patchnode existed left no reliable lane, occurrence, or point-in-time summary evidence and is intentionally not fabricated.
+
 - User-initiated `TaskStore.deleteTask` is a **soft delete**: the task row stays in `tasks` and `deletedAt` is set.
 - Active task readers (`getTask`, `listTasks`, search, dependency scans, scheduler/watcher reads, mission task aggregations) must filter with `deletedAt IS NULL`.
 - Archived-task flows (`archiveTask`, archived cleanup/migration) hard-delete from the active `tasks` table after copying to PostgreSQL cold storage. Legacy `archive.db` files are import-only.
@@ -63,7 +71,8 @@ See the [2026-07-14 PostgreSQL runtime cutover review](./postgres-migration-revi
 ### Agent log storage + soft-delete visibility (FN-5143 / FN-5911)
 
 - Agent logs are stored outside PostgreSQL. Each task appends newline-delimited JSON records to `<rootDir>/.fusion/tasks/{ID}/agent-log.jsonl`.
-- Tool arguments and successful `tool_result` detail remain opt-in through `persistAgentToolOutput`; failed `tool_error` detail always persists as bounded diagnostic signal so task Activity transcripts can reveal the underlying failure.
+- Tool arguments and successful `tool_result` detail persist by default through `persistAgentToolOutput`; failed `tool_error` detail always persists as bounded diagnostic signal so task Activity transcripts can reveal the underlying failure. Set `persistAgentToolOutput: false` explicitly to retain the previous low-volume behavior; every stored detail remains redacted and bounded per row.
+- Agent run-log JSONL uses the same bounded tool-detail policy before its existing larger general-entry guard. The durable run row and its live `run:log` event carry the identical normalized detail, so reload and streaming viewers reconcile without duplicates.
 - Agent-log JSONL rows may include optional numeric timing metadata: `timeToFirstTokenMs` on the first visible model-output row for a request, and `durationMs` on tool/request completion rows such as `tool_result` or `tool_error`. These fields are additive, non-sensitive millisecond values; legacy rows may omit them and readers must continue to treat omission as normal.
 - `TaskStore.deleteTask` keeps that JSONL file on disk for forensics, but all live read APIs (`getAgentLogs*`, `getAgentLogCount`) gate on task liveness and return zero entries once `deletedAt` is set.
 - Archived-task snapshot behavior (`taskToArchiveEntry` / `archiveTask`) embeds a capped agent-log snapshot sourced from JSONL.
@@ -361,6 +370,7 @@ API endpoints reviewed:
 | `themeMode` | Global | `GET/PUT /api/settings/global` (+ merged via `GET /api/settings`) | Theme mode preference |
 | `colorTheme` | Global | `GET/PUT /api/settings/global` | Color/accent theme |
 | `dashboardFontScalePct` | Global | `GET/PUT /api/settings/global` | Dashboard Appearance font scale percentage (85–125, default 100) applied before hydration. |
+| `chatSnippets` | Global | `GET/PUT /api/settings/global` | Ordered reusable chat prompts (`{ name, prompt }`), normalized and validated atomically; the dashboard inserts `/name` into composers without implicit send and keeps its shared cache memory-only. |
 | `defaultProvider` | Global | `GET/PUT /api/settings/global` | Default model provider |
 | `defaultModelId` | Global | `GET/PUT /api/settings/global` | Default model id |
 | `fallbackProvider` | Global | `GET/PUT /api/settings/global` | Fallback model provider |
@@ -396,7 +406,7 @@ API endpoints reviewed:
 | `globalPause` | Project | `GET/PUT /api/settings` | Hard stop for engine activity |
 | `enginePaused` | Project | `GET/PUT /api/settings` | Soft pause for dispatch |
 | `maxConcurrent` | Project | `GET/PUT /api/settings` | Max concurrent task-lane agents. Utility AI workflows bypass this limit. |
-| `maxWorktrees` | Project | `GET/PUT /api/settings` | Worktree cap |
+| `maxWorktrees` | Project | `GET/PUT /api/settings` | Execution-checkout holder cap; does not include planning |
 | `pollIntervalMs` | Project | `GET/PUT /api/settings` | Scheduler poll interval |
 | `groupOverlappingFiles` | Project | `GET/PUT /api/settings` | Serialize overlapping file work |
 | `overlapIgnorePaths` | Project | `GET/PUT /api/settings` | Project-relative file/directory paths ignored by overlap blocking |
@@ -406,8 +416,6 @@ API endpoints reviewed:
 | `worktreeInitCommand` | Project | `GET/PUT /api/settings` | Command run on worktree init |
 | `testCommand` | Project | `GET/PUT /api/settings` | Project test command |
 | `buildCommand` | Project | `GET/PUT /api/settings` | Project build command |
-| `recycleWorktrees` | Project | `GET/PUT /api/settings` | Worktree pool toggle |
-| `worktreeNaming` | Project | `GET/PUT /api/settings` | Worktree naming strategy |
 | `worktrunk` (`worktrunk.enabled`, `worktrunk.binaryPath`, `worktrunk.onFailure`) | Global + Project | `GET/PUT /api/settings/global` and `GET/PUT /api/settings` | Worktrunk integration settings group. Resolved with field-level project-overrides-global precedence in merged settings. See `docs/settings-reference.md` for key details and defaults. |
 | `worktreesDir` | Project | `GET/PUT /api/settings` | Optional worktree container directory (supports absolute/project-relative paths, `~`, `{repo}` token) |
 | `taskPrefix` | Project | `GET/PUT /api/settings` | Task ID prefix |
@@ -730,7 +738,6 @@ Each git worktree has its own gitignored `.fusion/` directory, so `.fusion/fusio
 
 Fusion now auto-hydrates the worktree DB during executor startup at three points:
 - after fresh worktree creation (including init/setup commands),
-- after pooled worktree acquire/reassignment,
 - when reusing an existing on-disk worktree for resume.
 
 Hydration copies only:
@@ -775,10 +782,7 @@ requires. The real defect was in **project-root resolution** for pi-extension to
 (`packages/cli/src/extension.ts`'s `resolveProjectRoot(cwd)` → `getProjectRootFromWorktree`
 in `packages/core/src/pi-extensions.ts`):
 
-1. `getProjectRootFromWorktree` matches the standard `.worktrees/<id>` and
- `.fusion/worktrees/<id>` path shapes via hardcoded regex. A project with a non-default
- `settings.worktreesDir` (an arbitrary relative/absolute location — common in containerized
- deployments) doesn't match either pattern.
+1. `getProjectRootFromWorktree` matches the standard `.fusion/worktrees/<id>` path shape and the legacy `.worktrees/<id>` shape via hardcoded regex. New worktrees use the former, while the latter remains accepted for pre-existing paths when `worktreesDir` is unset. A project with a non-default `settings.worktreesDir` (an arbitrary relative/absolute location — common in containerized deployments) doesn't match either pattern.
 2. The only remaining resolution path, `getProjectRootFromGitLinkedWorktree`, shelled out to
  `git rev-parse --git-common-dir`/`--git-dir` via `spawnSync`. A failing `git` invocation —
  missing binary in a minimal container image, Docker's "detected dubious ownership"
@@ -856,3 +860,7 @@ If Windows startup reports `unknown error 4551` while loading an embedded Postgr
 ### Bounded task-intake lookups
 
 Recommendation proposal claims use the indexed `findTaskByProposalClaimId` read (`uqTasksProjectProposalClaimId`), and same-agent intake reads only matching source lineage (`idxTasksProjectSourceAgentId` and `idxTasksSourceParentTaskId`). Do not replace either read with a `listTasks()` scan. Workflow terminal flags for intake duplicate checks are derived from workflow definitions, not board rows. Guarded-intake near-duplicate checks must remain bounded to their candidates (the fallback is `limit: 50`) and must not hydrate the full board.
+
+### External-block task metadata
+
+Project task rows persist `external_block` as nullable JSONB. A non-null value records the obstacle origin, code, raw message, source, timestamp, and exact resume coordinates. Legacy/null rows hydrate as `externalBlock: undefined`; lifecycle reset clears the column.

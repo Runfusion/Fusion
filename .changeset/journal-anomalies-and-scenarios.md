@@ -1,7 +1,0 @@
----
-"@runfusion/fusion": patch
----
-
-summary: The task journal no longer announces aborts that never happened or repeats the merge approval twice.
-category: fix
-dev: Three journal defects and the coverage gap that hid them. (1) `awaitAbortInFlightTaskWork` wrote its `Pause abort marked` breadcrumb before inspecting any surface, so every newly created task announced an interruption seconds after creation — creation moves the card out of the planning lane and that move is user-sourced, producing a `hard-cancel` label on a card nobody withdrew. The in-memory marker is still claimed synchronously (the graph-failure classifiers depend on it, and it must precede any await); only the operator-facing line now waits for evidence. (2) Landing requires two consecutive clean approvals of the same candidate, and both wrote the identical sentence, so a safety feature read as a duplicated invocation; the line now carries its pass number. (3) That same line is a contract: `SelfHealingManager.getApprovedAiMergeReviewShas` parses it with `/AI merge review \(pass \d+\): approved …/`, a parenthetical no emitter ever wrote, so `hasApprovedAiMergeReview` always answered false and the recovery it guards was dead. Emitter and parser now agree and are pinned against each other. New pipeline-smoke scenario S20 asserts the journal itself across all three coding built-ins — no abort claimed on an uninterrupted card, no line written twice in a row, no approval that records it verified nothing — and reproduced the duplicate deterministically on the first run.

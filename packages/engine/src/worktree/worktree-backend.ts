@@ -1,7 +1,7 @@
 import { exec, execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { access, rm } from "node:fs/promises";
-import { basename, resolve } from "node:path";
+import { access, readFile, rm, writeFile } from "node:fs/promises";
+import { basename, isAbsolute, resolve } from "node:path";
 import { promisify } from "node:util";
 import type { Settings } from "@fusion/core";
 import {
@@ -239,6 +239,35 @@ export interface WorktreeBackend {
   sync(input: WorktreeSyncInput): Promise<{ skipped: boolean }>;
   prune(input: WorktreePruneInput): Promise<void>;
   resolveWorktreePath(input: { rootDir: string; worktreeName: string; branch: string }): Promise<string>;
+}
+
+const WORKTREE_BACKEND_MARKER = "fusion-worktree-backend-kind";
+
+async function resolveWorktreeBackendMarkerPath(worktreePath: string): Promise<string> {
+  const { stdout } = await execAsync(`git rev-parse --git-path ${JSON.stringify(WORKTREE_BACKEND_MARKER)}`, {
+    cwd: worktreePath,
+    encoding: "utf-8",
+  });
+  const markerPath = stdout.trim();
+  return isAbsolute(markerPath) ? markerPath : resolve(worktreePath, markerPath);
+}
+
+export async function persistWorktreeBackendKind(
+  worktreePath: string,
+  backendKind: WorktreeBackend["kind"],
+): Promise<void> {
+  await writeFile(await resolveWorktreeBackendMarkerPath(worktreePath), `${backendKind}\n`, "utf-8");
+}
+
+export async function readPersistedWorktreeBackendKind(
+  worktreePath: string,
+): Promise<WorktreeBackend["kind"] | undefined> {
+  try {
+    const backendKind = (await readFile(await resolveWorktreeBackendMarkerPath(worktreePath), "utf-8")).trim();
+    return backendKind === "native" || backendKind === "worktrunk" ? backendKind : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export type WorktrunkOperationCode =
@@ -1078,6 +1107,7 @@ export const RemovalReason = {
   PoolPrune: "pool-prune",
   TaskReset: "task-reset",
   WorkspaceAcquireRollback: "workspace-acquire-rollback",
+  CompletionLandedCleanup: "completion-landed-cleanup",
 } as const;
 
 export type RemovalReason = typeof RemovalReason[keyof typeof RemovalReason];
@@ -1099,12 +1129,24 @@ const DEFENSIVE_REMOVAL_REASONS = new Set<RemovalReason>([
   RemovalReason.SelfHealingReclaim,
   RemovalReason.SelfHealingStaleActiveBranch,
   RemovalReason.StepSessionCleanup,
+  RemovalReason.CompletionLandedCleanup,
+]);
+
+const POST_LANDING_PROOF_REASONS = new Set<RemovalReason>([
+  RemovalReason.CompletionLandedCleanup,
 ]);
 
 export class InvalidForceUsageError extends Error {
   constructor(reason: RemovalReason) {
     super(`force=true is not allowed for removal reason '${reason}'`);
     this.name = "InvalidForceUsageError";
+  }
+}
+
+export class InvalidPostLandingProofUsageError extends Error {
+  constructor(reason: RemovalReason) {
+    super(`postLandingProof is not allowed for removal reason '${reason}'`);
+    this.name = "InvalidPostLandingProofUsageError";
   }
 }
 
@@ -1121,15 +1163,50 @@ export class ActiveSessionWorktreeRemovalError extends Error {
   }
 }
 
+/*
+FNXC:WorktreeCleanup 2026-09-01-06:09:
+FN-9233 permits automatic cleanup of only well-known regenerable dependency and build directories.
+Ignored paths outside this narrow allowlist can contain operator-owned local content and retain FN-251's
+proof gate; quoted porcelain paths are deliberately unparseable and therefore fail closed.
+*/
+/** Directory basenames whose ignored contents are reproducible project output. */
+export const REGENERABLE_IGNORED_DIR_NAMES = new Set([
+  "node_modules", "dist", "build", "out", "target", "bin", "obj", "coverage",
+  ".next", ".nuxt", ".turbo", ".svelte-kit", ".parcel-cache", ".pytest_cache",
+  ".mypy_cache", "__pycache__", ".gradle", ".venv", "venv",
+]);
+
+export type WorktreeRemovalContentClassification = "clean" | "regenerable-ignored" | "ignored-only" | "deliverable";
+
+function isRegenerableIgnoredPorcelainEntry(entry: string): boolean {
+  const path = entry.slice(3).replace(/\/$/, "");
+  if (!path || path.startsWith('"')) return false;
+  const lastSegment = path.split("/").at(-1);
+  return lastSegment !== undefined && REGENERABLE_IGNORED_DIR_NAMES.has(lastSegment);
+}
+
+/** Classify porcelain output without allowing ignored entries to mask deliverable content. */
+export function classifyWorktreeRemovalContent(porcelain: string): WorktreeRemovalContentClassification {
+  const entries = porcelain.split(/\r?\n/).filter((line) => line.trim().length > 0);
+  if (entries.length === 0) return "clean";
+  if (entries.some((line) => !line.startsWith("!! "))) return "deliverable";
+  return entries.every(isRegenerableIgnoredPorcelainEntry) ? "regenerable-ignored" : "ignored-only";
+}
+
+interface DefensiveRemovalContentProbe {
+  classification: WorktreeRemovalContentClassification;
+  entryCount: number;
+}
+
 /** Fail closed when an automatic sweep cannot prove the checkout is empty of user content. */
-async function assertCleanForDefensiveRemoval(worktreePath: string): Promise<void> {
+async function assertCleanForDefensiveRemoval(worktreePath: string): Promise<DefensiveRemovalContentProbe> {
   // Nothing on disk means nothing to preserve — stale registrations prune normally below.
   if (!existsSync(worktreePath)) {
-    return;
+    return { classification: "clean", entryCount: 0 };
   }
   let stdout: string;
   try {
-    ({ stdout } = await execFileAsync("git", ["status", "--porcelain", "--ignored", "--untracked-files=all"], {
+    ({ stdout } = await execFileAsync("git", ["status", "--porcelain=v1", "--ignored=matching", "--untracked-files=normal"], {
       cwd: worktreePath,
       encoding: "utf-8",
       timeout: 15_000,
@@ -1138,9 +1215,14 @@ async function assertCleanForDefensiveRemoval(worktreePath: string): Promise<voi
   } catch (error) {
     throw new Error(`preserving ${worktreePath}: status probe failed (${error instanceof Error ? error.message : String(error)})`);
   }
-  if (stdout.trim().length > 0) {
+  const classification = classifyWorktreeRemovalContent(stdout);
+  if (classification === "deliverable") {
     throw new Error(`preserving ${worktreePath}: uncommitted or ignored content present`);
   }
+  return {
+    classification,
+    entryCount: stdout.split(/\r?\n/).filter((line) => line.trim().length > 0).length,
+  };
 }
 
 /**
@@ -1155,6 +1237,8 @@ export async function removeWorktree(input: {
   reason: RemovalReason;
   taskId?: string;
   audit?: RunAuditor;
+  /** Durable landing proof permits ignored-only content, never force removal. */
+  postLandingProof?: { landedSha?: string; source: string };
   force?: boolean;
   timeout?: number;
   expectedOwnerTaskId?: string;
@@ -1170,15 +1254,88 @@ export async function removeWorktree(input: {
   if (input.force === true && !ALLOWED_FORCE_REASONS.has(input.reason)) {
     throw new InvalidForceUsageError(input.reason);
   }
+  if (input.postLandingProof && !POST_LANDING_PROOF_REASONS.has(input.reason)) {
+    throw new InvalidPostLandingProofUsageError(input.reason);
+  }
 
   const requiresCleanWorktree = DEFENSIVE_REMOVAL_REASONS.has(input.reason);
 
-  // FNXC:WorktreeCleanup:
-  // Defensive sweeps must prove cleanliness before destroying anything. Dirty or
-  // unverifiable content is preserved (fail closed) — callers treat the throw as "kept".
+  /*
+  FNXC:WorktreeCleanup 2026-09-01-06:09:
+  FN-9233 lets all defensive sweeps discard only allowlisted regenerable ignored output, while
+  non-allowlisted ignored content retains FN-251's durable landing-proof gate. Deliverable,
+  unverifiable, and live-session content remain fail-closed for every caller.
+  */
+  let contentClassification: WorktreeRemovalContentClassification | undefined;
+  let contentEntryCount = 0;
   if (requiresCleanWorktree) {
-    await assertCleanForDefensiveRemoval(input.worktreePath);
+    try {
+      const contentProbe = await assertCleanForDefensiveRemoval(input.worktreePath);
+      contentClassification = contentProbe.classification;
+      contentEntryCount = contentProbe.entryCount;
+    } catch (error) {
+      const classification = error instanceof Error && error.message.includes(": status probe failed (")
+        ? "unverifiable"
+        : "deliverable";
+      await input.audit?.git({
+        type: "worktree:removal-preserved",
+        target: input.worktreePath,
+        metadata: {
+          taskId: input.taskId,
+          reason: input.reason,
+          source: input.postLandingProof?.source,
+          classification,
+          hasPostLandingProof: input.postLandingProof !== undefined,
+        },
+      }).catch(() => undefined);
+      throw error;
+    }
+    if (contentClassification === "ignored-only" && !input.postLandingProof) {
+      await input.audit?.git({
+        type: "worktree:removal-preserved",
+        target: input.worktreePath,
+        metadata: {
+          taskId: input.taskId,
+          reason: input.reason,
+          source: undefined,
+          classification: "ignored-only",
+          hasPostLandingProof: false,
+        },
+      }).catch(() => undefined);
+      throw new Error(`preserving ${input.worktreePath}: uncommitted or ignored content present`);
+    }
   }
+
+  const recordIgnoredOnlyDiscard = async (): Promise<void> => {
+    if (contentClassification !== "ignored-only" || !input.postLandingProof) return;
+    try {
+      await input.audit?.git({
+        type: "worktree:post-landing-ignored-content-discarded",
+        target: input.worktreePath,
+        metadata: {
+          taskId: input.taskId,
+          reason: input.reason,
+          source: input.postLandingProof.source,
+          landedSha: input.postLandingProof.landedSha,
+        },
+      });
+    } catch {
+      // Audit persistence must not change worktree cleanup outcomes.
+    }
+  };
+
+  const recordRegenerableDiscard = async (): Promise<void> => {
+    if (contentClassification !== "regenerable-ignored") return;
+    try {
+      await input.audit?.git({
+        type: "worktree:removal-discarded-regenerable-content",
+        target: input.worktreePath,
+        metadata: { taskId: input.taskId, reason: input.reason, entryCount: contentEntryCount },
+      });
+    } catch {
+      // Audit persistence must not change worktree cleanup outcomes.
+    }
+  };
 
   if (input.expectedOwnerTaskId && input.liveOwnerProbe) {
     const reconciled = reconcileSelfOwnedActiveSessionForRemoval(
@@ -1239,6 +1396,8 @@ export async function removeWorktree(input: {
 
   try {
     await backend.remove(removeInput);
+    await recordIgnoredOnlyDiscard();
+    await recordRegenerableDiscard();
     if (input.audit) {
       await input.audit.git({
         type: backend.kind === "worktrunk" ? "worktree:worktrunk-remove" : "worktree:remove",
@@ -1269,6 +1428,8 @@ export async function removeWorktree(input: {
     const native = new NativeWorktreeBackend({ logger, settings: input.settings });
     try {
       await native.remove(removeInput);
+      await recordIgnoredOnlyDiscard();
+      await recordRegenerableDiscard();
       await input.audit?.git({ type: "worktree:remove", target: input.worktreePath });
       return { removed: true, classification: "removed" };
     } catch (nativeError) {

@@ -20,7 +20,7 @@ import { existsSync, mkdirSync, realpathSync, renameSync } from "node:fs";
 import type { ConfigChangedBy, ConfigKind, ConfigurationRevision, ConfigurationTarget, GlobalSettings } from "../types.js";
 import { CONFIG_CHANGED_BY_SYSTEM } from "../types.js";
 import { DEFAULT_GLOBAL_SETTINGS } from "../types.js";
-import { sanitizeCliAgentsSettings } from "./settings-schema.js";
+import { normalizeChatSnippets, sanitizeCliAgentsSettings } from "./settings-schema.js";
 import type { AsyncDataLayer } from "../postgres/data-layer.js";
 import { GLOBAL_CONFIGURATION_OWNER_ID, appendGlobalConfigurationRevision, createConfigurationRevision, getGlobalConfigurationRevision, listGlobalConfigurationRevisions } from "../async-stores/async-configuration-revision-store.js";
 
@@ -329,6 +329,8 @@ export class GlobalSettingsStore {
           // unknown adapter ids and invalid fields are dropped before persist so
           // a malformed `cliAgents` payload can never reach launch resolution.
           merged[key] = sanitizeCliAgentsSettings(value);
+        } else if (key === "chatSnippets") {
+          merged[key] = normalizeChatSnippets(value);
         } else {
           // normal value → set it
           merged[key] = value;

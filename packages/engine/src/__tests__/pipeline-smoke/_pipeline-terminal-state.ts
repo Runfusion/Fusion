@@ -7,6 +7,7 @@ import { existsSync } from "node:fs";
 export type PipelineTerminalState =
   | "merged-done"
   | "inert-intake"
+  | "blocked"
   | "parked"
   | "manual-hold"
   | "no-op-merge"
@@ -205,6 +206,8 @@ export function detectPipelineWedge(
 
 export function classifyTerminalState(state: PipelineObservedState): PipelineTerminalState {
   if (detectPipelineWedge(state)) return "wedge";
+  /* FNXC:ExternalBlockPipeline 2026-08-28-04:56: a deliberate external freeze is terminal, not a parked shape for the bounded driver to keep dispatching into W5. */
+  if (state.status === "blocked") return "blocked";
   if (state.emptyDiff) return "no-op-merge";
   if (state.manualHold) return "manual-hold";
   if (state.intake) return "inert-intake";

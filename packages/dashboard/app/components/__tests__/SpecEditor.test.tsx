@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
+import { MAX_TASK_MESSAGE_LENGTH } from "@fusion/core";
 import { SpecEditor } from "../SpecEditor";
 
 describe("SpecEditor", () => {
@@ -363,7 +364,7 @@ Test mission description.
 
     fireEvent.change(feedbackInput, { target: { value: "Hello" } });
 
-    expect(screen.getByText("5/2000")).toBeTruthy();
+    expect(screen.getByText(`5/${MAX_TASK_MESSAGE_LENGTH}`)).toBeTruthy();
   });
 
   it("enforces maxLength on feedback textarea", () => {
@@ -377,7 +378,26 @@ Test mission description.
 
     const feedbackInput = screen.getByPlaceholderText(/e.g., 'Add more details/) as HTMLTextAreaElement;
 
-    expect(feedbackInput.getAttribute("maxLength")).toBe("2000");
+    expect(feedbackInput.getAttribute("maxLength")).toBe(String(MAX_TASK_MESSAGE_LENGTH));
+  });
+
+  it("submits feedback above the former limit without truncation", async () => {
+    const longFeedback = "a".repeat(5_000);
+    render(
+      <SpecEditor
+        content={mockContent}
+        onSave={mockOnSave}
+        onRequestRevision={mockOnRequestRevision}
+      />,
+    );
+
+    const feedbackInput = screen.getByPlaceholderText(/e.g., 'Add more details/) as HTMLTextAreaElement;
+    fireEvent.change(feedbackInput, { target: { value: longFeedback } });
+    fireEvent.click(screen.getByText("Request AI Revision"));
+
+    await waitFor(() => {
+      expect(mockOnRequestRevision).toHaveBeenCalledWith(longFeedback);
+    });
   });
 
   it("triggers save on Ctrl+Enter keyboard shortcut in edit mode", async () => {

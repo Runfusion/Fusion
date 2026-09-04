@@ -45,12 +45,24 @@ describe("graph node workspace session boundary", () => {
     expect(resolveGraphNodeSessionBoundary({ ...base, isWorkspace: false })).toBeUndefined();
   });
 
-  it("does not touch read-only nodes, which never run in the task directory", () => {
-    expect(resolveGraphNodeSessionBoundary({ ...base, writeCapable: false })).toBeUndefined();
+  it("binds read-only reporting nodes to the task directory and its acquired children", () => {
+    expect(resolveGraphNodeSessionBoundary({ ...base, writeCapable: false })).toEqual({
+      kind: "workspace-task-dir",
+      writableRoot: "/ws/.fusion/worktrees/mult-012",
+      projectRoot: "/ws",
+      repoRoots: [
+        { repoRelPath: "repo1", repoRootDir: "/ws/repo1" },
+        { repoRelPath: "repo2", repoRootDir: "/ws/repo2" },
+      ],
+    });
   });
 
   it("keeps the legacy per-repo layout on its child-worktree boundary", () => {
     expect(resolveGraphNodeSessionBoundary({ ...base, legacyWorkspaceLayout: true })).toBeUndefined();
+  });
+
+  it("keeps Plan Review on its deliberate shared-root boundary", () => {
+    expect(resolveGraphNodeSessionBoundary({ ...base, writeCapable: false, isPlanReview: true })).toBeUndefined();
   });
 
   /*

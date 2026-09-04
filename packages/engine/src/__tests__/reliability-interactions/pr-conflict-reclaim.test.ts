@@ -5,6 +5,7 @@ import { SelfHealingManager } from "../../self-healing.js";
 import * as branchConflicts from "../../execution/branch-conflicts.js";
 import * as worktreePool from "../../worktree/worktree-pool.js";
 import { activeSessionRegistry } from "../../agents/active-session-registry.js";
+import { withBranchWriteProvenance } from "../branch-write-provenance-store-stub.js";
 
 function task(overrides: Partial<Task> = {}): Task {
   return {
@@ -33,9 +34,9 @@ function store(t: Task): TaskStore & EventEmitter {
   const settings = { globalPause: false, enginePaused: false, autoRecovery: { mode: "deterministic-only", maxRetries: 3 } } as Settings;
   return Object.assign(emitter, {
     getSettings: vi.fn(async () => settings),
-    getTask: vi.fn((id: string) => (id === t.id ? t : null)),
+    getTask: vi.fn(async (id: string) => (id === t.id ? t : null)),
     listTasks: vi.fn(async ({ column }: { column?: string } = {}) => (column ? [t] : [t])),
-    updateTask: vi.fn(async (_id: string, updates: Partial<Task>) => Object.assign(t, updates)),
+    updateTask: vi.fn(withBranchWriteProvenance(async (_id: string, updates: Partial<Task>) => Object.assign(t, updates))),
     moveTask: vi.fn(async (_id: string, column: Task["column"]) => {
       t.column = column;
       return t;
@@ -82,6 +83,10 @@ describe("reliability interaction: pr conflict reclaim", () => {
     const manager = new SelfHealingManager(s as any, { rootDir: "/tmp/test" } as any);
     const result = await manager.reclaimPrConflictForTask(t.id);
     expect(result.outcome).toBe("reclaimed");
-    expect(t.column).toBe("todo");
+    expect(t.column).toBe("in-progress");
+    expect(s.updateTask).toHaveBeenCalledWith(t.id, expect.objectContaining({
+      branch: "fusion/fn-4763",
+      branchWriteOrigin: "engine",
+    }));
   });
 });

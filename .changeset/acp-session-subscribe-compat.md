@@ -1,7 +1,0 @@
----
-"@runfusion/fusion": patch
----
-
-summary: Expose `session.subscribe` on ACP runtime sessions so engine workflow steps work with ACP agents.
-category: fix
-dev: The engine's AgentSession contract (pi-coding-agent) exposes `subscribe(handler)`, and two production call sites call it unconditionally: `execute-workflow-step.ts` (Plan/Code Review steps) and `pi.ts` fallback wiring (`wireFallbackHooks`, `promptableSession.subscribe`). `reviewer.ts` guards with `typeof session.subscribe === "function"`, but the other paths do not. ACP sessions (Hermes/Prime/Grok via the generic ACP runtime) streamed through the bridging client handler onto `callbacks` instead, so any workflow step executed by an ACP agent crashed before producing a verdict with `session.subscribe is not a function`. The adapter now wraps the raw callbacks so every forwarded text/thinking/tool event is also replayed to subscribers as the pi-shaped event (`message_update` + `assistantMessageEvent.{text_delta,thinking_delta}`, `tool_execution_start/end`) consumers parse, exposes `session.subscribe(handler)` returning an unsubscribe function, and merges engine `taskEnv` into the subprocess env behind the existing allow-list trust boundary. Original callback delivery is unchanged; subscriber failures are isolated. Regression tests cover event replay, unsubscribe semantics, and dual delivery (callbacks + subscribers) against the real echo-agent fixture.

@@ -36,6 +36,7 @@ vi.mock("../../api", async (importOriginal) => {
     bypassReview: vi.fn(),
     pauseTask: vi.fn(),
     unpauseTask: vi.fn(),
+    resetTask: vi.fn(),
     duplicateTask: vi.fn(),
     updateTask: vi.fn(),
     archiveTask: vi.fn(),
@@ -52,11 +53,13 @@ async function flushPromises(): Promise<void> {
 const mockFetchTasks = vi.mocked(api.fetchTasks);
 const mockFetchArchivedTasks = vi.mocked(api.fetchArchivedTasks);
 const mockCreateTask = vi.mocked(api.createTask);
+const mockMoveTask = vi.mocked(api.moveTask);
 const mockDeleteTask = vi.mocked(api.deleteTask);
 const mockRetryTask = vi.mocked(api.retryTask);
 const mockBypassReview = vi.mocked(api.bypassReview);
 const mockPauseTask = vi.mocked(api.pauseTask);
 const mockUnpauseTask = vi.mocked(api.unpauseTask);
+const mockResetTask = vi.mocked(api.resetTask);
 const mockDuplicateTask = vi.mocked(api.duplicateTask);
 const mockUpdateTask = vi.mocked(api.updateTask);
 const mockArchiveAllDone = vi.mocked(api.archiveAllDone);
@@ -106,6 +109,7 @@ beforeEach(() => {
   (globalThis as any).EventSource = MockEventSource;
   mockFetchTasks.mockReset().mockResolvedValue([]);
   mockFetchArchivedTasks.mockReset().mockResolvedValue({ tasks: [], total: 0, hasMore: false });
+  mockMoveTask.mockReset();
   mockDeleteTask.mockReset();
   mockRetryTask.mockReset();
   mockPauseTask.mockReset();
@@ -2269,6 +2273,72 @@ describe("useTasks", () => {
     });
   });
 
+  describe("moveTask reconciliation", () => {
+    it("publishes the confirmed moved row to state and project cache without SSE", async () => {
+      const before = createMockTask({ id: "FN-MOVE", column: "todo" as Column, updatedAt: "2026-08-30T01:00:00.000Z" });
+      const keep = createMockTask({ id: "FN-KEEP", column: "triage" as Column });
+      const confirmed = createMockTask({ ...before, column: "in-progress" as Column, updatedAt: "2026-08-30T01:01:00.000Z" });
+      mockFetchTasks.mockResolvedValueOnce([before, keep]);
+      mockMoveTask.mockResolvedValueOnce(confirmed);
+      const { result } = renderHook(() => useTasks({ projectId: "proj-1", sseEnabled: false }));
+
+      await waitFor(() => expect(result.current.tasks).toEqual([before, keep]));
+      mockReadCache.mockReset().mockReturnValue([before, keep]);
+      mockWriteCache.mockClear();
+
+      await act(async () => {
+        await result.current.moveTask("FN-MOVE", "in-progress" as Column);
+      });
+
+      expect(mockMoveTask).toHaveBeenCalledWith("FN-MOVE", "in-progress", "proj-1", undefined);
+      expect(result.current.tasks).toEqual([confirmed, keep]);
+      expect(mockWriteCache).toHaveBeenCalledWith(
+        `${swrCache.SWR_CACHE_KEYS.TASKS_PREFIX}proj-1`,
+        [confirmed, keep],
+        { maxBytes: 500_000 },
+      );
+    });
+
+    it("keeps a newer live event when it arrives before the move response", async () => {
+      const before = createMockTask({ id: "FN-MOVE", column: "todo" as Column, updatedAt: "2026-08-30T01:00:00.000Z", columnMovedAt: "2026-08-30T01:00:00.000Z" });
+      const response = createMockTask({ ...before, column: "in-progress" as Column, updatedAt: "2026-08-30T01:01:00.000Z", columnMovedAt: "2026-08-30T01:01:00.000Z" });
+      const newerLiveState = createMockTask({ ...before, column: "in-review" as Column, updatedAt: "2026-08-30T01:02:00.000Z", columnMovedAt: "2026-08-30T01:02:00.000Z" });
+      let resolveMove!: (task: Task) => void;
+      mockFetchTasks.mockResolvedValueOnce([before]);
+      mockMoveTask.mockImplementationOnce(() => new Promise<Task>((resolve) => { resolveMove = resolve; }));
+      const { result } = renderHook(() => useTasks());
+
+      await waitFor(() => expect(result.current.tasks).toEqual([before]));
+      let mutation!: Promise<Task>;
+      act(() => { mutation = result.current.moveTask("FN-MOVE", "in-progress" as Column); });
+      await waitFor(() => expect(mockMoveTask).toHaveBeenCalledTimes(1));
+      await act(async () => {
+        MockEventSource.instances[0]?._emit("task:updated", newerLiveState);
+        await flushPromises();
+      });
+      await act(async () => {
+        resolveMove(response);
+        await mutation;
+      });
+
+      expect(result.current.tasks).toHaveLength(1);
+      expect(result.current.tasks[0]).toMatchObject(newerLiveState);
+    });
+
+    it("leaves state and cache untouched when a move is rejected", async () => {
+      const before = createMockTask({ id: "FN-MOVE", column: "todo" as Column });
+      mockFetchTasks.mockResolvedValueOnce([before]);
+      mockMoveTask.mockRejectedValueOnce(new Error("stale move"));
+      const { result } = renderHook(() => useTasks({ projectId: "proj-1", sseEnabled: false }));
+
+      await waitFor(() => expect(result.current.tasks).toEqual([before]));
+      mockWriteCache.mockClear();
+      await expect(result.current.moveTask("FN-MOVE", "in-progress" as Column)).rejects.toThrow("stale move");
+      expect(result.current.tasks).toEqual([before]);
+      expect(mockWriteCache).not.toHaveBeenCalled();
+    });
+  });
+
   describe("pauseTask and unpauseTask", () => {
     it("FN-7861 immediately reflects unpaused state locally and in the project SWR cache without SSE", async () => {
       const paused = createMockTask({
@@ -3451,6 +3521,38 @@ describe("useTasks", () => {
     });
   });
 
+  describe("resetTask reconciliation", () => {
+    it("keeps options second, the project id last, and publishes the confirmed reset row", async () => {
+      const before = createMockTask({ id: "FN-1", column: "in-progress" as Column });
+      const confirmed = createMockTask({ ...before, column: "triage" as Column, steps: [], currentStep: 0 });
+      mockFetchTasks.mockResolvedValueOnce([before]);
+      mockResetTask.mockResolvedValue(confirmed);
+      const { result } = renderHook(() => useTasks({ projectId: "proj-9", sseEnabled: false }));
+
+      await waitFor(() => expect(result.current.tasks).toEqual([before]));
+      mockReadCache.mockReset().mockReturnValue([before]);
+
+      await act(async () => {
+        await result.current.resetTask("FN-1", { description: "corrected" });
+        await result.current.resetTask("FN-1");
+      });
+
+      expect(mockResetTask).toHaveBeenNthCalledWith(
+        1,
+        "FN-1",
+        { description: "corrected" },
+        "proj-9",
+      );
+      expect(mockResetTask).toHaveBeenNthCalledWith(2, "FN-1", undefined, "proj-9");
+      expect(result.current.tasks).toEqual([confirmed]);
+      expect(mockWriteCache).toHaveBeenCalledWith(
+        `${swrCache.SWR_CACHE_KEYS.TASKS_PREFIX}proj-9`,
+        [confirmed],
+        { maxBytes: 500_000 },
+      );
+    });
+  });
+
   describe("duplicateTask optimistic insertion", () => {
     it("adds task to state immediately", async () => {
       const original = createMockTask({ id: "FN-001", column: "todo" as Column });
@@ -3759,7 +3861,7 @@ describe("useTasks", () => {
   });
 
   describe("project switching", () => {
-    it("keeps previous tasks visible while new project's fetch is in flight (stale-while-revalidate)", async () => {
+    it("clears previous project rows while a cache-miss fetch is in flight", async () => {
       // Project A has tasks
       const projectATasks = [
         createMockTask({ id: "FN-A1", description: "Project A task 1" }),
@@ -3789,7 +3891,7 @@ describe("useTasks", () => {
         undefined, undefined, "project-a", undefined, false
       );
 
-      // Switch to project B — previous tasks should remain visible until new fetch lands
+      // Switch to project B without a snapshot; it must not render project A rows.
       await act(async () => {
         rerender({ projectId: "project-b" });
       });
@@ -3799,10 +3901,10 @@ describe("useTasks", () => {
         undefined, undefined, "project-b", undefined, false
       );
 
-      // Previous project's tasks remain visible (SWR) — avoids blank flash
-      expect(result.current.tasks.map((t) => t.id)).toEqual(["FN-A1", "FN-A2"]);
+      // A cache miss is intentionally empty rather than cross-project stale-while-revalidate.
+      expect(result.current.tasks).toEqual([]);
 
-      // Once project B resolves, its tasks replace the stale set
+      // Once project B resolves, its own rows populate the board
       const projectBTasks = [createMockTask({ id: "FN-B1", description: "Project B task" })];
       await act(async () => {
         resolveProjectB!(projectBTasks);

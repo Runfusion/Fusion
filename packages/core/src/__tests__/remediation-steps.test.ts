@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   formatRemediationStepName,
   hasOpenEquivalentRemediationStep,
+  hasPendingReviewRemediationWork,
   remediationWaveCount,
   type Task,
   type TaskStep,
@@ -34,7 +35,32 @@ describe("review remediation steps", () => {
     const { store, task } = fakeStore(prefix);
     const result = await appendRemediationStepsImpl(store as never, task.id, [remediation("missing undefined case")]);
     expect(task.steps.slice(0, prefix.length)).toEqual(prefix);
-    expect(result).toMatchObject({ appendedCount: 1, wave: 1 });
+    expect(result).toMatchObject({ appendedCount: 1, wave: 1, insertionIndex: 1, verificationStepIndex: 2 });
+    expect(result.appended).toHaveLength(1);
+    expect(task.steps.at(-1)).toEqual({ name: "Testing & Verification", status: "pending" });
+  });
+
+  it("keeps completed verification history and reports only the appended fix", async () => {
+    const originalVerification = { name: "Testing & Verification", status: "done" as const };
+    const { store, task } = fakeStore([
+      { name: "Implement", status: "done" },
+      originalVerification,
+    ]);
+    const result = await appendRemediationStepsImpl(store as never, task.id, [remediation("missing undefined case")]);
+
+    expect(task.steps.map((entry) => [entry.name, entry.status])).toEqual([
+      ["Implement", "done"],
+      ["Testing & Verification", "done"],
+      ["Fix: missing undefined case", "pending"],
+      ["Testing & Verification", "pending"],
+    ]);
+    expect(task.steps[1]).toBe(originalVerification);
+    expect(result).toMatchObject({
+      appendedCount: 1,
+      insertionIndex: 2,
+      verificationStepIndex: 3,
+    });
+    expect(result.appended.map((entry) => entry.name)).toEqual(["Fix: missing undefined case"]);
   });
 
   it("deduplicates only open equivalent remediation", async () => {
@@ -55,10 +81,38 @@ describe("review remediation steps", () => {
     }
   });
 
+  it("prefers finding titles while retaining legacy name fallbacks", () => {
+    expect(formatRemediationStepName({ title: "Short headline", detail: "Long reviewer explanation", name: "Legacy label" }))
+      .toBe("Fix: Short headline");
+    expect(formatRemediationStepName({ title: " \n\t ", detail: "Long reviewer explanation" }))
+      .toBe("Fix: Long reviewer explanation");
+    expect(formatRemediationStepName({ name: "Legacy label" })).toBe("Fix: Legacy label");
+    expect(formatRemediationStepName({})).toBe("Fix: review finding");
+
+    const multiLine = formatRemediationStepName({ title: "Short\n  headline\tfor operators" });
+    expect(multiLine).toBe("Fix: Short headline for operators");
+    expect(multiLine).not.toContain("\n");
+  });
+
   it("recognizes open equivalence structurally", () => {
     const existing = remediation("missing undefined case");
     expect(hasOpenEquivalentRemediationStep([existing], remediation("missing undefined case"))).toBe(true);
     existing.status = "done";
     expect(hasOpenEquivalentRemediationStep([existing], remediation("missing undefined case"))).toBe(false);
+  });
+
+  it("recognizes the workflow-selected pending remediation model without weakening named remediation", () => {
+    const pendingFix = remediation("missing undefined case");
+    const pendingPlain: TaskStep = { name: "Documentation & Delivery", status: "pending" };
+    const doneFix = remediation("previous wave", "done");
+
+    expect(hasPendingReviewRemediationWork({ steps: [pendingFix] }, { stepReopenPolicy: "none" })).toBe(true);
+    expect(hasPendingReviewRemediationWork({ steps: [pendingFix] }, { stepReopenPolicy: "reopen-trailing" })).toBe(true);
+    expect(hasPendingReviewRemediationWork({ steps: [pendingPlain] }, { stepReopenPolicy: "reopen-trailing" })).toBe(true);
+    expect(hasPendingReviewRemediationWork({ steps: [pendingPlain] }, { stepReopenPolicy: "none" })).toBe(false);
+    expect(hasPendingReviewRemediationWork({ steps: [] }, { stepReopenPolicy: "none" })).toBe(false);
+    expect(hasPendingReviewRemediationWork({ steps: [] }, { stepReopenPolicy: "reopen-trailing" })).toBe(false);
+    expect(hasPendingReviewRemediationWork({ steps: [doneFix] }, { stepReopenPolicy: "none" })).toBe(false);
+    expect(hasPendingReviewRemediationWork({ steps: [doneFix] }, { stepReopenPolicy: "reopen-trailing" })).toBe(false);
   });
 });

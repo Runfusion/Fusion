@@ -32,12 +32,15 @@ remediation budget was exhausted. Keep browser verification advisory, but make C
 Review a gate so REVISE records a blocking failed workflow step and cannot advance to
 review or merge.
 
-FNXC:CodeReviewStep 2026-06-29-17:55:
-Code Review REVISE is ordinary repair feedback, not a terminal task failure. FN-7242
-exhausted the old built-in three-pass default and parked failed at
-`code-review-remediation`; default built-in Code Review must keep recovering until it
-passes unless a workflow author explicitly sets a numeric maxRevisions cap.
+FNXC:WorkflowRemediationBudget 2026-09-03-05:40:
+A Code Review REVISE is repair feedback rather than an immediate terminal task failure, but an
+unbounded loop has no automatic terminal state. Three automatic remediation rounds give ordinary
+feedback time to converge, then hand an unresolved review to the existing convergence ladder and
+audited operator bypass instead of spending reviewer sessions indefinitely.
 */
+
+/** Default number of automatic built-in Code Review remediation rounds. */
+export const DEFAULT_CODE_REVIEW_MAX_REVISIONS = 3;
 
 /** Stable per-task enable key + group node id. */
 export const CODE_REVIEW_GROUP_ID = "code-review";
@@ -52,6 +55,11 @@ const CODE_REVIEW_NAME = "Code Review";
 const CODE_REVIEW_DESCRIPTION =
   "Diff-review the task's changes for correctness bugs, regressions, and intent mismatches that tests miss";
 
+/*
+FNXC:ReviewVerdictNotes 2026-08-28-21:23:
+The previous Code Review contract explicitly authorized empty approval notes, which produced verdicts
+with no operator-visible rationale. Every verdict now names what was checked and why it was reached.
+*/
 /** Agent prompt (inlined verbatim from the former catalog template — parity oracle). */
 const CODE_REVIEW_PROMPT = `You are a senior code reviewer. Review the task's diff for the correctness value automated tests do NOT catch.
 
@@ -76,11 +84,13 @@ ${REVIEW_REREVIEW_POLICY}
 Be specific: cite \`file:line\` for every finding and explain the concrete failure it causes.
 
 ## Output Requirements
-- Fast-bail: if the diff is trivial, generated, or out-of-scope for code review (e.g. pure docs/config/formatting with no logic), output {"verdict":"APPROVE","notes":"out of scope: code review"} immediately and stop.
-- APPROVE: no correctness concerns; use empty or brief notes.
+- Fast-bail: if the diff is trivial, generated, or out-of-scope for code review (e.g. pure docs/config/formatting with no logic), output {"verdict":"APPROVE","notes":"The diff contains no reviewable logic changes, so Code Review is out of scope."} immediately and stop.
+- APPROVE: no correctness concerns; include a short non-empty rationale.
 - APPROVE_WITH_NOTES: shippable. Use this when your findings are all P1/P2 — they are recorded and handed to the implementer without another remediation round.
 - REVISE: a correctness bug, regression, or contract break requires changes before merge. Requires at least one \`critical\` finding in \`findings\`; a REVISE without one will be treated as APPROVE_WITH_NOTES.
 - Every blocking issue MUST appear as an entry in \`findings\` with its severity and \`filePath\`/\`line\`. Prose in \`notes\` alone does not block.
+- Every REVISE finding is a required Fix-step record. Its \`id\`, \`title\`, \`body\`, \`filePath\`, \`line\`, and \`severity\` must be concrete enough for an executor to implement without asking what to fix. If you cannot name an affected file and correction, do not return REVISE: investigate until you can, or return the appropriate non-blocking verdict.
+- \`notes\` MUST contain one to three sentences naming what was checked and why the verdict was reached. An empty \`notes\` string is a protocol violation.
 - Final output: output exactly one trailing JSON object on the final line (no markdown fences, no surrounding prose):
 {"verdict":"APPROVE|APPROVE_WITH_NOTES|REVISE","notes":"...","findings":[{"id":"stable-id","title":"concise issue","body":"concrete failure and remediation","filePath":"path/to/file.ts","line":1,"severity":"critical|high|medium|low","resolution":"open|resolved-in-review|superseded"}]}`;
 
@@ -109,11 +119,7 @@ export function codeReviewOptionalGroupNode(
       defaultOn: options.defaultOn ?? true,
       reworkRegion: true,
       maxReworkCycles: 3,
-      /*
-       * FNXC:WorkflowRemediationBudget 2026-06-29-17:55:
-       * Built-in Code Review should never terminal-fail merely because repair feedback repeated. Default to unbounded fix→review recovery while preserving workflow-authored numeric caps through `config.maxRevisions`.
-       */
-      maxRevisions: options.maxRevisions ?? "unbounded",
+      maxRevisions: options.maxRevisions ?? DEFAULT_CODE_REVIEW_MAX_REVISIONS,
       template: {
         nodes: [
           {

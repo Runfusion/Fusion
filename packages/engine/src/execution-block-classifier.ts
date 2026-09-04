@@ -1,6 +1,12 @@
+import type { TaskExternalBlockOrigin } from "@fusion/core";
+import { isUsageLimitError } from "./errors/usage-limit-detector.js";
+import {
+  isOperatorActionableAgentError,
+  isTransientAuthCredentialError,
+} from "./errors/transient-error-detector.js";
+
 /**
- * Classify honest-blocked exits so the engine does not auto-replan (or thrash
- * re-execute) work that is blocked behind other Fusion board tasks.
+ * Classify honest blocked exits for durable task-dependency metadata and thrash detection.
  *
  * FNXC:HonestBlockedExit 2026-08-02-23:59 (operator decision — FN-8728 vs PR #2398):
  * FN-8700 previously treated "file claim / open PR" language as a durable external
@@ -11,14 +17,78 @@
  * open PR is never a claim on a task's file scope. All PR/file-claim classification,
  * pr:N blockedBy refs, and the gh-backed PR-clear sweep are removed. Blocked exits now
  * classify on task dependencies alone: task deps → durable external park (requeues
- * when the deps complete); no deps → plan defect → auto-replan (FN-8634).
+ * when the deps complete); no deps → repairable plan defect that remains in execution.
+ *
+ * FNXC:HonestBlockedExit 2026-08-28-07:48:
+ * A plan defect is repaired inside execution. Blocked exits no longer carry auto-replan authority,
+ * so this classifier records metadata only and cannot move a task back into planning.
  */
+
+export type ExternalObstacleClassification = {
+  origin: TaskExternalBlockOrigin;
+  code: string;
+};
+
+const HOST_EXTERNAL_CODES = ["ENOSPC", "EDQUOT", "EROFS", "ENOMEM", "EMFILE", "ENFILE"] as const;
+const NETWORK_EXTERNAL_CODES = ["ECONNREFUSED", "ECONNRESET", "ETIMEDOUT", "EAI_AGAIN", "ENOTFOUND"] as const;
+
+/*
+FNXC:ExternalBlock 2026-08-28-04:08:
+Only conservative, operator-actionable signals may freeze a task. Exact host/network codes and the
+existing provider/credential predicates identify causes outside the worktree; ordinary test, lint,
+type, merge, plan, and review failures deliberately fall through to the existing self-repair path.
+Transient credential rotation is excluded because its current retry owner must run first.
+
+FNXC:ExternalBlock 2026-08-28-22:15:
+FN-243 makes this classifier the single freeze authority for both agent declarations and session failures.
+An unrecognized cause remains AI-repairable; only host-resource, network, model-provider, and credential
+failures may freeze a card, while advisory tooling/service hints tailor the non-mutating repair refusal.
+*/
+export function classifyExternalObstacle(message: string): ExternalObstacleClassification | undefined {
+  const normalized = message.trim();
+  if (!normalized) return undefined;
+
+  /*
+  FNXC:ExternalBlock 2026-09-04-01:46:
+  A lifecycle refusal is an internal engine or spec defect, never an operator-recoverable
+  credentials state. Misclassifying it as credentials/CREDENTIALS froze cards and sent operators to auth.
+  */
+  if (/Forbidden lifecycle path|rejected by the task lifecycle projection|TransitionRejectionError/i.test(normalized)) {
+    return undefined;
+  }
+
+  for (const code of HOST_EXTERNAL_CODES) {
+    if (new RegExp(`\\b${code}\\b`, "i").test(normalized)) return { origin: "host-environment", code };
+  }
+  for (const code of NETWORK_EXTERNAL_CODES) {
+    if (new RegExp(`\\b${code}\\b`, "i").test(normalized)) return { origin: "network", code };
+  }
+  if (/socket hang up/i.test(normalized)) return { origin: "network", code: "SOCKET_HANG_UP" };
+  if (isTransientAuthCredentialError(normalized)) return undefined;
+  if (isUsageLimitError(normalized)) return { origin: "model-provider", code: "USAGE_LIMIT" };
+  if (isOperatorActionableAgentError(normalized)) return { origin: "credentials", code: "CREDENTIALS" };
+  return undefined;
+}
+
+export type RepairableObstacleHint = "missing-tooling" | "missing-service";
+
+/**
+ * Identify an AI-repairable missing capability without granting lifecycle authority.
+ */
+export function detectRepairableObstacleHint(message: string): RepairableObstacleHint | undefined {
+  const normalized = message.trim();
+  if (!normalized) return undefined;
+
+  const missingSignal = /\b(?:command not found|not installed|is not recognized as an internal or external command)\b|\bneither\b.{0,80}\binstalled\b/i;
+  const missingFileSignal = /(?:\b(?:spawn|exec(?:ute)?|binary|executable|interpreter|command)\b.{0,80}\b(?:ENOENT|no such file or directory)\b|\bENOENT\b.{0,80}\b(?:binary|executable|interpreter|command)\b)/i;
+  if (!missingSignal.test(normalized) && !missingFileSignal.test(normalized)) return undefined;
+
+  return /\b(?:service|daemon)\b/i.test(normalized) ? "missing-service" : "missing-tooling";
+}
 
 export type BlockedExitClass = "plan-defect" | "external";
 
 export type BlockedExitClassification = {
-  /** Only plan defects may use the empty-blockedBy → needs-replan path. */
-  allowAutoReplan: boolean;
   class: BlockedExitClass;
   /** Compact signature for thrash detection (ids/outcomes only — no free prose). */
   thrashSignature: string;
@@ -65,15 +135,13 @@ export function classifyBlockedExit(
   const { taskIds } = partitionBlockedByRefs(blockedBy);
   if (taskIds.length > 0) {
     return {
-      allowAutoReplan: false,
       class: "external",
       thrashSignature: `tasks:${taskIds.slice().sort().join(",")}`,
     };
   }
 
-  // Empty blockedBy → plan defect, auto-replan is OK
+  // Empty blockedBy remains a repairable plan defect in the executor.
   return {
-    allowAutoReplan: true,
     class: "plan-defect",
     thrashSignature: "plan-defect",
   };

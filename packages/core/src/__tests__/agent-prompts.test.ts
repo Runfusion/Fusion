@@ -352,6 +352,22 @@ describe("resolveAgentPrompt", () => {
     expect(result).toContain("Task Documents");
   });
 
+  it("qualifies external blocked exits in both executor prompt variants", () => {
+    const standard = resolveAgentPrompt("executor");
+    const senior = resolveAgentPrompt("executor", {
+      roleAssignments: { executor: "senior-engineer" },
+    });
+
+    for (const prompt of [standard, senior]) {
+      expect(prompt).toContain("host-resource, network, model-provider, and credential failures");
+      expect(prompt).toContain("resolve missing tooling or optional services");
+      expect(prompt).toContain("substitute a runnable check");
+      expect(prompt).toContain("recommend the deferred verification");
+      expect(prompt).toContain("plain prose without backticked command names");
+      expect(prompt).not.toContain("honest blocked exit only for a real external blocker");
+    }
+  });
+
   it("senior-engineer prompt includes task_document_read guidance", () => {
     const config: AgentPromptsConfig = {
       roleAssignments: {
@@ -367,6 +383,21 @@ describe("resolveAgentPrompt", () => {
     const result = resolveAgentPrompt("triage");
     expect(result).toContain("task_document_write");
     expect(result).toContain("planning");
+  });
+
+  it("adds environment feasibility only to standard triage planning", () => {
+    const standardPrompt = resolveAgentPrompt("triage");
+    const fastPrompt = builtinSeamPrompt("planning-fast");
+    const concisePrompt = resolveAgentPrompt("triage", {
+      roleAssignments: { triage: "concise-triage" },
+    });
+
+    expect(standardPrompt).toContain("## Environment feasibility");
+    expect(standardPrompt).toContain("## Environment Capabilities");
+    expect(standardPrompt).toContain("## Environment Constraints");
+    expect(standardPrompt).toContain("Never state that a plan is blocked because a runtime is missing");
+    expect(fastPrompt).not.toContain("## Environment feasibility");
+    expect(concisePrompt).not.toContain("## Environment feasibility");
   });
 
   it("concise-triage prompt includes task_document_write guidance", () => {
@@ -391,6 +422,9 @@ describe("resolveAgentPrompt", () => {
     expect(fastPrompt).toBe(fastTemplate?.prompt);
     expect(fastPrompt).toContain("This task is running in **fast mode**");
     expect(fastPrompt).toContain("### Step N: <name>");
+    expect(fastPrompt).toContain("### Step 0: Preflight");
+    expect(fastPrompt).not.toContain("### Step 1: Preflight");
+    expect(fastPrompt).toContain("through `### Step N-1:` with no gaps");
     expect(fastPrompt).toContain("Do not write bare `### Preflight` / `### Implementation` headings");
     expect(fastPrompt).not.toContain("## Review Level");
     expect(fastPrompt.length).toBeLessThan(standardPrompt.length / 3);
