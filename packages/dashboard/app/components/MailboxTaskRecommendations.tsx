@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { MessageMetadata, TaskRecommendation } from "@fusion/core";
 import { createTaskFromRecommendation, fetchTaskDetail } from "../api";
+import { AiDisclosure } from "./AiDisclosure";
 import "./MailboxTaskRecommendations.css";
 
 type TaskRecommendationNoticeMetadata = MessageMetadata & {
@@ -103,6 +104,7 @@ export function MailboxTaskRecommendations({
   if (!recommendations) return null;
 
   return <section className="mailbox-task-recommendations" data-testid="mailbox-task-recommendations" aria-label={t("mailbox.taskRecommendations", "Task recommendations")}>
+    {recommendations.length > 0 ? <AiDisclosure kind="ai-assisted-analysis" compact /> : null}
     {recommendations.map((recommendation) => {
       const actionKey = `${target.taskId}:${recommendation.id}`;
       const createdTaskId = recommendation.createdTaskId ?? createdIds[actionKey];

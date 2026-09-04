@@ -42,6 +42,7 @@ import {
 } from "../api";
 import { subscribeSse } from "../sse-bus";
 import { recordResumeEvent } from "../utils/resumeInstrumentation";
+import { AiDisclosure } from "./AiDisclosure";
 import { FloatingWindow } from "./FloatingWindow";
 import { useEmbeddedPresentation, type ModalPresentation } from "../hooks/useEmbeddedPresentation";
 import {
@@ -3674,6 +3675,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
             </div>
           )}
         </div>
+        <AiDisclosure kind="ai-interaction" className="planning-ai-disclosure" />
 
         <div
           className={`planning-modal-body planning-modal-body--split ${

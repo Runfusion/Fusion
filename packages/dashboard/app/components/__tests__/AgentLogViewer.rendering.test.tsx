@@ -16,6 +16,7 @@ vi.mock("lucide-react", () => ({
   Cpu: () => null,
   ChevronDown: () => null,
   ChevronRight: () => null,
+  Sparkles: () => null,
 }));
 
 describe("AgentLogViewer", () => {
@@ -45,6 +46,52 @@ describe("AgentLogViewer", () => {
 
     expect(screen.getByText("streamed chunk")).toBeTruthy();
     consoleErrorSpy.mockRestore();
+  });
+
+  it("renders one attributed disclosure for a grouped executor response with a runtime marker", () => {
+    const entries = [
+      makeEntry({ type: "status", text: "Executor using model: anthropic/claude-opus-4-1", agent: "executor" }),
+      makeEntry({ text: "first chunk", agent: "executor" }),
+      makeEntry({ text: " second chunk", agent: "executor" }),
+    ];
+    render(<AgentLogViewer entries={entries} loading={false} executorModel={{ provider: "openai", modelId: "gpt-4o" }} />);
+
+    const notes = screen.getAllByRole("note");
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toHaveAttribute("data-ai-provider", "anthropic");
+    expect(notes[0]).toHaveAttribute("data-ai-model", "claude-opus-4-1");
+  });
+
+  it("stays provider-agnostic when historic log provenance is missing even if the current executor model is set", () => {
+    const entries = [
+      makeEntry({ text: "first chunk", agent: "executor" }),
+      makeEntry({ text: " second chunk", agent: "executor" }),
+    ];
+    render(<AgentLogViewer entries={entries} loading={false} executorModel={{ provider: "anthropic", modelId: "claude-opus-4-1" }} />);
+
+    const notes = screen.getAllByRole("note");
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toHaveAttribute("data-ai-attribution", "provider-agnostic");
+    expect(notes[0]).not.toHaveAttribute("data-ai-provider");
+  });
+
+  it("splits grouped historic output at a model-A-to-model-B runtime marker change", () => {
+    const entries = [
+      makeEntry({ type: "status", text: "Executor using model: anthropic/claude-opus-4-1", agent: "executor", timestamp: "2026-01-01T00:00:00Z" }),
+      makeEntry({ text: "output from A", agent: "executor", timestamp: "2026-01-01T00:00:01Z" }),
+      makeEntry({ type: "status", text: "Executor using model: openai/gpt-4o", agent: "executor", timestamp: "2026-01-01T00:00:02Z" }),
+      makeEntry({ text: "output from B", agent: "executor", timestamp: "2026-01-01T00:00:03Z" }),
+    ];
+    render(<AgentLogViewer entries={entries} loading={false} executorModel={{ provider: "google", modelId: "gemini-pro" }} />);
+
+    const notes = screen.getAllByRole("note");
+    expect(notes).toHaveLength(2);
+    expect(notes[0]).toHaveAttribute("data-ai-provider", "anthropic");
+    expect(notes[0]).toHaveAttribute("data-ai-model", "claude-opus-4-1");
+    expect(notes[1]).toHaveAttribute("data-ai-provider", "openai");
+    expect(notes[1]).toHaveAttribute("data-ai-model", "gpt-4o");
+    expect(screen.getByText("output from A")).toBeTruthy();
+    expect(screen.getByText("output from B")).toBeTruthy();
   });
 
   it("renders grouped text entries in chronological order (oldest first)", () => {

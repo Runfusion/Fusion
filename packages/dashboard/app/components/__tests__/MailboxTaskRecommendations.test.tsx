@@ -40,6 +40,7 @@ describe("MailboxTaskRecommendations", () => {
     vi.mocked(createTaskFromRecommendation).mockResolvedValue({ task: { id: "FN-9101" }, parent: detail } as never);
     render(<MailboxTaskRecommendations metadata={metadata} projectId="project-1" onOpenTask={onOpenTask} />);
     await screen.findByRole("button", { name: "Create task" });
+    expect(screen.getByRole("note")).toHaveAttribute("data-ai-disclosure", "ai-assisted-analysis");
     expectMailboxCardWithoutBoardClass();
     fireEvent.click(screen.getByRole("button", { name: "Create task" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "View task FN-9101" })).toBeInTheDocument());

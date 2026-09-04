@@ -6,6 +6,7 @@ import { Loader2, Search } from "lucide-react";
 import { fetchAuthStatus, fetchSettings } from "../api";
 import { useResearch } from "../hooks/useResearch";
 import type { ResearchProviderOption } from "../research-types";
+import { AiDisclosure } from "./AiDisclosure";
 import { ResearchTaskActionModal } from "./ResearchTaskActionModal";
 import { LoadingSpinner } from "./LoadingSpinner";
 import { ViewHeader } from "./ViewHeader";
@@ -374,6 +375,7 @@ export function ResearchView({ projectId, addToast, onOpenSettings, readinessVer
                 </div>
                 <h3 className="research-view__run-title">{selectedRun.title}</h3>
                 <p className="research-view__run-query">{selectedRun.query}</p>
+                {selectedRun.results ? <AiDisclosure kind="ai-assisted-analysis" compact /> : null}
                 <p className="research-view__run-summary" data-testid="research-state-results">{selectedRun.results?.summary ?? t("research.noSummaryYet", "No summary yet.")}</p>
                 <div className="research-view__actions">
                   <button

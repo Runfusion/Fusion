@@ -26,6 +26,7 @@ import {
   Settings,
   Activity,
 } from "lucide-react";
+import { AiDisclosure } from "./AiDisclosure";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { ViewHeader } from "./ViewHeader";
 import { isNativeStructureDragEnabled, serializeNativeStructureRef } from "../utils/nativeStructureDrag";
@@ -382,6 +383,12 @@ export function InsightsView({ projectId, addToast, onClose, onCreateTask, model
     <section className="insights-section insights-recommendations" data-testid="insights-section-recommendations">
       <div className="insights-section-header"><div className="insights-section-title"><Lightbulb size={18} className="insights-section-icon" /><h3>{t("insights.recommendations.title", "Task Recommendations")}</h3><span className="insights-section-count">{taskRecommendations.items.length}</span></div></div>
       <p className="insights-recommendations__count">{t("insights.recommendations.count", "Showing {{shown}} of {{total}} source tasks", { shown: taskRecommendations.items.length, total: taskRecommendations.totalRowCount })}</p>
+      {/*
+      FNXC:AITransparency 2026-09-04-04:44:
+      The Recommendations category renders agent-authored titles and descriptions through this path,
+      not activeSection.items. Disclose it here so opening that category is not an unlabeled AI surface.
+      */}
+      {taskRecommendations.items.length > 0 ? <AiDisclosure kind="ai-assisted-analysis" compact testId="insights-recommendations-ai-disclosure" /> : null}
       <ul className="insights-list">
         {taskRecommendations.items.map((item) => {
           const key = `${item.taskId}:${item.recommendation.id}`;
@@ -494,7 +501,10 @@ export function InsightsView({ projectId, addToast, onClose, onCreateTask, model
                     </div>
                   </div>
                   {insight.content && (
-                    <p className="insight-item-content">{insight.content}</p>
+                    <>
+                      <AiDisclosure kind="ai-assisted-analysis" compact />
+                      <p className="insight-item-content">{insight.content}</p>
+                    </>
                   )}
                   <div className="insight-item-meta">
                     <span className={`insight-item-status insight-item-status--${insight.status}`}>

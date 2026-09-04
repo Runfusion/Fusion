@@ -270,6 +270,55 @@ describe("TaskPlannerChatTab", () => {
     expect(screen.getAllByTestId(/task-planner-chat-starter-/)).toHaveLength(4);
   });
 
+  it("keeps historic planner output attributed to its stored model after the displayed model changes", async () => {
+    mockFetchChatMessages.mockResolvedValue({
+      messages: [
+        {
+          id: "planner-a",
+          sessionId: "chat-planner",
+          role: "assistant",
+          content: "Answer from model A",
+          thinkingOutput: null,
+          metadata: { modelProvider: "anthropic", modelId: "claude-plan" },
+          createdAt: "2026-06-30T00:01:00.000Z",
+        },
+        {
+          id: "planner-b",
+          sessionId: "chat-planner",
+          role: "assistant",
+          content: "Answer from model B",
+          thinkingOutput: null,
+          metadata: { modelProvider: "openai", modelId: "gpt-4o" },
+          createdAt: "2026-06-30T00:02:00.000Z",
+        },
+        {
+          id: "planner-legacy",
+          sessionId: "chat-planner",
+          role: "assistant",
+          content: "Legacy planner answer",
+          thinkingOutput: null,
+          metadata: null,
+          createdAt: "2026-06-30T00:03:00.000Z",
+        },
+      ],
+    });
+    mockFetchTaskPlannerChatSession.mockResolvedValue({
+      session: makePlannerSession({ modelProvider: "openai", modelId: "gpt-4o" }),
+    });
+    mockFetchChatSession.mockResolvedValue({
+      session: makePlannerSession({ modelProvider: "openai", modelId: "gpt-4o" }),
+    });
+
+    renderPlannerChat({ taskChatModel: { provider: "openai", modelId: "gpt-4o" } });
+
+    expect(await screen.findByText("Answer from model A")).toBeInTheDocument();
+    expect(screen.getByTestId("chat-ai-disclosure-planner-a")).toHaveAttribute("data-ai-provider", "anthropic");
+    expect(screen.getByTestId("chat-ai-disclosure-planner-a")).toHaveAttribute("data-ai-model", "claude-plan");
+    expect(screen.getByTestId("chat-ai-disclosure-planner-b")).toHaveAttribute("data-ai-provider", "openai");
+    expect(screen.getByTestId("chat-ai-disclosure-planner-b")).toHaveAttribute("data-ai-model", "gpt-4o");
+    expect(screen.getByTestId("chat-ai-disclosure-planner-legacy")).toHaveAttribute("data-ai-attribution", "provider-agnostic");
+  });
+
   it("uses the Direct Chat model target and exposes model/thinking controls without losing task scope", async () => {
     const user = userEvent.setup();
     mockFetchTaskPlannerChatSession.mockResolvedValueOnce({ session: null });

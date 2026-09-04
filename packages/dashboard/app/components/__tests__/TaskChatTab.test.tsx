@@ -570,6 +570,77 @@ describe("TaskChatTab", () => {
     expectRoleIcon("Merger", "anthropic-icon");
   });
 
+  it("renders one exact AI disclosure per agent group from runtime model markers", () => {
+    mockLogs([
+      makeEntry({ agent: "executor", type: "status", text: "Executor using model: openai/gpt-5.6" }),
+      makeEntry({ agent: "executor", text: "executor output" }),
+      makeEntry({ agent: "executor", type: "thinking", text: "nested thought" }),
+    ]);
+
+    render(
+      <TaskChatTab
+        task={makeTask({ modelProvider: "mistral", modelId: "mistral-large" })}
+        active
+        addToast={vi.fn()}
+      />,
+    );
+
+    const executorGroup = getRoleGroup("Executor");
+    const notes = within(executorGroup).getAllByRole("note");
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toHaveAttribute("data-compliance", "eu-ai-act-art-50");
+    expect(notes[0]).toHaveAttribute("data-ai-disclosure", "generated-output");
+    expect(notes[0]).toHaveAttribute("data-ai-provider", "openai");
+    expect(notes[0]).toHaveAttribute("data-ai-model", "gpt-5.6");
+    expect(notes[0]).not.toHaveTextContent("Mistral");
+  });
+
+  it("stays provider-agnostic when a role group has no runtime marker even if the task override is set", () => {
+    mockLogs([
+      makeEntry({ agent: "executor", text: "executor output" }),
+      makeEntry({ agent: "executor", type: "thinking", text: "nested thought" }),
+    ]);
+
+    render(
+      <TaskChatTab
+        task={makeTask({ modelProvider: "openai", modelId: "gpt-5.6" })}
+        active
+        addToast={vi.fn()}
+      />,
+    );
+
+    const notes = within(getRoleGroup("Executor")).getAllByRole("note");
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toHaveAttribute("data-ai-attribution", "provider-agnostic");
+    expect(notes[0]).not.toHaveAttribute("data-ai-provider");
+  });
+
+  it("splits a role group at a model-A-to-model-B runtime marker change", () => {
+    mockLogs([
+      makeEntry({ agent: "executor", type: "status", text: "Executor using model: anthropic/claude-opus-4-1", timestamp: "2026-06-12T00:00:00.000Z" }),
+      makeEntry({ agent: "executor", text: "output from A", timestamp: "2026-06-12T00:00:01.000Z" }),
+      makeEntry({ agent: "executor", type: "status", text: "Executor using model: openai/gpt-4o", timestamp: "2026-06-12T00:00:02.000Z" }),
+      makeEntry({ agent: "executor", text: "output from B", timestamp: "2026-06-12T00:00:03.000Z" }),
+    ]);
+
+    render(
+      <TaskChatTab
+        task={makeTask({ modelProvider: "google", modelId: "gemini-pro" })}
+        active
+        addToast={vi.fn()}
+      />,
+    );
+
+    const groups = screen.getAllByRole("region", { name: "Executor messages" });
+    expect(groups).toHaveLength(2);
+    expect(within(groups[0]!).getByRole("note")).toHaveAttribute("data-ai-provider", "anthropic");
+    expect(within(groups[0]!).getByRole("note")).toHaveAttribute("data-ai-model", "claude-opus-4-1");
+    expect(within(groups[0]!).getByText("output from A")).toBeInTheDocument();
+    expect(within(groups[1]!).getByRole("note")).toHaveAttribute("data-ai-provider", "openai");
+    expect(within(groups[1]!).getByRole("note")).toHaveAttribute("data-ai-model", "gpt-4o");
+    expect(within(groups[1]!).getByText("output from B")).toBeInTheDocument();
+  });
+
   it("uses status and text runtime markers before static overrides for reviewer, executor, and planner icons", () => {
     mockLogs([
       makeEntry({ agent: "triage", type: "text", text: "Planning using model: openai/gpt-4o" }),
