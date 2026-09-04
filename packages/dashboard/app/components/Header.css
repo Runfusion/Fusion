@@ -871,14 +871,15 @@ non-notched devices, so this is a no-op there. Pair with viewport-fit=cover (ind
   scroll the page. The cap lives on the base class (not a media query) so a
   short-landscape phone in JS mobile mode with a 769-1024px CSS width gets it too.
 
-  FNXC:MobileOverflowMenuScroll 2026-08-25-18:44:
-  Review P1: on mobile, vh tracks the LAYOUT viewport, so with the browser chrome expanded
-  `100vh - 120px` can exceed the visible area and the cap no longer guarantees the menu fits.
-  The repeated declaration restates the cap with the dynamic-viewport unit (dvh) for browsers
-  that support it; older browsers keep the vh fallback from the first declaration.
+  FNXC:MobileOverflowMenuScroll 2026-09-04-04:43:
+  Review P1 follow-up: do not fall back to 100vh. Unsupported dvh would keep the larger
+  layout-viewport calculation and leave lower entries below the visible screen. First
+  declaration is the tokenized cap (smaller than typical mobile chrome-visible height).
+  Then 100svh (smallest viewport, chrome expanded) and 100dvh (current visible).
   */
-  max-height: min(480px, calc(100vh - 120px));
-  max-height: min(480px, calc(100dvh - 120px));
+  max-height: var(--dropdown-max-height);
+  max-height: min(var(--dropdown-max-height), calc(100svh - var(--dropdown-viewport-gutter)));
+  max-height: min(var(--dropdown-max-height), calc(100dvh - var(--dropdown-viewport-gutter)));
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
@@ -896,7 +897,7 @@ non-notched devices, so this is a no-op there. Pair with viewport-fit=cover (ind
 
 /* RUFU-170: thin scrollbar mirroring .project-selector__dropdown::-webkit-scrollbar. */
 .mobile-overflow-menu::-webkit-scrollbar {
-  width: 6px;
+  width: var(--space-scrollbar);
 }
 
 .mobile-overflow-menu::-webkit-scrollbar-track {
@@ -905,7 +906,7 @@ non-notched devices, so this is a no-op there. Pair with viewport-fit=cover (ind
 
 .mobile-overflow-menu::-webkit-scrollbar-thumb {
   background-color: var(--text-dim);
-  border-radius: 3px;
+  border-radius: var(--radius-scrollbar);
 }
 
 .mobile-overflow-item {
