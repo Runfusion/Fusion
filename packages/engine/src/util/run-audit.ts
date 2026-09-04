@@ -1248,8 +1248,8 @@ export function createRunAuditor(store: TaskStore, context: EngineRunContext | n
 
   const mutation = toRunMutationContext(context);
   const actorMetadata = {
-    actorId: mutation.actor.id,
-    actorKind: mutation.actor.kind,
+    actorId: mutation.actor.actor.id,
+    actorKind: mutation.actor.actor.kind,
   };
 
   return {
