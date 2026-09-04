@@ -49,6 +49,7 @@ export async function sendTaskBackForFix(
   findings?: WorkflowReviewFinding[],
   /** Workspace remediation must not overwrite singular task checkout routing. */
   persistWorktreePath?: boolean,
+  stepReopenPolicy: "reopen-trailing" | "none" = "reopen-trailing",
 ): Promise<void> {
   const taskId = task.id;
   deps.clearCompletedTaskWatchdog(taskId);
@@ -100,10 +101,12 @@ export async function sendTaskBackForFix(
     findings,
   );
 
-  // 4. Re-open only the last step for a single in-place fix pass. Earlier
-  // done steps stay done so the executor doesn't redo finished work.
+  // 4. Append one replay occurrence for the workflow-selected trailing step.
+  // Completed occurrences remain immutable history, and existing pending work prevents duplicate growth.
   const updatedTask = await deps.store.getTask(taskId);
-  await deps.reopenLastStepForRevision(taskId, updatedTask);
+  if (stepReopenPolicy === "reopen-trailing") {
+    await deps.reopenLastStepForRevision(taskId, updatedTask);
+  }
 
   // 5. Clear error/status/session fields and reset workflow step retries.
   //    FNXC:ReviewLeniency 2026-07-02-02:10: prior terminal failure results

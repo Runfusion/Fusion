@@ -9,7 +9,7 @@ import {
 
 /*
 FNXC:CapacityModel 2026-08-22-00:09:
-FN-9189's surface audit requires invalid persisted maxConcurrent values to resolve identically through both exported entry points. Production callers use the effective ceiling, so this shared matrix protects it from leaking an invalid scalar after the fallback resolver sanitizes it.
+FN-9189's surface audit requires invalid persisted maxConcurrent values to resolve identically through both exported entry points. Production callers use the agent ceiling, so this shared matrix protects it from leaking an invalid scalar after the fallback resolver sanitizes it.
 */
 const INVALID_MAX_CONCURRENT_CASES = [
   ["zero", 0],
@@ -32,8 +32,6 @@ describe("resolveEffectiveConcurrency", () => {
     expect(resolveEffectiveConcurrency(undefined)).toEqual({
       maxConcurrent: DEFAULT_PROJECT_SETTINGS.maxConcurrent,
       worktreeLimit: DEFAULT_PROJECT_SETTINGS.maxWorktrees,
-      effectiveLimit: DEFAULT_PROJECT_SETTINGS.maxConcurrent,
-      bindingKnob: "maxConcurrent",
     });
   });
 
@@ -41,56 +39,42 @@ describe("resolveEffectiveConcurrency", () => {
     expect(resolveMaxConcurrentSetting(invalidMaxConcurrentSettings(value))).toBe(DEFAULT_PROJECT_SETTINGS.maxConcurrent);
   });
 
-  it.each(INVALID_MAX_CONCURRENT_CASES)("returns a finite default effective ceiling for invalid maxConcurrent: %s", (_label, value) => {
+  it.each(INVALID_MAX_CONCURRENT_CASES)("returns a finite default agent ceiling for invalid maxConcurrent: %s", (_label, value) => {
     const resolved = resolveEffectiveConcurrency(invalidMaxConcurrentSettings(value));
 
     expect(resolved).toEqual({
       maxConcurrent: DEFAULT_PROJECT_SETTINGS.maxConcurrent,
       worktreeLimit: DEFAULT_PROJECT_SETTINGS.maxWorktrees,
-      effectiveLimit: DEFAULT_PROJECT_SETTINGS.maxConcurrent,
-      bindingKnob: "maxConcurrent",
     });
     expect(Number.isFinite(resolved.maxConcurrent)).toBe(true);
     expect(resolved.maxConcurrent).toBeGreaterThan(0);
-    expect(Number.isFinite(resolved.effectiveLimit)).toBe(true);
-    expect(resolved.effectiveLimit).toBeGreaterThan(0);
   });
 
-  it.each(INVALID_MAX_CONCURRENT_CASES)("keeps a binding worktree ceiling for invalid maxConcurrent: %s", (_label, value) => {
-    const resolved = resolveEffectiveConcurrency({
+  it.each(INVALID_MAX_CONCURRENT_CASES)("keeps the worktree dimension independent for invalid maxConcurrent: %s", (_label, value) => {
+    expect(resolveEffectiveConcurrency({
       ...invalidMaxConcurrentSettings(value),
       maxWorktrees: 1,
       worktreeLimitEnabled: true,
-    });
-
-    expect(resolved).toEqual({
+    })).toEqual({
       maxConcurrent: DEFAULT_PROJECT_SETTINGS.maxConcurrent,
       worktreeLimit: 1,
-      effectiveLimit: 1,
-      bindingKnob: "maxWorktrees",
     });
   });
 
-  it.each(INVALID_MAX_CONCURRENT_CASES)("removes the worktree ceiling when disabled for invalid maxConcurrent: %s", (_label, value) => {
-    const resolved = resolveEffectiveConcurrency({
+  it.each(INVALID_MAX_CONCURRENT_CASES)("removes the worktree dimension when disabled for invalid maxConcurrent: %s", (_label, value) => {
+    expect(resolveEffectiveConcurrency({
       ...invalidMaxConcurrentSettings(value),
       worktreeLimitEnabled: false,
-    });
-
-    expect(resolved).toEqual({
+    })).toEqual({
       maxConcurrent: DEFAULT_PROJECT_SETTINGS.maxConcurrent,
       worktreeLimit: null,
-      effectiveLimit: DEFAULT_PROJECT_SETTINGS.maxConcurrent,
-      bindingKnob: "maxConcurrent",
     });
   });
 
-  it("honors configured values and names a binding worktree limit", () => {
-    expect(resolveEffectiveConcurrency({ maxConcurrent: 8, maxWorktrees: 4, worktreeLimitEnabled: true })).toEqual({
-      maxConcurrent: 8,
-      worktreeLimit: 4,
-      effectiveLimit: 4,
-      bindingKnob: "maxWorktrees",
+  it("keeps maxConcurrent 30 independent from maxWorktrees 3", () => {
+    expect(resolveEffectiveConcurrency({ maxConcurrent: 30, maxWorktrees: 3, worktreeLimitEnabled: true })).toEqual({
+      maxConcurrent: 30,
+      worktreeLimit: 3,
     });
   });
 
@@ -98,8 +82,6 @@ describe("resolveEffectiveConcurrency", () => {
     expect(resolveEffectiveConcurrency({ maxConcurrent: 8, maxWorktrees: 4, worktreeLimitEnabled: false })).toEqual({
       maxConcurrent: 8,
       worktreeLimit: null,
-      effectiveLimit: 8,
-      bindingKnob: "maxConcurrent",
     });
   });
 

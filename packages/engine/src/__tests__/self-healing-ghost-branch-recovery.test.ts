@@ -1,14 +1,6 @@
 import { EventEmitter } from "node:events";
-/*
-FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
-These call-arg assertions now include the mutation context the converted sweep passes.
-Adding it is what keeps them load-bearing: left at the old arity every
-`toHaveBeenCalledWith` here would fail, and every `.not.toHaveBeenCalledWith` would pass
-vacuously — an assertion that can no longer fail is worse than one that is red.
-*/
-import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { TaskStore } from "@fusion/core";
+import { BranchWriteProvenanceError, type TaskStore } from "@fusion/core";
 
 const execMock = vi.fn();
 
@@ -28,12 +20,14 @@ vi.mock("node:child_process", async () => {
 import { SelfHealingManager } from "../self-healing.js";
 import * as branchConflicts from "../execution/branch-conflicts.js";
 import * as worktreePool from "../worktree/worktree-pool.js";
+import { withBranchWriteProvenance } from "./branch-write-provenance-store-stub.js";
 
 function createStore(): TaskStore & EventEmitter {
   const emitter = new EventEmitter() as TaskStore & EventEmitter;
   (emitter as any).getSettings = vi.fn().mockResolvedValue({ globalPause: false, enginePaused: false });
   (emitter as any).listTasks = vi.fn();
-  (emitter as any).updateTask = vi.fn().mockResolvedValue(undefined);
+  (emitter as any).getTask = vi.fn().mockResolvedValue({ column: "in-review" });
+  (emitter as any).updateTask = vi.fn(withBranchWriteProvenance(async () => undefined));
   (emitter as any).moveTask = vi.fn().mockResolvedValue(undefined);
   (emitter as any).logEntry = vi.fn().mockResolvedValue(undefined);
   (emitter as any).recordRunAuditEvent = vi.fn().mockResolvedValue(undefined);
@@ -45,6 +39,7 @@ describe("self-healing ghost branch reclaim", () => {
   let manager: SelfHealingManager;
 
   beforeEach(() => {
+    vi.restoreAllMocks();
     store = createStore();
     manager = new SelfHealingManager(store, { rootDir: "/tmp/test" });
     vi.spyOn(worktreePool, "isUsableTaskWorktree").mockResolvedValue(true);
@@ -71,9 +66,9 @@ describe("self-healing ghost branch reclaim", () => {
     const recovered = await manager.reclaimSelfOwnedBranchConflicts();
 
     expect(recovered).toBe(1);
-    expect(store.updateTask).toHaveBeenCalledWith("FN-9001", expect.objectContaining({ worktree: null, branch: null, baseCommitSha: null }), UNATTRIBUTED_MUTATION_CONTEXT);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-9001", "todo", expect.objectContaining({ preserveProgress: true, preserveResumeState: true }), UNATTRIBUTED_MUTATION_CONTEXT);
-    expect(store.logEntry).toHaveBeenCalledWith("FN-9001", expect.stringContaining("[recovery] tip-already-merged FN-9001"), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-9001", expect.objectContaining({ worktree: null, branch: null, baseCommitSha: null }));
+    expect(store.moveTask).toHaveBeenCalledWith("FN-9001", "in-progress", expect.objectContaining({ preserveProgress: true, preserveResumeState: true }));
+    expect(store.logEntry).toHaveBeenCalledWith("FN-9001", expect.stringContaining("[recovery] tip-already-merged FN-9001"));
     expect((store as any).recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({ mutationType: "branch:auto-reclaim", metadata: expect.objectContaining({ phase: "tip-already-merged" }) }));
   });
 
@@ -86,7 +81,7 @@ describe("self-healing ghost branch reclaim", () => {
     // FNXC:BranchNaming 2026-08-23-18:35: clearing `branch` is a branch write, so the engine-owned
     // reclaim must declare `branchWriteOrigin: "engine"`. Assert it rather than loosening the shape —
     // a missing provenance is exactly what the store guard rejects.
-    expect(store.updateTask).toHaveBeenCalledWith("FN-9001", { worktree: null, branch: null, branchWriteOrigin: "engine", baseCommitSha: null }, UNATTRIBUTED_MUTATION_CONTEXT);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-9001", { worktree: null, branch: null, branchWriteOrigin: "engine", baseCommitSha: null });
     expect(execMock).not.toHaveBeenCalledWith(expect.stringContaining("git branch -D"), expect.anything());
   });
 
@@ -107,7 +102,7 @@ describe("self-healing ghost branch reclaim", () => {
 
     await manager.reclaimSelfOwnedBranchConflicts();
 
-    expect(store.updateTask).toHaveBeenCalledWith("FN-9001", expect.objectContaining({ pausedReason: "branch-conflict-unrecoverable", status: "failed" }), UNATTRIBUTED_MUTATION_CONTEXT);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-9001", expect.objectContaining({ pausedReason: "branch-conflict-unrecoverable", status: "failed" }));
   });
 
   it("is idempotent after tip-already-merged cleanup", async () => {
@@ -139,7 +134,7 @@ describe("self-healing ghost branch reclaim", () => {
 
     const nullingCalls = (store.updateTask as any).mock.calls.filter((c: any[]) => c[1]?.baseCommitSha === null);
     expect(nullingCalls).toHaveLength(0);
-    expect(store.logEntry).toHaveBeenCalledWith("FN-9001", expect.stringContaining("tip-already-merged cleanup failed"), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
+    expect(store.logEntry).toHaveBeenCalledWith("FN-9001", expect.stringContaining("tip-already-merged cleanup failed"));
   });
 
   /*
@@ -163,6 +158,104 @@ describe("self-healing ghost branch reclaim", () => {
     - prune runs BEFORE removal, so a stale registration stops causing the failure it would have prevented
     - negative control: a genuine `live-foreign` verdict still parks (see "keeps genuine live-foreign conflicts parked")
   */
+  describe("reclaim failures that are not BranchConflictError verdicts", () => {
+    const NON_CONFLICT_ERRORS = [
+      new BranchWriteProvenanceError(),
+      new Error('Command failed: git worktree remove --force "/tmp/live"'),
+      new Error("ENOTEMPTY: directory not empty, rmdir '/tmp/live/node_modules/.pnpm'"),
+      new Error("database unavailable"),
+    ];
+
+    for (const error of NON_CONFLICT_ERRORS) {
+      it(`defers ${error.name}: ${error.message}`, async () => {
+        const task = { id: "FN-9001", column: "in-review", checkedOutBy: null, branch: "fusion/fn-9001", worktree: "/tmp/live", baseCommitSha: "m0", paused: true, pausedReason: "branch-conflict-unrecoverable", status: "failed" };
+        mockSweepTask(task);
+        vi.spyOn(branchConflicts, "inspectBranchConflict").mockRejectedValueOnce(error);
+
+        expect(await manager.reclaimSelfOwnedBranchConflicts()).toBe(0);
+
+        expect(store.logEntry).toHaveBeenCalledWith("FN-9001", expect.stringContaining("reclaim deferred — non-conflict error"));
+        const patches = (store.updateTask as any).mock.calls.map((call: any[]) => call[1]);
+        expect(patches.some((patch: any) => patch?.pausedReason === "branch-conflict-unrecoverable")).toBe(false);
+        expect(patches.some((patch: any) => patch?.status === "failed")).toBe(false);
+        expect(patches.some((patch: any) => patch?.worktree === null || patch?.branch === null)).toBe(false);
+        expect(task).toMatchObject({ branch: "fusion/fn-9001", worktree: "/tmp/live" });
+        expect((store.moveTask as any).mock.calls.some((call: any[]) => call[2]?.preserveWorktree === false)).toBe(false);
+        expect((store.logEntry as any).mock.calls.flat().join(" ")).not.toContain("not safely reclaimable");
+      });
+    }
+
+    function mockRelocatedReclaim() {
+      const task = { id: "FN-9001", column: "todo", checkedOutBy: null, branch: "fusion/fn-9001", worktree: "/tmp/old", baseCommitSha: "m0", paused: false, status: null };
+      (store.listTasks as any)
+        .mockResolvedValueOnce([task])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([]);
+      vi.spyOn(branchConflicts, "inspectBranchConflict").mockResolvedValueOnce({
+        kind: "reclaimable",
+        livePath: "/tmp/old",
+        tipSha: "1234567890abcdef",
+        taskAttributedCommitCount: 1,
+        strandedCommits: [{ sha: "abc", subject: "unique" }],
+      } as any);
+      return task;
+    }
+
+    it("re-points only the worktree when the reclaim persist fails after relocation", async () => {
+      mockRelocatedReclaim();
+      vi.spyOn(worktreePool, "relocateReclaimableWorktreeIntoRoot").mockResolvedValueOnce({
+        kind: "ready",
+        path: "/tmp/new",
+        relocated: true,
+      });
+      (store.updateTask as any).mockRejectedValueOnce(new Error("database unavailable"));
+
+      expect(await manager.reclaimSelfOwnedBranchConflicts()).toBe(0);
+
+      expect(store.updateTask).toHaveBeenNthCalledWith(2, "FN-9001", { worktree: "/tmp/new" });
+      const repoint = (store.updateTask as any).mock.calls[1][1];
+      expect(repoint).not.toHaveProperty("branch");
+      expect(repoint).not.toHaveProperty("status");
+      expect(repoint).not.toHaveProperty("paused");
+      expect(repoint).not.toHaveProperty("error");
+    });
+
+    it("defers without clearing pointers when both reclaim persist and re-point fail", async () => {
+      const task = mockRelocatedReclaim();
+      vi.spyOn(worktreePool, "relocateReclaimableWorktreeIntoRoot").mockResolvedValueOnce({
+        kind: "ready",
+        path: "/tmp/new",
+        relocated: true,
+      });
+      (store.updateTask as any)
+        .mockRejectedValueOnce(new Error("database unavailable"))
+        .mockRejectedValueOnce(new Error("database still unavailable"));
+
+      expect(await manager.reclaimSelfOwnedBranchConflicts()).toBe(0);
+
+      expect(store.updateTask).toHaveBeenNthCalledWith(2, "FN-9001", { worktree: "/tmp/new" });
+      expect((store.updateTask as any).mock.calls.some((call: any[]) => call[1]?.worktree === null || call[1]?.branch === null)).toBe(false);
+      expect((store.updateTask as any).mock.calls.some((call: any[]) => call[1]?.status === "failed")).toBe(false);
+      expect(task).toMatchObject({ branch: "fusion/fn-9001", worktree: "/tmp/old" });
+      expect(store.logEntry).toHaveBeenCalledWith("FN-9001", expect.stringContaining("registry reconcile will retry"));
+    });
+
+    it("does not attempt a re-point when placement did not relocate", async () => {
+      mockRelocatedReclaim();
+      vi.spyOn(worktreePool, "relocateReclaimableWorktreeIntoRoot").mockResolvedValueOnce({
+        kind: "ready",
+        path: "/tmp/old",
+        relocated: false,
+      });
+      (store.updateTask as any).mockRejectedValueOnce(new Error("database unavailable"));
+
+      expect(await manager.reclaimSelfOwnedBranchConflicts()).toBe(0);
+
+      expect(store.updateTask).toHaveBeenCalledTimes(1);
+      expect((store.updateTask as any).mock.calls[0][1]).toHaveProperty("branch", "fusion/fn-9001");
+    });
+  });
+
   describe("tip-already-merged cleanup failures are not branch conflicts", () => {
     /* The cleanup body is one try block, so WHICH housekeeping step throws does not change the
        classification -- only that something threw. These are the real messages observed on parked
@@ -278,8 +371,8 @@ describe("self-healing ghost branch reclaim", () => {
       const recovered = await manager.reclaimSelfOwnedBranchConflicts();
 
       expect(recovered).toBe(1);
-      expect(store.updateTask).toHaveBeenCalledWith("FN-1406", expect.objectContaining({ worktree: null, branch: null, baseCommitSha: null }), UNATTRIBUTED_MUTATION_CONTEXT);
-      expect(store.logEntry).toHaveBeenCalledWith("FN-1406", expect.stringContaining("[recovery] tip-already-merged FN-1406"), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
+      expect(store.updateTask).toHaveBeenCalledWith("FN-1406", expect.objectContaining({ worktree: null, branch: null, baseCommitSha: null }));
+      expect(store.logEntry).toHaveBeenCalledWith("FN-1406", expect.stringContaining("[recovery] tip-already-merged FN-1406"));
       // The symptom line must be gone entirely.
       expect((store.logEntry as any).mock.calls.some((c: any[]) => String(c[1]).includes("already-merged rejected"))).toBe(false);
       expect((store as any).recordRunAuditEvent).not.toHaveBeenCalledWith(
@@ -299,7 +392,7 @@ describe("self-healing ghost branch reclaim", () => {
 
       await manager.reclaimSelfOwnedBranchConflicts();
 
-      expect(store.updateTask).toHaveBeenCalledWith("FN-1406", expect.objectContaining({ worktree: null, branch: null, baseCommitSha: null }), UNATTRIBUTED_MUTATION_CONTEXT);
+      expect(store.updateTask).toHaveBeenCalledWith("FN-1406", expect.objectContaining({ worktree: null, branch: null, baseCommitSha: null }));
       expect((store.logEntry as any).mock.calls.some((c: any[]) => String(c[1]).includes("already-merged rejected"))).toBe(false);
     });
 
@@ -318,13 +411,13 @@ describe("self-healing ghost branch reclaim", () => {
       expect(recovered).toBe(0);
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-1406",
-        expect.stringContaining("[recovery] already-merged rejected FN-1406"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
+        expect.stringContaining("[recovery] already-merged rejected FN-1406"),
       );
       expect((store as any).recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
         mutationType: "task:auto-recover-already-merged-rejected",
         metadata: expect.objectContaining({ reason: "foreign-task-tip", candidateOwner: "FN-1401", phase: "tip-already-merged" }),
       }));
-      expect(store.updateTask).not.toHaveBeenCalledWith("FN-1406", expect.objectContaining({ branch: null }), UNATTRIBUTED_MUTATION_CONTEXT);
+      expect(store.updateTask).not.toHaveBeenCalledWith("FN-1406", expect.objectContaining({ branch: null }));
       expect(execMock).not.toHaveBeenCalledWith(expect.stringContaining("git branch -D"), expect.anything());
     });
   });

@@ -48,16 +48,18 @@ import type {
 } from "@fusion/core";
 import {
   ApprovalRequestStore,
+  buildTaskExternalBlockPatch,
   DEFAULT_PROVIDER_INSTANCE_ID,
   RetryStormError,
-  actorContextForAgent,
   columnsWithFlag,
   isEphemeralAgent,
+  isFastExecutionMode,
   resolveEphemeralTaskCreationPolicy,
   resolveExecutorFallbackModel,
   resolvePersistAgentThinkingLog,
   resolveTaskLifecycleColumns,
   resolveWorkflowIrForTask,
+  resolveStepReopenPolicy,
   resolveAgentActivityAttribution,
   serializeRetryStormError,
   isLegacyWorkspaceWorktreeLayout,
@@ -87,7 +89,6 @@ import {
   createWorkflowValidateTool,
 } from "./shared-worker-tools.js";
 import {
-  createAcquireRepoWorktreeTool,
   createAgentCreateTool,
   createAgentDeleteTool,
   createGetAgentConfigTool,
@@ -126,10 +127,13 @@ import { createFallbackModelObserver } from "../auth/fallback-model-observer.js"
 import { buildSessionSkillContext } from "../cli-runtime/session-skill-context.js";
 import { dropPreHeldExecutorSlot } from "../concurrency/concurrency.js";
 import { resolveAuthoritativeExternalExecutionRoute } from "./resolve-authoritative-external-execution-route.js";
+// FNXC:VerificationRemediation 2026-08-26-04:58: the FN-3345 gate's bounce shape lives in its own seam so it is testable without a real session.
+import { bounceVerificationFailure as bounceVerificationFailureSeam } from "./bounce-verification-failure.js";
 import { isContextLimitError } from "../errors/context-limit-detector.js";
 import { withRateLimitRetry } from "../errors/rate-limit-retry.js";
 import { recordRetry } from "../errors/retry-burned-logger.js";
-import { isSilentTransientError, isTransientError } from "../errors/transient-error-detector.js";
+import { isSessionContentionError, isSilentTransientError, isTransientError } from "../errors/transient-error-detector.js";
+import { isPlanningLifecycleLockTransportFailure } from "../planning-handoff-recovery.js";
 import { checkSessionError, isUsageLimitError } from "../errors/usage-limit-detector.js";
 import { TokenCapDetector } from "../errors/token-cap-detector.js";
 import {
@@ -143,7 +147,6 @@ import {
   BranchCrossContaminationError,
 } from "../execution/branch-conflicts.js";
 import { buildPromptLayers, collapsePromptLayers } from "../execution/prompt-layers.js";
-import { moveTaskToReplanColumn } from "../execution/replan-target.js";
 import {
   createRunVerificationTool,
   runVerificationCommand as runTaskVerificationCommand,
@@ -164,6 +167,7 @@ import {
 } from "./configured-command.js";
 import { buildExecutionPrompt } from "./execution-prompt.js";
 import { resolveReboundColumnFor, resolveTerminalColumnsFor } from "./lifecycle-columns.js";
+import { recoverAbortedStepSessionInPlace } from "./recover-aborted-step-session.js";
 import { detectPendingReviewBlock } from "./pending-review-block.js";
 import { detectPseudoPause } from "./pseudo-pause.js";
 import { isInvalidAssistantContinuationErrorMessage } from "./requeue-loop.js";
@@ -190,11 +194,13 @@ import { resolveAndEmitGoalContext } from "../goals/goal-injection-diagnostics.j
 import { computeRecoveryDecision, formatDelay, MAX_RECOVERY_RETRIES } from "../healing/recovery-policy.js";
 import { executorLog, formatError } from "../logger.js";
 import { classifyOrphanOurAdvance, rehomeOrphanOntoIntegration } from "../merge/merger-orphan-rehome.js";
+import { isTaskMergeInFlight } from "../merge/merge-execution-exclusion.js";
+import { classifyExternalObstacle } from "../execution-block-classifier.js";
 import { compactSessionContext, describeModel, formatModelMarkerDetails, promptWithFallback } from "../pi.js";
 import { resolveDedicatedPlannerColumnsForTask } from "../planner-lane-resolution.js";
 import { mergeEffectiveSettings } from "../project/effective-settings.js";
 import { buildStepFailureMessage, emitProactiveStatus, sanitizeFailureReason } from "../project/proactive-status.js";
-import { createRunAuditor, generateSyntheticRunId, type EngineRunContext, toRunMutationContext } from "../util/run-audit.js";
+import { createRunAuditor, generateSyntheticRunId, type EngineRunContext } from "../util/run-audit.js";
 import { emitBoundedRunAudit } from "./emit-bounded-run-audit.js";
 import { acquireTaskWorktree, acquireWorkspaceTaskWorktrees, WorktreeBaseRefreshError } from "../worktree/worktree-acquisition.js";
 import { resolveWorktreesDir } from "../worktree/worktree-paths.js";
@@ -207,7 +213,6 @@ import {
   isInsideWorktreesDir,
   removeWorktree,
 } from "../worktree/worktree-pool.js";
-import { runContextForTotal } from "./run-context-for.js";
 
 const MAX_TASK_DONE_SESSION_RETRIES = 3;
 
@@ -251,8 +256,8 @@ export type RunImplementationDeps = {
   BRANCH_CONFLICT_TRIPWIRE_THRESHOLD: number;
   MAX_AUTO_RECOVERY_ATTEMPTS: number;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
-  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   addActiveWorktree: AnyFn;
+  appendReviewRemediationSteps: AnyFn;
   attemptExecutorVerificationFix: AnyFn;
   buildActionGateContext: AnyFn;
   buildInjectedRuntimeEnv: AnyFn;
@@ -304,6 +309,7 @@ export type RunImplementationDeps = {
   resolveSeamColumnAgent: AnyFn;
   resolveTaskCustomFieldDefs: AnyFn;
   resumeApprovalAfterUnwindIfNeeded: AnyFn;
+  reexecuteTaskInPlace: (taskId: string) => Promise<void>;
   runExecutorDeterministicVerification: AnyFn;
   runWithExecutorSemaphore: AnyFn;
   scheduleCompletedTaskWatchdog: AnyFn;
@@ -327,12 +333,101 @@ export type RunImplementationDeps = {
   unregisterConfiguredCommandController: AnyFn;
 };
 
+export async function parkExternalSessionObstacle(
+  deps: Pick<RunImplementationDeps, "store" | "getRunContextFor">,
+  taskId: string,
+  errorMessage: string,
+): Promise<boolean> {
+  const obstacle = classifyExternalObstacle(errorMessage);
+  if (!obstacle) return false;
+  const live = await deps.store.getTask(taskId);
+  const externalBlock = {
+    ...obstacle,
+    message: errorMessage,
+    source: "session-failure" as const,
+    blockedAt: new Date().toISOString(),
+    resume: {
+      column: live.column,
+      nodeId: live.effectiveNodeId,
+      currentStep: live.currentStep,
+      worktree: live.worktree,
+      branch: live.branch,
+    },
+  };
+  /*
+  FNXC:ExternalBlock 2026-08-28-04:14:
+  Session infrastructure errors freeze only after their established retry owner declines another
+  attempt. The shared patch leaves workflow progress and Git pointers untouched; this helper clears
+  only the retry schedule whose budget is already exhausted.
+  */
+  await deps.store.updateTask(taskId, {
+    ...buildTaskExternalBlockPatch(externalBlock),
+    recoveryRetryCount: null,
+    nextRecoveryAt: null,
+  });
+  await deps.store.logEntry(
+    taskId,
+    `External session obstacle frozen (${externalBlock.origin}/${externalBlock.code}); resources and execution progress retained for Retry`,
+    undefined,
+    deps.getRunContextFor(taskId),
+  );
+  await emitBoundedRunAudit(deps.store, {
+    taskId,
+    agentId: "executor",
+    runId: generateSyntheticRunId("external-block", taskId),
+    domain: "database",
+    mutationType: "task:external-block-parked",
+    target: taskId,
+    metadata: {
+      taskId,
+      origin: externalBlock.origin,
+      code: externalBlock.code,
+      source: externalBlock.source,
+      column: live.column,
+      resumeNodeId: externalBlock.resume.nodeId,
+    },
+  });
+  return true;
+}
+
+export async function retryPlanningLifecycleLockTransportFailure(
+  deps: Pick<RunImplementationDeps, "store" | "getRunContextFor" | "markGraphExecuteSelfRequeued">,
+  task: Task,
+  errorMessage: string,
+  resolveReboundColumnFor: (store: TaskStore, taskId: string) => Promise<string>,
+): Promise<boolean> {
+  const decision = computeRecoveryDecision({ recoveryRetryCount: task.recoveryRetryCount, nextRecoveryAt: task.nextRecoveryAt });
+  if (!decision.shouldRetry) return false;
+  const attempt = decision.nextState.recoveryRetryCount;
+  const delay = formatDelay(decision.delayMs);
+  await deps.store.logEntry(task.id, `Planning lifecycle lock transport failure (retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}): ${errorMessage}`, undefined, deps.getRunContextFor(task.id));
+  await deps.store.updateTask(task.id, { recoveryRetryCount: attempt, nextRecoveryAt: decision.nextState.nextRecoveryAt });
+  deps.markGraphExecuteSelfRequeued(task.id);
+  await deps.store.moveTask(task.id, await resolveReboundColumnFor(deps.store, task.id), { preserveProgress: true });
+  return true;
+}
+
 export async function runImplementation(
   deps: RunImplementationDeps,
   task: Task,
   graphCompletion: GraphCompletionCallback,
   reportImplementationExit?: ImplementationExitReporter,
 ): Promise<void> {
+
+    /*
+    FNXC:MergeExecutionExclusion 2026-08-23-08:51:
+    FN-180 requires the reciprocal of merge admission's live-executor fence: execution must not
+    claim a task while its durable merge-active stamp says a merger owns the branch. This is a
+    deferral, not a park; the next dispatch may claim after the merge clears its stamp.
+    */
+    if (isTaskMergeInFlight(task.id, {
+      activeMergeTaskId: ["merging", "merging-pr", "merging-fix", "reviewing", "landing"].includes(task.status ?? "")
+        ? task.id
+        : null,
+    })) {
+      if (dropPreHeldExecutorSlot(task.id)) deps.options.semaphore?.release();
+      return;
+    }
 
     // FN-4811 follow-up (FN-4814/FN-4809/FN-4811 production failure): claim a
     // PROCESS-WIDE lock synchronously before any other work. Per-instance
@@ -413,7 +508,7 @@ export async function runImplementation(
     const settings = await mergeEffectiveSettings(deps.store, task, await deps.store.getSettings());
     if (externalExecutionRoute.configured && !externalExecutionRoute.valid) {
       const message = `Persisted external execution checkout is invalid: ${externalExecutionRoute.reason ?? "unknown error"}`;
-      await deps.store.logEntry(task.id, message, undefined, deps.runContextFor(task.id));
+      await deps.store.logEntry(task.id, message, undefined, deps.getRunContextFor(task.id));
       deps.executing.delete(task.id);
       executingTaskLock.release(task.id);
       if (dropPreHeldExecutorSlot(task.id)) deps.options.semaphore?.release();
@@ -426,8 +521,8 @@ export async function runImplementation(
     const pluginWorkflowStepTemplates = deps.options.pluginRunner?.getPluginWorkflowStepTemplates() ?? [];
     deps.store.setPluginWorkflowStepTemplates(pluginWorkflowStepTemplates);
 
-    // Read execution mode to determine whether to skip review and workflow steps
-    const executionMode = task.executionMode ?? "standard";
+    // Fast is one shared route policy; undefined/null retain standard execution behavior.
+    const fastExecution = isFastExecutionMode(task);
 
     // Construct run context for mutation correlation
     // Use a synthetic correlation ID: task ID + timestamp + random suffix
@@ -435,8 +530,6 @@ export async function runImplementation(
     deps.currentRunContexts.set(task.id, {
       runId: syntheticRunId,
       agentId: task.assignedAgentId ?? "executor",
-      // FNXC:Identity 2026-08-15-22:52: an execution run acts as the assigned agent (or the generic executor lane); autonomous work leaves `actingFor` unset (R28).
-      actor: actorContextForAgent(task.assignedAgentId ?? "executor"),
     });
     // FNXC:AgentActivityStream 2026-08-09-09:09 (restored 2026-08-15-22:15 after wave-18 shell-ification dropped it):
     // FN-8864 durable task:started activity at the implementation entry; monitoring never blocks execution.
@@ -454,8 +547,8 @@ export async function runImplementation(
     const audit = createRunAuditor(deps.store, engineRunContext);
 
     // Stale spec enforcement: check if PROMPT.md has aged beyond the configured threshold.
-    // When enabled, stale tasks are moved back to triage with status "needs-replan"
-    // so they receive fresh specification before execution. This guard runs early in
+    // When enabled, stale tasks request repair in their current lane with status "needs-replan"
+    // so no implementation card is moved backward into planning. This guard runs early in
     // execute() to prevent stale tasks from entering worktree creation or agent sessions.
     // If timestamp evaluation is skipped (missing/unreadable file), continue with execution
     // so existing filesystem validation paths remain authoritative.
@@ -515,11 +608,8 @@ export async function runImplementation(
       });
       if (staleness.isStale) {
         executorLog.warn(`Task ${task.id} specification is stale — ${staleness.reason}`);
-        // Move to the workflow-aware replan column first, then set status so the task
-        // enters it with needs-replan (workflows without "triage" replan in place in todo).
-        await moveTaskToReplanColumn(deps.store, task);
         await deps.store.updateTask(task.id, { status: "needs-replan" });
-        await deps.store.logEntry(task.id, staleness.reason, undefined, deps.runContextFor(task.id));
+        await deps.store.logEntry(task.id, staleness.reason, undefined, deps.getRunContextFor(task.id));
         // FNXC:GlobalConcurrencyControls 2026-07-15-02:55: replan handoff never starts agent work — free any re-registered pre-held slot before leaving execute().
         if (dropPreHeldExecutorSlot(task.id)) deps.options.semaphore?.release();
         return;
@@ -553,9 +643,11 @@ export async function runImplementation(
 
     if (task.column === preflightWipLane && task.mergeDetails) {
       executorLog.warn(`${task.id}: stale mergeDetails found while executing in-progress task — resetting merge state before continuing`);
+      const ir = await resolveWorkflowIrForTask(deps.store, task.id).catch(() => undefined);
       task = await deps.cleanupMergeStateForReverification(
         task,
         "Executor detected stale merge state while task was in-progress — reset verification steps and merge metadata before resuming",
+        { stepReopenPolicy: resolveStepReopenPolicy(ir) },
       );
     }
 
@@ -569,7 +661,7 @@ export async function runImplementation(
         task.id,
         "Drift detected: in-progress with no worktree — creating fresh worktree to recover",
         undefined,
-        deps.runContextFor(task.id),
+        deps.getRunContextFor(task.id),
       );
     }
 
@@ -674,24 +766,16 @@ export async function runImplementation(
       one session boundary.
       */
       if (hasWorkspaceRepos && deps.workspaceConfig) {
-        if (task.repositoryScope?.state !== "confirmed") {
-          throw new Error("Workspace acquisition requires a confirmed ## Repository Scope");
-        }
         const workspace = await acquireWorkspaceTaskWorktrees({
           workspaceConfig: deps.workspaceConfig,
           workspaceRootDir: deps.rootDir,
-          // FNXC:WorkspaceWorktree 2026-08-22-23:45:
-          // Execution may only acquire the scope confirmed by planning. Omitting
-          // this would silently recreate the pre-plan manifest-wide lease and
-          // worktree acquisition on the direct implementation entry point.
-          repoRelPaths: task.repositoryScope.repositories,
           task,
           store: deps.store,
           settings,
           logger: executorLog,
           secretsStore: deps.options.secretsStore,
           audit,
-          runContext: deps.runContextFor(task.id),
+          runContext: deps.getRunContextFor(task.id),
           runConfiguredCommand: (command, cwd, timeoutMs, env) =>
             runConfiguredCommand(
               command,
@@ -708,6 +792,7 @@ export async function runImplementation(
             }),
           taskEnv,
           addActiveWorktree: deps.addActiveWorktree,
+          refreshStaleBase: true,
         });
         task = workspace.task;
         workspaceTaskWorktreeDir = workspace.taskWorktreeDir;
@@ -741,10 +826,9 @@ export async function runImplementation(
             rootDir: deps.rootDir,
             store: deps.store,
             settings,
-            pool: deps.options.pool,
             logger: executorLog,
             audit,
-            runContext: deps.runContextFor(task.id),
+            runContext: deps.getRunContextFor(task.id),
             runInitCommand: true,
             createWorktree: deps.createWorktree,
             // FNXC:WorktreeAcquisition 2026-08-09-03:30: This injected creator is native even when project settings
@@ -836,7 +920,7 @@ export async function runImplementation(
             if (setupResult.spawnError || setupResult.timedOut || setupResult.exitCode !== 0) {
               throw new Error(configuredCommandErrorMessage(setupResult));
             }
-            await deps.store.logEntry(task.id, `[timing] Setup script '${settings.setupScript}' completed in ${Date.now() - setupStartedAt}ms`, scriptCommand, deps.runContextFor(task.id));
+            await deps.store.logEntry(task.id, `[timing] Setup script '${settings.setupScript}' completed in ${Date.now() - setupStartedAt}ms`, scriptCommand, deps.getRunContextFor(task.id));
           } catch (err: unknown) {
             if (err instanceof Error && err.name === "AbortError") {
               throw err;
@@ -845,12 +929,12 @@ export async function runImplementation(
             const message = "stderr" in execError && typeof (execError as Record<string, unknown>).stderr === "string"
               ? String((execError as Record<string, unknown>).stderr)
               : execError.message;
-            await deps.store.logEntry(task.id, `Setup script '${settings.setupScript}' failed: ${message}`, undefined, deps.runContextFor(task.id));
+            await deps.store.logEntry(task.id, `Setup script '${settings.setupScript}' failed: ${message}`, undefined, deps.getRunContextFor(task.id));
           } finally {
             deps.unregisterConfiguredCommandController(task.id, setupAbortController);
           }
         } else {
-          await deps.store.logEntry(task.id, `Setup script '${settings.setupScript}' not found in scripts map — skipping`, undefined, deps.runContextFor(task.id));
+          await deps.store.logEntry(task.id, `Setup script '${settings.setupScript}' not found in scripts map — skipping`, undefined, deps.getRunContextFor(task.id));
         }
       }
 
@@ -864,20 +948,7 @@ export async function runImplementation(
       An operator-routed checkout still needs the read-only base snapshot used by modified-file capture. It must not enter contamination or managed-worktree liveness checks: the persisted checkout is deliberately operator-owned and lives outside Fusion's worktree directory.
       */
       if (!deps.workspaceConfig && !acquisition.isResume) {
-        /*
-        FNXC:Identity 2026-08-14-05:32:
-        The base-SHA write is attributed to the run that captures it. Omitting the context here made
-        `captureBaseCommitSha` fall back to an executor-lane actor with run id `unknown`, even though
-        this caller resolves a real context for every other write on the path.
-        */
-        await captureBaseCommitSha(
-          deps.store,
-          task,
-          worktreePath,
-          audit,
-          { isResume: false },
-          runContextForTotal(deps.getRunContextFor, task.id),
-        );
+        await captureBaseCommitSha(deps.store, task, worktreePath, audit, { isResume: false });
       }
 
       if (!deps.workspaceConfig && !externalExecutionRoute.configured) {
@@ -932,7 +1003,7 @@ export async function runImplementation(
           const reanchor = await detectNestedWorktreeRoot(deps.rootDir, worktreePath, settings);
           if (reanchor.reanchored) {
             await deps.store.updateTask(task.id, { worktree: reanchor.root });
-            await deps.store.logEntry(task.id, `Re-anchored nested task.worktree from ${worktreePath} to ${reanchor.root}`, undefined, deps.runContextFor(task.id));
+            await deps.store.logEntry(task.id, `Re-anchored nested task.worktree from ${worktreePath} to ${reanchor.root}`, undefined, deps.getRunContextFor(task.id));
             await deps.emitWorktreeReanchoredAudit(task.id, worktreePath, reanchor.root, "executor-liveness-gate");
             worktreePath = reanchor.root;
             observedWorktreeRealpath = canonicalizePath(reanchor.root);
@@ -962,7 +1033,7 @@ export async function runImplementation(
         const reasonSection = livenessFailureReason ? ` (${livenessFailureReason})` : "";
         const failureMessage = `worktree liveness assertion failed: ${livenessFailure}${reasonSection} — observed=${observed}, expected=${expected}${registeredSection}`;
         executorLog.error(`${task.id}: ${failureMessage}`);
-        await deps.store.logEntry(task.id, failureMessage, undefined, deps.runContextFor(task.id));
+        await deps.store.logEntry(task.id, failureMessage, undefined, deps.getRunContextFor(task.id));
 
         const priorRequeues = task.taskDoneRetryCount ?? 0;
         const nextRequeueCount = priorRequeues + 1;
@@ -1014,7 +1085,7 @@ export async function runImplementation(
             task.id,
             `${failureMessage} — requeued to todo immediately (${nextRequeueCount}/${MAX_TASK_DONE_REQUEUE_RETRIES})`,
             undefined,
-            deps.runContextFor(task.id),
+            deps.getRunContextFor(task.id),
           );
           deps.markGraphExecuteSelfRequeued(task.id);
           await deps.store.moveTask(task.id, await resolveReboundColumnFor(deps.store, task.id), { preserveProgress: true });
@@ -1029,7 +1100,7 @@ export async function runImplementation(
             paused: false,
             pausedByAgentId: null,
           });
-          await deps.store.logEntry(task.id, `${failureMessage} — execution failed after worktree liveness retry budget was exhausted`, undefined, deps.runContextFor(task.id));
+          await deps.store.logEntry(task.id, `${failureMessage} — execution failed after worktree liveness retry budget was exhausted`, undefined, deps.getRunContextFor(task.id));
           await deps.persistTokenUsage(task.id);
           executorLog.log(`✗ ${task.id} worktree liveness failed`);
         }
@@ -1067,6 +1138,28 @@ export async function runImplementation(
       if (acquisition.isResume && task.branch && detail.steps.length > 0) {
         await deps.reconcileStepsFromGitHistory(task.id, detail, worktreePath);
       }
+
+      /*
+      FNXC:SessionResume 2026-08-10-17:33:
+      Set when the run ends by handing the COMPLETED implementation to the graph for review, rather than
+      by finishing or failing the task. The distinction matters because a review gate can bounce the card
+      straight back here for remediation in the SAME worktree: before this flag the single-session
+      `finally` below nulled `sessionFile` on every non-paused exit, so pause -> unpause was the only path
+      that ever resumed a conversation and every remediation round restarted cold — re-reading the repo
+      and re-deriving the change it had just written, once per round. Preserving the session across the
+      review round-trip is what makes a bounce a follow-up turn instead of a fresh investigation.
+
+      Scoped deliberately to the handoff exits, NOT to every non-terminal exit: paths that require a fresh
+      session (context overflow, stale assistant continuation, worktree reacquisition, non-continuable
+      session, task-done retry) clear `sessionFile` explicitly and synchronously at their own site, and the
+      resume guard re-validates the persisted worktree before reopening. Those defenses stay authoritative.
+
+      FNXC:WorkflowStepNotRun 2026-08-28-14:47:
+      Step-session completion also sets this handoff flag before returning to the graph. Declare it before
+      execution-path selection so an honest no-command verification handoff cannot hit the temporal dead
+      zone and be requeued as a failed session after recording that verification did not run.
+      */
+      let handedOffForReview = false;
 
       // ── Step-Session vs Single-Session execution path ──
       // When runStepsInNewSessions is enabled, each step runs in its own
@@ -1156,6 +1249,7 @@ export async function runImplementation(
           settings,
           (stepIdentityAgent?.runtimeConfig ?? undefined) as Record<string, unknown> | undefined,
           detail.credentialInstanceId ?? undefined,
+          detail.executionMode,
         );
         let activeStepInstanceRef: ProviderInstanceRef | undefined = initialStepSessionModel.provider
           ? {
@@ -1268,7 +1362,15 @@ export async function runImplementation(
               return false;
             }
           },
-          onStepComplete: (stepIndex, result) => {
+          onStepComplete: async (stepIndex, result) => {
+            /*
+            FNXC:StepCompletionOrdering 2026-08-29-06:46:
+            A fire-and-forget updateStep was the only production writer able to resolve after
+            `Task marked done by agent`: StepSessionExecutor returned while this callback's promise
+            remained outstanding. Completion writers already mark all non-terminal steps before their
+            marker, and fresh/resumed executor markers precede in-session writes; awaiting this
+            projection preserves that durable ordering.
+            */
             // FNXC:EngineDiagnostics 2026-07-26-10:05: per-step success is expected bookkeeping (incl. foreach instances); failures stay at log.
             if (result.success) {
               executorLog.debug(`${task.id}: step ${stepIndex} succeeded (${result.retries} retries)`);
@@ -1276,9 +1378,7 @@ export async function runImplementation(
               executorLog.log(`${task.id}: step ${stepIndex} failed (${result.retries} retries)`);
             }
             try {
-              deps.store.updateStep(task.id, stepIndex, result.success ? "done" : "skipped", stepProjectionOptions).catch((err) => {
-                executorLog.warn(`${task.id}: failed to update step ${stepIndex} status: ${err}`);
-              });
+              await deps.store.updateStep(task.id, stepIndex, result.success ? "done" : "skipped", stepProjectionOptions);
               const safeReason = result.success ? undefined : sanitizeFailureReason(result.error);
               if (!result.success) {
                 void emitProactiveStatus(
@@ -1316,6 +1416,8 @@ export async function runImplementation(
         stepExecutorRef.current = stepExecutor;
         deps.setActiveStepExecutor(task.id, stepExecutor, worktreePath, createSeenSteeringIds(detail));
 
+        let pendingInPlaceResume = false;
+
         const stepWork = async () => {
           const results = await stepExecutor.executeAll();
 
@@ -1335,9 +1437,16 @@ export async function runImplementation(
             }
             if (await deps.parkApprovalSuspension(task.id, "step sessions")) return;
             deps.clearPausedAborted(task.id);
-            await deps.store.logEntry(task.id, "Execution paused — step sessions terminated, moved to todo", undefined, deps.runContextFor(task.id));
-            deps.markGraphExecuteSelfRequeued(task.id);
-            await deps.store.moveTask(task.id, await resolveReboundColumnFor(deps.store, task.id), { preserveResumeState: true });
+            /*
+            FNXC:LifecycleContainment 2026-09-04-03:04:
+            F5 rejects engine WIP-to-hold recovery, while optionless moves previously bypassed the
+            postcondition check. Repair the interrupted step session in place instead of moving it.
+            */
+            pendingInPlaceResume = (await recoverAbortedStepSessionInPlace(
+              deps,
+              task.id,
+              "graceful-pause-abort",
+            )) === "resumed-in-place";
             return;
           }
           if (deps.stuckAborted.has(task.id)) {
@@ -1379,7 +1488,7 @@ export async function runImplementation(
                     if (hasAnomaly) {
                       const summary = `branch-attribution anomalies on ${repoRel}@${repo.branch}: foreign=${attribution.foreign.length}, unattributed=${attribution.unattributed.length}, ownUntrailed=${attribution.ownUntrailed.length}, ownTrailed=${attribution.ownTrailed}`;
                       executorLog.warn(`${task.id}: ${summary}`);
-                      await deps.store.logEntry(task.id, `[branch-attribution] ${summary}`, undefined, deps.runContextFor(task.id));
+                      await deps.store.logEntry(task.id, `[branch-attribution] ${summary}`, undefined, deps.getRunContextFor(task.id));
                       await audit.git({
                         type: "branch:attribution-anomaly",
                         target: repo.branch,
@@ -1428,7 +1537,7 @@ export async function runImplementation(
                 if (hasAnomaly) {
                   const summary = `branch-attribution anomalies on ${updatedTask.branch}: foreign=${attribution.foreign.length}, unattributed=${attribution.unattributed.length}, ownUntrailed=${attribution.ownUntrailed.length}, ownTrailed=${attribution.ownTrailed}`;
                   executorLog.warn(`${task.id}: ${summary}`);
-                  await deps.store.logEntry(task.id, `[branch-attribution] ${summary}`, undefined, deps.runContextFor(task.id));
+                  await deps.store.logEntry(task.id, `[branch-attribution] ${summary}`, undefined, deps.getRunContextFor(task.id));
                   await audit.git({
                     type: "branch:attribution-anomaly",
                     target: updatedTask.branch,
@@ -1457,7 +1566,7 @@ export async function runImplementation(
             // Run testCommand/buildCommand after all steps succeed but BEFORE
             // workflow steps and the in-review transition. Skipped in fast mode
             // and when no verification commands are configured.
-            if (executionMode !== "fast") {
+            if (!fastExecution) {
               if (settings.testCommand?.trim() || settings.buildCommand?.trim()) {
                 const verificationResult = await deps.runExecutorDeterministicVerification(task, worktreePath, settings, taskEnv);
 
@@ -1473,20 +1582,36 @@ export async function runImplementation(
                     task.id,
                     `[verification] ${failedType} command failed (exit ${failedResult.exitCode}). Attempting fix agent...`,
                     summary,
-                    deps.runContextFor(task.id),
+                    deps.getRunContextFor(task.id),
                   );
 
                   const maxFixRetries = Math.min(settings.verificationFixRetries ?? 3, 3);
+                  const stepReopenPolicy = resolveStepReopenPolicy(
+                    await resolveWorkflowIrForTask(deps.store, task.id).catch(() => undefined),
+                  );
+
+                  /*
+                  FNXC:VerificationRemediation 2026-08-26-04:58:
+                  A red deterministic verification hands the executor NAMED work, never a bare bounce. Which
+                  shape that takes is `stepReopenPolicy`'s call, and getting it wrong silently discards the
+                  measurement — see the rationale in bounce-verification-failure.ts.
+                  */
+                  const bounceVerificationFailure = (failureFeedback: string, reason: string) =>
+                    bounceVerificationFailureSeam(
+                      {
+                        store: deps.store,
+                        appendReviewRemediationSteps: deps.appendReviewRemediationSteps,
+                        sendTaskBackForFix: deps.sendTaskBackForFix,
+                        clearCompletedTaskWatchdog: deps.clearCompletedTaskWatchdog,
+                      },
+                      { task, worktreePath, failedType, feedback: failureFeedback, reason, stepReopenPolicy },
+                    );
 
                   if (maxFixRetries === 0) {
                     executorLog.log(`${task.id}: [verification] fix retries set to 0 — sending task back immediately`);
-                    await deps.sendTaskBackForFix(
-                      task, worktreePath,
+                    await bounceVerificationFailure(
                       `${failedType} command \`${failedCommand}\` failed (exit ${failedResult.exitCode}):\n${summary}`,
-                      `Verification (${failedType})`,
                       `Deterministic verification failed (${failedType})`,
-                      true,
-                      true,
                     );
                     return;
                   }
@@ -1513,7 +1638,7 @@ export async function runImplementation(
                         task.id,
                         `[verification] Fix agent succeeded on attempt ${attempt}/${maxFixRetries}. Verification now passing.`,
                         undefined,
-                        deps.runContextFor(task.id),
+                        deps.getRunContextFor(task.id),
                       );
                       break;
                     }
@@ -1522,23 +1647,31 @@ export async function runImplementation(
                       task.id,
                       `[verification] Fix agent attempt ${attempt}/${maxFixRetries} failed`,
                       undefined,
-                      deps.runContextFor(task.id),
+                      deps.getRunContextFor(task.id),
                     );
                   }
 
                   if (!fixSucceeded) {
                     executorLog.log(`${task.id}: [verification] all fix attempts exhausted (${maxFixRetries}/${maxFixRetries}) — sending task back`);
-                    await deps.sendTaskBackForFix(
-                      task, worktreePath,
+                    await bounceVerificationFailure(
                       `${failedType} command \`${failedCommand}\` failed (exit ${failedResult.exitCode}) after ${maxFixRetries} fix attempts:\n${summary}`,
-                      `Verification (${failedType})`,
                       `Deterministic verification failed after ${maxFixRetries} fix attempts`,
-                      true,
-                      true,
                     );
                     return;
                   }
                 }
+              } else {
+                /*
+                FNXC:WorkflowStepNotRun 2026-08-28-14:13:
+                No configured command is a non-blocking absence of measurement, not a pass. Keep the
+                executor moving while leaving an explicit durable log that nothing was verified.
+                */
+                await deps.store.logEntry(
+                  task.id,
+                  "[verification] Deterministic verification not executed because no test or build command is configured — NOTHING WAS VERIFIED.",
+                  undefined,
+                  deps.getRunContextFor(task.id),
+                );
               }
             }
 
@@ -1562,11 +1695,13 @@ export async function runImplementation(
           } else {
             const failedSteps = results.filter(r => !r.success);
             const errorSummary = failedSteps.map(r => `Step ${r.stepIndex}: ${r.error || "unknown error"}`).join("; ");
-            await deps.store.updateTask(task.id, { status: null, error: null });
-            await deps.store.logEntry(task.id, `Step-session failed — requeued for execution resume: ${errorSummary}`, undefined, deps.runContextFor(task.id));
-            deps.markGraphExecuteSelfRequeued(task.id);
-            await deps.store.moveTask(task.id, await resolveReboundColumnFor(deps.store, task.id), { preserveProgress: true, moveSource: "engine", recoveryRehome: true });
-            executorLog.log(`✗ ${task.id} step-session failed → todo resume: ${errorSummary}`);
+            pendingInPlaceResume = (await recoverAbortedStepSessionInPlace(
+              deps,
+              task.id,
+              "step-failure",
+              errorSummary,
+            )) === "resumed-in-place";
+            executorLog.log(`✗ ${task.id} step-session failed; repaired in place for same-node resume: ${errorSummary}`);
             deps.options.onError?.(task, new Error(errorSummary));
           }
         };
@@ -1580,7 +1715,7 @@ export async function runImplementation(
           onRetry: (attempt, delayMs, error) => {
             const delaySec = Math.round(delayMs / 1000);
             executorLog.warn(`⏳ ${task.id} rate limited — retry ${attempt} in ${delaySec}s: ${error.message}`);
-            deps.store.logEntry(task.id, `Rate limited — retry ${attempt} in ${delaySec}s`, undefined, deps.runContextFor(task.id)).catch((err: unknown) => {
+            deps.store.logEntry(task.id, `Rate limited — retry ${attempt} in ${delaySec}s`, undefined, deps.getRunContextFor(task.id)).catch((err: unknown) => {
               const msg = err instanceof Error ? err.message : String(err);
               executorLog.warn(`${task.id} failed to log rate-limit retry: ${msg}`);
             });
@@ -1605,14 +1740,23 @@ export async function runImplementation(
             }
             if (await deps.parkApprovalSuspension(task.id, "step session")) return;
             deps.clearPausedAborted(task.id);
-            await deps.store.logEntry(task.id, "Execution paused during step-session", undefined, deps.runContextFor(task.id));
-            deps.markGraphExecuteSelfRequeued(task.id);
-            await deps.store.moveTask(task.id, await resolveReboundColumnFor(deps.store, task.id), { preserveResumeState: true });
+            pendingInPlaceResume = (await recoverAbortedStepSessionInPlace(
+              deps,
+              task.id,
+              "pause-abort",
+            )) === "resumed-in-place";
           } else if (deps.stuckAborted.has(task.id)) {
             stuckRequeue = deps.stuckAborted.get(task.id) ?? true;
             deps.stuckAborted.delete(task.id);
           } else if (deps.options.usageLimitPauser && isUsageLimitError(errorMessage)) {
             await deps.options.usageLimitPauser.onUsageLimitHit("executor", task.id, errorMessage);
+          } else if (isSessionContentionError(errorMessage)) {
+            // FNXC:WorkspaceContention 2026-08-23-06:45: a live repository holder is a scheduling wait, not a transient infrastructure failure that should delete prepared work.
+            await deps.store.logEntry(task.id, `Waiting for shared workspace resource: ${errorMessage}`, undefined, deps.getRunContextFor(task.id));
+            throw err;
+          } else if (isPlanningLifecycleLockTransportFailure(err, errorMessage)) {
+            if (await retryPlanningLifecycleLockTransportFailure(deps, task, errorMessage, resolveReboundColumnFor)) return;
+            throw err;
           } else if (isTransientError(errorMessage)) {
             const decision = computeRecoveryDecision({
               recoveryRetryCount: task.recoveryRetryCount,
@@ -1624,7 +1768,7 @@ export async function runImplementation(
               const delay = formatDelay(decision.delayMs);
               if (!isSilentTransientError(errorMessage)) {
                 executorLog.warn(`⚡ ${task.id} transient error — retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}: ${errorMessage}`);
-                await deps.store.logEntry(task.id, `Transient error (retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}): ${errorMessage}`, undefined, deps.runContextFor(task.id));
+                await deps.store.logEntry(task.id, `Transient error (retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}): ${errorMessage}`, undefined, deps.getRunContextFor(task.id));
               }
               if (!externalExecutionRoute.configured && worktreePath && existsSync(worktreePath)) {
                 try {
@@ -1658,14 +1802,16 @@ export async function runImplementation(
 
             executorLog.error(`✗ ${task.id} transient error retries exhausted: ${errorDetail}`);
             if (errorStack) {
-              await deps.store.logEntry(task.id, `Transient error retries exhausted: ${errorMessage}`, errorStack, deps.runContextFor(task.id));
+              await deps.store.logEntry(task.id, `Transient error retries exhausted: ${errorMessage}`, errorStack, deps.getRunContextFor(task.id));
             }
-            await deps.store.updateTask(task.id, {
-              status: "failed",
-              error: errorMessage,
-              recoveryRetryCount: null,
-              nextRecoveryAt: null,
-            });
+            if (!(await parkExternalSessionObstacle(deps, task.id, errorMessage))) {
+              await deps.store.updateTask(task.id, {
+                status: "failed",
+                error: errorMessage,
+                recoveryRetryCount: null,
+                nextRecoveryAt: null,
+              });
+            }
             if (accumulatedStepTokenUsage) {
               await deps.persistTaskTokenUsage(task.id, accumulatedStepTokenUsage);
             }
@@ -1690,11 +1836,13 @@ export async function runImplementation(
               return;
             }
             executorLog.error(`✗ ${task.id} step-session execution failed:`, errorDetail);
-            await deps.store.logEntry(task.id, `Step-session execution failed: ${errorMessage}`, errorStack ?? errorDetail, deps.runContextFor(task.id));
-            await deps.store.updateTask(task.id, { status: null, error: null });
-            deps.markGraphExecuteSelfRequeued(task.id);
-            await deps.store.moveTask(task.id, await resolveReboundColumnFor(deps.store, task.id), { preserveProgress: true, moveSource: "engine", recoveryRehome: true });
-            executorLog.log(`✗ ${task.id} step-session execution failed → todo resume`);
+            pendingInPlaceResume = (await recoverAbortedStepSessionInPlace(
+              deps,
+              task.id,
+              "session-failure",
+              errorMessage,
+            )) === "resumed-in-place";
+            executorLog.log(`✗ ${task.id} step-session execution failed; repaired in place for same-node resume`);
             deps.options.onError?.(task, err instanceof Error ? err : new Error(errorMessage));
           }
         } finally {
@@ -1711,70 +1859,31 @@ export async function runImplementation(
           }
           deps.deleteActiveStepExecutor(task.id);
 
-          // Stuck-requeue: clean up worktree and move to todo
+          /*
+          FNXC:StuckSessionRecovery 2026-08-28-07:48:
+          A dead step session is disposed, then the same task is re-dispatched without changing its
+          column, workflow node, current step, worktree, branch, or completed-step progress.
+
+          FNXC:LifecycleContainment 2026-09-04-03:27:
+          Global and engine pauses defer all WIP re-dispatch to the unpause owner, including when
+          stuck-session recovery wins over an aborted-session recovery in this finally block.
+          */
           if (stuckRequeue === true) {
-            try {
-              // Re-read latest task state. Self-healing may have already moved
-              // the task out of in-progress while this step-session execution
-              // was unwinding; continuing the cleanup would clobber a valid
-              // recovery (see the analogous block in the outer finally for the
-              // full reasoning).
-              /* FNXC:WorkflowLifecycleColumns 2026-07-30-21:40 (fleet: stuck-requeue family): "has a
-                 concurrent recovery already moved this card on?" — the pre-completion lanes are the board's
-                 wip and hold. With literals a renamed board always answered "moved on", the cleanup never
-                 ran, and the log line blamed a concurrent recovery that had not happened. */
-              const latestTask = await deps.store.getTask(task.id);
-              const requeueLanes = await deps.resolveResumeLanes(task.id);
-              if (latestTask.column !== requeueLanes.wip && latestTask.column !== requeueLanes.hold) {
-                executorLog.log(
-                  `${task.id} stuck-requeue skipped — task is now in '${latestTask.column}' (recovered concurrently)`,
-                );
-              } else {
-                const settings = await deps.store.getSettings();
-                const preserveProgress = settings.preserveProgressOnStuckRequeue !== false;
-
-                /*
-                FNXC:StuckRequeue 2026-06-27-23:15:
-                Stuck requeue may destroy a checkout that contains only uncommitted step output. Always reconcile lost-work step state before worktree removal, even when preserve-progress is enabled, so a retry cannot skip code that no longer exists.
-                */
-                if (!externalExecutionRoute.configured) {
-                  await deps.resetStepsIfWorkLost(latestTask);
-                }
-
-                if (!externalExecutionRoute.configured && worktreePath && existsSync(worktreePath)) {
-                  try {
-                    await removeWorktree({
-                      worktreePath,
-                      rootDir: deps.rootDir,
-                      settings,
-                      taskId: task.id,
-                      reason: RemovalReason.ExecutorStuckKilled,
-                      expectedOwnerTaskId: task.id,
-                      liveOwnerProbe: (path, ownerTaskId) => deps.hasActiveWorktreeBinding(ownerTaskId, path),
-                    });
-                  } catch (wtErr: unknown) {
-                    const msg = wtErr instanceof Error ? wtErr.message : String(wtErr);
-                    executorLog.warn(`${task.id}: worktree removal failed during stuck-requeue cleanup (${worktreePath}): ${msg}`);
-                  }
-                }
-                await deps.store.updateTask(task.id, {
-                  status: "queued",
-                  error: null,
-                  worktree: null,
-                  branch: null, branchWriteOrigin: "engine" as const,
-                });
-                const reboundColumn = await resolveReboundColumnFor(deps.store, task.id);
-                if (latestTask.column !== reboundColumn) {
-                  deps.markGraphExecuteSelfRequeued(task.id);
-                  await deps.store.moveTask(task.id, reboundColumn, preserveProgress ? { preserveProgress: true } : undefined);
-                  executorLog.log(`${task.id} moved to ${reboundColumn} for retry after stuck kill${preserveProgress ? " (progress preserved)" : ""}`);
-                }
-              }
-            } catch (err: unknown) {
-              const errorMessage = err instanceof Error ? err.message : String(err);
-              executorLog.error(`Failed to requeue stuck task ${task.id}: ${errorMessage}`);
+            const latestTask = await deps.store.getTask(task.id);
+            const settings = await deps.store.getSettings();
+            if (!latestTask.paused && !latestTask.userPaused && !settings.globalPause && !settings.enginePaused) {
+              await deps.store.updateTask(task.id, { status: null, error: null });
+              await deps.store.logEntry(task.id, "Stuck step session disposed — resuming the same node and step in place");
+              await deps.reexecuteTaskInPlace(task.id);
             }
-            stuckRequeue = null; // Prevent outer finally from re-processing
+            stuckRequeue = null;
+          } else if (pendingInPlaceResume) {
+            const latestTask = await deps.store.getTask(task.id);
+            const settings = await deps.store.getSettings();
+            if (!latestTask.paused && !latestTask.userPaused && !settings.globalPause && !settings.enginePaused) {
+              await deps.reexecuteTaskInPlace(task.id);
+            }
+            pendingInPlaceResume = false;
           }
         }
         // Step-session path handled completely — return before outer catch/finally
@@ -1789,22 +1898,6 @@ export async function runImplementation(
       const codeReviewVerdicts = new Map<number, ReviewVerdict>();
 
       let wasPaused = false;
-      /*
-      FNXC:SessionResume 2026-08-10-17:33:
-      Set when the run ends by handing the COMPLETED implementation to the graph for review, rather than
-      by finishing or failing the task. The distinction matters because a review gate can bounce the card
-      straight back here for remediation in the SAME worktree: before this flag the `finally` below nulled
-      `sessionFile` on every non-paused exit, so pause -> unpause was the only path that ever resumed a
-      conversation and every remediation round restarted cold — re-reading the repo and re-deriving the
-      change it had just written, once per round. Preserving the session across the review round-trip is
-      what makes a bounce a follow-up turn instead of a fresh investigation.
-
-      Scoped deliberately to the handoff exits, NOT to every non-terminal exit: paths that require a fresh
-      session (context overflow, stale assistant continuation, worktree reacquisition, non-continuable
-      session, task-done retry) clear `sessionFile` explicitly and synchronously at their own site, and the
-      resume guard re-validates the persisted worktree before reopening. Those defenses stay authoritative.
-      */
-      let handedOffForReview = false;
       // Mutable ref — populated after createFnAgent, tools access lazily via closure
       const sessionRef: { current: AgentSession | null } = { current: null };
       /*
@@ -1860,7 +1953,7 @@ export async function runImplementation(
       }
 
       // Log fast mode status
-      if (executionMode === "fast") {
+      if (fastExecution) {
         executorLog.debug(`${task.id}: fast mode`);
       }
 
@@ -2054,8 +2147,10 @@ export async function runImplementation(
         }),
         ...createIdeationTools(deps.store),
         ...createGoalRetrievalTools(deps.store, {
-          // FNXC:Identity 2026-08-15-22:52: one boundary conversion instead of a hand-built partial context.
-          runContext: toRunMutationContext(engineRunContext),
+          runContext: {
+            runId: engineRunContext.runId,
+            agentId: engineRunContext.agentId,
+          },
           taskId: task.id,
         }),
         createWebFetchTool(),
@@ -2089,26 +2184,6 @@ export async function runImplementation(
         ...getEnabledPluginTools(deps.options.pluginRunner),
       ];
 
-      if (deps.workspaceConfig && deps.workspaceConfig.repos.length > 0) {
-        customTools.push(createAcquireRepoWorktreeTool({
-          workspaceRootDir: deps.rootDir,
-          workspaceRepos: deps.workspaceConfig.repos,
-          resolveWorkspaceRepos: async () => (await deps.refreshWorkspaceConfig?.())?.repos ?? [],
-          task,
-          store: deps.store,
-          settings,
-          logger: executorLog,
-          secretsStore: deps.options.secretsStore,
-          runContext: toRunMutationContext(engineRunContext),
-          audit,
-          // FNXC:Workspace 2026-06-21-22:30: F2 — register each freshly-acquired sub-repo worktree path in this task's activeWorktrees Set (KTD2) so owner/liveness checks see live per-repo worktrees, not just the browse-only root.
-          onAcquired: (worktreePath: string) => deps.addActiveWorktree(task.id, worktreePath),
-          taskEnv,
-          // FNXC:Workspace 2026-06-22 — forward the configured worktree-init runner so sub-repo worktrees run configured setup.
-          runConfiguredCommand: (command, cwd, timeoutMs, env) =>
-            runConfiguredCommand(command, cwd, timeoutMs, env, audit),
-        }));
-      }
 
       // Accumulates the full assistant text output for the most recent session.
       // Reset to "" each time a new session begins so detectPseudoPause only
@@ -2179,6 +2254,7 @@ export async function runImplementation(
           settings,
           (identityAgent?.runtimeConfig ?? undefined) as Record<string, unknown> | undefined,
           overrideColumnGovernsInitialSession ? undefined : activeAgentInstanceRef?.instanceId ?? detail.credentialInstanceId,
+          detail.executionMode,
         );
         const { provider: executorProvider, modelId: executorModelId } = executorSessionModel;
         /*
@@ -2197,7 +2273,11 @@ export async function runImplementation(
           : executorSessionModel.credentialInstanceId;
         const { provider: executorFallbackProvider, modelId: executorFallbackModelId } = resolveExecutorFallbackModel(settings);
         const executorSessionThinkingSource = (deps.graphSeamThinkingLevel.get(task.id) as string | undefined) ?? detail.thinkingLevel;
-        const executorThinkingLevel = resolveExecutorThinkingLevel(executorSessionThinkingSource, settings);
+        const executorThinkingLevel = resolveExecutorThinkingLevel(
+          executorSessionThinkingSource,
+          settings,
+          detail.executionMode,
+        );
         const executorFallbackThinkingLevel = resolveExecutorFallbackThinkingLevel(executorSessionThinkingSource, settings);
 
         // U1 telemetry: now that the session model/provider/node are resolved,
@@ -2229,7 +2309,7 @@ export async function runImplementation(
               task.id,
               `Detected stale persisted session metadata (worktree mismatch: ${persistedWorktreePath} vs ${worktreePath}) — discarded resume state and started fresh session`,
               undefined,
-              deps.runContextFor(task.id),
+              deps.getRunContextFor(task.id),
             );
             await deps.store.updateTask(task.id, { sessionFile: null });
             isResuming = false;
@@ -2315,9 +2395,7 @@ export async function runImplementation(
             ...(skillContext.additionalSkillPaths.length > 0 ? { additionalSkillPaths: skillContext.additionalSkillPaths } : {}),
             onSkillSummary: async (summary) => {
               const unavailable = summary.unresolvedForcedSkills.length ? `; forced-unavailable: [${summary.unresolvedForcedSkills.map((entry) => `${entry.requestedName} (${entry.reason})`).join(", ")}]` : "";
-              // FNXC:Identity 2026-08-17-04:30: main added this skills-summary breadcrumb after U18 converted the
-              // file, so it arrived unattributed; it writes to the task log like every other write here.
-              await deps.store.logEntry(task.id, `[skills] [executor] ${summary.availableCount} skill(s) available; forced: ${summary.forcedSkillNames.length ? `[${summary.forcedSkillNames.join(", ")}]` : "none"}${unavailable}`, undefined, runContextForTotal(deps.getRunContextFor, task.id));
+              await deps.store.logEntry(task.id, `[skills] [executor] ${summary.availableCount} skill(s) available; forced: ${summary.forcedSkillNames.length ? `[${summary.forcedSkillNames.join(", ")}]` : "none"}${unavailable}`);
             },
             // Column-agent principal alignment (plan U5, R5): action gating is
             // computed for the agent ACTUALLY RUNNING. When the governing execute
@@ -2333,8 +2411,6 @@ export async function runImplementation(
               agent: "executor",
               label: "executor",
               store: deps.store,
-              // FNXC:Identity 2026-08-16-05:10: the observer logs to the task; attribute it to this run.
-              runContext: runContextForTotal(deps.getRunContextFor, task.id),
               taskId: task.id,
               taskTitle: detail.title,
             }),
@@ -2361,10 +2437,10 @@ export async function runImplementation(
         const executorModelMarker = `Executor using model: ${executorModelDetails}`;
         if (isResuming) {
           executorLog.debug(`${task.id}: resumed session from ${task.sessionFile}`);
-          await deps.store.logEntry(task.id, `Resumed agent session after unpause (model: ${executorModelDesc})`, undefined, deps.runContextFor(task.id));
+          await deps.store.logEntry(task.id, `Resumed agent session after unpause (model: ${executorModelDesc})`, undefined, deps.getRunContextFor(task.id));
         } else {
           executorLog.debug(`${task.id}: using model ${executorModelDesc}`);
-          await deps.store.logEntry(task.id, executorModelMarker, undefined, deps.runContextFor(task.id));
+          await deps.store.logEntry(task.id, executorModelMarker, undefined, deps.getRunContextFor(task.id));
           // Persist session file path so pause/resume can reopen it
           if (sessionFile) {
             await deps.store.updateTask(task.id, { sessionFile });
@@ -2491,7 +2567,7 @@ export async function runImplementation(
                     task.id,
                     `Context compacted at ${compactResult.tokensBefore} tokens (token cap: ${settings.tokenCap})`,
                     undefined,
-                    deps.runContextFor(task.id),
+                    deps.getRunContextFor(task.id),
                   );
                 }
                 return compactResult;
@@ -2512,7 +2588,7 @@ export async function runImplementation(
           if (loopState?.pending) {
             loopState.pending = false;
             executorLog.log(`${task.id} consuming loop recovery — resuming with fresh context`);
-            await deps.store.logEntry(task.id, "Resuming execution after context compaction — taking a different approach", undefined, deps.runContextFor(task.id));
+            await deps.store.logEntry(task.id, "Resuming execution after context compaction — taking a different approach", undefined, deps.getRunContextFor(task.id));
 
             // Reset activity tracking so the detector doesn't immediately re-trigger
             stuckDetector?.recordProgress(task.id);
@@ -2625,7 +2701,7 @@ export async function runImplementation(
               }
               taskDone = true;
               executorLog.log(`${task.id} all steps done — treating as implicit fn_task_done`);
-              await deps.store.logEntry(task.id, "All steps complete — implicit fn_task_done (agent did not call tool explicitly)", undefined, deps.runContextFor(task.id));
+              await deps.store.logEntry(task.id, "All steps complete — implicit fn_task_done (agent did not call tool explicitly)", undefined, deps.getRunContextFor(task.id));
               deps.scheduleCompletedTaskWatchdog(task.id, "implicit fn_task_done");
             }
           }
@@ -2668,7 +2744,7 @@ export async function runImplementation(
                   ? `${task.id}: task parked for automatic replan during no-fn_task_done retry — honoring park, not retrying`
                   : `${task.id}: task parked failed during no-fn_task_done retry — honoring park, not retrying`;
                 executorLog.log(parkMessage);
-                await deps.store.logEntry(task.id, parkMessage, undefined, deps.runContextFor(task.id));
+                await deps.store.logEntry(task.id, parkMessage, undefined, deps.getRunContextFor(task.id));
                 deps.deleteActiveSession(task.id);
                 deps.tokenUsageBaselines.delete(task.id);
                 session.dispose();
@@ -2692,7 +2768,7 @@ export async function runImplementation(
                 ].filter(Boolean).join(", ");
                 const reclaimMessage = `${task.id}: worktree/branch contract changed (${mismatches || "unknown"}) during no-fn_task_done retry — aborting retry and requeueing`;
                 executorLog.log(reclaimMessage);
-                await deps.store.logEntry(task.id, reclaimMessage, undefined, deps.runContextFor(task.id));
+                await deps.store.logEntry(task.id, reclaimMessage, undefined, deps.getRunContextFor(task.id));
                 deps.deleteActiveSession(task.id);
                 deps.tokenUsageBaselines.delete(task.id);
                 session.dispose();
@@ -2709,7 +2785,7 @@ export async function runImplementation(
                   task.id,
                   `Agent finished without calling fn_task_done but Step ${pendingReviewBlock.stepIndex} is blocked on pending review (${pendingReviewBlock.reason}) — skipping retry session`,
                   undefined,
-                  deps.runContextFor(task.id),
+                  deps.getRunContextFor(task.id),
                 );
                 deps.deleteActiveSession(task.id);
                 deps.tokenUsageBaselines.delete(task.id);
@@ -2743,7 +2819,7 @@ export async function runImplementation(
                 task.id,
                 `Agent finished without calling fn_task_done — retrying with new session (${taskDoneSessionRetries}/${MAX_TASK_DONE_SESSION_RETRIES})`,
                 undefined,
-                deps.runContextFor(task.id),
+                deps.getRunContextFor(task.id),
               );
 
               // Capture and analyse the previous session's text before resetting.
@@ -2756,7 +2832,7 @@ export async function runImplementation(
                   task.id,
                   `Pseudo-pause detected (kind=${pseudoPause.kind}, matched='${shortMatch}')`,
                   undefined,
-                  deps.runContextFor(task.id),
+                  deps.getRunContextFor(task.id),
                 );
                 executorLog.log(`${task.id} pseudo-pause detected (kind=${pseudoPause.kind}): ${shortMatch}`);
               }
@@ -2924,7 +3000,7 @@ export async function runImplementation(
                   }
                   taskDone = true;
                   executorLog.log(`${task.id} all steps done — treating as implicit fn_task_done`);
-                  await deps.store.logEntry(task.id, "All steps complete — implicit fn_task_done (agent did not call tool explicitly)", undefined, deps.runContextFor(task.id));
+                  await deps.store.logEntry(task.id, "All steps complete — implicit fn_task_done (agent did not call tool explicitly)", undefined, deps.getRunContextFor(task.id));
                   deps.scheduleCompletedTaskWatchdog(task.id, "implicit fn_task_done");
                 }
               }
@@ -2974,7 +3050,7 @@ export async function runImplementation(
                 task.id,
                 "Worktree/branch reclaimed mid-retry — requeued to todo (engine self-heal, no failure)",
                 undefined,
-                deps.runContextFor(task.id),
+                deps.getRunContextFor(task.id),
               );
               // Clear any stale binding so the next pickup creates a fresh worktree.
               // baseCommitSha is also cleared because it pinned to the now-reclaimed worktree;
@@ -3007,14 +3083,14 @@ export async function runImplementation(
                   task.id,
                   `${errorMessage} — requeued to todo immediately (${nextRequeueCount}/${MAX_TASK_DONE_REQUEUE_RETRIES})`,
                   undefined,
-                  deps.runContextFor(task.id),
+                  deps.getRunContextFor(task.id),
                 );
                 deps.markGraphExecuteSelfRequeued(task.id);
                 await deps.store.moveTask(task.id, await resolveReboundColumnFor(deps.store, task.id), { preserveProgress: true });
                 executorLog.log(`✗ ${task.id} failed after ${MAX_TASK_DONE_SESSION_RETRIES} retries — requeued to todo (${nextRequeueCount}/${MAX_TASK_DONE_REQUEUE_RETRIES})`);
               } else {
                 await deps.store.updateTask(task.id, { status: "failed", error: errorMessage });
-                await deps.store.logEntry(task.id, `${errorMessage} — execution failed after task-done retry budget was exhausted`, undefined, deps.runContextFor(task.id));
+                await deps.store.logEntry(task.id, `${errorMessage} — execution failed after task-done retry budget was exhausted`, undefined, deps.getRunContextFor(task.id));
                 await deps.persistTokenUsage(task.id);
                 executorLog.log(`✗ ${task.id} failed after ${MAX_TASK_DONE_SESSION_RETRIES} retries — no fn_task_done`);
               }
@@ -3110,7 +3186,7 @@ export async function runImplementation(
         onRetry: (attempt, delayMs, error) => {
           const delaySec = Math.round(delayMs / 1000);
           executorLog.warn(`⏳ ${task.id} rate limited — retry ${attempt} in ${delaySec}s: ${error.message}`);
-          deps.store.logEntry(task.id, `Rate limited — retry ${attempt} in ${delaySec}s`, undefined, deps.runContextFor(task.id)).catch((err: unknown) => {
+          deps.store.logEntry(task.id, `Rate limited — retry ${attempt} in ${delaySec}s`, undefined, deps.getRunContextFor(task.id)).catch((err: unknown) => {
             const msg = err instanceof Error ? err.message : String(err);
             executorLog.warn(`${task.id} failed to log rate-limit retry: ${msg}`);
           });
@@ -3141,7 +3217,7 @@ export async function runImplementation(
           task.id,
           `Worktree base refresh blocked execution (${err.refresh.kind}) — task left queued for a later clean acquisition`,
           err.refresh.detail,
-          deps.runContextFor(task.id),
+          deps.getRunContextFor(task.id),
         ).catch(() => undefined);
         await deps.persistTokenUsage(task.id);
         return;
@@ -3171,7 +3247,7 @@ export async function runImplementation(
             task.id,
             `Stale assistant-continuation fresh-session retries exhausted after ${MAX_RECOVERY_RETRIES} attempts: ${errorMessage}`,
             errorStack ?? errorDetail,
-            deps.runContextFor(task.id),
+            deps.getRunContextFor(task.id),
           );
           await deps.store.updateTask(task.id, {
             status: "failed",
@@ -3192,7 +3268,7 @@ export async function runImplementation(
           task.id,
           `Detected stale assistant-continuation session — fresh-session retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay} with progress preserved: ${errorMessage}`,
           undefined,
-          deps.runContextFor(task.id),
+          deps.getRunContextFor(task.id),
         );
         await deps.store.updateTask(task.id, {
           sessionFile: null,
@@ -3208,7 +3284,7 @@ export async function runImplementation(
         const toColumn = transitionMatch?.[2] ?? "unknown";
         const logMessage = `Task already moved from '${fromColumn}' — skipping transition to '${toColumn}'`;
         executorLog.log(`${task.id} ${logMessage}`);
-        await deps.store.logEntry(task.id, logMessage, errorMessage, deps.runContextFor(task.id));
+        await deps.store.logEntry(task.id, logMessage, errorMessage, deps.getRunContextFor(task.id));
         /*
         FNXC:WorkflowResolvedColumns 2026-07-31-09:25 (fleet: executor lifecycle roles):
         `fromColumn`/`toColumn` are parsed out of the store's rejection message, so they carry
@@ -3255,7 +3331,7 @@ export async function runImplementation(
             task.id,
             "Execution abort cleanup skipped — incomplete stuck-loop task is already parked with progress preserved",
             undefined,
-            deps.runContextFor(task.id),
+            deps.getRunContextFor(task.id),
           );
           return;
         }
@@ -3265,7 +3341,7 @@ export async function runImplementation(
             return;
           }
           executorLog.log(`${task.id} paused after completion — finalizing to in-review`);
-          await deps.store.logEntry(task.id, "Execution paused after completion — finalizing to in-review", undefined, deps.runContextFor(task.id));
+          await deps.store.logEntry(task.id, "Execution paused after completion — finalizing to in-review", undefined, deps.getRunContextFor(task.id));
           await deps.persistTokenUsage(task.id);
           /*
           FNXC:WorkflowLifecycle 2026-06-17-23:33:
@@ -3347,7 +3423,7 @@ export async function runImplementation(
               ? "Execution paused — agent terminated, parked in todo (pause preserved, awaiting explicit unpause)"
               : "Execution paused — agent terminated, moved to todo",
             undefined,
-            deps.runContextFor(task.id),
+            deps.getRunContextFor(task.id),
           );
           deps.markGraphExecuteSelfRequeued(task.id);
           await deps.store.moveTask(task.id, await resolveReboundColumnFor(deps.store, task.id), {
@@ -3387,7 +3463,7 @@ export async function runImplementation(
           const activeEntry = deps.activeSessions.get(task.id);
           if (activeEntry) {
             executorLog.log(`${task.id} context limit error after auto-compaction — attempting reduced-prompt retry (${loopAttempts + 1}/${MAX_REDUCED_PROMPT_ATTEMPTS})`);
-            await deps.store.logEntry(task.id, `Context limit error after auto-compaction — attempting reduced-prompt retry (${loopAttempts + 1}/${MAX_REDUCED_PROMPT_ATTEMPTS}): ${errorMessage}`, undefined, deps.runContextFor(task.id));
+            await deps.store.logEntry(task.id, `Context limit error after auto-compaction — attempting reduced-prompt retry (${loopAttempts + 1}/${MAX_REDUCED_PROMPT_ATTEMPTS}): ${errorMessage}`, undefined, deps.getRunContextFor(task.id));
 
             deps.loopRecoveryState.set(task.id, { attempts: loopAttempts + 1, pending: false });
 
@@ -3411,19 +3487,19 @@ export async function runImplementation(
               // Reduced-prompt retry succeeded — return to let the finally block clean up
               // without marking the task as failed.
               executorLog.log(`${task.id} reduced-prompt recovery succeeded — continuing`);
-              await deps.store.logEntry(task.id, "Reduced-prompt recovery succeeded — continuing execution", undefined, deps.runContextFor(task.id));
+              await deps.store.logEntry(task.id, "Reduced-prompt recovery succeeded — continuing execution", undefined, deps.getRunContextFor(task.id));
               return;
             } catch (reducedErr: unknown) {
               const reducedErrorMessage = reducedErr instanceof Error ? reducedErr.message : String(reducedErr);
               if (!isContextLimitError(reducedErrorMessage)) {
                 executorLog.error(`${task.id} reduced-prompt recovery also failed: ${reducedErrorMessage}`);
-                await deps.store.logEntry(task.id, `Reduced-prompt recovery failed: ${reducedErrorMessage}`, undefined, deps.runContextFor(task.id));
+                await deps.store.logEntry(task.id, `Reduced-prompt recovery failed: ${reducedErrorMessage}`, undefined, deps.getRunContextFor(task.id));
                 // Non-context failure — fall through to mark task as failed
               } else {
                 // Still a context error — the session is saturated beyond recovery.
                 // Fall through to the fresh-session requeue path below.
                 executorLog.warn(`${task.id} session still saturated after reduced-prompt retry — will attempt fresh-session requeue`);
-                await deps.store.logEntry(task.id, `Reduced-prompt retry still over context — will attempt fresh-session requeue`, undefined, deps.runContextFor(task.id));
+                await deps.store.logEntry(task.id, `Reduced-prompt retry still over context — will attempt fresh-session requeue`, undefined, deps.getRunContextFor(task.id));
               }
             }
           }
@@ -3442,7 +3518,7 @@ export async function runImplementation(
             const attempt = decision.nextState.recoveryRetryCount;
             const delay = formatDelay(decision.delayMs);
             executorLog.warn(`⚡ ${task.id} context-overflow fresh-session requeue ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}`);
-            await deps.store.logEntry(task.id, `Context-overflow fresh-session requeue (${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}): ${errorMessage}`, undefined, deps.runContextFor(task.id));
+            await deps.store.logEntry(task.id, `Context-overflow fresh-session requeue (${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}): ${errorMessage}`, undefined, deps.getRunContextFor(task.id));
             // Retain the worktree and accumulated step progress so the fresh
             // session resumes where the saturated one left off, but clear
             // sessionFile synchronously here so the next dispatch is forced
@@ -3463,7 +3539,7 @@ export async function runImplementation(
           }
 
           executorLog.error(`✗ ${task.id} context-overflow requeue budget exhausted (${MAX_RECOVERY_RETRIES} attempts): ${errorMessage}`);
-          await deps.store.logEntry(task.id, `Context-overflow requeues exhausted after ${MAX_RECOVERY_RETRIES} attempts: ${errorMessage}`, undefined, deps.runContextFor(task.id));
+          await deps.store.logEntry(task.id, `Context-overflow requeues exhausted after ${MAX_RECOVERY_RETRIES} attempts: ${errorMessage}`, undefined, deps.getRunContextFor(task.id));
           // Reset so downstream failure path can persist cleanly
           await deps.store.updateTask(task.id, {
             recoveryRetryCount: null,
@@ -3477,7 +3553,7 @@ export async function runImplementation(
           const details = err.foreignCommits
             .map((commit) => `${commit.sha.slice(0, 12)}:${commit.foreignTaskId}`)
             .join(", ");
-          await deps.store.logEntry(task.id, `[recovery] branch cross-contamination detected on ${err.branchName} since ${err.baseSha}: ${details}`, undefined, deps.runContextFor(task.id));
+          await deps.store.logEntry(task.id, `[recovery] branch cross-contamination detected on ${err.branchName} since ${err.baseSha}: ${details}`, undefined, deps.getRunContextFor(task.id));
 
           try {
             const recoveredBootstrapMisbinding = await deps.tryBootstrapMisbindingRecovery(task, err, audit);
@@ -3555,7 +3631,7 @@ export async function runImplementation(
                   task.id,
                   `[recovery] rehomed orphan-our-advance commit ${commit.sha.slice(0, 12)} (source ${orphanClass.sourceTaskId}) onto ${integrationBranchForOrphan} via fast-forward; dropping from branch`,
                   undefined,
-                  deps.runContextFor(task.id),
+                  deps.getRunContextFor(task.id),
                 );
               } else {
                 const hint = "cherryPickHint" in rehome && rehome.cherryPickHint
@@ -3565,7 +3641,7 @@ export async function runImplementation(
                   task.id,
                   `[recovery] orphan-our-advance commit ${commit.sha.slice(0, 12)} (source ${orphanClass.sourceTaskId}) refused auto-rehome: ${rehome.reason}${hint}`,
                   undefined,
-                  deps.runContextFor(task.id),
+                  deps.getRunContextFor(task.id),
                 );
                 genuinelyUnique.push(commit);
               }
@@ -3579,7 +3655,7 @@ export async function runImplementation(
               task.id,
               `[recovery] contamination classification: already-upstream=[${alreadyShas}] misrouted=[${misroutedShas}] rehomed-orphan=[${rehomedShas}] unique=[${uniqueShas}]`,
               undefined,
-              deps.runContextFor(task.id),
+              deps.getRunContextFor(task.id),
             );
 
             const alreadyAttemptedRecovery = (task.recoveryRetryCount ?? 0) > 0;
@@ -3608,7 +3684,7 @@ export async function runImplementation(
                 task.id,
                 `[recovery] auto-recovered branch-cross-contamination: dropped ${recovery.droppedShas.length} commits (already-upstream + misrouted, SHAs: ${recovery.droppedShas.map((sha) => sha.slice(0, 12)).join(", ")}); new tip ${recovery.newTipSha.slice(0, 12)}`,
                 undefined,
-                deps.runContextFor(task.id),
+                deps.getRunContextFor(task.id),
               );
 
               for (const dropped of misrouted) {
@@ -3650,19 +3726,19 @@ export async function runImplementation(
                 task.id,
                 "[recovery] auto-recovery already attempted; escalating to human adjudication",
                 undefined,
-                deps.runContextFor(task.id),
+                deps.getRunContextFor(task.id),
               );
             } else if (genuinelyUnique.length > 0) {
               await deps.store.logEntry(
                 task.id,
                 `[recovery] unique foreign commits require human adjudication: ${genuinelyUnique.map((commit) => commit.sha.slice(0, 12)).join(", ")}`,
                 undefined,
-                deps.runContextFor(task.id),
+                deps.getRunContextFor(task.id),
               );
             }
           } catch (recoveryError: unknown) {
             const recoveryMessage = recoveryError instanceof Error ? recoveryError.message : String(recoveryError);
-            await deps.store.logEntry(task.id, `[recovery] contamination auto-recovery failed: ${recoveryMessage}`, undefined, deps.runContextFor(task.id));
+            await deps.store.logEntry(task.id, `[recovery] contamination auto-recovery failed: ${recoveryMessage}`, undefined, deps.getRunContextFor(task.id));
           }
 
           const autoRecoveryDispatcher = deps.getAutoRecoveryDispatcher(audit);
@@ -3713,7 +3789,7 @@ export async function runImplementation(
               `startPoint=${err.startPoint}`,
             ].join(" ");
             const tripwireMessage = `Branch conflict tripwire fired after ${conflictCount} events (threshold ${deps.BRANCH_CONFLICT_TRIPWIRE_THRESHOLD}). ${details}`;
-            await deps.store.logEntry(task.id, `[recovery] ${tripwireMessage}`, undefined, deps.runContextFor(task.id));
+            await deps.store.logEntry(task.id, `[recovery] ${tripwireMessage}`, undefined, deps.getRunContextFor(task.id));
             const autoRecoveryDispatcher = deps.getAutoRecoveryDispatcher(audit);
             const decision = await autoRecoveryDispatcher.dispatch({
               class: "branch-conflict-tripwire",
@@ -3745,7 +3821,7 @@ export async function runImplementation(
           for (let attempt = 1; attempt <= deps.MAX_AUTO_RECOVERY_ATTEMPTS; attempt += 1) {
             outcome = await deps.handleBranchConflict(task, err);
             if (outcome !== "retry") break;
-            await deps.store.logEntry(task.id, `[recovery] ${task.id} branch-conflict auto-retry requested (${attempt}/${deps.MAX_AUTO_RECOVERY_ATTEMPTS})`, undefined, deps.runContextFor(task.id));
+            await deps.store.logEntry(task.id, `[recovery] ${task.id} branch-conflict auto-retry requested (${attempt}/${deps.MAX_AUTO_RECOVERY_ATTEMPTS})`, undefined, deps.getRunContextFor(task.id));
             const taskForRetry = await deps.store.getTask(task.id);
             await recordRetry({
               store: deps.store,
@@ -3791,6 +3867,13 @@ export async function runImplementation(
           return;
         } else if (deps.options.usageLimitPauser && isUsageLimitError(errorMessage)) {
           await deps.options.usageLimitPauser.onUsageLimitHit("executor", task.id, errorMessage);
+        } else if (isSessionContentionError(errorMessage)) {
+          // FNXC:WorkspaceContention 2026-08-23-06:45: do not churn a prepared worktree while a live holder serializes this resource.
+          await deps.store.logEntry(task.id, `Waiting for shared workspace resource: ${errorMessage}`, undefined, deps.getRunContextFor(task.id));
+          throw err;
+        } else if (isPlanningLifecycleLockTransportFailure(err, errorMessage)) {
+          if (await retryPlanningLifecycleLockTransportFailure(deps, task, errorMessage, resolveReboundColumnFor)) return;
+          // Exhaustion falls through to the terminal failure path below.
         } else if (isTransientError(errorMessage)) {
           // Transient network/infrastructure error — use bounded recovery policy
           const decision = computeRecoveryDecision({
@@ -3804,7 +3887,7 @@ export async function runImplementation(
             // Silent transient errors (e.g., "request was aborted") are noisy — skip logging
             if (!isSilentTransientError(errorMessage)) {
               executorLog.warn(`⚡ ${task.id} transient error — retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}: ${errorMessage}`);
-              await deps.store.logEntry(task.id, `Transient error (retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}): ${errorMessage}`, undefined, deps.runContextFor(task.id));
+              await deps.store.logEntry(task.id, `Transient error (retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}): ${errorMessage}`, undefined, deps.getRunContextFor(task.id));
             }
             // Clean up the old worktree so the retry gets a fresh one
             if (!externalExecutionRoute.configured && worktreePath && existsSync(worktreePath)) {
@@ -3839,15 +3922,17 @@ export async function runImplementation(
 
           // Recovery budget exhausted — escalate to real failure
           executorLog.error(`✗ ${task.id} transient error retries exhausted (${MAX_RECOVERY_RETRIES} attempts): ${errorDetail}`);
-          await deps.store.logEntry(task.id, `Transient error retries exhausted after ${MAX_RECOVERY_RETRIES} attempts: ${errorMessage}`, errorStack ?? errorDetail, deps.runContextFor(task.id));
-          await deps.store.updateTask(task.id, {
-            status: "failed",
-            error: errorMessage,
-            recoveryRetryCount: null,
-            nextRecoveryAt: null,
-          });
+          await deps.store.logEntry(task.id, `Transient error retries exhausted after ${MAX_RECOVERY_RETRIES} attempts: ${errorMessage}`, errorStack ?? errorDetail, deps.getRunContextFor(task.id));
+          if (!(await parkExternalSessionObstacle(deps, task.id, errorMessage))) {
+            await deps.store.updateTask(task.id, {
+              status: "failed",
+              error: errorMessage,
+              recoveryRetryCount: null,
+              nextRecoveryAt: null,
+            });
+          }
           await deps.persistTokenUsage(task.id);
-          executorLog.log(`✗ ${task.id} transient retries exhausted — failed in execution`);
+          executorLog.log(`✗ ${task.id} transient retries exhausted — terminal execution park recorded`);
           deps.options.onError?.(task, err instanceof Error ? err : new Error(errorMessage));
           return;
         }
@@ -3855,8 +3940,10 @@ export async function runImplementation(
           ? JSON.stringify(serializeRetryStormError(err))
           : errorMessage;
         executorLog.error(`✗ ${task.id} execution failed:`, errorDetail);
-        await deps.store.logEntry(task.id, `Execution failed: ${terminalError}`, errorStack ?? errorDetail, deps.runContextFor(task.id));
-        await deps.store.updateTask(task.id, { status: "failed", error: terminalError });
+        await deps.store.logEntry(task.id, `Execution failed: ${terminalError}`, errorStack ?? errorDetail, deps.getRunContextFor(task.id));
+        if (!(await parkExternalSessionObstacle(deps, task.id, terminalError))) {
+          await deps.store.updateTask(task.id, { status: "failed", error: terminalError });
+        }
         await deps.persistTokenUsage(task.id);
         executorLog.log(`✗ ${task.id} execution failed`);
         deps.options.onError?.(task, err instanceof Error ? err : new Error(errorMessage));
@@ -3999,94 +4086,23 @@ export async function runImplementation(
         }
       }
 
-      // Requeue stuck-killed task AFTER deps.executing is cleared.
-      // This prevents the race where the scheduler re-dispatches the task
-      // (via task:moved → execute()) while the old execution guard is still set,
-      // which caused the new execute() call to silently no-op, stranding the
-      // task in "in-progress" with no active session or worktree.
+      /*
+      FNXC:StuckSessionRecovery 2026-08-28-07:48:
+      Re-dispatch only after the old execution lock is gone. Recovery retains the current column,
+      workflow node, current step, checkout, branch, and progress; no retry budget can terminalize it.
+      */
       if (stuckRequeue === true) {
         if (deps.userCanceledTaskIds.has(task.id)) {
           deps.clearPausedAborted(task.id);
           deps.stuckAborted.delete(task.id);
           deps.userCanceledTaskIds.delete(task.id);
-          await deps.store.logEntry(task.id, "Execution canceled by user — leaving task in todo");
+          await deps.store.logEntry(task.id, "Execution canceled by user — leaving task under manual control");
         } else {
-          try {
-          // Re-read latest task state. While this execute() invocation was
-          // unwinding, self-healing (e.g. recoverCompletedTasks) may have
-          // already transitioned the task to in-review or done. Continuing
-          // the stuck-requeue cleanup in that case would destroy the worktree
-          // the recovery now relies on and clobber the task back to todo with
-          // all step progress reset, undoing valid completion. Skip the
-          // entire cleanup if the column has moved on past in-progress/todo.
           const latestTask = await deps.store.getTask(task.id);
-          const outerRequeueLanes = await deps.resolveResumeLanes(task.id);
-          if (latestTask.column !== outerRequeueLanes.wip && latestTask.column !== outerRequeueLanes.hold) {
-            executorLog.log(
-              `${task.id} stuck-requeue skipped — task is now in '${latestTask.column}' (recovered concurrently)`,
-            );
-          } else {
-            const settings = await deps.store.getSettings();
-            const preserveProgress = settings.preserveProgressOnStuckRequeue !== false;
-
-            /*
-            FNXC:StuckRequeue 2026-06-27-23:15:
-            Preserve-progress stuck requeues still remove the old checkout. Reconcile steps first so uncommitted-only output is reset to pending while committed progress can remain complete.
-            */
-            if (!externalExecutionRoute.configured) {
-              await deps.resetStepsIfWorkLost(latestTask);
-            }
-
-            // Clean up the old worktree so the retry gets a fresh one
-            if (!externalExecutionRoute.configured && worktreePath && existsSync(worktreePath)) {
-              try {
-                await removeWorktree({
-                  worktreePath,
-                  rootDir: deps.rootDir,
-                  settings,
-                  taskId: task.id,
-                  audit,
-                  reason: RemovalReason.ExecutorStuckKilled,
-                  expectedOwnerTaskId: task.id,
-                  liveOwnerProbe: (path, ownerTaskId) => deps.hasActiveWorktreeBinding(ownerTaskId, path),
-                });
-                executorLog.log(`Removed old worktree for stuck-killed retry: ${worktreePath}`);
-              } catch (cleanupErr: unknown) {
-                const cleanupErrMessage = cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr);
-                executorLog.warn(`Failed to remove old worktree ${worktreePath}: ${cleanupErrMessage}`);
-              }
-            }
-            await deps.store.updateTask(task.id, {
-              status: "queued",
-              error: null,
-              worktree: null,
-              branch: null, branchWriteOrigin: "engine" as const,
-            });
-            // Only move to todo if not already there. Use the freshly-read
-            // latestTask.column rather than the stale captured task.column —
-            // the captured snapshot can be hours old and would race against
-            // any concurrent recovery (see comment above).
-            const stuckReboundColumn = await resolveReboundColumnFor(deps.store, task.id);
-            if (latestTask.column !== stuckReboundColumn) {
-              deps.markGraphExecuteSelfRequeued(task.id);
-              await deps.store.moveTask(task.id, stuckReboundColumn, preserveProgress ? { preserveProgress: true } : undefined);
-              /*
-              Audit trail: record task move (FN-1404).
-              FNXC:WorkflowLifecycleColumns 2026-07-30-15:15: `to` records the column the card was
-              ACTUALLY moved to. It was hardcoded `"todo"` while the move target was already
-              resolved from the workflow, so on a renamed board the audit row named a column the
-              move never touched — a run-audit trail that disagrees with the move it describes is
-              worse than none, because it is the record an operator reaches for afterwards.
-              */
-              await audit.database({ type: "task:move", target: task.id, metadata: { to: stuckReboundColumn } });
-              executorLog.log(`${task.id} moved to ${stuckReboundColumn} for retry after stuck kill${preserveProgress ? " (progress preserved)" : ""}`);
-            } else {
-              executorLog.debug(`${task.id} already in ${stuckReboundColumn} — skipping redundant move`);
-            }
-          }
-          } catch (err: unknown) {
-            const errorMessage = err instanceof Error ? err.message : String(err);
-            executorLog.error(`Failed to requeue stuck task ${task.id}: ${errorMessage}`);
+          if (!latestTask.paused && !latestTask.userPaused) {
+            await deps.store.updateTask(task.id, { status: null, error: null });
+            await deps.store.logEntry(task.id, "Stuck agent session disposed — resuming the same node and step in place");
+            await deps.reexecuteTaskInPlace(task.id);
           }
         }
       }

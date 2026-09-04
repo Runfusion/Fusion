@@ -22,7 +22,6 @@ vi.mock("lucide-react", () => ({
   RotateCw: () => <svg />,
   Zap: () => <svg />,
   AlertTriangle: () => <svg />,
-  ArrowUpRight: () => <svg />,
   // FNXC:PriorityIconsMock 2026-07-12 — utils/priorityIndicator.tsx builds its PRIORITY_INDICATORS map at
   // module load (low=ArrowDown, normal=Flag, high=ArrowUp, urgent=TriangleAlert). TaskCard imports it
   // transitively, so the mock MUST export all four or the suite fails to load with a "[vitest] No export" error.
@@ -88,7 +87,6 @@ function makeTask(overrides: Partial<Task> = {}): Task {
     column: "in-progress",
     status: "executing" as Task["status"],
     steps: [],
-    // FNXC:TaskCardPromote 2026-08-11-09:13: Promote-visible footer fixtures explicitly clear the default-on plan-review gate.
     enabledWorkflowSteps: [],
     dependencies: [],
     sourceType: "dashboard_ui",
@@ -180,7 +178,8 @@ describe("TaskCard footer wrapping (FN-5210)", () => {
         onOpenDetail={noop}
         addToast={noop}
         onOpenDetailWithTab={noop}
-        onPromote={vi.fn(async () => undefined)}
+        onMoveTask={vi.fn(async () => makeTask({ column: "todo" }))}
+        taskColumnFlags={{ intake: true, manualIntake: true }}
         workflowBadge={{ workflowId: "wf-footer", workflowName: "Workflow with a very long display name for wrapping" }}
       />,
     );

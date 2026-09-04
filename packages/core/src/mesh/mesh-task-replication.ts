@@ -8,6 +8,7 @@ to write the human-visible PROMPT.md stub.
 */
 
 import { isDuplicateRedirectOnlyPrompt } from "../duplicates/explicit-duplicate-marker.js";
+import { isFastExecutionMode } from "../workflows/workflow-fast-lane.js";
 
 export function buildBootstrapPrompt(taskId: string, title: string | undefined, description: string): string {
   const heading = title ? `${taskId}: ${title}` : taskId;
@@ -99,11 +100,11 @@ Callers: the `GET /api/tasks` board enrichment (`awaitingPlanning`) and triage's
 content branch. Do not re-open-code the status set or the seed check.
 */
 export function isTaskAwaitingPlanning(
-  task: { id: string; title?: string; description: string; status?: string | null },
+  task: { id: string; title?: string; description: string; status?: string | null; executionMode?: string | null },
   promptContent: string | null,
 ): boolean {
   if (task.status != null && AWAITING_PLANNING_STATUSES.has(task.status)) return true;
-  if (promptContent === null) return true;
+  if (promptContent === null) return !isFastExecutionMode(task);
   /*
   FNXC:DuplicateIntake 2026-08-01-19:24:
   A duplicate-only PROMPT is unplanned for execution — badge and triage must agree with
@@ -116,5 +117,12 @@ export function isTaskAwaitingPlanning(
   ("Ready") on the badge/triage surface — do not remove it again.
   */
   if (isDuplicateRedirectOnlyPrompt(promptContent, task.title)) return true;
+  /*
+  FNXC:FastLane 2026-08-29-03:00:
+  Fast tasks never await a generated specification, so their bootstrap prompt is ready rather than
+  "Queued to plan". Existing explicit replan and duplicate redirects still win before this branch:
+  Fast changes only the seed-prompt classification, not those independent safety holds.
+  */
+  if (isFastExecutionMode(task)) return false;
   return isUnplannedSeedPrompt(promptContent, task.id, task.title, task.description);
 }

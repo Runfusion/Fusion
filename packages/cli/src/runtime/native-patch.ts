@@ -5,7 +5,7 @@
  * modules when running from a Bun-compiled binary.
  *
  * When Bun compiles a binary, it creates a virtual filesystem at /$bunfs/root/
- * where bundled code runs. Node-pty looks for native modules at:
+ * where bundled code runs. @lydell/node-pty looks for native modules at:
  *   /$bunfs/root/prebuilds/<platform>-<arch>/pty.node
  *
  * This module creates a real directory structure at /tmp/fn-bunfs-<pid>/ that mirrors
@@ -13,9 +13,17 @@
  * temp directory (on macOS/Linux) so node-pty can find the native assets.
  */
 
-import { join, basename, dirname } from "node:path";
-import { existsSync, copyFileSync, mkdirSync, symlinkSync, rmSync, lstatSync, readlinkSync } from "node:fs";
+import { join, basename, dirname, normalize, relative } from "node:path";
+import { existsSync, cpSync, mkdirSync, symlinkSync, rmSync, lstatSync, readlinkSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
+import { nodePtyPlatformPackageName, nodePtyRequiredNativeAssetName } from "./pty-native-assets.js";
+
+const require = createRequire(import.meta.url);
+
+type NodeModuleLoader = (request: string, parent: { filename?: string } | undefined, isMain: boolean) => unknown;
+type NodeModuleWithLoader = { _load?: NodeModuleLoader };
+const nodeModule = require("node:module") as NodeModuleWithLoader;
 
 // Detect Bun-compiled binary
 // @ts-expect-error - Bun global
@@ -23,6 +31,7 @@ const isBunBinary = typeof Bun !== "undefined" && !!Bun.embeddedFiles;
 
 let initialized = false;
 let bunfsSymlinkPath: string | null = null;
+let originalNativeModuleLoad: NodeModuleLoader | null = null;
 
 function findStagedNativeDir(): string | null {
   const platform = process.platform === "darwin" ? "darwin" :
@@ -35,14 +44,15 @@ function findStagedNativeDir(): string | null {
   // Look next to the executable first
   const execDir = dirname(process.execPath);
   const nextToBinary = join(execDir, "runtime", prebuildName);
-  if (existsSync(join(nextToBinary, "pty.node"))) {
+  const requiredAsset = nodePtyRequiredNativeAssetName(platform);
+  if (requiredAsset && existsSync(join(nextToBinary, requiredAsset))) {
     return nextToBinary;
   }
 
   // Check FUSION_RUNTIME_DIR env var
   if (process.env.FUSION_RUNTIME_DIR) {
     const envPath = join(process.env.FUSION_RUNTIME_DIR, prebuildName);
-    if (existsSync(join(envPath, "pty.node"))) {
+    if (requiredAsset && existsSync(join(envPath, requiredAsset))) {
       return envPath;
     }
   }
@@ -76,12 +86,106 @@ function cleanupStaleBunfsLinks(): void {
 }
 
 /**
+ * Redirect a bundled Windows node-pty relative native probe to a staged file.
+ *
+ * Bun's virtual `/$bunfs/root` cannot be replaced by a filesystem junction on
+ * Windows. The platform package calls CommonJS `require()` with this relative
+ * probe, so redirecting that one probe to the staged directory preserves its
+ * normal `conpty.node` loading and adjacent DLL lookup.
+ */
+export function resolveBundledWindowsNativeRequest(
+  request: string,
+  parentFilename: string | undefined,
+  nativeDir: string,
+): string | null {
+  if (!parentFilename?.replace(/\\/g, "/").includes("/$bunfs/root/")) return null;
+
+  const normalizedRequest = request.replace(/\\/g, "/");
+  const expectedPrefix = `./prebuilds/${basename(nativeDir)}/`;
+  if (!normalizedRequest.startsWith(expectedPrefix)) return null;
+
+  const requestedAsset = normalizedRequest.slice(expectedPrefix.length);
+  const candidate = normalize(join(nativeDir, requestedAsset));
+  const candidateRelative = relative(nativeDir, candidate);
+  return requestedAsset && candidateRelative !== ".." && !candidateRelative.startsWith(`..${process.platform === "win32" ? "\\\\" : "/"}`)
+    ? candidate
+    : null;
+}
+
+/*
+ * FNXC:Terminal 2026-09-04-02:29:
+ * Standalone Windows binaries cannot expose staged files by replacing Bun's
+ * virtual root. Homebrew-style script-free delivery therefore redirects the
+ * bundled node-pty ConPTY probe to the complete staged platform directory,
+ * where conpty.node can find its companion DLLs.
+ */
+export function createWindowsNativeModuleRedirect(nativeDir: string, originalLoad: NodeModuleLoader): NodeModuleLoader {
+  return (request, parent, isMain) => {
+    const redirected = resolveBundledWindowsNativeRequest(request, parent?.filename, nativeDir);
+    return originalLoad.call(nodeModule, redirected ?? request, parent, isMain);
+  };
+}
+
+/**
+ * Resolve the dynamic platform-package request made by the bundled umbrella module.
+ *
+ * A cross-target package is intentionally absent from the build host's filtered
+ * node_modules. The build stages its full package root under the runtime payload,
+ * allowing the normal CommonJS loader to execute its JS from disk and preserve its
+ * relative native probes.
+ */
+export function resolveBundledPlatformPackageRequest(
+  request: string,
+  parentFilename: string | undefined,
+  nativeDir: string,
+  platform = process.platform,
+  arch = process.arch,
+): string | null {
+  if (!parentFilename?.replace(/\\/g, "/").includes("/$bunfs/root/")) return null;
+
+  const packageName = nodePtyPlatformPackageName(platform, arch);
+  if (request !== packageName) return null;
+  return join(nativeDir, "node-pty-platform", "lib", "index.js");
+}
+
+/*
+ * FNXC:Terminal 2026-09-04-03:11:
+ * Standalone cross-target binaries must redirect @lydell/node-pty's dynamic platform
+ * require to the staged package module. Copying only pty.node left foreign binaries
+ * unable to select their platform package before any native loader could run.
+ */
+export function createNativeModuleRedirect(
+  nativeDir: string,
+  originalLoad: NodeModuleLoader,
+  platform = process.platform,
+  arch = process.arch,
+): NodeModuleLoader {
+  return (request, parent, isMain) => {
+    const platformPackage = resolveBundledPlatformPackageRequest(request, parent?.filename, nativeDir, platform, arch);
+    const nativeProbe = platformPackage ? null : resolveBundledWindowsNativeRequest(request, parent?.filename, nativeDir);
+    return originalLoad.call(nodeModule, platformPackage ?? nativeProbe ?? request, parent, isMain);
+  };
+}
+
+function installNativeModuleRedirect(nativeDir: string): void {
+  if (originalNativeModuleLoad || !nodeModule._load) return;
+
+  const originalLoad = nodeModule._load;
+  nodeModule._load = createNativeModuleRedirect(nativeDir, originalLoad);
+  originalNativeModuleLoad = originalLoad;
+}
+
+/**
  * Set up the native module resolution structure.
  *
  * Creates:
  *   /tmp/fn-bunfs-<pid>/fn/prebuilds/<platform>-<arch>/
- *     ├── pty.node
- *     └── spawn-helper (Unix only)
+ *     └── every file published in prebuilds/<platform>-<arch>/
+ *
+ * FNXC:Terminal 2026-09-04-02:17: Homebrew disables lifecycle scripts, so the
+ * script-free platform payload must be mirrored into Bun's native probe directory
+ * without a local rebuild. Copy its complete prebuild directory: Linux legitimately
+ * omits spawn-helper while Windows exposes ConPTY instead of pty.node.
  *
  * Then attempts to create a symlink at /$bunfs/root pointing to the temp directory
  * so that node-pty's relative require() can find the native module.
@@ -114,19 +218,19 @@ export function setupNativeResolution(): { success: boolean; nativeDir: string |
     // Create directory structure
     mkdirSync(platformDir, { recursive: true });
 
-    // Copy native files to this location
-    const ptyNodeDest = join(platformDir, "pty.node");
-    copyFileSync(join(nativeDir, "pty.node"), ptyNodeDest);
-
-    if (existsSync(join(nativeDir, "spawn-helper"))) {
-      copyFileSync(join(nativeDir, "spawn-helper"), join(platformDir, "spawn-helper"));
-    }
+    // Preserve every published companion instead of predicting the platform
+    // payload shape; node-pty's relative probes own that package-specific detail.
+    cpSync(nativeDir, platformDir, { recursive: true });
 
     // Store the path for potential use
     process.env.FUSION_FAKE_BUNFS_ROOT = tmpRoot;
 
+    // The bundled umbrella dynamically requires its selected platform package.
+    // Redirect that request for every target; Windows also redirects raw ConPTY probes.
+    installNativeModuleRedirect(nativeDir);
+
     // Try to create symlink from /$bunfs/root to our temp directory
-    // This allows node-pty's relative require() to find the native module
+    // This allows node-pty's relative require() to find the native module.
     if (process.platform !== "win32") {
       const bunfsRoot = "/$bunfs/root";
       try {
@@ -176,6 +280,11 @@ export function cleanupNativeResolution(): void {
     }
   }
   bunfsSymlinkPath = null;
+
+  if (originalNativeModuleLoad) {
+    nodeModule._load = originalNativeModuleLoad;
+    originalNativeModuleLoad = null;
+  }
 }
 
 /**

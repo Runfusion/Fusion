@@ -50,7 +50,7 @@ Long native-structure kind and label values must not give the shared Messages pi
 }
 
 .message-composer-report-section {
-  border-block-start: var(--border) solid var(--border-subtle);
+  border-block-start: var(--btn-border-width) solid var(--border-subtle);
   display: grid;
   gap: var(--space-sm);
   padding-block-start: var(--space-sm);

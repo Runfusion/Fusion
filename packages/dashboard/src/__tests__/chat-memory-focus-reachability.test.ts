@@ -45,15 +45,15 @@ vi.mock("@fusion/core", async (importOriginal) => {
   };
 });
 
-const baseTaskStore = () => ({
-  getSettings: vi.fn(async () => ({})),
+const baseTaskStore = (settings: Record<string, unknown> = { experimentalFeatures: { chatFocus: true } }) => ({
+  getSettings: vi.fn(async () => settings),
 } as unknown as TaskStore);
 
 const baseAgentStore = {} as unknown as AgentStore;
 
-async function buildToolset(focus: string | undefined) {
+async function buildToolset(focus: string | undefined, settings?: Record<string, unknown>) {
   return createChatFusionToolset({
-    taskStore: baseTaskStore(),
+    taskStore: baseTaskStore(settings),
     agentStore: baseAgentStore,
     rootDir: "/project",
     agentId: "agent-abc",
@@ -78,6 +78,14 @@ describe("chat memory-focus production reachability (RUFU-068)", () => {
 
     expect(memoryCalls.calls).toHaveLength(1);
     expect(memoryCalls.calls[0]).toMatchObject({ query: "recall target", topic: "stash lcm" });
+  });
+
+  it.each([{}, { experimentalFeatures: { chatFocus: false } }])("keeps persisted focus inert while the flag is off", async (settings) => {
+    const tools = await buildToolset("stash lcm", settings);
+    const tool = tools.find((candidate) => candidate.name === "fn_memory_search")!;
+    await (tool.execute as (id: string, params: Record<string, unknown>) => Promise<unknown>)("1", { query: "recall target", projectDir: "/project" });
+
+    expect(memoryCalls.calls[0]).not.toHaveProperty("topic");
   });
 
   it("leaves recall whole-project when the session has no focus (undefined -> no topic)", async () => {

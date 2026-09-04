@@ -7,6 +7,7 @@ import userEvent from "@testing-library/user-event";
 import { TaskPlannerChatTab } from "../TaskPlannerChatTab";
 import { ChatMessageLayoutProvider } from "../../context/ChatMessageLayoutContext";
 import { clampChatInputHeight, getChatInputAutomaticMaxHeight, getChatInputBoxMetrics } from "../../utils/chatInputAutosize";
+import { __test_resetChatSnippetsCache } from "../../hooks/useChatSnippetsCache";
 
 const taskPlannerChatCss = readFileSync(resolve(__dirname, "../TaskPlannerChatTab.css"), "utf8");
 const originalScrollTopDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollTop");
@@ -20,13 +21,16 @@ const mockModelCatalog = vi.hoisted(() => ({
   ],
 }));
 
-const { mockEnsureTaskPlannerChatSession, mockFetchTaskPlannerChatSession, mockFetchChatSession, mockFetchChatMessages, mockFetchTaskDetail, mockUpdateChatSession, mockStreamChatResponse, mockAttachChatStream, mockCancelChatResponse, mockAddSteeringComment, mockTranslations, mockT } = vi.hoisted(() => {
+const { mockEnsureTaskPlannerChatSession, mockFetchTaskPlannerChatSession, mockFetchChatSession, mockFetchChatMessages, mockFetchSettings, mockFetchGlobalSettings, mockUpdateGlobalSettings, mockFetchTaskDetail, mockUpdateChatSession, mockStreamChatResponse, mockAttachChatStream, mockCancelChatResponse, mockAddSteeringComment, mockTranslations, mockT } = vi.hoisted(() => {
   const translations = new Map<string, string>();
   return {
     mockEnsureTaskPlannerChatSession: vi.fn(),
     mockFetchTaskPlannerChatSession: vi.fn(),
     mockFetchChatSession: vi.fn(),
     mockFetchChatMessages: vi.fn(),
+    mockFetchSettings: vi.fn().mockResolvedValue({}),
+    mockFetchGlobalSettings: vi.fn().mockResolvedValue({ chatSnippets: [] }),
+    mockUpdateGlobalSettings: vi.fn().mockResolvedValue({ chatSnippets: [] }),
     mockFetchTaskDetail: vi.fn(),
     mockUpdateChatSession: vi.fn(),
     mockStreamChatResponse: vi.fn(),
@@ -64,6 +68,9 @@ vi.mock("../../api", async (importOriginal) => {
     fetchTaskPlannerChatSession: mockFetchTaskPlannerChatSession,
     fetchChatSession: mockFetchChatSession,
     fetchChatMessages: mockFetchChatMessages,
+    fetchSettings: mockFetchSettings,
+    fetchGlobalSettings: mockFetchGlobalSettings,
+    updateGlobalSettings: mockUpdateGlobalSettings,
     fetchTaskDetail: mockFetchTaskDetail,
     updateChatSession: mockUpdateChatSession,
     streamChatResponse: mockStreamChatResponse,
@@ -192,7 +199,10 @@ function plannerQuestionMessage(id: string, args: Record<string, unknown>, creat
 
 describe("TaskPlannerChatTab", () => {
   beforeEach(() => {
+    __test_resetChatSnippetsCache();
     vi.clearAllMocks();
+    mockFetchGlobalSettings.mockReturnValue(new Promise(() => {}));
+    mockUpdateGlobalSettings.mockResolvedValue({ chatSnippets: [] });
     mockTranslations.clear();
     const plannerSession = makePlannerSession();
     mockFetchTaskPlannerChatSession.mockResolvedValue({ session: plannerSession });
@@ -215,6 +225,19 @@ describe("TaskPlannerChatTab", () => {
     restoreMetricDescriptor("scrollTop", originalScrollTopDescriptor);
     restoreMetricDescriptor("scrollHeight", originalScrollHeightDescriptor);
     restoreMetricDescriptor("clientHeight", originalClientHeightDescriptor);
+  });
+
+  it("keeps a cleared planner memory-focus control icon-only with its accessible name", async () => {
+    mockFetchSettings.mockResolvedValue({ experimentalFeatures: { chatFocus: true } });
+    const plannerSession = makePlannerSession({ memoryFocus: null });
+    mockFetchTaskPlannerChatSession.mockResolvedValue({ session: plannerSession });
+    mockFetchChatSession.mockResolvedValue({ session: plannerSession });
+    renderPlannerChat();
+
+    const chip = await screen.findByRole("button", { name: "Memory focus topic" });
+    expect(chip.closest(".task-planner-chat-focus-row")).toBeTruthy();
+    expect(chip.textContent?.trim()).toBe("");
+    expect(chip).not.toHaveTextContent(/Focus/);
   });
 
   it("looks up an existing task-scoped planner session and renders the starter-prompt empty state", async () => {
@@ -255,8 +278,16 @@ describe("TaskPlannerChatTab", () => {
     });
 
     await screen.findByTestId("task-planner-chat-empty");
-    expect(screen.getByRole("button", { name: "Chat model" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Chat model" })).toBeNull();
+    expect(screen.queryByTestId("task-planner-chat-target-controls")).toBeNull();
     expect(screen.getByTestId("chat-thinking-btn")).toHaveAccessibleName("Thinking level");
+    await user.click(screen.getByTestId("chat-thinking-btn"));
+    expect(screen.getByTestId("chat-thinking-popover")).toContainElement(screen.getByRole("button", { name: "Chat model" }));
+    expect(screen.getByTestId("chat-thinking-model-picker")).toBeInTheDocument();
+    expect(screen.getByRole("listbox")).toBeInTheDocument();
+    expect(screen.queryByTestId("chat-thinking-mode-toggle")).toBeNull();
+    expect(screen.queryByTestId("chat-thinking-agent-list")).toBeNull();
+    await user.click(screen.getByTestId("chat-thinking-btn"));
     await user.click(screen.getByRole("button", { name: /Summarize recent activity/ }));
 
     expect(mockEnsureTaskPlannerChatSession).toHaveBeenCalledWith(
@@ -274,6 +305,76 @@ describe("TaskPlannerChatTab", () => {
     );
   });
 
+  it("restores the project default model through the unified popover and closes only after choosing a thinking level", async () => {
+    const user = userEvent.setup();
+    const projectDefault = { provider: "anthropic", modelId: "claude-plan", thinkingLevel: "high" };
+    const existingSession = makePlannerSession({
+      modelProvider: "enterprise-provider",
+      modelId: "very-long-production-model",
+      thinkingLevel: "off",
+    });
+    mockFetchTaskPlannerChatSession.mockResolvedValue({ session: existingSession });
+    mockFetchChatSession.mockResolvedValue({ session: existingSession });
+    mockUpdateChatSession.mockResolvedValue({ session: makePlannerSession(projectDefault) });
+
+    renderPlannerChat({ taskChatModel: projectDefault });
+
+    await screen.findByTestId("task-planner-chat-empty");
+    await user.click(screen.getByTestId("chat-thinking-btn"));
+    await user.click(screen.getByRole("button", { name: "Chat model" }));
+    const portal = await screen.findByTestId("model-combobox-portal");
+    await user.click(within(portal).getByText("Use project default"));
+
+    await waitFor(() => expect(mockUpdateChatSession).toHaveBeenCalledWith(
+      "chat-planner",
+      {
+        modelProvider: projectDefault.provider,
+        modelId: projectDefault.modelId,
+        thinkingLevel: projectDefault.thinkingLevel,
+      },
+      undefined,
+    ));
+    expect(screen.getByTestId("chat-thinking-popover")).toBeInTheDocument();
+
+    await user.click(screen.getByTestId("chat-thinking-option-high"));
+    expect(screen.queryByTestId("chat-thinking-popover")).toBeNull();
+    await waitFor(() => expect(mockUpdateChatSession).toHaveBeenCalledWith(
+      "chat-planner",
+      { thinkingLevel: "high" },
+      undefined,
+    ));
+  });
+
+  it("keeps the popover open when first send acquires a session but closes it for another task", async () => {
+    const user = userEvent.setup();
+    mockFetchTaskPlannerChatSession.mockResolvedValueOnce({ session: null });
+    mockEnsureTaskPlannerChatSession.mockResolvedValue(makePlannerSession());
+    const { rerender } = renderPlannerChat();
+
+    await screen.findByTestId("task-planner-chat-empty");
+    await user.type(screen.getByRole("textbox", { name: "Message task chat" }), "Create the first session");
+    await user.click(screen.getByTestId("chat-thinking-btn"));
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(mockEnsureTaskPlannerChatSession).toHaveBeenCalledWith(
+      "FN-7310",
+      { modelProvider: "anthropic", modelId: "claude-plan" },
+      undefined,
+    ));
+    expect(screen.getByTestId("chat-thinking-popover")).toBeInTheDocument();
+
+    rerender(
+      <TaskPlannerChatTab
+        task={makeTask("FN-7312")}
+        active
+        taskChatModel={{ provider: "anthropic", modelId: "claude-plan" }}
+        addToast={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => expect(screen.queryByTestId("chat-thinking-popover")).toBeNull());
+  });
+
   it("uses Direct Chat's readable portal for compact task-chat triggers and keeps long models searchable", async () => {
     const user = userEvent.setup();
     const originalGetBoundingClientRect = Element.prototype.getBoundingClientRect;
@@ -285,6 +386,7 @@ describe("TaskPlannerChatTab", () => {
     try {
       renderPlannerChat();
       await screen.findByTestId("task-planner-chat-empty");
+      await user.click(screen.getByTestId("chat-thinking-btn"));
       await user.click(screen.getByRole("button", { name: "Chat model" }));
       const portal = await screen.findByTestId("model-combobox-portal");
 
@@ -292,7 +394,11 @@ describe("TaskPlannerChatTab", () => {
       expect(Number.parseFloat(portal.style.width)).toBeGreaterThan(200);
       await user.type(within(portal).getByPlaceholderText("Filter models…"), "readable long");
       expect(within(portal).getByText("Enterprise Production Model With A Readable Long Name")).toBeInTheDocument();
+      mockUpdateChatSession.mockResolvedValueOnce({
+        session: makePlannerSession({ modelProvider: "enterprise-provider", modelId: "very-long-production-model" }),
+      });
       await user.click(within(portal).getByText("Enterprise Production Model With A Readable Long Name"));
+      expect(screen.getByTestId("chat-thinking-popover")).toBeInTheDocument();
       await waitFor(() => expect(mockUpdateChatSession).toHaveBeenCalledWith(
         "chat-planner",
         expect.objectContaining({ modelProvider: "enterprise-provider", modelId: "very-long-production-model" }),
@@ -322,6 +428,7 @@ describe("TaskPlannerChatTab", () => {
     try {
       renderPlannerChat({ taskChatModel: {} });
       await screen.findByTestId("task-planner-chat-empty");
+      await user.click(screen.getByTestId("chat-thinking-btn"));
       await user.click(screen.getByRole("button", { name: "Chat model" }));
       const portal = await screen.findByTestId("model-combobox-portal");
       const left = Number.parseFloat(portal.style.left);
@@ -1013,6 +1120,36 @@ describe("TaskPlannerChatTab", () => {
     const mobileCss = taskPlannerChatCss.slice(taskPlannerChatCss.indexOf("@media (max-width: 768px)"));
     expect(mobileCss).not.toMatch(/\.task-planner-chat-transcript\s*\{/);
     expect(mobileCss).not.toMatch(/\.task-planner-chat-transcript[^}]*\b(?:overflow|scroll-behavior|height|flex)\s*:/);
+  });
+
+  it("inserts a chat snippet on the first submit without stream or persistent queue, then sends it normally", async () => {
+    const prompt = "lance toujours les tests avec chrome devtool mcp";
+    mockFetchGlobalSettings.mockResolvedValue({ chatSnippets: [{ name: "test", prompt }] });
+    const storageSpy = vi.spyOn(Storage.prototype, "setItem");
+    renderPlannerChat();
+    await screen.findByTestId("task-planner-chat-empty");
+    const input = screen.getByLabelText("Message task chat");
+    const send = screen.getByRole("button", { name: "Send" });
+
+    await userEvent.type(input, "/test");
+    await screen.findByRole("option", { name: /\/test/i });
+    fireEvent.click(send);
+
+    await waitFor(() => expect(input).toHaveValue(prompt));
+    expect(mockStreamChatResponse).not.toHaveBeenCalled();
+    expect(mockEnsureTaskPlannerChatSession).not.toHaveBeenCalled();
+    expect(storageSpy.mock.calls.some(([, value]) => String(value).includes(prompt))).toBe(false);
+
+    fireEvent.click(send);
+    await waitFor(() => expect(mockStreamChatResponse).toHaveBeenCalledWith(
+      "chat-planner",
+      prompt,
+      expect.any(Object),
+      undefined,
+      undefined,
+      { taskId: "FN-7310" },
+    ));
+    storageSpy.mockRestore();
   });
 
   it("sends messages through the chat stream and appends success responses", async () => {
@@ -2299,15 +2436,14 @@ describe("TaskPlannerChatTab", () => {
       expect(textarea).toHaveValue("next message");
     });
 
-    // The planner command menu renders only commands (not skills), so its
-    // accessible copy must say "command", not the reused skill-menu copy.
-    it("labels the command menu with command-specific copy, not skill copy", async () => {
+    // The unified slash menu can render commands and snippets, so its accessible copy must describe the shared affordance rather than the skill picker it reuses visually.
+    it("labels the command menu with slash-specific copy, not skill copy", async () => {
       renderPlannerChat({ task: makeTask("FN-7310", { column: "in-progress" }) });
       const textarea = await screen.findByLabelText("Message task chat");
 
       fireEvent.change(textarea, { target: { value: "/" } });
 
-      const menu = await screen.findByRole("listbox", { name: /command suggestions/i });
+      const menu = await screen.findByRole("listbox", { name: /slash suggestions/i });
       expect(menu).toBeInTheDocument();
       expect(screen.queryByRole("listbox", { name: /skill suggestions/i })).not.toBeInTheDocument();
     });

@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 
 // Mock external dependencies
 vi.mock("../pi.js", () => ({
@@ -520,7 +519,7 @@ describe("push-after-merge", () => {
     const store = createMockStore();
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
-      mergeIntegrationWorktree: "reuse-task-worktree" as const,
+      mergeIntegrationWorktree: "cwd-main" as const,
       pushAfterMerge: true,
       pushRemote: "origin",
       mergeStrategy: "direct",
@@ -598,7 +597,9 @@ describe("push-after-merge", () => {
     expect(result.merged).toBe(true);
     expect(result.pushedToRemote).toBe(false);
     expect(result.pushError).toContain("permission denied");
-    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done", undefined, ANY_MUTATION_CONTEXT);
+    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done", {
+      workflowMoveSource: "merger-complete-task",
+    });
 
     // FN-7625: a failed push must not vanish silently — it needs a persisted
     // audit event and a task log entry, not just a process-wide log line.
@@ -617,7 +618,8 @@ describe("push-after-merge", () => {
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-050",
       expect.stringContaining("Push to remote failed after merge"),
-      "PushToRemoteFailed", ANY_MUTATION_CONTEXT);
+      "PushToRemoteFailed",
+    );
   });
 
   it("records an aborted outcome when the retained merger is cancelled during push", async () => {

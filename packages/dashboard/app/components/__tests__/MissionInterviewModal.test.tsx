@@ -371,6 +371,20 @@ describe("MissionInterviewModal", () => {
     expect(screen.getByText("Deployment commits remain independently reviewable.")).toBeInTheDocument();
   });
 
+  it("keeps titles-only mission interview thinking visible with a raw trace escape hatch", async () => {
+    renderModal();
+    fireEvent.change(screen.getByLabelText("What do you want to build?"), { target: { value: "Build a mission planning workflow" } });
+    fireEvent.click(screen.getByText("Start Interview"));
+    await waitFor(() => expect(streamHandlers).toBeDefined());
+    act(() => streamHandlers.onThinking?.("**One**\n\n**Two**\n\n**Three**"));
+    await waitFor(() => expect(screen.getByTestId("thinking-trace-raw-toggle")).toBeInTheDocument());
+    const container = document.querySelector<HTMLElement>(".planning-thinking-output")!;
+    expect(container.querySelectorAll("[data-testid='thinking-trace-section']")).toHaveLength(0);
+    expect(container.querySelectorAll(".thinking-trace-section-empty")).toHaveLength(0);
+    fireEvent.click(screen.getByTestId("thinking-trace-raw-toggle"));
+    expect(screen.getByTestId("thinking-trace-raw")).toHaveTextContent("**One**");
+  });
+
   it("recovers a generating mission interview after a transient Stream error", async () => {
     mockFetchAiSession.mockResolvedValueOnce(buildMissionSession({ status: "generating" }));
 

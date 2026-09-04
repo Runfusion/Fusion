@@ -48,6 +48,7 @@ function buildDeps() {
     releaseSemaphore: vi.fn(),
     clearStalePauseAbortBeforeDispatch: vi.fn(async () => undefined),
     blockOuterDispatchWhenDependenciesUnmet: vi.fn(async () => false),
+    blockOuterDispatchWhenFileScopeLeaseHeld: vi.fn(async () => false),
     executeWorkflowGraph,
   };
 }
@@ -76,6 +77,7 @@ describe("workflow-principal hold cooldown", () => {
     // Gates that can write or await must not run for a card that is only waiting.
     expect(deps.clearStalePauseAbortBeforeDispatch).not.toHaveBeenCalled();
     expect(deps.blockOuterDispatchWhenDependenciesUnmet).not.toHaveBeenCalled();
+    expect(deps.blockOuterDispatchWhenFileScopeLeaseHeld).not.toHaveBeenCalled();
   });
 
   it("keeps deferring across repeated dispatches, which is the hot loop it exists to stop", async () => {

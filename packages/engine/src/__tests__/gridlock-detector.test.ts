@@ -164,6 +164,47 @@ describe("GridlockDetector", () => {
     expect(event?.blockingTaskIds).toEqual(["FN-9"]);
   });
 
+  it("detects a workspace review holder through its repository checkout and normalized scope", async () => {
+    tasks = [
+      createTask("FN-1", { column: "todo" }),
+      createTask("FN-WORKSPACE", {
+        column: "in-review",
+        workspaceWorktrees: { "repo-a": { worktreePath: "/wt/fn-workspace/repo-a" } } as Task["workspaceWorktrees"],
+      }),
+    ];
+    scopes = {
+      "FN-1": ["repo-a/src/shared.ts"],
+      "FN-WORKSPACE": ["src/shared.ts"],
+    };
+
+    const event = await detector.detectGridlock();
+
+    expect(event?.reasons).toEqual({ "FN-1": "overlap" });
+    expect(event?.blockingTaskIds).toEqual(["FN-WORKSPACE"]);
+  });
+
+  it("reports a higher-priority dormant worktree holder as the overlap blocker", async () => {
+    tasks = [
+      createTask("FN-1", { column: "todo", priority: "normal" }),
+      createTask("FN-DORMANT", {
+        column: "triage",
+        priority: "high",
+        worktree: "/wt/fn-dormant",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+    ];
+    scopes = {
+      "FN-1": ["packages/core/src/store.ts"],
+      "FN-DORMANT": ["packages/core/src/store.ts"],
+    };
+
+    const event = await detector.detectGridlock();
+
+    expect(event?.blockedTaskIds).toEqual(["FN-1"]);
+    expect(event?.reasons).toEqual({ "FN-1": "overlap" });
+    expect(event?.blockingTaskIds).toEqual(["FN-DORMANT"]);
+  });
+
   it("does not detect gridlock when there are no schedulable tasks", async () => {
     tasks = [createTask("FN-1", { column: "todo", paused: true }), createTask("FN-2", { column: "in-progress" })];
 

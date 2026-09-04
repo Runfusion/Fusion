@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   ActiveSessionWorktreeRemovalError,
+  classifyWorktreeRemovalContent,
+  InvalidPostLandingProofUsageError,
   NativeWorktreeBackend,
   WorktrunkOperationError,
   WorktrunkWorktreeBackend,
@@ -12,6 +14,7 @@ import { activeSessionRegistry } from "../agents/active-session-registry.js";
 
 const {
   execMock,
+  execFileMock,
   accessMock,
   rmMock,
   chmodMock,
@@ -26,8 +29,11 @@ const {
 } = vi.hoisted(() => {
   const mock = vi.fn();
   (mock as any)[Symbol.for("nodejs.util.promisify.custom")] = mock;
+  const execFileMock = vi.fn().mockResolvedValue({ stdout: "", stderr: "" });
+  (execFileMock as any)[Symbol.for("nodejs.util.promisify.custom")] = execFileMock;
   return {
     execMock: mock,
+    execFileMock,
     accessMock: vi.fn(),
     rmMock: vi.fn(),
     chmodMock: vi.fn(),
@@ -42,7 +48,7 @@ const {
   };
 });
 
-vi.mock("node:child_process", () => ({ exec: execMock, execFile: vi.fn() }));
+vi.mock("node:child_process", () => ({ exec: execMock, execFile: execFileMock }));
 vi.mock("node:fs", () => ({ existsSync: existsSyncMock }));
 vi.mock("node:fs/promises", () => ({ access: accessMock, chmod: chmodMock, rm: rmMock }));
 vi.mock("../execution/branch-conflicts.js", () => ({
@@ -77,8 +83,28 @@ vi.mock("../worktree/worktree-prune.js", () => ({
   pruneWorktreeAdminEntries: pruneWorktreeAdminEntriesMock,
 }));
 
+describe("classifyWorktreeRemovalContent", () => {
+  it.each([
+    { name: "classifies empty output as clean", porcelain: "", expected: "clean" },
+    { name: "classifies whitespace-only output as clean", porcelain: "  \n\t\n", expected: "clean" },
+    { name: "classifies a regenerable dependency directory", porcelain: "!! node_modules/\n", expected: "regenerable-ignored" },
+    { name: "classifies nested and root regenerable directories", porcelain: "!! packages/core/dist/\n!! node_modules/\n", expected: "regenerable-ignored" },
+    { name: "preserves ignored entries when one is non-regenerable", porcelain: "!! dist/\n!! .env\n", expected: "ignored-only" },
+    { name: "preserves a non-regenerable ignored file", porcelain: "!! .env\n", expected: "ignored-only" },
+    { name: "fails closed for a quoted ignored path", porcelain: '!! "generated output/"\n', expected: "ignored-only" },
+    { name: "classifies an untracked file as deliverable", porcelain: "?? untracked.txt\n", expected: "deliverable" },
+    { name: "classifies a modified tracked file as deliverable", porcelain: " M tracked.ts\n", expected: "deliverable" },
+    { name: "does not let ignored entries mask an untracked file", porcelain: "!! node_modules/\n?? untracked.txt\n", expected: "deliverable" },
+    { name: "classifies an unmerged file as deliverable", porcelain: "!! dist/\nUU conflicted.ts\n", expected: "deliverable" },
+  ])("$name", ({ porcelain, expected }) => {
+    expect(classifyWorktreeRemovalContent(porcelain)).toBe(expected);
+  });
+});
+
 beforeEach(() => {
   execMock.mockReset();
+  execFileMock.mockReset();
+  execFileMock.mockResolvedValue({ stdout: "", stderr: "" });
   accessMock.mockReset();
   rmMock.mockReset();
   rmMock.mockResolvedValue(undefined as never);
@@ -276,6 +302,24 @@ describe("NativeWorktreeBackend", () => {
     await expect(new NativeWorktreeBackend().remove({ rootDir: "/repo", worktreePath: "/repo/.worktrees/fn-1" })).rejects.toBe(error);
     expect(rmMock).not.toHaveBeenCalled();
     expect(pruneWorktreeAdminEntriesMock).not.toHaveBeenCalled();
+  });
+
+  it("prunes a missing defensive worktree registration without recursive fallback", async () => {
+    execMock.mockRejectedValueOnce({ stderr: "fatal: '/repo/.worktrees/fn-1' is not a working tree" });
+    existsSyncMock.mockReturnValue(false);
+
+    await new NativeWorktreeBackend().remove({
+      rootDir: "/repo",
+      worktreePath: "/repo/.worktrees/fn-1",
+      force: false,
+    });
+
+    expect(rmMock).not.toHaveBeenCalled();
+    expect(pruneWorktreeAdminEntriesMock).toHaveBeenCalledWith(expect.objectContaining({
+      rootDir: "/repo",
+      reason: "remove-missing-fallback",
+      target: "/repo/.worktrees/fn-1",
+    }));
   });
 
   it("retries errno-only recoverable cleanup failures before pruning once", async () => {
@@ -954,10 +998,156 @@ describe("removeWorktree", () => {
     });
 
     expect(execMock).toHaveBeenCalledWith(
-      'git worktree remove --force "/repo/.worktrees/fn-1"',
+      'git worktree remove "/repo/.worktrees/fn-1"',
       expect.objectContaining({ cwd: "/repo", timeout: 60000 }),
     );
     expect(audit.git).toHaveBeenCalledWith({ type: "worktree:remove", target: "/repo/.worktrees/fn-1" });
+  });
+
+  it("permits non-regenerable ignored content after a proven landing without force", async () => {
+    execFileMock.mockResolvedValueOnce({ stdout: "!! .env\n", stderr: "" });
+    execMock.mockResolvedValueOnce({ stdout: "", stderr: "" });
+    const audit = { git: vi.fn().mockResolvedValue(undefined) } as any;
+
+    await removeWorktree({
+      rootDir: "/repo",
+      worktreePath: "/repo/.worktrees/fn-251",
+      settings: {},
+      audit,
+      taskId: "FN-251",
+      reason: RemovalReason.CompletionLandedCleanup,
+      postLandingProof: { landedSha: "abc123", source: "ai-merge-finalize" },
+    });
+
+    expect(execFileMock).toHaveBeenCalledWith(
+      "git",
+      ["status", "--porcelain=v1", "--ignored=matching", "--untracked-files=normal"],
+      expect.objectContaining({ cwd: "/repo/.worktrees/fn-251" }),
+    );
+    expect(execMock).toHaveBeenCalledWith(
+      'git worktree remove "/repo/.worktrees/fn-251"',
+      expect.objectContaining({ cwd: "/repo", timeout: 60000 }),
+    );
+    expect(audit.git).toHaveBeenCalledWith({
+      type: "worktree:post-landing-ignored-content-discarded",
+      target: "/repo/.worktrees/fn-251",
+      metadata: {
+        taskId: "FN-251",
+        reason: RemovalReason.CompletionLandedCleanup,
+        source: "ai-merge-finalize",
+        landedSha: "abc123",
+      },
+    });
+  });
+
+  it("rejects landing proof for every pre-existing removal reason", async () => {
+    await expect(removeWorktree({
+      rootDir: "/repo",
+      worktreePath: "/repo/.worktrees/fn-251",
+      settings: {},
+      taskId: "FN-251",
+      reason: RemovalReason.PoolPrune,
+      postLandingProof: { source: "test" },
+    })).rejects.toBeInstanceOf(InvalidPostLandingProofUsageError);
+
+    expect(execFileMock).not.toHaveBeenCalled();
+    expect(execMock).not.toHaveBeenCalled();
+  });
+
+  it("removes regenerable ignored content during defensive cleanup and audits the discard", async () => {
+    execFileMock.mockResolvedValueOnce({ stdout: "!! node_modules/\n", stderr: "" });
+    execMock.mockResolvedValueOnce({ stdout: "", stderr: "" });
+    const audit = { git: vi.fn().mockResolvedValue(undefined) } as any;
+
+    await expect(removeWorktree({
+      rootDir: "/repo",
+      worktreePath: "/repo/.worktrees/fn-9233",
+      settings: {},
+      audit,
+      taskId: "FN-9233",
+      reason: RemovalReason.PoolPrune,
+    })).resolves.toMatchObject({ removed: true });
+
+    expect(audit.git).toHaveBeenCalledWith({
+      type: "worktree:removal-discarded-regenerable-content",
+      target: "/repo/.worktrees/fn-9233",
+      metadata: { taskId: "FN-9233", reason: RemovalReason.PoolPrune, entryCount: 1 },
+    });
+  });
+
+  it("preserves non-regenerable ignored content without landing proof and audits it", async () => {
+    execFileMock.mockResolvedValueOnce({ stdout: "!! .env\n", stderr: "" });
+    const audit = { git: vi.fn().mockResolvedValue(undefined) } as any;
+
+    await expect(removeWorktree({
+      rootDir: "/repo",
+      worktreePath: "/repo/.worktrees/fn-9233",
+      settings: {},
+      audit,
+      taskId: "FN-9233",
+      reason: RemovalReason.PoolPrune,
+    })).rejects.toThrow(/preserving/);
+
+    expect(audit.git).toHaveBeenCalledWith({
+      type: "worktree:removal-preserved",
+      target: "/repo/.worktrees/fn-9233",
+      metadata: {
+        taskId: "FN-9233",
+        reason: RemovalReason.PoolPrune,
+        source: undefined,
+        classification: "ignored-only",
+        hasPostLandingProof: false,
+      },
+    });
+  });
+
+  it("records deliverable and unverifiable defensive refusals", async () => {
+    const audit = { git: vi.fn().mockResolvedValue(undefined) } as any;
+    execFileMock.mockResolvedValueOnce({ stdout: "?? wip.txt\n", stderr: "" });
+
+    await expect(removeWorktree({
+      rootDir: "/repo",
+      worktreePath: "/repo/.worktrees/fn-251",
+      settings: {},
+      audit,
+      taskId: "FN-251",
+      reason: RemovalReason.PoolPrune,
+    })).rejects.toThrow(/preserving/);
+
+    expect(audit.git).toHaveBeenCalledWith({
+      type: "worktree:removal-preserved",
+      target: "/repo/.worktrees/fn-251",
+      metadata: {
+        taskId: "FN-251",
+        reason: RemovalReason.PoolPrune,
+        source: undefined,
+        classification: "deliverable",
+        hasPostLandingProof: false,
+      },
+    });
+  });
+
+  it("routes regenerable defensive removal through worktrunk without force", async () => {
+    execFileMock.mockResolvedValueOnce({ stdout: "!! dist/\n", stderr: "" });
+    execMock.mockResolvedValueOnce({ stdout: "", stderr: "" });
+    const audit = { git: vi.fn().mockResolvedValue(undefined) } as any;
+
+    await removeWorktree({
+      rootDir: "/repo",
+      worktreePath: "/repo/.worktrees/fn-9233",
+      settings: { worktrunk: { enabled: true, binaryPath: "worktrunk", onFailure: "fail" } as any },
+      audit,
+      taskId: "FN-9233",
+      reason: RemovalReason.PoolPrune,
+    });
+
+    expect(execMock).toHaveBeenCalledWith(
+      '"worktrunk" "remove" "--foreground" "/repo/.worktrees/fn-9233"',
+      expect.objectContaining({ cwd: "/repo" }),
+    );
+    expect(audit.git).toHaveBeenCalledWith(expect.objectContaining({
+      type: "worktree:removal-discarded-regenerable-content",
+    }));
   });
 
   it("classifies FN-343 nonstandard temp merge worktree remove failures as harmless when porcelain is absent after prune", async () => {

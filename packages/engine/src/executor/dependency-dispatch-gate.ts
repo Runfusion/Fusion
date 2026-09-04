@@ -10,7 +10,6 @@ import type { Task, TaskStore } from "@fusion/core";
 import { getUnmetSchedulingDependencies } from "../scheduler.js";
 import { executorLog } from "../logger.js";
 import type { EngineRunContext } from "../util/run-audit.js";
-import { resolveReboundColumnFor } from "./lifecycle-columns.js";
 import { clearDispatchBlockedLogState, logDispatchBlockedOnce } from "./dispatch-block-log.js";
 
 export type DependencyDispatchGateDeps = {
@@ -47,16 +46,7 @@ export async function blockOuterDispatchWhenDependenciesUnmet(
     return false;
   }
 
-  const reboundColumn = await resolveReboundColumnFor(deps.store, liveTask.id);
-  if (liveTask.column !== reboundColumn) {
-    await deps.store.moveTask(liveTask.id, reboundColumn, {
-      preserveProgress: true,
-      preserveWorktree: true,
-      preserveResumeState: true,
-      moveSource: "engine",
-      recoveryRehome: true,
-    }, deps.runContextFor(liveTask.id));
-  }
+  // Dependency admission is an in-place hold. It may suppress dispatch but cannot move lifecycle state backward.
   /*
   FNXC:DependencyGating 2026-08-07-12:10:
   Prefer the store's transitionQueuedEpisode so queued signature/blockedBy/audit are one atomic

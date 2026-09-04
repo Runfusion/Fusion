@@ -19,7 +19,6 @@ import {
   fetchGitRemotes,
   uploadAttachment,
   fetchBoardWorkflows,
-  fetchWorkspaceRepos,
   type BoardWorkflowsPayload,
   type CreateTaskInput,
   type DuplicateMatch,
@@ -370,13 +369,18 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
   const isFloating = viewportMode !== "mobile";
 
   const [dependencies, setDependencies] = useState<string[]>([]);
-  const [workspaceRepositories, setWorkspaceRepositories] = useState<string[]>([]);
-  const [selectedRepositoryScope, setSelectedRepositoryScope] = useState<string[]>([]);
   const [branchMode, setBranchMode] = useState<BranchSelectionMode>("project-default");
   const [branch, setBranch] = useState("");
   const [baseBranch, setBaseBranch] = useState("");
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  /*
+  FNXC:NewTaskWorkflowStart 2026-08-27-10:50:
+  FN-196 keeps Start visible during ordinary creation, so its in-flight label must track the
+  submitted action rather than shared submit state. State, not the pending workflow ref, rerenders
+  the button while duplicate acknowledgement preserves a pending Start label.
+  */
+  const [startSubmitInFlight, setStartSubmitInFlight] = useState(false);
   const [duplicateMatches, setDuplicateMatches] = useState<DuplicateMatch[] | null>(null);
   const [executorModel, setExecutorModel] = useState("");
   const [credentialInstanceId, setCredentialInstanceId] = useState<string | undefined>(undefined);
@@ -588,12 +592,21 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
     ? boardWorkflows.workflows.find((workflow) => workflow.id === resolvedStartWorkflowId)
     : undefined;
   const validatedStartWorkflow = validateQuickAddStartWorkflow(startWorkflowCandidate);
+  const startInitialColumn = validatedStartWorkflow
+    ? resolveQuickAddStartInitialColumn(validatedStartWorkflow)
+    : null;
   const startWorkflowTarget = resolveQuickAddStartWorkflowTarget(validatedStartWorkflow);
+  /*
+  FNXC:NewTaskWorkflowStart 2026-08-27-10:50:
+  FN-196 keeps Start hidden only when server-derived workflow metadata cannot prove a destination.
+  Eligible workflows render a disabled empty-description affordance so it remains discoverable and
+  matches Quick Add; an atomic initial column does not require a follow-up move callback.
+  */
   const canStartTask = Boolean(
     validatedStartWorkflow
     && workflowSupportsQuickAddStart(validatedStartWorkflow)
     && startWorkflowTarget
-    && onMoveTask,
+    && (startInitialColumn || onMoveTask),
   );
   const canStartTaskNow = canStartTask && Boolean(description.trim()) && !isSubmitting;
 
@@ -642,11 +655,10 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
       branchMode !== "project-default" ||
       branch !== "" ||
       baseBranch !== "" ||
-      selectedRepositoryScope.length > 0 ||
       githubTrackingEnabled !== initialDefaultValues.githubTrackingEnabled ||
       githubRepoOverrideTrimmed !== "";
     setHasDirtyState(isDirty);
-  }, [description, dependencies, pendingImages, selectedWorkflowId, hasUserSelectedEnabledWorkflowSteps, executorModel, validatorModel, planningModel, thinkingLevel, plannerOversightLevel, selectedAgentId, reviewLevel, autoMerge, priority, nodeId, executionMode, branchMode, branch, baseBranch, selectedRepositoryScope, githubTrackingEnabled, githubRepoOverrideTrimmed, initialDefaultValues]);
+  }, [description, dependencies, pendingImages, selectedWorkflowId, hasUserSelectedEnabledWorkflowSteps, executorModel, validatorModel, planningModel, thinkingLevel, plannerOversightLevel, selectedAgentId, reviewLevel, autoMerge, priority, nodeId, executionMode, branchMode, branch, baseBranch, githubTrackingEnabled, githubRepoOverrideTrimmed, initialDefaultValues]);
 
   const resetForm = useCallback(() => {
     // Clean up object URLs
@@ -655,7 +667,6 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
     setPendingImages([]);
     setDescription("");
     setDependencies([]);
-    setSelectedRepositoryScope([]);
     setExecutorModel("");
     setCredentialInstanceId(undefined);
     setValidatorModel("");
@@ -685,19 +696,9 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
     setInitialDefaultValues({ executorModel: "", validatorModel: "", githubTrackingEnabled: false });
     setGithubRepoOverride("");
     setDuplicateMatches(null);
+    setStartSubmitInFlight(false);
     githubGeneratedDescriptionRef.current = "";
   }, [pendingImages]);
-
-  useEffect(() => {
-    if (!isOpen) return;
-    /*
-    FNXC:WorkspaceRepos 2026-08-23-23:58:
-    Never let this payload decide whether New Task renders. A 200 whose body lacks `repos` used to store `undefined` in state, and the unguarded `.length` read below then threw during render, unmounting the whole modal into a blank screen — the caller only guarded the rejected path.
-    */
-    void fetchWorkspaceRepos(projectId)
-      .then(({ repos }) => setWorkspaceRepositories(Array.isArray(repos) ? repos : []))
-      .catch(() => setWorkspaceRepositories([]));
-  }, [isOpen, projectId]);
 
   const handleClose = useCallback(async () => {
     if (hasDirtyState) {
@@ -739,7 +740,7 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
       title: undefined,
       description: trimmedDesc,
       dependencies: dependencies.length ? dependencies : undefined,
-      ...(selectedRepositoryScope.length > 0 ? { repositoryScope: selectedRepositoryScope } : {}),      // U6/R3: forward the workflow selection only when the user changed it.
+      // U6/R3: forward the workflow selection only when the user changed it.
       //  - undefined → omit (store inherits the project default, today's behavior)
       //  - null      → explicit "No workflow" (store skips default materialization)
       //  - string    → that workflow, materialized atomically at create time.
@@ -859,6 +860,7 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
     const trimmedDesc = description.trim();
     if (!trimmedDesc || isSubmitting || githubRepoOverrideInvalid || hasInvalidBranchSelection) return;
 
+    setStartSubmitInFlight(Boolean(startWorkflow));
     setIsSubmitting(true);
     let keepSubmittingForDuplicateChoice = false;
     try {
@@ -880,6 +882,7 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
       if (!keepSubmittingForDuplicateChoice) {
         pendingWorkflowSelectionRef.current = undefined;
         pendingStartWorkflowRef.current = null;
+        setStartSubmitInFlight(false);
         setIsSubmitting(false);
       }
     }
@@ -906,6 +909,7 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
       pendingWorkflowSelectionRef.current = undefined;
       pendingStartWorkflowRef.current = null;
       setDuplicateMatches(null);
+      setStartSubmitInFlight(false);
       setIsSubmitting(false);
       return;
     }
@@ -923,6 +927,8 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
       addToast(getErrorMessage(err) || t("newTaskModal.failedToCreate", "Failed to create task"), "error");
     } finally {
       pendingWorkflowSelectionRef.current = undefined;
+      pendingStartWorkflowRef.current = null;
+      setStartSubmitInFlight(false);
       setIsSubmitting(false);
     }
   }, [description, duplicateMatches, performCreate, addToast, t]);
@@ -931,6 +937,7 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
     pendingWorkflowSelectionRef.current = undefined;
     pendingStartWorkflowRef.current = null;
     setDuplicateMatches(null);
+    setStartSubmitInFlight(false);
     setIsSubmitting(false);
   }, []);
 
@@ -1259,10 +1266,10 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
         onCreateSubmit={() => { void handleSubmit(); }}
         createSubmitLabel={isSubmitting ? t("newTaskModal.creating", "Creating...") : t("newTaskModal.createTask", "Create Task")}
         createSubmitDisabled={!description.trim() || isSubmitting || githubRepoOverrideInvalid || hasInvalidBranchSelection}
-        onStartSubmit={canStartTask && (Boolean(description.trim()) || isSubmitting) ? handleStartSubmit : undefined}
-        startSubmitLabel={isSubmitting ? t("newTaskModal.starting", "Starting...") : t("newTaskModal.startTask", "Start")}
+        onStartSubmit={canStartTask ? handleStartSubmit : undefined}
+        startSubmitLabel={startSubmitInFlight ? t("newTaskModal.starting", "Starting...") : t("newTaskModal.startTask", "Start")}
         startSubmitDisabled={!canStartTaskNow}
-        renderBelowPrimary={<>{quickFields}{workspaceRepositories.length > 0 && <fieldset className="form-group" data-testid="repository-scope-selector"><legend>{t("newTaskModal.repositoryScope", "Repository scope")}</legend><p className="form-hint">{t("newTaskModal.repositoryScopeHint", "Select the repositories this task intends to change.")}</p>{workspaceRepositories.map((repository) => <label key={repository} className="checkbox-label"><input type="checkbox" checked={selectedRepositoryScope.includes(repository)} onChange={() => setSelectedRepositoryScope((current) => current.includes(repository) ? current.filter((item) => item !== repository) : [...current, repository])} />{repository}</label>)}</fieldset>}</>}
+        renderBelowPrimary={quickFields}
         hideDependencies={true}
         autoExpandMoreOptionsOnSelection={false}
       />

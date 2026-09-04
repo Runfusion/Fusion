@@ -225,6 +225,20 @@ export default function (pi: ExtensionAPI) {
         contextWindow: 1_000_000,
         maxTokens: 128_000,
       },
+      /*
+       * FNXC:ModelCatalog 2026-09-02-01:01:
+       * Advertise Fable 5.1 through the local `claude` subprocess because it uses
+       * the operator's Claude subscription, matching the existing Fable 5 and Sonnet 5 CLI rows.
+       */
+      {
+        id: "claude-fable-5-1",
+        name: "Claude Fable 5.1",
+        reasoning: true,
+        input: ["text", "image"],
+        cost: { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 },
+        contextWindow: 1_000_000,
+        maxTokens: 128_000,
+      },
       {
         id: "claude-opus-4-8",
         name: "Claude Opus 4.8",

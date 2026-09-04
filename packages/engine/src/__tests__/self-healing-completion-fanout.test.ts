@@ -10,11 +10,16 @@ import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import { EventEmitter } from "node:events";
 import type { Settings, Task, TaskStore } from "@fusion/core";
 
-const { execMock, existsSyncMock } = vi.hoisted(() => ({
-  execMock: vi.fn(),
-  existsSyncMock: vi.fn(() => false),
-}));
-vi.mock("node:child_process", () => ({ exec: execMock, execSync: vi.fn(), execFile: vi.fn() }));
+const { execMock, execFileMock, existsSyncMock } = vi.hoisted(() => {
+  const execFileMock = vi.fn();
+  (execFileMock as any)[Symbol.for("nodejs.util.promisify.custom")] = execFileMock;
+  return {
+    execMock: vi.fn(),
+    execFileMock,
+    existsSyncMock: vi.fn(() => false),
+  };
+});
+vi.mock("node:child_process", () => ({ exec: execMock, execSync: vi.fn(), execFile: execFileMock }));
 
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs")>();
@@ -106,9 +111,34 @@ function createStore(tasks: Task[], settings?: Partial<Settings>): TaskStore & E
   }) as unknown as TaskStore & EventEmitter;
 }
 
+function configureTaskWorkflowSelections(
+  store: TaskStore,
+  definitions: ReadonlyArray<{ id: string; ir: unknown }>,
+  workflowIdByTaskId: Readonly<Record<string, string>>,
+): void {
+  const definitionById = new Map(definitions.map((definition) => [definition.id, definition]));
+  const mutable = store as unknown as {
+    listWorkflowDefinitions: ReturnType<typeof vi.fn>;
+    getTaskWorkflowSelection: ReturnType<typeof vi.fn>;
+    getTaskWorkflowSelectionAsync: ReturnType<typeof vi.fn>;
+    getWorkflowDefinition: ReturnType<typeof vi.fn>;
+  };
+  mutable.listWorkflowDefinitions = vi.fn(async () => definitions);
+  mutable.getTaskWorkflowSelection = vi.fn((taskId: string) => {
+    const workflowId = workflowIdByTaskId[taskId];
+    return workflowId ? { workflowId, stepIds: [] } : undefined;
+  });
+  mutable.getTaskWorkflowSelectionAsync = vi.fn(async (taskId: string) => {
+    const workflowId = workflowIdByTaskId[taskId];
+    return workflowId ? { workflowId, stepIds: [] } : undefined;
+  });
+  mutable.getWorkflowDefinition = vi.fn(async (workflowId: string) => definitionById.get(workflowId));
+}
+
 describe("self-healing completion fan-out", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    execFileMock.mockResolvedValue({ stdout: "", stderr: "" });
     execMock.mockImplementation((cmd: string, _opts: unknown, cb: (err: unknown, stdout: string, stderr: string) => void) => {
       cb(null, "", "");
     });
@@ -135,6 +165,99 @@ describe("self-healing completion fan-out", () => {
     expect((store as any).logEntry).toHaveBeenCalledWith(
       "FN-CLEAR",
       expect.stringContaining("FN-4523"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
+    );
+  });
+
+  it("preserves an overlap block held by a failed review task with a worktree", async () => {
+    const completed = makeTask("FN-COMPLETED", { column: "done" });
+    const overlapHolder = makeTask("FN-OVERLAP", {
+      column: "in-review",
+      status: "failed",
+      worktree: "/wt/fn-overlap",
+    });
+    const dependent = makeTask("FN-DEPENDENT", {
+      column: "todo",
+      status: "queued",
+      blockedBy: completed.id,
+      overlapBlockedBy: overlapHolder.id,
+    });
+    const store = createStore([completed, overlapHolder, dependent]);
+    (store as any).parseFileScopeFromPrompt = vi.fn(async () => ["packages/core/src/store.ts"]);
+    const mgr = new SelfHealingManager(store, { rootDir: "/repo" });
+
+    await mgr.reconcileCompletedTask(completed.id);
+
+    expect(await store.getTask(dependent.id)).toMatchObject({
+      status: "queued",
+      blockedBy: null,
+      overlapBlockedBy: overlapHolder.id,
+    });
+    expect((store as any).transitionQueuedEpisode).toHaveBeenCalledWith(
+      dependent.id,
+      expect.objectContaining({ signature: `file-scope:${overlapHolder.id}` }),
+    );
+  });
+
+  it("uses the holder workflow rather than a project-wide terminal column union", async () => {
+    const completed = makeTask("FN-254-COMPLETED", { column: "done" });
+    const overlapHolder = makeTask("FN-254-HOLDER", {
+      column: "shared",
+      priority: "high",
+      worktree: "/wt/fn-254-holder",
+    });
+    const dependent = makeTask("FN-254-DEPENDENT", {
+      column: "todo",
+      priority: "normal",
+      status: "queued",
+      blockedBy: completed.id,
+      overlapBlockedBy: overlapHolder.id,
+    });
+    const store = createStore([completed, overlapHolder, dependent]);
+    (store as any).parseFileScopeFromPrompt = vi.fn(async () => ["packages/core/src/store.ts"]);
+    configureTaskWorkflowSelections(
+      store,
+      [
+        {
+          id: "wf-holder",
+          ir: {
+            version: "v2",
+            name: "holder-workflow",
+            columns: [
+              { id: "todo", name: "Todo", traits: [{ trait: "hold" }] },
+              { id: "shared", name: "Shared", traits: [] },
+              { id: "done", name: "Done", traits: [{ trait: "complete" }] },
+            ],
+            nodes: [],
+            edges: [],
+          },
+        },
+        {
+          id: "wf-other",
+          ir: {
+            version: "v2",
+            name: "other-workflow",
+            columns: [
+              { id: "shared", name: "Shared", traits: [{ trait: "complete" }] },
+            ],
+            nodes: [],
+            edges: [],
+          },
+        },
+      ],
+      { [overlapHolder.id]: "wf-holder" },
+    );
+    const mgr = new SelfHealingManager(store, { rootDir: "/repo" });
+
+    await mgr.reconcileCompletedTask(completed.id);
+
+    expect(await store.getTask(dependent.id)).toMatchObject({
+      status: "queued",
+      blockedBy: null,
+      overlapBlockedBy: overlapHolder.id,
+    });
+    expect((store as any).transitionQueuedEpisode).toHaveBeenCalledWith(
+      dependent.id,
+      expect.objectContaining({ signature: `file-scope:${overlapHolder.id}` }),
     );
   });
 
@@ -166,12 +289,12 @@ describe("self-healing completion fan-out", () => {
 
     const first = await mgr.reconcileCompletedTask("FN-B", { worktreeHint: "/wt/fn-b" });
     expect(first.worktreeRemoved).toBe(true);
-    expect(execMock.mock.calls.some((c) => String(c[0]).includes("git worktree remove --force") && String(c[0]).includes("/wt/fn-b"))).toBe(true);
+    expect(execMock.mock.calls.some((c) => String(c[0]).includes('git worktree remove "/wt/fn-b"'))).toBe(true);
 
     existsSyncMock.mockReturnValue(false);
     const second = await mgr.reconcileCompletedTask("FN-B");
     expect(second.worktreeRemoved).toBe(false);
-    const rmCalls = execMock.mock.calls.filter((c) => String(c[0]).includes("git worktree remove --force") && String(c[0]).includes("/wt/fn-b"));
+    const rmCalls = execMock.mock.calls.filter((c) => String(c[0]).includes('git worktree remove "/wt/fn-b"'));
     expect(rmCalls).toHaveLength(1);
   });
 
@@ -187,7 +310,7 @@ describe("self-healing completion fan-out", () => {
     const out = await mgr.reconcileCompletedTask("FN-C");
     expect(out.worktreeRemoved).toBe(true);
     expect(findSpy).not.toHaveBeenCalled();
-    expect(execMock.mock.calls.some((c) => String(c[0]).includes("git worktree remove --force") && String(c[0]).includes("/wt/fn-c"))).toBe(true);
+    expect(execMock.mock.calls.some((c) => String(c[0]).includes('git worktree remove "/wt/fn-c"'))).toBe(true);
     expect((await store.getTask("FN-C"))?.worktree).toBeNull();
     expect((await store.getTask("FN-C"))?.branch).toBeNull();
     /*

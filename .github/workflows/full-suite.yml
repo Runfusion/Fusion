@@ -255,6 +255,53 @@ jobs:
       - name: Run engine-slow with non-empty-execution assertion
         run: node scripts/assert-engine-slow-nonempty.mjs
 
+  # FNXC:PipelineSmoke 2026-08-23-14:52:
+  # FN-182 runs the deterministic full-pipeline composition only after merge.
+  # It receives an isolated PostgreSQL service and a full clone for disposable
+  # real-Git fixtures, but is intentionally absent from required PR checks.
+  test-pipeline-smoke:
+    name: Pipeline smoke tier
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -h localhost -p 5432 -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      FUSION_PG_TEST_URL_BASE: "postgresql://postgres:postgres@localhost:5432"
+      PGPASSWORD: "postgres"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+
+      - name: Run deterministic pipeline smoke
+        run: pnpm smoke:pipeline
+
+      - name: Upload pipeline smoke report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: pipeline-smoke-report
+          path: packages/engine/.pipeline-smoke-report.json
+          if-no-files-found: warn
+          include-hidden-files: true
+          retention-days: 14
+
   # FNXC:CIGateSpeed 2026-07-22-23:30:
   # Warm the PR gate's incremental build cache from main. The Gate job in
   # pr-checks.yml restores `gate-dist-*` with restore-keys; caches saved on a

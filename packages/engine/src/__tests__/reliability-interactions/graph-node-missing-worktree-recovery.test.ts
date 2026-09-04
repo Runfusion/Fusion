@@ -1,12 +1,4 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-/*
-FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
-These call-arg assertions now include the mutation context the converted sweep passes.
-Adding it is what keeps them load-bearing: left at the old arity every
-`toHaveBeenCalledWith` here would fail, and every `.not.toHaveBeenCalledWith` would pass
-vacuously — an assertion that can no longer fail is worse than one that is red.
-*/
-import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import type { TaskDetail } from "@fusion/core";
 import "../executor-test-helpers.js";
 import {
@@ -24,8 +16,6 @@ import {
   resetExecutorMocks,
 } from "../executor-test-helpers.js";
 import { MAX_WORKTREE_SESSION_RETRIES } from "../../self-healing.js";
-/* FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage C): the executor threads a real mutation context to every store call, so these assertions pin it rather than accepting `undefined`. */
-import { ANY_MUTATION_CONTEXT } from "../mutation-context-matchers.js";
 
 /*
 FNXC:MissingWorktreeRecovery 2026-07-16-18:40:
@@ -154,7 +144,7 @@ describe("graph-node unusable-worktree failure recovery (FN-7996)", () => {
     mockedExecSync.mockReturnValue("" as any);
   });
 
-  it("requeues to todo with cleared worktree metadata instead of terminal-parking", async () => {
+  it("clears worktree metadata in the current lane instead of terminal-parking", async () => {
     const initial = makeTask();
     const { store, getLive } = trackingStore(initial);
     const executor = new TaskExecutor(store, "/tmp/test");
@@ -165,7 +155,7 @@ describe("graph-node unusable-worktree failure recovery (FN-7996)", () => {
     }));
 
     const live = getLive();
-    expect(live.column).toBe("todo");
+    expect(live.column).toBe("in-progress");
     expect(live.status).toBeNull();
     expect(live.worktree).toBeNull();
     expect(live.branch).toBeNull();
@@ -175,11 +165,7 @@ describe("graph-node unusable-worktree failure recovery (FN-7996)", () => {
       expect.objectContaining({ status: "failed" }),
       expect.anything(),
     );
-    expect(store.moveTask).toHaveBeenCalledWith(
-      initial.id,
-      "todo",
-      expect.objectContaining({ moveSource: "engine", recoveryRehome: true }), ANY_MUTATION_CONTEXT,
-    );
+    expect(store.moveTask).not.toHaveBeenCalled();
   });
 
   it("recovers when the refusal is only present under the materialized instance error key", async () => {
@@ -191,7 +177,7 @@ describe("graph-node unusable-worktree failure recovery (FN-7996)", () => {
       "node:plan-review::plan-review-step:error": MISSING_WT_ERROR,
     }));
 
-    expect(getLive().column).toBe("todo");
+    expect(getLive().column).toBe("in-progress");
     expect(getLive().worktree).toBeNull();
   });
 
@@ -208,7 +194,7 @@ describe("graph-node unusable-worktree failure recovery (FN-7996)", () => {
     expect(live.column).toBe("in-progress");
     expect(live.status).toBe("failed");
     expect(String(live.error)).toContain("plan-review::plan-review-step");
-    expect(store.moveTask).not.toHaveBeenCalledWith(initial.id, "todo", expect.anything(), ANY_MUTATION_CONTEXT);
+    expect(store.moveTask).not.toHaveBeenCalledWith(initial.id, "todo", expect.anything());
   });
 
   it("does not intercept graph failures without the worktree refusal signature", async () => {
@@ -267,7 +253,7 @@ describe("graph-node unusable-worktree failure recovery (FN-7996)", () => {
     );
 
     expect(handled).toBe(true);
-    expect(getLive().column).toBe("todo");
+    expect(getLive().column).toBe("in-progress");
   });
 
   it("leaves auto-merge-off in-review tasks terminal for human merge (FN-5147)", async () => {
@@ -304,7 +290,7 @@ describe("graph-node unusable-worktree failure recovery (FN-7996)", () => {
     );
 
     expect(handled).toBe(true);
-    expect(getLive().column).toBe("todo");
+    expect(getLive().column).toBe("in-review");
   });
 
   it.each([
@@ -335,13 +321,12 @@ describe("Plan Review missing-worktree repo-root fallback (FN-7996)", () => {
   });
 
   /*
-  FNXC:NodeWorktreeIsolation 2026-07-25-22:10:
-  FN-7996's invariant is unchanged — a missing recorded worktree must never terminal-park Plan Review —
-  but the remedy is no longer "run in the shared repo root". Every lane now runs in the TASK's own
-  worktree, so the reviewer RE-ACQUIRES one. The assertion below is the same symptom (stale path gone,
-  review still runs) with the shared checkout removed as an outcome.
+  FNXC:PlanningBoundary 2026-09-03-05:40:
+  Plan Review deliberately stays on the declared read-only project root before execution owns a
+  checkout. A stale recorded worktree must not force acquisition or terminal-park the planning gate;
+  Code Review separately proves task-checkout reacquisition below.
   */
-  it("re-acquires a task worktree for Plan Review when the recorded worktree is gone (never the repo root)", async () => {
+  it("keeps Plan Review on the declared read-only root when its recorded worktree is gone", async () => {
     const store = createMockStore();
     const executor = new TaskExecutor(store, "/tmp/test");
     mockedExistsSync.mockImplementation((path: unknown) => path !== "/tmp/stale-wt");
@@ -362,23 +347,15 @@ describe("Plan Review missing-worktree repo-root fallback (FN-7996)", () => {
     const result = await (executor as any).runGraphCustomNode(node, live, {}, undefined);
 
     expect(result.outcome).toBe("success");
-    // Not the stale path, and — the point of the change — not the shared repo root either.
     expect(captured.worktreePath).not.toBe("/tmp/stale-wt");
-    expect(captured.worktreePath).not.toBe("/tmp/test");
-    expect(captured.worktreePath).toContain("/tmp/test/.worktrees/");
-    expect(store.logEntry).toHaveBeenCalledWith(
-      live.id,
-      expect.stringContaining("re-acquiring a task worktree instead of running in the shared checkout"),
-      undefined,
-      ANY_MUTATION_CONTEXT,
-    );
+    expect(captured.worktreePath).toBe("/tmp/test");
   });
 
   it("releases the repo-root session lease after the fallback reviewer completes", async () => {
     const store = createMockStore();
     const agentStore = { getAgent: vi.fn().mockResolvedValue(null), createAgent: vi.fn() };
     const executor = new TaskExecutor(store, "/tmp/test", { agentStore } as any);
-    const output = '{"verdict":"APPROVE","notes":""}';
+    const output = '{"verdict":"APPROVE","notes":"Reviewed the scoped work and found it correct."}';
     mockedCreateFnAgent.mockImplementation(async () => {
       const listeners: Array<(event: any) => void> = [];
       return {
@@ -427,26 +404,33 @@ describe("Plan Review missing-worktree repo-root fallback (FN-7996)", () => {
     expect(activeSessionRegistry.lookupByPath("/tmp/test")).toBeNull();
   });
 
-  it("keeps other read-only nodes on the recorded path so they fail fast into recovery", async () => {
+  it("re-acquires a missing recorded worktree before read-only Code Review", async () => {
     const store = createMockStore();
     const executor = new TaskExecutor(store, "/tmp/test");
     mockedExistsSync.mockImplementation((path: unknown) => path !== "/tmp/stale-wt");
 
-    const captured: { worktreePath?: string } = {};
-    vi.spyOn(executor as any, "executeWorkflowStep").mockImplementation(async (...args: any[]) => {
-      captured.worktreePath = args[2];
-      return { success: true, output: "ok" };
-    });
-
     const node = {
-      id: "custom-gate",
+      id: "code-review-step",
       kind: "prompt",
-      config: { name: "Custom Gate", prompt: "Check something.", toolMode: "readonly" },
+      config: {
+        name: "Code Review",
+        prompt: "Review the implementation.",
+        toolMode: "readonly",
+        reviewKind: "code",
+      },
     };
     const live = makeTask({ worktree: "/tmp/stale-wt" });
+    const reacquired = makeTask({ worktree: "/tmp/test/.worktrees/reacquired", branch: live.branch });
+    const acquireSpy = vi.spyOn(executor as any, "ensureGraphCustomNodeWorktree").mockResolvedValue(reacquired);
+    vi.spyOn(executor as any, "executeWorkflowStep").mockResolvedValue({ success: true, output: "APPROVE" });
     store.getTask.mockResolvedValue(live as any);
-    await (executor as any).runGraphCustomNode(node, live, { reviewerInlineFixes: false }, undefined);
+    await (executor as any).runGraphCustomNode(node, live, {}, undefined);
 
-    expect(captured.worktreePath).toBe("/tmp/stale-wt");
+    expect(acquireSpy).toHaveBeenCalledOnce();
+    expect(acquireSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ id: live.id, worktree: undefined }),
+      expect.anything(),
+      node.id,
+    );
   });
 });

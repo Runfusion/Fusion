@@ -31,6 +31,15 @@ The always-available Cost tab reuses the Summary token-table visual system so de
   min-width: calc(var(--space-2xl) * 18);
 }
 
+/*
+FNXC:TaskDetailStats 2026-08-29-05:45:
+Execution and Token Stats and Model cost are separate bordered cards, so tokenized spacing must keep
+them from touching while the existing mobile padding override preserves the same relationship.
+*/
+.detail-section--cost {
+  margin-top: var(--space-lg);
+}
+
 @media (max-width: 768px) {
   .detail-section--cost {
     padding-inline: var(--space-sm);

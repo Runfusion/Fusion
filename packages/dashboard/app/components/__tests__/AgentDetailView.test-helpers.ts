@@ -1,5 +1,5 @@
 // Shared mocks/fixtures for AgentDetailView.*.test.tsx — see FN-4088
-import { createElement } from "react";
+import { createElement, useState } from "react";
 import { vi } from "vitest";
 import type { AgentCapability, AgentDetail } from "../../api";
 
@@ -96,22 +96,59 @@ vi.mock("../../api", () => ({
 }));
 
 vi.mock("../AgentLogViewer", () => ({
-  AgentLogViewer: ({ entries }: { entries: Array<{ text: string; detail?: string }> }) => createElement(
-    "div",
-    { "data-testid": "agent-log-viewer" },
-    ...entries.map((e, i) => createElement(
+  AgentLogViewer: ({
+    entries,
+    showMissingDetailHint = false,
+  }: {
+    entries: Array<{ text: string; detail?: string; type?: string }>;
+    showMissingDetailHint?: boolean;
+  }) => {
+    const [expanded, setExpanded] = useState(false);
+    return createElement(
       "div",
-      { key: i },
-      createElement("span", null, e.text),
-      e.detail
+      { "data-testid": "agent-log-viewer" },
+      showMissingDetailHint && entries.some((entry) =>
+        (entry.type === "tool" || entry.type === "tool_result") && !entry.detail)
         ? createElement(
-          "button",
-          { type: "button", "data-testid": "tool-detail-toggle", "aria-expanded": "false" },
-          "Show output",
+          "div",
+          { "data-testid": "agent-log-missing-detail-hint", role: "note" },
+          "Some tool details are unavailable.",
         )
         : null,
-    )),
-  ),
+      ...entries.map((entry, index) => {
+        const exceedsPreview = Boolean(entry.detail && (entry.detail.length > 600 || entry.detail.split("\n").length > 6));
+        return createElement(
+          "div",
+          { key: index },
+          createElement("span", null, entry.text),
+          entry.detail
+            ? createElement(
+              "pre",
+              {
+                "data-testid": "tool-detail-content",
+                className: exceedsPreview && !expanded
+                  ? "agent-log-tool-detail-content agent-log-tool-detail-content--preview"
+                  : "agent-log-tool-detail-content",
+              },
+              entry.detail,
+            )
+            : null,
+          exceedsPreview
+            ? createElement(
+              "button",
+              {
+                type: "button",
+                "data-testid": "tool-detail-toggle",
+                "aria-expanded": String(expanded),
+                onClick: () => setExpanded((value) => !value),
+              },
+              expanded ? "Show less" : "Show more",
+            )
+            : null,
+        );
+      }),
+    );
+  },
 }));
 
 vi.mock("../CustomModelDropdown", () => ({

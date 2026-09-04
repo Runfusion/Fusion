@@ -110,11 +110,11 @@ function renderSection(initialForm: SettingsFormState = { defaultThinkingLevel: 
 }
 
 describe("ProjectModelsSection Chat default settings", () => {
-  it("renders the Chat subsection with prompt mode and model controls by default", () => {
+  it("renders the Chat subsection with model controls by default", () => {
     renderSection();
 
     expect(screen.getByRole("heading", { name: "Chat" })).toBeInTheDocument();
-    expect(screen.getByLabelText("New Chat behavior")).toHaveValue("prompt");
+    expect(screen.getByTestId("project-models-chat-kind")).toBeInTheDocument();
     expect(screen.getByTestId("project-models-chat-model")).toBeInTheDocument();
     expect(screen.getByTestId("mock-model-host-chatDefaultModel")).toHaveAttribute("data-default-thinking", "medium");
   });
@@ -164,13 +164,6 @@ describe("ProjectModelsSection Chat default settings", () => {
     });
   });
 
-  it("setting the mode writes chatNewSessionMode", () => {
-    const { getForm } = renderSection();
-
-    fireEvent.change(screen.getByLabelText("New Chat behavior"), { target: { value: "always-default" } });
-
-    expect(getForm().chatNewSessionMode).toBe("always-default");
-  });
 
   it("Reset clears all chat default fields", () => {
     const { getForm } = renderSection({

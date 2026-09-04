@@ -60,7 +60,7 @@ interface AppModalsProps {
   onPlanningMode?: (initialPlan: string, workflowId?: string | null, sourceIssue?: { provider: "github"; repository: string; issueNumber: number; url: string; title?: string }) => void;
   onOpenChatWithPrefill?: (prefillText: string) => void;
   taskOperations: {
-    moveTask: (taskId: string, column: Column, optionsOrPosition?: { preserveProgress?: boolean } | number) => Promise<Task>;
+    moveTask: (taskId: string, column: Column, optionsOrPosition?: { preserveProgress?: boolean; expectedColumn?: string } | number) => Promise<Task>;
     deleteTask: (taskId: string, options?: {
       removeDependencyReferences?: boolean;
       removeLineageReferences?: boolean;
@@ -76,8 +76,9 @@ interface AppModalsProps {
     unpauseTask: (taskId: string) => Promise<Task>;
     /* FNXC:ReviewLaneBypass 2026-07-09-00:00 (FN-7720): operator-only review-lane bypass, threaded to TaskDetailModal only. */
     bypassReview?: (taskId: string, reason: string) => Promise<Task>;
-    resetTask: (taskId: string) => Promise<Task>;
-    duplicateTask: (taskId: string) => Promise<Task>;
+
+    resetTask: (taskId: string, options?: { description?: string }) => Promise<Task>;
+    duplicateTask: (taskId: string, options?: { workflowId?: string }) => Promise<Task>;
   };
   deepLink: {
     handleDetailClose: () => void;
@@ -323,7 +324,6 @@ export function AppModals({
             onClose={closeDetailWithNav}
             onOpenDetail={openDetailTaskWithNav}
             mobileHeaderMode={modalManager.detailTaskOrigin === "list-mobile" ? "back" : "close"}
-            onMoveTask={taskOperations.moveTask}
             /* FNXC:TaskRevert 2026-08-01-20:27: Modal detail must offer the same revision draft recovery as every reverted-task host. */
             onReviseTask={(task) => modalManager.openNewTaskWithDescription(task.description)}
             onDeleteTask={taskOperations.deleteTask}
@@ -331,6 +331,7 @@ export function AppModals({
             onArchiveTask={taskOperations.archiveTask}
             onRevertTask={taskOperations.revertTask}
             onRetryTask={taskOperations.retryTask}
+            onOpenChatWithPrefill={onOpenChatWithPrefill}
             onPauseTask={taskOperations.pauseTask}
             onUnpauseTask={taskOperations.unpauseTask}
             onBypassReview={taskOperations.bypassReview}

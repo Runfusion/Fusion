@@ -1,6 +1,6 @@
 /**
  * FNXC:Identity 2026-08-09-03:04:
- * U2 of the pluggable user identity plan: migration 0067 adds the actor registry, credentials,
+ * U2 of the pluggable user identity plan: migration 0072 adds the actor registry, credentials,
  * sessions, and provider links to `central`, plus project-scoped role grants to `project`.
  *
  * What these tests exist to catch:
@@ -40,16 +40,16 @@ const NOW = "2026-08-09T03:04:00.000Z";
 describe("identity schema: migration identity", () => {
   /*
   FNXC:Identity 2026-08-23-23:49:
-  Renumbered 0047 -> 0059 -> 0060 -> 0061 -> 0067 because main already shipped 0061-0066.
+  Renumbered 0047 -> 0059 -> 0060 -> 0061 -> 0067 -> 0072 because main already shipped 0061-0066.
   Two migrations sharing one bookkeeping identity would skip identity tables on upgraded databases.
   */
   it("assigns the identity schema its own immutable migration version at the current ceiling", () => {
-    expect(IDENTITY_ACTORS_VERSION).toBe("0067");
-    expect(SCHEMA_BASELINE_VERSION).toBe("0067");
+    expect(IDENTITY_ACTORS_VERSION).toBe("0072");
+    expect(SCHEMA_BASELINE_VERSION).toBe("0072");
   });
 });
 
-pgDescribe("identity schema: migration 0067", () => {
+pgDescribe("identity schema: migration 0072", () => {
   async function withHarness(fn: (h: PgTestHarness) => Promise<void>): Promise<void> {
     const h = await createTaskStoreForTest({ prefix: "fusion_identity" });
     try {
@@ -117,7 +117,7 @@ pgDescribe("identity schema: migration 0067", () => {
 
   /*
   FNXC:Identity 2026-08-24-02:12:
-  origin/main databases already recorded memory-focus as 0066. Identity must still apply as 0067
+  origin/main databases already recorded memory-focus as 0066. Identity must still apply as 0072
   on that shape — nesting the 0067 gate inside the 0066 `if` would skip actor tables on every
   upgraded install while a fresh database looked fine.
   */

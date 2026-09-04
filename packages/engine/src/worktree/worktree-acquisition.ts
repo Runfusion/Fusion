@@ -2,16 +2,15 @@ import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { lstat, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { exec } from "node:child_process";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 import { acquireWorktreePathReservation, assertWorkspaceRepoRelPath, canonicalizeWorktreePath, classifyTaskBranchOrigin, isLegacyWorkspaceWorktreeLayout, resolveEngineIncarnationId, resolveEngineNodeId, resolveWorkspaceRepoWorktreePath, resolveWorkspaceTaskWorktreeDir, workspaceWorktreeGroupSegment, WORKSPACE_GROUP_MARKER_FILENAME, type RunMutationContext, type Settings, type Task, type TaskStore, type SecretsStore, type WorkspaceConfig, type WorkspaceLeaseHandle, type WorkspaceWorktreeContext } from "@fusion/core";
-import { generateWorktreeName, resolveTaskWorkingBranchWithOrigin, slugify } from "./worktree-names.js";
+import { resolveTaskWorkingBranchWithOrigin } from "./worktree-names.js";
 import { resolveTaskWorktreePathForBackend, resolveWorktreesDir, WORKTREE_RECOVERY_DIRNAME } from "./worktree-paths.js";
 import { hydrateWorktreeDb } from "./worktree-db-hydrate.js";
 import { formatError } from "../logger.js";
-import { classifyBootstrapMisbinding, isBranchConflictError, reanchorBranchToBase } from "../execution/branch-conflicts.js";
+import { classifyBootstrapMisbinding, reanchorBranchToBase } from "../execution/branch-conflicts.js";
 import {
-  type WorktreePool,
   canonicalizePath,
   classifyTaskWorktree,
   getRegisteredWorktreeBranches,
@@ -19,12 +18,13 @@ import {
   isRepoRootPath,
   removeWorktree,
   RemovalReason,
-  PoolDoubleLeaseError,
 } from "./worktree-pool.js";
-import { isTaskPinnedWorktreeNaming, pinnedWorktreePathForTask } from "./worktree-pinning.js";
+import { pinnedWorktreePathForTask } from "./worktree-pinning.js";
 import {
   NativeWorktreeBackend,
   WorktrunkOperationError,
+  persistWorktreeBackendKind,
+  readPersistedWorktreeBackendKind,
   resolveWorktreeBackend,
   type WorktreeBackend,
 } from "./worktree-backend.js";
@@ -39,7 +39,8 @@ import {
   type WorktrunkOpName,
 } from "./worktrunk-failure-handler.js";
 import { resolveWorkspaceReviewRemediationRepository } from "../executor/workspace-review-remediation.js";
-import type { RunAuditor } from "../util/run-audit.js";
+import { generateSyntheticRunId, type RunAuditor } from "../util/run-audit.js";
+import { emitBoundedRunAudit } from "../util/emit-bounded-run-audit.js";
 import { reconcileSecretsEnvFingerprint, writeSecretsEnvFile } from "./secrets-env-writer.js";
 import { removeDesktopBuildArtifacts } from "./worktree-desktop-artifacts.js";
 import { installTaskWorktreeIdentityGuard } from "./worktree-hooks.js";
@@ -47,49 +48,31 @@ import { copyConfiguredWorktreeFiles, type WorktreeCopyFileResult } from "./work
 import { resolveCapturedBaseCommitSha } from "../execution/base-commit-capture.js";
 import { resolveIntegrationBranch } from "../merge/integration-branch.js";
 import { recordWorkspaceBaseBranchDecision, resolveWorkspaceRepoBaseBranch } from "./workspace-base-branch.js";
-import { activeSessionRegistry, type ActiveSessionRegistry } from "../agents/active-session-registry.js";
+import { acquireActiveSessionPath, activeSessionRegistry, executingTaskLock, type ActiveSessionRegistry } from "../agents/active-session-registry.js";
 import { refreshReusedWorktreeBase, type WorktreeBaseRefreshResult } from "../worktree-base-refresh.js";
+import { refreshWorkspaceRepoWorktreeBases } from "./workspace-base-refresh.js";
 import { normalizeWorkspaceTaskRouting } from "../executor/workspace-config-resolver.js";
+import {
+  ensureWorktreeDependencies,
+  type DependencyCommandRunner,
+  type DependencyCommandResult,
+} from "./worktree-dependency-install.js";
 
 const execAsync = promisify(exec);
-const WORKTREE_BACKEND_MARKER = "fusion-worktree-backend-kind";
 const PRESERVED_ORPHAN_RETENTION_COUNT = 10;
 const PRESERVED_ORPHAN_NAME_PATTERN = /^[a-z0-9][a-z0-9-]*-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
-async function resolveWorktreeBackendMarkerPath(worktreePath: string): Promise<string> {
-  const { stdout } = await execAsync(`git rev-parse --git-path ${JSON.stringify(WORKTREE_BACKEND_MARKER)}`, {
-    cwd: worktreePath,
-    encoding: "utf-8",
-  });
-  const markerPath = stdout.trim();
-  return isAbsolute(markerPath) ? markerPath : resolve(worktreePath, markerPath);
-}
-
-async function persistWorktreeBackendKind(worktreePath: string, backendKind: WorktreeBackend["kind"]): Promise<void> {
-  await writeFile(await resolveWorktreeBackendMarkerPath(worktreePath), `${backendKind}\n`, "utf-8");
-}
-
-async function readPersistedWorktreeBackendKind(worktreePath: string): Promise<WorktreeBackend["kind"] | undefined> {
-  try {
-    const backendKind = (await readFile(await resolveWorktreeBackendMarkerPath(worktreePath), "utf-8")).trim();
-    return backendKind === "native" || backendKind === "worktrunk" ? backendKind : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 /**
  * Worktree acquisition contract:
- * - `runInitCommand=true` runs the init command only for newly-created worktrees (fresh, not pool/existing).
- * - Heartbeat task runs should pass `runInitCommand=false`.
- * - Executor may pass `runInitCommand=true`; if heartbeat created the worktree earlier, executor reuses it and init is skipped.
+ * - `runInitCommand=true` runs the dependency bootstrap for fresh and reusable task worktrees.
+ * - Heartbeat task runs pass `runInitCommand=false` and never install dependencies.
+ * - Native worktrees are task-id-pinned; Worktrunk owns its own directory layout.
  */
 export interface AcquireTaskWorktreeOptions {
   task: Task;
   rootDir: string;
   store: TaskStore;
   settings: Partial<Settings>;
-  pool?: WorktreePool;
   logger?: { log: (m: string) => void; warn: (m: string) => void; debug?: (m: string) => void; error?: (m: string) => void };
   audit?: Pick<RunAuditor, "git" | "filesystem">;
   /*
@@ -113,15 +96,9 @@ export interface AcquireTaskWorktreeOptions {
   ) => Promise<{ path: string; branch: string }>;
   /** Actual backend used by an injected creator when it differs from the configured backend. */
   createWorktreeBackendKind?: WorktreeBackend["kind"];
-  runConfiguredCommand?: (command: string, cwd: string, timeoutMs: number, env?: NodeJS.ProcessEnv) => Promise<{
-    spawnError?: string | Error;
-    timedOut?: boolean;
-    exitCode?: number | null;
-    signal?: NodeJS.Signals | null;
-    stdout?: string;
-    stderr?: string;
-    bufferExceeded?: boolean;
-  }>;
+  runConfiguredCommand?: DependencyCommandRunner;
+  /** Test seam for the durable multi-ecosystem dependency bootstrap. */
+  ensureDependencyReadiness?: typeof ensureWorktreeDependencies;
   taskEnv?: NodeJS.ProcessEnv;
   backend?: WorktreeBackend;
   /** Test seam for filesystem-device recovery behavior. */
@@ -145,7 +122,7 @@ export interface AcquireTaskWorktreeOptions {
 export interface AcquireTaskWorktreeResult {
   worktreePath: string;
   branch: string;
-  source: "existing" | "pool" | "fresh";
+  source: "existing" | "fresh";
   hydrated: boolean;
   isResume: boolean;
   reclaimed?: {
@@ -396,7 +373,19 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
   an absent one, and what Stage C changed is that the caller can no longer omit it. The ~45
   downstream writes take the caller's context directly — there is no local fallback left to resolve.
   */
-  const { task, rootDir, store, settings, pool, logger, audit, runContext, createWorktree, runConfiguredCommand, runInitCommand, taskEnv, secretsStore, workspaceContext } = opts;
+  const { task, rootDir, store, settings, logger, audit, runContext, createWorktree, runConfiguredCommand, runInitCommand, taskEnv, secretsStore, workspaceContext } = opts;
+  const ensureDependencyReadiness = opts.ensureDependencyReadiness ?? ensureWorktreeDependencies;
+  /*
+   * FNXC:BranchWriteOrigin 2026-08-28-10:12:
+   * #3523 review (Greptile P1): hardcoded `branchWriteOrigin: "engine"` stamps on branch-value
+   * writes bypassed the classifier below, so operator-provided branches reaching fresh-create,
+   * warm-reuse, pinned reuse, or merge-reuse persisted as Fusion-owned and became eligible for
+   * engine cleanup of branches the operator supplied. Every branch-value write must derive its
+   * origin through `classifyTaskBranchOrigin`; null clears keep explicit stamps because they
+   * attribute the actor and cannot claim branch ownership.
+   */
+  const branchWriteOriginFor = (branch: string | null | undefined): "operator" | "engine" =>
+    classifyTaskBranchOrigin(task, branch ?? undefined) === "operator-supplied" ? "operator" : "engine";
   /*
    * FNXC:BranchNaming 2026-08-21-09:09:
    * Singular assignment persistence is a real task-branch write. Derive its durable provenance
@@ -408,7 +397,7 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
       ? patch
       : {
           ...patch,
-          branchWriteOrigin: patch.branchWriteOrigin ?? (classifyTaskBranchOrigin(task, patch.branch ?? undefined) === "operator-supplied" ? "operator" : "engine") as "operator" | "engine",
+          branchWriteOrigin: patch.branchWriteOrigin ?? branchWriteOriginFor(patch.branch),
         };
     if (!opts.suppressSingularWorktreePersist) {
       await store.updateTask(task.id, provenancePatch, runContext);
@@ -520,20 +509,13 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
   const branchName = workingBranch.branch;
   const resolveExistingWorktreeBackendKind = async (path: string): Promise<WorktreeBackend["kind"]> =>
     (await readPersistedWorktreeBackendKind(path)) ?? opts.createWorktreeBackendKind ?? backend.kind;
-  const naming = settings.worktreeNaming || "random";
   /*
-   * FNXC:TaskPinnedWorktrees 2026-07-16-00:00:
-   * Pinning and `recycleWorktrees` are MUTUALLY EXCLUSIVE — the settings-write boundary rejects enabling both
-   * (see `assertWorktreeNamingRecycleExclusive`). Pinned mode is therefore active only under
-   * `worktreeNaming: "task-id"` AND recycling OFF AND the native backend. The `!recycleWorktrees` guard here is
-   * the runtime backstop: a legacy/hand-edited on-disk config that still carries both settings degrades safely
-   * to recycling (pinning off), matching the rule "task-pinned worktrees only apply when recycling is off".
-   * Worktrunk owns its own layout, so pinning is bypassed whenever worktrunk is enabled or in play.
+   * FNXC:Worktrees 2026-08-29-06:49:
+   * Recycling is retired because a pooled directory necessarily carries a previous task's name.
+   * Native task-id pinning is unconditional, so stale metadata can be repaired by derivation and
+   * every completed worktree is removed after merge. Worktrunk retains ownership of its layout.
    */
-  const pinned = isTaskPinnedWorktreeNaming(settings)
-    && !settings.recycleWorktrees
-    && backend.kind !== "worktrunk"
-    && settings.worktrunk?.enabled !== true;
+  const pinned = backend.kind !== "worktrunk" && settings.worktrunk?.enabled !== true;
   const allowSiblingBranchRename = settings.executorAllowSiblingBranchRename === true;
   const baseBranch = task.executionStartBranch || null;
   /*
@@ -542,21 +524,19 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
    */
   const freshStartPoint = baseBranch ?? await resolveIntegrationBranch(rootDir, settings, { logger: logger ?? console });
 
-  let worktreePath = task.worktree;
-  if (!worktreePath) {
-    const worktreeName = naming === "task-id"
-      ? task.id.toLowerCase()
-      : naming === "task-title"
-        ? slugify(task.title || task.description.slice(0, 60))
-        : generateWorktreeName(rootDir, settings, workspaceContext);
-    worktreePath = await resolveTaskWorktreePathForBackend(rootDir, worktreeName, settings, backend, branchName, workspaceContext);
-  }
+  let worktreePath: string = task.worktree || await resolveTaskWorktreePathForBackend(
+    rootDir,
+    task.id.toLowerCase(),
+    settings,
+    backend,
+    branchName,
+    workspaceContext,
+  );
 
   // Grouped workspace paths have two container levels; native git requires the immediate parent to exist.
   if (workspaceContext && backend.kind !== "worktrunk") await mkdir(dirname(worktreePath), { recursive: true });
   let isResume = Boolean(task.worktree && existsSync(worktreePath));
-  // FNXC:TaskPinnedWorktrees 2026-07-16-00:00: the non-pinned resume-classification self-heal is skipped in
-  // pinned mode; acquirePinnedWorktree runs its own derive→validate→reuse-or-recreate decision below.
+  // Worktrunk owns its own layout; native task-id pinning runs its derive→validate→reuse-or-recreate path below.
   if (!pinned && task.worktree && isResume) {
     const resumeClassification = await classifyTaskWorktree(rootDir, worktreePath);
     /*
@@ -572,13 +552,18 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
       logger?.log(`${task.id}: assigned worktree is not usable; creating a fresh worktree instead: ${worktreePath}`);
       await store.logEntry(task.id, "Assigned worktree is not a registered, usable git worktree; creating a fresh worktree instead", worktreePath, runContext);
       await persistWorktreeAssignment({ worktree: null, branch: null, branchWriteOrigin: "engine" as const, sessionFile: null });
-      const fallbackName = generateWorktreeName(rootDir, settings, workspaceContext);
-      worktreePath = await resolveTaskWorktreePathForBackend(rootDir, fallbackName, settings, backend, branchName, workspaceContext);
+      worktreePath = await resolveTaskWorktreePathForBackend(
+        rootDir,
+        task.id.toLowerCase(),
+        settings,
+        backend,
+        branchName,
+        workspaceContext,
+      );
       isResume = false;
     }
   }
 
-  let acquiredFromPool = false;
   let branch = branchName;
 
   const hydrate = async (path: string): Promise<boolean> => {
@@ -694,7 +679,7 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
     }
   };
 
-  const logConfiguredCopyFileResults = async (results: WorktreeCopyFileResult[], source: "fresh" | "pool") => {
+  const logConfiguredCopyFileResults = async (results: WorktreeCopyFileResult[], source: "fresh") => {
     if (results.length === 0) return;
     const copied = results.filter((result) => result.outcome === "copied");
     const skipped = results.filter((result) => result.outcome === "skipped" && result.reason !== "blank" && result.reason !== "duplicate");
@@ -706,7 +691,7 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
     }
   };
 
-  const copyConfiguredFilesForPreparedWorktree = async (source: "fresh" | "pool") => {
+  const copyConfiguredFilesForPreparedWorktree = async (source: "fresh") => {
     const preparedWorktreePath = worktreePath;
     if (!preparedWorktreePath) return;
     const results = await copyConfiguredWorktreeFiles({
@@ -718,6 +703,42 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
       audit,
     });
     await logConfiguredCopyFileResults(results, source);
+  };
+
+  const resolveDependencyReadinessForPreparedWorktree = async (
+    preparedWorktreePath: string,
+    configuredInitResult?: DependencyCommandResult,
+  ): Promise<void> => {
+    if (!runInitCommand) return;
+    try {
+      const readiness = await ensureDependencyReadiness({
+        worktreePath: preparedWorktreePath,
+        settings,
+        taskId: task.id,
+        store,
+        runContext,
+        logger,
+        runConfiguredCommand,
+        taskEnv,
+        configuredInitResult,
+      });
+      await store.logEntry(
+        task.id,
+        `Worktree dependency readiness${workspaceContext?.repoRelPath ? ` [${workspaceContext.repoRelPath}]` : ""}: ${readiness.readiness}`,
+        undefined,
+        runContext,
+      );
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") throw err;
+      const message = err instanceof Error ? err.message : String(err);
+      logger?.error?.(`${task.id}: worktree dependency readiness probe failed (non-fatal): ${message}`);
+      await store.logEntry(
+        task.id,
+        `Worktree dependency readiness could not be determined${workspaceContext?.repoRelPath ? ` [${workspaceContext.repoRelPath}]` : ""}`,
+        message,
+        runContext,
+      );
+    }
   };
 
   const emitRepoRootReturnGuardAudit = async (guardedPath: string, source: string) => {
@@ -736,7 +757,7 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
 
   const finalizeCreatedWorktree = async (
     created: { path: string; branch: string; backendKind: WorktreeBackend["kind"] },
-    source: "fresh" | "pool",
+    source: "fresh",
     logOrigin: "normal" | "return-guard",
   ): Promise<AcquireTaskWorktreeResult> => {
     /*
@@ -751,8 +772,13 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
 
     worktreePath = created.path;
     branch = created.branch;
+    /*
+     * FNXC:BranchWriteOrigin 2026-08-20-14:40: FN-9161's store validation requires an explicit write origin on every branch write.
+     * FNXC:BranchWriteOrigin 2026-08-28-10:12: the stamp derives from the classifier — an operator override branch reaching
+     * fresh-create finalize must persist "operator" provenance, not engine ownership.
+     */
     try {
-      await persistWorktreeAssignment({ worktree: created.path, branch: created.branch });
+      await persistWorktreeAssignment({ worktree: created.path, branch: created.branch, branchWriteOrigin: branchWriteOriginFor(created.branch) });
     } catch (error) {
       /*
        * FNXC:WorktreeAcquisition 2026-08-21-09:09:
@@ -795,26 +821,44 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
 
     await copyConfiguredFilesForPreparedWorktree(source);
 
+    let configuredInitResult: InitCommandResult | undefined;
     if (runInitCommand && settings.worktreeInitCommand && runConfiguredCommand) {
       const initStartedAt = Date.now();
-      let initResult: InitCommandResult | undefined;
       try {
-        initResult = await runConfiguredCommand(settings.worktreeInitCommand, worktreePath, 300_000, taskEnv);
-        if (initResult.spawnError || initResult.timedOut || initResult.exitCode !== 0) {
-          throw new Error(configuredCommandErrorMessage(initResult));
+        configuredInitResult = await runConfiguredCommand(settings.worktreeInitCommand, worktreePath, 300_000, taskEnv);
+        if (configuredInitResult.spawnError || configuredInitResult.timedOut || configuredInitResult.exitCode !== 0) {
+          throw new Error(configuredCommandErrorMessage(configuredInitResult));
         }
         await store.logEntry(task.id, `[timing] Worktree init command completed in ${Date.now() - initStartedAt}ms`, settings.worktreeInitCommand, runContext);
       } catch (err) {
         if (err instanceof Error && err.name === "AbortError") {
           throw err;
         }
+        configuredInitResult ??= {
+          spawnError: err instanceof Error ? err : new Error(String(err)),
+          exitCode: null,
+          stdout: "",
+          stderr: "",
+          signal: null,
+          bufferExceeded: false,
+          timedOut: false,
+        };
         await store.logEntry(task.id, `[timing] Worktree init command failed after ${Date.now() - initStartedAt}ms`, undefined, runContext);
         const message = err instanceof Error ? err.message : String(err);
-        const outcome = formatInitFailureOutcome(initResult, err);
-        logger?.error?.(`${task.id}: worktree init command failed — first test run will likely fail: ${message} (stderr captured in task log outcome)`);
-        await store.logEntry(task.id, `Worktree init command failed (first test run will likely fail): ${message}`, outcome, runContext);
+        const outcome = formatInitFailureOutcome(configuredInitResult, err);
+        logger?.error?.(`${task.id}: worktree init command failed: ${message} (stderr captured in task log outcome)`);
+        await store.logEntry(task.id, `Worktree init command failed: ${message}`, outcome, runContext);
       }
     }
+
+    /*
+    FNXC:WorktreeDependencies 2026-08-29-06:59:
+    The existing configured init command remains at this fresh-worktree point and its exact
+    engine-observed result is passed to the durable readiness writer. The deterministic matrix is
+    non-fatal here: missing toolchains, command failures, and unfamiliar manifests are logged for
+    the planner; only the Plan Review gate may hold the card.
+    */
+    await resolveDependencyReadinessForPreparedWorktree(worktreePath, configuredInitResult);
 
     await maybeWarnForeignTaskStartPoint({
       baseBranch,
@@ -848,15 +892,26 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
     logger?.warn(`${task.id}: acquisition ${source} returned repo root; clearing assignment and creating a fresh worktree`);
     await store.logEntry(task.id, "Acquisition attempted to return the project root as a task worktree; creating a fresh worktree instead", guardedPath, runContext);
     await persistWorktreeAssignment({ worktree: null, branch: null, branchWriteOrigin: "engine" as const, sessionFile: null });
-    const fallbackName = generateWorktreeName(rootDir, settings, workspaceContext);
-    const fallbackPath = await resolveTaskWorktreePathForBackend(rootDir, fallbackName, settings, backend, branchName, workspaceContext);
+    const fallbackPath = await resolveTaskWorktreePathForBackend(
+      rootDir,
+      task.id.toLowerCase(),
+      settings,
+      backend,
+      branchName,
+      workspaceContext,
+    );
     const created = await createWorktreeImpl(branchName, fallbackPath, task.id, freshStartPoint, allowSiblingBranchRename, false, workingBranch.origin);
     return finalizeCreatedWorktree(created, "fresh", "return-guard");
   };
 
   const guardAcquisitionReturn = async (result: AcquireTaskWorktreeResult): Promise<AcquireTaskWorktreeResult> => {
-    if (!isRepoRootPath(rootDir, result.worktreePath)) return result;
-    return createFreshWorktreeFromReturnGuard(result.worktreePath, result.source);
+    if (isRepoRootPath(rootDir, result.worktreePath)) {
+      return createFreshWorktreeFromReturnGuard(result.worktreePath, result.source);
+    }
+    // Every reusable path receives the same bounded bootstrap as a fresh checkout. Matching
+    // successful records short-circuit, while unresolved rows deliberately retry for Plan Review.
+    await resolveDependencyReadinessForPreparedWorktree(result.worktreePath);
+    return result;
   };
 
   /** Warm-reuse an existing, usable, branch-matched worktree (mirrors the resume path). */
@@ -883,16 +938,19 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
   };
 
   /*
-   * FNXC:TaskPinnedWorktrees 2026-07-16-00:00:
-   * Pinned-mode acquisition: derive → validate → reuse-or-recreate at the SAME derived path.
-   * `task.worktree` is a cache here — if it disagrees with the derived pinned path (the FN-7996 stale/foreign
-   * pointer shape), re-derive, correct the metadata, and emit `worktree:pin-rederived` before validating.
-   * The pool is never consulted (a pooled dir has the wrong name), so a task dispatched N times only ever
-   * touches `<worktreesDir>/<task-id>` and never suffixes a sibling directory name. Recreate-in-place does NOT
-   * consume any worktree-session retry budget (acquisition returns a valid fresh worktree directly).
+   * FNXC:TaskPinnedWorktrees 2026-08-30-15:06:
+   * Pinned acquisition uses the current `.fusion/worktrees` default for new tasks, but a
+   * persisted path under the legacy root remains authoritative while that root is accepted.
+   * Recreating an invalid legacy checkout in place avoids silently migrating user work; only
+   * an external or no-longer-configured pointer is re-derived to the canonical task-ID path.
    */
   const acquirePinnedWorktree = async (): Promise<AcquireTaskWorktreeResult> => {
-    const pinnedPath = pinnedWorktreePathForTask(task.id, settings, rootDir, workspaceContext);
+    const derivedPinnedPath = pinnedWorktreePathForTask(task.id, settings, rootDir, workspaceContext);
+    const persistedPathIsManaged = task.worktree
+      && basename(canonicalizePath(task.worktree)) === task.id.toLowerCase()
+      && canonicalizePath(task.worktree) !== canonicalizePath(rootDir)
+      && isInsideWorktreesDir(rootDir, task.worktree, settings, workspaceContext);
+    const pinnedPath = persistedPathIsManaged ? task.worktree! : derivedPinnedPath;
     const resumedBranch = task.branch ?? branchName;
 
     if (task.worktree && canonicalizePath(task.worktree) !== canonicalizePath(pinnedPath)) {
@@ -954,7 +1012,8 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
          * was already correct.
          */
         if (task.worktree !== pinnedPath || task.branch !== resumedBranch) {
-          await persistWorktreeAssignment({ worktree: pinnedPath, branch: resumedBranch });
+          // FNXC:BranchWriteOrigin 2026-08-28-10:12: warm reuse can adopt an operator-override branch; derive origin (#3523 Greptile P1).
+          await persistWorktreeAssignment({ worktree: pinnedPath, branch: resumedBranch, branchWriteOrigin: branchWriteOriginFor(resumedBranch) });
         }
         return reuseWarmWorktree(pinnedPath, resumedBranch, "existing");
       }
@@ -1082,7 +1141,7 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
     return acquirePinnedWorktree();
   }
 
-  if (!workspaceContext && !task.worktree && !(pool && settings.recycleWorktrees)) {
+  if (!workspaceContext && !task.worktree) {
     const registeredMatches = (await getRegisteredWorktreeBranches(rootDir))
       .filter((entry) => entry.branch === branchName);
     if (registeredMatches.length === 1) {
@@ -1127,176 +1186,7 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
     return guardAcquisitionReturn({ worktreePath, branch: resumedBranch, source: "existing", hydrated, isResume: true, baseRefresh });
   }
 
-  if (!isResume && pool && settings.recycleWorktrees) {
-    let pooled: string | null = null;
-    try {
-      pooled = pool.acquire(task.id);
-    } catch (poolErr) {
-      if (poolErr instanceof PoolDoubleLeaseError) {
-        const poolErrMessage = poolErr instanceof Error ? poolErr.message : String(poolErr);
-        logger?.warn(`${task.id}: ${poolErrMessage}; skipping pool and creating fresh worktree`);
-        await store.logEntry(task.id, `Pool double-lease guard triggered (${poolErrMessage}), creating fresh worktree`, undefined, runContext);
-      } else {
-        throw poolErr;
-      }
-    }
-    if (pooled) {
-      let poolAssignmentPersistenceStarted = false;
-      try {
-        const preparedRaw = await pool.prepareForTask(pooled, branchName, freshStartPoint, {
-          allowSiblingBranchRename,
-          repoDir: rootDir,
-          requestingTaskId: task.id,
-          branchOrigin: workingBranch.origin,
-        });
-        const prepared = typeof preparedRaw === "string"
-          ? { branch: preparedRaw, worktreePath: pooled, reclaimed: false as const }
-          : preparedRaw;
-        if (prepared.reclaimed && prepared.worktreePath !== pooled) {
-          pool.release(pooled, task.id);
-        }
-        worktreePath = prepared.worktreePath;
-        branch = prepared.branch;
-        const pooledClassification = await classifyTaskWorktree(rootDir, worktreePath);
-        if (!pooledClassification.ok) {
-          await audit?.git({
-            type: "worktree:incomplete-detected",
-            target: worktreePath,
-            metadata: {
-              classification: pooledClassification.classification,
-              reason: pooledClassification.reason,
-              source: "pool-acquire",
-              taskId: task.id,
-            },
-          });
-          await store.logEntry(task.id, `Pool returned ${pooledClassification.classification} worktree (${pooledClassification.reason}); creating fresh worktree`, undefined, runContext);
-          if (isInsideWorktreesDir(rootDir, worktreePath, settings)) {
-            try {
-              await removeWorktree({
-                rootDir,
-                worktreePath,
-                settings,
-                reason: RemovalReason.PoolPrune,
-                taskId: task.id,
-                audit: undefined,
-              });
-            } catch (removeErr) {
-              logger?.warn(`${task.id}: failed to remove unusable pooled worktree ${worktreePath}: ${formatError(removeErr)}`);
-            }
-          }
-          const fallbackName = generateWorktreeName(rootDir, settings, workspaceContext);
-          worktreePath = await resolveTaskWorktreePathForBackend(rootDir, fallbackName, settings, backend, branchName, workspaceContext);
-          branch = branchName;
-        } else {
-          /*
-          FNXC:WorktreeIdentity 2026-07-19-16:05:
-          Pool preparation changes the checked-out branch but linked-worktree
-          identity metadata survives the prior occupant. Refresh the marker and
-          shared hooks before exposing the checkout to the new task.
-          */
-          await installTaskWorktreeIdentityGuard({
-            worktreePath,
-            taskId: task.id,
-            expectedBranch: branch,
-            commitMsgHookEnabled: settings.commitMsgHookEnabled,
-            taskPrefix: settings.taskPrefix,
-            taskAttributionTrailerName: settings.taskAttributionTrailerNames?.[0],
-            commitAuthorEnabled: settings.commitAuthorEnabled,
-            commitAuthorName: settings.commitAuthorName,
-            commitAuthorEmail: settings.commitAuthorEmail,
-          });
-          acquiredFromPool = true;
-          logger?.log(`Acquired worktree from pool: ${worktreePath}`);
-          /*
-           * FNXC:WorktreeAcquisition 2026-08-21-09:32:
-           * A lease-backed checkout is not a conflict or a candidate for fresh fallback when its
-           * task-row assignment fails. The outer handler releases the lease and preserves that error.
-           */
-          poolAssignmentPersistenceStarted = true;
-          await persistWorktreeAssignment({ worktree: worktreePath, branch });
-          poolAssignmentPersistenceStarted = false;
-          await audit?.git({ type: "worktree:reuse", target: worktreePath, metadata: { branch, reclaimed: prepared.reclaimed } });
-          if (prepared.reclaimed) {
-            await store.logEntry(task.id, `Acquired reclaimed worktree from pool: ${worktreePath} (${prepared.strandedCommitCount ?? 0} commits preserved)`, undefined, runContext);
-          } else if (branch !== branchName) {
-            logger?.log(`Branch conflict resolved: using ${branch} instead of ${branchName}`);
-            await store.logEntry(task.id, `Acquired worktree from pool: ${worktreePath} (branch conflict: using ${branch})`, undefined, runContext);
-          } else {
-            await store.logEntry(task.id, `Acquired worktree from pool: ${worktreePath}`, undefined, runContext);
-          }
-          const baseRefresh = await refreshExistingWorktree(worktreePath, "native");
-          const cleanup = await removeDesktopBuildArtifacts(worktreePath, logger);
-          if (cleanup.removed.length > 0) {
-            await store.logEntry(task.id, `Removed desktop build artifacts from worktree: ${cleanup.removed.join(", ")}`, undefined, runContext);
-          }
-          await copyConfiguredFilesForPreparedWorktree("pool");
-          await maybeWarnForeignTaskStartPoint({
-            baseBranch,
-            rootDir,
-            worktreePath,
-            taskId: task.id,
-            logger,
-            store,
-            runContext,
-          });
-          const hydrated = await hydrate(worktreePath);
-          try {
-            await writeSecretsEnvFile({
-              rootDir,
-              worktreePath,
-              taskId: task.id,
-              settings,
-              worktreeSource: "pool",
-              secretsStore,
-              audit,
-              logger,
-            });
-          } catch (err) {
-            logger?.warn?.(`${task.id}: secrets-env write failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
-          }
-          return guardAcquisitionReturn({
-            worktreePath,
-            branch,
-            source: "pool",
-            hydrated,
-            isResume: false,
-            baseRefresh,
-            reclaimed: prepared.reclaimed
-              ? {
-                  existingTipSha: prepared.existingTipSha,
-                  strandedCommitCount: prepared.strandedCommitCount,
-                }
-              : undefined,
-          });
-        }
-      } catch (poolErr) {
-        if (poolAssignmentPersistenceStarted) {
-          pool.release(pooled, task.id);
-          throw poolErr;
-        }
-        if (poolErr instanceof WorktreeBaseRefreshError) {
-          // FNXC:WorktreeBaseRefresh 2026-08-09-03:30: Clear every durable resume binding before returning the
-          // checkout to the pool. If persistence fails, retain the lease so no other task can mutate it.
-          await persistWorktreeAssignment({ worktree: null, branch: null, branchWriteOrigin: "engine" as const, sessionFile: null });
-          pool.release(pooled, task.id);
-          throw poolErr;
-        }
-        pool.release(pooled, task.id);
-        if (poolErr instanceof PoolDoubleLeaseError) {
-          const poolErrMessage = poolErr instanceof Error ? poolErr.message : String(poolErr);
-          logger?.warn(`${task.id}: ${poolErrMessage}; skipping pool and creating fresh worktree`);
-          await store.logEntry(task.id, `Pool double-lease guard triggered (${poolErrMessage}), creating fresh worktree`, undefined, runContext);
-        } else if (isBranchConflictError(poolErr)) throw poolErr;
-        const poolErrMessage = poolErr instanceof Error ? poolErr.message : String(poolErr);
-        logger?.log(`Pool prepareForTask failed, falling through to fresh worktree: ${poolErrMessage}`);
-        await store.logEntry(task.id, `Pool worktree preparation failed (${poolErrMessage}), creating fresh worktree`, undefined, runContext);
-      }
-    }
-  }
-
-  // Worktree removal in merger.ts, worktree-pool.ts, and self-healing.ts is now
-  // backend-mediated via WorktreeBackend.remove(). executor.ts and
-  // step-session-executor.ts remain native-only paths (tracked separately).
+  // Fresh native acquisition always creates the task-ID-derived path; removal is backend-mediated.
   const created = await createWorktreeImpl(
     branchName,
     worktreePath,
@@ -1306,7 +1196,7 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
     false,
     workingBranch.origin,
   );
-  return finalizeCreatedWorktree(created, acquiredFromPool ? "pool" : "fresh", "normal");
+  return finalizeCreatedWorktree(created, "fresh", "normal");
 }
 
 /**
@@ -1410,10 +1300,12 @@ export interface AcquireWorkspaceTaskWorktreesOptions {
   runContext: RunMutationContext;
   registry?: ActiveSessionRegistry;
   runConfiguredCommand?: AcquireTaskWorktreeOptions["runConfiguredCommand"];
+  ensureDependencyReadiness?: AcquireTaskWorktreeOptions["ensureDependencyReadiness"];
   taskEnv?: NodeJS.ProcessEnv;
   addActiveWorktree?: (taskId: string, path: string) => void;
-  /** Limit acquisition to the confirmed repository scope; omitted retains the declared manifest. */
-  repoRelPaths?: readonly string[];
+  holderLiveProbe?: AcquireWorkspaceRepoWorktreeOptions["holderLiveProbe"];
+  /** Execution callers opt in after repository acquisition; planning, review, and merge remain unchanged. */
+  refreshStaleBase?: boolean;
 }
 
 export interface AcquireWorkspaceRepoWorktreeOptions {
@@ -1431,7 +1323,13 @@ export interface AcquireWorkspaceRepoWorktreeOptions {
   runContext: RunMutationContext;
   /** Test seam: inject the path-keyed exclusivity registry (defaults to the process singleton). */
   registry?: ActiveSessionRegistry;
+  /**
+   * Proves a foreign acquisition holder is still alive. Ambiguous/throwing probes
+   * deliberately read live so a cache reclaim never steals a real critical section.
+   */
+  holderLiveProbe?: (holderTaskId: string, path: string) => boolean;
   runConfiguredCommand?: AcquireTaskWorktreeOptions["runConfiguredCommand"];
+  ensureDependencyReadiness?: AcquireTaskWorktreeOptions["ensureDependencyReadiness"];
   taskEnv?: NodeJS.ProcessEnv;
   /**
    * FNXC:WorkspaceWorktree 2026-08-20-06:26:34: Revalidate caller-owned admission policy immediately
@@ -1480,7 +1378,7 @@ const WORKSPACE_REPO_ACQUIRE_OWNER_KEY = "workspace-repo-acquire";
 export async function acquireWorkspaceRepoWorktree(
   opts: AcquireWorkspaceRepoWorktreeOptions,
 ): Promise<{ worktreePath: string; branch: string; baseCommitSha?: string; alreadyAcquired: boolean }> {
-  const { repoRelPath, workspaceRootDir, task, store, settings, logger, secretsStore, audit, runContext, runConfiguredCommand, taskEnv, validateTaskBeforeCreate } = opts;
+  const { repoRelPath, workspaceRootDir, task, store, settings, logger, secretsStore, audit, runContext, runConfiguredCommand, ensureDependencyReadiness, taskEnv, validateTaskBeforeCreate } = opts;
   const registry = opts.registry ?? activeSessionRegistry;
   const { join } = await import("node:path");
 
@@ -1489,6 +1387,15 @@ export async function acquireWorkspaceRepoWorktree(
   const repoAbsPath = join(workspaceRootDir, repoRelPath);
 
   let durableAcquireLease: WorkspaceLeaseHandle | undefined;
+  let acquireLeaseLost = false;
+  let acquireLeaseRenewalInFlight: Promise<void> | undefined;
+  let acquireLeaseRenewalTimer: ReturnType<typeof setInterval> | undefined;
+
+  const assertAcquireLeaseLive = (): void => {
+    if (acquireLeaseLost) {
+      throw new WorkspacePreparationError(repoRelPath, "acquire", "durable workspace acquire lease renewal was lost");
+    }
+  };
 
   /*
   FNXC:WorkspaceWorktree 2026-06-22-00:00:
@@ -1515,11 +1422,10 @@ export async function acquireWorkspaceRepoWorktree(
   }
 
   /*
-  FNXC:Workspace 2026-08-15-08:50:
-  Registry-only acquire serialization is invisible to another engine sharing the
-  central database. Claim before the local lookup/register fast path; a durable
-  conflict (including this task on a different node incarnation) is retryable
-  busy rather than permission to overwrite another process's worktree state.
+  FNXC:WorkspaceWorktree 2026-08-23-06:25:
+  The durable acquire lease is the sole cross-process admission authority. It is
+  renewed while legitimate preparation runs; the local registry is only a derived
+  same-process guard and must never outlive a lost or released lease.
   */
   try {
     const acquireWorkspaceLease = (store as Partial<TaskStore>).acquireWorkspaceLease;
@@ -1540,6 +1446,25 @@ export async function acquireWorkspaceRepoWorktree(
         throw new WorkspaceRepoAcquireBusyError(repoRelPath, claim.conflict.taskId, task.id);
       }
       durableAcquireLease = claim.handle;
+      const renewWorkspaceLease = (store as Partial<TaskStore>).renewWorkspaceLease;
+      if (typeof renewWorkspaceLease === "function") {
+        const renew = async (): Promise<void> => {
+          if (!durableAcquireLease || acquireLeaseLost) return;
+          try {
+            const renewed = await renewWorkspaceLease.call(store, durableAcquireLease, 5 * 60_000);
+            if (!renewed) throw new Error("Workspace acquire lease renewal was refused");
+            durableAcquireLease = renewed;
+          } catch {
+            acquireLeaseLost = true;
+          }
+        };
+        acquireLeaseRenewalTimer = setInterval(() => {
+          if (!acquireLeaseRenewalInFlight) {
+            acquireLeaseRenewalInFlight = renew().finally(() => { acquireLeaseRenewalInFlight = undefined; });
+          }
+        }, 60_000);
+        acquireLeaseRenewalTimer.unref?.();
+      }
     }
   } catch (error) {
     if (error instanceof WorkspaceRepoAcquireBusyError) throw error;
@@ -1569,32 +1494,76 @@ export async function acquireWorkspaceRepoWorktree(
   FNXC:Workspace 2026-06-21-20:10:
   Same-sub-repo exclusivity (KTD4): register the sub-repo absolute path in the
   path-keyed activeSessionRegistry BEFORE acquiring so two concurrent workspace
-  tasks contending for the SAME sub-repo are serialized. WorktreePool is a recycle
-  cache, not a cross-task lock, and disjoint-scope contention on one sub-repo is
-  otherwise unprotected (file-scope leases don't catch it). The entry is keyed by
+  tasks contending for the SAME sub-repo are serialized. This is not a task-lifetime
+  reservation: it protects only `git worktree add`, so independent task worktrees remain
+  concurrent after acquisition. The entry is keyed by
   the sub-repo path with a distinct ownerKey so it does not collide with the
   executor's later session registration on the produced worktree path. We release
   it once acquisition completes (success or failure) — it guards the acquisition
   critical section, not the whole task lifetime.
   */
-  const exclusivityHolder = registry.lookupByPath(repoAbsPath);
-  if (exclusivityHolder && exclusivityHolder.ownerKey === WORKSPACE_REPO_ACQUIRE_OWNER_KEY && exclusivityHolder.taskId !== task.id) {
-    const err = new WorkspaceRepoAcquireBusyError(repoRelPath, exclusivityHolder.taskId, task.id);
-    /*
-    FNXC:Workspace 2026-06-21-22:30:
-    F6 — the busy short-circuit's logEntry/audit are best-effort observability; if
-    either throws (e.g. a DB write hiccup) it must NOT replace the
-    WorkspaceRepoAcquireBusyError the caller relies on to classify "serialized,
-    retry later". Swallow logging failures so the busy error is what propagates.
-    */
+  /*
+  FNXC:WorkspaceWorktree 2026-08-23-06:25:
+  Keep the local check/register decision synchronous (F9), but make it a derived
+  cache gate. The durable lease has already decided cross-process admission; this
+  guard only prevents two same-process calls interleaving in this JavaScript turn.
+  A missing or throwing liveness probe is deliberately live/fail-closed.
+  */
+  const holderLiveProbe = (holderTaskId: string, path: string): boolean => {
     try {
-      const message = `sub-repo ${repoRelPath} is being acquired by ${exclusivityHolder.taskId}; serializing concurrent workspace acquisition`;
+      return opts.holderLiveProbe?.(holderTaskId, path) ?? executingTaskLock.has(holderTaskId);
+    } catch {
+      return true;
+    }
+  };
+  let registryClaim = acquireActiveSessionPath(registry, repoAbsPath, {
+    taskId: task.id,
+    kind: "workspace-repo-acquire",
+    ownerKey: WORKSPACE_REPO_ACQUIRE_OWNER_KEY,
+  }, {
+    holderLiveProbe,
+    restrictReclaimToKind: "workspace-repo-acquire",
+  });
+
+  /*
+  FNXC:WorkspaceWorktree 2026-08-23-06:51 (FN-179):
+  A successful durable acquire lease proves that any same-kind local entry is a
+  stale cache, even when its liveness probe is conservatively LIVE. Never let the
+  cache veto the authority; retain the cross-kind land fence so acquire cannot
+  clobber a live merge claim on the same repository path.
+  */
+  if (durableAcquireLease && registryClaim.action === "contended" && registryClaim.holderKind === "workspace-repo-acquire") {
+    const staleHolderTaskId = registryClaim.holderTaskId;
+    const staleAgeMs = registryClaim.ageMs;
+    registry.unregisterPath(repoAbsPath);
+    registryClaim = acquireActiveSessionPath(registry, repoAbsPath, {
+      taskId: task.id,
+      kind: "workspace-repo-acquire",
+      ownerKey: WORKSPACE_REPO_ACQUIRE_OWNER_KEY,
+    }, {
+      holderLiveProbe,
+      restrictReclaimToKind: "workspace-repo-acquire",
+    });
+    void emitBoundedRunAudit(store, {
+      taskId: task.id,
+      agentId: runContext?.agentId ?? "workspace-acquire",
+      runId: runContext?.runId ?? generateSyntheticRunId("workspace-acquire", task.id),
+      domain: "git",
+      mutationType: "worktree:workspace-repo-acquire-reclaimed",
+      target: repoRelPath,
+      metadata: { taskId: task.id, repoRelPath, holderTaskId: staleHolderTaskId, ageMs: staleAgeMs, outcome: "lease-authority" },
+    });
+  }
+  if (registryClaim.action === "contended") {
+    const err = new WorkspaceRepoAcquireBusyError(repoRelPath, registryClaim.holderTaskId, task.id);
+    try {
+      const message = `sub-repo ${repoRelPath} is being acquired by ${registryClaim.holderTaskId}; serializing concurrent workspace acquisition`;
       logger?.warn(`${task.id}: ${message}`);
       await store.logEntry(task.id, message, undefined, runContext);
       await audit?.git({
         type: "worktree:workspace-repo-acquire-busy",
         target: repoAbsPath,
-        metadata: { repoRelPath, holderTaskId: exclusivityHolder.taskId, requestingTaskId: task.id },
+        metadata: { repoRelPath, holderTaskId: registryClaim.holderTaskId, requestingTaskId: task.id },
       });
     } catch {
       // best-effort observability only — never mask the busy error
@@ -1602,18 +1571,6 @@ export async function acquireWorkspaceRepoWorktree(
     if (durableAcquireLease) await store.releaseWorkspaceLease(durableAcquireLease).catch(() => undefined);
     throw err;
   }
-  /*
-  FNXC:Workspace 2026-06-21-22:30:
-  F9 — no `await` may be inserted between lookupByPath and registerPath: the
-  atomicity of the exclusivity claim depends on staying in one synchronous slice.
-  An interleaved await would let a second task pass the lookup gate before this
-  task registers, defeating the same-sub-repo serialization (KTD4).
-  */
-  registry.registerPath(repoAbsPath, {
-    taskId: task.id,
-    kind: "workspace-repo-acquire",
-    ownerKey: WORKSPACE_REPO_ACQUIRE_OWNER_KEY,
-  });
 
   try {
     /*
@@ -1738,6 +1695,7 @@ export async function acquireWorkspaceRepoWorktree(
       audit,
       runContext,
       runConfiguredCommand,
+      ensureDependencyReadiness,
       taskEnv,
       runInitCommand: true,
     });
@@ -1837,6 +1795,7 @@ export async function acquireWorkspaceRepoWorktree(
     never makes dashboard workspace rendering, self-healing, or executor dispatch read it as
     single-repo.
     */
+        assertAcquireLeaseLive();
         acquisitionResult = {
           worktreePath: result.worktreePath,
           branch: result.branch,
@@ -1855,7 +1814,19 @@ export async function acquireWorkspaceRepoWorktree(
             : {}),
         };
         },
-        { clearSingularWorktree: true, validateBeforePersist: validateTaskBeforeCreate },
+        {
+          clearSingularWorktree: true,
+          /*
+          FNXC:WorkspaceWorktree 2026-08-23-08:12:
+          The callback's earlier check cannot fence an interval renewal that loses its lease
+          while the persist transaction awaits I/O. Re-check at the transaction's existing
+          lifecycle-validation seam immediately before the fresh-row update publishes this entry.
+          */
+          validateBeforePersist: async (current) => {
+            assertAcquireLeaseLive();
+            await validateTaskBeforeCreate?.(current);
+          },
+        },
       );
     } catch (error) {
       mergeError = error;
@@ -1906,6 +1877,7 @@ export async function acquireWorkspaceRepoWorktree(
       runContext,
     });
 
+    assertAcquireLeaseLive();
     return acquisitionResult;
   } catch (err) {
     /*
@@ -1942,6 +1914,8 @@ export async function acquireWorkspaceRepoWorktree(
       err instanceof Error ? err.message : String(err),
     );
   } finally {
+    if (acquireLeaseRenewalTimer) clearInterval(acquireLeaseRenewalTimer);
+    await acquireLeaseRenewalInFlight?.catch(() => undefined);
     /*
     FNXC:Workspace 2026-06-21-20:10:
     Release the acquisition-time exclusivity entry only when WE hold it. The busy-path
@@ -2005,15 +1979,32 @@ export class WorkspaceRepoAcquireBusyError extends Error {
 export async function acquireWorkspaceTaskWorktrees(
   opts: AcquireWorkspaceTaskWorktreesOptions,
 ): Promise<{ task: Task; taskWorktreeDir: string }> {
-  const repoRelPaths = [...new Set(opts.repoRelPaths ?? opts.workspaceConfig.repos)];
+  const repoRelPaths = [...new Set(opts.workspaceConfig.repos.map((repo) => repo.trim()).filter(Boolean))].sort();
   if (repoRelPaths.length === 0) {
-    throw new Error(`Workspace task ${opts.task.id} has no declared repositories`);
-  }
-  if (repoRelPaths.some((repoRelPath) => !opts.workspaceConfig.repos.includes(repoRelPath))) {
-    throw new Error(`Workspace task ${opts.task.id} requested an undeclared repository`);
+    throw new Error(`Workspace task ${opts.task.id} has no configured repositories`);
   }
 
   let current = await normalizeWorkspaceTaskRouting(opts.store, opts.task.id);
+  const hasLandedRepository = Object.values(current.workspaceWorktrees ?? {}).some((entry) => Boolean(entry.landedSha));
+  const currentRepositories = [...new Set((current.repositoryScope?.repositories ?? []).map((repo) => repo.trim()).filter(Boolean))].sort();
+  const needsScopeSync = JSON.stringify(currentRepositories) !== JSON.stringify(repoRelPaths)
+    || current.repositoryScope?.state !== "confirmed"
+    || current.repositoryScope?.confirmedBy !== "workspace";
+  if (!hasLandedRepository && needsScopeSync) {
+    const replacement = {
+      repositories: repoRelPaths,
+      state: "confirmed" as const,
+      confirmedBy: "workspace" as const,
+      confirmedAt: new Date().toISOString(),
+      revision: Math.max(1, current.repositoryScope?.revision ?? 1),
+    };
+    const updateScope = (opts.store as Partial<TaskStore>).updateTaskRepositoryScope;
+    // Production stores always expose the durable replacement writer. Structural test stores from
+    // pre-FN-258 keep acquisition routing observable by carrying the derived scope in memory.
+    current = typeof updateScope === "function"
+      ? await updateScope.call(opts.store, current.id, replacement)
+      : { ...current, repositoryScope: replacement };
+  }
   // Validate a durable remediation target without allowing it to choose session cwd.
   resolveWorkspaceReviewRemediationRepository(current, repoRelPaths);
   const taskWorktreeDir = resolveWorkspaceTaskWorktreeDir(opts.workspaceRootDir, opts.settings, current.id);
@@ -2032,12 +2023,28 @@ export async function acquireWorkspaceTaskWorktrees(
       audit: opts.audit,
       runContext: opts.runContext,
       registry: opts.registry,
+      holderLiveProbe: opts.holderLiveProbe,
       runConfiguredCommand: opts.runConfiguredCommand,
+      ensureDependencyReadiness: opts.ensureDependencyReadiness,
       taskEnv: opts.taskEnv,
       worktreePath: legacyLayout ? undefined : resolveWorkspaceRepoWorktreePath(taskWorktreeDir, repoRelPath),
     });
     opts.addActiveWorktree?.(opts.task.id, acquired.worktreePath);
     current = await opts.store.getTask(opts.task.id);
+  }
+
+  if (opts.refreshStaleBase) {
+    const refreshed = await refreshWorkspaceRepoWorktreeBases({
+      task: current,
+      workspaceRootDir: opts.workspaceRootDir,
+      repoRelPaths,
+      store: opts.store,
+      settings: opts.settings,
+      logger: opts.logger,
+      audit: opts.audit,
+      runContext: opts.runContext,
+    });
+    current = refreshed.task;
   }
 
   if (legacyLayout) {

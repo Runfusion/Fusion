@@ -13885,6 +13885,78 @@ for reference.
 - Updated dependencies [a2ed6d0]
   - @runfusion/fusion@0.1.0
 
+## 0.39.37-beta.1
+
+### @fusion/i18n
+
+#### Patch Changes
+
+- @fusion/core@0.78.0-beta.1
+
+## 0.39.37-beta.0
+
+### @fusion/i18n
+
+#### Patch Changes
+
+- @fusion/core@0.78.0-beta.0
+
+## 0.39.36
+
+### @fusion/i18n
+
+#### Patch Changes
+
+- @fusion/core@0.77.0
+
+## 0.39.36-beta.14
+
+### @fusion/i18n
+
+#### Patch Changes
+
+- @fusion/core@0.77.0-beta.14
+
+## 0.39.36-beta.13
+
+### @fusion/i18n
+
+#### Patch Changes
+
+- @fusion/core@0.77.0-beta.13
+
+## 0.39.36-beta.12
+
+### @fusion/i18n
+
+#### Patch Changes
+
+- @fusion/core@0.77.0-beta.12
+
+## 0.39.36-beta.11
+
+### @fusion/i18n
+
+#### Patch Changes
+
+- @fusion/core@0.77.0-beta.11
+
+## 0.39.36-beta.10
+
+### @fusion/i18n
+
+#### Patch Changes
+
+- @fusion/core@0.77.0-beta.10
+
+## 0.39.36-beta.9
+
+### @fusion/i18n
+
+#### Patch Changes
+
+- @fusion/core@0.77.0-beta.9
+
 ## 0.39.36-beta.8
 
 ### @fusion/i18n
@@ -14455,6 +14527,78 @@ for reference.
 #### Patch Changes
 
 - @fusion/core@0.40.0
+
+## 0.11.63-beta.1
+
+### @fusion/droid-cli
+
+#### Patch Changes
+
+- @fusion-plugin-examples/droid-runtime@0.1.63-beta.1
+
+## 0.11.63-beta.0
+
+### @fusion/droid-cli
+
+#### Patch Changes
+
+- @fusion-plugin-examples/droid-runtime@0.1.63-beta.0
+
+## 0.11.62
+
+### @fusion/droid-cli
+
+#### Patch Changes
+
+- @fusion-plugin-examples/droid-runtime@0.1.62
+
+## 0.11.62-beta.14
+
+### @fusion/droid-cli
+
+#### Patch Changes
+
+- @fusion-plugin-examples/droid-runtime@0.1.62-beta.14
+
+## 0.11.62-beta.13
+
+### @fusion/droid-cli
+
+#### Patch Changes
+
+- @fusion-plugin-examples/droid-runtime@0.1.62-beta.13
+
+## 0.11.62-beta.12
+
+### @fusion/droid-cli
+
+#### Patch Changes
+
+- @fusion-plugin-examples/droid-runtime@0.1.62-beta.12
+
+## 0.11.62-beta.11
+
+### @fusion/droid-cli
+
+#### Patch Changes
+
+- @fusion-plugin-examples/droid-runtime@0.1.62-beta.11
+
+## 0.11.62-beta.10
+
+### @fusion/droid-cli
+
+#### Patch Changes
+
+- @fusion-plugin-examples/droid-runtime@0.1.62-beta.10
+
+## 0.11.62-beta.9
+
+### @fusion/droid-cli
+
+#### Patch Changes
+
+- @fusion-plugin-examples/droid-runtime@0.1.62-beta.9
 
 ## 0.11.62-beta.8
 

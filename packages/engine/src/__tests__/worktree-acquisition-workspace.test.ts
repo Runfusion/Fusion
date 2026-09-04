@@ -11,7 +11,7 @@ git only where the invariant needs it; everything else is a narrow seam.
 import { execSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   WORKSPACE_GROUP_MARKER_FILENAME,
   workspaceRepoSegment,
@@ -127,7 +127,6 @@ function makeTask(id: string): Task {
 }
 
 const SETTINGS: Partial<Settings> = {
-  worktreeNaming: "task-id",
   commitMsgHookEnabled: true,
   taskPrefix: "FN",
   taskAttributionTrailerNames: ["Fusion-Task-Id"],
@@ -169,6 +168,60 @@ describeIfGit("acquireWorkspaceRepoWorktree (U2 per-repo hardening)", { timeout:
     // Base must be the LOCAL tip, never the behind origin tip.
     expect(result.baseCommitSha).toBe(localTip);
     expect(current().workspaceWorktrees?.["repo-a"]?.baseCommitSha).toBe(localTip);
+  });
+
+  it("records a repository-qualified dependency-readiness decision through the workspace callback store", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const { store, current, logs } = makeFakeStore(makeTask("FN-255"));
+    const ensureDependencyReadiness = vi.fn().mockResolvedValue({ readiness: "satisfied" });
+
+    const result = await acquireWorkspaceRepoWorktree({
+      repoRelPath: "repo-a",
+      workspaceRootDir: fixture.rootDir,
+      task: current(),
+      store,
+      settings: SETTINGS,
+      ensureDependencyReadiness,
+      registry: new ActiveSessionRegistry(),
+    });
+
+    expect(ensureDependencyReadiness).toHaveBeenCalledTimes(1);
+    expect(ensureDependencyReadiness.mock.calls[0]?.[0]).toMatchObject({
+      worktreePath: result.worktreePath,
+      taskId: "FN-255",
+    });
+    expect(logs).toContain("Worktree dependency readiness [repo-a]: satisfied");
+  });
+
+  it("runs the real dependency bootstrap through workspace acquisition", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const repo = fixture.repoPath("repo-a");
+    writeFileSync(join(repo, "package.json"), "{\"name\":\"fixture\"}\n", "utf8");
+    writeFileSync(join(repo, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n", "utf8");
+    fixture.git("repo-a", "git add package.json pnpm-lock.yaml && git commit -m 'add dependency manifests'");
+    writeFileSync(join(fixture.rootDir, "pnpm"), "fixture", "utf8");
+    const { store, current, logs } = makeFakeStore(makeTask("FN-258-workspace-bootstrap"));
+    const runConfiguredCommand = vi.fn().mockResolvedValue({ exitCode: 0, stderr: "", stdout: "" });
+
+    const result = await acquireWorkspaceRepoWorktree({
+      repoRelPath: "repo-a",
+      workspaceRootDir: fixture.rootDir,
+      task: current(),
+      store,
+      settings: SETTINGS,
+      registry: new ActiveSessionRegistry(),
+      runConfiguredCommand,
+      taskEnv: { PATH: fixture.rootDir },
+    });
+
+    expect(result.alreadyAcquired).toBe(false);
+    expect(runConfiguredCommand).toHaveBeenCalledWith(
+      "pnpm install --frozen-lockfile",
+      result.worktreePath,
+      300_000,
+      { PATH: fixture.rootDir },
+    );
+    expect(logs).toContain("Worktree dependency readiness [repo-a]: satisfied");
   });
 
   it("captures against a NON-main integration branch and does not inherit a shared settings.integrationBranch (KTD3)", async () => {
@@ -326,6 +379,38 @@ describeIfGit("acquireWorkspaceRepoWorktree (U2 per-repo hardening)", { timeout:
     expect(result.alreadyAcquired).toBe(false);
     // Acquisition releases its own exclusivity entry on completion.
     expect(registry.isPathActive(repoAbs)).toBe(false);
+  });
+
+  it("replaces a same-kind live registry cache after durable lease admission", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const repoAbs = fixture.repoPath("repo-a");
+    const registry = new ActiveSessionRegistry();
+    registry.registerPath(repoAbs, { taskId: "FN-stale", kind: "workspace-repo-acquire", ownerKey: "workspace-repo-acquire" });
+    const { store, current } = makeFakeStore(makeTask("FN-authority"));
+    const events: Array<{ mutationType?: string; metadata?: Record<string, unknown> }> = [];
+    const lease = {
+      leaseKey: "repo:repo-a",
+      owner: { taskId: "FN-authority", nodeId: "node", incarnationId: "incarnation" },
+      fenceToken: 1n,
+      expiresAt: new Date(Date.now() + 300_000).toISOString(),
+    };
+    Object.assign(store as object, {
+      acquireWorkspaceLease: async () => ({ outcome: "reclaimed-expired", handle: lease }),
+      renewWorkspaceLease: async () => lease,
+      releaseWorkspaceLease: async () => true,
+      recordRunAuditEvent: async (event: { mutationType?: string; metadata?: Record<string, unknown> }) => { events.push(event); },
+    });
+
+    await expect(acquireWorkspaceRepoWorktree({
+      repoRelPath: "repo-a", workspaceRootDir: fixture.rootDir, task: current(), store, settings: SETTINGS, registry,
+      holderLiveProbe: () => true,
+    })).resolves.toMatchObject({ alreadyAcquired: false });
+
+    expect(events).toContainEqual(expect.objectContaining({
+      mutationType: "worktree:workspace-repo-acquire-reclaimed",
+      metadata: expect.objectContaining({ holderTaskId: "FN-stale", outcome: "lease-authority" }),
+    }));
+    expect(registry.lookupByPath(repoAbs)).toBeNull();
   });
 
   it("is idempotent across (taskId, repo): re-acquire returns the existing entry without re-capture", async () => {

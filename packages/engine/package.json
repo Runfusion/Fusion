@@ -1,6 +1,6 @@
 {
   "name": "@fusion/engine",
-  "version": "0.77.0-beta.8",
+  "version": "0.78.0-beta.1",
   "license": "MIT",
   "description": "Fusion engine: executor, merger, scheduler, and automation runtime for the Fusion AI coding agent.",
   "homepage": "https://github.com/Runfusion/Fusion#readme",
@@ -33,19 +33,20 @@
     "test": "vitest run --silent=passed-only --reporter=dot --project=engine-default --project=engine-reliability",
     "test:core": "vitest run --silent=passed-only --reporter=dot --project=engine-core",
     "test:slow": "vitest run --silent=passed-only --reporter=dot --project=engine-slow",
+    "test:pipeline-smoke": "vitest run --silent=passed-only --reporter=dot --project=engine-pipeline-smoke",
     "test:all": "vitest run --silent=passed-only --reporter=dot",
     "test:executor": "vitest run src/__tests__/executor-*.test.ts",
     "test:watch": "vitest src/__tests__/executor-*.test.ts --watch"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "0.84.1",
-    "@earendil-works/pi-coding-agent": "0.84.1",
+    "@earendil-works/pi-ai": "0.84.4",
+    "@earendil-works/pi-coding-agent": "0.84.4",
     "@fusion/core": "workspace:*",
     "@fusion/pi-claude-cli": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "cron-parser": "^5.5.0",
     "esbuild": "^0.25.12",
-    "node-pty": "npm:@homebridge/node-pty-prebuilt-multiarch@^0.13.1",
+    "node-pty": "npm:@lydell/node-pty@1.2.0-beta.15",
     "playwright-core": "^1.60.0",
     "proper-lockfile": "^4.1.2",
     "typebox": "^1.0.0"

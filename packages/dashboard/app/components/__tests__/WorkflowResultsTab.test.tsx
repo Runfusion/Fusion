@@ -284,6 +284,80 @@ describe("WorkflowResultsTab", () => {
     expect(screen.getByTestId("workflow-state-summary-count")).toHaveTextContent("3 of 4 steps completed");
   });
 
+  it("labels not-run results and aggregate honestly while counting them separately from skipped", async () => {
+    const results: WorkflowStepResult[] = [
+      {
+        workflowStepId: "verification",
+        workflowStepName: "Verification",
+        phase: "pre-merge",
+        status: "skipped",
+        notRunReason: "not-configured",
+      },
+      {
+        workflowStepId: "documentation",
+        workflowStepName: "Documentation",
+        phase: "pre-merge",
+        status: "skipped",
+      },
+      {
+        workflowStepId: "code-review",
+        workflowStepName: "Code Review",
+        phase: "pre-merge",
+        status: "passed",
+      },
+    ];
+
+    render(<WorkflowResultsTab taskId="FN-001" task={baseTask} settings={mockSettings} results={results} />);
+
+    const badge = screen.getByTestId("workflow-result-badge-verification");
+    expect(badge).toHaveTextContent("Not executed — no test or build command is configured");
+    expect(badge).toHaveClass("workflow-result-badge--not-run");
+    expect(badge).not.toHaveTextContent("Passed");
+    expect(screen.getByTestId("workflow-results-summary")).toHaveTextContent("1 not executed");
+    expect(screen.getByTestId("workflow-results-summary")).toHaveTextContent("1 skipped");
+    expect(screen.getByTestId("workflow-aggregate-badge-not-run")).toHaveTextContent("Not fully executed");
+    expect(screen.queryByText("All passed")).not.toBeInTheDocument();
+  });
+
+  it("labels an unresolved workspace repository context as not executed", () => {
+    render(
+      <WorkflowResultsTab
+        taskId="FN-001"
+        task={baseTask}
+        settings={mockSettings}
+        results={[{
+          workflowStepId: "documentation-delivery",
+          workflowStepName: "Documentation & Delivery",
+          phase: "pre-merge",
+          status: "skipped",
+          notRunReason: "repository-context-unresolved",
+        }]}
+      />,
+    );
+
+    expect(screen.getByTestId("workflow-result-badge-documentation-delivery"))
+      .toHaveTextContent("Not executed — the workspace repository context could not be resolved");
+  });
+
+  it("keeps the documentation-delivery name and status badge on the Workflow tab", () => {
+    render(
+      <WorkflowResultsTab
+        taskId="FN-001"
+        task={baseTask}
+        settings={mockSettings}
+        results={[{
+          workflowStepId: "documentation-delivery",
+          workflowStepName: "Documentation",
+          phase: "pre-merge",
+          status: "passed",
+        }]}
+      />,
+    );
+
+    expect(screen.getByText("Documentation")).toBeInTheDocument();
+    expect(screen.getByTestId("workflow-result-badge-documentation-delivery")).toHaveTextContent("Passed");
+  });
+
   it.each([
     { name: "not started", task: { ...baseTask, status: "todo", column: "todo" } as Task, results: [] as WorkflowStepResult[], testId: "workflow-phase-badge-not-started", text: "Not started" },
     { name: "in progress", task: { ...baseTask, status: "in-progress", column: "in-progress" } as Task, results: [{ workflowStepId: "WS-004", workflowStepName: "Performance Check", phase: "pre-merge", status: "pending" }] as WorkflowStepResult[], testId: "workflow-phase-badge-pre-merge", text: "Pre-merge steps running" },
@@ -768,6 +842,35 @@ describe("WorkflowResultsTab", () => {
     expect(within(liveLogPanel).getByText("Current workflow output")).toBeInTheDocument();
   });
 
+  it("renders multi-argument tool detail in the bounded live workflow console", () => {
+    const currentStepEntries: AgentLogEntry[] = [
+      {
+        timestamp: "2026-03-31T10:03:25Z",
+        taskId: "FN-001",
+        text: "fn_run_verification",
+        type: "tool",
+        detail: "command=pnpm lint, allowFullSuite=false",
+      },
+    ];
+    mockedUseAgentLogs.mockReturnValue({
+      entries: currentStepEntries,
+      loading: false,
+      clear: vi.fn(),
+      loadMore: vi.fn(),
+      hasMore: false,
+      total: currentStepEntries.length,
+      loadingMore: false,
+    });
+
+    render(<WorkflowResultsTab taskId="FN-001" results={mockResults} isTaskInProgress />);
+
+    const liveLogPanel = screen.getByTestId("workflow-live-log-WS-004");
+    expect(liveLogPanel.querySelector(".workflow-live-log-detail")).toHaveTextContent("command=pnpm lint, allowFullSuite=false");
+    const detailRule = loadAllAppCssBaseOnly().match(/\.workflow-live-log-detail\s*\{([^}]*)\}/)?.[1] ?? "";
+    expect(detailRule).toContain("max-block-size");
+    expect(detailRule).toContain("overflow: hidden");
+  });
+
   describe("FN-8345: live workflow log scroll following", () => {
     const initialEntries: AgentLogEntry[] = [{
       timestamp: "2026-03-31T10:03:25Z", taskId: "FN-001", text: "Streaming output", type: "text",
@@ -780,6 +883,15 @@ describe("WorkflowResultsTab", () => {
       mockedUseAgentLogs.mockReturnValue({ entries, loading: false, clear: vi.fn(), loadMore: vi.fn(), hasMore: false, total: entries.length, loadingMore: false });
       return render(<WorkflowResultsTab taskId="FN-001" results={mockResults} isTaskInProgress />);
     }
+
+    it("keeps thinking live-log entries as raw console text without transcript controls", () => {
+      const view = renderLiveLog([{ timestamp: "2026-08-23T00:00:00Z", taskId: "FN-001", text: "**One**\n\nBody one", type: "thinking" }]);
+      const container = screen.getByTestId("workflow-live-log-WS-004");
+      expect(within(container).getByText((_, element) => element?.classList.contains("workflow-live-log-thinking") === true && element.textContent === "**One**\n\nBody one")).toBeInTheDocument();
+      expect(container.querySelector("[data-testid='thinking-trace-section']")).toBeNull();
+      expect(container.querySelector("[data-testid='thinking-trace-raw-toggle']")).toBeNull();
+      view.unmount();
+    });
 
     it.each([{ name: "desktop", isMobile: false }, { name: "mobile", isMobile: true }])("does not override an unsnapped $name reader during appended streaming growth", ({ isMobile }) => {
       mockWorkflowViewport(isMobile);
@@ -2169,20 +2281,62 @@ describe("WorkflowResultsTab", () => {
       expect(notesEl).toHaveTextContent("No relevant changes in scope — approved.");
     });
 
-    it("hides notes when status is pending", () => {
+    it("renders a mirrored structured review report once without an Output surface", () => {
+      const REPORT = "The plan is internally consistent, scoped to both repositories, accounts for the observed no-op state, preserves fixture bytes, and defines adequate repository-specific verification.";
+      const results: WorkflowStepResult[] = [{
+        workflowStepId: "plan-review",
+        workflowStepName: "Plan Review",
+        phase: "pre-merge",
+        reviewKind: "plan",
+        source: "optional-group",
+        status: "passed",
+        verdict: "APPROVE",
+        output: REPORT,
+        notes: REPORT,
+        startedAt: "2026-08-28T12:35:00.000Z",
+        completedAt: "2026-08-28T12:36:00.000Z",
+      }];
+
+      const { container } = render(<WorkflowResultsTab taskId="FN-230" results={results} />);
+
+      expect(screen.getByTestId("workflow-result-notes-plan-review")).toHaveTextContent(REPORT);
+      expect(screen.getAllByText(REPORT)).toHaveLength(1);
+      expect(container.querySelector(".workflow-result-output-section")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("workflow-result-toggle-plan-review")).not.toBeInTheDocument();
+    });
+
+    it("keeps Output available when it genuinely differs from visible notes", () => {
+      const results: WorkflowStepResult[] = [{
+        workflowStepId: "WS-different",
+        workflowStepName: "Review",
+        status: "passed",
+        notes: "Reviewer summary.",
+        output: "Additional execution detail.",
+      }];
+
+      const { container } = render(<WorkflowResultsTab taskId="FN-230" results={results} />);
+
+      expect(screen.getByTestId("workflow-result-notes-WS-different")).toHaveTextContent("Reviewer summary.");
+      expect(container.querySelector(".workflow-result-output-section")).toBeInTheDocument();
+      expect(screen.getByTestId("workflow-result-toggle-WS-different")).toBeInTheDocument();
+    });
+
+    it("hides notes when status is pending without changing the live-output surface", () => {
       const results: WorkflowStepResult[] = [
         {
           workflowStepId: "WS-001",
           workflowStepName: "QA Check",
           status: "pending",
           notes: "Should not show.",
+          output: "Should not become static output.",
           startedAt: "2026-03-31T10:00:00Z",
         },
       ];
 
-      render(<WorkflowResultsTab taskId="FN-001" results={results} />);
+      const { container } = render(<WorkflowResultsTab taskId="FN-001" results={results} />);
 
       expect(screen.queryByTestId("workflow-result-notes-WS-001")).not.toBeInTheDocument();
+      expect(container.querySelector(".workflow-result-output-section")).not.toBeInTheDocument();
     });
 
     it("renders both verdict badge and notes together", () => {

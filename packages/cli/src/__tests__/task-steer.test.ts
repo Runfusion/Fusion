@@ -25,6 +25,7 @@ vi.mock("../project-context.js", () => ({
 
 // Import after mocking
 import { createInterface } from "node:readline/promises";
+import { MAX_TASK_MESSAGE_LENGTH } from "@fusion/core";
 import { runTaskSteer } from "../commands/task.js";
 
 describe("runTaskSteer", () => {
@@ -93,18 +94,18 @@ describe("runTaskSteer", () => {
     expect(mockClose).toHaveBeenCalled();
   });
 
-  it("rejects messages longer than 2000 characters", async () => {
+  it("rejects messages longer than the shared task-message limit", async () => {
     setupTaskStoreMock();
     const exitSpy = vi.spyOn(process, "exit").mockImplementation((code) => {
       throw new Error(`Process.exit called with ${code}`);
     });
 
-    const longMessage = "a".repeat(2001);
+    const longMessage = "a".repeat(MAX_TASK_MESSAGE_LENGTH + 1);
 
     await expect(runTaskSteer("FN-003", longMessage)).rejects.toThrow();
 
     expect(mockConsoleError).toHaveBeenCalledWith(
-      expect.stringContaining("Message must be between 1 and 2000 characters")
+      expect.stringContaining(`Message must be between 1 and ${MAX_TASK_MESSAGE_LENGTH} characters`)
     );
     expect(mockAddComment).not.toHaveBeenCalled();
 
@@ -205,7 +206,7 @@ describe("runTaskSteer", () => {
     expect(mockAddComment).toHaveBeenCalledWith("FN-008", "Some message with whitespace", "user");
   });
 
-  it("accepts messages at boundary lengths (1 and 2000 chars)", async () => {
+  it("accepts messages above the former limit and at the shared boundary", async () => {
     setupTaskStoreMock();
     mockAddComment.mockResolvedValueOnce({
       id: "FN-009",
@@ -224,10 +225,21 @@ describe("runTaskSteer", () => {
       title: "Boundary Test 2",
     });
 
-    // Test exactly 2000 characters
-    const exact2000 = "b".repeat(2000);
-    await runTaskSteer("FN-010", exact2000);
-    expect(mockAddComment).toHaveBeenCalledWith("FN-010", exact2000, "user");
+    // Test above the former boundary before the shared upper boundary.
+    const overFormerLimit = "b".repeat(2001);
+    await runTaskSteer("FN-010", overFormerLimit);
+    expect(mockAddComment).toHaveBeenCalledWith("FN-010", overFormerLimit, "user");
+
+    vi.clearAllMocks();
+    setupTaskStoreMock();
+    mockAddComment.mockResolvedValueOnce({
+      id: "FN-011",
+      title: "Shared Boundary Test",
+    });
+
+    const atSharedLimit = "c".repeat(MAX_TASK_MESSAGE_LENGTH);
+    await runTaskSteer("FN-011", atSharedLimit);
+    expect(mockAddComment).toHaveBeenCalledWith("FN-011", atSharedLimit, "user");
   });
 
   it("rethrows non-ENOENT errors", async () => {

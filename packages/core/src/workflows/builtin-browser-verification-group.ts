@@ -71,6 +71,7 @@ Use these agent-browser commands for verification:
 - APPROVE_WITH_NOTES: verification succeeds with non-blocking advisory findings; include evidence references in notes.
 - REVISE: verification failures or regressions require changes; include failing behavior and actionable file paths in notes.
 - Screenshots/artifacts referenced in notes are evidence only; verdict must be conveyed by the final JSON line.
+- \`notes\` MUST contain one to three non-empty sentences naming what was checked and why the verdict was reached. An empty \`notes\` string is a protocol violation.
 - Final output: output exactly one trailing JSON object on the final line (no markdown fences, no surrounding prose):
 {"verdict":"APPROVE|APPROVE_WITH_NOTES|REVISE","notes":"..."}
 

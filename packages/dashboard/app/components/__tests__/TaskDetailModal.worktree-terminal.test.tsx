@@ -38,7 +38,6 @@ function renderDetail(task = makeTask({ id: "FN-7813", worktree: "/repo/.worktre
       task={task}
       projectId="proj-123"
       onClose={noop}
-      onMoveTask={noopMove}
       onDeleteTask={noopDelete}
       onMergeTask={noopMerge}
       onOpenDetail={noopOpenDetail}
@@ -89,7 +88,6 @@ describe("TaskDetailModal worktree terminal tab", () => {
         task={makeTask({ id: "FN-7813", worktree: undefined })}
         projectId="proj-123"
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -161,16 +159,16 @@ describe("TaskDetailModal worktree terminal tab", () => {
     }));
   });
 
-  it("orders Comments, Terminal, and Cost tabs together", async () => {
-    const { container } = renderDetail();
+  it("places Terminal after consolidated Details without a Cost tab", async () => {
+    renderDetail();
 
     await screen.findByRole("button", { name: "Terminal" });
     const tabLabels = Array.from(document.querySelectorAll<HTMLButtonElement>(".detail-tabs .detail-tab"))
       .map((tab) => tab.textContent?.trim());
 
-    expect(tabLabels.indexOf("Comments")).toBeGreaterThanOrEqual(0);
-    expect(tabLabels.indexOf("Terminal")).toBeGreaterThan(tabLabels.indexOf("Comments"));
-    expect(tabLabels.indexOf("Cost")).toBe(tabLabels.indexOf("Terminal") + 1);
+    expect(tabLabels.indexOf("Details")).toBeGreaterThanOrEqual(0);
+    expect(tabLabels.indexOf("Terminal")).toBe(tabLabels.indexOf("Details") + 1);
+    expect(tabLabels).not.toContain("Cost");
   });
 
   it("renders distinct Session and Terminal tab labels when an agent session exists", async () => {
@@ -227,7 +225,6 @@ describe("TaskDetailModal worktree terminal tab", () => {
         task={makeTask({ id: "FN-OTHER", worktree: "/repo/.worktrees/FN-OTHER" })}
         projectId="proj-123"
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -269,7 +266,6 @@ describe("TaskDetailModal worktree terminal tab", () => {
     const contentProps = {
       task,
       projectId: "proj-123",
-      onMoveTask: noopMove,
       onDeleteTask: noopDelete,
       onMergeTask: noopMerge,
       onOpenDetail: noopOpenDetail,

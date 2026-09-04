@@ -80,19 +80,22 @@ touches no data; it must advance in the same change that ships a new migration f
 /* FNXC:MemoryFocus 2026-08-13-15:57: chat_sessions.memory_focus (RUFU-068) renumbered 0059->0060->0061 as upstream claimed 0059 (FN-9037) and 0060 (FN-9059). */
 /* FNXC:MemoryFocus 2026-08-20-22:10: the upstream 2026-08-20 batch (FN-066..FN-094) claimed 0061-0064 after this branch had already taken 0061, so the memory-focus migration was renumbered to 0065 and the baseline ceiling advanced with it. */
 /* FNXC:MemoryFocus 2026-08-23-12:50: upstream then shipped FN-149's 0065_fn_149_review_convergence_stage.sql on origin/main, claiming 0065 for its own migration. Upstream's 0065 is canonical (already released), so the memory-focus migration is renumbered to 0066 and the ceiling advances to 0066. Production databases that already applied the memory-focus SQL under ledger row "0065" (v17-era ledger) need a one-time ledger remap 0065->0066 before first boot of a 0066-ceiling binary, or the fresh 0065_fn_149 migration would be skipped as "already applied". */
+/* FNXC:WorkspaceContention 2026-08-24-03:34: origin/main owns released migration 0066 for chat memory focus, so FN-179's session-contention wait state moves to 0067 and the binary ceiling advances with it. */
+/* FNXC:ExternalBlock 2026-08-28-03:48: advance the schema ceiling so upgraded projects materialize the external-obstacle freeze before task reads begin. */
+/* FNXC:PlanApproval 2026-08-28-06:24: advance the ceiling with the per-task approval migration so task reads never precede its column. */
+/* FNXC:PatchnodeLedger 2026-08-28-12:16: the permanent ledger table must exist before TaskStore can commit a completion move atomically with its entry. */
 /*
-FNXC:Identity 2026-08-23-06:40:
-Identity renumbered 0047 -> 0059 -> 0060 -> 0061 -> 0067. Upstream claimed 0060 (workspace leases),
-0061-0064 (the FN-066..FN-094 batch), 0065 (FN-149 review convergence) and 0066 (memory focus) while
-this branch was in review. A released upstream number is canonical, so identity moves rather than
-upstream; keeping 0061 would make an upgraded database SKIP the identity tables entirely, because the
-ledger would already record 0061 as applied.
+FNXC:Identity 2026-09-04-04:46:
+Identity renumbered 0047 -> 0059 -> 0060 -> 0061 -> 0067 -> 0072. Upstream claimed 0067-0071
+(session contention, step reports, external block, plan approval, patchnode) after the previous
+identity ceiling. A released upstream number is canonical, so identity moves rather than
+upstream; keeping 0067 would make an upgraded database SKIP the identity tables entirely.
 
-This marker is the binary's "highest migration I know" claim: it applies no SQL, but it MUST advance
-in the same change that ships a new migration file, or the next store open throws
+This marker is the binary's "highest migration I know" claim: it applies no SQL, but it MUST
+advance in the same change that ships a new migration file, or the next store open throws
 StaleBinarySchemaError against a ledger the same boot just wrote.
 */
-export const SCHEMA_BASELINE_VERSION = "0067";
+export const SCHEMA_BASELINE_VERSION = "0072";
 /** FNXC:SymbolLock 2026-07-20-10:00: upgrades need durable task declarations before admission resolves symbols. */
 export const TASK_DECLARED_SYMBOLS_VERSION = "0028";
 const INITIAL_SCHEMA_VERSION = "0000";
@@ -261,27 +264,30 @@ export const AI_MERGE_REVIEW_RECONCILIATION_VERSION = "0063";
 export const TASK_REPOSITORY_SCOPE_VERSION = "0064";
 /** FNXC:ReviewConvergence 2026-08-22-05:42: explicit migration registration preserves bounded review recovery state on upgraded projects. */
 export const REVIEW_CONVERGENCE_STAGE_VERSION = "0065";
-
-/** FNXC:MemoryFocus 2026-08-13-15:57: explicit registration prevents the per-conversation memory-focus migration from being skipped. Renumbered to 0060 (FN-9037 took 0059), then 0061, then 0065 (2026-08-20) when the upstream FN-066..FN-094 batch claimed 0061-0064. */
-export const CHAT_SESSION_MEMORY_FOCUS_VERSION = "0066";
+/** FNXC:WorkspaceContention 2026-08-24-03:34: upgrades must persist owner-visible scheduling waits at 0067 because released chat memory focus owns 0066. */
+export const SESSION_CONTENTION_WAIT_STATE_VERSION = "0067";
+/** FNXC:TaskHistory 2026-08-28-02:23: upgraded projects persist implementation reports under a dedicated immutable migration identity. */
+export const TASK_STEP_REPORTS_VERSION = "0068";
+/** FNXC:ExternalBlock 2026-08-28-03:48: upgraded projects persist the freeze reason and exact resume point under an immutable migration identity. */
+export const TASK_EXTERNAL_BLOCK_VERSION = "0069";
+/** FNXC:PlanApproval 2026-08-28-06:24: upgraded projects persist the per-task approval opt-in under an immutable migration identity. */
+export const TASK_REQUIRE_PLAN_APPROVAL_VERSION = "0070";
+/** FNXC:PatchnodeLedger 2026-08-28-12:16: upgraded projects need the durable delivery ledger before any completion transaction runs. */
+export const PATCHNODE_ENTRIES_VERSION = "0071";
 
 /**
  * FNXC:Identity 2026-08-15-22:52:
- * The identity schema's own immutable bookkeeping identity. Renumbered 0047 -> 0059 -> 0060 -> 0061
- * across refreshes from main, each time because main had landed its own migration at the number this
- * branch was holding. Two migrations sharing one identity means whichever check runs first records
- * the version and marks the OTHER already-applied, so the identity tables would silently never be
- * created on an upgraded database while a fresh one looked fine. A per-migration identity is
- * immutable only once RELEASED; this one has not been. Main shipped 0060 as workspace coordination
- * leases, so identity must be 0061.
+ * The identity schema's own immutable bookkeeping identity.
  *
- * FNXC:Identity 2026-08-24-02:12:
- * Renumbered again 0061 -> 0067 after origin/main shipped 0061-0066 (FN-066..FN-094, FN-149,
- * memory-focus). The apply block is a sibling of the 0066 gate, never nested inside it: a database
- * that already recorded memory-focus (every current origin/main install) would otherwise skip the
- * identity tables while a fresh database looked fine.
+ * FNXC:Identity 2026-09-04-04:46:
+ * Renumbered 0067 -> 0072 after origin/main shipped 0067-0071. The apply block is a sibling of
+ * the 0071 gate, never nested inside it: a database that already recorded patchnode (every
+ * current origin/main install) would otherwise skip the identity tables.
  */
-export const IDENTITY_ACTORS_VERSION = "0067";
+export const IDENTITY_ACTORS_VERSION = "0072";
+
+/** FNXC:MemoryFocus 2026-08-13-15:57: explicit registration prevents the per-conversation memory-focus migration from being skipped. Renumbered to 0060 (FN-9037 took 0059), then 0061, then 0065 (2026-08-20) when the upstream FN-066..FN-094 batch claimed 0061-0064. */
+export const CHAT_SESSION_MEMORY_FOCUS_VERSION = "0066";
 
 /** SECURITY DEFINER helper that only inserts LEGACY_ADOPTION_DRAINED_MARKER. */
 export const LEGACY_ADOPTION_DRAINED_MARKER_FUNCTION = "fusion_mark_legacy_adoption_drained";
@@ -523,7 +529,12 @@ const TASK_REPOSITORY_SCOPE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0064_fn_094_t
 const REVIEW_CONVERGENCE_STAGE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0065_fn_149_review_convergence_stage.sql");
 /* FNXC:MemoryFocus 2026-08-14-10:30: renumbered to 0061 (FN-9059 workspace leases own 0060), then to 0065 (2026-08-20) when the upstream FN-066..FN-094 batch claimed 0061-0064, then to 0066 (2026-08-23) when upstream's FN-149 claimed 0065. */
 const CHAT_SESSION_MEMORY_FOCUS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0066_chat_session_memory_focus.sql");
-const IDENTITY_ACTORS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0067_fn_identity_actors.sql");
+const SESSION_CONTENTION_WAIT_STATE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0067_fn_179_session_contention_wait_state.sql");
+const TASK_STEP_REPORTS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0068_fn_208_task_step_reports.sql");
+const TASK_EXTERNAL_BLOCK_MIGRATION_PATH = join(MIGRATIONS_DIR, "0069_fn_209_task_external_block.sql");
+const TASK_REQUIRE_PLAN_APPROVAL_MIGRATION_PATH = join(MIGRATIONS_DIR, "0070_fn_212_task_require_plan_approval.sql");
+const PATCHNODE_ENTRIES_MIGRATION_PATH = join(MIGRATIONS_DIR, "0071_fn_227_patchnode_entries.sql");
+const IDENTITY_ACTORS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0072_fn_identity_actors.sql");
 
 /**
  * Ensure the migration bookkeeping table exists. Lives in the public schema so
@@ -660,6 +671,11 @@ export async function applySchemaBaseline(
     const taskRepositoryScopeAlreadyApplied = applied.includes(TASK_REPOSITORY_SCOPE_VERSION);
     const reviewConvergenceStageAlreadyApplied = applied.includes(REVIEW_CONVERGENCE_STAGE_VERSION);
     const chatSessionMemoryFocusAlreadyApplied = applied.includes(CHAT_SESSION_MEMORY_FOCUS_VERSION);
+    const sessionContentionWaitStateAlreadyApplied = applied.includes(SESSION_CONTENTION_WAIT_STATE_VERSION);
+    const taskStepReportsAlreadyApplied = applied.includes(TASK_STEP_REPORTS_VERSION);
+    const taskExternalBlockAlreadyApplied = applied.includes(TASK_EXTERNAL_BLOCK_VERSION);
+    const taskRequirePlanApprovalAlreadyApplied = applied.includes(TASK_REQUIRE_PLAN_APPROVAL_VERSION);
+    const patchnodeEntriesAlreadyApplied = applied.includes(PATCHNODE_ENTRIES_VERSION);
     const identityActorsAlreadyApplied = applied.includes(IDENTITY_ACTORS_VERSION);
     assertBinaryNotOlderThanDatabase(applied);
     let schemaChanged = false;
@@ -1414,23 +1430,141 @@ export async function applySchemaBaseline(
     }
 
     /* FNXC:MemoryFocus 2026-08-14-10:30: register 0066 explicitly (renumbered from 0061 on 2026-08-20 — the upstream FN-066..FN-094 batch owns 0061-0064 — and from 0065 on 2026-08-23 when upstream's FN-149 claimed 0065). */
-    if (!chatSessionMemoryFocusAlreadyApplied) {
+    /*
+    FNXC:MemoryFocus 2026-08-26-08:31:
+    VERIFY THE COLUMN, NOT ONLY THE LEDGER ROW — the same defence `recommendations` already carries
+    above, for the same reason, one table over.
+
+    A ledger row asserts "a migration with this NUMBER ran". For a migration renumbered four times
+    (0059 → 0060 → 0061 → 0065 → 0066, each time because upstream claimed the sequence first) that is
+    not the same claim as "this COLUMN exists": a database carrying a row from one numbering while
+    another migration owned that number on the boot that recorded it converges to a ledger the applier
+    trusts absolutely and a schema that does not match it.
+
+    Measured on a real dev database: `column "memory_focus" does not exist` on every chat-session read,
+    because `select()` emits the binary's full column list. Every chat query 500s, the task planner
+    chat never opens, and startup reports success — the applier had nothing left to do.
+
+    The SQL is `ADD COLUMN IF NOT EXISTS`, so replaying it is free when the column is already there.
+    A settings-only schema has no chat_sessions relation and stays a no-op.
+    */
+    const chatSessionMemoryFocusColumnState = (await tx.execute(sql`
+      SELECT
+        to_regclass('project.chat_sessions') IS NOT NULL AS chat_sessions_exists,
+        EXISTS (
+          SELECT 1
+          FROM information_schema.columns
+          WHERE table_schema = 'project'
+            AND table_name = 'chat_sessions'
+            AND column_name = 'memory_focus'
+        ) AS memory_focus_exists
+    `)) as unknown as Array<{ chat_sessions_exists: boolean; memory_focus_exists: boolean }>;
+    const chatSessionMemoryFocusColumnMissing = chatSessionMemoryFocusColumnState[0]?.chat_sessions_exists
+      && !chatSessionMemoryFocusColumnState[0]?.memory_focus_exists;
+    if (!chatSessionMemoryFocusAlreadyApplied || chatSessionMemoryFocusColumnMissing) {
       const migrationSql = await readFile(CHAT_SESSION_MEMORY_FOCUS_MIGRATION_PATH, "utf8");
       await tx.execute(sql.raw(migrationSql));
       await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${CHAT_SESSION_MEMORY_FOCUS_VERSION}) ON CONFLICT (version) DO NOTHING`);
       schemaChanged = true;
     }
+    /*
+    FNXC:WorkspaceContention 2026-08-26-08:31:
+    The OTHER renumbered migration on this branch (0066 → 0067, because released chat memory focus
+    owns 0066) carries the identical ledger-versus-schema hazard, so it takes the identical defence:
+    verify the materialized columns, not only the marker. Its SQL is `ADD COLUMN IF NOT EXISTS`, so a
+    replay over a healthy schema is free.
+    */
+    const sessionContentionColumnState = (await tx.execute(sql`
+      SELECT
+        to_regclass('project.tasks') IS NOT NULL AS tasks_exists,
+        EXISTS (
+          SELECT 1
+          FROM information_schema.columns
+          WHERE table_schema = 'project'
+            AND table_name = 'tasks'
+            AND column_name = 'session_contention_wait_reason'
+        ) AS wait_reason_exists
+    `)) as unknown as Array<{ tasks_exists: boolean; wait_reason_exists: boolean }>;
+    const sessionContentionColumnsMissing = sessionContentionColumnState[0]?.tasks_exists
+      && !sessionContentionColumnState[0]?.wait_reason_exists;
+    if (!sessionContentionWaitStateAlreadyApplied || sessionContentionColumnsMissing) {
+      const migrationSql = await readFile(SESSION_CONTENTION_WAIT_STATE_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${SESSION_CONTENTION_WAIT_STATE_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    const taskStepReportsColumnState = (await tx.execute(sql`
+      SELECT
+        to_regclass('project.tasks') IS NOT NULL AS tasks_exists,
+        EXISTS (
+          SELECT 1
+          FROM information_schema.columns
+          WHERE table_schema = 'project'
+            AND table_name = 'tasks'
+            AND column_name = 'step_reports'
+        ) AS step_reports_exists
+    `)) as unknown as Array<{ tasks_exists: boolean; step_reports_exists: boolean }>;
+    const taskStepReportsColumnMissing = taskStepReportsColumnState[0]?.tasks_exists
+      && !taskStepReportsColumnState[0]?.step_reports_exists;
+    if (!taskStepReportsAlreadyApplied || taskStepReportsColumnMissing) {
+      const migrationSql = await readFile(TASK_STEP_REPORTS_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${TASK_STEP_REPORTS_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    const taskExternalBlockColumnState = (await tx.execute(sql`
+      SELECT
+        to_regclass('project.tasks') IS NOT NULL AS tasks_exists,
+        EXISTS (
+          SELECT 1
+          FROM information_schema.columns
+          WHERE table_schema = 'project'
+            AND table_name = 'tasks'
+            AND column_name = 'external_block'
+        ) AS external_block_exists
+    `)) as unknown as Array<{ tasks_exists: boolean; external_block_exists: boolean }>;
+    const taskExternalBlockColumnMissing = taskExternalBlockColumnState[0]?.tasks_exists
+      && !taskExternalBlockColumnState[0]?.external_block_exists;
+    if (!taskExternalBlockAlreadyApplied || taskExternalBlockColumnMissing) {
+      const migrationSql = await readFile(TASK_EXTERNAL_BLOCK_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${TASK_EXTERNAL_BLOCK_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    const taskRequirePlanApprovalColumnState = (await tx.execute(sql`
+      SELECT
+        to_regclass('project.tasks') IS NOT NULL AS tasks_exists,
+        EXISTS (
+          SELECT 1
+          FROM information_schema.columns
+          WHERE table_schema = 'project'
+            AND table_name = 'tasks'
+            AND column_name = 'require_plan_approval'
+        ) AS require_plan_approval_exists
+    `)) as unknown as Array<{ tasks_exists: boolean; require_plan_approval_exists: boolean }>;
+    const taskRequirePlanApprovalColumnMissing = taskRequirePlanApprovalColumnState[0]?.tasks_exists
+      && !taskRequirePlanApprovalColumnState[0]?.require_plan_approval_exists;
+    if (!taskRequirePlanApprovalAlreadyApplied || taskRequirePlanApprovalColumnMissing) {
+      const migrationSql = await readFile(TASK_REQUIRE_PLAN_APPROVAL_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${TASK_REQUIRE_PLAN_APPROVAL_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    const patchnodeEntriesMissing = ((await tx.execute(sql`
+      SELECT to_regclass('project.patchnode_entries') IS NULL AS missing
+    `)) as unknown as Array<{ missing: boolean }>)[0]?.missing ?? true;
+    if (!patchnodeEntriesAlreadyApplied || patchnodeEntriesMissing) {
+      const migrationSql = await readFile(PATCHNODE_ENTRIES_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${PATCHNODE_ENTRIES_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
 
     /*
-    FNXC:Identity 2026-08-15-22:52:
-    Identity storage is additive: it never touches the dead-looking project_auth_* tables, whose live
-    writer is the SQLite→Postgres cutover migrator (a missing target there is a fail-closed startup
-    error, so dropping them would brick legacy upgrades). Apply AFTER every upstream migration (through 0066) so
-    upgraded databases that already recorded 0060 still receive the identity tables as 0067.
-
-    FNXC:Identity 2026-08-24-02:12:
-    Sibling of the 0066 gate, not nested inside it. Nesting would skip identity on every database
-    that already recorded memory-focus — the production upgrade path from origin/main.
+    FNXC:Identity 2026-09-04-04:46:
+    Identity storage is additive. Apply AFTER every upstream migration (through 0071) so
+    upgraded databases that already recorded 0067-0071 still receive the identity tables as 0072.
+    Sibling of the 0071 gate, not nested inside it.
     */
     if (!identityActorsAlreadyApplied) {
       const migrationSql = await readFile(IDENTITY_ACTORS_MIGRATION_PATH, "utf8");

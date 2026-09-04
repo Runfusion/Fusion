@@ -22,6 +22,22 @@
   container-type: inline-size;
   container-name: task-card;
 }
+
+/*
+FNXC:TaskCardCursor 2026-08-28-13:18 (FN-229):
+A board task tile is a clickable surface that opens task detail, so its root and every non-disabled descendant show the pointing hand at rest. Inline editing is form work rather than tile activation: the editing branch inherits its normal form cursor, while enabled text-entry controls retain the native caret and disabled controls retain their busy or unavailable cursor.
+
+The tile selectors remain at (0,3,0), and the text-entry carve-out is (0,3,1), both strictly below Board's active-pan rule at (0,4,0). `.card.paused` deliberately has no cursor declaration so paused tiles share this uniform pointing-hand contract without an equal-specificity source-order conflict.
+*/
+.card[data-id]:not(.card-editing),
+.card[data-id] *:not(:disabled, :disabled *, .card-editing *) {
+  cursor: pointer;
+}
+
+.card[data-id] :is(input, textarea, select):not(:disabled) {
+  cursor: auto;
+}
+
 .card:hover {
   background: var(--card-hover);
   border-color: var(--text-muted);
@@ -225,10 +241,6 @@ The card remains presentation-only: it neither persists a fallback nor restores 
 }
 
 
-.card-retry-badge {
-  cursor: pointer;
-}
-
 .card-retry-badge:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring-strong);
@@ -334,7 +346,6 @@ FN-7780 anchors the created-by-agent badge in its own bottom-left row before wor
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  cursor: pointer;
   background: color-mix(in srgb, var(--text-muted) 14%, transparent);
   border-color: color-mix(in srgb, var(--text-muted) 30%, transparent);
   color: var(--text-muted);
@@ -688,6 +699,120 @@ falling through to an unstyled transparent shell.
   border-left: 3px solid var(--color-error-dark);
 }
 
+/*
+FNXC:ExternalBlockUx 2026-08-28-04:56:
+The card notice covers ordinary card state while preserving the card's footprint and responsive
+layout. Shared notice paint uses semantic tokens; mobile only changes flow and touch sizing.
+*/
+.card.external-blocked {
+  border-color: var(--color-error);
+}
+
+.external-block-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-error) 12%, var(--card));
+  color: var(--text-primary);
+}
+
+.external-block-notice--card {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  flex-direction: column;
+  justify-content: center;
+  border: 0;
+  border-radius: inherit;
+  box-shadow: var(--shadow-md);
+  background: color-mix(in srgb, var(--color-error) 14%, var(--card));
+}
+
+.external-block-notice__title {
+  color: var(--color-error);
+  font-size: var(--font-size-md);
+}
+
+.external-block-notice__reason {
+  max-width: 100%;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-normal);
+  overflow-wrap: anywhere;
+}
+
+.external-block-notice__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.external-block-notice__actions .btn {
+  min-height: var(--space-xl);
+}
+
+.external-block-notice__actions .btn-icon {
+  min-width: var(--space-xl);
+  padding: var(--space-xs);
+}
+
+.external-block-notice__actions svg {
+  width: var(--space-md);
+  height: var(--space-md);
+}
+
+/*
+FNXC:PlanApproval 2026-08-28-06:24:
+The manual approval hold covers the card like Blocked while using warning paint. Its actions remain
+available on cards and list rows without changing the host's footprint or opening task detail.
+*/
+.card.plan-approval-hold {
+  border-color: var(--color-warning);
+}
+
+.plan-approval-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-warning) 12%, var(--card));
+  color: var(--text-primary);
+}
+
+.plan-approval-notice--card {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  flex-direction: column;
+  justify-content: center;
+  border-radius: inherit;
+  box-shadow: var(--shadow-md);
+  background: color-mix(in srgb, var(--color-warning) 16%, var(--card));
+}
+
+.plan-approval-notice__title {
+  color: var(--color-warning);
+  font-size: var(--font-size-md);
+}
+
+.plan-approval-notice__copy {
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
+}
+
+.plan-approval-notice__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
 /* Error display on failed task cards */
 .card-error {
   display: flex;
@@ -739,6 +864,23 @@ falling through to an unstyled transparent shell.
 }
 
 @media (max-width: 768px) {
+  .external-block-notice {
+    flex-direction: column;
+  }
+
+  .external-block-notice__actions .btn,
+  .external-block-notice__actions .btn-icon,
+  .plan-approval-notice__actions .btn {
+    min-width: var(--touch-target-min-size);
+    min-height: var(--touch-target-min-size);
+  }
+
+  .plan-approval-notice,
+  .plan-approval-notice__actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
   .card-error-retry-btn {
     min-height: 36px;
   }
@@ -765,7 +907,6 @@ falling through to an unstyled transparent shell.
 .card.paused {
   opacity: 0.55;
   border-left: 3px solid var(--text-muted);
-  cursor: default;
 }
 
 @keyframes pulse {
@@ -789,7 +930,6 @@ falling through to an unstyled transparent shell.
 }
 
 .card-dep-badge.clickable {
-  cursor: pointer;
   transition: color var(--transition-fast), text-decoration var(--transition-fast);
 }
 
@@ -875,7 +1015,6 @@ at desktop and mobile breakpoints.
   padding: calc(var(--space-xs) / 2) var(--space-sm);
   border: var(--btn-border-width) solid transparent;
   border-radius: var(--radius-pill);
-  cursor: pointer;
   transition: color var(--transition-fast), background var(--transition-fast);
   max-width: 110px;
   overflow: hidden;
@@ -900,6 +1039,10 @@ at desktop and mobile breakpoints.
   margin-top: var(--space-xs);
 }
 
+/*
+FNXC:TaskCardPromoteRemoval 2026-08-30-01:40:
+Operator-requested removal of the task-card Promote affordance leaves action rows for Start and PR work only. The cost badge now always uses its established footer or meta placement, with no Promote-specific wrapper.
+*/
 .card-action-row {
   display: flex;
   align-items: center;
@@ -907,16 +1050,6 @@ at desktop and mobile breakpoints.
   margin-top: var(--space-xs);
   flex-wrap: wrap;
   row-gap: var(--space-xs);
-}
-
-/*
-FNXC:TaskCardCostBadge 2026-07-12-00:00:
-On cards with Promote, the opt-in cost badge belongs directly below that action in the bottom-right corner. Keep its shared card-cost-indicator styling and only position its wrapper so cards without Promote retain their existing footer/meta layout.
-*/
-.card-promote-cost-row {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: var(--space-xs);
 }
 
 .card-provider-icons {
@@ -1040,7 +1173,6 @@ on narrow/mobile cards, so added terminal metadata cannot force horizontal scrol
   background: transparent;
   color: var(--text-muted);
   font-size: 0.75rem;
-  cursor: pointer;
   min-width: 0;
   flex: 1 1 auto;
   overflow: hidden;
@@ -1178,8 +1310,14 @@ The execution-time badge is part of the footer's bottom-right chip cluster, so i
   text-decoration: none;
 }
 
-.card-duplicate-chip,
-.card-duplicate-keep {
+.card-duplicate-chip-group {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex-shrink: 0;
+}
+
+.card-duplicate-chip {
   display: inline-flex;
   align-items: center;
   gap: var(--space-xs);
@@ -1216,30 +1354,40 @@ The execution-time badge is part of the footer's bottom-right chip cluster, so i
   color: var(--color-warning);
 }
 
-.card-duplicate-keep {
-  border-color: color-mix(in srgb, var(--color-warning) 45%, transparent);
-  background: color-mix(in srgb, var(--surface-2) 90%, transparent);
-  color: var(--text);
-  cursor: pointer;
-  appearance: none;
-  background-image: none;
-  transition:
-    background-color var(--transition-fast),
-    color var(--transition-fast),
-    box-shadow var(--transition-fast);
+.card-duplicate-dismiss {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--card-chip-height);
+  min-height: var(--card-chip-height);
+  padding: var(--space-xs);
+  border: var(--btn-border-width) solid color-mix(in srgb, var(--color-warning) 45%, transparent);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--color-warning) 16%, transparent);
+  color: var(--color-warning);
+  transition: background-color var(--transition-fast), box-shadow var(--transition-fast);
 }
 
-.card-duplicate-keep:hover {
+.card-duplicate-dismiss::after {
+  content: "";
+  position: absolute;
+  inset: calc(var(--space-sm) * -1);
+}
+
+.card-duplicate-dismiss:hover {
   background: var(--card-hover);
 }
 
-.card-duplicate-keep:focus-visible {
+.card-duplicate-dismiss:focus-visible {
   box-shadow: var(--focus-ring-strong);
   outline: none;
 }
 
 @media (max-width: 768px) {
-  .card-duplicate-chip {
+  .card-duplicate-chip,
+  .card-duplicate-chip-group,
+  .card-duplicate-dismiss {
     max-width: 100%;
   }
 
@@ -1308,7 +1456,6 @@ so the icon needs no rule of its own.
   background: color-mix(in srgb, var(--text-muted) 12%, transparent);
   color: var(--text);
   text-decoration: none;
-  cursor: pointer;
   appearance: none;
   background-image: none;
   transition:
@@ -1379,7 +1526,6 @@ the established compact mobile interaction rhythm while the card remains the pri
   padding: var(--space-xs) 0;
   background: none;
   border: none;
-  cursor: pointer;
   font-size: 0.6875rem;
   color: var(--text-muted);
   transition: color var(--transition-fast);
@@ -1411,6 +1557,11 @@ the established compact mobile interaction rhythm while the card remains the pri
   overflow-y: auto;
 }
 
+.card-review-gates-separator {
+  border-top: var(--btn-border-width) solid color-mix(in srgb, var(--border) 70%, transparent);
+  margin-block: var(--space-xs);
+}
+
 .card-step-item {
   display: flex;
   align-items: center;
@@ -1437,7 +1588,8 @@ the established compact mobile interaction rhythm while the card remains the pri
   background: var(--color-success);
 }
 
-.card-step-dot--skipped {
+.card-step-dot--skipped,
+.card-step-dot--not_run {
   background: var(--text-dim);
 }
 
@@ -1607,7 +1759,6 @@ The trailing actions cluster (Actions/Send-back and ⋯ menu) must share the tas
   border: none;
   border-radius: var(--radius-sm);
   color: var(--text-muted);
-  cursor: pointer;
   opacity: 0;
   transition: opacity var(--transition-fast), background var(--transition-fast),
     color var(--transition-fast);
@@ -1625,7 +1776,6 @@ The trailing actions cluster (Actions/Send-back and ⋯ menu) must share the tas
   color: var(--bg);
   border: none;
   border-radius: var(--radius-sm);
-  cursor: pointer;
   transition: filter var(--transition-fast);
 }
 
@@ -1673,7 +1823,6 @@ short-landscape variant (FN-5751 lesson: never a desktop-only or portrait-only f
   border: none;
   border-radius: var(--radius-sm);
   color: var(--text-muted);
-  cursor: pointer;
   opacity: 0;
   transition: opacity var(--transition-fast), background var(--transition-fast),
     color var(--transition-fast);
@@ -1744,7 +1893,6 @@ The mobile/short-landscape 28px ⋯ touch target must not expand .card-header-ac
   border: none;
   border-radius: var(--radius-sm);
   color: var(--text-muted);
-  cursor: pointer;
   opacity: 0;
   transition: opacity var(--transition-fast), color var(--transition-fast);
 }
@@ -1786,7 +1934,6 @@ too so future divergence doesn't have to rediscover the shared selector group.
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: var(--text-muted);
-  cursor: pointer;
   opacity: 0;
   transition: opacity var(--transition-fast), background var(--transition-fast),
     color var(--transition-fast), border-color var(--transition-fast);
@@ -1833,7 +1980,6 @@ The three-dot menu is the sole card move/action entry point. Keep this shared bu
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: var(--text-muted);
-  cursor: pointer;
   opacity: 0;
   transform: translateY(calc(var(--space-xs) / -4));
   transition: opacity var(--transition-fast), background var(--transition-fast),
@@ -1998,9 +2144,6 @@ The three-dot menu is the sole card move/action entry point. Keep this shared bu
     margin-left: auto;
   }
 
-  .card-promote-cost-row {
-    justify-content: flex-end;
-  }
 
   /* Card: compact progress bar on narrow cards */
   .card-progress {
@@ -2174,4 +2317,3 @@ The three-dot menu is the sole card move/action entry point. Keep this shared bu
 
 /* FNXC:TaskRevert 2026-08-01-19:51: Reverted tasks require visible resolution controls, not hover-only menu actions. */
 .card-reverted-actions { display: inline-flex; gap: var(--space-1); }
-.reverted-tasks-section { display: grid; gap: var(--space-2); padding: var(--space-3); }

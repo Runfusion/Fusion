@@ -13,7 +13,7 @@ import { BUILTIN_CODING_WORKFLOW_IR } from "../workflows/builtin-coding-workflow
 import { BUILTIN_STEPWISE_CODING_WORKFLOW_IR } from "../workflows/builtin-stepwise-coding-workflow-ir.js";
 import { BUILTIN_PR_WORKFLOW_IR } from "../workflows/builtin-pr-workflow-ir.js";
 import { BROWSER_VERIFICATION_GROUP_ID, BROWSER_VERIFICATION_STEP_NODE_ID } from "../workflows/builtin-browser-verification-group.js";
-import { CODE_REVIEW_STEP_NODE_ID } from "../workflows/builtin-code-review-group.js";
+import { CODE_REVIEW_STEP_NODE_ID, DEFAULT_CODE_REVIEW_MAX_REVISIONS } from "../workflows/builtin-code-review-group.js";
 import { PLAN_REVIEW_GROUP_ID, PLAN_REVIEW_STEP_NODE_ID } from "../workflows/builtin-plan-review-group.js";
 import { builtinPromptConfig, BUILTIN_SEAM_PROMPTS } from "../workflows/builtin-workflow-prompts.js";
 import { BUILTIN_WORKFLOW_SETTINGS } from "../workflows/builtin-workflow-settings.js";
@@ -231,27 +231,65 @@ describe("built-in workflows", () => {
               ? 3
               : workflow.id === "builtin:compound-engineering" && gate === "code-review"
                 ? 2
-                : "unbounded",
+                : gate === "code-review"
+                  ? DEFAULT_CODE_REVIEW_MAX_REVISIONS
+                  : "unbounded",
         });
       }
     }
   });
 
-  it("all built-in workflows generate a task completion summary as a graph node", () => {
+  /*
+  FNXC:WorkflowCompletion 2026-08-25-10:20:
+  The invariant is that every built-in PRODUCES a card summary, not that it owns a node called
+  `completion-summary`. `builtin:coding-ideas-v2` folds the summary into its Documentation milestone,
+  writing it in the same pass as the delivery note and saving a model call per card. Pinning the node
+  id would have forced a second read-only session that exists only to satisfy a test.
+  What must NOT weaken: a workflow with neither a summary node nor a summary-writing milestone still
+  fails here, so a future built-in cannot ship with no card summary at all.
+
+  FNXC:WorkflowCompletion 2026-08-26-07:34:
+  THE MILESTONE BRANCH USED TO ASSERT A PROMPT STRING (`fn_task_done(summary=`), and that is how this
+  guard stayed green while the product lost its card summary. `fn_task_done` is NOT available to a
+  `toolMode: "readonly"` workflow step — the allowlist is read/grep/find/ls plus a few read-only task
+  reads — so the prompt was asking for a call that could never happen. The test proved the milestone
+  had been TOLD to write a summary, not that one could ever be written.
+  The mechanism is `summaryTarget: "task"`, the projection contract that persists a node's own output.
+  Assert that, wherever the node lives: a top-level node or inside an optional-group template, since
+  the executing node of a group is its template child.
+  */
+  it("all built-in workflows produce a task completion summary", () => {
     for (const workflow of BUILTIN_WORKFLOWS) {
       if (workflow.kind === "fragment") continue;
       const summaryNodes = workflow.ir.nodes.filter((node) => node.id === "completion-summary");
-      expect(summaryNodes, workflow.id).toHaveLength(1);
-      expect(summaryNodes[0]?.kind, workflow.id).toBe("prompt");
-      expect(summaryNodes[0]?.config?.summaryTarget, workflow.id).toBe("task");
-      expect(summaryNodes[0]?.config?.toolMode, workflow.id).toBe("readonly");
+      if (summaryNodes.length > 0) {
+        expect(summaryNodes, workflow.id).toHaveLength(1);
+        expect(summaryNodes[0]?.kind, workflow.id).toBe("prompt");
+        expect(summaryNodes[0]?.config?.summaryTarget, workflow.id).toBe("task");
+        expect(summaryNodes[0]?.config?.toolMode, workflow.id).toBe("readonly");
+        continue;
+      }
+
+      const writesSummary = workflow.ir.nodes.some((node) => {
+        const template = node.config?.template as { nodes?: Array<{ config?: Record<string, unknown> }> } | undefined;
+        return node.config?.summaryTarget === "task"
+          || (template?.nodes ?? []).some((child) => child.config?.summaryTarget === "task");
+      });
+      expect(writesSummary, `${workflow.id} has no completion-summary node and no milestone that writes the card summary`).toBe(true);
     }
   });
 
   it("merge-capable built-ins expose a default-off post-merge verification node after merge proof", () => {
     for (const workflow of BUILTIN_WORKFLOWS) {
       if (workflow.kind === "fragment") continue;
-      if (workflow.id === "builtin:coding-ideas") continue; // intentionally minimal pipeline
+      /*
+      FNXC:WorkflowCatalog 2026-08-25-14:40:
+      Coding (Ideas) is an intentionally minimal pipeline with no post-merge verification, and
+      `builtin:coding-ideas-v2` DERIVES from it — it inherits the absence rather than declining the
+      node. Its own review lane is where verification is judged; adding a post-merge node would
+      re-open the checks after the merge that its review already covered.
+      */
+      if (workflow.id === "builtin:coding-ideas" || workflow.id === "builtin:coding-ideas-v2") continue;
       const mergeNode = workflow.ir.nodes.find((node) => node.id === "merge-attempt" || node.id === "merge");
       if (!mergeNode) continue;
 
@@ -766,7 +804,7 @@ describe("built-in workflows", () => {
     });
     expect(ir.settings?.find((setting) => setting.id === "codeReviewMaxRevisions")).toMatchObject({
       type: "number",
-      description: expect.stringMatching(/workflow's authored default/i),
+      description: expect.stringMatching(/workflow's authored bounded default/i),
     });
   });
 
@@ -893,13 +931,21 @@ describe("built-in workflows", () => {
     expect(defaultEnabledBuiltinWorkflowIds()).not.toContain("builtin:pr-workflow");
     expect(getBuiltinWorkflow("builtin:pr-workflow")!.kind).toBe("fragment");
     expect(defaultEnabledBuiltinWorkflowIds().length).toBeGreaterThanOrEqual(5);
+    /*
+    FNXC:WorkflowCatalog 2026-08-25-14:40:
+    `builtin:coding-ideas-v2` sits third, immediately after the Ideas workflow it derives from, which
+    is where a reader looking for the coding lane expects it. It displaced `builtin:review-heavy`
+    from this five-entry window; the window exists to pin ORDER STABILITY and `builtin:coding` first,
+    not to freeze the catalog size, and `review-heavy` is still asserted as enabled below.
+    */
     expect(defaultEnabledBuiltinWorkflowIds().slice(0, 5)).toEqual([
       "builtin:coding",
       "builtin:coding-ideas",
+      "builtin:coding-ideas-v2",
       "builtin:legacy-coding",
       "builtin:quick-fix",
-      "builtin:review-heavy",
     ]);
+    expect(defaultEnabledBuiltinWorkflowIds()).toContain("builtin:review-heavy");
     expect(defaultEnabledBuiltinWorkflowIds()).toContain("builtin:stepwise-coding");
   });
 

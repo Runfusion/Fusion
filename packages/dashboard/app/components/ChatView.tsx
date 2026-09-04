@@ -17,7 +17,6 @@ import {
   Check,
   Maximize2,
   X,
-  Hash,
   Pin,
   PinOff,
   MoreHorizontal,
@@ -29,27 +28,25 @@ import {
   Bookmark,
 } from "lucide-react";
 import { FN_AGENT_ID, TASK_PLANNER_CHAT_AGENT_ID_PREFIX, useChat, type ChatMessageInfo, type ChatSessionInfo } from "../hooks/useChat";
-import { RoomMessageDeliveredButReplyFailedError, useChatRooms } from "../hooks/useChatRooms";
 import { useChatUnread } from "../hooks/useChatUnread";
 import { useComposerDictation } from "../hooks/useComposerDictation";
 import { useViewportMode } from "./Header";
-import { fetchSettings, fetchChatSession, updateGlobalSettings, type DiscoveredSkill } from "../api";
-import { type Agent, type ChatTag, type Settings } from "@fusion/core";
-import { CustomModelDropdown } from "./CustomModelDropdown";
+import { isTabletTouchViewport } from "../hooks/useViewportMode";
+import { fetchSettings, fetchChatSession, type DiscoveredSkill } from "../api";
+import { isExperimentalFeatureEnabled, CHAT_FOCUS_FLAG, type Agent, type ChatSnippet, type ChatTag, type Settings } from "@fusion/core";
 import { MicButton } from "./MicButton";
 import { ChatThinkingLevelControl } from "./ChatThinkingLevelControl";
 import { ChatThreadTitleSwitcher } from "./ChatThreadTitleSwitcher";
 import { PendingChatMessageQueue } from "./PendingChatMessageQueue";
 import { ChatFocusSelector } from "./ChatFocusSelector";
 import { AgentMentionPopup } from "./AgentMentionPopup";
-import { AgentAvatar } from "./AgentAvatar";
 import { ProviderIcon } from "./ProviderIcon";
 import { FileMentionPopup } from "./FileMentionPopup";
-import { CreateRoomModal } from "./CreateRoomModal";
 import { CliChatSurface, type CliChatTier } from "./CliChatSurface";
 import { useFileMention } from "../hooks/useFileMention";
 import { useModelsCache } from "../hooks/useModelsCache";
 import { useDiscoveredSkillsCache } from "../hooks/useDiscoveredSkillsCache";
+import { useChatSnippets } from "../hooks/useChatSnippetsCache";
 import { useAgentsMapCache } from "../hooks/useAgentsMapCache";
 import { useMobileKeyboard } from "../hooks/useMobileKeyboard";
 import { useMobileKeyboardViewportLock, isIOS } from "../hooks/useMobileScrollLock";
@@ -60,6 +57,7 @@ import { recordResumeEvent } from "../utils/resumeInstrumentation";
 import { formatTokenCount } from "../utils/estimateChatTokens";
 import { resolveChatContextUsage } from "../utils/chatContextUsage";
 import { copyTextToClipboard } from "../utils/copyToClipboard";
+import { buildChatQuotePrefill } from "../utils/chatQuotePrefill";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { ViewHeader } from "./ViewHeader";
@@ -70,7 +68,8 @@ import {
   formatModelTag,
 } from "./StandardChatSurface";
 import { buildChatReportHandoff, type ChatReportHandoff } from "./chatReportHandoff";
-import { CHAT_COMMANDS, matchChatCommand, filterChatCommands, getSlashTriggerMatch, type ChatCommand } from "./chat-commands";
+import { matchChatCommand, filterChatCommands, getSlashTriggerMatch, selectChatCommands, type ChatCommand } from "./chat-commands";
+import { applySnippetToDraft, filterChatSnippets, matchStandaloneSnippetInvocation } from "./chat-snippets";
 import { useChatMessageLayout } from "../context/ChatMessageLayoutContext";
 import {
   createChatInputAutosizeController,
@@ -78,8 +77,8 @@ import {
 } from "../utils/chatInputAutosize";
 
 /*
-FNXC:AgentMentionPopup 2026-08-20-04:49:
-FN-069 requires @ suggestions to open above the composer like / skills because below-composer modal placement can hide them. Direct and room composers share this invariant.
+FNXC:AgentMentionPopup 2026-08-24-03:34:
+Direct-chat @ suggestions open above the composer like / skills because below-composer placement can hide them.
 */
 const AGENT_MENTION_POPUP_POSITION = "above" as const;
 
@@ -106,6 +105,7 @@ export interface ChatCommandContext {
  */
 export type SkillMenuEntry =
   | { kind: "command"; command: ChatCommand; disabled: boolean }
+  | { kind: "snippet"; snippet: ChatSnippet }
   | { kind: "skill"; skill: DiscoveredSkill };
 
 export interface ChatViewProps {
@@ -118,6 +118,12 @@ export interface ChatViewProps {
    * A retained-but-hidden Quick Chat must release document Find ownership; visible hosts retain the default.
    */
   findActive?: boolean;
+  /*
+  FNXC:MainViewKeepAlive 2026-08-30-19:05:
+  A kept-alive ChatView retains its selected session, transcript, and composer while hidden.
+  Inactive hosts must not acknowledge arriving messages; explicit user session selection remains active.
+  */
+  active?: boolean;
   /** Enables the "/" command registry (e.g. `/steer`) for this composer instance. See {@link ChatCommandContext}. */
   chatCommandContext?: ChatCommandContext;
   /*
@@ -132,6 +138,8 @@ export interface ChatViewProps {
   onOpenSessionInNewWindow?: (session: ChatSessionInfo) => void;
   /** Secondary windows start in Direct and keep selection/scope storage private. */
   initialDirectSession?: ChatSessionInfo;
+  /** Monotonic pop-out focus signal; a repeated open restores this window's detail view. */
+  initialDirectSessionNonce?: number;
   persistChatPreferences?: boolean;
   /** Optional external composer seed; paired with a nonce so repeated opens reseed intentionally. */
   initialComposerDraft?: string;
@@ -165,9 +173,6 @@ export function resolveChatContextMenuPosition(
     y: Math.min(Math.max(CHAT_CONTEXT_MENU_VIEWPORT_MARGIN_PX, anchorY), maximumTop),
   };
 }
-/** Canonical definition lives in packages/dashboard/src/chat.ts (ROOM_SKIP_SENTINEL). */
-const ROOM_SKIP_SENTINEL = "__SKIP__";
-
 export const CHAT_DOCKED_SIDEBAR_WIDTH_STORAGE_KEY = "fusion:chat-docked-sidebar-width";
 export const CHAT_DOCKED_SIDEBAR_OPEN_STORAGE_KEY = "fusion:chat-docked-sidebar-open";
 export const CHAT_DOCKED_SIDEBAR_MIN_WIDTH = 220;
@@ -217,19 +222,14 @@ function formatRelativeTime(dateStr: string, t: TFunction<"app">): string {
   return date.toLocaleDateString();
 }
 
-const CHAT_SCOPE_STORAGE_KEY = "fusion:chat-scope";
 const CHAT_DRAFT_STORAGE_PREFIX = "fusion:chat-draft:";
 
 function findSubmittedQuestionAnswer(messages: ChatMessageInfo[], messageIndex: number): string | undefined {
   return messages.slice(messageIndex + 1).find((message) => message.role === "user")?.content;
 }
 
-function getChatDraftKey(scope: "direct" | "rooms", id: string | null | undefined): string | null {
-  if (!id) {
-    return null;
-  }
-
-  return `${CHAT_DRAFT_STORAGE_PREFIX}${scope}:${id}`;
+function getChatDraftKey(id: string | null | undefined): string | null {
+  return id ? `${CHAT_DRAFT_STORAGE_PREFIX}direct:${id}` : null;
 }
 
 function getPersistedChatDraft(key: string | null): string {
@@ -357,229 +357,6 @@ export function resolveSessionProvider(
   return null;
 }
 
-interface NewChatDialogProps {
-  projectId?: string;
-  defaultModel: DefaultModelSelection;
-  defaultKind?: "model" | "agent";
-  defaultAgentId?: string;
-  defaultThinkingLevel?: string;
-  defaultSelectedThinkingLevel?: string;
-  onClose: () => void;
-  onCreate: (input: { agentId: string; modelProvider?: string; modelId?: string; thinkingLevel?: string }) => void;
-}
-
-function NewChatDialog({ projectId, defaultModel, defaultKind, defaultAgentId, defaultThinkingLevel, defaultSelectedThinkingLevel, onClose, onCreate }: NewChatDialogProps) {
-  const { t } = useTranslation("app");
-  const [chatMode, setChatMode] = useState<"agent" | "model">(defaultKind ?? "agent");
-  const { agents, loading: agentsLoading } = useAgentsMapCache(projectId);
-  const [selectedAgentId, setSelectedAgentId] = useState<string>(defaultAgentId ?? "");
-  const { models, favoriteProviders: cachedFavoriteProviders, favoriteModels: cachedFavoriteModels, loading: modelsLoading, refresh } = useModelsCache();
-  const defaultModelValue = defaultModel.provider && defaultModel.modelId
-    ? `${defaultModel.provider}/${defaultModel.modelId}`
-    : "";
-  const [selectedModel, setSelectedModel] = useState<string>(defaultModelValue);
-  /*
-   * FNXC:Chat-ThinkingLevel 2026-07-10-00:00:
-   * New model-mode chats expose the shared inline thinking selector; an empty value means Default and is omitted from the create-session payload so the backend resolves project/global reasoning effort.
-   */
-  const [thinkingLevel, setThinkingLevel] = useState<string>(defaultSelectedThinkingLevel ?? "");
-  const [favoriteProviders, setFavoriteProviders] = useState<string[]>(cachedFavoriteProviders);
-  const [favoriteModels, setFavoriteModels] = useState<string[]>(cachedFavoriteModels);
-
-  useEffect(() => {
-    setFavoriteProviders(cachedFavoriteProviders);
-  }, [cachedFavoriteProviders]);
-
-  useEffect(() => {
-    setFavoriteModels(cachedFavoriteModels);
-  }, [cachedFavoriteModels]);
-
-  useEffect(() => {
-    if (defaultKind) {
-      setChatMode(defaultKind);
-    }
-  }, [defaultKind]);
-
-  useEffect(() => {
-    if (!defaultAgentId) {
-      return;
-    }
-    setSelectedAgentId((current) => current || defaultAgentId);
-  }, [defaultAgentId]);
-
-  useEffect(() => {
-    if (!defaultModelValue) {
-      return;
-    }
-    setSelectedModel((current) => current || defaultModelValue);
-  }, [defaultModelValue]);
-
-  useEffect(() => {
-    if (!defaultSelectedThinkingLevel) {
-      return;
-    }
-    setThinkingLevel((current) => current || defaultSelectedThinkingLevel);
-  }, [defaultSelectedThinkingLevel]);
-
-  const handleToggleFavorite = useCallback(async (provider: string) => {
-    const currentFavorites = favoriteProviders;
-    const isFavorite = currentFavorites.includes(provider);
-    const newFavorites = isFavorite
-      ? currentFavorites.filter((value) => value !== provider)
-      : [provider, ...currentFavorites];
-
-    setFavoriteProviders(newFavorites);
-
-    try {
-      await updateGlobalSettings({ favoriteProviders: newFavorites, favoriteModels });
-      await refresh();
-    } catch {
-      setFavoriteProviders(currentFavorites);
-    }
-  }, [favoriteProviders, favoriteModels, refresh]);
-
-  const handleToggleModelFavorite = useCallback(async (modelId: string) => {
-    const currentFavorites = favoriteModels;
-    const isFavorite = currentFavorites.includes(modelId);
-    const newFavorites = isFavorite
-      ? currentFavorites.filter((value) => value !== modelId)
-      : [modelId, ...currentFavorites];
-
-    setFavoriteModels(newFavorites);
-
-    try {
-      await updateGlobalSettings({ favoriteProviders, favoriteModels: newFavorites });
-      await refresh();
-    } catch {
-      setFavoriteModels(currentFavorites);
-    }
-  }, [favoriteModels, favoriteProviders, refresh]);
-
-  const resolvedModel = selectedModel || defaultModelValue;
-
-  const handleSubmit = (e: React.SyntheticEvent<HTMLFormElement>) => {
-    e.preventDefault();
-
-    if (chatMode === "agent") {
-      if (!selectedAgentId) return;
-      onCreate({ agentId: selectedAgentId });
-      return;
-    }
-
-    // model mode
-    if (!resolvedModel) return;
-    const slashIdx = resolvedModel.indexOf("/");
-    if (slashIdx <= 0) return;
-    const modelProvider = resolvedModel.slice(0, slashIdx);
-    const modelId = resolvedModel.slice(slashIdx + 1);
-    onCreate({ agentId: FN_AGENT_ID, modelProvider, modelId, thinkingLevel: thinkingLevel || undefined });
-  };
-
-  const isSubmitDisabled =
-    chatMode === "agent" ? !selectedAgentId : !resolvedModel;
-  /*
-  FNXC:ModalDismissal 2026-08-15-12:27:
-  The model listbox is portaled to document.body and can re-anchor when a mobile keyboard opens. Pair press origin with release so a filter gesture that ends on this backdrop never closes New Chat.
-  */
-  const overlayDismiss = useOverlayDismiss(onClose, { enabled: true });
-
-  return (
-    <div className="chat-new-dialog-backdrop chat-view-dialog-backdrop" {...overlayDismiss} role="dialog" aria-modal="true">
-      <div className="chat-new-dialog chat-view-dialog" onClick={(e) => e.stopPropagation()}>
-        <h3>{t("chat.newChatTitle", "New Chat")}</h3>
-        <div className="chat-new-dialog-mode-toggle" data-testid="chat-new-dialog-mode-toggle">
-          <button
-            type="button"
-            className={`chat-new-dialog-mode-btn${chatMode === "agent" ? " chat-new-dialog-mode-btn--active" : ""}`}
-            data-testid="chat-new-dialog-mode-agent"
-            onClick={() => {
-              setChatMode("agent");
-            }}
-          >
-            {t("chat.newChatModeAgent", "Agent")}
-          </button>
-          <button
-            type="button"
-            className={`chat-new-dialog-mode-btn${chatMode === "model" ? " chat-new-dialog-mode-btn--active" : ""}`}
-            data-testid="chat-new-dialog-mode-model"
-            onClick={() => {
-              setChatMode("model");
-              setSelectedAgentId("");
-              setSelectedModel((current) => current || defaultModelValue);
-            }}
-          >
-            {t("chat.newChatModeModel", "Model")}
-          </button>
-        </div>
-        <form onSubmit={handleSubmit}>
-          {chatMode === "agent" && (
-            <label className="chat-new-dialog-model-label">
-              {t("chat.newChatModeAgent", "Agent")}
-              {agentsLoading ? (
-                <div className="chat-new-dialog-loading">{t("chat.loadingAgents", "Loading agents...")}</div>
-              ) : agents.length === 0 ? (
-                <div className="chat-new-dialog-empty">{t("chat.noAgentsAvailable", "No agents available")}</div>
-              ) : (
-                <div className="chat-new-dialog-agent-list">
-                  {agents.map((agent) => (
-                    <button
-                      key={agent.id}
-                      type="button"
-                      className={`chat-new-dialog-agent-item${selectedAgentId === agent.id ? " chat-new-dialog-agent-item--selected" : ""}`}
-                      onClick={() => setSelectedAgentId(agent.id)}
-                      data-testid={`agent-option-${agent.id}`}
-                    >
-                      <Bot size={16} />
-                      <span className="chat-new-dialog-agent-name">{agent.name}</span>
-                      <span className="chat-new-dialog-agent-role">{agent.role}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </label>
-          )}
-          {chatMode === "model" && (
-            <div className="chat-new-dialog-model-dropdown" data-testid="chat-new-dialog-model-section">
-              {modelsLoading ? (
-                <div className="chat-new-dialog-loading">{t("chat.loadingModels", "Loading models...")}</div>
-              ) : (
-                <CustomModelDropdown
-                  models={models}
-                  value={selectedModel}
-                  onChange={setSelectedModel}
-                  label={t("chat.newChatModeModel", "Model")}
-                  placeholder={t("chat.selectModel", "Select a model")}
-                  favoriteProviders={favoriteProviders}
-                  onToggleFavorite={handleToggleFavorite}
-                  favoriteModels={favoriteModels}
-                  onToggleModelFavorite={handleToggleModelFavorite}
-                  showThinkingLevel
-                  thinkingLevel={thinkingLevel}
-                  onThinkingLevelChange={setThinkingLevel}
-                  defaultThinkingLevel={defaultThinkingLevel ?? "off"}
-                />
-              )}
-            </div>
-          )}
-          <div className="chat-new-dialog-actions">
-            <button type="button" className="btn btn-sm" onClick={onClose}>
-              {t("chat.cancel", "Cancel")}
-            </button>
-            <button
-              type="submit"
-              className="btn btn-sm btn-primary"
-              disabled={isSubmitDisabled}
-            >
-              {t("chat.create", "Create")}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-}
-
-
 /**
  * FNXC:ModalDismissal 2026-08-15-13:11:
  * Chat dialogs share this press-paired backdrop because a portaled model menu can re-anchor under
@@ -593,13 +370,7 @@ function ChatDialogBackdrop({ children, onClose }: { children: React.ReactNode; 
 
 type CopyFeedbackState = "success" | "error" | null;
 
-interface RoomContext {
-  roomId: string;
-  roomName: string;
-  memberIds: ReadonlySet<string>;
-}
-
-export function ChatView({ projectId, addToast, floating = false, compactLayout = false, findActive = true, onPopOut, onMaximize, onClose, onOpenSessionInNewWindow, initialDirectSession, persistChatPreferences = true, chatCommandContext, initialComposerDraft, initialComposerDraftNonce, onSendAsReport }: ChatViewProps) {
+export function ChatView({ projectId, addToast, floating = false, compactLayout = false, findActive = true, active = true, onPopOut, onMaximize, onClose, onOpenSessionInNewWindow, initialDirectSession, initialDirectSessionNonce, persistChatPreferences = true, chatCommandContext, initialComposerDraft, initialComposerDraftNonce, onSendAsReport }: ChatViewProps) {
   const { t } = useTranslation("app");
   const chatMessageLayout = useChatMessageLayout();
   useEffect(() => {
@@ -626,7 +397,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
   /*
   FNXC:Chat-ThinkingLevel 2026-07-12-20:05:
   The chat Default thinking-level labels must surface the same resolved project/global default every dashboard model picker reads from Settings (`defaultThinkingLevel ?? "off"`) instead of hardcoding `off`.
-  This fetch only corrects labels in NewChatDialog and ChatThinkingLevelControl; send-time resolution remains centralized in `resolveExecutorThinkingLevel` in dashboard chat.ts.
+  This fetch supplies the shared thinking-level control; send-time resolution remains centralized in `resolveExecutorThinkingLevel` in dashboard chat.ts.
   */
   useEffect(() => {
     let cancelled = false;
@@ -647,10 +418,15 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     };
   }, [projectId]);
   const resolvedDefaultThinkingLevel = chatSettings?.defaultThinkingLevel ?? "off";
+  const chatFocusEnabled = isExperimentalFeatureEnabled(chatSettings ?? undefined, CHAT_FOCUS_FLAG);
+  const selectedChatCommands = useMemo(() => selectChatCommands({ chatFocusEnabled }), [chatFocusEnabled]);
   const chatDefaultTarget = useMemo(() => {
     /*
-    FNXC:ChatModels 2026-07-12-20:45:
-    New Chat has one project-scoped default target resolver shared by every affordance. A complete agent default wins only when kind=agent; a complete model pair wins only when kind=model; incomplete always-default settings fall back to the picker instead of creating an unroutable session.
+    FNXC:ChatModels 2026-09-01-05:14:
+    Every New Chat affordance shares one project-scoped default target resolver. A complete agent
+    default wins only for kind=agent, and a complete model pair wins only for kind=model; an
+    incomplete target falls through to the project/global default model rather than creating an
+    unroutable session. The retired create-time picker is not a fallback path.
     */
     if (chatSettings?.chatDefaultKind === "agent" && chatSettings.chatDefaultAgentId) {
       return {
@@ -716,33 +492,8 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     agentsMap: chatAgentsMap,
   } = useChat(projectId, addToast, { initialSession: initialDirectSession, persistActiveSession: persistChatPreferences });
 
-  const [showNewDialog, setShowNewDialog] = useState(false);
-  /* FNXC:ChatRooms 2026-06-23-01:28: Chat Rooms graduated from Experimental; stale false flags should not hide rooms in the main view, popout modal, or quick-chat surfaces. */
-  const chatRoomsEnabled = true;
-  const [chatScope, setChatScope] = useState<"direct" | "rooms">(() => {
-    if (!persistChatPreferences || initialDirectSession) return "direct";
-    try {
-      const persistedScope = localStorage.getItem(CHAT_SCOPE_STORAGE_KEY);
-      if (persistedScope === "rooms" && chatRoomsEnabled) {
-        return "rooms";
-      }
-    } catch {
-      // Ignore storage errors.
-    }
-
-    return "direct";
-  });
-  // Keep this hook unconditional to preserve hook ordering and test stability.
-  // Rooms UI and interactions are fully gated by `chatRoomsEnabled`.
-  const rooms = useChatRooms(projectId, addToast);
   const { isUnread, markRead } = useChatUnread(projectId);
-  const [messageInput, setMessageInput] = useState(() => {
-    const initialDraftKey = getChatDraftKey(
-      chatScope,
-      chatScope === "rooms" ? rooms.activeRoom?.id : activeSession?.id,
-    );
-    return getPersistedChatDraft(initialDraftKey);
-  });
+  const [messageInput, setMessageInput] = useState(() => getPersistedChatDraft(getChatDraftKey(activeSession?.id)));
   const [contextMenu, setContextMenu] = useState<{ sessionId: string; anchorX: number; anchorY: number; anchorRight: boolean; x: number; y: number } | null>(null);
   /*
   FNXC:ChatStashBackfill 2026-08-19-16:28:
@@ -839,7 +590,6 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
   const [renameDialog, setRenameDialog] = useState<{ sessionId: string; title: string } | null>(null);
   const [renameTitle, setRenameTitle] = useState("");
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
-  const [confirmDeleteRoomId, setConfirmDeleteRoomId] = useState<string | null>(null);
   const [newTagName, setNewTagName] = useState("");
   const [renameTagDialog, setRenameTagDialog] = useState<{ id: string; name: string } | null>(null);
   const [renameTagName, setRenameTagName] = useState("");
@@ -850,25 +600,37 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
   conversation management; detail owns the thread and its single return path.
   Keep this local state independent of useChat's restored active session so a
   remount never creates a phantom drill-in history entry or replaces a stream.
+  A dedicated pop-out starts on its requested thread; ordinary hosts still start on the list.
   Visible Back must consume its pushed navigation entry; popstate uses the raw
   return callback so either route restores the same list state.
+
+  FNXC:ChatWindows 2026-08-27-09:09:
+  FN-193 makes useChat expose initialDirectSession on the first committed render. Seed detail and previous detail state from that same requested session so a dedicated pop-out paints its thread without pushing a phantom navigation-history entry.
   */
-  const [detailOpen, setDetailOpen] = useState(false);
+  const [detailOpen, setDetailOpen] = useState(() => Boolean(initialDirectSession));
+  /*
+  FNXC:ChatNavigation 2026-08-23-03:33:
+  FN-169 automatic detail opening is not a user drill-in. Suppress exactly its next false-to-true
+  transition, including when selection resolves after the first render; manual Back then selection
+  still contributes one history entry.
+  */
+  const suppressAutomaticDetailNavRef = useRef(Boolean(initialDirectSession));
+  const previousInitialDirectSessionNonceRef = useRef(initialDirectSessionNonce);
   const [conversationSearchOpen, setConversationSearchOpen] = useState(false);
   const [conversationSearchQuery, setConversationSearchQuery] = useState("");
   const [conversationSearchIndex, setConversationSearchIndex] = useState(0);
-  const [createRoomOpen, setCreateRoomOpen] = useState(false);
   const { agentsMap: cachedAgentsMap } = useAgentsMapCache(projectId);
   const agentsMap = useMemo(() => (chatAgentsMap.size > 0 ? chatAgentsMap : cachedAgentsMap), [cachedAgentsMap, chatAgentsMap]);
   const { models, favoriteProviders, favoriteModels, defaultProvider, defaultModelId } = useModelsCache();
   const defaultModel = useMemo<DefaultModelSelection>(() => ({ provider: defaultProvider, modelId: defaultModelId }), [defaultModelId, defaultProvider]);
-  const dialogDefaultModel = useMemo<DefaultModelSelection>(() => {
+  const _dialogDefaultModel = useMemo<DefaultModelSelection>(() => {
     if (chatDefaultTarget?.kind === "model") {
       return { provider: chatDefaultTarget.modelProvider, modelId: chatDefaultTarget.modelId };
     }
     return defaultModel;
   }, [chatDefaultTarget, defaultModel]);
   const { skills: discoveredSkills, loading: skillsLoading } = useDiscoveredSkillsCache(projectId);
+  const chatSnippets = useChatSnippets();
   const [showSkillMenu, setShowSkillMenu] = useState(false);
   const [skillFilter, setSkillFilter] = useState("");
   const [highlightedSkillIndex, setHighlightedSkillIndex] = useState(0);
@@ -913,7 +675,6 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
   const loadMoreSentinelRef = useRef<HTMLDivElement>(null);
   const isUserScrollingRef = useRef(false);
   const lastAnchoredThreadStateRef = useRef<{ threadId: string; loaded: boolean; hasMessages: boolean } | null>(null);
-  const previousChatScopeRef = useRef<"direct" | "rooms" | null>(null);
   const directThreadDeferredAnchorTimeoutRef = useRef<number | null>(null);
   const lastMessageCountRef = useRef(0);
   const lastThreadIdRef = useRef<string | null>(null);
@@ -940,19 +701,15 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
   // quick re-tap never scrolls the document while iOS is raising the keyboard.
   const blurScrollResetTimeoutRef = useRef<number | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const roomInputRef = useRef<HTMLTextAreaElement>(null);
   const inputAutosizeRef = useRef<ChatInputAutosizeController | null>(null);
-  const roomAutosizeRef = useRef<ChatInputAutosizeController | null>(null);
-  // FNXC:VoiceInput 2026-07-24-04:10:
-  // ChatView can mount direct and room composers together, so each owns a ref and dictation
-  // adapter; a shared anchor would route a transcript into whichever textarea rendered last.
+  // FNXC:VoiceInput 2026-08-24-03:34:
+  // Direct Chat owns one composer ref and dictation adapter so transcripts always target its textarea.
   const appliedComposerDraftNonceRef = useRef<number | undefined>(undefined);
   const focusComposerAfterPrefillRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pendingAttachmentsRef = useRef<PendingAttachment[]>([]);
   const mentionCursorPosRef = useRef(0);
   const copyFeedbackTimeoutsRef = useRef<Map<string, number>>(new Map());
-  const roomSendInFlightRef = useRef(false);
   /*
   FNXC:ChatSendDedupe 2026-06-17-08:36:
   FN-6576 refines FN-6563 by matching QuickChatFAB's two-latch touch contract: pointerdown/touchstart claim a per-input-task gesture so one mobile tap sends exactly once, while the separate 700ms latch is consumed only by a trailing click. A suppressed iOS click must never leave the long latch blocking the next tap; a send-to-stop DOM swap must consume the trailing click without swallowing a genuine later stop tap.
@@ -1001,78 +758,29 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
   const dockedSidebarVisible = dockedSidebarEligible && dockedSidebarOpen;
 
   useEffect(() => {
-    if (!activeSession?.id) {
+    if (!active || !activeSession?.id) {
       return;
     }
 
     markRead("direct", activeSession.id, activeSession.lastMessageAt ?? activeSession.updatedAt);
-  }, [activeSession?.id, activeSession?.lastMessageAt, activeSession?.updatedAt, markRead]);
+  }, [active, activeSession?.id, activeSession?.lastMessageAt, activeSession?.updatedAt, markRead]);
+
 
   useEffect(() => {
-    if (!rooms.activeRoom?.id) {
-      return;
-    }
-
-    markRead("room", rooms.activeRoom.id, rooms.activeRoom.updatedAt);
-  }, [rooms.activeRoom?.id, rooms.activeRoom?.updatedAt, markRead]);
-
-  useEffect(() => {
-    if (!activeSession?.id || messages.length === 0) {
+    if (!active || !activeSession?.id || messages.length === 0) {
       return;
     }
 
     const latestMessage = messages[messages.length - 1];
     markRead("direct", activeSession.id, latestMessage?.createdAt ?? activeSession.lastMessageAt ?? activeSession.updatedAt);
-  }, [activeSession?.id, activeSession?.lastMessageAt, activeSession?.updatedAt, markRead, messages]);
-
-  useEffect(() => {
-    if (!rooms.activeRoom?.id || rooms.messages.length === 0) {
-      return;
-    }
-
-    const latestMessage = rooms.messages[rooms.messages.length - 1];
-    markRead("room", rooms.activeRoom.id, latestMessage?.createdAt ?? rooms.activeRoom.updatedAt);
-  }, [markRead, rooms.activeRoom?.id, rooms.activeRoom?.updatedAt, rooms.messages]);
+  }, [active, activeSession?.id, activeSession?.lastMessageAt, activeSession?.updatedAt, markRead, messages]);
 
 
-  useEffect(() => {
-    if (!persistChatPreferences || initialDirectSession) {
-      setChatScope("direct");
-      return;
-    }
-    try {
-      const persistedScope = localStorage.getItem(CHAT_SCOPE_STORAGE_KEY);
-      if (persistedScope === "direct") {
-        setChatScope("direct");
-        return;
-      }
-      if (persistedScope === "rooms" && chatRoomsEnabled) {
-        setChatScope("rooms");
-      }
-    } catch {
-      // Ignore storage errors.
-    }
-  }, [chatRoomsEnabled, initialDirectSession, persistChatPreferences]);
 
-  useEffect(() => {
-    if (!chatRoomsEnabled && chatScope === "rooms") {
-      setChatScope("direct");
-      return;
-    }
-    if (!persistChatPreferences) return;
-    try {
-      localStorage.setItem(CHAT_SCOPE_STORAGE_KEY, chatScope);
-    } catch {
-      // Ignore storage errors.
-    }
-  }, [chatRoomsEnabled, chatScope, persistChatPreferences]);
-
-  const activeDraftKey = getChatDraftKey(
-    chatScope,
-    chatScope === "rooms" ? rooms.activeRoom?.id : activeSession?.id,
-  );
+  const activeDraftKey = getChatDraftKey(activeSession?.id);
   const lastDraftKeyRef = useRef<string | null>(activeDraftKey);
   const skipNextDraftRestoreRef = useRef(false);
+  const snippetDraftEphemeralRef = useRef(false);
 
   useEffect(() => {
     if (activeDraftKey === lastDraftKeyRef.current) {
@@ -1080,6 +788,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     }
 
     lastDraftKeyRef.current = activeDraftKey;
+    snippetDraftEphemeralRef.current = false;
     if (skipNextDraftRestoreRef.current) {
       skipNextDraftRestoreRef.current = false;
       return;
@@ -1093,6 +802,11 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     }
 
     try {
+      if (snippetDraftEphemeralRef.current) {
+        localStorage.removeItem(activeDraftKey);
+        if (!messageInput) snippetDraftEphemeralRef.current = false;
+        return;
+      }
       if (messageInput) {
         localStorage.setItem(activeDraftKey, messageInput);
         return;
@@ -1103,7 +817,6 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     }
   }, [activeDraftKey, messageInput]);
 
-  const roomThreadActive = chatRoomsEnabled && chatScope === "rooms" && !!rooms.activeRoom;
   /*
   FNXC:ChatComposer 2026-08-23-16:07:
   The composer must track the soft keyboard on every Fusion-classified Chat host, not only a
@@ -1111,7 +824,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
   hook's internal width heuristic cannot disagree with Chat's tablet, dock, or floating host.
   */
   const { keyboardOverlap, keyboardOpen } = useMobileKeyboard({
-    enabled: keyboardTrackedHost && (!!activeSession || roomThreadActive),
+    enabled: keyboardTrackedHost && !!activeSession,
     allowNonMobileViewport: keyboardTrackedHost,
   });
 
@@ -1123,13 +836,18 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     return matchingSkills.slice(0, 10);
   }, [discoveredSkills, skillFilter]);
 
+  const filteredSnippets = useMemo(
+    () => filterChatSnippets(skillFilter, chatSnippets),
+    [chatSnippets, skillFilter],
+  );
+
   // Commands only contribute to the "/" menu when this ChatView instance is
   // bound to a task (chatCommandContext provided) — the general, non-task-bound
   // Chat surface never shows/dispatches them, so its skill-only behavior is unchanged.
   const filteredCommands = useMemo(() => {
     if (!chatCommandContext) return [] as ChatCommand[];
-    return filterChatCommands(skillFilter, CHAT_COMMANDS);
-  }, [chatCommandContext, skillFilter]);
+    return filterChatCommands(skillFilter, selectedChatCommands);
+  }, [chatCommandContext, skillFilter, selectedChatCommands]);
 
   const skillMenuEntries = useMemo<SkillMenuEntry[]>(() => {
     const commandEntries: SkillMenuEntry[] = filteredCommands.map((command) => ({
@@ -1137,37 +855,21 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
       command,
       disabled: command.requiresAgent && !chatCommandContext?.agentRunning,
     }));
+    const snippetEntries: SkillMenuEntry[] = filteredSnippets.map((snippet) => ({ kind: "snippet", snippet }));
     const skillEntries: SkillMenuEntry[] = filteredSkills.map((skill) => ({ kind: "skill", skill }));
-    return [...commandEntries, ...skillEntries];
-  }, [filteredCommands, filteredSkills, chatCommandContext]);
+    return [...commandEntries, ...snippetEntries, ...skillEntries];
+  }, [filteredCommands, filteredSnippets, filteredSkills, chatCommandContext]);
 
+  /*
+  FNXC:ChatDirectOnly 2026-08-23-03:10:
+  ChatView no longer subscribes to or renders persistent Rooms. @agent suggestions list every
+  available agent because a mention dispatches that one direct-chat turn to the agent's own model.
+  */
   const mentionAgents = useMemo(() => Array.from(agentsMap.values()), [agentsMap]);
-
-  const roomContext = useMemo<RoomContext | null>(() => {
-    if (!chatRoomsEnabled || chatScope !== "rooms" || !rooms.activeRoom) {
-      return null;
-    }
-    return {
-      roomId: rooms.activeRoom.id,
-      roomName: rooms.activeRoom.name,
-      memberIds: new Set(rooms.activeRoomMembers.map((member) => member.agentId)),
-    };
-  }, [chatRoomsEnabled, chatScope, rooms.activeRoom, rooms.activeRoomMembers]);
-
-  const filteredMentionAgents = useMemo(() => {
-    const matchingAgents = mentionAgents.filter((agent) => matchesAgentMentionFilter(agent.name, mentionFilter));
-    if (!roomContext) {
-      return matchingAgents;
-    }
-
-    const memberAgents = matchingAgents.filter((agent) => roomContext.memberIds.has(agent.id));
-    if (mentionFilter.trim().length === 0) {
-      return memberAgents;
-    }
-
-    const otherAgents = matchingAgents.filter((agent) => !roomContext.memberIds.has(agent.id));
-    return [...memberAgents, ...otherAgents];
-  }, [mentionAgents, mentionFilter, roomContext]);
+  const filteredMentionAgents = useMemo(
+    () => mentionAgents.filter((agent) => matchesAgentMentionFilter(agent.name, mentionFilter)),
+    [mentionAgents, mentionFilter],
+  );
 
   const mentionAgentsByName = useMemo(() => {
     const byName = new Map<string, Agent>();
@@ -1177,18 +879,19 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     return byName;
   }, [mentionAgents]);
 
-  // Key the reset on skill ids, not array identity: useDiscoveredSkillsCache
-  // (SWR) re-delivers content-identical lists with fresh identities (cache
-  // reads re-parse; revalidation notifies a new array). Resetting on identity
-  // alone wipes the user's keyboard highlight mid-navigation when a
-  // revalidation lands — only a *semantic* list change should reset it.
-  const filteredSkillsKey = useMemo(
-    () => filteredSkills.map((skill) => skill.id).join(" "),
-    [filteredSkills],
+  // Reset on semantic menu identity rather than fresh cache-array identities so
+  // revalidation cannot wipe a user's keyboard highlight mid-navigation.
+  const skillMenuEntriesKey = useMemo(
+    () => skillMenuEntries.map((entry) => {
+      if (entry.kind === "command") return `command:${entry.command.name}`;
+      if (entry.kind === "snippet") return `snippet:${entry.snippet.name}`;
+      return `skill:${entry.skill.id}`;
+    }).join("\u0000"),
+    [skillMenuEntries],
   );
   useEffect(() => {
     setHighlightedSkillIndex(0);
-  }, [filteredSkillsKey]);
+  }, [skillMenuEntriesKey]);
 
   useEffect(() => {
     setMentionHighlightIndex(0);
@@ -1219,8 +922,8 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
   }, [hasMoreMessages, messagesLoading, loadMoreMessages]);
 
   const getActiveThreadId = useCallback(() => {
-    return roomThreadActive ? (rooms.activeRoom?.id ?? null) : (activeSession?.id ?? null);
-  }, [roomThreadActive, rooms.activeRoom?.id, activeSession?.id]);
+    return activeSession?.id ?? null;
+  }, [activeSession?.id]);
 
   const getMessageElement = useCallback((container: HTMLElement, messageId: string) => {
     if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
@@ -1334,16 +1037,16 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     writeBottom();
   }, []);
 
-  const activeThreadMessages = roomThreadActive ? rooms.messages : messages;
+  const activeThreadMessages = messages;
   const conversationSearchMatches = useMemo(() => {
     const query = conversationSearchQuery.trim().toLocaleLowerCase();
     if (!query) return [] as string[];
     const messageIds = activeThreadMessages
-      .filter((message) => message.content.trim() !== ROOM_SKIP_SENTINEL && message.content.toLocaleLowerCase().includes(query))
+      .filter((message) => message.content.toLocaleLowerCase().includes(query))
       .map((message) => message.id);
-    if (!roomThreadActive && isStreaming && streamingText.toLocaleLowerCase().includes(query)) messageIds.push("__streaming__");
+    if (isStreaming && streamingText.toLocaleLowerCase().includes(query)) messageIds.push("__streaming__");
     return messageIds;
-  }, [activeThreadMessages, conversationSearchQuery, isStreaming, roomThreadActive, streamingText]);
+  }, [activeThreadMessages, conversationSearchQuery, isStreaming, streamingText]);
   const activeConversationMatchId = conversationSearchMatches[conversationSearchIndex] ?? null;
 
   /*
@@ -1412,9 +1115,8 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
       wasPinnedBefore: !isUserScrollingRef.current,
       atBottomNow: atBottom,
       messageCount: activeThreadMessages.length,
-      roomThreadActive,
     });
-  }, [activeThreadMessages.length, roomThreadActive]);
+  }, [activeThreadMessages.length]);
 
   const scrollToBottom = useCallback((cause: string) => {
     logScrollDebug(cause);
@@ -1432,7 +1134,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
       directThreadDeferredAnchorTimeoutRef.current = null;
     }
 
-    const threadId = roomThreadActive ? (rooms.activeRoom?.id ?? null) : (activeSession?.id ?? null);
+    const threadId = activeSession?.id ?? null;
     if (!threadId) {
       lastAnchoredThreadStateRef.current = null;
       return;
@@ -1440,8 +1142,8 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
 
     const nextState = {
       threadId,
-      loaded: roomThreadActive ? !rooms.messagesLoading : !messagesLoading,
-      hasMessages: roomThreadActive ? rooms.messages.length > 0 : messages.length > 0,
+      loaded: !messagesLoading,
+      hasMessages: messages.length > 0,
     };
     const previousState = lastAnchoredThreadStateRef.current;
     const isThreadChanged = previousState?.threadId !== threadId;
@@ -1461,7 +1163,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
 
     logScrollDebug(isThreadChanged ? "thread-change" : finishedLoading ? "finished-loading" : firstMessagesArrived ? "first-messages" : "mount");
     anchorToBottom(messagesContainer, { force: true });
-    if (!roomThreadActive) {
+    {
       directThreadDeferredAnchorTimeoutRef.current = window.setTimeout(() => {
         directThreadDeferredAnchorTimeoutRef.current = null;
         if (isUserScrollingRef.current) {
@@ -1491,10 +1193,6 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
   null previous state and FORCE-anchored, yanking a reader who had scrolled up to the bottom.
   */
   }, [
-    roomThreadActive,
-    rooms.activeRoom?.id,
-    rooms.messages.length,
-    rooms.messagesLoading,
     activeSession?.id,
     messages.length,
     messagesLoading,
@@ -1573,7 +1271,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
   its own phone-width iOS gate, so this does not add body pinning on wide hosts.
   */
   useLayoutEffect(() => {
-    if (!keyboardTrackedHost || (!activeSession && !roomThreadActive)) return;
+    if (!keyboardTrackedHost || !activeSession) return;
     if (typeof window === "undefined") return;
 
     const thread = chatThreadRef.current;
@@ -1664,7 +1362,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
       thread.style.willChange = "";
       appliedThreadTranslateYRef.current = 0;
     };
-  }, [activeSession, keyboardTrackedHost, roomThreadActive]);
+  }, [activeSession, keyboardTrackedHost]);
 
   // Close context menu on outside click
   useEffect(() => {
@@ -1717,40 +1415,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
   // blur()+focus() resync here.
 
   useEffect(() => {
-    const previousScope = previousChatScopeRef.current;
-    previousChatScopeRef.current = chatScope;
-
-    if (chatScope === "rooms" && !rooms.activeRoom) {
-      lastAnchoredThreadStateRef.current = null;
-      return;
-    }
-
-    const enteredDirect =
-      chatScope === "direct" &&
-      (previousScope === null || previousScope === "rooms");
-    const enteredRooms =
-      chatScope === "rooms" &&
-      (previousScope === null || previousScope === "direct");
-
-    if (!enteredDirect && !enteredRooms) {
-      return;
-    }
-
-    const messagesContainer = messagesContainerRef.current;
-    if (!messagesContainer) {
-      return;
-    }
-
-    anchorToBottom(messagesContainer, { force: true });
-    isUserScrollingRef.current = false;
-    setIsUserScrolling(false);
-  }, [chatScope, rooms.activeRoom, anchorToBottom]);
-
-  useEffect(() => {
-    if (!activeSession && !roomThreadActive) {
-      return;
-    }
-    if (roomThreadActive && !isChatMobile) {
+    if (!activeSession) {
       return;
     }
 
@@ -1776,12 +1441,9 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
       document.removeEventListener("visibilitychange", onVisibilityChange);
       window.removeEventListener("pageshow", captureForRefetch);
     };
-  }, [isChatMobile, isMobile, activeSession, roomThreadActive, captureScrollSnapshot, scrollToBottom]);
+  }, [isChatMobile, isMobile, activeSession, captureScrollSnapshot, scrollToBottom]);
 
   useEffect(() => {
-    if (roomThreadActive) {
-      return;
-    }
     if (typeof ResizeObserver === "undefined") {
       return;
     }
@@ -1803,7 +1465,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     return () => {
       observer.disconnect();
     };
-  }, [roomThreadActive, anchorToBottom, activeSession?.id, chatScope]);
+  }, [anchorToBottom, activeSession?.id]);
 
   // Fetch agents on mount for name resolution (project-scoped with stale-request protection)
   useEffect(() => {
@@ -1865,63 +1527,63 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
 
   // Handle create session
   const handleCreateSession = useCallback(
-    async (input: { agentId: string; modelProvider?: string; modelId?: string; thinkingLevel?: string }) => {
+    async (
+      input: { agentId: string; modelProvider?: string; modelId?: string; thinkingLevel?: string },
+      options?: { openInNewWindow?: boolean },
+    ): Promise<ChatSessionInfo | null> => {
       try {
-        await createSession(input);
-        // FNXC:ChatNavigation 2026-08-20-23:57: New Chat always creates a Direct session, so switch scopes only after persistence succeeds and let useChat select the new thread.
-        setChatScope("direct");
-        setShowNewDialog(false);
+        if (options?.openInNewWindow) {
+          const session = await createSession(input, { keepActiveSession: true });
+          onOpenSessionInNewWindow?.(session);
+          return session;
+        }
+        const session = await createSession(input);
         setDetailOpen(true);
-        return true;
+        return session;
       } catch {
         addToast(t("chat.failedToCreateSession", "Failed to create chat session"), "error");
-        return false;
+        return null;
       }
     },
-    [createSession, addToast, isChatMobile, t],
+    [addToast, createSession, onOpenSessionInNewWindow, t],
   );
 
-  const handleNewChat = useCallback(() => {
-    if (chatSettings?.chatNewSessionMode === "always-default" && chatDefaultTarget) {
-      if (chatDefaultTarget.kind === "agent") {
-        void handleCreateSession({ agentId: chatDefaultTarget.agentId });
-        return;
-      }
-      void handleCreateSession({
-        agentId: FN_AGENT_ID,
-        modelProvider: chatDefaultTarget.modelProvider,
-        modelId: chatDefaultTarget.modelId,
-        thinkingLevel: chatDefaultTarget.thinkingLevel,
-      });
+  /*
+  FNXC:ChatWindows 2026-08-23-04:29:
+  Ctrl/Cmd-click must create a conversation beside, never in place of, the conversation currently
+  open in this host. The plain path intentionally retains the existing in-place selection behavior.
+  */
+  const handleNewChat = useCallback((event?: React.MouseEvent<HTMLButtonElement>) => {
+    const openInNewWindow = Boolean((event?.ctrlKey || event?.metaKey) && onOpenSessionInNewWindow);
+    if (chatDefaultTarget?.kind === "agent") {
+      const input = { agentId: chatDefaultTarget.agentId };
+      void (openInNewWindow ? handleCreateSession(input, { openInNewWindow: true }) : handleCreateSession(input));
       return;
     }
-    setShowNewDialog(true);
-  }, [chatDefaultTarget, chatSettings?.chatNewSessionMode, handleCreateSession]);
+    if (chatDefaultTarget?.kind === "model") {
+      const input = { agentId: FN_AGENT_ID, modelProvider: chatDefaultTarget.modelProvider, modelId: chatDefaultTarget.modelId, thinkingLevel: chatDefaultTarget.thinkingLevel };
+      void (openInNewWindow ? handleCreateSession(input, { openInNewWindow: true }) : handleCreateSession(input));
+      return;
+    }
+    if (defaultModel.provider && defaultModel.modelId) {
+      const input = { agentId: FN_AGENT_ID, modelProvider: defaultModel.provider, modelId: defaultModel.modelId };
+      void (openInNewWindow ? handleCreateSession(input, { openInNewWindow: true }) : handleCreateSession(input));
+      return;
+    }
+    addToast(t("chat.noDefaultModelConfigured", "Configure a default chat model in Settings before creating a conversation."), "error");
+  }, [addToast, chatDefaultTarget, defaultModel, handleCreateSession, onOpenSessionInNewWindow, t]);
 
-  const resizeComposer = useCallback((textarea?: HTMLTextAreaElement | null) => {
-    if (!textarea || textarea === inputRef.current) {
-      inputAutosizeRef.current?.resize();
-      return;
-    }
-    if (textarea === roomInputRef.current) {
-      roomAutosizeRef.current?.resize();
-    }
+  const resizeComposer = useCallback(() => {
+    inputAutosizeRef.current?.resize();
   }, []);
 
   // FNXC:VoiceInput 2026-07-24-05:00: Dictation uses this same post-render resize path as
-  // keyboard input, including the independently mounted room composer.
+  // keyboard input in the single direct composer.
   const composerDictation = useComposerDictation({
     textareaRef: inputRef,
     value: messageInput,
     onChange: setMessageInput,
-    onResize: () => resizeComposer(inputRef.current),
-    projectId,
-  });
-  const roomComposerDictation = useComposerDictation({
-    textareaRef: roomInputRef,
-    value: messageInput,
-    onChange: setMessageInput,
-    onResize: () => resizeComposer(roomInputRef.current),
+    onResize: () => resizeComposer(),
     projectId,
   });
 
@@ -1932,23 +1594,14 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     if (!textarea) return;
     inputAutosizeRef.current = createChatInputAutosizeController(textarea);
   }, []);
-  const handleRoomComposerRef = useCallback((textarea: HTMLTextAreaElement | null) => {
-    roomAutosizeRef.current?.destroy();
-    roomAutosizeRef.current = null;
-    roomInputRef.current = textarea;
-    if (!textarea) return;
-    roomAutosizeRef.current = createChatInputAutosizeController(textarea);
-  }, []);
 
   useLayoutEffect(() => {
-    // FNXC:VoiceInput 2026-07-24-05:00: Select the active textarea explicitly so controlled
-    // programmatic updates, including dictation, resize the room composer instead of a hidden direct input.
-    resizeComposer(chatScope === "rooms" ? roomInputRef.current : inputRef.current);
+    resizeComposer();
     if (focusComposerAfterPrefillRef.current) {
       focusComposerAfterPrefillRef.current = false;
       inputRef.current?.focus();
     }
-  }, [chatScope, messageInput, activeSession?.id, rooms.activeRoom?.id, resizeComposer]);
+  }, [messageInput, activeSession?.id, resizeComposer]);
 
   /*
   FNXC:ChatComposerPrefill 2026-07-30-12:00:
@@ -1982,29 +1635,16 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
       if (willChangeDraftTarget) {
         skipNextDraftRestoreRef.current = true;
       }
-      setChatScope("direct");
       setDetailOpen(true);
       focusComposerAfterPrefillRef.current = true;
       setMessageInput(initialComposerDraft);
     };
 
-    if (!isStreaming && chatSettings?.chatNewSessionMode === "always-default" && chatDefaultTarget) {
-      const input = chatDefaultTarget.kind === "agent"
-        ? { agentId: chatDefaultTarget.agentId }
-        : {
-            agentId: FN_AGENT_ID,
-            modelProvider: chatDefaultTarget.modelProvider,
-            modelId: chatDefaultTarget.modelId,
-            thinkingLevel: chatDefaultTarget.thinkingLevel,
-          };
-      void handleCreateSession(input).then((created) => seedComposer(created || chatScope !== "direct"));
-      return;
-    }
-
-    seedComposer(chatScope !== "direct");
-  }, [chatDefaultTarget, chatScope, chatSettings?.chatNewSessionMode, handleCreateSession, initialComposerDraft, initialComposerDraftNonce, isStreaming, resizeComposer]);
+    seedComposer(false);
+  }, [initialComposerDraft, initialComposerDraftNonce]);
 
   const clearComposerState = useCallback(() => {
+    snippetDraftEphemeralRef.current = false;
     setMessageInput("");
     if (activeDraftKey) {
       try {
@@ -2044,14 +1684,50 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     });
   }, []);
 
+  /*
+  FNXC:ChatSnippets 2026-09-03-15:56:
+  Selecting or submitting /name expands only the editable draft. The inserted prompt is ephemeral until explicit clear or send: remove the active saved draft and fence the normal draft-persistence effect so reusable prompt content is never copied into localStorage by expansion.
+  */
+  const insertSnippetDraft = useCallback((snippet: ChatSnippet, cursorPosition = messageInput.length, standalone = false): boolean => {
+    const applied = standalone
+      ? { value: snippet.prompt, cursorPosition: snippet.prompt.length }
+      : applySnippetToDraft(messageInput, snippet, cursorPosition);
+    if (!applied) return false;
+    snippetDraftEphemeralRef.current = true;
+    if (activeDraftKey) {
+      try {
+        localStorage.removeItem(activeDraftKey);
+      } catch {
+        // Ignore storage errors.
+      }
+    }
+    setMessageInput(applied.value);
+    setShowSkillMenu(false);
+    setSkillFilter("");
+    setHighlightedSkillIndex(0);
+    window.requestAnimationFrame(() => {
+      if (!inputRef.current) return;
+      resizeComposer();
+      inputRef.current.focus();
+      inputRef.current.setSelectionRange(applied.cursorPosition, applied.cursorPosition);
+    });
+    return true;
+  }, [activeDraftKey, messageInput, resizeComposer]);
+
   // Handle send message including pending attachment uploads.
   const handleSend = useCallback(() => {
     const trimmed = messageInput.trim();
     const files = pendingAttachments.map((attachment) => attachment.file);
     if ((!trimmed && files.length === 0) || !activeSession) return;
 
+    const snippetInvocation = matchStandaloneSnippetInvocation(trimmed, chatSnippets);
+    if (snippetInvocation) {
+      insertSnippetDraft(snippetInvocation, messageInput.length, true);
+      return;
+    }
+
     if (chatCommandContext) {
-      const commandMatch = matchChatCommand(trimmed, CHAT_COMMANDS);
+      const commandMatch = matchChatCommand(trimmed, selectedChatCommands);
       if (commandMatch) {
         // FNXC:ChatMemoryFocus (RUFU-068): only agent-gated commands (steer) are
         // refused without a running agent. /focus is a local session-setting command
@@ -2153,6 +1829,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     }
 
     const sentFiles = new Set(files);
+    snippetDraftEphemeralRef.current = false;
     setMessageInput("");
     try {
       sendMessage(trimmed, files, {
@@ -2180,6 +1857,9 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     chatCommandContext,
     isStreaming,
     releaseSentAttachments,
+    selectedChatCommands,
+    chatSnippets,
+    insertSnippetDraft,
     t,
   ]);
 
@@ -2188,99 +1868,23 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     const trimmed = messageInput.trim();
     const files = pendingAttachments.map((attachment) => attachment.file);
     /**
-     * FNXC:Chat 2026-06-17-02:12:
-     * Main Chat room dispatch must permit attachment-only sends. Block only a truly empty composer so staged files can reach the backend without requiring filler text.
+     * FNXC:Chat 2026-08-24-03:34:
+     * Direct Chat permits attachment-only sends. Block only a truly empty composer so staged files reach the backend without filler text.
      */
     if (!trimmed && files.length === 0) {
       return;
     }
 
-    if (chatRoomsEnabled && chatScope === "rooms") {
-      if (!rooms.activeRoom) {
-        return;
-      }
-
-      if (trimmed === "/clear" || trimmed === "/new") {
-        /*
-        FNXC:ChatSlashCommands 2026-08-10-05:57:
-        Room clear/new also revokes and discards pending previews, so reject only exact commands with staged files before touching room state.
-        */
-        if (files.length > 0) {
-          addToast(t("chat.clearNoAttachments", "Remove the attachments before running /clear or /new — they would be discarded unsent"), "warning");
-          return;
-        }
-        clearComposerState();
-        try {
-          await rooms.clearRoom(rooms.activeRoom.id);
-        } catch {
-          addToast(t("chat.failedToClearRoomConversation", "Failed to clear room conversation"), "error");
-        }
-        return;
-      }
-
-      if (roomSendInFlightRef.current) {
-        return;
-      }
-
-      roomSendInFlightRef.current = true;
-      const previousInput = messageInput;
-      const sentFiles = new Set(files);
-      // Clear only the text optimistically. Keeping staged attachments until upload succeeds lets a
-      // rejected room send be retried without silently losing its photo or file.
-      setMessageInput("");
-
-      try {
-        await rooms.sendRoomMessage(trimmed, { files, onDelivered: () => releaseSentAttachments(sentFiles) });
-        // Refetch completion is an idempotent backstop after delivery acceptance.
-        releaseSentAttachments(sentFiles);
-      } catch (error) {
-        if (error instanceof RoomMessageDeliveredButReplyFailedError) {
-          // The server accepted this turn, so release only the attachments that were dispatched.
-          releaseSentAttachments(sentFiles);
-          const message = error.message.trim()
-            ? error.message
-            : t("chat.messageSentButReplyFailed", "Message sent, but assistant reply failed");
-          addToast(t("chat.messageSentButReplyFailedDetail", "Message sent, but assistant reply failed: {{detail}}", { detail: message }), "error");
-          return;
-        }
-
-        setMessageInput(previousInput);
-        const message = error instanceof Error && error.message.trim()
-          ? error.message
-          : t("chat.failedToSendRoomMessage", "Failed to send room message");
-        addToast(message, "error");
-      } finally {
-        roomSendInFlightRef.current = false;
-      }
-      return;
-    }
-
     handleSend();
-  }, [messageInput, pendingAttachments, chatRoomsEnabled, chatScope, rooms, rooms.clearRoom, clearComposerState, addToast, handleSend, releaseSentAttachments]);
+  }, [messageInput, pendingAttachments, handleSend]);
 
   const handleQuestionSubmit = useCallback(async (answerText: string) => {
-    if (chatRoomsEnabled && chatScope === "rooms") {
-      if (!rooms.activeRoom) {
-        return;
-      }
-
-      try {
-        await rooms.sendRoomMessage(answerText);
-      } catch (error) {
-        const message = error instanceof Error && error.message.trim()
-          ? error.message
-          : t("chat.failedToSendRoomMessage", "Failed to send room message");
-        addToast(message, "error");
-      }
-      return;
-    }
-
     if (!activeSession) {
       return;
     }
 
     sendMessage(answerText);
-  }, [activeSession, addToast, chatRoomsEnabled, chatScope, rooms, sendMessage, t]);
+  }, [activeSession, sendMessage]);
 
   const handleSkillSelect = useCallback(
     (skill: DiscoveredSkill) => {
@@ -2296,7 +1900,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
 
         window.requestAnimationFrame(() => {
           if (!inputRef.current) return;
-          resizeComposer(inputRef.current);
+          resizeComposer();
           inputRef.current.focus();
         });
 
@@ -2309,6 +1913,10 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     },
     [resizeComposer],
   );
+
+  const handleSnippetSelect = useCallback((snippet: ChatSnippet) => {
+    insertSnippetDraft(snippet, inputRef.current?.selectionStart ?? messageInput.length);
+  }, [insertSnippetDraft, messageInput.length]);
 
   const handleCommandSelect = useCallback(
     (command: ChatCommand, disabled: boolean) => {
@@ -2329,7 +1937,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
 
         window.requestAnimationFrame(() => {
           if (!inputRef.current) return;
-          resizeComposer(inputRef.current);
+          resizeComposer();
           inputRef.current.focus();
         });
 
@@ -2367,7 +1975,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
 
       window.requestAnimationFrame(() => {
         if (!inputRef.current) return;
-        resizeComposer(inputRef.current);
+        resizeComposer();
         inputRef.current.focus();
         inputRef.current.setSelectionRange(nextCursorPos, nextCursorPos);
       });
@@ -2390,7 +1998,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
 
       window.requestAnimationFrame(() => {
         if (!inputRef.current) return;
-        resizeComposer(inputRef.current);
+        resizeComposer();
         inputRef.current.focus();
         inputRef.current.setSelectionRange(nextCursorPos, nextCursorPos);
       });
@@ -2475,6 +2083,8 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
         const entryToSelect = skillMenuEntries[highlightedSkillIndex] ?? skillMenuEntries[0];
         if (entryToSelect?.kind === "skill") {
           handleSkillSelect(entryToSelect.skill);
+        } else if (entryToSelect?.kind === "snippet") {
+          handleSnippetSelect(entryToSelect.snippet);
         } else if (entryToSelect?.kind === "command") {
           handleCommandSelect(entryToSelect.command, entryToSelect.disabled);
         }
@@ -2501,6 +2111,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
       skillMenuEntries,
       highlightedSkillIndex,
       handleSkillSelect,
+      handleSnippetSelect,
       handleCommandSelect,
       handleSendDispatch,
       fileMention,
@@ -2534,12 +2145,12 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     // works in tests but can lose the height in production because React 18
     // batches the state update and the controlled-component value reset can
     // happen before our direct DOM height assignment lands.
-    resizeComposer(textarea);
+    resizeComposer();
 
     mentionCursorPosRef.current = cursorPos;
     setMessageInput(nextValue);
 
-    const skillTriggerMatch = getSkillTriggerMatch(nextValue);
+    const skillTriggerMatch = getSkillTriggerMatch(nextValue.slice(0, cursorPos));
     if (skillTriggerMatch) {
       setShowSkillMenu(true);
       setSkillFilter(skillTriggerMatch.filter);
@@ -2839,18 +2450,10 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     setConversationSearchIndex(0);
   }, []);
 
-  const handleRoomBack = useCallback(() => {
-    setDetailOpen(false);
-    setConversationSearchOpen(false);
-    setConversationSearchQuery("");
-    setConversationSearchIndex(0);
-  }, []);
-
   const handleVisibleDetailBack = useCallback(() => {
-    const revert = chatScope === "rooms" ? handleRoomBack : handleBack;
-    revert();
-    removeNav?.(revert);
-  }, [chatScope, handleBack, handleRoomBack, removeNav]);
+    handleBack();
+    removeNav?.(handleBack);
+  }, [handleBack, removeNav]);
 
   // Render empty state (no active session)
   const renderEmptyState = () => {
@@ -2858,7 +2461,12 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
       <div className="chat-empty-state">
         <MessageSquare size={48} strokeWidth={1.5} />
         <h2>{t("chat.startNewConversation", "Start a new conversation")}</h2>
-        <button className="btn btn-primary" onClick={handleNewChat}>
+        <button
+          className="btn btn-primary"
+          onClick={handleNewChat}
+          data-testid="chat-new-btn-empty"
+          title={onOpenSessionInNewWindow ? t("chat.newChatOpenInNewWindowHint", "Ctrl/Cmd + click to open the new conversation in a separate window") : undefined}
+        >
           <Plus size={16} />
           {t("chat.newChat", "New Chat")}
         </button>
@@ -2891,7 +2499,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
   const activeModelTag = formatModelTag(activeResolvedModel?.provider, activeResolvedModel?.modelId);
   const activeModelProvider = activeResolvedModel?.provider ?? null;
   const hasThreadInView = Boolean(activeSession || isStreaming || messages.length > 0);
-  const hasDetailSelection = detailOpen && (chatScope === "rooms" ? roomThreadActive : hasThreadInView);
+  const hasDetailSelection = detailOpen && hasThreadInView;
   // ── CLI-backed chat mount (U12) ──────────────────────────────────────────
   // When the active chat session selects a cli-agent executor, the message-pane
   // + composer region is delegated to <CliChatSurface> (transcript + raw-terminal
@@ -2909,6 +2517,44 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
   const cliTerminalSessionId = activeSession?.cliSessionFile || activeSession?.id || "";
 
   const previousDetailOpenRef = useRef(hasDetailSelection);
+  const focusedComposerThreadRef = useRef<string | null>(null);
+  const suppressComposerFocus = isMobile || isTabletTouchViewport(mode);
+
+  /*
+  FNXC:ChatComposerFocus 2026-09-01-01:04:
+  Opening or creating a conversation must put the caret in its composer so operators can type immediately without a mouse click. `findActive` is the focus-ownership gate because a retained-but-hidden Quick Chat stays mounted and portaled; reopening it onto an existing thread is itself an open.
+
+  Phone and touch-tablet hosts deliberately keep focus off the composer: an unsolicited software keyboard would cover a freshly opened thread, and programmatic focus without a user gesture cannot reliably raise the iOS keyboard. Record the thread before that suppression so a later viewport or orientation change cannot retroactively steal focus.
+  */
+  useEffect(() => {
+    if (!findActive || !hasDetailSelection || !activeSession) {
+      focusedComposerThreadRef.current = null;
+      return;
+    }
+
+    const threadKey = `${activeSession.id}:${initialDirectSessionNonce ?? 0}`;
+    if (focusedComposerThreadRef.current === threadKey) return;
+    focusedComposerThreadRef.current = threadKey;
+    if (suppressComposerFocus) return;
+
+    inputRef.current?.focus();
+  }, [activeSession?.id, findActive, hasDetailSelection, initialDirectSessionNonce, suppressComposerFocus]);
+
+  useEffect(() => {
+    if (initialDirectSessionNonce === previousInitialDirectSessionNonceRef.current) return;
+    previousInitialDirectSessionNonceRef.current = initialDirectSessionNonce;
+    if (!initialDirectSession) return;
+    suppressAutomaticDetailNavRef.current = true;
+    setDetailOpen(true);
+    /*
+    FNXC:ChatWindows 2026-08-23-03:33:
+    FN-169 must not re-select an already active streaming session: selectSession clears transient
+    composer and stream state. A re-open only selects when its requested session is different.
+    */
+    if (activeSession?.id !== initialDirectSession.id) {
+      selectSession(initialDirectSession.id, initialDirectSession);
+    }
+  }, [activeSession?.id, initialDirectSession, initialDirectSessionNonce, selectSession]);
 
   /*
   FNXC:ChatFind 2026-08-21-16:29:
@@ -2923,7 +2569,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     setConversationSearchOpen(false);
     setConversationSearchQuery("");
     setConversationSearchIndex(0);
-  }, [activeSession?.id, rooms.activeRoom?.id, chatScope]);
+  }, [activeSession?.id]);
 
   const focusConversationSearch = useCallback(() => {
     setConversationSearchOpen(true);
@@ -2964,7 +2610,6 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
       const nestedDialog = target?.closest("[role=dialog]");
       if ((!ownsTarget && activeChatFindOwner !== root) || nestedDialog || target?.closest(".xterm, [data-terminal-owner]")) return;
       if (!hasDetailSelection) {
-        if (chatScope !== "direct") return;
         event.preventDefault();
         listSearchInputRef.current?.focus();
         return;
@@ -2980,7 +2625,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
       if (activeChatFindOwner === root) activeChatFindOwner = null;
       document.removeEventListener("keydown", onKeyDown);
     };
-  }, [chatScope, cliChatActive, cliChatTier, findActive, focusConversationSearch, hasDetailSelection]);
+  }, [cliChatActive, cliChatTier, findActive, focusConversationSearch, hasDetailSelection]);
 
   const renderConversationSearch = () => {
     if (!conversationSearchOpen) return null;
@@ -3001,9 +2646,20 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
   useEffect(() => {
     const previousDetailOpen = previousDetailOpenRef.current;
     previousDetailOpenRef.current = hasDetailSelection;
-    if (previousDetailOpen || !hasDetailSelection || dockedSidebarVisible) return;
-    pushNav({ type: "view", revert: chatScope === "rooms" ? handleRoomBack : handleBack });
-  }, [chatScope, dockedSidebarVisible, handleBack, handleRoomBack, hasDetailSelection, pushNav]);
+    if (previousDetailOpen || !hasDetailSelection) {
+      if (previousDetailOpen && hasDetailSelection && suppressAutomaticDetailNavRef.current) {
+        suppressAutomaticDetailNavRef.current = false;
+      }
+      return;
+    }
+    if (suppressAutomaticDetailNavRef.current) {
+      suppressAutomaticDetailNavRef.current = false;
+      return;
+    }
+    if (dockedSidebarVisible) return;
+    pushNav({ type: "view", revert: handleBack });
+  }, [dockedSidebarVisible, handleBack, hasDetailSelection, pushNav]);
+
 
   /*
   FNXC:ChatNavigation 2026-08-20-05:25:
@@ -3055,6 +2711,20 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
   // assistant bubble is noise. Hide the per-message identity row entirely.
   const hideAssistantIdentity = activeSession?.agentId === FN_AGENT_ID;
 
+  /*
+  FNXC:ChatMentionDispatch 2026-08-23-02:52:
+  Per-message mention dispatch persists its author in metadata. Resolve that identity for completed
+  replies so model-only sessions do not hide summoned agents and multi-agent turns retain attribution.
+  */
+  const resolveMessageAssistantIdentity = useCallback((message: ChatMessageInfo) => {
+    const senderId = typeof message.metadata?.senderAgentId === "string" ? message.metadata.senderAgentId : null;
+    if (!senderId) return { agentName, hideAssistantIdentity };
+    return {
+      agentName: agentsMap.get(senderId)?.name
+        ?? (typeof message.metadata?.senderAgentName === "string" ? message.metadata.senderAgentName : senderId.slice(0, 30)),
+      hideAssistantIdentity: false,
+    };
+  }, [agentName, agentsMap, hideAssistantIdentity]);
 
   const setCopyFeedback = useCallback((messageId: string, feedback: CopyFeedbackState) => {
     const existingTimeout = copyFeedbackTimeoutsRef.current.get(messageId);
@@ -3084,6 +2754,16 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     setCopyFeedback(messageId, copied ? "success" : "error");
   }, [setCopyFeedback]);
 
+  const handleQuoteMessage = useCallback((message: ChatMessageInfo) => {
+    const senderId = typeof message.metadata?.senderAgentId === "string" ? message.metadata.senderAgentId : undefined;
+    const sessionAgent = activeSession?.agentId && activeSession.agentId !== FN_AGENT_ID ? agentsMap.get(activeSession.agentId) : undefined;
+    const agentName = senderId
+      ? (agentsMap.get(senderId)?.name ?? (typeof message.metadata?.senderAgentName === "string" ? message.metadata.senderAgentName : undefined))
+      : message.role === "assistant" ? sessionAgent?.name : undefined;
+    setMessageInput((draft) => buildChatQuotePrefill({ quotedText: message.content, agentName, existingDraft: draft }));
+    requestAnimationFrame(() => { inputRef.current?.focus(); resizeComposer(); });
+  }, [activeSession?.agentId, agentsMap, resizeComposer]);
+
   const showProviderResponseCopy = activeSession?.agentId === FN_AGENT_ID;
 
   const renderMessageActions = useCallback((messageId: string, content: string, role: "assistant" | "user" | "system", testId?: string, allowReport = true) => {
@@ -3111,11 +2791,9 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
   }, []);
 
   /*
-   * FNXC:ChatMessageEdit 2026-07-07-09:00:
-   * Editing is supported only for direct (model-loop) chat sessions: never CLI-agent-backed
-   * sessions (a live PTY owns the transcript, not a rewindable pi session), and never while a
-   * generation is streaming (an edit cannot race a live send). Rooms don't route through this
-   * pane at all, so no additional gate is needed here for that surface.
+   * FNXC:ChatMessageEdit 2026-08-24-03:34:
+   * Editing is supported only for direct model-loop sessions: never CLI-agent-backed sessions
+   * (a live PTY owns the transcript), and never while a generation is streaming.
    */
   const canEditChatMessages = !cliChatActive && !isStreaming;
 
@@ -3136,8 +2814,8 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
               key={message.id}
               message={message}
               forcePlain={false}
-              agentName={agentName}
-              hideAssistantIdentity={hideAssistantIdentity}
+              agentName={resolveMessageAssistantIdentity(message).agentName}
+              hideAssistantIdentity={resolveMessageAssistantIdentity(message).hideAssistantIdentity}
               showAssistantModelTag={showAssistantModelTag}
               activeModelTag={activeModelTag}
               activeModelProvider={activeModelProvider}
@@ -3146,6 +2824,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
               mentionAgentsByName={mentionAgentsByName}
               roomContext={null}
               copyAction={renderMessageActions(message.id, message.content, message.role)}
+              onQuoteMessage={handleQuoteMessage}
               onScrollToTop={handleScrollMessageToTop}
               isTopClipped={topClippedMessageIds.has(message.id)}
               isAwaitingQuestionAnswer={message.role === "assistant" && index === messages.length - 1 && !isStreaming}
@@ -3187,8 +2866,8 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
               key={message.id}
               message={message}
               forcePlain={false}
-              agentName={agentName}
-              hideAssistantIdentity={hideAssistantIdentity}
+              agentName={resolveMessageAssistantIdentity(message).agentName}
+              hideAssistantIdentity={resolveMessageAssistantIdentity(message).hideAssistantIdentity}
               showAssistantModelTag={showAssistantModelTag}
               activeModelTag={activeModelTag}
               activeModelProvider={activeModelProvider}
@@ -3197,6 +2876,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
               mentionAgentsByName={mentionAgentsByName}
               roomContext={null}
               copyAction={renderMessageActions(message.id, message.content, message.role)}
+              onQuoteMessage={handleQuoteMessage}
               onScrollToTop={handleScrollMessageToTop}
               isTopClipped={topClippedMessageIds.has(message.id)}
               isAwaitingQuestionAnswer={message.role === "assistant" && index === messages.length - 1 && !isStreaming}
@@ -3229,9 +2909,9 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
         }}
       />
       {showSkillMenu && (
-        <div className="chat-skill-menu" data-testid="chat-skill-menu" role="listbox" aria-label={t("chat.skillSuggestions", "Skill suggestions")}>
-          {skillsLoading && filteredCommands.length === 0 ? (
-            <div className="chat-skill-menu-empty">{t("chat.loadingSkills", "Loading skills…")}</div>
+        <div className="chat-skill-menu" data-testid="chat-skill-menu" role="listbox" aria-label={t("chat.slashSuggestions", "Slash suggestions")}>
+          {skillsLoading && skillMenuEntries.length === 0 ? (
+            <div className="chat-skill-menu-empty">{t("chat.loadingSlashSuggestions", "Loading suggestions…")}</div>
           ) : skillMenuEntries.length === 0 ? (
             <div className="chat-skill-menu-empty">
               {skillFilter ? t("chat.noSkillsFound", "No skills found") : t("chat.noSkillsAvailable", "No skills available")}
@@ -3255,6 +2935,22 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
                     {entry.disabled
                       ? t("chat.commandNoRunningAgentHint", "No running agent to steer")
                       : entry.command.description}
+                  </span>
+                </button>
+              ) : entry.kind === "snippet" ? (
+                <button
+                  key={`snippet-${entry.snippet.name}`}
+                  type="button"
+                  role="option"
+                  aria-selected={index === highlightedSkillIndex}
+                  className={`chat-skill-menu-item${index === highlightedSkillIndex ? " chat-skill-menu-item--highlighted" : ""}`}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onMouseEnter={() => setHighlightedSkillIndex(index)}
+                  onClick={() => handleSnippetSelect(entry.snippet)}
+                >
+                  <span className="chat-skill-menu-item-name">/{entry.snippet.name}</span>
+                  <span className="chat-skill-menu-item-description">
+                    {t("chat.snippetSuggestion", "Insert saved prompt")}
                   </span>
                 </button>
               ) : (
@@ -3325,23 +3021,22 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
           <Paperclip size={16} />
         </button>
         {/*
-        FNXC:ChatMemoryFocus 2026-08-13:
-        RUFU-068: per-conversation memory focus chip for direct chat sessions. Persists
-        on chat_sessions.memory_focus so it survives reconnect; recall scoping is server-side
-        (within-project read filter), never a client post-query filter. Only the direct composer
-        shows it — rooms have no per-conversation focus.
+        FNXC:ChatMemoryFocus 2026-08-24-04:21:
+        Per-conversation memory focus is opt-in. Hide its direct-session chip until Settings
+        enables experimentalFeatures.chatFocus; persisted values remain inert while hidden.
         */}
-        <ChatFocusSelector
-          sessionId={activeSession?.id ?? null}
-          projectId={projectId}
-          memoryFocus={resolvedChatFocus}
-          onPersist={(focus) => setChatFocusOverride(focus)}
-          addToast={addToast}
-        />
+        {chatFocusEnabled && (
+          <ChatFocusSelector
+            sessionId={activeSession?.id ?? null}
+            projectId={projectId}
+            memoryFocus={resolvedChatFocus}
+            onPersist={(focus) => setChatFocusOverride(focus)}
+            addToast={addToast}
+          />
+        )}
         {/*
-        FNXC:Chat-ThinkingLevel 2026-07-16-00:34:
-        FN-8030: direct sessions retain model/agent targeting here, while room composers reuse
-        this control in level-only mode. CLI-backed sessions broker to a live PTY and never receive
+        FNXC:Chat-ThinkingLevel 2026-08-24-03:34:
+        Direct sessions retain model/agent targeting here. CLI-backed sessions broker to a live PTY and never receive
         defaultThinkingLevel (FN-7775), so this direct-chat control stays gated by cliChatActive.
         */}
         {!cliChatActive && (
@@ -3355,6 +3050,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
             agentId={activeSession?.agentId}
             modelProvider={activeSession?.modelProvider}
             modelId={activeSession?.modelId}
+            targetKey={activeSession?.id ?? null}
             onChange={(level) => {
               if (activeSession) {
                 void setSessionThinkingLevel(activeSession.id, level);
@@ -3413,8 +3109,6 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
             visible={mentionPopupVisible}
             onSelect={handleMentionSelect}
             position={AGENT_MENTION_POPUP_POSITION}
-            roomMemberIds={roomContext?.memberIds}
-            roomName={roomContext?.roomName}
           />
           <FileMentionPopup
             visible={fileMention.mentionActive && !mentionPopupVisible}
@@ -3454,11 +3148,8 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
    * FN-6516 refines the tablet keyboard behavior: keep the sidebar at the same persisted width while the keyboard is open instead of narrowing to the minimum. The FN-6210 CSS max-width guard remains the upper bound, and resize controls still stay disabled while typing.
    */
   /*
-  FNXC:ChatHeader 2026-06-22-16:18:
-  Direct/Rooms is a view-level scope switch, so it belongs in Chat's canonical header directly before New Chat instead of consuming the first row of the sidebar. Keep the existing test ids while moving the DOM so direct and room conversations share one header control surface.
-
-  FNXC:ChatHeader 2026-06-22-18:44:
-  Very narrow chat headers collapse Direct/Rooms to icons while retaining aria-selected tabs and text labels for wider headers. The segmented control must stay height-aligned with the ViewHeader action row, so icon+label markup is stable and CSS hides only the label.
+  FNXC:ChatDirectOnly 2026-08-24-03:34:
+  The session list is direct-chat only; the canonical ViewHeader carries New Chat and docked-list actions without a stale Rooms scope control.
   */
   const visibleSidebarSessions = showArchivedSessions ? archivedSessions : filteredSessions;
   const pinnedFilteredSessions = visibleSidebarSessions.filter((session) => session.pinnedAt != null);
@@ -3500,33 +3191,6 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
   }, [addToast, contextMenu, contextMenuSession, createTag, newTagName, setSessionTags, t]);
 
 
-  const scopeToggle = chatRoomsEnabled ? (
-    <div className="chat-sidebar-scope-toggle chat-view-header-scope-toggle" role="tablist" data-testid="chat-sidebar-scope-toggle">
-      <button
-        type="button"
-        role="tab"
-        className={`chat-sidebar-scope-btn${chatScope === "direct" ? " chat-sidebar-scope-btn--active" : ""}`}
-        aria-selected={chatScope === "direct"}
-        data-testid="chat-sidebar-scope-direct"
-        onClick={() => setChatScope("direct")}
-      >
-        <MessageSquare size={14} aria-hidden="true" />
-        <span>{t("chat.scopeDirect", "Direct")}</span>
-      </button>
-      <button
-        type="button"
-        role="tab"
-        className={`chat-sidebar-scope-btn${chatScope === "rooms" ? " chat-sidebar-scope-btn--active" : ""}`}
-        aria-selected={chatScope === "rooms"}
-        data-testid="chat-sidebar-scope-rooms"
-        onClick={() => setChatScope("rooms")}
-      >
-        <Hash size={14} aria-hidden="true" />
-        <span>{t("chat.scopeRooms", "Rooms")}</span>
-      </button>
-    </div>
-  ) : null;
-
   return (
     /*
     FNXC:ChatNavigation 2026-08-20-05:25:
@@ -3541,7 +3205,6 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
         title={t("chat.title", "Chat")}
         actions={
           <>
-            {!hasDetailSelection || dockedSidebarVisible ? scopeToggle : null}
             {dockedSidebarEligible ? (
               <button type="button" className="btn-icon chat-view-header-icon" data-testid="chat-docked-sidebar-toggle"
                 aria-pressed={dockedSidebarOpen}
@@ -3551,10 +3214,12 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
                 {dockedSidebarOpen ? <PanelLeftClose /> : <PanelLeft />}
               </button>
             ) : null}
+
             <button
               className="btn btn-sm btn-primary chat-view-header-new-chat"
               onClick={handleNewChat}
               data-testid="chat-new-btn"
+              title={onOpenSessionInNewWindow ? t("chat.newChatOpenInNewWindowHint", "Ctrl/Cmd + click to open the new conversation in a separate window") : undefined}
             >
               <Plus size={14} />
               {t("chat.newChat", "New Chat")}
@@ -3604,17 +3269,14 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
         className={`chat-sidebar${hasDetailSelection && !dockedSidebarVisible ? " chat-sidebar--hidden" : ""}${dockedSidebarVisible ? " chat-sidebar--docked" : ""}`}
         style={dockedSidebarVisible ? { width: dockedSidebarWidth, minWidth: dockedSidebarWidth } : undefined}
       >
-        {!chatRoomsEnabled || chatScope === "direct" ? (
-          <>
+        <>
             {/* Search section */}
             {/*
             FNXC:ChatSearch 2026-07-07-12:00:
             Search always matches message content (server round trip) in addition to
             title/agentId; there is no client toggle to restrict it back to title-only (FN-7651
             removed the "Search in title only" button per user request). Rendered on both desktop
-            and mobile since this sidebar markup is shared (mobile layout is a CSS breakpoint of
-            the same DOM), and only within the Direct scope — Rooms already hides search/list
-            entirely.
+            and mobile because the direct-chat sidebar markup is shared across breakpoints.
             */}
             <div className="chat-sidebar-search-container">
               <div className="chat-sidebar-search-wrapper">
@@ -3763,107 +3425,12 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
                 </>
               )}
             </div>
-          </>
-        ) : (
-          <div className="chat-sidebar-rooms" data-testid="chat-sidebar-rooms">
-            {!isChatMobile && (
-              <div className="chat-sidebar-rooms-header" data-testid="chat-sidebar-rooms-header">
-                <button
-                  type="button"
-                  className="btn btn-sm btn-primary"
-                  data-testid="chat-create-room-btn"
-                  onClick={() => setCreateRoomOpen(true)}
-                >
-                  <Plus size={14} />
-                  {t("chat.createRoom", "Create room")}
-                </button>
-              </div>
-            )}
-            {rooms.rooms.length === 0 ? (
-              <div className="chat-sidebar-rooms-empty" data-testid="chat-sidebar-rooms-empty">
-                {t("chat.noRoomsYet", "No rooms yet.")}
-              </div>
-            ) : (
-              <div className="chat-session-list chat-sidebar-list">
-                {rooms.rooms.map((room) => {
-                  const isActive = rooms.activeRoom?.id === room.id;
-                  const showUnreadDot = !isActive && isUnread("room", room.id, room.updatedAt);
-                  return (
-                    <div
-                      key={room.id}
-                      role="button"
-                      tabIndex={0}
-                      className={`chat-room-item${isActive ? " chat-room-item--active" : ""}`}
-                      data-testid={`chat-room-item-${room.slug}`}
-                      onClick={() => {
-                        markRead("room", room.id, room.updatedAt);
-                        rooms.selectRoom(room.id);
-                        setDetailOpen(true);
-                      }}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter" || event.key === " ") {
-                          event.preventDefault();
-                          markRead("room", room.id, room.updatedAt);
-                          rooms.selectRoom(room.id);
-                          setDetailOpen(true);
-                        }
-                      }}
-                    >
-                      <span className="chat-room-item-details">
-                        <span className="chat-room-item-name-row">
-                          <span className="chat-room-item-name">#{room.name}</span>
-                          {showUnreadDot ? (
-                            <span
-                              className="chat-unread-dot"
-                              data-testid={`chat-unread-dot-${room.id}`}
-                              aria-label={t("chat.unreadMessages", "Unread messages")}
-                            />
-                          ) : null}
-                        </span>
-                        {isActive ? (
-                          <span className="chat-room-item-meta">
-                            {t("chat.roomMemberCount", "{{count}} member", { count: rooms.activeRoomMembers.length, defaultValue_one: "{{count}} member", defaultValue_other: "{{count}} members" })}
-                          </span>
-                        ) : null}
-                      </span>
-                      <button
-                        type="button"
-                        className="btn-icon chat-room-item-delete"
-                        data-testid={`chat-room-delete-${room.slug}`}
-                        aria-label={t("chat.deleteRoom", "Delete room {{name}}", { name: room.name })}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          setConfirmDeleteRoomId(room.id);
-                        }}
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        )}
-        {chatScope === "rooms" ? (
-          isChatMobile ? (
-            <div className="chat-sidebar-footer">
-              <button
-                type="button"
-                className="btn btn-sm btn-primary chat-sidebar-footer-btn"
-                data-testid="chat-create-room-btn"
-                onClick={() => setCreateRoomOpen(true)}
-              >
-                <Plus size={14} />
-                {t("chat.createRoom", "Create room")}
-              </button>
-            </div>
-          ) : null
-        ) : null}
+        </>
         {dockedSidebarVisible ? <div className="chat-sidebar__resize-handle" role="separator" aria-orientation="vertical" tabIndex={0}
           aria-valuenow={dockedSidebarWidth} aria-valuemin={CHAT_DOCKED_SIDEBAR_MIN_WIDTH} aria-valuemax={CHAT_DOCKED_SIDEBAR_MAX_WIDTH}
           aria-label={t("chat.resizeSidebar", "Resize chat sidebar")} data-testid="chat-sidebar-resize-handle"
           onPointerDown={handleDockedResizeStart} onKeyDown={handleDockedResizeKeyDown} /> : null}
+
       </div>
 
 
@@ -3877,7 +3444,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
           style={{ top: contextMenu.y, left: contextMenu.x }}
           onClick={(e) => e.stopPropagation()}
         >
-          {onOpenSessionInNewWindow && chatScope === "direct" && !showArchivedSessions && contextMenuSession ? (
+          {onOpenSessionInNewWindow && !showArchivedSessions && contextMenuSession ? (
             <button
               type="button"
               role="menuitem"
@@ -4055,257 +3622,9 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
         </ChatDialogBackdrop>
       )}
 
-      {chatRoomsEnabled && confirmDeleteRoomId && (
-        <ChatDialogBackdrop onClose={() => setConfirmDeleteRoomId(null)}>
-          <div className="chat-new-dialog chat-view-dialog" onClick={(e) => e.stopPropagation()}>
-            <h3>{t("chat.deleteRoomTitle", "Delete Room?")}</h3>
-            <p className="chat-view-delete-dialog-copy">
-              {t("chat.deleteRoomBody", "This action cannot be undone. This room and all its messages will be permanently deleted.")}
-            </p>
-            <div className="chat-new-dialog-actions">
-              <button className="btn btn-sm" onClick={() => setConfirmDeleteRoomId(null)}>
-                {t("chat.cancel", "Cancel")}
-              </button>
-              <button
-                className="btn btn-sm btn-danger"
-                onClick={() => {
-                  void (async () => {
-                    try {
-                      await rooms.deleteRoom(confirmDeleteRoomId);
-                      setConfirmDeleteRoomId(null);
-                    } catch {
-                      addToast(t("chat.failedToDeleteRoom", "Failed to delete room"), "error");
-                    }
-                  })();
-                }}
-              >
-                {t("chat.delete", "Delete")}
-              </button>
-            </div>
-          </div>
-        </ChatDialogBackdrop>
-      )}
       {/* Thread */}
-      {hasDetailSelection && chatRoomsEnabled && chatScope === "rooms" ? (
-        <div ref={chatThreadRef} className="chat-thread">
-          {renderConversationSearch()}
-          {rooms.activeRoom ? (
-            <>
-              <div className="chat-room-thread-header">
-                {/*
-                FNXC:ChatNavigation 2026-08-23-15:54:
-                FN-9199 requires the chat detail Back affordance to render a real lucide ArrowLeft
-                glyph, never a literal less-than text character. Both Rooms and Direct thread
-                headers use this same icon-and-translated-label pattern on every chat host and
-                breakpoint, while aria-label retains the fuller accessible name.
-                */}
-                {!dockedSidebarVisible ? <button
-                  type="button"
-                  className="btn btn-sm chat-thread-header-back chat-back-btn"
-                  onClick={handleVisibleDetailBack}
-                  data-testid="chat-back-btn"
-                  aria-label={t("chat.backToConversations", "Back to conversations")}
-                >
-                  <ArrowLeft size={14} aria-hidden="true" />
-                  <span>{t("chat.back", "Back")}</span>
-                </button> : null}
-                <span className="chat-thread-header-title">#{rooms.activeRoom.name}</span>
-                <div className="chat-room-thread-members">
-                  {rooms.activeRoomMembers.map((member) => (
-                    <AgentAvatar
-                      key={member.agentId}
-                      agent={agentsMap.get(member.agentId) ?? { id: member.agentId, name: member.agentId.slice(0, 30) }}
-                    />
-                  ))}
-                </div>
-              </div>
-              <div className="chat-messages" ref={messagesContainerRef} onScroll={updateScrollState}>
-                {rooms.messagesLoading && rooms.messages.length === 0 ? (
-                  <div className="chat-empty-state">{t("chat.loadingMessages", "Loading messages...")}</div>
-                ) : rooms.messages.filter((message) => message.content.trim() !== ROOM_SKIP_SENTINEL).length === 0 ? (
-                  <div className="chat-empty-state">{t("chat.noMessagesYet", "No messages yet. Start the conversation!")}</div>
-                ) : (
-                  rooms.messages
-                    .filter((message) => message.content.trim() !== ROOM_SKIP_SENTINEL)
-                    .map((message) => {
-                    const senderName = message.senderAgentId ? (agentsMap.get(message.senderAgentId)?.name ?? message.senderAgentId.slice(0, 30)) : t("chat.you", "You");
-                    const roomMessage: ChatMessageInfo = {
-                      id: message.id,
-                      sessionId: message.roomId,
-                      role: message.role,
-                      content: message.content,
-                      thinkingOutput: message.thinkingOutput ?? undefined,
-                      toolCalls: undefined,
-                      fallbackInfo: undefined,
-                      attachments: message.attachments,
-                      createdAt: message.createdAt,
-                    };
-                    return (
-                      <StandardChatMessageItem
-                        key={message.id}
-                        message={roomMessage}
-                        forcePlain={false}
-                        agentName={senderName}
-                        hideAssistantIdentity={false}
-                        showAssistantModelTag={false}
-                        activeModelTag={null}
-                        activeModelProvider={null}
-                        activeSessionId={rooms.activeRoom?.id ?? null}
-                        projectId={projectId}
-                        mentionAgentsByName={mentionAgentsByName}
-                        roomContext={roomContext}
-                        onScrollToTop={handleScrollMessageToTop}
-                        isTopClipped={topClippedMessageIds.has(message.id)}
-                        isAwaitingQuestionAnswer={false}
-                        onQuestionSubmit={handleQuestionSubmit}
-                        isSearchMatch={conversationSearchMatches.includes(message.id)}
-                        isSearchActive={activeConversationMatchId === message.id}
-                      />
-                    );
-                  })
-                )}
-                <div ref={messagesEndRef} />
-              </div>
-              {rooms.activeRoom && isUserScrolling && (
-                <button
-                  type="button"
-                  className="btn btn-sm chat-jump-to-latest"
-                  data-testid="chat-jump-to-latest"
-                  onClick={() => scrollToBottom("fab-click")}
-                >
-                  <ChevronDown size={14} />
-                  {t("chat.latest", "Latest")}
-                </button>
-              )}
-            </>
-          ) : (
-            <div className="chat-room-empty-pane" data-testid="chat-rooms-empty-pane">{t("chat.selectRoomOrCreate", "Select a room or create one")}</div>
-          )}
+      {hasDetailSelection ? (
 
-          {rooms.activeRoom && (
-            <div className="chat-input-area">
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept={CHAT_ATTACHMENT_ACCEPT}
-                multiple
-                style={{ display: "none" }}
-                onChange={(event) => {
-                  handleAttachmentFiles(event.target.files);
-                  event.target.value = "";
-                }}
-              />
-              {pendingAttachments.length > 0 && (
-                <div className="chat-attachment-previews" data-testid="chat-attachment-previews">
-                  {pendingAttachments.map((attachment, index) => (
-                    <div
-                      key={attachment.previewUrl || `${attachment.file.name}-${index}`}
-                      className="chat-attachment-preview"
-                      data-testid={`chat-attachment-preview-${index}`}
-                    >
-                      {attachment.previewUrl ? (
-                        <img src={attachment.previewUrl} alt={attachment.file.name} />
-                      ) : (
-                        <span className="chat-attachment-preview-name">{attachment.file.name}</span>
-                      )}
-                      <button
-                        type="button"
-                        className="chat-attachment-remove"
-                        onClick={() => removeAttachment(index)}
-                        data-testid={`chat-attachment-remove-${index}`}
-                        aria-label={`Remove ${attachment.file.name}`}
-                      >
-                        ×
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-              <div className="chat-input-row">
-                <button
-                  type="button"
-                  className="btn-icon chat-attach-btn"
-                  data-testid="chat-attach-btn"
-                  aria-label={t("chat.attachFiles", "Attach files")}
-                  onClick={() => fileInputRef.current?.click()}
-                >
-                  <Paperclip size={16} />
-                </button>
-                {/*
-                FNXC:Chat-ThinkingLevel 2026-07-16-00:34:
-                FN-8030 moves room thinking effort from the crowded thread header to this Brain-icon
-                popover beside attach, matching direct chat while keeping it reachable on narrow layouts.
-                It persists one responder-wide room default and intentionally exposes no model/agent target.
-                */}
-                <ChatThinkingLevelControl
-                  level={rooms.activeRoom.thinkingLevel}
-                  defaultThinkingLevel={resolvedDefaultThinkingLevel}
-                  showTargetSection={false}
-                  onChange={(level) => {
-                    void rooms.updateRoomSettings(rooms.activeRoom!.id, { thinkingLevel: level || null }).catch(() => {
-                      addToast(t("chat.failedToUpdateRoomThinkingLevel", "Failed to update room thinking effort"), "error");
-                    });
-                  }}
-                />
-                <div
-                  className={`chat-input-wrapper${isDragOver ? " chat-input-wrapper--dragover" : ""}`}
-                  onDragOver={(event) => {
-                    event.preventDefault();
-                    setIsDragOver(true);
-                  }}
-                  onDragLeave={() => setIsDragOver(false)}
-                  onDrop={(event) => {
-                    event.preventDefault();
-                    setIsDragOver(false);
-                    handleAttachmentFiles(event.dataTransfer.files);
-                  }}
-                >
-                  <textarea
-                    ref={handleRoomComposerRef}
-                    className="chat-input-textarea"
-                    placeholder={t("chat.typeMessage", "Type a message...")}
-                    value={messageInput}
-                    onChange={handleInputChange}
-                    onKeyDown={handleInputKeyDown}
-                    onKeyUp={handleInputKeyUp}
-                    onClick={handleInputSelectionChange}
-                    onBlur={handleInputBlur}
-                    onFocus={handleInputFocus}
-                    onPaste={handlePaste}
-                    onTouchStart={(event) => {
-                      if (typeof window === "undefined") return;
-                      if (window.innerWidth > 768) return;
-                      if (!isIOS()) return;
-                      if (document.activeElement === event.currentTarget) return;
-                      // FN-6301: do not preventDefault on the first unfocused iOS tap.
-                      // Native focus is the reliable path that raises the soft keyboard;
-                      // the visualViewport/input-focus effects own scroll compensation.
-                    }}
-                    rows={1}
-                    data-testid="chat-input"
-                  />
-                  <AgentMentionPopup
-                    agents={mentionAgents}
-                    filter={mentionFilter}
-                    highlightedIndex={mentionHighlightIndex}
-                    visible={mentionPopupVisible}
-                    onSelect={handleMentionSelect}
-                    position={AGENT_MENTION_POPUP_POSITION}
-                    roomMemberIds={roomContext?.memberIds}
-                    roomName={roomContext?.roomName}
-                  />
-                </div>
-                <MicButton {...roomComposerDictation.micProps} />
-                <StandardChatActionButton
-                  isStreaming={false}
-                  canSend={Boolean(messageInput.trim() || pendingAttachments.length > 0)}
-                  onSend={handleSendDispatch}
-                />
-              </div>
-            </div>
-          )}
-        </div>
-      ) : hasDetailSelection ? (
       <div ref={chatThreadRef} className="chat-thread">
         {/* FNXC:ChatRenderToggle 2026-07-04-00:00: The markdown/plain eye toggle
             button (desktop `.chat-thread-header-render-toggle` and the mobile
@@ -4388,37 +3707,8 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
       </div>
       ) : null}
 
-      {chatRoomsEnabled && (
-        <CreateRoomModal
-          isOpen={createRoomOpen}
-          onClose={() => setCreateRoomOpen(false)}
-          projectId={projectId}
-          existingRoomNames={rooms.rooms.map((room) => room.name)}
-          onCreate={async (draft) => {
-            await rooms.createRoom({ name: draft.name, memberAgentIds: draft.memberAgentIds });
-            if (chatScope !== "rooms") {
-              setChatScope("rooms");
-            }
-            setCreateRoomOpen(false);
-            setDetailOpen(true);
-          }}
-        />
-      )}
       </div>
 
-      {/* New Chat Dialog (rendered at root level) */}
-      {showNewDialog && (
-        <NewChatDialog
-          projectId={projectId}
-          defaultModel={dialogDefaultModel}
-          defaultKind={chatDefaultTarget?.kind}
-          defaultAgentId={chatDefaultTarget?.kind === "agent" ? chatDefaultTarget.agentId : undefined}
-          defaultThinkingLevel={resolvedDefaultThinkingLevel}
-          defaultSelectedThinkingLevel={chatDefaultTarget?.kind === "model" ? chatDefaultTarget.thinkingLevel : undefined}
-          onClose={() => setShowNewDialog(false)}
-          onCreate={handleCreateSession}
-        />
-      )}
     </div>
   );
 }

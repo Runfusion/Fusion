@@ -259,7 +259,7 @@ vi.mock("../../project-context.js", () => {
 });
 
 import { createInterface } from "node:readline/promises";
-import { TaskStore, CentralCore, extractIntentSignature, findNearDuplicates, runDeterministicDuplicateGuard, reconcileDeterministicDuplicate, TaskIsLiveError } from "@fusion/core";
+import { TaskStore, CentralCore, extractIntentSignature, findNearDuplicates, MAX_TASK_MESSAGE_LENGTH, runDeterministicDuplicateGuard, reconcileDeterministicDuplicate, TaskIsLiveError } from "@fusion/core";
 import { watchFile, unwatchFile, statSync, existsSync, readFileSync } from "node:fs";
 import { exec } from "node:child_process";
 import { runTaskShow, runTaskCreate, runTaskList, runTaskDuplicate, runTaskRefine, runTaskDelete, runTaskRetry, runTaskLogs, runTaskComment, runTaskComments, runTaskPrCreate, runTaskPlan, runTaskMove, runTaskAttach, runTaskPause, runTaskUnpause, runTaskArchive, runTaskUnarchive, runTaskSteer, runTaskSetNode, runTaskClearNode, runTaskImportFromGitHub, runTaskImportGitHubInteractive, runTaskUpdate, runTaskLog, runTaskMerge, type LogsOptions } from "../task.js";
@@ -2771,24 +2771,26 @@ describe("runTaskRefine", () => {
     exitSpy.mockRestore();
   });
 
-  it("exits when feedback exceeds 2000 characters", async () => {
+  it("exits when feedback exceeds the shared task-message limit", async () => {
     const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {}) as (code?: number) => never);
 
-    await runTaskRefine("FN-001", "A".repeat(2001));
+    await runTaskRefine("FN-001", "A".repeat(MAX_TASK_MESSAGE_LENGTH + 1));
 
-    expect(errorSpy).toHaveBeenCalledWith("Feedback must be 2000 characters or less");
+    expect(errorSpy).toHaveBeenCalledWith(`Feedback must be ${MAX_TASK_MESSAGE_LENGTH} characters or less`);
     expect(exitSpy).toHaveBeenCalledWith(1);
 
     exitSpy.mockRestore();
   });
 
-  it("allows feedback at exactly 2000 characters", async () => {
-    const longFeedback = "A".repeat(2000);
+  it("allows feedback above the former limit and at the shared boundary", async () => {
+    const overFormerLimit = "A".repeat(2001);
+    const atSharedLimit = "B".repeat(MAX_TASK_MESSAGE_LENGTH);
 
-    await runTaskRefine("FN-001", longFeedback);
+    await runTaskRefine("FN-001", overFormerLimit);
+    await runTaskRefine("FN-001", atSharedLimit);
 
-    expect(mockRefineTask).toHaveBeenCalledOnce();
-    expect(mockRefineTask).toHaveBeenCalledWith("FN-001", longFeedback);
+    expect(mockRefineTask).toHaveBeenNthCalledWith(1, "FN-001", overFormerLimit);
+    expect(mockRefineTask).toHaveBeenNthCalledWith(2, "FN-001", atSharedLimit);
   });
 
   it("throws when task not in done or in-review", async () => {
@@ -2991,6 +2993,21 @@ describe("runTaskComment", () => {
     expect(logSpy).toHaveBeenCalledWith("  ✓ Comment added to FN-001");
   });
 
+  it("forwards comments above the former limit without truncation", async () => {
+    const longComment = "A".repeat(5_000);
+    const addTaskComment = vi.fn().mockResolvedValue(makeTask({
+      comments: [{ id: "c1", text: longComment, author: "alice", createdAt: new Date().toISOString() }],
+    }));
+    (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+      init: vi.fn(),
+      addTaskComment,
+    }));
+
+    await runTaskComment("FN-001", longComment, "alice");
+
+    expect(addTaskComment).toHaveBeenCalledWith("FN-001", longComment, "alice");
+  });
+
   it("lists task comments", async () => {
     (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
       init: vi.fn(),
@@ -3059,6 +3076,7 @@ describe("runTaskRetry", () => {
       baseBranch: null,
       baseCommitSha: null,
       nextRecoveryAt: null,
+      sessionContentionWaitReason: null,
       /*
       FNXC:CliTests 2026-07-17-10:57:
       The exact manual retry reset contract now clears bulk-completion refusal
@@ -3073,6 +3091,7 @@ describe("runTaskRetry", () => {
       planReviewReplanCount: 0,
       stuckKillCount: 0,
       recoveryRetryCount: 0,
+      sessionContentionHoldCount: 0,
       taskDoneRetryCount: 0,
       worktreeSessionRetryCount: 0,
       workflowStepRetries: 0,
@@ -3152,6 +3171,7 @@ describe("runTaskRetry", () => {
       baseBranch: null,
       baseCommitSha: null,
       nextRecoveryAt: null,
+      sessionContentionWaitReason: null,
       /*
       FNXC:CliTests 2026-07-17-10:57:
       The exact manual retry reset contract now clears bulk-completion refusal
@@ -3166,6 +3186,7 @@ describe("runTaskRetry", () => {
       planReviewReplanCount: 0,
       stuckKillCount: 0,
       recoveryRetryCount: 0,
+      sessionContentionHoldCount: 0,
       taskDoneRetryCount: 0,
       worktreeSessionRetryCount: 0,
       workflowStepRetries: 0,
@@ -3413,6 +3434,55 @@ describe("runTaskLogs", () => {
     expect(calls[4]).toContain("[ERROR]");
   });
 
+  it("renders multiline tool arguments as one indented terminal block", async () => {
+    mockGetTask.mockResolvedValueOnce(makeTask({ id: "FN-001" }));
+    mockGetAgentLogs.mockResolvedValueOnce([
+      makeAgentLogEntry({
+        type: "tool",
+        text: "fn_run_verification",
+        detail: "command=pnpm lint\nallowFullSuite=false",
+      }),
+    ]);
+
+    await runTaskLogs("FN-001");
+
+    expect(logSpy).toHaveBeenCalledTimes(1);
+    const formatted = logSpy.mock.calls[0]?.[0] as string;
+    expect(formatted).toContain("[TOOL] fn_run_verification");
+    expect(formatted).toContain("\n\x1b[2m\x1b[90m    command=pnpm lint\n    allowFullSuite=false");
+  });
+
+  it("renders multiline results and errors as indented blocks while retaining the red error header", async () => {
+    mockGetTask.mockResolvedValueOnce(makeTask({ id: "FN-001" }));
+    mockGetAgentLogs.mockResolvedValueOnce([
+      makeAgentLogEntry({ type: "tool_result", text: "bash", detail: "stdout line one\nstdout line two" }),
+      makeAgentLogEntry({ type: "tool_error", text: "bash", detail: "stderr line one\nstderr line two" }),
+    ]);
+
+    await runTaskLogs("FN-001");
+
+    const [result, error] = logSpy.mock.calls.map((call) => call[0] as string);
+    expect(result).toContain("[RESULT] bash\n\x1b[2m\x1b[90m    stdout line one");
+    expect(error).toMatch(/^\x1b\[31m.*\[ERROR] bash/);
+    expect(error).toContain("\n\x1b[2m\x1b[90m    stderr line one");
+  });
+
+  it("keeps short single-line tool detail inline and omits an empty detail block", async () => {
+    mockGetTask.mockResolvedValueOnce(makeTask({ id: "FN-001" }));
+    mockGetAgentLogs.mockResolvedValueOnce([
+      makeAgentLogEntry({ type: "tool", text: "read", detail: "path/to/file.ts" }),
+      makeAgentLogEntry({ type: "tool_result", text: "read" }),
+    ]);
+
+    await runTaskLogs("FN-001");
+
+    const [tool, result] = logSpy.mock.calls.map((call) => call[0] as string);
+    expect(tool).toContain("[TOOL] read (path/to/file.ts)");
+    expect(tool).not.toContain("\n");
+    expect(result).toContain("[RESULT] read");
+    expect(result).not.toContain("\n");
+  });
+
   it("displays agent role when present", async () => {
     mockGetTask.mockResolvedValueOnce(makeTask({ id: "FN-001" }));
     mockGetAgentLogs.mockResolvedValueOnce([
@@ -3595,6 +3665,31 @@ describe("runTaskLogs", () => {
     expect(newEntry).toBeDefined();
 
     // Clean up
+    sigintHandlers.forEach((handler) => handler());
+  });
+
+  it("formats multiline tool detail from follow-mode JSONL through the shared formatter", async () => {
+    mockGetTask.mockResolvedValueOnce(makeTask({ id: "FN-001" }));
+    mockGetAgentLogs.mockResolvedValueOnce([]);
+    mockStatSync.mockReturnValue({ size: 0 });
+
+    runTaskLogs("FN-001", { follow: true });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    const watchCallback = mockWatchFile.mock.calls[0]?.[2] as () => void;
+    mockStatSync.mockReturnValueOnce({ size: 200 });
+    mockReadFileSync.mockReturnValueOnce(`${JSON.stringify(makeAgentLogEntry({
+      type: "tool_result",
+      text: "fn_run_verification",
+      detail: "result line one\nresult line two",
+    }))}\n`);
+    watchCallback();
+
+    const followed = logSpy.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("[RESULT] fn_run_verification"),
+    )?.[0] as string | undefined;
+    expect(followed).toContain("\n\x1b[2m\x1b[90m    result line one");
+
     sigintHandlers.forEach((handler) => handler());
   });
 

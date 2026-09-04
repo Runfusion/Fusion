@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import "./executor-test-helpers.js";
 import type { Task, TaskDetail, WorkflowIr } from "@fusion/core";
 import { activeSessionRegistry } from "../agents/active-session-registry.js";
 import { MAX_EXECUTE_REQUEUE_LOOP_CYCLES, TaskExecutor } from "../executor.js";
@@ -9,7 +10,12 @@ import { advanceNoMergeWorkflowToCompleteColumn } from "../executor/no-merge-com
 import { recoverMissingRequiredArtifacts } from "../executor/required-artifact-recovery.js";
 import { handleStaleInReviewPlanPauseAbortReplay } from "../executor/handle-stale-in-review-plan-pause-abort-replay.js";
 import { WorkflowGraphTaskRunner } from "../workflows/workflow-graph-task-runner.js";
-import { createMockStore } from "./executor-test-helpers.js";
+import {
+  createMockStore,
+  mockedCreateFnAgent,
+  mockedExecSync,
+  resetExecutorMocks,
+} from "./executor-test-helpers.js";
 
 const NO_MERGE_IR = {
   version: "v2", id: "wf-audit", name: "audit", nodes: [], edges: [],
@@ -47,6 +53,11 @@ async function settleBounded<T>(invoke: () => Promise<T>, hanging: boolean): Pro
  * store's real audit method rejects, hangs, or throws synchronously.
  */
 describe("FN-9172 executor run-audit emitter isolation", () => {
+  beforeEach(() => {
+    resetExecutorMocks();
+    mockedExecSync.mockImplementation(() => Buffer.from(""));
+  });
+
   afterEach(() => activeSessionRegistry.clear());
 
   it.each(Object.entries(sinkStates))("keeps the terminal dispatch-loop park and token persistence moving after a %s sink", async (state, makeSink) => {
@@ -147,7 +158,7 @@ describe("FN-9172 executor run-audit emitter isolation", () => {
     }, task, ["plan"], { source: "graph-entry" }), state === "hanging");
 
     expect(recordRunAuditEvent).toHaveBeenCalledOnce();
-    expect(updateTask).toHaveBeenCalledWith("FN-ARTIFACT", expect.objectContaining({ status: "needs-replan" }), undefined);
+    expect(updateTask).toHaveBeenCalledWith("FN-ARTIFACT", expect.objectContaining({ status: null }), undefined);
   });
 
   it.each(Object.entries(sinkStates))("keeps completed-blocked parks returning true after a %s sink", async (state, makeSink) => {
@@ -185,7 +196,7 @@ describe("FN-9172 executor run-audit emitter isolation", () => {
     } as any, task.id, "/repo", "", new Map());
 
     const result = await settleBounded(() => tool.execute("call", {
-      outcome: "blocked", reason: "upstream dependency", blockedBy: ["FN-9999"],
+      outcome: "blocked", obstacle: "inside-worktree", reason: "upstream dependency", blockedBy: ["FN-9999"],
     }), state === "hanging");
 
     expect(result.content[0]?.text).toContain("parked as blocked");
@@ -231,6 +242,66 @@ describe("FN-9172 executor run-audit emitter isolation", () => {
       expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({ mutationType: "task:workflow-run-suspended" }));
     } finally {
       run.mockRestore();
+    }
+  });
+
+  it.each([
+    ["absent", undefined, false],
+    ["throwing", () => vi.fn(() => { throw new Error("audit throw"); }), false],
+    ["rejecting", () => vi.fn(() => Promise.reject(new Error("audit reject"))), false],
+    ["hanging", () => vi.fn(() => new Promise<void>(() => {})), true],
+    ["late-settling", () => vi.fn(() => new Promise<void>((resolve) => setTimeout(resolve, 5_000))), true],
+  ] as const)("keeps a repaired review verdict unchanged with an %s audit sink", async (_state, makeSink, bounded) => {
+    const store = createMockStore() as any;
+    const task = {
+      id: "FN-VERDICT-AUDIT", title: "verdict", description: "verdict", column: "in-progress",
+      dependencies: [], steps: [{ name: "Implement", status: "done" }], currentStep: 0, log: [],
+      worktree: "/repo/.worktrees/verdict", branch: "fusion/verdict", baseCommitSha: "abc123",
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    } as any;
+    store.getTask.mockResolvedValue(task);
+    const recordRunAuditEvent = makeSink?.();
+    if (recordRunAuditEvent) store.recordRunAuditEvent = recordRunAuditEvent;
+    const listeners: Array<(event: any) => void> = [];
+    let reply = 0;
+    mockedCreateFnAgent.mockResolvedValue({
+      session: {
+        state: {},
+        subscribe: (listener: (event: any) => void) => { listeners.push(listener); return () => {}; },
+        prompt: vi.fn(async () => {
+          const output = reply++ === 0
+            ? "I inspected the scoped diff and found no correctness defects."
+            : '{"verdict":"APPROVE"}';
+          for (const listener of listeners) listener({
+            type: "message_update",
+            assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: output },
+          });
+        }),
+        dispose: vi.fn(),
+      },
+    } as any);
+    const executor = new TaskExecutor(store, "/repo", {
+      agentStore: { getAgent: vi.fn().mockResolvedValue(null), createAgent: vi.fn() },
+    } as any) as any;
+    vi.spyOn(executor, "getRunContextFor").mockReturnValue({
+      taskId: task.id, agentId: "reviewer", runId: "run-verdict-audit", phase: "execute",
+    });
+    const step = {
+      id: "graph:quality-review", name: "Quality Review", description: "", mode: "prompt",
+      phase: "pre-merge", gateMode: "gate", prompt: "Review.", toolMode: "readonly",
+      enabled: true, createdAt: task.createdAt, updatedAt: task.updatedAt,
+    };
+
+    const outcome = await settleBounded(
+      () => executor.executeWorkflowStep(task, step, task.worktree, { workflowStepTimeoutMs: 60_000 }),
+      bounded,
+    );
+
+    expect(outcome).toMatchObject({ success: true, verdict: "APPROVE" });
+    if (recordRunAuditEvent) {
+      expect(recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+        mutationType: "task:review-verdict-repaired",
+      }));
     }
   });
 

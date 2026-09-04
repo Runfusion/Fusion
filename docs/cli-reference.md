@@ -151,7 +151,7 @@ fn init --name my-project --path /absolute/path/to/project
 
 Project initialization is always execution-ready. When the target directory is not already a Git repository, Fusion runs `git init`, creates a verifiable baseline `HEAD` containing only the managed `.gitignore`, and verifies that task worktrees can be created. An existing committed repository keeps its history, branch, remotes, configuration, index, and user changes; missing managed ignore rules are left visible as user changes rather than committed automatically.
 
-The managed ignore entries are `.fusion/`, `.pi/`, `.worktrees/`, `fusion.db`, `fusion.db-wal`, and `fusion.db-shm`. Git readiness is required before registration or activation, so Git and filesystem failures fail the command instead of reporting a usable local project. `fn init --git` remains accepted for script compatibility and has the same behavior as the default; it is no longer a separate Git initialization path.
+The managed ignore entries are `.fusion/`, `.pi/`, `.worktrees/`, `fusion.db`, `fusion.db-wal`, and `fusion.db-shm`. Git readiness is required before registration or activation, so Git and filesystem failures fail the command instead of reporting a usable local project. For a single repository, successful readiness also prints `✓ Integration branch: <branch> (<action>)`, where the action is `existing`, `created-from-remote`, `created-from-head`, or `unavailable`; this shows the local ref Fusion adopted or attempted to materialize. `fn init --git` remains accepted for script compatibility and has the same behavior as the default; it is no longer a separate Git initialization path.
 
 During fresh initialization, Fusion also installs the bundled `fusion` skill into supported local agent homes when the target skill does not already exist:
 
@@ -689,7 +689,7 @@ fn task show FN-001
 fn task logs FN-001 --follow --limit 50 --type tool
 ```
 
-`fn task logs` now exposes full agent-log content for each entry type. In particular, `thinking`, `tool_result`, and `tool_error` entries preserve full multiline output (including stderr/stack details) so you can inspect raw tool responses directly from the CLI stream.
+`fn task logs` exposes full agent-log content for each entry type. Tool argument rows, successful `tool_result` rows, and `tool_error` rows preserve complete bounded detail, including stderr and stack details. Short single-line values stay inline beside the tool name; longer or multiline values render as an indented block under the same CLI log entry.
 
 `fn task show <id>` includes routing and provenance context when available:
 - task node override
@@ -885,7 +885,7 @@ Subcommands: `list|ls`, `add`, `remove|rm`, `show`, `info`, `set-default|default
 
 `fn project list` and `fn project show/info` report `In-Flight Agents` from live task state: in-progress executors plus triage planners whose task is in `triage` with `status === "planning"` and is not paused. The readout intentionally ignores stale persisted `projectHealth.inFlightAgentCount` bookkeeping.
 
-`fn project add` registers an existing directory with Fusion. Registration first establishes the shared Git-readiness contract: non-Git and unborn repositories receive a baseline `HEAD`, managed Fusion-local paths are ignored, and committed repositories are preserved. If Git, ignore reconciliation, or baseline creation fails, the project is not registered or activated.
+`fn project add` registers an existing directory with Fusion. Registration first establishes the shared Git-readiness contract: non-Git and unborn repositories receive a baseline `HEAD`, managed Fusion-local paths are ignored, and committed repositories are preserved. For a single repository, its output also reports the reconciled local integration branch and action. If Git, ignore reconciliation, or baseline creation fails, the project is not registered or activated.
 
 ---
 
@@ -914,6 +914,30 @@ fn mesh status [--json]
 ```
 
 Subcommands: `status`.
+
+---
+
+## `fn cloud`
+
+Link a local Fusion engine to a cloud control plane. Set `FUSION_CLOUD_HTTP_URL` to the HTTPS control-plane base URL, or pass `--http <url>` to `pair-start` or `pair-complete`. Plain HTTP is accepted only for loopback development endpoints.
+
+```bash
+fn cloud pair-start --http https://cloud.example.com [--name <engine-name>]
+fn cloud pair-complete [--http https://cloud.example.com] [--code <pairing-code>]
+fn cloud heartbeat [--url <engine-origin>] [--port <port>] [--no-tunnel]
+fn cloud status [--json]
+fn cloud unlink
+```
+
+Subcommands: `pair-start`, `pair-complete`, `heartbeat`, `status`, `unlink`.
+
+- `pair-start` requests a pairing code and stores its pending pairing data in `~/.fusion/cloud-link-pending.json`.
+- `pair-complete` promotes a claimed pairing to `~/.fusion/cloud-link.json`. It refuses `--pending-secret` in both `--flag value` and `--flag=value` forms so a pairing password is never exposed in a process listing or shell history. It reads the password from the mode-`0600` pending file by default, or from `FUSION_CLOUD_PENDING_SECRET` when an override is necessary.
+- `heartbeat --url <engine-origin>` and `heartbeat --no-tunnel` each send one reachability update. A bare `heartbeat` starts a Cloudflare Quick Tunnel and publishes presence every 20 seconds until you press Ctrl+C. `fn serve` and `fn dashboard` use the same tunnel-and-publish behavior for their process lifetime when the engine is linked.
+- `status --json` prints `{ linked, engineId, name, httpBaseUrl, linkedAt }`; when unlinked it prints `{ "linked": false }`.
+- `unlink` removes both the linked credential file and the pending pairing file.
+
+The linked device credential and pending pairing files are written with mode `0600`, limiting access to the owning operating-system user. They are local credentials in the same threat class as `~/.fusion/auth.json`; they are not encrypted at rest because cloud pairing must work before Fusion's PostgreSQL-backed SecretsStore is available, and any same-user process that can read the file can also read a local wrapping key.
 
 ---
 
@@ -1303,14 +1327,42 @@ fn git push --yes
 
 ## `fn backup`
 
-Database backup lifecycle.
+PostgreSQL backup lifecycle.
 
 ```bash
 fn backup --create
 fn backup --list
-fn backup --restore .fusion/backups/fusion-2026-04-08.db
+fn backup --restore .fusion/backups/fusion-pg-20260831-120000.dump
+fn backup --restore .fusion/backups/fusion-central-pg-20260831-120000.dump
 fn backup --cleanup
 ```
+
+`--create` writes a same-stem `fusion-pg-<timestamp>.dump` containing the
+`project` and `archive` schemas and a `fusion-central-pg-<timestamp>.dump`
+containing the `central` schema. Dumps are written through private in-progress
+artifacts and atomically published, so `--list` never offers an in-progress
+artifact; it shows complete pairs and either kind of orphan without treating
+legacy `.db` files as PostgreSQL backups. `--cleanup` also removes abandoned
+in-progress artifacts from a crashed backup, but never a live backup claim.
+
+Restoring a project/archive dump validates both source archives, retains a new
+current-state `fusion-pre-restore-pg-*` +
+`fusion-central-pre-restore-pg-*` pair, then restores project/archive followed
+by its required same-stem central sibling. Selecting a
+`fusion-central-pg-*` dump is the explicit central-only operation. Each
+`pg_restore` is independently clean and transactional; if central fails after
+the project/archive transaction commits, Fusion attempts to roll
+project/archive back from the retained pre-restore dump and reports the restore
+as failed. The two source dumps are sequential snapshots, and no transaction
+spans both restore processes. Dump pairs include only `project`, `archive`, and
+`central`: PostgreSQL migration bookkeeping in `public` is not restored. A dump
+older than the running binary's schema baseline can therefore leave restored data
+and recorded migration state inconsistent until an operator reviews it.
+
+Native backup commands do not provide cross-process locking or cluster-wide
+quiescence. Before list, create, cleanup, or especially restore, quiesce other
+Fusion writers and prevent competing native backup commands. Preserve every
+pre-restore dump after failure until recovery is reviewed.
 
 ---
 

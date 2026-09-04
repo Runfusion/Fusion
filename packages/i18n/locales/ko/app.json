@@ -137,7 +137,10 @@
     "toolEntriesHidden_other": "",
     "toolsOff": "도구: 끔",
     "toolsOn": "도구: 켬",
-    "usingDefault": "기본값 사용 중"
+    "usingDefault": "기본값 사용 중",
+    "missingToolDetailHint": "Some tool details are unavailable. They may have been recorded while detail saving was disabled; check Settings → Global General to save future tool details.",
+    "showLessDetail": "Show less {{detailLabel}}",
+    "showMoreDetail": "Show more {{detailLabel}}{{lineCount}}"
   },
   "agentMention": {
     "membersOf": "#{{roomName}} 멤버",
@@ -1200,10 +1203,10 @@
       "capacityExhausted": "",
       "guardRejected": "",
       "mergeBlocked": "",
-      "promoteRejected": "",
       "unknownColumn": "",
       "unplannedForExecution": "",
-      "workflowMismatch": ""
+      "workflowMismatch": "",
+      "staleMovePrecondition": ""
     },
     "todo": "할 일",
     "triage": "트리아지",
@@ -1422,7 +1425,17 @@
     "currentModelTarget": "Current model: {{model}}",
     "currentDefaultTarget": "Using the default chat target",
     "newNotAllowedForTaskChat": "",
-    "restore": ""
+    "restore": "",
+    "quoteMessage": "메시지 인용",
+    "agentRepliesFailed": "일부 에이전트가 응답하지 못했습니다: {{agents}}",
+    "noDefaultModelConfigured": "대화를 만들기 전에 설정에서 기본 채팅 모델을 구성하세요.",
+    "newChatOpenInNewWindowHint": "",
+    "minimizeAllChats": "모든 채팅 최소화",
+    "restoreAllChats": "모든 채팅 복원",
+    "slashSuggestions": "슬래시 제안",
+    "loadingSlashSuggestions": "제안 불러오는 중…",
+    "snippetSuggestion": "저장된 프롬프트 삽입",
+    "snippetSuggestions": "스니펫 제안"
   },
   "chatRooms": {
     "error": {
@@ -1509,7 +1522,6 @@
     "autoMerge": "자동 병합",
     "autoMergeDisabled": "자동 병합 비활성화됨",
     "autoMergeEnabled": "자동 병합 활성화됨",
-    "cancelMove": "이동 취소",
     "collapseArchivedLabel": "보관된 작업 접기",
     "collapseArchivedTitle": "보관된 작업 접기",
     "expandArchivedLabel": "보관된 작업 펼치기",
@@ -1518,41 +1530,21 @@
     "keepProgress": "진행 상황 유지",
     "loadMore_one": "",
     "loadMore_other": "",
-    "moveAllToTodo": "모두 할 일로 이동",
-    "moveAllToTodoMessage_one": "",
-    "moveAllToTodoMessage_other": "",
-    "moveAllToTodoTitle": "모두 할 일로 이동",
-    "movedToPlanning_one": "",
-    "movedToPlanning_other": "",
-    "movedToTodo_one": "",
-    "movedToTodo_other": "",
-    "movePartialFailure": "{{total}}개 중 {{moved}}개 이동됨; {{failed}}개 실패",
-    "moveToTodoHint_one": "",
-    "moveToTodoHint_other": "",
-    "moveToTodoPartialFailure": "{{total}}개 중 {{moved}}개를 할 일로 이동함; {{failed}}개 실패",
     "newTask": "새 작업",
     "noManuallyPausableTasks": "수동으로 일시 중지 가능한 작업이 없습니다",
     "noTasks": "작업 없음",
     "noTasksInColumn": "이 열에 작업이 없습니다",
     "pauseHint_one": "",
     "pauseHint_other": "",
-    "preserveProgressMessage": "이 작업에는 완료된 단계가 있습니다. 이동하기 전에 진행 상황을 유지하시겠습니까?",
-    "preserveProgressMoveTodoMessage": "일부 작업에 완료된 단계가 있습니다. 할 일로 이동하기 전에 진행 상황을 유지하시겠습니까?",
     "preserveProgressTitle": "진행 상황을 유지하시겠습니까?",
-    "promoteUnplannedCancel": "",
-    "promoteUnplannedConfirm": "",
-    "promoteUnplannedMessage": "",
-    "promoteUnplannedTitle": "",
     "replanAll": "모두 재계획",
-    "replanAllHint_one": "",
-    "replanAllHint_other": "",
-    "replanAllMessage_one": "",
-    "replanAllMessage_other": "",
+    "replanAllHint_one": "Replan {{count}} task{{plural}} from its original description",
+    "replanAllHint_other": "Replan {{count}} task{{plural}} from its original description",
+    "replanAllMessage_one": "Replan {{count}} task{{plural}} from its original description? Its current plan will be discarded.",
+    "replanAllMessage_other": "Replan {{count}} task{{plural}} from its original description? Its current plan will be discarded.",
     "replanAllTitle": "모든 작업 재계획",
     "resetProgress": "진행 상황 초기화",
     "resetProgressConfirm": "진행 상황 초기화",
-    "resetProgressMessage": "이 작업을 이동하기 전에 모든 단계 진행 상황을 초기화하시겠습니까?",
-    "resetProgressMoveTodoMessage": "할 일로 이동하기 전에 작업의 단계 진행 상황을 초기화하시겠습니까?",
     "resetProgressTitle": "진행 상황을 초기화하시겠습니까?",
     "stopAll": "모두 중지",
     "stopAllMessage_one": "",
@@ -1565,7 +1557,10 @@
     "sortArrivalDesc": "",
     "sortArrivalDescHint": "",
     "sortTaskIdDesc": "",
-    "sortTaskIdDescHint": ""
+    "sortTaskIdDescHint": "",
+    "replannedTasks_one": "Replanned {{count}} task{{plural}}",
+    "replannedTasks_other": "Replanned {{count}} task{{plural}}",
+    "replanPartialFailure": "Replanned {{replanned}} of {{total}} tasks; {{failed}} failed"
   },
   "commandCenter": {
     "activity": {
@@ -1957,6 +1952,7 @@
       "rangeNote": "Time range filters loaded events; it is not sent to the server.",
       "openTask": "Open task {{taskId}}",
       "openAgent": "Open agent {{agentId}}",
+      "workflowGateNotRun": "Workflow gate not executed",
       "eventTypes": {
         "task:started": "Task started",
         "task:handed-off": "Task handed off",
@@ -3112,7 +3108,7 @@
     "selectProject": "프로젝트 선택",
     "settings": "설정",
     "showScripts": "스크립트 표시",
-    "skillsView": "스킬",
+    "skillsView": "스킬 및 스니펫",
     "startAiEngine": "AI 엔진 시작",
     "stashRecoveryView": "스태시 복구",
     "stopAiEngine": "AI 엔진 중지",
@@ -3446,7 +3442,9 @@
     "useProjectDefault": "프로젝트 기본값 사용",
     "viewOptions": "보기 옵션",
     "workflowLabel": "",
-    "statusReplan": "재계획"
+    "statusReplan": "재계획",
+    "statusWaiting": "",
+    "statusWaitingOn": ""
   },
   "mailbox": {
     "agent": "에이전트",
@@ -3733,7 +3731,11 @@
     "shortstatTitle": "최종 커밋 요약; 모든 작업 커밋에 걸친 전체 랜딩 diff는 변경 탭을 참조하세요.",
     "smartPull": "스마트 풀",
     "status": "상태",
-    "title": "병합 세부 정보"
+    "title": "병합 세부 정보",
+    "targetBranch": "",
+    "strategy": "",
+    "method": "",
+    "noOpReason": ""
   },
   "mesh": {
     "ariaLabel": "노드 메시 토폴로지 시각화",
@@ -4226,13 +4228,14 @@
     "settings": "설정",
     "showScriptsAriaLabel": "스크립트 표시",
     "sidebarAriaLabel": "",
-    "skills": "스킬",
+    "skills": "스킬 및 스니펫",
     "stashRecovery": "스태시 복구",
     "tasks": "작업",
     "terminal": "터미널",
     "todos": "할 일",
     "usage": "사용량",
-    "workflows": "워크플로"
+    "workflows": "워크플로",
+    "patchnode": ""
   },
   "newTaskModal": {
     "addDependencies": "의존성 추가",
@@ -5881,6 +5884,7 @@
       "copiedCodeToClipboard": "코드가 클립보드에 복사되었습니다",
       "copyCode": "코드 복사",
       "enterCodeOnGitHub": "GitHub에 이 코드를 입력하세요",
+      "enterCodeToContinue": "",
       "failedToCopyCode": "코드 복사 실패 — 위의 상자에서 직접 복사하세요",
       "groupAuthenticated": "인증됨",
       "groupAvailable": "사용 가능",
@@ -5898,6 +5902,7 @@
       "manualPasteTitle": "주의 — 수동 붙여넣기가 필요합니다",
       "noProviders": "사용 가능한 공급자가 없습니다",
       "openGitHub": "GitHub 열기",
+      "openVerificationPage": "",
       "pasteRedirectUrlFirst": "먼저 전체 리디렉션 URL 또는 인증 코드를 붙여넣으세요.",
       "reopenOnboarding": "온보딩 가이드 다시 열기",
       "refreshModels": "모델 새로 고침",
@@ -5918,7 +5923,8 @@
       "anthropicPreferenceApiKey": "API key",
       "anthropicPreferenceSubscription": "Claude subscription",
       "credentialInUse": "In use",
-      "credentialOverridden": "Overridden below"
+      "credentialOverridden": "Overridden below",
+      "legacyAnthropicOAuthNotice": ""
     },
     "authentication": {
       "enterAPIKey": "",
@@ -6172,7 +6178,6 @@
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",
-      "autoReloadDashboardOnVersionChange": "",
       "checkForThe": "",
       "checkForUpdatesAutomatically": "",
       "cLIBinaryOnPATH": "",
@@ -6201,8 +6206,7 @@
       "saveToolOutputInAgentLogs": "",
       "updates": "",
       "weekly": "",
-      "whenDisabledToolRowsAreStillLoggedBut": "",
-      "whenEnabledDefaultTheDashboardAutomaticallyReloadsWhen": "",
+      "whenDisabledToolRowsAreStillLoggedBut": " When disabled, tool rows are still logged but detailed tool payloads are omitted. Very large tool payloads may still be clipped even when this stays enabled. Default: enabled. ",
       "whenEnabledFusionChecksNpmForNewVersions": "",
       "whenEnabledTheDashboardProbesForAGlobally": "",
       "gitLabEnabledHint": "",
@@ -6285,7 +6289,9 @@
       "openRouterRoutingOnlyHint": "",
       "openRouterAllowFallbacksHint": "",
       "openRouterRoutingSortHint": "",
-      "requireParametersHint": ""
+      "requireParametersHint": "",
+      "fastAndCheapModel": "빠르고 저렴한 모델",
+      "fastAndCheapModelHelp": "빠른 편집을 위해 저렴한 모델을 선택하세요. 작업을 만들 때 빠른 모드에 사용됩니다."
     },
     "header": {
       "discord": "Discord",
@@ -6728,17 +6734,13 @@
       "prTitlePromptInstructionsHelp": "",
       "prDescriptionPromptInstructionsHelp": "",
       "chatHeading": "Chat",
-      "chatDescription": "Choose the default target for new Direct chats and whether New Chat should prompt or immediately use that default.",
-      "chatNewSessionMode": "New Chat behavior",
-      "chatNewSessionModePrompt": "Prompt for model each time",
-      "chatNewSessionModeAlwaysDefault": "Always use configured default",
-      "chatNewSessionModeHelp": "Prompt mode opens New Chat with this default preselected. Always-default mode skips the dialog when the configured default is complete.",
+      "chatDescription": "Choose the default target for new Direct chats. New Chat always creates the conversation immediately from this default.",
       "chatDefaultKind": "Chat default target",
       "chatDefaultKindModel": "Model",
       "chatDefaultKindAgent": "Agent",
       "chatDefaultModel": "Chat Default Model",
       "selectChatDefaultModel": "Select a chat default model",
-      "chatDefaultModelHelp": "Model-mode New Chat uses the built-in Fusion chat agent with this provider/model pair. Leave empty to fall back to prompting.",
+      "chatDefaultModelHelp": "Model-mode New Chat uses the built-in Fusion chat agent with this provider/model pair. Leave empty to use the project or global default model.",
       "chatDefaultAgent": "Chat Default Agent",
       "loadingAgents": "Loading agents…",
       "selectChatDefaultAgent": "Select a chat default agent",
@@ -7020,27 +7022,21 @@
       "maxWorktrees": "",
       "worktreeLimitEnabled": "",
       "worktreeLimitEnabledHelp": "",
-      "offByDefaultOptInWhenEnabledCompleted": "",
       "openApprovals": "승인 열기",
       "optionalLeaveBlankToAutoResolveFusionWill": "",
       "optionalSupports": "",
       "pnpmInstallFrozenLockfile": "",
-      "randomNamesEGSwiftFalcon": "",
       "rebaseFromRemoteBeforeMerge": "",
       "rebaseRemote": "",
-      "recycleWorktrees": "",
       "selectWorktreesDir": "Worktrees 디렉터리 선택",
       "shellCommandToRunInEachNewWorktree": "",
       "stopsOnWorktrunkErrorsForExplicitOperatorRecovery": "",
-      "taskIDEGFN042": "",
-      "taskTitleEGFixLoginBug": "",
       "tryAgain": "다시 시도",
       "useGitDefault": "",
       "whenEnabledTheMergerFetchesFromTheConfigured": "",
       "whenUnsetOnlyAffectsNewlyCreatedWorktrees": "",
       "whichRemoteToFetchForThePreMerge": "",
       "worktreeInitCommand": "",
-      "worktreeNamingStyle": "",
       "worktrees": "",
       "worktreesDirectory": "",
       "worktrunk": "",
@@ -7049,10 +7045,7 @@
       "worktrunkIntegration": "",
       "worktreesPickerNote": "",
       "showWorktreeGroupingHelp": "",
-      "copyFilesHelp": "",
-      "namingStyleNotApplicableWhenRecycling": "",
-      "howToNameFreshWorktreeDirectories": "",
-      "recycleNotApplicableWithTaskIdNaming": ""
+      "copyFilesHelp": ""
     },
     "fileBrowser": {
       "currentDirectory": "",
@@ -7574,7 +7567,7 @@
     "catalogSection": "스킬 카탈로그",
     "catalogUnavailable": "카탈로그를 일시적으로 사용할 수 없습니다. 나중에 다시 시도해 주세요.",
     "closeDetail": "스킬 상세 닫기",
-    "closeView": "스킬 보기 닫기",
+    "closeView": "스킬 및 스니펫 보기 닫기",
     "disabled": "스킬 비활성화됨",
     "disableSkill": "{{name}} 비활성화",
     "discovered": "검색됨",
@@ -7607,7 +7600,7 @@
     "removeSkill": "{{name}} 제거",
     "searchLabel": "스킬 검색",
     "searchPlaceholder": "스킬 검색...",
-    "title": "스킬",
+    "title": "스킬 및 스니펫",
     "toggleError": "스킬 전환 실패",
     "toggleFailed": "스킬 전환 실패: {{message}}",
     "viewDetails": "{{name}} 상세 보기",
@@ -7623,7 +7616,31 @@
     "filter": "Filter skills",
     "noMatches": "No matching skills",
     "loadError": "Skills could not be loaded.",
-    "hiddenUnavailable": "Hidden skills include disabled or not-discovered entries"
+    "hiddenUnavailable": "Hidden skills include disabled or not-discovered entries",
+    "snippetsReservedName": "이 이름은 채팅 명령용으로 예약되어 있습니다.",
+    "snippetsInvalidName": "문자, 숫자, 밑줄 또는 하이픈을 1~48자 사용하세요.",
+    "snippetsPromptRequired": "이 스니펫의 프롬프트를 입력하세요.",
+    "snippetsPromptTooLong": "프롬프트는 최대 {{count}}자까지 입력할 수 있습니다.",
+    "snippetsDuplicateName": "이 이름의 스니펫이 이미 있습니다.",
+    "snippetsLimitReached": "스니펫은 최대 {{count}}개까지 저장할 수 있습니다.",
+    "snippetsSaveError": "스니펫을 저장할 수 없습니다. 새로 고친 후 다시 시도하세요.",
+    "snippetsDeleteError": "스니펫을 삭제할 수 없습니다. 새로 고친 후 다시 시도하세요.",
+    "snippetsTitle": "채팅 스니펫",
+    "snippetsCount": "{{count}}개 저장됨",
+    "snippetsDescription": "재사용 가능한 프롬프트를 저장한 다음 채팅에서 /이름을 입력해 전송하지 않고 삽입하세요.",
+    "snippetsLoading": "스니펫 불러오는 중...",
+    "snippetsLoadError": "스니펫을 새로 고칠 수 없습니다. 마지막으로 불러온 목록이 계속 표시됩니다.",
+    "snippetsFormLabel": "채팅 스니펫 편집기",
+    "snippetsNameLabel": "이름",
+    "snippetsNameHelp": "문자, 숫자, 밑줄 또는 하이픈을 최대 48자까지 사용할 수 있습니다.",
+    "snippetsPromptLabel": "프롬프트",
+    "snippetsPromptHelp": "{{count}} / {{max}}자",
+    "snippetsSaving": "저장 중...",
+    "snippetsSaveChanges": "변경 사항 저장",
+    "snippetsAdd": "스니펫 추가",
+    "snippetsEmpty": "저장된 스니펫이 없습니다.",
+    "snippetsEdit": "/{{name}} 편집",
+    "snippetsDelete": "/{{name}} 삭제"
   },
   "specEditor": {
     "edit": "편집",
@@ -7938,7 +7955,14 @@
       "overlapBlocker": "파일 범위 겹침 차단기:",
       "removeTitle": "의존성 {{id}} 제거",
       "searchPlaceholder": "작업 검색…",
-      "stale": "(오래됨)"
+      "stale": "(오래됨)",
+      "overlapFiles": {
+        "loading": "",
+        "error": "",
+        "noScope": "",
+        "none": "",
+        "matches": ""
+      }
     },
     "description": {
       "showLess": "간략히 보기",
@@ -7948,7 +7972,8 @@
       "btn": "복제",
       "message": "{{id}}를 복제하시겠습니까? 같은 설명과 프롬프트로 Triage에 새 작업이 생성됩니다.",
       "success": "{{id}} 복제됨 → {{newId}}",
-      "title": "작업 복제"
+      "title": "작업 복제",
+      "workflowLabel": ""
     },
     "edit": {
       "autosaveHint": "편집 시 변경 사항이 자동 저장됩니다",
@@ -8053,21 +8078,8 @@
       "noBranchToMerge": "병합할 브랜치 없음",
       "title": "작업 병합"
     },
-    "move": {
-      "backToInProgress": "진행 중으로 돌아가기",
-      "backTo": "{{column}}(으)로 돌아가기",
-      "cancelMove": "이동 취소",
-      "keepProgress": "진행 상태 유지",
-      "movedTo": "{{column}}으로 이동됨",
-      "moveTo": "{{column}}으로 이동",
-      "preserveProgressMessage": "이 작업에 완료된 단계가 있습니다. 이동 전 진행 상태를 유지하시겠습니까?",
-      "preserveProgressTitle": "진행 상태 유지?",
-      "resetProgress": "진행 상태 초기화",
-      "resetProgressMessage": "이 작업을 이동하기 전에 모든 단계 진행 상태를 초기화하시겠습니까?",
-      "resetProgressTitle": "진행 상태 초기화?"
-    },
     "nearDuplicate": {
-      "actions": "보관을 선택하면 이 작업이 보관 상태로 이동하고, 유지를 선택하면 이 작업을 계속합니다.",
+      "actions": "This task continues normally. Archive it if the work is already covered, or clear this flag once you have read it.",
       "archiveBtn": "보관",
       "archiveConfirm": "보관",
       "archived": "{{id}} 보관됨",
@@ -8075,14 +8087,14 @@
       "archiveTitle": "근사 중복 작업 보관",
       "copy": "이 작업은 다음의 근사 중복으로 보입니다",
       "headline": "잠재적 중복 감지됨",
-      "keepBtn": "유지",
-      "kept": "{{id}} 유지 및 중복 경고 무시됨",
       "deleteBtn": "삭제",
       "deleteConfirm": "삭제",
       "deleted": "{{id}} 삭제됨",
       "deleteMessage": "{{duplicateOf}}의 중복으로 {{id}}를 삭제할까요?",
       "deleteTitle": "중복 작업 삭제",
-      "triageActions": "이 중복을 제거하려면 삭제를, 계속하려면 유지를 선택하세요."
+      "triageActions": "This task stays paused until you clear this flag or delete it. Delete it if the work is already covered.",
+      "dismissBtn": "Mark the duplicate flag for {{id}} as read",
+      "dismissed": "Duplicate flag cleared for {{id}}"
     },
     "nextRecoveryAt": "다음 복구 시각: {{time}}",
     "no": "아니요",
@@ -8167,7 +8179,7 @@
       "createBtn": "개선 작업 생성",
       "creating": "생성 중...",
       "feedbackRequired": "개선이 필요한 내용을 설명하는 피드백을 입력하세요",
-      "feedbackTooLong": "피드백은 2000자 이하여야 합니다",
+      "feedbackTooLong": "",
       "help": "개선하거나 향상시킬 내용을 설명하세요...",
       "modalTitle": "개선",
       "placeholder": "피드백을 입력하세요...",
@@ -8175,11 +8187,13 @@
     },
     "reset": {
       "btn": "초기화",
-      "confirmMessage": "{{id}}의 모든 진행 상태가 삭제되고 작업이 처음부터 다시 시작됩니다. 계속하시겠습니까?",
-      "resetSuccess": "{{id}} 초기화됨 — 새 실행이 할당됩니다"
-    },
-    "respecify": {
-      "btn": "재명세"
+      "confirmMessage": "Restart this task from nothing but the original request. Its plan, worktree, branch and commits, and reviews are permanently deleted and cannot be recovered.",
+      "resetSuccess": "{{id}} 초기화됨 — 새 실행이 할당됩니다",
+      "confirmTitle": "Reset this task?",
+      "descriptionHelp": "",
+      "descriptionLabel": "",
+      "descriptionRequired": "",
+      "submitting": ""
     },
     "retries": {
       "branchConflict": "브랜치 충돌 복구",
@@ -8210,7 +8224,18 @@
     "retriesLabel": "재시도 (복구 / 워크플로 / 병합 / task_done)",
     "retry": {
       "btn": "재시도",
-      "retried": "{{id}} 재시도됨"
+      "retried": "{{id}} 재시도됨",
+      "confirmTitle": "Retry this stage?",
+      "confirmLabel": "Retry",
+      "planConfirmMessage": "Rebuild the plan from the original request. This card stays in its current column.",
+      "implementationConfirmMessage": "Discard the in-flight work and start it again on the approved plan. This card stays in its current column.",
+      "reviewConfirmMessage": "Discard the review verdicts and review the produced work again. This card stays in its current column.",
+      "genericConfirmMessage": "Repeat the current stage and keep this card in its current column.",
+      "planSuccess": "Planning will restart in this column.",
+      "implementationSuccess": "Work will restart in this column.",
+      "reviewSuccess": "Review will run again in this column.",
+      "genericSuccess": "This stage will restart in its current column.",
+      "pendingAutomaticRecovery": "Automatic recovery is pending. You can Retry now to restart this stage."
     },
     "runtimeLinks": "런타임 링크",
     "runtimeStatus": "런타임 상태",
@@ -8274,8 +8299,10 @@
       "worktreeTerminal": "터미널",
       "workflow": "워크플로",
       "summary": "Summary",
-      "cost": "",
-      "recommendations": ""
+      "recommendations": "",
+      "dependencies": "",
+      "details": "",
+      "debug": ""
     },
     "terminal": {
       "loading": ""
@@ -8308,30 +8335,7 @@
     "workflowTimedSteps": "워크플로 시간 측정 단계",
     "yes": "예",
     "summaryTab": {
-      "agentWorkHeading": "Work done by agents",
-      "cachedTokens": "Cached",
-      "changedHeading": "What changed",
-      "commit": "Commit",
-      "completedSteps": "Completed steps",
-      "completionHeading": "Completion summary",
-      "cost": "Cost",
-      "costUnavailable": "No pricing for this model",
-      "deletions": "Removed",
-      "filesChanged": "Files",
-      "inputTokens": "Input",
-      "insertions": "Added",
-      "model": "Model",
-      "noAgentWork": "No completed steps or workflow results are available for this task.",
-      "noChangedFiles": "No changed-file list is available for this task.",
-      "noCompletionSummary": "No completion summary was recorded for this task.",
-      "noTokenUsage": "No token usage recorded for this task yet.",
-      "outputTokens": "Output",
-      "retries": "Agents retried this task {{count}} time{{plural}}.",
-      "tokenCostHeading": "Token usage & cost",
-      "totalCost": "Total cost",
-      "totalTokens": "Total",
-      "unknownModel": "(unknown)",
-      "workflowResults": "Workflow results"
+      "agentWorkHeading": "Work done by agents"
     },
     "gitlabTracking": {
       "collapse": "",
@@ -8409,6 +8413,15 @@
       "candidate": "",
       "dismissFinding": "",
       "terminalGuidance": ""
+    },
+    "debug": {
+      "none": ""
+    },
+    "details": {
+      "expandRouting": "",
+      "collapseRouting": "",
+      "expandDebug": "",
+      "collapseDebug": ""
     }
   },
   "taskDocuments": {
@@ -8636,7 +8649,16 @@
     "attachFileFailed": "{{fileName}} 첨부에 실패했습니다: {{error}}",
     "awaitingApproval": "승인 대기 중",
     "baseBranch": "베이스",
-    "blockedByTooltip": "{{taskId}}에 의해 차단됨 (파일 충돌)",
+    "blockedByTooltip": "{{taskId}} 대기 중 (파일 충돌)",
+    "externalBlock": {
+      "title": "차단됨",
+      "unknownCode": "미분류",
+      "genericMessage": "외부 장애로 운영자 조치가 필요합니다",
+      "explain": "이 오류 설명",
+      "explainPrompt": "이 오류 {{error}}의 원인과 해결 방법을 설명해 주세요.",
+      "resuming": "재개 중…",
+      "retry": "다시 시도"
+    },
     "branch": "브랜치",
     "branchMetadata": "브랜치 메타데이터",
     "branchProgress": "",
@@ -8680,9 +8702,8 @@
     "depsCount_other": "",
     "descriptionPlaceholder": "작업 설명",
     "descriptionRefined": "AI로 설명이 다듬어졌습니다",
-    "doneNoMerge": "완료 (병합 없음)",
     "duplicateCheckFailed": "중복 확인에 실패했습니다. 작업을 그대로 생성합니다.",
-    "duplicateDismissed": "{{taskId}}을(를) 유지했습니다. 중복 경고가 해제되었습니다",
+    "duplicateDismissed": "Duplicate flag cleared for {{taskId}}",
     "duplicateOf": "{{id}}의 중복",
     "editTask": "작업 편집",
     "enterDescriptionFirst": "먼저 설명을 입력해 주세요",
@@ -8718,10 +8739,7 @@
     "issueClosed": "닫힘",
     "issueDeleted": "삭제됨",
     "issueLeft": "그대로 둠",
-    "keep": "유지",
-    "keepFailed": "{{taskId}} 유지에 실패했습니다: {{error}}",
     "keepProgress": "진행 상황 유지",
-    "keepTaskTitle": "이 작업을 유지하고 중복 경고 해제",
     "leaveUnchanged": "그대로 두기",
     "lineageConflict": "{{taskId}}에는 소스 부모로 참조하는 계보 자식({{children}})이 있습니다.\n\n이 참조를 먼저 해제하고 삭제하시겠습니까?",
     "linkedIssueChipAriaLabel": "연결된 GitHub 이슈 #{{number}}",
@@ -8745,7 +8763,7 @@
     "moved": "{{taskId}}을(를) {{column}}으로 이동했습니다",
     "moveFailed": "{{taskId}} 이동에 실패했습니다: {{error}}",
     "moveTask": "작업 이동",
-    "nearDuplicateTitle": "{{id}}의 잠재적 유사 중복",
+    "nearDuplicateTitle": "Flagged as a possible duplicate of {{id}}. This task continues normally; clear the flag once you have read it.",
     "needsInput": "",
     "noAgentsAvailable": "사용 가능한 에이전트가 없습니다",
     "node": "노드",
@@ -8765,9 +8783,6 @@
     "prNodeTitle": "",
     "prNodeWithNumber": "",
     "projectDefaultLocal": "프로젝트 기본값 / 로컬",
-    "promote": "",
-    "promoteTask": "",
-    "promoting": "",
     "queued": "대기 중",
     "refine": "다듬기",
     "refineAddDetails": "세부 사항 추가",
@@ -8850,7 +8865,18 @@
     "refinesOfTitle": "",
     "revertedTasks": "",
     "revertedResolutionActions": "",
-    "revise": ""
+    "revise": "",
+    "dismissDuplicateFlag": "Mark the duplicate flag for {{id}} as read",
+    "nearDuplicateHeldTitle": "Flagged as a duplicate of {{id}}. This task stays paused until you clear this flag or delete it.",
+    "duplicateDismissFailed": "Failed to clear the duplicate flag for {{taskId}}: {{error}}",
+    "planApproval": {
+      "approve": "",
+      "approveFailed": "",
+      "approving": "",
+      "copy": "",
+      "replanCapCopy": "",
+      "title": ""
+    }
   },
   "terminal": {
     "arrowKeysLabel": "",
@@ -9098,7 +9124,15 @@
     "statusSkipped": "",
     "submitAndResume": "",
     "submitting": "",
-    "waitingForOutput": ""
+    "waitingForOutput": "",
+    "aggregateNotFullyExecuted": "Not fully executed",
+    "notRunReasonExecutionModeSkip": "fast mode skipped this check",
+    "notRunReasonNotConfigured": "no test or build command is configured",
+    "notRunReasonRepositoryContextUnresolved": "the workspace repository context could not be resolved",
+    "notRunReasonToolingUnavailable": "a required tool was unavailable",
+    "statusNotRunWithReason": "Not executed — {{reason}}",
+    "summaryNotExecuted_one": "{{count}} not executed",
+    "summaryNotExecuted_other": "{{count}} not executed"
   },
   "workflowColumns": {
     "add": "",
@@ -9551,7 +9585,8 @@
     "missingOutput": "",
     "missingOutputTimestamp": "",
     "statusUpdate": "",
-    "statusUpdateTimestamp": ""
+    "statusUpdateTimestamp": "",
+    "toolDetailsMissing": "Some tool details are unavailable. They may have been recorded while detail saving was disabled; check Settings → Global General to save future tool details."
   },
   "engineBanner": {
     "body": "The engine for this project is not running, so task automation and live updates may be paused. Start it now to reconnect the dashboard.",
@@ -9722,12 +9757,86 @@
     "noDetail": "",
     "untitledSection": "",
     "sectionCount": "",
-    "sectionCountPlural": ""
+    "sectionCountPlural": "",
+    "showRaw": "",
+    "showSections": ""
   },
   "artifactImageViewer": {
     "openTask": "",
     "close": "",
     "loading": "",
-    "retry": ""
+    "retry": "",
+    "zoomIn": "",
+    "zoomOut": "",
+    "resetZoom": "",
+    "zoomLevel": ""
+  },
+  "taskHistory": {
+    "stage": {
+      "plan": "",
+      "code": "",
+      "review": ""
+    },
+    "empty": {
+      "plan": "",
+      "code": "",
+      "review": ""
+    },
+    "entry": {
+      "noBody": "",
+      "completionSummary": "",
+      "stepReport": "",
+      "merged": "",
+      "noOpMerge": "",
+      "verdictNoNotes": "",
+      "duration": ""
+    },
+    "meta": {
+      "commit": "",
+      "targetBranch": "",
+      "strategy": "",
+      "method": "",
+      "files": "",
+      "insertions": "",
+      "deletions": "",
+      "pr": "",
+      "noOpReason": ""
+    },
+    "loading": "",
+    "verdict": {
+      "approve": "",
+      "approve-with-notes": "",
+      "revise": "",
+      "close-no-op": "",
+      "passed": "",
+      "failed": "",
+      "advisory-failure": "",
+      "skipped": "",
+      "pending": ""
+    }
+  },
+  "patchnode": {
+    "cancelled": "",
+    "empty": "",
+    "entryCount_one": "",
+    "entryCount_other": "",
+    "error": "",
+    "loadMore": "",
+    "loading": "",
+    "loadingMore": "",
+    "noResults": "",
+    "retry": "",
+    "reverted": "",
+    "searchAriaLabel": "",
+    "searchPlaceholder": "",
+    "title": "",
+    "today": "",
+    "yesterday": ""
+  },
+  "toolCallDetails": {
+    "line": "line",
+    "lines": "lines",
+    "showLess": "Show less",
+    "showMore": "Show more ({{count}} {{lineLabel}})"
   }
 }

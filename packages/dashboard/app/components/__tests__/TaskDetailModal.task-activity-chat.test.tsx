@@ -40,7 +40,6 @@ function renderModal(props: Partial<ComponentProps<typeof TaskDetailModal>> = {}
         ],
       })}
       onClose={noop}
-      onMoveTask={noopMove}
       onDeleteTask={noopDelete}
       onMergeTask={noopMerge}
       onOpenDetail={noopOpenDetail}
@@ -160,6 +159,14 @@ describe("TaskDetailModal Activity and planner Chat tab integration", () => {
     const { prompt: _prompt, log: _log, steps: _steps, ...slimTask } = makeTask({ id: "FN-8779-loading" });
     vi.mocked(fetchTaskDetail).mockReset();
     vi.mocked(fetchTaskDetail).mockImplementationOnce(() => new Promise(() => {}));
+    /*
+    FNXC:TaskActivityFeedFreshness 2026-08-26-12:20:
+    An empty Feed now rescues itself whenever it is visible, not only when the operator switches to
+    it — a card opening straight onto Feed used to show "(no activity)" forever. The later renders in
+    this test therefore also request the detail, so the reset mock needs a default beyond its single
+    queued implementation. This test's subject is Feed layout, not request counts; nothing is relaxed.
+    */
+    vi.mocked(fetchTaskDetail).mockResolvedValue(makeTask({ id: "FN-8779-default", log: [] }) as never);
 
     const loading = renderModal({ task: slimTask as any, initialTab: "logs" });
     expect(await screen.findByRole("status")).toHaveTextContent("Loading activity…");
@@ -231,7 +238,6 @@ describe("TaskDetailModal Activity and planner Chat tab integration", () => {
         task={makeTask({ id: "FN-8303-embedded", column: "in-progress" as any, log: [], steeringComments: [], plannerOversightLevel: "off" })}
         embedded
         onRequestClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -404,7 +410,6 @@ describe("TaskDetailModal Activity and planner Chat tab integration", () => {
         <TaskDetailModal
           task={makeTask({ id: "FN-7485-NEXT", column: "in-progress" as any, log: [], steeringComments: [] })}
           onClose={noop}
-          onMoveTask={noopMove}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}
@@ -565,7 +570,6 @@ describe("TaskDetailModal Activity and planner Chat tab integration", () => {
             task={makeTask({ id: "FN-7536", column: "in-progress" as any, log: [], steeringComments: [] })}
             embedded
             onRequestClose={noop}
-            onMoveTask={noopMove}
             onDeleteTask={noopDelete}
             onMergeTask={noopMerge}
             onOpenDetail={noopOpenDetail}
@@ -635,7 +639,6 @@ describe("TaskDetailModal Activity and planner Chat tab integration", () => {
             task={makeTask({ id: "FN-7493", column: "in-progress" as any, log: [], steeringComments: [] })}
             embedded
             onRequestClose={noop}
-            onMoveTask={noopMove}
             onDeleteTask={noopDelete}
             onMergeTask={noopMerge}
             onOpenDetail={noopOpenDetail}
@@ -742,7 +745,6 @@ describe("TaskDetailModal Activity and planner Chat tab integration", () => {
       <TaskDetailModal
         task={makeTask({ id: "FN-7315", column: "in-progress" as any, log: [], steeringComments: [] })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -760,7 +762,6 @@ describe("TaskDetailModal Activity and planner Chat tab integration", () => {
       <TaskDetailModal
         task={makeTask({ id: "FN-7315", column: "in-progress" as any, log: [{ timestamp: "2026-06-30T20:01:00.000Z", action: "Posted update" }], steeringComments: [] })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -776,7 +777,7 @@ describe("TaskDetailModal Activity and planner Chat tab integration", () => {
     expect(screen.getByRole("heading", { name: "Feed" })).toBeInTheDocument();
   });
 
-  it("preserves Summary as the done-task mobile default while Activity and Chat remain first", async () => {
+  it("keeps Summary as the done-task mobile default after the Activity, Chat, Plan, and Changes tabs", async () => {
     const user = userEvent.setup();
     const originalInnerWidth = window.innerWidth;
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
@@ -789,7 +790,6 @@ describe("TaskDetailModal Activity and planner Chat tab integration", () => {
           task={makeTask({ id: "FN-7315-DONE", column: "done" as any, log: [], steeringComments: [], plannerOversightLevel: "off" })}
           embedded
           onRequestClose={noop}
-          onMoveTask={noopMove}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}
@@ -797,7 +797,7 @@ describe("TaskDetailModal Activity and planner Chat tab integration", () => {
         />,
       );
 
-      expect(topLevelTabLabels().slice(0, 3)).toEqual(["Activity", "Chat", "Summary"]);
+      expect(topLevelTabLabels().slice(0, 5)).toEqual(["Activity", "Chat", "Plan", "Changes", "Summary"]);
       expect(screen.getByRole("button", { name: "Summary" })).toHaveClass("detail-tab-active");
       expect(screen.queryByRole("combobox", { name: "Activity view" })).not.toBeInTheDocument();
 

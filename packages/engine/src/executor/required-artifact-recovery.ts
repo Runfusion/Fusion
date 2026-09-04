@@ -1,11 +1,10 @@
 /**
  * FNXC:CodeOrganization 2026-08-03-21:35:
  * recoverMissingRequiredArtifacts peeled from TaskExecutor (U4).
- * Bounded replan recovery when required workflow artifacts are missing.
+ * In-place execution recovery when required workflow artifacts are missing.
  */
 import type { Task, TaskStore } from "@fusion/core";
 import { computeRecoveryDecision, formatDelay, MAX_RECOVERY_RETRIES } from "../healing/recovery-policy.js";
-import { moveTaskToReplanColumn, resolveReplanTargetColumn } from "../execution/replan-target.js";
 import { generateSyntheticRunId, type EngineRunContext } from "../util/run-audit.js";
 import { emitBoundedRunAudit } from "./emit-bounded-run-audit.js";
 import { resolveTerminalColumnsFor } from "./lifecycle-columns.js";
@@ -63,7 +62,7 @@ export async function recoverMissingRequiredArtifacts(
   });
   const attempt = decision.nextState.recoveryRetryCount ?? MAX_RECOVERY_RETRIES;
   const context = deps.runContextFor(task.id);
-  const action = decision.shouldRetry ? "replan" : "park-failed";
+  const action = decision.shouldRetry ? "retry-in-place" : "park-failed";
 
   await emitBoundedRunAudit(deps.store, {
     taskId: task.id,
@@ -75,7 +74,7 @@ export async function recoverMissingRequiredArtifacts(
     metadata: {
       taskId: task.id,
       artifactKeys,
-      owner: "planning",
+      owner: "execution",
       source: source.source,
       action,
       attempt,
@@ -98,23 +97,16 @@ export async function recoverMissingRequiredArtifacts(
     return;
   }
 
-  const replanColumn = await resolveReplanTargetColumn(deps.store, task.id);
   await deps.store.logEntry(
     task.id,
-    `Required workflow artifact missing — moved to ${replanColumn} for automatic planning recovery (attempt ${attempt}/${MAX_RECOVERY_RETRIES} in ${formatDelay(decision.delayMs)})`,
+    `Required workflow artifact missing — retrying repair in ${task.column} (attempt ${attempt}/${MAX_RECOVERY_RETRIES} in ${formatDelay(decision.delayMs)})`,
     `Missing artifact keys: ${artifactKeys.join(", ")}`,
     context,
   );
-  deps.workflowLifecycleMovesInFlight.add(task.id);
-  try {
-    const liveTask = await deps.store.getTask(task.id).catch(() => null);
-    if (!liveTask || await deps.isRequiredArtifactRecoveryProtected(liveTask)) return;
-    await moveTaskToReplanColumn(deps.store, { id: task.id, column: liveTask.column }, replanColumn);
-  } finally {
-    deps.workflowLifecycleMovesInFlight.delete(task.id);
-  }
+  const liveTask = await deps.store.getTask(task.id).catch(() => null);
+  if (!liveTask || await deps.isRequiredArtifactRecoveryProtected(liveTask)) return;
   await deps.store.updateTask(task.id, {
-    status: "needs-replan",
+    status: null,
     error: null,
     recoveryRetryCount: decision.nextState.recoveryRetryCount,
     nextRecoveryAt: decision.nextState.nextRecoveryAt,

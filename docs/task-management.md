@@ -27,6 +27,7 @@ Dashboard `POST /tasks` now performs a pre-create duplicate gate using token-ove
   - `task.source.sourceMetadata.acknowledgedDuplicateIds = [...]`
 - Override creates emit activity type `task:duplicate-warning-overridden` with acknowledged IDs and scored candidate metadata.
 - Duplicate lineage is persisted on the task row via canonical source fields (`sourceType: "task_duplicate"`, `sourceParentTaskId`) plus `sourceMetadata.duplicateOfTaskIds` when available, so `fn task show <id>` and Task Detail views can render duplicate-of linkage directly from task provenance.
+- A duplicated task inherits the source task's workflow by default, including that workflow's intake column and default-on optional groups. `POST /api/tasks/:id/duplicate` accepts an optional `{ "workflowId": "..." }` body to choose another enabled workflow; disabled, retired, or unknown workflow ids are rejected.
 
 #### Deterministic duplicate guard (FN-4918, extended by FN-5060)
 
@@ -94,7 +95,7 @@ Near-duplicate flagging now keeps the task in its normal flow column (`todo` / a
 - `source.sourceMetadata.nearDuplicateOf = <canonicalTaskId>`
 - `source.sourceMetadata.nearDuplicateScore = <number>`
 - `source.sourceMetadata.nearDuplicateSharedTokens = <string[]>`
-- optional `source.sourceMetadata.nearDuplicateDismissed = true` after user chooses Keep
+- optional `source.sourceMetadata.nearDuplicateDismissed = true` after the operator clears the duplicate flag
 - activity event `task:near-duplicate-flagged`
 
 A near-duplicate flag is only actionable while the canonical task is active. The triage backstop does not persist `nearDuplicateOf` for archived, soft-deleted, done, or missing canonicals; when a canonical later becomes inactive through archive, soft-delete, or move-to-done, the store clears `nearDuplicateOf`, `nearDuplicateScore`, `nearDuplicateSharedTokens`, and `nearDuplicateDismissed` from active referrers and records an informational log entry without pausing or failing those tasks.
@@ -102,19 +103,13 @@ A near-duplicate flag is only actionable while the canonical task is active. The
 Dashboard surfaces this as a yellow Duplicate chip plus modal actions only while the canonical exists and is active:
 
 - **Archive** (user-initiated archive path)
-- **Keep** (dismisses the warning by setting `nearDuplicateDismissed: true`)
+- **Clear the duplicate flag** (dismisses the warning by setting `nearDuplicateDismissed: true`)
 
 This layer complements, rather than replaces, FN-4829 similarity detection, FN-4918 deterministic deduplication, and FN-4892 same-agent intake heuristics.
 
 ### Workspace worktree cleanup on archive
 
 Archiving a workspace (multi-repository) task now synchronously removes every recorded per-sub-repository worktree, including archives initiated by `fn_task_archive` and CLI paths that do not construct an executor. Each path is protected by a per-repository cross-process reservation until backend removal and its `fusion/<task-id>` branch cleanup finish. If one removal fails, its reservation is quarantined and the next acquisition reconciles that orphan; successful sibling repositories are still released. On unarchive, Fusion reconciles the retained live-row metadata: it drops each per-repository entry whose exact worktree path is gone (including its `landedSha`) and clears a stale singular worktree path. A fully disposed workspace task consequently returns as a non-workspace card that must be re-executed rather than re-landed. `archiveTask(..., { cleanup: false })` intentionally retains worktrees, and the self-healing workspace sweep remains an idempotent backstop. See [Workspaces](./workspaces.md#archiving-and-cleanup) for the workspace operator lifecycle.
-
-### Task-pinned orphan recovery
-
-When `worktreeNaming: "task-id"` finds an inactive pinned directory whose Git metadata is incomplete or unregistered, Fusion preserves the whole directory before recreating the task worktree at the same path. The normal preservation root is `<project>/.fusion/recovery/worktrees`. If the configured worktree directory is on another filesystem, Fusion retries the atomic rename under `<worktreesDir>/.fusion-recovery/worktrees` instead of using copy-and-delete.
-
-Each preservation root retains the newest 10 Fusion-generated orphan directories. Pruning is best-effort and skips unknown names, symlinks, unreadable entries, and paths with active sessions. Copy artifacts elsewhere if they need indefinite retention. Worktree discovery, cleanup, and capacity scans treat `.fusion-recovery` as an internal container rather than a task worktree.
 
 ### Explicit duplicate-marker guard (FN-5220)
 
@@ -144,7 +139,7 @@ Layer behavior:
 - **Triage planning loop** — after triage reads the generated `PROMPT.md`, an exact redirect marker short-circuits directly into `finalizeApprovedTask()`. Normal plans run deterministic spec hygiene checks in triage, then the selected workflow's optional Plan Review gate owns AI plan review before execution.
 - **Self-healing sweep** — maintenance Batch 2 runs `resolveExplicitDuplicateMarkerTasks()` across `triage`/`todo` tasks to clean up older stuck marker tasks. The sweep is best-effort, capped at 50 marker tasks per cycle, and can be disabled with the internal setting `resolveExplicitDuplicateMarkerEnabled: false` (default `true`).
 
-An operator's decision is durable for a task and its active canonical pair. **Keep** records the acknowledgement, clears the marker-only prompt and triage decision hold, and lets planning continue; triage and self-healing will not ask again if that same marker is reprocessed. A marker for a different active canonical remains a new decision. **Delete** for an explicit-marker decision soft-deletes the duplicate, while **Archive** for an ordinary near-duplicate leaves it terminal in Archived; neither outcome is reopened as a duplicate decision.
+An operator's decision is durable for a task and its active canonical pair. **Clearing the duplicate flag** records the acknowledgement, retires the marker source, clears the triage decision hold, and lets planning continue; triage and self-healing will not ask again if that same marker is reprocessed. A marker for a different active canonical remains a new decision. **Delete** for an explicit-marker decision soft-deletes the duplicate, while **Archive** for an ordinary near-duplicate leaves it terminal in Archived; neither outcome is reopened as a duplicate decision.
 
 All three layers fail open: parse errors, task lookup failures, file-read failures, activity-recording errors, or other unexpected exceptions log a warning and continue normal intake/triage/self-healing flow instead of blocking task creation or recovery.
 
@@ -162,7 +157,7 @@ Fusion applies two conservative intake heuristics that may auto-archive newly fi
 
 - **Ghost-bug preflight** (triage finalize path): for bug-fix-shaped specs that cite concrete constructs/commands, Fusion probes current `main`. If all definitive probes show the cited bug does not reproduce, the task is archived as `auto-resolved-ghost-bug`.
 - **Same-agent duplicate intake** (all task-create backends): if the same `source.sourceAgentId` (or `source.sourceParentTaskId`) filed a highly similar task within 24h (threshold `0.75`), Fusion still detects the near-duplicate — but what happens next depends on the `autoArchiveDuplicateTasksEnabled` project/global setting (default **`false`**, FN-7658/FN-8401):
-  - **Default (`false`)**: the later task is left in place and flagged via the same near-duplicate marker used elsewhere (`sourceMetadata.nearDuplicateOf` / `nearDuplicateScore`), so the dashboard's yellow "Duplicate" chip with Keep/Archive actions surfaces it for a human decision. Neither the new task nor its live siblings are moved to `archived` or deleted automatically.
+  - **Default (`false`)**: the later task is left in place and flagged via the same near-duplicate marker used elsewhere (`sourceMetadata.nearDuplicateOf` / `nearDuplicateScore`), so the dashboard's yellow "Duplicate" chip with a clear-the-flag control and Archive action surfaces it for a human decision. Neither the new task nor its live siblings are moved to `archived` or deleted automatically.
   - **`true`** (legacy behavior, opt-in): only the later/new task is archived as `auto-resolved-duplicate`; its live siblings remain intact.
 
 Ghost-bug preflight is unaffected by `autoArchiveDuplicateTasksEnabled` — it is a distinct heuristic and always auto-archives on a definitive non-repro.
@@ -354,7 +349,7 @@ Auto-completion/finalization remains owned by existing recovery passes:
 
 ### Archive worktree cleanup
 
-Archiving a single-repository task synchronously removes its git worktree before branch and task-metadata cleanup. CLI and extension archive requests fence live execution under the per-task advisory transaction lock: a WIP-lane or active-merge refusal performs no archive write and suppresses all cleanup (worktrees, branches, and task directory). This applies to random and pinned (`task-id`/`task-title`) names, including `fn_task_archive` and direct CLI archive commands that run without an executor. A host-scoped filesystem reservation serializes a successor's deterministic-path acquisition with archival disposal; if removal fails, the reservation is quarantined so the next acquisition can reconcile the orphan instead of colliding with it. `archive({ cleanup: false })` intentionally retains the worktree. Workspace tasks' per-repository `workspaceWorktrees` are not removed by this lifecycle yet.
+Archiving a single-repository task synchronously removes its task-ID-pinned git worktree before branch and task-metadata cleanup. CLI and extension archive requests fence live execution under the per-task advisory transaction lock: a WIP-lane or active-merge refusal performs no archive write and suppresses all cleanup (worktrees, branches, and task directory). Native worktrees always derive from the lowercased task ID; Worktrunk retains its backend-owned layout. A host-scoped filesystem reservation serializes a successor's deterministic-path acquisition with archival disposal; if removal fails, the reservation is quarantined so the next acquisition can reconcile the orphan instead of colliding with it. `archive({ cleanup: false })` intentionally retains the worktree. Workspace tasks' per-repository `workspaceWorktrees` are not removed by this lifecycle yet.
 
 Board ordering behavior:
 - `todo` mirrors scheduler dispatch order: priority first (`urgent` → `low`), then oldest `createdAt` within a priority tier, then task ID as deterministic tie-break.
@@ -362,13 +357,18 @@ Board ordering behavior:
 - The `done` column is recency-ordered by completion time (newest first), using `columnMovedAt` as primary and falling back to `updatedAt` then `createdAt` for legacy tasks.
 - The dashboard **list view default ordering matches these same per-column semantics** until a user clicks a sortable header (manual list sorting still overrides defaults).
 
-<!-- FNXC:TaskCardMovement 2026-08-21-16:09: FN-109 separates desktop/tablet Board viewport panning from contextual task movement so card-body drags cannot restore native relocation. -->
+<!-- FNXC:TaskCardMovement 2026-08-27-12:01: FN-198 makes workflow automation the sole owner of dashboard task placement; Board gestures and menus must not offer relocation. -->
 
-### Moving tasks on Board and List
+### Task placement on Board and List
 
-Use a task card or List row's context menu (**right-click**, **Shift+F10** / Context Menu key, the visible overflow control, or touch long-press), then choose **Move to**. When more than one legal destination is available, **Move to** opens one submenu containing each destination; a single destination remains a direct action. This changes task movement only.
+Tasks cannot be relocated manually from Board, List, or Task Detail. The workflow and its automated recovery paths decide placement. Use **Retry** to repeat the current stage in place, **Reset** to edit the original description and restart cleanly from the confirmed request, or **Delete** to remove a task. A manual-intake card can still show **Start**, which admits a new idea into its workflow rather than relocating active work. Start is accepted only while the card remains in the column the operator saw: if another Start or the scheduler has already advanced it, Fusion refuses the stale press without cancelling work and publishes the current card state. Task cards have no **Promote** control; workflow scheduling owns capacity-gated releases.
 
-On desktop and tablet Boards, dragging a task card's noninteractive body or text pans the Board viewport without moving the task. Controls and editing remain native; **Move to** remains the only task-relocation path.
+### Plan approval hold
+
+After planning, the card remains at `status: "awaiting-approval"` in the workflow's planning lane, which may be an intake or hold column, and shows **Need Your Review**. **Approve** releases the reviewed plan. **Reject Plan** remains available in Task Detail; it discards the plan and regenerates in place when the card is already in its workflow's planning column. Cards outside planning retain the workflow intake rehome.
+
+<!-- FNXC:BoardNavigationDocs 2026-08-28-13:29: FN-229 makes the pointing hand identify clickable task tiles without changing card activation or Board pan eligibility; disabled controls and editing keep native cursors. -->
+On desktop and tablet Boards, a task tile shows the pointing hand on hover. Dragging a task card's noninteractive body or text pans the Board viewport without moving the task, and the closed grabbing hand remains visible across the whole Board until the drag ends. Disabled controls and editing retain their native state and form cursors at rest.
 
 ### Lifecycle commands
 
@@ -463,47 +463,57 @@ Fusion no longer provides a dedicated task-branch conflict CLI command. Resolve 
 
 ## Task Execution Modes
 
-Each task has an execution mode that controls how the executor agent approaches the task:
+Each task has an execution mode that controls how the selected workflow executes it:
 
 | Mode | Description |
 |------|-------------|
-| `standard` | Full execution with complete review workflow (default) |
-| `fast` | Expedited execution with minimal overhead for simple tasks |
+| `standard` | Plans the work, executes the planned steps, and runs the workflow's normal review path (default). |
+| `fast` | Uses the original request for one implementation occurrence, without a planning session or pre-merge review. |
 
-### Fast Mode Bypassed Gates
+### Fast Mode Route
 
-When `executionMode: "fast"`, the following automated review/validation gates are **bypassed**:
+<!-- FNXC:FastLane 2026-08-29-03:20: Fast is a first-class overlay on the task's selected workflow, not a separate workflow or a lean planning variant. Keep the route description aligned with the graph taxonomy so a simple edit cannot silently skip its only implementation occurrence. -->
 
-| Gate | Standard Mode | Fast Mode |
+A Fast card is captured in intake, can pass through a hold/planning column while its worktree is prepared, then executes once and enters the normal review/merge region. `undefined` and `null` execution modes remain standard.
+
+| Category | Fast behavior |
+|----------|---------------|
+| **Bypassed** | The planning seam, every pre-merge optional group (including an explicitly selected group), their remediation/no-op nodes, and per-step `step-review` nodes. A bypassed pre-merge group records terminal `skipped` evidence with `bypassedBy: "fast-mode"`; it is never silently deleted. |
+| **Retargeted** | `parse-steps` still dispatches, but writes exactly one synthetic implementation step instead of reading `PROMPT.md`. The implementation session receives the original request and uses the Fast & Cheap model lane. |
+| **Untouched** | Completion summary, the merge region, and post-merge optional groups retain their standard workflow behavior. |
+
+`parse-steps` is deliberately retargeted rather than bypassed: it is the validated dominator for a `foreach(source: "task-steps")` region, and an empty expansion otherwise follows its success edge with zero implementation instances. The Fast template route also suppresses deferred done-marking and follows the existing `outcome:approve` edge past `step-review`; it records no fabricated reviewer verdict.
+
+### Fast Mode Bypassed Work
+
+| Work | Standard Mode | Fast Mode |
 |------|---------------|-----------|
-| `review_step` tool enforcement | Available to executor agent | **Not injected** |
-| Pre-merge workflow-step execution | Runs configured steps | **Skipped** |
-| Custom graph pre-merge prompt/script/gate nodes | Run in selected custom workflows | **Skipped** |
-| Workflow revision loop | Enabled (feedback → fix → re-review) | **Disabled** |
+| Planning session and Plan Review | Runs before execution | **Bypassed** |
+| Plan-derived step parsing | Reads planned `PROMPT.md` headings | **Retargeted** to one synthetic step from the original request |
+| Pre-merge optional groups | Run when default-on or explicitly enabled | **Bypassed**, with recorded skipped evidence |
+| Per-step code review | Reviews every stepwise occurrence | **Bypassed**; step execution marks its own step done |
+| Executor deterministic test/build gate | Runs when configured | **Skipped** (the Fast-mode behavior of the executor lane) |
 
-### Fast Mode Mandatory Gates
+### Fast Mode Unchanged Work
 
-The bypass applies to both the legacy workflow-step path and the workflow graph executor path (including custom non-`builtin:coding` workflows). `undefined` or `null` execution mode is treated as standard mode.
-
-The following quality gates **remain enforced** in fast mode:
-
-| Gate | Behavior |
+| Work | Behavior |
 |------|----------|
-| `task_done` requirement | Agent must call `task_done()` to complete |
-| Completion blocker checks | Tests, build, and typecheck from PROMPT.md still enforced |
-| Post-merge workflow steps | Run as normal (merger-owned) |
+| Completion summary | Runs normally before merge. |
+| Merge region | Uses the selected workflow's existing merge gates and landing behavior. |
+| Post-merge optional groups | Run normally after a successful merge. |
+| `task_done()` | Remains the implementation session's completion tool. |
 
 ### Execution Mode Matrix
 
 | Feature | Standard | Fast |
 |---------|----------|------|
-| Executor agent session | Full prompt + tools | Full prompt (minus review_step) |
-| Pre-merge workflow steps (legacy, builtin, and custom graph workflows) | ✅ Run | ❌ Bypassed |
-| Custom graph prompt/script/gate validation nodes | ✅ Run | ❌ Bypassed |
-| `review_step` tool | ✅ Available | ❌ Not available |
-| Post-merge workflow steps | ✅ Run | ✅ Run |
-| Completion blockers (test/build/typecheck) | ✅ Enforced | ✅ Enforced |
-| `task_done()` requirement | ✅ Required | ✅ Required |
+| Planning prompt | Full specification prompt | No planning prompt |
+| Implementation prompt | Planned step context | Compact original-request context |
+| Implementation occurrences | Parsed plan steps | Exactly one synthetic step when the workflow has `parse-steps` + `foreach` |
+| Pre-merge optional groups | ✅ Run when enabled | ❌ Bypassed even when explicitly enabled |
+| Per-step review | ✅ Runs where authored | ❌ Bypassed without a verdict |
+| Completion summary / merge | ✅ Run | ✅ Run unchanged |
+| Post-merge groups | ✅ Run | ✅ Run unchanged |
 
 ### Setting Execution Mode
 
@@ -963,3 +973,9 @@ Task Detail labels this measure **Total active time**. It sums durable planning 
 ## Generated task language
 
 In **Settings → Models → Project**, choose whether AI-authored task plans, titles, steps, summaries, and recommendations use English, the task input language, or the Fusion interface language. The choice is captured when a planning, title, execution, or workflow generation begins; changing it does not translate or alter existing tasks or active sessions.
+
+## Blocked tasks
+
+**Blocked** means infrastructure outside the task worktree requires operator action, such as exhausted disk, unavailable credentials, a provider outage, or a terminal network failure. The card preserves completed steps and committed work while displaying the raw code and message.
+
+Use the robot action to open Chat with that exact error prefilled. After repairing the external obstacle, use **Retry**. Retry resumes the recorded interrupted workflow node; it does not reset steps, delete `PROMPT.md`, replan, or replace the task worktree and branch. Repeated Retry requests are refused while the resume continuation is already pending.

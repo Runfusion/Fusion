@@ -61,10 +61,10 @@ export function GlobalGeneralSection({ form, setForm }: GlobalGeneralSectionProp
         descriptor={{
           key: "persistAgentToolOutput",
           label: t("settings.globalGeneral.saveToolOutputInAgentLogs", " Save tool output in agent logs "),
-          help: t("settings.globalGeneral.whenDisabledToolRowsAreStillLoggedBut", " When disabled, tool rows are still logged but detailed tool payloads are omitted. Very large tool payloads may still be clipped even when this stays enabled. Default: disabled. "),
+          help: t("settings.globalGeneral.whenDisabledToolRowsAreStillLoggedBut", " When disabled, tool rows are still logged but detailed tool payloads are omitted. Very large tool payloads may still be clipped even when this stays enabled. Default: enabled. "),
           scope: "global",
         }}
-        value={form.persistAgentToolOutput === true}
+        value={form.persistAgentToolOutput !== false}
         onChange={(v) => setForm((f) => ({ ...f, persistAgentToolOutput: v === true }))}
       />
       <SettingsToggleRow
@@ -209,16 +209,10 @@ export function GlobalGeneralSection({ form, setForm }: GlobalGeneralSectionProp
         value={form.autoRestartAfterUpdate === true || (form.autoRestartAfterUpdate === undefined && form.autoUpdateAndRestart === true)}
         onChange={(v) => setForm((f) => ({ ...f, autoRestartAfterUpdate: v === true }))}
       />
-      <SettingsToggleRow
-        descriptor={{
-          key: "autoReloadOnVersionChange",
-          label: t("settings.globalGeneral.autoReloadDashboardOnVersionChange", " Auto-reload dashboard on version change "),
-          help: t("settings.globalGeneral.whenEnabledDefaultTheDashboardAutomaticallyReloadsWhen", " When enabled (default), the dashboard automatically reloads when it detects a new build version \u2014 either from server rebuilds or service worker updates. Disable this to stay on the current version until you manually refresh. Default: enabled. "),
-          scope: "global",
-        }}
-        value={form.autoReloadOnVersionChange !== false}
-        onChange={(v) => setForm((f) => ({ ...f, autoReloadOnVersionChange: v === true }))}
-      />
+      {/*
+        FNXC:VersionAutoReload 2026-08-23-04:03:
+        Reloading after a detected build-version change is mandatory to prevent tabs from running deleted bundles. It deliberately has no Settings control.
+      */}
     </>);
 }
 export default GlobalGeneralSection;

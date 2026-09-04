@@ -37,6 +37,8 @@ import {
   type WorkflowIrPin,
   computeWorkflowIrPin,
   detectWorkflowDrift,
+  classifyLifecycleDirection,
+  classifyLifecycleRole,
   findWorkflowColumn,
   isHoldToWipBoundary,
   resolveColumnFlags,
@@ -373,6 +375,22 @@ export function createWorkflowColumnBoundary(
       if (toColumn === column) return { kind: "entered" };
 
       const fromColumn = column;
+
+      /*
+      FNXC:LifecycleContainment 2026-09-02-10:36:
+      FN-9243 preserves FN-207's no-backward-authority rule for graph routing. A review gate authored
+      in a WIP column runs where an in-review card already is, rather than attempting the rejected
+      backward move that killed the graph and stranded both unrun gates and stale-content reroutes.
+      */
+      const isReviewGate = node.kind === "optional-group" || node.kind === "step-review";
+      const direction = classifyLifecycleDirection(
+        classifyLifecycleRole(flagsFor(fromColumn)),
+        classifyLifecycleRole(flagsFor(toColumn)),
+      );
+      if (isReviewGate && direction === "backward") {
+        warn("review gate entered in place to preserve lifecycle containment", { fromColumn, toColumn, nodeId: node.id });
+        return { kind: "entered" };
+      }
 
       // KTD-2: never graph-move a hold→wip boundary — the scheduler is the sole
       // mover there; the card parks at the ready-for-release seam (U4 performs the

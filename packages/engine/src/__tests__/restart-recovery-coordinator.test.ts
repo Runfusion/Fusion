@@ -1,12 +1,4 @@
 import { describe, expect, it, vi } from "vitest";
-/*
-FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
-These call-arg assertions now include the mutation context the converted sweep passes.
-Adding it is what keeps them load-bearing: left at the old arity every
-`toHaveBeenCalledWith` here would fail, and every `.not.toHaveBeenCalledWith` would pass
-vacuously — an assertion that can no longer fail is worse than one that is red.
-*/
-import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import type { TaskStore, Task } from "@fusion/core";
 import {
   RestartRecoveryCoordinator,
@@ -188,8 +180,11 @@ describe("RestartRecoveryCoordinator", () => {
     const coordinator = new RestartRecoveryCoordinator(store, executor);
     await coordinator.recoverInterruptedRuns();
 
-    expect(store.updateTask).toHaveBeenCalledWith("FN-1", expect.objectContaining({ status: "stuck-killed" }), UNATTRIBUTED_MUTATION_CONTEXT);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-1", "todo", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-1", expect.objectContaining({ status: "stuck-killed" }));
+    expect(store.moveTask).toHaveBeenCalledWith("FN-1", "todo", expect.objectContaining({
+      moveSource: "engine",
+      lifecycleReason: "self-healing-session-recovery",
+    }));
     expect(executor.resumeOrphaned).toHaveBeenCalledTimes(1);
   });
 
@@ -249,8 +244,8 @@ hid a second one behind the first:
      before the read;
   2. the redundant `.filter` — DELETED rather than converted; re-asserting the column the query just
      selected on adds nothing, and a second copy of a rule is how a read and its filter drift;
-  3. the move DESTINATION — already resolved via `resolveReboundTargetForTask`; only its comment was
-     stale, still describing the pre-fix state, and is corrected in place.
+  3. the move DESTINATION — FN-207 now derives it from the live source through the contained-
+     backward helper, so WIP returns to hold and review can never jump to Planning.
 
 REVERT PROOF, measured: restore `listTasks({ column: "in-progress" })` and the renamed case requeues
 nothing.
@@ -288,7 +283,7 @@ describe("restart recovery resolves the board's own wip lane", () => {
 
     await coordinator.recoverInterruptedRuns();
 
-    expect(store.updateTask).toHaveBeenCalledWith("FN-1", expect.objectContaining({ status: "stuck-killed" }), UNATTRIBUTED_MUTATION_CONTEXT);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-1", expect.objectContaining({ status: "stuck-killed" }));
   });
 
   it("still skips a PAUSED task — the only thing the deleted filter contributed", async () => {

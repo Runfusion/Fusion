@@ -116,6 +116,7 @@ describe("NotificationService deferred failure notifications", () => {
     });
     const service = new NotificationService(store as any, { wedgeNotificationSettleMs: 0 });
     await service.start();
+    const exhaustedAt = new Date().toISOString();
     const exhausted = task({
       id: "FN-suppressed-exhaustion",
       status: "failed",
@@ -124,14 +125,14 @@ describe("NotificationService deferred failure notifications", () => {
         reasonKey: "terminal-failed",
         episodeId: "active",
         status: "active",
-        transitionedAt: "2026-08-10T20:00:00.000Z",
-        lastNotifiedAtByReason: { "terminal-failed": "2026-08-10T20:01:00.000Z" },
+        transitionedAt: exhaustedAt,
+        lastNotifiedAtByReason: { "terminal-failed": exhaustedAt },
         autoRecovery: {
           attempts: 3,
-          lastAttemptAt: "2026-08-10T20:00:00.000Z",
-          budgetStartedAt: "2026-08-10T20:00:00.000Z",
-          exhaustedAt: "2026-08-10T20:01:00.000Z",
-          lastBudgetWriteAt: "2026-08-10T20:01:00.000Z",
+          lastAttemptAt: exhaustedAt,
+          budgetStartedAt: exhaustedAt,
+          exhaustedAt,
+          lastBudgetWriteAt: exhaustedAt,
         },
       },
     });
@@ -178,6 +179,37 @@ describe("NotificationService deferred failure notifications", () => {
   it. No delivery or durable wedge claim is allowed until the writer clears that
   ownership at exhaustion, when the existing once-per-episode seam must alert.
   */
+  it("writes clear-or-delete guidance for a held triage duplicate", async () => {
+    const store = createStore();
+    const sendMessageOnce = vi.fn(async () => ({ message: {} as any, inserted: true }));
+    const service = new NotificationService(store as any, {
+      messageStore: { on: () => undefined, sendMessageOnce } as any,
+    });
+    await service.start();
+
+    const duplicate = task({
+      id: "FN-duplicate",
+      paused: true,
+      pausedReason: "duplicate-decision-required",
+      sourceMetadata: { duplicateSource: "triage-marker", nearDuplicateOf: "FN-1234" },
+    });
+    store.emit("task:updated", duplicate);
+    await flushAsyncHandlers();
+
+    expect(sendMessageOnce).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining("Clear the duplicate flag"),
+        metadata: expect.objectContaining({ kind: "triage-duplicate-decision" }),
+      }),
+      "triage-duplicate-decision:FN-duplicate",
+    );
+    const payload = (sendMessageOnce.mock.calls as unknown as Array<[{ content: string }]>)[0][0];
+    expect(payload.content).not.toMatch(/keep it/i);
+    expect(payload.content).toMatch(/delete the task/i);
+
+    await service.stop();
+  });
+
   it("suppresses recovery-owned failed snapshots and alerts once after exhaustion", async () => {
     const store = createStore();
     const sendMessageOnce = vi.fn(async () => ({ message: {} as any, inserted: true }));

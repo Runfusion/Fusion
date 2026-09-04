@@ -88,7 +88,7 @@ describeIfGit("landWorkspaceTask file-scope gates", () => {
      */
     addBranch(fx, "repo-b", "repo-a/feature.txt");
     const task = {
-      id: TASK_ID, title: "workspace scope", description: "", column: "in-review", branch: BRANCH, enabledWorkflowSteps: [], /* FNXC:RequiredPreMergeSteps 2026-08-23-00:20: merge-mechanics fixture; an unspecified list makes the door refuse on default-on Plan/Code Review before the behaviour under test runs. */ 
+      id: TASK_ID, title: "workspace scope", description: "", column: "in-review", branch: BRANCH, enabledWorkflowSteps: [], /* FNXC:RequiredPreMergeSteps 2026-08-23-00:20: merge-mechanics fixture; an unspecified list makes the door refuse on default-on Plan/Code Review before the behaviour under test runs. */
       comments: [], steeringComments: [], dependencies: [], steps: [], log: [], currentStep: 0,
       workspaceWorktrees: {
         "repo-a": { worktreePath: fx.repoPath("repo-a"), branch: BRANCH },
@@ -127,7 +127,7 @@ describeIfGit("landWorkspaceTask file-scope gates", () => {
     addBranch(fx, "repo-a");
     addBranch(fx, "repo-b", "unapproved.ts");
     const task = {
-      id: TASK_ID, title: "workspace scope", description: "", column: "in-review", branch: BRANCH, enabledWorkflowSteps: [], /* FNXC:RequiredPreMergeSteps 2026-08-23-00:20: merge-mechanics fixture; an unspecified list makes the door refuse on default-on Plan/Code Review before the behaviour under test runs. */ 
+      id: TASK_ID, title: "workspace scope", description: "", column: "in-review", branch: BRANCH, enabledWorkflowSteps: [], /* FNXC:RequiredPreMergeSteps 2026-08-23-00:20: merge-mechanics fixture; an unspecified list makes the door refuse on default-on Plan/Code Review before the behaviour under test runs. */
       comments: [], steeringComments: [], dependencies: [], steps: [], log: [], currentStep: 0,
       workspaceWorktrees: {
         "repo-a": { worktreePath: fx.repoPath("repo-a"), branch: BRANCH },
@@ -150,12 +150,82 @@ describeIfGit("landWorkspaceTask file-scope gates", () => {
     expect(store.updates).not.toContainEqual(expect.objectContaining({ modifiedFiles: expect.anything() }));
   });
 
+  it("lands two modified repositories only after both durable approvals are present", async () => {
+    policy.mockResolvedValue({ fileScope: "strict", fileScopeRules: [] });
+    fx = await createWorkspaceFixture(["repo-a", "repo-b"]);
+    addBranch(fx, "repo-a");
+    addBranch(fx, "repo-b");
+    const workspaceWorktrees = {
+      "repo-a": { worktreePath: fx.repoPath("repo-a"), branch: BRANCH },
+      "repo-b": { worktreePath: fx.repoPath("repo-b"), branch: BRANCH },
+    };
+    const task = {
+      id: TASK_ID, title: "workspace approval coverage", description: "", column: "in-review", branch: BRANCH, enabledWorkflowSteps: [],
+      comments: [], steeringComments: [], dependencies: [], steps: [], log: [], currentStep: 0,
+      workspaceWorktrees,
+      repositoryScope: { repositories: ["repo-a", "repo-b"], state: "confirmed" as const, revision: 1, reviewEvidence: reviewEvidence(workspaceWorktrees) },
+      modifiedFiles: ["repo-a/feature.txt", "repo-b/feature.txt"],
+    } as Task;
+
+    await expect(landWorkspaceTask(storeFor(task, task.modifiedFiles!), task, fx.rootDir, {}, {
+      mergeAgent: squashAgent(BRANCH), reviewAgent: async () => "REVIEW_VERDICT: approve",
+    })).resolves.toMatchObject({ allLanded: true });
+  });
+
+  it("reports the exact modified repository whose approval evidence is absent", async () => {
+    policy.mockResolvedValue({ fileScope: "strict", fileScopeRules: [] });
+    fx = await createWorkspaceFixture(["repo-a", "repo-b"]);
+    addBranch(fx, "repo-a");
+    addBranch(fx, "repo-b");
+    const workspaceWorktrees = {
+      "repo-a": { worktreePath: fx.repoPath("repo-a"), branch: BRANCH },
+      "repo-b": { worktreePath: fx.repoPath("repo-b"), branch: BRANCH },
+    };
+    const evidence = reviewEvidence(workspaceWorktrees);
+    const task = {
+      id: TASK_ID, title: "workspace missing approval", description: "", column: "in-review", branch: BRANCH, enabledWorkflowSteps: [],
+      comments: [], steeringComments: [], dependencies: [], steps: [], log: [], currentStep: 0,
+      workspaceWorktrees,
+      repositoryScope: { repositories: ["repo-a", "repo-b"], state: "confirmed" as const, revision: 1, reviewEvidence: { "repo-a": evidence["repo-a"] } },
+      modifiedFiles: ["repo-a/feature.txt", "repo-b/feature.txt"],
+    } as Task;
+
+    await expect(landWorkspaceTask(storeFor(task, task.modifiedFiles!), task, fx.rootDir, {}, {
+      mergeAgent: squashAgent(BRANCH), reviewAgent: async () => "REVIEW_VERDICT: approve",
+    })).rejects.toMatchObject({
+      name: "WorkspaceReviewRequiredError",
+      assessment: { kind: "approval-missing", repositories: ["repo-b"], files: ["repo-b/feature.txt"] },
+    });
+  });
+
+  it("does not require review evidence from a clean in-scope repository", async () => {
+    policy.mockResolvedValue({ fileScope: "strict", fileScopeRules: [] });
+    fx = await createWorkspaceFixture(["repo-a", "repo-b"]);
+    addBranch(fx, "repo-a");
+    const workspaceWorktrees = {
+      "repo-a": { worktreePath: fx.repoPath("repo-a"), branch: BRANCH },
+      "repo-b": { worktreePath: fx.repoPath("repo-b"), branch: BRANCH },
+    };
+    const evidence = reviewEvidence({ "repo-a": workspaceWorktrees["repo-a"] });
+    const task = {
+      id: TASK_ID, title: "workspace clean peer", description: "", column: "in-review", branch: BRANCH, enabledWorkflowSteps: [],
+      comments: [], steeringComments: [], dependencies: [], steps: [], log: [], currentStep: 0,
+      workspaceWorktrees,
+      repositoryScope: { repositories: ["repo-a", "repo-b"], state: "confirmed" as const, revision: 1, reviewEvidence: { "repo-a": evidence["repo-a"] } },
+      modifiedFiles: ["repo-a/feature.txt"],
+    } as Task;
+
+    await expect(landWorkspaceTask(storeFor(task, task.modifiedFiles!), task, fx.rootDir, {}, {
+      mergeAgent: squashAgent(BRANCH), reviewAgent: async () => "REVIEW_VERDICT: approve",
+    })).resolves.toMatchObject({ allLanded: true });
+  });
+
   it("uses unprefixed scope as a repo-local fallback instead of blocking every workspace repo", async () => {
     policy.mockResolvedValue({ fileScope: "strict", fileScopeRules: [] });
     fx = await createWorkspaceFixture(["repo-a"]);
     addBranch(fx, "repo-a");
     const task = {
-      id: TASK_ID, title: "workspace scope", description: "", column: "in-review", branch: BRANCH, enabledWorkflowSteps: [], /* FNXC:RequiredPreMergeSteps 2026-08-23-00:20: merge-mechanics fixture; an unspecified list makes the door refuse on default-on Plan/Code Review before the behaviour under test runs. */ 
+      id: TASK_ID, title: "workspace scope", description: "", column: "in-review", branch: BRANCH, enabledWorkflowSteps: [], /* FNXC:RequiredPreMergeSteps 2026-08-23-00:20: merge-mechanics fixture; an unspecified list makes the door refuse on default-on Plan/Code Review before the behaviour under test runs. */
       comments: [], steeringComments: [], dependencies: [], steps: [], log: [], currentStep: 0,
       workspaceWorktrees: { "repo-a": { worktreePath: fx.repoPath("repo-a"), branch: BRANCH } },
       repositoryScope: {

@@ -7,21 +7,19 @@ import userEvent from "@testing-library/user-event";
 import { Column } from "../Column";
 import type { Task, Column as ColumnType } from "@fusion/core";
 
+const { rebuildTaskSpecMock } = vi.hoisted(() => ({ rebuildTaskSpecMock: vi.fn() }));
+vi.mock("../../api", async (importOriginal) => ({
+  ...(await importOriginal()),
+  rebuildTaskSpec: rebuildTaskSpecMock,
+}));
+
 // Mock child components to keep tests focused on the Column badge behavior
 const taskCardRenderSpy = vi.fn();
 
 vi.mock("../TaskCard", () => ({
-  TaskCard: React.memo(({ task, onPromote, isPromoting }: { task: Task; onPromote?: (taskId: string) => Promise<void>; isPromoting?: boolean }) => {
+  TaskCard: React.memo(({ task }: { task: Task }) => {
     taskCardRenderSpy(task.id);
-    return (
-      <div data-testid={`task-${task.id}`}>
-        {onPromote && (
-          <button type="button" data-testid={`card-promote-${task.id}`} disabled={isPromoting} onClick={() => void onPromote(task.id)}>
-            {isPromoting ? "Promoting…" : "Promote"}
-          </button>
-        )}
-      </div>
-    );
+    return <div data-testid={`task-${task.id}`} />;
   }),
 }));
 vi.mock("../WorktreeGroup", () => ({
@@ -98,6 +96,7 @@ function makeTask(id: string): Task {
 }
 
 beforeEach(() => {
+  rebuildTaskSpecMock.mockReset();
   taskCardRenderSpy.mockClear();
   mockConfirm.mockReset();
   mockConfirm.mockResolvedValue(true);
@@ -344,140 +343,6 @@ describe("Column workflow mode (U9)", () => {
     expect(document.querySelector(".column-menu")).not.toBeNull();
   });
 
-
-
-  it("renders a Promote affordance on hold-column cards", () => {
-    render(
-      <Column
-        {...defaultProps}
-        column={"hold-col" as ColumnType}
-        workflowMode
-        columnDisplayName="Hold"
-        columnFlags={{ hold: true }}
-        onPromote={vi.fn().mockResolvedValue(undefined)}
-        tasks={[{ ...makeTask("FN-7"), column: "hold-col" as ColumnType }]}
-      />,
-    );
-    expect(screen.getByTestId("card-promote-FN-7")).toBeDefined();
-  });
-
-  /*
-  FNXC:BoardPromote 2026-07-25-04:55:
-  The unplanned-for-execution rejection must (a) render real copy rather than the
-  raw `board.rejection.unplannedForExecution` key and (b) offer the operator an
-  explicit force override. Declining leaves the card held; confirming re-issues
-  the promote with `{ force: true }`.
-  */
-  function renderHoldColumnWithPromote(onPromote: (taskId: string, options?: { force?: boolean }) => Promise<void>) {
-    return render(
-      <Column
-        {...defaultProps}
-        column={"hold-col" as ColumnType}
-        workflowMode
-        columnDisplayName="Hold"
-        columnFlags={{ hold: true }}
-        onPromote={onPromote}
-        tasks={[{ ...makeTask("FN-7"), column: "hold-col" as ColumnType }]}
-      />,
-    );
-  }
-
-  const unplannedRejection = {
-    details: {
-      code: "unplanned-for-execution",
-      messageKey: "board.rejection.unplannedForExecution",
-      retryable: true,
-      forceable: true,
-    },
-  };
-
-  it("offers an override on unplanned-for-execution and keeps the card held when declined", async () => {
-    const onPromote = vi.fn().mockRejectedValue(unplannedRejection);
-    mockConfirm.mockResolvedValue(false);
-    renderHoldColumnWithPromote(onPromote);
-
-    fireEvent.click(screen.getByTestId("card-promote-FN-7"));
-
-    await waitFor(() => expect(mockConfirm).toHaveBeenCalled());
-    expect(mockConfirm.mock.calls[0][0]).toMatchObject({
-      title: "Start execution anyway?",
-      confirmLabel: "Start Anyway",
-      cancelLabel: "Keep Waiting",
-      danger: true,
-    });
-    expect(mockConfirm.mock.calls[0][0].message).toContain("FN-7");
-
-    await waitFor(() => expect(screen.getByTestId("column-inline-feedback")).toBeDefined());
-    // Real copy, never the raw i18n key (the FN-8471 regression).
-    expect(screen.getByTestId("column-inline-feedback").textContent).not.toContain("board.rejection");
-    expect(screen.getByTestId("column-inline-feedback").textContent).toContain("plan review");
-    expect(onPromote).toHaveBeenCalledTimes(1);
-    expect(onPromote).toHaveBeenCalledWith("FN-7");
-  });
-
-  it("re-promotes with force once the operator confirms the override", async () => {
-    const onPromote = vi.fn()
-      .mockRejectedValueOnce(unplannedRejection)
-      .mockResolvedValueOnce(undefined);
-    mockConfirm.mockResolvedValue(true);
-    renderHoldColumnWithPromote(onPromote);
-
-    fireEvent.click(screen.getByTestId("card-promote-FN-7"));
-
-    await waitFor(() => expect(onPromote).toHaveBeenCalledTimes(2));
-    expect(onPromote).toHaveBeenLastCalledWith("FN-7", { force: true });
-    expect(screen.queryByTestId("column-inline-feedback")).toBeNull();
-  });
-
-  it("does not offer an override for a capacity rejection", async () => {
-    const onPromote = vi.fn().mockRejectedValue({
-      details: { code: "capacity-exhausted", messageKey: "board.rejection.capacityExhausted", retryable: true },
-    });
-    renderHoldColumnWithPromote(onPromote);
-
-    fireEvent.click(screen.getByTestId("card-promote-FN-7"));
-    await waitFor(() => expect(screen.getByTestId("column-inline-feedback")).toBeDefined());
-    expect(mockConfirm).not.toHaveBeenCalled();
-    expect(onPromote).toHaveBeenCalledTimes(1);
-  });
-
-  it("#1410: clears the inline capacity banner when the task list changes via SSE", async () => {
-    const onPromote = vi.fn().mockRejectedValue({
-      details: { code: "capacity-exhausted", retryable: true },
-    });
-    const holdTask = { ...makeTask("FN-7"), column: "hold-col" as ColumnType };
-    const { rerender } = render(
-      <Column
-        {...defaultProps}
-        column={"hold-col" as ColumnType}
-        workflowMode
-        columnDisplayName="Hold"
-        columnFlags={{ hold: true }}
-        onPromote={onPromote}
-        tasks={[holdTask]}
-      />,
-    );
-
-    // Trigger a capacity-exhausted promote → inline banner appears.
-    fireEvent.click(screen.getByTestId("card-promote-FN-7"));
-    await waitFor(() => expect(screen.getByTestId("column-inline-feedback")).toBeDefined());
-    expect(screen.getByTestId("column-inline-feedback").textContent).toContain("capacity");
-
-    // An SSE-driven task list change (occupant moved out) re-renders the column
-    // with a different roster → the stale banner is cleared.
-    rerender(
-      <Column
-        {...defaultProps}
-        column={"hold-col" as ColumnType}
-        workflowMode
-        columnDisplayName="Hold"
-        columnFlags={{ hold: true }}
-        onPromote={onPromote}
-        tasks={[{ ...makeTask("FN-8"), column: "hold-col" as ColumnType }]}
-      />,
-    );
-    await waitFor(() => expect(screen.queryByTestId("column-inline-feedback")).toBeNull());
-  });
 });
 
 describe("Column worktree grouping setting", () => {
@@ -880,7 +745,7 @@ describe("Column QuickEntryBox", () => {
 });
 
 describe("Column in-progress/in-review bulk actions", () => {
-  it.each(["in-progress", "in-review"] as const)("renders Stop All and Move All to Todo actions for %s", async (column) => {
+  it.each(["in-progress", "in-review"] as const)("renders Stop All without manual move actions for %s", async (column) => {
     const user = userEvent.setup();
     render(
       <Column
@@ -900,7 +765,7 @@ describe("Column in-progress/in-review bulk actions", () => {
     expect(menuButton).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByRole("menu")).toBeTruthy();
     expect(screen.getByRole("menuitem", { name: /Stop All/i })).toBeTruthy();
-    expect(screen.getByRole("menuitem", { name: /Move All to Todo/i })).toBeTruthy();
+    expect(screen.queryByRole("menuitem", { name: /Move All/i })).toBeNull();
   });
 
   it.each(["in-progress", "in-review"] as const)("Stop All pauses only manually-pausable tasks in %s", async (column) => {
@@ -975,37 +840,6 @@ describe("Column in-progress/in-review bulk actions", () => {
     expect(screen.getByText("No manually pausable tasks")).toBeTruthy();
   });
 
-  it.each(["in-progress", "in-review"] as const)("Move All to Todo moves every task in %s", async (column) => {
-    const user = userEvent.setup();
-    const onMoveTask = vi.fn().mockResolvedValue({} as Task);
-
-    render(
-      <Column
-        {...defaultProps}
-        column={column}
-        onMoveTask={onMoveTask}
-        tasks={[
-          { ...makeTask("FN-001"), column },
-          { ...makeTask("FN-002"), column },
-        ]}
-        onPauseTask={vi.fn().mockResolvedValue({} as Task)}
-      />,
-    );
-
-    await user.click(screen.getByRole("button", { name: `${column === "in-progress" ? "In Progress" : "In Review"} column actions` }));
-    await user.click(screen.getByRole("menuitem", { name: /Move All to Todo/i }));
-
-    await waitFor(() => {
-      expect(onMoveTask).toHaveBeenCalledTimes(2);
-    });
-    expect(onMoveTask).toHaveBeenCalledWith("FN-001", "todo", undefined);
-    expect(onMoveTask).toHaveBeenCalledWith("FN-002", "todo", undefined);
-    expect(screen.queryByRole("menu")).toBeNull();
-    expect(mockConfirm).toHaveBeenCalledWith({
-      title: "Move All to Todo",
-      message: `Move all 2 ${column === "in-progress" ? "in progress" : "in review"} tasks to Todo?`,
-    });
-  });
 });
 
 describe("Column plan auto-approval action", () => {
@@ -1052,6 +886,21 @@ describe("Column plan auto-approval action", () => {
 
     expect(onTogglePlanAutoApprove).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  it("replans each task through the server and never moves cards client-side", async () => {
+    const user = userEvent.setup();
+    const onMoveTask = vi.fn();
+    rebuildTaskSpecMock.mockResolvedValue({});
+    render(<Column {...defaultProps} column="todo" projectId="project-1" onMoveTask={onMoveTask} tasks={[makeTask("FN-001"), makeTask("FN-002")]} />);
+
+    await user.click(screen.getByRole("button", { name: "Todo column actions" }));
+    await user.click(screen.getByRole("menuitem", { name: /Replan All/i }));
+
+    await waitFor(() => expect(rebuildTaskSpecMock).toHaveBeenCalledTimes(2));
+    expect(rebuildTaskSpecMock).toHaveBeenCalledWith("FN-001", "project-1");
+    expect(rebuildTaskSpecMock).toHaveBeenCalledWith("FN-002", "project-1");
+    expect(onMoveTask).not.toHaveBeenCalled();
   });
 
   it("coexists with workflow intake replan actions", async () => {

@@ -295,7 +295,17 @@ describe("task_prompt_write tool", () => {
 
     const result = await runTool(createTaskPromptWriteTool(store, TASK_ID, TEST_PROMPT_WRITE_CONTEXT), "call-order", { content: "# Verified plan" });
 
-    expect(calls).toEqual(["getTask", "updateTask", "getTask"]);
+    /*
+    FNXC:PromptWriteVerification 2026-08-31-09:28:
+    Assert the ORDER this case is named for -- the authoritative read-back happens after the write
+    resolves -- rather than a full call census. The census also pinned a leading pre-read that the
+    tool no longer performs, so it failed on a change that left its actual subject intact. A census
+    breaks on any added or removed neighbouring call; the ordering invariant breaks only when the
+    read-back could observe a row the write had not yet reached, which is the defect this guards.
+    */
+    expect(calls.at(-1)).toBe("getTask");
+    expect(calls.indexOf("updateTask")).toBeLessThan(calls.lastIndexOf("getTask"));
+    expect(calls.filter((c) => c === "updateTask")).toHaveLength(1);
     expect(getText(result)).toBe(`Updated PROMPT.md for ${TASK_ID}.`);
   });
 

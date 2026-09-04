@@ -27,7 +27,7 @@ import { createFnAgent } from "../pi.js";
 
 const mockedCreateFnAgent = vi.mocked(createFnAgent);
 
-function createMockSession(reviewText = "### Verdict: APPROVE\n### Summary\nLooks good.") {
+function createMockSession(reviewText = "### Verdict: APPROVE\n### Summary\nLooks good.\n{\"verdict\":\"APPROVE\",\"notes\":\"Reviewed the prompt source.\"}") {
   return {
     session: {
       prompt: vi.fn().mockResolvedValue(undefined),

@@ -1,10 +1,21 @@
-import type { Task, WorkflowStepResult } from "@fusion/core";
+import { isActionableReviewFinding, type Task, type WorkflowStepResult } from "@fusion/core";
 
 function normalize(value: string | undefined): string {
   return (value ?? "").replace(/\s+/g, " ").trim().toLowerCase();
 }
 
 export type WorkspaceReviewRemediation = NonNullable<NonNullable<Task["repositoryScope"]>["reviewRemediation"]>;
+
+export function hasDurableRepeatedWorkspaceReview(
+  task: Pick<Task, "repositoryScope">,
+  remediation: WorkspaceReviewRemediation | undefined,
+): boolean {
+  const prior = task.repositoryScope?.reviewRemediation;
+  return remediation !== undefined
+    && prior?.scopeRevision === remediation.scopeRevision
+    && prior.repository === remediation.repository
+    && prior.inputSignature === remediation.inputSignature;
+}
 
 /**
  * FNXC:WorkspaceFinalization 2026-08-21-09:33:
@@ -31,24 +42,47 @@ export function resolveWorkspaceReviewRemediationRepository(
 /**
  * FNXC:WorkspaceFinalization 2026-08-21-09:09:
  * A workspace remediation target is derived from structured per-repository review evidence, never
- * rendered feedback or a singular task worktree. This makes an empty-finding REVISE convergent and
- * keeps the next executor in the repository that actually failed review.
+ * rendered feedback or a singular task worktree. A repository rejection is blocking only when it
+ * carries actionable findings, so an empty-finding REVISE remains advisory and cannot select a
+ * remediation target. The next executor stays in the alphabetically first repository that failed
+ * review, while the convergence signature covers every blocking repository in the same episode.
  */
 export function deriveWorkspaceReviewRemediation(
   result: Pick<WorkflowStepResult, "workflowStepId" | "repositoryScopeRevision" | "repositoryReviewOutcomes">,
 ): WorkspaceReviewRemediation | undefined {
   if (typeof result.repositoryScopeRevision !== "number") return undefined;
   const blocking = (result.repositoryReviewOutcomes ?? [])
-    .filter((outcome) => outcome.status === "REVIEWED" && (outcome.verdict === "REVISE" || outcome.verdict === "RETHINK"))
-    .sort((left, right) => left.repository.localeCompare(right.repository))[0];
-  if (!blocking) return undefined;
-  const findings = (blocking.findings ?? [])
-    .map((finding) => `${finding.id}:${normalize(finding.title)}:${normalize(finding.body)}`)
-    .sort()
-    .join("|");
+    .filter((outcome) => outcome.status === "REVIEWED"
+      && (outcome.verdict === "REVISE" || outcome.verdict === "RETHINK")
+      && (outcome.findings ?? []).some(isActionableReviewFinding))
+    .sort((left, right) => left.repository.localeCompare(right.repository));
+  if (blocking.length === 0) return undefined;
+  /*
+  FNXC:WorkspaceReviewConvergence 2026-08-28-11:50:
+  FN-223 requires repeat-unchanged detection to span every blocking repository. Otherwise an
+  unchanged alphabetically first repository could hide changed findings in a later repository.
+  The deterministic digest matches reviewInputSignature and excludes volatile model finding IDs.
+  */
+  /*
+  FNXC:ReviewRemediation 2026-08-31-08:24:
+  Separators must not be NUL: `inputSignature` is PERSISTED on the task as
+  `reviewRemediation.inputSignature`, and PostgreSQL rejects NUL in text/jsonb (SQLSTATE 22P05).
+  Its singular twin in `reviewInputSignature` shipped exactly that break -- every remediation claim
+  write threw against a real database while passing every mock-store test -- so this workspace path
+  is corrected in lockstep rather than left as the same defect waiting for a workspace card.
+  U+001F/U+001E keep the "cannot occur in the content" property and are storable.
+  */
+  const sep = "\u001F";
+  const blockingSignatures = blocking.map((outcome) => {
+    const findings = (outcome.findings ?? [])
+      .map((finding) => `${normalize(finding.filePath)}:${finding.line ?? ""}:${normalize(finding.body)}`)
+      .sort()
+      .join("|");
+    return `${outcome.repository}${sep}${outcome.fingerprint ?? ""}${sep}${outcome.verdict}${sep}${findings}`;
+  });
   return {
     scopeRevision: result.repositoryScopeRevision,
-    repository: blocking.repository,
-    inputSignature: `${result.workflowStepId}\u0000${blocking.repository}\u0000${blocking.fingerprint ?? ""}\u0000${blocking.verdict}\u0000${findings}`,
+    repository: blocking[0].repository,
+    inputSignature: `${result.workflowStepId}${sep}${result.repositoryScopeRevision}${sep}${blockingSignatures.join("\u001E")}`,
   };
 }

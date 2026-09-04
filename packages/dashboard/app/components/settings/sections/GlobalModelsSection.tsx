@@ -28,6 +28,7 @@ const GLOBAL_LANE_CREDENTIAL_INSTANCE_KEYS: Partial<Record<string, keyof Setting
     merger: "mergerGlobalCredentialInstanceId",
     summarization: "titleSummarizerGlobalCredentialInstanceId",
     "import-translate": "importTranslateGlobalCredentialInstanceId",
+    "fast-cheap": "fastCheapGlobalCredentialInstanceId",
 };
 export interface GlobalModelsSectionProps extends SectionBaseProps {
     availableModels: ModelInfo[];
@@ -153,7 +154,7 @@ export function GlobalModelsSection({ form, setForm, availableModels, modelsLoad
                 const thinkingValue = getLaneThinkingValue(lane);
                 const credentialInstanceKey = GLOBAL_LANE_CREDENTIAL_INSTANCE_KEYS[lane.laneId];
                 const credentialInstanceId = credentialInstanceKey ? form[credentialInstanceKey] as string | undefined : undefined;
-                return (<div className="form-group" key={`global-${lane.laneId}`}>
+                return (<div className="form-group" key={`global-${lane.laneId}`} data-settings-key={lane.globalModelKey}>
                 {/* FNXC:SettingsHelp 2026-07-15-21:40: A global lane row is plain label + picker + one help string (unlike the project lanes, which add an inherited/override badge and a resolved fallback chain), so its helper text hangs off the shared "?" like every other row in this section. */}
                 <div className="settings-field-label-row">
                   <label htmlFor={`global-${lane.laneId}-model`}>{lane.label}</label>

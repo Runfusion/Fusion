@@ -4,7 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   choosePreferredStoredCredential,
+  computeStoredCredentialAccountFingerprint,
   extractClaudeCliStoredCredential,
+  isSameStoredCredentialMaterial,
   extractCodexCliStoredCredential,
   getClaudeCodeCredentialPaths,
   readStoredCredentialsFromAuthFile,
@@ -67,6 +69,41 @@ describe("oauth credential interop", () => {
     expect(credential?.type).toBe("oauth");
     expect(credential?.accountId).toBe("acct_from_token");
     expect(credential?.expires).toBe(Date.parse(lastRefresh) + 55 * 60 * 1000);
+  });
+
+  it("identifies credential material without exposing it", () => {
+    const credential = {
+      type: "oauth",
+      access: "access-material",
+      refresh: "refresh-material",
+      expires: Date.now() + 60_000,
+      label: "Account A",
+      scopes: ["profile"],
+      accountId: "provider-account",
+      accountFingerprint: "old-fingerprint",
+    } as const;
+    const metadataOnlyChange = {
+      ...credential,
+      expires: credential.expires + 1,
+      label: "Renamed account",
+      scopes: ["other"],
+      accountId: "other-account",
+      accountFingerprint: "another-fingerprint",
+    };
+    const differentRefresh = { ...credential, refresh: "different-refresh" };
+
+    const fingerprint = computeStoredCredentialAccountFingerprint(credential);
+    expect(fingerprint).toMatch(/^[0-9a-f]{16}$/);
+    expect(fingerprint).not.toContain("refresh-material");
+    expect(fingerprint).toBe(computeStoredCredentialAccountFingerprint(metadataOnlyChange));
+    expect(isSameStoredCredentialMaterial(credential, metadataOnlyChange)).toBe(true);
+    expect(isSameStoredCredentialMaterial(credential, differentRefresh)).toBe(false);
+    expect(fingerprint).not.toBe(computeStoredCredentialAccountFingerprint(differentRefresh));
+    expect(isSameStoredCredentialMaterial(credential, { type: "api_key", key: "refresh-material" })).toBe(false);
+    expect(isSameStoredCredentialMaterial(credential, undefined)).toBe(false);
+    expect(isSameStoredCredentialMaterial(undefined, credential)).toBe(false);
+    expect(computeStoredCredentialAccountFingerprint(undefined)).toBeUndefined();
+    expect(computeStoredCredentialAccountFingerprint({ type: "oauth" })).toBeUndefined();
   });
 
   it("prefers a valid OAuth credential over an expired one and hydrates only when better", () => {

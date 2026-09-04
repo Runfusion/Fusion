@@ -64,7 +64,7 @@ afterEach(() => {
 });
 
 describe("workflow continuation active-slot admission", () => {
-  it("does not start a tenth task when nine active tasks already hold the worktree budget", async () => {
+  it("starts a continuation when the worktree gate is full but the agent gate has slack", async () => {
     const active = Array.from({ length: 8 }, (_, index) =>
       task(`FN-PLAN-${index}`, { status: "planning" }),
     );
@@ -89,11 +89,11 @@ describe("workflow continuation active-slot admission", () => {
       dispatch,
     });
 
-    expect(admitted).toBe(false);
-    expect(dispatch).not.toHaveBeenCalled();
-    expect(taskStore.logEntry).toHaveBeenCalledWith(
+    expect(admitted).toBe(true);
+    expect(dispatch).toHaveBeenCalledOnce();
+    expect(taskStore.logEntry).not.toHaveBeenCalledWith(
       CONTINUATION_ID,
-      expect.stringContaining("maxWorktrees capacity exhausted: used=9/9"),
+      expect.stringContaining("maxWorktrees capacity exhausted"),
     );
   });
 
@@ -122,7 +122,11 @@ describe("workflow continuation active-slot admission", () => {
     const ninthActive = task("FN-LANDED-HANDOFF", { status: "planning" });
     const continuation = task(CONTINUATION_ID);
     let liveTasks = [...eightActive, continuation];
-    const taskStore = store(liveTasks);
+    const taskStore = store(liveTasks, {
+      maxConcurrent: 9,
+      maxWorktrees: 3,
+      worktreeLimitEnabled: true,
+    });
     vi.mocked(taskStore.listTasks).mockImplementation(async () => liveTasks);
     const dispatch = vi.fn(async () => {});
     let releaseBlocker!: () => void;
@@ -136,6 +140,7 @@ describe("workflow continuation active-slot admission", () => {
           taskId: "FN-BLOCKER",
           projectId: PROJECT_ID,
           lane: "execute",
+          consumesWorktree: true,
           createdAt: "2026-07-31T23:59:59.000Z",
           start: async () => {
             resolveStarted();
@@ -214,7 +219,11 @@ describe("workflow continuation active-slot admission", () => {
     const first = task(CONTINUATION_ID);
     const second = task("FN-CONTINUATION-2", { createdAt: "2026-08-01T00:00:01.000Z" });
     const tasks = [...active, first, second];
-    const taskStore = store(tasks);
+    const taskStore = store(tasks, {
+      maxConcurrent: 9,
+      maxWorktrees: 1,
+      worktreeLimitEnabled: true,
+    });
     const pendingResolvers: Array<() => void> = [];
     const execute = vi.fn(() => new Promise<void>((resolve) => pendingResolvers.push(resolve)));
     const items = [
@@ -249,7 +258,11 @@ describe("workflow continuation active-slot admission", () => {
     const continuation = task(CONTINUATION_ID);
     const other = task("FN-CONTINUATION-2");
     const fourth = task("FN-CONTINUATION-3");
-    const taskStore = store([...active, continuation, other, fourth]);
+    const taskStore = store([...active, continuation, other, fourth], {
+      maxConcurrent: 9,
+      maxWorktrees: 1,
+      worktreeLimitEnabled: true,
+    });
     const settles: Array<() => void> = [];
     const execute = vi.fn(() => new Promise<void>((resolve) => { settles.push(resolve); }));
     const dispatch = createPlanningContinuationDispatcher({
@@ -263,6 +276,7 @@ describe("workflow continuation active-slot admission", () => {
       dispatch(continuation, { ...item, id: "continuation-duplicate" }),
     ]);
     expect(admissions).toEqual([true, true]);
+    await Promise.resolve();
     expect(execute).toHaveBeenCalledOnce();
     expect(await dispatch(other, { ...item, id: "continuation-other", taskId: other.id })).toBe(true);
     expect(execute).toHaveBeenCalledTimes(2);

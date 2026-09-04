@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { afterEach, describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { AgentLogViewer } from "../AgentLogViewer";
 import { makeEntry, getScrollContainer } from "./AgentLogViewer.test-helpers";
@@ -18,6 +18,10 @@ vi.mock("lucide-react", () => ({
 describe("AgentLogViewer", () => {
   beforeEach(() => {
     window.localStorage.clear();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   describe("model info header", () => {
@@ -485,6 +489,69 @@ describe("AgentLogViewer", () => {
       const badgeContainer = badge.parentElement as HTMLElement;
       expect(badgeContainer.textContent).toContain("[executor]");
       expect(badgeContainer.textContent).toContain("5m ago");
+    });
+
+    it("renders the precise clock beside an unchanged recent relative label", () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date(2026, 5, 17, 14, 32, 30, 0));
+      const timestamp = new Date(2026, 5, 17, 14, 32, 7, 482).toISOString();
+      const { container } = render(<AgentLogViewer entries={[
+        makeEntry({ text: "hello", type: "text", agent: "executor", timestamp }),
+      ]} loading={false} />);
+
+      expect(container.querySelector(".agent-log-timestamp")).toHaveTextContent("just now");
+      expect(screen.getByTestId("agent-log-precise-timestamp")).toHaveTextContent("14:32:07.482");
+    });
+
+    it("distinguishes consecutive tool entries that differ only by milliseconds", () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date(2026, 5, 17, 14, 33, 0, 0));
+      const { container } = render(<AgentLogViewer entries={[
+        makeEntry({ text: "first", type: "tool", agent: "executor", timestamp: new Date(2026, 5, 17, 14, 32, 7, 482).toISOString() }),
+        makeEntry({ text: "second", type: "tool", agent: "executor", timestamp: new Date(2026, 5, 17, 14, 32, 7, 913).toISOString() }),
+      ]} loading={false} />);
+
+      expect(Array.from(container.querySelectorAll(".agent-log-precise-timestamp")).map((element) => element.textContent)).toEqual([
+        "14:32:07.482",
+        "14:32:07.913",
+      ]);
+    });
+
+    it("renders a dated precise clock when the unchanged relative label falls back to a locale date", () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date(2026, 5, 17, 14, 32, 30, 0));
+      const timestamp = new Date(2026, 4, 18, 14, 32, 7, 482).toISOString();
+      render(<AgentLogViewer entries={[
+        makeEntry({ text: "older", type: "text", agent: "executor", timestamp }),
+      ]} loading={false} />);
+
+      expect(screen.getByTestId("agent-log-precise-timestamp")).toHaveTextContent("2026-05-18 14:32:07.482");
+    });
+
+    it("does not add a precise timestamp where a grouped entry has no relative badge", () => {
+      const { container } = render(<AgentLogViewer entries={[
+        makeEntry({ text: "chunk one", type: "text" }),
+        makeEntry({ text: "chunk two", type: "text" }),
+      ]} loading={false} />);
+
+      expect(container.querySelectorAll(".agent-log-timestamp")).toHaveLength(0);
+      expect(container.querySelectorAll(".agent-log-precise-timestamp")).toHaveLength(0);
+    });
+
+    it("keeps the precise timestamp present at the mobile width", () => {
+      const originalInnerWidth = window.innerWidth;
+      Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 390 });
+      try {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date(2026, 5, 17, 14, 32, 30, 0));
+        render(<AgentLogViewer entries={[
+          makeEntry({ text: "mobile", type: "text", agent: "executor", timestamp: new Date(2026, 5, 17, 14, 32, 7, 482).toISOString() }),
+        ]} loading={false} />);
+
+        expect(screen.getByTestId("agent-log-precise-timestamp")).toHaveTextContent("14:32:07.482");
+      } finally {
+        Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: originalInnerWidth });
+      }
     });
   });
 });

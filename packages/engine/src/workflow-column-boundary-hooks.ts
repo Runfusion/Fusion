@@ -111,6 +111,7 @@ export function createExecutorColumnBoundaryHooks(
         // to the run that built these hooks, so a column transition names its author in audit.
         await store.moveTask(task.id, toColumn, {
           moveSource: "engine",
+          lifecycleReason: "workflow-graph-node-column",
           workflowMoveSource: "workflow-graph",
           bypassGuards: true,
           preserveProgress: true,

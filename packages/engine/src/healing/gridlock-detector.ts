@@ -21,9 +21,9 @@ future cleanup revisits this, the question to ask is whether dependency and over
 deadlock are still possible — not whether capacity is simpler.
 */
 import type { MissionStore, Task, TaskStore, WorkflowIr } from "@fusion/core";
-import { resolveTaskLifecycleColumns, resolveWorkflowIrForTask, columnsWithFlag } from "@fusion/core";
+import { compareTasksByPriorityThenAgeAndId, fileScopeLeaseBlocksCandidate, normalizeOverlapScopeForTask, resolveTaskLifecycleColumns, resolveWorkflowIrForTask, columnsWithFlag } from "@fusion/core";
 import { createLogger } from "../logger.js";
-import { filterPathsByIgnoreList, pathsOverlap } from "../scheduler.js";
+import { classifyFileScopeLease, filterPathsByIgnoreList, isCoordinationOnlyTask, pathsOverlap } from "../scheduler.js";
 
 const gridlockLog = createLogger("gridlock-detector");
 
@@ -115,37 +115,74 @@ export class GridlockDetector {
     }
 
     /*
-    FNXC:UnownedHoldColumnGates 2026-07-29-13:45 (U7 / R3):
-    The ACTIVE filter is the same bug as the schedulable one above, and converting
-    only the `todo` half would have left the detector just as blind: `active` is
-    empty on a renamed board, and an empty active set is ALSO an early return. Two
-    literals, one silence — which is why this is converted in the same change rather
-    than counted as out of scope because `in-progress` is not `todo`.
+    FNXC:OverlapScheduling 2026-08-29-06:04:
+    Gridlock reporting must use the same active/dormant lease classification as admission. A preserved
+    worktree outside WIP or review remains a dormant holder, and priority → age → id picks the one
+    holder that genuinely blocks a waiting card instead of reporting its files as free.
+
+    FNXC:OverlapScheduling 2026-09-01-14:49:
+    Checkout-free planning cards are not overlap holders and cannot manufacture a planning gridlock;
+    a retained checkout remains the durable evidence for a genuine dormant-holder cycle.
     */
-    const rolesByTask = new Map<string, { wip?: string; review?: string }>();
+    const rolesByTask = new Map<string, { wip?: string; review?: string; complete?: string; archived?: string } | undefined>();
     for (const task of tasks) {
       const roles = await resolveTaskLifecycleColumns(this.store, task.id, irCache);
-      rolesByTask.set(task.id, { wip: roles?.wip, review: roles?.review });
+      rolesByTask.set(task.id, roles ? {
+        wip: roles.wip,
+        review: roles.review,
+        complete: roles.complete,
+        archived: roles.archived,
+      } : undefined);
     }
-    const active = tasks.filter((task) => {
-      const roles = rolesByTask.get(task.id);
-      if (!roles) return false;
-      if (roles.wip !== undefined && task.column === roles.wip) return true;
-      return roles.review !== undefined && task.column === roles.review && Boolean(task.worktree);
-    });
-    if (active.length === 0) {
+    const handoffAcceptedByTaskId = new Map<string, boolean>();
+    if (settings.mergeRequestContractShadowEnabled === true) {
+      for (const task of tasks) {
+        const roles = rolesByTask.get(task.id);
+        if (roles?.review === task.column) {
+          handoffAcceptedByTaskId.set(task.id, (await this.store.getCompletionHandoffAcceptedMarker(task.id)) !== null);
+        }
+      }
+    }
+    const classifications = new Map(
+      tasks.map((task) => {
+        const roles = rolesByTask.get(task.id);
+        return [task.id, classifyFileScopeLease(task, tasks, roles
+          ? {
+            mergeRequestContractShadowEnabled: settings.mergeRequestContractShadowEnabled,
+            handoffAccepted: handoffAcceptedByTaskId.get(task.id) ?? false,
+            isWipColumn: roles.wip === task.column,
+            isReviewColumn: roles.review === task.column,
+            isTerminalColumn: roles.complete === task.column || roles.archived === task.column,
+          }
+          : {
+            mergeRequestContractShadowEnabled: settings.mergeRequestContractShadowEnabled,
+            handoffAccepted: handoffAcceptedByTaskId.get(task.id) ?? false,
+          })] as const;
+      }),
+    );
+    const leaseHolders = tasks.filter((task) => classifications.get(task.id)?.kind !== "none");
+    if (leaseHolders.length === 0) {
       this.clearGridlockState();
       return null;
     }
 
     const overlapIgnorePaths = settings.overlapIgnorePaths ?? [];
     const filterOptions = { ignoreHiddenOverlapPaths: settings.ignoreHiddenOverlapPaths };
-    const activeScopes = new Map<string, string[]>();
+    const activeLeaseHolders = leaseHolders
+      .filter((task) => classifications.get(task.id)?.kind === "active")
+      .sort((a, b) => a.id.localeCompare(b.id));
+    const dormantLeaseHolders = leaseHolders
+      .filter((task) => classifications.get(task.id)?.kind === "dormant")
+      .sort(compareTasksByPriorityThenAgeAndId);
+    const leaseScopes = new Map<string, string[]>();
     if (settings.groupOverlappingFiles) {
-      for (const task of active) {
-        const scope = filterPathsByIgnoreList(await this.store.parseFileScopeFromPrompt(task.id), overlapIgnorePaths, filterOptions);
-        if (scope.length > 0) {
-          activeScopes.set(task.id, scope);
+      for (const holder of leaseHolders) {
+        const scope = normalizeOverlapScopeForTask(
+          holder,
+          filterPathsByIgnoreList(await this.store.parseFileScopeFromPrompt(holder.id), overlapIgnorePaths, filterOptions),
+        );
+        if (scope.length > 0 && !isCoordinationOnlyTask(holder, scope)) {
+          leaseScopes.set(holder.id, scope);
         }
       }
     }
@@ -201,15 +238,24 @@ export class GridlockDetector {
 
       if (!settings.groupOverlappingFiles) continue;
 
-      const taskScope = filterPathsByIgnoreList(await this.store.parseFileScopeFromPrompt(task.id), overlapIgnorePaths, filterOptions);
-      if (taskScope.length === 0) continue;
+      const taskScope = normalizeOverlapScopeForTask(
+        task,
+        filterPathsByIgnoreList(await this.store.parseFileScopeFromPrompt(task.id), overlapIgnorePaths, filterOptions),
+      );
+      if (taskScope.length === 0 || isCoordinationOnlyTask(task, taskScope)) continue;
 
-      for (const [activeId, activeScope] of activeScopes) {
-        if (pathsOverlap(taskScope, activeScope)) {
-          reasons[task.id] = "overlap";
-          blockingTaskIds.add(activeId);
-          break;
-        }
+      const findBlockingHolder = (holders: readonly Task[]): Task | undefined => holders.find((holder) => {
+        const classification = classifications.get(holder.id);
+        const holderScope = leaseScopes.get(holder.id);
+        return classification !== undefined
+          && holderScope !== undefined
+          && fileScopeLeaseBlocksCandidate(holder, task, classification)
+          && pathsOverlap(taskScope, holderScope);
+      });
+      const holder = findBlockingHolder(activeLeaseHolders) ?? findBlockingHolder(dormantLeaseHolders);
+      if (holder) {
+        reasons[task.id] = "overlap";
+        blockingTaskIds.add(holder.id);
       }
     }
 

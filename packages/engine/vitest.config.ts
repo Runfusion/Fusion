@@ -330,9 +330,9 @@ export default defineConfig({
           name: "engine-default",
           include: ["src/**/*.test.ts"],
           exclude: [
-            // FNXC:WedgeNotificationFlake 2026-08-23-22:35 — quarantined (2nd sighting); see scripts/lib/test-quarantine.json for the evidence and the 2026-09-06 deletion deadline.
-            "src/__tests__/self-healing-pending-wedge-notification.test.ts",
             "src/__tests__/reliability-interactions/**/*.test.ts",
+            // FNXC:PipelineSmoke 2026-08-23-14:52: FN-182's whole-pipeline fixture is opt-in, never a default or gate test.
+            "src/__tests__/pipeline-smoke/**/*.test.ts",
             // Real-git heavy files run in the engine-slow project so local
             // `pnpm test` stays snappy. CI picks them up via `test:slow`
             // / `test:all` invoked from the root `test:full` script.
@@ -475,12 +475,44 @@ export default defineConfig({
             // FN-8111 restored meta-archive guard composition with PG-authoritative audits and canonical fixture ids, and fixed completed stale continuations so the in-memory wedge suite is intentionally unquarantined.
             // FNXC:PgMigrationQuarantine 2026-07-16-12:30:
             // FN-8118 verified the already-landed post-done continuation rescue: this pure in-memory suite has no PG fixture and passed its serialized reliability lane three times. Keep it absent from this quarantine list while preserving the engine-default reliability partition exclusion.
+            /*
+            FNXC:ReliabilityQuarantine 2026-08-29-03:11:
+            FN-249 observed the second sequence-only failure of this file: the selected engine-abort
+            subject passes alone, while the serialized file misses recovery writes after sibling cases.
+            Quarantine the whole file under the deletion ratchet rather than weaken its assertions.
+            */
+            "src/__tests__/reliability-interactions/merge-node-paused-abort-retryable.test.ts",
           ],
           // These tests assert event ordering across real worktrees. Parallel
           // execution under merger load caused subprocess-guard timeouts and
           // SQLite rowid interleaving (e.g. FN-5521 hit
           // `expected 24 to be less than 19` in merge-reuse-task-worktree).
           // Serialize at the file level; within-file order is already linear.
+          minWorkers: 1,
+          maxWorkers: 1,
+          fileParallelism: false,
+        },
+      },
+      {
+        extends: true,
+        test: {
+          /*
+          FNXC:PipelineSmoke 2026-08-23-14:52:
+          FN-182 reserves a focused opt-in project for the deterministic full
+          workflow composition. It must not join engine-default, engine-slow,
+          or engine-core: the smoke suite owns a real disposable Git fixture and
+          PostgreSQL store, while the ordinary and blocking lanes stay bounded.
+          */
+          name: "engine-pipeline-smoke",
+          include: ["src/__tests__/pipeline-smoke/**/*.pipeline.test.ts"],
+          /*
+          FNXC:PipelineSmoke 2026-08-23-15:18:
+          FN-182 permits one bounded timeout for the serialized real PostgreSQL/local-Git lane.
+          The five-minute runner budget remains the outer contract; these values only allow a
+          single fixture body and shared database hook to report a concrete failure before it.
+          */
+          testTimeout: 120_000,
+          hookTimeout: 60_000,
           minWorkers: 1,
           maxWorkers: 1,
           fileParallelism: false,

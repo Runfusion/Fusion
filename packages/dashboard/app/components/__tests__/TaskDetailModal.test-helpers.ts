@@ -11,10 +11,14 @@ import { clearAuthToken } from "../../auth";
 
 const taskDetailSseSubscriptions = vi.hoisted(() => [] as Array<{
   url: string;
-  options: { events?: Record<string, (event: MessageEvent) => void> };
+  options: {
+    events?: Record<string, (event: MessageEvent) => void>;
+    onReconnect?: () => void;
+  };
 }>);
 
 export { taskDetailSseSubscriptions };
+export const mockFetchOverlapBlockerReport = vi.fn();
 
 /*
 FNXC:TaskDetailOptimisticOpening 2026-08-05-07:39:
@@ -38,7 +42,10 @@ export function expectSingleStatsRuntimeStatus(status: string): void {
 }
 
 vi.mock("../../sse-bus", () => ({
-  subscribeSse: vi.fn((url: string, options: { events?: Record<string, (event: MessageEvent) => void> }) => {
+  subscribeSse: vi.fn((url: string, options: {
+    events?: Record<string, (event: MessageEvent) => void>;
+    onReconnect?: () => void;
+  }) => {
     taskDetailSseSubscriptions.push({ url, options });
     return vi.fn();
   }),
@@ -51,6 +58,7 @@ vi.mock("../../api", async (importOriginal) => {
     deleteAttachment: vi.fn(),
     updateTask: vi.fn().mockResolvedValue({}),
     repairOverlapBlocker: vi.fn().mockResolvedValue({ repaired: true, statusCleared: false, reason: "repaired", message: "Repaired", task: makeTask() }),
+    fetchOverlapBlockerReport: mockFetchOverlapBlockerReport.mockResolvedValue({ taskId: "FN-099", blockerId: null, blockerColumn: null, reason: "no-overlap-blocker", taskScopeCount: 0, blockerScopeCount: 0, overlaps: [] }),
     summarizeTitle: vi.fn().mockResolvedValue("Generated Title"),
     fetchTaskDetail: vi.fn().mockResolvedValue(makeTask()),
     fetchTaskPrompt: vi.fn().mockResolvedValue({ id: "FN-099", prompt: "# Task FN-099" }),
@@ -126,6 +134,7 @@ vi.mock("lucide-react", () => ({
   X: () => null,
   Maximize2: () => null,
   Minimize2: () => null,
+  WrapText: () => null,
   Loader2: (props: any) => React.createElement("svg", { "data-testid": "loader2-icon", ...props }),
   /*
   FNXC:TaskDetailTabPersistence 2026-07-20-19:10:
@@ -147,6 +156,8 @@ vi.mock("lucide-react", () => ({
   GitBranch: () => null,
   Gitlab: () => null,
   AlertTriangle: () => null,
+  AlertCircle: () => null,
+  FileCode: () => null,
   Play: () => null,
   Flag: () => null,
   ArrowDown: () => null,
@@ -230,12 +241,14 @@ vi.mock("../../hooks/usePluginUiSlots", () => ({
 export const mockConfirm = vi.fn();
 export const mockConfirmWithChoice = vi.fn();
 export const mockConfirmWithCheckbox = vi.fn();
+export const mockConfirmWithSelect = vi.fn();
 
 vi.mock("../../hooks/useConfirm", () => ({
   useConfirm: () => ({
     confirm: mockConfirm,
     confirmWithChoice: mockConfirmWithChoice,
     confirmWithCheckbox: mockConfirmWithCheckbox,
+    confirmWithSelect: mockConfirmWithSelect,
   }),
 }));
 
@@ -327,9 +340,11 @@ export function setupTaskDetailModalHooks(): void {
     mockConfirm.mockReset();
     mockConfirmWithChoice.mockReset();
     mockConfirmWithCheckbox.mockReset();
+    mockConfirmWithSelect.mockReset();
     mockConfirm.mockResolvedValue(true);
     mockConfirmWithChoice.mockResolvedValue("primary");
     mockConfirmWithCheckbox.mockResolvedValue({ choice: "primary", checkboxValue: false });
+    mockConfirmWithSelect.mockResolvedValue({ choice: "primary", checkboxValue: false });
     clearAuthToken();
     localStorage.removeItem("fn.authToken");
     taskDetailSseSubscriptions.length = 0;

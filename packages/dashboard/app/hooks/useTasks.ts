@@ -9,12 +9,14 @@ import type { Task, Column, ColumnId, TaskCreateInput, MergeResult, GithubIssueA
 // column guards — the planner LANE keeps the name `triage`; U11 removed only the COLUMN.
 import { PLANNER_AGENT_ROLE, normalizeColumnId } from "@fusion/core";
 import * as api from "../api";
+import type { TaskResetOptions } from "../api/tasks/tasks-lifecycle";
 import { subscribeSse } from "../sse-bus";
 import { clearCache, readCache, readCacheSavedAt, SWR_CACHE_KEYS, SWR_TASKS_MAX_AGE_MS, writeCache } from "../utils/swrCache";
 import { pushTrace } from "../utils/dashboardTraceBuffer";
 import { recordResumeEvent } from "../utils/resumeInstrumentation";
 import { isLikelyTabSuspensionError } from "./visibilitySuspension";
 import { isIntakeColumnRole, isHoldColumnRole, type ColumnRoleFlags } from "../utils/columnRoles";
+import { isForeignTaskEvent, readTaskEventProjectId, stripTaskEventProjectId } from "../utils/taskEventProjectScope";
 
 const loggedTaskCacheHitProjects = new Set<string>();
 
@@ -312,14 +314,17 @@ owns a real column transition; within that column, a later `updatedAt` owns stat
 clock evidence retains the already-visible known lifecycle state unless a complete server snapshot is
 newer than the row and resolves an equal legacy move clock; sparse SSE patches never receive that tie-break.
 
-This helper intentionally merges only defined sparse fields and retains a fetched detail's prompt/log
-when a slim board row arrives. Every open-detail host and useTasks ingestion uses this one boundary so
-one provider cannot regress a modal, main panel, split detail, dock, or popup independently.
+This helper intentionally merges only defined sparse fields. A slim or sparse payload's absent, empty, or whitespace-only prompt is not evidence that a loaded plan was cleared, and an empty log is not evidence that a populated journal was cleared; marked full snapshots remain authoritative for both fields. Every open-detail host and useTasks ingestion uses this one boundary so one provider cannot regress a modal, main panel, split detail, dock, or popup independently.
 
 FNXC:TaskDetailStateStability 2026-08-09-07:13:
 `mergeTaskSnapshot` arbitrates server snapshots only. Locally-authored detail patches must use
 `applyLocalTaskPatch`: FN-5148 requires mismatched ids to be ignored while accepting an absent id, and
 FN-8796 showed that an absent or equal local clock is not evidence of staleness.
+
+FNXC:TaskDetailStateStability 2026-08-28-16:07:
+A sparse blank prompt must not add a `prompt` key to a slim task row. Task detail uses key presence to
+distinguish a complete detail from a board snapshot, so synthesizing that key would make a transient
+empty payload look authoritative and could replace the loaded Definition plan with `(no prompt)`.
 */
 export interface TaskSnapshotMergeOptions {
   /** Hook-local, non-persisted evidence captured when GET /api/tasks supplied a release verdict. */
@@ -438,9 +443,37 @@ export function mergeTaskSnapshot<T extends Task>(
     ? incoming.recentAgentActivityAt
     : current.recentAgentActivityAt;
 
-  if ("prompt" in current && incoming.prompt === undefined) {
-    merged.prompt = current.prompt;
-    merged.log = current.log;
+  const currentHasPrompt = "prompt" in current;
+  const incomingPrompt = incoming.prompt;
+  if (currentHasPrompt) {
+    const currentPrompt = current.prompt;
+    const sparseBlankCannotClear = options.fullSnapshot !== true
+      && Boolean(currentPrompt?.trim())
+      && !incomingPrompt?.trim();
+    if (incomingPrompt === undefined || sparseBlankCannotClear) {
+      merged.prompt = currentPrompt;
+    }
+  } else if (options.fullSnapshot !== true && !incomingPrompt?.trim()) {
+    delete merged.prompt;
+  }
+
+  /*
+  FNXC:TaskActivityFeed 2026-08-28-00:13:
+  FN-205 found `stripTaskListHeavyFields` emits `log: []` for every slim SSE/list task payload. The
+  task journal is append-only and trimmed server-side, so an absent or empty slim log is never evidence
+  that a populated journal was cleared. Retain it independently of prompt presence; board-to-board
+  merges remain inert because both slim rows have empty journals.
+
+  A marked full detail snapshot is authoritative, including an honestly empty journal. It also adopts a
+  populated journal over an empty current row even when its clock is older, because the empty stripped
+  row is not competing journal evidence.
+  */
+  const currentLog = current.log;
+  const incomingLog = incoming.log;
+  if (options.fullSnapshot === true) {
+    merged.log = incomingLog;
+  } else if (currentLog && currentLog.length > 0 && (!incomingLog || incomingLog.length === 0)) {
+    merged.log = currentLog;
   }
 
   return merged as T;
@@ -576,6 +609,8 @@ export function useTasks(options?: UseTasksOptions) {
   const includeArchived = false;
   const includeArchivedRef = useRef(includeArchived);
   const tasksRef = useRef(tasks);
+  // Task ids are project-local. Reconciliation may compare ids only after this owner fence holds.
+  const tasksProjectIdRef = useRef<string | undefined>(projectId);
   /*
   FNXC:PromoteVisibility 2026-08-11-20:53:
   This is deliberately hook-local rather than Task state or persistent cache. It records only the
@@ -747,6 +782,9 @@ export function useTasks(options?: UseTasksOptions) {
     fetchVersionRef.current++;
     archivedRequestGenerationRef.current++;
     projectContextVersionRef.current++;
+    liveTaskMutationsRef.current.clear();
+    releaseGateProvenanceRef.current.clear();
+    boardFetchConfirmedRef.current = false;
     projectChangeRefreshPendingRef.current = true;
   }
 
@@ -826,24 +864,30 @@ export function useTasks(options?: UseTasksOptions) {
       callback. Reconcile from the synchronous task/mutation refs before either side effect, so a
       remount cannot hydrate the older response after an intervening SSE create or delete.
       */
-      const previousById = new Map(tasksRef.current.map((task) => [task.id, task]));
+      /*
+      FNXC:TaskEventProjectScope 2026-09-01-06:16:
+      `mergeTaskSnapshot` resolves equal ids by freshness, so callers must establish identical project
+      ownership first. Project-local IDs are intentionally reusable and must never arbitrate cross-project rows.
+      */
+      const ownsCurrentRows = tasksProjectIdRef.current === requestProjectId;
+      const previousById = new Map(ownsCurrentRows ? tasksRef.current.map((task) => [task.id, task]) : []);
       const fetchedIds = new Set(normalizedFetchedTasks.map((task) => task.id));
       const reconciledFetchedTasks = normalizedFetchedTasks.flatMap((fetched) => {
-        const liveMutation = liveTaskMutationsRef.current.get(fetched.id);
+        const liveMutation = ownsCurrentRows ? liveTaskMutationsRef.current.get(fetched.id) : undefined;
         if (liveMutation && liveMutation.version > requestLiveMutationVersion) {
           return liveMutation.deleted ? [] : [liveMutation.task ?? previousById.get(fetched.id) ?? fetched];
         }
         const current = previousById.get(fetched.id);
         return [current ? mergeIncomingTask(current, fetched, { fullSnapshot: true }) : fetched];
       });
-      for (const [taskId, liveMutation] of liveTaskMutationsRef.current) {
+      for (const [taskId, liveMutation] of ownsCurrentRows ? liveTaskMutationsRef.current : []) {
         if (!fetchedIds.has(taskId) && liveMutation.version > requestLiveMutationVersion && !liveMutation.deleted) {
           const task = liveMutation.task ?? previousById.get(taskId);
           if (task) reconciledFetchedTasks.push(task);
         }
       }
       const freshIds = new Set(reconciledFetchedTasks.map((task) => task.id));
-      const archivedCarryOver = shouldCarryOverArchived
+      const archivedCarryOver = shouldCarryOverArchived && ownsCurrentRows
         ? archivedTasksRef.current.filter((task) => !freshIds.has(task.id))
         : [];
       const tasksForCache = reconciledFetchedTasks;
@@ -861,6 +905,7 @@ export function useTasks(options?: UseTasksOptions) {
           liveTaskMutationsRef.current.delete(taskId);
         }
       }
+      tasksProjectIdRef.current = requestProjectId;
       if (requestProjectId) {
         writeTaskCacheSnapshot(`${SWR_CACHE_KEYS.TASKS_PREFIX}${requestProjectId}`, tasksForCache);
       }
@@ -1128,7 +1173,10 @@ export function useTasks(options?: UseTasksOptions) {
         loggedTaskCacheHitProjects.add(projectId);
         console.info("[swr-cache] hit tasks=", cachedTasks.length, "projectId=", projectId);
       }
-      setTasks(filterActiveTasks(cachedTasks.map(normalizeNonBoardTask)));
+      const nextTasks = filterActiveTasks(cachedTasks.map(normalizeNonBoardTask));
+      tasksRef.current = nextTasks;
+      tasksProjectIdRef.current = projectId;
+      setTasks(nextTasks);
       /*
       FNXC:MobileTabDiscard 2026-07-26-14:18:
       A project switch replaces `tasks` with the new project's snapshot, so the freshness clock must
@@ -1140,6 +1188,13 @@ export function useTasks(options?: UseTasksOptions) {
       lastFetchTimeMs.current = readCacheSavedAt(cacheKey, { maxAgeMs: SWR_TASKS_MAX_AGE_MS });
       // FNXC:MobileTabDiscard 2026-07-26-16:40: these rows come from cache, not the server — an SSE
       // event must not stamp them as measured-from-now until this project's fetch confirms them.
+      boardFetchConfirmedRef.current = false;
+    } else if (tasksProjectIdRef.current !== projectId) {
+      // Never retain another project's stale rows when this project's snapshot is absent.
+      tasksRef.current = [];
+      tasksProjectIdRef.current = projectId;
+      setTasks([]);
+      lastFetchTimeMs.current = undefined;
       boardFetchConfirmedRef.current = false;
     }
     setIsStale(true);
@@ -1250,6 +1305,19 @@ export function useTasks(options?: UseTasksOptions) {
     // Guards against reconnect callbacks firing after the effect has cleaned up
     // (e.g., sseEnabled flipped to false during a pending reconnect timer in sse-bus).
     let active = true;
+    const readScopedEvent = <T,>(event: MessageEvent): T | null => {
+      const payload = JSON.parse(event.data) as T;
+      const eventProjectId = readTaskEventProjectId(payload);
+      if (!isForeignTaskEvent(eventProjectId, projectId)) return stripTaskEventProjectId(payload);
+      pushTrace("useTasks", "dropped-foreign-project-event", {
+        eventProjectId,
+        projectId,
+        id: typeof payload === "object" && payload !== null && "id" in payload
+          ? (payload as { id?: unknown }).id
+          : undefined,
+      });
+      return null;
+    };
 
     // Guard against stale callbacks: when sseEnabled flips false or the
     // effect unmounts, these handlers must not fire refreshTasks into a
@@ -1268,7 +1336,9 @@ export function useTasks(options?: UseTasksOptions) {
         traceDroppedStaleEvent();
         return;
       }
-      const task = normalizeTask(stripTransientReleaseGate(JSON.parse(e.data) as Task));
+      const payload = readScopedEvent<Task>(e);
+      if (!payload) return;
+      const task = normalizeTask(stripTransientReleaseGate(payload));
       recordLiveMutation(task, isSoftDeleted(task));
       if (searchQueryRef.current) {
         void refreshTasksRef.current({ searchQueryOverride: searchQueryRef.current });
@@ -1303,12 +1373,14 @@ export function useTasks(options?: UseTasksOptions) {
         traceDroppedStaleEvent();
         return;
       }
-      if (searchQueryRef.current) {
+      // #1403: the move event carries `ColumnId` (custom column ids admitted).
+      const payload = readScopedEvent<{ task: Task; from: ColumnId; to: ColumnId }>(e);
+      if (searchQueryRef.current && payload) {
         void refreshTasksRef.current({ searchQueryOverride: searchQueryRef.current });
         return;
       }
-      // #1403: the move event carries `ColumnId` (custom column ids admitted).
-      const { task, to }: { task: Task; from: ColumnId; to: ColumnId } = JSON.parse(e.data);
+      if (!payload) return;
+      const { task, to } = payload;
       const normalizedTask = normalizeTask(stripTransientReleaseGate(task));
       if (isSoftDeleted(normalizedTask)) {
         recordLiveMutation(normalizedTask, true);
@@ -1346,11 +1418,13 @@ export function useTasks(options?: UseTasksOptions) {
         traceDroppedStaleEvent();
         return;
       }
-      if (searchQueryRef.current) {
+      const payload = readScopedEvent<Task>(e);
+      if (searchQueryRef.current && payload) {
         void refreshTasksRef.current({ searchQueryOverride: searchQueryRef.current });
         return;
       }
-      const incoming = normalizeTask(stripTransientReleaseGate(JSON.parse(e.data) as Task));
+      if (!payload) return;
+      const incoming = normalizeTask(stripTransientReleaseGate(payload));
       recordLiveMutation(incoming, isSoftDeleted(incoming));
       if (isSoftDeleted(incoming)) {
         // FN-5135: treat deletedAt-bearing task:updated payloads as delete-equivalent.
@@ -1378,11 +1452,13 @@ export function useTasks(options?: UseTasksOptions) {
         traceDroppedStaleEvent();
         return;
       }
+      const payload = readScopedEvent<Task>(e);
+      if (!payload) return;
       if (searchQueryRef.current) {
         void refreshTasksRef.current({ searchQueryOverride: searchQueryRef.current });
         return;
       }
-      const task = normalizeTask(stripTransientReleaseGate(JSON.parse(e.data) as Task));
+      const task = normalizeTask(stripTransientReleaseGate(payload));
       recordLiveMutation(task, true);
       applyLiveTasks((prev) => prev.filter((t) => t.id !== task.id));
     };
@@ -1392,11 +1468,13 @@ export function useTasks(options?: UseTasksOptions) {
         traceDroppedStaleEvent();
         return;
       }
-      if (searchQueryRef.current) {
+      const payload = readScopedEvent<{ task: Task }>(e);
+      if (searchQueryRef.current && payload) {
         void refreshTasksRef.current({ searchQueryOverride: searchQueryRef.current });
         return;
       }
-      const { task }: { task: Task } = JSON.parse(e.data);
+      if (!payload) return;
+      const { task } = payload;
       const normalizedTask = normalizeTask(stripTransientReleaseGate(task));
       if (isSoftDeleted(normalizedTask)) {
         recordLiveMutation(normalizedTask, true);
@@ -1422,11 +1500,9 @@ export function useTasks(options?: UseTasksOptions) {
         traceDroppedStaleEvent();
         return;
       }
-      if (searchQueryRef.current) {
-        return;
-      }
-      const entry = JSON.parse(e.data) as AgentLogActivityEvent;
-      if (!entry.taskId || !entry.timestamp) return;
+      const entry = readScopedEvent<AgentLogActivityEvent>(e);
+      if (searchQueryRef.current) return;
+      if (!entry || !entry.taskId || !entry.timestamp) return;
       setTasks((prev) => {
         let changed = false;
         const next = prev.map((task) => {
@@ -1451,12 +1527,12 @@ export function useTasks(options?: UseTasksOptions) {
       // Guard onReconnect against stale SSE callbacks: do not call refreshTasks
       // if the SSE was disabled or the effect unmounted while reconnect was pending.
       onReconnect: () => {
-        contextVersionAtStart = projectContextVersionRef.current;
         if (!active) return;
         if (isStale()) {
           traceDroppedStaleEvent();
           return;
         }
+        contextVersionAtStart = projectContextVersionRef.current;
         revalidateAfterResume("sse-reconnect", "stream-reopened");
       },
     });
@@ -1475,20 +1551,11 @@ export function useTasks(options?: UseTasksOptions) {
     return task;
   }, [projectId]);
 
-  const moveTask = useCallback(async (
-    id: string,
-    column: ColumnId,
-    optionsOrPosition?: { preserveProgress?: boolean } | number,
-  ): Promise<Task> => {
-    return normalizeNonBoardTask(await api.moveTask(id, column, projectId, optionsOrPosition));
-  }, [projectId]);
-
   /*
-  FNXC:DashboardPauseState 2026-08-05-07:18:
-  Every lifecycle surface must publish the server-confirmed pause row to shared state before
-  waiting on SSE or polling. One reconciliation seam advances the fetch version, replaces only
-  the matching task, and safely refreshes the project cache, so detail, board, list, and dock
-  hosts cannot diverge after pause or unpause.
+  FNXC:DashboardTaskReconciliation 2026-08-30-01:40:
+  Start and Reset must publish their server-confirmed rows before SSE or polling so every task host
+  immediately shows the new column. A stale card invited a second Start that could hard-cancel work,
+  so lifecycle mutations share one reconciliation seam rather than waiting for an eventual refresh.
   */
   const reconcileConfirmedTask = useCallback((confirmedTask: Task): Task => {
     const normalizedConfirmedRow = normalizeNonBoardTask(confirmedTask);
@@ -1539,6 +1606,14 @@ export function useTasks(options?: UseTasksOptions) {
     });
     return updatedTask;
   }, [projectId]);
+
+  const moveTask = useCallback(async (
+    id: string,
+    column: ColumnId,
+    optionsOrPosition?: { preserveProgress?: boolean; expectedColumn?: string } | number,
+  ): Promise<Task> => {
+    return reconcileConfirmedTask(await api.moveTask(id, column, projectId, optionsOrPosition));
+  }, [projectId, reconcileConfirmedTask]);
 
   const pauseTask = useCallback(async (id: string): Promise<Task> => {
     return reconcileConfirmedTask(await api.pauseTask(id, projectId));
@@ -1674,12 +1749,12 @@ export function useTasks(options?: UseTasksOptions) {
     return bypassedTask;
   }, [projectId]);
 
-  const resetTask = useCallback(async (id: string): Promise<Task> => {
-    return normalizeNonBoardTask(await api.resetTask(id, projectId));
-  }, [projectId]);
+  const resetTask = useCallback(async (id: string, options?: TaskResetOptions): Promise<Task> => {
+    return reconcileConfirmedTask(await api.resetTask(id, options, projectId));
+  }, [projectId, reconcileConfirmedTask]);
 
-  const duplicateTask = useCallback(async (id: string): Promise<Task> => {
-    const task = normalizeNonBoardTask(await api.duplicateTask(id, projectId));
+  const duplicateTask = useCallback(async (id: string, options?: { workflowId?: string }): Promise<Task> => {
+    const task = normalizeNonBoardTask(await api.duplicateTask(id, options, projectId));
     setTasks((prev) => {
       if (prev.some((t) => t.id === task.id)) return prev;
       return [...prev, task];

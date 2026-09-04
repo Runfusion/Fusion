@@ -13,13 +13,16 @@
  *
  * FNXC:WorkflowRemediation 2026-08-09-21:41:
  * FN-8910: completed work + policy-refused remediation stays parked in review.
+ *
+ * FNXC:WorkflowRemediation 2026-08-28-12:16:
+ * This generic resume router must not own review-to-WIP recovery. `sendTaskBackForFix` through `scheduleWorkflowRerun` owns that contained move only after named pending remediation exists; preserving this refusal prevents an unowned backward transition from bypassing lifecycle containment.
  */
 import type { TaskDetail, TaskStore } from "@fusion/core";
-import { COMPLETION_SUMMARY_NODE_ID } from "@fusion/core";
+import { COMPLETION_SUMMARY_NODE_ID, isTaskExternallyBlocked } from "@fusion/core";
 import { isDurableBlockedTask } from "../execution-block-classifier.js";
 import { executorLog } from "../logger.js";
 import type { EngineRunContext } from "../util/run-audit.js";
-import { resolveReboundColumnFor, resolveTerminalColumnsFor } from "./lifecycle-columns.js";
+import { resolveTerminalColumnsFor } from "./lifecycle-columns.js";
 import { hasNonTerminalWorkflowSteps } from "./workflow-step-satisfaction.js";
 import { isMergeGraphFailure } from "./graph-failure-pure.js";
 import type { ResumeLanes } from "./resolve-resume-lanes.js";
@@ -59,6 +62,10 @@ export async function routeGraphFailureToExecutionResume(
      * are left failed in-place by the caller; they must never be handed to review.
      */
     if (live.deletedAt) return false;
+    if (isTaskExternallyBlocked(live)) {
+      executorLog.log(`${live.id}: graph failure resume skipped — external Blocked freeze honored`);
+      return false;
+    }
     if (live.paused || live.userPaused === true) return false;
     if ((await resolveTerminalColumnsFor(deps.store, live.id)).includes(live.column)) return false;
     /*
@@ -98,10 +105,9 @@ export async function routeGraphFailureToExecutionResume(
       && await deps.isRemediationGraphNode(live.id, failedNode)) return false;
     const implementationIncompleteMergeFailure = isMergeGraphFailure(failedNode) && failureValue === "implementation-incomplete";
     if (implementationIncompleteMergeFailure && !incompleteSteps) return false;
-    const prematureMergeWithIncompleteSteps = implementationIncompleteMergeFailure && incompleteSteps;
     /*
     FNXC:WorkflowLifecycleColumns 2026-07-30-21:40 (fleet: executor.ts — the REVERSE half-conversion):
-    THE DESTINATION WAS ALREADY RESOLVED HERE AND THE GATE WAS NOT. `resolveReboundColumnFor` below picks
+    THE DESTINATION WAS ALREADY RESOLVED HERE AND THE GATE WAS NOT. The contained resolver below picks
     the board's rebound column (U7), but this gate compared against three default-lineage literals — so on
     a renamed board the router refused before ever reaching the resolved move. That is the mirror image of
     the dangerous half-conversion: instead of admitting a card and sending it nowhere, it refuses a card
@@ -122,28 +128,17 @@ export async function routeGraphFailureToExecutionResume(
     fail-closed rule on the opposite path, which was failing OPEN.
     */
     if (!resumeRouterLanes.wipDeclared) return false;
-    if (live.column !== resumeRouterLanes.review
-      && !(incompleteSteps && live.column === resumeRouterLanes.hold)
-      && !(prematureMergeWithIncompleteSteps && live.column === resumeRouterLanes.wip)) return false;
+    if (live.column !== resumeRouterLanes.wip || !implementationIncompleteMergeFailure) {
+      const message = `Workflow graph failed at node '${failedNode}'${failureValue ? ` (${failureValue})` : ""} — automatic recovery cannot move '${live.column}' backward; card remains in place`;
+      executorLog.warn(`${live.id}: ${message}`);
+      await deps.store.logEntry(live.id, message, undefined, deps.getRunContextFor(live.id));
+      return false;
+    }
 
-    const message = incompleteSteps
-      ? `Workflow graph failed at node '${failedNode}'${failureValue ? ` (${failureValue})` : ""} with incomplete steps — moved back to todo for execution resume`
-      : `Workflow graph failed at node '${failedNode}'${failureValue ? ` (${failureValue})` : ""} before a clean review handoff — moved back to todo for workflow retry`;
+    const message = `Workflow graph failed at node '${failedNode}'${failureValue ? ` (${failureValue})` : ""} with incomplete work — resuming in place in '${live.column}'`;
     executorLog.warn(`${live.id}: ${message}`);
     await deps.store.logEntry(live.id, message, undefined, deps.runContextFor(live.id));
-    await deps.store.updateTask(live.id, {
-      status: null,
-      error: null,
-    }, deps.runContextFor(live.id));
-    const reboundColumn = await resolveReboundColumnFor(deps.store, live.id);
-    if (live.column !== reboundColumn) {
-      await deps.store.moveTask(live.id, reboundColumn, {
-        preserveProgress: true,
-        moveSource: "engine",
-        recoveryRehome: true,
-        workflowMoveSource: "workflow-remediation",
-      }, deps.runContextFor(live.id));
-    }
+    await deps.store.updateTask(live.id, { status: null, error: null }, deps.runContextFor(live.id));
     /*
     FNXC:ReviewConvergence 2026-08-22-05:00:
     Graph-failure recovery is automatic remediation, not an explicit operator retry. Archive its

@@ -1,6 +1,6 @@
 {
   "name": "@runfusion/fusion",
-  "version": "0.77.0-beta.8",
+  "version": "0.78.0-beta.1",
   "license": "MIT",
   "description": "Fusion CLI: HTTP API server, daemon, dashboard launcher, and task tooling for the Fusion AI coding agent.",
   "homepage": "https://github.com/Runfusion/Fusion#readme",
@@ -67,8 +67,8 @@
   "dependencies": {
     "@agentclientprotocol/sdk": "0.24.0",
     "agent-browser": "0.26.0",
-    "@earendil-works/pi-ai": "0.84.1",
-    "@earendil-works/pi-coding-agent": "0.84.1",
+    "@earendil-works/pi-ai": "0.84.4",
+    "@earendil-works/pi-coding-agent": "0.84.4",
     "claude-code-cli-acp": "0.1.1",
     "dockerode": "^4.0.12",
     "electron": "^33.4.11",
@@ -80,7 +80,7 @@
     "ink-text-input": "^6.0.0",
     "ioredis": "^5.6.0",
     "multer": "^2.1.1",
-    "node-pty": "npm:@homebridge/node-pty-prebuilt-multiarch@^0.13.1",
+    "node-pty": "npm:@lydell/node-pty@1.2.0-beta.15",
     "react": "^19.2.0",
     "react-i18next": "^17.0.8",
     "ws": "^8.18.0",

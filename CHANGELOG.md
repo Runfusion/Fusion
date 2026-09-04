@@ -2,6 +2,349 @@
 
 User-facing release notes aggregated across all packages. This file is auto-synced from each `packages/*/CHANGELOG.md` by `scripts/release.mjs` — do not edit by hand.
 
+## 0.78.0-beta.1
+
+### Highlights
+
+- Claude Fable 5.1 works again when signing in with an Anthropic subscription
+- Muse Spark models are selectable in the model picker with pricing attached
+- Bundled Pi runtime moves from 0.84.1 to 0.84.4
+- Pin the reported Claude Code client version with an environment override
+
+### New
+
+- Muse Spark models are now selectable wherever you pick a model, with pricing configured for the four credentialed-provider keys.
+- The bundled Pi runtime advances from 0.84.1 to 0.84.4.
+
+### Fixed
+
+- Claude Fable 5.1 no longer fails on Anthropic subscription login with a too-old-client error. A new client-identity policy sends a current version, and an environment override lets you pin the reported Claude Code version yourself if a future upstream bump gets ahead of the release.
+
+## 0.78.0-beta.0
+
+### Highlights
+
+- Claude Fable 5.1 selectable in Anthropic and Claude CLI model pickers, with pricing
+- Review cards with enabled pre-merge checks that never ran now recover automatically
+- Skipped pre-merge gates re-enter review in place instead of stalling the card
+
+### New
+
+- Claude Fable 5.1 is available in the Anthropic and Claude CLI model pickers, with pricing wired in so cost tracking stays accurate.
+
+### Fixed
+
+- A review card whose enabled pre-merge checks never ran is now detected and reseeded, so it re-enters the missing gate in place instead of sitting in review unmerged. The reroute is recorded in the run audit.
+
+## 0.77.0
+
+### Highlights
+
+- Breaking: executing agents no longer create tasks — findings become completion recommendations
+- Remote login links now mint expiring sessions instead of handing over the dashboard token
+- Auto-merge waits for Code Review, and an in-flight merge no longer aborts itself every 15 seconds
+- Idle and paused projects drop from ~98% CPU to under 50% by backing off polling and git sweeps
+- New Coding (Ideas) V2 workflow runs verification and documentation as visible review gates
+
+### Breaking
+
+- Executing agents no longer create tasks; out-of-scope findings are recorded as completion recommendations instead.
+- Complex requests stay as one planned task — task splitting and the subtask/fan-out routes are removed.
+- Revision findings are the only thing that can move a task backward; the assorted automatic replan and terminal-failure sweeps are gone.
+- Task recovery is simplified to Retry, Reset, and Delete; Reset opens an editable original-description dialog and replaces Respecify.
+- Unplanned tasks can no longer be force-started into execution on any surface.
+- The per-task manual plan-approval toggle and shield badges are removed; plan approval is resolved from settings.
+- Every configured repository is prepared in a task-ID worktree before work starts; `worktreeNaming`, `recycleWorktrees`, and `fn_acquire_repo_worktree` are removed.
+
+### Security
+
+- Remote login links no longer redirect with the dashboard's real non-expiring token. They now mint an opaque, expiring, revocable session delivered as an HttpOnly cookie, so revoking a remote token actually signs the recipient out.
+- A remote tunnel that cannot start now reports `stopped` with a reason instead of claiming it is starting.
+
+### New
+
+- Coding (Ideas) V2 workflow: verification and documentation run as review-lane gates rather than hidden checklist entries, with Code Review running lint/test/build itself and quoting output as evidence.
+- Update Fusion from source in one click — pull, rebuild, and restart from Command Center; the Docker entrypoint is now a restart supervisor.
+- Add OrcaRouter as a named model provider with startup catalog sync, plus Grok 4.6 in the built-in Grok catalog.
+- Stash memory backend: complete-chat-session capture, per-task capture, executor transcript upload for finished or failed tasks, a per-chat "Preserve to Stash" backfill action, and opt-in semantic recall.
+- New Patchnode/History view with a searchable, permanent daily log of completed and reverted tasks.
+- Terminal sessions are now shared across browsers, with close-here vs end-session and a Reopen control.
+- Prometheus-format `/metrics` endpoint on the dashboard for runtime and domain metrics.
+- Fast lane for quick task changes without planning or pre-merge review.
+- Task detail gains a History tab and a consolidated Summary with merge details and per-step timings; reports, changes, and spend each have one home.
+- Chat: agent mentions and quoting, a docked resizable conversation sidebar, multiple pop-out Quick Chat windows, contextual Find, and bubble-or-full-width message layout.
+- Board and List gain arrival and task-ID sorting, desktop click-drag panning, and preserved view state.
+- ACP runtimes can expose Fusion `fn_*` tools to external agents such as Hermes ACP and Prime.
+- Cursor CLI runs through Fusion's supervised runtime, with Fusion task tools bridged into its sessions and cross-runtime fallback support.
+- New Velvet, Iceberg, Flexoki, Cozy Cartoon, and Medieval color themes.
+- `pnpm dev --tunnel` publishes a dev server through a Cloudflare quick tunnel, and `pnpm dev --isolated` runs the dev server against its own database and project directory.
+- Workspace tasks can use one custom branch name across every sub-repository, choose a verified base branch per repository, and derive branch names from configured JIRA issues.
+
+### Fixed
+
+- Merges no longer stall forever: an in-flight merge stopped aborting itself every 15 seconds, and a landed merge finalizes even when the task row has no steps.
+- Auto-merge no longer merges a task before its workflow's code review has finished; every merge door is now a recovery servicer rather than a merge initiator.
+- A rejected code review now reliably produces named fix steps that start on the first try, instead of leaving the card stuck in review with no explanation.
+- A blocking review gate no longer records approval when the reviewer never returned a usable verdict.
+- Fixed a startup crash where Fusion rejected the database it had just migrated, and a chat failure from a renumbered migration leaving `memory_focus` missing.
+- Starting Fusion no longer interrupts a working install with onboarding questions; onboarding always creates the central database.
+- First-ever provider logins no longer fail silently on a fresh install; Anthropic Subscription and OpenAI Codex sign-in are fixed, and a persistent sign-in dialog keeps the paste field and status visible.
+- Remote access reports "running" for a tunnel that survived a restart, targets the port the dashboard is really on, survives an engine restart, and works in Docker.
+- The Docker image now ships ca-certificates, git-lfs, ripgrep, gh, tailscale, cloudflared, and Google Chrome; builds no longer OOM and first-run volume permissions are correct.
+- Fusion sets its own git identity for commits, so hosts with no ambient git config no longer stall an auto-merge.
+- Workspace/multi-repository work: code review no longer reports delivered files as missing, approvals persist, per-repository landing status is visible, uncommitted edits in a shared checkout no longer stall completion, and concurrent acquisition no longer loses sub-repo worktrees.
+- Task worktrees and branches are preserved through recovery, reclaim, and rebind instead of being lost to the idle sweep.
+- Task Feed no longer shows "(no activity)" when opened directly on the activity view.
+- Chat fixes across mobile and desktop: keyboard-aware composers, five-line caps, preserved streamed prefixes after Stop, focus on open, back-arrow icon, and readable source links.
+- Dashboard event streams for an unknown project return 404 instead of logging a 500.
+- Board fixes: task detail opens on card click, columns stop scrolling on text selection, controls stay clickable in narrow windows, and mobile column releases settle smoothly.
+- Verification gates that reported PASS without running your tests now actually run them; a failing test or build creates named fix steps.
+- A failed database query now explains what went wrong instead of printing the whole SQL statement.
+
+### Performance
+
+- Idle and paused projects no longer poll in a tight loop: task-lifecycle outbox consumers back off toward a 60s cadence, targeting ~98% CPU down to under 50%.
+- Periodic self-healing no longer runs git churn on paused projects, and repair sweeps are bounded so health and UI stay fast.
+- Each task's workflow selection is read once per scheduler tick instead of ~6x, cutting scheduler CPU and health-API latency.
+- Creating a task from an Insights recommendation is no longer slow on large boards.
+
+### Internal
+
+- Bundled Pi runtime upgraded from 0.82.1 to 0.84.1 for updated provider and model support.
+- Retired the Coding (review-gated) workflow, superseded by Coding (Ideas) V2.
+- Added dedicated pipeline coverage proving a rejected code review produces fix steps that run and merge.
+
+## 0.77.0-beta.14
+
+### Highlights
+
+- Auto-generated chat titles stay in your configured output language
+- Mixed-language chats no longer get mislabeled titles from ambiguous text
+
+### Fixed
+
+- Chat title summarization now honors the resolved output language target, so English chats keep English titles
+- Language detection is stricter on medium-confidence Latin-script text, cutting mislabeled titles
+
+## 0.77.0-beta.13
+
+### Highlights
+
+- Approved tasks no longer get stuck unmergeable when review proof is missing or stale
+- A landed merge now finalizes even when the task row carries no steps
+- Your selected Claude account beats a leftover legacy Anthropic sign-in
+- Codex sign-in works on remote dashboards, with device codes for every OAuth provider
+- Command Center gets a compact section dropdown and self-recovering System controls
+
+### New
+
+- Command Center section tabs are now a compact, accessible dropdown — every section is still there, just without the wrapping tab row.
+- Readonly workflow steps can now use explicitly named MCP servers.
+
+### Fixed
+
+- Approved tasks no longer become permanently stuck when merge review proof is missing: proof is enforced before dispatch and at the sink, bypass is limited to audited humans, and reconciliation is audited.
+- Inline review fixes no longer leave an approved task unable to merge — verified review identity is re-captured and stale singular content is rerouted out of merge admission.
+- A merge that already landed now finalizes when the task row has no steps, instead of silently never emitting a merged event.
+- Interrupted merges from pre-upgrade worktree layouts now resume without dirty-checkout refusals.
+- Finished worktrees holding regenerable build and dependency output are cleaned up; anything not on the allowlist stays behind the landing-proof gate.
+- Your selected Claude account now takes precedence over a leftover legacy Anthropic sign-in.
+- Adding a credential instance no longer creates a duplicate OAuth account.
+- OpenAI Codex sign-in works on remote dashboards (device code by default, explicit browser override), and stalled logins no longer hang in the background.
+- Same-numbered tasks from different projects no longer bleed into each other on the board.
+- Workflow lists reflect workflow edits immediately, with no daemon restart.
+- Reopening a terminal restores the existing session immediately instead of waiting on validation.
+- Retargeting an existing Direct chat keeps the selected agent.
+- Command Center's System controls come back on their own after a failed capability probe — a tab left open across a dev-server restart no longer loses Rebuild and plugin cards.
+- Emphasized text and visible borders are restored across mailbox, chat, settings, and task details.
+- Mailbox task cards render with the correct padding, spacing, borders, and text sizes.
+- Mobile: the chat footer and composer sit flush above the keyboard on every platform, and the New Task priority button stays compact instead of stretching across the row.
+- Settings shows the correct Direct Chat default help text.
+
+## 0.77.0-beta.12
+
+### Highlights
+
+- Update Fusion from source in one click — pull, rebuild, and restart from Command Center
+- Remote access survives engine and container restarts instead of silently dying
+- Code review revisions now start their fix steps on the first try instead of stalling
+- Task dispatch and recovery no longer stall when Fusion re-pins a worktree branch
+- Board, List, and Chat keep their state when you return to a visited view
+
+### New
+
+- Command Center can update Fusion from source in one click: git pull, install, workspace build, and a restart that only happens if the build succeeded. The Docker entrypoint now acts as a restart supervisor and supports running from source.
+- Task worktrees now live under `.fusion/worktrees` by default, the legacy `.worktrees` root is still cleaned up, and merged workspace checkouts are removed after landing.
+- Board, List, and Chat are retained when you navigate away and back, so scroll position and view state survive; hidden views release their header and unread-message side effects.
+- Task activity log timestamps now show precise millisecond clock times across Live, Feed, Raw, and Interventions.
+
+### Fixed
+
+- A code review revision now writes its fix steps and reopens implementation on the first try, instead of stalling with the card frozen in review. This covers the step-ledger reopen path, the inline atomic branch Code Review always takes, revisions after a dashboard Retry, cards canceled in the review lane, and the field-separator bug that made every remediation claim write fail against PostgreSQL.
+- A blocked or refused review always explains itself on the task now — including when the concurrency marker cannot be written — rather than returning silently with no entry.
+- Remote access reports its real state: a tunnel that survived a restart shows as running, a tunnel serving traffic is never reported as stopped, and a funnel on a different port is refused rather than clobbered.
+- Stopping or restarting the engine no longer kills remote access, tunnel start/stop/status work with no engine attached, and a stopped engine can be restarted from the UI. A supervised restart releases and re-adopts the live Tailscale funnel instead of spawning a competitor.
+- Remote access no longer dies after a `docker restart`: `tailscaled` liveness is now decided by an actual running process, not a stale socket file left behind in the writable layer.
+- Task dispatch and recovery no longer fail when Fusion re-pins a worktree branch. Operator-provided branches keep their operator marker (including through numeric sibling renames) and stay protected from engine branch cleanup.
+- Workspace projects now honor the push-after-merge setting, refresh repository bases at implementation dispatch, and serialize safely when file scopes overlap.
+- Chat focuses the message box when you open or create a conversation, with phone and touch-tablet suppression.
+- ACP runtime session failures now name the scoping cwd and the JSON-RPC diagnostic, so you can tell a misconfigured spawn target from an agent-side fault.
+
+## 0.77.0-beta.11
+
+### Highlights
+
+- Task recovery is now just Retry, Reset, and Delete — Respecify and Restart stage are gone
+- Reset opens an editable description dialog and deletes the task branch so the next run starts clean
+- Every configured repo is prepped in a task-ID worktree; worktreeNaming and recycleWorktrees removed
+- New Fast lane runs quick changes with no planning and no pre-merge review
+- New History view keeps a permanent, searchable daily log of completed and reverted tasks
+
+### Breaking
+
+- Task recovery is simplified to Retry, Reset, and Delete. The restart-stage route and the Respecify and Restart stage dashboard actions are removed; Retry restarts the current stage and is now visible on intake cards.
+- Reset replaces Respecify: it opens an editable original-description dialog, and the client `resetTask` parameter order changed to options-second, projectId-last.
+- Every configured repository is prepared in a task-ID worktree before work starts. The `worktreeNaming` and `recycleWorktrees` settings, the `fn_acquire_repo_worktree` tool, and `POST /tasks/:id/repository-scope` are removed, and persisted values for the removed settings are ignored. Adds multi-ecosystem dependency bootstrap and a blocking Plan Review dependency gate.
+- Revision findings are now the only authority that can move a task backward. Blocked-exit auto-replan, several recovery and sweep paths, and executor stuck-kill terminalization are removed along with their audit events.
+- Unplanned tasks can no longer be force-started. The promote force option, `issueRelease` unplanned waiver, promote force API field, `fn_task_promote` force parameter, and the forced-promote audit event are gone.
+- The per-task manual plan-approval toggle and shield badges are removed; plan approval resolves from settings only.
+
+### New
+
+- Fast lane: create quick tasks that run one implementation pass, skipping planning and selected pre-merge review groups while keeping the normal merge path.
+- History view: a searchable, permanent daily log of completed and reverted tasks, with a read-only chat tool for reading it. Each re-delivery gets its own dated entry, and entries outlive archive cleanup.
+- Task History tab collects the planning, implementation, review, and merge reports for a task in one place.
+- Tasks that hit an external infrastructure block now preserve their work and resume exactly where they stopped, with dashboard recovery and audit events.
+- Multi-repository tasks can be reset safely back to fresh planning, including workspace coordination cleanup.
+- Planning Mode history shows the original prompt that started the session, read-only.
+- Duplicating a task lets you choose an enabled workflow, and Planning Mode create requests honor the default.
+- Plan-preserving Respecify: revise the spec without discarding the approved plan.
+- Reviewers must now supply notes with every verdict, and those notes appear in task activity summaries.
+- Task logs show complete, readable tool inputs and outputs; persisting tool output is now on by default, with clamped raw log and CLI blocks.
+- Task Detail is consolidated: Cost, Routing, Debug, Attachments, and Recommendations are folded into Stats, Details, Artifacts, and Summary. Summary now carries merge details and per-step timings.
+- New Cozy Cartoon theme with a pastel light palette and oversized rounded buttons.
+
+### Fixed
+
+- Reset and manual cancel now stop a running task cleanly, leaving no failed step and no blocked merge.
+- Merged review cards can advance to Done, and merged task worktrees are cleaned up before completion.
+- The merger no longer re-runs a full AI merge for work that already landed, short-circuiting to finalization when the landing is proven.
+- Self-healing reclaim keeps task branches and checkouts attached when it hits a non-conflict failure, and rebinds relocated worktrees from Git.
+- Automatic recovery stays in its owning lifecycle stage, with visible move attribution and workspace checkout reuse.
+- Workspace Code Review reports one complete verdict across every modified repository, persists approvals so reviewed tasks can merge, and reopens implementation with named fixes when changes are requested.
+- Workspace tasks can retry their current stage without losing per-repository landing progress, and workspace Reset no longer deletes a task directory held by an active session.
+- Review fix steps keep being created past three rounds while the evidence actually changes, and frozen review cycles no longer repeat the same model without change evidence.
+- Completed verification history is preserved, and a fresh verification pass is required after review fixes.
+- Checks that could not run are shown as not executed instead of passed.
+- No-change tasks conclude once with a visible terminal outcome, and Review shows a single completion summary with the empty Merge section removed.
+- Tasks no longer freeze when a required tool is unavailable; host capabilities are injected into planning and Plan Review.
+- Waiting planning and implementation work starts as soon as shared capacity frees up, while overlapping tasks stay queued until unfinished work lands.
+- Activity Feed entries stay current over SSE, task History moves into Activity Summaries, and duplicated review reports render once.
+- The task Plan summary survives transient prompt refresh failures.
+- Long steering messages and comments are no longer rejected.
+- Per-task human plan approval is visible and actionable from the workflow planning lane.
+- Remediation steps use concise review finding titles instead of full finding bodies.
+- Reset tasks restart in Planning with their confirmed original request.
+- Board controls stay clickable in narrow desktop windows; board tiles show the pointing hand, and panning shows the grabbing hand.
+- Optional review selections are restored after turning off Fast task creation mode.
+- Task timelines stay consistent across workspace and single-repository runs.
+
+## 0.77.0-beta.10
+
+### Highlights
+
+- Task detail splits into Plan, dependencies, attachments, details and debug tabs
+- Plan tab opens with a plain-language summary of what the task delivers
+- Manual column-move controls removed from the board and task detail
+- Docker image now ships Google Chrome, so container browser automation works
+- Skills, automations and routines now list per project instead of coming up empty
+
+### Breaking
+
+- Dashboard controls that manually moved tasks between workflow columns are gone; Replan All now rebuilds the spec instead.
+- Task detail tabs are renamed and re-homed: Plan keeps steps and PROMPT.md, while dependencies, attachments, details and debug get their own tabs. The original prompt section and the retries deep link now land on details.
+
+### New
+
+- Plan now leads with a "What This Delivers" summary so you can confirm a task's intent at a glance.
+- Task Chat merges model selection and thinking level into a single Brain popover.
+- New Flexoki theme: warm inky dark, cream paper light.
+- Task detail can explain why a task is blocked by a file-scope overlap with another task.
+
+### Fixed
+
+- The Docker image installs Google Chrome, so the agent-browser plugin and the Chrome DevTools MCP server work in a container instead of failing every call. Chrome's sandbox still needs unprivileged user namespaces, so pass `--no-sandbox` or run with `--security-opt seccomp=unconfined`.
+- Skills discovery resolves project-local roots per request, so each project shows its own installed skills and the catalog stops offering duplicate installs.
+- Automations and Routines honor project scope instead of returning an empty list.
+- Workspace tasks no longer stall on uncommitted edits sitting in a shared repo checkout; only a task-attributed commit blocks completion, and uncommitted entries are recorded as a warning.
+- Multi-repository Code Review fixes are routed back to the repository that actually failed.
+- Agents can read secret values returned by `fn_secret_get`.
+- Popped-out chats open on the thread you asked for, and stacked floating windows stay visibly separated.
+- Selecting text on the board no longer scrolls Kanban columns out from under you.
+- The New Task Start button appears whenever quick entry would allow a start.
+- Reasoning bodies show alongside titles for OpenAI Responses models.
+
+## 0.77.0-beta.9
+
+### Highlights
+
+- Verification gates no longer report a pass without running your tests
+- Blocking review gates stop approving merges when the reviewer returned no verdict
+- Merges no longer abort themselves mid-flight or after every repo has landed
+- New Coding (Ideas) V2 workflow runs verification and docs as visible review gates
+- New Stash memory backend captures chats, task completions and executor transcripts
+
+### New
+
+- Coding (Ideas) V2 is selectable as a built-in workflow: Code Review runs lint/test/build itself and must quote command output as evidence, then a readonly Documentation gate writes the card summary and can propose follow-ups in the Recommendations tab. Two fewer model calls per card and one blocking gate instead of four.
+- Stash memory backend (`memory.backendType=stash`) with global and per-project URL/API-key settings, per-project session folders, per-conversation memory focus, and per-task completion capture.
+- Finished or failed tasks upload their executor transcript to Stash as a task session, capped at 20,000 events by default and never blocking terminalization. New project settings control whether capture runs, the event cap, and status lines.
+- Per-chat "Preserve to Stash" action backfills a chat's full history with real per-message timestamps; re-running it inserts nothing new.
+- Opt-in semantic (vector) recall for Stash via `stashVectorSearch`, off by default, falling back to keyword search on any failure.
+- Direct-chat agent mentions and message quoting; Ctrl/Cmd-click opens a new chat in an offset in-app window, and pop-outs now open in front on the right conversation.
+- Press Shift+V in the TUI Logs panel for a chrome-free view you can select and copy with the mouse.
+- Chat memory focus is now an opt-in experimental feature, and its button stays icon-only until a topic is set.
+- Duplicate tasks show a dismissible tag instead of a Keep button, and reverted tasks stay labelled in their own workflow column.
+- Onboarding asks once whether to star Fusion on GitHub, and never again once dismissed.
+- The dashboard now always reloads when it detects a new build; the opt-out toggle is gone.
+- Dashboard notices share one banner style.
+
+### Fixed
+
+- A Verification gate could report PASS in about 46ms without executing your test or build command, supplying merge evidence for a check that never ran.
+- A blocking review gate recorded success when the reviewer returned no usable verdict, merging unreviewed work on a rejection nobody could see. Advisory gates are unchanged.
+- An in-flight merge aborted itself every 15 seconds and was re-admitted indefinitely, so merges never completed.
+- A successful multi-repository merge aborted itself after both repositories had landed, verified duplicates ended as errors, and merge checks ran without a test runner because an inherited production environment skipped devDependencies.
+- Chat failed with `column memory_focus does not exist` after a renumbered migration was skipped; the missing columns are now verified and repaired at startup.
+- A failing test, build, or code review now appends named fix steps instead of bouncing a card with nothing to do; per-step failures stay inside their step.
+- Documentation can no longer hold a merge or send a card back with nothing to do, and the step now really writes the card summary.
+- A task's Feed no longer shows "(no activity)" when opened directly on the activity view.
+- A failed merge no longer strands review-column tasks on their verification and delivery gates.
+- Multi-repository code review no longer reports delivered files as missing, and local-only workspace merges no longer fail after a repo has landed.
+- Task cards and list rows now show Verification, Documentation & Delivery and Code Review progress while a card sits in review; in-review cards show the running gate as a badge.
+- Start in the task composer no longer does nothing on a duplicated Ideas workflow.
+- A task whose workflow role pool is unroutable is no longer re-dispatched; the hold waits as intended.
+- Workspace acquisition waits are recoverable and visible via a Waiting badge.
+- A failed database query now reports the actual reason instead of printing the whole SQL statement.
+- The task journal no longer announces aborts that never happened or repeats the merge approval twice.
+- The built-in Fusion memory MCP server is no longer skipped in agent sessions.
+- Chat Stop and Force send now interrupt the active model turn before teardown; thinking traces are readable and have a raw transcript view.
+- Chat no longer opens an imported link into a hidden composer or re-anchors a thread on open; memory Focus popovers stay usable on mobile.
+- Custom review lanes are honored across merge-readiness checks and merge finalization.
+- Project registration now creates or adopts a usable local integration branch, and task branches survive worktree reclamation.
+- Automatic worktree cleanup fails closed on dirty or unverifiable content.
+- Worktree agents can read skills installed under `~/.agents/skills`.
+- Full-size mailbox Inbox icons restored on mobile; JIRA settings available in every dashboard locale.
+- CLI plugin packaging succeeds again with sharp 0.35 native binaries.
+- Archived task-planner chats soft-delete their Stash sessions, and Stash backfill no longer duplicates or drops messages when timestamps tie or mislabels the first project folder.
+
+### Internal
+
+- Database maintenance now covers 17 previously missed project tables, including plan-evidence and lifecycle tables.
+- Workflow gates are classified by what they are rather than by their name or id.
+- The Coding (review-gated) workflow is retired in favour of Coding (Ideas) V2; existing tasks that selected it keep working.
+- New pipeline drives prove a rejected code review produces named fix steps that run and merge, and the restart-recovery scenario no longer fails under load.
+
 ## 0.77.0-beta.8
 
 ### Highlights

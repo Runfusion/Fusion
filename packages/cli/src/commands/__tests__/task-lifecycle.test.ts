@@ -1911,14 +1911,6 @@ describe("cleanupMergedTaskArtifacts FN-5455", () => {
     activeSessionRegistry.clear();
   });
 
-  it("FN-5455: releases pool lease before removing worktree and deleting branch", async () => {
-    const pool = { release: vi.fn() };
-    await cleanupMergedTaskArtifacts("/repo", { id: "FN-5455-A", worktree: "/repo/wt" } as never, { pool } as never);
-    expect(pool.release).toHaveBeenCalledWith("/repo/wt", "FN-5455-A");
-    expect(execMock).toHaveBeenCalledWith(expect.stringContaining('git worktree remove "/repo/wt" --force'), expect.any(Object));
-    expect(execMock).toHaveBeenCalledWith(expect.stringContaining('git branch -d "fusion/fn-5455-a"'), expect.any(Object));
-  });
-
   it("FN-5455: pool omitted keeps backward-compatible cleanup behavior", async () => {
     await cleanupMergedTaskArtifacts("/repo", { id: "FN-5455-B", worktree: "/repo/wt-b" } as never);
     expect(execMock).toHaveBeenCalledWith(expect.stringContaining('git worktree remove "/repo/wt-b" --force'), expect.any(Object));
@@ -2294,7 +2286,7 @@ describe("refreshAutomatedPrHead", () => {
         throw new Error("The operation was aborted");
       }
       if (addAttempted && command === "git worktree list --porcelain") {
-        return "worktree /projects/repo-a/.worktrees/pr-refresh-49e2094e7f117641\nbranch refs/heads/fusion/fn-cancel-cleanup\n";
+        return "worktree /projects/repo-a/.fusion/worktrees/pr-refresh-49e2094e7f117641\nbranch refs/heads/fusion/fn-cancel-cleanup\n";
       }
       return "";
     });
@@ -2307,13 +2299,13 @@ describe("refreshAutomatedPrHead", () => {
 
     expect(execFileCalls).toContainEqual(expect.objectContaining({
       file: "git",
-      args: ["worktree", "remove", "--force", expect.stringMatching(/\/projects\/repo-a\/\.worktrees\/pr-refresh-/)],
+      args: ["worktree", "remove", "--force", expect.stringMatching(/\/projects\/repo-a\/\.fusion\/worktrees\/pr-refresh-/)],
     }));
   });
 
   it("quarantines a retained temporary checkout when cleanup fails", async () => {
     const reservation = {
-      canonicalPath: "/projects/repo-a/.worktrees/pr-refresh-test",
+      canonicalPath: "/projects/repo-a/.fusion/worktrees/pr-refresh-test",
       state: "held" as const,
       release: vi.fn(async () => undefined),
       quarantine: vi.fn(async () => undefined),
@@ -2323,7 +2315,7 @@ describe("refreshAutomatedPrHead", () => {
     execMock.mockImplementation((command: string) => {
       if (command.startsWith("git worktree add")) worktreeAdded = true;
       if (worktreeAdded && command === "git worktree list --porcelain") {
-        return "worktree /projects/repo-a/.worktrees/pr-refresh-f7ab243dfb531960\nbranch refs/heads/fusion/fn-cleanup-failure\n";
+        return "worktree /projects/repo-a/.fusion/worktrees/pr-refresh-f7ab243dfb531960\nbranch refs/heads/fusion/fn-cleanup-failure\n";
       }
       if (command.startsWith("git worktree remove --force")) throw new Error("device busy");
       return "";

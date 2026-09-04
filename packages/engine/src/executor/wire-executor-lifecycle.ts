@@ -39,6 +39,25 @@ import { WorkflowAgentCapacity } from "../agents/workflow-agent-capacity.js";
 
 const execFileAsync = promisify(execFile);
 
+/**
+ * FNXC:WorkspaceWorktree 2026-08-23-06:25:
+ * An acquisition registry entry mirrors a durable acquire lease. Owner disappearance
+ * must release both immediately, but this deliberately excludes land/ai-merge records
+ * because completed and review lanes may still own their merge critical section.
+ */
+async function releaseWorkspaceAcquireClaims(store: TaskStore, taskId: string): Promise<void> {
+  for (const entry of activeSessionRegistry.entriesByKind("workspace-repo-acquire")) {
+    if (entry.taskId === taskId) activeSessionRegistry.unregisterPath(entry.path);
+  }
+  const inspect = (store as Partial<TaskStore>).inspectWorkspaceLeases;
+  const release = (store as Partial<TaskStore>).releaseWorkspaceLease;
+  if (typeof inspect !== "function" || typeof release !== "function") return;
+  const leases = await inspect.call(store, { taskId });
+  await Promise.all(leases
+    .filter((lease) => lease.kind === "acquire" && lease.status === "held")
+    .map((lease) => release.call(store, lease)));
+}
+
 /** Field names collected from TaskExecutor for lifecycle listeners. */
 const WIRE_LIFECYCLE_FIELDS = [
   "activeConfiguredCommandControllers", "activeSessions", "activeStepExecutorSeenSteeringIds",
@@ -356,7 +375,8 @@ export function wireExecutorLifecycle(deps: WireExecutorLifecycleDeps): WireExec
       */
       deps.trackTaskDisposal(
         task.id,
-        deps.awaitAbortInFlightTaskWork(task.id, "task archived").then(() => {
+        deps.awaitAbortInFlightTaskWork(task.id, "task archived").then(async () => {
+          await releaseWorkspaceAcquireClaims(deps.store, task.id);
           // Belt-and-suspenders sweep: clear any registry entry that survived the
           // abort above because its in-memory session map was already empty
           // (a leaked entry with no live session to abort).
@@ -379,7 +399,10 @@ export function wireExecutorLifecycle(deps: WireExecutorLifecycleDeps): WireExec
         task.id,
         deps.awaitAbortInFlightTaskWork(task.id, `task moved out of planning to ${to}`, {
           userCanceled: source === "user",
-        }).then(async () => { await deps.releasePreExecutionWorktree(task.id, `moved to ${to}`); }),
+        }).then(async () => {
+          await releaseWorkspaceAcquireClaims(deps.store, task.id);
+          await deps.releasePreExecutionWorktree(task.id, `moved to ${to}`);
+        }),
       );
     } else if (from === wipLane) {
       if (deps.workflowLifecycleMovesInFlight.has(task.id) && deps.graphRouting.has(task.id)) {
@@ -392,7 +415,7 @@ export function wireExecutorLifecycle(deps: WireExecutorLifecycleDeps): WireExec
         task.id,
         deps.awaitAbortInFlightTaskWork(task.id, `parent moved from in-progress to ${to}`, {
           userCanceled: source === "user" && to === holdLane,
-        }),
+        }).then(() => releaseWorkspaceAcquireClaims(deps.store, task.id)),
       );
     }
   });
@@ -402,7 +425,8 @@ export function wireExecutorLifecycle(deps: WireExecutorLifecycleDeps): WireExec
     deps.approvalResumeAfterUnwind.delete(task.id);
     deps.trackTaskDisposal(
       task.id,
-      deps.awaitAbortInFlightTaskWork(task.id, "task soft-deleted", { userCanceled: true }),
+      deps.awaitAbortInFlightTaskWork(task.id, "task soft-deleted", { userCanceled: true })
+        .then(() => releaseWorkspaceAcquireClaims(deps.store, task.id)),
     );
   });
 

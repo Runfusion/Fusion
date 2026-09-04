@@ -3,6 +3,22 @@
  * Completion, review, and merge inspect only acquired workspace worktrees. Probe every configured
  * main checkout so direct edits cannot bypass those surfaces. Classification uses execution time,
  * not File Scope: unenumerated and unscoped paths must not become an escape hatch.
+ *
+ * FNXC:WorkspaceFinalization 2026-08-27-08:42:
+ * Only COMMITS in a main checkout are a completion violation. Uncommitted status entries warn.
+ * Two measured reasons. (1) The very next pipeline stage absorbs a dirty main checkout: workspace
+ * lands call the same `landOneRepo`/`landSquash` mechanic as single-repo with `projectRootDir` set
+ * to the sub-repo main checkout, so a dirty tree there is stashed (untracked included) -> ff ->
+ * restored under `merger.allowDirtyLocalCheckoutSync`, or the ref advances atomically and the tree
+ * is left alone when the stash is impossible. Refusing completion for a state the merger is built
+ * to handle stops the board for nothing. (2) Attribution had no evidence: a File Scope match was
+ * treated as task work with NO timing test, so an operator editing the same feature in the shared
+ * checkout was indistinguishable from an agent that skipped its pre-created task worktree — and the
+ * refusal named an operator-only remedy, so the card could only loop.
+ * The dangerous cases keep hard refusals elsewhere: a task-attributed commit still returns
+ * `main_checkout_edit` (it would reach the shared branch unreviewed), and work that exists ONLY in
+ * the main checkout now falls through to the acquired-worktree `no_commits` invariant, which
+ * refuses because the acquired worktree carries no commits.
  */
 import { exec } from "node:child_process";
 import { existsSync, promises as fs } from "node:fs";
@@ -16,9 +32,11 @@ import { isAlwaysAllowedScopeLeakPath, workflowPathMatchesDeclaredScope } from "
 const execAsync = promisify(exec);
 const probeOptions = { encoding: "utf-8" as const, timeout: 10_000, maxBuffer: 1024 * 1024 };
 export type MainCheckoutEvidence = "task-era-change" | "declared-scope-change" | "task-attributed-commit" | "post-anchor-commit";
-export type MainCheckoutWarningReason = "pre-existing-dirt" | "anchor-unresolved" | "commit-scan-unavailable";
+/** `uncommitted-only`: task-era or in-scope status entries with no commit behind them (2026-08-27). */
+export type MainCheckoutWarningReason = "pre-existing-dirt" | "anchor-unresolved" | "commit-scan-unavailable" | "uncommitted-only";
 export type MainCheckoutFinding = { repo: string; files: string[]; commits: string[]; evidence: MainCheckoutEvidence };
-export type MainCheckoutWarning = { repo: string; files: string[]; commits: string[]; reason: MainCheckoutWarningReason };
+/** `evidence` is retained on downgraded findings so telemetry keeps the classification it had. */
+export type MainCheckoutWarning = { repo: string; files: string[]; commits: string[]; reason: MainCheckoutWarningReason; evidence?: MainCheckoutEvidence };
 export type MainCheckoutGuardResult = { violations: MainCheckoutFinding[]; warnings: MainCheckoutWarning[]; skipped: string[] };
 
 /** Earliest durable attempt timestamp, with a small filesystem clock tolerance. */
@@ -112,7 +130,16 @@ export async function detectWorkspaceMainCheckoutWork(
       else if (anchor !== null && mtime !== null && mtime >= anchor) taskFiles.push(file);
       else oldFiles.push(file);
     }
-    if (taskFiles.length) violations.push({ repo, files: taskFiles, commits: [], evidence: repoScope.length && taskFiles.some((file) => workflowPathMatchesDeclaredScope(file, repoScope)) ? "declared-scope-change" : "task-era-change" });
+    // FNXC:WorkspaceFinalization 2026-08-27-08:42: status-only evidence is reported, never refused (see header).
+    if (taskFiles.length) {
+      warnings.push({
+        repo,
+        files: taskFiles,
+        commits: [],
+        reason: "uncommitted-only",
+        evidence: repoScope.length && taskFiles.some((file) => workflowPathMatchesDeclaredScope(file, repoScope)) ? "declared-scope-change" : "task-era-change",
+      });
+    }
     if (oldFiles.length) warnings.push({ repo, files: oldFiles, commits: [], reason: anchor === null ? "anchor-unresolved" : "pre-existing-dirt" });
     if (anchor === null && statusFiles.length && !oldFiles.length) warnings.push({ repo, files: statusFiles, commits: [], reason: "anchor-unresolved" });
     try {

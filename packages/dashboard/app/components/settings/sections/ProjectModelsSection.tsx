@@ -34,6 +34,7 @@ const PROJECT_LANE_CREDENTIAL_INSTANCE_KEYS = {
     default: "defaultCredentialInstanceIdOverride",
     merger: "mergerCredentialInstanceId",
     "import-translate": "importTranslateCredentialInstanceId",
+    "fast-cheap": "fastCheapCredentialInstanceId",
 } as const satisfies Partial<Record<string, keyof Settings>>;
 /*
 FNXC:SettingsModels 2026-06-16-19:58:
@@ -332,13 +333,19 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
         registerWorkflowLaneSaver?.(saveWorkflowLanes);
         return () => registerWorkflowLaneSaver?.(null);
     }, [registerWorkflowLaneSaver, saveWorkflowLanes]);
-    // The project DEFAULT, title-summarizer, and merger lanes remain editable
+    // The project DEFAULT, title-summarizer, merger, import-translate, and Fast & Cheap lanes remain editable
     // here. Execution/planning/validator workflow-specific lanes still redirect to
     // workflow settings below.
     // FNXC:Settings-MergerModel 2026-07-13-07:52: Merger is project-scoped (like summarization), not workflow-moved.
     // FNXC:GitHubImportTranslate 2026-07-15-09:30: The import-translate lane is project-scoped (like merger/summarization), so its project override must be editable here — otherwise the lane's projectProviderKey/projectModelKey would be unreachable and only the global lane could ever be set.
+    /*
+    FNXC:FastLane 2026-08-29-02:51:
+    Fast tasks resolve a project Fast & Cheap override before the global lane. Keep this lane in the
+    project picker list; defining it only in MODEL_LANES would render it globally but make the
+    documented project override impossible to save through the UI.
+    */
     // FNXC:SettingsModels 2026-08-18-06:41: Summarization remains project-scoped but stays with its AI summarization enable toggles instead of the Model Overrides group.
-    const projectModelLanes = modelLanes.filter((lane) => ["default", "merger", "import-translate"].includes(lane.laneId));
+    const projectModelLanes = modelLanes.filter((lane) => ["default", "merger", "import-translate", "fast-cheap"].includes(lane.laneId));
     const credentialInstanceKeyForLane = (lane: ModelLane): keyof Settings | undefined => PROJECT_LANE_CREDENTIAL_INSTANCE_KEYS[lane.laneId as keyof typeof PROJECT_LANE_CREDENTIAL_INSTANCE_KEYS];
     const credentialInstanceValueForLane = (lane: ModelLane): string => {
         const key = credentialInstanceKeyForLane(lane);
@@ -470,7 +477,7 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
         const thinkingValue = getLaneThinkingValue(lane);
         const isOverridden = status === "overridden" || Boolean(thinkingValue) || Boolean(credentialInstanceValueForLane(lane));
         const laneLabel = getProjectLaneLabel(lane);
-        return (<div className="form-group" key={lane.laneId}>
+        return (<div className="form-group" key={lane.laneId} data-settings-key={lane.projectModelKey}>
         {/*
         FNXC:SettingsHelp 2026-07-15-23:10:
         Lane help rides the same "?" as every other row. It reads as an exception — a lane is a label + inherited/override badge + dropdown + conditional Reset, and its copy ends in the resolved fallback CHAIN — but that argues for WHERE the tip hangs (the label row, beside the badge), not for keeping a paragraph. Left inline, Project Models was the one section still showing prose under every control while its neighbours showed an icon; the global lanes next door already use the tip.
@@ -577,7 +584,7 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
         />
       </SettingsFieldRow>
       {modelsLoading ? (<div className="settings-empty-state"><LoadingSpinner label={t("settings.projectModels.loadingAvailableModels", "Loading available models\u2026")} /></div>) : availableModels.length === 0 ? (<div className="settings-empty-state settings-muted">{t("settings.projectModels.noModelsAvailableConfigureAuthenticationFirst", " No models available. Configure authentication first. ")}</div>) : (<>
-          {projectModelLanes.filter((lane) => lane.laneId === "default" || lane.laneId === "merger").map(renderProjectLane)}
+          {projectModelLanes.filter((lane) => lane.laneId === "default" || lane.laneId === "merger" || lane.laneId === "fast-cheap").map(renderProjectLane)}
           {renderMergerFallbackLane()}
           {projectModelLanes.filter((lane) => lane.laneId === "import-translate").map(renderProjectLane)}
         </>)}
@@ -639,31 +646,16 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
         </>)}
 
       </div>
-      {/* FNXC:ChatModels 2026-07-12-20:45: Project Models owns the Direct-chat default because New Chat needs a project-scoped model-or-agent target plus prompt-vs-direct creation mode without changing workflow or in-chat switcher settings. */}
+      {/* FNXC:ChatModels 2026-07-12-20:45: Project Models owns the Direct-chat default because New Chat needs a project-scoped model-or-agent target without changing workflow or in-chat switcher settings. */}
       {/* FNXC:SettingsHelp 2026-07-16-12:45: Section description moved behind the shared "?" affordance beside the heading — operator requirement: no inline description paragraphs in Settings. */}
       <div className="settings-field-label-row">
         <h4 className="settings-section-heading settings-section-heading--spaced">{t("settings.projectModels.chatHeading", "Chat")}</h4>
-        <SettingsHelpTip settingKey="project-chat-defaults">{t("settings.projectModels.chatDescription", "Choose the default target for new Direct chats and whether New Chat should prompt or immediately use that default.")}</SettingsHelpTip>
+        <SettingsHelpTip settingKey="project-chat-defaults">{t("settings.projectModels.chatDescription", "Choose the default target for new Direct chats. New Chat always creates the conversation immediately from this default.")}</SettingsHelpTip>
       </div>
       {/*
-      FNXC:SettingsModels 2026-07-15-17:35:
-      Only the mode select migrates to a primitive. The target picker below it (Model/Agent segmented toggle + model dropdown or agent select + shared Reset) is one compound control over five form keys, not a row per key, so it stays bespoke.
-      "prompt" is the unset default rather than a stored value: anything that is not `always-default` writes `undefined` so the key is deleted rather than persisted at its default.
+      FNXC:ChatDefaultTarget 2026-09-01-08:39:
+      Retired create-time prompt-mode copy is removed because New Chat always creates immediately from the configured target.
       */}
-      <SettingsSelectRow
-        descriptor={{
-          key: "chatNewSessionMode",
-          label: t("settings.projectModels.chatNewSessionMode", "New Chat behavior"),
-          help: t("settings.projectModels.chatNewSessionModeHelp", "Prompt mode opens New Chat with this default preselected. Always-default mode skips the dialog when the configured default is complete."),
-          scope: "project",
-          options: [
-            { value: "prompt", label: t("settings.projectModels.chatNewSessionModePrompt", "Prompt for model each time") },
-            { value: "always-default", label: t("settings.projectModels.chatNewSessionModeAlwaysDefault", "Always use configured default") },
-          ],
-        }}
-        value={form.chatNewSessionMode ?? "prompt"}
-        onChange={(v) => setForm((f) => ({ ...f, chatNewSessionMode: v === "always-default" ? "always-default" : undefined } as SettingsFormState))}
-      />
       <div className="form-group" data-testid="project-models-chat-kind">
         <label>{t("settings.projectModels.chatDefaultKind", "Chat default target")}</label>
         <div className="chat-new-dialog-mode-toggle" data-testid="project-models-chat-kind-toggle">
@@ -678,12 +670,12 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
       {chatDefaultKind === "model" ? (<div className="form-group" data-testid="project-models-chat-model">
           {/*
           FNXC:SettingsHelp 2026-07-15-21:40:
-          Model mode is a plain label + control + help row, so its help hangs off the same "?" as the New Chat behavior select directly above it instead of printing a paragraph beside it.
+          Model mode is a plain label + control + help row, so its help hangs off the shared "?" affordance instead of printing a paragraph beside it.
           FNXC:SettingsHelp 2026-07-16-12:45: The agent-mode branch's descriptive help now hangs off the same "?" too — operator requirement: no inline description paragraphs in Settings. Only its dynamic empty-state line ("No agents are available for this project yet.") stays inline, because it is live status explaining an empty picker and must stay in view.
           */}
           <div className="settings-field-label-row">
             <label htmlFor="chatDefaultModel">{t("settings.projectModels.chatDefaultModel", "Chat Default Model")}</label>
-            <SettingsHelpTip settingKey="chatDefaultModel">{t("settings.projectModels.chatDefaultModelHelp", "Model-mode New Chat uses the built-in Fusion chat agent with this provider/model pair. Leave empty to fall back to prompting.")}</SettingsHelpTip>
+            <SettingsHelpTip settingKey="chatDefaultModel">{t("settings.projectModels.chatDefaultModelHelp", "Model-mode New Chat uses the built-in Fusion chat agent with this provider/model pair. Leave empty to use the project or global default model.")}</SettingsHelpTip>
           </div>
           <div className="settings-model-lane-control-row">
             <div className="settings-model-lane-control-main">

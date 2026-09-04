@@ -126,7 +126,7 @@ describe("workflow-native built-in workflow settings", () => {
     const inlineFixes = revisionById.get("reviewerInlineFixes");
     expect(inlineFixes).toMatchObject({
       type: "boolean",
-      default: true,
+      default: false,
     });
     expect(fullIds.has("reviewerInlineFixes")).toBe(true);
     expect(movedIds.has("reviewerInlineFixes")).toBe(false);

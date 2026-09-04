@@ -1,11 +1,14 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup } from "@testing-library/react";
 import { loadAllAppCss } from "../../test/cssFixture";
+import { __test_resetChatSnippetsCache } from "../../hooks/useChatSnippetsCache";
 
 // Mock API functions
 const mockFetchDiscoveredSkills = vi.fn().mockResolvedValue([]);
 const mockFetchSkillsCatalog = vi.fn().mockResolvedValue({ entries: [] });
 const mockToggleExecutionSkill = vi.fn().mockResolvedValue(undefined);
+const mockFetchGlobalSettings = vi.fn().mockResolvedValue({ chatSnippets: [] });
+const mockUpdateGlobalSettings = vi.fn().mockResolvedValue({ chatSnippets: [] });
 const mockFetchSkillContent = vi.fn().mockResolvedValue({
   name: "test-skill",
   skillMd: "",
@@ -20,6 +23,8 @@ vi.mock("../../api", () => ({
   // FNXC:Skills 2026-06-23-04:15: SkillsView now imports fetchSkillFileContent for the file viewer; stub it so the mock module is complete.
   fetchSkillFileContent: vi.fn().mockResolvedValue({ name: "", relativePath: "", content: "", isText: true }),
   installSkill: vi.fn().mockResolvedValue({ success: true }),
+  fetchGlobalSettings: (...args: unknown[]) => mockFetchGlobalSettings(...args),
+  updateGlobalSettings: (...args: unknown[]) => mockUpdateGlobalSettings(...args),
 }));
 
 function extractRuleBlock(css: string, selector: string): string {
@@ -67,6 +72,14 @@ describe("skills-view mobile css", () => {
 
   it("defines the shared .view-header__title", () => {
     expect(cssContent).toContain(".view-header__title {");
+  });
+
+  it("stacks snippet rows and keeps their actions reachable on mobile", () => {
+    const itemBlock = extractRuleBlock(mobileMediaBlock, ".skills-view-snippets__item");
+    const actionsBlock = extractRuleBlock(mobileMediaBlock, ".skills-view-snippets__item-actions");
+    expect(itemBlock).toContain("flex-direction: column");
+    expect(actionsBlock).toContain("align-self: stretch");
+    expect(actionsBlock).toContain("justify-content: flex-end");
   });
 
   it("defines .skills-view-content with reduced padding on mobile", () => {
@@ -240,11 +253,55 @@ describe("skills-view mobile css", () => {
 
 describe("SkillsView component structure", () => {
   beforeEach(() => {
+    __test_resetChatSnippetsCache();
     vi.clearAllMocks();
+    mockFetchGlobalSettings.mockResolvedValue({ chatSnippets: [] });
+    mockUpdateGlobalSettings.mockResolvedValue({ chatSnippets: [] });
   });
 
   afterEach(() => {
     cleanup();
+  });
+
+  it("renders an installed catalog entry without an install button in the narrow layout", async () => {
+    mockFetchSkillsCatalog.mockResolvedValue({
+      entries: [{
+        id: "mobile-installed",
+        slug: "mobile-installed",
+        name: "Mobile Installed",
+        repo: "owner/mobile-installed",
+        installation: { installed: true, matchingSkillIds: ["*::skills/mobile-installed/SKILL.md"], matchingPaths: [] },
+      }],
+    });
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 375 });
+    window.dispatchEvent(new Event("resize"));
+    const { SkillsView } = await import("../SkillsView");
+
+    render(<SkillsView projectId="mobile-project" addToast={vi.fn()} onClose={vi.fn()} />);
+
+    const indicator = await screen.findByText("Installed");
+    const card = indicator.closest(".skills-view-card");
+    expect(card).not.toBeNull();
+    expect(card!.querySelector("button")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Install Mobile Installed" })).toBeNull();
+  });
+
+  it("keeps the snippet editor, actions, and execution-skill sections reachable in the narrow layout", async () => {
+    mockFetchGlobalSettings.mockResolvedValue({
+      chatSnippets: [{ name: "test", prompt: "lance toujours les tests avec chrome devtool mcp" }],
+    });
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 375 });
+    window.dispatchEvent(new Event("resize"));
+    const { SkillsView } = await import("../SkillsView");
+
+    render(<SkillsView projectId="mobile-project" addToast={vi.fn()} onClose={vi.fn()} />);
+
+    expect(await screen.findByText("/test")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Edit /test" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Delete /test" })).toBeTruthy();
+    expect(screen.getByLabelText("Chat snippet editor")).toBeTruthy();
+    expect(screen.getByText("Discovered Skills")).toBeTruthy();
+    expect(screen.getByText("Skills Catalog")).toBeTruthy();
   });
 
   it("renders .skills-view-content wrapper around sections", async () => {
@@ -262,9 +319,9 @@ describe("SkillsView component structure", () => {
     const contentWrapper = screen.getByTestId("skills-view").querySelector(".skills-view-content");
     expect(contentWrapper).not.toBeNull();
 
-    // The two sections should be inside the wrapper
+    // Snippets plus the two execution-skill sections should be inside the wrapper.
     const sections = contentWrapper!.querySelectorAll(".skills-view-section");
-    expect(sections.length).toBe(2);
+    expect(sections.length).toBe(3);
 
     // Header (now the shared ViewHeader: .view-header) should be outside the content
     // wrapper, directly on skills-view.

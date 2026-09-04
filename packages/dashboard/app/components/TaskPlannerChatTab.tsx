@@ -1,6 +1,6 @@
-import type { ChatInFlightGenerationState, ChatMessage, ResolvedModelSelection, Task, TaskDetail } from "@fusion/core";
+import type { ChatInFlightGenerationState, ChatMessage, ChatSnippet, ResolvedModelSelection, Settings, Task, TaskDetail } from "@fusion/core";
 import { isWipColumnRole } from "../utils/columnRoles";
-import { getErrorMessage } from "@fusion/core";
+import { getErrorMessage, isExperimentalFeatureEnabled, CHAT_FOCUS_FLAG } from "@fusion/core";
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Loader2, Maximize2, Minimize2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -9,16 +9,17 @@ import { useComposerDictation } from "../hooks/useComposerDictation";
 import { getPersistedPendingChatMessages, setPersistedPendingChatMessages } from "../hooks/chatPendingMessageStorage";
 import { MicButton } from "./MicButton";
 import type { ChatMessageInfo, ToolCallInfo } from "../hooks/chatTypes";
-import { attachChatStream, cancelChatResponse, ensureTaskPlannerChatSession, fetchChatMessages, fetchChatSession, fetchTaskDetail, fetchTaskPlannerChatSession, streamChatResponse, updateChatSession, type ChatFailureInfo, type ChatStreamErrorMeta } from "../api";
+import { attachChatStream, cancelChatResponse, ensureTaskPlannerChatSession, fetchChatMessages, fetchChatSession, fetchSettings, fetchTaskDetail, fetchTaskPlannerChatSession, streamChatResponse, updateChatSession, type ChatFailureInfo, type ChatStreamErrorMeta } from "../api";
 import { parseQuestionToolCall, type ParsedQuestionToolCall } from "../utils/parseQuestionToolCall";
 import { ChatQuestionResponse } from "./ChatQuestionResponse";
 import { PendingChatMessageQueue } from "./PendingChatMessageQueue";
 import { ProviderIcon } from "./ProviderIcon";
-import { CustomModelDropdown } from "./CustomModelDropdown";
 import { ChatThinkingLevelControl } from "./ChatThinkingLevelControl";
 import { useModelsCache } from "../hooks/useModelsCache";
+import { useChatSnippets } from "../hooks/useChatSnippetsCache";
 import { StandardChatActionButton, StandardChatMessageItem, StandardStreamingMessage, formatModelTag } from "./StandardChatSurface";
-import { CHAT_COMMANDS, filterChatCommands, getSlashTriggerMatch, matchChatCommand, type ChatCommand } from "./chat-commands";
+import { filterChatCommands, getSlashTriggerMatch, matchChatCommand, selectChatCommands, type ChatCommand } from "./chat-commands";
+import { applySnippetToDraft, filterChatSnippets, matchStandaloneSnippetInvocation } from "./chat-snippets";
 import { useChatMessageLayout } from "../context/ChatMessageLayoutContext";
 import {
   createChatInputAutosizeController,
@@ -41,6 +42,10 @@ interface TaskPlannerChatTabProps {
 }
 
 type ComposerState = "idle" | "sending";
+
+type PlannerSlashMenuEntry =
+  | { kind: "command"; command: ChatCommand }
+  | { kind: "snippet"; snippet: ChatSnippet };
 
 type PendingQueueReservation = {
   sessionId: string;
@@ -341,6 +346,7 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
   persisted per-conversation focus without a full session refetch.
   */
   const [sessionMemoryFocus, setSessionMemoryFocus] = useState<string | null>(null);
+  const [chatSettings, setChatSettings] = useState<Settings | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");
   const [pendingMessages, setPendingMessages] = useState<string[]>([]);
@@ -348,6 +354,7 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
   const composerTextareaRef = useRef<HTMLTextAreaElement>(null);
   const autosizeRef = useRef<ChatInputAutosizeController | null>(null);
   const dictation = useComposerDictation({ textareaRef: composerTextareaRef, value: draft, onChange: setDraft, projectId });
+  const chatSnippets = useChatSnippets();
   const [showCommandMenu, setShowCommandMenu] = useState(false);
   const [commandFilter, setCommandFilter] = useState("");
   const [highlightedCommandIndex, setHighlightedCommandIndex] = useState(0);
@@ -387,6 +394,23 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
     taskChatModelRef.current = taskChatModel;
   }, [addToast, onTaskUpdated, taskChatModel]);
 
+  useEffect(() => {
+    let cancelled = false;
+    setChatSettings(null);
+    fetchSettings(projectId)
+      .then((settings) => {
+        if (!cancelled) setChatSettings(settings);
+      })
+      .catch(() => {
+        if (!cancelled) setChatSettings(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
+
+  const chatFocusEnabled = isExperimentalFeatureEnabled(chatSettings ?? undefined, CHAT_FOCUS_FLAG);
+  const selectedChatCommands = useMemo(() => selectChatCommands({ chatFocusEnabled }), [chatFocusEnabled]);
   const [sessionModel, setSessionModel] = useState<ResolvedModelSelection & { thinkingLevel?: string }>(taskChatModel);
   const hasLocalTargetOverrideRef = useRef(false);
   const { models, favoriteProviders, favoriteModels } = useModelsCache();
@@ -523,7 +547,18 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
   planner edits could land against a task already being implemented.
   */
   const agentRunning = isWipColumnRole(columnFlags, task.column);
-  const filteredCommands = useMemo(() => filterChatCommands(commandFilter, CHAT_COMMANDS), [commandFilter]);
+  const filteredCommands = useMemo(
+    () => filterChatCommands(commandFilter, selectedChatCommands),
+    [commandFilter, selectedChatCommands],
+  );
+  const filteredSnippets = useMemo(
+    () => filterChatSnippets(commandFilter, chatSnippets),
+    [chatSnippets, commandFilter],
+  );
+  const slashMenuEntries = useMemo<PlannerSlashMenuEntry[]>(() => [
+    ...filteredCommands.map((command) => ({ kind: "command" as const, command })),
+    ...filteredSnippets.map((snippet) => ({ kind: "snippet" as const, snippet })),
+  ], [filteredCommands, filteredSnippets]);
 
   useEffect(() => {
     setHighlightedCommandIndex(0);
@@ -1069,7 +1104,7 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
   }, [messages, refreshMessagesForSession, refreshTaskAfterEdit, sessionId, startPlannerStream, t]);
 
   const dispatchSlashCommand = useCallback(async (command: ChatCommand, remainder: string) => {
-    if (!agentRunning) {
+    if (command.requiresAgent && !agentRunning) {
       // Do not silently fall back to a normal chat message: /steer with no
       // running agent is a no-op with feedback, not a plain send.
       addToastRef.current(t("taskDetail.plannerChat.commandNoRunningAgent", "No running agent to steer"), "warning");
@@ -1126,21 +1161,55 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
     setHighlightedCommandIndex(0);
   }, [agentRunning, t]);
 
+  const handleSnippetMenuSelect = useCallback((snippet: ChatSnippet) => {
+    const applied = applySnippetToDraft(
+      draft,
+      snippet,
+      composerTextareaRef.current?.selectionStart ?? draft.length,
+    );
+    if (!applied) return;
+    setDraft(applied.value);
+    setShowCommandMenu(false);
+    setCommandFilter("");
+    setHighlightedCommandIndex(0);
+    window.requestAnimationFrame(() => {
+      composerTextareaRef.current?.focus();
+      composerTextareaRef.current?.setSelectionRange(applied.cursorPosition, applied.cursorPosition);
+      autosizeRef.current?.resize();
+    });
+  }, [draft]);
+
   const sendMessage = useCallback(() => {
     const trimmed = draft.trim();
-    const commandMatch = matchChatCommand(trimmed, CHAT_COMMANDS);
+    const snippetInvocation = matchStandaloneSnippetInvocation(trimmed, chatSnippets);
+    if (snippetInvocation) {
+      /*
+      FNXC:ChatSnippets 2026-09-03-15:56:
+      A standalone /name expands before command dispatch, streaming, optimistic transcript work, or persistent pending-queue writes. The operator must explicitly submit the inserted prompt a second time.
+      */
+      setDraft(snippetInvocation.prompt);
+      setShowCommandMenu(false);
+      setCommandFilter("");
+      window.requestAnimationFrame(() => {
+        composerTextareaRef.current?.focus();
+        composerTextareaRef.current?.setSelectionRange(snippetInvocation.prompt.length, snippetInvocation.prompt.length);
+        autosizeRef.current?.resize();
+      });
+      return;
+    }
+    const commandMatch = matchChatCommand(trimmed, selectedChatCommands);
     if (commandMatch) {
       setShowCommandMenu(false);
       return dispatchSlashCommand(commandMatch.command, commandMatch.remainder);
     }
     return sendMessageContent(draft);
-  }, [draft, dispatchSlashCommand, sendMessageContent]);
+  }, [chatSnippets, draft, dispatchSlashCommand, selectedChatCommands, sendMessageContent]);
 
   const handleDraftChange = useCallback((event: React.ChangeEvent<HTMLTextAreaElement>) => {
     const nextValue = event.target.value;
     setDraft(nextValue);
 
-    const triggerMatch = getSlashTriggerMatch(nextValue);
+    const triggerMatch = getSlashTriggerMatch(nextValue.slice(0, event.target.selectionStart ?? nextValue.length));
     if (triggerMatch) {
       setShowCommandMenu(true);
       setCommandFilter(triggerMatch.filter);
@@ -1282,25 +1351,27 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
   const handleKeyDown = useCallback((event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (showCommandMenu && event.key === "ArrowDown") {
       event.preventDefault();
-      if (filteredCommands.length > 0) {
-        setHighlightedCommandIndex((prev) => (prev + 1) % filteredCommands.length);
+      if (slashMenuEntries.length > 0) {
+        setHighlightedCommandIndex((prev) => (prev + 1) % slashMenuEntries.length);
       }
       return;
     }
 
     if (showCommandMenu && event.key === "ArrowUp") {
       event.preventDefault();
-      if (filteredCommands.length > 0) {
-        setHighlightedCommandIndex((prev) => (prev === 0 ? filteredCommands.length - 1 : prev - 1));
+      if (slashMenuEntries.length > 0) {
+        setHighlightedCommandIndex((prev) => (prev === 0 ? slashMenuEntries.length - 1 : prev - 1));
       }
       return;
     }
 
-    if (showCommandMenu && (event.key === "Enter" || event.key === "Tab") && !event.shiftKey && filteredCommands.length > 0) {
+    if (showCommandMenu && (event.key === "Enter" || event.key === "Tab") && !event.shiftKey && slashMenuEntries.length > 0) {
       event.preventDefault();
-      const commandToSelect = filteredCommands[highlightedCommandIndex] ?? filteredCommands[0];
-      if (commandToSelect) {
-        handleCommandMenuSelect(commandToSelect);
+      const entryToSelect = slashMenuEntries[highlightedCommandIndex] ?? slashMenuEntries[0];
+      if (entryToSelect?.kind === "command") {
+        handleCommandMenuSelect(entryToSelect.command);
+      } else if (entryToSelect?.kind === "snippet") {
+        handleSnippetMenuSelect(entryToSelect.snippet);
       }
       return;
     }
@@ -1314,7 +1385,7 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
     if (event.key !== "Enter" || event.shiftKey) return;
     event.preventDefault();
     void sendMessage();
-  }, [showCommandMenu, filteredCommands, highlightedCommandIndex, handleCommandMenuSelect, sendMessage]);
+  }, [showCommandMenu, slashMenuEntries, highlightedCommandIndex, handleCommandMenuSelect, handleSnippetMenuSelect, sendMessage]);
 
   const canSend = draft.trim().length > 0 && composerState !== "sending" && !queueActionPending;
   const showEmptyState = historyLoaded && !loading && !error && messages.length === 0;
@@ -1584,12 +1655,30 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
           className="chat-skill-menu task-planner-chat-command-menu"
           data-testid="task-planner-chat-command-menu"
           role="listbox"
-          aria-label={t("chat.commandSuggestions", "Command suggestions")}
+          aria-label={t("chat.slashSuggestions", "Slash suggestions")}
         >
-          {filteredCommands.length === 0 ? (
-            <div className="chat-skill-menu-empty">{t("chat.noCommandsFound", "No commands found")}</div>
+          {slashMenuEntries.length === 0 ? (
+            <div className="chat-skill-menu-empty">{t("chat.noSlashSuggestions", "No suggestions found")}</div>
           ) : (
-            filteredCommands.map((command, index) => {
+            slashMenuEntries.map((entry, index) => {
+              if (entry.kind === "snippet") {
+                return (
+                  <button
+                    key={`snippet-${entry.snippet.name}`}
+                    type="button"
+                    role="option"
+                    aria-selected={index === highlightedCommandIndex}
+                    className={`chat-skill-menu-item${index === highlightedCommandIndex ? " chat-skill-menu-item--highlighted" : ""}`}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onMouseEnter={() => setHighlightedCommandIndex(index)}
+                    onClick={() => handleSnippetMenuSelect(entry.snippet)}
+                  >
+                    <span className="chat-skill-menu-item-name">/{entry.snippet.name}</span>
+                    <span className="chat-skill-menu-item-description">{t("chat.snippetSuggestion", "Insert saved prompt")}</span>
+                  </button>
+                );
+              }
+
               /*
               FNXC:ChatMemoryFocus 2026-08-13:
               RUFU-068: disable only agent-gated commands (steer) when no agent is
@@ -1597,67 +1686,68 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
               appears disabled. Only the disabled item shows the no-running-agent hint so
               the focus menu entry keeps its real description.
               */
-              const commandDisabled = command.requiresAgent && !agentRunning;
+              const commandDisabled = entry.command.requiresAgent && !agentRunning;
               return (
-              <button
-                key={command.trigger}
-                type="button"
-                role="option"
-                aria-selected={index === highlightedCommandIndex}
-                aria-disabled={commandDisabled}
-                className={`chat-skill-menu-item chat-command-menu-item${index === highlightedCommandIndex ? " chat-skill-menu-item--highlighted" : ""}${commandDisabled ? " chat-command-menu-item--disabled" : ""}`}
-                onMouseDown={(e) => e.preventDefault()}
-                onMouseEnter={() => setHighlightedCommandIndex(index)}
-                onClick={() => handleCommandMenuSelect(command)}
-              >
-                <span className="chat-skill-menu-item-name">{command.trigger}</span>
-                <span className="chat-skill-menu-item-description">
-                  {commandDisabled
-                    ? t("chat.commandNoRunningAgentHint", "No running agent to steer")
-                    : command.description}
-                </span>
-              </button>
+                <button
+                  key={entry.command.trigger}
+                  type="button"
+                  role="option"
+                  aria-selected={index === highlightedCommandIndex}
+                  aria-disabled={commandDisabled}
+                  className={`chat-skill-menu-item chat-command-menu-item${index === highlightedCommandIndex ? " chat-skill-menu-item--highlighted" : ""}${commandDisabled ? " chat-command-menu-item--disabled" : ""}`}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onMouseEnter={() => setHighlightedCommandIndex(index)}
+                  onClick={() => handleCommandMenuSelect(entry.command)}
+                >
+                  <span className="chat-skill-menu-item-name">{entry.command.trigger}</span>
+                  <span className="chat-skill-menu-item-description">
+                    {commandDisabled
+                      ? t("chat.commandNoRunningAgentHint", "No running agent to steer")
+                      : entry.command.description}
+                  </span>
+                </button>
               );
             })
           )}
         </div>
       )}
-      <div className="task-planner-chat-focus-row">
-        <ChatFocusSelector
-          sessionId={sessionId}
-          projectId={projectId}
-          memoryFocus={sessionMemoryFocus}
-          onPersist={(focus) => setSessionMemoryFocus(focus)}
-          addToast={(message, type) => addToastRef.current(message, type)}
-        />
-      </div>
-      <div className="task-planner-chat-composer">
-        <div className="task-planner-chat-target-controls" data-testid="task-planner-chat-target-controls">
-          <CustomModelDropdown
-            id="task-planner-chat-model-selector"
-            label={t("taskDetail.plannerChat.modelLabel", "Chat model")}
-            models={models}
-            value={displayedModelProvider && displayedModelId ? `${displayedModelProvider}/${displayedModelId}` : ""}
-            onChange={(value) => void handleTaskChatModelChange(value)}
-            placeholder={t("model.selectPlaceholder", "Select a model…")}
-            defaultOptionLabel={t("models.useDefault", "Use project default")}
-            /*
-            FNXC:TaskChatModelMenu 2026-08-21-01:12:
-            Task Chat keeps its compact composer trigger, but long provider/model names need Direct Chat's readable, viewport-clamped portaled menu on desktop and mobile.
-            */
-            menuWidth="readable"
-            favoriteProviders={favoriteProviders}
-            favoriteModels={favoriteModels}
-            disabled={queueActionPending || composerState === "sending"}
-          />
-          <ChatThinkingLevelControl
-            level={displayedModel.thinkingLevel}
-            defaultThinkingLevel={taskChatModel.thinkingLevel ?? "off"}
-            showTargetSection={false}
-            onChange={(level) => void handleTaskChatThinkingChange(level)}
-            disabled={queueActionPending || composerState === "sending"}
+      {/*
+      FNXC:ChatMemoryFocus 2026-08-24-04:21:
+      Suppress the focus chip and its padded wrapper together until experimentalFeatures.chatFocus
+      is enabled, so default-off planner chat leaves no empty composer shell.
+      */}
+      {chatFocusEnabled && (
+        <div className="task-planner-chat-focus-row">
+          <ChatFocusSelector
+            sessionId={sessionId}
+            projectId={projectId}
+            memoryFocus={sessionMemoryFocus}
+            onPersist={(focus) => setSessionMemoryFocus(focus)}
+            addToast={(message, type) => addToastRef.current(message, type)}
           />
         </div>
+      )}
+      <div className="task-planner-chat-composer">
+        <ChatThinkingLevelControl
+          level={displayedModel.thinkingLevel}
+          defaultThinkingLevel={taskChatModel.thinkingLevel ?? "off"}
+          showTargetSection
+          showAgentTarget={false}
+          targetKey={plannerChatScopeKey}
+          models={models}
+          favoriteProviders={favoriteProviders}
+          favoriteModels={favoriteModels}
+          modelProvider={displayedModelProvider ?? null}
+          modelId={displayedModelId ?? null}
+          modelPickerLabel={t("taskDetail.plannerChat.modelLabel", "Chat model")}
+          modelDefaultOptionLabel={t("models.useDefault", "Use project default")}
+          defaultModelValue={taskChatModel.provider && taskChatModel.modelId ? `${taskChatModel.provider}/${taskChatModel.modelId}` : ""}
+          onChange={(level) => void handleTaskChatThinkingChange(level)}
+          onChangeModel={(selection) => void handleTaskChatModelChange(
+            selection.modelProvider && selection.modelId ? `${selection.modelProvider}/${selection.modelId}` : "",
+          )}
+          disabled={queueActionPending || composerState === "sending"}
+        />
         <textarea
           ref={handleComposerRef}
           className="input task-planner-chat-input"

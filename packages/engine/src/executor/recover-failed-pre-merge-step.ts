@@ -2,38 +2,44 @@
  * FNXC:CodeOrganization 2026-08-03-09:20:
  * recoverFailedPreMergeWorkflowStep peeled from TaskExecutor (U4).
  *
- * Auto-revive an `in-review` task whose pre-merge workflow step(s) failed, by replaying
- * the same send-back-for-fix flow the executor uses during a live run. Invoked by
- * SelfHealingManager's `recoverReviewTasksWithFailedPreMergeSteps` scan when a task is
- * parked in review with a failed pre-merge step and no active session. Picks the latest
- * failed pre-merge workflow step result, injects feedback into PROMPT.md, resets steps,
- * and schedules todo → in-progress. Independently enforces the effective finite-or-unlimited
- * revision budget before it can reopen work.
- *
  * FNXC:WorkflowPostMerge 2026-06-26-14:00:
- * U7c: gate-ness is now sourced from the recorded `WorkflowStepResult.status`, NOT a
- * `workflow_steps` table read. The graph executor (workflow-graph-executor.ts) maps a
- * group outcome to status by gate semantics: a GATE REVISE / hard failure records
- * `status: "failed"` (blocking), while an ADVISORY REVISE records `status:
- * "advisory_failure"` (non-blocking). So a pre-merge result with `status === "failed"`
- * IS by construction a blocking gate failure — the prior `getWorkflowStep(id).gateMode`
- * lookup was redundant (and after the table drop it returned undefined for graph node
- * ids anyway). Recovery revives the task from the latest blocking pre-merge failure.
- *
- * FNXC:WorkflowRevisionBudget 2026-07-22-18:30:
- * Failed-step recovery is also a remediation entry point, not merely a
- * retry-label formatter. Enforce the same finite Code Review budget here
- * as live and restart-local graph remediation: an unset policy remains
- * unlimited, while zero or an exhausted explicit cap cannot silently send
- * work back for another fix. Progress-loop termination stays owned by the
- * graph executor's signature guard rather than this budget check.
+ * A failed pre-merge result is a blocking gate failure by construction. Recovery revives the task
+ * from that failed gate while retaining the gate's structured findings for the implementer.
  */
 import type { Task, TaskStore, WorkflowStepResult as CoreWorkflowStepResult } from "@fusion/core";
-import { hasPreMergeRemediationAutoMergeHold } from "@fusion/core";
+import { hasPreMergeRemediationAutoMergeHold, resolveStepReopenPolicy, resolveWorkflowIrForTask } from "@fusion/core";
 import { executorLog } from "../logger.js";
 import type { EngineRunContext } from "../util/run-audit.js";
+import type {
+  AppendReviewRemediationOptions,
+  AppendReviewRemediationOutcome,
+} from "./append-review-remediation-steps.js";
+import { reassertRemediationAttempt } from "./claim-review-remediation-attempt.js";
+import { ClaimSupersededError, fenceStoreForClaim } from "./fence-store-for-claim.js";
 import { routeReviewConvergenceLadder } from "./review-convergence-ladder.js";
-import { hasRepeatedUnchangedReview } from "./request-pre-merge-optional-step-fix.js";
+import { hasRepeatedUnchangedReview, reviewInputSignature, type RequestPreMergeOptionalStepFixInfo } from "./request-pre-merge-optional-step-fix.js";
+import { resolveReviewRemediationGate } from "./review-remediation-gate.js";
+import { resolveRemediationCheckout } from "./resolve-remediation-checkout.js";
+import { isDefiniteEmptyCodeReviewRevise } from "./review-empty-content-close.js";
+
+export type RemediationRefusalReason =
+  | "no-actionable-findings"
+  | "upstream-out-of-scope"
+  | "unclassified-gate-no-reopen"
+  | "appender-declined";
+
+export type ReviewRemediationAttemptDescriptor = {
+  workflowStepId: string;
+  signature: string;
+  owner: string;
+};
+
+/** The caller distinguishes a durable refusal from a transient skip or a stale claimed review. */
+export type RecoverFailedPreMergeStepOutcome =
+  | { kind: "scheduled" }
+  | { kind: "refused"; reason: RemediationRefusalReason; gate: string }
+  | { kind: "skipped" }
+  | { kind: "superseded" };
 
 export type RecoverFailedPreMergeStepDeps = {
   store: TaskStore;
@@ -43,6 +49,11 @@ export type RecoverFailedPreMergeStepDeps = {
     task: Task,
     target: CoreWorkflowStepResult,
   ) => Promise<{ unbounded: boolean; max: number; label: string; key: string; stepName?: string; attempts: number }>;
+  appendReviewRemediationSteps?: (
+    task: Task,
+    info: RequestPreMergeOptionalStepFixInfo,
+    options?: AppendReviewRemediationOptions,
+  ) => Promise<AppendReviewRemediationOutcome>;
   sendTaskBackForFix: (
     task: Task,
     worktreePath: string,
@@ -53,75 +64,166 @@ export type RecoverFailedPreMergeStepDeps = {
     mergeVerificationFailure?: boolean,
     retryPresentation?: { attempt: number; max?: number },
     findings?: CoreWorkflowStepResult["findings"],
+    persistWorktreePath?: boolean,
+    stepReopenPolicy?: "reopen-trailing" | "none",
   ) => Promise<void>;
 };
 
-export async function recoverFailedPreMergeWorkflowStep(
-  deps: RecoverFailedPreMergeStepDeps,
+function latestFailedPreMergeStep(task: Pick<Task, "workflowStepResults">): CoreWorkflowStepResult | undefined {
+  return (task.workflowStepResults ?? [])
+    .filter((result) => (result.phase || "pre-merge") === "pre-merge" && result.status === "failed")
+    .sort((left, right) => {
+      const leftTime = Date.parse(left.completedAt || left.startedAt || "");
+      const rightTime = Date.parse(right.completedAt || right.startedAt || "");
+      return (Number.isFinite(rightTime) ? rightTime : 0) - (Number.isFinite(leftTime) ? leftTime : 0);
+    })[0];
+}
+
+function refusalFromAppender(outcome: AppendReviewRemediationOutcome): RemediationRefusalReason {
+  switch (outcome) {
+    case "released-no-actionable-findings":
+    case "released-no-pending-work":
+      return "no-actionable-findings";
+    case "released-upstream-out-of-scope":
+      return "upstream-out-of-scope";
+    default:
+      return "appender-declined";
+  }
+}
+
+/** True only for the successful hand-off outcome; callers must not treat every object as success. */
+export function isRecoverFailedPreMergeStepScheduled(outcome: RecoverFailedPreMergeStepOutcome): boolean {
+  return outcome.kind === "scheduled";
+}
+
+/**
+ * FNXC:LifecycleContainment 2026-08-30-13:36:
+ * A claimed recovery runs against the same fenced store the live requester uses. Its refusal
+ * branches — operator hold, checkout unavailable, zero/exhausted budget, the convergence ladder —
+ * each NARRATE on the task, and a log entry cannot be withdrawn by a later fenced refusal. Fencing
+ * the store, rather than adding a check per branch, is what stops the next branch from reopening
+ * the hole: supersession surfaces as a thrown sentinel and becomes a silent `superseded` outcome.
+ */
+export async function recoverFailedPreMergeWorkflowStepDetailed(
+  rawDeps: RecoverFailedPreMergeStepDeps,
   task: Task,
-): Promise<boolean> {
+  options: { claim?: ReviewRemediationAttemptDescriptor } = {},
+): Promise<RecoverFailedPreMergeStepOutcome> {
+  const deps: RecoverFailedPreMergeStepDeps = options.claim
+    ? { ...rawDeps, store: fenceStoreForClaim(rawDeps.store, task.id, options.claim) }
+    : rawDeps;
   try {
     /*
-     * FNXC:SharedBranchMemberHold 2026-08-06-00:12:
-     * Startup/self-healing recovery is another pre-merge remediation requester.
-     * Do not let it send a user-held member back to execution: only an explicit
-     * operator release or revision may advance that manual checkpoint.
-     *
-     * FNXC:SharedBranchMemberHold 2026-08-09-21:41:
-     * FN-8910: recovery reopens implementation rather than merging. Project
-     * Off remains enforced at merge admission; only an operator task Off
-     * fences this seam, and a refusal must be visible to the operator.
-     */
-    if (hasPreMergeRemediationAutoMergeHold(task, await deps.store.getSettings())) {
-      const reason = "operator-authored task-level auto-merge Off holds failed-step recovery";
-      executorLog.warn(`${task.id}: failed pre-merge step recovery NOT scheduled — ${reason}. Card left parked.`);
-      await deps.store.logEntry(
-        task.id,
-        "Failed pre-merge step recovery not scheduled — operator task hold",
-        `Reason: ${reason}`,
-        deps.runContextFor(task.id),
-      );
-      return false;
+    FNXC:LifecycleContainment 2026-08-30-12:57:
+    A claim-scoped recovery must resolve its exact failed result before emitting a comment, logging a
+    refusal, appending work, or asking for a move. The step id is the durable address and the review
+    signature identifies its round; a moved or absent target is superseded and remains completely
+    silent so an older worker cannot narrate or remediate a newer review.
+    */
+    let liveTask = task;
+    let target: CoreWorkflowStepResult | undefined;
+    if (options.claim) {
+      const current = await deps.store.getTask(task.id);
+      target = current?.workflowStepResults?.find((result) => result.workflowStepId === options.claim!.workflowStepId);
+      if (!current || !target || reviewInputSignature(target) !== options.claim.signature) return { kind: "superseded" };
+      liveTask = current;
+    } else {
+      target = latestFailedPreMergeStep(task);
     }
-    const failed = (task.workflowStepResults ?? [])
-      .filter((r) => (r.phase || "pre-merge") === "pre-merge" && r.status === "failed")
-      .sort((a, b) => {
-        const aTs = Date.parse(a.completedAt || a.startedAt || "");
-        const bTs = Date.parse(b.completedAt || b.startedAt || "");
-        return (Number.isFinite(bTs) ? bTs : 0) - (Number.isFinite(aTs) ? aTs : 0);
-      });
-
-    const target = failed[0];
     if (!target) {
       executorLog.warn(`${task.id}: no failed pre-merge workflow step to recover from`);
-      return false;
+      return { kind: "skipped" };
+    }
+
+    if (hasPreMergeRemediationAutoMergeHold(liveTask, await deps.store.getSettings())) {
+      const reason = "operator-authored task-level auto-merge Off holds failed-step recovery";
+      executorLog.warn(`${liveTask.id}: failed pre-merge step recovery NOT scheduled — ${reason}. Card left parked.`);
+      await deps.store.logEntry(
+        liveTask.id,
+        "Failed pre-merge step recovery not scheduled — operator task hold",
+        `Reason: ${reason}`,
+        deps.getRunContextFor?.(liveTask.id),
+      );
+      return { kind: "skipped" };
     }
 
     const feedback = target.output?.trim() || "(no feedback captured)";
     const stepName = target.workflowStepName || target.workflowStepId || "Unknown";
-    const budget = await deps.resolveFailedPreMergeWorkflowStepBudget(task, target);
-    /*
-     * FNXC:WorkflowRevisionBudget 2026-08-09-21:41:
-     * FN-8910: recovery-budget refusals park a card with no new session, so
-     * they must log their concrete attempt/max values before returning false.
-     */
-    if (!budget.unbounded && (!Number.isFinite(budget.max) || budget.max <= 0)) {
-      executorLog.warn(`${task.id}: failed pre-merge step recovery NOT scheduled for "${stepName}" — revision budget is zero/invalid (attempts=${budget.attempts}, max=${String(budget.max)}). Card left parked.`);
+    const checkout = resolveRemediationCheckout(liveTask, target);
+    if (!checkout) {
+      executorLog.warn(`${liveTask.id}: failed pre-merge step recovery NOT scheduled for "${stepName}" — no remediation checkout is available. Card left parked.`);
       await deps.store.logEntry(
-        task.id,
+        liveTask.id,
+        "Failed pre-merge step recovery not scheduled — checkout unavailable",
+        `Step: ${stepName}\nNo singular worktree or acquired workspace repository worktree is available. Retry after restoring the task checkout, or use the privileged review bypass when the failed review is known to be non-blocking.`,
+        deps.getRunContextFor?.(liveTask.id),
+      );
+      return { kind: "skipped" };
+    }
+
+    const info: RequestPreMergeOptionalStepFixInfo = {
+      nodeId: target.workflowStepId,
+      stepName,
+      feedback,
+      phase: target.phase ?? "pre-merge",
+      status: target.status,
+      verdict: target.verdict,
+      findings: target.findings,
+      reviewKind: target.reviewKind,
+    };
+    const gate = resolveReviewRemediationGate(info);
+    const producesRemediation = Boolean(
+      gate && deps.appendReviewRemediationSteps && (gate !== "Code Review" || target.verdict === "REVISE"),
+    );
+
+    /*
+    FNXC:ReviewEmptyContent 2026-08-30-13:36:
+    FN-267: the empty-diff close must never PRE-EMPT the deterministic Fix-step producer. A Code
+    Review REVISE carrying the empty-diff fingerprint but no usable findings used to park terminally
+    right here, which is the one outcome the operator requirement forbids — a REVISE may not block a
+    card merely because fix steps were absent. The close is now the FALLBACK for a review no producer
+    can serve: it keeps its original position (ahead of every budget branch) for gates with no
+    producer, and otherwise runs only after the producer has actually declined.
+    */
+    const closeEmptyReviewContent = async (): Promise<boolean> => {
+      const emptyTarget = target;
+      if (!isDefiniteEmptyCodeReviewRevise(emptyTarget)) return false;
+      const outcome = await routeReviewConvergenceLadder({
+        ...deps,
+        getRunContextFor: deps.getRunContextFor ?? (() => undefined),
+      }, liveTask.id, {
+        kind: "empty-review-input",
+        workflowStepId: emptyTarget.workflowStepId,
+        stepName,
+        feedback,
+        findings: emptyTarget.findings,
+        attempt: 1,
+        emptyInputFence: {
+          workflowStepId: emptyTarget.workflowStepId,
+          stepName,
+          expectedStartedAt: emptyTarget.startedAt,
+          expectedCompletedAt: emptyTarget.completedAt,
+          expectedVerdict: emptyTarget.verdict,
+          expectedReviewInputFingerprint: emptyTarget.reviewInputFingerprint!,
+        },
+      });
+      return outcome === "empty-content-terminalized";
+    };
+    if (!producesRemediation && await closeEmptyReviewContent()) return { kind: "skipped" };
+
+    const budget = await deps.resolveFailedPreMergeWorkflowStepBudget(liveTask, target);
+    if (!budget.unbounded && (!Number.isFinite(budget.max) || budget.max <= 0)) {
+      executorLog.warn(`${liveTask.id}: failed pre-merge step recovery NOT scheduled for "${stepName}" — revision budget is zero/invalid (attempts=${budget.attempts}, max=${String(budget.max)}). Card left parked.`);
+      await deps.store.logEntry(
+        liveTask.id,
         "Failed pre-merge step recovery not scheduled — revision budget zero/invalid",
         `Step: ${stepName}\nAttempts: ${budget.attempts}\nMax: ${String(budget.max)}`,
-        deps.runContextFor(task.id),
+        deps.runContextFor?.(liveTask.id),
       );
-      return false;
+      return { kind: "skipped" };
     }
-    /*
-    FNXC:ReviewConvergence 2026-08-22-05:44:
-    Recovery is an independent remediation requester. It must compare the durable current
-    review input before bouncing an unlimited budget, otherwise restart recovery recreates the
-    unchanged-review loop that the live graph path already escalates.
-    */
-    if (hasRepeatedUnchangedReview(task, {
+
+    if (hasRepeatedUnchangedReview(liveTask, {
       nodeId: target.workflowStepId,
       stepName,
       feedback,
@@ -133,50 +235,94 @@ export async function recoverFailedPreMergeWorkflowStep(
       const outcome = await routeReviewConvergenceLadder({
         ...deps,
         getRunContextFor: deps.getRunContextFor ?? (() => undefined),
-      }, task.id, {
+      }, liveTask.id, {
         kind: "repeat-unchanged", workflowStepId: target.workflowStepId, stepName,
         feedback, findings: target.findings, attempt: budget.attempts,
         max: budget.unbounded ? undefined : budget.max,
       });
-      if (outcome === "escalated" || outcome === "arbitrated") return true;
-      return false;
+      return outcome === "escalated" || outcome === "arbitrated"
+        ? { kind: "scheduled" }
+        : { kind: "skipped" };
     }
     if (!budget.unbounded && budget.attempts >= budget.max) {
       const outcome = await routeReviewConvergenceLadder({
         ...deps,
         getRunContextFor: deps.getRunContextFor ?? (() => undefined),
-      }, task.id, {
+      }, liveTask.id, {
         kind: "budget-exhausted", workflowStepId: target.workflowStepId, stepName,
         feedback, findings: target.findings, attempt: budget.attempts, max: budget.max,
       });
-      if (outcome === "escalated" || outcome === "arbitrated") return true;
-      executorLog.warn(`${task.id}: failed pre-merge step recovery NOT scheduled for "${stepName}" — revision budget exhausted (attempts=${budget.attempts}, max=${String(budget.max)}). Card left parked.`);
-      await deps.store.logEntry(task.id, "Failed pre-merge step recovery not scheduled — revision budget exhausted", `Step: ${stepName}\nAttempts: ${budget.attempts}\nMax: ${String(budget.max)}`, deps.runContextFor(task.id));
-      return false;
+      if (outcome === "escalated" || outcome === "arbitrated") return { kind: "scheduled" };
+      executorLog.warn(`${liveTask.id}: failed pre-merge step recovery NOT scheduled for "${stepName}" — revision budget exhausted (attempts=${budget.attempts}, max=${String(budget.max)}). Card left parked.`);
+      await deps.store.logEntry(liveTask.id, "Failed pre-merge step recovery not scheduled — revision budget exhausted", `Step: ${stepName}\nAttempts: ${budget.attempts}\nMax: ${String(budget.max)}`, deps.runContextFor?.(liveTask.id));
+      return { kind: "skipped" };
     }
 
+    const workflowIr = await resolveWorkflowIrForTask(deps.store, liveTask.id).catch(() => undefined);
+    const stepReopenPolicy = resolveStepReopenPolicy(workflowIr);
+
+    /*
+    FNXC:LifecycleContainment 2026-08-30-12:57:
+    FN-267 reverses the deadlocking order for recovery. A classified Code Review or Verification
+    first runs the shared named-remediation producer, which performs its own guarded hand-off only
+    after the Fix work is durable. The direct send-back route is reserved for an unclassified
+    trailing-reopen workflow, whose producer is its ordinary replay occurrence.
+    */
+    /*
+    FNXC:LifecycleContainment 2026-08-30-13:36:
+    The re-assert wraps the CALL to each hand-off, never its body: sendTaskBackForFix writes its
+    comment and "moved back" entry as its first durable acts, and the appender updates the task
+    before returning, so an inner check is already too late to keep the boundary. A refused
+    re-assert means a newer review round replaced the claimed one; the overtaken runner then goes
+    completely silent rather than narrating or remediating a round it never examined.
+    */
+    const holdsClaim = async (): Promise<boolean> => {
+      if (!options.claim) return true;
+      const reasserted = await reassertRemediationAttempt(deps.store, liveTask.id, options.claim);
+      return reasserted.applied;
+    };
+
+    if (producesRemediation && deps.appendReviewRemediationSteps) {
+      if (!await holdsClaim()) return { kind: "superseded" };
+      const appenderOutcome = await deps.appendReviewRemediationSteps(liveTask, info);
+      if (appenderOutcome === "appended") return { kind: "scheduled" };
+      /* The producer genuinely declined; only now may a provably empty round close terminally. */
+      if (await closeEmptyReviewContent()) return { kind: "skipped" };
+      return { kind: "refused", reason: refusalFromAppender(appenderOutcome), gate: gate ?? stepName };
+    }
+    if (stepReopenPolicy !== "reopen-trailing") {
+      return { kind: "refused", reason: "unclassified-gate-no-reopen", gate: stepName };
+    }
+    if (!await holdsClaim()) return { kind: "superseded" };
     await deps.sendTaskBackForFix(
-      task,
-      task.worktree ?? "",
+      liveTask,
+      checkout.path,
       feedback,
       stepName,
       `Auto-revived from in-review: pre-merge workflow step "${stepName}" had failed`,
       true,
       false,
       { attempt: budget.attempts + 1, max: budget.unbounded ? undefined : budget.max },
-      /*
-       * FNXC:ReviewSeverityGate 2026-08-10-17:33:
-       * Self-healing recovery of a failed pre-merge review step is the SAME remediation the executor
-       * schedules inline, so it must hand the implementer the same priority-grouped findings. Reading
-       * them off the persisted step result (rather than re-deriving from prose) is what keeps a
-       * restart-recovered bounce indistinguishable from a live one.
-       */
       target.findings,
+      checkout.persist,
+      stepReopenPolicy,
     );
-    return true;
+    return { kind: "scheduled" };
   } catch (err: unknown) {
+    if (err instanceof ClaimSupersededError) return { kind: "superseded" };
     const errorMessage = err instanceof Error ? err.message : String(err);
     executorLog.error(`Failed to recover failed pre-merge workflow step for ${task.id}: ${errorMessage}`);
-    return false;
+    return { kind: "skipped" };
   }
+}
+
+/**
+ * Compatibility entry point for existing non-claim callers. New owner-scoped recovery uses the
+ * detailed outcome so a durable refusal, transient skip, and supersession remain distinguishable.
+ */
+export async function recoverFailedPreMergeWorkflowStep(
+  deps: RecoverFailedPreMergeStepDeps,
+  task: Task,
+): Promise<boolean> {
+  return isRecoverFailedPreMergeStepScheduled(await recoverFailedPreMergeWorkflowStepDetailed(deps, task));
 }

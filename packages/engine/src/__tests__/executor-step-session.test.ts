@@ -1,7 +1,6 @@
 // -nocheck
 /* eslint-disable -eslint/no-unused-vars */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 import "./executor-test-helpers.js";
 import { AgentSemaphore } from "../concurrency/concurrency.js";
 import { detectReviewHandoffIntent, determineRevisionResetStart } from "../executor.js";
@@ -10,8 +9,6 @@ import { createFnAgent } from "../pi.js";
 import { reviewStep as mockedReviewStepFn } from "../execution/reviewer.js";
 import { execSync } from "node:child_process";
 import { findWorktreeUser, aiMergeTask } from "../merger.js";
-import { WorktreePool } from "../worktree/worktree-pool.js";
-import { generateWorktreeName, slugify } from "../worktree/worktree-names.js";
 import { isEphemeralAgent, type Task, type TaskDetail } from "@fusion/core";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { StepSessionExecutor } from "../execution/step-session-executor.js";
@@ -26,7 +23,6 @@ import {
   implementationSessionCalls,
   mockedCreateFnAgent,
   mockedSessionManager,
-  mockedGenerateWorktreeName,
   mockedFindWorktreeUser,
   mockedStepSessionExecutor,
   mockedWithRateLimitRetry,
@@ -349,8 +345,8 @@ describe("Workflow Steps Execution", () => {
       status: "queued",
       error: null,
       taskDoneRetryCount: 1,
-    }, ANY_MUTATION_CONTEXT);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo", { preserveProgress: true }, ANY_MUTATION_CONTEXT);
+    });
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo", { preserveProgress: true });
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-001",
       "Agent finished without calling fn_task_done (after 3 retries) — requeued to todo immediately (1/3)",
@@ -413,10 +409,10 @@ describe("Workflow Steps Execution", () => {
     expect(store.updateTask).toHaveBeenCalledWith("FN-001", {
       status: "failed",
       error: "Agent finished without calling fn_task_done (after 3 retries)",
-    }, ANY_MUTATION_CONTEXT);
+    });
     // FNXC:ExecutorMoveTask 2026-07-07-08:38: FN-7229 (984e36255d) stopped parking execution errors in review — an exhausted fn_task_done budget now marks the task failed in-place (executor.ts:11179) instead of moveTask→in-review. `in-review` is reserved for clean completion handoffs, so the task must NOT be moved there. (Line 236 already asserts status=failed.)
-    expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "in-review", undefined, ANY_MUTATION_CONTEXT);
-    expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "todo", undefined, ANY_MUTATION_CONTEXT);
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "in-review");
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "todo");
     expect(onError).toHaveBeenCalledWith(
       expect.objectContaining({ id: "FN-001" }),
       expect.objectContaining({ message: "Agent finished without calling fn_task_done (after 3 retries)" }),
@@ -477,17 +473,20 @@ describe("Workflow Steps Execution", () => {
 
     await executor.execute(task as any);
 
-    expect(store.updateTask).toHaveBeenCalledWith("FN-ASSISTANT-STALE", {
-      sessionFile: null,
-      recoveryRetryCount: 1,
-      nextRecoveryAt: expect.any(String),
-    }, ANY_MUTATION_CONTEXT);
-    expect(store.updateTask).toHaveBeenCalledWith("FN-ASSISTANT-STALE", {
-      sessionFile: null,
-      status: null,
-      error: null,
-    }, ANY_MUTATION_CONTEXT);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-ASSISTANT-STALE", "todo", { preserveResumeState: true }, ANY_MUTATION_CONTEXT);
+    const retryRecoveryWrite = store.updateTask.mock.calls.find(
+      ([id, patch, runContext]) => id === "FN-ASSISTANT-STALE"
+        && patch?.sessionFile === null
+        && patch?.recoveryRetryCount === 1
+        && typeof patch?.nextRecoveryAt === "string"
+        && runContext === undefined,
+    );
+    expect(retryRecoveryWrite).toHaveLength(2);
+    expect(retryRecoveryWrite?.[2]).toBeUndefined();
+    expect(store.updateTask.mock.calls).toContainEqual([
+      "FN-ASSISTANT-STALE",
+      { sessionFile: null, status: null, error: null },
+    ]);
+    expect(store.moveTask).toHaveBeenCalledWith("FN-ASSISTANT-STALE", "todo", { preserveResumeState: true });
     expect(markGraphExecuteSelfRequeued).toHaveBeenCalledWith("FN-ASSISTANT-STALE");
     expect(executingTaskLock.has("FN-ASSISTANT-STALE")).toBe(false);
     expect((executor as any).activeWorktrees.has("FN-ASSISTANT-STALE")).toBe(false);
@@ -536,13 +535,23 @@ describe("Workflow Steps Execution", () => {
 
     await executor.execute(task as any);
 
-    expect(store.updateTask).toHaveBeenCalledWith("FN-ASSISTANT-STALE-EXHAUSTED", {
-      status: "failed",
-      error: "Cannot continue from message role: assistant",
-      recoveryRetryCount: null,
-      nextRecoveryAt: null,
-    }, ANY_MUTATION_CONTEXT);
-    expect(store.moveTask).not.toHaveBeenCalledWith("FN-ASSISTANT-STALE-EXHAUSTED", "todo", expect.anything(), ANY_MUTATION_CONTEXT);
+    /*
+    FNXC:EngineTests 2026-08-09-12:02:
+    Graph-owned stale-assistant recovery reaches the existing classifier once reused-worktree
+    reconciliation is mocked safe. Assert the absent run context is observably undefined and the
+    two-argument store write retains its exact arity, distinguishing it from the graph wrapper path.
+    */
+    const exhaustedRecoveryWrite = store.updateTask.mock.calls.find(
+      ([id, patch, runContext]) => id === "FN-ASSISTANT-STALE-EXHAUSTED"
+        && patch?.status === "failed"
+        && patch?.error === "Cannot continue from message role: assistant"
+        && patch?.recoveryRetryCount === null
+        && patch?.nextRecoveryAt === null
+        && runContext === undefined,
+    );
+    expect(exhaustedRecoveryWrite).toHaveLength(2);
+    expect(exhaustedRecoveryWrite?.[2]).toBeUndefined();
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-ASSISTANT-STALE-EXHAUSTED", "todo", expect.anything());
     expect(onError).toHaveBeenCalledOnce();
   });
 
@@ -607,7 +616,7 @@ describe("Workflow Steps Execution", () => {
       expect(store.updateTask).not.toHaveBeenCalledWith("FN-5436-B", {
         status: "failed",
         error: "executor-exit-while-review-pending",
-      }, ANY_MUTATION_CONTEXT);
+      });
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-5436-B",
         expect.stringContaining("blocked on pending review (review-request-without-verdict)"),
@@ -630,7 +639,7 @@ describe("Workflow Steps Execution", () => {
         expect.objectContaining({
           workflowMoveSource: "workflow-graph",
           workflowMoveMetadata: expect.objectContaining({ nodeId: "review-pending-handoff" }),
-        }), ANY_MUTATION_CONTEXT,
+        }),
       );
     });
 
@@ -672,7 +681,7 @@ describe("Workflow Steps Execution", () => {
         status: "queued",
         error: null,
         taskDoneRetryCount: 1,
-      }, ANY_MUTATION_CONTEXT);
+      });
     });
 
     /*
@@ -745,13 +754,13 @@ describe("Workflow Steps Execution", () => {
       expect(store.updateTask).not.toHaveBeenCalledWith("FN-5436-D", {
         status: "failed",
         error: "executor-exit-while-review-pending",
-      }, ANY_MUTATION_CONTEXT);
+      });
       // FNXC:EngineTests 2026-07-19-11:15 (U10b): the in-review handoff is now the graph's own
       // move off the implementation node, carrying workflow move provenance.
       expect(store.moveTask).toHaveBeenCalledWith(
         "FN-5436-D",
         "in-review",
-        expect.objectContaining({ workflowMoveSource: "workflow-graph" }), ANY_MUTATION_CONTEXT,
+        expect.objectContaining({ workflowMoveSource: "workflow-graph" }),
       );
       expect(onError).not.toHaveBeenCalled();
     });
@@ -804,7 +813,7 @@ describe("Workflow Steps Execution", () => {
     expect(store.moveTask).toHaveBeenCalledWith(
       "FN-001",
       "in-review",
-      expect.objectContaining({ workflowMoveSource: "workflow-graph" }), ANY_MUTATION_CONTEXT,
+      expect.objectContaining({ workflowMoveSource: "workflow-graph" }),
     );
   });
 
@@ -815,8 +824,8 @@ describe("Workflow Steps Execution", () => {
     // workflow-step Promise.race used a frozen 360 s setTimeout, and the
     // rejection from the mock prompt never reached the catch block in time.
     // The behavior we actually need to lock down is:
-    //   1. sendTaskBackForFix re-opens the actionable implementation step plus
-    //      any trailing verification/delivery step, not just a trivial last step.
+    //   1. sendTaskBackForFix re-opens exactly the workflow-selected trailing step;
+    //      it must not infer additional work from step titles.
     //   2. The rerun bounce uses preserveResumeState so step progress and
     //      the worktree survive the in-progress → todo hop.
     //   3. PROMPT.md gains the Workflow Step Failure section with the
@@ -860,11 +869,10 @@ describe("Workflow Steps Execution", () => {
     };
     store.getTask.mockImplementation(async () => mutableTask);
 
-    store.updateStep.mockImplementation(async (_taskId: string, stepIndex: number, status: string) => {
-      if (mutableTask.steps[stepIndex]) {
-        mutableTask.steps[stepIndex].status = status as any;
-      }
-      return {};
+    (store as any).updateTaskAtomic = vi.fn(async (_taskId: string, mutate: (current: any) => Partial<typeof mutableTask> | null) => {
+      const patch = mutate(mutableTask);
+      if (patch) Object.assign(mutableTask, patch);
+      return mutableTask as any;
     });
 
     const onError = vi.fn();
@@ -919,27 +927,27 @@ describe("Workflow Steps Execution", () => {
       "Workflow step failed",
     );
 
-    // (1) failure comment + the implementation-bearing step is re-opened with the trailing delivery step.
-    // Before FN-7162, reopenLastStepForRevision returned only [1] here, so a
-    // Code Review / Browser Verification REVISE could re-run Documentation &
-    // Delivery against unchanged implementation work and loop until budget exhaustion.
+    // (1) failure comment + only the policy-selected trailing step receives a replay occurrence.
+    // FN-180 removed title-based suffix selection because it was a second replay
+    // authority that scheduled unrelated completed checklist work after review.
     expect(store.addTaskComment).toHaveBeenCalledWith(
       "FN-001",
       expect.stringContaining("Workflow step failed"),
       "agent",
     );
-    const reopenedStepIndexes = store.updateStep.mock.calls
-      .filter((call: any[]) => call[0] === "FN-001" && call[2] === "pending")
-      .map((call: any[]) => call[1]);
-    expect(reopenedStepIndexes).toEqual([0, 1]);
+    expect(mutableTask.steps.map((step) => [step.name, step.status])).toEqual([
+      ["Implementation", "done"],
+      ["Documentation & Delivery", "done"],
+      ["Documentation & Delivery", "pending"],
+    ]);
+    expect(mutableTask.currentStep).toBe(2);
 
-    // FNXC:ExecutorMoveTask 2026-07-07-08:38: Await the captured rerun-bounce promise instead of flushing a fixed number of microtasks. 3167dbc83 inserted clearTerminalStepFailuresForRetry (an extra awaited hop) between the todo and in-progress moves inside performWorkflowRerunBounce, so a fixed microtask count no longer deterministically drains the bounce to the final in-progress moveTask. Awaiting the promise is exact and survives future awaited hops; the bounce still performs the todo→in-progress hop (executor.ts:3650 then 3674).
+    // Await the exact production bounce rather than relying on timer/microtask flushing.
     await bouncePromise;
 
-    // (2) bounce uses preserveResumeState so step progress + worktree survive
-    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo", expect.objectContaining({ preserveResumeState: true, preserveWorktree: true }), ANY_MUTATION_CONTEXT);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-progress", undefined, ANY_MUTATION_CONTEXT);
-    expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "in-review", undefined, ANY_MUTATION_CONTEXT);
+    // (2) remediation already in WIP stays in WIP; no sideways reset move can discard progress.
+    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(mutableTask.column).toBe("in-progress");
     expect(onError).not.toHaveBeenCalled();
 
     // (3) PROMPT.md injection was invoked with the failure context. The
@@ -953,7 +961,7 @@ describe("Workflow Steps Execution", () => {
     // FNXC:ReviewSeverityGate 2026-08-10-17:33: a trailing `findings` arg now carries structured
     // review findings into the injection; a prompt-mode hard failure has none, so it is `undefined`.
     expect(injectSpy).toHaveBeenCalledWith(
-      mutableTask,
+      expect.objectContaining({ id: mutableTask.id }),
       feedback,
       stepName,
       { attempt: 3, max: 3 },
@@ -966,7 +974,7 @@ describe("Workflow Steps Execution", () => {
     injectSpy.mockRestore();
   });
 
-  it("keeps post-verdict reopening bounded across all-done, mixed, and single-step states", async () => {
+  it("keeps post-verdict replay bounded across all-done, mixed, and single-step states", async () => {
     const cases = [
       {
         id: "all-done-terminal",
@@ -974,8 +982,7 @@ describe("Workflow Steps Execution", () => {
           { name: "Implementation", status: "done" as const },
           { name: "Documentation & Delivery", status: "done" as const },
         ],
-        expectedIndexes: [0, 1],
-        expectedCurrent: 0,
+        expectedIndex: 2,
       },
       {
         id: "mixed-terminal-pending",
@@ -983,14 +990,12 @@ describe("Workflow Steps Execution", () => {
           { name: "Implementation", status: "done" as const },
           { name: "Documentation & Delivery", status: "pending" as const },
         ],
-        expectedIndexes: [0],
-        expectedCurrent: 0,
+        expectedIndex: null,
       },
       {
         id: "single-step",
         steps: [{ name: "Implementation", status: "done" as const }],
-        expectedIndexes: [0],
-        expectedCurrent: 0,
+        expectedIndex: 1,
       },
     ];
 
@@ -1008,28 +1013,34 @@ describe("Workflow Steps Execution", () => {
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
-      store.updateStep.mockImplementation(async (_taskId: string, stepIndex: number, status: string) => {
-        mutableTask.steps[stepIndex]!.status = status as any;
-        return {};
+      const originalLength = mutableTask.steps.length;
+      (store as any).updateTaskAtomic = vi.fn(async (_taskId: string, mutate: (current: any) => Partial<typeof mutableTask> | null) => {
+        const patch = mutate(mutableTask);
+        if (patch) Object.assign(mutableTask, patch);
+        return mutableTask as any;
       });
 
       const executor = createRoutingExecutor(store, "/tmp/test");
-      const reopened = await (executor as unknown as {
+      const replayed = await (executor as unknown as {
         reopenLastStepForRevision: (
           taskId: string,
           task: typeof mutableTask,
         ) => Promise<{ index: number; name: string; indexes: number[] } | null>;
       }).reopenLastStepForRevision(mutableTask.id, mutableTask);
 
-      expect(reopened?.indexes).toEqual(testCase.expectedIndexes);
-      expect(reopened?.index).toBe(testCase.expectedCurrent);
-      expect(store.updateStep.mock.calls.map((call: any[]) => call[1])).toEqual(testCase.expectedIndexes);
-      expect(store.updateTask).toHaveBeenCalledWith(mutableTask.id, { currentStep: testCase.expectedCurrent }, ANY_MUTATION_CONTEXT);
-      expect(mutableTask.steps.some((step) => step.status === "pending")).toBe(true);
+      if (testCase.expectedIndex === null) {
+        expect(replayed).toBeNull();
+        expect(mutableTask.steps).toHaveLength(originalLength);
+      } else {
+        expect(replayed).toMatchObject({ index: testCase.expectedIndex, indexes: [testCase.expectedIndex] });
+        expect(mutableTask.currentStep).toBe(testCase.expectedIndex);
+        expect(mutableTask.steps).toHaveLength(originalLength + 1);
+        expect(mutableTask.steps.at(-1)?.status).toBe("pending");
+      }
     }
   });
 
-  it("reopens terminal verification and delivery suffix with the implementation step", async () => {
+  it("does not infer verification or delivery suffixes from step names", async () => {
     const store = createMockStore();
     const mutableTask = {
       id: "FN-7162-SUFFIX",
@@ -1047,9 +1058,10 @@ describe("Workflow Steps Execution", () => {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
-    store.updateStep.mockImplementation(async (_taskId: string, stepIndex: number, status: string) => {
-      mutableTask.steps[stepIndex]!.status = status as any;
-      return {};
+    (store as any).updateTaskAtomic = vi.fn(async (_taskId: string, mutate: (current: any) => Partial<typeof mutableTask> | null) => {
+      const patch = mutate(mutableTask);
+      if (patch) Object.assign(mutableTask, patch);
+      return mutableTask as any;
     });
 
     const executor = createRoutingExecutor(store, "/tmp/test");
@@ -1060,9 +1072,14 @@ describe("Workflow Steps Execution", () => {
       ) => Promise<{ index: number; name: string; indexes: number[] } | null>;
     }).reopenLastStepForRevision(mutableTask.id, mutableTask);
 
-    expect(reopened).toEqual({ index: 0, name: "Implementation", indexes: [0, 1, 2] });
-    expect(store.updateStep.mock.calls.map((call: any[]) => call[1])).toEqual([0, 1, 2]);
-    expect(store.updateTask).toHaveBeenCalledWith("FN-7162-SUFFIX", { currentStep: 0 }, ANY_MUTATION_CONTEXT);
+    expect(reopened).toEqual({ index: 3, name: "Documentation & Delivery", indexes: [3] });
+    expect(mutableTask.steps.map((step) => [step.name, step.status])).toEqual([
+      ["Implementation", "done"],
+      ["Testing & Verification", "done"],
+      ["Documentation & Delivery", "done"],
+      ["Documentation & Delivery", "pending"],
+    ]);
+    expect(mutableTask.currentStep).toBe(3);
   });
 
   // FNXC:WorkflowOptionalStepFix 2026-06-27-13:30:
@@ -1090,9 +1107,12 @@ describe("Workflow Steps Execution", () => {
       dependencies: [] as string[],
       steps: [
         { name: "Step 0", status: "done" as const },
-        // Last step reopened by reopenLastStepForRevision — this is the step
-        // the merge gate blocks on until the executor re-runs.
-        { name: "Documentation & Delivery", status: "pending" as const },
+        // A review-to-WIP handoff carries named pending remediation.
+        {
+          name: "Fix: Documentation & Delivery",
+          status: "pending" as const,
+          remediation: { wave: 1, gate: "Code Review" as const, gateStepId: "code-review", detail: "Apply requested documentation fix" },
+        },
       ],
       currentStep: 1,
       log: [] as any[],
@@ -1116,16 +1136,14 @@ describe("Workflow Steps Execution", () => {
 
     // The bounce succeeds instead of throwing "cannot bounce to in-progress".
     expect(outcome).toBe("bounced");
-    // in-review → todo (preserving step progress + worktree) → in-progress, so
-    // the reopened step is re-executed rather than left stranded.
-    /* FNXC:WorkflowMoveProvenance 2026-08-23-23:35: the bounce now stamps its move source so a
-       remediation hop is distinguishable from an operator or engine move. */
-    expect(store.moveTask).toHaveBeenCalledWith("FN-7122", "todo", {
+    // Review remediation returns directly to WIP; Planning is never an intermediate stop.
+    expect(store.moveTask).toHaveBeenCalledTimes(1);
+    expect(store.moveTask).toHaveBeenCalledWith("FN-7122", "in-progress", {
       preserveResumeState: true,
       preserveWorktree: true,
       workflowMoveSource: "workflow-remediation",
+      lifecycleReason: "code-review-revise-remediation",
     });
-    expect(store.moveTask).toHaveBeenCalledWith("FN-7122", "in-progress", ANY_MUTATION_CONTEXT);
     expect(onError).not.toHaveBeenCalled();
   });
 
@@ -1196,7 +1214,7 @@ describe("Real-time steering injection", () => {
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-001",
       expect.stringContaining("Comment received mid-execution"),
-      "by user", ANY_MUTATION_CONTEXT
+      "by user"
     );
   });
 
@@ -1247,7 +1265,7 @@ describe("Real-time steering injection", () => {
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-001",
       expect.stringContaining("Comment received mid-execution"),
-      "by user", ANY_MUTATION_CONTEXT,
+      "by user",
     );
   });
 
@@ -1278,7 +1296,7 @@ describe("Real-time steering injection", () => {
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-001",
       expect.stringContaining("Comment received mid-execution"),
-      "by user", ANY_MUTATION_CONTEXT,
+      "by user",
     );
 
     const nextPromptTask = (stepExecutor as any).consumeTaskDetailForStepPrompt();
@@ -1321,7 +1339,7 @@ describe("Real-time steering injection", () => {
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-001",
       expect.stringContaining("Comment received mid-execution"),
-      "by user", ANY_MUTATION_CONTEXT,
+      "by user",
     );
   });
 
@@ -1367,7 +1385,7 @@ describe("Real-time steering injection", () => {
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-001",
       expect.stringContaining("Comment received mid-execution"),
-      "by user", ANY_MUTATION_CONTEXT,
+      "by user",
     );
   });
 
@@ -1462,7 +1480,7 @@ describe("Real-time steering injection", () => {
     expect(store.logEntry).not.toHaveBeenCalledWith(
       "FN-001",
       expect.stringContaining("Comment received mid-execution"),
-      expect.anything(), ANY_MUTATION_CONTEXT,
+      expect.anything(),
     );
   });
 
@@ -1483,7 +1501,7 @@ describe("Real-time steering injection", () => {
     expect(store.logEntry).not.toHaveBeenCalledWith(
       "FN-NOT-EXECUTING",
       expect.stringContaining("Comment received mid-execution"),
-      expect.anything(), ANY_MUTATION_CONTEXT,
+      expect.anything(),
     );
   });
 
@@ -1607,7 +1625,6 @@ describe("TaskExecutor loop recovery", () => {
       inactivityMs: 0,
       activitySinceProgress: 100,
       ignoredStepUpdateCount: 0,
-      shouldRequeue: true,
     });
 
     expect(result).toBe(true);
@@ -1615,7 +1632,7 @@ describe("TaskExecutor loop recovery", () => {
     expect(mockSession.steer).toHaveBeenCalled();
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-001",
-      expect.stringContaining("compact-and-resume"), undefined, ANY_MUTATION_CONTEXT,
+      expect.stringContaining("compact-and-resume"),
     );
   });
 
@@ -1631,7 +1648,6 @@ describe("TaskExecutor loop recovery", () => {
       inactivityMs: 0,
       activitySinceProgress: 100,
       ignoredStepUpdateCount: 0,
-      shouldRequeue: true,
     });
 
     expect(result).toBe(false);
@@ -1649,7 +1665,6 @@ describe("TaskExecutor loop recovery", () => {
       inactivityMs: 0,
       activitySinceProgress: 100,
       ignoredStepUpdateCount: 0,
-      shouldRequeue: true,
     });
     expect(result1).toBe(true);
 
@@ -1661,7 +1676,6 @@ describe("TaskExecutor loop recovery", () => {
       inactivityMs: 0,
       activitySinceProgress: 200,
       ignoredStepUpdateCount: 0,
-      shouldRequeue: true,
     });
     expect(result2).toBe(false);
   });
@@ -1677,7 +1691,6 @@ describe("TaskExecutor loop recovery", () => {
       inactivityMs: 0,
       activitySinceProgress: 100,
       ignoredStepUpdateCount: 0,
-      shouldRequeue: true,
     });
 
     expect(result).toBe(false);
@@ -1695,7 +1708,6 @@ describe("TaskExecutor loop recovery", () => {
       inactivityMs: 0,
       activitySinceProgress: 100,
       ignoredStepUpdateCount: 0,
-      shouldRequeue: true,
     });
 
     await vi.advanceTimersByTimeAsync(60000);
@@ -1704,7 +1716,7 @@ describe("TaskExecutor loop recovery", () => {
     expect(mockSession.abort).toHaveBeenCalled();
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-001",
-      expect.stringContaining("Context compaction timed out"), undefined, ANY_MUTATION_CONTEXT,
+      expect.stringContaining("Context compaction timed out"),
     );
 
     vi.useRealTimers();

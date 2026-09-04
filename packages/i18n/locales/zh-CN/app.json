@@ -137,7 +137,10 @@
     "toolEntriesHidden_other": "",
     "toolsOff": "工具：关闭",
     "toolsOn": "工具：开启",
-    "usingDefault": "使用默认值"
+    "usingDefault": "使用默认值",
+    "missingToolDetailHint": "Some tool details are unavailable. They may have been recorded while detail saving was disabled; check Settings → Global General to save future tool details.",
+    "showLessDetail": "Show less {{detailLabel}}",
+    "showMoreDetail": "Show more {{detailLabel}}{{lineCount}}"
   },
   "agentMention": {
     "membersOf": "#{{roomName}} 的成员",
@@ -1200,10 +1203,10 @@
       "capacityExhausted": "",
       "guardRejected": "",
       "mergeBlocked": "",
-      "promoteRejected": "",
       "unknownColumn": "",
       "unplannedForExecution": "",
-      "workflowMismatch": ""
+      "workflowMismatch": "",
+      "staleMovePrecondition": ""
     },
     "todo": "待办",
     "triage": "分诊",
@@ -1422,7 +1425,17 @@
     "currentModelTarget": "Current model: {{model}}",
     "currentDefaultTarget": "Using the default chat target",
     "newNotAllowedForTaskChat": "",
-    "restore": ""
+    "restore": "",
+    "quoteMessage": "引用消息",
+    "agentRepliesFailed": "部分代理无法回复：{{agents}}",
+    "noDefaultModelConfigured": "请先在设置中配置默认聊天模型，再创建对话。",
+    "newChatOpenInNewWindowHint": "",
+    "minimizeAllChats": "最小化所有聊天",
+    "restoreAllChats": "恢复所有聊天",
+    "slashSuggestions": "斜杠建议",
+    "loadingSlashSuggestions": "正在加载建议…",
+    "snippetSuggestion": "插入已保存的提示词",
+    "snippetSuggestions": "片段建议"
   },
   "chatRooms": {
     "error": {
@@ -1509,7 +1522,6 @@
     "autoMerge": "自动合并",
     "autoMergeDisabled": "自动合并已禁用",
     "autoMergeEnabled": "自动合并已启用",
-    "cancelMove": "取消移动",
     "collapseArchivedLabel": "折叠已存档的任务",
     "collapseArchivedTitle": "折叠已存档的任务",
     "expandArchivedLabel": "展开已存档的任务",
@@ -1518,41 +1530,21 @@
     "keepProgress": "保留进度",
     "loadMore_one": "",
     "loadMore_other": "",
-    "moveAllToTodo": "全部移至待办",
-    "moveAllToTodoMessage_one": "",
-    "moveAllToTodoMessage_other": "",
-    "moveAllToTodoTitle": "全部移至待办",
-    "movedToPlanning_one": "",
-    "movedToPlanning_other": "",
-    "movedToTodo_one": "",
-    "movedToTodo_other": "",
-    "movePartialFailure": "已移动 {{total}} 个任务中的 {{moved}} 个；{{failed}} 个失败",
-    "moveToTodoHint_one": "",
-    "moveToTodoHint_other": "",
-    "moveToTodoPartialFailure": "已将 {{total}} 个任务中的 {{moved}} 个移至待办；{{failed}} 个失败",
     "newTask": "新任务",
     "noManuallyPausableTasks": "没有可手动暂停的任务",
     "noTasks": "没有任务",
     "noTasksInColumn": "此列中没有任务",
     "pauseHint_one": "",
     "pauseHint_other": "",
-    "preserveProgressMessage": "此任务已完成步骤。在移动前保留进度？",
-    "preserveProgressMoveTodoMessage": "某些任务已完成步骤。在移至待办前保留进度？",
     "preserveProgressTitle": "保留进度？",
-    "promoteUnplannedCancel": "",
-    "promoteUnplannedConfirm": "",
-    "promoteUnplannedMessage": "",
-    "promoteUnplannedTitle": "",
     "replanAll": "全部重新计划",
-    "replanAllHint_one": "",
-    "replanAllHint_other": "",
-    "replanAllMessage_one": "",
-    "replanAllMessage_other": "",
+    "replanAllHint_one": "Replan {{count}} task{{plural}} from its original description",
+    "replanAllHint_other": "Replan {{count}} task{{plural}} from its original description",
+    "replanAllMessage_one": "Replan {{count}} task{{plural}} from its original description? Its current plan will be discarded.",
+    "replanAllMessage_other": "Replan {{count}} task{{plural}} from its original description? Its current plan will be discarded.",
     "replanAllTitle": "重新计划所有任务",
     "resetProgress": "重置进度",
     "resetProgressConfirm": "重置进度",
-    "resetProgressMessage": "在移动此任务之前重置所有步骤进度？",
-    "resetProgressMoveTodoMessage": "在移至待办前重置任务的步骤进度？",
     "resetProgressTitle": "重置进度？",
     "stopAll": "全部停止",
     "stopAllMessage_one": "",
@@ -1565,7 +1557,10 @@
     "sortArrivalDesc": "",
     "sortArrivalDescHint": "",
     "sortTaskIdDesc": "",
-    "sortTaskIdDescHint": ""
+    "sortTaskIdDescHint": "",
+    "replannedTasks_one": "Replanned {{count}} task{{plural}}",
+    "replannedTasks_other": "Replanned {{count}} task{{plural}}",
+    "replanPartialFailure": "Replanned {{replanned}} of {{total}} tasks; {{failed}} failed"
   },
   "commandCenter": {
     "activity": {
@@ -1957,6 +1952,7 @@
       "rangeNote": "Time range filters loaded events; it is not sent to the server.",
       "openTask": "Open task {{taskId}}",
       "openAgent": "Open agent {{agentId}}",
+      "workflowGateNotRun": "Workflow gate not executed",
       "eventTypes": {
         "task:started": "Task started",
         "task:handed-off": "Task handed off",
@@ -3112,7 +3108,7 @@
     "selectProject": "选择项目",
     "settings": "设置",
     "showScripts": "显示脚本",
-    "skillsView": "技能",
+    "skillsView": "技能与片段",
     "startAiEngine": "启动 AI 引擎",
     "stashRecoveryView": "暂存恢复",
     "stopAiEngine": "停止 AI 引擎",
@@ -3446,7 +3442,9 @@
     "useProjectDefault": "使用项目默认",
     "viewOptions": "视图选项",
     "workflowLabel": "",
-    "statusReplan": "重新规划"
+    "statusReplan": "重新规划",
+    "statusWaiting": "",
+    "statusWaitingOn": ""
   },
   "mailbox": {
     "agent": "代理",
@@ -3733,7 +3731,11 @@
     "shortstatTitle": "最终提交简统计；有关所有任务提交的完整着陆差异，请参见 Changes 标签。",
     "smartPull": "智能拉取",
     "status": "状态",
-    "title": "合并详情"
+    "title": "合并详情",
+    "targetBranch": "",
+    "strategy": "",
+    "method": "",
+    "noOpReason": ""
   },
   "mesh": {
     "ariaLabel": "节点网格拓扑可视化",
@@ -4226,13 +4228,14 @@
     "settings": "设置",
     "showScriptsAriaLabel": "显示脚本",
     "sidebarAriaLabel": "",
-    "skills": "技能",
+    "skills": "技能与片段",
     "stashRecovery": "储藏恢复",
     "tasks": "任务",
     "terminal": "终端",
     "todos": "待办",
     "usage": "用量",
-    "workflows": "工作流"
+    "workflows": "工作流",
+    "patchnode": ""
   },
   "newTaskModal": {
     "addDependencies": "添加依赖项",
@@ -5881,6 +5884,7 @@
       "copiedCodeToClipboard": "代码已复制到剪贴板",
       "copyCode": "复制代码",
       "enterCodeOnGitHub": "在 GitHub 上输入此代码",
+      "enterCodeToContinue": "",
       "failedToCopyCode": "复制代码失败，请手动从上方框中复制",
       "groupAuthenticated": "已认证",
       "groupAvailable": "可用",
@@ -5898,6 +5902,7 @@
       "manualPasteTitle": "注意——需要手动粘贴回来",
       "noProviders": "没有可用的提供商",
       "openGitHub": "打开 GitHub",
+      "openVerificationPage": "",
       "pasteRedirectUrlFirst": "请先粘贴完整的重定向 URL 或授权码。",
       "reopenOnboarding": "重新打开引导向导",
       "refreshModels": "刷新模型",
@@ -5918,7 +5923,8 @@
       "anthropicPreferenceApiKey": "API key",
       "anthropicPreferenceSubscription": "Claude subscription",
       "credentialInUse": "In use",
-      "credentialOverridden": "Overridden below"
+      "credentialOverridden": "Overridden below",
+      "legacyAnthropicOAuthNotice": ""
     },
     "authentication": {
       "enterAPIKey": "",
@@ -6172,7 +6178,6 @@
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",
-      "autoReloadDashboardOnVersionChange": "",
       "checkForThe": "",
       "checkForUpdatesAutomatically": "",
       "cLIBinaryOnPATH": "",
@@ -6201,8 +6206,7 @@
       "saveToolOutputInAgentLogs": "",
       "updates": "",
       "weekly": "",
-      "whenDisabledToolRowsAreStillLoggedBut": "",
-      "whenEnabledDefaultTheDashboardAutomaticallyReloadsWhen": "",
+      "whenDisabledToolRowsAreStillLoggedBut": " When disabled, tool rows are still logged but detailed tool payloads are omitted. Very large tool payloads may still be clipped even when this stays enabled. Default: enabled. ",
       "whenEnabledFusionChecksNpmForNewVersions": "",
       "whenEnabledTheDashboardProbesForAGlobally": "",
       "gitLabEnabledHint": "",
@@ -6285,7 +6289,9 @@
       "openRouterRoutingOnlyHint": "",
       "openRouterAllowFallbacksHint": "",
       "openRouterRoutingSortHint": "",
-      "requireParametersHint": ""
+      "requireParametersHint": "",
+      "fastAndCheapModel": "快速且经济的模型",
+      "fastAndCheapModelHelp": "在此选择一个用于快速编辑的低价模型。创建任务时，快速模式将使用它。"
     },
     "header": {
       "discord": "Discord",
@@ -6728,17 +6734,13 @@
       "prTitlePromptInstructionsHelp": "",
       "prDescriptionPromptInstructionsHelp": "",
       "chatHeading": "Chat",
-      "chatDescription": "Choose the default target for new Direct chats and whether New Chat should prompt or immediately use that default.",
-      "chatNewSessionMode": "New Chat behavior",
-      "chatNewSessionModePrompt": "Prompt for model each time",
-      "chatNewSessionModeAlwaysDefault": "Always use configured default",
-      "chatNewSessionModeHelp": "Prompt mode opens New Chat with this default preselected. Always-default mode skips the dialog when the configured default is complete.",
+      "chatDescription": "Choose the default target for new Direct chats. New Chat always creates the conversation immediately from this default.",
       "chatDefaultKind": "Chat default target",
       "chatDefaultKindModel": "Model",
       "chatDefaultKindAgent": "Agent",
       "chatDefaultModel": "Chat Default Model",
       "selectChatDefaultModel": "Select a chat default model",
-      "chatDefaultModelHelp": "Model-mode New Chat uses the built-in Fusion chat agent with this provider/model pair. Leave empty to fall back to prompting.",
+      "chatDefaultModelHelp": "Model-mode New Chat uses the built-in Fusion chat agent with this provider/model pair. Leave empty to use the project or global default model.",
       "chatDefaultAgent": "Chat Default Agent",
       "loadingAgents": "Loading agents…",
       "selectChatDefaultAgent": "Select a chat default agent",
@@ -7020,27 +7022,21 @@
       "maxWorktrees": "",
       "worktreeLimitEnabled": "",
       "worktreeLimitEnabledHelp": "",
-      "offByDefaultOptInWhenEnabledCompleted": "",
       "openApprovals": "打开审批",
       "optionalLeaveBlankToAutoResolveFusionWill": "",
       "optionalSupports": "",
       "pnpmInstallFrozenLockfile": "",
-      "randomNamesEGSwiftFalcon": "",
       "rebaseFromRemoteBeforeMerge": "",
       "rebaseRemote": "",
-      "recycleWorktrees": "",
       "selectWorktreesDir": "选择工作树目录",
       "shellCommandToRunInEachNewWorktree": "",
       "stopsOnWorktrunkErrorsForExplicitOperatorRecovery": "",
-      "taskIDEGFN042": "",
-      "taskTitleEGFixLoginBug": "",
       "tryAgain": "重试",
       "useGitDefault": "",
       "whenEnabledTheMergerFetchesFromTheConfigured": "",
       "whenUnsetOnlyAffectsNewlyCreatedWorktrees": "",
       "whichRemoteToFetchForThePreMerge": "",
       "worktreeInitCommand": "",
-      "worktreeNamingStyle": "",
       "worktrees": "",
       "worktreesDirectory": "",
       "worktrunk": "",
@@ -7049,10 +7045,7 @@
       "worktrunkIntegration": "",
       "worktreesPickerNote": "",
       "showWorktreeGroupingHelp": "",
-      "copyFilesHelp": "",
-      "namingStyleNotApplicableWhenRecycling": "",
-      "howToNameFreshWorktreeDirectories": "",
-      "recycleNotApplicableWithTaskIdNaming": ""
+      "copyFilesHelp": ""
     },
     "fileBrowser": {
       "currentDirectory": "",
@@ -7574,7 +7567,7 @@
     "catalogSection": "技能目录",
     "catalogUnavailable": "目录暂时不可用。请稍后重试。",
     "closeDetail": "关闭技能详情",
-    "closeView": "关闭技能视图",
+    "closeView": "关闭技能与片段视图",
     "disabled": "技能已禁用",
     "disableSkill": "禁用 {{name}}",
     "discovered": "已发现",
@@ -7607,7 +7600,7 @@
     "removeSkill": "删除 {{name}}",
     "searchLabel": "搜索技能",
     "searchPlaceholder": "搜索技能...",
-    "title": "技能",
+    "title": "技能与片段",
     "toggleError": "切换技能失败",
     "toggleFailed": "切换技能失败: {{message}}",
     "viewDetails": "查看 {{name}} 的详情",
@@ -7623,7 +7616,31 @@
     "filter": "Filter skills",
     "noMatches": "No matching skills",
     "loadError": "Skills could not be loaded.",
-    "hiddenUnavailable": "Hidden skills include disabled or not-discovered entries"
+    "hiddenUnavailable": "Hidden skills include disabled or not-discovered entries",
+    "snippetsReservedName": "此名称已保留给聊天命令。",
+    "snippetsInvalidName": "请使用 1–48 个字母、数字、下划线或连字符。",
+    "snippetsPromptRequired": "请输入此片段的提示词。",
+    "snippetsPromptTooLong": "提示词最多可包含 {{count}} 个字符。",
+    "snippetsDuplicateName": "已存在同名片段。",
+    "snippetsLimitReached": "最多可保存 {{count}} 个片段。",
+    "snippetsSaveError": "无法保存片段。请刷新后重试。",
+    "snippetsDeleteError": "无法删除片段。请刷新后重试。",
+    "snippetsTitle": "聊天片段",
+    "snippetsCount": "已保存 {{count}} 个",
+    "snippetsDescription": "保存可复用提示词，然后在任意聊天中输入 /名称，即可插入而不会发送。",
+    "snippetsLoading": "正在加载片段...",
+    "snippetsLoadError": "无法刷新片段。仍显示上次加载的列表。",
+    "snippetsFormLabel": "聊天片段编辑器",
+    "snippetsNameLabel": "名称",
+    "snippetsNameHelp": "字母、数字、下划线或连字符；最多 48 个字符。",
+    "snippetsPromptLabel": "提示词",
+    "snippetsPromptHelp": "{{count}} / {{max}} 个字符",
+    "snippetsSaving": "正在保存...",
+    "snippetsSaveChanges": "保存更改",
+    "snippetsAdd": "添加片段",
+    "snippetsEmpty": "尚未保存片段。",
+    "snippetsEdit": "编辑 /{{name}}",
+    "snippetsDelete": "删除 /{{name}}"
   },
   "specEditor": {
     "edit": "编辑",
@@ -7938,7 +7955,14 @@
       "overlapBlocker": "文件范围重叠阻断器：",
       "removeTitle": "移除依赖 {{id}}",
       "searchPlaceholder": "搜索任务…",
-      "stale": "（已过期）"
+      "stale": "（已过期）",
+      "overlapFiles": {
+        "loading": "",
+        "error": "",
+        "noScope": "",
+        "none": "",
+        "matches": ""
+      }
     },
     "description": {
       "showLess": "显示更少",
@@ -7948,7 +7972,8 @@
       "btn": "复制",
       "message": "复制 {{id}}？这将在 Triage 中创建一个具有相同描述和提示词的新任务。",
       "success": "已复制 {{id}} → {{newId}}",
-      "title": "复制任务"
+      "title": "复制任务",
+      "workflowLabel": ""
     },
     "edit": {
       "autosaveHint": "编辑时自动保存更改",
@@ -8053,21 +8078,8 @@
       "noBranchToMerge": "没有可合并的分支",
       "title": "合并任务"
     },
-    "move": {
-      "backToInProgress": "返回进行中",
-      "backTo": "返回{{column}}",
-      "cancelMove": "取消移动",
-      "keepProgress": "保留进度",
-      "movedTo": "已移至 {{column}}",
-      "moveTo": "移至 {{column}}",
-      "preserveProgressMessage": "此任务有已完成的步骤。移动前保留进度？",
-      "preserveProgressTitle": "保留进度？",
-      "resetProgress": "重置进度",
-      "resetProgressMessage": "在移动此任务之前重置所有步骤进度？",
-      "resetProgressTitle": "重置进度？"
-    },
     "nearDuplicate": {
-      "actions": "选择「归档」将此任务归档，或选择「保留」继续使用此任务。",
+      "actions": "This task continues normally. Archive it if the work is already covered, or clear this flag once you have read it.",
       "archiveBtn": "归档",
       "archiveConfirm": "归档",
       "archived": "已归档 {{id}}",
@@ -8075,14 +8087,14 @@
       "archiveTitle": "归档近似重复任务",
       "copy": "此任务看起来是以下任务的近似重复：",
       "headline": "检测到潜在重复",
-      "keepBtn": "保留",
-      "kept": "保留了 {{id}} 并关闭了重复警告",
       "deleteBtn": "删除",
       "deleteConfirm": "删除",
       "deleted": "已删除 {{id}}",
       "deleteMessage": "将 {{id}} 作为 {{duplicateOf}} 的重复项删除？",
       "deleteTitle": "删除重复任务",
-      "triageActions": "选择删除以移除此重复项，或选择保留以继续。"
+      "triageActions": "This task stays paused until you clear this flag or delete it. Delete it if the work is already covered.",
+      "dismissBtn": "Mark the duplicate flag for {{id}} as read",
+      "dismissed": "Duplicate flag cleared for {{id}}"
     },
     "nextRecoveryAt": "下次恢复时间：{{time}}",
     "no": "否",
@@ -8167,7 +8179,7 @@
       "createBtn": "创建细化任务",
       "creating": "正在创建...",
       "feedbackRequired": "请输入描述需要细化内容的反馈",
-      "feedbackTooLong": "反馈不能超过 2000 字符",
+      "feedbackTooLong": "",
       "help": "描述需要细化或改进的内容...",
       "modalTitle": "细化",
       "placeholder": "在此输入您的反馈...",
@@ -8175,11 +8187,13 @@
     },
     "reset": {
       "btn": "重置",
-      "confirmMessage": "这将清除 {{id}} 的所有进度并从头开始。继续？",
-      "resetSuccess": "已重置 {{id}} — 将分配新的运行"
-    },
-    "respecify": {
-      "btn": "重新规范"
+      "confirmMessage": "Restart this task from nothing but the original request. Its plan, worktree, branch and commits, and reviews are permanently deleted and cannot be recovered.",
+      "resetSuccess": "已重置 {{id}} — 将分配新的运行",
+      "confirmTitle": "Reset this task?",
+      "descriptionHelp": "",
+      "descriptionLabel": "",
+      "descriptionRequired": "",
+      "submitting": ""
     },
     "retries": {
       "branchConflict": "分支冲突恢复",
@@ -8210,7 +8224,18 @@
     "retriesLabel": "重试次数（恢复 / 工作流 / 合并 / 任务完成）",
     "retry": {
       "btn": "重试",
-      "retried": "已重试 {{id}}"
+      "retried": "已重试 {{id}}",
+      "confirmTitle": "Retry this stage?",
+      "confirmLabel": "Retry",
+      "planConfirmMessage": "Rebuild the plan from the original request. This card stays in its current column.",
+      "implementationConfirmMessage": "Discard the in-flight work and start it again on the approved plan. This card stays in its current column.",
+      "reviewConfirmMessage": "Discard the review verdicts and review the produced work again. This card stays in its current column.",
+      "genericConfirmMessage": "Repeat the current stage and keep this card in its current column.",
+      "planSuccess": "Planning will restart in this column.",
+      "implementationSuccess": "Work will restart in this column.",
+      "reviewSuccess": "Review will run again in this column.",
+      "genericSuccess": "This stage will restart in its current column.",
+      "pendingAutomaticRecovery": "Automatic recovery is pending. You can Retry now to restart this stage."
     },
     "runtimeLinks": "运行时链接",
     "runtimeStatus": "运行时状态",
@@ -8274,8 +8299,10 @@
       "worktreeTerminal": "终端",
       "workflow": "工作流",
       "summary": "Summary",
-      "cost": "",
-      "recommendations": ""
+      "recommendations": "",
+      "dependencies": "",
+      "details": "",
+      "debug": ""
     },
     "terminal": {
       "loading": ""
@@ -8308,30 +8335,7 @@
     "workflowTimedSteps": "工作流计时步骤",
     "yes": "是",
     "summaryTab": {
-      "agentWorkHeading": "Work done by agents",
-      "cachedTokens": "Cached",
-      "changedHeading": "What changed",
-      "commit": "Commit",
-      "completedSteps": "Completed steps",
-      "completionHeading": "Completion summary",
-      "cost": "Cost",
-      "costUnavailable": "No pricing for this model",
-      "deletions": "Removed",
-      "filesChanged": "Files",
-      "inputTokens": "Input",
-      "insertions": "Added",
-      "model": "Model",
-      "noAgentWork": "No completed steps or workflow results are available for this task.",
-      "noChangedFiles": "No changed-file list is available for this task.",
-      "noCompletionSummary": "No completion summary was recorded for this task.",
-      "noTokenUsage": "No token usage recorded for this task yet.",
-      "outputTokens": "Output",
-      "retries": "Agents retried this task {{count}} time{{plural}}.",
-      "tokenCostHeading": "Token usage & cost",
-      "totalCost": "Total cost",
-      "totalTokens": "Total",
-      "unknownModel": "(unknown)",
-      "workflowResults": "Workflow results"
+      "agentWorkHeading": "Work done by agents"
     },
     "gitlabTracking": {
       "collapse": "",
@@ -8409,6 +8413,15 @@
       "candidate": "",
       "dismissFinding": "",
       "terminalGuidance": ""
+    },
+    "debug": {
+      "none": ""
+    },
+    "details": {
+      "expandRouting": "",
+      "collapseRouting": "",
+      "expandDebug": "",
+      "collapseDebug": ""
     }
   },
   "taskDocuments": {
@@ -8636,7 +8649,16 @@
     "attachFileFailed": "附加 {{fileName}} 失败：{{error}}",
     "awaitingApproval": "等待审批",
     "baseBranch": "基础",
-    "blockedByTooltip": "被 {{taskId}} 阻塞（文件冲突）",
+    "blockedByTooltip": "正在等待 {{taskId}}（文件冲突）",
+    "externalBlock": {
+      "title": "已阻塞",
+      "unknownCode": "未分类",
+      "genericMessage": "外部障碍需要操作员处理",
+      "explain": "解释此错误",
+      "explainPrompt": "请解释错误 {{error}} 及其解决方法。",
+      "resuming": "正在恢复…",
+      "retry": "重试"
+    },
     "branch": "分支",
     "branchMetadata": "分支元数据",
     "branchProgress": "",
@@ -8680,9 +8702,8 @@
     "depsCount_other": "",
     "descriptionPlaceholder": "任务描述",
     "descriptionRefined": "已用 AI 优化描述",
-    "doneNoMerge": "完成（不合并）",
     "duplicateCheckFailed": "重复检查失败，仍然创建任务。",
-    "duplicateDismissed": "已保留 {{taskId}}；重复警告已忽略",
+    "duplicateDismissed": "Duplicate flag cleared for {{taskId}}",
     "duplicateOf": "{{id}} 的重复项",
     "editTask": "编辑任务",
     "enterDescriptionFirst": "请先输入描述",
@@ -8718,10 +8739,7 @@
     "issueClosed": "已关闭",
     "issueDeleted": "已删除",
     "issueLeft": "保留",
-    "keep": "保留",
-    "keepFailed": "保留 {{taskId}} 失败：{{error}}",
     "keepProgress": "保留进度",
-    "keepTaskTitle": "保留此任务并忽略重复警告",
     "leaveUnchanged": "保持不变",
     "lineageConflict": "{{taskId}} 有子项（{{children}}）将其引用为来源父项。\n\n仍要先解除这些引用并删除吗？",
     "linkedIssueChipAriaLabel": "关联的 GitHub Issue #{{number}}",
@@ -8745,7 +8763,7 @@
     "moved": "已将 {{taskId}} 移动到 {{column}}",
     "moveFailed": "移动 {{taskId}} 失败：{{error}}",
     "moveTask": "移动任务",
-    "nearDuplicateTitle": "疑似与 {{id}} 重复",
+    "nearDuplicateTitle": "Flagged as a possible duplicate of {{id}}. This task continues normally; clear the flag once you have read it.",
     "needsInput": "",
     "noAgentsAvailable": "无可用智能体",
     "node": "节点",
@@ -8765,9 +8783,6 @@
     "prNodeTitle": "",
     "prNodeWithNumber": "",
     "projectDefaultLocal": "项目默认 / 本地",
-    "promote": "",
-    "promoteTask": "",
-    "promoting": "",
     "queued": "排队中",
     "refine": "优化",
     "refineAddDetails": "添加细节",
@@ -8850,7 +8865,18 @@
     "refinesOfTitle": "",
     "revertedTasks": "",
     "revertedResolutionActions": "",
-    "revise": ""
+    "revise": "",
+    "dismissDuplicateFlag": "Mark the duplicate flag for {{id}} as read",
+    "nearDuplicateHeldTitle": "Flagged as a duplicate of {{id}}. This task stays paused until you clear this flag or delete it.",
+    "duplicateDismissFailed": "Failed to clear the duplicate flag for {{taskId}}: {{error}}",
+    "planApproval": {
+      "approve": "",
+      "approveFailed": "",
+      "approving": "",
+      "copy": "",
+      "replanCapCopy": "",
+      "title": ""
+    }
   },
   "terminal": {
     "arrowKeysLabel": "",
@@ -9098,7 +9124,15 @@
     "statusSkipped": "",
     "submitAndResume": "",
     "submitting": "",
-    "waitingForOutput": ""
+    "waitingForOutput": "",
+    "aggregateNotFullyExecuted": "Not fully executed",
+    "notRunReasonExecutionModeSkip": "fast mode skipped this check",
+    "notRunReasonNotConfigured": "no test or build command is configured",
+    "notRunReasonRepositoryContextUnresolved": "the workspace repository context could not be resolved",
+    "notRunReasonToolingUnavailable": "a required tool was unavailable",
+    "statusNotRunWithReason": "Not executed — {{reason}}",
+    "summaryNotExecuted_one": "{{count}} not executed",
+    "summaryNotExecuted_other": "{{count}} not executed"
   },
   "workflowColumns": {
     "add": "",
@@ -9551,7 +9585,8 @@
     "missingOutput": "",
     "missingOutputTimestamp": "",
     "statusUpdate": "",
-    "statusUpdateTimestamp": ""
+    "statusUpdateTimestamp": "",
+    "toolDetailsMissing": "Some tool details are unavailable. They may have been recorded while detail saving was disabled; check Settings → Global General to save future tool details."
   },
   "engineBanner": {
     "body": "The engine for this project is not running, so task automation and live updates may be paused. Start it now to reconnect the dashboard.",
@@ -9722,12 +9757,86 @@
     "noDetail": "",
     "untitledSection": "",
     "sectionCount": "",
-    "sectionCountPlural": ""
+    "sectionCountPlural": "",
+    "showRaw": "",
+    "showSections": ""
   },
   "artifactImageViewer": {
     "openTask": "",
     "close": "",
     "loading": "",
-    "retry": ""
+    "retry": "",
+    "zoomIn": "",
+    "zoomOut": "",
+    "resetZoom": "",
+    "zoomLevel": ""
+  },
+  "taskHistory": {
+    "stage": {
+      "plan": "",
+      "code": "",
+      "review": ""
+    },
+    "empty": {
+      "plan": "",
+      "code": "",
+      "review": ""
+    },
+    "entry": {
+      "noBody": "",
+      "completionSummary": "",
+      "stepReport": "",
+      "merged": "",
+      "noOpMerge": "",
+      "verdictNoNotes": "",
+      "duration": ""
+    },
+    "meta": {
+      "commit": "",
+      "targetBranch": "",
+      "strategy": "",
+      "method": "",
+      "files": "",
+      "insertions": "",
+      "deletions": "",
+      "pr": "",
+      "noOpReason": ""
+    },
+    "loading": "",
+    "verdict": {
+      "approve": "",
+      "approve-with-notes": "",
+      "revise": "",
+      "close-no-op": "",
+      "passed": "",
+      "failed": "",
+      "advisory-failure": "",
+      "skipped": "",
+      "pending": ""
+    }
+  },
+  "patchnode": {
+    "cancelled": "",
+    "empty": "",
+    "entryCount_one": "",
+    "entryCount_other": "",
+    "error": "",
+    "loadMore": "",
+    "loading": "",
+    "loadingMore": "",
+    "noResults": "",
+    "retry": "",
+    "reverted": "",
+    "searchAriaLabel": "",
+    "searchPlaceholder": "",
+    "title": "",
+    "today": "",
+    "yesterday": ""
+  },
+  "toolCallDetails": {
+    "line": "line",
+    "lines": "lines",
+    "showLess": "Show less",
+    "showMore": "Show more ({{count}} {{lineLabel}})"
   }
 }

@@ -16,7 +16,7 @@ import {
 } from "../workflows/workflow-lifecycle-traits.js";
 import {resolveWorkflowIrForTask} from "../workflows/workflow-ir-resolver.js";
 import {InvalidFileScopeError, SelfSpawnedDependencyError, detectSelfSpawnedDependency} from "./errors.js";
-import {mkdir, readFile, stat, writeFile} from "node:fs/promises";
+import {mkdir, readFile, stat} from "node:fs/promises";
 import {join} from "node:path";
 import {existsSync} from "node:fs";
 import type {Task, Column, TaskLogEntry, RunMutationContext, TaskRecommendation} from "../types.js";
@@ -38,7 +38,7 @@ import {supersedePlanReviewResults} from "../planner/plan-approval.js";
 import {PLAN_REVIEW_GROUP_ID} from "../workflows/builtin-plan-review-group.js";
 import {BranchWriteProvenanceError, validateTaskBranchName} from "../branch/branch-assignment.js";
 import {withTaskBranchContextInSourceMetadata} from "./branch-context.js";
-import {invalidateSupersededRepositoryScopeReviews} from "../tasks/repository-scope.js";
+import {writePromptFileAtomic} from "./prompt-file.js";
 
 /*
 FNXC:TaskRecommendations 2026-08-08-07:06:
@@ -52,9 +52,13 @@ Recommendations are task-ready prose, not a shell execution channel. Reject dire
 syntax and imperative command forms with flags, paths, or script extensions at persistence, where
 future writers cannot evade the executor's user-facing validation.
 */
-/* FNXC:TaskRecommendations 2026-08-08-07:26: Treat credential-like values, not ordinary security work such as a password-reset feature, as secrets. */
-const UNSAFE_RECOMMENDATION_CONTENT = /(?:```|\b(?:api[_-]?key|password|secret|token)\b\s*(?:=|:)\s*\S+|(?:^|\n)\s*(?:[$#]\s*)?(?:npm|pnpm|yarn|bun|npx|node|deno|python(?:3)?|bash|sh|zsh|fish|cmd(?:\.exe)?|powershell|curl|wget|git|docker|kubectl|make|just|rm|cp|mv|chmod|sudo)\b|(?:^|\n)\s*(?:run|execute)\s+(?:(?:npm|pnpm|yarn|bun|npx|node|deno|python(?:3)?|bash|sh|zsh|fish|cmd(?:\.exe)?|powershell|curl|wget|git|docker|kubectl|make|just|rm|cp|mv|chmod|sudo)\b|(?:\.?\.?[\\/]|~[\\/])\S*|\S+\s+(?:-{1,2}\S*|\S*[\\/]\S*|\S+\.(?:sh|py|js|ts|mjs|cjs|exe|bat|cmd)\b))|`(?:npm|pnpm|yarn|bun|npx|node|deno|python(?:3)?|bash|sh|zsh|fish|cmd|powershell|curl|wget|git|docker|kubectl|make|just|rm|cp|mv|chmod|sudo)\b)/im;
-const RECOMMENDATION_KEYS = new Set(["id", "title", "description", "category", "createdTaskId"]);
+/*
+FNXC:TaskRecommendations 2026-08-26-07:34:
+The content rule and key set now live in tasks/recommendation-validation.ts so the review-lane
+projection writer is screened by the SAME definition instead of a copy. This boundary still ASSERTS
+(a caller handing it malformed data has a bug); the projection path normalizes before it gets here.
+*/
+import { RECOMMENDATION_KEYS, UNSAFE_RECOMMENDATION_CONTENT } from "../tasks/recommendation-validation.js";
 
 function assertValidRecommendations(value: unknown): asserts value is TaskRecommendation[] {
   if (!Array.isArray(value)) throw new Error("recommendations must be an array");
@@ -245,30 +249,10 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       if (updates.workspaceWorktrees !== undefined) {
         task.workspaceWorktrees = updates.workspaceWorktrees;
       }
-      /*
-      FNXC:RepositoryScope 2026-08-21-01:18:
-      A validated workspace plan commits its prompt and repository intent through this one
-      task-row write. Do not route that paired publication through updateTaskRepositoryScope:
-      a second transaction would expose a new ## Repository Scope heading with stale intent.
-      */
-      if (updates.repositoryScope === null) {
-        task.repositoryScope = undefined;
-      } else if (updates.repositoryScope !== undefined) {
-        /*
-        FNXC:RepositoryScope 2026-08-21-02:48:
-        Prompt confirmation writes scope in the same task mutation. Its new revision cannot
-        inherit Code Review evidence or a remediation target captured for the old repository intent.
-        */
-        const scopeRevisionChanged = task.repositoryScope?.revision !== updates.repositoryScope.revision;
-        task.repositoryScope = scopeRevisionChanged
-          ? { ...updates.repositoryScope, reviewEvidence: undefined, reviewRemediation: undefined }
-          : updates.repositoryScope;
-        if (scopeRevisionChanged) {
-          task.workflowStepResults = invalidateSupersededRepositoryScopeReviews(
-            task.workflowStepResults,
-            task.repositoryScope.revision,
-          );
-        }
+      if (updates.externalBlock === null) {
+        task.externalBlock = undefined;
+      } else if (updates.externalBlock !== undefined) {
+        task.externalBlock = updates.externalBlock;
       }
       // New dependencies re-seed hold-lane tasks and exhausted Plan Review cap parks.
       let movedToTriage = false;
@@ -802,6 +786,16 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       } else if (updates.recoveryRetryCount !== undefined) {
         task.recoveryRetryCount = updates.recoveryRetryCount;
       }
+      if (updates.sessionContentionHoldCount === null) {
+        task.sessionContentionHoldCount = undefined;
+      } else if (updates.sessionContentionHoldCount !== undefined) {
+        task.sessionContentionHoldCount = updates.sessionContentionHoldCount;
+      }
+      if (updates.sessionContentionWaitReason === null) {
+        task.sessionContentionWaitReason = undefined;
+      } else if (updates.sessionContentionWaitReason !== undefined) {
+        task.sessionContentionWaitReason = updates.sessionContentionWaitReason;
+      }
       if (updates.taskDoneRetryCount === null) {
         task.taskDoneRetryCount = undefined;
       } else if (updates.taskDoneRetryCount !== undefined) {
@@ -1235,7 +1229,7 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       so no reader can dispatch work from a new heading paired with the preceding scope generation.
       */
       if (updates.prompt !== undefined) {
-        await writeFile(promptPath, updates.prompt);
+        await writePromptFileAtomic(promptPath, updates.prompt);
       }
 
       if (store.isBackendMode() && updates.prompt !== undefined) {
@@ -1303,7 +1297,7 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
 
             if (isBootstrapPromptStub(existingPrompt, task.id, preUpdateTitle, preUpdateDescription)) {
               const newPrompt = buildBootstrapPrompt(task.id, task.title, task.description);
-              await writeFile(promptPath, newPrompt);
+              await writePromptFileAtomic(promptPath, newPrompt);
             } else {
               // Real spec — surgical edits only. Each section we propagate to is
               // edited in place; everything else (Review Level, Frontend UX
@@ -1330,7 +1324,7 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
                 next = applyOriginalDescription(next, task.description ?? "");
               }
               if (next !== existingPrompt) {
-                await writeFile(promptPath, next);
+                await writePromptFileAtomic(promptPath, next);
               }
             }
           }

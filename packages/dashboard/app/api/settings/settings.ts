@@ -11,15 +11,15 @@ import { dedupe } from "../client/dedupe.js";
 
 export function fetchConfig(projectId?: string): Promise<{
   maxConcurrent: number;
-  effectiveMaxConcurrent: number;
-  concurrencyBindingKnob: "maxConcurrent" | "maxWorktrees";
+  maxWorktrees: number;
+  worktreeLimitEnabled: boolean;
   rootDir: string;
 }> {
   const path = withProjectId("/config", projectId);
   return dedupe(path, () => api<{
     maxConcurrent: number;
-    effectiveMaxConcurrent: number;
-    concurrencyBindingKnob: "maxConcurrent" | "maxWorktrees";
+    maxWorktrees: number;
+    worktreeLimitEnabled: boolean;
     rootDir: string;
   }>(path));
 }

@@ -15,11 +15,26 @@ Render states (design-lens): the progress model distinguishes
 - `advisory_failure` (non-blocking REVISE — amber, counts as completed; does not block merge)
 - `failed` (blocking gate failure — red)
 - `skipped`
+- `not_run` (terminal and non-blocking, but never painted as a pass)
 Disabled optional steps are simply absent from `enabledWorkflowSteps`, so they never appear in the
 counter/bar. Recorded workflow-node progress is included independently because it represents an actual graph stage that ran, not a toggle placeholder.
+
+FNXC:WorkflowStepNotRun 2026-08-28-14:13:
+The dashboard browser bundle aliases `@fusion/core` to its type-only leaf, unlike dashboard tests.
+Keep this fixed reason tuple local and drift-tested against the Node barrel instead of value-importing
+core workflow helpers that would pass Vitest and fail the production build.
 */
 
-export type UnifiedTaskProgressStatus = StepStatus | "failed" | "advisory_failure" | "running";
+export const WORKFLOW_STEP_NOT_RUN_REASONS = ["not-configured", "tooling-unavailable", "execution-mode-skip", "repository-context-unresolved"] as const;
+const WORKFLOW_STEP_NOT_RUN_REASON_SET: ReadonlySet<string> = new Set(WORKFLOW_STEP_NOT_RUN_REASONS);
+
+export function isWorkflowStepNotRun(result: WorkflowStepResult): boolean {
+  return result.status === "skipped"
+    && typeof result.notRunReason === "string"
+    && WORKFLOW_STEP_NOT_RUN_REASON_SET.has(result.notRunReason);
+}
+
+export type UnifiedTaskProgressStatus = StepStatus | "failed" | "advisory_failure" | "running" | "not_run";
 
 export interface UnifiedTaskProgressItem {
   id: string;
@@ -35,7 +50,7 @@ export interface UnifiedTaskProgress {
   items: UnifiedTaskProgressItem[];
 }
 
-function mapWorkflowStatus(result: WorkflowStepResult): UnifiedTaskProgressStatus {
+export function mapWorkflowStatus(result: WorkflowStepResult): UnifiedTaskProgressStatus {
   switch (result.status) {
     case "passed":
       return "done";
@@ -44,7 +59,7 @@ function mapWorkflowStatus(result: WorkflowStepResult): UnifiedTaskProgressStatu
     case "advisory_failure":
       return "advisory_failure";
     case "skipped":
-      return "skipped";
+      return isWorkflowStepNotRun(result) ? "not_run" : "skipped";
     case "pending":
     default:
       // The graph upserts a `pending` entry when a step starts running. A started-but-not-completed
@@ -57,7 +72,7 @@ function mapWorkflowStatus(result: WorkflowStepResult): UnifiedTaskProgressStatu
 function isCompleted(status: UnifiedTaskProgressStatus): boolean {
   // advisory_failure is non-blocking: the step ran and returned feedback, so it counts as completed
   // (overall progress reads complete when only advisory steps returned REVISE).
-  return status === "done" || status === "skipped" || status === "advisory_failure";
+  return status === "done" || status === "skipped" || status === "not_run" || status === "advisory_failure";
 }
 
 /*
@@ -96,6 +111,8 @@ const NON_IMPLEMENTATION_WORKFLOW_STEP_IDS = new Set([
   "plan-review",
   "plan-replan",
   "code-review",
+  "verification",
+  "documentation-delivery",
   "browser-verification",
   "post-merge-verification",
   "completion-summary",
@@ -286,13 +303,18 @@ export function getRunningOptionalGateBadge(
   }
 
   if (!(columnFlags ? isReviewColumnRole(columnFlags, task.column) : REVIEW_LANE_COLUMNS.has(task.column))) return undefined;
-  if (
-    workflowStepId !== "code-review"
-    && workflowStepId !== "browser-verification"
-    && workflowStepId !== "post-merge-verification"
-  ) {
-    return undefined;
-  }
+  /*
+  FNXC:TaskCardOptionalGateBadge 2026-08-25-02:10:
+  Badge whatever review-lane gate is RUNNING, instead of a closed list of three ids. The old test
+  named `code-review`, `browser-verification` and `post-merge-verification` explicitly, so a
+  workflow that adds gates — builtin:coding-ideas-v2 runs Verification and Documentation & Delivery
+  in review — showed no badge at all for them: the operator watched an apparently idle card until
+  "Merging" appeared at the very end. The running gate's own state is the signal; a hardcoded id
+  list can only ever describe the gates that existed when it was written.
+  `isNonImplementationWorkflowStepId` already distinguishes a lane-owned gate from an
+  implementation step, and the review-lane check above bounds this to the right column.
+  */
+  if (!isNonImplementationWorkflowStepId(workflowStepId)) return undefined;
 
   return {
     workflowStepId,

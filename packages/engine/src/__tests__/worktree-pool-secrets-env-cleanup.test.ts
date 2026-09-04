@@ -36,8 +36,8 @@ afterEach(async () => {
   await Promise.all(dirs.splice(0).map((d) => rm(d, { recursive: true, force: true })));
 });
 
-describe("worktree-pool secrets cleanup hooks", () => {
-  it("reapOrphanWorktrees invokes cleanup before removal", async () => {
+describe("worktree-pool secrets preservation", () => {
+  it("preserves an unverifiable orphan instead of deleting its environment file", async () => {
     cleanupSecretsEnvFile.mockResolvedValue({ outcome: "cleaned", reason: "fingerprint-match" });
     const root = tmpRoot();
     const worktrees = join(root, ".worktrees");
@@ -48,15 +48,12 @@ describe("worktree-pool secrets cleanup hooks", () => {
     const mod = await import("../worktree/worktree-pool.js");
     const removed = await mod.reapOrphanWorktrees(root);
 
-    expect(removed).toBe(1);
-    expect(cleanupSecretsEnvFile).toHaveBeenCalledWith(expect.objectContaining({
-      worktreePath: orphan,
-      taskId: "orphan:orphan-1",
-    }));
-    expect(existsSync(orphan)).toBe(false);
+    expect(removed).toBe(0);
+    expect(cleanupSecretsEnvFile).not.toHaveBeenCalled();
+    expect(existsSync(orphan)).toBe(true);
   });
 
-  it("cleanup failures do not block orphan removal", async () => {
+  it("does not invoke secrets cleanup before preserving dangling metadata", async () => {
     cleanupSecretsEnvFile.mockRejectedValueOnce(new Error("cleanup failed"));
     const root = tmpRoot();
     const orphan = join(root, ".worktrees", "orphan-2");
@@ -65,7 +62,8 @@ describe("worktree-pool secrets cleanup hooks", () => {
     const mod = await import("../worktree/worktree-pool.js");
     const removed = await mod.reapOrphanWorktrees(root);
 
-    expect(removed).toBe(1);
-    expect(existsSync(orphan)).toBe(false);
+    expect(removed).toBe(0);
+    expect(cleanupSecretsEnvFile).not.toHaveBeenCalled();
+    expect(existsSync(orphan)).toBe(true);
   });
 });

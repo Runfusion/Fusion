@@ -14,9 +14,8 @@ import { executorLog } from "../logger.js";
 import { generateSyntheticRunId, createRunAuditor, type EngineRunContext, type RunAuditor } from "../util/run-audit.js";
 import { acquireTaskWorktree, acquireWorkspaceTaskWorktrees } from "../worktree/worktree-acquisition.js";
 import { captureBaseCommitSha } from "./worktree-git-refs.js";
-import { runContextForTotal } from "./run-context-for.js";
-import { createConfiguredCommandAbortError } from "./task-predicates.js";
 import type { WorktreePool } from "../worktree/worktree-pool.js";
+import { createConfiguredCommandAbortError } from "./task-predicates.js";
 import { resolveWorkspaceConfigOnce } from "./workspace-config-resolver.js";
 
 export type EnsureGraphCustomNodeWorktreeDeps = {
@@ -69,27 +68,22 @@ export async function ensureGraphCustomNodeWorktree(
   const commandAbortController = new AbortController();
   deps.registerConfiguredCommandController(task.id, commandAbortController);
   try {
-    await deps.store.logEntry(
-      task.id,
-      `Workflow node '${nodeId}' requires a task worktree — acquiring worktree before node execution`,
-      undefined,
-      deps.runContextFor(task.id),
-    );
-
     /*
-    FNXC:WorkspaceWorktree 2026-08-22-22:42:
-    FN-158 acquires only the planner-confirmed repository scope. Callers reach
-    this seam solely for write-capable nodes; read-only planning never creates a
-    branch, lease, or worktree before it can declare its scope.
+    FNXC:WorkspaceWorktree 2026-08-29-06:59:
+    Workspace membership is decided once by workspace.json. Planning, read-only gates, and
+    implementation all acquire the complete configured set into this task directory; the short
+    per-repository lease protects only `git worktree add`, not the task's private checkout lifetime.
     */
     if (workspaceConfig) {
-      if (task.repositoryScope?.state !== "confirmed") {
-        throw new Error("Workspace acquisition requires a confirmed ## Repository Scope");
-      }
+      await deps.store.logEntry(
+        task.id,
+        `Workflow node '${nodeId}' acquiring workspace checkouts for ${workspaceConfig.repos.length} configured repository(ies)`,
+        undefined,
+        deps.runContextFor(task.id),
+      );
       const workspace = await acquireWorkspaceTaskWorktrees({
         workspaceConfig,
         workspaceRootDir: deps.rootDir,
-        repoRelPaths: task.repositoryScope.repositories,
         task,
         store: deps.store,
         settings,
@@ -113,18 +107,24 @@ export async function ensureGraphCustomNodeWorktree(
           }),
         taskEnv: process.env,
         addActiveWorktree: deps.addActiveWorktree,
+        refreshStaleBase,
       });
       deps.onStart?.(workspace.task, workspace.taskWorktreeDir);
       executorLog.debug(`${task.id}: workflow node '${nodeId}' using workspace task directory ${workspace.taskWorktreeDir}`);
       return { ...task, ...workspace.task } as TaskDetail;
     }
 
+    await deps.store.logEntry(
+      task.id,
+      `Workflow node '${nodeId}' requires a task worktree — acquiring worktree before node execution`,
+      undefined,
+      deps.runContextFor(task.id),
+    );
     const acquisition = await acquireTaskWorktree({
       task,
       rootDir: deps.rootDir,
       store: deps.store,
       settings,
-      pool: deps.pool,
       logger: executorLog,
       audit,
       runContext: deps.runContextFor(task.id),
@@ -151,15 +151,19 @@ export async function ensureGraphCustomNodeWorktree(
     });
     deps.addActiveWorktree(task.id, acquisition.worktreePath);
     if (!acquisition.isResume) {
-      // FNXC:Identity 2026-08-14-05:32: attribute the base-SHA write to the graph node's run,
-      // matching every other store write in this function.
+      /*
+      FNXC:Identity 2026-09-04-04:46:
+      Custom-node worktree capture is outside the implementation node, so the partial
+      `getRunContextFor` map is empty and would persist `executor`/`unknown`. Use the total
+      carrier so the graph-node actor and run id survive onto `baseCommitSha`.
+      */
       await captureBaseCommitSha(
         deps.store,
         task,
         acquisition.worktreePath,
         audit,
         { isResume: false },
-        runContextForTotal(deps.getRunContextFor, task.id),
+        deps.runContextFor(task.id),
       );
     }
     deps.onStart?.(task, acquisition.worktreePath);

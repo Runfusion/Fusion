@@ -67,6 +67,8 @@ export interface TaskRow {
   postReviewFixCount: number | null;
   planReviewReplanCount: number | null;
   recoveryRetryCount: number | null;
+  sessionContentionHoldCount: number | null;
+  sessionContentionWaitReason: string | null;
   taskDoneRetryCount: number | null;
   // FNXC:Lifecycle 2026-07-16-21:40: FN-8141 skip-bypass taint marker (ISO timestamp / null).
   bulkCompletionRefusalAt: string | null;
@@ -127,6 +129,7 @@ export interface TaskRow {
   executionCompletedAt: string | null;
   dependencies: string | null;
   steps: string | null;
+  stepReports: string | null;
   customFields: string | null;
   log: string | null;
   attachments: string | null;
@@ -149,6 +152,7 @@ export interface TaskRow {
   mergeDetails: string | null;
   workspaceWorktrees: string | null;
   repositoryScope: string | null;
+  externalBlock: string | null;
   noCommitsExpected: number | null;
   enabledWorkflowSteps: string | null;
   modifiedFiles: string | null;
@@ -229,9 +233,9 @@ FNXC:TaskLifecyclePersistence 2026-07-14-13:27:
 PostgreSQL task JSONB conversion must use one registry for both descriptor writes and SQLite-shaped row hydration. Separate read/write lists drifted when late lifecycle columns were added, allowing JSON strings or parsed objects to cross the wrong serialization boundary.
 */
 export const TASK_JSONB_COLUMNS: ReadonlySet<string> = new Set([
-  "dependencies", "steps", "customFields", "log", "attachments", "steeringComments",
+  "dependencies", "steps", "stepReports", "customFields", "log", "attachments", "steeringComments",
   "comments", "review", "reviewState", "workflowStepResults", "prInfo", "prInfos",
-  "issueInfo", "githubTracking", "gitlabTracking", "mergeDetails", "workspaceWorktrees", "repositoryScope", "enabledWorkflowSteps",
+  "issueInfo", "githubTracking", "gitlabTracking", "mergeDetails", "workspaceWorktrees", "repositoryScope", "externalBlock", "enabledWorkflowSteps",
   "modifiedFiles", "declaredSymbols", "scopeAutoWiden", "sourceMetadata", "tokenUsagePerModel",
   "tokenBudgetOverride", "columnDwellMs", "workflowTransitionNotification", "recommendations",
 ]);
@@ -271,6 +275,7 @@ export const TASK_COLUMN_DESCRIPTORS: TaskColumnDescriptor[] = [
   defineTaskColumn("queuedLogEpisodeSignature", (task) => task.queuedLogEpisodeSignature ?? null),
   defineTaskColumn("paused", (task) => task.paused ? 1 : 0),
   defineTaskColumn("pausedReason", (task) => task.pausedReason ?? null),
+  defineTaskColumn("externalBlock", (task) => toJsonNullable(task.externalBlock)),
   defineTaskColumn("wedgeNotification", (task) => toJsonNullable(task.wedgeNotification)),
   defineTaskColumn("userPaused", (task) => task.userPaused ? 1 : 0),
   defineTaskColumn("baseBranch", (task) => task.baseBranch ?? null),
@@ -311,6 +316,8 @@ export const TASK_COLUMN_DESCRIPTORS: TaskColumnDescriptor[] = [
   defineTaskColumn("postReviewFixCount", (task) => task.postReviewFixCount ?? 0),
   defineTaskColumn("planReviewReplanCount", (task) => task.planReviewReplanCount ?? 0),
   defineTaskColumn("recoveryRetryCount", (task) => task.recoveryRetryCount ?? null),
+  defineTaskColumn("sessionContentionHoldCount", (task) => task.sessionContentionHoldCount ?? 0),
+  defineTaskColumn("sessionContentionWaitReason", (task) => task.sessionContentionWaitReason ?? null),
   defineTaskColumn("taskDoneRetryCount", (task) => task.taskDoneRetryCount ?? 0),
   // FNXC:Lifecycle 2026-07-16-21:40: FN-8141 skip-bypass taint marker persisted as nullable ISO timestamp.
   defineTaskColumn("bulkCompletionRefusalAt", (task) => task.bulkCompletionRefusalAt ?? null),
@@ -376,6 +383,7 @@ export const TASK_COLUMN_DESCRIPTORS: TaskColumnDescriptor[] = [
   defineTaskColumn("executionCompletedAt", (task) => task.executionCompletedAt ?? null),
   defineTaskColumn("dependencies", (task) => toJson(task.dependencies || [])),
   defineTaskColumn("steps", (task) => toJson(task.steps || [])),
+  defineTaskColumn("stepReports", (task) => toJson(task.stepReports || [])),
   defineTaskColumn("customFields", (task) => toJson(task.customFields ?? {})),
   defineTaskColumn("log", (task) => toJson(task.log || [])),
   defineTaskColumn("attachments", (task) => toJson(task.attachments || [])),

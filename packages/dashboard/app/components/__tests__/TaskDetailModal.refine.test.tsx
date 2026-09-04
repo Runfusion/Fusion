@@ -13,6 +13,7 @@ import {
 import { TaskDetailModal } from "../TaskDetailModal";
 import { ModalDismissPreferenceProvider } from "../../hooks/useOverlayDismiss";
 import { refineTask } from "../../api";
+import { MAX_TASK_MESSAGE_LENGTH } from "@fusion/core";
 
 setupTaskDetailModalHooks();
 
@@ -31,7 +32,6 @@ const renderDoneTaskDetail = (options: {
       initialAction={options.initialAction}
       onClose={options.onClose ?? noop}
       onRefinementCreated={options.onRefinementCreated}
-      onMoveTask={noopMove}
       onDeleteTask={noopDelete}
       onMergeTask={noopMerge}
       onOpenDetail={noopOpenDetail}
@@ -170,16 +170,18 @@ describe("TaskDetailModal refine modal dismissal invariant", () => {
     expect(screen.getByRole("button", { name: "Create Refinement Task" })).toBeDisabled();
     expect(refineTask).not.toHaveBeenCalled();
 
-    fireEvent.change(screen.getByPlaceholderText("Enter your feedback here..."), { target: { value: "x".repeat(2001) } });
+    const tooLongFeedback = "x".repeat(MAX_TASK_MESSAGE_LENGTH + 1);
+    fireEvent.change(screen.getByPlaceholderText("Enter your feedback here..."), { target: { value: tooLongFeedback } });
     fireEvent.click(screen.getByRole("button", { name: "Create Refinement Task" }));
-    expect(addToast).toHaveBeenCalledWith("Feedback must be 2000 characters or less", "error");
+    expect(addToast).toHaveBeenCalledWith(`Feedback must be ${MAX_TASK_MESSAGE_LENGTH} characters or less`, "error");
     expect(refineTask).not.toHaveBeenCalled();
 
-    fireEvent.change(screen.getByPlaceholderText("Enter your feedback here..."), { target: { value: "Please add the missing regression coverage" } });
+    const longFeedback = "x".repeat(5_000);
+    fireEvent.change(screen.getByPlaceholderText("Enter your feedback here..."), { target: { value: longFeedback } });
     await user.click(screen.getByRole("button", { name: "Create Refinement Task" }));
 
     await waitFor(() => {
-      expect(refineTask).toHaveBeenCalledWith("FN-001", "Please add the missing regression coverage", undefined);
+      expect(refineTask).toHaveBeenCalledWith("FN-001", longFeedback, undefined);
       expect(addToast).toHaveBeenCalledWith("Refinement task created: FN-002", "success");
       expect(onRefinementCreated).toHaveBeenCalledTimes(1);
       expect(onRefinementCreated).toHaveBeenCalledWith(returnedChild);

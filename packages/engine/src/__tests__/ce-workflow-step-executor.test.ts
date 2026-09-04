@@ -24,15 +24,6 @@
  */
 
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
-/*
-FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
-These call-arg assertions now include the mutation context the converted sweep passes.
-Adding it is what keeps them load-bearing: left at the old arity every
-`toHaveBeenCalledWith` here would fail, and every `.not.toHaveBeenCalledWith` would pass
-vacuously — an assertion that can no longer fail is worse than one that is red.
-*/
-import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -44,6 +35,10 @@ import "./executor-test-helpers.js";
 vi.mock("../executor/worktree-git-refs.js", async (importOriginal) => ({
   ...(await importOriginal() as object),
   captureBaseCommitSha: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock("../worktree/review-diff-fingerprint.js", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../worktree/review-diff-fingerprint.js")>(),
+  resolveContentReviewInputProof: vi.fn(async () => ({ kind: "fingerprint", fingerprint: "ce-review-proof" })),
 }));
 import { TaskExecutor } from "../executor.js";
 import type { PluginRunner } from "../plugins/plugin-runner.js";
@@ -114,7 +109,7 @@ type CapturedSession = {
  * that emits the given output line, then resolves. Returns the capture holder.
  */
 function captureSession(
-  output = '{"verdict":"APPROVE","notes":""}',
+  output = '{"verdict":"APPROVE","notes":"Reviewed the scoped work and found it correct."}',
   questionTool?: { name: string; args: Record<string, unknown> },
 ): { last?: CapturedSession; all: CapturedSession[] } {
   const holder: { last?: CapturedSession; all: CapturedSession[] } = { all: [] };
@@ -513,7 +508,7 @@ describe("CE workflow-step executor integration", () => {
         "FN-CE-1",
         "Workflow node 'plan' assigned worktree is missing — reacquiring before node execution",
         "/tmp/test/.worktrees/missing-ce-checkout",
-        ANY_MUTATION_CONTEXT,
+        undefined,
       );
     });
 
@@ -584,7 +579,7 @@ describe("CE workflow-step executor integration", () => {
       expect(result.context["node:code-review:outcome"]).not.toBe("no-worktree-for-write-node");
     });
 
-    it("keeps disabled inline fixes and Plan Review read-only during graph preparation", async () => {
+    it("prepares a Code Review checkout while keeping Plan Review checkout-free", async () => {
       const requirements: any[] = [];
       const graph = new WorkflowGraphExecutor({
         prepareNodeExecution: (_node, _task, requirement) => { requirements.push(requirement); },
@@ -608,9 +603,8 @@ describe("CE workflow-step executor integration", () => {
       };
       await graph.run(baseStepTask({ enabledWorkflowSteps: ["code-review", "plan-review"] }) as any, {
         experimentalFeatures: {},
-        reviewerInlineFixes: false,
       }, ir);
-      expect(requirements).toEqual([]);
+      expect(requirements).toEqual([{ requiresWorktree: true, reason: "write-capable-node" }]);
     });
 
     it("finalizes a merge-confirmed workflow graph task that is stranded before done", async () => {
@@ -639,12 +633,12 @@ describe("CE workflow-step executor integration", () => {
       expect(store.moveTask).toHaveBeenCalledWith("FN-CE-1", "done", expect.objectContaining({
         recoveryRehome: true,
         preserveProgress: true,
-      }), ANY_MUTATION_CONTEXT);
+      }));
       expect(live.column).toBe("done");
       expect(live.mergeDetails?.mergeConfirmed).toBe(true);
     });
 
-    it("lets stale no-op merge proof fall through when implementation steps are incomplete", async () => {
+    it("finalizes durable no-op merge proof without replaying pre-merge implementation", async () => {
       const store = createMockStore();
       const live = baseStepTask({
         column: "in-progress",
@@ -660,19 +654,14 @@ describe("CE workflow-step executor integration", () => {
       const { executor } = makeExecutor(store);
 
       /*
-       * FNXC:WorkflowMerge 2026-06-29-23:12:
-       * A no-op merge confirmation without a landed commit is not implementation proof. When reopened work still has incomplete legacy steps, execute() must continue to stale-merge cleanup/reverification instead of consuming the run in merge-confirmed finalization.
+       * FNXC:ConfirmedMergeFinalization 2026-09-03-05:40:
+       * Durable merge confirmation is the terminal authority. FN-180 reconciliation skips stale
+       * pre-merge checklist entries rather than replaying implementation after the merge boundary.
        */
       const handled = await (executor as any).finalizeMergeConfirmedWorkflowGraphTask("FN-CE-1", "test");
 
-      expect(handled).toBe(false);
-      expect(store.moveTask).not.toHaveBeenCalledWith("FN-CE-1", "done", expect.anything(), ANY_MUTATION_CONTEXT);
-      expect(store.logEntry).toHaveBeenCalledWith(
-        "FN-CE-1",
-        expect.stringContaining("merge-confirmed finalization blocked"),
-        undefined,
-        ANY_MUTATION_CONTEXT,
-      );
+      expect(handled).toBe(true);
+      expect(store.moveTask).toHaveBeenCalledWith("FN-CE-1", "done", expect.anything());
     });
 
     it("blocks the merge requester when graph traversal reaches merge before implementation steps finish", async () => {
@@ -746,7 +735,7 @@ describe("CE workflow-step executor integration", () => {
         "FN-CE-1",
         expect.stringContaining("Workflow merge boundary blocked:"),
         undefined,
-        ANY_MUTATION_CONTEXT,
+        undefined,
       );
       /*
       FNXC:WorkflowMerge 2026-08-23-23:50:
@@ -756,8 +745,8 @@ describe("CE workflow-step executor integration", () => {
       only re-describe the retired two-stage order.
       */
       // The card must never reach the review column on unproven implementation.
-      expect(store.moveTask).not.toHaveBeenCalledWith("FN-CE-1", "in-review", expect.anything(), ANY_MUTATION_CONTEXT);
-      expect(store.moveTask).not.toHaveBeenCalledWith("FN-CE-1", "in-review", undefined, ANY_MUTATION_CONTEXT);
+      expect(store.moveTask).not.toHaveBeenCalledWith("FN-CE-1", "in-review", expect.anything());
+      expect(store.moveTask).not.toHaveBeenCalledWith("FN-CE-1", "in-review");
     });
 
     it("uses moveTask for workflow graph column transitions so lifecycle notifications fire", async () => {
@@ -795,10 +784,10 @@ describe("CE workflow-step executor integration", () => {
             workflowId: "builtin:coding",
             runId: "run-1",
           }),
-        }), ANY_MUTATION_CONTEXT,
+        }),
       );
-      expect(store.updateTask).toHaveBeenCalledWith("FN-CE-1", { status: "queued" }, ANY_MUTATION_CONTEXT);
-      expect(store.updateTask).not.toHaveBeenCalledWith("FN-CE-1", expect.objectContaining({ column: "in-progress" }), ANY_MUTATION_CONTEXT);
+      expect(store.updateTask).toHaveBeenCalledWith("FN-CE-1", { status: "queued" });
+      expect(store.updateTask).not.toHaveBeenCalledWith("FN-CE-1", expect.objectContaining({ column: "in-progress" }));
     });
 
     it("moves direct-to-merge workflow tasks into in-review before requesting merge", async () => {
@@ -864,7 +853,7 @@ describe("CE workflow-step executor integration", () => {
             workflowId: "builtin:quick-fix",
             runId: "run-merge",
           }),
-        }), ANY_MUTATION_CONTEXT,
+        }),
       );
       expect(mergeRequester).toHaveBeenCalledWith("FN-CE-1", expect.objectContaining({ signal: expect.any(AbortSignal) }));
       expect(live.column).toBe("in-review");
@@ -937,7 +926,7 @@ describe("CE workflow-step executor integration", () => {
           ],
           currentStep: 1,
         }),
-        ANY_MUTATION_CONTEXT,
+        undefined,
       );
       expect(mergeRequester).toHaveBeenCalledWith("FN-CE-1", expect.objectContaining({ signal: expect.any(AbortSignal) }));
       expect(live.steps.every((step: any) => step.status === "done")).toBe(true);
@@ -1022,13 +1011,13 @@ describe("CE workflow-step executor integration", () => {
       expect(store.updateTask).toHaveBeenCalledWith(
         "FN-CE-1",
         { status: null, pausedReason: null },
-        ANY_MUTATION_CONTEXT,
+        undefined,
       );
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-CE-1",
         "Workflow input marker 'commit-pr' already has a reply — clearing stale marker before step 'plan'",
         undefined,
-        ANY_MUTATION_CONTEXT,
+        undefined,
       );
       expect(live.pausedReason).toBeNull();
     });
@@ -1102,7 +1091,7 @@ describe("CE workflow-step executor integration", () => {
           paused: true,
           pausedReason: expect.stringContaining("Should compact tablets use one pane or two?"),
         }),
-        ANY_MUTATION_CONTEXT,
+        undefined,
       );
     });
 
@@ -1145,7 +1134,7 @@ Ship FIVE kinds. Do NOT add roadmap-item in this task.
       expect(cap.last?.systemPrompt).toContain("modified-file list is the starting point");
       expect(cap.last?.systemPrompt).toContain("necessary callers, selectors, shared helpers, consumers, and tests");
       expect(cap.last?.systemPrompt).not.toContain("Review ONLY the files listed above");
-      expect(cap.last?.systemPrompt).toContain("restart the mandatory review procedure");
+      expect(cap.last?.systemPrompt).not.toContain("## Same-Session Fix Policy");
     });
 
     it("does not restore the historical task description when PROMPT.md is unavailable", async () => {
@@ -1196,7 +1185,7 @@ Ship FIVE kinds. Do NOT add roadmap-item in this task.
       });
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-CE-1",
-        expect.stringContaining("Plan Review refused to run without PROMPT.md"), undefined, ANY_MUTATION_CONTEXT,
+        expect.stringContaining("Plan Review refused to run without PROMPT.md"),
       );
     });
 

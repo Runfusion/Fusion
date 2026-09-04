@@ -5,24 +5,18 @@
  */
 import type { Task, TaskStore } from "@fusion/core";
 import type { EngineRunContext } from "../util/run-audit.js";
-import { isTaskWorkComplete } from "./task-predicates.js";
 import { preservePreExecutionWorkflowStepResults } from "./workflow-step-satisfaction.js";
 
 export type CleanupMergeStateDeps = {
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
-  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
-  reopenLastStepForRevision: (
-    taskId: string,
-    task: Task,
-  ) => Promise<{ index: number } | null | undefined | false | void>;
+  runContextFor: (taskId: string) => EngineRunContext | undefined;
 };
 
 export async function cleanupMergeStateForReverification(
   deps: CleanupMergeStateDeps,
   task: Task,
   logMessage: string,
-  options?: { preserveVerificationFailureCount?: boolean },
+  options?: { preserveVerificationFailureCount?: boolean; stepReopenPolicy?: "reopen-trailing" | "none" },
 ): Promise<Task> {
   const preservedWorkflowStepResults = preservePreExecutionWorkflowStepResults(task);
   await deps.store.updateTask(task.id, {
@@ -34,38 +28,13 @@ export async function cleanupMergeStateForReverification(
     workflowStepResults: preservedWorkflowStepResults,
   });
 
-  const refreshedTask = await deps.store.getTask(task.id);
-  const steps = refreshedTask.steps ?? [];
-  if (steps.length > 0) {
-    const allStepsComplete = isTaskWorkComplete(refreshedTask);
-    if (allStepsComplete) {
-      await deps.reopenLastStepForRevision(task.id, refreshedTask);
-    } else {
-      const resetIndexes = new Set<number>();
-      for (let i = 0; i < steps.length; i++) {
-        const name = steps[i].name.toLowerCase();
-        if (/testing|verification/.test(name) || /documentation|delivery/.test(name)) {
-          resetIndexes.add(i);
-        }
-      }
-
-      if (resetIndexes.size === 0) {
-        const reopened = await deps.reopenLastStepForRevision(task.id, refreshedTask);
-        if (reopened && typeof reopened === "object" && "index" in reopened) {
-          resetIndexes.add(reopened.index);
-        }
-      } else {
-        for (const index of resetIndexes) {
-          if (steps[index].status !== "pending") {
-            await deps.store.updateStep(task.id, index, "pending");
-          }
-        }
-        const earliestIndex = Math.min(...Array.from(resetIndexes));
-        await deps.store.updateTask(task.id, { currentStep: earliestIndex });
-      }
-    }
-  }
-
+  /*
+   * FNXC:WorkflowStepReopenAuthority 2026-08-23-08:51:
+   * FN-180 makes sendTaskBackForFix the sole workflow-resolved replay authority. Cleanup only
+   * clears stale merge bookkeeping: reopening here and again during the remediation bounce could
+   * reopen two different steps from one rejection. The resolved policy still travels through each
+   * caller to the send-back path, where `none` has a concrete no-reopen exit.
+   */
   await deps.store.logEntry(task.id, logMessage, undefined, deps.runContextFor(task.id));
   return deps.store.getTask(task.id);
 }

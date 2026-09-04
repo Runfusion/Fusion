@@ -115,6 +115,8 @@ import {
   createFusionModelRegistry,
   refreshFusionModelRegistry,
   setLocalDashboardPort,
+  startCloudLinkPresence,
+  stopCloudLinkPresence,
   reconcileUnownedStaleMergeStamp,
 } from "@fusion/engine";
 import { setHostTaskStore, clearHostTaskStores } from "../extension.js";
@@ -134,6 +136,7 @@ import { ensureCwdProjectRegistered } from "./ensure-project-registered.js";
 import { createReadOnlyProviderSettingsView } from "./provider-settings.js";
 import { wrapAuthStorageWithApiKeyProviders } from "./provider-auth.js";
 import { getPackageManagerAgentDir } from "./auth-paths.js";
+import { createProjectScopedPackageManagerFactory } from "./skills-package-manager.js";
 import { resolveProject } from "../project-context.js";
 import {
   ensureClaudeSkillsForAllProjectsOnStartup,
@@ -2076,6 +2079,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     ? createSkillsAdapter({
         // eslint-disable-next-line @typescript-eslint/no-explicit-any -- dashboard's resolve() uses a looser onMissing signature than pi's DefaultPackageManager
         packageManager: packageManager as any,
+        getPackageManager: createProjectScopedPackageManagerFactory(getPackageManagerAgentDir()),
         getSettingsPath: (rootDir: string) => getProjectSettingsPath(rootDir),
         /*
          * FNXC:PluginSkills 2026-07-10-00:00:
@@ -2088,6 +2092,12 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   async function disposeAsync(): Promise<void> {
     if (disposed) return;
     disposed = true;
+    /*
+    FNXC:CloudLink 2026-08-24-00:05:
+    Programmatic dispose() must stop Cloud Link presence so a Quick Tunnel and
+    heartbeat timer cannot outlive the dashboard backend.
+    */
+    await stopCloudLinkPresence().catch(() => undefined);
 
     // Clear pending debounce timer
     if (tuiRefreshDebounceTimer) {
@@ -2190,8 +2200,8 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     const engineManager: ProjectEngineManager = new ProjectEngineManager(centralCoreForEngine, {
       cliPackageVersion,
       getMergeStrategy,
-      processPullRequestMerge: (s, wd, taskId, pool, signal) =>
-        processPullRequestMergeTask(s, wd, taskId, githubClient, getTaskMergeBlocker, pool, signal),
+      processPullRequestMerge: (s, wd, taskId, signal) =>
+        processPullRequestMergeTask(s, wd, taskId, githubClient, getTaskMergeBlocker, signal),
       createGroupPr: createGroupPrCallback(githubClient),
       syncGroupPr: syncGroupPrCallback(githubClient),
       /*
@@ -2387,7 +2397,13 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       if (hybridExecutor) {
         await hybridExecutor.shutdown();
       }
-      await engineManager.stopAll();
+      /*
+      FNXC:RemoteAccess 2026-09-01-02:54:
+      shutdown() runs disposeAsync() BEFORE its own engineManager.stopAll(), so this is the call that
+      actually reaches the tunnels first — the restart intent has to be threaded here too, or the
+      handover never happens and the operator's public URL dies on every Restart anyway.
+      */
+      await engineManager.stopAll({ supervisedRestart: shutdownExitCode === FUSION_RESTART_EXIT_CODE });
       await closeCentralCoreBestEffort(centralCoreForEngine, "dispose cleanup");
     });
 
@@ -2554,7 +2570,16 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       }
 
       // Stop all project engines uniformly
-      await timeShutdownStep("engineManager.stopAll", () => engineManager.stopAll());
+      /*
+      FNXC:RemoteAccess 2026-09-01-02:54:
+      Tell the engine manager WHY we are exiting. `shutdownExitCode` is FUSION_RESTART_EXIT_CODE only
+      when requestSelfRestart set it, so it is the honest local signal for "a supervisor will relaunch
+      us" — unlike the inherited FUSION_RESTART_SUPERVISED env var. Remote tunnels are handed over
+      instead of killed on that path; a real container stop still tears them down.
+      */
+      await timeShutdownStep("engineManager.stopAll", () =>
+        engineManager.stopAll({ supervisedRestart: shutdownExitCode === FUSION_RESTART_EXIT_CODE }),
+      );
 
       // Stop peer exchange service
       if (peerExchangeService) {
@@ -2570,6 +2595,8 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
           await centralCoreForMesh!.updateNode(localNodeIdForMesh!, { status: "offline" });
         });
       }
+
+      await timeShutdownStep("stopCloudLinkPresence", () => stopCloudLinkPresence());
 
       await timeShutdownStep("closeCentralCore", () =>
         closeCentralCoreBestEffort(centralCoreForEngine, `shutdown (${signal})`),
@@ -2894,6 +2921,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       }
 
       await logShutdownDiagnostics(signal);
+      await timeShutdownStep("stopCloudLinkPresence", () => stopCloudLinkPresence());
       await disposeAsync();
       stopDiagnosticInterval();
       if (triggerScheduler) triggerScheduler.stop();
@@ -3021,6 +3049,23 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     or the EADDRINUSE rebind just above) tunnelled whatever else owned 4040.
     */
     setLocalDashboardPort(actualPort);
+    /*
+    FNXC:CloudLink 2026-08-22-00:40:
+    Linked instances start a Cloudflare Quick Tunnel to this bound port and
+    republish the URL to Cloud Link whenever cloudflared rotates it.
+    */
+    /*
+    FNXC:CloudLink 2026-08-24-00:05:
+    Do not publish an unauthenticated dashboard through a public Quick Tunnel.
+    */
+    if (dashboardAuthToken) {
+      void startCloudLinkPresence(actualPort, (message) => logSink.log(message, "cloud-link")).catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        logSink.warn(`Cloud Link presence failed: ${message}`, "cloud-link");
+      });
+    } else {
+      logSink.log("Skipping public tunnel because dashboard auth is off.", "cloud-link");
+    }
 
     /*
     FNXC:DevTunnel 2026-08-19-04:30:

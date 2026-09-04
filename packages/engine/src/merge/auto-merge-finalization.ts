@@ -1,19 +1,17 @@
 import {
-  getMergeConfirmedFinalizationBlocker,
-  getUnfinishedStepTitles,
+  getPostMergeFinalizeBlocker,
+  planConfirmedMergeChecklistReconciliation,
   resolveWorkflowIrForTask,
   resolveCompleteColumn,
   resolveMergeOrchestrationColumn,
   columnHasFlag,
-  REVIEW_ELIGIBLE_SENTINEL_COLUMN,
   clearMergeConfirmedTransientStatus,
   type MergeResult,
   type Task,
   type TaskStore,
 } from "@fusion/core";
-/* FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage B): mutation-context constructors for this lane. */
-import { mutationContextForAgent } from "@fusion/core";
 import { createRunAuditor, generateSyntheticRunId, type DatabaseMutationType, type RunAuditor } from "../util/run-audit.js";
+import { cleanupLandedTaskWorktree } from "./post-landing-worktree-cleanup.js";
 import type { MergeWriteFence } from "./merge-write-fence.js";
 
 /*
@@ -232,6 +230,7 @@ export async function finalizeProvenAutoMergeTask({
   store,
   taskId,
   result,
+  rootDir,
   audit,
   auditAgentId,
   auditPhase,
@@ -249,6 +248,27 @@ export async function finalizeProvenAutoMergeTask({
   const { completeColumn, mergeColumn, isCompleteColumn } = await resolveFinalizationColumns(store, taskId);
 
   const validationMergeDetails = buildFinalizationMergeDetails(latest, result);
+  const cleanupLandedWorktree = async (task: Task, mergeDetails: NonNullable<Task["mergeDetails"]>): Promise<void> => {
+    if (!rootDir) return;
+    await cleanupLandedTaskWorktree({
+      store,
+      taskId,
+      worktreePath: task.worktree,
+      rootDir,
+      landedSha: mergeDetails.commitSha ?? result?.commitSha,
+      source,
+      audit,
+      log: async (message) => {
+        if (fence) {
+          await fence.write("log", () => store.logEntry(taskId, message).catch(() => undefined));
+        } else {
+          await store.logEntry(taskId, message).catch(() => undefined);
+        }
+        await log?.(message);
+      },
+      fence,
+    });
+  };
   /*
    * FNXC:WorkflowMerge 2026-06-29-10:35:
    * Workflow-owned completion requires current merge proof, not just a stale `mergeConfirmed` flag. A task cannot reach or remain accepted as `done` when workflow steps are still pending or a no-op claims landed files. Branch-only residue is ignored because squash landing validates the task patch, not branch-history cleanliness.
@@ -268,8 +288,16 @@ export async function finalizeProvenAutoMergeTask({
       await log?.(`Auto-merge finalization blocked for ${taskId}: ${proofVerdict.reason}`);
       return { outcome: "blocked", task: latest, previousColumn: latest.column, reason: proofVerdict.reason };
     }
-    if (result) result.task = latest;
-    return { outcome: "already-done", task: latest, previousColumn: latest.column };
+    /*
+    FNXC:WorkflowMergeFinalization 2026-08-29-01:06:
+    This is convergence, not the ordering gate: a task that reached complete before FN-251 still
+    receives proof-gated cleanup when the finalizer sees its durable landing again. No root directory
+    means there is no trustworthy cleanup boundary, so preserve the historical no-op finalization.
+    */
+    await cleanupLandedWorktree(latest, validationMergeDetails);
+    const converged = await store.getTask(taskId).catch(() => latest);
+    if (result) result.task = converged;
+    return { outcome: "already-done", task: converged, previousColumn: latest.column };
   }
 
   const mergeDetails = validationMergeDetails;
@@ -288,51 +316,37 @@ export async function finalizeProvenAutoMergeTask({
     return { outcome: "blocked", task: latest, previousColumn: latest.column, reason };
   }
 
-  /* FNXC:MergeConfirmedFinalization 2026-08-23-21:40 (FN-9193): landing is already proven above by
-     `hasDurableMergeProof`, so incomplete steps must not hold the card out of `done` — see the
-     core helper for why that hold was self-defeating. Unfinished steps are logged, not dropped. */
-  const hardBlocker = getMergeConfirmedFinalizationBlocker({
-    ...latest,
-    /*
-    FNXC:WorkflowMerge 2026-06-29-09:15:
-    Proven merge finalization is a recovery path: durable `mergeConfirmed` means the branch already landed, even if a workflow graph crash left the card in `in-progress` or `todo`. Evaluate hard blockers as review-eligible so the column mismatch itself does not block the recovery rehome to `done`; real blockers such as paused/error/incomplete steps still apply.
-    U7 note: `"in-review"` here is getTaskHardMergeBlocker's review-eligible SENTINEL
-    (a core merge-blocker assumption), NOT a lifecycle column — it is intentionally
-    NOT re-keyed to the merge-orchestration column so custom workflows evaluate the
-    same review-eligible blocker set as builtin.
-    */
-    column: REVIEW_ELIGIBLE_SENTINEL_COLUMN,
-    paused: false,
+  /*
+  FNXC:ConfirmedMergeFinalization 2026-08-23-07:25:
+  FN-180 forbids re-running the pre-merge checklist after durable merge proof.
+  A concurrent review bounce can leave that checklist stale, so reconcile it
+  before moving to complete; only an independent status may still defer.
+  */
+  const postMergeBlocker = getPostMergeFinalizeBlocker({
     status: clearMergeConfirmedTransientStatus(latest.status),
     error: undefined,
   });
-  const unfinishedSteps = getUnfinishedStepTitles(latest);
-  if (unfinishedSteps.length > 0) {
-    await store.logEntry(
-      taskId,
-      `Finalizing proven merge with ${unfinishedSteps.length} unfinished step(s) — the branch already landed, so these did not run: ${unfinishedSteps.slice(0, 8).join("; ")}`,
-      "MergeConfirmedFinalizeUnfinishedSteps",
-    ).catch(() => undefined);
-  }
-  if (hardBlocker) {
-    // FNXC:MergeReliability 2026-08-11-21:39: A blocker discovered before finalization
-    // still writes task lifecycle state, so an orphan must reject rather than return a blocked result.
-    fence?.assertOwned("finalization");
-    await store.updateTask(taskId, {
-      status: "failed",
-      error: `Merge confirmed but finalization blocked: ${hardBlocker}`,
-    }, mutationContextForAgent(auditAgentId ?? "merger")).catch(() => undefined);
+  if (postMergeBlocker) {
     await recordFinalizationAudit({
       store,
       audit,
       task: latest,
       type: "task:auto-merge-finalize-column-mismatch-no-action",
-      reason: hardBlocker,
+      reason: postMergeBlocker,
       auditAgentId,
       auditPhase,
     });
-    return { outcome: "blocked", task: latest, previousColumn: latest.column, reason: hardBlocker };
+    return { outcome: "blocked", task: latest, previousColumn: latest.column, reason: postMergeBlocker };
   }
+  const checklistReconciliation = planConfirmedMergeChecklistReconciliation(latest);
+  const reconciledSteps = latest.steps.map((step, index) =>
+    checklistReconciliation.skippedStepIndexes.includes(index) ? { ...step, status: "skipped" as const } : step,
+  );
+  const reconciledWorkflowStepResults = (latest.workflowStepResults ?? []).map((result) =>
+    checklistReconciliation.reconciledWorkflowStepIds.includes(result.workflowStepId)
+      ? { ...result, status: "skipped" as const }
+      : result,
+  );
 
   const proofVerdict = await validateWorkflowDoneMergeProof({ ...latest, mergeDetails } as Task, {
     result,
@@ -362,7 +376,9 @@ export async function finalizeProvenAutoMergeTask({
     overlapBlockedBy: null,
     mergeRetries: 0,
     mergeDetails,
-  } as unknown as Partial<Task>, mutationContextForAgent(auditAgentId ?? "merger"));
+    steps: reconciledSteps,
+    workflowStepResults: reconciledWorkflowStepResults,
+  } as Pick<Task, "steps" | "workflowStepResults">);
 
   const shouldRecoveryRehome = latest.column !== mergeColumn;
   if (shouldRecoveryRehome) {
@@ -371,11 +387,25 @@ export async function finalizeProvenAutoMergeTask({
     );
   }
 
+  /*
+  FNXC:WorkflowMergeFinalization 2026-08-29-01:06:
+  For a proven single-repository landing, resolve cleanup before the complete-column move. Preserved
+  deliverable, unverifiable, and active-session outcomes are logged but never reclassify a durable
+  landing as a merge failure, because blocking this transition would permanently wedge the card.
+  */
+  await cleanupLandedWorktree(latest, mergeDetails);
+
   try {
     fence?.assertOwned("finalization");
+    /*
+    FNXC:AutoMergeMoveAttribution 2026-08-29-07:37:
+    Proven merge finalization advances review to the complete lane. Use a dedicated neutral
+    provenance instead of workflow-graph, workflow-remediation, or plan-approval: those literals
+    carry in-review-entry and reopen semantics. The value is also forwarded to plugin move policies.
+    */
     const moved = await store.moveTask(taskId, completeColumn, shouldRecoveryRehome
-      ? { moveSource: "engine", recoveryRehome: true, preserveProgress: true }
-      : { moveSource: "engine", preserveProgress: true }, mutationContextForAgent(auditAgentId ?? "merger"));
+      ? { moveSource: "engine", workflowMoveSource: "auto-merge-finalization", recoveryRehome: true, preserveProgress: true }
+      : { moveSource: "engine", workflowMoveSource: "auto-merge-finalization", preserveProgress: true });
     if (result) result.task = moved;
     if (shouldRecoveryRehome) {
       await recordFinalizationAudit({
@@ -390,7 +420,7 @@ export async function finalizeProvenAutoMergeTask({
       fence?.assertOwned("finalization");
       await store.logEntry(
         taskId,
-        `Auto-merge finalization repaired column mismatch: ${latest.column} → ${completeColumn} after proven merge; cleared stale status/blockers`, undefined, mutationContextForAgent(auditAgentId ?? "merger"),
+        `Auto-merge finalization repaired column mismatch: ${latest.column} → ${completeColumn} after proven merge; cleared stale status/blockers`,
       ).catch(() => undefined);
     }
     const finalTask = moved ?? (await store.getTask(taskId).catch(() => null)) ?? latest;

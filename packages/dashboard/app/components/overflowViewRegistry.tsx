@@ -83,7 +83,9 @@ export interface OverflowViewRenderProps {
   onOpenSessionInNewWindow?: (session: ChatSessionInfo) => void;
   /** Opens New Task with a reverted source task's original description. */
   onReviseTask?: (task: Task | TaskDetail) => void;
+  onUpdateTask?: (id: string, updates: { title?: string; description?: string; dependencies?: string[]; dismissNearDuplicate?: boolean; githubTracking?: { enabled?: boolean } }) => Promise<Task>;
   onDeleteTask?: (id: string, options?: { removeDependencyReferences?: boolean; removeLineageReferences?: boolean; githubIssueAction?: GithubIssueAction; allowResurrection?: boolean }) => Promise<Task>;
+  onOpenChatWithPrefill?: (prefillText: string) => void;
   onOpenDetail?: (task: Task | TaskDetail, initialTab?: DetailTaskTab) => void;
   onSendSelectionToTask?: (description: string) => void;
   onCreateTaskFromInsight?: (payload: { insightId: string; title: string; description: string }) => Promise<void> | void;
@@ -163,7 +165,9 @@ export const STATIC_OVERFLOW_VIEW_ENTRIES: readonly OverflowViewEntry[] = [
         projectId={props.projectId}
         onOpenTask={props.onOpenTaskInDock}
         onReviseTask={props.onReviseTask}
+        onUpdateTask={props.onUpdateTask}
         onDeleteTask={props.onDeleteTask}
+        onOpenChatWithPrefill={props.onOpenChatWithPrefill}
         addToast={props.addToast}
         prAuthAvailable={false}
         autoMergeEnabled={false}

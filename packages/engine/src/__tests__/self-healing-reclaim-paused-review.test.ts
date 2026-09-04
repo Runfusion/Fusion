@@ -1,12 +1,4 @@
 import { EventEmitter } from "node:events";
-/*
-FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
-These call-arg assertions now include the mutation context the converted sweep passes.
-Adding it is what keeps them load-bearing: left at the old arity every
-`toHaveBeenCalledWith` here would fail, and every `.not.toHaveBeenCalledWith` would pass
-vacuously — an assertion that can no longer fail is worse than one that is red.
-*/
-import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TaskStore } from "@fusion/core";
 import { SelfHealingManager } from "../self-healing.js";
@@ -16,6 +8,7 @@ import {
   relocateReclaimableWorktreeIntoRoot,
   removeWorktree,
 } from "../worktree/worktree-pool.js";
+import { withBranchWriteProvenance } from "./branch-write-provenance-store-stub.js";
 
 /*
 FNXC:EngineTests 2026-07-20-23:55:
@@ -42,7 +35,8 @@ function createStore(): TaskStore & EventEmitter {
   const emitter = new EventEmitter() as TaskStore & EventEmitter;
   (emitter as any).getSettings = vi.fn().mockResolvedValue({ globalPause: false, enginePaused: false, autoMerge: true });
   (emitter as any).listTasks = vi.fn();
-  (emitter as any).updateTask = vi.fn().mockResolvedValue(undefined);
+  (emitter as any).getTask = vi.fn().mockResolvedValue({ column: "in-review" });
+  (emitter as any).updateTask = vi.fn(withBranchWriteProvenance(async () => undefined));
   (emitter as any).moveTask = vi.fn().mockResolvedValue(undefined);
   (emitter as any).handoffToReview = vi.fn().mockImplementation(async (taskId: string) => {
     await (emitter as any).moveTask(taskId, "in-review");
@@ -92,9 +86,9 @@ describe("self-healing reclaim paused review", () => {
     const recovered = await manager.reclaimSelfOwnedBranchConflicts();
 
     expect(recovered).toBe(1);
-    expect(store.updateTask).toHaveBeenCalledWith("FN-4485", expect.objectContaining({ paused: false, pausedReason: undefined, status: null, error: null }), UNATTRIBUTED_MUTATION_CONTEXT);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-4485", "todo", expect.objectContaining({ moveSource: "engine" }), UNATTRIBUTED_MUTATION_CONTEXT);
-    expect(store.logEntry).toHaveBeenCalledWith("FN-4485", expect.stringContaining("[recovery] reclaim-paused-review"), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-4485", expect.objectContaining({ paused: false, pausedReason: undefined, status: null, error: null }));
+    expect(store.moveTask).toHaveBeenCalledWith("FN-4485", "in-progress", expect.objectContaining({ moveSource: "engine" }));
+    expect(store.logEntry).toHaveBeenCalledWith("FN-4485", expect.stringContaining("[recovery] reclaim-paused-review"));
     expect((store as any).recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
       mutationType: "branch:auto-reclaim",
       metadata: expect.objectContaining({ recoveredFromPaused: true, previousPausedReason: "branch-conflict-unrecoverable" }),
@@ -119,7 +113,7 @@ describe("self-healing reclaim paused review", () => {
     const recovered = await manager.reclaimSelfOwnedBranchConflicts();
 
     expect(recovered).toBe(1);
-    expect(store.moveTask).not.toHaveBeenCalledWith("FN-4486", "todo", expect.anything(), UNATTRIBUTED_MUTATION_CONTEXT);
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-4486", "todo", expect.anything());
     expect((store.updateTask as any).mock.calls.some((call: any[]) => call[0] === "FN-9998")).toBe(false);
   });
 
@@ -133,7 +127,14 @@ describe("self-healing reclaim paused review", () => {
     vi.spyOn(branchConflicts, "inspectBranchConflict").mockResolvedValueOnce({
       kind: "live-foreign",
       livePath: "/tmp/foreign",
-      error: new Error("foreign owner"),
+      error: new branchConflicts.BranchConflictError({
+        branchName: "fusion/fn-4487",
+        conflictingWorktreePath: "/tmp/foreign",
+        existingTipSha: "abc123",
+        strandedCommits: [{ sha: "abc123", subject: "foreign" }],
+        startPoint: "main",
+        recommendedAction: "manual",
+      }),
     } as any);
 
     const recovered = await manager.reclaimSelfOwnedBranchConflicts();

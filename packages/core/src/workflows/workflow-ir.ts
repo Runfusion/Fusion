@@ -970,6 +970,23 @@ function validateReviewerAgentOverrides(nodes: WorkflowIrNode[]): void {
   }
 }
 
+/*
+ * FNXC:McpConfig 2026-09-01-06:06:
+ * Read-only MCP server names are authorable wherever coding toolMode is authorable and can only
+ * reference operator-configured servers. Validate their shape recursively but do not treat them as
+ * an approval bypass flag, because coding mode already grants strictly broader capabilities.
+ */
+function validateReadonlyMcpServersConfig(nodes: WorkflowIrNode[]): void {
+  for (const node of nodes) {
+    const value = node.config?.readonlyMcpServers;
+    if (value !== undefined && (!Array.isArray(value) || value.some((name) => typeof name !== "string" || !name.trim()))) {
+      throw new WorkflowIrError(`Workflow node '${node.id}' readonlyMcpServers must be an array of non-empty strings when present`);
+    }
+    const templateNodes = (node.config as { template?: { nodes?: unknown } } | undefined)?.template?.nodes;
+    if (Array.isArray(templateNodes)) validateReadonlyMcpServersConfig(templateNodes as WorkflowIrNode[]);
+  }
+}
+
 function validateThinkingLevelConfig(nodes: WorkflowIrNode[]): void {
   for (const node of nodes) {
     const value = node.config?.thinkingLevel;
@@ -1752,6 +1769,7 @@ function validateV2(ir: WorkflowIrV2): void {
   const topLevelIds = new Set(ir.nodes.map((n) => n.id));
   validateStepExecutePlacement(ir.nodes);
   validateThinkingLevelConfig(ir.nodes);
+  validateReadonlyMcpServersConfig(ir.nodes);
   validateCredentialInstanceIdConfig(ir.nodes);
   validateReviewerAgentOverrides(ir.nodes);
   for (const node of ir.nodes) {

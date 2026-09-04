@@ -153,6 +153,8 @@ export { resetStepsIfWorkLost as resetStepsIfWorkLostFree } from "./reset-steps-
 export { routeRetryableRemediationGraphFailureToPreMergeFix as routeRetryableRemediationGraphFailureToPreMergeFixFree } from "./route-retryable-remediation.js";
 export { buildForeachWorktreeDeps as buildForeachWorktreeDepsFree } from "./build-foreach-worktree-deps.js";
 export { requestPreMergeOptionalStepFix as requestPreMergeOptionalStepFixFree } from "./request-pre-merge-optional-step-fix.js";
+export { appendReviewRemediationSteps as appendReviewRemediationStepsFree } from "./append-review-remediation-steps.js";
+export { resolveRemediationCheckout as resolveRemediationCheckoutFree } from "./resolve-remediation-checkout.js";
 export { createSpawnAgentTool as createSpawnAgentToolFree, spawnAgentParams as spawnAgentParamsFree } from "./create-spawn-agent-tool.js";
 export { createTaskUpdateTool as createTaskUpdateToolFree } from "./create-task-update-tool.js";
 export { attemptExecutorVerificationFix as attemptExecutorVerificationFixFree } from "./attempt-executor-verification-fix.js";
@@ -213,7 +215,6 @@ export { acquireSessionRegistryPath as acquireSessionRegistryPathFree } from "./
 export { shouldDeferCompletionForGlobalPause as shouldDeferCompletionForGlobalPauseFree } from "./should-defer-completion-for-global-pause.js";
 export { parkApprovalSuspension as parkApprovalSuspensionFree } from "./park-approval-suspension.js";
 export { resumeApprovalAfterUnwindIfNeeded as resumeApprovalAfterUnwindIfNeededFree } from "./resume-approval-after-unwind.js";
-export { ensureTaskWorktreeForPlanning as ensureTaskWorktreeForPlanningFree } from "./ensure-task-worktree-for-planning.js";
 export { foreachActiveForTask as foreachActiveForTaskFree } from "./foreach-active-for-task.js";
 export { buildBranchPersistence as buildBranchPersistenceFree } from "./build-branch-persistence.js";
 export {

@@ -18,7 +18,7 @@ export const CREATE_API_ROUTES_REGISTRAR_MOUNT_SEQUENCE = [
   "registerAgentReflectionRatingRoutes", "registerAgentGenerationRoutes", "registerIntegratedRouters", "registerProjectRoutes",
   "registerNodeRoutes", "registerDockerNodeRoutes", "registerDockerProvisioningRoutes", "registerSettingsSyncRoutes",
   "registerSecretsSyncRoutes", "registerMeshRoutes", "registerDiscoveryRoutes", "registerUiMetadataRoutes", "registerSettingsSyncInboundRoutes",
-  "registerSecretsSyncInboundRoutes", "registerSetupActivityRoutes", "registerIntegratedDevServerRouter", "registerAgentSkillsRoutes", "registerProxyRoutes",
+  "registerSecretsSyncInboundRoutes", "registerSetupActivityRoutes", "registerIntegratedDevServerRouter", "registerAgentSkillsRoutes", "registerPatchnodeRoutes", "registerProxyRoutes",
 ] as const;
 
 export type CreateApiRoutesRegistrarId = (typeof CREATE_API_ROUTES_REGISTRAR_MOUNT_SEQUENCE)[number];

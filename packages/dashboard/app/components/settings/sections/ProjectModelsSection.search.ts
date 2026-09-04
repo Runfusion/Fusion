@@ -31,16 +31,6 @@ export const projectModelsSearchEntries: SettingsSearchEntry[] = [
   },
   {
     sectionId: "project-models",
-    key: "chatNewSessionMode",
-    labelKey: "settings.projectModels.chatNewSessionMode",
-    labelFallback: "New Chat behavior",
-    helpKey: "settings.projectModels.chatNewSessionModeHelp",
-    helpFallback:
-      "Prompt mode opens New Chat with this default preselected. Always-default mode skips the dialog when the configured default is complete.",
-    keywords: ["direct chat", "skip dialog"],
-  },
-  {
-    sectionId: "project-models",
     key: "autoSelectModelPreset",
     labelKey: "settings.projectModels.autoSelectPresetBasedOnTaskSize",
     labelFallback: " Auto-select preset based on task size ",
@@ -98,5 +88,14 @@ export const projectModelsSearchEntries: SettingsSearchEntry[] = [
     helpFallback:
       "Guides the AI-generated Create PR summary, changes, and testing sections. Leave blank to use the default PR metadata prompt. No default — unset.",
     keywords: ["pull request", "body"],
+  },
+  {
+    sectionId: "project-models",
+    key: "fastCheapModelId",
+    labelKey: "settings.globalModels.fastAndCheapModel",
+    labelFallback: "Fast & Cheap Model",
+    helpKey: "settings.globalModels.fastAndCheapModelHelp",
+    helpFallback: "Select a cheap model here for quick edits. It is used for Fast Mode when creating a task.",
+    keywords: ["fast", "cheap", "fast mode"],
   },
 ];

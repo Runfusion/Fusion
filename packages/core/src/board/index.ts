@@ -10,6 +10,7 @@ export * from "./command-center-live.js";
 export * from "./github-issue-analytics.js";
 export * from "./gitlab-issue-analytics.js";
 export * from "./mobile-nav-primary-items.js";
+export * from "./patchnode.js";
 export * from "./productivity-analytics.js";
 export * from "./signals-analytics.js";
 export * from "./team-analytics.js";

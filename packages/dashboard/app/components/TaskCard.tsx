@@ -3,7 +3,8 @@ import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { memo, useCallback, useState, useRef, useEffect, useLayoutEffect, useMemo, type CSSProperties, type ReactElement } from "react";
 import { createPortal } from "react-dom";
-import { Link, Clock, Layers, Pencil, ChevronDown, Folder, Target, Bot, Trash2, RotateCw, Zap, GitBranch, GitPullRequest, AlertTriangle, ArrowUpRight, Eye, MoreHorizontal, Sparkles } from "lucide-react";
+import { Link, Clock, Layers, Pencil, ChevronDown, Folder, Target, Bot, Trash2, RotateCw, Zap, GitBranch, GitPullRequest, AlertTriangle, Eye, MoreHorizontal, Sparkles, X } from "lucide-react";
+import { isTaskExternallyBlocked } from "@fusion/core";
 import type { Task, TaskDetail, Column, ColumnId, PrInfo, IssueInfo, TaskPriority, GithubIssueAction, MergeResult, PlannerOversightLevel } from "@fusion/core";
 import {
   DEFAULT_PLANNER_OVERSIGHT_LEVEL,
@@ -19,11 +20,12 @@ import { resolveEffectiveAutoMerge } from "../../../core/src/merge/task-merge";
 // resolver — like resolveEffectiveAutoMerge above — must be imported from its source module
 // directly rather than the package barrel.
 import { resolveEffectivePlannerOversightLevel } from "../../../core/src/workflows/workflow-settings-resolver";
-import { addressPrFeedback, fetchTaskDetail, uploadAttachment, fetchMission, fetchAgent, rebuildTaskSpec, refreshPrStatus, fetchWorkflowSettingValues, type WorkflowFieldDefinition, type RevertTaskOptions, type RevertTaskResult } from "../api";
+import { addressPrFeedback, approvePlan, fetchTaskDetail, uploadAttachment, fetchMission, fetchAgent, refreshPrStatus, fetchWorkflowSettingValues, fetchBoardWorkflows, type WorkflowFieldDefinition, type RevertTaskOptions, type RevertTaskResult } from "../api";
 import { GitHubBadge } from "./GitHubBadge";
 import { GitLabBadge } from "./GitLabBadge";
 import { RuntimeFallbackBadge } from "./RuntimeFallbackBadge";
 import { PrCreateModal } from "./PrCreateModal";
+import { TaskResetDialog } from "./TaskResetDialog";
 import { ProviderIcon } from "./ProviderIcon";
 import { PluginSlot } from "./PluginSlot";
 import { useBadgeWebSocket } from "../hooks/useBadgeWebSocket";
@@ -36,10 +38,12 @@ import {
   isArchivedColumnRole,
   isCompleteColumnRole,
   isFieldEditableColumnRole,
+  isPreImplementationColumnRole,
   isReviewColumnRole,
   isWipColumnRole,
 } from "../utils/columnRoles";
-import { hasPendingAutomaticRecovery, isTaskManuallyRetryable } from "../utils/taskRecovery";
+import { hasPendingAutomaticRecovery } from "../utils/taskRecovery";
+import { resolveRetryStageCopy } from "../utils/taskRetryCopy";
 import { getRevertOfId, isTaskReverted } from "../utils/taskRevert";
 import { getStalledReviewSignal } from "../utils/taskStalledReview";
 import { getInReviewStallCopy, shouldShowInReviewStallBadge } from "../utils/inReviewStallCopy";
@@ -57,15 +61,13 @@ import { getPrBadgeModifierClass } from "../utils/prBadgeClass";
 import { getTotalAgentActiveMs, getEndToEndDurationMs, getTimedDurationMs, getWorkflowRuntimeMs, parseTimestampToMs } from "../utils/taskTiming";
 import { getTaskStatusBadgeLabel, getTaskWipLifecycleBadgeLabel, type TaskStatusBadgeContext, hasTaskStatusBadge, isTaskPlanningActive } from "../utils/taskStatusBadgeLabel";
 import {
-  isPlanReviewGateUnsatisfied,
   isReviewBudgetExhaustedApproval,
   isTaskAwaitingPlanApproval,
-  isTaskBlockedOnApprovalHold,
-  resolvePromoteSuppressed,
 } from "../utils/reviewBudgetApproval";
 import { canStartPrFeedbackAddressing, getTaskPrimaryPrInfo } from "../utils/prFeedback";
 import type { ToastType } from "../hooks/useToast";
 import { useConfirm } from "../hooks/useConfirm";
+import { runDuplicateTaskAction } from "../utils/duplicateTaskAction";
 import { extractDependencyDeleteConflict, extractLineageDeleteConflict } from "../utils/taskDelete";
 import { MAX_AUTO_MERGE_RETRIES, type BlockerFanoutEntry } from "../hooks/useBlockerFanout";
 import { useRetryWarning } from "../context/RetryWarningContext";
@@ -74,7 +76,7 @@ import { useColumnLabel } from "../i18n/labels";
 import { formatCompactLifecycleDate, useLocaleFormat } from "../i18n/format";
 import { WorkspaceWorktreesSummary, isWorkspaceTask } from "./WorkspaceWorktreesSummary";
 import { WorkflowIcon } from "./WorkflowIcon";
-import { TaskContextMenu, buildTaskActionMenuModel, buildTaskMoveMenuItems, getTaskPrAutomationLabel, type TaskContextMenuColumnFlags, type TaskContextMenuColumnMetadata, type TaskMenuItemDescriptor } from "./TaskContextMenu";
+import { TaskContextMenu, buildTaskActionMenuModel, getTaskPrAutomationLabel, type TaskContextMenuColumnFlags, type TaskContextMenuColumnMetadata, type TaskMenuItemDescriptor } from "./TaskContextMenu";
 import { formatCost, hasTaskCost, taskTotalCost } from "../utils/taskTokenCost";
 import { getPriorityColorVar, getPriorityIcon, getPriorityLabel } from "../utils/priorityIndicator";
 import { getTaskTitleDisplay } from "../utils/taskTitleDisplay";
@@ -599,6 +601,136 @@ function renderCardFieldBadge(
   );
 }
 
+interface ExternalBlockNoticeProps {
+  task: Task;
+  variant: "card" | "list" | "detail";
+  onOpenChatWithPrefill?: (prefillText: string) => void;
+  onRetryTask?: (id: string) => Promise<Task>;
+  addToast?: (message: string, type?: ToastType) => void;
+}
+
+/*
+FNXC:ExternalBlockUx 2026-08-28-04:56:
+Every task surface uses one external-obstacle notice so Blocked always wins over paused, failure,
+dependency, and file-overlap vocabulary. Action buttons exist only when their real handlers exist;
+the explanation prompt carries the durable raw code/message and Retry resumes without the normal
+destructive stage-restart confirmation.
+*/
+export function ExternalBlockNotice({ task, variant, onOpenChatWithPrefill, onRetryTask, addToast }: ExternalBlockNoticeProps) {
+  const { t } = useTranslation("app");
+  const [isResuming, setIsResuming] = useState(false);
+  const block = task.externalBlock;
+  if (!isTaskExternallyBlocked(task) || !block) return null;
+  const code = block.code.trim() || t("tasks.externalBlock.unknownCode", "UNCLASSIFIED");
+  const message = block.message.trim() || t("tasks.externalBlock.genericMessage", "External obstacle requires operator action");
+  const error = `${code}: ${message}`;
+  const stop = (event: React.SyntheticEvent) => event.stopPropagation();
+  const explain = (event: React.MouseEvent<HTMLButtonElement>) => {
+    stop(event);
+    onOpenChatWithPrefill?.(t("tasks.externalBlock.explainPrompt", "Explain this error {{error}} and how to resolve it.", { error }));
+  };
+  const retry = async (event: React.MouseEvent<HTMLButtonElement>) => {
+    stop(event);
+    if (!onRetryTask || isResuming) return;
+    setIsResuming(true);
+    try {
+      await onRetryTask(task.id);
+    } catch (reason) {
+      addToast?.(t("tasks.retryFailed", "Failed to retry {{taskId}}: {{error}}", { taskId: task.id, error: getErrorMessage(reason) }), "error");
+    } finally {
+      setIsResuming(false);
+    }
+  };
+  return (
+    <div className={`external-block-notice external-block-notice--${variant}`} role="alert" data-testid={`external-block-${variant}-${task.id}`}>
+      <strong className="external-block-notice__title">{t("tasks.externalBlock.title", "Blocked")}</strong>
+      <span className="external-block-notice__reason">{error}</span>
+      {(onOpenChatWithPrefill || onRetryTask) && (
+        <span className="external-block-notice__actions">
+          {onOpenChatWithPrefill && (
+            <button type="button" className="btn btn-icon" onClick={explain} aria-label={t("tasks.externalBlock.explain", "Explain this error")} title={t("tasks.externalBlock.explain", "Explain this error")}>
+              <Bot aria-hidden="true" />
+            </button>
+          )}
+          {onRetryTask && (
+            <button type="button" className="btn" onClick={(event) => void retry(event)} disabled={isResuming}>
+              <RotateCw aria-hidden="true" />
+              {isResuming ? t("tasks.externalBlock.resuming", "Resuming…") : t("tasks.externalBlock.retry", "Retry")}
+            </button>
+          )}
+        </span>
+      )}
+    </div>
+  );
+}
+
+interface PlanApprovalNoticeProps {
+  task: Task;
+  variant: "card" | "list" | "detail";
+  projectId?: string;
+  addToast: (message: string, type?: ToastType) => void;
+  onTaskUpdated?: (task: Task) => void;
+  isPlanningLane?: boolean;
+}
+
+/*
+FNXC:PlanApproval 2026-08-28-16:31:
+Every board surface shares one approval notice. Approve is the only in-notice control and stops propagation so card navigation never wins; operators who need to restate and restart the task use the separate Reset dialog.
+*/
+export function PlanApprovalNotice({
+  task,
+  variant,
+  projectId,
+  addToast,
+  onTaskUpdated,
+  isPlanningLane = true,
+}: PlanApprovalNoticeProps) {
+  const { t } = useTranslation("app");
+  const [isApproving, setIsApproving] = useState(false);
+  const awaitingApproval = isTaskAwaitingPlanApproval(task, isPlanningLane);
+  if (isTaskExternallyBlocked(task) || !awaitingApproval) return null;
+
+  const replanCap = isReviewBudgetExhaustedApproval(task);
+  const approve = async (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+    if (!task.prompt || isApproving) return;
+    setIsApproving(true);
+    try {
+      const updated = await approvePlan(task.id, projectId);
+      addToast(t("taskDetail.plan.approved", "Plan approved — {{id}} moved to Todo", { id: task.id }), "success");
+      onTaskUpdated?.(updated);
+    } catch (error) {
+      addToast(t("tasks.planApproval.approveFailed", "Failed to approve plan: {{error}}", { error: getErrorMessage(error) }), "error");
+      setIsApproving(false);
+    }
+  };
+
+  return (
+      <div
+        className={`plan-approval-notice plan-approval-notice--${variant}`}
+        role="alert"
+        data-testid={`plan-approval-${variant}-${task.id}`}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <strong className="plan-approval-notice__title">
+          {replanCap
+            ? t("taskDetail.plan.replanCapHeadline", "Approval needed: Plan Review did not converge")
+            : t("tasks.planApproval.title", "Need Your Review")}
+        </strong>
+        <span className="plan-approval-notice__copy">
+          {replanCap
+            ? t("tasks.planApproval.replanCapCopy", "Review the current plan, then approve it or request specific changes.")
+            : t("tasks.planApproval.copy", "Review the plan before implementation starts.")}
+        </span>
+        <span className="plan-approval-notice__actions">
+          <button type="button" className="btn btn-primary btn-sm" onClick={(event) => void approve(event)} disabled={!task.prompt || isApproving}>
+            {isApproving ? t("tasks.planApproval.approving", "Approving...") : t("tasks.planApproval.approve", "Approve")}
+          </button>
+        </span>
+      </div>
+  );
+}
+
 interface TaskCardProps {
   task: Task;
   projectId?: string;
@@ -638,9 +770,10 @@ interface TaskCardProps {
   }) => Promise<Task>;
   onPauseTask?: (id: string) => Promise<Task>;
   onRetryTask?: (id: string) => Promise<Task>;
+  onOpenChatWithPrefill?: (prefillText: string) => void;
   onUnpauseTask?: (id: string) => Promise<Task>;
-  onResetTask?: (id: string) => Promise<Task>;
-  onDuplicateTask?: (id: string) => Promise<Task>;
+  onResetTask?: (id: string, options?: { description?: string }) => Promise<Task>;
+  onDuplicateTask?: (id: string, options?: { workflowId?: string }) => Promise<Task>;
   onMergeTask?: (id: string) => Promise<MergeResult>;
   onOpenDetailWithTab?: (task: Task | TaskDetail, initialTab: "changes" | "retries" | "workflow") => void;
   /*
@@ -650,15 +783,11 @@ interface TaskCardProps {
   /** Called when user clicks the mission badge on a task card. */
   onOpenMission?: (missionId: string) => void;
   /** Called when user moves a task to a different column from the card. */
-  onMoveTask?: (id: string, column: ColumnId, optionsOrPosition?: { preserveProgress?: boolean } | number) => Promise<Task>;
+  onMoveTask?: (id: string, column: ColumnId, optionsOrPosition?: { preserveProgress?: boolean; expectedColumn?: string } | number) => Promise<Task>;
   /** Workflow-column flags for this task's current column, used for detail-equivalent card action availability. */
   taskColumnFlags?: TaskContextMenuColumnFlags;
   /** Ordered workflow columns that define card move targets in workflow-column mode. */
   taskMoveColumns?: readonly TaskContextMenuColumnMetadata[];
-  /** Called when user promotes a held task out of a hold column. */
-  onPromote?: (taskId: string) => Promise<void>;
-  /** True while this task's promote action is in flight. */
-  isPromoting?: boolean;
   /** Timestamp (ms) when task data was last confirmed fresh from the server. */
   lastFetchTimeMs?: number;
   /** Downstream fan-out entry for this task, computed at board-level. */
@@ -863,6 +992,7 @@ function areTaskCardPropsEqual(previous: TaskCardProps, next: TaskCardProps): bo
     previous.onDeleteTask === next.onDeleteTask &&
     previous.onPauseTask === next.onPauseTask &&
     previous.onRetryTask === next.onRetryTask &&
+    previous.onOpenChatWithPrefill === next.onOpenChatWithPrefill &&
     previous.onUnpauseTask === next.onUnpauseTask &&
     previous.onResetTask === next.onResetTask &&
     previous.onDuplicateTask === next.onDuplicateTask &&
@@ -871,8 +1001,6 @@ function areTaskCardPropsEqual(previous: TaskCardProps, next: TaskCardProps): bo
     previous.onOpenRefine === next.onOpenRefine &&
     previous.onOpenMission === next.onOpenMission &&
     previous.onMoveTask === next.onMoveTask &&
-    previous.onPromote === next.onPromote &&
-    previous.isPromoting === next.isPromoting &&
     previous.fanout?.totalCount === next.fanout?.totalCount &&
     previous.fanout?.activeTodoCount === next.fanout?.activeTodoCount &&
     previous.fanout?.isHighFanout === next.fanout?.isHighFanout &&
@@ -899,6 +1027,9 @@ function areTaskCardPropsEqual(previous: TaskCardProps, next: TaskCardProps): bo
     previousTask.paused === nextTask.paused &&
     previousTask.userPaused === nextTask.userPaused &&
     previousTask.error === nextTask.error &&
+    previousTask.externalBlock?.blockedAt === nextTask.externalBlock?.blockedAt &&
+    previousTask.externalBlock?.code === nextTask.externalBlock?.code &&
+    previousTask.externalBlock?.message === nextTask.externalBlock?.message &&
     previousTask.size === nextTask.size &&
     previousTask.blockedBy === nextTask.blockedBy &&
     previousTask.overlapBlockedBy === nextTask.overlapBlockedBy &&
@@ -1009,6 +1140,7 @@ function TaskCardComponent({
   onReviseTask,
   onPauseTask,
   onRetryTask,
+  onOpenChatWithPrefill,
   onUnpauseTask,
   onResetTask,
   onDuplicateTask,
@@ -1018,8 +1150,6 @@ function TaskCardComponent({
   onMoveTask,
   taskColumnFlags,
   taskMoveColumns,
-  onPromote,
-  isPromoting = false,
   lastFetchTimeMs,
   fanout,
   prAuthAvailable,
@@ -1036,6 +1166,7 @@ function TaskCardComponent({
   const { locale } = useLocaleFormat();
   const columnLabel = useColumnLabel();
   const [fileDragOver, setFileDragOver] = useState(false);
+  const [showResetDialog, setShowResetDialog] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [editDescription, setEditDescription] = useState(task.description || "");
   /*
@@ -1126,6 +1257,7 @@ function TaskCardComponent({
   const [isPrCreateOpen, setIsPrCreateOpen] = useState(false);
   const [isAddressingPrFeedback, setIsAddressingPrFeedback] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
+  const [startPendingColumn, setStartPendingColumn] = useState<ColumnId | null>(null);
   const [lifecycleNowMs, setLifecycleNowMs] = useState(() => Date.now());
 
   /*
@@ -1148,6 +1280,12 @@ function TaskCardComponent({
     };
   }, []);
 
+  useEffect(() => {
+    if (startPendingColumn !== null && task.column !== startPendingColumn) {
+      setStartPendingColumn(null);
+    }
+  }, [startPendingColumn, task.column]);
+
   const descTextareaRef = useRef<HTMLTextAreaElement>(null);
   const touchOpenHandledRef = useRef(false);
   const cardRef = useRef<HTMLDivElement>(null);
@@ -1162,7 +1300,7 @@ function TaskCardComponent({
   const [isInViewport, setIsInViewport] = useState(false);
   const { badgeUpdates, subscribeToBadge, unsubscribeFromBadge } = useBadgeWebSocket(projectId);
   const { agentsMap } = useAgentsMapCache(projectId);
-  const { confirm } = useConfirm();
+  const { confirm, confirmWithSelect } = useConfirm();
   const retryWarningThreshold = useRetryWarning();
   const costBadge = useCostBadge();
   /*
@@ -1469,9 +1607,9 @@ function TaskCardComponent({
   const isDoneColumn = isCompleteColumn;
   const visualStatus = isDoneColumn ? "done" : task.status;
   const hasPendingRecovery = hasPendingAutomaticRecovery(task, lastFetchTimeMs);
+  const isExternalBlocked = !isDoneColumn && isTaskExternallyBlocked(task);
   const isFailed = !isDoneColumn && task.status === "failed" && !hasPendingRecovery;
-  const canRetryTask = isTaskManuallyRetryable(task, lastFetchTimeMs);
-  const isPaused = !isDoneColumn && (task.paused === true || task.userPaused === true);
+  const isPaused = !isDoneColumn && !isExternalBlocked && (task.paused === true || task.userPaused === true);
   const isTriageDuplicateDecision = isPaused
     && task.pausedReason === "duplicate-decision-required"
     && task.sourceMetadata?.duplicateSource === "triage-marker"
@@ -1493,10 +1631,6 @@ function TaskCardComponent({
   const planReviewRunning = useMemo(
     () => isPlanReviewRunning(task),
     [task.steps, task.enabledWorkflowSteps, task.workflowStepResults],
-  );
-  const planReviewGateUnsatisfied = useMemo(
-    () => isPlanReviewGateUnsatisfied(task),
-    [task.enabledWorkflowSteps, task.workflowStepResults],
   );
   /*
   FNXC:WorkflowResolvedColumns 2026-07-30-00:40 (partial-supply seam, caught by the gate):
@@ -1535,8 +1669,8 @@ function TaskCardComponent({
   converging — Approve keeps the current PROMPT.md; Reject regenerates.
   */
   const isPlanReviewReplanCapApproval = isReviewBudgetExhaustedApproval(task);
-  const isAwaitingApproval = isTaskAwaitingPlanApproval(task, isIntakeColumn);
-  const isBlockedOnApprovalHold = isTaskBlockedOnApprovalHold(task);
+  const isPlanningLane = isPreImplementationColumnRole(taskColumnFlags, task.column);
+  const isAwaitingApproval = isTaskAwaitingPlanApproval(task, isPlanningLane);
   const isAwaitingInput = task.status === "awaiting-user-input";
   /*
   FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (PR #2566 review — greptile):
@@ -1572,27 +1706,6 @@ function TaskCardComponent({
   two independent conditions disjoint.
   */
   const awaitingPlanning = task.awaitingPlanning ?? ((task.steps?.length ?? 0) === 0);
-  /*
-  FNXC:TaskCardPromote 2026-08-09-19:00:
-  Post-U11, the hold column is also the planning lane, so Promote must not be offered while a card is unplanned, being planned, in Plan Review, or awaiting plan approval. That click is rejected as `unplanned-for-execution` and the force path would start implementation against an incomplete plan.
-
-  `awaitingPlanning` is absent from SSE payloads, so its step-count fallback deliberately matches the Ready / Queued to plan badge pair. `isAwaitingApproval` only applies on an intake-trait merged planning lane or for the `plan-review-replan-cap` reason.
-
-  FNXC:TaskCardPromote 2026-08-11-09:13:
-  FN-8950 anticipates `issueRelease`'s approval and unplanned refusal arms. An enabled-but-pending
-  default-on Plan Review in Todo and an absent enabled-step selection are both blocked; approval
-  holds are blocked on every column rather than only intake. This is deliberately conservative,
-  not exact parity: the card cannot resolve custom defaultOn values, plan-review's column/WIP
-  position, or capacity continuations, and also suppresses the planning-stage `specifying` and
-  `plan-review-unavailable` statuses. Hiding a shortcut is safer than offering a click the server
-  rejects: capacity release and explicit force promotion remain available.
-  */
-  const isStillInPlanning = awaitingPlanning
-    || ["planning", "specifying", "needs-replan", "plan-review-unavailable"].includes(task.status ?? "")
-    || planReviewGateUnsatisfied
-    || isAwaitingApproval
-    || isBlockedOnApprovalHold;
-  const showPromoteAction = Boolean(onPromote) && !resolvePromoteSuppressed(task, isStillInPlanning);
   const showIdleTodoBadge = !isPaused
     && isHoldColumn
     && !visualStatus
@@ -1616,6 +1729,24 @@ function TaskCardComponent({
   structural rather than a property of the step count that two independent conditions had to agree on.
   */
   const showQueuedToPlanBadge = showIdleTodoBadge && !queued && awaitingPlanning;
+  /*
+  FNXC:TaskStatusBadge 2026-08-28-21:24:
+  Idle-hold tooltips must state the release-gate reason the server actually observed rather than asserting capacity for every wait. SSE and enrichment-cap rows can omit the verdict, so the existing generic planning-slot copy remains the fallback.
+  */
+  const queuedToPlanTitle = task.releaseGate?.reason === "plan-review-pending"
+    ? t(
+        "tasks.queuedToPlanPlanReviewTitle",
+        "Plan Review has not finished yet — implementation starts once the plan passes review.",
+      )
+    : task.releaseGate?.reason === "needs-replan"
+      ? t(
+          "tasks.needsReplanQueuedTitle",
+          "Waiting to revise the plan — the revision starts when a planning slot frees up.",
+        )
+      : t(
+          "tasks.queuedToPlanTitle",
+          "Waiting for a planning slot — planning starts when an agent slot frees up",
+        );
   /*
   FNXC:TaskCardMovement 2026-08-19-18:32:
   Native task movement is intentionally absent from cards. File drops remain below because
@@ -1740,8 +1871,8 @@ function TaskCardComponent({
   In-progress card progress is WIP implementation only. Plan Review (Todo) and Code Review / other review-lane gates must not appear as checklist rows or inflate completed/total while the card is in In progress; badges still use full progress helpers (isPlanReviewRunning / running step labels).
   */
   const unifiedProgress = useMemo(
-    () => getUnifiedTaskProgress(task, { scope: "implementation" }),
-    [task.steps, task.enabledWorkflowSteps, task.workflowStepResults],
+    () => getUnifiedTaskProgress(task, { scope: isReviewColumn ? "full" : "implementation" }),
+    [isReviewColumn, task.column, task.steps, task.enabledWorkflowSteps, task.workflowStepResults],
   );
   /*
   FNXC:TaskCardProgress 2026-06-29-02:26:
@@ -1755,8 +1886,31 @@ function TaskCardComponent({
   FNXC:TaskCardWorkflowProgress 2026-07-08-hh:mm:
   FN-7676 — cards in the Planning/`triage` column must not surface the steps breakdown (progress bar, active badge, step-count toggle, expandable list); enumerated implementation steps are premature planning artifacts, not execution progress. The affordance now appears only after the task leaves Planning (`in-progress` / `executing`), matching `ListView.shouldShowTaskProgress`. FN-7831 adds a separate header "Reviewing" badge for a running Plan Review, but the progress breakdown itself remains hidden in Planning.
   */
+  /*
+  FNXC:TaskCardWorkflowProgress 2026-08-25-01:10:
+  The review lane shows its breakdown too. FN-7676 hid it in Planning because enumerated steps are a
+  premature planning artifact there — that reasoning does not extend to in-review, where a
+  review-column workflow such as builtin:coding-ideas-v2 runs Verification, Documentation & Delivery
+  and Code Review as real, advancing work. The card already resolves the FULL pipeline once it
+  reaches that lane; this gate then suppressed the rendering of what it had just computed, so the
+  operator saw nothing for the stage those gates were promoted into. Resolved by TRAIT, not by the
+  hardcoded `in-review` id, so a renamed board behaves the same.
+  */
+  /*
+  FNXC:TaskCardWorkflowProgress 2026-08-25-11:40:
+  The review lane shows its stage as a BADGE, not a step list. A review-column workflow has few
+  milestones in a fixed order (Code Review -> Documentation -> merge), so the running-gate badge
+  already answers "where is this card", and a list of two rows plus every finished implementation
+  step is noise on a board.
+  It also removes a whole failure mode: the list is built from `task.enabledWorkflowSteps`, which is
+  frozen on the card at planning time, so a card planned before a workflow changed rendered a
+  milestone that no longer exists as permanently `pending`. No list, no ghost.
+  Cost, stated: a non-blocking gate that failed is no longer visible from the board — open the card.
+  Blocking failures still move the card back to in-progress, which is visible.
+  */
   const showProgressSection =
-    unifiedProgress.total > 0 && (task.status === "executing" || isWipColumn);
+    unifiedProgress.total > 0
+    && (task.status === "executing" || isWipColumn);
 
   /*
   FNXC:BoardPerformance 2026-07-26-09:46:
@@ -2170,7 +2324,7 @@ function TaskCardComponent({
     );
     return (next?.id ?? "todo") as ColumnId;
   }, [taskMoveColumns, task.column]);
-  const shouldRenderActionRow = showPromoteAction || showCreatePrQuickAction || showAddressPrFeedbackAction || showStartAction;
+  const shouldRenderActionRow = showCreatePrQuickAction || showAddressPrFeedbackAction || showStartAction;
 
   const enterEditMode = useCallback((e?: React.MouseEvent) => {
     e?.stopPropagation();
@@ -2264,9 +2418,9 @@ function TaskCardComponent({
 
     try {
       await onUpdateTask(task.id, { dismissNearDuplicate: true });
-      addToast(t("tasks.duplicateDismissed", "Kept {{taskId}}; duplicate warning dismissed", { taskId: task.id }), "success");
+      addToast(t("tasks.duplicateDismissed", "Duplicate flag cleared for {{taskId}}", { taskId: task.id }), "success");
     } catch (err) {
-      addToast(t("tasks.keepFailed", "Failed to keep {{taskId}}: {{error}}", { taskId: task.id, error: getErrorMessage(err) }), "error");
+      addToast(t("tasks.duplicateDismissFailed", "Failed to clear the duplicate flag for {{taskId}}: {{error}}", { taskId: task.id, error: getErrorMessage(err) }), "error");
     }
   }, [addToast, onUpdateTask, task.id]);
 
@@ -2553,15 +2707,25 @@ function TaskCardComponent({
 
   const handleTaskActionRetry = useCallback(async () => {
     if (!onRetryTask || isRetrying) return;
+    const copy = resolveRetryStageCopy(t, taskColumnFlags, task.column);
+    const confirmed = await confirm({
+      title: copy.confirmTitle,
+      message: copy.confirmMessage,
+      confirmLabel: copy.confirmLabel,
+      cancelLabel: t("common.cancel", "Cancel"),
+      danger: true,
+    });
+    if (!confirmed) return;
     setIsRetrying(true);
     try {
       await onRetryTask(task.id);
+      addToast(copy.successMessage, "success");
     } catch (err) {
       addToast(t("tasks.retryFailed", "Failed to retry {{taskId}}: {{error}}", { taskId: task.id, error: getErrorMessage(err) }), "error");
     } finally {
       setIsRetrying(false);
     }
-  }, [addToast, isRetrying, onRetryTask, task.id, t]);
+  }, [addToast, confirm, isRetrying, onRetryTask, t, task.column, task.id, taskColumnFlags]);
 
   const handleTaskActionTogglePause = useCallback(async () => {
     try {
@@ -2579,38 +2743,22 @@ function TaskCardComponent({
     }
   }, [addToast, isPaused, onPauseTask, onUnpauseTask, task.id, t]);
 
-  const handleTaskActionReset = useCallback(async () => {
-    if (!onResetTask) return;
-    const shouldReset = await confirm({
-      title: t("taskDetail.reset.btn", "Reset"),
-      message: t("taskDetail.reset.confirmMessage", "This will erase all progress for {{id}} and start the task from scratch. Continue?", { id: task.id }),
-      confirmLabel: t("taskDetail.reset.btn", "Reset"),
-      cancelLabel: t("common.cancel", "Cancel"),
-      danger: true,
-    });
-    if (!shouldReset) return;
-    try {
-      await onResetTask(task.id);
-      addToast(t("taskDetail.reset.resetSuccess", "Reset {{id}} — fresh run will be allocated", { id: task.id }), "success");
-    } catch (err) {
-      addToast(getErrorMessage(err), "error");
-    }
-  }, [addToast, confirm, onResetTask, task.id, t]);
+  const handleTaskActionReset = useCallback(() => {
+    if (onResetTask) setShowResetDialog(true);
+  }, [onResetTask]);
 
   const handleTaskActionDuplicate = useCallback(async () => {
     if (!onDuplicateTask) return;
-    const shouldDuplicate = await confirm({
-      title: t("taskDetail.duplicate.title", "Duplicate Task"),
-      message: t("taskDetail.duplicate.message", "Duplicate {{id}}? This will create a new task in Triage with the same description and prompt.", { id: task.id }),
+    await runDuplicateTaskAction({
+      taskId: task.id,
+      t,
+      addToast,
+      confirmWithSelect,
+      confirm,
+      duplicateTask: onDuplicateTask,
+      loadBoardWorkflows: () => fetchBoardWorkflows(projectId),
     });
-    if (!shouldDuplicate) return;
-    try {
-      const newTask = await onDuplicateTask(task.id);
-      addToast(t("taskDetail.duplicate.success", "Duplicated {{id}} → {{newId}}", { id: task.id, newId: newTask.id }), "success");
-    } catch (err) {
-      addToast(getErrorMessage(err), "error");
-    }
-  }, [addToast, confirm, onDuplicateTask, task.id, t]);
+  }, [addToast, confirm, confirmWithSelect, onDuplicateTask, projectId, task.id, t]);
 
   const handleTaskActionMerge = useCallback(async () => {
     if (!onMergeTask) return;
@@ -2635,87 +2783,6 @@ function TaskCardComponent({
     const taskWorkflowId = (task as Task & { workflowId?: string | null }).workflowId;
     onPlanningMode?.(seed, taskWorkflowId ?? planningWorkflowId ?? null);
   }, [onPlanningMode, planningWorkflowId, task, task.description, task.id, task.title]);
-
-  const handleTaskActionRespecify = useCallback(async () => {
-    const shouldRebuild = await confirm({
-      title: t("taskDetail.plan.rebuildTitle", "Rebuild Plan"),
-      message: t("taskDetail.plan.rebuildMessage", "Rebuild the plan for this task? The task will move to planning for replanning."),
-    });
-    if (!shouldRebuild) return;
-    try {
-      await rebuildTaskSpec(task.id, projectId);
-      addToast(t("taskDetail.plan.replanning", "Replanning {{id}}…", { id: task.id }), "info");
-    } catch (err) {
-      addToast(getErrorMessage(err), "error");
-    }
-  }, [addToast, confirm, projectId, task.id, t]);
-
-  const handleTaskActionMove = useCallback(async (column: ColumnId) => {
-    if (!onMoveTask) return;
-    try {
-      const hasStepProgress = task.steps.some((step) => step.status !== "pending");
-      /*
-      FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
-      The TARGET column's role, not this card's. My first conversion of this site read the
-      card's own column and was WRONG: the original `(column === "todo" || column ===
-      "triage")` tests the MOVE DESTINATION — moving a card BACK into a pre-implementation
-      lane is what risks discarding step progress. The regression test for this
-      (`confirms preserving progress before moving`) moves in-progress -> todo and caught
-      it immediately, which is the whole reason each site is converted red-green rather
-      than by pattern-matching the comparison.
-
-      Falls back to the legacy ids when the destination's flags are unavailable, matching
-      the single fallback documented at the role helpers above.
-      */
-      const targetFlags = taskMoveColumns?.find((candidate) => candidate.id === column)?.flags;
-      /*
-      FNXC:WorkflowLifecycleColumns 2026-07-29-23:40 DELIBERATE-LITERAL: the fallback arm only. Guessing "not
-      pre-implementation" here skips the preserve-progress PROMPT, and losing completed steps is
-      unrecoverable — the safe degraded answer is the legacy one. Reason in full above.
-      */
-      const targetIsPreImplementation = targetFlags
-        ? targetFlags.intake === true || targetFlags.hold === true
-        : column === "todo" || column === "triage";
-      const shouldPrompt = targetIsPreImplementation && hasStepProgress;
-      let moveOptions: { preserveProgress?: boolean } | undefined;
-
-      if (shouldPrompt) {
-        const keepProgress = await confirm({
-          title: t("taskDetail.move.preserveProgressTitle", "Preserve Progress?"),
-          message: t("taskDetail.move.preserveProgressMessage", "This task has completed steps. Keep progress before moving?"),
-          confirmLabel: t("taskDetail.move.keepProgress", "Keep Progress"),
-          cancelLabel: t("taskDetail.move.resetProgress", "Reset Progress"),
-        });
-
-        if (keepProgress) {
-          moveOptions = { preserveProgress: true };
-        } else {
-          const resetProgress = await confirm({
-            title: t("taskDetail.move.resetProgressTitle", "Reset Progress?"),
-            message: t("taskDetail.move.resetProgressMessage", "Reset all step progress before moving this task?"),
-            confirmLabel: t("taskDetail.move.resetProgress", "Reset Progress"),
-            cancelLabel: t("taskDetail.move.cancelMove", "Cancel Move"),
-            danger: true,
-          });
-          if (!resetProgress) return;
-        }
-      }
-
-      await onMoveTask(task.id, column, moveOptions);
-      addToast(t("taskDetail.move.movedTo", "Moved to {{column}}", { column: columnLabel(column) }), "success");
-    } catch (err) {
-      addToast(getErrorMessage(err), "error");
-    }
-  /*
-  FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (PR #2566 review — greptile):
-  `taskMoveColumns` MUST be a dependency. The prompt now resolves the target column's
-  traits from it, so omitting it pins the callback to whatever metadata existed at first
-  render: once the board-workflows payload arrives or changes, a move into a custom
-  intake/hold lane would skip the preserve-progress confirmation entirely (silently
-  resetting work), while stale traits could prompt for a lane that is no longer
-  pre-implementation. I added the lookup and missed the dep.
-  */
-  }, [addToast, columnLabel, confirm, onMoveTask, task.id, task.steps, t, taskMoveColumns]);
 
   const handleTaskActionCheckPrStatus = useCallback(async () => {
     try {
@@ -2754,17 +2821,14 @@ function TaskCardComponent({
       addToast(t("taskDetail.updateFailed", "Failed to update {{id}}: {{error}}", { id: task.id, error: getErrorMessage(err) }), "error");
     }
   }, [addToast, onUpdateTask, task.id, t]);
-  const taskActionColumnLabel = useCallback((column: ColumnId) => {
-    return taskMoveColumns?.find((candidate) => candidate.id === column)?.label ?? columnLabel(column);
-  }, [columnLabel, taskMoveColumns]);
+  const taskColumnLabel = useCallback((column: ColumnId) => (
+    taskMoveColumns?.find((candidate) => candidate.id === column)?.label ?? columnLabel(column)
+  ), [columnLabel, taskMoveColumns]);
 
   const taskActionMenuModel = useMemo(() => buildTaskActionMenuModel({
     task,
     t,
-    columnLabel: taskActionColumnLabel,
     currentColumnFlags: taskColumnFlags,
-    workflowMoveColumns: taskMoveColumns,
-    canRetryTask,
     hasDuplicateHandler: Boolean(onDuplicateTask),
     hasRetryHandler: Boolean(onRetryTask),
     hasResetHandler: Boolean(onResetTask),
@@ -2776,7 +2840,6 @@ function TaskCardComponent({
     onDuplicate: onDuplicateTask ? handleTaskActionDuplicate : undefined,
     onPlan: onPlanningMode ? handleTaskActionPlan : undefined,
     onOpenRefine: onOpenRefine ? () => onOpenRefine(task) : undefined,
-    onRespecify: handleTaskActionRespecify,
     onRetry: onRetryTask ? handleTaskActionRetry : undefined,
     onReset: onResetTask ? handleTaskActionReset : undefined,
     onTogglePause: (isPaused ? onUnpauseTask : onPauseTask) ? handleTaskActionTogglePause : undefined,
@@ -2787,10 +2850,7 @@ function TaskCardComponent({
   }), [
     task,
     t,
-    taskActionColumnLabel,
     taskColumnFlags,
-    taskMoveColumns,
-    canRetryTask,
     onDuplicateTask,
     onRetryTask,
     onResetTask,
@@ -2804,7 +2864,6 @@ function TaskCardComponent({
     handleTaskActionMerge,
     handleTaskActionPlan,
     handleTaskActionReset,
-    handleTaskActionRespecify,
     handleTaskActionRetry,
     handleTaskActionTogglePause,
     handleTaskActionUnarchive,
@@ -2823,7 +2882,7 @@ function TaskCardComponent({
     task.prInfo,
   ]);
   const contextMenuActions = useMemo<TaskMenuItemDescriptor[]>(() => {
-    if (!onDeleteTask && !onArchiveTask && !onUnarchiveTask && !onRevertTask && !onDuplicateTask && !onRetryTask && !onResetTask && !onPauseTask && !onUnpauseTask && !onMergeTask && !onMoveTask && !onPlanningMode && !onOpenRefine && !onUpdateTask) {
+    if (!onDeleteTask && !onArchiveTask && !onUnarchiveTask && !onRevertTask && !onDuplicateTask && !onRetryTask && !onResetTask && !onPauseTask && !onUnpauseTask && !onMergeTask && !onPlanningMode && !onOpenRefine && !onUpdateTask) {
       return [];
     }
     const actions: TaskMenuItemDescriptor[] = [...taskActionMenuModel.actions];
@@ -2851,45 +2910,8 @@ function TaskCardComponent({
     if (taskActionMenuModel.reviewAction) {
       actions.push({ id: taskActionMenuModel.reviewAction.id, label: taskActionMenuModel.reviewAction.label, disabled: taskActionMenuModel.reviewAction.disabled, onSelect: taskActionMenuModel.reviewAction.onSelect });
     }
-    if (onMoveTask) {
-      const moveTransitions = [...taskActionMenuModel.moveTransitions];
-      /*
-      FNXC:BoardCardActions 2026-07-16-00:00 (FN-8149):
-      The retired in-review Move dropdown offered Done (no merge) and Triage in addition to the shared menu model's Todo/In Progress defaults. Fold those targets into this TaskCard-only menu so card consolidation retains every move capability without changing ListView or TaskDetail menus.
-      */
-      /*
-      FNXC:BoardCardActions 2026-08-18-06:18 (FN-005):
-      Supplemental in-review targets are named by legacy id so card menus retain
-      Done (no merge) and legacy workflow parity. The default workflow no longer
-      declares `triage`; its `todo` column is labelled Planning. Without filtering,
-      COLUMN_LABELS.triage also reads as Planning and duplicates the declared todo
-      target. Only offer a supplemental target when loaded workflow metadata declares
-      a visible column; retain both legacy targets while metadata is unavailable.
-      */
-      if (isReviewColumn) {
-        for (const column of ["done", "triage"] as const) {
-          const workflowColumn = taskMoveColumns?.find((candidate) => candidate.id === column);
-          if (taskMoveColumns && (!workflowColumn || workflowColumn.flags?.hiddenFromBoard)) continue;
-          if (moveTransitions.some((transition) => transition.column === column)) continue;
-          moveTransitions.push({
-            column,
-            /* DELIBERATE-LITERAL — `column` is the loop variable over the literal
-               `["done", "triage"] as const` two lines up, not a board column being classified. */
-            label: column === "done"
-              ? t("tasks.doneNoMerge", "Done (no merge)")
-              : t("taskDetail.move.moveTo", "Move to {{column}}", { column: taskActionColumnLabel(column) }),
-            primaryLabel: t("taskDetail.move.moveTo", "Move to {{column}}", { column: taskActionColumnLabel(column) }),
-          });
-        }
-      }
-      actions.push(...buildTaskMoveMenuItems(
-        moveTransitions,
-        handleTaskActionMove,
-        t("taskDetail.move.moveToParent", "Move to"),
-      ));
-    }
     return actions.filter((action) => "items" in action || action.tone === "note" || action.disabled === true || Boolean(action.onSelect));
-  }, [handleTaskActionArchive, handleTaskActionMove, handleTaskActionRevert, handleTaskActionUnarchive, isRevertable, onArchiveTask, onDeleteTask, onDuplicateTask, onMergeTask, onMoveTask, onPlanningMode, onOpenRefine, onPauseTask, onResetTask, onRetryTask, onRevertTask, onUnarchiveTask, onUnpauseTask, onUpdateTask, t, task.column, taskActionColumnLabel, taskActionMenuModel.actions, taskActionMenuModel.moveTransitions, taskActionMenuModel.reviewAction, taskMoveColumns]);
+  }, [handleTaskActionArchive, handleTaskActionRevert, handleTaskActionUnarchive, isRevertable, onArchiveTask, onDeleteTask, onDuplicateTask, onMergeTask, onPlanningMode, onOpenRefine, onPauseTask, onResetTask, onRetryTask, onRevertTask, onUnarchiveTask, onUnpauseTask, onUpdateTask, t, task.column, taskActionMenuModel.actions, taskActionMenuModel.reviewAction]);
   const hasContextMenuActions = contextMenuActions.length > 0;
 
   const closeContextMenu = useCallback(() => {
@@ -3059,17 +3081,13 @@ function TaskCardComponent({
     }
   }, [task.missionId, onOpenMission]);
 
-  const handlePromoteClick = useCallback((e: React.MouseEvent<HTMLButtonElement>) => {
-    e.stopPropagation();
-    if (!onPromote || isPromoting) return;
-    void onPromote(task.id);
-  }, [isPromoting, onPromote, task.id]);
   const handleStartClick = useCallback(async (e: React.MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
-    if (!onMoveTask || isStarting) return;
+    if (!onMoveTask || isStarting || startPendingColumn !== null) return;
     setIsStarting(true);
+    setStartPendingColumn(task.column);
     try {
-      await onMoveTask(task.id, startTargetColumn);
+      await onMoveTask(task.id, startTargetColumn, { expectedColumn: task.column });
       /*
       FNXC:CodingIdeasWorkflow 2026-07-25-12:05:
       Honest copy: Start performs a column move, not a plan dispatch. "Started planning" claimed an
@@ -3079,11 +3097,12 @@ function TaskCardComponent({
       */
       addToast(t("tasks.queuedForPlanning", "Queued {{taskId}} for planning", { taskId: task.id }), "success");
     } catch (err) {
+      setStartPendingColumn(null);
       addToast(getErrorMessage(err), "error");
     } finally {
       setIsStarting(false);
     }
-  }, [addToast, isStarting, onMoveTask, startTargetColumn, t, task.id]);
+  }, [addToast, isStarting, onMoveTask, startPendingColumn, startTargetColumn, t, task.column, task.id]);
 
   const handleAddressPrFeedbackClick = useCallback(async (e: React.MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
@@ -3100,21 +3119,15 @@ function TaskCardComponent({
     }
   }, [addToast, isAddressingPrFeedback, projectId, t, task.id]);
 
-  const handleRetryTask = useCallback(async (e: React.MouseEvent<HTMLButtonElement>) => {
+  const handleRetryTask = useCallback((e: React.MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
-    if (!onRetryTask || isRetrying) return;
+    // FNXC:TaskRecoveryVocabulary 2026-08-28-01:11: The error-banner Retry discards
+    // the same stage artifacts as the context-menu action, so it must share that confirmation
+    // boundary instead of calling the route directly.
+    void handleTaskActionRetry();
+  }, [handleTaskActionRetry]);
 
-    setIsRetrying(true);
-    try {
-      await onRetryTask(task.id);
-    } catch (err) {
-      addToast(t("tasks.retryFailed", "Failed to retry {{taskId}}: {{error}}", { taskId: task.id, error: getErrorMessage(err) }), "error");
-    } finally {
-      setIsRetrying(false);
-    }
-  }, [addToast, isRetrying, onRetryTask, task.id]);
-
-  const cardClass = `card${queued ? " queued" : ""}${isAgentActive ? " agent-active" : ""}${isFailed ? " failed" : ""}${isPaused ? " paused" : ""}${isAwaitingApproval ? " awaiting-approval" : ""}${isAwaitingInput ? " awaiting-input" : ""}${fileDragOver ? " file-drop-target" : ""}${isEditing ? " card-editing" : ""}${isSaving ? " card-saving" : ""}`;
+  const cardClass = `card${queued ? " queued" : ""}${isAgentActive ? " agent-active" : ""}${isFailed ? " failed" : ""}${isPaused ? " paused" : ""}${isExternalBlocked ? " external-blocked" : ""}${isAwaitingApproval ? " awaiting-approval plan-approval-hold" : ""}${isAwaitingInput ? " awaiting-input" : ""}${fileDragOver ? " file-drop-target" : ""}${isEditing ? " card-editing" : ""}${isSaving ? " card-saving" : ""}`;
 
   const filesChangedButton = (() => {
     if (isWipColumn) {
@@ -3204,7 +3217,6 @@ function TaskCardComponent({
     && Boolean(githubTrackedIssue);
   const footerHasLeadingContent = Boolean(filesChangedButton)
     || (isGitHubImportedTask && !showLinkedIssueChipForImport);
-  const costBadgeBelowPromote = Boolean(showPromoteAction && cardCostLabel);
   const costBadgeChip = cardCostLabel ? (
     <span
       className="card-cost-indicator"
@@ -3218,7 +3230,7 @@ function TaskCardComponent({
       <span>{cardCostLabel}</span>
     </span>
   ) : null;
-  const footerRightHasContent = Boolean((!costBadgeBelowPromote && cardCostLabel)
+  const footerRightHasContent = Boolean(cardCostLabel
     || timeIndicator
     || showNearDuplicateChip
     || showUndoOfChip
@@ -3272,26 +3284,35 @@ function TaskCardComponent({
         </span>
       )}
       {showNearDuplicateChip && (
-        <>
+        /*
+        FNXC:NearDuplicateDetection 2026-08-23-04:10:
+        FN-173 removed the undiscoverable Keep decision button. The tag is an acknowledgeable notification;
+        clearing it deliberately uses dismissNearDuplicate so triage-marker holds release instead of stranding paused cards.
+        */
+        <span className="card-duplicate-chip-group">
           <span
             className="card-duplicate-chip"
-            title={t("tasks.nearDuplicateTitle", "Potential near-duplicate of {{id}}", { id: String(task.sourceMetadata?.nearDuplicateOf) })}
-            aria-label={t("tasks.nearDuplicateTitle", "Potential near-duplicate of {{id}}", { id: String(task.sourceMetadata?.nearDuplicateOf) })}
+            title={isTriageDuplicateDecision
+              ? t("tasks.nearDuplicateHeldTitle", "Flagged as a duplicate of {{id}}. This task stays paused until you clear this flag or delete it.", { id: String(task.sourceMetadata?.nearDuplicateOf) })
+              : t("tasks.nearDuplicateTitle", "Flagged as a possible duplicate of {{id}}. This task continues normally; clear the flag once you have read it.", { id: String(task.sourceMetadata?.nearDuplicateOf) })}
+            aria-label={isTriageDuplicateDecision
+              ? t("tasks.nearDuplicateHeldTitle", "Flagged as a duplicate of {{id}}. This task stays paused until you clear this flag or delete it.", { id: String(task.sourceMetadata?.nearDuplicateOf) })
+              : t("tasks.nearDuplicateTitle", "Flagged as a possible duplicate of {{id}}. This task continues normally; clear the flag once you have read it.", { id: String(task.sourceMetadata?.nearDuplicateOf) })}
           >
             <span>{t("tasks.duplicateOf", "Duplicate of {{id}}", { id: String(task.sourceMetadata?.nearDuplicateOf) })}</span>
           </span>
           {onUpdateTask && (
             <button
               type="button"
-              className="card-duplicate-keep"
+              className="card-duplicate-dismiss"
               onClick={(e) => void handleDismissNearDuplicate(e)}
-              title={t("tasks.keepTaskTitle", "Keep this task and dismiss duplicate warning")}
-              aria-label={t("tasks.keepTaskTitle", "Keep this task and dismiss duplicate warning")}
+              title={t("tasks.dismissDuplicateFlag", "Mark the duplicate flag for {{id}} as read", { id: String(task.sourceMetadata?.nearDuplicateOf) })}
+              aria-label={t("tasks.dismissDuplicateFlag", "Mark the duplicate flag for {{id}} as read", { id: String(task.sourceMetadata?.nearDuplicateOf) })}
             >
-              {t("tasks.keep", "Keep")}
+              <X size={11} aria-hidden="true" />
             </button>
           )}
-        </>
+        </span>
       )}
       {chipFarRight && (showTrackingIndicator || showLinkedIssueChipForImport) && githubTrackedIssue && (
         <a
@@ -3346,7 +3367,7 @@ function TaskCardComponent({
       FNXC:TaskCardTimingBadge 2026-06-13-17:20:
       The execution-time badge belongs in the bottom-right footer cluster and must match sibling footer badge sizing while preserving its existing label, title, aria text, and live-update data.
       */}
-      {!costBadgeBelowPromote && costBadgeChip}
+      {costBadgeChip}
       {timeIndicator && (
         <span
           className="card-time-indicator"
@@ -3408,7 +3429,7 @@ function TaskCardComponent({
     && !showQueuedToPlanBadge
     ? getTaskWipLifecycleBadgeLabel(visualStatus, t, {
       isWipColumn,
-      lifecycleLabel: taskActionColumnLabel(task.column),
+      lifecycleLabel: taskColumnLabel(task.column),
     })
     : null;
   const showStatusBadge = !isPaused
@@ -3443,7 +3464,7 @@ function TaskCardComponent({
               : showQueuedBadge
                 ? t("tasks.statusQueued", "Queued")
                 : wipLifecycleBadgeLabel
-                  ?? getTaskStatusLabel(visualStatus ?? "", t, showOptionalGateBadge ? undefined : getRunningWorkflowStepLabel(task), { idle: !isAgentActive, overlapBlockedBy: task.overlapBlockedBy ?? null });
+                  ?? getTaskStatusLabel(visualStatus ?? "", t, showOptionalGateBadge ? undefined : getRunningWorkflowStepLabel(task), { idle: !isAgentActive, overlapBlockedBy: task.overlapBlockedBy ?? null, sessionContentionWaitReason: task.sessionContentionWaitReason ?? null });
   const hasCardMetaBadges = showPriorityBadge
     || task.executionMode === "fast"
     // FNXC:PlannerOversight 2026-07-04-00:00: the oversight badge is opt-in
@@ -3479,7 +3500,6 @@ function TaskCardComponent({
     || Boolean(isCompleteColumn && onArchiveTask)
     || Boolean(isArchivedColumn && onUnarchiveTask)
     || Boolean((isCompleteColumn || isArchivedColumn) && onRevertTask && isRevertable)
-    || Boolean(isWipColumn && onMoveTask)
     || Boolean(task.size)
     || hasContextMenuActions;
 
@@ -3571,6 +3591,24 @@ function TaskCardComponent({
         </div>,
         document.body,
       )}
+      {isExternalBlocked && (
+        <ExternalBlockNotice
+          task={task}
+          variant="card"
+          onOpenChatWithPrefill={onOpenChatWithPrefill}
+          onRetryTask={onRetryTask}
+          addToast={addToast}
+        />
+      )}
+      {!isExternalBlocked && isAwaitingApproval && (
+        <PlanApprovalNotice
+          task={task}
+          variant="card"
+          projectId={projectId}
+          addToast={addToast}
+          isPlanningLane={isPlanningLane}
+        />
+      )}
       <div className="card-header">
         <span className="card-id">{task.id}</span>
         {/*
@@ -3626,10 +3664,7 @@ function TaskCardComponent({
                   running revise cycle keeps no misleading "waiting" text.
                   */
                   : showQueuedToPlanBadge
-                    ? t(
-                        "tasks.queuedToPlanTitle",
-                        "Waiting for a planning slot — planning starts when an agent slot frees up",
-                      )
+                    ? queuedToPlanTitle
                   : showQueuedBadge && task.overlapBlockedBy
                     ? t("tasks.queuedFileOverlapTitle", "Queued due to file overlap with {{taskId}}", { taskId: task.overlapBlockedBy })
                   : showQueuedBadge && task.blockedBy
@@ -3688,7 +3723,14 @@ function TaskCardComponent({
         Suppress Ready while Plan Review (or other agent-active work) is live — finalize often clears status before plan-review, which previously stacked Ready + Reviewing on the same Todo card.
         */}
         {showReadyBadge && (
-          <span className="card-status-badge card-status-badge--todo ready" data-testid={`card-ready-${task.id}`}>
+          <span
+            className="card-status-badge card-status-badge--todo ready"
+            data-testid={`card-ready-${task.id}`}
+            title={t(
+              "tasks.readyTitle",
+              "Planning is done — implementation starts as soon as an implementation slot frees up.",
+            )}
+          >
             {t("tasks.ready", "Ready")}
           </span>
         )}
@@ -4159,7 +4201,8 @@ function TaskCardComponent({
             </button>
             {showSteps && (
               <div className="card-steps-list">
-                {unifiedProgress.items.map((step) => {
+                {unifiedProgress.items.map((step, index) => {
+                  const beginsReviewGates = step.source === "workflow" && index > 0 && unifiedProgress.items[index - 1]?.source === "step";
                   /*
                   FNXC:WorkflowSteps 2026-06-25-00:00:
                   The dot color is keyed by the unified status, which now distinguishes the two
@@ -4172,7 +4215,9 @@ function TaskCardComponent({
                   Workflow-sourced rows remain visible through their step names and status dots, but task cards intentionally omit the redundant `workflow` text badge so expanded step lists stay focused on progress.
                   */
                   return (
-                    <div key={step.id} className="card-step-item">
+                    <div key={step.id}>
+                      {beginsReviewGates && <div className="card-review-gates-separator" aria-hidden="true" />}
+                    <div className="card-step-item">
                       <span
                         className={`card-step-dot card-step-dot--${step.status}`}
                         aria-hidden="true"
@@ -4185,6 +4230,7 @@ function TaskCardComponent({
                           {t("tasks.active", "active")}
                         </span>
                       )}
+                    </div>
                     </div>
                   );
                 })}
@@ -4239,7 +4285,7 @@ function TaskCardComponent({
             </div>
           )}
           {(task.overlapBlockedBy || task.blockedBy) && (
-            <span className="card-scope-badge" data-tooltip={t("tasks.blockedByTooltip", "Blocked by {{taskId}} (file overlap)", { taskId: task.overlapBlockedBy || task.blockedBy })}>
+            <span className="card-scope-badge" data-tooltip={t("tasks.blockedByTooltip", "Waiting for {{taskId}} (file overlap)", { taskId: task.overlapBlockedBy || task.blockedBy })}>
               <Layers size={12} style={{ verticalAlign: "middle" }} /> {task.overlapBlockedBy || task.blockedBy}
             </span>
           )}
@@ -4326,37 +4372,14 @@ function TaskCardComponent({
               data-testid={`card-start-${task.id}`}
               title={t("tasks.startTask", "Start — plan this task")}
               aria-label={t("tasks.startTask", "Start — plan this task")}
-              disabled={isStarting}
+              disabled={isStarting || startPendingColumn !== null}
               onClick={handleStartClick}
             >
               <Zap size={12} />
               {isStarting ? t("tasks.starting", "Starting…") : t("tasks.start", "Start")}
             </button>
           )}
-          {showPromoteAction && (
-            <button
-              type="button"
-              className="card-promote-action card-send-back-btn"
-              data-testid={`card-promote-${task.id}`}
-              title={t("tasks.promoteTask", "Promote task")}
-              aria-label={t("tasks.promoteTask", "Promote task")}
-              disabled={isPromoting}
-              onClick={handlePromoteClick}
-            >
-              <ArrowUpRight size={12} />
-              {isPromoting ? t("tasks.promoting", "Promoting…") : t("tasks.promote", "Promote")}
-            </button>
-          )}
         </div>
-        {costBadgeBelowPromote && (
-          <div className="card-promote-cost-row">
-            {/*
-            FNXC:TaskCardCostBadge 2026-07-12-00:00:
-            Promote-bearing cards must place the enabled cost badge directly below Promote in the bottom-right corner. Cards without Promote retain the footer/meta placement so other footer chips and card layouts do not move.
-            */}
-            {costBadgeChip}
-          </div>
-        )}
         </>
       )}
       {shouldShowCreatedAgentBadge && (
@@ -4398,6 +4421,15 @@ function TaskCardComponent({
         </div>
       )}
       <PluginSlot slotId="task-card-badge" projectId={projectId} />
+      {showResetDialog && onResetTask && (
+        <TaskResetDialog
+          taskId={task.id}
+          initialDescription={task.description}
+          onReset={onResetTask}
+          addToast={addToast}
+          onClose={() => setShowResetDialog(false)}
+        />
+      )}
       {(showCreatePrQuickAction || isPrCreateOpen) && (
         <PrCreateModal
           open={isPrCreateOpen}

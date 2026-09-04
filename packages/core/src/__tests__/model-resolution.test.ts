@@ -3,6 +3,8 @@ import {
   applyTestModeOverrides,
   hasConfiguredFallbackLane,
   resolveExecutionSettingsModel,
+  resolveFastCheapSettingsModel,
+  resolveFastCheapThinkingLevel,
   resolveExecutorFallbackModel,
   resolvePlanningFallbackModel,
   resolveValidatorFallbackModel,
@@ -70,6 +72,52 @@ describe("model-resolution", () => {
         defaultModelId: "claude-sonnet-4-5",
       }),
     ).toEqual({ provider: "openai", modelId: "gpt-4o" });
+  });
+
+  it("resolves the Fast & Cheap lane as project → global → execution and skips partial pairs", () => {
+    const execution = {
+      executionProvider: "execution-provider",
+      executionModelId: "execution-model",
+    };
+
+    expect(resolveFastCheapSettingsModel({
+      ...execution,
+      fastCheapProvider: "project-provider",
+      fastCheapCredentialInstanceId: "project-credential",
+      fastCheapModelId: "project-model",
+      fastCheapGlobalProvider: "global-provider",
+      fastCheapGlobalModelId: "global-model",
+    })).toEqual({
+      provider: "project-provider",
+      credentialInstanceId: "project-credential",
+      modelId: "project-model",
+    });
+    expect(resolveFastCheapSettingsModel({
+      ...execution,
+      fastCheapProvider: "partial-project-provider",
+      fastCheapGlobalProvider: "global-provider",
+      fastCheapGlobalCredentialInstanceId: "global-credential",
+      fastCheapGlobalModelId: "global-model",
+    })).toEqual({
+      provider: "global-provider",
+      credentialInstanceId: "global-credential",
+      modelId: "global-model",
+    });
+    expect(resolveFastCheapSettingsModel(execution)).toEqual({
+      provider: "execution-provider",
+      modelId: "execution-model",
+    });
+    expect(resolveFastCheapSettingsModel({ ...execution, testMode: true })).toEqual(TEST_MODE_RESOLVED);
+    expect(resolveFastCheapThinkingLevel({
+      fastCheapThinkingLevel: "low",
+      fastCheapGlobalThinkingLevel: "medium",
+      executionThinkingLevel: "high",
+    })).toBe("low");
+    expect(resolveFastCheapThinkingLevel({
+      fastCheapGlobalThinkingLevel: "medium",
+      executionThinkingLevel: "high",
+    })).toBe("medium");
+    expect(resolveFastCheapThinkingLevel({ executionThinkingLevel: "high" })).toBe("high");
   });
 
   it("uses the execution lane before the project default override", () => {

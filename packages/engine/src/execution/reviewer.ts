@@ -276,7 +276,7 @@ export async function reviewStep(
   if (options.allowInlineFixes === true) {
     /*
      * FNXC:WorkflowReviewers 2026-07-01-12:39:
-     * Triage Plan Review uses this reviewer path instead of graph `executeWorkflowStep`. When workflow setting `reviewerInlineFixes` is enabled, the reviewer must be allowed to repair PROMPT.md/spec findings in this same session and return the final verdict after the fix.
+     * Triage Plan Review uses this reviewer path instead of graph `executeWorkflowStep`. When inline reviewer repairs are explicitly enabled, the reviewer may repair PROMPT.md/spec findings in this same session and return the final verdict after the fix.
      */
     request = appendSameSessionFixPolicy(request, reviewType, canWritePromptInline);
   }
@@ -760,7 +760,7 @@ export async function reviewStep(
       },
     });
 
-  const fallbackReviewRequest = `${request}\n\nIMPORTANT: Respond with exactly one of: APPROVE | REVISE | RETHINK on a line starting with "Verdict:".`;
+  const fallbackReviewRequest = `${request}\n\nIMPORTANT: End your response with exactly one trailing JSON object and stop: {"verdict":"APPROVE|APPROVE_WITH_NOTES|REVISE|RETHINK","notes":"one to three non-empty sentences"}. A response with no verdict object is a failed review and is never an approval.`;
 
   const logFallbackRetry = async (reason: string, mode: string): Promise<void> => {
     const message = `${reviewType} review retry with fallback model after ${reason} (${mode})`;
@@ -1098,10 +1098,8 @@ function buildReviewRequest(
 }
 
 /*
-FNXC:ReviewLeniency 2026-07-01-22:15:
-Operators want a review whose text CLEARLY approves to PASS even when the output is not perfectly structured — no trailing JSON verdict block and no "Verdict:" line. This detects an explicit prose approval while refusing to flip a rejection: any REVISE/RETHINK/"request revision|changes"/reject/disapprove or negated-approval ("not/no/never/cannot/can't/don't/doesn't/won't/without approve") signal disqualifies the lenient pass, so a prose REJECTION is never silently promoted to APPROVE. The positive set is a superset of the historical approve/approved/looks good/no issues/out of scope keywords plus common approval phrasings (approving, approval, LGTM, ship it, passes review, all good, acceptable, good to go/merge, no blocking issues/concerns).
-
-Shared by the reviewer/plan-review parser (extractVerdict, this file) and the code-review + browser-verification gate parser (inferWorkflowStepVerdictFromProse in executor.ts). Fail-closed merge / PR-review / mission-verification gates deliberately do NOT use this — leniently reading "approved" out of malformed output there could auto-merge on garbage.
+FNXC:ReviewLeniency 2026-09-02-19:16:
+Clear approving prose is diagnostic evidence of a protocol failure, never approval authority. Keep the rejection and negated-approval guards so a review that requests changes is not mislabeled as a prose approval; both workflow-step and reviewer parsers use this classifier only to explain why verdict-less output was refused.
 */
 export function proseSignalsClearApproval(rawOutput: string): boolean {
   const text = rawOutput.trim();
@@ -1240,31 +1238,33 @@ export function textHasStructuredVerdictKey(rawOutput: string): boolean {
 }
 
 /*
-FNXC:ReviewLeniency 2026-07-01-23:30:
-"Any approved" — classify a verdict TOKEN leniently so approval-family variants all pass. Any token starting with APPROVE (APPROVE, APPROVED, APPROVE_WITH_NOTES, approve_with_verdict, …) → APPROVE; REVISE/REQUEST_REVISION/REJECT → REVISE; RETHINK → RETHINK. Unknown tokens (e.g. "PASS") → null so callers can fall through instead of misclassifying.
+FNXC:ReviewVerdictAuthority 2026-09-02-19:49:
+Reviewer verdict tokens are an exact protocol. Only APPROVE, APPROVE_WITH_NOTES, REVISE, and RETHINK may affect review state; prefix matches and aliases must remain UNAVAILABLE so an invented JSON value cannot authorize a merge.
 */
-export function classifyReviewVerdictToken(raw: string): ReviewVerdict | null {
-  const v = raw.trim().toUpperCase();
-  if (v.startsWith("APPROVE") || v.startsWith("APPROVAL")) return "APPROVE";
-  if (v.startsWith("REVISE") || v.startsWith("REQUEST_REVISION") || v.startsWith("REJECT")) return "REVISE";
-  if (v.startsWith("RETHINK")) return "RETHINK";
+export function classifyReviewVerdictToken(verdict: string): ReviewVerdict | null {
+  if (verdict === "APPROVE" || verdict === "APPROVE_WITH_NOTES") return "APPROVE";
+  if (verdict === "REVISE") return "REVISE";
+  if (verdict === "RETHINK") return "RETHINK";
   return null;
 }
 
 function extractVerdict(review: string): ReviewVerdict {
   /*
-  FNXC:ReviewLeniency 2026-07-02-00:10:
-  An EXPLICIT verdict the reviewer wrote as a heading or "Verdict:" line takes precedence over any JSON object found in the body. A reviewer that writes `## Verdict: REVISE` and also pastes a format example ```json {"verdict":"APPROVE"}``` or quotes a prior reviewer's `{"verdict":"APPROVE"}` must NOT be read as APPROVE. The prose→trailing-JSON case the leniency targets has no such heading/line, so JSON is still reached and used.
+  FNXC:ReviewLeniency 2026-09-02-19:16:
+  Prose headings and verdict lines retain authority only in the fail-safe downgrade direction. REVISE or RETHINK must precede any quoted JSON example, while an APPROVE-family prose claim falls through to the trailing JSON parser and cannot authorize approval by itself.
   */
   // Strategy 1: verdict in a heading line (### Verdict: APPROVE, **Verdict: REVISE**).
   // Only match lines that START with a verdict pattern to avoid matching keywords in body text.
-  // Capture the whole token (e.g. APPROVE_WITH_NOTES) and classify leniently ("any approved").
+  // Capture the whole token (e.g. APPROVE_WITH_NOTES) and classify only exact protocol values.
   const headingMatch = review.match(
     /^[>\s]*(?:###?\s*|[*_]{1,2})Verdict[:\s]*[*_]{0,2}\s*([A-Za-z_]+)/im,
   );
   if (headingMatch) {
-    const classified = classifyReviewVerdictToken(headingMatch[1]);
-    if (classified) return classified;
+    const classified = classifyReviewVerdictToken(headingMatch[1].toUpperCase());
+    if (classified === "REVISE" || classified === "RETHINK") return classified;
+    if (classified === "APPROVE") {
+      reviewerLog.warn("Ignoring non-authoritative prose approval heading; a structured JSON verdict is required.");
+    }
   }
 
   // Strategy 2: Standalone verdict line like "Verdict: APPROVE" or "Decision: REVISE"
@@ -1272,12 +1272,15 @@ function extractVerdict(review: string): ReviewVerdict {
     /^[>\s]*(?:verdict|decision)\s*[-:]\s*([A-Za-z_]+)/im,
   );
   if (lineFallback) {
-    const classified = classifyReviewVerdictToken(lineFallback[1]);
-    if (classified) return classified;
+    const classified = classifyReviewVerdictToken(lineFallback[1].toUpperCase());
+    if (classified === "REVISE" || classified === "RETHINK") return classified;
+    if (classified === "APPROVE") {
+      reviewerLog.warn("Ignoring non-authoritative prose approval line; a structured JSON verdict is required.");
+    }
   }
 
   // Strategy 3: JSON verdict payload (structured output), tolerating prose before
-  // it, extra fields (notes), and approval-family verdict variants. Prefer the
+  // it and extra fields (notes), but requiring an exact verdict token. Prefer the
   // LAST balanced object — models emit the authoritative verdict as a trailing
   // JSON payload after any reasoning prose.
   const jsonCandidates = extractJsonObjectCandidates(review);
@@ -1296,22 +1299,12 @@ function extractVerdict(review: string): ReviewVerdict {
     }
   }
 
-  // Strategy 4 (lenient): no structured verdict, but the prose clearly approves
-  // (and carries no revise/reject/negated-approval signal). Treat as APPROVE so
-  // an imperfectly-structured approval passes instead of collapsing to a
-  // synthetic UNAVAILABLE retry/block. See proseSignalsClearApproval.
-  /*
-  FNXC:ReviewLeniency 2026-08-11-18:44:
-  A quoted JSON verdict key that Strategy 3 could not classify must not be laundered
-  into a prose APPROVE. This shared detector also guards workflow-step gates; here
-  suppression deliberately falls through to retryable UNAVAILABLE. Explicit heading
-  and line strategies above remain authoritative, and fail-closed gates are untouched.
-  */
+  // Strategy 4 is diagnostic only: prose may explain an attempted approval, but
+  // without a structured verdict it remains retryable UNAVAILABLE.
   if (textHasStructuredVerdictKey(review)) {
     reviewerLog.warn(`Structured verdict key was present but unparseable (${review.length} chars). Returning UNAVAILABLE.`);
   } else if (proseSignalsClearApproval(review)) {
-    reviewerLog.log(`Verdict extracted via lenient prose approval (${review.length} chars) → APPROVE`);
-    return "APPROVE";
+    reviewerLog.warn(`Non-authoritative prose approval was present (${review.length} chars). Returning UNAVAILABLE.`);
   }
 
   reviewerLog.warn(`Could not extract verdict from review (${review.length} chars). Returning UNAVAILABLE.`);

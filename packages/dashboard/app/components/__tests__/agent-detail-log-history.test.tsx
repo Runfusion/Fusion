@@ -118,6 +118,25 @@ describe("AgentDetailView — agent log history is windowed, not discarded", () 
     expect(mockFetchAgentRunLogs).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps the windowed remaining-count signal when run rows carry tool detail", async () => {
+    const entries = makeEntries(WINDOW + 1).map((entry) => ({
+      ...entry,
+      type: "tool_result" as const,
+      detail: "command=pnpm lint, allowFullSuite=false",
+    }));
+    mockFetchAgent.mockResolvedValue(createMockAgent({ taskId: undefined, activeRun: ACTIVE_RUN, completedRuns: [] }));
+    mockFetchAgentRuns.mockResolvedValue([ACTIVE_RUN]);
+    mockFetchAgentRunLogs.mockResolvedValue(entries);
+
+    render(<AgentDetailView agentId="agent-001" onClose={vi.fn()} addToast={vi.fn()} />);
+    await waitFor(() => expect(screen.getByText("Logs")).toBeInTheDocument());
+    fireEvent.click(screen.getByText("Logs"));
+
+    await waitFor(() => expect(renderedEntryTexts()).toHaveLength(WINDOW));
+    expect(screen.getAllByTestId("tool-detail-content")).toHaveLength(WINDOW);
+    expect(screen.getByTestId("agent-logs-load-older")).toHaveTextContent("1 remaining");
+  });
+
   it("Runs tab: an expanded run is windowed and pages back to entry 0", async () => {
     mockFetchAgentRunLogs.mockResolvedValue(makeEntries(RUN_LENGTH));
     mockFetchAgentRunDetail.mockResolvedValue({
@@ -149,6 +168,37 @@ describe("AgentDetailView — agent log history is windowed, not discarded", () 
 
     expect(screen.getByText("entry-0")).toBeInTheDocument();
     expect(renderedEntryTexts()).toHaveLength(RUN_LENGTH);
+  });
+
+  it("renders streamed tool-result detail as a visible preview in the latest-run viewer", async () => {
+    mockFetchAgent.mockResolvedValue(createMockAgent({ taskId: undefined, activeRun: ACTIVE_RUN, completedRuns: [] }));
+    mockFetchAgentRuns.mockResolvedValue([ACTIVE_RUN]);
+    mockFetchAgentRunLogs.mockResolvedValue([]);
+
+    render(<AgentDetailView agentId="agent-001" onClose={vi.fn()} addToast={vi.fn()} />);
+    await waitFor(() => expect(screen.getByText("Logs")).toBeInTheDocument());
+    fireEvent.click(screen.getByText("Logs"));
+
+    const streamUrl = `/api/agents/agent-001/runs/${ACTIVE_RUN.id}/logs/stream`;
+    await waitFor(() => expect(mockSubscribeSse.mock.calls.some(([url]) => url === streamUrl)).toBe(true));
+    const subscription = mockSubscribeSse.mock.calls.find(([url]) => url === streamUrl);
+    const options = subscription?.[1] as { events?: Record<string, (event: MessageEvent) => void> } | undefined;
+    const detail = Array.from({ length: 7 }, (_, index) => `line ${index + 1}`).join("\n");
+
+    await act(async () => {
+      options?.events?.["agent:log"]?.({ data: JSON.stringify({
+        timestamp: "2024-01-01T00:01:00.000Z",
+        taskId: "agent-run",
+        text: "fn_run_verification",
+        type: "tool_result",
+        detail,
+      }) } as MessageEvent);
+    });
+
+    const content = await screen.findByTestId("tool-detail-content");
+    expect(content).toBeVisible();
+    expect(content).toHaveTextContent("line 7");
+    expect(content).toHaveClass("agent-log-tool-detail-content--preview");
   });
 
   it("converges after an SSE suspend/reopen cycle without losing lines", async () => {

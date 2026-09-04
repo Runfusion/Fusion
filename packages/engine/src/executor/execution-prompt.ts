@@ -9,7 +9,8 @@ import type {
   TaskDetail,
   WorkflowFieldDefinition,
 } from "@fusion/core";
-import { buildExecutionMemoryInstructions, buildMemoryPreSteeringNudge, resolveTaskOutputLanguage, type WorkspaceConfig } from "@fusion/core";
+import { buildExecutionMemoryInstructions, buildMemoryPreSteeringNudge, isFastExecutionMode, resolveTaskOutputLanguage, type WorkspaceConfig } from "@fusion/core";
+import { buildFastLanePrompt } from "../execution/step-session-executor.js";
 import { executorLog } from "../logger.js";
 import type { PluginRunner } from "../plugins/plugin-runner.js";
 import { parseReviewLevelFromPrompt } from "./prompt-derived-eligibility.js";
@@ -85,6 +86,7 @@ export function buildExecutionPrompt(
   workspaceConfig?: WorkspaceConfig | null,
   options?: { pluginTaskContributions?: string },
 ): string {
+  if (isFastExecutionMode(task)) return buildFastLanePrompt(task, rootDir, settings, worktreePath);
   const prompt = scopePromptToWorktree(task.prompt, rootDir, worktreePath, workspaceConfig);
   const reviewLevel = parseReviewLevelFromPrompt(prompt);
   /*
@@ -260,12 +262,13 @@ You are running in an **isolated git worktree**. This means:
 ${hasProgress
     ? `Resume from Step ${task.currentStep}. Do NOT redo completed steps.`
     : "Start with Step 0 (Preflight). Work through each step in order."}
-Use \`fn_task_update\` to report progress on every step transition; its \`step\` value is 0-based and equals the \`### Step N:\` number in PROMPT.md.
+Use \`fn_task_update\` to report progress on every step transition; its \`step\` value is 0-based and equals the \`### Step N:\` number in PROMPT.md. When marking a step done, include the \`summary\` argument with 2–4 plain-language sentences describing what that step delivered and verified.
 Use \`fn_task_log\` for important actions and decisions.
 Use \`fn_task_create\` for truly separate follow-up work, including unrelated/pre-existing broad-suite failures.
 Commit at step boundaries: \`git commit -m "feat(${task.id}): complete Step N — <short summary>"${sourceIssueRef ? ` -m "Ref: ${sourceIssueRef}"` : ""}${authorArg}\`
 The \`<short summary>\` is required — replace it with a concrete 5–10 word description of what the step changed.
 When all steps are complete: call \`fn_task_done()\`
+For \`fn_task_done(outcome="blocked")\`, reserve \`obstacle:"outside-worktree"\` for host-resource, network, model-provider, and credential failures. An unavailable command, interpreter, optional service, or unrunnable test is never a blocked exit: resolve it with project tooling or an available equivalent, substitute a runnable automated check, or—when it does not prevent the task objective—complete the achievable work and record the deferred verification. If PROMPT.md has an \`## Environment Constraints\` section, its substitute is the sanctioned verification path and must not be re-litigated as a blocker. Set \`obstacle:"inside-worktree"\` for code, tests, lint, types, plan, merge, or review failures so AI self-repair remains active.
 
 If a build command is configured, run that exact command in this worktree before calling \`fn_task_done()\`.
 Treat a non-zero exit code as a blocking failure. Do not claim success without a real passing run.
@@ -281,10 +284,9 @@ Do not repeatedly rerun a broad failing or hanging workspace command without a n
       `This project is a workspace containing multiple git repositories.\n` +
       `Available repos:\n` +
       workspaceConfig.repos.map((r: string) => `- \`${r}\``).join("\n") +
-      `\n\nBefore editing files in any sub-repo, call \`fn_acquire_repo_worktree\` ` +
-      `with the repo name to get an isolated worktree path. ` +
-      /* FNXC:Workspace 2026-08-15-07:05: Completion mechanically refuses task-era main-checkout writes and commits, even outside File Scope or before acquisition. */
-      `Work exclusively inside that returned path — never edit the repo's main checkout directly. This is mechanically enforced at \`fn_task_done\`: any file created, modified, or deleted, or any commit landed in a sub-repo main checkout during this run refuses completion regardless of File Scope or acquisition. Move the work into an acquired worktree and restore the main checkout before retrying.\n`;
+      `\n\nEvery configured repository is already checked out beneath this task's workspace directory at its repository-relative path. ` +
+      /* FNXC:WorkspaceFinalization 2026-08-27-08:42: Completion refuses main-checkout COMMITS (they reach the shared branch unreviewed). Uncommitted main-checkout edits only warn — the merger already stashes/restores a dirty checkout — but they deliver nothing, so the acquired-worktree commit invariant still fails work that lives only there. */
+      `Work exclusively inside those task-owned paths — never edit a repository's main checkout directly. Committing in a sub-repo main checkout refuses completion at \`fn_task_done\`: that commit would reach the shared branch without review. Uncommitted edits left in a main checkout are reported but deliver nothing — completion still requires commits in the task worktrees. Leave each main checkout as you found it.\n`;
   }
 
   return executionPrompt;

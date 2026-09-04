@@ -18,7 +18,6 @@ import { resolveProject } from "../project-context.js";
 export const VALID_SETTINGS = [
   "maxConcurrent",
   "maxWorktrees",
-  "worktreeNaming",
   "worktreesDir",
   "taskPrefix",
   "ntfyTopic",
@@ -43,7 +42,6 @@ const GLOBAL_ONLY_SETTINGS = ["ntfyEnabled", "ntfyTopic", "defaultModel", "langu
 const PROJECT_ONLY_SETTINGS = [
   "maxConcurrent",
   "maxWorktrees",
-  "worktreeNaming",
   "worktreesDir",
   "taskPrefix",
   "autoResolveConflicts",
@@ -65,7 +63,6 @@ const BOOLEAN_SETTINGS: readonly string[] = [
 const NUMBER_SETTINGS: readonly string[] = ["maxConcurrent", "maxWorktrees"];
 
 const ENUM_SETTINGS: Record<string, readonly string[]> = {
-  worktreeNaming: ["random", "task-id", "task-title"],
   unavailableNodePolicy: ["block", "fallback-local"],
   "worktrunk.onFailure": ["fail", "fallback-native"],
   // "auto" clears the persisted locale and reverts to runtime detection.
@@ -259,7 +256,7 @@ export async function runSettingsShow(projectName?: string): Promise<void> {
     },
     {
       title: "Worktrees",
-      keys: ["worktreeNaming", "worktreesDir", "recycleWorktrees"],
+      keys: ["worktreesDir"],
     },
     {
       title: "Worktrunk Integration",

@@ -789,6 +789,16 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       if (workflowId !== undefined && workflowId !== null && typeof workflowId !== "string") {
         throw badRequest("workflowId must be a string or null");
       }
+      /*
+      FNXC:PlanningMode 2026-08-28-04:16:
+      `workflowId: null` is the store's explicit No Workflow opt-out, but Planning Mode has no such
+      operator choice. A missing, blank, or aggregate board lane must therefore omit the field so
+      task creation materializes the workflow configured as the project default in Settings.
+      */
+      const normalizedWorkflowId = typeof workflowId === "string" ? workflowId.trim() : undefined;
+      const resolvedWorkflowId = normalizedWorkflowId && normalizedWorkflowId !== "__all_workflows__"
+        ? normalizedWorkflowId
+        : undefined;
       if (previousTaskId !== undefined && (typeof previousTaskId !== "string" || !previousTaskId.trim())) {
         throw badRequest("previousTaskId must be a non-empty string");
       }
@@ -1095,7 +1105,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         FNXC:WorkflowSelection 2026-06-20-16:48:
         Planning Mode creates tasks from the board context, so an active workflow lane must be materialized at create time when the client supplies it.
         */
-        ...(workflowId !== undefined ? { workflowId: workflowId as string | null } : {}),
+        ...(resolvedWorkflowId ? { workflowId: resolvedWorkflowId } : {}),
         proposalClaimId: currentProposalClaimId(),
       }, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
 

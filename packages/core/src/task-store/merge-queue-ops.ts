@@ -12,13 +12,14 @@ import type {Task, MergeResult, MergeQueueEntry, MergeQueueAcquireOptions} from 
 import {assertNotWorkspaceTaskMerge} from "../types.js";
 import "../builtin-traits.js";
 import {getTaskMergeBlocker, isPreMergeStepsNotRunBlocker, PreMergeStepsNotRunError, resolveTaskMergeTarget} from "../merge/task-merge.js";
-import {resolveRequiredPreMergeStepIds} from "../merge/required-pre-merge-steps.js";
-import {resolveWorkflowIrForTask} from "../workflows/workflow-ir-resolver.js";
-import {resolveReviewColumns, resolveTaskLifecycleColumns} from "../workflows/workflow-lifecycle-traits.js";
+import {resolvePreMergeGateForTask} from "../merge/required-pre-merge-steps.js";
+import {resolveTaskLifecycleColumns} from "../workflows/workflow-lifecycle-traits.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {assertSafeGitBranchName, assertSafeAbsolutePath} from "../task-store/shell-safety.js";
 import {isFusionDeletableBranch} from "../branch/branch-assignment.js";
 import {acquireMergeQueueLease as acquireMergeQueueLeaseAsync} from "../task-store/async/async-merge-coordination.js";
+import {appendTaskStepReport} from "../workflows/task-step-reports.js";
+import {buildStepLedgerReopenLog, evaluateStepLedgerSeal, STEP_LEDGER_REFUSAL_MARKER_PREFIX} from "./step-ledger-seal.js";
 
 export type StepStartDisposition = "started" | "resumed" | "blocked" | "terminal";
 
@@ -68,7 +69,7 @@ async function appendProactiveStepStatus(store: TaskStore, taskId: string, messa
   await store.appendAgentLog(taskId, message, "status", undefined, "executor");
 }
 
-async function mutateStepImpl(store: TaskStore, id: string, stepIndex: number, status: import("../types.js").StepStatus, options?: { source?: "graph" },): Promise<{ task: Task; startResult?: Omit<StepStartResult, "task"> }> {
+async function mutateStepImpl(store: TaskStore, id: string, stepIndex: number, status: import("../types.js").StepStatus, options?: { source?: "graph"; summary?: string; operatorOverride?: boolean },): Promise<{ task: Task; startResult?: Omit<StepStartResult, "task"> }> {
     // FNXC:WorkflowStepOrdering 2026-07-20-20:05:
     // Step-inversion projection discipline (U6/KTD-7). A `source: "graph"` write
     // is the workflow-graph executor projecting a foreach instance's lifecycle
@@ -130,6 +131,7 @@ async function mutateStepImpl(store: TaskStore, id: string, stepIndex: number, s
       // step status would silently undo progress, and the currentStep
       // rewind below would discard the task's place in the plan.
       const currentStatus = task.steps[stepIndex].status;
+      const isTransition = status !== currentStatus;
       if (
         status === "in-progress" &&
         (currentStatus === "done" || currentStatus === "skipped")
@@ -248,8 +250,102 @@ async function mutateStepImpl(store: TaskStore, id: string, stepIndex: number, s
         }
       }
 
+      const ledgerSeal = isTransition ? evaluateStepLedgerSeal(task.log) : { sealed: false };
+      const admittedPostCompletionStart = currentStatus === "pending" && status === "in-progress";
+      /*
+      FNXC:StepLedgerIntegrity 2026-09-01-02:31:
+      The completion seal prevents a FINISHED session from rewriting progress it already recorded;
+      starting work that the durable ledger still shows as pending is implementation re-entry, not
+      time travel. FN-272 measured the opposite at 2026-09-01T01:31:14: `steps#8:step-execute`
+      rejected the pending Fix step before `runTaskStep` invoked its body, failed the whole foreach
+      region, and routed the card away from the success edge that returns it to review. Admit only
+      pending-to-in-progress here; stale pending-to-done and in-progress-to-done projections remain
+      sealed, as does the earlier completed-step regression guard.
+      */
+      if (
+        isTransition
+        && status !== "pending"
+        && !admittedPostCompletionStart
+        && !options?.operatorOverride
+        && ledgerSeal.sealed
+      ) {
+        const ts = new Date().toISOString();
+        const stepName = task.steps[stepIndex].name;
+        task.updatedAt = ts;
+        task.log.push({
+          timestamp: ts,
+          action:
+            `${STEP_LEDGER_REFUSAL_MARKER_PREFIX} ${status} for step ${stepIndex} (${stepName}) — ` +
+            `implementation ended at "${ledgerSeal.markerAction}" and no new implementation session has started`,
+        });
+        if (graphSource) {
+          task.log.push({
+            timestamp: ts,
+            action:
+              `[integrity-warning] graph-source updateStep suppressed: step ${stepIndex} ` +
+              `(${stepName}) → ${status} arrived after completion`,
+          });
+        }
+        await store.atomicWriteTaskJson(dir, task);
+        if (store.isWatching) store.taskCache.set(id, { ...task });
+        store.emit("task:updated", task);
+        return {
+          task,
+          ...(status === "in-progress"
+            ? {
+                startResult: {
+                  accepted: false,
+                  disposition: "terminal" as const,
+                },
+              }
+            : {}),
+        };
+      }
+
+      const reopenAfterCompletion = isTransition && ledgerSeal.sealed
+        ? status === "pending"
+          ? "pending"
+          : options?.operatorOverride
+            ? "operator"
+            : admittedPostCompletionStart
+              ? "start"
+              : undefined
+        : undefined;
+      if (reopenAfterCompletion) {
+        const stepName = task.steps[stepIndex].name;
+        const reason = reopenAfterCompletion === "pending"
+          ? `step ${stepIndex} (${stepName}) returned to pending after completion`
+          : reopenAfterCompletion === "operator"
+            ? `step ${stepIndex} (${stepName}) edited by operator after completion`
+            : `step ${stepIndex} (${stepName}) started after completion`;
+        task.log = buildStepLedgerReopenLog(task.log, reason) ?? task.log;
+      }
+
+      /*
+      FNXC:StepLedgerIntegrity 2026-08-29-06:46:
+      The task timeline must describe state transitions, never repeated writes. On mono-025, the
+      graph step-runner start projection recorded the initial Preflight start, the implementation
+      StepSessionExecutor onStepStart re-wrote that same status, and its fire-and-forget
+      onStepComplete could write done after `Task marked done by agent`. A sealed completion window
+      refuses stale engine transitions; pending resets, explicit operator edits, and starting a step
+      still recorded pending append a reopen marker first, so genuine re-entry remains possible
+      without time-traveling the ledger.
+      */
       task.steps[stepIndex].status = status;
       task.updatedAt = new Date().toISOString();
+
+      /*
+      FNXC:TaskHistory 2026-08-28-02:23:
+      The locked updateStep seam is the sole ledger writer: updateTask cannot rewrite implementation history. Suppressed regression and dependency-order writes return above this point, so they cannot manufacture reports for transitions that never landed.
+      */
+      if (status === "done" && options?.summary?.trim()) {
+        task.stepReports = appendTaskStepReport(task.stepReports, {
+          stepIndex,
+          stepName: task.steps[stepIndex].name,
+          summary: options.summary,
+          recordedAt: task.updatedAt,
+        });
+      }
 
       // Recompute from the full list: an out-of-index parallel step may have
       // moved currentStep ahead of an earlier unfinished dependency branch.
@@ -277,17 +373,20 @@ async function mutateStepImpl(store: TaskStore, id: string, stepIndex: number, s
       */
       if ((status === "done" || status === "skipped") && (task.stuckKillCount ?? 0) > 0) {
         task.stuckKillCount = undefined;
-        task.log.push({
-          timestamp: task.updatedAt,
-          action: `Reset stuck-kill streak (forward progress: step ${stepIndex} (${task.steps[stepIndex].name}) → ${status})`,
-        });
+        if (isTransition) {
+          task.log.push({
+            timestamp: task.updatedAt,
+            action: `Reset stuck-kill streak (forward progress: step ${stepIndex} (${task.steps[stepIndex].name}) → ${status})`,
+          });
+        }
       }
 
-      // Log it
-      task.log.push({
-        timestamp: task.updatedAt,
-        action: `Step ${stepIndex} (${task.steps[stepIndex].name}) → ${status}`,
-      });
+      if (isTransition) {
+        task.log.push({
+          timestamp: task.updatedAt,
+          action: `Step ${stepIndex} (${task.steps[stepIndex].name}) → ${status}`,
+        });
+      }
 
       await store.atomicWriteTaskJson(dir, task);
       if (store.isWatching) store.taskCache.set(id, { ...task });
@@ -312,7 +411,7 @@ async function mutateStepImpl(store: TaskStore, id: string, stepIndex: number, s
     });
 }
 
-export async function updateStepImpl(store: TaskStore, id: string, stepIndex: number, status: import("../types.js").StepStatus, options?: { source?: "graph" },): Promise<Task> {
+export async function updateStepImpl(store: TaskStore, id: string, stepIndex: number, status: import("../types.js").StepStatus, options?: { source?: "graph"; summary?: string; operatorOverride?: boolean },): Promise<Task> {
   return (await mutateStepImpl(store, id, stepIndex, status, options)).task;
 }
 
@@ -408,37 +507,24 @@ export async function mergeTaskImpl(store: TaskStore, id: string): Promise<Merge
       }
 
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-30-00:45 (unwired-parameter class, cf. #2803):
-      `getTaskMergeBlocker` has taken an optional RESOLVED `reviewColumns` since its own conversion, and
-      this caller omitted it — so the identity check fell back to the literal `in-review` and threw
-      `Cannot merge <id>: task is not in 'in-review'` for a card sitting correctly in ITS OWN board's
-      review lane. A hard, operator-visible merge failure on every renamed board.
-
-      A resolved seam nobody wired is indistinguishable from no seam at all.
-
-      MEMBERSHIP, not first-per-role: `resolveReviewColumns` unions mergeOrchestration, mergeBlocker and
-      humanReview, so a workflow splitting those across columns has all of them accepted. Unioned with
-      the legacy id because `resolveWorkflowIrForTask` degrades to the BUILT-IN IR rather than throwing.
+      FNXC:PreMergeGateResolution 2026-08-23-07:58:
+      Queue admission resolves the selected workflow with provenance. A selected workflow that
+      falls back to the builtin graph is not evidence about its review lanes, so it defers rather
+      than silently using the legacy result-only gate. An absent selection still uses builtin:coding.
       */
-      /*
-      FNXC:WorkflowResolvedColumns 2026-07-30-14:10 (#2820 review — coderabbit, Major):
-      THE LEGACY ID IS A FALLBACK, NOT A MEMBER. My first version pre-seeded `in-review` into the set and
-      unioned the resolved lanes on top. That admits a board which declares `in-review` as its WIP column:
-      a card mid-implementation would pass the merge-identity check and merge prematurely.
-
-      The legacy id is only correct when the board tells us NOTHING — an empty resolved set, or a
-      resolution that threw. A non-empty resolved answer replaces it outright; that is the same
-      "unscoped legacy acceptance" the glasses plugin's own review caught, and I reintroduced it here.
-      */
-      let reviewColumns: ReadonlySet<string> = new Set<string>(["in-review"]);
-      let requiredPreMergeStepIds: ReadonlySet<string> | undefined;
+      let mergeGate;
       try {
-        const ir = await resolveWorkflowIrForTask(store, id);
-        const resolved = ir ? resolveReviewColumns(ir) : [];
-        if (resolved.length > 0) reviewColumns = new Set(resolved);
-        if (ir) requiredPreMergeStepIds = resolveRequiredPreMergeStepIds(ir, task.enabledWorkflowSteps);
-      } catch { /* degraded: the board told us nothing, so the legacy id stands */ }
-      const mergeBlocker = getTaskMergeBlocker(task, { reviewColumns, requiredPreMergeStepIds });
+        mergeGate = await resolvePreMergeGateForTask(store, id, task.enabledWorkflowSteps, task);
+      } catch {
+        throw new Error(`Cannot merge ${id}: merge gate could not resolve the task workflow`);
+      }
+      if (mergeGate.provenance === "default" && !mergeGate.selectionAbsent) {
+        throw new Error(`Cannot merge ${id}: merge gate could not resolve the task workflow`);
+      }
+      const mergeBlocker = getTaskMergeBlocker(task, {
+        reviewColumns: mergeGate.reviewColumns.size > 0 ? mergeGate.reviewColumns : new Set(["in-review"]),
+        requiredPreMergeStepIds: mergeGate.requiredPreMergeStepIds,
+      });
       if (mergeBlocker) {
         /* FNXC:RequiredPreMergeSteps 2026-08-22-22:40: an unrun enabled gate is a deferral (typed), not a failure. */
         if (isPreMergeStepsNotRunBlocker(mergeBlocker)) throw new PreMergeStepsNotRunError(id);

@@ -10,7 +10,6 @@ only ENTERS the complete column when finalization confirms the merge — for the
 benchmark whose Done is terminal, complete-column entry IS the success terminal.
 */
 import { describe, expect, it, vi } from "vitest";
-import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 import "@fusion/core";
 import type { MergeResult, Task, TaskStore, WorkflowIr } from "@fusion/core";
 import { finalizeProvenAutoMergeTask } from "../merge/auto-merge-finalization.js";
@@ -71,7 +70,10 @@ describe("finalizeProvenAutoMergeTask — complete-trait column (U7)", () => {
     const store = makeStore(task); // no ir → builtin:coding
     const res = await finalizeProvenAutoMergeTask({ store, taskId: task.id, result: confirmedResult, source: "direct-ai-merge" });
     expect(res.outcome).toBe("done");
-    expect(store.moveTask).toHaveBeenCalledWith("FN-M1", "done", expect.anything(), ANY_MUTATION_CONTEXT);
+    expect(store.moveTask).toHaveBeenCalledWith("FN-M1", "done", expect.objectContaining({
+      moveSource: "engine",
+      workflowMoveSource: "auto-merge-finalization",
+    }));
   });
 
   it("moves a confirmed-merged custom/benchmark card to its OWN complete column (`shipped`)", async () => {
@@ -79,7 +81,7 @@ describe("finalizeProvenAutoMergeTask — complete-trait column (U7)", () => {
     const store = makeStore(task, benchmarkIr());
     const res = await finalizeProvenAutoMergeTask({ store, taskId: task.id, result: confirmedResult, source: "workflow-graph-merge-finalize" });
     expect(res.outcome).toBe("done");
-    expect(store.moveTask).toHaveBeenCalledWith("FN-M1", "shipped", expect.anything(), ANY_MUTATION_CONTEXT);
+    expect(store.moveTask).toHaveBeenCalledWith("FN-M1", "shipped", expect.anything());
   });
 
   it("done-only-on-confirmed-merge: refuses to finalize without durable merge proof (no move)", async () => {

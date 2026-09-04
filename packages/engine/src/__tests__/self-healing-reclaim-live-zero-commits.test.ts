@@ -1,12 +1,4 @@
 import { EventEmitter } from "node:events";
-/*
-FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
-These call-arg assertions now include the mutation context the converted sweep passes.
-Adding it is what keeps them load-bearing: left at the old arity every
-`toHaveBeenCalledWith` here would fail, and every `.not.toHaveBeenCalledWith` would pass
-vacuously — an assertion that can no longer fail is worse than one that is red.
-*/
-import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TaskStore } from "@fusion/core";
 
@@ -59,19 +51,26 @@ vi.mock("../worktree/worktree-pool.js", () => ({
     SelfHealingBranchConflict: "self-healing-branch-conflict",
     SelfHealingIdleSweep: "self-healing-idle-sweep",
     PoolPrune: "pool-prune",
+    CompletionLandedCleanup: "completion-landed-cleanup",
   },
+}));
+
+vi.mock("../merge/post-landing-worktree-cleanup.js", () => ({
+  cleanupLandedTaskWorktree: vi.fn().mockResolvedValue({ outcome: "nothing-to-remove", removed: false }),
 }));
 
 import { SelfHealingManager } from "../self-healing.js";
 import * as branchConflicts from "../execution/branch-conflicts.js";
 import { isUsableTaskWorktree, removeWorktree, relocateReclaimableWorktreeIntoRoot } from "../worktree/worktree-pool.js";
+import { withBranchWriteProvenance } from "./branch-write-provenance-store-stub.js";
 
 function createStore(): TaskStore & EventEmitter {
   const emitter = new EventEmitter() as TaskStore & EventEmitter;
   // FNXC:EngineTests 2026-07-21-00:20: reclaim candidates are filtered by allowsAutoMergeProcessing.
   (emitter as any).getSettings = vi.fn().mockResolvedValue({ globalPause: false, enginePaused: false, autoMerge: true });
   (emitter as any).listTasks = vi.fn();
-  (emitter as any).updateTask = vi.fn().mockResolvedValue(undefined);
+  (emitter as any).getTask = vi.fn().mockResolvedValue({ column: "in-review" });
+  (emitter as any).updateTask = vi.fn(withBranchWriteProvenance(async () => undefined));
   (emitter as any).moveTask = vi.fn().mockResolvedValue(undefined);
   (emitter as any).logEntry = vi.fn().mockResolvedValue(undefined);
   (emitter as any).recordRunAuditEvent = vi.fn().mockResolvedValue(undefined);
@@ -125,9 +124,10 @@ describe("self-healing reclaim live zero commits", () => {
     }));
     expect(execMock).toHaveBeenCalledWith("git worktree prune", expect.anything());
     expect(execMock).toHaveBeenCalledWith(expect.stringContaining("git branch -D"), expect.anything());
-    expect(store.updateTask).toHaveBeenCalledWith("FN-9001", expect.objectContaining({ worktree: null, branch: null, paused: false }), UNATTRIBUTED_MUTATION_CONTEXT);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-9001", "todo", expect.objectContaining({ moveSource: "engine", preserveProgress: true, preserveResumeState: true }), UNATTRIBUTED_MUTATION_CONTEXT);
-    expect(store.logEntry).toHaveBeenCalledWith("FN-9001", expect.stringContaining("[recovery] reclaim-live-zero-commits"), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-9001", expect.objectContaining({ worktree: null, branch: null, paused: false }));
+    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(store.logEntry).toHaveBeenCalledWith("FN-9001", expect.stringContaining("has no backward-move authority"));
+    expect(store.logEntry).toHaveBeenCalledWith("FN-9001", expect.stringContaining("[recovery] reclaim-live-zero-commits"));
     expect((store as any).recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
       mutationType: "branch:auto-reclaim",
       metadata: expect.objectContaining({ phase: "reclaim-live-zero-commits" }),
@@ -154,7 +154,87 @@ describe("self-healing reclaim live zero commits", () => {
     expect(recovered).toBe(1);
     expect(execMock).not.toHaveBeenCalledWith(expect.stringContaining("git worktree remove --force"), expect.anything());
     expect(execMock).not.toHaveBeenCalledWith(expect.stringContaining("git branch -D"), expect.anything());
-    expect(store.updateTask).toHaveBeenCalledWith("FN-9001", expect.objectContaining({ worktree: "/tmp/live", branch: "fusion/fn-9001" }), UNATTRIBUTED_MUTATION_CONTEXT);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-9001", expect.objectContaining({
+      worktree: "/tmp/live",
+      branch: "fusion/fn-9001",
+      branchWriteOrigin: "engine",
+    }));
+  });
+
+  it("preserves an operator override when re-persisting a canonical-looking branch", async () => {
+    const branchOverride = { by: "operator" as const, at: "2026-08-28T06:41:00.000Z", branch: "fusion/fn-9001" };
+    (store.listTasks as any)
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{
+        id: "FN-9001",
+        column: "in-review",
+        checkedOutBy: null,
+        branch: "fusion/fn-9001",
+        branchContext: { branchOverride },
+        worktree: "/tmp/stale",
+        paused: true,
+        pausedReason: "branch-conflict-unrecoverable",
+        status: "failed",
+      }]);
+    vi.spyOn(branchConflicts, "inspectBranchConflict").mockResolvedValueOnce({
+      kind: "reclaimable",
+      livePath: "/tmp/live",
+      tipSha: "1234567890abcdef",
+      taskAttributedCommitCount: 1,
+      strandedCommits: [{ sha: "abc", subject: "unique" }],
+    } as any);
+
+    expect(await manager.reclaimSelfOwnedBranchConflicts()).toBe(1);
+
+    expect(store.updateTask).toHaveBeenCalledWith("FN-9001", expect.objectContaining({
+      branch: "fusion/fn-9001",
+      branchWriteOrigin: "operator",
+      worktree: "/tmp/live",
+    }));
+    const branchContextWrites = (store.updateTask as any).mock.calls.filter((call: any[]) => call[1]?.branchContext !== undefined);
+    expect(branchContextWrites).toHaveLength(0);
+  });
+
+  it("persists a relocated checkout only at the reclaim commit point", async () => {
+    const relocatedPath = "/tmp/test/.worktrees/fn-9001";
+    vi.mocked(relocateReclaimableWorktreeIntoRoot).mockResolvedValueOnce({
+      kind: "ready",
+      path: relocatedPath,
+      relocated: true,
+    });
+    (store.listTasks as any)
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{
+        id: "FN-9001",
+        column: "in-review",
+        checkedOutBy: null,
+        branch: "fusion/fn-9001",
+        worktree: "/tmp/live",
+        paused: true,
+        pausedReason: "branch-conflict-unrecoverable",
+        status: "failed",
+      }]);
+    vi.spyOn(branchConflicts, "inspectBranchConflict").mockResolvedValueOnce({
+      kind: "reclaimable",
+      livePath: "/tmp/live",
+      tipSha: "1234567890abcdef",
+      taskAttributedCommitCount: 1,
+      strandedCommits: [{ sha: "abc", subject: "unique" }],
+    } as any);
+
+    expect(await manager.reclaimSelfOwnedBranchConflicts()).toBe(1);
+
+    const relocatedWrites = (store.updateTask as any).mock.calls.filter((call: any[]) => call[1]?.worktree === relocatedPath);
+    expect(relocatedWrites).toHaveLength(1);
+    expect(relocatedWrites[0][1]).toEqual(expect.objectContaining({
+      branch: "fusion/fn-9001",
+      branchWriteOrigin: "engine",
+      paused: false,
+      status: null,
+      error: null,
+    }));
   });
 
   it("skips destructive fast-path when another in-progress task owns live worktree", async () => {
@@ -175,7 +255,7 @@ describe("self-healing reclaim live zero commits", () => {
 
     expect(recovered).toBe(1);
     expect(execMock).not.toHaveBeenCalledWith(expect.stringContaining("git worktree remove --force"), expect.anything());
-    expect(store.updateTask).toHaveBeenCalledWith("FN-9001", expect.objectContaining({ worktree: "/tmp/live", branch: "fusion/fn-9001" }), UNATTRIBUTED_MUTATION_CONTEXT);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-9001", expect.objectContaining({ worktree: "/tmp/live", branch: "fusion/fn-9001" }));
   });
 
   it("does not run destructive fast-path for foreign branch names", async () => {
@@ -194,7 +274,7 @@ describe("self-healing reclaim live zero commits", () => {
     await manager.reclaimSelfOwnedBranchConflicts();
 
     expect(execMock).not.toHaveBeenCalledWith(expect.stringContaining("git worktree remove --force"), expect.anything());
-    expect(store.updateTask).toHaveBeenCalledWith("FN-9001", expect.objectContaining({ worktree: "/tmp/live", branch: "fusion/fn-other" }), UNATTRIBUTED_MUTATION_CONTEXT);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-9001", expect.objectContaining({ worktree: "/tmp/live", branch: "fusion/fn-other" }));
   });
 
   it("parks task without corrupting branch/worktree when worktree removal fails", async () => {
@@ -218,7 +298,7 @@ describe("self-healing reclaim live zero commits", () => {
     const recovered = await manager.reclaimSelfOwnedBranchConflicts();
 
     expect(recovered).toBe(1);
-    expect(store.logEntry).toHaveBeenCalledWith("FN-9001", expect.stringContaining("reclaim-live-zero-commits failed"), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
-    expect(store.updateTask).toHaveBeenCalledWith("FN-9001", expect.objectContaining({ worktree: "/tmp/live", branch: "fusion/fn-9001" }), UNATTRIBUTED_MUTATION_CONTEXT);
+    expect(store.logEntry).toHaveBeenCalledWith("FN-9001", expect.stringContaining("reclaim-live-zero-commits failed"));
+    expect(store.updateTask).toHaveBeenCalledWith("FN-9001", expect.objectContaining({ worktree: "/tmp/live", branch: "fusion/fn-9001" }));
   });
 });

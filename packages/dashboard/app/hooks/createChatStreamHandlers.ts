@@ -42,9 +42,12 @@ export interface CreateChatStreamHandlersOptions {
   /** Optional toast helper, used to surface fallback-model warnings + errors. */
   addToast?: (message: string, level: "error" | "warning" | "success") => void;
   /** Caller-supplied terminal handlers — bind in their own state setters. */
+  onAgentMessage?: (data: { message: ChatMessage; senderAgentId: string; senderAgentName: string }) => void;
   onDone: (data: {
     messageId: string;
     message?: ChatMessage;
+    dispatch?: "agents";
+    failedAgentNames?: string[];
     accumulated: {
       text: string;
       thinking: string;
@@ -66,7 +69,8 @@ export interface ChatStreamHandlers {
   onToolStart: (data: { toolName: string; args?: Record<string, unknown> }) => void;
   onToolEnd: (data: { toolName: string; isError: boolean; result?: unknown }) => void;
   onFallback: (data: FallbackInfo) => void;
-  onDone: (data: { messageId: string; message?: ChatMessage }) => void;
+  onAgentMessage?: (data: { message: ChatMessage; senderAgentId: string; senderAgentName: string }) => void;
+  onDone: (data: { messageId: string; message?: ChatMessage; dispatch?: "agents"; failedAgentNames?: string[] }) => void;
   onError: (data: string | ChatFailureInfo, meta?: ChatStreamErrorMeta) => void;
 }
 
@@ -106,6 +110,7 @@ export function createChatStreamHandlers(
     addToast,
     onDone,
     onError,
+    onAgentMessage,
     onFallbackSession,
   } = options;
 
@@ -201,11 +206,14 @@ export function createChatStreamHandlers(
       onFallbackSession?.(data, sessionId);
       addToast?.(`Primary model unavailable. Switched to fallback ${data.fallbackModel}.`, "warning");
     },
-    onDone: (data: { messageId: string; message?: ChatMessage }) => {
+    onAgentMessage,
+    onDone: (data: { messageId: string; message?: ChatMessage; dispatch?: "agents"; failedAgentNames?: string[] }) => {
       cancelFlushes();
       onDone({
         messageId: data.messageId,
         message: data.message,
+        ...(data.dispatch ? { dispatch: data.dispatch } : {}),
+        ...(data.failedAgentNames ? { failedAgentNames: data.failedAgentNames } : {}),
         accumulated: {
           text: capturedText,
           thinking: capturedThinking,

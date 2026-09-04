@@ -56,11 +56,11 @@ function assertRuntimeDepsAreNotOptionalPeers(pkg: any, label: string): void {
   }
 
   // FNXC:DesktopPackaging 2026-08-12-20:46: Exact matched Pi runtime pin — keep in sync with
-  // pnpm-workspace.yaml overrides and check-pi-versions-pinned.mjs (currently 0.84.1).
+  // pnpm-workspace.yaml overrides and check-pi-versions-pinned.mjs (currently 0.84.4).
   for (const dependencyName of ["@earendil-works/pi-coding-agent", "@earendil-works/pi-ai"]) {
     expect(dependencies, `${label}: ${dependencyName} must remain a required runtime dependency`).toHaveProperty(
       dependencyName,
-      "0.84.1",
+      "0.84.4",
     );
     expect(dependencies[dependencyName], `${label}: ${dependencyName} must be a clean exact semver`).toMatch(
       EXACT_SEMVER,
@@ -89,6 +89,27 @@ function assertRuntimeDepsAreNotOptionalPeers(pkg: any, label: string): void {
     optional: true,
   });
 }
+
+describe("node-pty platform packaging", () => {
+  it("pins every runtime manifest to script-free platform prebuilds", () => {
+    const expected = "npm:@lydell/node-pty@1.2.0-beta.15";
+    for (const packageDir of ["cli", "dashboard", "engine"]) {
+      expect(loadPackageJson(packageDir).dependencies["node-pty"]).toBe(expected);
+    }
+
+    const lockfile = readFileSync(join(workspaceRoot, "pnpm-lock.yaml"), "utf8");
+    for (const target of ["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64", "win32-arm64", "win32-x64"]) {
+      expect(lockfile).toMatch(new RegExp(`'@lydell/node-pty-${target}@1\\.2\\.0-beta\\.15':\\n    resolution: \\{integrity: sha512-`));
+    }
+
+    const workspaceConfig = readFileSync(join(workspaceRoot, "pnpm-workspace.yaml"), "utf8");
+    const retiredPackage = `@homebridge/${"node-pty-prebuilt-multiarch"}`;
+    expect(workspaceConfig).not.toContain(retiredPackage);
+    for (const packageDir of ["cli", "dashboard", "engine"]) {
+      expect(JSON.stringify(loadPackageJson(packageDir))).not.toContain(retiredPackage);
+    }
+  });
+});
 
 describe("CLI package.json publishing config", () => {
   const pkg = loadPackageJson("cli");
@@ -313,7 +334,7 @@ describe("CLI package.json publishing config", () => {
     const TRANSITIVE_EXTERNALS: Record<string, string> = {
       ssh2: "transitive dep of dockerode",
       "cpu-features": "transitive dep of dockerode (via ssh2)",
-      "@homebridge/node-pty-prebuilt-multiarch":
+      "@lydell/node-pty":
         "aliased as node-pty in dependencies; the alias entry satisfies the import",
       jimp:
         "optional Baileys dynamic-require helper externalized only for bundled fusion-plugin-whatsapp-chat; not a @runfusion/fusion runtime dep — see tsup.config.ts bundlePluginEntry external",
@@ -321,6 +342,16 @@ describe("CLI package.json publishing config", () => {
         "optional Baileys dynamic-require helper externalized only for bundled fusion-plugin-whatsapp-chat; not a @runfusion/fusion runtime dep — see tsup.config.ts bundlePluginEntry external",
       "qrcode-terminal":
         "optional Baileys dynamic-require helper externalized only for bundled fusion-plugin-whatsapp-chat; not a @runfusion/fusion runtime dep — see tsup.config.ts bundlePluginEntry external",
+      /*
+       * FNXC:CliTests 2026-08-24-02:16:
+       * sharp 0.35 native addons (img-sharp platform .node files) cannot be esbuild-bundled.
+       * Externalized for CLI bin + plugin packaging; desktop generate-icons and optional
+       * Baileys media helpers own the runtime, so it is not a @runfusion/fusion published dep.
+       */
+      sharp:
+        "native image codec (desktop generate-icons + optional Baileys media); 0.35 ships img-sharp platform .node addons esbuild cannot bundle — see tsup.config.ts",
+      "@img/sharp-*":
+        "esbuild glob for sharp 0.35 platform native addons; not a published CLI runtime dep",
       // FNXC:BuildConfig 2026-07-13-12:00: FN-7936 aliased @fusion/core to a runtime shim in bundled plugin outputs; it's no longer a tsup external, so this allowlist entry is stale.
       // "@fusion/core": REMOVED — was "plugin-entry bundling external only; not a runtime dep of the CLI bin",
       "@fusion/engine": "plugin-entry bundling external only; not a runtime dep of the CLI bin",
@@ -329,6 +360,11 @@ describe("CLI package.json publishing config", () => {
     it("parses externals from tsup.config.ts", () => {
       expect(externals.length).toBeGreaterThan(0);
       expect(externals).toContain("dockerode");
+    });
+
+    it("externalizes sharp and @img/sharp-* native addons", () => {
+      expect(externals).toContain("sharp");
+      expect(externals).toContain("@img/sharp-*");
     });
 
     it.each(externals.filter(

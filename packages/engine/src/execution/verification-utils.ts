@@ -89,6 +89,8 @@ export interface VerificationCommandResult {
 
 /** Result of running all verification commands */
 export interface VerificationResult {
+  /** No command was configured, so nothing was measured; `allPassed` means only no failure was observed. */
+  notRun?: true;
   testResult?: VerificationCommandResult;
   buildResult?: VerificationCommandResult;
   allPassed: boolean;

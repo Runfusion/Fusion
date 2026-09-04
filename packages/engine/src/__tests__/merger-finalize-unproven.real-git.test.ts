@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 import { execSync, spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -21,6 +20,7 @@ vi.mock("../pi.js", () => ({
 }));
 
 import { aiMergeTask, classifyOwnedLandedEvidence } from "../merger.js";
+import { withBranchWriteProvenance } from "./branch-write-provenance-store-stub.js";
 
 const hasGit = spawnSync("git", ["--version"], { stdio: "pipe" }).status === 0;
 const describeIfGit = hasGit ? describe : describe.skip;
@@ -51,10 +51,10 @@ function createStore(
     getTask: vi.fn(async () => currentTask),
     getSettings: vi.fn(async () => mergedSettings),
     listTasks: vi.fn(async () => [currentTask]),
-    updateTask: vi.fn(async (_id: string, updates: Partial<Task>) => {
+    updateTask: vi.fn(withBranchWriteProvenance(async (_id: string, updates: Partial<Task>) => {
       currentTask = { ...currentTask, ...updates, updatedAt: new Date().toISOString() } as Task;
       return currentTask;
-    }),
+    })),
     moveTask: vi.fn(async (_id: string, column: Task["column"]) => {
       currentTask = {
         ...currentTask,
@@ -163,8 +163,8 @@ describeIfGit("aiMergeTask finalize no-op unproven reproduction (real git)", () 
   // was "auto-finalize proven no-op and clear stale modifiedFiles", which
   // turned out to be the bug — claimed modifiedFiles + no commit = lost work
   // (uncommitted in the worktree or squashed against the wrong branch), not
-  // a legitimate no-op. The merger now refuses to finalize and moves the
-  // task back to todo with progress preserved instead.
+  // a legitimate no-op. The merger now refuses to finalize and returns the
+  // review-owned repair to WIP with progress preserved instead.
   it("FN-5490: refuses no-op finalize when modifiedFiles are claimed without a commit", async () => {
     const repo = mkdtempSync(join(tmpdir(), "fusion-merger-noop-finalize-"));
     repos.push(repo);
@@ -198,7 +198,7 @@ describeIfGit("aiMergeTask finalize no-op unproven reproduction (real git)", () 
     const result = await aiMergeTask(store, repo, "FN-C");
 
     // Lost-work guard fires — task does NOT advance to done, does NOT have
-    // modifiedFiles cleared, and gets moved back to todo with progress.
+    // modifiedFiles cleared, and returns to WIP with progress.
     expect(result.merged).toBe(false);
     expect(result.error).toMatch(/lost-work/);
     expect(
@@ -207,7 +207,7 @@ describeIfGit("aiMergeTask finalize no-op unproven reproduction (real git)", () 
       ),
     ).toBe(false);
     expect((store.moveTask as ReturnType<typeof vi.fn>).mock.calls.some(([, column]) => column === "done")).toBe(false);
-    expect((store.moveTask as ReturnType<typeof vi.fn>).mock.calls.some(([, column]) => column === "todo")).toBe(true);
+    expect(store.moveTask).not.toHaveBeenCalled();
   }, 20_000);
 
   it("FN-6461: demotes no-commits proven no-op tasks when skipped work outweighs done work", async () => {
@@ -253,13 +253,16 @@ describeIfGit("aiMergeTask finalize no-op unproven reproduction (real git)", () 
     expect(result.noOp).toBe(false);
     // "Verify"/"Testing" are skipped verification steps → precise reason naming them.
     expect(result.error).toContain("skipped verification step");
-    expect(store.updateTask).toHaveBeenCalledWith("FN-NO-COMMITS", expect.objectContaining({ error: expect.stringContaining("skipped verification step") }), ANY_MUTATION_CONTEXT);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-NO-COMMITS", "todo", expect.objectContaining({ preserveProgress: true, moveSource: "engine" }), ANY_MUTATION_CONTEXT);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-NO-COMMITS", expect.objectContaining({
+      error: expect.stringContaining("skipped verification step"),
+    }));
+    expect(store.moveTask).not.toHaveBeenCalled();
     expect(store.moveTask).not.toHaveBeenCalledWith("FN-NO-COMMITS", "done");
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-NO-COMMITS",
       expect.stringContaining("Finalize blocked (no-commits incomplete-work guard)"),
-      expect.stringContaining("legacy-no-op-classifier"), ANY_MUTATION_CONTEXT);
+      expect.stringContaining("legacy-no-op-classifier"),
+    );
     expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
       mutationType: "task:no-commits-finalize-blocked-incomplete-steps",
       target: "FN-NO-COMMITS",
@@ -300,7 +303,55 @@ describeIfGit("aiMergeTask finalize no-op unproven reproduction (real git)", () 
 
     expect(result.merged).toBe(true);
     expect(result.noOp).toBe(true);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-NO-COMMITS-DONE", "done", undefined, ANY_MUTATION_CONTEXT);
+    expect(store.moveTask).toHaveBeenCalledWith("FN-NO-COMMITS-DONE", "done");
+  }, 20_000);
+
+  it("FN-213: clears a removed worktree pointer while retaining an operator branch", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "fusion-merger-operator-empty-own-"));
+    repos.push(repo);
+    git(repo, "git init -b main");
+    git(repo, 'git config user.email "test@example.com"');
+    git(repo, 'git config user.name "Test User"');
+    git(repo, "git commit --allow-empty -m 'init'");
+    const baseSha = git(repo, "git rev-parse HEAD");
+    git(repo, "git checkout -b operator/fn-213");
+    git(repo, "git commit --allow-empty -m 'test(FN-213): no content change'");
+    git(repo, "git checkout main");
+    const worktree = join(repo, ".operator-worktree");
+    git(repo, `git worktree add -q ${JSON.stringify(worktree)} operator/fn-213`);
+    const branchOverride = { by: "operator" as const, at: "2026-08-28T06:41:00.000Z", branch: "operator/fn-213" };
+    const task = {
+      id: "FN-213",
+      title: "FN-213",
+      description: "FN-213",
+      column: "in-review",
+      branch: "operator/fn-213",
+      branchContext: { branchOverride },
+      worktree,
+      baseBranch: "main",
+      baseCommitSha: baseSha,
+      dependencies: [],
+      steps: [{ name: "Verify", status: "done" }],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      prompt: "# FN-213",
+    } as unknown as Task;
+    const store = createStore(task, { mergeIntegrationWorktree: "reuse-task-worktree" as any });
+
+    const result = await aiMergeTask(store, repo, task.id);
+
+    expect(result.merged).toBe(true);
+    expect(result.noOp).toBe(true);
+    expect(result.worktreeRemoved).toBe(true);
+    expect(result.branchDeleted).toBe(false);
+    const pointerClear = (store.updateTask as ReturnType<typeof vi.fn>).mock.calls.find(([, patch]) => patch?.worktree === null);
+    expect(pointerClear?.[1]).toEqual({ worktree: null });
+    expect(pointerClear?.[1]).not.toHaveProperty("branch");
+    expect(result.task.worktree).toBeNull();
+    expect(result.task.branch).toBe("operator/fn-213");
+    expect(result.task.branchContext?.branchOverride).toEqual(branchOverride);
   }, 20_000);
 
   it("FN-6461: demotes no-commits empty-own-diff fast-path before cleanup", async () => {
@@ -338,13 +389,15 @@ describeIfGit("aiMergeTask finalize no-op unproven reproduction (real git)", () 
 
     expect(result.merged).toBe(false);
     expect(result.error).toContain("done=1, incomplete=1");
-    expect(store.moveTask).toHaveBeenCalledWith("FN-EMPTY-BLOCK", "todo", expect.objectContaining({ preserveProgress: true, moveSource: "engine" }), ANY_MUTATION_CONTEXT);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-EMPTY-BLOCK", expect.objectContaining({ error: expect.any(String) }));
+    expect(store.moveTask).not.toHaveBeenCalled();
     expect(store.moveTask).not.toHaveBeenCalledWith("FN-EMPTY-BLOCK", "done");
     expect(git(repo, "git show-ref --verify --quiet refs/heads/fusion/fn-empty-block; echo $?")).toBe("0");
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-EMPTY-BLOCK",
       expect.stringContaining("Finalize blocked (no-commits incomplete-work guard)"),
-      expect.stringContaining("early-empty-own-diff"), ANY_MUTATION_CONTEXT);
+      expect.stringContaining("early-empty-own-diff"),
+    );
   }, 20_000);
 
   it("FN-6461: allows all-done no-commits empty-own-diff fast-path tasks", async () => {
@@ -382,7 +435,7 @@ describeIfGit("aiMergeTask finalize no-op unproven reproduction (real git)", () 
 
     expect(result.merged).toBe(true);
     expect(result.noOp).toBe(true);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-EMPTY-DONE", "done", undefined, ANY_MUTATION_CONTEXT);
+    expect(store.moveTask).toHaveBeenCalledWith("FN-EMPTY-DONE", "done");
   }, 20_000);
 
   it("blocks FN-4653 shape: foreign start-point branch with no FN-owned commits", async () => {
@@ -431,8 +484,8 @@ describeIfGit("aiMergeTask finalize no-op unproven reproduction (real git)", () 
     const result = await aiMergeTask(store, repo, "FN-B");
     expect(result.merged).toBe(false);
     expect(result.error).toContain("finalize-unproven");
-    expect((store.moveTask as ReturnType<typeof vi.fn>).mock.calls.some(([, column]) => column === "done")).toBe(false);
-    expect((store.moveTask as ReturnType<typeof vi.fn>).mock.calls.some(([, column]) => column === "todo")).toBe(true);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-B", expect.objectContaining({ error: expect.any(String) }));
+    expect(store.moveTask).not.toHaveBeenCalled();
   }, 20_000);
 
   // FN-5345/FN-5377 + branch-group completion regression: a shared-group member

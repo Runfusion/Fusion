@@ -30,9 +30,9 @@ export interface LaneProps {
   onToggleCollapse: (workflowId: string) => void;
   projectId?: string;
   maxConcurrent: number;
+  maxWorktrees: number;
   showWorktreeGrouping?: boolean;
-  onMoveTask: (id: string, column: ColumnId, optionsOrPosition?: { preserveProgress?: boolean } | number) => Promise<Task>;
-  onPromote: (taskId: string) => Promise<void>;
+  onMoveTask: (id: string, column: ColumnId, optionsOrPosition?: { preserveProgress?: boolean; expectedColumn?: string } | number) => Promise<Task>;
   onPauseTask?: (id: string) => Promise<Task>;
   onOpenDetail: (task: Task | TaskDetail) => void;
   onOpenGroupModal?: (groupId: string) => void;
@@ -82,7 +82,7 @@ function LaneComponent(props: LaneProps) {
   const contextMenuColumns = useMemo(
     () => workflow.columns
       .filter((col) => !col.flags.hiddenFromBoard)
-      .map((col) => ({ id: col.id, label: col.name, flags: col.flags, ...(col.moveTargets ? { moveTargets: col.moveTargets } : {}) })),
+      .map((col) => ({ id: col.id, label: col.name, flags: col.flags })),
     [workflow.columns],
   );
   const createColumnId = useMemo(() => (
@@ -179,9 +179,9 @@ function LaneComponent(props: LaneProps) {
               allTasks={tasks}
               projectId={props.projectId}
               maxConcurrent={props.maxConcurrent}
+              maxWorktrees={props.maxWorktrees}
               showWorktreeGrouping={props.showWorktreeGrouping === true}
               onMoveTask={props.onMoveTask}
-              onPromote={props.onPromote}
               onPauseTask={props.onPauseTask}
               onOpenDetail={props.onOpenDetail}
               onOpenGroupModal={props.onOpenGroupModal}

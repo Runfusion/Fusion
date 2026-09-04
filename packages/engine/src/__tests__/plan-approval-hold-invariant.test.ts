@@ -30,8 +30,11 @@ automated surface that can advance a held card, and where each is covered:
      the scheduler's `reserveSlot` guard) — guarded there rather than inside
      `isUnplannedForExecution`, because an approval-held card is not "unplanned".
      Guarded again inside the `moveTaskIf` predicate so a park landing mid-sweep
-     cannot lose the race. Operator force-promote (`allowUnplanned`) deliberately
-     still passes: that IS a human decision about this card.   [describe #1]
+     cannot lose the race.
+
+FNXC:WorkflowScheduling 2026-08-29-00:24:
+     FN-245 removes the former operator waiver. Approval-held cards now remain
+     refused on every release surface, including explicit promote. [describe #1]
   2. continuation seed — `seedPreReleasePlanReviewContinuation` (normal
      completion) and `evaluateStrandedHoldContinuation` (FN-8592 self-healing
      re-seed). Both seeders, not just the one on the reported path. [describe #2]

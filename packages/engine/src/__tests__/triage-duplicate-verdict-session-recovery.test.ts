@@ -156,9 +156,7 @@ describe("duplicate verdict reported in the planner's reply (FN-8600)", () => {
     const task = createTask();
     stubPlanner(rootDir, task.id, DUPLICATE_REPLY);
 
-    await new TriageProcessor(createStore(task, rootDir), rootDir, {
-      acquirePlanningWorktree: async () => null,
-    }).specifyTask(task);
+    await new TriageProcessor(createStore(task, rootDir), rootDir).specifyTask(task);
 
     const promptPath = join(rootDir, ".fusion", "tasks", "FN-8600", "PROMPT.md");
     expect(existsSync(promptPath)).toBe(true);
@@ -176,9 +174,7 @@ describe("duplicate verdict reported in the planner's reply (FN-8600)", () => {
       realSpec,
     );
 
-    await new TriageProcessor(createStore(task, rootDir), rootDir, {
-      acquirePlanningWorktree: async () => null,
-    }).specifyTask(task);
+    await new TriageProcessor(createStore(task, rootDir), rootDir).specifyTask(task);
 
     const written = await readFile(join(rootDir, ".fusion", "tasks", "FN-8600", "PROMPT.md"), "utf-8");
     expect(written).toBe(realSpec);

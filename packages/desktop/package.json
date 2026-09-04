@@ -1,7 +1,7 @@
 {
   "name": "@fusion/desktop",
   "productName": "Fusion",
-  "version": "0.77.0-beta.8",
+  "version": "0.78.0-beta.1",
   "license": "MIT",
   "author": {
     "name": "Runfusion",
@@ -54,7 +54,7 @@
     "jsdom": "^29.1.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "sharp": "^0.33.0",
+    "sharp": "^0.35.3",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",
     "vite": "^6.0.0",

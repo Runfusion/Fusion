@@ -30,7 +30,7 @@ import kbExtension, {
   __setCachedStoreForTesting,
   closeCachedStores,
 } from "../extension.js";
-import type { TaskStore } from "@fusion/core";
+import { SecretsStore, type TaskStore } from "@fusion/core";
 
 export { pgDescribe };
 
@@ -147,6 +147,22 @@ export function createPgExtensionHarness(prefix: string): PgExtensionHarness {
     },
     afterAll: pg.afterAll,
   };
+}
+
+/**
+ * Install an in-memory-key SecretsStore so extension tests exercise real encryption without
+ * resolving the developer's global Fusion key directory.
+ */
+export function injectSecretsStore(harness: PgExtensionHarness): SecretsStore {
+  const layer = harness.store().getAsyncLayer();
+  if (!layer) throw new Error("harness store has no async layer");
+  const noopDb = {
+    prepare: () => { throw new Error("sync DB not available in backend-mode test"); },
+    bumpLastModified: () => {},
+  };
+  const secretsStore = new SecretsStore(noopDb as never, noopDb as never, async () => Buffer.alloc(32, 7), { asyncLayer: layer });
+  harness.store().secretsStore = secretsStore;
+  return secretsStore;
 }
 
 /** Look up a registered tool, failing the test loudly if it was never registered. */

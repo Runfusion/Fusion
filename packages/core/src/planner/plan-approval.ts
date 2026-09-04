@@ -5,7 +5,7 @@ import {
   ORIGINAL_DESCRIPTION_START_MARKER,
 } from "../tasks/original-description-policy.js";
 import { FRONTEND_UX_CRITERIA_SECTION } from "../tasks/frontend-ux-policy.js";
-import type { ProjectSettings } from "../types.js";
+import type { ProjectSettings, Task } from "../types.js";
 import type { WorkflowStepResult } from "../types/workflow/workflow-steps.js";
 import { PLAN_REVIEW_GROUP_ID } from "../workflows/builtin-plan-review-group.js";
 
@@ -48,17 +48,39 @@ export function isPlanReviewSatisfied(result: WorkflowStepResult): boolean {
  * A dependency change preserves Plan Review history for audit while retiring
  * every current gate projection, including an in-flight lease. Superseded
  * evidence belongs to the old planning episode and cannot satisfy the new gate.
+ *
+ * FNXC:PlanReviewSupersession 2026-08-28-06:24:
+ * Respecify preserves the old plan only as revision source. Its current Plan Review evidence must
+ * be retired under an explicit reason so the preserved text can never count as already reviewed.
  */
 export function supersedePlanReviewResults(
   results: WorkflowStepResult[] | undefined,
   supersededAt: string,
+  reason: NonNullable<WorkflowStepResult["supersededReason"]> = "dependency-change",
 ): WorkflowStepResult[] | undefined {
   if (!results?.some((result) => result.workflowStepId === PLAN_REVIEW_GROUP_ID && result.supersededAt == null)) {
     return results;
   }
   return results.map((result) => result.workflowStepId === PLAN_REVIEW_GROUP_ID && result.supersededAt == null
-    ? { ...result, supersededAt, supersededReason: "dependency-change" }
+    ? { ...result, supersededAt, supersededReason: reason }
     : result);
+}
+
+export function buildPreservedPlanRespecifyPatch(
+  task: Pick<Task, "workflowStepResults">,
+  supersededAt: string,
+): {
+  status: "needs-replan";
+  approvedPlanFingerprint: null;
+  awaitingApprovalReason: null;
+  workflowStepResults: WorkflowStepResult[] | undefined;
+} {
+  return {
+    status: "needs-replan",
+    approvedPlanFingerprint: null,
+    awaitingApprovalReason: null,
+    workflowStepResults: supersedePlanReviewResults(task.workflowStepResults, supersededAt, "respecify"),
+  };
 }
 
 /**
@@ -149,8 +171,10 @@ function stripInjectedFrontendUxCriteria(promptText: string): string {
 }
 
 /**
- * FNXC:PlanApproval 2026-06-26-00:00:
- * Per-project planApprovalMode controls the planning approval gate for every task in the project: require-all always parks approved specs for manual approval, auto-approve-all always bypasses the gate, and workflow/undefined preserves the workflow-resolved requirePlanApproval value.
+ * FNXC:PlanApproval 2026-08-28-17:16:
+ * FN-234 removes per-task approval escalation. Manual approval now derives only from the project
+ * planApprovalMode and the workflow-resolved requirePlanApproval setting: require-all always parks,
+ * auto-approve-all always bypasses, and workflow/undefined preserves the workflow value.
  */
 export function resolvePlanApprovalRequired(
   settings: Pick<ProjectSettings, "planApprovalMode" | "requirePlanApproval">,

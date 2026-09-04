@@ -79,6 +79,7 @@ export function rowToTask(row: TaskRow): Task {
     queuedLogEpisodeSignature: row.queuedLogEpisodeSignature || undefined,
     paused: row.paused ? true : undefined,
     pausedReason: row.pausedReason || undefined,
+    externalBlock: fromJson<Task["externalBlock"]>(row.externalBlock) ?? undefined,
     wedgeNotification: fromJson<Task["wedgeNotification"]>(row.wedgeNotification) ?? undefined,
     userPaused: row.userPaused ? true : undefined,
     baseBranch: row.baseBranch || undefined,
@@ -124,6 +125,8 @@ export function rowToTask(row: TaskRow): Task {
     postReviewFixCount: row.postReviewFixCount ?? undefined,
     planReviewReplanCount: row.planReviewReplanCount ?? undefined,
     recoveryRetryCount: row.recoveryRetryCount ?? undefined,
+    sessionContentionHoldCount: row.sessionContentionHoldCount ?? undefined,
+    sessionContentionWaitReason: row.sessionContentionWaitReason ?? undefined,
     taskDoneRetryCount: row.taskDoneRetryCount ?? undefined,
     // FNXC:Lifecycle 2026-07-16-21:40: FN-8141 skip-bypass taint marker; empty/null → undefined (no taint).
     bulkCompletionRefusalAt: row.bulkCompletionRefusalAt || undefined,
@@ -173,6 +176,7 @@ export function rowToTask(row: TaskRow): Task {
     executionCompletedAt: row.executionCompletedAt || undefined,
     dependencies: fromJson<string[]>(row.dependencies) || [],
     steps: fromJson<import("../types.js").TaskStep[]>(row.steps) || [],
+    stepReports: (() => { const reports = fromJson<import("../types.js").TaskStepReport[]>(row.stepReports); return reports && reports.length > 0 ? reports : undefined; })(),
     customFields: fromJson<Record<string, unknown>>(row.customFields) ?? undefined,
     log: fromJson<import("../types.js").TaskLogEntry[]>(row.log) || [],
     tokenBudgetSoftAlertedAt: row.tokenBudgetSoftAlertedAt || undefined,
@@ -423,6 +427,12 @@ export function archiveEntryToTask(
   };
 }
 
+/*
+FNXC:ArchiveSummary 2026-08-29-05:17:
+FN-253 makes tool detail default-populated. The former detail-first snippet silently replaced every
+identifying tool name with arguments, so archive summaries now keep text first inside the existing
+160-character clamp and append available detail only after it.
+*/
 export function summarizeAgentLog(entries: AgentLogEntry[], totalCount: number): string | undefined {
   if (totalCount === 0) {
     return undefined;
@@ -447,7 +457,10 @@ export function summarizeAgentLog(entries: AgentLogEntry[], totalCount: number):
     .slice(-5)
     .map((entry) => {
       const source = entry.agent ? `${entry.agent}/${entry.type}` : entry.type;
-      const text = (entry.detail || entry.text || "").replace(/\s+/g, " ").trim();
+      const content = entry.text
+        ? entry.detail ? `${entry.text} — ${entry.detail}` : entry.text
+        : entry.detail || "";
+      const text = content.replace(/\s+/g, " ").trim();
       const snippet = text.length > ARCHIVE_AGENT_LOG_SNIPPET_LIMIT
         ? `${text.slice(0, ARCHIVE_AGENT_LOG_SNIPPET_LIMIT)}...`
         : text;

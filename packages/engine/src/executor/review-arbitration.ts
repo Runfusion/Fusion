@@ -8,12 +8,17 @@ import type { ArbitrationFailureFence, Task, TaskStore, WorkflowReviewFinding, W
 import {
   archiveArbitratedWorkflowStepFailure,
   resolveReviewArbitrationTarget,
+  resolveStepReopenPolicy,
   resolveValidatorFallbackModel,
+  resolveWorkflowIrForTask,
 } from "@fusion/core";
 import { mergeEffectiveSettings } from "../project/effective-settings.js";
 import { reviewStep } from "../execution/reviewer.js";
 import type { EngineRunContext } from "../util/run-audit.js";
 import { emitBoundedRunAudit } from "./emit-bounded-run-audit.js";
+import type { AppendReviewRemediationOptions, AppendReviewRemediationOutcome } from "./append-review-remediation-steps.js";
+import type { RequestPreMergeOptionalStepFixInfo } from "./request-pre-merge-optional-step-fix.js";
+import { resolveRemediationCheckout } from "./resolve-remediation-checkout.js";
 
 export type ReviewArbitrationReleaseDeps = {
   /** FNXC:Identity 2026-08-23-06:40: total run carrier — main added this seam after U18 converted
@@ -28,7 +33,13 @@ export type ReviewArbitrationDeps = ReviewArbitrationReleaseDeps & {
     task: Task, worktreePath: string, failureFeedback: string, stepName: string, reason: string,
     preserveResumeState: boolean, mergeVerificationFailure: boolean,
     retryPresentation?: { attempt: number; max?: number }, findings?: WorkflowReviewFinding[],
+    persistWorktreePath?: boolean, stepReopenPolicy?: "reopen-trailing" | "none",
   ) => Promise<void>;
+  appendReviewRemediationSteps?: (
+    task: Task,
+    info: RequestPreMergeOptionalStepFixInfo,
+    options?: AppendReviewRemediationOptions,
+  ) => Promise<AppendReviewRemediationOutcome>;
 };
 
 type ArbitrationDecision = "UPHOLD_REVIEW" | "UPHOLD_IMPLEMENTER" | "SPLIT";
@@ -155,6 +166,7 @@ export async function runReviewArbitration(
   const failed = (task.workflowStepResults ?? []).find((result) =>
     result.workflowStepId === workflowStepId && result.status === "failed");
   if (!failed) return "declined";
+  const remediationCheckout = resolveRemediationCheckout(task, failed);
   const settings = await mergeEffectiveSettings(deps.store, task, await deps.store.getSettings());
   const configuredTarget = resolveReviewArbitrationTarget(settings);
   if (settings.reviewArbitrationEnabled === false) return "declined";
@@ -166,7 +178,7 @@ export async function runReviewArbitration(
   const prompt = `${task.prompt ?? ""}\n\n## Review arbitration\nDecide this disagreement using the code and the complete same-gate ledger below. Return exactly one trailing JSON object: {"decision":"UPHOLD_REVIEW"|"UPHOLD_IMPLEMENTER"|"SPLIT","notes":"...","bindingFindingIds":["..."]}.\n\n${JSON.stringify(history)}`;
   let raw: string;
   try {
-    const result = await reviewStep(task.worktree ?? process.cwd(), task.id, 0, `Arbitration: ${stepName}`, "code", prompt, undefined, {
+    const result = await reviewStep(remediationCheckout?.path ?? process.cwd(), task.id, 0, `Arbitration: ${stepName}`, "code", prompt, undefined, {
       store: deps.store,
       taskId: task.id,
       settings,
@@ -185,6 +197,7 @@ export async function runReviewArbitration(
     const release = await applyReviewArbitrationRelease(deps, task.id, fence);
     return release.applied ? "arbitrated" : "declined";
   }
+  if (!remediationCheckout) return "declined";
   const obligations = bindingObligations(failed.findings, ruling.bindingFindingIds, ruling.decision);
   /*
   FNXC:ReviewConvergence 2026-08-22-05:56:
@@ -229,8 +242,31 @@ export async function runReviewArbitration(
     });
     return "declined";
   }
-  await deps.sendTaskBackForFix(task, task.worktree ?? "", feedback, stepName,
+  const workflowIr = await resolveWorkflowIrForTask(deps.store, task.id).catch(() => undefined);
+  const stepReopenPolicy = resolveStepReopenPolicy(workflowIr);
+  /*
+  FNXC:LifecycleContainment 2026-08-30-12:57:
+  Arbitration must use the selected workflow's remediation model too. A `none` workflow cannot
+  receive a raw send-back: append the arbiter's surviving obligations first, including the
+  deterministic Code Review fallback when the reviewer omitted usable Fix steps.
+  */
+  if (stepReopenPolicy === "none") {
+    const appender = deps.appendReviewRemediationSteps;
+    if (!appender) return "declined";
+    const outcome = await appender(task, {
+      nodeId: failed.workflowStepId,
+      stepName,
+      feedback,
+      phase: failed.phase ?? "pre-merge",
+      status: failed.status,
+      verdict: failed.verdict,
+      reviewKind: failed.reviewKind,
+      findings: obligations ?? failed.findings,
+    });
+    return outcome === "appended" ? "arbitrated" : "declined";
+  }
+  await deps.sendTaskBackForFix(task, remediationCheckout.path, feedback, stepName,
     "Review arbitration upheld remaining review obligations", true, false,
-    { attempt: attempt + 1, max }, obligations ?? failed.findings);
+    { attempt: attempt + 1, max }, obligations ?? failed.findings, remediationCheckout.persist, stepReopenPolicy);
   return "arbitrated";
 }

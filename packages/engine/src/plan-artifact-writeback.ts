@@ -6,22 +6,12 @@ import type { TaskStore } from "@fusion/core";
 import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 
 /*
-FNXC:PlanArtifactPersistence 2026-07-26-03:55:
-Planning sessions run in the TASK's own worktree (see FNXC:NodeWorktreeIsolation in triage.ts), and they
-carry the full coding tool surface. The system prompt tells the planner to persist through
-`fn_task_prompt_write`, but that is a soft instruction: a planner that reaches for the generic write tool
-writes the relative spec path (`.fusion/tasks/<id>/PROMPT.md`) against its own cwd, so the spec lands
-INSIDE the worktree. Triage then finalizes by reading `<rootDir>/<promptPath>`, sees nothing, and fails
-deterministic validation — and the worktree copy is destroyed with the worktree.
-
-Two durability requirements follow, and this module owns both:
-1. A plan written inside a worktree is copied back into the main project `.fusion/` folder. The copy goes
-   through `store.updateTask({ prompt })`, which is the single validated persistence path (File Scope
-   validation, root PROMPT.md write, and task.json sync stay together and stay atomic).
-2. The authoritative plan is mirrored into the project database. `project.tasks` has no `prompt` column —
-   PROMPT.md is filesystem-only and is hydrated on read — so losing the project checkout loses every spec.
-   The mirror uses the existing `task_documents` store under the `plan` key, which triage already reads as
-   a planning-draft fallback (`readNonEmptyPlanningDraft`), so recovery has a DB-backed source of truth.
+FNXC:PlanArtifactPersistence 2026-09-01-14:49:
+Fresh planning runs at the project root under a boundary that permits generic writes only inside `.fusion/`,
+so normal plans publish directly to the authoritative task artifact. This worktree-recovery path remains for
+replan cards that already retained an execution checkout or legacy attempts interrupted before FN-282.
+Recovered content still passes through `store.updateTask({ prompt })`, and the authoritative plan is mirrored
+under the `plan` task-document key so filesystem and project-database durability remain aligned.
 */
 
 /** Relative, cwd-anchored path handed to the planning agent for a task's spec. */

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import type { ColumnId, GithubIssueAction, MergeResult, Task, TaskDetail, WorkflowStep } from "@fusion/core";
+import type { GithubIssueAction, MergeResult, Task, TaskDetail, WorkflowStep } from "@fusion/core";
 import { isNearDuplicateCanonicalInactive } from "../../../core/src/duplicates/near-duplicate-canonical";
 import type { ToastType } from "../hooks/useToast";
 import type { ChatSessionInfo } from "../hooks/useChat";
@@ -38,19 +38,20 @@ export interface RightDockControllerInput {
   onOpenSessionInNewWindow?: (session: ChatSessionInfo) => void;
   openMobileTasksInPopup: boolean;
   openFileInBrowser: (path: string, opts?: { workspace?: string; line?: number; col?: number }) => void;
-  onMoveTask: (id: string, column: ColumnId, optionsOrPosition?: { preserveProgress?: boolean } | number) => Promise<Task>;
+  onUpdateTask?: (id: string, updates: { title?: string; description?: string; dependencies?: string[]; dismissNearDuplicate?: boolean; githubTracking?: { enabled?: boolean } }) => Promise<Task>;
   onDeleteTask: (id: string, options?: { removeDependencyReferences?: boolean; removeLineageReferences?: boolean; githubIssueAction?: GithubIssueAction; allowResurrection?: boolean }) => Promise<Task>;
   onArchiveTask?: (id: string, options?: { removeLineageReferences?: boolean }) => Promise<Task>;
   /* FNXC:TaskRevert 2026-07-05-00:00 (FN-7525): threaded alongside onArchiveTask; never mutates the source task's column. */
   onRevertTask?: (id: string, body?: RevertTaskOptions) => Promise<RevertTaskResult>;
   onMergeTask: (id: string) => Promise<MergeResult>;
   onRetryTask?: (id: string) => Promise<Task>;
+  onOpenChatWithPrefill?: (prefillText: string) => void;
   onPauseTask?: (id: string) => Promise<Task>;
   onUnpauseTask?: (id: string) => Promise<Task>;
   /* FNXC:ReviewLaneBypass 2026-07-09-00:00 (FN-7720): threaded through so the right-dock host renders the same TaskDetailContent bypass affordance as the full modal/floating hosts. */
   onBypassReview?: (id: string, reason: string) => Promise<Task>;
-  onResetTask?: (id: string) => Promise<Task>;
-  onDuplicateTask?: (id: string) => Promise<Task>;
+  onResetTask?: (id: string, options?: { description?: string }) => Promise<Task>;
+  onDuplicateTask?: (id: string, options?: { workflowId?: string }) => Promise<Task>;
   onTaskUpdated?: (task: Task) => void;
   openSettings: (section?: string) => void;
   onOpenUsage?: (anchorRect?: DOMRect | null) => void;
@@ -186,7 +187,9 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
       taskColumnFlags={input.columnFlagsByTaskId?.get(task.id)}
       projectId={input.projectId}
       onOpenDetail={(value: Task | TaskDetail) => input.openDetailTask(value)}
+      onOpenChatWithPrefill={input.onOpenChatWithPrefill}
       onDeleteTask={input.onDeleteTask}
+      onUpdateTask={input.onUpdateTask}
       addToast={input.addToast}
       prAuthAvailable={input.prAuthAvailable}
       autoMergeEnabled={input.autoMerge}
@@ -209,6 +212,7 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
     anchorGoalId: input.goalAnchorId,
     tasks: input.tasks,
     columnFlagsByTaskId: input.columnFlagsByTaskId,
+    onUpdateTask: input.onUpdateTask,
     workflowSteps: input.workflowSteps,
     pluginContext: {
       projectId: input.projectId,
@@ -244,6 +248,7 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
     */
     onReviseTask: (task: Task | TaskDetail) => input.onSendSelectionToTask(task.description),
     onDeleteTask: input.onDeleteTask,
+    onOpenChatWithPrefill: input.onOpenChatWithPrefill,
     onOpenDetail: input.openDetailTask,
     onOpenSessionInNewWindow: input.onOpenSessionInNewWindow,
     onSendSelectionToTask: input.onSendSelectionToTask,
@@ -268,7 +273,6 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
       embedded
       onRequestClose={closeDockTask}
       onOpenDetail={(value, initialTab) => input.openDetailTask(value, initialTab ?? "chat")}
-      onMoveTask={input.onMoveTask}
       /* FNXC:TaskRevert 2026-08-01-20:27: Right-dock task detail uses the shared New Task draft recovery for reverted tasks. */
       onReviseTask={(task) => input.onSendSelectionToTask(task.description)}
       onDeleteTask={input.onDeleteTask}
@@ -276,6 +280,7 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
       onRevertTask={input.onRevertTask}
       onMergeTask={input.onMergeTask}
       onRetryTask={input.onRetryTask}
+      onOpenChatWithPrefill={input.onOpenChatWithPrefill}
       onPauseTask={input.onPauseTask}
       onUnpauseTask={input.onUnpauseTask}
       onBypassReview={input.onBypassReview}

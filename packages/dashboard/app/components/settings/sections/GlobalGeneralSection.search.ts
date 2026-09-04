@@ -47,8 +47,8 @@ export const globalGeneralSearchEntries: SettingsSearchEntry[] = [
     labelFallback: " Save tool output in agent logs ",
     helpKey: "settings.globalGeneral.whenDisabledToolRowsAreStillLoggedBut",
     helpFallback:
-      " When disabled, tool rows are still logged but detailed tool payloads are omitted. Very large tool payloads may still be clipped even when this stays enabled. Default: disabled. ",
-    keywords: ["persist", "transcript", "disk usage"],
+      " When disabled, tool rows are still logged but detailed tool payloads are omitted. Very large tool payloads may still be clipped even when this stays enabled. Default: enabled. ",
+    keywords: ["persist", "transcript", "disk usage", "tool arguments", "tool results"],
   },
   {
     sectionId: "global-general",
@@ -120,15 +120,5 @@ export const globalGeneralSearchEntries: SettingsSearchEntry[] = [
     helpKey: "settings.globalGeneral.autoRestartAfterUpdateHelp",
     helpFallback: " After a dashboard update installs, requests a supervised restart. Unset: disabled. ",
     keywords: ["auto update", "automatic restart", "restart", "supervisor"],
-  },
-  {
-    sectionId: "global-general",
-    key: "autoReloadOnVersionChange",
-    labelKey: "settings.globalGeneral.autoReloadDashboardOnVersionChange",
-    labelFallback: " Auto-reload dashboard on version change ",
-    helpKey: "settings.globalGeneral.whenEnabledDefaultTheDashboardAutomaticallyReloadsWhen",
-    helpFallback:
-      " When enabled (default), the dashboard automatically reloads when it detects a new build version — either from server rebuilds or service worker updates. Disable this to stay on the current version until you manually refresh. Default: enabled. ",
-    keywords: ["refresh", "service worker", "hot reload"],
   },
 ];

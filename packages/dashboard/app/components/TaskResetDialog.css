@@ -1,0 +1,53 @@
+/*
+FNXC:TaskReset 2026-08-28-16:31:
+The editable reset request reuses shared modal and button primitives. Scoped token-only layout keeps the destructive warning readable and gives both mobile actions full-width touch targets without changing global modal behavior.
+*/
+.task-reset-overlay {
+  align-items: center;
+}
+
+.task-reset-dialog__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-lg);
+}
+
+.task-reset-dialog__warning,
+.task-reset-dialog__help {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.task-reset-dialog__label {
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+}
+
+.task-reset-dialog__textarea {
+  inline-size: 100%;
+  min-block-size: calc(var(--space-3xl) * 4);
+  resize: vertical;
+  font-family: var(--font-sans);
+}
+
+.task-reset-dialog__help--required {
+  color: var(--color-error);
+}
+
+.task-reset-dialog__actions {
+  gap: var(--space-sm);
+}
+
+@media (max-width: 768px) {
+  .task-reset-dialog__actions {
+    flex-direction: column-reverse;
+  }
+
+  .task-reset-dialog__actions .btn {
+    min-block-size: var(--touch-target-min-size);
+    inline-size: 100%;
+  }
+}

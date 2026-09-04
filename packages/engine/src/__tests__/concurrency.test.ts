@@ -16,7 +16,7 @@ import {
   persistedTopLevelAgentSlots,
   recoverIdleSemaphoreLeakCandidate,
   registerPreHeldExecutorSlot,
-  resolveActiveTaskCapacityLimit,
+  resolveAgentCapacityLimit,
   takePreHeldExecutorSlot,
 } from "../concurrency/concurrency.js";
 
@@ -1078,6 +1078,7 @@ describe("ProjectAdmissionCoordinator", () => {
     const drainingReservation = coordinator.reserveIfAvailable({
       projectId,
       taskId: "FN-DRAINING",
+      consumesWorktree: false,
       maxConcurrent: 4,
       claimed: () => pendingClaim,
     });
@@ -1101,12 +1102,14 @@ describe("ProjectAdmissionCoordinator", () => {
     coordinator.clearReservationsForTests();
     expect(coordinator.inspectProjectStateForTests(projectId)).toEqual({
       reservedCount: 0,
+      reservedWorktreeCount: 0,
       draining: false,
       providerIds: [],
     });
     expect(await coordinator.reserveIfAvailable({
       projectId,
       taskId: "FN-AFTER-DRAINING-RESET",
+      consumesWorktree: false,
       maxConcurrent: 1,
       claimed: () => 0,
     })).toBe(true);
@@ -1127,11 +1130,7 @@ describe("ProjectAdmissionCoordinator", () => {
   it("shares the final active-task slot across planning, execution, and merge lanes", async () => {
     const coordinator = new ProjectAdmissionCoordinator();
     const started: string[] = [];
-    const activeTaskLimit = resolveActiveTaskCapacityLimit({
-      maxConcurrent: 12,
-      maxWorktrees: 9,
-      worktreeLimitEnabled: true,
-    });
+    const activeTaskLimit = resolveAgentCapacityLimit({ maxConcurrent: 12 });
 
     for (const [lane, taskId, createdAt] of [
       ["planning", "FN-PLANNING", "2026-01-01T00:00:00.000Z"],
@@ -1144,6 +1143,7 @@ describe("ProjectAdmissionCoordinator", () => {
           taskId,
           projectId: "project-a",
           lane,
+          consumesWorktree: lane === "execute",
           createdAt,
           start: async () => { started.push(taskId); },
         }],
@@ -1153,13 +1153,14 @@ describe("ProjectAdmissionCoordinator", () => {
     expect(await coordinator.admitNext({
       projectId: "project-a",
       maxConcurrent: activeTaskLimit,
-      claimed: () => 8,
+      claimed: () => 11,
     })).toBe("FN-MERGE");
     expect(await coordinator.reserveIfAvailable({
       projectId: "project-a",
       taskId: "FN-DIRECT-SCHEDULER",
+      consumesWorktree: true,
       maxConcurrent: activeTaskLimit,
-      claimed: () => 8,
+      claimed: () => 11,
     })).toBe(false);
     expect(started).toEqual(["FN-MERGE"]);
 
@@ -1168,8 +1169,9 @@ describe("ProjectAdmissionCoordinator", () => {
     expect(await coordinator.reserveIfAvailable({
       projectId: "project-a",
       taskId: "FN-DIRECT-SCHEDULER",
-      maxConcurrent: 10,
-      claimed: () => 9,
+      consumesWorktree: true,
+      maxConcurrent: 13,
+      claimed: () => 12,
       claimedTaskIds: () => ["FN-MERGE"],
     })).toBe(true);
 
@@ -1182,6 +1184,7 @@ describe("ProjectAdmissionCoordinator", () => {
     expect(await coordinator.reserveIfAvailable({
       projectId: "project-transfer",
       taskId: "FN-HANDOFF",
+      consumesWorktree: false,
       maxConcurrent: 1,
       claimed: () => 0,
     })).toBe(true);
@@ -1193,6 +1196,7 @@ describe("ProjectAdmissionCoordinator", () => {
     const candidate = coordinator.reserveIfAvailable({
       projectId: "project-transfer",
       taskId: "FN-CANDIDATE",
+      consumesWorktree: false,
       maxConcurrent: 1,
       claimed: async () => {
         snapshotStarted();
@@ -1221,6 +1225,7 @@ describe("ProjectAdmissionCoordinator", () => {
     const first = coordinator.reserveIfAvailable({
       projectId: "project-serialized-snapshot",
       taskId: "FN-BLOCKER",
+      consumesWorktree: false,
       maxConcurrent: 0,
       claimed: async () => {
         drainStarted();
@@ -1234,6 +1239,7 @@ describe("ProjectAdmissionCoordinator", () => {
     const second = coordinator.reserveIfAvailable({
       projectId: "project-serialized-snapshot",
       taskId: "FN-WAITING",
+      consumesWorktree: false,
       maxConcurrent: 1,
       claimed: freshClaim,
     });
@@ -1250,9 +1256,9 @@ describe("ProjectAdmissionCoordinator", () => {
     const coordinator = new ProjectAdmissionCoordinator();
     const started: string[] = [];
     const candidates = [
-      { taskId: "FN-20", projectId: "a", lane: "execute" as const, createdAt: "2026-01-02T00:00:00.000Z", start: async () => { started.push("new"); } },
-      { taskId: "FN-10", projectId: "a", lane: "execute" as const, createdAt: "2026-01-01T00:00:00.000Z", start: async () => { started.push("old"); } },
-      { taskId: "FN-1", projectId: "b", lane: "execute" as const, createdAt: "2026-01-03T00:00:00.000Z", start: async () => { started.push("other-project"); } },
+      { taskId: "FN-20", projectId: "a", lane: "execute" as const, consumesWorktree: true, createdAt: "2026-01-02T00:00:00.000Z", start: async () => { started.push("new"); } },
+      { taskId: "FN-10", projectId: "a", lane: "execute" as const, consumesWorktree: true, createdAt: "2026-01-01T00:00:00.000Z", start: async () => { started.push("old"); } },
+      { taskId: "FN-1", projectId: "b", lane: "execute" as const, consumesWorktree: true, createdAt: "2026-01-03T00:00:00.000Z", start: async () => { started.push("other-project"); } },
     ];
     const sem = new AgentSemaphore(2);
     await Promise.all([
@@ -1289,22 +1295,22 @@ describe("ProjectAdmissionCoordinator", () => {
       refresh: async () => [
         // Oldest, but its lane cannot start it (e.g. a merge id no longer queued).
         {
-          taskId: "FN-OLDEST", projectId: "project-a", lane: "review", createdAt: "2026-01-01T00:00:00.000Z",
+          taskId: "FN-OLDEST", projectId: "project-a", lane: "review", consumesWorktree: false, createdAt: "2026-01-01T00:00:00.000Z",
           start: async () => { started.push("FN-OLDEST"); return false; },
         },
         // Also declines — proves the walk continues past more than one.
         {
-          taskId: "FN-MIDDLE", projectId: "project-a", lane: "review", createdAt: "2026-01-02T00:00:00.000Z",
+          taskId: "FN-MIDDLE", projectId: "project-a", lane: "review", consumesWorktree: false, createdAt: "2026-01-02T00:00:00.000Z",
           start: async () => { started.push("FN-MIDDLE"); return false; },
         },
         // The planning candidate that was starving behind them.
         {
-          taskId: "FN-PLANNING", projectId: "project-a", lane: "planning", createdAt: "2026-01-03T00:00:00.000Z",
+          taskId: "FN-PLANNING", projectId: "project-a", lane: "planning", consumesWorktree: false, createdAt: "2026-01-03T00:00:00.000Z",
           start: async () => { started.push("FN-PLANNING"); },
         },
         // Younger still: must NOT be admitted, so skipping never becomes overtaking.
         {
-          taskId: "FN-YOUNGEST", projectId: "project-a", lane: "planning", createdAt: "2026-01-04T00:00:00.000Z",
+          taskId: "FN-YOUNGEST", projectId: "project-a", lane: "planning", consumesWorktree: false, createdAt: "2026-01-04T00:00:00.000Z",
           start: async () => { started.push("FN-YOUNGEST"); },
         },
       ],
@@ -1339,9 +1345,9 @@ describe("ProjectAdmissionCoordinator", () => {
       claimed: () => 0,
       semaphore: shim as unknown as Parameters<ProjectAdmissionCoordinator["admitNext"]>[0]["semaphore"],
       refresh: async () => [
-        { taskId: "FN-A", projectId: "project-shim", createdAt: "2026-01-01T00:00:00.000Z", start: async () => false },
-        { taskId: "FN-B", projectId: "project-shim", createdAt: "2026-01-02T00:00:00.000Z", start: async () => false },
-        { taskId: "FN-C", projectId: "project-shim", createdAt: "2026-01-03T00:00:00.000Z", start: async () => undefined },
+        { taskId: "FN-A", projectId: "project-shim", lane: "execute", consumesWorktree: true, createdAt: "2026-01-01T00:00:00.000Z", start: async () => false },
+        { taskId: "FN-B", projectId: "project-shim", lane: "execute", consumesWorktree: true, createdAt: "2026-01-02T00:00:00.000Z", start: async () => false },
+        { taskId: "FN-C", projectId: "project-shim", lane: "execute", consumesWorktree: true, createdAt: "2026-01-03T00:00:00.000Z", start: async () => undefined },
       ],
     });
 
@@ -1370,12 +1376,12 @@ describe("ProjectAdmissionCoordinator", () => {
       semaphore,
       refresh: async () => [
         {
-          taskId: "FN-DECLINE", projectId: "project-prehold", createdAt: "2026-01-01T00:00:00.000Z",
+          taskId: "FN-DECLINE", projectId: "project-prehold", lane: "execute", consumesWorktree: true, createdAt: "2026-01-01T00:00:00.000Z",
           reserve: () => registerPreHeldExecutorSlot("FN-DECLINE"),
           start: async () => false,
         },
         {
-          taskId: "FN-TAKES", projectId: "project-prehold", createdAt: "2026-01-02T00:00:00.000Z",
+          taskId: "FN-TAKES", projectId: "project-prehold", lane: "execute", consumesWorktree: true, createdAt: "2026-01-02T00:00:00.000Z",
           reserve: () => registerPreHeldExecutorSlot("FN-TAKES"),
           start: async () => undefined,
         },
@@ -1406,7 +1412,7 @@ describe("ProjectAdmissionCoordinator", () => {
       claimed: () => 0,
       semaphore,
       refresh: async () => [{
-        taskId: "FN-BOOM", projectId: "project-throw", createdAt: "2026-01-01T00:00:00.000Z",
+        taskId: "FN-BOOM", projectId: "project-throw", lane: "execute", consumesWorktree: true, createdAt: "2026-01-01T00:00:00.000Z",
         start: async () => { throw new Error("lane exploded"); },
       }],
     })).rejects.toThrow("lane exploded");
@@ -1428,8 +1434,8 @@ describe("ProjectAdmissionCoordinator", () => {
       claimed: () => 0,
       semaphore,
       refresh: async () => [
-        { taskId: "FN-1", projectId: "project-a", createdAt: "2026-01-01T00:00:00.000Z", start: async () => { started.push("FN-1"); } },
-        { taskId: "FN-2", projectId: "project-a", createdAt: "2026-01-02T00:00:00.000Z", start: async () => { started.push("FN-2"); } },
+        { taskId: "FN-1", projectId: "project-a", lane: "execute", consumesWorktree: true, createdAt: "2026-01-01T00:00:00.000Z", start: async () => { started.push("FN-1"); } },
+        { taskId: "FN-2", projectId: "project-a", lane: "execute", consumesWorktree: true, createdAt: "2026-01-02T00:00:00.000Z", start: async () => { started.push("FN-2"); } },
       ],
     });
 
@@ -1448,7 +1454,7 @@ describe("ProjectAdmissionCoordinator", () => {
       claimed: () => 0,
       semaphore,
       refresh: async () => [{
-        taskId: "FN-1", projectId: "project-a", createdAt: "2026-01-01T00:00:00.000Z",
+        taskId: "FN-1", projectId: "project-a", lane: "execute", consumesWorktree: true, createdAt: "2026-01-01T00:00:00.000Z",
         start: async () => false,
       }],
     });
@@ -1463,7 +1469,7 @@ describe("ProjectAdmissionCoordinator", () => {
       claimed: () => 0,
       semaphore,
       refresh: async () => [{
-        taskId: "FN-2", projectId: "project-a", createdAt: "2026-01-01T00:00:00.000Z",
+        taskId: "FN-2", projectId: "project-a", lane: "execute", consumesWorktree: true, createdAt: "2026-01-01T00:00:00.000Z",
         start: async () => { await startBlocked; },
       }],
     });
@@ -1474,7 +1480,7 @@ describe("ProjectAdmissionCoordinator", () => {
       claimed: () => 0,
       semaphore,
       refresh: async () => [{
-        taskId: "FN-3", projectId: "project-a", createdAt: "2026-01-02T00:00:00.000Z",
+        taskId: "FN-3", projectId: "project-a", lane: "execute", consumesWorktree: true, createdAt: "2026-01-02T00:00:00.000Z",
         start: async () => true,
       }],
     });
@@ -1491,7 +1497,7 @@ describe("ProjectAdmissionCoordinator", () => {
     const register = (lane: "review" | "execute" | "planning", taskId: string, createdAt: string, name: string) => {
       coordinator.registerProvider(name, {
         projectId: "project-a",
-        refresh: async () => [{ taskId, projectId: "project-a", lane, createdAt, start: async () => { started.push(name); } }],
+        refresh: async () => [{ taskId, projectId: "project-a", lane, consumesWorktree: lane === "execute", createdAt, start: async () => { started.push(name); } }],
       });
     };
     register("planning", "FN-1", "2026-01-01T00:00:00.000Z", "planner");

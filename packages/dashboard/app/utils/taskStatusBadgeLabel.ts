@@ -89,6 +89,8 @@ export interface TaskStatusBadgeContext {
   idle?: boolean;
   /** The task currently holding the overlapping file-scope lease, when queued behind one. */
   overlapBlockedBy?: string | null;
+  /** FNXC:WorkspaceContention 2026-08-23-06:50: durable scheduling-wait copy is passed by every badge host. */
+  sessionContentionWaitReason?: string | null;
 }
 
 export function getTaskStatusBadgeLabel(
@@ -129,6 +131,16 @@ export function getTaskStatusBadgeLabel(
     return context?.idle
       ? t("tasks.statusReplanQueued", "Queued to revise")
       : t("tasks.statusReplan", "Revising");
+  }
+  /* FNXC:WorkspaceContention 2026-08-23-06:50: contention used to clear status and appear as an unexplained column regression. */
+  /* FNXC:ExternalBlockUx 2026-08-28-04:56: Blocked is durable operator copy, while contention and queued states remain waiting vocabulary. */
+  if (status === "blocked") {
+    return t("tasks.externalBlock.title", "Blocked");
+  }
+  if (status === "contention-hold") {
+    return context?.sessionContentionWaitReason
+      ? t("tasks.statusWaitingOn", "Waiting on {{reason}}", { reason: context.sessionContentionWaitReason })
+      : t("tasks.statusWaiting", "Waiting");
   }
   if (status === "queued" && context?.overlapBlockedBy) {
     return t("tasks.statusQueuedBehind", "Queued behind {{taskId}}", { taskId: context.overlapBlockedBy });

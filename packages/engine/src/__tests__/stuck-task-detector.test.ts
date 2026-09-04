@@ -831,7 +831,7 @@ describe("StuckTaskDetector", () => {
       vi.useRealTimers();
     });
 
-    it("calls onStuck callback with structured event payload including shouldRequeue", async () => {
+    it("calls onStuck callback with a recoverable structured event payload", async () => {
       const onStuck = vi.fn();
       const customDetector = new StuckTaskDetector(store, { onStuck });
       const session = createMockSession();
@@ -850,7 +850,6 @@ describe("StuckTaskDetector", () => {
           noProgressMs: expect.any(Number),
           inactivityMs: expect.any(Number),
           activitySinceProgress: 0,
-          shouldRequeue: true,
         }),
       );
 
@@ -912,84 +911,6 @@ describe("StuckTaskDetector", () => {
       expect(store.logEntry).not.toHaveBeenCalled();
     });
 
-    it("calls beforeRequeue and passes shouldRequeue=false to onStuck when budget exhausted", async () => {
-      const beforeRequeue = vi.fn().mockResolvedValue(false);
-      const onStuck = vi.fn();
-      const customDetector = new StuckTaskDetector(store, { beforeRequeue, onStuck });
-      const session = createMockSession();
-
-      customDetector.trackTask("FN-001", session);
-
-      vi.useFakeTimers({ shouldAdvanceTime: true });
-      vi.advanceTimersByTime(61000);
-
-      await customDetector.killAndRetry("FN-001", 60000);
-
-      expect(beforeRequeue).toHaveBeenCalledWith(
-        "FN-001",
-        "inactivity",
-        expect.objectContaining({ taskId: "FN-001", reason: "inactivity", shouldRequeue: false }),
-      );
-      expect(customDetector.trackedCount).toBe(0);
-      expect(session.dispose).toHaveBeenCalled();
-      // onStuck should still be called with shouldRequeue=false
-      expect(onStuck).toHaveBeenCalledWith(
-        expect.objectContaining({ taskId: "FN-001", shouldRequeue: false }),
-      );
-      // Detector no longer moves tasks — executor handles it
-      expect(store.moveTask).not.toHaveBeenCalled();
-
-      vi.useRealTimers();
-    });
-
-    it("calls beforeRequeue and passes shouldRequeue=true to onStuck when budget allows", async () => {
-      const beforeRequeue = vi.fn().mockResolvedValue(true);
-      const onStuck = vi.fn();
-      const customDetector = new StuckTaskDetector(store, { beforeRequeue, onStuck });
-      const session = createMockSession();
-
-      customDetector.trackTask("FN-001", session);
-
-      vi.useFakeTimers({ shouldAdvanceTime: true });
-      vi.advanceTimersByTime(61000);
-
-      await customDetector.killAndRetry("FN-001", 60000);
-
-      expect(beforeRequeue).toHaveBeenCalledWith(
-        "FN-001",
-        "inactivity",
-        expect.objectContaining({ taskId: "FN-001", reason: "inactivity", shouldRequeue: true }),
-      );
-      expect(onStuck).toHaveBeenCalledWith(
-        expect.objectContaining({ taskId: "FN-001", shouldRequeue: true }),
-      );
-      // Detector no longer moves tasks — executor handles it
-      expect(store.moveTask).not.toHaveBeenCalled();
-
-      vi.useRealTimers();
-    });
-
-    it("falls through with shouldRequeue=true when beforeRequeue throws", async () => {
-      const beforeRequeue = vi.fn().mockRejectedValue(new Error("check failed"));
-      const onStuck = vi.fn();
-      const customDetector = new StuckTaskDetector(store, { beforeRequeue, onStuck });
-      const session = createMockSession();
-
-      customDetector.trackTask("FN-001", session);
-
-      vi.useFakeTimers({ shouldAdvanceTime: true });
-      vi.advanceTimersByTime(61000);
-
-      await customDetector.killAndRetry("FN-001", 60000);
-
-      // Should pass shouldRequeue=true on error (safe fallback)
-      expect(onStuck).toHaveBeenCalledWith(
-        expect.objectContaining({ taskId: "FN-001", shouldRequeue: true }),
-      );
-      expect(store.moveTask).not.toHaveBeenCalled();
-
-      vi.useRealTimers();
-    });
   });
 
   describe("pause lifecycle", () => {
@@ -1079,7 +1000,7 @@ describe("StuckTaskDetector", () => {
 
       expect(session.dispose).toHaveBeenCalled();
       expect(onStuck).toHaveBeenCalledWith(
-        expect.objectContaining({ taskId: "FN-001", shouldRequeue: true }),
+        expect.objectContaining({ taskId: "FN-001", reason: "inactivity" }),
       );
       // Detector no longer moves tasks — executor handles it
       expect(store.moveTask).not.toHaveBeenCalled();
@@ -1286,7 +1207,6 @@ describe("StuckTaskDetector", () => {
           taskId: "FN-001",
           reason: "inactivity",
           activitySinceProgress: 0,
-          shouldRequeue: true,
         }),
       );
       expect(session.dispose).toHaveBeenCalled();
@@ -1619,10 +1539,9 @@ describe("StuckTaskDetector", () => {
       vi.useRealTimers();
     });
 
-    it("receives correct event payload with shouldRequeue from beforeRequeue", async () => {
-      const beforeRequeue = vi.fn().mockResolvedValue(false); // budget exhausted
+    it("receives a recoverable loop event without a budget field", async () => {
       const onLoopDetected = vi.fn().mockResolvedValue(true);
-      const customDetector = new StuckTaskDetector(store, { beforeRequeue, onLoopDetected });
+      const customDetector = new StuckTaskDetector(store, { onLoopDetected });
       const session = createMockSession();
 
       vi.useFakeTimers({ shouldAdvanceTime: true });
@@ -1632,14 +1551,10 @@ describe("StuckTaskDetector", () => {
 
       await customDetector.killAndRetry("FN-001", 60000);
 
-      // onLoopDetected should receive shouldRequeue=false from beforeRequeue
       expect(onLoopDetected).toHaveBeenCalledWith(
-        expect.objectContaining({
-          taskId: "FN-001",
-          reason: "loop",
-          shouldRequeue: false,
-        }),
+        expect.objectContaining({ taskId: "FN-001", reason: "loop" }),
       );
+      expect(onLoopDetected.mock.calls[0]?.[0]).not.toHaveProperty("shouldRequeue");
 
       vi.useRealTimers();
     });
@@ -1773,30 +1688,19 @@ describe("StuckTaskDetector heartbeat tracking (FN-978)", () => {
     expect(detector.trackedCount).toBe(1);
   });
 
-  it("does not re-track terminal stuck tasks", async () => {
-    const beforeRequeue = vi.fn().mockResolvedValue(false);
-    const exhaustedStore = createMockStore({
-      getTask: vi.fn().mockResolvedValue({
-        id: "FN-001",
-        status: "failed",
-        error: "STUCK_NO_PROGRESS_CHURN: detected 25 ignored step-update rebuffs after compact-and-resume failed to recover progress.",
-      }),
-    });
-    const customDetector = new StuckTaskDetector(exhaustedStore, { beforeRequeue });
-    const session = createMockSession();
+  it("re-tracks repeated silence without a terminal stuck state", async () => {
+    const customDetector = new StuckTaskDetector(createMockStore());
+    const first = createMockSession();
 
     vi.useFakeTimers({ shouldAdvanceTime: true });
-    customDetector.trackTask("FN-001", session);
+    customDetector.trackTask("FN-001", first);
     vi.advanceTimersByTime(61_000);
     await customDetector.killAndRetry("FN-001", 60_000);
+    expect(first.dispose).toHaveBeenCalled();
     expect(customDetector.trackedCount).toBe(0);
 
     customDetector.trackTask("FN-001-step-0", createMockSession(), "FN-001");
-    await Promise.resolve();
-    await Promise.resolve();
-
-    expect((exhaustedStore.getTask as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith("FN-001");
-    expect(customDetector.trackedCount).toBe(0);
+    expect(customDetector.trackedCount).toBe(1);
     vi.useRealTimers();
   });
 });

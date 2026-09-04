@@ -76,6 +76,7 @@ import { registerOrgPortabilityRoutes } from "./routes/register-org-portability-
 import { registerAgentSkillsRoutes } from "./routes/register-agent-skills-routes.js";
 import { registerPluginsAutomationRoutes } from "./routes/register-plugins-automation.js";
 import { registerProxyRoutes } from "./routes/register-proxy-routes.js";
+import { registerPatchnodeRoutes } from "./routes/register-patchnode-routes.js";
 import { registerModelRoutes } from "./routes/register-model-routes.js";
 import { registerCustomProviderRoutes } from "./routes/register-custom-provider-routes.js";
 import { registerUsageRoutes } from "./routes/register-usage-routes.js";
@@ -136,6 +137,10 @@ export interface ModelRegistryLike {
    * FNXC:ModelCatalog 2026-08-12-20:46:
    * Pi 0.84.1 returns refresh metadata instead of void. Preserve it as unknown because
    * the route needs only completion while structural compatibility must track the SDK.
+   *
+   * FNXC:ModelCatalog 2026-09-02-22:06:
+   * Pi 0.84.4 preserves the refresh metadata contract. Keep the result unknown because
+   * the route only waits for completion before reading the refreshed catalog.
    */
   refresh(): Promise<unknown>;
   /** Optional runtime passthrough lets request refreshes use the engine abort-aware path. */
@@ -1223,8 +1228,8 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         globalPause: settings.globalPause ?? false,
         enginePaused: settings.enginePaused ?? false,
         maxConcurrent: capacity.maxConcurrent,
-        effectiveMaxConcurrent: capacity.effectiveLimit,
-        concurrencyBindingKnob: capacity.bindingKnob,
+        maxWorktrees: capacity.worktreeLimit ?? settings.maxWorktrees,
+        worktreeLimitEnabled: settings.worktreeLimitEnabled !== false,
         lastActivityAt,
       });
     } catch (err: unknown) {
@@ -2096,6 +2101,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   // ── Skills Routes ──────────────────────────────────────────────────────────
 
   registrarMounter.mount("registerAgentSkillsRoutes", () => registerAgentSkillsRoutes(routeContext));
+  registrarMounter.mount("registerPatchnodeRoutes", () => registerPatchnodeRoutes(routeContext));
 
   // Remote node proxy routes stay last so explicit handlers always precede
   // the wildcard /proxy/:nodeId/{*splat} route in Express match order.

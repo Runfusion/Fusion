@@ -5,16 +5,21 @@ import { cleanupOrphanedWorktrees } from "../../worktree/worktree-pool.js";
 import { SelfHealingManager } from "../../self-healing.js";
 import { NativeWorktreeBackend, WorktrunkWorktreeBackend } from "../../worktree/worktree-backend.js";
 
-const { execSpy, existsSpy, readdirSpy, readFileSpy } = vi.hoisted(() => ({
-  execSpy: vi.fn(),
-  existsSpy: vi.fn(() => true),
-  readdirSpy: vi.fn(() => []),
-  readFileSpy: vi.fn(() => ""),
-}));
+const { execSpy, execFileSpy, existsSpy, readdirSpy, readFileSpy } = vi.hoisted(() => {
+  const execFileSpy = vi.fn().mockResolvedValue({ stdout: "", stderr: "" });
+  (execFileSpy as any)[Symbol.for("nodejs.util.promisify.custom")] = execFileSpy;
+  return {
+    execSpy: vi.fn(),
+    execFileSpy,
+    existsSpy: vi.fn(() => true),
+    readdirSpy: vi.fn(() => []),
+    readFileSpy: vi.fn(() => ""),
+  };
+});
 
 vi.mock("node:child_process", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:child_process")>();
-  return { ...actual, exec: execSpy };
+  return { ...actual, exec: execSpy, execFile: execFileSpy };
 });
 
 vi.mock("node:fs", async (importOriginal) => {
@@ -39,6 +44,8 @@ describe("reliability interactions: worktrunk worktree removal routing", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     execSpy.mockImplementation((_cmd: string, _opts: unknown, cb: (err: unknown, stdout: string, stderr: string) => void) => cb(null, "", ""));
+    execFileSpy.mockReset();
+    execFileSpy.mockResolvedValue({ stdout: "", stderr: "" });
     // A workspace-group marker is an explicit delete veto in the ownership proof; these fixtures
     // are ordinary single-project worktrees, so the marker must be absent.
     existsSpy.mockImplementation(((path: string) => !String(path).endsWith("/.fusion-workspace-root")) as never);

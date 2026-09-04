@@ -129,6 +129,24 @@ describe("FN-8592 stranded hold continuation recovery", () => {
     })).toMatchObject({ stranded: false, candidate: false, reason: "planning-recovery-owned" });
   });
 
+  it("treats a Fast hold card as a non-candidate for Plan Review reseeding", () => {
+    const task = strandedTask({ executionMode: "fast" });
+
+    expect(evaluateStrandedHoldContinuation({
+      task,
+      columnFlags: { hold: true },
+      ir: workflow,
+      continuations: [],
+      stepResults: [],
+      effectiveSettings: {},
+      enginePaused: false,
+      promptContent: "# FN-8592-test: Real specification\n\nA Fast request",
+      live: false,
+      stalenessMs: 120_000,
+      graceMs: 60_000,
+    })).toMatchObject({ stranded: false, candidate: false, reason: "fast-lane" });
+  });
+
   it("keeps ordinary null-status continuation recovery outside the conservative legacy shape", () => {
     const task = strandedTask({ status: null as never, steps: [] });
 

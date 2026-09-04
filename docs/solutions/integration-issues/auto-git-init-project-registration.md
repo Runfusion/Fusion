@@ -94,6 +94,27 @@ Using `git rev-parse --is-inside-work-tree` also matches Git's own repository mo
 
 Blocking registration on initialization failure moves the error to the earliest recoverable point. The user sees that Git could not initialize while registering the project, rather than discovering the problem only after task execution starts.
 
+## Follow-on: Integration-branch readiness
+
+Git repository readiness alone was insufficient: a project could have a valid `HEAD` while the merge target was an inferred `main` ref that did not exist locally. The later AI merge then failed with `target branch "main" has no local ref`, even when the repository's only branch was `master` or an unambiguous `refs/remotes/origin/develop` ref was already available.
+
+The shared readiness seam now selects an integration branch with one ordered ladder:
+
+1. configured `integrationBranch`, then legacy `baseBranch`;
+2. `origin/HEAD`;
+3. well-known local branches in `main`, `master`, `trunk`, `develop` order;
+4. the current local HEAD branch, then one remaining non-Fusion local branch;
+5. a well-known `origin` remote-tracking branch, then one remaining non-Fusion remote-tracking branch;
+6. `main` only when no candidate is available.
+
+A `fusion/*` sibling task branch is never inferred as the project integration branch. Local candidates always win before remote-tracking candidates, so registration cannot retarget an already usable local repository at a remote name.
+
+After baseline creation, registration ensures the selected branch has a local ref. It adopts an existing ref, creates a remote-only ref with plain `git branch <branch> refs/remotes/origin/<branch>`, or creates the fallback/configured ref at `HEAD`. Do **not** replace plain `git branch` with `--track`: an extant remote-tracking ref can lack a configured fetch refspec, where `--track` fails despite safe local materialization. Reconciliation never checks out, switches, resets, or changes the operator's `HEAD`, and never fetches, lists remotes, or contacts the network.
+
+A failed ref materialization is returned as an `unavailable` reconciliation result rather than failing project registration. This keeps registration usable and lets dashboard/CLI surfaces show the action, while downstream merge still retains a loud error for a target that exists nowhere. The merge lane has one narrower recovery: when its target exists under `refs/remotes/origin/<branch>`, it materializes that local ref before merging; it never invents a merge target from `HEAD`.
+
+The ordering is deliberate for an unborn repository with fetched remote refs. The readiness seam creates the baseline first, which creates its symbolic local branch, then reports that branch as existing. Adopting fetched upstream history into a new baseline would change repository history and remains out of scope for this readiness contract.
+
 ## Prevention
 
 - Put project-readiness invariants at `CentralCore.ensureProjectForPath(...)` when every project creation surface must share them.

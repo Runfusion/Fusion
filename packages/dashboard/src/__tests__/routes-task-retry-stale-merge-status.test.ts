@@ -38,6 +38,27 @@ const NOW = Date.now();
 const STALE_AT = new Date(NOW - DEFAULT_STALE_MERGING_STATUS_MIN_AGE_MS - 60_000).toISOString();
 const FRESH_AT = new Date(NOW - 5_000).toISOString();
 
+const LEGACY_V1_IR = {
+  version: "v1",
+  name: "legacy retry route",
+  nodes: [],
+  edges: [],
+} as never;
+
+const RESTART_IR = {
+  version: "v2",
+  name: "retry stale merge route",
+  columns: [
+    { id: "in-review", name: "In Review", traits: [{ trait: "merge-blocker" }, { trait: "human-review" }] },
+    { id: "done", name: "Done", traits: [{ trait: "complete" }] },
+  ],
+  nodes: [
+    { id: "start", kind: "start" },
+    { id: "code-review", kind: "prompt", column: "in-review" },
+  ],
+  edges: [{ from: "start", to: "code-review" }],
+} as never;
+
 /** An in-review task whose implementation is complete — the FN-8004 shape. */
 function mkMergeTask(overrides: Partial<Task> = {}): Task {
   return {
@@ -68,10 +89,12 @@ function buildApp(input: {
   staleMergingStatusMinAgeMs?: number;
   settings?: { autoMerge?: boolean };
   engine?: { isMergePending: ReturnType<typeof vi.fn>; enqueueMerge: ReturnType<typeof vi.fn> };
+  workflowIr?: unknown;
 }) {
   const updateTask = vi.fn(async (_id: string, patch: Partial<Task>) => Object.assign(input.task, patch));
   const moveTask = vi.fn(async () => input.task);
   const logEntry = vi.fn(async () => {});
+  const workflowItems: Array<Record<string, unknown>> = [];
   const store = {
     getTask: async () => input.task,
     getTaskDetail: async () => input.task,
@@ -82,6 +105,26 @@ function buildApp(input: {
     getSettingsFast: async () => ({ autoMerge: true, ...input.settings }),
     getRootDir: () => "/tmp/does-not-exist",
     listTasks: async () => [input.task],
+    withPlanningLifecycleLock: async (_taskId: string, work: () => Promise<unknown>) => work(),
+    updateTaskAtomic: async (_taskId: string, updater: (current: Task) => Partial<Task> | null | undefined | Promise<Partial<Task> | null | undefined>) => {
+      const patch = await updater(structuredClone(input.task));
+      if (patch) Object.assign(input.task, patch);
+      return input.task;
+    },
+    pauseTask: async (_taskId: string, paused: boolean, _context?: unknown, options?: { pausedReason?: string }) => {
+      input.task.paused = paused || undefined;
+      input.task.pausedReason = paused ? options?.pausedReason : undefined;
+      return input.task;
+    },
+    cancelActiveWorkflowWorkItemsForTask: async () => {},
+    replaceActiveTaskWorkflowContinuation: async (item: Record<string, unknown>) => {
+      workflowItems.push(item);
+      return item;
+    },
+    listWorkflowWorkItemsForTask: async () => workflowItems,
+    clearWorkflowRunStepInstancesAsync: async () => {},
+    getTaskWorkflowSelectionAsync: async () => ({ workflowId: "wf-retry-stage" }),
+    getWorkflowDefinition: async () => ({ id: "wf-retry-stage", name: "Retry stage", ir: input.workflowIr ?? RESTART_IR }),
     // FNXC:TaskWedgeNotifications 2026-08-15-05:10: dashboard Retry now clears the spent generic-terminal auto-recovery budget before mutating task state; the fixture must expose the seam or every retry 500s.
     resetTerminalFailureAutoRecoveryBudget: async () => {},
   } as unknown as TaskStore;
@@ -139,7 +182,7 @@ function buildApp(input: {
     }
     sendErrorResponse(res, 500, error instanceof Error ? error.message : "Internal server error");
   });
-  return { app, updateTask, moveTask, logEntry };
+  return { app, updateTask, moveTask, logEntry, workflowItems };
 }
 
 /** The reported zero-land workspace lease-loss state, with completed execution progress. */
@@ -208,24 +251,24 @@ describe("POST /api/tasks/:id/retry — orphaned merge-active status (FN-8004)",
     expect(res.status).toBe(200);
   });
 
-  it("still REFUSES to retry a merge holding the live in-process lease", async () => {
-    const { app } = buildApp({ task: mkMergeTask(), activeMergeTaskId: "FN-8004" });
+  it.each([...ACTIVE_MERGE_STATUSES])("refuses %s retry while a merge holds the live in-process lease", async (status) => {
+    const { app } = buildApp({ task: mkMergeTask({ status }), activeMergeTaskId: "FN-8004" });
 
     const res = await performRequest(app, "POST", "/api/tasks/FN-8004/retry", "{}", { "content-type": "application/json" });
 
-    expect(res.status).toBe(400);
-    expect(JSON.stringify(res.body)).toContain("not in a retryable state");
+    expect(res.status, JSON.stringify(res.body)).toBe(409);
+    expect(JSON.stringify(res.body)).toContain("Retry is unavailable while a merge is active");
   });
 
-  it("still REFUSES to retry a merge that is progressing (fresh updatedAt)", async () => {
+  it.each([...ACTIVE_MERGE_STATUSES])("refuses %s retry while the phase is progressing with a fresh updatedAt", async (status) => {
     // Each merge phase writes a log entry, refreshing updatedAt — this is what stops
     // an operator from yanking a slow-but-live merge.
-    const { app } = buildApp({ task: mkMergeTask({ updatedAt: FRESH_AT }) });
+    const { app } = buildApp({ task: mkMergeTask({ status, updatedAt: FRESH_AT }) });
 
     const res = await performRequest(app, "POST", "/api/tasks/FN-8004/retry", "{}", { "content-type": "application/json" });
 
-    expect(res.status).toBe(400);
-    expect(JSON.stringify(res.body)).toContain("not in a retryable state");
+    expect(res.status, JSON.stringify(res.body)).toBe(409);
+    expect(JSON.stringify(res.body)).toContain("Retry is unavailable while a merge is active");
   });
 
   it("leaves the pre-existing failed-merge retry path unchanged", async () => {
@@ -248,7 +291,7 @@ describe("POST /api/tasks/:id/retry — orphaned merge-active status (FN-8004)",
     const task = mkFailedWorkspaceTask();
     const workspaceWorktrees = task.workspaceWorktrees;
     const engine = { isMergePending: vi.fn().mockResolvedValue(false), enqueueMerge: vi.fn().mockReturnValue(true) };
-    const { app, updateTask, moveTask } = buildApp({ task, engine });
+    const { app, updateTask, moveTask } = buildApp({ task, engine, workflowIr: LEGACY_V1_IR });
 
     const res = await performRequest(app, "POST", "/api/tasks/MRG-040/retry", "{}", { "content-type": "application/json" });
 
@@ -267,7 +310,7 @@ describe("POST /api/tasks/:id/retry — orphaned merge-active status (FN-8004)",
   it("keeps a workspace retry successful when no engine is available", async () => {
     const task = mkFailedWorkspaceTask();
     const workspaceWorktrees = task.workspaceWorktrees;
-    const { app, moveTask } = buildApp({ task });
+    const { app, moveTask } = buildApp({ task, workflowIr: LEGACY_V1_IR });
 
     const res = await performRequest(app, "POST", "/api/tasks/MRG-040/retry", "{}", { "content-type": "application/json" });
 
@@ -275,6 +318,23 @@ describe("POST /api/tasks/:id/retry — orphaned merge-active status (FN-8004)",
     expect(task.status).toBeNull();
     expect(task.workspaceWorktrees).toBe(workspaceWorktrees);
     expect(moveTask).not.toHaveBeenCalled();
+  });
+
+  it("restarts a v2 workspace review in place without dispatching the legacy merge queue", async () => {
+    const task = mkFailedWorkspaceTask({ status: undefined, error: undefined, mergeRetries: 0 });
+    const before = structuredClone(task.workspaceWorktrees);
+    const engine = { isMergePending: vi.fn().mockResolvedValue(false), enqueueMerge: vi.fn().mockReturnValue(true) };
+    const { app, updateTask, workflowItems } = buildApp({ task, engine });
+
+    const res = await performRequest(app, "POST", "/api/tasks/MRG-040/retry", "{}", { "content-type": "application/json" });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(task.column).toBe("in-review");
+    expect(task.workspaceWorktrees).toEqual(before);
+    expect(workflowItems).toContainEqual(expect.objectContaining({ nodeId: "code-review", state: "runnable" }));
+    for (const [, patch] of updateTask.mock.calls) expect("workspaceWorktrees" in (patch as object)).toBe(false);
+    expect(engine.isMergePending).not.toHaveBeenCalled();
+    expect(engine.enqueueMerge).not.toHaveBeenCalled();
   });
 
   it("does not send a non-workspace merge retry through the workspace queue", async () => {
@@ -295,7 +355,7 @@ describe("POST /api/tasks/:id/retry — orphaned merge-active status (FN-8004)",
     };
     const task = mkFailedWorkspaceTask(input.task);
     const workspaceWorktrees = task.workspaceWorktrees;
-    const { app, moveTask } = buildApp({ task, engine, settings: input.settings });
+    const { app, moveTask } = buildApp({ task, engine, settings: input.settings, workflowIr: LEGACY_V1_IR });
 
     const res = await performRequest(app, "POST", "/api/tasks/MRG-040/retry", "{}", { "content-type": "application/json" });
 

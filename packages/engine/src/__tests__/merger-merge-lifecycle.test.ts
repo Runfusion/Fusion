@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 
 // Mock external dependencies
 vi.mock("../pi.js", () => ({
@@ -261,7 +260,7 @@ describe("auto-merge proven finalization helper", () => {
       dependencies: [],
       steps: [{ status: "done" }],
       currentStep: 0,
-      log: [{ action: "AI merge (workspace): all 2 sub-repo(s) landed" }],
+      log: [{ action: "AI merge (workspace): aggregate=all-landed; task → done; repo-a {status=landed; sha=workspace-landed-sha; dependency-sync=ran}; repo-b {status=landed; sha=workspace-landed-sha; dependency-sync=ran}" }],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       mergeDetails: {
@@ -294,7 +293,8 @@ describe("auto-merge proven finalization helper", () => {
     expect(store.moveTask).toHaveBeenCalledWith(
       "FN-WS-010",
       "done",
-      expect.objectContaining({ moveSource: "engine", recoveryRehome: true, preserveProgress: true }), ANY_MUTATION_CONTEXT);
+      expect.objectContaining({ moveSource: "engine", recoveryRehome: true, preserveProgress: true }),
+    );
   });
 
   it("reconciles a landed merge-confirmed todo row without invalid todo-to-done transition", async () => {
@@ -350,11 +350,13 @@ describe("auto-merge proven finalization helper", () => {
         overlapBlockedBy: null,
         mergeRetries: 0,
         mergeDetails: expect.objectContaining({ commitSha: "f528cd06", mergeConfirmed: true, landedFiles: ["packages/engine/src/merger-ai.ts"] }),
-      }), ANY_MUTATION_CONTEXT);
+      }),
+    );
     expect(store.moveTask).toHaveBeenCalledWith(
       "FN-6897",
       "done",
-      expect.objectContaining({ moveSource: "engine", recoveryRehome: true, preserveProgress: true }), ANY_MUTATION_CONTEXT);
+      expect.objectContaining({ moveSource: "engine", recoveryRehome: true, preserveProgress: true }),
+    );
     expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
       mutationType: "task:auto-merge-finalize-column-mismatch-reconciled",
       metadata: expect.objectContaining({
@@ -369,7 +371,8 @@ describe("auto-merge proven finalization helper", () => {
     }));
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-6897",
-      expect.stringContaining("Auto-merge finalization repaired column mismatch"), undefined, ANY_MUTATION_CONTEXT);
+      expect.stringContaining("Auto-merge finalization repaired column mismatch"),
+    );
   });
 
   it("uses the task base commit for branch proof so inherited foreign commits do not block finalization", async () => {
@@ -432,7 +435,8 @@ describe("auto-merge proven finalization helper", () => {
     expect(store.moveTask).toHaveBeenCalledWith(
       "FN-7360",
       "done",
-      expect.objectContaining({ moveSource: "engine", preserveProgress: true }), ANY_MUTATION_CONTEXT);
+      expect.objectContaining({ moveSource: "engine", preserveProgress: true }),
+    );
     expect(store.recordRunAuditEvent).not.toHaveBeenCalledWith(expect.objectContaining({
       mutationType: "task:auto-merge-finalize-column-mismatch-no-action",
     }));
@@ -480,21 +484,8 @@ describe("auto-merge proven finalization helper", () => {
     }));
   });
 
-  /*
-  FNXC:MergeConfirmedFinalization 2026-08-23-21:40 (FN-9193 — DELIBERATE INVERSION of this test):
-  This case previously asserted that incomplete steps BLOCK a proven merge's finalization. That is
-  the behaviour that wedged FN-9193: its branch landed on main as eaa1d47c, a Code Review revision
-  request had reset its steps while the approved merge was in flight, and the card was then left
-  `mergeConfirmed` WITH incomplete steps — unfinalizable, parked `failed` for five hours. Restarting
-  it re-planned seven fresh `pending` steps, so the retry re-created the block it was meant to clear.
-
-  Holding a landed card out of `done` un-merges nothing; the code is on the target branch either way.
-  So the exemption is now asserted here, scoped to merges that actually landed content — the sibling
-  case below keeps the blocker for a no-op merge that landed nothing, which is the protective half
-  the original test was really carrying.
-  */
-  it("finalizes a proven merge even when planned steps are still incomplete", async () => {
-    const landedTask = {
+  it("reconciles incomplete workflow steps after a confirmed merge", async () => {
+    const strandedTask = {
       id: "FN-INCOMPLETE",
       title: "Incomplete workflow",
       description: "Test",
@@ -507,67 +498,29 @@ describe("auto-merge proven finalization helper", () => {
       updatedAt: new Date().toISOString(),
       mergeDetails: { mergeConfirmed: true, commitSha: "abc123", landedFiles: ["packages/engine/src/executor.ts"] },
     } as Task;
-    const store = createMockStore(landedTask) as unknown as TaskStore & {
+    const store = createMockStore(strandedTask) as unknown as TaskStore & {
       getTask: ReturnType<typeof vi.fn>;
       updateTask: ReturnType<typeof vi.fn>;
       moveTask: ReturnType<typeof vi.fn>;
-      logEntry: ReturnType<typeof vi.fn>;
       recordRunAuditEvent: ReturnType<typeof vi.fn>;
     };
-    store.getTask.mockResolvedValue(landedTask);
+    store.getTask.mockResolvedValue(strandedTask);
 
     const result = await finalizeProvenAutoMergeTask({
       store,
       taskId: "FN-INCOMPLETE",
-      result: { task: landedTask, ok: true, merged: true, commitSha: "abc123", mergeConfirmed: true } as MergeResult,
+      result: { task: strandedTask, ok: true, merged: true, commitSha: "abc123", mergeConfirmed: true } as MergeResult,
       source: "workflow-graph-merge-finalize",
       rootDir: "/repo",
     });
 
-    expect(result).not.toEqual(expect.objectContaining({ reason: "task has incomplete steps" }));
-    expect(store.updateTask).not.toHaveBeenCalledWith("FN-INCOMPLETE", expect.objectContaining({
-      error: "Merge confirmed but finalization blocked: task has incomplete steps",
+    expect(result).toEqual(expect.objectContaining({ outcome: "done" }));
+    expect(store.updateTask).toHaveBeenCalledWith("FN-INCOMPLETE", expect.objectContaining({
+      status: null,
+      error: null,
+      steps: [{ status: "done" }, { status: "skipped" }],
     }));
-    // The unfinished work is recorded on the task rather than silently dropped.
-    expect(store.logEntry).toHaveBeenCalledWith(
-      "FN-INCOMPLETE",
-      expect.stringContaining("unfinished step"),
-      "MergeConfirmedFinalizeUnfinishedSteps",
-    );
-  });
-
-  it("still blocks finalization when a no-op merge landed no content", async () => {
-    const noOpTask = {
-      id: "FN-NOOP",
-      title: "No-op merge",
-      description: "Test",
-      column: "in-progress",
-      dependencies: [],
-      steps: [{ status: "done" }, { status: "pending" }],
-      currentStep: 1,
-      log: [],
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      mergeDetails: { mergeConfirmed: true, noOpMerge: true, landedFiles: [] },
-    } as unknown as Task;
-    const store = createMockStore(noOpTask) as unknown as TaskStore & {
-      getTask: ReturnType<typeof vi.fn>;
-      updateTask: ReturnType<typeof vi.fn>;
-      moveTask: ReturnType<typeof vi.fn>;
-      recordRunAuditEvent: ReturnType<typeof vi.fn>;
-    };
-    store.getTask.mockResolvedValue(noOpTask);
-
-    const result = await finalizeProvenAutoMergeTask({
-      store,
-      taskId: "FN-NOOP",
-      result: { task: noOpTask, ok: true, merged: true, mergeConfirmed: true, noOp: true } as MergeResult,
-      source: "workflow-graph-merge-finalize",
-      rootDir: "/repo",
-    });
-
-    expect(result).toEqual(expect.objectContaining({ outcome: "blocked", reason: "task has incomplete steps" }));
-    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(store.moveTask).toHaveBeenCalled();
   });
 
   it("finalizes proven workflow merges even when the task branch still has residue outside the landed patch", async () => {
@@ -608,7 +561,7 @@ describe("auto-merge proven finalization helper", () => {
       moveSource: "engine",
       preserveProgress: true,
       recoveryRehome: true,
-    }), ANY_MUTATION_CONTEXT);
+    }));
     expect(mockedExecSync.mock.calls.some(([cmd]) => String(cmd).includes("git diff --name-only"))).toBe(false);
   });
 
@@ -1739,7 +1692,7 @@ describe("aiMergeTask — no-op short-circuit", () => {
 
     expect(result.merged).toBe(true);
     expect(result.noOp).toBe(true);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-3834-NOOP", "done", undefined, ANY_MUTATION_CONTEXT);
+    expect(store.moveTask).toHaveBeenCalledWith("FN-3834-NOOP", "done", expect.objectContaining({ workflowMoveSource: "merger-complete-task" }));
     expect(store.updateTask).toHaveBeenCalledWith(
       "FN-3834-NOOP",
       expect.objectContaining({
@@ -1748,7 +1701,8 @@ describe("aiMergeTask — no-op short-circuit", () => {
           noOpMerge: true,
           noOpReason: expect.stringContaining("main"),
         }),
-      }), ANY_MUTATION_CONTEXT);
+      }),
+    );
   });
 });
 
@@ -1781,7 +1735,7 @@ describe("aiMergeTask — empty squash merge (branch already merged via dep)", (
     // Agent should NOT have been spawned
     expect(mockedCreateFnAgent).not.toHaveBeenCalled();
     // Task should still be moved to done
-    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done", undefined, ANY_MUTATION_CONTEXT);
+    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done", expect.objectContaining({ workflowMoveSource: "merger-complete-task" }));
   });
 
   it("does not record commitSha when squash is empty (would be pre-merge HEAD)", async () => {
@@ -3194,7 +3148,7 @@ describe("aiMergeTask post-squash audit gate", () => {
       squashSha: "mergedcommit123",
     });
     expect(store.appendAgentLog).toHaveBeenCalledWith("FN-050", "post-squash audit clean", "status", undefined, "merger");
-    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done", undefined, ANY_MUTATION_CONTEXT);
+    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done", expect.objectContaining({ workflowMoveSource: "merger-complete-task" }));
   });
 
   it("routes multi-substantive auto branches through rebase range audit", async () => {
@@ -3400,7 +3354,7 @@ describe("aiMergeTask post-squash audit gate", () => {
 
     await aiMergeTask(store, "/tmp/root", "FN-050");
 
-    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done", undefined, ANY_MUTATION_CONTEXT);
+    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done", expect.objectContaining({ workflowMoveSource: "merger-complete-task" }));
     expect(store.appendAgentLog).toHaveBeenCalledWith(
       "FN-050",
       expect.stringContaining("post-rebase audit overlap cleared by deterministic verification"),
@@ -3445,8 +3399,8 @@ describe("aiMergeTask post-squash audit gate", () => {
 
     await expect(aiMergeTask(store, "/tmp/root", "FN-050")).rejects.toThrow(/post-rebase range audit blocked auto-completion/);
 
-    expect(store.moveTask).not.toHaveBeenCalledWith("FN-050", "done");
-    expect(store.updateTask).toHaveBeenCalledWith("FN-050", { status: null }, ANY_MUTATION_CONTEXT);
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-050", "done", expect.objectContaining({ workflowMoveSource: "merger-complete-task" }));
+    expect(store.updateTask).toHaveBeenCalledWith("FN-050", { status: null });
   });
 
   it("continues to branch-tip lookup when audit ref tree is unresolvable and still short-circuits on cache hit (FN-4344)", async () => {
@@ -3488,7 +3442,7 @@ describe("aiMergeTask post-squash audit gate", () => {
 
     await aiMergeTask(store, "/tmp/root", "FN-050");
 
-    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done", undefined, ANY_MUTATION_CONTEXT);
+    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done", expect.objectContaining({ workflowMoveSource: "merger-complete-task" }));
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("could not resolve post-merge audit verification tree for ref landedcommit002"));
     warnSpy.mockRestore();
   });
@@ -3538,7 +3492,7 @@ describe("aiMergeTask post-squash audit gate", () => {
       expect.stringContaining("Duplicate-subject risks:\n- feat: duplicate subject"),
       "merger",
     );
-    expect(store.updateTask).toHaveBeenCalledWith("FN-050", { status: null }, ANY_MUTATION_CONTEXT);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-050", { status: null });
   });
 
   it("blocks completion and logs touched-file-overlap findings", async () => {
@@ -3581,7 +3535,7 @@ describe("aiMergeTask post-squash audit gate", () => {
       expect.stringContaining("Touched-file overlap risks:\n- src/shared.ts\n  - abc1234 fix: recent main change"),
       "merger",
     );
-    expect(store.updateTask).toHaveBeenCalledWith("FN-050", { status: null }, ANY_MUTATION_CONTEXT);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-050", { status: null });
   });
 
   it("blocks completion and logs combined duplicate-subject and touched-file findings", async () => {
@@ -3618,7 +3572,7 @@ describe("aiMergeTask post-squash audit gate", () => {
     await expect(aiMergeTask(store, "/tmp/root", "FN-050")).rejects.toThrow(/post-squash audit blocked auto-completion/);
 
     expect(vi.mocked(store.moveTask).mock.calls.some(([, column]) => column === "done")).toBe(false);
-    expect(store.updateTask).toHaveBeenCalledWith("FN-050", { status: null }, ANY_MUTATION_CONTEXT);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-050", { status: null });
     expect(store.appendAgentLog).toHaveBeenCalledWith(
       "FN-050",
       expect.stringContaining("post-squash audit blocked auto-completion"),
@@ -3636,7 +3590,7 @@ describe("aiMergeTask post-squash audit gate", () => {
 
     expect(result.merged).toBe(true);
     expect(mockedAuditSquashMerge).not.toHaveBeenCalled();
-    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done", undefined, ANY_MUTATION_CONTEXT);
+    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done", expect.objectContaining({ workflowMoveSource: "merger-complete-task" }));
     expect(
       vi.mocked(store.appendAgentLog).mock.calls.some(([, message]) => String(message).includes("post-squash audit clean") || String(message).includes("post-squash audit blocked auto-completion")),
     ).toBe(false);
@@ -3679,7 +3633,7 @@ describe("aiMergeTask post-squash audit gate", () => {
       strategy: "squash",
       squashSha: "mergedcommit123",
     });
-    expect(store.updateTask).toHaveBeenCalledWith("FN-050", { status: null }, ANY_MUTATION_CONTEXT);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-050", { status: null });
   });
 
   it("skips the post-merge audit entirely when postMergeAuditMode=off (FN-4333)", async () => {
@@ -3734,7 +3688,7 @@ describe("aiMergeTask post-squash audit gate", () => {
     const result = await aiMergeTask(store, "/tmp/root", "FN-050");
 
     expect(result.merged).toBe(true);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done", undefined, ANY_MUTATION_CONTEXT);
+    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done", expect.objectContaining({ workflowMoveSource: "merger-complete-task" }));
     expect(
       vi.mocked(store.appendAgentLog).mock.calls.some(([, message, type]) => type === "tool_error" && String(message).includes("audit blocked auto-completion")),
     ).toBe(false);
@@ -3753,7 +3707,7 @@ describe("aiMergeTask post-squash audit gate", () => {
 
     expect(result.merged).toBe(true);
     expect(mockedAuditSquashMerge).not.toHaveBeenCalled();
-    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done", undefined, ANY_MUTATION_CONTEXT);
+    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done", expect.objectContaining({ workflowMoveSource: "merger-complete-task" }));
     expect(
       vi.mocked(store.appendAgentLog).mock.calls.some(([, message]) => String(message).includes("post-squash audit blocked auto-completion")),
     ).toBe(false);

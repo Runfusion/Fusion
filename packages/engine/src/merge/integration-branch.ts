@@ -1,6 +1,6 @@
 import { exec, execSync } from "node:child_process";
 import { promisify } from "node:util";
-import type { ProjectSettings } from "@fusion/core";
+import { selectIntegrationBranch, type ProjectSettings } from "@fusion/core";
 
 const execAsync = promisify(exec);
 
@@ -26,8 +26,11 @@ function normalize(value: unknown): string {
 }
 
 /*
-FNXC:IntegrationBranch 2026-07-02-11:59:
-Auto-detect deliberately reads origin/HEAD only. When operators use another remote such as gitlab, fallback diagnostics must name discovered remotes and guide them to add an origin alias or set integrationBranch manually instead of silently choosing an arbitrary remote.
+FNXC:IntegrationBranchReadiness 2026-08-24-00:47:
+FN-183 lets inferred fallback inspect local refs and origin's remote-tracking refs through the
+shared selection ladder, but never chooses an arbitrary non-origin remote such as gitlab. When
+that ladder has no candidate, preserve the actionable remote diagnostic that directs operators to
+add an origin alias or configure integrationBranch explicitly.
 */
 function warnFallback(rootDir: string, logger: Pick<Console, "warn">, remotes: string[] = []): void {
   if (warnedFallbackRootDirs.has(rootDir)) {
@@ -117,6 +120,112 @@ function listGitRemotesSync(rootDir: string): string[] {
   }
 }
 
+function parseBranchRefs(stdout: string, dropRemoteHead = false): string[] {
+  return [...new Set(stdout
+    .split(/\r?\n/)
+    .map(normalize)
+    .filter((branch) => branch.length > 0 && (!dropRemoteHead || branch !== "HEAD")))];
+}
+
+async function listBranchRefs(rootDir: string, refPrefix: string, dropRemoteHead = false): Promise<string[]> {
+  try {
+    const { stdout } = await execAsync(`git for-each-ref --format=%(refname:short) ${refPrefix}`, {
+      cwd: rootDir,
+      encoding: "utf8",
+      timeout: 5_000,
+      maxBuffer: 1024 * 1024,
+    });
+    return parseBranchRefs(stdout, dropRemoteHead);
+  } catch {
+    return [];
+  }
+}
+
+function listBranchRefsSync(rootDir: string, refPrefix: string, dropRemoteHead = false): string[] {
+  try {
+    const stdout = execSync(`git for-each-ref --format=%(refname:short) ${refPrefix}`, {
+      cwd: rootDir,
+      encoding: "utf8",
+      timeout: 5_000,
+      maxBuffer: 1024 * 1024,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    return parseBranchRefs(stdout, dropRemoteHead);
+  } catch {
+    return [];
+  }
+}
+
+/*
+FNXC:IntegrationBranchReadiness 2026-08-24-00:46:
+FN-183 keeps explicit project settings and origin/HEAD authoritative, then delegates every
+inferred fallback to the core selection ladder shared with registration. Worktree acquisition,
+merge, recovery, and branch-conflict paths have no branch naming logic beyond this resolver,
+so this single boundary is their shared regression coverage rather than separate per-consumer tests.
+*/
+async function resolveInferredBranch(rootDir: string): Promise<ReturnType<typeof selectIntegrationBranch>> {
+  const [localBranches, currentHeadOutput, remoteBranches] = await Promise.all([
+    listBranchRefs(rootDir, "refs/heads/"),
+    resolveCurrentHead(rootDir),
+    listBranchRefs(rootDir, "refs/remotes/origin/", true),
+  ]);
+  return selectIntegrationBranch({
+    localBranches,
+    currentBranch: currentHeadOutput,
+    remoteBranches,
+  });
+}
+
+function resolveInferredBranchSync(rootDir: string): ReturnType<typeof selectIntegrationBranch> {
+  return selectIntegrationBranch({
+    localBranches: listBranchRefsSync(rootDir, "refs/heads/"),
+    currentBranch: resolveCurrentHeadSync(rootDir),
+    remoteBranches: listBranchRefsSync(rootDir, "refs/remotes/origin/", true),
+  });
+}
+
+async function resolveCurrentHead(rootDir: string): Promise<string> {
+  try {
+    const { stdout } = await execAsync("git symbolic-ref --quiet --short HEAD", {
+      cwd: rootDir,
+      encoding: "utf8",
+      timeout: 5_000,
+      maxBuffer: 1024 * 1024,
+    });
+    return normalize(stdout);
+  } catch {
+    return "";
+  }
+}
+
+function resolveCurrentHeadSync(rootDir: string): string {
+  try {
+    const stdout = execSync("git symbolic-ref --quiet --short HEAD", {
+      cwd: rootDir,
+      encoding: "utf8",
+      timeout: 5_000,
+      maxBuffer: 1024 * 1024,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    return normalize(stdout);
+  } catch {
+    return "";
+  }
+}
+
+function warnInferredBranch(
+  rootDir: string,
+  logger: Pick<Console, "warn">,
+  branch: string,
+  source: string,
+): void {
+  if (branch === INTEGRATION_BRANCH_FALLBACK || warnedFallbackRootDirs.has(rootDir)) {
+    return;
+  }
+  warnedFallbackRootDirs.add(rootDir);
+  logger.warn(`[integration-branch] adopted '${branch}' from ${source} inference instead of falling back to 'main'.`);
+}
+
 export async function resolveIntegrationBranch(
   rootDir: string,
   settings: IntegrationBranchSettings,
@@ -132,6 +241,12 @@ export async function resolveIntegrationBranch(
   const fromOrigin = await resolveFromOriginHead(rootDir);
   if (fromOrigin.length > 0) {
     return fromOrigin;
+  }
+
+  const inferred = await resolveInferredBranch(rootDir);
+  if (inferred) {
+    warnInferredBranch(rootDir, logger, inferred.branch, inferred.source);
+    return inferred.branch;
   }
 
   const remotes = await listGitRemotes(rootDir);
@@ -154,6 +269,12 @@ export function resolveIntegrationBranchSync(
   const fromOrigin = resolveFromOriginHeadSync(rootDir);
   if (fromOrigin.length > 0) {
     return fromOrigin;
+  }
+
+  const inferred = resolveInferredBranchSync(rootDir);
+  if (inferred) {
+    warnInferredBranch(rootDir, logger, inferred.branch, inferred.source);
+    return inferred.branch;
   }
 
   const remotes = listGitRemotesSync(rootDir);

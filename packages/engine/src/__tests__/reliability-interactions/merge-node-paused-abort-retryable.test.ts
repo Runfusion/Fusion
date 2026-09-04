@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ANY_MUTATION_CONTEXT } from "../mutation-context-matchers.js";
 import "../executor-test-helpers.js";
 import { TaskExecutor } from "../../executor.js";
 import { runWorkflowMergeAttemptNode } from "../../workflows/workflow-merge-nodes.js";
@@ -135,7 +134,7 @@ describe("merge-node paused-abort retry classification (FN-6735)", () => {
     expect(store.updateTask).not.toHaveBeenCalledWith(
       task.id,
       expect.objectContaining({ status: "failed" }),
-      ANY_MUTATION_CONTEXT,
+      undefined,
     );
   });
 
@@ -153,7 +152,7 @@ describe("merge-node paused-abort retry classification (FN-6735)", () => {
 
     expect(mergeRequester).toHaveBeenCalledWith(task.id);
     expect(logText(store)).toContain("routed to bounded auto-merge retry after benign pause/resume abort");
-    expect(store.updateTask).not.toHaveBeenCalledWith(task.id, expect.objectContaining({ status: "failed" }), ANY_MUTATION_CONTEXT);
+    expect(store.updateTask).not.toHaveBeenCalledWith(task.id, expect.objectContaining({ status: "failed" }), undefined);
   });
 
   it("retries FN-7335-style merge pause aborts while AI merge review status is active", async () => {
@@ -170,7 +169,7 @@ describe("merge-node paused-abort retry classification (FN-6735)", () => {
     expect(store.updateTask).not.toHaveBeenCalledWith(
       task.id,
       expect.objectContaining({ status: "failed" }),
-      ANY_MUTATION_CONTEXT,
+      undefined,
     );
   });
 
@@ -183,7 +182,7 @@ describe("merge-node paused-abort retry classification (FN-6735)", () => {
     expect(store.updateTask).toHaveBeenCalledWith(
       task.id,
       expect.objectContaining({ status: "failed", error: expect.stringContaining("operator action required") }),
-      ANY_MUTATION_CONTEXT,
+      undefined,
     );
   });
 
@@ -196,7 +195,7 @@ describe("merge-node paused-abort retry classification (FN-6735)", () => {
     expect(store.updateTask).toHaveBeenCalledWith(
       task.id,
       expect.objectContaining({ status: "failed", error: expect.stringContaining("operator action required") }),
-      ANY_MUTATION_CONTEXT,
+      undefined,
     );
   });
 
@@ -209,7 +208,7 @@ describe("merge-node paused-abort retry classification (FN-6735)", () => {
     expect(store.updateTask).toHaveBeenCalledWith(
       task.id,
       expect.objectContaining({ status: "failed", error: expect.stringContaining("operator action required") }),
-      ANY_MUTATION_CONTEXT,
+      undefined,
     );
   });
 
@@ -268,7 +267,7 @@ describe("merge-node paused-abort retry classification (FN-6735)", () => {
     expect(store.updateTask).not.toHaveBeenCalledWith(
       task.id,
       expect.objectContaining({ status: "failed" }),
-      ANY_MUTATION_CONTEXT,
+      undefined,
     );
     expect(logText(store)).toContain("Workflow graph run ended at manual merge hold with auto-merge off — benign, in-review manual-hold state preserved for Merge & Close");
     expect(logText(store)).not.toContain("Workflow graph failure surfaced after paused engine abort during pause/resume");
@@ -281,7 +280,7 @@ describe("merge-node paused-abort retry classification (FN-6735)", () => {
     await invokeGraphFailure(executor, task, "merge-manual-hold", "merge-finalize-blocked");
 
     expect(mergeRequester).not.toHaveBeenCalled();
-    expect(store.updateTask).not.toHaveBeenCalledWith(task.id, expect.objectContaining({ status: "failed" }), ANY_MUTATION_CONTEXT);
+    expect(store.updateTask).not.toHaveBeenCalledWith(task.id, expect.objectContaining({ status: "failed" }), undefined);
     expect(logText(store)).toContain("manual merge hold with auto-merge off");
   });
 
@@ -292,7 +291,7 @@ describe("merge-node paused-abort retry classification (FN-6735)", () => {
     await invokeGraphFailure(executor, task, "merge-manual-hold", "merge-finalize-blocked");
 
     expect(mergeRequester).not.toHaveBeenCalled();
-    expect(store.updateTask).toHaveBeenCalledWith(task.id, { status: null, error: null }, ANY_MUTATION_CONTEXT);
+    expect(store.updateTask).toHaveBeenCalledWith(task.id, { status: null, error: null }, undefined);
     expect(logText(store)).toContain("Auto-recovered: cleared stale auto-merge-off manual merge hold pause-abort failure — failure notification suppressed");
     expect(logText(store)).not.toContain("Workflow graph failure surfaced after paused engine abort during pause/resume");
   });
@@ -307,7 +306,7 @@ describe("merge-node paused-abort retry classification (FN-6735)", () => {
     expect(globalHarness.store.updateTask).toHaveBeenCalledWith(
       globalHarness.task.id,
       expect.objectContaining({ status: "failed", error: expect.stringContaining("global pause") }),
-      ANY_MUTATION_CONTEXT,
+      undefined,
     );
 
     const userHarness = makeHarness({ userPaused: true });
@@ -317,7 +316,7 @@ describe("merge-node paused-abort retry classification (FN-6735)", () => {
     expect(userHarness.store.updateTask).toHaveBeenCalledWith(
       userHarness.task.id,
       expect.objectContaining({ status: "failed", error: expect.stringContaining("explicit user pause") }),
-      ANY_MUTATION_CONTEXT,
+      undefined,
     );
   });
 
@@ -329,7 +328,8 @@ describe("merge-node paused-abort retry classification (FN-6735)", () => {
     expect(mergeRequester).not.toHaveBeenCalled();
     expect(store.updateTask).toHaveBeenCalledWith(
       task.id,
-      expect.objectContaining({ status: null, error: null, paused: false }), ANY_MUTATION_CONTEXT);
+      expect.objectContaining({ status: null, error: null, paused: false }),
+    );
   });
 
   const implementationIncompleteMergeNodes = [
@@ -391,8 +391,8 @@ describe("merge-node paused-abort retry classification (FN-6735)", () => {
     await invokeGraphFailure(executor, task, nodeId, value);
 
     expect(mergeRequester).not.toHaveBeenCalled();
-    expect(store.moveTask).toHaveBeenCalledWith(task.id, "todo", expect.objectContaining({ preserveProgress: true }));
-    expect(logText(store)).toContain(`Workflow graph failed at node '${nodeId}' (implementation-incomplete) with incomplete steps — moved back to todo for execution resume`);
+    expect(store.moveTask).toHaveBeenCalledWith(task.id, "in-progress", expect.objectContaining({ preserveProgress: true }));
+    expect(logText(store)).toContain(`Workflow graph failed at node '${nodeId}' (implementation-incomplete) with incomplete steps — resuming execution in 'in-progress'`);
     expect((executor as any).getActiveWorktreePaths(task.id)).toEqual([worktreePath]);
   });
 
@@ -429,8 +429,8 @@ describe("merge-node paused-abort retry classification (FN-6735)", () => {
     await invokeGraphFailure(executor, task, nodeId, "implementation-incomplete");
 
     expect(mergeRequester).not.toHaveBeenCalled();
-    expect(store.moveTask).not.toHaveBeenCalledWith(task.id, "done", expect.anything(), ANY_MUTATION_CONTEXT);
-    expect(store.moveTask).not.toHaveBeenCalledWith(task.id, "todo", expect.anything(), ANY_MUTATION_CONTEXT);
+    expect(store.moveTask).not.toHaveBeenCalledWith(task.id, "done", expect.anything());
+    expect(store.moveTask).not.toHaveBeenCalledWith(task.id, "todo", expect.anything());
     expect(store.updateTask).not.toHaveBeenCalledWith(
       task.id,
       expect.objectContaining({
@@ -444,7 +444,7 @@ describe("merge-node paused-abort retry classification (FN-6735)", () => {
         status: "failed",
         error: expect.stringContaining("implementation incomplete with no executable proof to resume"),
       }),
-      ANY_MUTATION_CONTEXT,
+      undefined,
     );
     const messages = logText(store);
     expect(messages).toContain(`Workflow graph merge blocked at node '${nodeId}': implementation incomplete with no executable proof to resume — failing instead of retrying merge`);
@@ -468,15 +468,15 @@ describe("merge-node paused-abort retry classification (FN-6735)", () => {
     await invokeGraphFailure(executor, task, nodeId, "implementation-incomplete");
 
     expect(mergeRequester).not.toHaveBeenCalled();
-    expect(store.updateTask).toHaveBeenCalledWith(task.id, { status: null, error: null }, ANY_MUTATION_CONTEXT);
-    expect(store.moveTask).toHaveBeenCalledWith(task.id, "todo", expect.objectContaining({
+    expect(store.updateTask).toHaveBeenCalledWith(task.id, { status: null, error: null }, undefined);
+    expect(store.moveTask).toHaveBeenCalledWith(task.id, "in-progress", expect.objectContaining({
       preserveProgress: true,
       moveSource: "engine",
       recoveryRehome: true,
-    }), ANY_MUTATION_CONTEXT);
-    expect(store.moveTask).not.toHaveBeenCalledWith(task.id, "done", expect.anything(), ANY_MUTATION_CONTEXT);
+    }));
+    expect(store.moveTask).not.toHaveBeenCalledWith(task.id, "done", expect.anything());
     const messages = logText(store);
-    expect(messages).toContain(`Workflow graph failed at node '${nodeId}' (implementation-incomplete) with incomplete steps — moved back to todo for execution resume`);
+    expect(messages).toContain(`Workflow graph failed at node '${nodeId}' (implementation-incomplete) with incomplete steps — resuming execution in 'in-progress'`);
     expect(messages).not.toContain("routed to bounded auto-merge retry after benign pause/resume abort");
   });
 
@@ -502,14 +502,14 @@ describe("merge-node paused-abort retry classification (FN-6735)", () => {
     await invokeGraphFailure(executor, task, "merge", "implementation-incomplete");
 
     expect(mergeRequester).not.toHaveBeenCalled();
-    expect(store.moveTask).not.toHaveBeenCalledWith(task.id, "todo", expect.anything(), ANY_MUTATION_CONTEXT);
+    expect(store.moveTask).not.toHaveBeenCalledWith(task.id, "todo", expect.anything());
     expect(store.updateTask).toHaveBeenCalledWith(
       task.id,
       expect.objectContaining({
         status: "failed",
         error: expect.stringContaining("implementation incomplete with no executable proof to resume"),
       }),
-      ANY_MUTATION_CONTEXT,
+      undefined,
     );
     const messages = logText(store);
     expect(messages).toContain("Workflow graph merge blocked at node 'merge': implementation incomplete with no executable proof to resume — failing instead of retrying merge");
@@ -544,15 +544,15 @@ describe("merge-node paused-abort retry classification (FN-6735)", () => {
     expect(store.updateTask).toHaveBeenCalledWith(
       task.id,
       expect.objectContaining({ paused: false, pausedReason: null }),
-      ANY_MUTATION_CONTEXT,
+      undefined,
     );
-    expect(store.moveTask).toHaveBeenCalledWith(task.id, "todo", expect.objectContaining({
+    expect(store.moveTask).toHaveBeenCalledWith(task.id, "in-progress", expect.objectContaining({
       preserveProgress: true,
       moveSource: "engine",
       recoveryRehome: true,
-    }), ANY_MUTATION_CONTEXT);
+    }));
     const messages = logText(store);
-    expect(messages).toContain("Workflow graph failed at node 'merge' (implementation-incomplete) with incomplete steps — moved back to todo for execution resume");
+    expect(messages).toContain("Workflow graph failed at node 'merge' (implementation-incomplete) with incomplete steps — resuming execution in 'in-progress'");
     expect(messages).not.toContain("operator action required");
     // Resumable path keeps active registration so the preserved worktree stays counted.
     expect((executor as any).activeWorktrees.has(task.id)).toBe(true);
@@ -578,7 +578,7 @@ describe("merge-node paused-abort retry classification (FN-6735)", () => {
     await invokeGraphFailure(executor, task, "merge-gate", "implementation-incomplete");
 
     expect(mergeRequester).not.toHaveBeenCalled();
-    expect(store.moveTask).toHaveBeenCalledWith(task.id, "todo", expect.objectContaining({ preserveProgress: true }), ANY_MUTATION_CONTEXT);
+    expect(store.moveTask).toHaveBeenCalledWith(task.id, "in-progress", expect.objectContaining({ preserveProgress: true }));
     expect((executor as any).activeWorktrees.has(task.id)).toBe(true);
     expect((executor as any).getActiveWorktreePaths(task.id)).toEqual([worktreePath]);
   });

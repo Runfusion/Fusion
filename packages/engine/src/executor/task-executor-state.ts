@@ -72,6 +72,8 @@ export abstract class TaskExecutorState {
    */
   protected workflowGateActivityPrincipals = new Map<string, string>();
   protected executing = new Set<string>();
+  /** Deferred terminal-park callbacks currently in flight (restart-recovery intent chain). */
+  protected deferredTerminalParksInFlight = new Set<string>();
   protected resumingUnpaused = new Set<string>();
   protected approvalSuspended = new Set<string>();
   protected approvalResumeAfterUnwind = new Set<string>();

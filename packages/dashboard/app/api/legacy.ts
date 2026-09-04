@@ -43,6 +43,7 @@ export {
   createTaskFromRecommendation,
   createTask,
   repairOverlapBlocker,
+  fetchOverlapBlockerReport,
   updateTask,
   batchUpdateTaskModels,
   moveTask,
@@ -65,6 +66,7 @@ import type {
   BranchSelectionInput,
   CreateTaskInput,
   RepairOverlapBlockerResult,
+  TaskOverlapBlockerReport,
 } from "./tasks/tasks.js";
 export type {
   DeleteTaskOptions,
@@ -83,6 +85,7 @@ export type {
   BranchSelectionInput,
   CreateTaskInput,
   RepairOverlapBlockerResult,
+  TaskOverlapBlockerReport,
 };
 
 /*
@@ -1392,6 +1395,7 @@ export {
   unarchiveInsight,
   updateInsight,
 } from "./system/insights.js";
+export { fetchPatchnode } from "./system/patchnode.js";
 export type {
   InsightsListResponse,
   RunsListResponse,
@@ -1413,6 +1417,7 @@ export {
   startFnBinaryLinkLocal,
   startFnBinaryUseGlobal,
   startSystemRebuild,
+  startSystemSourceUpdate,
 } from "./system/system-panel.js";
 export type {
   ResearchFindingPromotionInput,

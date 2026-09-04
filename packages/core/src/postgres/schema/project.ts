@@ -120,6 +120,8 @@ export const tasks = projectSchema.table("tasks", {
   executeRequeueLoopCount: integer("execute_requeue_loop_count").default(0),
   executeRequeueLoopSignature: text("execute_requeue_loop_signature"),
   recoveryRetryCount: integer("recovery_retry_count"),
+  sessionContentionHoldCount: integer("session_contention_hold_count").default(0),
+  sessionContentionWaitReason: text("session_contention_wait_reason"),
   taskDoneRetryCount: integer("task_done_retry_count").default(0),
   // FNXC:Lifecycle 2026-07-16-21:40: FN-8141 skip-bypass taint marker (nullable ISO timestamp).
   bulkCompletionRefusalAt: text("bulk_completion_refusal_at"),
@@ -171,6 +173,12 @@ export const tasks = projectSchema.table("tasks", {
   is not enough for Gate boot-smoke before health reconciliation runs.
   */
   sessionAdvisorEnabled: integer("session_advisor_enabled"),
+  /*
+  FNXC:PlanApproval 2026-08-28-17:16:
+  FN-234 retired this task column from reads and writes. Keep it in the append-only schema because
+  migration 0070 and PostgreSQL health repair still materialize it for upgrade compatibility.
+  */
+  requirePlanApproval: integer("require_plan_approval"),
   tokenUsageInputTokens: bigint("token_usage_input_tokens", { mode: "number" }),
   tokenUsageOutputTokens: bigint("token_usage_output_tokens", { mode: "number" }),
   tokenUsageCachedTokens: bigint("token_usage_cached_tokens", { mode: "number" }),
@@ -206,6 +214,7 @@ export const tasks = projectSchema.table("tasks", {
   executionCompletedAt: text("execution_completed_at"),
   dependencies: jsonb("dependencies").default([]),
   steps: jsonb("steps").default([]),
+  stepReports: jsonb("step_reports").default([]),
   log: jsonb("log").default([]),
   attachments: jsonb("attachments").default([]),
   steeringComments: jsonb("steering_comments").default([]),
@@ -233,6 +242,8 @@ export const tasks = projectSchema.table("tasks", {
   workspaceWorktrees: jsonb("workspace_worktrees"),
   // FNXC:RepositoryScope 2026-08-20-23:07: explicit task intent must survive PostgreSQL reads independently of acquired worktrees.
   repositoryScope: jsonb("repository_scope"),
+  // FNXC:ExternalBlock 2026-08-28-03:48: obstacle origin and exact resume coordinates survive process restarts.
+  externalBlock: jsonb("external_block"),
   noCommitsExpected: integer("no_commits_expected").default(0),
   enabledWorkflowSteps: jsonb("enabled_workflow_steps").default([]),
   modifiedFiles: jsonb("modified_files").default([]),
@@ -670,6 +681,31 @@ export const memoryRecallRecords = projectSchema.table("memory_recall_records", 
   source: jsonb("source").notNull(), tags: jsonb("tags").notNull().default(sql`'[]'::jsonb`), graphNodeIds: jsonb("graph_node_ids").notNull().default(sql`'[]'::jsonb`),
   createdAt: text("created_at").notNull(), updatedAt: text("updated_at").notNull(),
 }, (t) => [primaryKey({ columns: [t.projectId, t.id] }), unique("memory_recall_records_project_kind_hash_key").on(t.projectId, t.kind, t.contentHash), index("idxMemoryRecallRecordsKindCreated").on(t.projectId, t.kind, t.createdAt), index("idxMemoryRecallRecordsCreated").on(t.projectId, t.createdAt)]);
+
+/*
+FNXC:PatchnodeLedger 2026-08-28-12:16:
+Patchnode deliberately does not follow this schema's task foreign-key convention. Archive cleanup hard-deletes task rows to fire sibling cascades, while this self-contained delivery ledger must remain readable after that deletion.
+*/
+export const patchnodeEntries = projectSchema.table("patchnode_entries", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  entryId: text("entry_id").notNull(),
+  taskId: text("task_id").notNull(),
+  kind: text("kind").notNull(),
+  occurrenceKey: text("occurrence_key").notNull(),
+  day: text("day").notNull(),
+  occurredAt: text("occurred_at").notNull(),
+  title: text("title").notNull(),
+  body: text("body").notNull(),
+  revertsEntryId: text("reverts_entry_id"),
+  revertedAt: text("reverted_at"),
+  revertedCommitSha: text("reverted_commit_sha"),
+  createdAt: text("created_at").notNull(),
+}, (t) => [
+  primaryKey({ columns: [t.projectId, t.entryId] }),
+  check("patchnode_entries_kind_check", sql`${t.kind} IN ('completed', 'reverted')`),
+  index("idxPatchnodeEntriesFeed").on(t.projectId, t.day, t.occurredAt),
+  index("idxPatchnodeEntriesTaskKind").on(t.projectId, t.taskId, t.kind, t.occurredAt),
+]);
 
 export const agentActivityEventSeq = projectSchema.table("agent_activity_event_seq", {
   projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`), lastSeq: bigint("last_seq", { mode: "bigint" }).notNull().default(sql`0`),
@@ -2642,7 +2678,7 @@ export const projectTableNames = [
   "mission_validator_runs", "mission_validator_failures",
   "mission_fix_feature_lineage", "verification_cache", "import_translation_cache",
   "approval_requests",
-  "approval_request_audit_events", "agent_activity_events", "agent_activity_event_seq", "memory_recall_records", "chat_rooms", "chat_room_members",
+  "approval_request_audit_events", "agent_activity_events", "agent_activity_event_seq", "patchnode_entries", "memory_recall_records", "chat_rooms", "chat_room_members",
   "chat_room_messages", "chat_token_usage",
   /*
   FNXC:WorkspaceCoordination 2026-08-23-20:05:

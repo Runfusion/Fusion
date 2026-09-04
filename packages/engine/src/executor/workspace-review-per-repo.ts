@@ -10,29 +10,68 @@
  * identically: it invokes the caller's
  * own `invokeForCwd(cwd)` only for an explicitly scoped repository with diff evidence. Acquired
  * worktrees are never task intent: clean scoped repositories are recorded as not-reviewed and
- * out-of-scope worktrees are not opened. Modified in-scope verdicts aggregate as a conjunction.
- * verdict becomes the aggregate verdict (mirroring verifyWorktreeInvariants' first-failing-repo return), and its
- * findings are repo-tagged. A zero-acquire workspace task is classified with the completion invariant: proven
+ * out-of-scope worktrees are not opened. Findings are repository-qualified before they leave the
+ * loop, so aggregate evidence and per-repository outcomes match the workspace task's scoped file
+ * paths. A zero-acquire workspace task is classified with the completion invariant: proven
  * commit-free work approves honestly, while unproven work returns non-retryable UNAVAILABLE.
  *
- * Verdict severity for the conjunction: any RETHINK/REVISE/UNAVAILABLE fails the whole review; only all-APPROVE
- * (or all-skipped UNAVAILABLE-advisory, handled by the caller) approves. We surface the first failing repo's exact
- * verdict so the caller's existing verdict→edge mapping (APPROVE done-marking, REVISE block, RETHINK reset,
- * UNAVAILABLE retry) is unchanged.
+ * FNXC:WorkspaceReviewCoverage 2026-08-28-11:50:
+ * FN-223 requires one complete workspace verdict. Every modified in-scope repository is reviewed
+ * before aggregation, and deterministic severity (`RETHINK` > `REVISE` > `UNAVAILABLE` > approval)
+ * ensures iteration order cannot hide a stronger blocker. Approval-with-notes remains visible in
+ * its repository outcome while the approval-family aggregate is normalized to `APPROVE`.
  */
 import { existsSync } from "node:fs";
 import { resolve, sep } from "node:path";
-import type { Settings, Task, WorkflowRepositoryReviewOutcome } from "@fusion/core";
+import type { Settings, Task, WorkflowRepositoryReviewOutcome, WorkflowReviewFinding } from "@fusion/core";
 import type { ReviewResult } from "../execution/reviewer.js";
 import { captureWorkspaceReviewEvidence } from "../worktree/workspace-review-evidence.js";
+import { isFastForwardAdvance } from "../worktree/review-inline-fix-recapture.js";
 import { classifyWorkspaceZeroAcquire, type WorkspaceZeroAcquireOptions } from "./workspace-zero-acquire.js";
 import { captureModifiedFiles } from "./worktree-capture-modified-files.js";
+
+const hasRepositoryPrefix = (value: string | undefined, repoRel: string, separator: "/" | ":") =>
+  value === repoRel || value?.startsWith(`${repoRel}${separator}`) === true;
+
+/*
+FNXC:WorkspaceReviewCoverage 2026-08-28-11:50:
+Prompt and custom review severity gates may return `APPROVE_WITH_NOTES`. It is an approving verdict,
+so treating it as blocking would truncate complete workspace coverage and withhold merge evidence.
+*/
+export function isApprovalFamilyVerdict(verdict: string | undefined): boolean {
+  return verdict === "APPROVE" || verdict === "APPROVE_WITH_NOTES";
+}
+
+/*
+FNXC:WorkspaceReviewFindings 2026-08-27-12:05:
+FN-201 requires workspace findings to match repository-qualified File Scope and modified-file entries;
+unqualified paths are scope-rejected and model-supplied finding identifiers collide across repositories.
+*/
+export function qualifyRepositoryFindings(repoRel: string, findings: readonly WorkflowReviewFinding[] | undefined): WorkflowReviewFinding[] | undefined {
+  if (!findings?.length) return undefined;
+  return findings.map((finding) => ({
+    ...finding,
+    id: hasRepositoryPrefix(finding.id, repoRel, ":") || hasRepositoryPrefix(finding.id, repoRel, "/")
+      ? finding.id
+      : `${repoRel}:${finding.id}`,
+    ...(finding.filePath
+      ? { filePath: hasRepositoryPrefix(finding.filePath, repoRel, "/") ? finding.filePath : `${repoRel}/${finding.filePath}` }
+      : {}),
+    ...(finding.rebutsDisputedFindingId
+      ? {
+          rebutsDisputedFindingId: hasRepositoryPrefix(finding.rebutsDisputedFindingId, repoRel, ":") || hasRepositoryPrefix(finding.rebutsDisputedFindingId, repoRel, "/")
+            ? finding.rebutsDisputedFindingId
+            : `${repoRel}:${finding.rebutsDisputedFindingId}`,
+        }
+      : {}),
+  }));
+}
 
 export async function reviewWorkspacePerRepo(
   // FNXC:Workspace 2026-06-21-15:00: F7 — drop the dead `repoRel` callback param.
   // Both call sites bind `(cwd) => runForCwd(cwd)` and discard the second arg, so the type wrongly
   // implied repo identity is observable inside `runForCwd`. Removed until a real consumer needs it
-  // (Phase C). The loop below still tags findings with `repoRel` from its own iteration key.
+  // (Phase C). The loop uses its own iteration key to qualify reviewer findings before aggregation.
   task: Task,
   invokeForCwd: (cwd: string) => Promise<ReviewResult>,
   options: Omit<WorkspaceZeroAcquireOptions, "workspaceMode"> & {
@@ -181,59 +220,115 @@ export async function reviewWorkspacePerRepo(
   }));
   const reviewSections: string[] = notReviewedRepos.map((repoRel) => `### [${repoRel}] NOT_REVIEWED\nNo changes — not reviewed.`);
   const summarySections: string[] = notReviewedRepos.map((repoRel) => `[${repoRel}] NOT_REVIEWED: no changes`);
-  let firstFailing: { repo: string; result: ReviewResult } | undefined;
+  const reviewedResults: Array<{ repository: string; result: ReviewResult }> = [];
+  const noVerdictRepositories: string[] = [];
+  const findings: WorkflowReviewFinding[] = [];
   for (const repoRel of repoKeys) {
     const repo = workspaceWorktrees[repoRel];
-    const result = await invokeForCwd(repo.worktreePath);
+    let result: ReviewResult;
+    try {
+      result = await invokeForCwd(repo.worktreePath);
+    } catch (error) {
+      /*
+      FNXC:WorkspaceReviewCoverage 2026-08-28-11:50:
+      FN-223 isolates ordinary repository reviewer failures as `UNAVAILABLE`, below an already-known
+      `REVISE` or `RETHINK`, so one failed reviewer cannot erase determined findings. A provider
+      usage-limit or transient failure is not a verdict: abort without invoking remaining repositories
+      or publishing partial findings, then rethrow. The stepReview seam's existing blanket handler
+      converts that throw to narrated `UNAVAILABLE`, and its bounded retry reruns the whole episode.
+      */
+      if (error instanceof Error && error.name === "ReviewerProviderError") throw error;
+      const message = error instanceof Error ? error.message : String(error);
+      noVerdictRepositories.push(repoRel);
+      result = {
+        verdict: "UNAVAILABLE",
+        review: `reviewer error: ${message}`,
+        summary: `reviewer error: ${message}`,
+      };
+    }
+    reviewedResults.push({ repository: repoRel, result });
+    const qualifiedFindings = qualifyRepositoryFindings(repoRel, result.findings);
+    if (qualifiedFindings) findings.push(...qualifiedFindings);
     repositoryReviewOutcomes.push({
       repository: repoRel,
       status: "REVIEWED",
       verdict: result.verdict,
       output: result.review,
-      findings: result.findings,
+      ...(qualifiedFindings ? { findings: qualifiedFindings } : {}),
       fingerprint: repositoryDiffFingerprints[repoRel],
       episodeId: reviewedAt,
       scopeRevision: repositoryScopeRevision,
       reviewedAt,
     });
-    // Tag every per-repo finding with its sub-repo so downstream readers attribute it correctly.
+    // Structured findings are qualified before both durable outcomes and aggregate evidence consume them.
     reviewSections.push(`### [${repoRel}] ${result.verdict}\n${result.review}`);
     summarySections.push(`[${repoRel}] ${result.verdict}: ${result.summary}`);
-    if (result.verdict !== "APPROVE") {
-      // FNXC:Workspace 2026-06-21-15:00: F3 — BREAK on the first non-APPROVE repo.
-      // The contract is "the FIRST non-APPROVE repo's verdict becomes the aggregate". Without the
-      // break, a LATER repo's reviewer throwing would discard this already-determined REVISE/RETHINK
-      // and the caller would see UNAVAILABLE — masking the real verdict. Stop at the first failure.
-      firstFailing = { repo: repoRel, result };
-      break;
+  }
+
+  /*
+  FNXC:WorkspaceReviewCoverage 2026-08-28-11:50:
+  FN-223 aggregates only after the complete walk. Strongest-severity selection preserves every
+  repository's findings while making the result independent of alphabetical iteration order.
+  */
+  const aggregateVerdict: ReviewResult["verdict"] = reviewedResults.some(({ result }) => result.verdict === "RETHINK")
+    ? "RETHINK"
+    : reviewedResults.some(({ result }) => result.verdict === "REVISE")
+      ? "REVISE"
+      : reviewedResults.some(({ result }) => !isApprovalFamilyVerdict(result.verdict))
+        ? "UNAVAILABLE"
+        : "APPROVE";
+  /*
+  FNXC:PreMergeApproval 2026-09-01-06:53:
+  FN-9234 fixes the same pre-dispatch-capture defect for workspace review evidence. Each repository
+  may advance only when its own reviewer finished on a proven fast-forward; workspace re-entry already
+  owns stale evidence, so this producer never applies the singular reroute.
+  */
+  let publishedModifiedFiles = modifiedFiles;
+  if (isApprovalFamilyVerdict(aggregateVerdict) && evidence && options.workspaceRootDir) {
+    try {
+      const refreshed = await captureWorkspaceReviewEvidence({ task, workspaceRootDir: options.workspaceRootDir, settings: options.settings ?? {} });
+      if (refreshed.outOfScopeRepositories.size > 0) {
+        return { verdict: "UNAVAILABLE", retryable: false, review: "Workspace Code Review cannot approve changes outside confirmed scope after review.", summary: "Unavailable: changes outside confirmed scope after review", repositoryScopeRevision };
+      }
+      for (const updated of refreshed.repositories) {
+        const original = evidence.repositories.find((candidate) => candidate.repository === updated.repository);
+        const worktreePath = workspaceWorktrees[updated.repository]?.worktreePath;
+        const outcome = repositoryReviewOutcomes.find((candidate) => candidate.repository === updated.repository && candidate.status === "REVIEWED");
+        /*
+        FNXC:PreMergeApproval 2026-09-01-07:46:
+        Only a repository whose own reviewer ran may re-bind. A clean repository can become dirty
+        while another repository is being reviewed, but it has no lane that inspected that tree and
+        must remain missing at the merge gate.
+        */
+        if (!original || !worktreePath || !updated.fingerprint || !outcome || !repositoryScope.has(updated.repository)) continue;
+        if (await isFastForwardAdvance(worktreePath, original.branch, updated.branch)) {
+          repositoryDiffFingerprints[updated.repository] = updated.fingerprint;
+          outcome.fingerprint = updated.fingerprint;
+        }
+      }
+      publishedModifiedFiles = refreshed.modifiedFiles;
+    } catch {
+      // Keep pre-review evidence on unreadable post-review Git state so landing fails closed.
     }
   }
+  const blockingRepositories = reviewedResults
+    .filter(({ result }) => !isApprovalFamilyVerdict(result.verdict))
+    .map(({ repository }) => repository);
+  const blockingSummary = blockingRepositories.length > 0
+    ? `blocking repositories: ${blockingRepositories.join(", ")}`
+    : `all ${repoKeys.length} modified in-scope repositories approved`;
+  const coverageNotice = noVerdictRepositories.length > 0
+    ? `\nNot covered by a verdict: ${noVerdictRepositories.join(", ")}.`
+    : "";
 
-  if (firstFailing) {
-    // Conjunction failed: the aggregate carries the FIRST failing repo's verdict (so the caller's
-    // verdict→edge mapping is identical to single-cwd), with the full repo-tagged review body.
-    return {
-      verdict: firstFailing.result.verdict,
-      // FNXC:Workspace 2026-06-22-00:00: the conjunction BREAKS on the first non-APPROVE repo,
-      // so reviewSections holds only the repos evaluated up to (and including) the failure — not
-      // every sub-repo. Label it honestly so operators don't read a partial list as exhaustive.
-      review: `Workspace review failed in sub-repo \`${firstFailing.repo}\` (verdict ${firstFailing.result.verdict}). Per-repo verdicts (evaluation stopped at first failure; later modified repos not reviewed):\n\n${reviewSections.join("\n\n")}`,
-      summary: `${firstFailing.repo}: ${firstFailing.result.verdict} — ${summarySections.join(" | ")}`,
-      repositoryDiffFingerprints,
-      repositoryModifiedFiles: modifiedFiles,
-      repositoryReviewOutcomes,
-      repositoryScopeRevision: repositoryScopeRevision,
-    };
-  }
-
-  // Every sub-repo approved → the task is reviewed (conjunction satisfied).
   return {
-    verdict: "APPROVE",
-    review: `All ${repoKeys.length} modified in-scope sub-repo(s) approved. Per-repo outcomes:\n\n${reviewSections.join("\n\n")}`,
-    summary: `APPROVE across ${repoKeys.length} modified in-scope sub-repo(s): ${summarySections.join(" | ")}`,
+    verdict: aggregateVerdict,
+    review: `All ${repoKeys.length} modified in-scope sub-repository review(s) were evaluated. Aggregate verdict: ${aggregateVerdict}. ${blockingRepositories.length > 0 ? `Blocking repositories: ${blockingRepositories.join(", ")}.` : "No blocking repositories."}${coverageNotice} Per-repository outcomes:\n\n${reviewSections.join("\n\n")}`,
+    summary: `${aggregateVerdict} — ${blockingSummary} — ${summarySections.join(" | ")}`,
     repositoryDiffFingerprints,
-    repositoryModifiedFiles: modifiedFiles,
+    repositoryModifiedFiles: publishedModifiedFiles,
     repositoryReviewOutcomes,
+    ...(findings.length > 0 ? { findings } : {}),
     repositoryScopeRevision: repositoryScopeRevision,
   };
 }

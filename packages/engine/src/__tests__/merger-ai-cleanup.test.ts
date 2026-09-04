@@ -164,7 +164,7 @@ function makeStore(taskId = "FN-1") {
     /* FNXC:MergeMockDrift 2026-08-23-00:20: `updateTaskAtomic` is a production write seam the merge
        path uses; a fake store that omits it throws TypeError before the behaviour under test runs.
        Same read-modify-write shape as the sibling fake in `merger-ai.test.ts`. */
-    updateTaskAtomic: vi.fn(async (_id: string, updater: (current: typeof task) => Record<string, unknown> | undefined) => {
+    updateTaskAtomic: vi.fn(async (_id: string, updater: (current: typeof task) => Record<string, unknown> | null | undefined | Promise<Record<string, unknown> | null | undefined>) => {
       const patch = await updater(task);
       if (patch) Object.assign(task, patch);
       return task;
@@ -193,6 +193,12 @@ function localAiMergeDir(projectRoot: string, name: string): string {
 
 function legacyRepoAiMergeDir(projectRoot: string, name: string): string {
   const dir = join(resolveLegacyAiMergeRootPath(projectRoot), name);
+  mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+function historicWorktreesAiMergeDir(projectRoot: string, name: string): string {
+  const dir = join(projectRoot, ".worktrees", ".ai-merge", name);
   mkdirSync(dir, { recursive: true });
   return dir;
 }
@@ -336,22 +342,24 @@ describe("AI merge temp worktree cleanup", () => {
     ]));
   });
 
-  it("pruneExistingAiMergeWorktrees removes stale same-task directories from new and legacy roots", async () => {
+  it("pruneExistingAiMergeWorktrees removes stale same-task directories from current and legacy roots", async () => {
     const projectRoot = tempProjectRoot();
     const staleNew = localAiMergeDir(projectRoot, "fusion-ai-merge-fn-777-stale-new");
     const staleLegacyRepo = legacyRepoAiMergeDir(projectRoot, "fusion-ai-merge-fn-777-stale-legacy-repo");
+    const staleLegacyWorktrees = historicWorktreesAiMergeDir(projectRoot, "fusion-ai-merge-fn-777-stale-legacy-worktrees");
     const staleLegacyTmp = tempAiMergeDir("fusion-ai-merge-fn-777-stale-tmp");
-    for (const stale of [staleNew, staleLegacyRepo, staleLegacyTmp]) {
+    for (const stale of [staleNew, staleLegacyRepo, staleLegacyWorktrees, staleLegacyTmp]) {
       makeAge(stale, MIN_TEMP_WORKTREE_REAP_AGE_MS + 1_000);
     }
-    const canonicalStale = [staleNew, staleLegacyRepo, staleLegacyTmp].map((path) => realpathSync(path));
+    const canonicalStale = [staleNew, staleLegacyRepo, staleLegacyWorktrees, staleLegacyTmp].map((path) => realpathSync(path));
     const { audit, events } = makeAudit();
     const logs: string[] = [];
 
-    await expect(pruneExistingAiMergeWorktrees("FN-777", projectRoot, audit, vi.fn(async (message: string) => { logs.push(message); }))).resolves.toBe(3);
+    await expect(pruneExistingAiMergeWorktrees("FN-777", projectRoot, audit, vi.fn(async (message: string) => { logs.push(message); }))).resolves.toBe(4);
 
     expect(existsSync(staleNew)).toBe(false);
     expect(existsSync(staleLegacyRepo)).toBe(false);
+    expect(existsSync(staleLegacyWorktrees)).toBe(false);
     expect(existsSync(staleLegacyTmp)).toBe(false);
     for (const mergeRoot of canonicalStale) {
       expect(events).toEqual(expect.arrayContaining([
@@ -389,7 +397,7 @@ describe("AI merge temp worktree cleanup", () => {
 
     const { mergeRoot, events } = await cleanup({ gitRunner, rmRunner });
 
-    expect(rmRunner).toHaveBeenCalledTimes(10);
+    expect(rmRunner).toHaveBeenCalledTimes(realpathSync(mergeRoot) === mergeRoot ? 5 : 10);
     expect(existsSync(mergeRoot)).toBe(true);
     expect(gitRunner.mock.calls.filter(([args]) => args[1] === "prune")).toHaveLength(1);
     expect(events).toEqual(expect.arrayContaining([

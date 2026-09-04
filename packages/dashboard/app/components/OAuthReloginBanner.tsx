@@ -146,7 +146,7 @@ export function OAuthReloginBanner({
   return (
     <Banner className="oauth-relogin-banner" tone="warning" role="status" aria-live="polite" actions={<div className="oauth-relogin-banner__actions">
       <button type="button" className="btn btn-sm" onClick={() => onReLogin(isSingleProvider ? visibleExpiredProviders[0]?.id : undefined)}>{t("auth.relogin", "Re-login")}</button>
-    </div>} onDismiss={handleDismiss} dismissLabel={t("actions.dismissOAuth", "Dismiss OAuth re-login banner")}> 
+    </div>} onDismiss={handleDismiss} dismissLabel={t("actions.dismissOAuth", "Dismiss OAuth re-login banner")}>
       <div className="oauth-relogin-banner__content">
         <AlertTriangle aria-hidden="true" />
         <p className="oauth-relogin-banner__message">

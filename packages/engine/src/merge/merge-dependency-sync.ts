@@ -18,6 +18,8 @@ export interface WorktreeDependencySyncLogger {
   log?: (message: string) => void;
 }
 
+export type DependencySyncDecisionCode = "ran" | "healed" | "skipped-marker-match" | "no-command";
+
 export interface WorktreeDependencySyncResult {
   installCommand: string | null;
   configured: boolean;
@@ -36,7 +38,7 @@ export interface WorktreeDependencySyncResult {
 
 export interface InstallWorktreeDependenciesOptions {
   cwd: string;
-  settings?: Settings | null;
+  settings?: Pick<Settings, "worktreeInitCommand"> | null;
   taskId: string;
   signal?: AbortSignal;
   log?: (message: string) => Promise<void> | void;
@@ -48,12 +50,30 @@ export function hasInstallState(rootDir: string): boolean {
   return existsSync(join(rootDir, "node_modules")) || existsSync(join(rootDir, ".pnp.cjs"));
 }
 
+/**
+ * Render the shared dependency-readiness decision vocabulary used by task worktree acquisition
+ * and AI-merge clean rooms. The line is intentionally fixed-format so operators can compare the
+ * two environments without interpreting lane-specific prose.
+ */
+export function describeDependencySyncDecision(result: WorktreeDependencySyncResult): string {
+  const code: DependencySyncDecisionCode = result.installCommand === null
+    ? "no-command"
+    : result.healed
+      ? "healed"
+      : result.skipped
+        ? "skipped-marker-match"
+        : "ran";
+  const source = result.configured ? "configured" : "inferred";
+  const command = result.healedCommand ?? result.installCommand ?? "none";
+  return `${code}; source=${source}; command=${command}; duration=${result.durationMs}ms`;
+}
+
 export function getConfiguredWorktreeInitCommand(settings?: Pick<Settings, "worktreeInitCommand"> | null): string | null {
   const trimmed = settings?.worktreeInitCommand?.trim();
   return trimmed ? trimmed : null;
 }
 
-export function getDependencySyncCommand(rootDir: string, settings?: Settings | null): string | null {
+export function getDependencySyncCommand(rootDir: string, settings?: Pick<Settings, "worktreeInitCommand"> | null): string | null {
   const configuredCommand = getConfiguredWorktreeInitCommand(settings);
   if (configuredCommand) return configuredCommand;
   if (existsSync(join(rootDir, "pnpm-lock.yaml"))) return "pnpm install --frozen-lockfile";
@@ -177,6 +197,33 @@ export async function installWorktreeDependencies(options: InstallWorktreeDepend
   these vars, corepack cannot locate its pnpm shim and "pnpm: command not found" occurs.
   */
   const resolvedEnv: NodeJS.ProcessEnv = { ...process.env };
+  /*
+  FNXC:MergeDeps 2026-08-26-13:05:
+  NEVER INSTALL IN PRODUCTION MODE. A clean room exists to RUN THE PROJECT'S CHECKS, and every test
+  runner, linter and type-checker a project owns lives in `devDependencies`. Inheriting an ambient
+  `NODE_ENV=production` (or an `--omit=dev` config) makes `npm install` skip exactly those, so the
+  verification the merge is about to rely on has no binaries to run.
+
+  Measured on a live multi-repository card, in the executor's own words: "Initial npm test lacked dev
+  binaries because the environment omitted devDependencies; npm install --include=dev resolved that".
+  The EXECUTOR repaired its own environment and carried on. The merge clean room runs the same
+  inferred command, does not repair anything, and its reviewer reported "tests could not run: vitest
+  is unavailable" — then approved the merge anyway.
+
+  The project already knows this trap and neutralizes it for its OWN tests (`scripts/test-changed.mjs`
+  — "Developer shells and release scripts can export NODE_ENV=production"); the lesson simply never
+  reached the lane that provisions task and merge checkouts.
+
+  `NODE_ENV=development` is deliberate rather than deleting the variable: some projects branch on it
+  being set at all, and development is the truthful description of a checkout about to be tested.
+  An explicitly configured `worktreeInitCommand` still wins — an operator who wrote their own install
+  command owns its semantics.
+  */
+  resolvedEnv.NODE_ENV = "development";
+  delete resolvedEnv.npm_config_production;
+  delete resolvedEnv.npm_config_omit;
+  delete resolvedEnv.NPM_CONFIG_PRODUCTION;
+  delete resolvedEnv.NPM_CONFIG_OMIT;
   const PNPM_ENV_VARS = ["COREPACK_HOME", "PNPM_HOME", "npm_config_registry"] as const;
   for (const key of PNPM_ENV_VARS) {
     const value = process.env[key];

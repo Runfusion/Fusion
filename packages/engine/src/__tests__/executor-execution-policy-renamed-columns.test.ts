@@ -46,8 +46,6 @@ import type { TaskDetail, WorkflowIr } from "@fusion/core";
 import "./executor-test-helpers.js";
 import { TaskExecutor } from "../executor.js";
 import { createMockStore, resetExecutorMocks } from "./executor-test-helpers.js";
-/* FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage C): the executor threads a real mutation context to every store call, so these assertions pin it rather than dropping the argument. */
-import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 
 const now = "2026-07-28T00:00:00.000Z";
 const WF = "custom:renamed";
@@ -303,7 +301,7 @@ describe("FN-7863/FN-7926 dispatch-loop gate matches the workflow's own hold col
       task.id,
       expect.stringContaining("executor recovery preserved"),
       undefined,
-      ANY_MUTATION_CONTEXT,
+      undefined,
     );
     expect(store.updateTask).not.toHaveBeenCalledWith(
       task.id,
@@ -321,7 +319,7 @@ describe("FN-7863/FN-7926 dispatch-loop gate matches the workflow's own hold col
       task.id,
       expect.stringContaining("executor recovery preserved"),
       undefined,
-      ANY_MUTATION_CONTEXT,
+      undefined,
     );
   });
 
@@ -344,7 +342,7 @@ describe("FN-7863/FN-7926 dispatch-loop gate matches the workflow's own hold col
       task.id,
       expect.stringContaining("executor recovery preserved"),
       undefined,
-      ANY_MUTATION_CONTEXT,
+      undefined,
     );
     expect(task).toMatchObject({
       status: "failed",
@@ -367,7 +365,7 @@ describe("FN-7863/FN-7926 dispatch-loop gate matches the workflow's own hold col
       task.id,
       expect.stringContaining("executor recovery preserved"),
       undefined,
-      ANY_MUTATION_CONTEXT,
+      undefined,
     );
   });
 });
@@ -417,7 +415,7 @@ describe("a resolved workflow is never given a column it does not declare", () =
       task.id,
       expect.stringContaining("executor recovery preserved"),
       undefined,
-      ANY_MUTATION_CONTEXT,
+      undefined,
     );
     /*
     FNXC:WorkflowExecutionOwnership 2026-07-28-19:05 (U8, PR #2497 review — coderabbit):
@@ -428,17 +426,10 @@ describe("a resolved workflow is never given a column it does not declare", () =
     encode the wrong contract; what this case pins is that the DISPATCH-LOOP gate did not claim
     it, and that the run reached a real classifier rather than falling off the end.
 
-    Noted while writing this: the resume router's log said "moved back to todo" and its
-    already-there check was another `"todo"` literal — one of the 20 sites in this method left to
-    U5's executor slice. It is why the card USED TO stay put here rather than being rehomed to
-    `inbox`.
-
-    FNXC:WorkflowExecutionOwnership 2026-07-30-12:40:
-    That literal is now converted, and this case flipped to the outcome the paragraph above
-    predicted: the resume router rehomes the card to `inbox`, this workflow's declared intake column
-    (`noHoldIr`), instead of leaving it parked in a `todo` the workflow does not declare. The
-    prediction landing is the evidence the conversion is right, so this asserts the rehome rather
-    than the absence of a move.
+    FNXC:LifecycleContainment 2026-08-28-01:09:
+    FN-207 keeps a review recovery in the workflow's declared WIP lane. This workflow has no hold
+    lane, so `building` is the only legal resume destination; it must not invent `todo` or regress
+    to the intake column.
 
     What the case still owns is unchanged: the DISPATCH-LOOP gate did not claim the card (no
     "executor recovery preserved" log), and the run reached a real classifier rather than falling off
@@ -446,17 +437,17 @@ describe("a resolved workflow is never given a column it does not declare", () =
     */
     expect(store.logEntry).toHaveBeenCalledWith(
       task.id,
-      expect.stringContaining("execution resume"),
+      expect.stringContaining("resuming execution in 'building'"),
       undefined,
-      ANY_MUTATION_CONTEXT,
+      undefined,
     );
     expect(store.moveTask).toHaveBeenCalledWith(
       task.id,
-      "inbox",
-      expect.objectContaining({ recoveryRehome: true, preserveProgress: true }), ANY_MUTATION_CONTEXT,
+      "building",
+      expect.objectContaining({ recoveryRehome: true, preserveProgress: true }),
     );
     // Still never the literal the workflow does not declare.
-    expect(store.moveTask).not.toHaveBeenCalledWith(task.id, "todo", expect.anything(), ANY_MUTATION_CONTEXT);
+    expect(store.moveTask).not.toHaveBeenCalledWith(task.id, "todo", expect.anything());
     expect(task.status).not.toBe("failed");
   });
 
@@ -474,7 +465,7 @@ describe("a resolved workflow is never given a column it does not declare", () =
       task.id,
       expect.stringContaining("already advanced"),
       undefined,
-      ANY_MUTATION_CONTEXT,
+      undefined,
     );
     expect(task).toMatchObject({
       status: "failed",

@@ -243,13 +243,6 @@ vi.mock("../agents/agent-session-helpers.js", async () => {
 
   };
 });
-vi.mock("../worktree/worktree-names.js", async () => {
-  const actual = await vi.importActual<typeof import("../worktree/worktree-names.js")>("../worktree/worktree-names.js");
-  return {
-    ...actual,
-    generateWorktreeName: vi.fn().mockReturnValue("swift-falcon"),
-  };
-});
 vi.mock("../worktree/worktree-pool.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../worktree/worktree-pool.js")>();
   const backend = await vi.importActual<typeof import("../worktree/worktree-backend.js")>("../worktree/worktree-backend.js");
@@ -259,6 +252,16 @@ vi.mock("../worktree/worktree-pool.js", async (importOriginal) => {
     RemovalReason: backend.RemovalReason,
     removeWorktree: vi.fn(actual.removeWorktree),
     classifyTaskWorktree: vi.fn().mockResolvedValue({ ok: true }),
+    /*
+    FNXC:ExecutorTests 2026-09-02-19:43:
+    Shared executor fixtures model FN-001's already-acquired pinned checkout. The acquisition boundary
+    now requires a non-empty registered branch probe in addition to classification, so provide matching
+    evidence rather than letting every session-oriented test fail before it opens an agent session.
+    */
+    getRegisteredWorktreeBranches: vi.fn().mockResolvedValue([{
+      worktreePath: "/tmp/test/.fusion/worktrees/fn-001",
+      branch: "fusion/fn-001",
+    }]),
     describeRegisteredWorktrees: vi.fn().mockResolvedValue({ rawOutput: "", canonicalized: [] }),
     isUsableTaskWorktree: vi.fn().mockResolvedValue(true),
   };
@@ -410,6 +413,14 @@ vi.mock("../execution/step-session-executor.js", () => ({
     const end = nextHeading === -1 ? prompt.length : nextHeading;
     return prompt.slice(start, end).trim();
   },
+  buildFastLanePrompt: (task: { id: string; description?: string; attachments?: Array<{ originalName: string }> }, _rootDir?: string, _settings?: unknown, worktreePath?: string) => [
+    `## Task: ${task.id}`,
+    "## Original Request",
+    task.description ?? "",
+    ...(task.attachments?.map((attachment) => attachment.originalName) ?? []),
+    `Work only inside ${worktreePath ?? "the assigned task worktree"}.`,
+    `fix(${task.id}): <short summary>`,
+  ].join("\n"),
 }));
 
 vi.mock("../errors/rate-limit-retry.js", () => ({
@@ -453,7 +464,6 @@ vi.mock("@earendil-works/pi-coding-agent", () => {
 
 import { createFnAgent } from "../pi.js";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import { generateWorktreeName } from "../worktree/worktree-names.js";
 import { findWorktreeUser } from "../merger.js";
 import { StepSessionExecutor } from "../execution/step-session-executor.js";
 import { withRateLimitRetry } from "../errors/rate-limit-retry.js";
@@ -468,7 +478,6 @@ import { TaskExecutor } from "../executor.js";
 
 export const mockedCreateFnAgent = vi.mocked(createFnAgent);
 export const mockedSessionManager = vi.mocked(SessionManager);
-export const mockedGenerateWorktreeName = vi.mocked(generateWorktreeName);
 export const mockedFindWorktreeUser = vi.mocked(findWorktreeUser);
 export const mockedStepSessionExecutor = vi.mocked(StepSessionExecutor);
 export const mockedWithRateLimitRetry = vi.mocked(withRateLimitRetry);
@@ -679,6 +688,20 @@ export function createMockStore() {
     updateTask: vi.fn(async (id: string, patch: Record<string, unknown>) => {
       applyPatch(id, patch);
       return { ...(patches.get(id) ?? {}), id };
+    }),
+    /*
+    FNXC:EngineTests 2026-09-04-03:21:
+    The shared executor store fake must model TaskStore's atomic reducer so terminal graph-failure
+    persistence can test its live-row fence without falling into production backoff retries.
+    */
+    updateTaskAtomic: vi.fn(async (
+      id: string,
+      updater: (current: Task) => Record<string, unknown> | null | Promise<Record<string, unknown> | null>,
+    ) => {
+      const current = await store.getTask(id) as Task;
+      const patch = await updater(current);
+      applyPatch(id, patch ?? undefined);
+      return store.getTask(id);
     }),
     mergeWorkspaceWorktreeEntry: vi.fn((
       id: string,

@@ -1,16 +1,8 @@
-/*
-FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
-Extracted helper of the unattended self-healing / scheduler sweeps, so its store writes carry
-the same MARKER as the sweeps that call it: a timer-driven repair has no session, no request,
-and no acting agent, and the only ids in scope name the SUBJECT of the write rather than its
-author. Counted by `unattributed-actor-census.test.ts`; U13 owns whether these lanes get a real
-system actor.
-*/
-import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import type { Task, TaskStore } from "@fusion/core";
 import type { TaskExecutor } from "../executor.js";
 import { createLogger } from "../logger.js";
-import { resolveProjectColumnsForRoles, resolveReboundTargetForTask } from "@fusion/core";
+import { resolveProjectColumnsForRoles, UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
+import { moveTaskToContainedBackwardTarget } from "../execution/lifecycle-move.js";
 import { setImmediate as setImmediateCb } from "node:timers";
 import { NO_PROGRESS_REQUEUE_BUDGET_EXHAUSTED_PREFIX } from "./no-progress-requeue-budget.js";
 
@@ -203,9 +195,9 @@ export class RestartRecoveryCoordinator {
     selected on adds nothing, and a second copy of the same rule is how a read and its filter drift —
     the `paused` check is the only thing that predicate contributed.
 
-    The move DESTINATION below was already resolved (`resolveReboundTargetForTask`); its comment still
-    described the pre-fix state and is corrected there. Naming all three layers because the previous
-    two conversions in this class each hid a second one behind the first.
+    FN-207 later replaced the hold-first destination with the contained-backward seam: this sweep
+    reads WIP cards, so they return one rank to hold, while an unexpected review source could only
+    return to WIP. A missing target stays in place instead of inventing a column.
     */
     const wipColumns = await resolveProjectColumnsForRoles(this.store, ["countsTowardWip"]);
     const byId = new Map<string, Task>();
@@ -252,17 +244,19 @@ export class RestartRecoveryCoordinator {
     }, UNATTRIBUTED_MUTATION_CONTEXT);
     await this.store.logEntry(
       task.id,
-      "Restart recovery: interrupted run had no step progress and no fn_task_done — requeued to todo for safe retry", undefined, UNATTRIBUTED_MUTATION_CONTEXT,
-    );
+      "Restart recovery: interrupted run had no step progress and no fn_task_done — queued for contained safe retry", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
     /*
-    FNXC:WorkflowResolvedColumns 2026-07-30-20:50 / corrected 2026-07-31-23:20:
-    A census-invisible moveTask DESTINATION — a call argument, not a comparison. It is RESOLVED
-    (`resolveReboundTargetForTask`), so the original warning below no longer applies; the comment was
-    describing the pre-fix state long after the fix landed. Left in place, corrected, because the
-    reason it matters is still true: this requeue is not a #1411 `recoveryRehome` escape, so a
-    hardcoded destination would be REJECTED on a board that does not declare it and the recovery
-    would never complete.
+    FNXC:LifecycleContainment 2026-08-28-03:03:
+    Restart recovery uses the live source column and the task's own workflow to choose exactly one
+    adjacent backward lane. The helper keeps unresolved and capacity-blocked recovery in place and
+    preserves the explicit engine source plus registered recovery reason.
     */
-    await this.store.moveTask(task.id, await resolveReboundTargetForTask(this.store, task.id), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
+    await moveTaskToContainedBackwardTarget(
+      this.store,
+      task.id,
+      "self-healing-session-recovery",
+      { moveSource: "engine" },
+      task.column,
+    );
   }
 }

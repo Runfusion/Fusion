@@ -44,6 +44,13 @@ WORKFLOW_INTERPRETER_DUAL_OBSERVE_FLAG read plumbing (named constant +
 */
 export const GRAPH_NATIVE_POST_MERGE_FLAG = "graphNativePostMerge" as const;
 
+/*
+FNXC:ChatMemoryFocus 2026-08-24-04:21:
+Per-conversation memory Focus is opt-in: the chip, /focus command, and recall scoping stay off
+until operators enable this flag. Persisted focus topics remain inert while it is disabled.
+*/
+export const CHAT_FOCUS_FLAG = "chatFocus" as const;
+
 export function isExperimentalFeatureEnabled(
   settings: Pick<Settings, "experimentalFeatures"> | undefined,
   key: string,

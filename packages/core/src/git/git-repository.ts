@@ -5,6 +5,10 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { invalidateGitBinaryCache, isSpawnGitEnoent, resolveGitBinary } from "../cli/git-binary.js";
+import {
+  ensureIntegrationBranchLocalRef,
+  type IntegrationBranchReconciliation,
+} from "./integration-branch-readiness.js";
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_GIT_TIMEOUT_MS = 10_000;
@@ -41,6 +45,11 @@ export interface EnsureGitRepositoryOptions {
   timeoutMs?: number;
 }
 
+export interface ProjectGitReadiness {
+  outcome: GitRepositoryEnsureOutcome;
+  integrationBranches: IntegrationBranchReconciliation[];
+}
+
 export class GitRepositoryInitializationError extends Error {
   readonly path: string;
   readonly causeMessage: string;
@@ -54,7 +63,8 @@ export class GitRepositoryInitializationError extends Error {
 }
 
 /**
- * Ensures that a project has a usable Git baseline before any registry row is written.
+ * Ensures that a project has a usable Git baseline and a resolvable integration ref before
+ * any registry row is written.
  *
  * FNXC:ProjectSetup 2026-08-19-12:44:
  * Registration must be fail-closed: non-Git directories and unborn repositories receive
@@ -63,16 +73,16 @@ export class GitRepositoryInitializationError extends Error {
  * Workspace roots remain browse-only; their members are prepared inside one canonical-root
  * lock so dashboard, CLI, reattachment, and workspace registration cannot drift.
  */
-export async function ensureGitRepositoryForProjectPath(
+export async function ensureProjectGitReadiness(
   projectPath: string,
   options: EnsureGitRepositoryOptions = {},
-): Promise<GitRepositoryEnsureOutcome> {
+): Promise<ProjectGitReadiness> {
   const runner = options.runner ?? runGitCommand;
   const timeout = options.timeoutMs ?? DEFAULT_GIT_TIMEOUT_MS;
 
   return withWorkspaceModeLock(projectPath, async () => {
     try {
-      return await ensureGitRepositoryForProjectPathLocked(projectPath, runner, timeout);
+      return await ensureProjectGitReadinessLocked(projectPath, runner, timeout);
     } catch (error) {
       if (error instanceof GitRepositoryInitializationError) throw error;
       throw new GitRepositoryInitializationError(projectPath, extractCommandErrorMessage(error));
@@ -80,18 +90,33 @@ export async function ensureGitRepositoryForProjectPath(
   });
 }
 
-async function ensureGitRepositoryForProjectPathLocked(
+/** Preserves the legacy outcome-only readiness contract for existing injected callers. */
+export async function ensureGitRepositoryForProjectPath(
+  projectPath: string,
+  options: EnsureGitRepositoryOptions = {},
+): Promise<GitRepositoryEnsureOutcome> {
+  return (await ensureProjectGitReadiness(projectPath, options)).outcome;
+}
+
+async function ensureProjectGitReadinessLocked(
   projectPath: string,
   runner: GitRepositoryCommandRunner,
   timeout: number,
-): Promise<GitRepositoryEnsureOutcome> {
+): Promise<ProjectGitReadiness> {
   const workspace = await loadWorkspaceConfig(projectPath);
   if (workspace) {
     return prepareWorkspaceRepositories(projectPath, workspace.repos, runner, timeout);
   }
 
   if (await isInsideGitWorkTree(projectPath, runner, timeout)) {
-    return prepareSingleRepository(projectPath, runner, timeout, false);
+    const prepared = await prepareSingleRepository(
+      projectPath,
+      runner,
+      timeout,
+      false,
+      await readConfiguredIntegrationBranch(projectPath),
+    );
+    return { outcome: prepared.outcome, integrationBranches: [prepared.integrationBranch] };
   }
 
   /*
@@ -103,14 +128,21 @@ async function ensureGitRepositoryForProjectPathLocked(
   if (!(await isWorkspaceModeExplicitlyDisabled(projectPath))) {
     const detectedRepos = await detectWorkspaceRepos(projectPath, runner, timeout);
     if (detectedRepos.length > 0) {
-      const outcome = await prepareWorkspaceRepositories(projectPath, detectedRepos, runner, timeout);
+      const readiness = await prepareWorkspaceRepositories(projectPath, detectedRepos, runner, timeout);
       await setWorkspaceModeInConfig(projectPath, true);
       await saveWorkspaceConfig(projectPath, { repos: detectedRepos });
-      return outcome;
+      return readiness;
     }
   }
 
-  return prepareSingleRepository(projectPath, runner, timeout, true);
+  const prepared = await prepareSingleRepository(
+    projectPath,
+    runner,
+    timeout,
+    true,
+    await readConfiguredIntegrationBranch(projectPath),
+  );
+  return { outcome: prepared.outcome, integrationBranches: [prepared.integrationBranch] };
 }
 
 async function prepareWorkspaceRepositories(
@@ -118,14 +150,19 @@ async function prepareWorkspaceRepositories(
   repos: string[],
   runner: GitRepositoryCommandRunner,
   timeout: number,
-): Promise<GitRepositoryEnsureOutcome> {
+): Promise<ProjectGitReadiness> {
   let initialized = false;
+  const integrationBranches: IntegrationBranchReconciliation[] = [];
   for (const relativeRepo of repos) {
     const repoPath = join(rootDir, relativeRepo);
-    const outcome = await prepareSingleRepository(repoPath, runner, timeout, true);
-    initialized ||= outcome === "initialized";
+    const prepared = await prepareSingleRepository(repoPath, runner, timeout, true, undefined, relativeRepo);
+    initialized ||= prepared.outcome === "initialized";
+    integrationBranches.push(prepared.integrationBranch);
   }
-  return initialized ? "initialized" : "existing";
+  return {
+    outcome: initialized ? "initialized" : "existing",
+    integrationBranches,
+  };
 }
 
 async function prepareSingleRepository(
@@ -133,7 +170,9 @@ async function prepareSingleRepository(
   runner: GitRepositoryCommandRunner,
   timeout: number,
   initializeIfMissing: boolean,
-): Promise<GitRepositoryEnsureOutcome> {
+  configuredBranch?: string,
+  repoRelPath = ".",
+): Promise<{ outcome: GitRepositoryEnsureOutcome; integrationBranch: IntegrationBranchReconciliation }> {
   let repositoryExists = await isInsideGitWorkTree(projectPath, runner, timeout);
   if (!repositoryExists && !initializeIfMissing) {
     throw new Error("workspace member is not a usable Git repository");
@@ -166,7 +205,22 @@ async function prepareSingleRepository(
     }
   }
 
-  return initialized || !hasHead ? "initialized" : "existing";
+  /*
+  FNXC:IntegrationBranchReadiness 2026-08-24-00:41:
+  FN-183 reconciles the integration ref only after baseline creation. An unborn repository
+  therefore already has its symbolic local branch and reports it as existing; adopting fetched
+  upstream history into that new baseline is intentionally outside this narrow readiness seam.
+  */
+  const integrationBranch = await ensureIntegrationBranchLocalRef(projectPath, {
+    runner,
+    timeoutMs: timeout,
+    configuredBranch,
+    repoRelPath,
+  });
+  return {
+    outcome: initialized || !hasHead ? "initialized" : "existing",
+    integrationBranch,
+  };
 }
 
 async function hasVerifiableHead(
@@ -412,6 +466,32 @@ export class WorkspaceRepoValidationError extends Error {
 
 const WORKSPACE_CONFIG_FILENAME = "workspace.json";
 const EXCLUDED_WORKSPACE_ENTRIES = new Set(["node_modules", ".fusion", ".git", ".pi", ".worktrees"]);
+
+/**
+ * FNXC:IntegrationBranchReadiness 2026-08-24-00:41:
+ * Registration may consult the project-local config mirror before the database row exists.
+ * Keep this read-only and best-effort: an explicit integrationBranch wins, with baseBranch
+ * retained only as the legacy fallback, while malformed or unavailable mirrors never block
+ * Git readiness.
+ */
+async function readConfiguredIntegrationBranch(projectPath: string): Promise<string | undefined> {
+  try {
+    const { readFile } = await import("node:fs/promises");
+    const { join } = await import("node:path");
+    const raw = await readFile(join(projectPath, ".fusion", "config.json"), "utf-8");
+    const config = JSON.parse(raw) as {
+      settings?: { integrationBranch?: unknown; baseBranch?: unknown };
+    };
+    for (const value of [config.settings?.integrationBranch, config.settings?.baseBranch]) {
+      if (typeof value !== "string") continue;
+      const branch = value.trim();
+      if (branch) return branch;
+    }
+  } catch {
+    // FNXC:IntegrationBranchReadiness 2026-08-24-00:41: Config-mirror failures are advisory only.
+  }
+  return undefined;
+}
 
 /**
  * Reads .fusion/config.json and returns true when `workspaceMode` is explicitly

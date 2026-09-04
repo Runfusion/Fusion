@@ -1,6 +1,5 @@
 import { sortTasksForDisplayColumn, type TaskColumnSortMode, type Task, type TaskDetail, type Column as ColumnType, type ColumnId, type TaskCreateInput, type GithubIssueAction, type MergeResult } from "@fusion/core";
 import { Column } from "./Column";
-import { TaskCard } from "./TaskCard";
 import "./Lane.css";
 import "./Board.css";
 import type { ToastType } from "../hooks/useToast";
@@ -8,7 +7,7 @@ import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { createPortal } from "react-dom";
-import { promoteTask, type ModelInfo, type BoardWorkflowsPayload, type BoardWorkflowColumn, type RevertTaskOptions, type RevertTaskResult } from "../api";
+import { type ModelInfo, type BoardWorkflowsPayload, type BoardWorkflowColumn, type RevertTaskOptions, type RevertTaskResult } from "../api";
 import { useBlockerFanout, type BlockerFanoutColumnFlags } from "../hooks/useBlockerFanout";
 import { useColumnScrollSnap } from "../hooks/useColumnScrollSnap";
 import { useBoardMousePan } from "../hooks/useBoardMousePan";
@@ -26,20 +25,20 @@ import {
   writeBoardWorkflowSelection,
 } from "../utils/boardWorkflowSelection";
 import type { TaskContextMenuColumnMetadata } from "./TaskContextMenu";
-import { isTaskReverted, partitionRevertedTasks } from "../utils/taskRevert";
+import { isTaskReverted } from "../utils/taskRevert";
 
 interface BoardProps {
   tasks: Task[];
   projectId?: string;
   maxConcurrent: number;
-  /** Shared engine-enforced capacity for the board's Up Next preview. */
-  effectiveMaxConcurrent?: number;
+  /** Execution-worktree capacity for the board's Up Next preview. */
+  maxWorktrees: number;
   showWorktreeGrouping: boolean;
-  onMoveTask: (id: string, column: ColumnId) => Promise<Task>;
+  onMoveTask: (id: string, column: ColumnId, optionsOrPosition?: { preserveProgress?: boolean; expectedColumn?: string } | number) => Promise<Task>;
   onPauseTask?: (id: string) => Promise<Task>;
   onUnpauseTask?: (id: string) => Promise<Task>;
-  onResetTask?: (id: string) => Promise<Task>;
-  onDuplicateTask?: (id: string) => Promise<Task>;
+  onResetTask?: (id: string, options?: { description?: string }) => Promise<Task>;
+  onDuplicateTask?: (id: string, options?: { workflowId?: string }) => Promise<Task>;
   onMergeTask?: (id: string) => Promise<MergeResult>;
   onOpenDetail: (task: Task | TaskDetail) => void;
   onOpenRefine?: (task: Task | TaskDetail) => void;
@@ -59,6 +58,7 @@ interface BoardProps {
     updates: { title?: string; description?: string; dependencies?: string[] }
   ) => Promise<Task>;
   onRetryTask?: (id: string) => Promise<Task>;
+  onOpenChatWithPrefill?: (prefillText: string) => void;
   onArchiveTask?: (id: string, options?: { removeLineageReferences?: boolean }) => Promise<Task>;
   onUnarchiveTask?: (id: string) => Promise<Task>;
   /* FNXC:TaskRevert 2026-07-05-00:00 (FN-7525): threaded alongside onArchiveTask/onUnarchiveTask. */
@@ -109,6 +109,12 @@ interface BoardProps {
   /** Already-resolved app setting for whether workflow lanes should be used. */
   /** Relocates workflow controls into the Header portal slot when sidebar navigation owns the inline chrome. */
   workflowControlsInHeader?: boolean;
+  /*
+  FNXC:MainViewKeepAlive 2026-08-30-19:05:
+  A kept-alive host leaves Board mounted while hidden. Inactive means its local state stays intact,
+  but it must release shared workflow-header ownership until it is the visible main view again.
+  */
+  active?: boolean;
 }
 
 let boardWasPreviouslyInactive = false;
@@ -179,7 +185,7 @@ function columnDefOffersArchiveAllDone(columnDef: { flags: { complete?: boolean;
   return columnDef.flags.complete === true && columnDef.flags.archived !== true;
 }
 
-export function Board({ tasks, projectId, maxConcurrent, effectiveMaxConcurrent = maxConcurrent, showWorktreeGrouping, onMoveTask, onPauseTask, onUnpauseTask, onResetTask, onDuplicateTask, onMergeTask, onOpenDetail, onOpenRefine, onOpenGroupModal, addToast, onQuickCreate, onNewTask, autoMerge, mergeStrategy = "direct", onToggleAutoMerge, planAutoApproveEnabled, onTogglePlanAutoApprove, globalPaused, onUpdateTask, onRetryTask, onArchiveTask, onUnarchiveTask, onRevertTask, onReviseTask, onDeleteTask, onArchiveAllDone, onLoadArchivedTasks, onLoadMoreArchivedTasks, archivedSortMode, onArchivedSortModeChange, archivedHasMore, archivedLoadingMore, searchQuery = "", availableModels, onPlanningMode, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, onOpenMission, staleHighFanoutBlockerAgeThresholdMs, lastFetchTimeMs, prAuthAvailable, onOpenWorkflowEditor, onCreateWorkflow, workflowControlsInHeader = false }: BoardProps) {
+export function Board({ tasks, projectId, maxConcurrent, maxWorktrees, showWorktreeGrouping, onMoveTask, onPauseTask, onUnpauseTask, onResetTask, onDuplicateTask, onMergeTask, onOpenDetail, onOpenRefine, onOpenGroupModal, addToast, onQuickCreate, onNewTask, autoMerge, mergeStrategy = "direct", onToggleAutoMerge, planAutoApproveEnabled, onTogglePlanAutoApprove, globalPaused, onUpdateTask, onRetryTask, onOpenChatWithPrefill, onArchiveTask, onUnarchiveTask, onRevertTask, onReviseTask, onDeleteTask, onArchiveAllDone, onLoadArchivedTasks, onLoadMoreArchivedTasks, archivedSortMode, onArchivedSortModeChange, archivedHasMore, archivedLoadingMore, searchQuery = "", availableModels, onPlanningMode, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, onOpenMission, staleHighFanoutBlockerAgeThresholdMs, lastFetchTimeMs, prAuthAvailable, onOpenWorkflowEditor, onCreateWorkflow, workflowControlsInHeader = false, active = true }: BoardProps) {
   const { t } = useTranslation("app");
   const [archivedCollapsed, setArchivedCollapsed] = useState(true);
   /*
@@ -236,8 +242,19 @@ export function Board({ tasks, projectId, maxConcurrent, effectiveMaxConcurrent 
   remains native until horizontal intent is proven. A real pan captures and consumes its compatibility
   click; stationary card bodies/text retain their configured detail route, while controls, editing,
   the skeleton, and mobile snap ownership remain unchanged.
+
+  FNXC:BoardTextSelection 2026-08-27-10:06:
+  FN-194 makes selection suppression CSS-owned by the shared `.board` class before this 4px-intent
+  hook can capture a drag. Keep the class name and pan wiring unchanged so the intentional pan remains
+  the sole pointer-driven horizontal scroll path while editable descendants opt back in through Board.css.
   */
-  const { isPanning: isBoardMousePanning, ...boardMousePanBindings } = useBoardMousePan(boardElement, viewportMode !== "mobile");
+  /*
+  FNXC:BoardNavigation 2026-08-30-07:01:
+  Mouse panning remains active at every viewport mode because a narrow non-touch browser resolves
+  to mobile. The snap owner ignores mouse input, while this owner captures only proven horizontal
+  intent and excludes controls, preserving stationary clicks; FN-9219 covered Electron only.
+  */
+  const { isPanning: isBoardMousePanning, ...boardMousePanBindings } = useBoardMousePan(boardElement, true);
   const boardClassName = `board board-workflow-columns${isBoardMousePanning ? " is-mouse-panning" : ""}`;
   const [headerWorkflowSlot, setHeaderWorkflowSlot] = useState<HTMLElement | null>(() => {
     if (typeof document === "undefined") return null;
@@ -246,14 +263,16 @@ export function Board({ tasks, projectId, maxConcurrent, effectiveMaxConcurrent 
   // Normalized search-active signal: trimmed and non-empty
   const isSearchActive = searchQuery.trim() !== "";
   useEffect(() => {
-    if (!workflowControlsInHeader || typeof document === "undefined") {
+    if (!active || !workflowControlsInHeader || typeof document === "undefined") {
       setHeaderWorkflowSlot(null);
       return;
     }
     setHeaderWorkflowSlot(document.getElementById("header-workflow-slot"));
-  }, [workflowControlsInHeader, viewportMode]);
+  }, [active, workflowControlsInHeader, viewportMode]);
 
   useEffect(() => {
+    if (!active) return;
+
     recordResumeEvent({
       view: "Board",
       trigger: boardWasPreviouslyInactive ? "route-active" : "remount",
@@ -271,7 +290,7 @@ export function Board({ tasks, projectId, maxConcurrent, effectiveMaxConcurrent 
         replayAttempted: false,
       });
     };
-  }, [projectId]);
+  }, [active, projectId]);
 
   const handleToggleArchivedCollapse = useCallback(() => {
     setArchivedCollapsed((current) => {
@@ -438,11 +457,6 @@ export function Board({ tasks, projectId, maxConcurrent, effectiveMaxConcurrent 
     staleHighFanoutAgeThresholdMs: staleHighFanoutBlockerAgeThresholdMs,
     columnFlagsByTaskId: blockerFanoutColumnFlagsByTaskId,
   });
-
-  const handlePromote = useCallback(async (taskId: string, options?: { force?: boolean }) => {
-    // `force` only ever arrives from Column's confirmed unplanned-for-execution override.
-    await promoteTask(taskId, projectId, options);
-  }, [projectId]);
 
   const handleToggleAutoMerge = useCallback(() => {
     onToggleAutoMerge();
@@ -618,7 +632,7 @@ export function Board({ tasks, projectId, maxConcurrent, effectiveMaxConcurrent 
     for (const workflow of boardWorkflows?.workflows ?? []) {
       map.set(workflow.id, workflow.columns
         .filter((column) => !column.flags.hiddenFromBoard)
-        .map((column) => ({ id: column.id, label: column.name, flags: column.flags, ...(column.moveTargets ? { moveTargets: column.moveTargets } : {}) })));
+        .map((column) => ({ id: column.id, label: column.name, flags: column.flags })));
     }
     return map;
   }, [boardWorkflows]);
@@ -677,8 +691,17 @@ export function Board({ tasks, projectId, maxConcurrent, effectiveMaxConcurrent 
     FNXC:WorkflowBoard 2026-07-05-14:20:
     Safety net (defense in depth for the taskWorkflowIds refetch above): a card that passed the selected-workflow membership filter genuinely belongs on THIS board, so it must always land in a rendered lane. If its stored `column` is not one this workflow declares (a workflow edited to drop a column, or a create/refetch race that lands an intake-column card before its lane is known), re-home it for DISPLAY into the workflow's intake/first visible column instead of a `??=`-created bucket that is never rendered. Display-only — the task's stored column is untouched.
     */
+    /*
+    FNXC:TaskRevert 2026-08-27-02:34:
+    Reverted work stays in its stored lane and may arrive twice during an optimistic/refetch overlap.
+    Preserve the former reverted-group identity guarantee without deduplicating ordinary task rows.
+    */
+    const seenRevertedTaskIds = new Set<string>();
     for (const task of selectedWorkflowTasks) {
-      if (isTaskReverted(task.sourceMetadata) && selectedWorkflow.columns.find((column) => column.id === task.column)?.flags.complete) continue;
+      if (isTaskReverted(task.sourceMetadata)) {
+        if (seenRevertedTaskIds.has(task.id)) continue;
+        seenRevertedTaskIds.add(task.id);
+      }
       const columnId = grouped[task.column] !== undefined
         ? task.column
         : (selectedWorkflowCreateColumnId ?? task.column);
@@ -820,17 +843,6 @@ export function Board({ tasks, projectId, maxConcurrent, effectiveMaxConcurrent 
     [aggregateArchivedBoardColumns, aggregateVisibleBoardColumns],
   );
 
-  /*
-  FNXC:TaskRevert 2026-08-01-20:06:
-  A successful revert is resolution-required work, not completed work. Aggregate the
-  shared, deduplicated partition once so All Workflows keeps those cards discoverable
-  after its complete lanes exclude them, including custom complete columns.
-  */
-  const aggregateRevertedTasks = useMemo(
-    () => partitionRevertedTasks(tasks).reverted,
-    [tasks],
-  );
-
   const aggregateTasksByColumn = useMemo(() => {
     const grouped: Record<string, Task[]> = {};
     for (const column of aggregateBoardColumns) grouped[column.id] = [];
@@ -844,7 +856,17 @@ export function Board({ tasks, projectId, maxConcurrent, effectiveMaxConcurrent 
         if (column.flags.hiddenFromBoard) hiddenAnywhereColumnIds.add(column.id);
       }
     }
+    /*
+    FNXC:TaskRevert 2026-08-27-02:34:
+    Reverted cards no longer have a separate group that deduplicates their ids. Retain that
+    protection in the aggregate lane grouping so a refetch duplicate cannot render twice.
+    */
+    const seenRevertedTaskIds = new Set<string>();
     for (const task of tasks) {
+      if (isTaskReverted(task.sourceMetadata)) {
+        if (seenRevertedTaskIds.has(task.id)) continue;
+        seenRevertedTaskIds.add(task.id);
+      }
       const workflowId = getEffectiveTaskWorkflowId(task);
       const workflowColumn = workflowId ? workflowColumnsByWorkflowId.get(workflowId)?.get(task.column) : null;
       /*
@@ -852,7 +874,6 @@ export function Board({ tasks, projectId, maxConcurrent, effectiveMaxConcurrent 
       Aggregate Board grouping must resolve the task's effective workflow before using a shared column id. If one workflow hides `qa` while another shows it, tasks assigned to the hidden `qa` column stay hidden instead of leaking into the visible aggregate lane.
       */
       if (workflowColumn?.flags.hiddenFromBoard) continue;
-      if (isTaskReverted(task.sourceMetadata) && workflowColumn?.flags.complete) continue;
       if (!workflowColumn) {
         /*
         FNXC:WorkflowBoard 2026-07-12-23:35:
@@ -936,11 +957,17 @@ export function Board({ tasks, projectId, maxConcurrent, effectiveMaxConcurrent 
 
     FNXC:WorkflowControls 2026-06-20-15:42:
     Standalone workflow edit/create icon buttons were removed because those actions now live inside WorkflowSwitcher; keep this wrapper only when it contains the switcher to avoid empty toolbar shells.
+
+    FNXC:MainViewKeepAlive 2026-08-31-14:54:
+    React commits portals before the active-gate effect clears a retained Board's cached header slot.
+    Gate selection here too, so an inactive Board renders its toolbar inline inside the hidden wrapper
+    instead of claiming the shared slot for a commit.
     */
-    const relocatedWorkflowToolbar = workflowControlsInHeader && headerWorkflowSlot && workflowToolbar
-      ? createPortal(workflowToolbar, headerWorkflowSlot)
+    const shouldRelocateWorkflowToolbar = active && workflowControlsInHeader && Boolean(headerWorkflowSlot);
+    const relocatedWorkflowToolbar = shouldRelocateWorkflowToolbar && workflowToolbar
+      ? createPortal(workflowToolbar, headerWorkflowSlot!)
       : null;
-    const renderedWorkflowToolbar = workflowControlsInHeader && headerWorkflowSlot ? relocatedWorkflowToolbar : workflowToolbar;
+    const renderedWorkflowToolbar = shouldRelocateWorkflowToolbar ? relocatedWorkflowToolbar : workflowToolbar;
 
     if (isAllWorkflowsViewSelected) {
       return (
@@ -973,7 +1000,7 @@ export function Board({ tasks, projectId, maxConcurrent, effectiveMaxConcurrent 
                   tasks={aggregateTasksByColumn[columnDef.id] ?? []}
                   projectId={projectId}
                   maxConcurrent={maxConcurrent}
-                  effectiveMaxConcurrent={effectiveMaxConcurrent}
+                  maxWorktrees={maxWorktrees}
                   showWorktreeGrouping={showWorktreeGrouping}
                   onMoveTask={onMoveTask}
                   onPauseTask={onPauseTask}
@@ -989,9 +1016,11 @@ export function Board({ tasks, projectId, maxConcurrent, effectiveMaxConcurrent 
                   globalPaused={globalPaused}
                   onUpdateTask={onUpdateTask}
                   onRetryTask={onRetryTask}
+                  onOpenChatWithPrefill={onOpenChatWithPrefill}
                   onArchiveTask={onArchiveTask}
                   onUnarchiveTask={onUnarchiveTask}
                   onRevertTask={onRevertTask}
+                  onReviseTask={onReviseTask}
                   onDeleteTask={onDeleteTask}
                   allTasks={tasks}
                   availableModels={availableModels}
@@ -1020,22 +1049,6 @@ export function Board({ tasks, projectId, maxConcurrent, effectiveMaxConcurrent 
                 />
               );
             })}
-            {aggregateRevertedTasks.length > 0 && (
-              <section className="reverted-tasks-section" aria-label={t("tasks.revertedTasks", "Reverted Tasks")} data-testid="board-reverted-tasks">
-                <h2>{t("tasks.revertedTasks", "Reverted Tasks")}</h2>
-                {aggregateRevertedTasks.map((task) => (
-                  <TaskCard
-                    key={`reverted-${task.id}`}
-                    task={task}
-                    taskColumnFlags={blockerFanoutColumnFlagsByTaskId.get(task.id)}
-                    onOpenDetail={onOpenDetail}
-                    onDeleteTask={onDeleteTask}
-                    onReviseTask={onReviseTask}
-                    addToast={addToast}
-                  />
-                ))}
-              </section>
-            )}
           </main>
         </div>
       );
@@ -1070,13 +1083,12 @@ export function Board({ tasks, projectId, maxConcurrent, effectiveMaxConcurrent 
                 allTasks={selectedWorkflowTasks}
                 projectId={projectId}
                 maxConcurrent={maxConcurrent}
-                effectiveMaxConcurrent={effectiveMaxConcurrent}
+                maxWorktrees={maxWorktrees}
                 showWorktreeGrouping={showWorktreeGrouping}
                 onMoveTask={onMoveTask}
-                onPromote={handlePromote}
                 onPauseTask={onPauseTask}
                 onUnpauseTask={onUnpauseTask}
-                onResetTask={onResetTask}
+                  onResetTask={onResetTask}
                 onDuplicateTask={onDuplicateTask}
                 onMergeTask={onMergeTask}
                 onOpenDetail={onOpenDetail}
@@ -1087,9 +1099,11 @@ export function Board({ tasks, projectId, maxConcurrent, effectiveMaxConcurrent 
                 globalPaused={globalPaused}
                 onUpdateTask={onUpdateTask}
                 onRetryTask={onRetryTask}
+                onOpenChatWithPrefill={onOpenChatWithPrefill}
                 onArchiveTask={onArchiveTask}
                 onUnarchiveTask={onUnarchiveTask}
                 onRevertTask={onRevertTask}
+                onReviseTask={onReviseTask}
                 onDeleteTask={onDeleteTask}
                 availableModels={availableModels}
                 onOpenDetailWithTab={onOpenDetailWithTab}
@@ -1114,12 +1128,6 @@ export function Board({ tasks, projectId, maxConcurrent, effectiveMaxConcurrent 
               />
             );
           })}
-          {partitionRevertedTasks(selectedWorkflowTasks).reverted.length > 0 && (
-            <section className="reverted-tasks-section" aria-label={t("tasks.revertedTasks", "Reverted Tasks")} data-testid="board-reverted-tasks">
-              <h2>{t("tasks.revertedTasks", "Reverted Tasks")}</h2>
-              {partitionRevertedTasks(selectedWorkflowTasks).reverted.map((task) => <TaskCard key={`reverted-${task.id}`} task={task} taskColumnFlags={blockerFanoutColumnFlagsByTaskId.get(task.id)} onOpenDetail={onOpenDetail} onDeleteTask={onDeleteTask} onReviseTask={onReviseTask} addToast={addToast} />)}
-            </section>
-          )}
           {selectedWorkflowArchivedColumn && (
             <Column
               key={selectedWorkflowArchivedColumn.id}
@@ -1135,13 +1143,12 @@ export function Board({ tasks, projectId, maxConcurrent, effectiveMaxConcurrent 
               allTasks={selectedWorkflowTasks}
               projectId={projectId}
               maxConcurrent={maxConcurrent}
-              effectiveMaxConcurrent={effectiveMaxConcurrent}
+              maxWorktrees={maxWorktrees}
               showWorktreeGrouping={showWorktreeGrouping}
               onMoveTask={onMoveTask}
-              onPromote={handlePromote}
               onPauseTask={onPauseTask}
               onUnpauseTask={onUnpauseTask}
-              onResetTask={onResetTask}
+                  onResetTask={onResetTask}
               onDuplicateTask={onDuplicateTask}
               onMergeTask={onMergeTask}
               onOpenDetail={onOpenDetail}
@@ -1152,9 +1159,11 @@ export function Board({ tasks, projectId, maxConcurrent, effectiveMaxConcurrent 
               globalPaused={globalPaused}
               onUpdateTask={onUpdateTask}
               onRetryTask={onRetryTask}
+              onOpenChatWithPrefill={onOpenChatWithPrefill}
               onArchiveTask={onArchiveTask}
               onUnarchiveTask={onUnarchiveTask}
               onRevertTask={onRevertTask}
+              onReviseTask={onReviseTask}
               onDeleteTask={onDeleteTask}
               availableModels={availableModels}
               onOpenDetailWithTab={onOpenDetailWithTab}

@@ -770,6 +770,34 @@ function LogsPanel({
   );
 }
 
+/*
+FNXC:TuiRawLogs 2026-08-26-14:10:
+Logs, and nothing else: no panel border, no title, no filter row, no header, no status bar. A
+rectangular terminal selection over the normal view captures box-drawing characters and neighbouring
+rows, which is what makes a copied log unusable; here every line is plain text starting at column 0.
+Mouse reporting is released alongside it (see `wantsMouse`), because it is enabled for wheel
+scrolling on this panel and otherwise swallows the click-drag entirely.
+The timestamp/level/prefix shape matches the `[c]` single-line copy, so a mouse selection and a
+keyboard copy produce the same text.
+*/
+function RawLogs({ state, rows }: { state: DashboardState; rows: number }) {
+  const entries = state.logEntries.filter((entry) =>
+    state.logsSeverityFilter === "all" || entry.level === state.logsSeverityFilter);
+  const visible = entries.slice(Math.max(0, entries.length - Math.max(1, rows)));
+  return (
+    <Box flexDirection="column" flexGrow={1} width="100%">
+      {visible.map((entry, index) => {
+        const prefix = entry.prefix ? `[${entry.prefix}] ` : "";
+        return (
+          <Text key={`${entry.timestamp}-${index}`} wrap="wrap">
+            {`${formatTimestamp(entry.timestamp)} ${entry.level.toUpperCase()} ${prefix}${stripLeadingDetailedTimestamp(entry.message)}`}
+          </Text>
+        );
+      })}
+    </Box>
+  );
+}
+
 function ExpandedLog({
   entry,
   index,
@@ -861,6 +889,7 @@ function HelpOverlay() {
     ["[→] / [↓] / [n]", t("tui.helpShortcutNextPanel", "Next panel (Main; ↑/↓ scroll on Logs)")],
     ["[←] / [↑] / [p]", t("tui.helpShortcutPrevPanel", "Previous panel (Main; ↑/↓ scroll on Logs)")],
     ["[Enter]", t("tui.helpShortcutExpandLog", "Expand log + release mouse for text selection (Logs)")],
+    ["[V]", t("tui.helpShortcutRawLogs", "Raw logs: no borders, mouse released — select a range to copy (Logs)")],
     ["[r]", t("tui.helpShortcutRefreshStats", "Refresh stats (Utilities)")],
     ["[c]", t("tui.helpShortcutClearLogs", "Clear logs (Utilities)")],
     ["[k]", t("tui.helpShortcutKillVitest", "Kill all vitest processes (Utilities)")],
@@ -1079,6 +1108,13 @@ function StatusModeSingle({
     }
   };
 
+  /*
+  FNXC:TuiRawLogs 2026-08-26-14:10:
+  Raw mode replaces the WHOLE frame, status bar included. Leaving any chrome on screen defeats the
+  point: a rectangular drag would still capture it, and the borders are precisely what made copied
+  logs unusable. One trailing hint line stays, because a full-screen view with no visible way out is
+  worse than one extra row.
+  */
   return (
     <Box flexDirection="column" flexGrow={1}>
       <Box flexGrow={1} flexDirection="column" overflow="hidden">
@@ -4269,7 +4305,8 @@ export function DashboardApp({ controller }: DashboardAppProps) {
     ? (state.interactiveView === "files"
        || state.interactiveView === "git"
        || state.interactiveView === "board")
-    : (statusLogsFocused && !state.logsExpandedMode);
+    /* FNXC:TuiRawLogs 2026-08-26-14:10: raw mode exists to allow native click-drag, so it must release the mouse. */
+    : (statusLogsFocused && !state.logsExpandedMode && !state.logsRawMode);
   useEffect(() => {
     if (state.mouseEnabled !== wantsMouse) {
       controller.setMouseEnabled(wantsMouse);
@@ -4572,7 +4609,9 @@ export function DashboardApp({ controller }: DashboardAppProps) {
       const filteredEntries = controller.getFilteredLogEntries();
 
       if (key.escape) {
-        if (state.logsExpandedMode) {
+        if (state.logsRawMode) {
+          controller.setLogsRawMode(false);
+        } else if (state.logsExpandedMode) {
           controller.setLogsExpandedMode(false);
           controller.setShowHelp(false);
         } else if (state.showHelp) {
@@ -4588,6 +4627,23 @@ export function DashboardApp({ controller }: DashboardAppProps) {
         if (filteredEntries.length > 0) {
           controller.setLogsExpandedMode(!state.logsExpandedMode);
         }
+        return;
+      }
+
+      /*
+      FNXC:TuiRawLogs 2026-08-26-14:40:
+      SHIFT+V, not [v]: the Utilities panel already advertises `[v] Auto-Kill Vitest` on the same
+      screen. The two handlers are mutually exclusive at runtime (utility actions require the
+      Utilities section, this branch requires log focus), so there is no functional clash — but two
+      different `[v]` legends visible at once is a UI anyone would misread.
+
+      Shows the logs alone, chrome-free and mouse-released, so a terminal click-drag copies clean
+      text. `[c]` already copies ONE selected line; this is the path for copying a range, which no
+      keyboard shortcut can express. Esc returns (handled with the other escapes above).
+      */
+      if (input === "V") {
+        controller.setLogsRawMode(!state.logsRawMode);
+        if (!state.logsRawMode) controller.setShowHelp(false);
         return;
       }
 
@@ -4689,6 +4745,27 @@ export function DashboardApp({ controller }: DashboardAppProps) {
     resizeTick,
     hasSystemInfo: Boolean(state.systemInfo),
   });
+
+  /*
+  FNXC:TuiRawLogs 2026-08-26-14:40:
+  Raw mode replaces the ENTIRE frame, above the layout choice — header included.
+
+  It was first added inside the single-pane layout only, which is the narrow one. On a wide terminal
+  the dashboard renders the GRID layout instead (System / Stats / Utilities / Settings beside Logs),
+  so the toggle changed state and nothing moved on screen. The point of this mode is that NO chrome
+  survives a rectangular selection, and chrome is drawn by both layouts plus the header — so the
+  escape has to happen before either is chosen.
+  */
+  if (state.mode === "status" && state.logsRawMode) {
+    return (
+      <Box key={layoutKey} flexDirection="column" height={rows} width={cols} overflow="hidden">
+        <RawLogs state={state} rows={Math.max(1, rows - 1)} />
+        <Box height={1} flexShrink={0}>
+          <Text dimColor>{t("tui.rawLogsHint", "[V/Esc] leave raw logs · select with the mouse to copy")}</Text>
+        </Box>
+      </Box>
+    );
+  }
 
   return (
     <Box key={layoutKey} flexDirection="column" height={rows} width={cols} overflow="hidden">

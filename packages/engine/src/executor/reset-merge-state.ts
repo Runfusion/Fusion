@@ -12,14 +12,14 @@
  * `resolveWorkflowIrForTask` degrades to the BUILT-IN IR rather than throwing.
  */
 import type { Task, TaskStore } from "@fusion/core";
-import { columnsWithFlag, resolveWorkflowIrForTask } from "@fusion/core";
+import { columnsWithFlag, resolveStepReopenPolicy, resolveWorkflowIrForTask } from "@fusion/core";
 
 export type ResetMergeStateDeps = {
   store: TaskStore;
   cleanupMergeStateForReverification: (
     task: Task,
     logMessage: string,
-    options?: { preserveVerificationFailureCount?: boolean },
+    options?: { preserveVerificationFailureCount?: boolean; stepReopenPolicy?: "reopen-trailing" | "none" },
   ) => Promise<Task>;
 };
 
@@ -52,6 +52,7 @@ export async function resetMergeStateIfNeeded(
     return task;
   }
 
+  const ir = await resolveWorkflowIrForTask(deps.store, task.id).catch(() => undefined);
   return deps.cleanupMergeStateForReverification(
     task,
     `Task returned to in-progress from ${from} column — resetting verification steps and merge state for re-verification`,
@@ -60,6 +61,7 @@ export async function resetMergeStateIfNeeded(
       // cycles. Status may be cleared by intermediate paths, so the counter is
       // the canonical signal once a bounce has started.
       preserveVerificationFailureCount: (task.verificationFailureCount ?? 0) > 0,
+      stepReopenPolicy: resolveStepReopenPolicy(ir),
     },
   );
 }

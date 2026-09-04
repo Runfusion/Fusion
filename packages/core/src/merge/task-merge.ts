@@ -1,6 +1,8 @@
 import { isBranchGroupMemberLanded } from "../branch/branch-group-completion.js";
 import { taskHasManualOpenPullRequest } from "../tasks/task-helpers.js";
 import type { BranchGroup, Settings, Task, WorkflowStepResult } from "../types.js";
+import type { MergeContentDescriptor } from "./merge-content-descriptor.js";
+import { evaluatePreMergeApprovals } from "./pre-merge-approval.js";
 
 export interface LandedMemberReviewAdvisory {
   taskId: string;
@@ -83,7 +85,7 @@ export interface MergeTargetResolverOptions {
  */
 const FUSION_SIBLING_BRANCH_RE = /^fusion\/fn-/i;
 
-function isFusionSiblingBranch(branch: string): boolean {
+export function isFusionSiblingBranch(branch: string): boolean {
   return FUSION_SIBLING_BRANCH_RE.test(branch);
 }
 
@@ -335,6 +337,25 @@ const NON_TERMINAL_STEP_STATUSES = new Set([
   "in-progress",
 ]);
 
+/*
+FNXC:MergeBlockerReasons 2026-08-26-11:40:
+The RULE behind the "task has incomplete steps" blocker, exported so a caller can ask the question
+instead of matching the sentence.
+
+`merge-confirmed-finalize.ts` carved out one case — a no-op merge with no landed commit whose work is
+unfinished must fall through to stale-merge cleanup rather than consume the run — by comparing the
+blocker reason with `===` against that exact string. The merge-authority work then made refusals more
+informative, so a card in an error state reports `task is marked 'failed': … task has incomplete
+steps`. Same meaning, different sentence, and the carve-out silently stopped applying: a filter
+pinned to "subject is exactly Invoice" once invoices began arriving as "Invoice — March 2026".
+
+A blocker MESSAGE is written for an operator to read and will be reworded again. The condition it
+describes is what callers actually mean, so give them that.
+*/
+export function hasNonTerminalSteps(task: Pick<Task, "steps">): boolean {
+  return (task.steps ?? []).some((step) => NON_TERMINAL_STEP_STATUSES.has(step.status));
+}
+
 const NON_TERMINAL_WORKFLOW_STATUSES = new Set<WorkflowStepResult["status"]>([
   "pending",
 ]);
@@ -385,7 +406,7 @@ export const TASK_DONE_BYPASS_BLOCKER_MESSAGE =
  * Undefined means the task is eligible to move from `in-review` to `done`.
  */
 export function getTaskMergeBlocker(
-  task: Pick<Task, "column" | "paused" | "status" | "error" | "steps" | "workflowStepResults">,
+  task: Pick<Task, "column" | "paused" | "status" | "error" | "steps" | "workflowStepResults" | "repositoryScope">,
   options: {
     manual?: boolean;
     skipColumnIdentityCheck?: boolean;
@@ -398,6 +419,7 @@ export function getTaskMergeBlocker(
     back to their graph gate rather than hiding a recoverable wedge.
     */
     requiredPreMergeStepIds?: ReadonlySet<string>;
+    mergeContent?: MergeContentDescriptor;
   } = {},
 ): string | undefined {
   /*
@@ -463,16 +485,17 @@ export function getTaskMergeBlocker(
     return "task has incomplete steps";
   }
 
-  // A merge door must not pass an enabled pre-merge group that never ran.
-  // Omitted input preserves legacy result-only semantics for recovery callers.
-  if (
-    options.requiredPreMergeStepIds?.size
-    && [...options.requiredPreMergeStepIds].some(
-      (workflowStepId) => !(task.workflowStepResults ?? []).some((result) => result.workflowStepId === workflowStepId),
-    )
-  ) {
-    return PRE_MERGE_STEPS_NOT_RUN_BLOCKER;
-  }
+  /*
+  FNXC:PreMergeApproval 2026-08-23-06:52:
+  FN-180 requires a positive approval for each enabled gate. Missing and rejected
+  results exit through a fresh gate run (or the audited FN-7720 bypass); stale and
+  unprovable diff evidence exit through a review over current content.
+  */
+  const approval = evaluatePreMergeApprovals(task, options).find((candidate) => candidate.state !== "approved");
+  if (approval?.state === "missing") return PRE_MERGE_STEPS_NOT_RUN_BLOCKER;
+  if (approval?.state === "not-approved") return "task has enabled pre-merge workflow steps without a current approval";
+  if (approval?.state === "stale-content") return "task has a pre-merge approval recorded against different content";
+  if (approval?.state === "unprovable-content") return "task has no provable approval for the content being merged";
 
   // Only pre-merge workflow step failures block merge.
   // Post-merge failures run after merge and do not block it.
@@ -582,8 +605,8 @@ export function clearMergeConfirmedTransientStatus(status: string | undefined): 
 }
 
 export function getTaskHardMergeBlocker(
-  task: Pick<Task, "column" | "paused" | "status" | "error" | "steps" | "workflowStepResults">,
-  options: { reviewColumns?: ReadonlySet<string>; requiredPreMergeStepIds?: ReadonlySet<string> } = {},
+  task: Pick<Task, "column" | "paused" | "status" | "error" | "steps" | "workflowStepResults" | "repositoryScope">,
+  options: { reviewColumns?: ReadonlySet<string>; requiredPreMergeStepIds?: ReadonlySet<string>; mergeContent?: MergeContentDescriptor } = {},
 ): string | undefined {
   return getTaskMergeBlocker({
     ...task,
@@ -594,6 +617,7 @@ export function getTaskHardMergeBlocker(
   }, {
     reviewColumns: options.reviewColumns,
     requiredPreMergeStepIds: options.requiredPreMergeStepIds,
+    mergeContent: options.mergeContent,
   });
 }
 
@@ -671,12 +695,26 @@ export function getTaskDoneBypassBlocker(
 }
 
 export function isTaskReadyForMerge(
-  task: Pick<Task, "column" | "paused" | "status" | "error" | "steps" | "workflowStepResults">,
-  options: { reviewColumns?: ReadonlySet<string>; requiredPreMergeStepIds?: ReadonlySet<string> } = {},
+  task: Pick<Task, "column" | "paused" | "status" | "error" | "steps" | "workflowStepResults" | "repositoryScope">,
+  options: {
+    reviewColumns?: ReadonlySet<string>;
+    requiredPreMergeStepIds?: ReadonlySet<string>;
+    mergeContent?: MergeContentDescriptor;
+  } = {},
 ): boolean {
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-08-29-23:50:
+  Forward each resolved lane input by name rather than spreading `options` through.
+  #3514 wrote it this way so the lane-wiring census can prove the seam is active; a
+  later merge of origin/main resolved the conflict back to the wholesale forward, and
+  because a bare `options` pass reads as an unwired call site the ratchet went red on
+  main — failing the Lint gate on every open PR at once, none of which had touched
+  this file. Keep the arguments explicit: the census reads call sites, not types.
+  */
   return getTaskMergeBlocker(task, {
     reviewColumns: options.reviewColumns,
     requiredPreMergeStepIds: options.requiredPreMergeStepIds,
+    mergeContent: options.mergeContent,
   }) === undefined;
 }
 

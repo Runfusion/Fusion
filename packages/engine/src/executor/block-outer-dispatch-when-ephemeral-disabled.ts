@@ -57,6 +57,7 @@ export async function blockOuterDispatchWhenEphemeralDisabled(
         preserveWorktree: true,
         preserveResumeState: true,
         moveSource: "engine",
+        lifecycleReason: "self-healing-session-recovery",
         recoveryRehome: true,
       }, deps.runContextFor(liveTask.id));
     }

@@ -8,9 +8,44 @@ import type { ActorContext } from "../../identity/actor.js";
 
 export type StepStatus = "pending" | "in-progress" | "done" | "skipped";
 
+/*
+FNXC:TaskHistory 2026-08-28-02:23:
+Step reports live on the task rather than inside TaskStep because replanning replaces task.steps wholesale. The top-level append-only ledger preserves implementation history across every replan so History never loses an earlier delivery report.
+*/
+export interface TaskStepReport {
+  id: string;
+  stepIndex: number;
+  stepName: string;
+  summary: string;
+  recordedAt: string;
+  source: "agent";
+  attempt: number;
+}
+
 export interface TaskStep {
   name: string;
   status: StepStatus;
+  /**
+   * FNXC:ReviewGatedCoding 2026-08-23-04:52:
+   * JSONB task steps need no migration for this additive provenance. Review-gated consumers use
+   * this durable field—not a human-readable name—to identify appended remediation work.
+   */
+  remediation?: {
+    wave: number;
+    gate: string;
+    gateStepId: string;
+    findingId?: string;
+    filePath?: string;
+    line?: number;
+    /**
+     * FNXC:VerificationRemediation 2026-08-28-16:10:
+     * This normalized verification-evidence identity proves whether a deterministic measurement
+     * changed between waves. Task steps are JSONB, so additive provenance needs no migration.
+     */
+    evidenceDigest?: string;
+    detail?: string;
+    declaredFiles?: string[];
+  };
   /**
    * Step-inversion (KTD-11): 0-indexed indices of steps this step depends on,
    * parsed from the PROMPT.md `### Step N (depends: 1,2): Title` annotation
@@ -159,8 +194,9 @@ export interface AgentLogEntry {
   type: AgentLogType;
   /**
    * For `tool`: human-readable argument summary (for example a file path or command).
-   * `tool` and successful `tool_result` detail are persisted only when `persistAgentToolOutput` is enabled;
-   * failed `tool_error` detail is always persisted as bounded diagnostic signal.
+   * `tool` and successful `tool_result` detail are persisted by default; an explicit
+   * `persistAgentToolOutput: false` omits them, while failed `tool_error` detail always persists
+   * as bounded diagnostic signal.
    *
    * FNXC:AgentLogging 2026-07-15-16:05: FN-7995 requires failed tool-call errors to remain available
    * to task transcript renderers even when verbose successful tool output is disabled.

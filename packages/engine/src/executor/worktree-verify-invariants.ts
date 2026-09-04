@@ -80,11 +80,18 @@ export async function verifyWorktreeInvariants(
       { rootDir: deps.rootDir, settings }, task, configuredRepos, declaredScope,
     );
     const auditor = createRunAuditor(deps.store, deps.runContextFor(task.id));
+    /*
+    FNXC:WorkspaceFinalization 2026-08-27-08:42:
+    Uncommitted main-checkout edits arrive here as `uncommitted-only` warnings rather than
+    violations. Keep their `evidence` in telemetry so the downgrade stays auditable (fixed enum,
+    ids/counts only) — without it, "was this in declared scope?" became unanswerable after the fact.
+    */
     for (const warning of mainCheckout.warnings) {
       executorLog.warn(`${task.id}: workspace main-checkout guard warning repo=${warning.repo} reason=${warning.reason}`);
       await auditor.git({ type: "worktree:workspace-main-checkout-edit", target: warning.repo, metadata: {
         taskId: task.id, repo: warning.repo, fileCount: warning.files.length, commitCount: warning.commits.length,
-        reason: warning.reason, taskDoneRetryCount: task.taskDoneRetryCount ?? 0, outcome: "warned",
+        reason: warning.reason, ...(warning.evidence ? { evidence: warning.evidence } : {}),
+        taskDoneRetryCount: task.taskDoneRetryCount ?? 0, outcome: "warned",
       } });
     }
     for (const repo of mainCheckout.skipped) {
@@ -106,7 +113,7 @@ export async function verifyWorktreeInvariants(
       return {
         ok: false, reason: "main_checkout_edit", repo: firstMainCheckoutViolation.repo,
         observed: `${firstMainCheckoutViolation.evidence}: ${observed}`,
-        expected: `move task work into the acquired fusion/${task.id} worktree for ${firstMainCheckoutViolation.repo} (acquire it first if needed), restore its main checkout, then ask an operator to retry fn_task_done`,
+        expected: `no task-attributed commit in the ${firstMainCheckoutViolation.repo} main checkout — a commit there reaches the shared branch without review; move it onto the acquired fusion/${task.id} worktree branch, restore the main checkout, then ask an operator to retry fn_task_done`,
       };
     }
     const zeroAcquire = classifyWorkspaceZeroAcquire(task, {
@@ -123,7 +130,7 @@ export async function verifyWorktreeInvariants(
         ok: false,
         reason: "no_commits",
         observed: "0 acquired sub-repo worktrees",
-        expected: "at least one acquired sub-repo worktree (fn_acquire_repo_worktree), or a no-op completion sentinel / noCommitsExpected",
+        expected: "at least one configured sub-repo task worktree, or a no-op completion sentinel / noCommitsExpected",
       };
     }
     const workspacePromptContent = (task as Task & { prompt?: unknown }).prompt;

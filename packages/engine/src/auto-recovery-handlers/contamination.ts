@@ -1,13 +1,12 @@
 import type { TaskStore } from "@fusion/core";
-/* FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage B): mutation-context constructors for this lane. */
-import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import { classifyForeignOnlyContamination } from "../execution/branch-conflicts.js";
 import type { AutoRecoveryContext, AutoRecoveryDecision, AutoRecoveryFailure, AutoRecoveryHandlers } from "../healing/auto-recovery.js";
-import { resolveReboundTargetForTask } from "@fusion/core";
+import { moveTaskToContainedBackwardTarget } from "../execution/lifecycle-move.js";
 import { createLogger, type Logger } from "../logger.js";
 import { recoverForeignOnlyContamination } from "../recovery/foreign-only-contamination.js";
 import { resolveIntegrationBranch } from "../merge/integration-branch.js";
 import type { RunAuditor } from "../util/run-audit.js";
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 
 const baseLog = createLogger("auto-recovery:contamination");
 
@@ -84,17 +83,23 @@ export class ContaminationAutoRecoveryHandler implements Pick<AutoRecoveryHandle
     }
 
     if (recoveryKind === "default") {
-      /* FNXC:WorkflowResolvedColumns 2026-07-30-19:55 (#2808 review — coderabbit): census-invisible moveTask
-       DESTINATION — a call argument, not a comparison, so the census never scored it. This requeue is not a
-       #1411 `recoveryRehome` escape, so an undeclared destination is REJECTED and the recovery never completes:
-       that is what the hardcoded `todo` used to cause on any board without that column. The destination now
-       comes from the task's own workflow, and the legacy id remains only as the unresolvable fallback. */
-      await this.deps.taskStore.moveTask(task.id, await resolveReboundTargetForTask(this.deps.taskStore, task.id), {
-        moveSource: "engine",
-        preserveResumeState: true,
-        preserveProgress: true,
-        preserveWorktree: true,
-      }, UNATTRIBUTED_MUTATION_CONTEXT);
+      /*
+      FNXC:LifecycleContainment 2026-08-28-03:03:
+      Contamination recovery uses the live source role and an adjacent target. Review returns to WIP,
+      WIP returns to hold, and missing/capacity-blocked destinations remain in place.
+      */
+      await moveTaskToContainedBackwardTarget(
+        this.deps.taskStore,
+        task.id,
+        "contamination-recovery",
+        {
+          moveSource: "engine",
+          preserveResumeState: true,
+          preserveProgress: true,
+          preserveWorktree: true,
+        },
+        task.column,
+      );
 
       await this.deps.taskStore.updateTask(task.id, {
         paused: false,

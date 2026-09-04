@@ -48,6 +48,12 @@ Core `central` tables (names as exposed by the data layer; SQL uses snake_case):
 
 Per-project task data is keyed by `projectId` in PostgreSQL's `project` schema. Each repo keeps `.fusion/project.json` as its filesystem identity marker; `.fusion/fusion.db` is read only by the one-time legacy migrator.
 
+## Dashboard realtime task scope
+
+Task IDs are project-local. Every task lifecycle frame emitted on a scoped `/api/events` stream carries that stream's `projectId`, including envelope payloads and their nested task rows. Dashboard task state is owned by `(projectId, taskId)`: a client discards a known foreign task event before it can update rendered rows or the saved board snapshot.
+
+An absent `projectId` remains valid for legacy and unscoped streams. Clients accept those frames for compatibility, while a present identity that differs from the selected project is always rejected.
+
 ### Agent ownership predicates
 
 <!--
@@ -101,7 +107,7 @@ The TTL and its renewal timer indicate liveness; they are not authorization to m
 
 The fence token is enforced by the resource as well as by the database. Fusion uses exactly these mechanisms:
 
-1. **Git fence refs.** A sub-repository land publishes `refs/fusion/workspace-lease/<repo-slug>` and a merge body publishes `refs/fusion/merge-dispatch/<task-id>`. At the irreversible push, one `git push --atomic` compare-and-swaps the target ref observed by that tenancy and every applicable published pin: the repository fence plus the enclosing merge-dispatch fence for workspace land, or the dispatch pin for a merge-only push. A target-tip-only CAS is insufficient: a superseded owner can otherwise push while the target tip is still unchanged. The remote must permit both `refs/fusion/...` namespaces; a rejected namespace or fence-ref publication fails closed and never falls back to a tip-only push.
+1. **Git fence refs.** When `pushAfterMerge` is enabled, a sub-repository land publishes `refs/fusion/workspace-lease/<repo-slug>` and a merge body publishes `refs/fusion/merge-dispatch/<task-id>`. At the irreversible push, one `git push --atomic` compare-and-swaps the target ref observed by that tenancy and every applicable published pin: the repository fence plus the enclosing merge-dispatch fence for workspace land, or the dispatch pin for a merge-only push. A target-tip-only CAS is insufficient: a superseded owner can otherwise push while the target tip is still unchanged. If the target CAS rejects because the remote is behind the approved squash, Fusion re-observes it once and retries only after proving that observed commit is an ancestor of the published commit; every fence pin remains unchanged. The remote must permit both `refs/fusion/...` namespaces; a rejected namespace or fence-ref publication fails closed and never falls back to a tip-only push. With `pushAfterMerge` off, workspace land uses its durable lease and local ref CAS without publishing remote fence refs.
 2. **Transaction-bound durable writes.** The lease validity check and the protected state write occur in one advisory-locked transaction.
 3. **Owner-and-fence conditional lease updates.** Renew, release, and lease-state transitions cannot alter a successor's row.
 

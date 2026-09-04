@@ -139,6 +139,14 @@ html {
   --line-height-tight: 1.25;
   /* FNXC:DashboardStyling 2026-08-21-13:35: normal-body line-height token (was a raw 1.4 literal in ChatFocusSelector.css). */
   --line-height-normal: 1.4;
+  /*
+  FNXC:DashboardStyling 2026-09-01-08:39:
+  Ten declarations across nine component stylesheets named these weight rungs without definitions, making each declaration invalid so text inherited its weight. Define the complete scale here, matching the earlier font-size repair above, rather than adding component literals.
+  */
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
 
   /* Spacing Scale */
   /* FNXC:DashboardStyling 2026-08-23-16:00: FN-9198 uses this 2px token for chat title-switcher focus-ring widths and offsets. */
@@ -184,6 +192,10 @@ html {
 
   /* Component-specific tokens */
   --btn-padding: var(--space-sm) var(--space-lg);
+  /*
+  FNXC:DashboardStyling 2026-09-01-08:39:
+  Border shorthands must use this existing theme-aware width token, not an alias such as --border-width. Its 29 theme overrides, including Cozy Cartoon's thicker borders, keep all component outlines consistent.
+  */
   --btn-border-width: 1px;
   --card-padding: 10px 12px;
   --modal-padding: var(--space-lg) 20px;
@@ -1341,6 +1353,15 @@ Operator feedback requires one readable pixel face for ordinary prose, links, da
 
 [data-color-theme="medieval"] :is(pre, pre *, code, code *, kbd, kbd *, samp, samp *, .cm-editor, .cm-editor *, .xterm, .xterm *, .terminal, .terminal *, .session-terminal, .session-terminal *) {
   font-family: var(--font-mono) !important;
+}
+
+/*
+FNXC:DashboardTheming 2026-08-28-07:45:
+The shared .btn rule hardcodes its font size, so Cozy Cartoon needs this single token-backed typography override to make ordinary buttons visibly larger. The compact exclusions preserve every .btn-sm/.btn--sm control, including the height-pinned Quick Add action row, while omitting height and min-height lets the desktop ViewHeader clamp keep trimming enlarged button padding without stretching headers.
+*/
+[data-color-theme="cozy-cartoon"] .btn:not(.btn-sm):not(.btn--sm) {
+  font-size: var(--cozy-cartoon-btn-font-size);
+  font-weight: var(--cozy-cartoon-btn-font-weight);
 }
 
 .modal {
@@ -2872,6 +2893,13 @@ Task cards reuse the compact badge chip dimensions for GitLab links, but stale G
   gap: 2px;
 }
 
+.detail-log-timestamps {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-xs);
+}
+
 .detail-log-timestamp {
   font-size: 11px;
   color: var(--text-muted);
@@ -4027,7 +4055,7 @@ Toast text must contrast its status background across every dashboard theme and 
 .text-secondary { color: var(--text-muted); }
 .text-dim { color: var(--text-dim, var(--text-muted)); }
 
-/* === Column header dropdown menu (todo column "Respecify All", etc.) ====== */
+/* === Column header dropdown menu actions ================================ */
 .column-menu {
   position: relative;
   display: inline-flex;

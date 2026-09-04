@@ -119,7 +119,6 @@ const qualityAppComponentTests = [
   "ChatView.default-model-icon",
   "ChatView.draft",
   "ChatView.hash-mention",
-  "ChatView.rooms",
   "ChatView.scroll-to-top",
   "ChatView.swipe-back",
   "Column",
@@ -248,6 +247,8 @@ FNXC:ChatNavigation 2026-08-19-21:10:
 FN-054 requires the focused Chat lane to collect every suite that protects shared list-to-detail navigation. Keep responsive, history, creation, and mount contracts together so the task command cannot silently omit stale selector or split-pane assertions.
 */
 const qualityAppChatOnlyTests = [
+  // FNXC:ChatComposerFocus 2026-09-01-01:04: Cross-host composer focus belongs in the shared list-to-detail Chat lane so pointer, touch, and retained Quick Chat ownership regressions run together.
+  "app/components/__tests__/ChatView.composer-focus.test.tsx",
   "app/components/__tests__/ChatView.content-search.test.tsx",
   "app/components/__tests__/ChatView.core.test.tsx",
   "app/components/__tests__/ChatView.core-contracts.test.tsx",

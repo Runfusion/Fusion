@@ -3,14 +3,10 @@
  * holdForSessionContention peeled from TaskExecutor (U4).
  * Bounded in-place retry while another task holds a shared session path.
  *
- * FNXC:SessionContention 2026-07-25-21:30 (self-recovering wait — the task is never parked):
- * Retry the graph in place on an exponential backoff while the holder finishes. The counter is
- * IN-MEMORY on purpose: it needs no schema change, and an engine restart resetting it is the desired
- * behavior (a restart also drops the in-process registry, so the contention is gone anyway).
- * When the ladder is exhausted the task is left cleanly dispatchable — status/error cleared, progress
- * untouched — so ordinary scheduling picks it up later with a fresh budget. There is no terminal branch
- * here by design: lease contention always ends (the holder finishes, or self-healing sweeps it), so
- * parking the task would only require a human to press Retry on a condition that fixed itself.
+ * FNXC:WorkspaceContention 2026-08-23-06:40 (FN-179):
+ * Acquisition contention can survive an engine restart because its authority is a durable lease.
+ * Persist the owner-local retry budget and an operator-visible wait reason, but never park a
+ * contention wait as failed; a shared budget across unrelated failed-park owners remains out of scope.
  */
 import type { Task, TaskDetail, TaskStore } from "@fusion/core";
 import { isSessionContentionError } from "../errors/transient-error-detector.js";
@@ -24,11 +20,7 @@ export const SESSION_CONTENTION_HOLD_MAX_BACKOFF_MS = 60_000;
 
 export type SessionContentionHoldDeps = {
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
-  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
-  getHoldAttempts: (taskId: string) => number;
-  setHoldAttempts: (taskId: string, attempt: number) => void;
-  clearHold: (taskId: string) => void;
+  runContextFor: (taskId: string) => EngineRunContext | undefined;
   reexecute: (task: Task) => Promise<void>;
 };
 
@@ -44,29 +36,30 @@ export async function holdForSessionContention(
   result: Parameters<typeof graphFailureErrorTexts>[0],
 ): Promise<void> {
   const detail = graphFailureErrorTexts(result).find((text) => isSessionContentionError(text));
-  const priorAttempts = deps.getHoldAttempts(task.id);
+  const priorAttempts = live.sessionContentionHoldCount ?? 0;
   const attempt = priorAttempts + 1;
+  const reason = (detail ?? "another task to release a shared session path").slice(0, 200);
 
   if (attempt > MAX_SESSION_CONTENTION_HOLD_RETRIES) {
-    deps.clearHold(task.id);
     const message = `Still waiting on another task to release a shared session path after ${MAX_SESSION_CONTENTION_HOLD_RETRIES} attempts — leaving the task queued for normal re-dispatch (not a failure)${detail ? `: ${detail}` : ""}`;
     executorLog.warn(`${task.id}: ${message}`);
     await deps.store.logEntry(task.id, message, undefined, deps.runContextFor(task.id));
-    if (live.status != null || live.error != null) {
-      await deps.store.updateTask(task.id, { status: null, error: null }, deps.runContextFor(task.id));
-    }
+    // FNXC:WorkspaceContention 2026-08-23-07:30: Exhaustion releases the visible wait so ordinary
+    // scheduling can retry after the holder settles, but it must not erase the durable budget.
+    // Only explicit lifecycle reset owners (manual retry, clean completion, and done cleanup) may
+    // start a new contention episode; otherwise scheduler rediscovery recreates the incident loop.
+    await deps.store.updateTask(task.id, { status: null, error: null, sessionContentionWaitReason: null }, deps.runContextFor(task.id));
     return;
   }
 
-  deps.setHoldAttempts(task.id, attempt);
   const message = `Waiting on another task to release a shared session path — retrying in place (${attempt}/${MAX_SESSION_CONTENTION_HOLD_RETRIES})${detail ? `: ${detail}` : ""}`;
   executorLog.warn(`${task.id}: ${message}`);
   await deps.store.logEntry(task.id, message, undefined, deps.runContextFor(task.id));
-  // A contention hold is not a failure state: clear any stale park so the row never shows as failed
-  // while it is simply waiting its turn.
-  if (live.status != null || live.error != null) {
-    await deps.store.updateTask(task.id, { status: null, error: null }, deps.runContextFor(task.id));
-  }
+  // A contention hold is a scheduling wait, not a failure. Its token makes the owner visible.
+  await deps.store.updateTask(task.id, {
+    status: "contention-hold", error: null, sessionContentionHoldCount: attempt,
+    sessionContentionWaitReason: reason,
+  }, deps.runContextFor(task.id));
 
   const delayMs = SESSION_CONTENTION_HOLD_BACKOFF_MS === 0
     ? 0
@@ -76,9 +69,16 @@ export async function holdForSessionContention(
       try {
         const resume = await deps.store.getTask(task.id);
         if (!resume || resume.deletedAt || resume.paused || resume.userPaused) {
-          deps.clearHold(task.id);
+          if (resume) await deps.store.updateTask(task.id, { status: null, sessionContentionWaitReason: null }, deps.runContextFor(task.id));
           return;
         }
+        /*
+        FNXC:WorkspaceContention 2026-08-23-06:51 (FN-179):
+        Yielding a scheduling hold clears only its visible owner token. Retain the
+        durable count so a repeated live-holder refusal consumes the bounded budget
+        instead of restarting at attempt one after every scheduled re-execution.
+        */
+        await deps.store.updateTask(task.id, { status: null, sessionContentionWaitReason: null }, deps.runContextFor(task.id));
         await deps.reexecute(resume);
       } catch (err) {
         executorLog.error(`Failed session-contention retry for ${task.id}:`, err);

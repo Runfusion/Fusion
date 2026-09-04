@@ -58,7 +58,7 @@
 .mcp-editor,
 .mcp-import-export__pane {
   padding: var(--space-md);
-  border: var(--border-width) solid var(--border);
+  border: var(--btn-border-width) solid var(--border);
   border-radius: var(--radius-md);
   background: var(--surface);
 }
@@ -89,7 +89,7 @@
   padding: var(--space-xs) var(--space-xs);
   font-size: var(--font-size-xs);
   line-height: var(--line-height-tight);
-  border: var(--border-width) solid var(--border);
+  border: var(--btn-border-width) solid var(--border);
   color: var(--text-muted);
 }
 
@@ -129,7 +129,7 @@
   align-items: center;
   border-radius: var(--radius-full);
   padding: var(--space-xs) var(--space-xs);
-  border: var(--border-width) solid var(--border);
+  border: var(--btn-border-width) solid var(--border);
   color: inherit;
 }
 

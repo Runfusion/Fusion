@@ -97,8 +97,10 @@ import {
 } from "./project-identity.js";
 import {
   ensureGitRepositoryForProjectPath,
+  ensureProjectGitReadiness,
   type GitRepositoryEnsureOutcome,
 } from "../git/git-repository.js";
+import type { IntegrationBranchReconciliation } from "../git/integration-branch-readiness.js";
 /*
  * FNXC:CentralCore 2026-06-26-12:30:
  * Async Drizzle helpers + the AsyncDataLayer type for backend-mode (PostgreSQL)
@@ -183,10 +185,12 @@ export interface EnsureProjectForPathResult {
   reattached: boolean;
   outcome: "existing" | "reattached" | "registered";
   gitRepository?: GitRepositoryEnsureOutcome;
+  integrationBranches?: IntegrationBranchReconciliation[];
 }
 
 export interface CentralCoreOptions {
   ensureGitRepositoryForProjectPath?: typeof ensureGitRepositoryForProjectPath;
+  ensureProjectGitReadiness?: typeof ensureProjectGitReadiness;
   /**
    * FNXC:CentralCore 2026-06-26-12:30:
    * When an AsyncDataLayer is injected, CentralCore operates in "backend mode":
@@ -204,7 +208,7 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
   private nodeDiscovery: NodeDiscovery | null = null;
   private discoveryConfig: DiscoveryConfig | null = null;
   private readonly discoveredNodes = new Map<string, DiscoveredNode>();
-  private readonly ensureGitRepositoryForProjectPath: typeof ensureGitRepositoryForProjectPath;
+  private readonly ensureProjectGitReadiness: typeof ensureProjectGitReadiness;
   private ownedBackendShutdown: (() => Promise<void>) | null = null;
   private ownedBackendReleaseConnections: (() => Promise<void>) | null = null;
   private initializationPromise: Promise<void> | null = null;
@@ -308,8 +312,23 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
     super();
     this.setMaxListeners(100);
     this.globalDir = resolveGlobalDir(globalDir);
-    this.ensureGitRepositoryForProjectPath =
-      options.ensureGitRepositoryForProjectPath ?? ensureGitRepositoryForProjectPath;
+    if (options.ensureProjectGitReadiness) {
+      this.ensureProjectGitReadiness = options.ensureProjectGitReadiness;
+    } else if (options.ensureGitRepositoryForProjectPath) {
+      const legacyEnsureGitRepository = options.ensureGitRepositoryForProjectPath;
+      /*
+      FNXC:IntegrationBranchReadiness 2026-08-24-00:53:
+      FN-183 adds branch reconciliation without breaking legacy CentralCore injection seams.
+      Older dashboard and CLI fakes return only the Git outcome, so adapt them to an empty
+      reconciliation list rather than requiring every caller to adopt the richer result at once.
+      */
+      this.ensureProjectGitReadiness = async (projectPath, readinessOptions) => ({
+        outcome: await legacyEnsureGitRepository(projectPath, readinessOptions),
+        integrationBranches: [],
+      });
+    } else {
+      this.ensureProjectGitReadiness = ensureProjectGitReadiness;
+    }
     this.asyncLayer = options.asyncLayer ?? null;
   }
 
@@ -585,8 +604,14 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
     */
     const existing = await this.getProjectByPath(input.path);
     if (existing) {
-      const gitRepository = await this.ensureGitRepositoryForProjectPath(input.path);
-      return { project: existing, reattached: false, outcome: "existing", gitRepository };
+      const gitReadiness = await this.ensureProjectGitReadiness(input.path);
+      return {
+        project: existing,
+        reattached: false,
+        outcome: "existing",
+        gitRepository: gitReadiness.outcome,
+        integrationBranches: gitReadiness.integrationBranches,
+      };
     }
 
     if (input.identity?.id) {
@@ -595,11 +620,17 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
         throw new ProjectIdentityConflictError(input.identity.id, byId.path, input.path);
       }
       if (byId) {
-        const gitRepository = await this.ensureGitRepositoryForProjectPath(input.path);
-        return { project: byId, reattached: false, outcome: "existing", gitRepository };
+        const gitReadiness = await this.ensureProjectGitReadiness(input.path);
+        return {
+          project: byId,
+          reattached: false,
+          outcome: "existing",
+          gitRepository: gitReadiness.outcome,
+          integrationBranches: gitReadiness.integrationBranches,
+        };
       }
 
-      const gitRepository = await this.ensureGitRepositoryForProjectPath(input.path);
+      const gitReadiness = await this.ensureProjectGitReadiness(input.path);
       const reattached = await this.registerProject({
         id: input.identity.id,
         name: input.name ?? basename(input.path),
@@ -609,10 +640,16 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
         settings: input.settings,
       });
       this.emit("project:reattached", reattached, "identity-recovered");
-      return { project: reattached, reattached: true, outcome: "reattached", gitRepository };
+      return {
+        project: reattached,
+        reattached: true,
+        outcome: "reattached",
+        gitRepository: gitReadiness.outcome,
+        integrationBranches: gitReadiness.integrationBranches,
+      };
     }
 
-    const gitRepository = await this.ensureGitRepositoryForProjectPath(input.path);
+    const gitReadiness = await this.ensureProjectGitReadiness(input.path);
     const registered = await this.registerProject({
       name: input.name ?? basename(input.path),
       path: input.path,
@@ -620,7 +657,13 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
       nodeId: input.nodeId,
       settings: input.settings,
     });
-    return { project: registered, reattached: false, outcome: "registered", gitRepository };
+    return {
+      project: registered,
+      reattached: false,
+      outcome: "registered",
+      gitRepository: gitReadiness.outcome,
+      integrationBranches: gitReadiness.integrationBranches,
+    };
   }
 
   /**

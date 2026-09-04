@@ -28,7 +28,7 @@ import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 import { EventEmitter } from "node:events";
 import { execSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { Task, TaskStore } from "@fusion/core";
 import { assertNotWorkspaceTaskMerge } from "@fusion/core";
@@ -50,6 +50,8 @@ interface RecordingStore extends EventEmitter {
   moveTaskCalls: Array<{ id: string; column: string }>;
   emitted: Array<{ event: string; payload: unknown }>;
 }
+
+let currentWorkspaceTask: Task | undefined;
 
 function createStore(settings: Record<string, unknown> = {}): TaskStore & RecordingStore {
   const emitter = new EventEmitter();
@@ -74,7 +76,7 @@ function createStore(settings: Record<string, unknown> = {}): TaskStore & Record
     // FNXC:Test 2026-06-24-23:50: mergeAndReview reads store.getTask().comments for merge/review
     // prompt context (selectUserCommentsForAgentContext); an undefined return throws mid-land. Return
     // a real task shape so the per-repo land reaches landSquash.
-    getTask: vi.fn().mockResolvedValue({ id: TASK_ID, column: "in-review", branch: BRANCH, comments: [], steeringComments: [], steps: [], log: [] }),
+    getTask: vi.fn(async () => currentWorkspaceTask ?? { id: TASK_ID, column: "in-review", branch: BRANCH, comments: [], steeringComments: [], steps: [], log: [] }),
     moveTask: vi.fn((id: string, column: string) => {
       moveTaskCalls.push({ id, column });
       return Promise.resolve({ id, column } as Task);
@@ -110,6 +112,7 @@ function addRegisteredTaskWorktreeWithEdit(
   fx: WorkspaceFixture,
   repoRel: string,
   content: string,
+  file = "feature.txt",
 ): { worktreePath: string; baseCommitSha: string } {
   const repoDir = fx.repoPath(repoRel);
   // Keep the linked checkout outside its main checkout so the production dirty-root guard stays meaningful.
@@ -117,8 +120,8 @@ function addRegisteredTaskWorktreeWithEdit(
   const baseCommitSha = fx.git(repoRel, "git rev-parse HEAD");
   fx.git(repoRel, `git worktree add -b ${BRANCH} ${worktreePath} HEAD`);
   configureIdentity(worktreePath);
-  writeFileSync(path.join(worktreePath, "feature.txt"), content, "utf-8");
-  execSync("git add feature.txt", { cwd: worktreePath, stdio: "pipe" });
+  writeFileSync(path.join(worktreePath, file), content, "utf-8");
+  execSync(`git add ${file}`, { cwd: worktreePath, stdio: "pipe" });
   execSync(`git commit -m "feat(${TASK_ID}): linked task worktree feature"`, { cwd: worktreePath, stdio: "pipe" });
   return { worktreePath, baseCommitSha };
 }
@@ -193,7 +196,7 @@ function squashMergeAgent(branch: string) {
 const approveReviewAgent = async (): Promise<string> => "REVIEW_VERDICT: approve";
 
 function makeTask(workspaceWorktrees: Task["workspaceWorktrees"]): Task {
-  return {
+  const task = {
     /* FNXC:RequiredPreMergeSteps 2026-08-23-00:20: merge-mechanics fixture, not a review-gating one.
        The door refuses a card whose enabled optional pre-merge groups produced no result, and the
        built-in workflow enables Plan and Code Review by default, so an unspecified list failed the
@@ -226,11 +229,36 @@ function makeTask(workspaceWorktrees: Task["workspaceWorktrees"]): Task {
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   } as Task;
+  currentWorkspaceTask = task;
+  return task;
+}
+
+/** Build a single-repository peer task so both public merge callers receive identical settings. */
+function makeSingleRepositoryTask(): Task {
+  const task = {
+    enabledWorkflowSteps: [],
+    id: TASK_ID,
+    title: "Single-repository merge peer",
+    description: "",
+    column: "in-review",
+    branch: BRANCH,
+    dependencies: [],
+    steps: [],
+    currentStep: 0,
+    log: [],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  } as Task;
+  currentWorkspaceTask = task;
+  return task;
 }
 
 describeIfGit("landWorkspaceTask — per-repo merge loop (Phase C U1)", () => {
   let fx: WorkspaceFixture;
-  afterEach(() => fx?.cleanup());
+  afterEach(() => {
+    fx?.cleanup();
+    currentWorkspaceTask = undefined;
+  });
 
   it("happy: both clean repos advance their OWN local integration ref with NO push", async () => {
     fx = await createWorkspaceFixture(["repo-a", "repo-b"]);
@@ -297,6 +325,198 @@ describeIfGit("landWorkspaceTask — per-repo merge loop (Phase C U1)", () => {
     expect(result.allLanded).toBe(true);
     expect(fx.git("repo-a", "git rev-parse refs/heads/main")).not.toBe(integrationTipBefore);
     expect(store.moveTaskCalls).toEqual([{ id: TASK_ID, column: "done" }]);
+  });
+
+  it("stashes, fast-forwards, and restores non-conflicting dirty integration-checkout edits when enabled", async () => {
+    fx = await createWorkspaceFixture(["repo-a"]);
+    const linked = addRegisteredTaskWorktreeWithEdit(fx, "repo-a", "landed feature\n");
+    const integrationTipBefore = fx.git("repo-a", "git rev-parse refs/heads/main");
+    const operatorDraft = path.join(fx.repoPath("repo-a"), "operator-draft.txt");
+    writeFileSync(operatorDraft, "operator draft\n", "utf-8");
+    const store = createStore({ merger: { allowDirtyLocalCheckoutSync: true } });
+    const task = makeTask({
+      "repo-a": { worktreePath: linked.worktreePath, branch: BRANCH, baseCommitSha: linked.baseCommitSha },
+    });
+
+    const result = await landWorkspaceTask(store, task, fx.rootDir, {}, {
+      mergeAgent: squashMergeAgent(BRANCH),
+      reviewAgent: approveReviewAgent,
+    });
+
+    expect(result.allLanded).toBe(true);
+    expect(result.repos).toMatchObject([{ repo: "repo-a", status: "landed", localSync: "stash-ff-restore" }]);
+    expect(fx.git("repo-a", "git rev-parse refs/heads/main")).not.toBe(integrationTipBefore);
+    expect(readFileSync(path.join(fx.repoPath("repo-a"), "feature.txt"), "utf-8")).toBe("landed feature\n");
+    expect(readFileSync(operatorDraft, "utf-8")).toBe("operator draft\n");
+  });
+
+  it("refuses a dirty integration checkout when dirty-checkout sync is disabled", async () => {
+    fx = await createWorkspaceFixture(["repo-a"]);
+    const linked = addRegisteredTaskWorktreeWithEdit(fx, "repo-a", "landed feature\n");
+    const integrationTipBefore = fx.git("repo-a", "git rev-parse refs/heads/main");
+    const operatorDraft = path.join(fx.repoPath("repo-a"), "operator-draft.txt");
+    writeFileSync(operatorDraft, "operator draft\n", "utf-8");
+    const store = createStore({ merger: { allowDirtyLocalCheckoutSync: false } });
+    const task = makeTask({
+      "repo-a": { worktreePath: linked.worktreePath, branch: BRANCH, baseCommitSha: linked.baseCommitSha },
+    });
+
+    const result = await landWorkspaceTask(store, task, fx.rootDir, {}, {
+      mergeAgent: squashMergeAgent(BRANCH),
+      reviewAgent: approveReviewAgent,
+    });
+
+    expect(result.allLanded).toBe(false);
+    expect(result.repos).toMatchObject([{ repo: "repo-a", status: "failed" }]);
+    expect(store.mergeWorkspaceWorktreeEntry).toHaveBeenCalledWith(
+      TASK_ID,
+      "repo-a",
+      expect.objectContaining({ landFailure: expect.objectContaining({ technicalDetail: expect.stringMatching(/dirty integration checkout/i) }) }),
+      { requireExistingEntry: true },
+    );
+    expect(fx.git("repo-a", "git rev-parse refs/heads/main")).toBe(integrationTipBefore);
+    expect(readFileSync(operatorDraft, "utf-8")).toBe("operator draft\n");
+  });
+
+  it("inherits dirty-checkout sync from the same resolved merger setting as single-repository landing", async () => {
+    fx = await createWorkspaceFixture(["repo-a"]);
+    const linked = addRegisteredTaskWorktreeWithEdit(fx, "repo-a", "landed feature\n");
+    const integrationTipBefore = fx.git("repo-a", "git rev-parse refs/heads/main");
+    const operatorDraft = path.join(fx.repoPath("repo-a"), "operator-draft.txt");
+    writeFileSync(operatorDraft, "operator draft\n", "utf-8");
+    // FNXC:WorkspaceFinalization 2026-08-27-15:50:
+    // This is the resolved new-project settings shape. The raw test store does not merge defaults,
+    // so omitting `merger` would model an explicit unresolved false in both merge paths.
+    const store = createStore({ merger: { mode: "ai", maxReviewPasses: 3, allowDirtyLocalCheckoutSync: true } });
+    const task = makeTask({
+      "repo-a": { worktreePath: linked.worktreePath, branch: BRANCH, baseCommitSha: linked.baseCommitSha },
+    });
+
+    const result = await landWorkspaceTask(store, task, fx.rootDir, {}, {
+      mergeAgent: squashMergeAgent(BRANCH),
+      reviewAgent: approveReviewAgent,
+    });
+
+    expect(result.allLanded).toBe(true);
+    expect(result.repos).toMatchObject([{ repo: "repo-a", status: "landed", localSync: "stash-ff-restore" }]);
+    expect(fx.git("repo-a", "git rev-parse refs/heads/main")).not.toBe(integrationTipBefore);
+    expect(readFileSync(operatorDraft, "utf-8")).toBe("operator draft\n");
+  });
+
+  /*
+  FNXC:WorkspaceDirtyCheckoutParity 2026-08-27-16:07:
+  FN-202 requires real-Git parity at both public merge callers. A workspace repository is a
+  main checkout just like a single-repository root: enabled, disabled, and inherited policy
+  paths must agree whether that checkout is on the integration branch or an operator branch.
+  */
+  it.each(([
+    {
+      policy: "explicitly enabled",
+      settings: { merger: { allowDirtyLocalCheckoutSync: false } },
+      options: { allowDirtyLocalCheckoutSync: true },
+      landsOnIntegrationCheckout: true,
+    },
+    {
+      policy: "explicitly disabled",
+      settings: { merger: { allowDirtyLocalCheckoutSync: true } },
+      options: { allowDirtyLocalCheckoutSync: false },
+      landsOnIntegrationCheckout: false,
+    },
+    {
+      policy: "inherited from resolved settings",
+      settings: { merger: { mode: "ai", maxReviewPasses: 3, allowDirtyLocalCheckoutSync: true } },
+      options: {},
+      landsOnIntegrationCheckout: true,
+    },
+  ] as const).flatMap((policy) => (["integration", "other-branch"] as const).map((checkout) => ({ ...policy, checkout }))))("keeps workspace and single-repository dirty-checkout behavior aligned when $policy on $checkout", async ({ settings, options, landsOnIntegrationCheckout, checkout }) => {
+    fx = await createWorkspaceFixture(["workspace-repo", "single-repo"]);
+    const workspaceLinked = addRegisteredTaskWorktreeWithEdit(fx, "workspace-repo", "workspace landed feature\n");
+    const singleLinked = addRegisteredTaskWorktreeWithEdit(fx, "single-repo", "single landed feature\n");
+    const workspaceTipBefore = fx.git("workspace-repo", "git rev-parse refs/heads/main");
+    const singleTipBefore = fx.git("single-repo", "git rev-parse refs/heads/main");
+
+    for (const repo of ["workspace-repo", "single-repo"]) {
+      if (checkout === "other-branch") fx.git(repo, "git checkout -b operator-draft main");
+      writeFileSync(path.join(fx.repoPath(repo), "operator-draft.txt"), `${repo} operator draft\n`, "utf-8");
+    }
+
+    const workspaceStore = createStore(settings);
+    const workspaceTask = makeTask({
+      "workspace-repo": { worktreePath: workspaceLinked.worktreePath, branch: BRANCH, baseCommitSha: workspaceLinked.baseCommitSha },
+    });
+    const workspaceResult = await landWorkspaceTask(workspaceStore, workspaceTask, fx.rootDir, options, {
+      mergeAgent: squashMergeAgent(BRANCH),
+      reviewAgent: approveReviewAgent,
+    });
+
+    const singleStore = createStore(settings);
+    makeSingleRepositoryTask();
+    const runSingleRepositoryMerge = () => runAiMerge(singleStore, fx.repoPath("single-repo"), TASK_ID, { manual: true, ...options }, {
+      mergeAgent: squashMergeAgent(BRANCH),
+      reviewAgent: approveReviewAgent,
+    });
+
+    if (checkout === "integration" && !landsOnIntegrationCheckout) {
+      expect(workspaceResult).toMatchObject({
+        allLanded: false,
+        repos: [{ repo: "workspace-repo", status: "failed" }],
+      });
+      expect(workspaceStore.mergeWorkspaceWorktreeEntry).toHaveBeenCalledWith(
+        TASK_ID,
+        "workspace-repo",
+        expect.objectContaining({ landFailure: expect.objectContaining({ technicalDetail: expect.stringMatching(/dirty integration checkout/i) }) }),
+        { requireExistingEntry: true },
+      );
+      await expect(runSingleRepositoryMerge()).rejects.toThrow(/dirty integration checkout/i);
+      expect(fx.git("workspace-repo", "git rev-parse refs/heads/main")).toBe(workspaceTipBefore);
+      expect(fx.git("single-repo", "git rev-parse refs/heads/main")).toBe(singleTipBefore);
+    } else {
+      expect(workspaceResult).toMatchObject({ allLanded: true, repos: [{ repo: "workspace-repo", status: "landed" }] });
+      await expect(runSingleRepositoryMerge()).resolves.toMatchObject({ merged: true });
+      expect(fx.git("workspace-repo", "git rev-parse refs/heads/main")).not.toBe(workspaceTipBefore);
+      expect(fx.git("single-repo", "git rev-parse refs/heads/main")).not.toBe(singleTipBefore);
+      if (checkout === "integration") {
+        expect(workspaceResult.repos[0]?.localSync).toBe("stash-ff-restore");
+      } else {
+        expect(workspaceResult.repos[0]?.localSync).toBe("skipped-other-branch");
+        for (const repo of ["workspace-repo", "single-repo"]) {
+          expect(fx.git(repo, "git branch --show-current")).toBe("operator-draft");
+        }
+      }
+    }
+
+    for (const repo of ["workspace-repo", "single-repo"]) {
+      expect(readFileSync(path.join(fx.repoPath(repo), "operator-draft.txt"), "utf-8"))
+        .toBe(`${repo} operator draft\n`);
+    }
+  });
+
+  it("lands despite a conflicting dirty restore and retains the operator stash for recovery", async () => {
+    fx = await createWorkspaceFixture(["repo-a"]);
+    const linked = addRegisteredTaskWorktreeWithEdit(fx, "repo-a", "# landed README\n", "README.md");
+    const integrationTipBefore = fx.git("repo-a", "git rev-parse refs/heads/main");
+    writeFileSync(path.join(fx.repoPath("repo-a"), "README.md"), "# operator README\n", "utf-8");
+    const stashResolveAgent = vi.fn(async (cwd: string) => {
+      writeFileSync(path.join(cwd, "README.md"), "# operator README\n", "utf-8");
+      execSync("git add README.md", { cwd, stdio: "pipe" });
+    });
+    const store = createStore({ merger: { allowDirtyLocalCheckoutSync: true } });
+    const task = makeTask({
+      "repo-a": { worktreePath: linked.worktreePath, branch: BRANCH, baseCommitSha: linked.baseCommitSha },
+    });
+    task.modifiedFiles = ["repo-a/README.md"];
+
+    const result = await landWorkspaceTask(store, task, fx.rootDir, {}, {
+      mergeAgent: squashMergeAgent(BRANCH),
+      reviewAgent: approveReviewAgent,
+      stashResolveAgent,
+    });
+
+    expect(result.allLanded).toBe(true);
+    expect(result.repos).toMatchObject([{ repo: "repo-a", status: "landed", localSync: "stash-ff-airesolved" }]);
+    expect(stashResolveAgent).toHaveBeenCalled();
+    expect(fx.git("repo-a", "git rev-parse refs/heads/main")).not.toBe(integrationTipBefore);
+    expect(fx.git("repo-a", "git stash list")).toContain("fusion-merger-autostash:");
   });
 
   it("reuses reconciled review findings for a workspace sub-repository", async () => {
@@ -460,7 +680,7 @@ describeIfGit("landWorkspaceTask — per-repo merge loop (Phase C U1)", () => {
    * REVERTED it (ahead of main, net-zero, tip NOT an ancestor) has zero landed sub-repos and no
    * already-landed proof. It must be blocked back to todo with error — NOT laundered into `done`.
    */
-  it("FN-8141: blocks a commit-expected all-empty (reverted) workspace to todo, not done", async () => {
+  it("FN-8141: keeps a commit-expected all-empty workspace in review without a WIP target", async () => {
     fx = await createWorkspaceFixture(["repo-a", "repo-b"]);
     addRepoRevertedBranch(fx, "repo-a");
     addRepoRevertedBranch(fx, "repo-b");
@@ -485,8 +705,13 @@ describeIfGit("landWorkspaceTask — per-repo merge loop (Phase C U1)", () => {
     expect(result.finalizeBlockedReason).toEqual(expect.stringContaining("operator review required"));
     for (const r of result.repos) expect(r.status).toBe("empty");
 
-    // Moved back to todo with error set; never moved done and never emitted task:merged.
-    expect(store.moveTaskCalls).toEqual([{ id: TASK_ID, column: "todo" }]);
+    /*
+    FNXC:LifecycleContainment 2026-08-30-09:14:
+    A review-owned finalize block may move only to a WIP column declared by the task workflow.
+    This structural fixture deliberately has no workflow resolver, so containment keeps it in review
+    instead of guessing `in-progress`; it still never visits Planning or emits task:merged.
+    */
+    expect(store.moveTaskCalls).toEqual([]);
     expect(store.updateTask).toHaveBeenCalledWith(
       TASK_ID,
       expect.objectContaining({ error: expect.stringContaining("operator review required") }), ANY_MUTATION_CONTEXT);

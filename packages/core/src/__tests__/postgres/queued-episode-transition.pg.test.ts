@@ -27,7 +27,7 @@ const overlap = (id: string) => ({
   signature: `file-scope:${id}`,
   blockedBy: null,
   overlapBlockedBy: id,
-  action: `queued — blocked by active file-scope lease ${id}`,
+  action: `queued — waiting for active file-scope lease ${id}`,
 });
 
 pgDescribe("queued episode transition", () => {

@@ -23,6 +23,19 @@ export class MergeAbortedError extends Error {
 }
 
 /**
+ * FNXC:MergeInFlightRevoke 2026-08-23-08:15:
+ * FN-180 fences every integration-ref advance with a fresh positive gate check.
+ * A revoked review approval is a deferral back to review, never a retryable
+ * merge failure or a failed task park.
+ */
+export class MergeGateRevokedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "MergeGateRevokedError";
+  }
+}
+
+/**
  * Raised when fix agent made no changes and the failing test files are all
  * outside the branch's diff. This signals that the failure is pre-existing on
  * the base branch (e.g. a flaky engine test) and retrying cannot help.

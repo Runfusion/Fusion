@@ -23,7 +23,9 @@ import { irToFlow } from "./workflow-flow-mapping";
 import { workflowNodeTypes } from "./nodes/WorkflowNodeTypes";
 import type { Components } from "react-markdown";
 import { linkifyFilePaths, linkifyReactChildren } from "../utils/filePathLinkify";
+import { workflowResultTextsAreEquivalent } from "../utils/workflowResultText";
 import { resolveEffectiveExecutor, resolveEffectivePlanning, resolveEffectiveValidator } from "./effective-model-resolution";
+import { isWorkflowStepNotRun } from "../utils/taskProgress";
 
 // Markdown rendering components for workflow output
 const markdownComponents: Components = {
@@ -99,8 +101,21 @@ interface WorkflowStepOption {
   icon?: ReactNode;
 }
 
-function getStatusLabel(status: WorkflowStepResult["status"], t: ReturnType<typeof useTranslation>["t"]): string {
-  switch (status) {
+const NOT_RUN_REASON_LABELS = {
+  "not-configured": ["app:workflow.notRunReasonNotConfigured", "no test or build command is configured"],
+  "tooling-unavailable": ["app:workflow.notRunReasonToolingUnavailable", "a required tool was unavailable"],
+  "execution-mode-skip": ["app:workflow.notRunReasonExecutionModeSkip", "fast mode skipped this check"],
+  "repository-context-unresolved": ["app:workflow.notRunReasonRepositoryContextUnresolved", "the workspace repository context could not be resolved"],
+} as const;
+
+function getStatusLabel(result: WorkflowStepResult, t: ReturnType<typeof useTranslation>["t"]): string {
+  if (isWorkflowStepNotRun(result)) {
+    const [reasonKey, reasonFallback] = NOT_RUN_REASON_LABELS[result.notRunReason!];
+    return t("app:workflow.statusNotRunWithReason", "Not executed — {{reason}}", {
+      reason: t(reasonKey, reasonFallback),
+    });
+  }
+  switch (result.status) {
     case "passed":
       return t("app:workflow.statusPassed", "Passed");
     case "failed":
@@ -112,7 +127,7 @@ function getStatusLabel(status: WorkflowStepResult["status"], t: ReturnType<type
     case "pending":
       return t("app:workflow.statusRunning", "Running…");
     default:
-      return status;
+      return result.status;
   }
 }
 
@@ -169,6 +184,9 @@ function getAggregateWorkflowResult(
   }
   if (results.length === 0) {
     return { label: t("app:workflow.aggregateNoResults", "No results"), badgeClass: "workflow-result-badge--skipped", testId: "no-results" };
+  }
+  if (results.some(isWorkflowStepNotRun)) {
+    return { label: t("app:workflow.aggregateNotFullyExecuted", "Not fully executed"), badgeClass: "workflow-result-badge--not-run", testId: "not-run" };
   }
   return { label: t("app:workflow.aggregateAllPassed", "All passed"), badgeClass: "workflow-result-badge--passed", testId: "passed" };
 }
@@ -333,7 +351,7 @@ function LiveAgentLogOutput({
           if (entry.type === "thinking") {
             /*
             FNXC:ThinkingTrace 2026-08-22-16:56:
-            This append-only console renders raw deltas, which may end mid-title or mid-token. It deliberately remains unsectioned; ThinkingTrace is for complete transcript messages.
+            This append-only console renders raw deltas, which may end mid-title or mid-token. It deliberately remains unsectioned; transcript panes expose the same source through their Raw trace toggle.
             */
             return (
               <div key={i} className="workflow-live-log-thinking">
@@ -853,13 +871,15 @@ export function WorkflowResultsTab({
     const passed = results.filter((r) => r.status === "passed").length;
     const failed = results.filter((r) => r.status === "failed").length;
     const advisoryFailures = results.filter((r) => r.status === "advisory_failure");
-    const skipped = results.filter((r) => r.status === "skipped").length;
+    const notExecuted = results.filter(isWorkflowStepNotRun).length;
+    const skipped = results.filter((r) => r.status === "skipped" && !isWorkflowStepNotRun(r)).length;
     const pending = results.filter((r) => r.status === "pending").length;
 
     const summaryParts: string[] = [t("app:workflow.summaryStepCount", { count: results.length, defaultValue_one: "{{count}} step", defaultValue_other: "{{count}} steps" })];
     if (passed > 0) summaryParts.push(t("app:workflow.summaryPassed", "{{count}} passed", { count: passed }));
     if (failed > 0) summaryParts.push(t("app:workflow.summaryFailed", "{{count}} failed", { count: failed }));
     if (advisoryFailures.length > 0) summaryParts.push(t("app:workflow.summaryAdvisory", "{{count}} advisory", { count: advisoryFailures.length }));
+    if (notExecuted > 0) summaryParts.push(t("app:workflow.summaryNotExecuted", "{{count}} not executed", { count: notExecuted }));
     if (skipped > 0) summaryParts.push(t("app:workflow.summarySkipped", "{{count}} skipped", { count: skipped }));
     if (pending > 0) summaryParts.push(t("app:workflow.summaryRunning", "{{count}} running", { count: pending }));
 
@@ -884,6 +904,13 @@ export function WorkflowResultsTab({
         {results.map((result, index) => {
           const phase = (result.phase || "pre-merge") as "pre-merge" | "post-merge";
           const isExpanded = expandedOutputs[result.workflowStepId] ?? false;
+          const notesVisible = Boolean(result.notes) && result.status !== "pending";
+          /*
+          FNXC:WorkflowResultText 2026-08-28-13:46:
+          Structured-verdict reviews deliberately persist one report in both output and notes. When the visible notes are strictly equivalent after whitespace normalization, omit the redundant Output surface; containment is not enough because output-only detail must remain accessible.
+          */
+          const outputDuplicatesVisibleNotes = notesVisible
+            && workflowResultTextsAreEquivalent(result.output, result.notes);
           return (
             <div
               key={`${result.workflowStepId}-${index}`}
@@ -905,15 +932,15 @@ export function WorkflowResultsTab({
                     </span>
                   )}
                   <span
-                    className={`workflow-result-badge workflow-result-badge--${result.status}`}
+                    className={`workflow-result-badge ${isWorkflowStepNotRun(result) ? "workflow-result-badge--not-run" : `workflow-result-badge--${result.status}`}`}
                     data-testid={`workflow-result-badge-${result.workflowStepId}`}
                   >
-                    {getStatusLabel(result.status, t)}
+                    {getStatusLabel(result, t)}
                   </span>
                 </div>
               </div>
 
-              {result.notes && result.status !== "pending" && (
+              {notesVisible && (
                 <div className="workflow-result-notes" data-testid={`workflow-result-notes-${result.workflowStepId}`}>
                   <span className="workflow-result-notes-label">{t("app:workflow.notes", "Notes:")} </span>
                   <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
@@ -939,7 +966,7 @@ export function WorkflowResultsTab({
                   stepId={result.workflowStepId}
                   t={t}
                 />
-              ) : result.output ? (
+              ) : result.output && !outputDuplicatesVisibleNotes ? (
                 <div className="workflow-result-output-section">
                   <div className="workflow-result-output-header">
                     <span className="workflow-result-output-label">{t("app:workflow.output", "Output:")} </span>

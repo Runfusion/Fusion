@@ -3031,6 +3031,7 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
                   ...(missionGroupId ? { groupId: missionGroupId } : {}),
                   source: "mission" as const,
                   assignmentMode: resolvedAssignmentMode,
+                  mergeTargetBranch: branchAssignment.mergeTargetBranch,
                   inheritedBaseBranch: resolvedBaseBranch,
                 },
               }

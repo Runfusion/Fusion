@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import {
   makeTask,
   noop,
@@ -20,7 +20,7 @@ afterEach(async () => {
 });
 
 describe("TaskDetailModal spec-lock report", () => {
-  it("renders persisted Mission-statement divergence and immutable provenance in the shared Definition surface", async () => {
+  it("renders persisted Mission-statement divergence and immutable provenance from Details diagnostics", async () => {
     const { fetchSpecLock } = await import("../../api");
     vi.mocked(fetchSpecLock).mockResolvedValue({
       latestLock: {
@@ -55,11 +55,10 @@ describe("TaskDetailModal spec-lock report", () => {
 
     render(
       <TaskDetailContent
-        initialTab="definition"
+        initialTab="details"
         active
         task={makeTask({ prompt: "## Mission\n\nChanged" })}
         onRequestClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -68,6 +67,7 @@ describe("TaskDetailModal spec-lock report", () => {
       />,
     );
 
+    fireEvent.click(screen.getByRole("button", { name: "Expand debug details" }));
     const report = await screen.findByTestId("spec-lock-report");
     expect(report).toHaveAccessibleName("Spec lock alignment");
     expect(report).toHaveTextContent("diverged-needs-review");
@@ -75,10 +75,8 @@ describe("TaskDetailModal spec-lock report", () => {
     expect(report).toHaveTextContent("source revision 42");
     expect(report).toHaveTextContent("source hash source-hash");
     expect(report).toHaveTextContent("Retained history: lock v1; plan v1, plan v2; 2 reports");
-    for (const heading of ["Progress", "Original prompt", "Dependencies", "Blocking"]) {
-      const anchor = screen.getByText(heading, { exact: true });
-      expect(anchor.compareDocumentPosition(report) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    }
+    expect(screen.getByRole("button", { name: "Details" })).toHaveClass("detail-tab-active");
+    expect(screen.queryByText("Progress", { exact: true })).toBeNull();
     await waitFor(() => expect(fetchSpecLock).toHaveBeenCalledWith("FN-099", undefined));
   });
 
@@ -95,11 +93,10 @@ describe("TaskDetailModal spec-lock report", () => {
 
     render(
       <TaskDetailContent
-        initialTab="definition"
+        initialTab="details"
         active
         task={makeTask()}
         onRequestClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -108,12 +105,12 @@ describe("TaskDetailModal spec-lock report", () => {
       />,
     );
 
+    fireEvent.click(screen.getByRole("button", { name: "Expand debug details" }));
     const report = await screen.findByTestId("spec-lock-report");
     expect(report).toHaveTextContent("unavailable");
     expect(report).toHaveTextContent("v—");
     expect(report.querySelector(".spec-lock-findings")).toBeNull();
-    const blocking = screen.getByText("Blocking", { exact: true });
-    expect(blocking.compareDocumentPosition(report) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Details" })).toHaveClass("detail-tab-active");
   });
 
   it("does not leave a spec-lock shell when no spec-lock data exists", async () => {
@@ -122,11 +119,10 @@ describe("TaskDetailModal spec-lock report", () => {
 
     render(
       <TaskDetailContent
-        initialTab="definition"
+        initialTab="details"
         active
         task={makeTask()}
         onRequestClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -135,9 +131,9 @@ describe("TaskDetailModal spec-lock report", () => {
       />,
     );
 
+    fireEvent.click(screen.getByRole("button", { name: "Expand debug details" }));
     await waitFor(() => expect(fetchSpecLock).toHaveBeenCalledWith("FN-099", undefined));
     expect(screen.queryByTestId("spec-lock-report")).toBeNull();
-    expect(screen.getByText("Dependencies", { exact: true })).toBeInTheDocument();
-    expect(screen.getByText("Blocking", { exact: true })).toBeInTheDocument();
+    expect(screen.getByText("No debug details available.")).toBeInTheDocument();
   });
 });

@@ -65,6 +65,14 @@ Decision-only or investigation tasks can also declare `noCommitsExpected` / `**N
 
 Every selectable built-in workflow uses a capacity-released hold column (`todo` or a workflow-specific backlog) for queued work and a WIP execution column for active work, so the hold/release sweep performs the normal `todo`/backlog → in-progress dispatch across the catalog.
 
+#### Content-binding review proof
+
+A pre-merge review binds source content when its step id is `code-review` **or** its result declares `reviewKind: "code"`. This is the same identity-or-kind rule used by merge admission. A workflow author who reuses the `code-review` node id inherits this contract even when the node does not declare `reviewKind`.
+
+Every singular content-binding approval must record a `reviewInputFingerprint`. Fusion refuses to dispatch the review when it cannot prove that input, records a recoverable failed step instead, and prevents any proofless approval from being persisted or honored. An audited human bypass—identified by a non-empty operator actor plus a recorded timestamp and reason—waives content binding for the specific skipped step. The automated `fast-mode` bypass never does; it retains the existing fail-closed merge refusal.
+
+Workspace Code Review is excluded from both the singular pre-dispatch proof requirement and the human-waiver shortcut. Workspace approval is bound through confirmed per-repository review evidence instead of one scalar fingerprint, and merge admission continues to validate that evidence repository by repository.
+
 ### Current workflow behavior inventory
 
 <!--
@@ -117,7 +125,7 @@ Pure-v1 custom graphs remain rollback-compatible by upgrading to trait-less defa
 
 After the workflow-columns cutover, the only automatic queued-work dispatcher is the engine's hold/release sweep. It releases a task from `todo` only when that column resolves as a `hold` column and its hold config uses `release: "capacity"`; it then moves the card to the nearest downstream `wip` column with available capacity.
 
-**Unplanned/intake cards never release into a processing column (FN-7648).** The sweep (and the explicit `promoteHeldTask`/`releaseHeldTaskByEvent` releases) refuses to move a card into a `countsTowardWip` column while it is still unplanned: `status === "planning"`, its PROMPT.md is still the bootstrap stub, or it currently rests in a column carrying the `intake` trait. This is trait-based, not keyed on the literal `"todo"` id, so a custom workflow whose intake column is renamed (`ideas`, `Inbox`, ...) is covered the same way as the default workflow's `triage`/"Planning" column. See `docs/architecture.md` § "Workflow-defined columns & traits" → "Execution-entry invariant" for the implementation detail.
+**Unplanned/intake cards never release into a processing column (FN-7648).** The sweep and both explicit release surfaces (`promoteHeldTask` and `releaseHeldTaskByEvent`) refuse to move a card into a `countsTowardWip` column while it is still unplanned: `status === "planning"`, a pending pre-release Plan Review, a durable replan signal, its PROMPT.md is still the bootstrap stub, or it currently rests in a column carrying the `intake` trait. An approval-held card is refused as well. FN-245 removes any operator override from `promoteHeldTask`, so an explicit promote refusal is terminal until planning or plan review genuinely completes. This is trait-based, not keyed on the literal `"todo"` id, so a custom workflow whose intake column is renamed (`ideas`, `Inbox`, ...) is covered the same way as the default workflow's `triage`/"Planning" column. See `docs/architecture.md` § "Workflow-defined columns & traits" → "Execution-entry invariant" for the implementation detail.
 
 Pure-v1 custom workflow definitions (`start` / `prompt` / `script` / `gate` / `end` nodes with default columns) still parse and upgrade by synthesizing the legacy column ids with empty trait sets. That shape is intentional for FN-5769 / issue #1405 rollback compatibility: it can be downgraded back to v1 for older binaries. The tradeoff is that a pure-v1 custom workflow's `todo` column is not a hold column, so tasks can sit in `todo` instead of dispatching to `in-progress`.
 
@@ -224,7 +232,7 @@ The default built-in catalog entry `builtin:coding` is backed by a Stepwise-deri
 
 If the Plan Review reviewer is unavailable before producing a verdict, the task stays in triage as `status: "plan-review-unavailable"` with a short backoff. That retry state is not a replan: Fusion rereads the existing non-empty `PROMPT.md`, preserves it unchanged, and reruns only Plan Review/finalization while holding a global agent concurrency slot for the reviewer lane. The graph applies the same invariant after execution has started: a transient/provider/model/abort Plan Review failure without a `REVISE` verdict remains visible in its current task state and never moves the task backward to `needs-replan`. A reviewer revision verdict moves the task to `needs-replan`; missing/empty/invalid prompt content fails clearly instead of restarting the planner.
 
-Workflow Plan Review is separate from manual plan approval. Project `planApprovalMode: "auto-approve-all"` bypasses only the final manual `awaiting-approval` plan gate after the plan is specified and any enabled Plan Review passes; it does not disable Plan Review or other explicit safety gates.
+Workflow Plan Review is separate from manual plan approval. Project `planApprovalMode: "auto-approve-all"` bypasses only the final manual `awaiting-approval` plan gate after the plan is specified and any enabled Plan Review passes. Workflow mode follows the workflow `requirePlanApproval` setting, while project `require-all` requires manual approval for every plan. None of these choices disables Plan Review or other explicit safety gates.
 
 ### Closing stale or duplicate work from Plan Review
 
@@ -242,7 +250,7 @@ A valid close follows the graph's explicit terminal no-op route before parsing o
 
 **FN-7559 (superseded by FN-7732) — telling the holds apart:** Plan Review parks a task with its own distinct statuses (`needs-replan` for a revision verdict, `plan-review-unavailable` for a reviewer-outage retry), so it never renders identically to a plan-approval hold. A separate triage release-authorization gate used to also use `status: "awaiting-approval"` with a distinct `awaitingApprovalReason: "release-authorization"` discriminator and its own dashboard label; that gate was removed (it over-fired on AI-authored specs that merely mentioned release tooling — see `b5b0458`, FN-7732). Releases are kept out of Fusion by agent instruction instead (AGENTS.md → "Releasing"), not by an engine/UI gate. The `Task.awaitingApprovalReason` field and its `"release-authorization"` value are kept only so legacy rows deserialize; any task that still carries the legacy value now renders as an ordinary manual plan-approval hold.
 
-**FN-7569 / FN-8008 — manual plan approval is idempotent against unchanged plans:** approving a plan under the manual gate records a fingerprint of the approved `PROMPT.md`, normalized to ignore deterministic `## Original Description` and Frontend UX hygiene sections. If the same task is later re-specified — a `needs-replan` replan, a Plan Review reviewer-outage retry, or a self-healing rebound back to `triage` — the manual gate detects the unchanged operator-authored plan and proceeds straight to `todo` instead of re-parking at `status: "awaiting-approval"`, regardless of whether those generated sections were injected before either fingerprint was calculated. A genuinely revised Mission, Steps, or File Scope still produces a different fingerprint and re-asks as before, and using Reject Plan clears the fingerprint so the regenerated plan is always treated as new. This idempotency check runs only inside the manual gate, strictly after Plan Review has already made its independent decision, and never applies under `planApprovalMode: "auto-approve-all"` (which bypasses the manual gate entirely).
+**FN-7569 / FN-8008 — manual plan approval is idempotent against unchanged plans:** approving a plan under the manual gate records a fingerprint of the approved `PROMPT.md`, normalized to ignore deterministic `## Original Description` and Frontend UX hygiene sections. If the same task is later re-specified — a `needs-replan` replan, a Plan Review reviewer-outage retry, or a self-healing rebound back to `triage` — the manual gate detects the unchanged operator-authored plan and proceeds straight to `todo` instead of re-parking at `status: "awaiting-approval"`, regardless of whether those generated sections were injected before either fingerprint was calculated. A genuinely revised Mission, Steps, or File Scope still produces a different fingerprint and re-asks as before. Reject Plan clears the fingerprint and deletes the plan for regeneration. The retained spec-revision API instead clears the fingerprint and supersedes current Plan Review evidence while retaining the old plan strictly as revision source, so unchanged text cannot skip the required replan and re-approval episode; this capability is no longer exposed as a task-menu button. The idempotency check runs only inside the manual gate, strictly after Plan Review has made its independent decision; project `auto-approve-all` bypasses that gate.
 
 `builtin:legacy-coding` is backed by the original monolithic `BUILTIN_CODING_WORKFLOW_IR`: `planning` → `execute` → optional quality gates → `review` → merge region.
 
@@ -326,7 +334,7 @@ The **step-inversion** track makes task *steps* themselves workflow-modelable. T
 
 `parse-steps` reads a declared **artifact** and runs a named **parser** to write the canonical step list (`Task.steps[]`). Config: `{ artifact: <key>, parser: "step-headings" | "json-steps" | "plugin:<id>:<parser>" }`.
 
-- Built-in parsers: `step-headings` (the `### Step N:` convention, extracted byte-identically from the legacy regex) and `json-steps` (a `[{ name, depends? }]` JSON document). Both preserve the difference between an absent dependency annotation/key and an explicit empty dependency list. Plugins register additional parsers under `plugin:<pluginId>:<parserId>`.
+- Built-in parsers: `step-headings` (the `### Step N:` convention, extracted byte-identically from the legacy regex) and `json-steps` (a `[{ name, depends? }]` JSON document). Numbered `### Step N:` headings use contiguous 0-based execution indices (`0 … N-1`); triage deterministically rejects malformed sequences, while the legacy step-session executor defensively rebases a fully 1-based sequence and clamps out-of-range indices. Both preserve the difference between an absent dependency annotation/key and an explicit empty dependency list. Plugins register additional parsers under `plugin:<pluginId>:<parserId>`.
 - Outcomes: `success`, `outcome:no-steps` (parsed cleanly, zero steps — routable, defaults to success), `outcome:parse-error` (malformed artifact or a throwing/unavailable plugin parser — fail-closed, routable, defaults to failure). A plugin parser never crashes the run.
 - It is the **only** graph-side writer of the step list, and **must dominate** (precede on all paths) any `foreach(source:"task-steps")` — a validator rule that prevents merging a task that reached the foreach before steps were parsed.
 
@@ -371,6 +379,12 @@ The **step-inversion** track makes task *steps* themselves workflow-modelable. T
 `mode` and `isolation` are independent axes. `parallel + shared` is rejected (concurrent writers in one worktree are unguardable). Under `worktree` isolation each instance runs in its own worktree/branch off a common base, with an **ordered integration stage** that lands step branches in step order (done iff integrated); a rebase conflict routes `outcome:integration-conflict` (default: rework on the updated base, budget-counted).
 
 Per-instance `worktree` isolation, including the implicit default for `mode: "parallel"`, is not supported for workspace (multi-repo) projects. It fails fast with `worktree-isolation-unsupported-workspace`; use `mode: "sequential"` with `isolation: "shared"` for workspace projects.
+
+### Workspace workflow admission
+
+Workspace planning runs read-only from the workspace root and acquires no repository checkout. When the first write-capable execution node starts, Fusion acquires task-ID-named worktrees for every repository configured in `.fusion/workspace.json`; later workflow nodes do not select repositories or add checkouts on demand. The configured set is persisted as the confirmed repository scope used by Code Review, verification, and landing; planning no longer proposes a `## Repository Scope` heading.
+
+Fresh Planning and prompt Plan Review run read-only from the dependency-installed project/workspace root before any task checkout exists. Their boundary permits generic writes only under `.fusion/` and refuses shell and verification commands. Dependency initialization moves to the first write-capable execution acquisition. A replan card that already retains execution checkouts may still run the compatibility readiness probe; unreadable or absent checkout evidence logs `Dependency readiness not determined` and does not manufacture a Plan Review `REVISE`. Script/CLI Plan Review remains refused in workspace mode because those paths cannot satisfy the declared read-only boundary.
 
 Parallelism is opt-in *per step by the planner*, not asserted by the workflow author. A step depends on the previous step unless its PROMPT.md heading carries a `(depends: N,M)` annotation listing the 1-indexed steps it actually depends on — e.g. `### Step 3 (depends: 1): Title`. An explicit empty list (`### Step 3 (depends:): Title` or `json-steps` `"depends": []`) means the step has no dependencies and can be scheduled as an independent root. An absent annotation/key is different: it remains the legacy previous-step dependency, so an unannotated plan is fully sequential regardless of `mode`. Annotate **conservatively**: only mark a step independent when it genuinely does not read or modify the prior step's output, or heavily-overlapping "independent" steps will loop integrate→conflict→rework until the budget exhausts.
 
@@ -440,19 +454,27 @@ Optional quality gates are authored directly in the workflow graph as `optional-
 Node config (`WorkflowOptionalGroupConfig`): `{ name?, defaultOn?, maxRevisions?: number | "unbounded", phase?: "pre-merge" | "post-merge", template: { nodes, edges } }`.
 
 - `defaultOn` contributes to the runtime/display effective enable set only when the task has no persisted `enabledWorkflowSteps` array; operators can still toggle persisted selections when creating or editing tasks.
-- `maxRevisions` optionally overrides the workflow/project `maxPostReviewFixes` budget for this one optional group's pre-merge fix → re-review loop. Use a non-negative integer for a bounded number of automatic fix passes, `0` to disable automatic fixes for that step, or `"unbounded"` to keep cycling until the step returns `APPROVE` / `APPROVE_WITH_NOTES`. When omitted, generic optional gates keep the global `maxPostReviewFixes` behavior; built-in `plan-review` and most `code-review` groups default to unbounded remediation unless a workflow setting caps them. Compound Engineering authors a two-pass Code Review cap.
+- `maxRevisions` optionally overrides the workflow/project `maxPostReviewFixes` budget for this one optional group's pre-merge fix → re-review loop. Use a non-negative integer for a bounded number of automatic fix passes, `0` to disable automatic fixes for that step, or `"unbounded"` to keep cycling until the step returns `APPROVE` / `APPROVE_WITH_NOTES`. When omitted, generic optional gates keep the global `maxPostReviewFixes` behavior. Built-in Plan Review remains unbounded behind its separate replan cap; standard built-in Code Review defaults to three remediation rounds and Compound Engineering authors a two-pass cap.
 - `phase` defaults to `"pre-merge"` (the prior, only behavior). `"post-merge"` marks a group the executor runs after a successful merge (see [Execution Phases](#execution-phases)). An enabled pre-merge group with no result blocks the merge door as well as pending or failed results. The built-in Plan Review, Code Review, and Browser Verification groups declare no phase, so they count as pre-merge.
 - Persisted enable state lives on the per-task `enabledWorkflowSteps` array, keyed by the **group node id** (for example `browser-verification`, `code-review`). For execution, Fusion treats a group as enabled when `enabledWorkflowSteps` is present and includes the group id; if the field is omitted, Fusion falls back to the workflow node's `defaultOn: true`. An explicit empty array disables every optional group and prevents default-on gates from reappearing.
+- **Current pre-merge approval:** an enabled Code Review gate permits merge only with a `passed` result carrying an explicit `APPROVE` or `APPROVE_WITH_NOTES` verdict, or a `skipped` result with the audited FN-7720 bypass metadata. A not-executed result satisfies a required pre-merge gate only when the gate is neither code-domain nor plan-domain; it can never satisfy Code Review or Plan Review. A `REVISE` blocks only when it carries at least one open actionable finding; finding-less and all-resolved revisions are recorded as `APPROVE_WITH_NOTES`. Remediation-archived results are not approvals. A disabled optional group is not a required gate. Diff-domain reviews must match the content being merged: singular tasks use the current diff fingerprint, while workspace tasks require confirmed per-repository `repositoryScope.reviewEvidence` for each modified in-scope repository. A matching plan-review fingerprint proves the plan text, not source diff content, and is never cross-compared with a diff fingerprint. A current workspace `reviewRemediation` record is blocking only when it identifies open findings. Missing approval clears by rerunning the gate, a failed review can be released through the audited bypass, stale content clears through a fresh review, and unavailable content proof blocks until the gate records new evidence.
+- **Gate-resolution provenance:** merge doors assert default-on pre-merge groups only when their store can read task workflow selection. A store with no selection reader keeps legacy result-only semantics; a reader that reports no selection resolves the default workflow for that task; and a selection-read failure refuses the merge rather than guessing.
+
+### Not-executed checks
+
+A check that never starts is stored as terminal `status: "skipped"` with a fixed `notRunReason`: `not-configured` when no test or build command exists, `tooling-unavailable` when a required tool such as `agent-browser` is unavailable, `execution-mode-skip` when fast mode deliberately omits the check, or `repository-context-unresolved` when a workspace gate cannot resolve its task-owned repository context. Dashboard progress, Workflow results, and agent activity present this state as **Not executed** with its reason, and count it as completed without painting it as passed.
+
+The graph still follows the success edge, so no operator action is required. Recorders deliberately do not write this discriminator for the `plan-review` group: Plan Review satisfaction is fail-closed on skipped rows, and writing one would create a blocking hold rather than an automatic continuation. This exclusion does not allow an unexecuted Plan Review to satisfy merge approval; both plan-domain and code-domain gates still require their existing positive evidence.
 
 Built-in optional gates ship as inlined IR builders, not as a template catalog:
 
 - `builtin:coding` carries the `browser-verification` optional-group node (`builtin-browser-verification-group.ts`), default-off, so browser verification runs only for tasks whose `enabledWorkflowSteps` includes `browser-verification`.
 - `builtin:coding` and `builtin:stepwise-coding` carry the `plan-review` optional-group node (`builtin-plan-review-group.ts`), default-on, before `parse-steps` so the plan can be reviewed before execution begins even when a task has not persisted explicit optional-step ids.
 - The `code-review` optional-group node (`builtin-code-review-group.ts`) is the inlined default-on code-review gate. On default `builtin:coding`, this is the only final review surface before merge; it is effective by default even when no explicit optional-step ids are stored. On `builtin:stepwise-coding`, it remains a post-foreach optional final review gate before the workflow's final review seam.
-- Plan Review/spec revision and most Code Review remediation loops are unbounded by default for built-in workflows. Compound Engineering instead defaults CE Code Review to two remediation passes so persistent findings park for operator action. Operators can override these authored defaults per workflow from the Workflow Editor **Settings → Values** tab with `planReviewMaxRevisions` and `codeReviewMaxRevisions`; leaving the value empty uses the workflow's authored default, a non-negative integer caps automatic revisions, and `0` disables automatic revision for that review path. Separately, `planReviewReplanCap` backstops the **unbounded** Plan Review default: it bounds consecutive `REVISE` → replan cycles before Fusion parks the task at `awaiting-approval` (reason `plan-review-replan-cap`) for an explicit human Approve or Reject decision. An explicit `planReviewMaxRevisions` is a stricter, earlier gate and takes precedence. Leave the setting empty to use the built-in 15; `0` parks on the first REVISE. These values are editable for read-only built-ins without duplicating the workflow.
+- Plan Review revisions retain their authored replan policy and operator approval cap. Code Review open findings become named remediation work, and finding-less feedback yields the deterministic fallback Fix step described below, so a `REVISE` never blocks merely because usable fix steps were absent. Standard Code Review allows three automatic remediation rounds by default; exhaustion enters the existing convergence ladder and ultimately leaves the failed review visibly merge-blocking for audited operator action instead of creating another wave. `planReviewReplanCap` still backstops the unbounded Plan Review default and can park at `awaiting-approval` (reason `plan-review-replan-cap`) for an explicit human decision. These values remain editable for read-only built-ins without duplicating the workflow.
 - A workflow (for example compound-engineering) can add a **post-merge** optional-group node via the generic `postMergeOptionalGroupNode(...)` builder (`builtin-post-merge-group.ts`) — e.g. a `document` step that runs after merge.
 
-Create-time optional-step controls appear in the quick-add action row and the **New Task** dialog inline quick buttons for the active workflow. They resolve the workflow's optional-group nodes (plus plugin-contributed palette templates, see [Plugin-Contributed Steps](#plugin-contributed-steps)) into toggleable rows. Selecting **Fast** clears currently enabled optional steps and submits `enabledWorkflowSteps: []` even if optional-step metadata is still loading, but the dropdown stays available once loaded; any manual reselection before create is submitted as explicit ids and executes even on the Fast task. Workflows with no optional groups render no trigger and omit `enabledWorkflowSteps` unless the operator selects Fast, where the explicit empty array preserves the speed-first opt-out. Unknown or removed ids are skipped during resolution so stale selections never render blank controls or break workflow loading.
+Create-time optional-step controls appear in the quick-add action row and the **New Task** dialog inline quick buttons for the active workflow. They resolve the workflow's optional-group nodes (plus plugin-contributed palette templates, see [Plugin-Contributed Steps](#plugin-contributed-steps)) into toggleable rows. Selecting **Fast** clears currently enabled optional steps and submits `enabledWorkflowSteps: []` even if optional-step metadata is still loading; leaving Fast restores the pre-Fast selection plus any steps enabled while Fast was active, with the current workflow's `defaultOn` seed used when that baseline is no longer trustworthy. The dropdown stays available once loaded; any manual reselection before create is submitted as explicit ids and executes even on the Fast task. Workflows with no optional groups render no trigger and omit `enabledWorkflowSteps` unless the operator selects Fast, where the explicit empty array preserves the speed-first opt-out. Unknown or removed ids are skipped during resolution so stale selections never render blank controls or break workflow loading.
 
 ## What They Are
 
@@ -481,7 +503,7 @@ An `optional-group` node's `phase` config selects one of two phases:
 
 Post-merge runs **graph-native**: after a successful merge the executor continues traversal to any post-merge optional-group node reachable from the merge region (and to plain post-merge nodes that follow a `seam:"merge"` node), running it via the same optional-group execution + recording path with `phase: "post-merge"` and non-blocking failures. This is gated by `experimentalFeatures.graphNativePostMerge`, which is **default-ON** and is now the single owner of post-merge execution — the legacy merger-owned post-merge path was deleted, so there is no fallback and post-merge work runs exactly once via the graph.
 
-> **Note on Fast Mode:** When a task has `executionMode: "fast"`, omitted/default optional groups are bypassed for speed and top-level custom pre-merge prompt/script/gate validation nodes are skipped. Explicitly selected optional groups still run their template prompt/script/gate nodes, so a Fast task with `enabledWorkflowSteps: ["browser-verification"]` runs Browser Verification. Post-merge steps remain active and run normally (post-merge is unaffected by execution mode).
+> **Note on Fast Mode:** When a task has `executionMode: "fast"`, every **pre-merge** optional group is bypassed, including groups explicitly named in `enabledWorkflowSteps`. The graph records terminal `skipped` evidence for each bypassed pre-merge group so merge admission remains auditable. `parse-steps` is retargeted to one synthetic implementation occurrence, per-step `step-review` is routed past without a verdict, and post-merge groups remain active and run normally.
 
 ## Execution Modes
 
@@ -515,6 +537,8 @@ Prompt-mode workflow-step agents receive user-authored task comments plus legacy
 
 Readonly steps cannot hold `edit`, `write`, `bash`, or task/agent mutation tools. Attempts to use denied tools fail closed with `READONLY_VIOLATION` and are surfaced as a `[readonly-violation]` workflow-step failure outcome.
 
+A graph prompt node may declare `config.readonlyMcpServers` as an array of non-blank configured MCP server names. For example, a Plan Review inner prompt can use `{ "toolMode": "readonly", "readonlyMcpServers": ["nav"] }` to use semantic navigation without receiving coding tools. Only listed servers are connected and exposed; unlisted servers never start, and tool origin is re-checked before exposure. The key is validated recursively in optional-group templates, is graph-node configuration rather than a legacy persisted configured-step field, and an absent key preserves the normal no-MCP readonly behavior. Reviewers are judge-only and remain read-only by default. If an operator explicitly enables the workflow's reviewer inline-fix setting, a review step is promoted to coding mode, this readonly-only opt-in is omitted, and normal coding-mode MCP policy applies.
+
 Use `toolMode: "coding"` for any prompt step that must modify files, run shell commands, or perform mutation actions.
 
 ## Gate Modes
@@ -522,7 +546,7 @@ Use `toolMode: "coding"` for any prompt step that must modify files, run shell c
 A gate node also has a `gateMode`:
 
 - **`gate`**: failures block merge/completion and follow normal remediation/retry flows.
-- **`advisory`**: failures are recorded as `advisory_failure` and shown as polish feedback, but never block merge.
+- **`advisory`**: authored `REVISE` outcomes are recorded as `advisory_failure` and shown as polish feedback, but never block merge. A prompt step inside a merge-consulted optional group must still emit a structured verdict even when its gate mode is advisory; advisory controls routing severity, not whether an approval may be unauthored. A verdict-required result that still has no verdict is always terminally `failed`, never `advisory_failure`.
 
 Defaults:
 - gates are `advisory` by default (advisory-by-default per FN-4368); opt in to `gate` by setting the node's `gateMode` in the [Workflow Editor](./workflow-editor.md).
@@ -596,15 +620,19 @@ When `defaultOn: true`, the gate is effectively enabled for execution and in-pro
 
 ## Workflow Step Revision Loop
 
+A review revision produces its remediation before any review-to-WIP move is requested. Reviewers are judge-only by default and never repair their own findings in-session; a Code Review `REVISE` becomes visible executor-owned work. Named-remediation workflows append visible `Fix:` steps after the untouched task history and then a pending `Testing & Verification` step; trailing-reopen workflows instead use their reopened pending occurrence. Every post-completion appender records the shared step-ledger reopen marker atomically with that new work, and starting a still-`pending` occurrence also records re-entry, so the resumed foreach skips completed history, executes the pending remediation, and can take its success edge back into review. Previously completed verification occurrences remain completed, while the fresh trailing occurrence makes another verification pass mandatory before the revised card can return to review. The parse node preserves live remediation steps across the post-bounce run; dedupe and scope checks still apply. A workflow's stored revision value or authored optional-group `maxRevisions` bounds the wave count, with standard Code Review defaulting to three.
+
+A Code Review `REVISE` must contain structured, file-specific Fix-step records. If a reviewer nevertheless omits usable records or only reports out-of-scope files, Fusion appends one deterministic pending Fix step that directs the executor to turn that feedback into concrete implementation work and returns the card to WIP; it never leaves Code Review blocked for that omission. Verification and unrelated gates retain their evidence-based non-blocking release behavior when no actionable remediation exists. Automatic failed-review revival claims the exact keyable review-input signature before it consumes budget or narrates an attempt. The claim has an owner and every refresh or release is fenced by step id, signature, and owner, so a concurrent runner cannot duplicate the attempt and an overtaken runner cannot clear a newer round's claim.
+
 A gate can request implementation revisions instead of just blocking completion. The revision/remediation flow runs through the **graph executor**, which calls the same executor revision primitives described below (the legacy `runWorkflowSteps` loop that previously owned this flow was deleted).
 
 ### How It Works
 
 Prompt-mode gate output is parsed in this order:
 
-1. Structured JSON verdict (`parseWorkflowStepVerdict`)
-2. Legacy prose fallback (`inferWorkflowStepVerdictFromProse`)
-3. `malformed` when neither format can be interpreted
+1. A structured JSON verdict (`parseWorkflowStepVerdict`), which is the only form that can approve
+2. Fail-safe prose revision requests (`inferWorkflowStepVerdictFromProse`)
+3. A classified `malformed` result when no authoritative verdict was emitted
 
 #### Structured Verdict Output
 
@@ -615,7 +643,7 @@ Use a JSON object with this schema:
 ```
 
 - Valid `verdict` values are exactly: `APPROVE`, `APPROVE_WITH_NOTES`, `REVISE`.
-- `notes` is optional and defaults to `""` when missing or non-string.
+- `notes` is required and must contain a short rationale naming what was checked and why the verdict was reached. When a structured verdict leaves it blank, Fusion first recovers the reviewer's surrounding prose, then a bounded list of its finding titles; if neither exists, the live session receives one bounded, verdict-preserving request for notes. If that request also produces nothing, Fusion substitutes deterministic engine narration that states the verdict and why reviewer-authored rationale is unavailable; it never fabricates rationale or changes the verdict. Each repair attempt records the fixed outcome through the bounded `task:review-notes-repaired` run-audit event.
 - The parser checks fenced and inline JSON candidates, and the **last valid candidate wins**. Inline scanning keeps every balanced object (including nested objects) and is string-aware. If that scan detects desynchronization from arbitrary prose (an unpaired brace, quote, or stray close), it also recovers recent full JSON lines and `JSON.parse`-arbitrated brace slices across a generous trailing window. Fairly allocated close/open-anchor budgets preserve payloads with braces or escaped quotes in strings, many findings, and brace-bearing prose after the payload; recovery is based on scanner desync, not whether the payload happens to be near the end.
 
 Accepted shapes:
@@ -636,18 +664,15 @@ Additional example:
 
 #### Prose Fallback
 
-Legacy prose is still supported when structured JSON is missing. A visible but unreadable quoted JSON `"verdict":` key is never converted into a prose approval: prompt-gate parsing reports `malformed`, while reviewer and plan-review lanes return retryable `UNAVAILABLE`. Plain prose with no structured verdict key remains lenient:
+Prose is supported only in the fail-safe direction: it may request a revision, but it can never grant approval. Output beginning with `REQUEST REVISION` (case-insensitive), or an explicit prose `Verdict: REVISE` / `Status: REVISE` line, maps to `REVISE`. Remaining text is retained as reviewer-authored notes; when nothing follows `REQUEST REVISION`, notes default to `"Revision requested"`.
 
-- Output beginning with `REQUEST REVISION` (case-insensitive) maps to `REVISE`.
-  - Remaining prose becomes `notes`.
-  - If nothing follows, notes default to `"Revision requested"`.
-- Output containing one of these phrases maps to `APPROVE` with empty notes: `approve`, `approved`, `looks good`, `no issues`, `out of scope`.
-
-For new workflow step prompts, prefer the structured JSON contract.
+Approving prose such as `looks good`, `LGTM`, `ship it`, or `Verdict: APPROVE` is not authoritative without the trailing JSON object and is recorded as malformed. The same rule governs the reviewer and Plan Review lane: reviewer prompt templates require a trailing JSON verdict object, while human-readable verdict headings may only downgrade to `REVISE` or `RETHINK`.
 
 #### Malformed Output
 
-If output matches neither structured JSON nor known prose fallback patterns, Fusion records the step output as `malformed`. Operationally, this means no workflow verdict could be inferred from that response. A malformed `gateMode: "gate"` prompt step is a blocking failure rather than an approval; a malformed `gateMode: "advisory"` step is recorded as `advisory_failure` and does not block completion.
+When a verdict-required response has no authoritative JSON verdict and is not a fail-safe prose revision, Fusion asks the already-live reviewer once for the verdict envelope only. This bounded follow-up forbids re-reviewing and tool use, accepts only the exact declared verdict tokens, and emits `task:review-verdict-repaired` with identifiers and fixed outcomes only. If the follow-up is empty, invalid, fails, or times out, Fusion records the response as `malformed` with one of three reasons: `no-verdict`, `unreadable-structured-verdict`, or `prose-approval-without-json`. The original reviewer output remains visible, and deterministic engine narration explains that the review did not complete because no usable JSON verdict object was emitted.
+
+A verdict-required optional-group result with no verdict is persisted as terminal `failed` and can never become `advisory_failure` or a `passed` approval. The failed record blocks merge and remains selectable by the audited privileged review bypass.
 
 ### Behavior
 
@@ -662,7 +687,7 @@ When a revision is requested:
 
 ### Feedback Format
 
-Recommended (structured JSON, prompt-mode):
+Required for every approving prompt-mode review:
 
 ```json
 {"verdict":"REVISE","notes":"[Clear, actionable description of what needs to be fixed]"}
@@ -671,11 +696,11 @@ Recommended (structured JSON, prompt-mode):
 Also valid for approvals:
 
 ```json
-{"verdict":"APPROVE","notes":""}
-{"verdict":"APPROVE_WITH_NOTES","notes":"Optional non-blocking feedback"}
+{"verdict":"APPROVE","notes":"Reviewed the scoped implementation and targeted verification; both satisfy the acceptance criteria."}
+{"verdict":"APPROVE_WITH_NOTES","notes":"The implementation is correct; the non-blocking follow-up is described below."}
 ```
 
-Legacy fallback (still supported via prose inference):
+Fail-safe revision fallback (never an approval):
 
 ```
 REQUEST REVISION
@@ -683,7 +708,7 @@ REQUEST REVISION
 [Clear, actionable description of what needs to be fixed]
 ```
 
-The revision block replaces any prior revision instructions (no accumulation).
+The revision block replaces any prior revision instructions (no accumulation). Persisted workflow-step results mirror the final human-readable rationale into both `output` and `notes`; workspace review aggregates preserve each repository's rationale in their combined narrative.
 
 By default this split-and-fork behavior is enabled through the project setting `workflowRevisionForkOnScopeMismatch`. Set it to `false` to restore the legacy behavior that appends all workflow revision feedback to the original task even when it references files outside the declared File Scope.
 
@@ -740,6 +765,8 @@ For pre-merge gate hard failures, the graph executor drives remediation through 
 
 Tasks are not *parked* in `in-review` for this remediable path unless additional terminal failures occur — they pass through it. The pre-merge review gates run with the card in `in-review` (which is what surfaces the running step as a card badge on the board), and remediation moves it back to `in-progress`; the card only stays in `in-review` when a terminal failure blocks the merge gate.
 
+A positive diff-domain approval binds the tree its own lane finished reviewing. If that lane fast-forwards its checkout to make an inline fix, it re-captures only its own fingerprint and commit identity after re-reviewing the final tree; no other lane receives that approval. A singular stale-content refusal seeds an idle-guarded fresh graph review of current content for the oldest stale required lane. Non-fast-forward or unreadable Git evidence, non-approval verdicts, plan-domain reviews, unavailable routes, active continuations, and already-current lanes all refuse rather than weakening merge admission.
+
 Because `in-review` carries no WIP trait, a card releases its concurrency/worktree slot while a review gate runs, even though its agent and checkout are still live. The pool can therefore be full when the remediation node crosses back into `in-progress`, and capacity is enforced in-transaction and is never bypassable — so that move can be rejected. The workflow column boundary treats a capacity rejection as a **park, not a failure**: the run unwinds cleanly, the card keeps its failed pre-merge gate result and its worktree, and the next graph run retries the crossing once a slot frees. Non-capacity rejections (invariant violations) still surface as real errors.
 
 ## Workflow Interpreter Dual-Observe (retired parity instrumentation)
@@ -761,7 +788,7 @@ Authoritative cutover now depends on existing/current parity summary evidence, n
 
 #### Self-healing recovery for parked review tasks
 
-If a task is found in `in-review` with failed pre-merge workflow results and no active executor, self-healing can auto-revive it by replaying the same remediation send-back flow. Generic optional gates use the resolved workflow/project budget; built-in Plan Review and most Code Review groups are unbounded unless workflow settings or node config set a numeric cap. Compound Engineering's Code Review node supplies a two-pass cap.
+If a task is found in `in-review` with failed pre-merge workflow results and no active executor, self-healing can auto-revive it by replaying the same remediation send-back flow. A singular task uses its task worktree; a workspace task uses the acquired sub-repository worktree selected by the failed repository review outcome. Recovery is checkout-unavailable only when neither a singular worktree nor a usable acquired sub-repository worktree can be resolved. Generic optional gates use the resolved workflow/project budget. Built-in Plan Review remains unbounded behind its replan cap; standard Code Review uses three remediation rounds and Compound Engineering uses two unless workflow settings override them.
 
 Project-level `autoMerge: false` gates **merge admission**, not pre-merge remediation: Plan Review replans, Code Review/optional-gate fixes, required-artifact recovery, and failed-step revival remain available for shared-branch members and standalone tasks. Only an operator-authored task-level auto-merge Off fences those remediation seams. Every such hold or revision-budget refusal is recorded on the task; when a fire-and-forget remediation node cannot schedule after implementation is complete, the card stays visibly parked in its resolved review lane with its merge blocker rather than bouncing back to planning.
 
@@ -776,10 +803,10 @@ FNXC:WorkflowOptionalStepFix 2026-06-27-22:51:
 A post-verdict bounce from Code Review or Browser Verification must not reopen only a trivial trailing documentation step. The next executor pass reopens the actionable implementation step plus terminal verification/delivery steps, completes them to `done`, and only then lets the optional group re-evaluate across both in-progress and in-review bounce sources.
 
 FNXC:WorkflowRemediation 2026-07-03-20:10:
-Retryable graph failures at explicit remediation nodes (for example `code-review-remediation` returning `remediation-not-scheduled` after restart-local context is gone) should not strand tasks in `in-review` with `status:"failed"`. Live executor handling and self-healing both classify the durable failed pre-merge step result and send the task through the existing remediation bounce, while numeric caps, pauses, missing worktrees, and auto-merge-disabled rows remain operator-actionable.
+Retryable graph failures at explicit remediation nodes (for example `code-review-remediation` returning `remediation-not-scheduled` after restart-local context is gone) should not strand tasks in `in-review` with `status:"failed"`. Live executor handling and self-healing both classify the durable failed pre-merge step result and send the task through the existing remediation bounce. A workspace task's acquired sub-repository checkout satisfies this requirement; "missing worktree" means that neither a singular worktree nor any resolvable acquired sub-repository checkout exists. Numeric caps, pauses, unavailable checkouts, and auto-merge-disabled rows remain operator-actionable.
 -->
 
-During a live graph run, an enabled **pre-merge** optional step that returns `REVISE` (including the built-in **Code Review** / `code-review` and **Browser Verification** / `browser-verification` groups) sends the task back to the executor for a fix pass before the graph continues to review or merge. The workflow graph restarts on the next executor pass, re-launches task execution, and reopens the terminal verification/delivery suffix plus the nearest preceding implementation step so the verdict-demanded fix can be made rather than merely replaying a trivial trailing step. The optional step re-runs only after the executor drives those reopened steps back to `done`; the cycle repeats until the step returns `APPROVE` / `APPROVE_WITH_NOTES` or the resolved revision budget is exhausted. Generic optional gates use the workflow/project `maxPostReviewFixes` value (built-in default: 10 fix passes). Built-in Plan Review and most Code Review groups default to `"unbounded"` so they continue until approval unless `planReviewMaxRevisions`, `codeReviewMaxRevisions`, or the node's `config.maxRevisions` sets a numeric cap. Compound Engineering's Code Review node authors a two-pass cap. The aggregate `postReviewFixCount` remains for dashboard visibility, but budget checks count attempts per workflow-step key so Plan Review, Code Review, and Browser Verification do not consume each other's caps.
+During a live graph run, an enabled **pre-merge** optional step that returns `REVISE` (including the built-in **Code Review** / `code-review` and **Browser Verification** / `browser-verification` groups) sends the task back to the executor for a fix pass before the graph continues to review or merge. The workflow graph restarts on the next executor pass, re-launches task execution, and reopens the terminal verification/delivery suffix plus the nearest preceding implementation step so the verdict-demanded fix can be made rather than merely replaying a trivial trailing step. The optional step re-runs only after the executor drives those reopened steps back to `done`; the cycle repeats until the step returns `APPROVE` / `APPROVE_WITH_NOTES` or the resolved revision budget is exhausted. Generic optional gates use the workflow/project `maxPostReviewFixes` value (built-in default: 10 fix passes). Built-in Plan Review remains `"unbounded"` behind `planReviewReplanCap`. Standard built-in Code Review defaults to three remediation rounds, while Compound Engineering authors a two-pass cap; `codeReviewMaxRevisions` or a node's `config.maxRevisions` may override those defaults. The aggregate `postReviewFixCount` remains for dashboard visibility, but budget checks count attempts per workflow-step key so Plan Review, Code Review, and Browser Verification do not consume each other's caps.
 
 ### Severity-gated review verdicts
 
@@ -822,7 +849,7 @@ FNXC:WorkflowStepResults 2026-06-26-15:00:
 Results now live on `task.workflowStepResults` (written by the graph executor, keyed by optional-group node id). The persisted `status` union is pending/passed/failed/advisory_failure/skipped; the UI derives a `running` display state from a `pending` entry with `startedAt` and no `completedAt`.
 -->
 
-Gate results are recorded on the task's **`workflowStepResults`** field (`WorkflowStepResult[]`), written by the graph executor and keyed by the optional-group node id. Each entry carries `status`, optional `verdict`, `notes`, `output`, and `phase`. The unified progress bar and the Workflow tab read this field directly.
+Gate results are recorded on the task's **`workflowStepResults`** field (`WorkflowStepResult[]`), written by the graph executor and keyed by the optional-group node id. Each entry carries `status`, optional `verdict`, `notes`, `output`, and `phase`. Verdict-carrying prompt reviews persist a non-empty rationale mirrored in `notes` and `output` whenever the reviewer supplies or repairs one; legacy rows may still lack both. The unified progress bar and the Workflow tab read this field directly.
 
 <!--
 FNXC:WorkflowStepResults 2026-07-09-01:10:
@@ -879,10 +906,10 @@ Prompt-mode workflow agents should emit a trailing JSON object:
 
 `{"verdict":"APPROVE|APPROVE_WITH_NOTES|REVISE","notes":"..."}`
 
-- `verdict` and `notes` are persisted on `WorkflowStepResult` when present.
-- Script-mode steps do not populate these fields.
-- Backward compatibility remains for legacy prose-only responses via heuristic fallback (`REQUEST REVISION` and approval keywords).
-- If neither structured JSON nor fallback prose can be interpreted, output is recorded as `malformed` (no inferable verdict). Malformed blocking gates fail closed; advisory gates record `advisory_failure` without blocking.
+- `verdict` and non-empty human-readable text are persisted on `WorkflowStepResult`; surrounding reviewer prose or finding titles are recovered before one bounded same-session note request is attempted. If the request remains empty, fails, or times out, deterministic engine narration states the verdict and the fixed failure reason without fabricating reviewer rationale. Repair attempts emit bounded `task:review-notes-repaired` telemetry.
+- Script-mode steps have no live session for note repair; workspace script reviews use deterministic engine narration when they produce no text.
+- Backward compatibility remains only in the fail-safe direction: `REQUEST REVISION` or an explicit prose `REVISE` line may request changes, but approving prose never grants approval.
+- If neither structured JSON nor fail-safe revision prose can be interpreted, the live reviewer receives one bounded verdict-only request. A response that still has no verdict is recorded as `malformed`, and the optional-group result is terminally `failed` even for an advisory gate.
 
 ## Workflow Graph Executor
 
@@ -1023,7 +1050,7 @@ When the merge boundary cannot be proven, Fusion emits the terminal graph value 
 
 ### Workspace Code Review remediation
 
-Workspace Code Review carries repository-specific outcomes. A failed review is remediated from the failing repository's acquired worktree without persisting a singular workspace-root worktree. Repeated unchanged negative review input parks for operator approval; landing requires current approval evidence for every modified scoped repository. Scope changes clear both approval evidence and the remediation target atomically, while a current-scope APPROVE clears its matching target before graph completion.
+Workspace Code Review carries repository-specific outcomes. Structured findings are repository-qualified (including their identifiers and file paths), retained on the aggregate review result, and persisted on the workflow step result so named-remediation workflows can turn a REVISE into explicit fix work. Remediation gate identity is structural: `reviewKind: "code"` identifies Code Review even when a custom workflow uses a different node id, and `workflowAction: "deterministic-verification"` identifies Verification. A blocking finding inside a confirmed `repositoryScope.repositories` entry is remediable even when its file is not yet in PROMPT.md File Scope; accepting the finding appends a named fix step and widens File Scope atomically. A failed review is remediated from the failing repository's acquired worktree without persisting a singular workspace-root worktree. The convergence ladder's stage-two arbiter reads that same failing repository checkout and uses it for an upheld-review bounce. Repeated unchanged or exhausted automatic review input is recorded and released as non-blocking rather than creating an engine-authored human hold; landing still requires current approval evidence for every modified scoped repository. Scope changes clear both approval evidence and the remediation target atomically, while a current-scope APPROVE clears its matching target before graph completion. Every refusal to schedule remediation is recorded on the card with the failed step, concrete cause, and available retry or privileged-bypass remedy.
 
 ### Workspace Code Review seal
 
@@ -1033,6 +1060,16 @@ For workspace tasks, Code Review is the final write-sensitive stage before landi
 
 Automatic remediation retains a failed review as a non-blocking `skipped` carrier. The carrier stores the failed verdict, findings, and bounded prior-attempt ledger, but never bypass metadata, so it cannot satisfy a review gate by itself. This applies to remediation bounces, graph-failure resumes, and remediation-owned replans; explicit operator retry remains a clean slate.
 
-The next reviewer receives the same-gate attempt history and open findings. An implementer may call `fn_review_dispute(findingId, rationale)`: this records a contested-but-open annotation, so the finding remains blocking and visible. The reviewer must supersede it or rebut it with `rebutsDisputedFindingId`; only a terminal same-gate verdict that does neither marks it `dispute-upheld`.
+Each review result records the commit that the reviewer inspected. On the next same-gate Code Review, Fusion compares that anchor with the current commit and presents an explicit changed-since summary with the commit count, bounded changed-file list, and diff stat. If no commits landed, the prompt states that the tree is frozen and directs the reviewer to maintain prior findings by ID or approve. Legacy results without an anchor, unavailable Git evidence, and workspace multi-repository reviews omit this singular-worktree summary rather than inventing progress.
 
-Repeated unchanged review input routes through the shared convergence ladder: one bounded escalation/replan, then arbitration, then a loud human escalation only after the automatic stages are spent. A non-declining stage performs a real re-dispatch and its requester succeeds rather than terminalizing the remediation node. Arbitration may release only its exact fenced failed gate; it cannot release sibling gates, and a split with binding findings remains blocking.
+The next reviewer also receives the same-gate attempt history and open findings. An implementer may call `fn_review_dispute(findingId, rationale)`: this records a contested-but-open annotation, so the finding remains blocking and visible. The reviewer must supersede it or rebut it with `rebutsDisputedFindingId`; only a terminal same-gate verdict that does neither marks it `dispute-upheld`.
+
+Repeated unchanged review input routes through the shared convergence ladder. Its model notch checks the dedicated review-convergence target first and the configured execution fallback lane second, taking the first complete model pair that differs from the task's effective execution model. A configured but identical dedicated target is discarded instead of blocking a distinct fallback. If neither candidate is distinct, Fusion advances directly to arbitration without dispatching another identical remediation round. Budget exhaustion and the Plan Review cap retain their existing stage-one lifecycle actions because they do not prove a frozen tree. Arbitration may release only its exact fenced failed gate; it cannot release sibling gates, and a split with binding findings remains blocking.
+
+A provably empty singular Code Review diff is a definite review input. When `noCommitsExpected: true` is already durable, Fusion records a `passed` Code Review result without dispatching a model; the downstream no-op finalizer requires that passed gate and still applies all of its evidence guards. Otherwise an empty-diff `REVISE` is offered to the remediation producer FIRST: a Code Review or Verification gate that can name fix work returns the card to WIP with that work, because a card must never be parked merely for missing fix steps. Only when no producer serves the gate, or when the producer genuinely declines, does the empty-diff close run — and for those gates it keeps its original position ahead of every revision-budget refusal, including zero and invalid budgets. The close still compare-and-sets the exact failed attempt, so a concurrent approval, operator bypass, supersession, remediation archive, pause, delete, or hold wins the race.
+
+## Review-gated coding
+
+`builtin:review-gated-coding` is an opt-in coding workflow. Its task steps contain implementation work only. Verification, Code Review, and Documentation & Delivery run in that order as review-column gates. A failed Verification appends `Fix: Fix failing <label>` remediation steps, while a failed Code Review appends `Fix: <finding title>` remediation steps to the end of the task list. Their durable `remediation` provenance records the gate, finding, affected file, and wave; for Code Review, `remediation.detail` retains the finding body. Step names are never used to classify remediation.
+
+Review-to-fix remediation waves continue while actionable evidence changes and the resolved revision budget has room. Missing actionable findings, out-of-scope findings, duplicate-only open remediation, unchanged Code Review input, and unchanged normalized Verification measurements are recorded on the card and released as non-blocking rather than returning the task to implementation without work or creating an engine-authored human hold. Standard Code Review is bounded to three rounds unless workflow values or authored node policy override it. `parse-steps` uses `preserveRemediationSteps` to stop before replacement writes when live remediation exists, while `implementationOnlySteps` only audits gate-like plan steps and never deletes them.

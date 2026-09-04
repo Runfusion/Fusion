@@ -109,6 +109,11 @@ import {
   TASK_REPOSITORY_SCOPE_VERSION,
   REVIEW_CONVERGENCE_STAGE_VERSION,
   CHAT_SESSION_MEMORY_FOCUS_VERSION,
+  SESSION_CONTENTION_WAIT_STATE_VERSION,
+  TASK_STEP_REPORTS_VERSION,
+  TASK_EXTERNAL_BLOCK_VERSION,
+  TASK_REQUIRE_PLAN_APPROVAL_VERSION,
+  PATCHNODE_ENTRIES_VERSION,
   IDENTITY_ACTORS_VERSION,
 } from "../../postgres/schema-applier.js";
 import { ProjectPartitionRekeyError, rekeyFallbackProjectPartition } from "../../postgres/migration-stamping.js";
@@ -158,15 +163,13 @@ describe("schema-applier: immutable migration identities", () => {
     expect(TASK_REPOSITORY_SCOPE_VERSION).toBe("0064");
     expect(REVIEW_CONVERGENCE_STAGE_VERSION).toBe("0065");
     expect(CHAT_SESSION_MEMORY_FOCUS_VERSION).toBe("0066");
-    /*
-    FNXC:Identity 2026-08-23-06:40:
-    Identity is 0067: upstream claimed 0060 through 0066 while this branch was in review, and a
-    released number is canonical. The ceiling tracks the NEWEST migration, so it moves with
-    identity — the comment above explains why a stale ceiling makes the binary reject its own
-    database, and that applies identically here.
-    */
-    expect(IDENTITY_ACTORS_VERSION).toBe("0067");
-    expect(SCHEMA_BASELINE_VERSION).toBe("0067");
+    expect(SESSION_CONTENTION_WAIT_STATE_VERSION).toBe("0067");
+    expect(TASK_STEP_REPORTS_VERSION).toBe("0068");
+    expect(TASK_EXTERNAL_BLOCK_VERSION).toBe("0069");
+    expect(TASK_REQUIRE_PLAN_APPROVAL_VERSION).toBe("0070");
+    expect(Number(SCHEMA_BASELINE_VERSION)).toBeGreaterThanOrEqual(Number(TASK_REQUIRE_PLAN_APPROVAL_VERSION));
+    expect(IDENTITY_ACTORS_VERSION).toBe("0072");
+    expect(SCHEMA_BASELINE_VERSION).toBe("0072");
   });
 
   it("keeps monitor and approval isolation assigned to version 0003", () => {
@@ -701,7 +704,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     ctx = null;
   });
 
-  it("creates all 116 project tables, 21 central tables, 1 archive table", async () => {
+  it("creates all 113 project tables, 17 central tables, 1 archive table", async () => {
     ctx = await setupFreshDb();
     // FNXC:PostgresCutover 2026-07-05-15:55: apply the BASELINE only.
     // applySchemaBaseline now runs the plugin schema-init hooks by default,
@@ -723,22 +726,17 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     refusal marker (100 → 105); later baseline additions bring the count to 106; and 0048 adds
     GitHub check state (106 → 107); 0049 adds the agent-activity outbox and counter (→ 109);
     0050 adds immutable lock, evidence, and report history (109 → 112); 0052 adds recall records (→ 113);
-    0060 adds workspace coordination leases and land intents (→ 115).
-    FNXC:Identity 2026-08-15-22:52: 0067 adds project.actor_role_grants (→ 116). Plugin tables are added separately
+    0060 adds workspace coordination leases and land intents (→ 115). Plugin tables are added separately
     by the schema-init hook and are excluded here.
     */
-    expect(bySchema.project).toBe(116);
+    expect(bySchema.project).toBe(115);
     /*
     FNXC:CapacityModel 2026-07-29-08:10 (drop the cross-project cap — table half):
     17, not 18: `central.global_concurrency` is dropped by migration 0037. A fresh
     database still CREATEs it from the historical 0000 baseline and then drops it,
     so fresh and upgraded databases converge on the same shape.
-
-    FNXC:Identity 2026-08-15-22:52:
-    21, not 17: migration 0067 adds central.actors, actor_credentials, actor_sessions, and
-    actor_provider_links (KTD7 — identity is central because one daemon serves N projects).
     */
-    expect(bySchema.central).toBe(21);
+    expect(bySchema.central).toBe(17);
     expect(bySchema.archive).toBe(1);
   });
 
@@ -791,6 +789,80 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     await expect(applySchemaBaseline(ctx.db, { pluginHooks: [] })).resolves.toEqual({ applied: true, pluginHooksRun: 0 });
     expect(await getAppliedMigrations(ctx.db)).toContain(TASK_LIFECYCLE_OUTBOX_VERSION);
     await assertTaskLifecycleOutboxOwnershipContract(ctx);
+  });
+
+  /*
+  FNXC:MemoryFocus 2026-08-26-08:31:
+  THE LEDGER CAN LIE ABOUT A RENUMBERED MIGRATION.
+
+  A ledger row asserts "a migration with this NUMBER ran". The memory-focus migration was renumbered
+  four times (0059 → 0060 → 0061 → 0065 → 0066), each time because an upstream batch claimed the
+  sequence first, so a database can carry a row for one numbering while a different migration owned
+  that number on the boot that recorded it. The applier then trusts the ledger absolutely, skips the
+  migration, and reports a successful startup over a schema that does not match it.
+
+  Reproduced from a real dev database: `column "memory_focus" does not exist` on every chat-session
+  read — `select()` emits the binary's full column list — so every chat query 500s and the task
+  planner chat never opens, with nothing wrong at startup.
+
+  The repair is the same one `recommendations` already carries: verify the materialized column, not
+  only the marker, and replay the idempotent `ADD COLUMN IF NOT EXISTS`.
+  */
+  it("repairs a database whose ledger claims memory focus but whose column is missing", async () => {
+    ctx = await setupFreshDb();
+    await applySchemaBaseline(ctx.db, { pluginHooks: [] });
+
+    // The exact drifted state: marker present, column absent.
+    await ctx.db.execute(sql.raw(`ALTER TABLE project.chat_sessions DROP COLUMN memory_focus;`));
+    expect(await getAppliedMigrations(ctx.db)).toContain(CHAT_SESSION_MEMORY_FOCUS_VERSION);
+
+    expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(true);
+
+    const columns = (await ctx.db.execute(sql`
+      SELECT column_name
+      FROM information_schema.columns
+      WHERE table_schema = 'project' AND table_name = 'chat_sessions' AND column_name = 'memory_focus'
+    `)) as unknown as Array<{ column_name: string }>;
+    expect(columns, "the replay must materialize the column the ledger already claimed").toHaveLength(1);
+    expect(await getAppliedMigrations(ctx.db)).toContain(CHAT_SESSION_MEMORY_FOCUS_VERSION);
+
+    // Idempotent: a second pass over a healthy schema changes nothing and still succeeds.
+    await applySchemaBaseline(ctx.db, { pluginHooks: [] });
+    const afterSecondPass = (await ctx.db.execute(sql`
+      SELECT column_name
+      FROM information_schema.columns
+      WHERE table_schema = 'project' AND table_name = 'chat_sessions' AND column_name = 'memory_focus'
+    `)) as unknown as Array<{ column_name: string }>;
+    expect(afterSecondPass).toHaveLength(1);
+  });
+
+  /*
+  FNXC:WorkspaceContention 2026-08-26-08:31:
+  The other migration renumbered on this branch (0066 → 0067, because released chat memory focus owns
+  0066) carries the identical hazard and therefore the identical defence.
+  */
+  it("repairs a database whose ledger claims session contention wait state but whose columns are missing", async () => {
+    ctx = await setupFreshDb();
+    await applySchemaBaseline(ctx.db, { pluginHooks: [] });
+
+    await ctx.db.execute(sql.raw(`
+      ALTER TABLE project.tasks
+        DROP COLUMN session_contention_hold_count,
+        DROP COLUMN session_contention_wait_reason;
+    `));
+    expect(await getAppliedMigrations(ctx.db)).toContain(SESSION_CONTENTION_WAIT_STATE_VERSION);
+
+    expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(true);
+
+    const columns = (await ctx.db.execute(sql`
+      SELECT column_name
+      FROM information_schema.columns
+      WHERE table_schema = 'project' AND table_name = 'tasks'
+        AND column_name IN ('session_contention_hold_count', 'session_contention_wait_reason')
+      ORDER BY column_name
+    `)) as unknown as Array<{ column_name: string }>;
+    expect(columns.map((row) => row.column_name))
+      .toEqual(["session_contention_hold_count", "session_contention_wait_reason"]);
   });
 
   /*
@@ -857,6 +929,25 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     `)) as unknown as Array<{ column_name: string }>;
     expect(columns).toEqual([{ column_name: "session_advisor_enabled" }]);
     expect(await getAppliedMigrations(ctx.db)).toContain(SESSION_ADVISOR_ENABLED_SCHEMA_VERSION);
+  });
+
+  it("repairs a recorded 0070 migration when require_plan_approval is missing", async () => {
+    ctx = await setupFreshDb();
+    await applySchemaBaseline(ctx.db, { pluginHooks: [] });
+    await ctx.db.execute(sql.raw(`
+      ALTER TABLE project.tasks DROP COLUMN require_plan_approval;
+    `));
+
+    expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(true);
+    const columns = (await ctx.db.execute(sql`
+      SELECT column_name
+      FROM information_schema.columns
+      WHERE table_schema = 'project'
+        AND table_name = 'tasks'
+        AND column_name = 'require_plan_approval'
+    `)) as unknown as Array<{ column_name: string }>;
+    expect(columns).toEqual([{ column_name: "require_plan_approval" }]);
+    expect(await getAppliedMigrations(ctx.db)).toContain(TASK_REQUIRE_PLAN_APPROVAL_VERSION);
   });
 
   /*
@@ -1797,6 +1888,11 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_REPOSITORY_SCOPE_VERSION,
       REVIEW_CONVERGENCE_STAGE_VERSION,
       CHAT_SESSION_MEMORY_FOCUS_VERSION,
+      SESSION_CONTENTION_WAIT_STATE_VERSION,
+      TASK_STEP_REPORTS_VERSION,
+      TASK_EXTERNAL_BLOCK_VERSION,
+      TASK_REQUIRE_PLAN_APPROVAL_VERSION,
+      PATCHNODE_ENTRIES_VERSION,
       IDENTITY_ACTORS_VERSION,
     ]);
     expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
@@ -1890,6 +1986,11 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_REPOSITORY_SCOPE_VERSION,
       REVIEW_CONVERGENCE_STAGE_VERSION,
       CHAT_SESSION_MEMORY_FOCUS_VERSION,
+      SESSION_CONTENTION_WAIT_STATE_VERSION,
+      TASK_STEP_REPORTS_VERSION,
+      TASK_EXTERNAL_BLOCK_VERSION,
+      TASK_REQUIRE_PLAN_APPROVAL_VERSION,
+      PATCHNODE_ENTRIES_VERSION,
       IDENTITY_ACTORS_VERSION,
     ]);
   });
@@ -2116,6 +2217,11 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_REPOSITORY_SCOPE_VERSION,
       REVIEW_CONVERGENCE_STAGE_VERSION,
       CHAT_SESSION_MEMORY_FOCUS_VERSION,
+      SESSION_CONTENTION_WAIT_STATE_VERSION,
+      TASK_STEP_REPORTS_VERSION,
+      TASK_EXTERNAL_BLOCK_VERSION,
+      TASK_REQUIRE_PLAN_APPROVAL_VERSION,
+      PATCHNODE_ENTRIES_VERSION,
       IDENTITY_ACTORS_VERSION,
     ]);
   });
@@ -2223,6 +2329,11 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_REPOSITORY_SCOPE_VERSION,
       REVIEW_CONVERGENCE_STAGE_VERSION,
       CHAT_SESSION_MEMORY_FOCUS_VERSION,
+      SESSION_CONTENTION_WAIT_STATE_VERSION,
+      TASK_STEP_REPORTS_VERSION,
+      TASK_EXTERNAL_BLOCK_VERSION,
+      TASK_REQUIRE_PLAN_APPROVAL_VERSION,
+      PATCHNODE_ENTRIES_VERSION,
       IDENTITY_ACTORS_VERSION,
     ]);
   });
@@ -2330,6 +2441,11 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_REPOSITORY_SCOPE_VERSION,
       REVIEW_CONVERGENCE_STAGE_VERSION,
       CHAT_SESSION_MEMORY_FOCUS_VERSION,
+      SESSION_CONTENTION_WAIT_STATE_VERSION,
+      TASK_STEP_REPORTS_VERSION,
+      TASK_EXTERNAL_BLOCK_VERSION,
+      TASK_REQUIRE_PLAN_APPROVAL_VERSION,
+      PATCHNODE_ENTRIES_VERSION,
       IDENTITY_ACTORS_VERSION,
     ]);
   });

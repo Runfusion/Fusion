@@ -78,159 +78,6 @@ html[data-viewport-mode="tablet"] .chat-view--docked-list .chat-sidebar--docked 
   height: auto;
 }
 
-.chat-sidebar-scope-toggle {
-  display: flex;
-  gap: var(--space-xs);
-  padding: var(--space-sm) var(--space-md);
-}
-
-/*
-FNXC:ChatHeader 2026-06-22-16:18:
-Direct/Rooms now lives in the Chat ViewHeader immediately before New Chat. The control must scale with available header width: bounded flex-basis, minmax grid columns, and truncating labels let it fit desktop, narrow pop-out, and mobile headers without forcing the title/actions to overlap.
-
-FNXC:ChatHeader 2026-06-22-18:44:
-Keep the Direct/Rooms segmented control height-aligned with ViewHeader's action row and collapse labels to icons when Chat is very narrow. Buttons use height:100% inside the padded track so they cannot grow taller than the background.
-
-FNXC:ChatHeader 2026-06-22-20:28:
-When the movable chat popup is resized narrow, collapse Direct/Rooms labels to icon-only from the ChatView container width so the Chat title remains visible even on a wide desktop viewport.
-*/
-.chat-view-header-scope-toggle {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  flex: 1 1 clamp(128px, 24vw, 220px);
-  width: clamp(128px, 24vw, 220px);
-  min-width: min(128px, 100%);
-  max-width: 220px;
-  height: var(--view-header-content-row, 28px);
-  box-sizing: border-box;
-  padding: 2px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface);
-}
-
-.chat-sidebar-scope-btn {
-  flex: 1;
-  padding: var(--space-sm) var(--space-md);
-  border: none;
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--text-muted);
-  font-size: var(--space-md);
-  transition: background var(--transition-fast), color var(--transition-fast), box-shadow var(--transition-fast);
-}
-
-.chat-view-header-scope-toggle .chat-sidebar-scope-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-xs);
-  min-width: 0;
-  min-height: 0;
-  height: 100%;
-  padding: 0 clamp(var(--space-xs), 1.2vw, var(--space-sm));
-  border: 1px solid transparent;
-  border-radius: calc(var(--radius-md) - 2px);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
-}
-
-.chat-view-header-scope-toggle .chat-sidebar-scope-btn svg {
-  flex: 0 0 auto;
-}
-
-.chat-view-header-scope-toggle .chat-sidebar-scope-btn span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.chat-sidebar-scope-btn:hover {
-  background: var(--card-hover);
-  color: var(--text);
-}
-
-.chat-sidebar-scope-btn:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring-strong);
-}
-
-.chat-sidebar-scope-btn--active {
-  background: var(--card);
-  color: var(--text);
-}
-
-.chat-view-header-scope-toggle .chat-sidebar-scope-btn--active {
-  border-color: var(--todo);
-}
-
-.chat-sidebar-rooms {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.chat-sidebar-rooms-header {
-  padding: var(--space-sm) var(--space-md);
-}
-
-.chat-sidebar-rooms-empty {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-  color: var(--text-muted);
-  padding: var(--space-xl) var(--space-lg);
-  font-size: var(--space-md);
-}
-
-.chat-room-item {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-sm);
-  border: none;
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--text);
-  padding: var(--space-sm) var(--space-md);
-  text-align: left;
-  cursor: pointer;
-}
-
-.chat-room-item:hover {
-  background: var(--card-hover);
-}
-
-.chat-room-item:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring-strong);
-}
-
-.chat-room-item--active {
-  background: color-mix(in srgb, var(--todo) 12%, transparent);
-}
-
-.chat-room-item-details {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-xs);
-}
-
-.chat-room-item-name-row {
-  display: inline-flex;
-  align-items: center;
-}
-
-.chat-room-item-name {
-  font-weight: 500;
-}
 
 .chat-unread-dot {
   display: inline-block;
@@ -240,43 +87,6 @@ When the movable chat popup is resized narrow, collapse Direct/Rooms labels to i
   background: var(--color-info);
   flex-shrink: 0;
   margin-inline-start: var(--space-xs);
-}
-
-.chat-room-item-meta {
-  color: var(--text-muted);
-  font-size: var(--space-sm);
-}
-
-.chat-room-item-delete {
-  color: var(--text-muted);
-}
-
-.chat-room-item-delete:hover,
-.chat-room-item-delete:focus-visible {
-  color: var(--color-error);
-}
-
-.chat-room-thread-header {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-  padding: var(--space-md) var(--space-lg);
-  border-bottom: 1px solid var(--border);
-}
-
-.chat-room-thread-members {
-  margin-left: auto;
-  display: flex;
-  gap: var(--space-xs);
-  overflow-x: auto;
-}
-
-.chat-room-empty-pane {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-muted);
-  padding: var(--space-2xl);
 }
 
 .chat-sidebar-search-container {
@@ -520,8 +330,14 @@ measured thread top accounts for host chrome above Chat instead of assuming only
      ancestor stays `transform: none` and the keyboard stays up. */
 }
 
+/*
+FNXC:ChatComposer 2026-09-01-05:36:
+When the keyboard covers the bottom gesture region, the composer must not reserve that
+safe-area inset again. Keep the accessory clearance because Safari does not subtract the
+input-assistant bar from visualViewport.height.
+*/
 .chat-thread--keyboard-active .chat-input-area {
-  padding-bottom: calc(var(--space-md) + env(safe-area-inset-bottom, 0px) + var(--chat-keyboard-accessory-clearance, 0px));
+  padding-bottom: calc(var(--space-md) + var(--chat-keyboard-accessory-clearance, 0px));
 }
 
 .chat-thread-header {
@@ -599,60 +415,6 @@ FN-096 keeps the shared-header New Chat action visible in selected detail as wel
 
 .chat-view .view-header__actions {
   min-width: 0;
-}
-
-@media (max-width: 768px), (max-height: 480px) {
-  .chat-view-header-scope-toggle {
-    flex-basis: clamp(112px, 42vw, 180px);
-    width: clamp(112px, 42vw, 180px);
-    max-width: 180px;
-  }
-}
-
-@container chat-view (max-width: 560px) {
-  .chat-view-header-scope-toggle {
-    flex: 0 0 72px;
-    width: 72px;
-    min-width: 72px;
-    max-width: 72px;
-  }
-
-  .chat-view-header-scope-toggle .chat-sidebar-scope-btn {
-    padding: 0;
-  }
-
-  .chat-view-header-scope-toggle .chat-sidebar-scope-btn span {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip: rect(0 0 0 0);
-    clip-path: inset(50%);
-    white-space: nowrap;
-  }
-}
-
-@media (max-width: 460px) {
-  .chat-view-header-scope-toggle {
-    flex: 0 0 72px;
-    width: 72px;
-    min-width: 72px;
-    max-width: 72px;
-  }
-
-  .chat-view-header-scope-toggle .chat-sidebar-scope-btn {
-    padding: 0;
-  }
-
-  .chat-view-header-scope-toggle .chat-sidebar-scope-btn span {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip: rect(0 0 0 0);
-    clip-path: inset(50%);
-    white-space: nowrap;
-  }
 }
 
 /*
@@ -839,8 +601,8 @@ FN-110 keeps the conversation-local Find row compact across Chat hosts and disti
 }
 
 /*
-FNXC:ChatMessageLayout 2026-08-18-20:27:
-Full-width conversation mode is scoped to the ChatView root so normal Chat, Rooms, CLI transcripts, Quick Chat, and dock hosts share one override while the default bubble selectors remain unchanged. Stretch the message blocks, not their shared StandardChatSurface markup, so streaming, failures, tools, thinking, and attachments retain their existing semantics.
+FNXC:ChatMessageLayout 2026-08-24-03:34:
+Full-width conversation mode is scoped to the ChatView root so direct Chat, CLI transcripts, Quick Chat, and dock hosts share one override while the default bubble selectors remain unchanged. Stretch the message blocks, not their shared StandardChatSurface markup, so streaming, failures, tools, thinking, and attachments retain their existing semantics.
 */
 .chat-view--full-width .chat-message,
 .chat-view--full-width .chat-message--user,
@@ -1198,6 +960,7 @@ Shared Chat Markdown links need page-text contrast against assistant bubbles and
 }
 
 .chat-message-copy-action,
+.chat-message-quote-action,
 .chat-message-scroll-to-top-action {
   display: flex;
   align-items: center;
@@ -1221,6 +984,7 @@ Shared Chat Markdown links need page-text contrast against assistant bubbles and
 }
 
 .chat-message-copy-action:hover,
+.chat-message-quote-action:hover,
 .chat-message-scroll-to-top-action:hover {
   opacity: 1;
   color: var(--text);
@@ -1228,6 +992,7 @@ Shared Chat Markdown links need page-text contrast against assistant bubbles and
 }
 
 .chat-message-copy-action:focus-visible,
+.chat-message-quote-action:focus-visible,
 .chat-message-scroll-to-top-action:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring-strong);
@@ -1243,8 +1008,8 @@ Shared Chat Markdown links need page-text contrast against assistant bubbles and
 }
 
 /*
-FNXC:ChatMessageEdit 2026-07-12-23:13:
-User messages in direct (model-loop) chat carry a compact edit affordance inline with the timestamp footer instead of a standalone action row. Editing an earlier message still resumes the conversation from that point, forgetting everything after it; the footer placement keeps the affordance discoverable without adding vertical space. Rendered only for user messages on direct/model-loop sessions (never rooms, CLI-agent sessions, or while streaming) — see StandardChatSurface.tsx `showEditAction`.
+FNXC:ChatMessageEdit 2026-08-24-03:34:
+User messages in direct (model-loop) chat carry a compact edit affordance inline with the timestamp footer instead of a standalone action row. Editing an earlier message still resumes the conversation from that point, forgetting everything after it; the footer placement keeps the affordance discoverable without adding vertical space. Rendered only for user messages on direct/model-loop sessions (never CLI-agent sessions or while streaming) — see StandardChatSurface.tsx `showEditAction`.
 */
 .chat-message-time-row {
   display: flex;
@@ -2307,9 +2072,6 @@ Thinking-section text uses the defined muted text token across all themes. The m
     display: none;
   }
 
-  .chat-sidebar-scope-btn {
-    min-height: calc(var(--space-lg) * 2.25);
-  }
 
   /* FNXC:ChatSidebar 2026-07-16-00:00: Match the shared sidebar row's one-button overflow gutter on mobile. */
   .chat-session-title,
@@ -2439,31 +2201,6 @@ Thinking-section text uses the defined muted text token across all themes. The m
     bottom: calc(var(--space-xl) * 4);
   }
 
-  .chat-sidebar-rooms-header .btn {
-    width: 100%;
-    justify-content: center;
-  }
-
-  .chat-room-thread-header {
-    padding: var(--space-sm) var(--space-md);
-  }
-
-  .chat-room-thread-header .btn-icon {
-    min-height: 36px;
-    min-width: 36px;
-  }
-
-  .chat-room-item {
-    padding: var(--space-sm);
-  }
-
-  .chat-room-item-delete {
-    flex-shrink: 0;
-  }
-
-  .chat-room-thread-members {
-    max-width: 50%;
-  }
 }
 
 .chat-mention-chip {

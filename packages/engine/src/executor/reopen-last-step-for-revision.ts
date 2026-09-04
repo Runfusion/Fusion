@@ -2,59 +2,57 @@
  * FNXC:CodeOrganization 2026-08-03-18:30:
  * reopenLastStepForRevision peeled from TaskExecutor (U4).
  *
- * FNXC:WorkflowOptionalStepFix 2026-06-27-18:03:
- * Code Review / Browser Verification REVISE bounces must reopen the step that can actually make the requested code change, not only a trailing Documentation & Delivery or Testing & Verification step. Otherwise the graph rerun can complete a trivial terminal step, re-evaluate the optional group against unchanged code, and loop or strand pending work. Reopen the trailing verification/delivery suffix plus the nearest preceding implementation step so both in-progress and in-review bounce sources re-launch execution on actionable work before optional-step re-evaluation.
+ * FNXC:WorkflowStepReopenAuthority 2026-08-23-08:51:
+ * FN-180 requires the workflow-resolved replay policy to be the only authority after a review
+ * rejection. Step-title heuristics created a second authority that could make a confirmed merge's
+ * checklist stale. A permitted replay targets exactly the last actionable completed step; workflows
+ * that must preserve remediation steps select the `none` policy before reaching this helper.
+ *
+ * FNXC:WorkflowStepReopenAuthority 2026-08-28-15:11:
+ * A completed step is immutable execution history. The single replay authority appends a new pending
+ * occurrence instead of rewriting the completed occurrence, while existing pending work prevents
+ * duplicate growth.
  */
-import type { Task, TaskStore } from "@fusion/core";
+import { buildStepLedgerReopenLog, type Task, type TaskStore } from "@fusion/core";
 
 export async function reopenLastStepForRevision(
   store: TaskStore,
   taskId: string,
-  task: Task,
+  _task: Task,
 ): Promise<{ index: number; name: string; indexes: number[] } | null> {
-  const steps = task.steps;
-  if (steps.length === 0) return null;
+  let replay: { index: number; name: string; indexes: number[] } | null = null;
 
-  let lastNonPendingIndex = -1;
-  for (let i = steps.length - 1; i >= 0; i--) {
-    if (steps[i].status !== "pending") {
-      lastNonPendingIndex = i;
-      break;
+  await store.updateTaskAtomic(taskId, (current) => {
+    const steps = current.steps ?? [];
+    if (steps.length === 0 || steps.every((step) => step.status === "pending")) {
+      return { currentStep: 0 };
     }
-  }
+    if (steps.some((step) => step.status === "pending")) {
+      return null;
+    }
 
-  if (lastNonPendingIndex === -1) {
-    await store.updateTask(taskId, { currentStep: 0 });
-    return null;
-  }
+    const trailing = steps.at(-1)!;
+    const index = steps.length;
+    replay = { index, name: trailing.name, indexes: [index] };
+    /*
+    FNXC:StepLedgerIntegrity 2026-09-01-02:31:
+    Under `stepReopenPolicy: "reopen-trailing"`, this can be the only producer of new work for an
+    unclassified review gate. Callers in `request-pre-merge-optional-step-fix.ts`,
+    `recover-failed-pre-merge-step.ts`, `review-convergence-ladder.ts`, and
+    `bounce-verification-failure.ts` rerun the graph before any executor-session or unpause marker
+    exists. Publish the replay and the shared ledger reopen stamp in this one transaction so that
+    first `step-execute` start cannot be mistaken for a stale post-completion projection.
+    */
+    const log = buildStepLedgerReopenLog(
+      current.log,
+      `trailing replay step ${index} (${trailing.name}) appended after completion`,
+    );
+    return {
+      steps: [...steps, { name: trailing.name, status: "pending" }],
+      currentStep: index,
+      ...(log ? { log } : {}),
+    };
+  });
 
-  // Match step-title words rather than arbitrary substrings so an implementation step
-  // like "DataVerificationLayer" is not treated as a trailing delivery/check step.
-  const isTerminalVerificationOrDeliveryStep = (name: string): boolean =>
-    /(^|[^a-z])(testing|verification|documentation|delivery)([^a-z]|$)/i.test(name);
-
-  const resetIndexes = new Set<number>([lastNonPendingIndex]);
-  if (isTerminalVerificationOrDeliveryStep(steps[lastNonPendingIndex].name)) {
-    let cursor = lastNonPendingIndex;
-    while (cursor >= 0 && isTerminalVerificationOrDeliveryStep(steps[cursor].name)) {
-      resetIndexes.add(cursor);
-      cursor--;
-    }
-    while (cursor >= 0 && steps[cursor].status === "pending") {
-      cursor--;
-    }
-    if (cursor >= 0) {
-      resetIndexes.add(cursor);
-    }
-  }
-
-  const indexes = [...resetIndexes].sort((a, b) => a - b);
-  for (const index of indexes) {
-    if (steps[index].status !== "pending") {
-      await store.updateStep(taskId, index, "pending");
-    }
-  }
-  const currentStep = indexes[0] ?? lastNonPendingIndex;
-  await store.updateTask(taskId, { currentStep });
-  return { index: currentStep, name: steps[currentStep].name, indexes };
+  return replay;
 }

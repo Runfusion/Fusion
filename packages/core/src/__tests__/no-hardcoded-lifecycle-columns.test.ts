@@ -220,11 +220,19 @@ these values the same single-guard probe takes the gate red.
 LOWER these as conversions land; a raise means a literal came back OR detection improved — and if it
 is the latter, say which sites in the commit, as previous revisions of this file did.
 */
+/*
+FNXC:LifecycleColumnRatchet 2026-08-25-02:10:
+Ceilings lowered to the MEASURED counts. They had drifted far above reality (todo 64 vs 12,
+in-progress 197 vs 72, in-review 213 vs 28), which made the ratchet inert for the very thing it
+exists to stop: a new hardcoded guard could be added freely inside that headroom. Not hypothetical —
+the TaskCard guard that hid review-lane progress from operators was one of those tolerated sites,
+and the ratchet had no way to notice it. A ceiling that sits far above the count measures nothing.
+*/
 const CEILINGS: Record<string, number> = {
   triage: 11,
-  todo: 64,
-  "in-progress": 197,
-  "in-review": 213,
+  todo: 12,
+  "in-progress": 72,
+  "in-review": 28,
 };
 
 describe("lifecycle-column literal ratchet (AST)", () => {

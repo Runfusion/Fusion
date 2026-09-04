@@ -1,6 +1,6 @@
 /*
 FNXC:TaskDetailTabs 2026-06-17-08:20:
-FN-7324 keeps the stable internal `chat` tab as Activity for explicit legacy links, but the omitted non-done default is now planner Chat. Tests that assert Definition-only sections must opt into `initialTab="definition"` so they verify the intended surface instead of the Chat landing state.
+FN-7324 keeps the stable internal `chat` tab as Activity for explicit legacy links, but the omitted non-done default is now planner Chat. Tests that assert Definition-only sections must opt into `initialTab="details"` so they verify the intended surface instead of the Chat landing state.
 */
 import { afterEach, describe, it, expect, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -90,10 +90,9 @@ function renderSummarizeTitleModal(overrides: Parameters<typeof makeTask>[0] = {
 
   const result = render(
     <TaskDetailModal
-      initialTab="definition"
+      initialTab="details"
       task={task}
       onClose={noop}
-      onMoveTask={noopMove}
       onDeleteTask={noopDelete}
       onMergeTask={noopMerge}
       onOpenDetail={noopOpenDetail}
@@ -116,16 +115,14 @@ function createDeferred<T>() {
   return { promise, resolve, reject };
 }
 
-describe("TaskDetailModal reset confirmations", () => {
-  it("routes reset through the centralized confirm seam and proceeds in skip mode", async () => {
+describe("TaskDetailModal reset dialog", () => {
+  it("edits and submits the original description without consulting confirmation settings", async () => {
     const onResetTask = vi.fn(async () => makeTask());
     const addToast = vi.fn();
-    mockConfirm.mockResolvedValueOnce(true);
     render(
       <TaskDetailModal
-        task={makeTask({ id: "FN-001", column: "in-progress" as any })}
+        task={makeTask({ id: "FN-001", column: "in-progress" as any, description: "Original detail request" })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -136,21 +133,49 @@ describe("TaskDetailModal reset confirmations", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Actions" }));
     fireEvent.click(await screen.findByRole("menuitem", { name: "Reset" }));
+    expect(await screen.findByTestId("task-reset-dialog")).toBeInTheDocument();
+    expect(mockConfirm).not.toHaveBeenCalled();
+    expect(screen.getByTestId("task-reset-description")).toHaveValue("Original detail request");
+    fireEvent.change(screen.getByTestId("task-reset-description"), { target: { value: "Corrected detail request" } });
+    fireEvent.click(screen.getByTestId("task-reset-submit"));
+
+    await waitFor(() => expect(onResetTask).toHaveBeenCalledWith(
+      "FN-001",
+      { description: "Corrected detail request" },
+    ));
+    expect(addToast).toHaveBeenCalledWith("Reset FN-001 — fresh run will be allocated", "success");
+  });
+
+  it("keeps the detail Reset call arity unchanged when the description is untouched", async () => {
+    const onResetTask = vi.fn(async () => makeTask());
+    render(
+      <TaskDetailModal
+        task={makeTask({ id: "FN-001", column: "in-progress" as any, description: "Original detail request" })}
+        onClose={noop}
+        onDeleteTask={noopDelete}
+        onMergeTask={noopMerge}
+        onOpenDetail={noopOpenDetail}
+        onResetTask={onResetTask}
+        addToast={noop}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Actions" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Reset" }));
+    fireEvent.click(await screen.findByTestId("task-reset-submit"));
+
     await waitFor(() => expect(onResetTask).toHaveBeenCalledWith("FN-001"));
-    expect(mockConfirm).toHaveBeenCalledWith(expect.objectContaining({ danger: true, title: "Reset", message: expect.stringContaining("worktree") }));
-    expect(addToast).toHaveBeenCalledWith(expect.stringContaining("worktree and plan discarded"), "success");
-    expect(document.querySelector(".confirm-dialog-overlay")).toBeNull();
+    expect(onResetTask.mock.calls[0]).toEqual(["FN-001"]);
+    expect(mockConfirm).not.toHaveBeenCalled();
   });
 
   it("shows endpoint failure instead of reset success copy", async () => {
     const addToast = vi.fn();
     const onResetTask = vi.fn().mockRejectedValue(new Error("partial cleanup; retry Reset"));
-    mockConfirm.mockResolvedValueOnce(true);
     render(
       <TaskDetailModal
-        task={makeTask({ id: "FN-002", column: "in-progress" as any })}
+        task={makeTask({ id: "FN-002", column: "in-progress" as any, description: "Retry this request" })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -160,8 +185,11 @@ describe("TaskDetailModal reset confirmations", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Actions" }));
     fireEvent.click(await screen.findByRole("menuitem", { name: "Reset" }));
+    fireEvent.click(await screen.findByTestId("task-reset-submit"));
     await waitFor(() => expect(addToast).toHaveBeenCalledWith("partial cleanup; retry Reset", "error"));
-    expect(addToast).not.toHaveBeenCalledWith(expect.stringContaining("worktree and plan discarded"), "success");
+    expect(addToast).not.toHaveBeenCalledWith(expect.stringContaining("fresh run will be allocated"), "success");
+    expect(screen.getByTestId("task-reset-dialog")).toBeInTheDocument();
+    expect(mockConfirm).not.toHaveBeenCalled();
   });
 });
 
@@ -178,7 +206,6 @@ describe("TaskDetailModal planner Chat tab", () => {
         taskDetailChatFirst
         task={makeTask({ column })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -212,10 +239,10 @@ describe("TaskDetailModal planner Chat tab", () => {
     expect(screen.getByTestId("task-planner-chat-panel")).toBeInTheDocument();
   });
 
-  it("preserves Summary as the default for done tasks while keeping Chat then Activity order", () => {
+  it("preserves Summary as the default for done tasks after Chat, Activity, Plan, and Changes", () => {
     renderTask("done");
 
-    expect(tabLabels().slice(0, 3)).toEqual(["Chat", "Activity", "Summary"]);
+    expect(tabLabels().slice(0, 5)).toEqual(["Chat", "Activity", "Plan", "Changes", "Summary"]);
     expect(screen.getByRole("button", { name: "Summary" })).toHaveClass("detail-tab-active");
   });
 
@@ -258,7 +285,6 @@ describe("TaskDetailModal planner Chat tab", () => {
         task={makeTask({ id: "FN-7324-A", column: "todo" as any })}
         taskDetailChatFirst
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -275,7 +301,6 @@ describe("TaskDetailModal planner Chat tab", () => {
         task={makeTask({ id: "FN-7324-B", column: "todo" as any })}
         taskDetailChatFirst
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -313,7 +338,6 @@ describe("TaskDetailModal planner Chat tab", () => {
         taskDetailChatFirst
         task={makeTask({ column: "todo" as any, status: "failed", error: "Planner failed hard" })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -349,7 +373,6 @@ describe("TaskDetailModal planner Chat tab", () => {
         taskDetailChatFirst
         task={makeTask({ column: "todo" as any, status: "failed", error: "Activity failure stays visible" })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -378,7 +401,6 @@ describe("TaskDetailModal planner Chat tab", () => {
         taskDetailChatFirst
         task={makeTask({ column: "todo" as any, status: "failed" })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -399,7 +421,6 @@ describe("TaskDetailModal planner Chat tab", () => {
         taskDetailChatFirst
         task={makeTask({ column: "todo" as any, status: "in-progress", error: "Ignored because task is not failed" })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -411,8 +432,10 @@ describe("TaskDetailModal planner Chat tab", () => {
     expect(document.querySelector(".detail-error-alert")).toBeNull();
   });
 
-  it("surfaces the latest tool error detail and stages a model override before retrying", async () => {
+  it("confirms the current stage before saving a model override and retrying", async () => {
     const user = userEvent.setup();
+    const retryConfirmation = createDeferred<boolean>();
+    mockConfirm.mockReturnValueOnce(retryConfirmation.promise);
     const { useAgentLogs } = await import("../../hooks/useAgentLogs");
     const { fetchModels, fetchNodes, updateTask } = await import("../../api");
     vi.mocked(useAgentLogs).mockReturnValue({
@@ -438,7 +461,6 @@ describe("TaskDetailModal planner Chat tab", () => {
         taskDetailChatFirst
         task={makeTask({ column: "todo" as any, status: "failed", error: "Workflow graph terminated with failure at node 'steps#0:step-execute'" })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -454,8 +476,21 @@ describe("TaskDetailModal planner Chat tab", () => {
     await user.selectOptions(screen.getByLabelText("Executor model"), "anthropic/claude-alternate");
     await user.click(screen.getByRole("button", { name: "Apply and retry" }));
 
+    await waitFor(() => expect(mockConfirm).toHaveBeenCalledWith(expect.objectContaining({
+      title: "Retry this stage?",
+      message: "Repeat the current stage and keep this card in its current column.",
+      confirmLabel: "Retry",
+      danger: true,
+    })));
+    expect(updateTask).not.toHaveBeenCalled();
+    expect(onRetryTask).not.toHaveBeenCalled();
+
+    await act(async () => retryConfirmation.resolve(true));
+
     await waitFor(() => expect(updateTask).toHaveBeenCalledWith("FN-099", { modelProvider: "anthropic", modelId: "claude-alternate" }, undefined));
     await waitFor(() => expect(onRetryTask).toHaveBeenCalledWith("FN-099"));
+    expect(mockConfirm.mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(updateTask).mock.invocationCallOrder[0]!);
+    expect(vi.mocked(updateTask).mock.invocationCallOrder[0]).toBeLessThan(onRetryTask.mock.invocationCallOrder[0]!);
   });
 
   it("does not attribute a recovered historical tool error to an unknown graph failure", async () => {
@@ -480,7 +515,6 @@ describe("TaskDetailModal planner Chat tab", () => {
         taskDetailChatFirst
         task={makeTask({ column: "in-progress" as any, status: "failed", error: "Workflow graph terminated with failure at node 'unknown'" })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -513,7 +547,6 @@ describe("TaskDetailModal planner Chat tab", () => {
         taskDetailChatFirst
         task={makeTask({ column: "in-progress" as any, status: "failed", error: "Workflow graph terminated with failure at node 'unknown'" })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -537,10 +570,9 @@ describe("TaskDetailModal base-branch editor", () => {
     const onTaskUpdated = vi.fn();
     render(
       <TaskDetailModal
-        initialTab="definition"
+        initialTab="details"
         task={makeTask({ id: "FN-8811", column: "todo" as any, baseBranch })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -717,14 +749,13 @@ describe("TaskDetailModal GitHub tracking CTA", () => {
     const user = userEvent.setup();
     render(
       <TaskDetailModal
-        initialTab="definition"
+        initialTab="details"
         task={makeTask({
           githubTracking: { enabled: true },
           title: "",
           description: "",
         })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -743,14 +774,13 @@ describe("TaskDetailModal GitHub tracking CTA", () => {
     const user = userEvent.setup();
     render(
       <TaskDetailModal
-        initialTab="definition"
+        initialTab="details"
         task={makeTask({
           githubTracking: { enabled: true },
           title: "Real title",
           description: "",
         })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -767,14 +797,13 @@ describe("TaskDetailModal GitHub tracking CTA", () => {
     const user = userEvent.setup();
     render(
       <TaskDetailModal
-        initialTab="definition"
+        initialTab="details"
         task={makeTask({
           githubTracking: { enabled: true },
           title: "",
           description: "A meaningful first line.\nMore text.",
         })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -799,7 +828,6 @@ describe("TaskDetailModal Activity feed loading", () => {
         task={task as any}
         initialTab={initialTab}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -880,10 +908,9 @@ describe("TaskDetailModal Activity feed loading", () => {
 
     render(
       <TaskDetailModal
-        initialTab="definition"
+        initialTab="details"
         task={makeSlimTask() as any}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -1008,7 +1035,6 @@ describe("TaskDetailModal Activity feed loading", () => {
         embedded
         initialTab="chat"
         onRequestClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -1151,7 +1177,6 @@ describe("TaskDetailModal Chat task merge", () => {
         initialTab="chat"
         projectId="project-7309"
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -1193,7 +1218,6 @@ describe("TaskDetailModal Chat task merge", () => {
         embedded
         initialTab="chat"
         onRequestClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -1243,7 +1267,6 @@ describe("TaskDetailModal Chat task merge", () => {
         initialTab="chat"
         projectId="project-1"
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -1285,10 +1308,9 @@ describe("TaskDetailModal Raw Logs agent loading", () => {
 
     render(
       <TaskDetailModal
-        initialTab="definition"
+        initialTab="details"
         task={makeTask({ prompt: "# Loaded" })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -1326,10 +1348,9 @@ describe("TaskDetailModal Raw Logs agent loading", () => {
 
     render(
       <TaskDetailModal
-        initialTab="definition"
+        initialTab="details"
         task={makeTask({ id: "FN-6040", prompt: "# Loaded" })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -1358,10 +1379,9 @@ describe("TaskDetailModal branch group surfacing", () => {
   function renderTaskWithBranchContext(id: string) {
     return (
       <TaskDetailModal
-        initialTab="definition"
+        initialTab="details"
         task={makeTask({ id, branchContext })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -1402,10 +1422,9 @@ describe("TaskDetailModal branch group surfacing", () => {
     vi.mocked(fetchTaskDetail).mockResolvedValueOnce(makeTask({ id: "FN-landed", column: "done" as any }));
     render(
       <TaskDetailModal
-        initialTab="definition"
+        initialTab="details"
         task={makeTask({ id: "FN-6041", branchContext })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={onOpenDetail}
@@ -1419,6 +1438,10 @@ describe("TaskDetailModal branch group surfacing", () => {
 });
 
 describe("TaskDetailModal delete affordance", () => {
+  async function selectDelete(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(screen.getByRole("button", { name: "Actions" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
+  }
   function dependencyConflictError(dependentIds: string[]) {
     const error = new Error("Task has dependents");
     (error as Error & { details: { code: string; dependentIds: string[] } }).details = {
@@ -1435,13 +1458,12 @@ describe("TaskDetailModal delete affordance", () => {
       if (!open) return null;
       return (
         <TaskDetailModal
-          initialTab="definition"
+          initialTab="details"
           task={makeTask({ column: "triage", ...props.task })}
           onClose={() => {
             onClose();
             setOpen(false);
           }}
-          onMoveTask={noopMove}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}
@@ -1465,7 +1487,7 @@ describe("TaskDetailModal delete affordance", () => {
     });
 
     expect(screen.getByRole("dialog")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Delete task" }));
+    await selectDelete(user);
 
     await waitFor(() => expect(onDeleteTask).toHaveBeenCalledWith("FN-099", { allowResurrection: false }));
     expect(onClose).toHaveBeenCalledTimes(1);
@@ -1482,11 +1504,10 @@ describe("TaskDetailModal delete affordance", () => {
 
     render(
       <TaskDetailContent
-        initialTab="definition"
+        initialTab="details"
         embedded
         task={makeTask({ column: "triage" })}
         onRequestClose={onRequestClose}
-        onMoveTask={noopMove}
         onDeleteTask={onDeleteTask}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -1494,7 +1515,7 @@ describe("TaskDetailModal delete affordance", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: "Delete task" }));
+    await selectDelete(user);
 
     await waitFor(() => expect(onDeleteTask).toHaveBeenCalledWith("FN-099", { allowResurrection: false }));
     expect(onRequestClose).toHaveBeenCalledTimes(1);
@@ -1514,11 +1535,10 @@ describe("TaskDetailModal delete affordance", () => {
 
     render(
       <TaskDetailContent
-        initialTab="definition"
+        initialTab="details"
         embedded
         task={makeTask({ column: "triage" })}
         onRequestClose={onRequestClose}
-        onMoveTask={noopMove}
         onDeleteTask={onDeleteTask}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -1526,7 +1546,7 @@ describe("TaskDetailModal delete affordance", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: "Delete task" }));
+    await selectDelete(user);
 
     await waitFor(() => expect(onDeleteTask).toHaveBeenCalledTimes(2));
     expect(onDeleteTask).toHaveBeenNthCalledWith(2, "FN-099", {
@@ -1547,7 +1567,7 @@ describe("TaskDetailModal delete affordance", () => {
     const addToast = vi.fn();
     const { onClose } = renderClosingTaskDetailModal({ onDeleteTask, addToast });
 
-    await user.click(screen.getByRole("button", { name: "Delete task" }));
+    await selectDelete(user);
 
     await waitFor(() => expect(onDeleteTask).toHaveBeenCalledWith("FN-099", { allowResurrection: false }));
     expect(onClose).toHaveBeenCalledTimes(1);
@@ -1568,11 +1588,10 @@ describe("TaskDetailModal delete affordance", () => {
 
     render(
       <TaskDetailContent
-        initialTab="definition"
+        initialTab="details"
         embedded
         task={makeTask({ column: "triage" })}
         onRequestClose={onRequestClose}
-        onMoveTask={noopMove}
         onDeleteTask={onDeleteTask}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -1580,7 +1599,7 @@ describe("TaskDetailModal delete affordance", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: "Delete task" }));
+    await selectDelete(user);
 
     await waitFor(() => expect(mockConfirm).toHaveBeenCalledWith(expect.objectContaining({
       title: "Force Delete Task",
@@ -1595,7 +1614,7 @@ describe("TaskDetailModal delete affordance", () => {
     mockConfirmWithCheckbox.mockResolvedValueOnce({ choice: "cancel", checkboxValue: false });
     const { onClose } = renderClosingTaskDetailModal({ onDeleteTask });
 
-    await user.click(screen.getByRole("button", { name: "Delete task" }));
+    await selectDelete(user);
 
     expect(onDeleteTask).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
@@ -1611,10 +1630,9 @@ describe("TaskDetailModal delete affordance", () => {
 
     render(
       <TaskDetailModal
-        initialTab="definition"
+        initialTab="details"
         task={makeTask({ column: "done" })}
         onClose={onClose}
-        onMoveTask={noopMove}
         onDeleteTask={onDeleteTask}
         onArchiveTask={onArchiveTask}
         onMergeTask={noopMerge}
@@ -1638,28 +1656,31 @@ describe("TaskDetailModal delete affordance", () => {
 describe("TaskDetailModal in-review stall diagnostics", () => {
   it("renders diagnostic row and jumps to highlighted activity entry", async () => {
     const user = userEvent.setup();
+    const task = makeTask({
+      column: "in-review",
+      /*
+      FNXC:InReviewStallBadge 2026-07-26-18:20:
+      Fixture repointed off `merge-blocker`, which is now badge-suppressed. This case guards the
+      diagnostics row and its jump-to-activity-entry behavior — not any one stall code — so it
+      needs a code that still surfaces.
+      */
+      inReviewStall: {
+        code: "transient-merge-status-no-owner",
+        reason: "Workflow pre-merge check failed",
+        observedAt: "2026-05-13T00:00:00.000Z",
+      },
+      log: [
+        { timestamp: "2026-05-13T00:01:00.000Z", action: "In-review stall surfaced [transient-merge-status-no-owner]: Workflow pre-merge check failed" },
+      ],
+    });
+    const { fetchTaskDetail } = await import("../../api");
+    vi.mocked(fetchTaskDetail).mockResolvedValue(task);
+
     render(
       <TaskDetailModal
-        initialTab="definition"
-        task={makeTask({
-          column: "in-review",
-          /*
-          FNXC:InReviewStallBadge 2026-07-26-18:20:
-          Fixture repointed off `merge-blocker`, which is now badge-suppressed. This case guards the
-          diagnostics row and its jump-to-activity-entry behavior — not any one stall code — so it
-          needs a code that still surfaces.
-          */
-          inReviewStall: {
-            code: "transient-merge-status-no-owner",
-            reason: "Workflow pre-merge check failed",
-            observedAt: "2026-05-13T00:00:00.000Z",
-          },
-          log: [
-            { timestamp: "2026-05-13T00:01:00.000Z", action: "In-review stall surfaced [transient-merge-status-no-owner]: Workflow pre-merge check failed" },
-          ],
-        })}
+        initialTab="details"
+        task={task}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -1684,7 +1705,7 @@ describe("TaskDetailModal in-review stall diagnostics", () => {
     const user = userEvent.setup();
     render(
       <TaskDetailModal
-        initialTab="definition"
+        initialTab="details"
         task={makeTask({
           column: "in-review",
           mergeRetries: 3,
@@ -1695,7 +1716,6 @@ describe("TaskDetailModal in-review stall diagnostics", () => {
           },
         })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -1711,7 +1731,7 @@ describe("TaskDetailModal in-review stall diagnostics", () => {
     const user = userEvent.setup();
     render(
       <TaskDetailModal
-        initialTab="definition"
+        initialTab="details"
         task={makeTask({
           column: "in-review",
           // FNXC:InReviewStallBadge 2026-07-26-18:21: repointed off the now-suppressed `merge-blocker`; this guards the no-log copy, not a specific code.
@@ -1723,7 +1743,6 @@ describe("TaskDetailModal in-review stall diagnostics", () => {
           log: [{ timestamp: "2026-05-13T00:01:00.000Z", action: "Something else" }],
         })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -1739,7 +1758,7 @@ describe("TaskDetailModal in-review stall diagnostics", () => {
   it("FN-4570: hides merge-blocker diagnostic while task is actively merging", () => {
     render(
       <TaskDetailModal
-        initialTab="definition"
+        initialTab="details"
         task={makeTask({
           column: "in-review",
           status: "merging-fix",
@@ -1750,7 +1769,6 @@ describe("TaskDetailModal in-review stall diagnostics", () => {
           },
         })}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -1788,10 +1806,9 @@ describe("TaskDetailModal in-review stall diagnostics", () => {
   ])("does not render diagnostic row for $label", ({ task }) => {
     render(
       <TaskDetailModal
-        initialTab="definition"
+        initialTab="details"
         task={task}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}

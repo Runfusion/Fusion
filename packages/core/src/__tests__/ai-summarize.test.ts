@@ -54,6 +54,11 @@ describe("ai-summarize", () => {
       expect(SUMMARIZE_SYSTEM_PROMPT).toContain("title summarization");
     });
 
+    it("keeps the language rule neutral rather than anchoring on French", () => {
+      expect(SUMMARIZE_SYSTEM_PROMPT).toContain("SAME language as the task description");
+      expect(SUMMARIZE_SYSTEM_PROMPT).not.toContain("For example, a French description requires a French title.");
+    });
+
     it("should have correct length limits", () => {
       expect(MIN_DESCRIPTION_LENGTH).toBe(1);
       expect(MAX_DESCRIPTION_LENGTH).toBe(2000);
@@ -255,6 +260,42 @@ describe("ai-summarize", () => {
       await expect(summarizeTitle(description, "/tmp")).resolves.toBe("Improve task creation");
       expect(SUMMARIZE_SYSTEM_PROMPT).toContain("SAME language as the task description");
       expect(prompt.mock.calls[0][0]).toContain("Likely language: English");
+    });
+
+    it("does not attach a French language hint to the reported English title input", async () => {
+      const prompt = vi.fn().mockResolvedValue(undefined);
+      getFnAgentMock.mockResolvedValue(() => Promise.resolve({
+        session: {
+          prompt,
+          dispose: vi.fn(),
+          state: { messages: [{ role: "assistant", content: "Scheduling timezone comparison" }] },
+        },
+      }));
+
+      await summarizeTitle("Compare v2 par default vs v3, plus check the est timezone handling in scheduling.", "/tmp");
+
+      expect(prompt.mock.calls[0][0]).not.toContain("Likely language:");
+    });
+
+    it("uses an explicit English target instead of content detection", async () => {
+      const prompt = vi.fn().mockResolvedValue(undefined);
+      getFnAgentMock.mockResolvedValue(() => Promise.resolve({
+        session: {
+          prompt,
+          dispose: vi.fn(),
+          state: { messages: [{ role: "assistant", content: "Scheduling timezone comparison" }] },
+        },
+      }));
+
+      await summarizeTitle(
+        "Compare v2 par default vs v3, plus check the est timezone handling in scheduling.",
+        "/tmp",
+        undefined,
+        undefined,
+        { mode: "english", locale: "en", instruction: "English" },
+      );
+
+      expect(prompt.mock.calls[0][0]).toContain("Write the title in English.");
     });
 
     it("returns sanitized title when AI responds cleanly", async () => {

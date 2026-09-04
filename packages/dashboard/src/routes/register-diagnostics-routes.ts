@@ -1,20 +1,9 @@
+import { isResumeTrigger } from "../shared/resume-triggers.js";
 import type { ApiRouteRegistrar } from "./types.js";
 
 let resumeRingCap = 5_000;
 const ACCEPT_CAP = 100;
 const DETAIL_CAP_BYTES = 4 * 1024;
-
-const triggers = new Set([
-  "visibility",
-  "pageshow",
-  "sse-error",
-  "sse-reconnect",
-  "sse-open",
-  "remount",
-  "route-active",
-  "route-inactive",
-  "project-context-change",
-]);
 
 type ResumeEvent = {
   ts: string;
@@ -53,7 +42,7 @@ function validateEvent(event: unknown): event is ResumeEvent {
   const candidate = event as Record<string, unknown>;
   if (!isIsoDate(candidate.ts)) return false;
   if (typeof candidate.view !== "string" || candidate.view.length === 0 || candidate.view.length > 64) return false;
-  if (typeof candidate.trigger !== "string" || !triggers.has(candidate.trigger)) return false;
+  if (!isResumeTrigger(candidate.trigger)) return false;
   if (typeof candidate.replayAttempted !== "boolean") return false;
 
   if (candidate.detail !== undefined) {

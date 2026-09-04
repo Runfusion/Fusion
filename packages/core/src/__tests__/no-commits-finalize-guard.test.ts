@@ -135,6 +135,39 @@ describe("evaluateNoCommitsNoOpFinalize", () => {
     expect(result.reason).toContain("Deploy notes");
   });
 
+  it("blocks a skipped remediation step structurally even when its name has no gate word", () => {
+    expect(evaluateNoCommitsNoOpFinalize({
+      noCommitsExpected: true,
+      steps: [{ name: "Fix: inverted condition", status: "skipped", remediation: { wave: 1, gate: "Code Review", gateStepId: "code-review", detail: "inverted condition" } }],
+    })).toMatchObject({ blocked: true });
+  });
+
+  it("requires each supplied verification gate to have a passing result", () => {
+    const task = { noCommitsExpected: false, steps: [{ name: "Implement", status: "done" as const }], workflowStepResults: [] };
+    expect(evaluateNoCommitsNoOpFinalize(task, { requiredVerificationStepIds: new Set(["verification"]) }))
+      .toMatchObject({ blocked: true });
+    expect(evaluateNoCommitsNoOpFinalize({ ...task, workflowStepResults: [{ workflowStepId: "verification", status: "passed" }] }, { requiredVerificationStepIds: new Set(["verification"]) }))
+      .toMatchObject({ blocked: false });
+  });
+
+  it("accepts the passed empty Code Review gate required by no-op finalization", () => {
+    const task = {
+      noCommitsExpected: true,
+      steps: namedSteps([["Implementation", "done"], ["Testing & Verification", "done"]]),
+      workflowStepResults: [{
+        workflowStepId: "code-review",
+        status: "passed" as const,
+        verdict: "APPROVE" as const,
+        reviewKind: "code" as const,
+        reviewInputFingerprint: "empty-review-input:v1",
+      }],
+    };
+
+    expect(evaluateNoCommitsNoOpFinalize(task, {
+      requiredVerificationStepIds: new Set(["code-review"]),
+    })).toMatchObject({ blocked: false });
+  });
+
   it("does not block skip-free ordinary tasks (all-done handled by lineage proof)", () => {
     expect(evaluateNoCommitsNoOpFinalize({
       noCommitsExpected: false,

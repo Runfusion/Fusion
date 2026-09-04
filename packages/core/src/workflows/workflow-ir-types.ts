@@ -229,8 +229,8 @@ The template itself contains no iteration or internal rework edges (validated in
 FNXC:WorkflowOptionalStepRevisionBudget 2026-06-27-12:15:
 Optional-group remediation still runs the template once per graph pass, but workflow authors can set a per-step `maxRevisions` override for the PRE-merge fix→re-review cycle. A non-negative integer caps that optional step against its own review-attempt partition, `"unbounded"` removes the ceiling, and absence preserves the effective global `maxPostReviewFixes` behavior for generic optional gates.
 
-FNXC:WorkflowRevisionBudget 2026-06-30-20:34:
-Built-in Plan Review/spec and Code Review groups have workflow-value overrides (`planReviewMaxRevisions`, `codeReviewMaxRevisions`) that resolve before this node config; when those workflow values are unset, the authored node config applies. Plan Review and most Code Review groups remain unbounded, while Compound Engineering authors a two-pass Code Review cap.
+FNXC:WorkflowRevisionBudget 2026-09-03-05:40:
+Built-in Plan Review/spec and Code Review groups have workflow-value overrides (`planReviewMaxRevisions`, `codeReviewMaxRevisions`) that resolve before this node config; when those workflow values are unset, the authored node config applies. Plan Review remains unbounded behind its separate replan cap, standard Code Review authors three remediation rounds, and Compound Engineering authors two.
 */
 /** Config for an `optional-group` container node. `defaultOn` seeds the per-task
  *  enable set at creation; the `template` is the subgraph run once per enabled
@@ -261,6 +261,22 @@ export interface WorkflowOptionalGroupConfig {
   `WorkflowStepResult.phase` and `[post-merge]` logs follow this value.
   */
   phase?: "pre-merge" | "post-merge";
+  /*
+  FNXC:ReportingOnlyGroup 2026-08-26-06:56:
+  A REPORTING group observes accepted work and records what it found. It carries no approval and can
+  never hold or reopen a card, so it is excluded from the required pre-merge approval set and may
+  not schedule executor remediation.
+
+  `gateMode: "advisory"` on the inner node was NOT enough, and the gap was measured on a real card:
+  an advisory REVISE records `advisory_failure`, which `evaluatePreMergeApprovals` reads as
+  "not-approved" — so the merge door held — AND still reached `requestPreMergeOptionalStepFix`, which
+  bounced the card to implementation. The Documentation milestone therefore both blocked the merge
+  and demanded work, while its own contract says it reports and never vetoes.
+
+  Deliberately opt-in and absent everywhere else: advisory gates that DO own remediation (browser
+  verification) keep their existing blocking behaviour untouched.
+  */
+  reportingOnly?: boolean;
   template: {
     nodes: WorkflowIrNode[];
     edges: WorkflowIrEdge[];

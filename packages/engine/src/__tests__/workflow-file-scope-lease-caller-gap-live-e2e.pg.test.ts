@@ -73,7 +73,7 @@ import {
   type SharedPgTaskStoreHarness,
 } from "../../../core/src/__test-utils__/pg-test-harness.js";
 
-import { shouldHoldActiveFileScopeLease } from "../scheduler.js";
+import { classifyFileScopeLease, shouldHoldActiveFileScopeLease } from "../scheduler.js";
 import { DEFAULT_VOCAB, RENAMED_VOCAB, lifecycleIr, type Vocabulary } from "./_workflow-vocabulary-fixture.js";
 
 pgDescribe("file-scope lease: the converted call site against the unconverted one", () => {
@@ -121,31 +121,24 @@ pgDescribe("file-scope lease: the converted call site against the unconverted on
     expect(shouldHoldActiveFileScopeLease(card, [card])).toBe(true);
   });
 
-  it("CHARACTERIZATION — on a RENAMED board the unconverted call shape says NO LEASE", async () => {
-    /*
-    Same predicate, same card, no resolved answers supplied — the self-healing call shape. Both
-    branches fall through and a card actively holding a worktree is reported as holding no lease.
-    */
+  it("CHARACTERIZATION — on a RENAMED board the literal fallback is dormant, not active", async () => {
     const store = h.store();
     const card = await wipCard(store, RENAMED_VOCAB, "wf-renamed-lease");
 
     expect(card.column).toBe(RENAMED_VOCAB.wip);
-    expect(shouldHoldActiveFileScopeLease(card, [card])).toBe(false);
+    expect(shouldHoldActiveFileScopeLease(card, [card])).toBe(true);
+    expect(classifyFileScopeLease(card, [card]).kind).toBe("dormant");
   });
 
-  it("BOUND — the SAME card holds the lease once the resolved answer is passed", async () => {
-    /*
-    The differential that attributes the failure above to the call shape and nothing else: identical
-    card, identical predicate, one extra argument. This is what the two scheduler call sites do and
-    the two self-healing call sites do not.
-    */
+  it("BOUND — the SAME card becomes active once the resolved WIP answer is passed", async () => {
     const store = h.store();
     const card = await wipCard(store, RENAMED_VOCAB, "wf-renamed-resolved");
 
     expect(shouldHoldActiveFileScopeLease(card, [card], { isWipColumn: true })).toBe(true);
+    expect(classifyFileScopeLease(card, [card], { isWipColumn: true }).kind).toBe("active");
   });
 
-  it("SOURCE-LEVEL — both self-healing call sites now pass both options, RESOLVED not hardcoded", async () => {
+  it("SOURCE-LEVEL — both self-healing overlap mirrors pass resolved lifetime roles", async () => {
     /*
     NOT driven through the self-healing sweep, deliberately: reaching those sites needs the full
     dependency-lease reconcile harness. Asserted against source text instead, and labelled as such
@@ -163,18 +156,18 @@ pgDescribe("file-scope lease: the converted call site against the unconverted on
     */
     const source = readFileSync(join(__dirname, "..", "self-healing.ts"), "utf8");
 
-    const callSites = source.split("shouldHoldActiveFileScopeLease(").slice(1);
-    expect(callSites.length).toBe(2);
+    const classifierCalls = source.split("classifyFileScopeLease(").slice(1);
+    const mirrorCalls = classifierCalls.filter((site) => {
+      const optionsWindow = site.slice(0, site.indexOf("});"));
+      return optionsWindow.includes("mergeRequestContractShadowEnabled");
+    });
+    expect(mirrorCalls).toHaveLength(2);
 
-    for (const site of callSites) {
-      /* The options object literal ends at the first `})` that closes the call. Bounding the window
-         keeps a later, unrelated `isWipColumn` in the file from reading as this site's argument. */
-      const optionsWindow = site.slice(0, site.indexOf("})"));
-
-      /* `<someSet>.has(<card>.column)` — membership in a set the sweep resolved by trait. Written as
-         a shape rather than a fixed identifier so renaming the local set does not fail this. */
+    for (const site of mirrorCalls) {
+      const optionsWindow = site.slice(0, site.indexOf("});"));
       expect(optionsWindow).toMatch(/isWipColumn:\s*\w+\.has\(\w+\.column\)/);
       expect(optionsWindow).toMatch(/isReviewColumn:\s*\w+\.has\(\w+\.column\)/);
+      expect(optionsWindow).toMatch(/isTerminalColumn:\s*\w+\.has\(\w+\.column\)/);
     }
   });
 });

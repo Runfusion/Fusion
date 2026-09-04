@@ -1,5 +1,68 @@
 # @fusion/engine
 
+## 0.78.0-beta.1
+
+### Patch Changes
+
+- @fusion/core@0.78.0-beta.1
+- @fusion/pi-claude-cli@0.78.0-beta.1
+
+## 0.78.0-beta.0
+
+### Patch Changes
+
+- @fusion/core@0.78.0-beta.0
+- @fusion/pi-claude-cli@0.78.0-beta.0
+
+## 0.77.0
+
+### Patch Changes
+
+- @fusion/core@0.77.0
+- @fusion/pi-claude-cli@0.77.0
+
+## 0.77.0-beta.14
+
+### Patch Changes
+
+- @fusion/core@0.77.0-beta.14
+- @fusion/pi-claude-cli@0.77.0-beta.14
+
+## 0.77.0-beta.13
+
+### Patch Changes
+
+- @fusion/core@0.77.0-beta.13
+- @fusion/pi-claude-cli@0.77.0-beta.13
+
+## 0.77.0-beta.12
+
+### Patch Changes
+
+- @fusion/core@0.77.0-beta.12
+- @fusion/pi-claude-cli@0.77.0-beta.12
+
+## 0.77.0-beta.11
+
+### Patch Changes
+
+- @fusion/core@0.77.0-beta.11
+- @fusion/pi-claude-cli@0.77.0-beta.11
+
+## 0.77.0-beta.10
+
+### Patch Changes
+
+- @fusion/core@0.77.0-beta.10
+- @fusion/pi-claude-cli@0.77.0-beta.10
+
+## 0.77.0-beta.9
+
+### Patch Changes
+
+- @fusion/core@0.77.0-beta.9
+- @fusion/pi-claude-cli@0.77.0-beta.9
+
 ## 0.77.0-beta.8
 
 ### Patch Changes

@@ -26,14 +26,10 @@ import {
 } from "./executor-constants.js";
 
 export type BranchConflictHandleDepsSource = {
-  /**
-   * FNXC:Identity 2026-08-16-05:10: the U18 total run carrier. Required by the built Deps type;
-   * the source must declare it or the projection cannot pass it through.
-   */
-  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   rootDir: string;
   store: TaskStore;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   findActiveWorktreeOwner: BranchConflictHandleDeps["findActiveWorktreeOwner"];
   normalizeReclaimableWorktreePath: BranchConflictHandleDeps["normalizeReclaimableWorktreePath"];
   cleanupConflictingWorktree: BranchConflictHandleDeps["cleanupConflictingWorktree"];
@@ -93,17 +89,13 @@ export function buildWorktreeCreateConflictDeps(src: WorktreeCreateConflictDepsS
 }
 
 export type WorktreeInvariantDepsSource = {
-  /**
-   * FNXC:Identity 2026-08-16-05:10: the U18 total run carrier. Required by the built Deps type;
-   * the source must declare it or the projection cannot pass it through.
-   */
-  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   rootDir: string;
   store: TaskStore;
   workspaceConfig: unknown | null | undefined;
   ensureWorkspaceConfig?: () => Promise<unknown | null>;
   getActiveWorktreePaths: (taskId: string) => string[];
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   emitWorktreeReanchoredAudit: WorktreeInvariantDeps["emitWorktreeReanchoredAudit"];
 };
 
@@ -159,8 +151,11 @@ export function buildExecuteWorkflowGraphDeps(host: any): any {
       "graphToolFailureRunCursors", "graphUnattendedRuns", "outerConcurrencyClaims",
       // FNXC:AgentActivityStream 2026-08-15-22:15: FN-8864 gate-attribution retention map (restored post-wave-18).
       "workflowGateActivityPrincipals",
+      // FNXC:WorkflowLifecycle 2026-08-31-06:41: per-run abort-marker reset at run birth.
+      "userCanceledTaskIds",
     ]),
     ...facadeMethods(host, [
+      "clearPausedAborted",
       "getRunContextFor", "runContextFor", "advanceNoMergeWorkflowToCompleteColumn", "applyGraphRethinkReset",
       "buildBranchPersistence", "buildCodeNodeRunner", "buildColumnBoundaryHooks", "buildForeachWorktreeDeps",
       "buildParseStepsDeps", "buildStepInstancePersistence", "createAuthoritativeWorkflowPrimitives",
@@ -185,6 +180,7 @@ export function buildHandleGraphFailureDeps(host: any): any {
       "activeWorktrees", "completionFinalizedTaskIds", "graphExecuteSelfRequeued",
       "graphToolFailureRunCursors", "pausedAborted", "pausedAbortProvenance", "userCanceledTaskIds",
       "executing", "resumingUnpaused", "activeSessions", "activeStepExecutors",
+      "deferredTerminalParksInFlight",
       "activeWorkflowStepSessions", "activeCliTaskSessions", "activeWorkflowGraphAbortControllers",
     ]),
     ...facadeMethods(host, [
@@ -197,7 +193,7 @@ export function buildHandleGraphFailureDeps(host: any): any {
       "isRequiredArtifactRecoveryProtected", "isRetryableBenignMergePauseAbort",
       "parkCompletedBlockedTask", "persistTokenUsage", "reenterPausedAbortedWorkflowNode",
       "resolveResumeLanes", "routeGraphFailureToExecutionResume", "routeGraphMergeFailureToRetry",
-      "routeImplementationIncompleteMergeGraphFailure", "routeResetParsePinMismatchToRetry",
+      "requestPreMergeOptionalStepFix", "routeImplementationIncompleteMergeGraphFailure", "routeResetParsePinMismatchToRetry",
       "routeRetryableRemediationGraphFailureToPreMergeFix", "routeUnusableWorktreeGraphFailureToRecovery",
       "safeLogEntry",
     ]),
@@ -307,11 +303,17 @@ export function buildRunImplementationDeps(
       "finalizeMergeConfirmedWorkflowGraphTask", "cleanupMergeStateForReverification", "createWorktree",
       "emitWorktreeReanchoredAudit", "buildInjectedRuntimeEnv", "reconcileStepsFromGitHistory",
       "setActiveStepExecutor", "captureWorkspaceModifiedFiles", "runExecutorDeterministicVerification",
+      /* FNXC:VerificationRemediation 2026-08-26-04:58: the FN-3345 gate needs the named-remediation authority for `stepReopenPolicy: "none"` workflows. */
+      "appendReviewRemediationSteps",
       "attemptExecutorVerificationFix", "deleteActiveStepExecutor", "createTaskUpdateTool",
       "createTaskAddDepTool", "createTaskDoneTool", "createReviewDisputeTool", "createSpawnAgentTool",
       "resolveInstructionsForRole", "finalizeAlreadyReviewedTask",
       "handleBranchConflict", "handleNonContinuableSessionRetry", "resumeApprovalAfterUnwindIfNeeded",
     ]),
+    reexecuteTaskInPlace: async (taskId: string) => {
+      const live = await host.store.getTask(taskId);
+      setTimeout(() => { void host.execute(live); }, 0);
+    },
     sharedWorkerTools: buildSharedWorkerToolsDeps(host),
   };
   return defineLiveWorkspaceConfig(bag, host);
@@ -323,6 +325,7 @@ export function buildRunGraphCustomNodeDeps(host: any): any {
     ensureWorkspaceConfig: withWorkspaceResolver(host),
     options: host.options as { pluginRunner?: unknown; [k: string]: unknown },
     graphUnattendedRuns: host.graphUnattendedRuns,
+    runConfiguredCommand: pure.runConfiguredCommand,
     ...facadeMethods(host, [
       "getRunContextFor", "runContextFor",
       "adoptColumnAgentForNode", "buildInjectedRuntimeEnv", "ensureGraphCustomNodeWorktree",
@@ -423,6 +426,10 @@ export function buildMarkStuckAbortedDeps(host: any): any {
       "hasActiveWorktreeBinding",
     ]),
     ensureWorkspaceConfig: withWorkspaceResolver(host),
+    reexecuteTaskInPlace: async (taskId: string) => {
+      const live = await host.store.getTask(taskId);
+      setTimeout(() => { void host.execute(live); }, 0);
+    },
   };
   return defineLiveWorkspaceConfig(bag, host);
 }
@@ -476,7 +483,6 @@ export function buildEnsureGraphCustomNodeWorktreeDeps(host: any, runConfiguredC
     ...facadeMethods(host, [
       "getRunContextFor", "runContextFor", "addActiveWorktree", "registerConfiguredCommandController", "unregisterConfiguredCommandController",
     ]),
-    pool: host.options.pool,
     secretsStore: host.options.secretsStore,
     createWorktree: (
       branch: string, path: string, taskId: string, startPoint?: string, allowSibling?: boolean,
@@ -562,9 +568,6 @@ export function buildDispatchUnpauseResumeDeps(host: any): any {
 export function buildHoldForSessionContentionDeps(host: any): any {
   return {
     ...buildStoreRunContextDeps(host),
-    getHoldAttempts: (taskId: string) => host.sessionContentionHoldAttempts.get(taskId) ?? 0,
-    setHoldAttempts: (taskId: string, attempt: number) => { host.sessionContentionHoldAttempts.set(taskId, attempt); },
-    clearHold: (taskId: string) => host.clearSessionContentionHold(taskId),
     reexecute: (t: unknown) => host.execute(t),
   };
 }
@@ -682,8 +685,15 @@ export function buildRequestPreMergeOptionalStepFixDeps(host: any): any {
     ...facadeFields(host, ["store", "workflowLifecycleMovesInFlight"]),
     ...facadeMethods(host, [
       "getRunContextFor", "runContextFor", "recoverMissingRequiredArtifacts", "parkPlanReviewReplanCapExhausted",
-      "clearPausedAborted", "sendTaskBackForFix",
+      "clearPausedAborted", "readTaskArtifact", "appendReviewRemediationSteps", "sendTaskBackForFix",
     ]),
+  };
+}
+
+export function buildAppendReviewRemediationStepsDeps(host: any): any {
+  return {
+    ...facadeFields(host, ["store"]),
+    ...facadeMethods(host, ["readTaskArtifact", "sendTaskBackForFix"]),
   };
 }
 
@@ -809,7 +819,7 @@ export function buildExecuteCoreDeps(host: any): any {
     releaseSemaphore: () => { host.options.semaphore?.release(); },
     ...facadeMethods(host, [
       "clearStalePauseAbortBeforeDispatch", "blockOuterDispatchWhenDependenciesUnmet",
-      "executeWorkflowGraph",
+      "blockOuterDispatchWhenFileScopeLeaseHeld", "executeWorkflowGraph",
     ]),
   };
 }
@@ -1076,6 +1086,10 @@ export function buildMarkPausedAbortedDeps(host: any): any {
 export function buildResumeOrphanedDeps(host: any): any {
   return {
     ...facadeFields(host, ["store", "executing", "recoveringCompleted"]),
+    // FNXC:MergeRetryReliability 2026-08-29-17:00 (CodeRabbit L1331): the
+    // deferred-park intent reader must resolve the same tasks dir fallback
+    // the handleGraphFailure writer uses when the store has no getTasksDir.
+    rootDir: host.rootDir,
     processWideGraphRouting: host.constructor.processWideGraphRouting as Set<string>,
     ...facadeMethods(host, [
       "listWipLaneTasks", "clearResumeFailureState", "recoverApprovedStepsOnResume",
@@ -1271,8 +1285,6 @@ export function buildColumnBoundaryHooksFacadeDeps(host: any): any {
   return {
     store: host.store,
     workflowLifecycleMovesInFlight: host.workflowLifecycleMovesInFlight,
-    getRunContextFor: (taskId: string) => host.getRunContextFor(taskId),
-    runContextFor: (taskId: string, fallback?: string | null) => host.runContextFor(taskId, fallback),
   };
 }
 
@@ -1378,8 +1390,9 @@ export function buildPauseAbortMarkerDeps(host: any): any {
     ...facadeFields(host, [
       "pausedAborted", "pausedAbortProvenance", "completionFinalizedTaskIds",
     ]),
-    markPausedAborted: (id: string, provenance?: unknown, source?: string) =>
-      host.markPausedAborted(id, provenance, source),
+    /* FNXC:PausedAbortProvenance 2026-08-26-09:52: forward the quiet flag so the breadcrumb can wait for evidence. */
+    markPausedAborted: (id: string, provenance?: unknown, source?: string, options?: { quiet?: boolean }) =>
+      host.markPausedAborted(id, provenance, source, options),
   };
 }
 
@@ -1490,7 +1503,9 @@ export function buildStaleLockRecoveryDeps(host: any): any {
 export function buildRecoverFailedPreMergeWorkflowStepDeps(host: any): any {
   return {
     store: host.store,
-    ...facadeMethods(host, ["getRunContextFor", "runContextFor", "resolveFailedPreMergeWorkflowStepBudget", "sendTaskBackForFix"]),
+    ...facadeMethods(host, [
+      "getRunContextFor", "runContextFor", "resolveFailedPreMergeWorkflowStepBudget", "appendReviewRemediationSteps", "sendTaskBackForFix",
+    ]),
   };
 }
 

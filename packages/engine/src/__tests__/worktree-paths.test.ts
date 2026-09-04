@@ -1,29 +1,34 @@
 import { describe, expect, it } from "vitest";
 import { homedir, tmpdir } from "node:os";
+import { realpathSync } from "node:fs";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import {
   AI_MERGE_DIRNAME,
+  WORKTREE_LOCKS_DIRNAME,
   WORKTREE_RECOVERY_DIRNAME,
   isAiMergeContainerDir,
   isWorktreeContainerDir,
   isInsideConfiguredWorktreesDir,
   isReclaimableWorktreeCandidate,
   resolveAiMergeRootPath,
+  resolveAiMergeSearchRoots,
+  resolveLegacyAiMergeRootPath,
   resolveTaskWorktreePath,
   resolveTaskWorktreePathForBackend,
   resolveWorktreesDir,
+  resolveWorktreesDirScanRoots,
 } from "../worktree/worktree-paths.js";
 
 describe("worktree-paths", () => {
-  const rootDir = "/tmp/repo-name";
+  const rootDir = join(tmpdir(), "repo-name");
 
-  it("defaults to <rootDir>/.worktrees when unset", () => {
-    expect(resolveWorktreesDir(rootDir, undefined)).toBe(join(rootDir, ".worktrees"));
+  it("defaults to <rootDir>/.fusion/worktrees when unset", () => {
+    expect(resolveWorktreesDir(rootDir, undefined)).toBe(join(rootDir, ".fusion", "worktrees"));
   });
 
-  it("defaults to <rootDir>/.worktrees when settings object is present but worktreesDir is unset", () => {
-    expect(resolveWorktreesDir(rootDir, {} as any)).toBe(join(rootDir, ".worktrees"));
+  it("defaults to <rootDir>/.fusion/worktrees when settings object is present but worktreesDir is unset", () => {
+    expect(resolveWorktreesDir(rootDir, {} as any)).toBe(join(rootDir, ".fusion", "worktrees"));
   });
 
   it("supports absolute path", () => {
@@ -49,11 +54,33 @@ describe("worktree-paths", () => {
   });
 
   it("builds the AI-merge root under the default worktrees dir", () => {
-    expect(resolveAiMergeRootPath(rootDir, undefined)).toBe(join(rootDir, ".worktrees", AI_MERGE_DIRNAME));
+    expect(resolveAiMergeRootPath(rootDir, undefined)).toBe(join(rootDir, ".fusion", "worktrees", AI_MERGE_DIRNAME));
   });
 
   it("builds the AI-merge root under an absolute custom worktrees dir", () => {
     expect(resolveAiMergeRootPath(rootDir, { worktreesDir: "/tmp/ext-worktrees" } as any)).toBe(join("/tmp/ext-worktrees", AI_MERGE_DIRNAME));
+  });
+
+  it("searches current, legacy, and historic AI-merge roots without configured worktrees", () => {
+    expect(resolveAiMergeSearchRoots(rootDir, undefined)).toEqual([
+      join(rootDir, ".fusion", "worktrees", AI_MERGE_DIRNAME),
+      resolveLegacyAiMergeRootPath(rootDir),
+      join(rootDir, ".worktrees", AI_MERGE_DIRNAME),
+    ]);
+  });
+
+  it("deduplicates the historic AI-merge root when worktreesDir is configured to .worktrees", () => {
+    expect(resolveAiMergeSearchRoots(rootDir, { worktreesDir: ".worktrees" } as any)).toEqual([
+      join(rootDir, ".worktrees", AI_MERGE_DIRNAME),
+      resolveLegacyAiMergeRootPath(rootDir),
+    ]);
+  });
+
+  it("does not search the historic root for an external configured worktrees dir", () => {
+    expect(resolveAiMergeSearchRoots(rootDir, { worktreesDir: "/abs/elsewhere" } as any)).toEqual([
+      join("/abs/elsewhere", AI_MERGE_DIRNAME),
+      resolveLegacyAiMergeRootPath(rootDir),
+    ]);
   });
 
   it("builds the AI-merge root under expanded {repo} and ~ worktrees dirs", () => {
@@ -72,8 +99,10 @@ describe("worktree-paths", () => {
   it("identifies internal worktree containers without hiding task worktrees", () => {
     expect(isWorktreeContainerDir(AI_MERGE_DIRNAME)).toBe(true);
     expect(isWorktreeContainerDir(WORKTREE_RECOVERY_DIRNAME)).toBe(true);
+    expect(isWorktreeContainerDir(WORKTREE_LOCKS_DIRNAME)).toBe(true);
     expect(isWorktreeContainerDir("fusion-ai-merge-fn-1-abc")).toBe(false);
     expect(isWorktreeContainerDir(".fusion-recovery-child")).toBe(false);
+    expect(isWorktreeContainerDir("fn-1")).toBe(false);
   });
 
   it("vetoes workspace containers and plain directories before a destructive sweep", async () => {
@@ -98,9 +127,28 @@ describe("worktree-paths", () => {
     expect(isInsideConfiguredWorktreesDir(rootDir, { worktreesDir: "../{repo}.worktrees" } as any, dir)).toBe(false);
   });
 
-  it("legacy .worktrees default still works for containment checks", () => {
-    expect(isInsideConfiguredWorktreesDir(rootDir, undefined, join(rootDir, ".worktrees", "fn-1"))).toBe(true);
+  it("accepts both default and legacy roots while unset", () => {
+    const primary = join(rootDir, ".fusion", "worktrees");
+    const legacy = join(rootDir, ".worktrees");
+    /*
+    FNXC:WorktreePathTests 2026-08-30-20:16:
+    Scan-root expectations use Node's filesystem resolution as an independent oracle. Importing the production canonicalizer would let the implementation and test regress together.
+    */
+    const canonicalRootDir = join(realpathSync.native(tmpdir()), "repo-name");
+    expect(resolveWorktreesDirScanRoots(rootDir, undefined)).toEqual([
+      join(canonicalRootDir, ".fusion", "worktrees"),
+      join(canonicalRootDir, ".worktrees"),
+    ]);
+    expect(isInsideConfiguredWorktreesDir(rootDir, undefined, join(primary, "fn-1"))).toBe(true);
+    expect(isInsideConfiguredWorktreesDir(rootDir, undefined, join(legacy, "fn-1"))).toBe(true);
+    expect(isInsideConfiguredWorktreesDir(rootDir, undefined, primary)).toBe(false);
+    expect(isInsideConfiguredWorktreesDir(rootDir, undefined, legacy)).toBe(false);
     expect(isInsideConfiguredWorktreesDir(rootDir, undefined, join(rootDir, "fn-1"))).toBe(false);
+  });
+
+  it("excludes the legacy root when worktreesDir is configured", () => {
+    const settings = { worktreesDir: "configured" } as any;
+    expect(isInsideConfiguredWorktreesDir(rootDir, settings, join(rootDir, ".worktrees", "fn-1"))).toBe(false);
   });
 
   it("delegates to worktrunk backend path resolver", async () => {
