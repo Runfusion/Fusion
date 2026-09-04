@@ -65,7 +65,6 @@ import {
   isLegacyWorkspaceWorktreeLayout,
   resolveWorkspaceTaskWorktreeDir,
   resolveSandboxBackend as resolveConfiguredSandboxBackend,
-  toRunMutationContext,
 } from "@fusion/core";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
@@ -188,6 +187,7 @@ import {
   tokenUsageWithModelSnapshot as tokenUsageWithModelSnapshotImpl,
 } from "./token-usage-pure.js";
 import { captureBaseCommitSha, resolveContaminationBaseRef } from "./worktree-git-refs.js";
+import { runContextForTotal } from "./run-context-for.js";
 import { MAX_TASK_DONE_REQUEUE_RETRIES } from "./task-done-refusal-handler.js";
 import type { ImplementationExitReporter } from "./implementation-exit.js";
 import type { GraphCompletionCallback } from "./run-implementation-phase.js";
@@ -528,21 +528,21 @@ export async function runImplementation(
     // Construct run context for mutation correlation
     // Use a synthetic correlation ID: task ID + timestamp + random suffix
     const syntheticRunId = generateSyntheticRunId("exec", task.id);
-    deps.currentRunContexts.set(task.id, toRunMutationContext({
+    deps.currentRunContexts.set(task.id, {
       runId: syntheticRunId,
       agentId: task.assignedAgentId ?? "executor",
-    }));
+    });
     // FNXC:AgentActivityStream 2026-08-09-09:09 (restored 2026-08-15-22:15 after wave-18 shell-ification dropped it):
     // FN-8864 durable task:started activity at the implementation entry; monitoring never blocks execution.
     try { await deps.store.recordAgentActivity({ type: "task:started", attributionClaim: resolveAgentActivityAttribution([{ id: task.assignedAgentId ?? "executor", provenance: task.assignedAgentId ? "roster" : "lane" }], "executor"), taskId: task.id, occurredAt: new Date().toISOString(), discriminator: syntheticRunId, metadata: { runId: syntheticRunId } }); } catch { /* monitoring never blocks execution */ }
 
     // Build engine run context for audit instrumentation (FN-1404)
-    const engineRunContext: EngineRunContext = toRunMutationContext({
+    const engineRunContext: EngineRunContext = {
       runId: syntheticRunId,
       agentId: task.assignedAgentId ?? "executor",
       taskId: task.id,
       phase: "execute",
-    });
+    };
 
     // Create run auditor for TaskStore-backed audit emission (no-ops if store doesn't support it)
     const audit = createRunAuditor(deps.store, engineRunContext);
@@ -949,7 +949,21 @@ export async function runImplementation(
       An operator-routed checkout still needs the read-only base snapshot used by modified-file capture. It must not enter contamination or managed-worktree liveness checks: the persisted checkout is deliberately operator-owned and lives outside Fusion's worktree directory.
       */
       if (!deps.workspaceConfig && !acquisition.isResume) {
-        await captureBaseCommitSha(deps.store, task, worktreePath, audit, { isResume: false });
+        /*
+        FNXC:Identity 2026-09-04-05:47:
+        Non-workspace fresh-worktree base-SHA capture used to omit the registered run
+        carrier, so captureBaseCommitSha fell back to executor/unknown. Thread the live
+        map through the total form so the assigned actor and this implementation runId
+        persist onto baseCommitSha.
+        */
+        await captureBaseCommitSha(
+          deps.store,
+          task,
+          worktreePath,
+          audit,
+          { isResume: false },
+          runContextForTotal((id) => deps.getRunContextFor(id), task.id, task.assignedAgentId),
+        );
       }
 
       if (!deps.workspaceConfig && !externalExecutionRoute.configured) {
@@ -2148,7 +2162,10 @@ export async function runImplementation(
         }),
         ...createIdeationTools(deps.store),
         ...createGoalRetrievalTools(deps.store, {
-          runContext: engineRunContext,
+          runContext: {
+            runId: engineRunContext.runId,
+            agentId: engineRunContext.agentId,
+          },
           taskId: task.id,
         }),
         createWebFetchTool(),

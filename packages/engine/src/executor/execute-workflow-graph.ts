@@ -106,7 +106,7 @@ export type ExecuteWorkflowGraphDeps = {
   workflowGateActivityPrincipals: Map<string, string>;
   outerConcurrencyClaims: Set<string>;
   processWideGraphRouting: Set<string>;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string) => EngineRunContext | undefined;
   advanceNoMergeWorkflowToCompleteColumn: AnyFn;
   applyGraphRethinkReset: AnyFn;
   buildBranchPersistence: AnyFn;
@@ -342,7 +342,7 @@ per-task advisory lock as resetTaskPublicationImpl. Minimal test stores retain t
 fallbacks, but only the first tier serializes against Reset.
 */
 async function writeWorkflowStepResultPatch(
-  deps: Pick<ExecuteWorkflowGraphDeps, "store" | "getRunContextFor">,
+  deps: Pick<ExecuteWorkflowGraphDeps, "store" | "runContextFor">,
   taskId: string,
   compute: (current: Task) => WorkflowStepResultPatch | null,
 ): Promise<{ applied: boolean; task?: Task }> {
@@ -359,7 +359,7 @@ async function writeWorkflowStepResultPatch(
       const patch = compute(current);
       if (patch !== null) applied = true;
       return patch;
-    }, deps.getRunContextFor(taskId));
+    }, deps.runContextFor(taskId));
     return applied ? { applied: true, task } : { applied: false };
   }
 
@@ -367,11 +367,11 @@ async function writeWorkflowStepResultPatch(
   if (!current) return { applied: false };
   const patch = compute(current);
   if (patch === null) return { applied: false };
-  const task = await store.updateTask(taskId, patch, deps.getRunContextFor(taskId));
+  const task = await store.updateTask(taskId, patch, deps.runContextFor(taskId));
   return { applied: true, task };
 }
 
-type PersistWorkflowStepResultDeps = Pick<ExecuteWorkflowGraphDeps, "store" | "getRunContextFor" | "readTaskArtifact">
+type PersistWorkflowStepResultDeps = Pick<ExecuteWorkflowGraphDeps, "store" | "runContextFor" | "readTaskArtifact">
   & Partial<Pick<ExecuteWorkflowGraphDeps, "workflowGateActivityPrincipals" | "activeWorkflowPrincipals">>;
 
 /** The graph needs durable acceptance separately from the scope-CAS edge-admission result. */
@@ -498,7 +498,7 @@ export async function persistWorkflowStepResultWithOutcome(
         taskId,
         `[pre-merge] ${result.workflowStepName} approval invalidated: ${persistedResult.notes ?? persistedResult.output ?? "review input proof missing"}`,
         undefined,
-        deps.getRunContextFor(taskId),
+        deps.runContextFor(taskId),
       ).catch(() => undefined);
     }
     if (isTerminalStepResult(persistedResult)) {
@@ -538,7 +538,7 @@ export async function persistWorkflowStepResultWithOutcome(
  * test-friendly fallbacks. A missing or newer lease is a harmless no-op.
  */
 export async function discardWorkflowStepLease(
-  deps: Pick<ExecuteWorkflowGraphDeps, "store" | "getRunContextFor">,
+  deps: Pick<ExecuteWorkflowGraphDeps, "store" | "runContextFor">,
   taskId: string,
   workflowStepId: string,
   startedAt: string,
@@ -641,7 +641,7 @@ export async function executeWorkflowGraph(
           : 0;
         deps.graphToolFailureRunCursors.set(task.id, cursor);
         if (typeof deps.store.updateTask === "function") {
-          await deps.store.updateTask(task.id, { toolFailureDetectorLogCursor: cursor }, deps.getRunContextFor(task.id));
+          await deps.store.updateTask(task.id, { toolFailureDetectorLogCursor: cursor }, deps.runContextFor(task.id));
         }
       }
       let selection: { workflowId: string; stepIds: string[] } | undefined;
@@ -1009,7 +1009,7 @@ export async function executeWorkflowGraph(
         // the re-running agent can read. Best-effort; logging failures swallowed.
         logTaskEntry: (summary: string, detail?: string) => {
           void deps.store
-            .logEntry(task.id, summary, detail, deps.getRunContextFor(task.id))
+            .logEntry(task.id, summary, detail, deps.runContextFor(task.id))
             .catch(() => {});
         },
         /*
@@ -1271,7 +1271,7 @@ export async function executeWorkflowGraph(
         }
         await deps.advanceNoMergeWorkflowToCompleteColumn(live as TaskDetail);
         if ((live.graphResumeRetryCount ?? 0) !== 0 || (live.sessionContentionHoldCount ?? 0) !== 0 || live.sessionContentionWaitReason != null || (live.consecutiveToolFailureRetryCount ?? 0) !== 0) {
-          await deps.store.updateTask(task.id, { graphResumeRetryCount: 0, sessionContentionHoldCount: 0, sessionContentionWaitReason: null, consecutiveToolFailureRetryCount: 0, executorEscalationAttempted: false, toolFailureDetectorLogCursor: null, toolFailureRetryExhaustedAuditEmitted: false }, deps.getRunContextFor(task.id));
+          await deps.store.updateTask(task.id, { graphResumeRetryCount: 0, sessionContentionHoldCount: 0, sessionContentionWaitReason: null, consecutiveToolFailureRetryCount: 0, executorEscalationAttempted: false, toolFailureDetectorLogCursor: null, toolFailureRetryExhaustedAuditEmitted: false }, deps.runContextFor(task.id));
         }
       }
       return;

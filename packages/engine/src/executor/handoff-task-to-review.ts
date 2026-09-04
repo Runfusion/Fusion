@@ -16,7 +16,8 @@
  * clean completion handoffs.
  */
 import type { ResolvedTaskOutputLanguage, Task, TaskDetail, TaskStore } from "@fusion/core";
-import { isMergeRequestContractShadowEnabled, resolveAgentActivityAttribution } from "@fusion/core";
+import { isMergeRequestContractShadowEnabled, resolveAgentActivityAttribution, UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
+import { toRunMutationContext } from "../util/run-audit.js";
 import { ensureWorkflowCompletionSummary } from "../workflows/workflow-completion-summary.js";
 import { executorLog } from "../logger.js";
 import type { EngineRunContext } from "../util/run-audit.js";
@@ -27,6 +28,7 @@ type AnyFn = (...args: any[]) => any;
 export type HandoffTaskToReviewDeps = {
   store: TaskStore;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   generateCompletionFeatureVideo: AnyFn;
 };
 
@@ -45,12 +47,15 @@ export async function handoffTaskToReview(
      * A graph handoff can finish long after its agent session starts. Its missing-summary
      * fallback must use that invocation's resolved target, not mutable project settings.
      */
+    // FNXC:Identity 2026-08-15-22:52 (U18/KTD2): derived — the executor holds a real per-task run
+    // context here (this is the same run that produced `runId`/`agentId` two lines above).
+    const runContext = deps.runContextFor(task.id);
     await ensureWorkflowCompletionSummary(deps.store, task as TaskDetail, {
       reason,
       runId,
       originalInput: task.description,
       outputLanguage,
-    }).catch((error: unknown) => {
+    }, runContext ? toRunMutationContext(runContext) : UNATTRIBUTED_MUTATION_CONTEXT).catch((error: unknown) => {
       executorLog.warn(`${task.id}: failed to record workflow completion summary: ${error instanceof Error ? error.message : String(error)}`);
     });
   }

@@ -26,6 +26,7 @@ import { extractOwnSettings } from "./agent-binding-pure.js";
 export type ResolveSeamColumnAgentDeps = {
   store: TaskStore;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   agentStore?: AgentStore | null;
   graphSeamGoverningNodeId: Map<string, string>;
   graphColumnAgentResolver: Map<string, (nodeId: string) => WorkflowColumnAgent | undefined>;
@@ -63,11 +64,16 @@ export async function resolveSeamColumnAgent(
     // Best-effort audit: a logEntry failure (DB locked / mid-recovery) must NOT
     // escalate this graceful fallback into a hard session failure (R8).
     try {
+      /*
+      FNXC:Identity 2026-08-24-02:18:
+      Column-agent fallback and adoption logs use `runContextFor` so seam attribution matches the
+      live graph run instead of an unattributed executor-lane fallback.
+      */
       await deps.store.logEntry(
         task.id,
         `Workflow seam node '${governingNodeId}': column agent '${effective.agentId}' not found — falling back to assigned-agent resolution`,
         undefined,
-        deps.getRunContextFor(task.id),
+        deps.runContextFor(task.id),
       );
     } catch (logErr: unknown) {
       executorLog.warn(`${task.id}: failed to log column-agent fallback: ${logErr instanceof Error ? logErr.message : String(logErr)}`);
@@ -79,7 +85,7 @@ export async function resolveSeamColumnAgent(
       task.id,
       `Workflow seam node '${governingNodeId}': running as column agent '${effective.agentId}' (${binding.mode})`,
       undefined,
-      deps.getRunContextFor(task.id),
+      deps.runContextFor(task.id),
     );
   } catch (logErr: unknown) {
     executorLog.warn(`${task.id}: failed to log column-agent adoption: ${logErr instanceof Error ? logErr.message : String(logErr)}`);

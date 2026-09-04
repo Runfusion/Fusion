@@ -17,6 +17,7 @@ import { dispatchAcceptedCompletionRecommendationNotice } from "./completion-rec
 export type FinalizeAcceptedNoOpCompletionDeps = {
   store: TaskStore;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   scheduleCompletedTaskWatchdog: (taskId: string, source: string) => void;
 };
 
@@ -53,7 +54,7 @@ export async function finalizeAcceptedNoOpCompletion(
   }
   if (rejectIfPaused && (live.paused || live.userPaused)) return { completed: false, hardPauseActive: false };
 
-  const runContext = deps.getRunContextFor(task.id);
+  const runContext = deps.runContextFor(task.id);
   const restoreNoCommitsExpected = async (): Promise<void> => {
     if (live.noCommitsExpected !== true) {
       await deps.store.updateTask(task.id, { noCommitsExpected: false }).catch(() => undefined);

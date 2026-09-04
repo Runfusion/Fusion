@@ -16,6 +16,7 @@ export const MAX_TASK_DONE_REQUEUE_RETRIES = 3;
 export type TaskDoneRefusalHandlerDeps = {
   store: TaskStore;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   markGraphExecuteSelfRequeued: (taskId: string) => void;
   persistTokenUsage: (taskId: string) => Promise<void>;
   deleteActiveSession: (taskId: string) => void;
@@ -27,7 +28,7 @@ export async function handleImplicitTaskDoneRefusal(
   task: Task,
   refusal: Extract<ReturnType<typeof evaluateTaskDoneRefusal>, { ok: false }>,
 ): Promise<void> {
-  await deps.store.logEntry(task.id, refusal.message, undefined, deps.getRunContextFor(task.id));
+  await deps.store.logEntry(task.id, refusal.message, undefined, deps.runContextFor(task.id));
   executorLog.error(`${task.id}: fn_task_done refused (${refusal.refusalClass}) — ${refusal.reason} (implicit completion)`);
 
   const taintUpdate = skipBypassTaintUpdateForRefusal(refusal);
@@ -49,7 +50,7 @@ export async function handleImplicitTaskDoneRefusal(
       task.id,
       `${refusal.message} — requeued to todo immediately (${nextRequeueCount}/${MAX_TASK_DONE_REQUEUE_RETRIES})`,
       undefined,
-      deps.getRunContextFor(task.id),
+      deps.runContextFor(task.id),
     );
     deps.markGraphExecuteSelfRequeued(task.id);
     await deps.store.moveTask(task.id, await resolveReboundColumnFor(deps.store, task.id), { preserveProgress: true });
@@ -64,7 +65,7 @@ export async function handleImplicitTaskDoneRefusal(
       branch: null, branchWriteOrigin: "engine" as const,
       sessionFile: null,
     });
-    await deps.store.logEntry(task.id, `${refusal.message} — execution failed because implicit fn_task_done was refused`, undefined, deps.getRunContextFor(task.id));
+    await deps.store.logEntry(task.id, `${refusal.message} — execution failed because implicit fn_task_done was refused`, undefined, deps.runContextFor(task.id));
     await deps.persistTokenUsage(task.id);
   }
 

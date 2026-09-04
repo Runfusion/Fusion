@@ -5,9 +5,10 @@
  */
 import { exec, execFile, execSync } from "node:child_process";
 import { promisify } from "node:util";
-import type { Task } from "@fusion/core";
+import type { RunMutationContext, Task } from "@fusion/core";
 import { resolveCapturedBaseCommitSha } from "../execution/base-commit-capture.js";
 import { executorLog } from "../logger.js";
+import { runContextForTotal } from "./run-context-for.js";
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
@@ -94,7 +95,7 @@ export async function resolveDiffBaseRef(worktreePath: string, baseCommitSha?: s
 }
 
 export type CaptureBaseCommitShaStore = {
-  updateTask: (taskId: string, patch: { baseCommitSha: string }) => Promise<unknown>;
+  updateTask: (taskId: string, patch: { baseCommitSha: string }, runContext?: RunMutationContext) => Promise<unknown>;
 };
 
 /**
@@ -107,6 +108,7 @@ export async function captureBaseCommitSha(
   worktreePath: string,
   audit: { git: (event: { type: "commit:create"; target: string; metadata: Record<string, unknown> }) => Promise<void> },
   options: { isResume: boolean } = { isResume: false },
+  runContext?: RunMutationContext,
 ): Promise<void> {
   try {
     // Preserve an existing baseCommitSha only on RESUME of the same
@@ -141,7 +143,20 @@ export async function captureBaseCommitSha(
       throw new Error("could not resolve base commit SHA");
     }
 
-    await store.updateTask(task.id, { baseCommitSha });
+    /*
+    FNXC:Identity 2026-08-16-05:10:
+    Passed through `runContextForTotal` rather than raw: `runContext` is optional, so a caller that
+    omits it wrote `undefined` and the base-SHA capture landed unattributed. The total form falls
+    back to the derived executor-lane actor, which is what the base-commit-capture tests assert and
+    what the rebase reverted.
+
+    FNXC:Identity 2026-08-24-02:18:
+    PR 3430 review: production callers (`run-implementation`, `ensure-graph-custom-node-worktree`)
+    pass the live task run context. The parameter stays optional so isolated capture tests can omit
+    it; when supplied, `runContextForTotal(() => runContext, task.id)` returns that carrier (including
+    its runId) instead of reconstructing from `agentId` alone.
+    */
+    await store.updateTask(task.id, { baseCommitSha }, runContextForTotal(() => runContext, task.id));
     /*
     FNXC:EngineDiagnostics 2026-08-03-05:54:
     Base-SHA capture is per-task setup bookkeeping (also in run-audit). Worktree created stays info.

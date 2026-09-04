@@ -11,6 +11,7 @@ import type { EngineRunContext } from "../util/run-audit.js";
 export type WorkflowInputMarkerDeps = {
   store: TaskStore;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
 };
 
 export function workflowInputRepliesAfterWatermark(
@@ -44,21 +45,21 @@ export async function resolveWorkflowInputMarkerForGraphNode(
   const marker = `workflow-input:${markerMatch[1]}`;
   const replies = workflowInputRepliesAfterWatermark(live, marker);
   if (live.paused || replies.length === 0) {
-    await deps.store.updateTask(live.id, { status: "awaiting-user-input", paused: true }, deps.getRunContextFor(live.id));
+    await deps.store.updateTask(live.id, { status: "awaiting-user-input", paused: true }, deps.runContextFor(live.id));
     return "waiting";
   }
   /*
    * FNXC:WorkflowInput 2026-06-29-10:00:
    * A workflow graph can restart at an earlier node after pause/resume recovery while the durable pausedReason still points at the later skill node that asked the question. If the user already supplied a post-watermark reply, clear that stale marker before any node executes so Compound Engineering cannot loop at Plan while Commit & open PR's answered question remains attached.
    */
-  await deps.store.updateTask(live.id, { status: null, pausedReason: null }, deps.getRunContextFor(live.id));
+  await deps.store.updateTask(live.id, { status: null, pausedReason: null }, deps.runContextFor(live.id));
   await deps.store.logEntry(
     live.id,
     marker === `workflow-input:${nodeId}`
       ? `Workflow input received for step '${nodeId}' — resuming`
       : `Workflow input marker '${markerMatch[1]}' already has a reply — clearing stale marker before step '${nodeId}'`,
     undefined,
-    deps.getRunContextFor(live.id),
+    deps.runContextFor(live.id),
   );
   return "clear";
 }

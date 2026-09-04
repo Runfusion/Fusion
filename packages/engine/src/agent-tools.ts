@@ -1333,10 +1333,10 @@ async function carryCanonicalTaskRouting(
 
   let task = canonical;
   if (input.assignedAgentId !== canonical.assignedAgentId) {
-    task = await store.updateTask(canonical.id, { assignedAgentId: input.assignedAgentId });
+    task = await store.updateTask(canonical.id, { assignedAgentId: input.assignedAgentId }, runContext);
   }
   if (input.column !== undefined && input.column !== task.column) {
-    task = await store.moveTask(task.id, input.column);
+    task = await store.moveTask(task.id, input.column, undefined, runContext);
   }
   return task;
 }
@@ -1562,7 +1562,7 @@ export async function createAgentTask(
     const createdTask = await store.createTask(createInput, {
       settings,
       onProposalClaimConflict: () => { proposalClaimConflict = true; },
-    });
+    }, runContext);
 
     const reconcileCreatedDuplicate = (input as AgentTaskInputWithBootstrap).reconcileCreatedDuplicate;
     const reconcile = await reconcileDeterministicDuplicate(store, {
@@ -1968,7 +1968,7 @@ export function createTaskLogTool(store: TaskStore, taskId: string): ToolDefinit
     parameters: taskLogParams,
     execute: async (_id: string, params: Static<typeof taskLogParams>) => {
       try {
-        await store.logEntry(taskId, params.message, params.outcome);
+        await store.logEntry(taskId, params.message, params.outcome, runContext);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       } catch (err: any) {
         if (typeof err?.message === "string" && err.message.toLowerCase().includes("archived")) {
@@ -2474,7 +2474,7 @@ export function createTaskPromptWriteTool(
 
 /*
 FNXC:FileScope 2026-07-08-22:40:
-Requirement: when an executing agent must edit files beyond the task's declared `## File Scope`, it should extend the declared scope itself rather than silently editing out-of-scope (which strands those edits — the merger's squash is scoped to `## File Scope`, and cross-task overlap blocking + the merge file-scope invariant both read it). This tool appends validated entries to the `## File Scope` section of PROMPT.md and persists via `store.updateTask({ prompt })`, so the same validation (`validateFileScopeInPromptContent`) and task.json/PROMPT.md sync path as `fn_task_prompt_write` applies, and `parseFileScopeFromPrompt` picks the additions up immediately.
+Requirement: when an executing agent must edit files beyond the task's declared `## File Scope`, it should extend the declared scope itself rather than silently editing out-of-scope (which strands those edits — the merger's squash is scoped to `## File Scope`, and cross-task overlap blocking + the merge file-scope invariant both read it). This tool appends validated entries to the `## File Scope` section of PROMPT.md and persists via `store.updateTask({ prompt }, runContext)`, so the same validation (`validateFileScopeInPromptContent`) and task.json/PROMPT.md sync path as `fn_task_prompt_write` applies, and `parseFileScopeFromPrompt` picks the additions up immediately.
 Entries are validated with `isValidFileScopeEntry` and de-duplicated against existing scope. Marker-free plain `- \`path\`` lines are used (not the merger's `scopeAutoWiden` HTML-comment marker) so these read as first-class declared scope. Caveat: unlike the merge-time auto-widen, this does NOT re-run the peer-claim refusal (files owned by another active task's scope) — the merge-time invariant remains the backstop for genuine cross-task conflicts.
 */
 export function createTaskFileScopeAddTool(store: TaskStore, taskId: string, runContext?: RunMutationContext): ToolDefinition {
@@ -3479,7 +3479,13 @@ export function createTaskUnarchiveTool(store: TaskStore): ToolDefinition {
   };
 }
 
-export function createTaskDeleteTool(store: TaskStore): ToolDefinition {
+/*
+FNXC:Identity 2026-09-04-05:05:
+fn_task_delete used to hard-code agentId "chat" and a generated run id, so a non-chat
+caller was recorded as the wrong actor and could not be correlated with the active run.
+The caller supplies the live RunMutationContext; auditContext and deleteTask both use it.
+*/
+export function createTaskDeleteTool(store: TaskStore, runContext: import("@fusion/core").RunMutationContext): ToolDefinition {
   return {
     name: "fn_task_delete",
     label: "Delete Task",
@@ -3493,8 +3499,13 @@ export function createTaskDeleteTool(store: TaskStore): ToolDefinition {
         const task = await store.deleteTask(params.id, {
           allowResurrection: params.allowResurrection === true,
           removeLineageReferences: params.removeLineageReferences === true,
-          auditContext: fusionCore.toRunMutationContext({ agentId: "chat", runId: `chat-delete-${params.id}-${Date.now()}`, taskId: params.id, callerKind: "agent-tool" as const }),
-        });
+          auditContext: {
+            agentId: runContext.agentId,
+            runId: runContext.runId,
+            taskId: params.id,
+            actor: runContext.actor,
+          },
+        }, runContext);
         return { content: [{ type: "text" as const, text: `Deleted ${task.id}` }], details: { taskId: task.id } };
       } catch (err: unknown) {
         return { content: [{ type: "text" as const, text: `ERROR: Failed to delete task: ${toolErrorMessage(err)}` }], details: {}, isError: true };
@@ -3503,7 +3514,7 @@ export function createTaskDeleteTool(store: TaskStore): ToolDefinition {
   };
 }
 
-export function createTaskRetryTool(store: TaskStore): ToolDefinition {
+export function createTaskRetryTool(store: TaskStore, runContext: import("@fusion/core").RunMutationContext): ToolDefinition {
   return {
     name: "fn_task_retry",
     label: "Retry Task",
@@ -3515,7 +3526,7 @@ export function createTaskRetryTool(store: TaskStore): ToolDefinition {
         if (task.status !== "failed" && task.status !== "stuck-killed") {
           return { content: [{ type: "text" as const, text: `Task ${params.id} is not in a retryable state (status: ${task.status || "none"})` }], details: { taskId: params.id, currentStatus: task.status }, isError: true };
         }
-        await store.updateTask(params.id, { status: null, error: null });
+        await store.updateTask(params.id, { status: null, error: null }, runContext);
         /*
         FNXC:TaskRetry 2026-07-31-23:59 (review finding on #3152 — the move resolved, the REPORT did not):
         The rebound target is resolved once and reused for the move, the log line, the response text
@@ -3528,8 +3539,8 @@ export function createTaskRetryTool(store: TaskStore): ToolDefinition {
         act on, so a wrong value there is not merely cosmetic.
         */
         const retryTarget = await fusionCore.resolveReboundTargetForTask(store, params.id);
-        await store.moveTask(params.id, retryTarget);
-        await store.logEntry(params.id, "Retry requested via chat tool", `Task reset to ${retryTarget} for retry`);
+        await store.moveTask(params.id, retryTarget, undefined, runContext);
+        await store.logEntry(params.id, "Retry requested via chat tool", `Task reset to ${retryTarget} for retry`, runContext);
         return { content: [{ type: "text" as const, text: `Retried ${params.id} → ${retryTarget}` }], details: { taskId: params.id, newColumn: retryTarget } };
       } catch (err: unknown) {
         return { content: [{ type: "text" as const, text: `ERROR: Failed to retry task: ${toolErrorMessage(err)}` }], details: {}, isError: true };
@@ -3538,7 +3549,7 @@ export function createTaskRetryTool(store: TaskStore): ToolDefinition {
   };
 }
 
-export function createTaskPauseTool(store: TaskStore): ToolDefinition {
+export function createTaskPauseTool(store: TaskStore, runContext: import("@fusion/core").RunMutationContext): ToolDefinition {
   return {
     name: "fn_task_pause",
     label: "Pause Task",
@@ -3546,7 +3557,7 @@ export function createTaskPauseTool(store: TaskStore): ToolDefinition {
     parameters: taskPauseParams,
     execute: async (_id: string, params: Static<typeof taskPauseParams>) => {
       try {
-        const task = await store.pauseTask(params.id, true);
+        const task = await store.pauseTask(params.id, true, runContext);
         return { content: [{ type: "text" as const, text: `Paused ${task.id}` }], details: { taskId: task.id, column: task.column } };
       } catch (err: unknown) {
         return { content: [{ type: "text" as const, text: `ERROR: Failed to pause task: ${toolErrorMessage(err)}` }], details: {}, isError: true };
@@ -3555,7 +3566,7 @@ export function createTaskPauseTool(store: TaskStore): ToolDefinition {
   };
 }
 
-export function createTaskUnpauseTool(store: TaskStore): ToolDefinition {
+export function createTaskUnpauseTool(store: TaskStore, runContext: import("@fusion/core").RunMutationContext): ToolDefinition {
   return {
     name: "fn_task_unpause",
     label: "Unpause Task",
@@ -3563,7 +3574,7 @@ export function createTaskUnpauseTool(store: TaskStore): ToolDefinition {
     parameters: taskUnpauseParams,
     execute: async (_id: string, params: Static<typeof taskUnpauseParams>) => {
       try {
-        const task = await store.pauseTask(params.id, false);
+        const task = await store.pauseTask(params.id, false, runContext);
         return { content: [{ type: "text" as const, text: `Unpaused ${task.id}` }], details: { taskId: task.id, column: task.column } };
       } catch (err: unknown) {
         return { content: [{ type: "text" as const, text: `ERROR: Failed to unpause task: ${toolErrorMessage(err)}` }], details: {}, isError: true };
@@ -3647,7 +3658,7 @@ export function createTaskUpdateTool(store: TaskStore, taskId: string): ToolDefi
           if (invalidIds.length) {
             return { content: [{ type: "text" as const, text: `ERROR: Unknown dependency task(s): ${invalidIds.join(", ")}` }], details: {}, isError: true };
           }
-          await store.updateTask(taskId, { dependencies: params.dependencies });
+          await store.updateTask(taskId, { dependencies: params.dependencies }, runContext);
         }
         if (params.step !== undefined && params.status !== undefined) {
           const task = params.summary === undefined
@@ -3706,7 +3717,7 @@ export function createTaskAddDepTool(store: TaskStore, taskId: string): ToolDefi
           };
         }
         if (depId === taskId) return { content: [{ type: "text" as const, text: "ERROR: cannot add self-dependency." }], details: {}, isError: true };
-        await store.updateTask(taskId, { dependencies: [...(task.dependencies || []), depId] });
+        await store.updateTask(taskId, { dependencies: [...(task.dependencies || []), depId] }, runContext);
         return { content: [{ type: "text" as const, text: `Added dependency ${depId} to ${taskId}` }], details: { taskId, dependency: depId } };
       } catch (err: unknown) {
         return { content: [{ type: "text" as const, text: `ERROR: Failed to add dependency: ${toolErrorMessage(err)}` }], details: {}, isError: true };
@@ -5977,7 +5988,7 @@ export function createTaskAssignTool(
         return { content: [{ type: "text" as const, text: `ERROR: ${verdict.reason}` }], details: {} };
       }
 
-      const assigned = await taskStore.updateTask(task.id, { assignedAgentId: agent.id });
+      const assigned = await taskStore.updateTask(task.id, { assignedAgentId: agent.id }, runContext);
       return {
         content: [{ type: "text" as const, text: `Assigned ${assigned.id} to ${agent.name} (${agent.id}).` }],
         details: { taskId: assigned.id, agentId: agent.id, agentName: agent.name },

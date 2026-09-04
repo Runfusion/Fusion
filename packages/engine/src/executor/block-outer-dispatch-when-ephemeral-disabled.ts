@@ -18,6 +18,7 @@ export type BlockOuterDispatchWhenEphemeralDisabledDeps = {
   store: TaskStore;
   agentStore?: AgentStore | null;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
 };
 
 export async function blockOuterDispatchWhenEphemeralDisabled(
@@ -51,6 +52,11 @@ export async function blockOuterDispatchWhenEphemeralDisabled(
     const liveTask = (await deps.store.getTask(task.id).catch(() => null)) ?? task;
     const reboundColumn = await resolveReboundColumnFor(deps.store, liveTask.id);
     if (liveTask.column !== reboundColumn) {
+      /*
+      FNXC:Identity 2026-08-24-02:18:
+      Ephemeral-disabled dispatch block rehomes and queues through `runContextFor` so the blocked
+      mutation is attributable to the live executor run.
+      */
       await deps.store.moveTask(liveTask.id, reboundColumn, {
         preserveProgress: true,
         preserveWorktree: true,
@@ -58,14 +64,14 @@ export async function blockOuterDispatchWhenEphemeralDisabled(
         moveSource: "engine",
         lifecycleReason: "self-healing-session-recovery",
         recoveryRehome: true,
-      });
+      }, deps.runContextFor(liveTask.id));
     }
-    await deps.store.updateTask(liveTask.id, { status: "queued" }, deps.getRunContextFor(liveTask.id));
+    await deps.store.updateTask(liveTask.id, { status: "queued" }, deps.runContextFor(liveTask.id));
     await deps.store.logEntry(
       liveTask.id,
       "queued — ephemeral agents disabled; no permanent executor assigned",
       "Executor pre-dispatch ephemeral gate blocked workflow/authoritative execution.",
-      deps.getRunContextFor(liveTask.id),
+      deps.runContextFor(liveTask.id),
     );
     logDispatchBlockedOnce(
       executorLog,

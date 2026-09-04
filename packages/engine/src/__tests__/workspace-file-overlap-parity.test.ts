@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { TaskStore as CoreTaskStore } from "@fusion/core";
+import { mutationContextForAgent, TaskStore as CoreTaskStore } from "@fusion/core";
 import type { Settings, Task, TaskDetail, TaskStore, WorkflowIrNode, WorkspaceConfig } from "@fusion/core";
 import { prepareGraphNodeExecution } from "../executor/prepare-graph-node-execution.js";
 import { ensureGraphCustomNodeWorktree } from "../executor/ensure-graph-custom-node-worktree.js";
@@ -191,19 +191,45 @@ describe("workspace implementation base-refresh enablement", () => {
     );
 
     expect(ensureGraphCustomNodeWorktree).toHaveBeenCalledOnce();
-    expect(ensureGraphCustomNodeWorktree).toHaveBeenCalledWith(live, settings, "implementation", true);
+    expect(ensureGraphCustomNodeWorktree).toHaveBeenCalledWith(live, settings, "implementation", true, undefined);
+  });
+
+  it("forwards node config.agentId as the worktree acquire principal", async () => {
+    const live = task({ assignedAgentId: "task-assignee" });
+    const ensureGraphCustomNodeWorktree = vi.fn(async (value: TaskDetail) => value);
+    const deps = {
+      store: { getTask: vi.fn(async () => live), logEntry: vi.fn(async () => undefined) } as unknown as TaskStore,
+      rootDir: "/workspace",
+      workspaceConfigOwner: {},
+      getWorkspaceConfig: () => null,
+      setWorkspaceConfig: vi.fn(),
+      getRunContextFor: () => undefined,
+      ensureGraphCustomNodeWorktree,
+    };
+
+    await prepareGraphNodeExecution(
+      deps,
+      { id: "custom-first", kind: "prompt", config: { agentId: "node-agent" } } as WorkflowIrNode,
+      live,
+      settings,
+      { requiresWorktree: true },
+    );
+
+    expect(ensureGraphCustomNodeWorktree).toHaveBeenCalledWith(live, settings, "custom-first", false, "node-agent");
   });
 
   it("passes the graph refresh flag into workspace acquisition", async () => {
     const live = task({ workspaceWorktrees: { "repo-a": { worktreePath: "/workspace/.fusion/worktrees/fn-273/repo-a" } } });
     mockedAcquireWorkspaceTaskWorktrees.mockResolvedValue({ task: live, taskWorktreeDir: "/workspace/.fusion/worktrees/fn-273" });
+    const attributed = mutationContextForAgent("graph-node");
     const deps = {
       store: { logEntry: vi.fn(async () => undefined) } as unknown as TaskStore,
       rootDir: "/workspace",
       workspaceConfigOwner: {},
       getWorkspaceConfig: () => workspaceConfig,
       setWorkspaceConfig: vi.fn(),
-      getRunContextFor: () => undefined,
+      getRunContextFor: () => attributed,
+      runContextFor: () => attributed,
       createWorktree: vi.fn(),
       runConfiguredCommand: vi.fn(),
       addActiveWorktree: vi.fn(),
@@ -217,19 +243,22 @@ describe("workspace implementation base-refresh enablement", () => {
       task: live,
       workspaceConfig,
       refreshStaleBase: true,
+      runContext: attributed,
     }));
   });
 
   it("keeps graph workspace refresh disabled when the caller does not opt in", async () => {
     const live = task({ workspaceWorktrees: { "repo-a": { worktreePath: "/workspace/.fusion/worktrees/fn-273/repo-a" } } });
     mockedAcquireWorkspaceTaskWorktrees.mockResolvedValue({ task: live, taskWorktreeDir: "/workspace/.fusion/worktrees/fn-273" });
+    const attributed = mutationContextForAgent("graph-node");
     const deps = {
       store: { logEntry: vi.fn(async () => undefined) } as unknown as TaskStore,
       rootDir: "/workspace",
       workspaceConfigOwner: {},
       getWorkspaceConfig: () => workspaceConfig,
       setWorkspaceConfig: vi.fn(),
-      getRunContextFor: () => undefined,
+      getRunContextFor: () => attributed,
+      runContextFor: () => attributed,
       createWorktree: vi.fn(),
       runConfiguredCommand: vi.fn(),
       addActiveWorktree: vi.fn(),
@@ -239,7 +268,10 @@ describe("workspace implementation base-refresh enablement", () => {
 
     await ensureGraphCustomNodeWorktree(deps, live, settings, "review", false);
 
-    expect(mockedAcquireWorkspaceTaskWorktrees).toHaveBeenCalledWith(expect.objectContaining({ refreshStaleBase: false }));
+    expect(mockedAcquireWorkspaceTaskWorktrees).toHaveBeenCalledWith(expect.objectContaining({
+      refreshStaleBase: false,
+      runContext: attributed,
+    }));
   });
 });
 

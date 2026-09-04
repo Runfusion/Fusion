@@ -19,6 +19,7 @@ import type { MergeBoundaryUnprovenReasonCode } from "./workflow-merge-boundary.
 export type RouteGraphMergeFailureToRetryDeps = {
   store: TaskStore;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   mergeRequester?: ((taskId: string) => Promise<unknown>) | null;
   ensureWorkflowMergeBoundaryTask: (
     live: TaskDetail,
@@ -123,7 +124,12 @@ export async function routeGraphMergeFailureToRetry(
     const failedNode = result.visitedNodeIds[result.visitedNodeIds.length - 1] ?? "unknown";
     const message = `Workflow graph merge failure at node '${failedNode}' routed to bounded auto-merge retry${abortProvenance === "merge-seam" ? " after merge-seam abort" : isGenericAbortProvenance(abortProvenance) || abortProvenance === undefined ? " after benign pause/resume abort" : ""}`;
     executorLog.warn(`${live.id}: ${message}`);
-    await deps.store.logEntry(live.id, message, undefined, deps.getRunContextFor(live.id));
+    /*
+    FNXC:Identity 2026-08-24-02:18:
+    Merge-failure retry routing logs through `runContextFor` so the bounded auto-merge retry is
+    attributed to the live graph run.
+    */
+    await deps.store.logEntry(live.id, message, undefined, deps.runContextFor(live.id));
 
     /*
     FNXC:MergeRetryReliability 2026-08-26-13:40 (Greptile P1): the boundary-try scope
@@ -172,7 +178,7 @@ export async function routeGraphMergeFailureToRetry(
       */
       if (mergeBoundary.blocked) {
         const { reason, code, missingInstanceCount } = mergeBoundary.blocked;
-        await deps.store.logEntry(live.id, `Workflow merge boundary retry parked task: ${reason}`, undefined, deps.getRunContextFor(live.id));
+        await deps.store.logEntry(live.id, `Workflow merge boundary retry parked task: ${reason}`, undefined, deps.runContextFor(live.id));
         let parked = false;
         /*
         FNXC:MergeRetryReliability 2026-09-04-03:01:
@@ -197,7 +203,7 @@ export async function routeGraphMergeFailureToRetry(
             status: "failed",
             error: `${MERGE_BOUNDARY_UNPROVEN_VALUE.toUpperCase().replaceAll("-", "_")}: ${reason}`,
           };
-        }, deps.getRunContextFor(live.id));
+        }, deps.runContextFor(live.id));
         const outcome = parked ? "parked" as const : "already-terminal" as const;
         /*
         FNXC:RunAudit 2026-08-20-02:00:

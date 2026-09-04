@@ -68,6 +68,7 @@ export type TaskDoneScopeLeakDeps = {
   workspaceConfig: unknown | null | undefined;
   ensureWorkspaceConfig?: () => Promise<unknown | null>;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   captureUncommittedModifiedFiles: (worktreePath: string) => Promise<string[]>;
   captureModifiedFiles: (
     worktreePath: string,
@@ -88,7 +89,12 @@ export async function evaluateTaskDoneScopeLeak(
 ): Promise<{ blocked: false } | { blocked: true; message: string }> {
   if (task.scopeOverride === true) {
     executorLog.debug(`${task.id}: scope-leak guard bypassed (scopeOverride=true)`);
-    await deps.store.logEntry(task.id, "[scope-leak] scope guard bypassed via task.scopeOverride", undefined, deps.getRunContextFor(task.id));
+    /*
+    FNXC:Identity 2026-08-24-02:18:
+    Scope-leak audit breadcrumbs (bypass, blocked, allowed) use `runContextFor` so completion-guard
+    attribution matches the live executor run.
+    */
+    await deps.store.logEntry(task.id, "[scope-leak] scope guard bypassed via task.scopeOverride", undefined, deps.runContextFor(task.id));
     return { blocked: false };
   }
 
@@ -109,7 +115,7 @@ export async function evaluateTaskDoneScopeLeak(
         await verifyRepositoryCaptureEvidence(repo.worktreePath);
       } catch (_error) {
         const message = `workspace repository ${repoRel} cannot establish out-of-scope change evidence; completion is blocked until its checkout is readable`;
-        await deps.store.logEntry(task.id, `[scope-leak] ${message}`, undefined, deps.getRunContextFor(task.id));
+        await deps.store.logEntry(task.id, `[scope-leak] ${message}`, undefined, deps.runContextFor(task.id));
         return { blocked: true, message };
       }
       const [uncommitted, committed, strictEvidence] = await Promise.all([
@@ -119,7 +125,7 @@ export async function evaluateTaskDoneScopeLeak(
       ]);
       if (uncommitted.length > 0 || committed.length > 0 || strictEvidence.length > 0) {
         const message = `workspace repository ${repoRel} has modified out-of-scope work; approve the repository scope or clean the checkout before completing`;
-        await deps.store.logEntry(task.id, `[scope-leak] ${message}`, undefined, deps.getRunContextFor(task.id));
+        await deps.store.logEntry(task.id, `[scope-leak] ${message}`, undefined, deps.runContextFor(task.id));
         return { blocked: true, message };
       }
     }
@@ -183,7 +189,7 @@ export async function evaluateTaskDoneScopeLeak(
     if (repoKeys.length === 0) {
       const message = "workspace task declares File Scope but acquired no sub-repo worktrees — cannot verify scope";
       executorLog.warn(`${task.id}: [scope-leak] ${message}`);
-      await deps.store.logEntry(task.id, `[scope-leak] ${message}`, undefined, deps.getRunContextFor(task.id));
+      await deps.store.logEntry(task.id, `[scope-leak] ${message}`, undefined, deps.runContextFor(task.id));
       return { blocked: true, message };
     }
     const aggregatedOffScope: string[] = [];
@@ -203,7 +209,7 @@ export async function evaluateTaskDoneScopeLeak(
         if (scope.size > 0 && !scope.has(repoRel) && repoTouched.length > 0) {
           const message = `workspace repository ${repoRel} has modified out-of-scope work; approve the repository scope or clean the checkout before completing`;
           executorLog.warn(`${task.id}: [scope-leak] ${message}`);
-          await deps.store.logEntry(task.id, `[scope-leak] ${message}`, undefined, deps.getRunContextFor(task.id));
+          await deps.store.logEntry(task.id, `[scope-leak] ${message}`, undefined, deps.runContextFor(task.id));
           return { blocked: true, message };
         }
         // Repo-LOCAL declared-scope subset for THIS repo (prefix stripped). Same filter as the
@@ -226,7 +232,7 @@ export async function evaluateTaskDoneScopeLeak(
         const errMessage = repoErr instanceof Error ? repoErr.message : String(repoErr);
         const message = `workspace scope-leak guard failed to evaluate (${repoRel}/${errMessage}) — refusing fn_task_done as a precaution`;
         executorLog.warn(`${task.id}: [scope-leak] ${message}`);
-        await deps.store.logEntry(task.id, `[scope-leak] ${message}`, undefined, deps.getRunContextFor(task.id));
+        await deps.store.logEntry(task.id, `[scope-leak] ${message}`, undefined, deps.runContextFor(task.id));
         return { blocked: true, message };
       }
     }
@@ -274,7 +280,7 @@ export async function evaluateTaskDoneScopeLeak(
   const repoTag = offendingRepo ? ` repo=${offendingRepo}` : "";
   const message = `[scope-leak] reviewLevel=${reviewLevel} enforcement=${enforcementMode}${repoTag} off-scope touched files [${offScopePreview}]; declared scope [${declaredScopePreview}]; total off-scope=${offScopeFiles.length} total scope=${declaredScope.length}`;
   executorLog.warn(`${task.id}: ${message}`);
-  await deps.store.logEntry(task.id, message, undefined, deps.getRunContextFor(task.id));
+  await deps.store.logEntry(task.id, message, undefined, deps.runContextFor(task.id));
 
   if (enforcementMode === "block") {
     return {

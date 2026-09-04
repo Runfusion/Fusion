@@ -9,7 +9,7 @@ import { preservePreExecutionWorkflowStepResults } from "./workflow-step-satisfa
 
 export type CleanupMergeStateDeps = {
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string) => EngineRunContext | undefined;
 };
 
 export async function cleanupMergeStateForReverification(
@@ -35,6 +35,6 @@ export async function cleanupMergeStateForReverification(
    * reopen two different steps from one rejection. The resolved policy still travels through each
    * caller to the send-back path, where `none` has a concrete no-reopen exit.
    */
-  await deps.store.logEntry(task.id, logMessage, undefined, deps.getRunContextFor(task.id));
+  await deps.store.logEntry(task.id, logMessage, undefined, deps.runContextFor(task.id));
   return deps.store.getTask(task.id);
 }
