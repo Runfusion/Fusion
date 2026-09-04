@@ -27,15 +27,19 @@ import {
 } from "../chat.js";
 
 /*
-FNXC:PerTurnMemoryRecall 2026-09-04-04:43:
+FNXC:PerTurnMemoryRecall 2026-09-04-05:38:
 ThreatCrush CWE-377: LCM recall tests (and the shared ChatManager helpers) must not use a
-predictable /tmp/test project root. mkdtempSync gives an exclusive directory; afterAll
-removes it even though most cases never write through this path.
+predictable OS temporary-directory path. mkdtempSync gives an exclusive directory; afterAll
+removes it even though most cases never write through this path. Plugin skill roots in this
+file use the same exclusive parent so they are not hardcoded either.
 */
 const TEST_ROOT = mkdtempSync(join(tmpdir(), "fusion-chat-manager-"));
 afterAll(() => {
   rmSync(TEST_ROOT, { recursive: true, force: true });
 });
+function makePluginRoot(prefix: string): string {
+  return mkdtempSync(join(TEST_ROOT, `${prefix}-`));
+}
 
 // ── Mock Setup ──────────────────────────────────────────────────────────────
 
@@ -1565,7 +1569,7 @@ describe("ChatManager.sendMessage", () => {
       runtimeConfig: {},
       metadata: { skills: ["agent-debug", "ce-debug"] },
     });
-    const pluginRoot = "/tmp/plugin-chat-skills";
+    const pluginRoot = makePluginRoot("plugin-chat-skills");
     const pluginSkillDir = join(pluginRoot, "skills", "ce-debug");
     const pluginRunner = {
       getPluginSkills: vi.fn(() => [
@@ -1605,7 +1609,7 @@ describe("ChatManager.sendMessage", () => {
         },
       };
     });
-    const pluginRoot = "/tmp/plugin-quick-chat-skills";
+    const pluginRoot = makePluginRoot("plugin-quick-chat-skills");
     const pluginSkillDir = join(pluginRoot, "skills", "ce-debug");
     const pluginRunner = {
       getPluginSkills: vi.fn(() => [
@@ -4516,7 +4520,7 @@ describe("ChatManager generation isolation", () => {
         },
       };
     });
-    const pluginRoot = "/tmp/plugin-room-chat-skills";
+    const pluginRoot = makePluginRoot("plugin-room-chat-skills");
     const pluginSkillDir = join(pluginRoot, "skills", "ce-debug");
     const pluginRunner = {
       getPluginSkills: vi.fn(() => [

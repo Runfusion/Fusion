@@ -37,9 +37,10 @@ whole-entry budget, top-K clamping, and the bounded session-scoped dedup registr
 */
 
 /*
-FNXC:PerTurnMemoryRecall 2026-09-04-04:43:
-ThreatCrush CWE-377: do not use a predictable /tmp path. mkdtempSync gives an exclusive
-directory; recall only receives it as a fake rootDir string, and afterAll removes it.
+FNXC:PerTurnMemoryRecall 2026-09-04-05:38:
+ThreatCrush CWE-377: do not use a predictable OS temporary-directory path. mkdtempSync
+gives an exclusive directory; recall only receives it as a fake rootDir string, and
+afterAll removes it.
 */
 const ROOT = mkdtempSync(join(tmpdir(), "perturn-recall-fake-project-"));
 afterAll(() => {

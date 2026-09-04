@@ -59,10 +59,10 @@ function chatStoreFor(sessions: ChatSession[]): ChatStore {
 }
 
 /*
-FNXC:ChatInFlightRecovery 2026-09-04-04:43:
+FNXC:ChatInFlightRecovery 2026-09-04-05:38:
 ThreatCrush CWE-377: SelfHealingManager rootDir in this suite is a dummy path, but a
-predictable /tmp name still trips CWE-377. mkdtempSync + afterAll cleanup keeps the
-fixture exclusive.
+predictable OS temporary-directory name still trips CWE-377. mkdtempSync + afterAll cleanup
+keeps the fixture exclusive.
 */
 const TEST_ROOT = mkdtempSync(join(tmpdir(), "rufu-144-chat-test-"));
 afterAll(() => {

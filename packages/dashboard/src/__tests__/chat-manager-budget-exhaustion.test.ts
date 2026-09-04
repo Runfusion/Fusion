@@ -66,10 +66,10 @@ vi.mock("@fusion/engine", async (importOriginal) => {
 import { ChatManager, __setBuildAgentChatPrompt } from "../chat.js";
 
 /*
-FNXC:ChatOutputBudget 2026-09-04-04:43:
+FNXC:ChatOutputBudget 2026-09-04-05:38:
 ThreatCrush CWE-377: ChatManager's projectRootDir must be an exclusive temp directory, not
-a predictable /tmp/test path. The suite never writes through this root; afterAll still
-removes it.
+a predictable OS temporary-directory path. The suite never writes through this root; afterAll
+still removes it.
 */
 const TEST_ROOT = mkdtempSync(join(tmpdir(), "fusion-chat-budget-"));
 afterAll(() => {
