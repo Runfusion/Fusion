@@ -44,7 +44,7 @@ import {and, asc, eq, inArray, isNotNull, isNull, sql} from "drizzle-orm";
 import {recoverExpiredMergeQueueLeases as recoverExpiredMergeQueueLeasesAsync} from "../task-store/async/async-merge-coordination.js";
 import {updateBranchGroup as updateBranchGroupAsync, updatePrEntity as updatePrEntityAsync} from "../task-store/async/async-branch-groups.js";
 import {recordCompletionHandoff as recordCompletionHandoffAsync, getCompletionHandoffMarker as getCompletionHandoffMarkerAsync} from "../task-store/async/async-workflow-workitems.js";
-import { projectScopeFor, taskProjectScope } from "../postgres/data-layer.js";
+import { projectOwnershipPartition, projectScopeFor, taskProjectScope } from "../postgres/data-layer.js";
 import type { AsyncDataLayer, DbTransaction } from "../postgres/data-layer.js";
 import {getActivityLog as getActivityLogAsync} from "../task-store/async/async-audit.js";
 import {insertArtifactRow as insertArtifactRowAsync} from "../task-store/async/async-comments-attachments.js";
@@ -947,10 +947,20 @@ export async function pinWorkspaceWorktreeDirSegmentImpl(
       checkout exists. A conflict is reported, never thrown: it is an ordinary outcome here.
       */
       try {
+        /*
+        FNXC:WorkspaceWorktree 2026-09-04-04:59:
+        The pin UPDATE must use the same ownership partition as `readTaskRowInTransaction`.
+        `taskProjectScope(layer)` is a no-op when the layer is unbound, so `WHERE id = $id` would
+        rewrite every project's same-id row and `.returning()` would surface only the first. Unbound
+        stores still exist; they write `__legacy_unscoped__`, never a cross-project scan.
+        */
         const [updatedRow] = await tx.update(schema.project.tasks).set({
           workspaceWorktreeDirSegment: candidate,
           updatedAt: new Date().toISOString(),
-        }).where(and(eq(schema.project.tasks.id, id), taskProjectScope(layer))).returning();
+        }).where(and(
+          eq(schema.project.tasks.id, id),
+          eq(schema.project.tasks.projectId, projectOwnershipPartition(layer.projectId)),
+        )).returning();
         if (!updatedRow) throw new TaskNotFoundError(id);
         return { task: store.rowToTask(store.pgRowToTaskRow(updatedRow)), segment: candidate, minted: true, claimed: true };
       } catch (error: unknown) {
