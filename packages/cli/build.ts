@@ -9,6 +9,7 @@
  *   bun run build.ts                           # Build for current platform
  *   bun run build.ts --target bun-linux-x64    # Cross-compile for Linux x64
  *   bun run build.ts --all                     # Build for all supported platforms
+ *   bun run build.ts --allow-missing-native    # Explicitly permit a terminal-less binary
  *
  * Prerequisites:
  *   - Bun >= 1.1 (cross-compilation support)
@@ -22,9 +23,10 @@
  */
 
 import { join, dirname } from "node:path";
-import { cpSync, mkdirSync, existsSync, rmSync, writeFileSync, readdirSync } from "node:fs";
+import { cpSync, mkdirSync, existsSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+import { bunTargetToPlatformArch, nodePtyPlatformPackageName, nodePtyPrebuildRelDir, nodePtyRequiredNativeAssetName, resolveStagingOutcome } from "./src/runtime/pty-native-assets.js";
 
 const cliRoot = dirname(fileURLToPath(import.meta.url));
 const workspaceRoot = join(cliRoot, "..", "..");
@@ -35,56 +37,11 @@ const runtimeDir = join(outDir, "runtime");
 const entryPoint = join(cliRoot, "src", "bin.ts");
 
 // ── Native module asset paths ─────────────────────────────────────────
-// Resolve the @homebridge/node-pty-prebuilt-multiarch install root dynamically.
-// The package is aliased as "node-pty" in package.json of @fusion/dashboard.
-// We must create the require from the dashboard package location so Node resolves
-// node-pty via the dashboard's node_modules (where the alias is installed).
+// The @lydell/node-pty umbrella is aliased as node-pty in the dashboard manifest.
 const dashboardPkgDir = join(workspaceRoot, "packages", "dashboard");
 const _require = createRequire(join(dashboardPkgDir, "package.json"));
-let nodePtyRoot: string;
-try {
-  const pkgJsonPath = _require.resolve("node-pty/package.json");
-  nodePtyRoot = dirname(pkgJsonPath);
-  console.log(`  node-pty resolved to: ${nodePtyRoot}`);
-} catch {
-  // Fallback: check pnpm's shared node_modules
-  const fallback = join(workspaceRoot, "node_modules", ".pnpm", "node_modules", "node-pty");
-  if (existsSync(fallback)) {
-    nodePtyRoot = fallback;
-    console.log(`  node-pty fallback resolved to: ${nodePtyRoot}`);
-  } else {
-    // Last resort: rely on pnpm symlink structure
-    nodePtyRoot = join(dashboardPkgDir, "node_modules", "node-pty");
-    console.log(`  node-pty last-resort resolved to: ${nodePtyRoot}`);
-  }
-}
-
-/**
- * Pick the highest ABI .node file from a prebuilds/<plat-arch>/ directory
- * that is <= the host Node.js ABI, returning its full path (or null).
- * The fork names files like: node.abi115.node, node.abi115.musl.node
- * We want the non-musl version (glibc) for cross-compile targets.
- */
-function pickHighestAbiNode(prebuildDir: string, targetAbi: number): string | null {
-  let files: string[];
-  try {
-    files = readdirSync(prebuildDir);
-  } catch {
-    return null;
-  }
-  // Match node.abi<N>.node (non-musl)
-  const abiRe = /^node\.abi(\d+)\.node$/;
-  let best: { abi: number; file: string } | null = null;
-  for (const f of files) {
-    const m = abiRe.exec(f);
-    if (!m) continue;
-    const abi = parseInt(m[1], 10);
-    if (abi <= targetAbi && (!best || abi > best.abi)) {
-      best = { abi, file: f };
-    }
-  }
-  return best ? join(prebuildDir, best.file) : null;
-}
+const nodePtyVersion = "1.2.0-beta.15";
+const allowMissingNative = process.argv.includes("--allow-missing-native");
 
 // ── Supported cross-compilation targets ───────────────────────────────
 const SUPPORTED_TARGETS = [
@@ -373,101 +330,109 @@ function stageEmbeddedPostgresRuntime(target?: BunTarget): boolean {
 
 // ── Copy native terminal assets for a specific target ─────────────────
 /**
- * Stage @homebridge/node-pty-prebuilt-multiarch native assets for the given target.
- * Assets are placed in dist/runtime/<platform-arch>/ alongside client/.
- *
- * The fork ships two layouts:
- *   - build/Release/pty.node   — placed here by `prebuild-install` at install time
- *                                (present on the HOST platform only)
- *   - prebuilds/linux-<arch>/node.abi<N>.node — bundled inside the npm tarball
- *                                (present for Linux targets on any host)
- *
- * Strategy per target:
- *   - Host (no --target flag):     use build/Release/pty.node + build/Release/spawn-helper
- *   - bun-linux-x64/arm64:        use prebuilds/linux-<arch>/node.abi<N>.node (highest ≤ host ABI)
- *   - bun-darwin-x64/arm64:       prebuilds not bundled; warn and skip (cross-compile unsupported)
- *   - bun-windows-x64:            prebuilds not bundled; warn and skip
+ * FNXC:Terminal 2026-09-04-01:43: Standalone builds must stage the script-free
+ * @lydell/node-pty platform payload, or explicitly opt out; warn-and-skip shipped dead terminals.
  */
+/*
+ * FNXC:Terminal 2026-09-04-04:22:
+ * Bun's build-time type shim is not the script-free runtime package. Resolve the actual
+ * umbrella with Node so every standalone payload retains executable JavaScript rather
+ * than a declaration file that would leave the terminal permanently unavailable.
+ */
+function resolveInstalledNodePtyUmbrellaRoot(): string {
+  // Bun applies the dashboard tsconfig path shim to `node-pty`, which resolves
+  // to the ambient declaration rather than the runtime package. Ask Node's
+  // ordinary package resolver for the real aliased dependency before staging.
+  const resolved = Bun.spawnSync({
+    cmd: [
+      "node",
+      "-e",
+      "const { createRequire } = require('node:module'); process.stdout.write(createRequire(process.argv[1]).resolve('node-pty'));",
+      join(dashboardPkgDir, "package.json"),
+    ],
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  if (resolved.exitCode !== 0) {
+    throw new Error(`Unable to resolve the installed node-pty umbrella: ${new TextDecoder().decode(resolved.stderr)}`);
+  }
+  return dirname(new TextDecoder().decode(resolved.stdout).trim());
+}
+
 function copyNativeAssets(target?: BunTarget): boolean {
-  const prebuildName = target ? targetToPrebuildName(target) : hostPrebuildName();
+  const targetInfo = target
+    ? bunTargetToPlatformArch(target)
+    : { platform: process.platform, arch: process.arch };
+  if (!targetInfo) return false;
+  const { platform, arch } = targetInfo;
+  const packageName = nodePtyPlatformPackageName(platform, arch);
+  if (!packageName) return false;
+  const prebuildName = `${platform}-${arch}`;
   const destDir = join(runtimeDir, prebuildName);
 
   try {
-    // Clean and recreate dest
-    if (existsSync(destDir)) {
-      rmSync(destDir, { recursive: true, force: true });
-    }
-    mkdirSync(destDir, { recursive: true });
-
-    // ── Determine source pty.node ─────────────────────────────────────
-    let ptyNodeSrc: string | null = null;
-    let spawnHelperSrc: string | null = null;
-
-    if (!target) {
-      // HOST build: use the prebuild-install output in build/Release/
-      const releaseDir = join(nodePtyRoot, "build", "Release");
-      const candidate = join(releaseDir, "pty.node");
-      if (existsSync(candidate)) {
-        ptyNodeSrc = candidate;
-        const helper = join(releaseDir, "spawn-helper");
-        if (existsSync(helper)) spawnHelperSrc = helper;
-      } else {
-        // Fallback: maybe prebuilds/<plat-arch>/ exists (older fork layout or manually extracted)
-        const prebuildDir = join(nodePtyRoot, "prebuilds", prebuildName);
-        const hostAbi = parseInt(process.versions.modules, 10);
-        ptyNodeSrc = pickHighestAbiNode(prebuildDir, hostAbi);
-        if (!ptyNodeSrc && existsSync(join(prebuildDir, "pty.node"))) {
-          // Some layouts ship pty.node directly (shouldn't happen with this fork, but guard)
-          ptyNodeSrc = join(prebuildDir, "pty.node");
-        }
-        const helper = join(prebuildDir, "spawn-helper");
-        if (existsSync(helper)) spawnHelperSrc = helper;
-      }
-    } else if (target.startsWith("bun-linux-")) {
-      // Linux cross-compile: use the pre-bundled prebuilds/ in the npm tarball
-      const [, , arch] = target.split("-") as [string, string, string]; // bun-linux-<arch>
-      // Bun's arm64 → arm64, but armv7 is "arm" in prebuilds
-      const linuxArch = arch === "arm64" ? "arm64" : arch === "x64" ? "x64" : arch;
-      const prebuildDir = join(nodePtyRoot, "prebuilds", `linux-${linuxArch}`);
-      const hostAbi = parseInt(process.versions.modules, 10);
-      ptyNodeSrc = pickHighestAbiNode(prebuildDir, hostAbi);
-      if (ptyNodeSrc) {
-        const helper = join(prebuildDir, "spawn-helper");
-        if (existsSync(helper)) spawnHelperSrc = helper;
-      }
-    } else {
-      // darwin or windows cross-compile: prebuilds are NOT bundled in the tarball.
-      // They are only present in build/Release/ after prebuild-install runs on that host.
-      // Warn and skip rather than erroring — the binary will start but terminal won't work.
-      console.warn(
-        `  WARNING: Cross-compiling for ${target} from ${hostPrebuildName()}. ` +
-        `The @homebridge/node-pty-prebuilt-multiarch package only bundles Linux prebuilds in the npm tarball. ` +
-        `Darwin/Windows prebuilds are downloaded by prebuild-install at install time on the target host. ` +
-        `Terminal functionality will be unavailable in this cross-compiled build.`
-      );
-      return false;
+    let packageEntry: string;
+    try {
+      const umbrellaEntry = _require.resolve("node-pty");
+      packageEntry = createRequire(umbrellaEntry).resolve(packageName);
+    } catch {
+      const fetch = Bun.spawnSync({
+        cmd: [process.execPath, join(cliRoot, "scripts", "fetch-node-pty-platform-package.mjs"), platform, arch, nodePtyVersion],
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      if (fetch.exitCode !== 0) throw new Error(new TextDecoder().decode(fetch.stderr));
+      packageEntry = join(new TextDecoder().decode(fetch.stdout).trim(), "lib", "index.js");
     }
 
-    if (!ptyNodeSrc) {
-      console.warn(`  WARNING: No pty.node found for target ${prebuildName}. Terminal will be unavailable.`);
-      console.warn(`    Looked in: ${join(nodePtyRoot, "build", "Release")} and ${join(nodePtyRoot, "prebuilds", prebuildName)}`);
-      return false;
+    const packageRoot = dirname(dirname(packageEntry));
+    const sourceDir = join(packageRoot, nodePtyPrebuildRelDir(platform, arch));
+    const requiredAsset = nodePtyRequiredNativeAssetName(platform);
+    if (!requiredAsset || !existsSync(join(sourceDir, requiredAsset))) {
+      throw new Error(`Missing required native entry ${requiredAsset ?? "for unsupported platform"} in ${packageName}`);
     }
 
-    // Copy pty.node (renamed to stable "pty.node" so native-patch.ts can find it)
-    const ptyNodeDest = join(destDir, "pty.node");
-    cpSync(ptyNodeSrc, ptyNodeDest);
-    console.log(`  → ${destDir}/pty.node  (from ${ptyNodeSrc})`);
-
-    // Copy spawn-helper if available (Unix platforms)
-    if (spawnHelperSrc) {
-      cpSync(spawnHelperSrc, join(destDir, "spawn-helper"));
-      console.log(`  → ${destDir}/spawn-helper`);
-    }
-
+    rmSync(destDir, { recursive: true, force: true });
+    /*
+     * FNXC:Terminal 2026-09-04-02:17:
+     * The release must carry each package's actual payload without install scripts.
+     * Linux omits spawn-helper and Windows exposes ConPTY rather than pty.node, so
+     * copying a hand-maintained companion manifest would reject valid targets.
+     *
+     * FNXC:Terminal 2026-09-04-03:11:
+     * The umbrella package dynamically requires the selected platform package. Foreign
+     * targets are absent from the host's filtered node_modules, so stage its JavaScript
+     * alongside the payload for native-patch's Bun runtime redirect instead of shipping
+     * a binary whose pty.node exists but whose package entry cannot resolve.
+     */
+    const umbrellaRoot = resolveInstalledNodePtyUmbrellaRoot();
+    cpSync(sourceDir, destDir, { recursive: true });
+    cpSync(packageRoot, join(destDir, "node-pty-platform"), { recursive: true });
+    // Bun replaces its compiled node-pty import with `{}`. Keep the real umbrella
+    // and its selected optional dependency on disk so the runtime can require it.
+    cpSync(umbrellaRoot, join(destDir, "node-pty-umbrella"), { recursive: true });
+    const stagedUmbrellaRoot = join(destDir, "node-pty-umbrella");
+    cpSync(
+      packageRoot,
+      join(stagedUmbrellaRoot, "node_modules", "@lydell", packageName.slice("@lydell/".length)),
+      { recursive: true },
+    );
+    // Bun's disk CJS loader does not search this staged node_modules tree for
+    // the umbrella's computed package name. Make the selected request relative.
+    const stagedUmbrellaIndex = join(stagedUmbrellaRoot, "index.js");
+    const umbrellaSource = readFileSync(stagedUmbrellaIndex, "utf8");
+    writeFileSync(
+      stagedUmbrellaIndex,
+      umbrellaSource.replace(
+        "return require(PACKAGE_NAME);",
+        `return require("./node_modules/${packageName}/lib/index.js");`,
+      ),
+    );
+    console.log(`  → ${destDir} (${packageName}, disk-loaded umbrella + platform module + native entry ${requiredAsset})`);
     return true;
-  } catch (err) {
-    console.error(`  ERROR: Failed to copy native assets for ${prebuildName}:`, err);
+  } catch (error) {
+    rmSync(destDir, { recursive: true, force: true });
+    console.error(`  ERROR: Failed to stage ${packageName} for ${prebuildName}:`, error);
     return false;
   }
 }
@@ -480,10 +445,18 @@ function compileBinary(outFile: string, target: string, isCrossCompile: boolean)
   if (existsSync(outFile)) rmSync(outFile);
 
   // Stage native assets for this target
-  const prebuildName = isCrossCompile 
-    ? target.replace(/^bun-/, "") 
+  const prebuildName = isCrossCompile
+    ? (() => { const info = bunTargetToPlatformArch(target); return info ? `${info.platform}-${info.arch}` : target; })()
     : hostPrebuildName();
-  copyNativeAssets(isCrossCompile ? target as BunTarget : undefined);
+  const ptyStaged = copyNativeAssets(isCrossCompile ? target as BunTarget : undefined);
+  const stagingOutcome = resolveStagingOutcome({ staged: ptyStaged, allowMissingNative });
+  if (stagingOutcome === "fail") {
+    console.error(`  ERROR: PTY payload could not be staged for ${prebuildName}. Pass --allow-missing-native only to explicitly produce a terminal-less binary.`);
+    return false;
+  }
+  if (stagingOutcome === "warn") {
+    console.warn(`  WARNING: Building ${prebuildName} without its PTY payload because --allow-missing-native was passed.`);
+  }
   // FNXC:StandaloneExeEmbeddedPg 2026-07-17-13:40:
   // Must run AFTER copyNativeAssets — that function recreates runtime/<plat>/
   // and would wipe a previously staged embedded-postgres tree.

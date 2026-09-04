@@ -12,8 +12,9 @@ import {
 } from "../terminal-service.js";
 import { runGitCommand } from "../routes/resolve-diff-base.js";
 
-const { mockStat } = vi.hoisted(() => ({
+const { mockStat, mockLoadPtyModule } = vi.hoisted(() => ({
   mockStat: vi.fn(),
+  mockLoadPtyModule: vi.fn(),
 }));
 
 // Mock node-pty
@@ -35,6 +36,11 @@ const mockPtyProcess = {
 
 vi.mock("node-pty", () => ({
   spawn: vi.fn(() => mockPtyProcess),
+}));
+
+vi.mock("@fusion/engine", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@fusion/engine")>()),
+  loadPtyModule: mockLoadPtyModule,
 }));
 
 vi.mock("node:fs", async (importOriginal) => {
@@ -68,6 +74,7 @@ describe("TerminalService", () => {
     vi.clearAllMocks();
     service = new TerminalService(projectRoot, 10);
     vi.mocked(nodePty.spawn).mockImplementation(() => mockPtyProcess as never);
+    mockLoadPtyModule.mockResolvedValue(nodePty);
     mockPtyProcess._onDataCallback = null;
     mockPtyProcess._onExitCallback = null;
     mockStat.mockResolvedValue({ isDirectory: () => true });
@@ -95,6 +102,18 @@ describe("TerminalService", () => {
       }
       expect(result.session.id).toMatch(/^term-\d+-/);
       expect(result.session.cwd).toBe(projectRoot);
+    });
+
+    it("returns an actionable diagnostic when the PTY platform package is missing", async () => {
+      mockLoadPtyModule.mockRejectedValueOnce(new Error("native payload missing"));
+
+      const result = await service.createSession();
+
+      expect(result.success).toBe(false);
+      if (result.success) throw new Error("Expected PTY load failure");
+      expect(result.code).toBe("pty_load_failed");
+      expect(result.error.startsWith("Terminal service unavailable. The PTY module could not be loaded.")).toBe(true);
+      expect(result.error).toContain(`@lydell/node-pty-${process.platform}-${process.arch}`);
     });
 
     it("returns max_sessions error when session limit reached", async () => {

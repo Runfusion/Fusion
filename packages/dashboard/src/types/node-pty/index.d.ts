@@ -1,13 +1,13 @@
 /**
  * Type shim for the `node-pty` import specifier.
  *
- * The runtime package is @homebridge/node-pty-prebuilt-multiarch, aliased as
+ * The runtime package is @lydell/node-pty, aliased as
  * "node-pty" in package.json. Its bundled typings use `declare module
- * '@homebridge/node-pty-prebuilt-multiarch'` which TypeScript cannot resolve
+ * '@lydell/node-pty'` which TypeScript cannot resolve
  * via the npm alias alone. This shim re-declares the module under the `node-pty`
  * specifier so all source imports of `"node-pty"` resolve correctly.
  *
- * API surface matches node-pty 0.10.x / @homebridge/node-pty-prebuilt-multiarch 0.13.x.
+ * API surface matches the bundled @lydell/node-pty declaration.
  */
 declare module "node-pty" {
   /**

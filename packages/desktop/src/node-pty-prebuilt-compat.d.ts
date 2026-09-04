@@ -1,3 +1,3 @@
-declare module "@homebridge/node-pty-prebuilt-multiarch" {
+declare module "@lydell/node-pty" {
   export * from "node-pty";
 }

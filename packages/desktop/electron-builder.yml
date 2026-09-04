@@ -8,10 +8,10 @@ directories:
 
 # The desktop app bundles no native addon that needs an Electron-ABI rebuild: it
 # uses Node's built-in `node:sqlite`, and the only native modules in the dependency
-# tree (keytar, @homebridge/node-pty-prebuilt-multiarch via @fusion/dashboard) are
+# tree (keytar, @lydell/node-pty via @fusion/dashboard) are
 # loaded optionally and are NOT in the `files` list, so they're never packaged.
 # electron-builder's default rebuild walks the whole tree and tries to source-build
-# node-pty (it ships Node-ABI prebuilds only, none for Electron) via node-gyp, which
+# node-pty (its Node-API platform prebuilds do not require an Electron-ABI rebuild) via node-gyp, which
 # fails on the Windows runner ("Could not find any Visual Studio installation").
 # Disabling the rebuild skips that pointless, platform-fragile compile entirely.
 npmRebuild: false

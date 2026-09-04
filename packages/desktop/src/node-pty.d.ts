@@ -1,4 +1,4 @@
-/** Desktop must mirror dashboard's node-pty shim because desktop typechecks dashboard source via @fusion/dashboard workspace imports. */
+/** Desktop mirrors the @lydell/node-pty alias shim because it typechecks dashboard workspace imports. */
 declare module "node-pty" {
   /**
    * An object that can be disposed via a dispose function.
