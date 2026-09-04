@@ -10,6 +10,40 @@ export type IntegrationBranchSettings =
   | undefined
   | null;
 
+// FNXC:IntegrationBranchValidation 2026-09-04:
+// When `integrationBranch` (or fallback `baseBranch`) names a branch that does not exist
+// locally nor in refs/remotes/origin/, `git worktree add <branch>` aborts with
+// `fatal: invalid reference: <branch>`. The resolver previously trusted settings blindly
+// and propagated a ghost ref to every caller (worktree acquisition, merge, recovery,
+// branch-conflict paths all route through resolveIntegrationBranch). This guard verifies
+// the candidate against the git index and skips the rung when missing, letting the ladder
+// fall through to origin/HEAD → inferred → INTEGRATION_BRANCH_FALLBACK instead of aborting.
+async function branchRefExists(rootDir: string, branch: string): Promise<boolean> {
+  if (!branch) return false;
+  try {
+    const { stdout } = await execAsync(
+      `git rev-parse --verify --quiet refs/heads/${branch} refs/remotes/origin/${branch}`,
+      { cwd: rootDir, encoding: "utf8", timeout: 5_000, maxBuffer: 1024 * 1024 },
+    );
+    return stdout.trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
+function branchRefExistsSync(rootDir: string, branch: string): boolean {
+  if (!branch) return false;
+  try {
+    const stdout = execSync(
+      `git rev-parse --verify --quiet refs/heads/${branch} refs/remotes/origin/${branch}`,
+      { cwd: rootDir, encoding: "utf8", timeout: 5_000, maxBuffer: 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] },
+    );
+    return stdout.trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
 export const INTEGRATION_BRANCH_FALLBACK = "main";
 const warnedFallbackRootDirs = new Set<string>();
 
@@ -53,6 +87,10 @@ function resolveFromSettings(settings: IntegrationBranchSettings): string {
   }
 
   return normalize((settings as { baseBranch?: unknown } | null | undefined)?.baseBranch);
+}
+
+async function resolveFromSettingsAsync(settings: IntegrationBranchSettings): Promise<string> {
+  return resolveFromSettings(settings);
 }
 
 async function resolveFromOriginHead(rootDir: string): Promise<string> {
@@ -233,8 +271,8 @@ export async function resolveIntegrationBranch(
 ): Promise<string> {
   const logger = opts.logger ?? console;
 
-  const fromSettings = resolveFromSettings(settings);
-  if (fromSettings.length > 0) {
+  const fromSettings = await resolveFromSettingsAsync(settings);
+  if (fromSettings.length > 0 && (await branchRefExists(rootDir, fromSettings))) {
     return fromSettings;
   }
 
@@ -262,7 +300,7 @@ export function resolveIntegrationBranchSync(
   const logger = opts.logger ?? console;
 
   const fromSettings = resolveFromSettings(settings);
-  if (fromSettings.length > 0) {
+  if (fromSettings.length > 0 && branchRefExistsSync(rootDir, fromSettings)) {
     return fromSettings;
   }
 
