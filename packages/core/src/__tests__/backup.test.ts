@@ -9,6 +9,7 @@ import {
   type BackupOptions,
 } from "../backup/backup.js";
 import {
+  detectRestoredSchemaRewindFloor,
   reconcileRestoredSchemaMigrations,
   reconciliationPostgresSsl,
   RESTORED_SCHEMA_RELATION_SENTINELS,
@@ -16,6 +17,8 @@ import {
 } from "../postgres/restore-migration-reconcile.js";
 import {
   CONFIGURATION_REVISIONS_VERSION,
+  CREDENTIAL_INSTANCE_SELECTION_VERSION,
+  MESSAGE_ARCHIVE_SCHEMA_VERSION,
   TASK_LIFECYCLE_OUTBOX_VERSION,
   TASK_REQUIRE_PLAN_APPROVAL_VERSION,
 } from "../postgres/schema-applier.js";
@@ -463,6 +466,41 @@ describe("PostgreSQL paired restore orchestration", () => {
 
       expect(await catalog.relationExists("project.configuration_revisions")).toBe(true);
       await expect(catalog.insertConfigurationRevision()).resolves.toBeUndefined();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("unstamps omitted ALTER columns even when later CREATE TABLE sentinels exist", async () => {
+    const allRelations = RESTORED_SCHEMA_RELATION_SENTINELS.flatMap((sentinel) => [...(sentinel.relations ?? [])]);
+    const credentialCatalog = createRestoreCatalog(
+      allRelations,
+      sentinelColumnsBelow(CREDENTIAL_INSTANCE_SELECTION_VERSION),
+    );
+    expect(await detectRestoredSchemaRewindFloor(credentialCatalog)).toBe(CREDENTIAL_INSTANCE_SELECTION_VERSION);
+
+    const archiveCatalog = createRestoreCatalog(
+      allRelations,
+      sentinelColumnsBelow(MESSAGE_ARCHIVE_SCHEMA_VERSION),
+    );
+    expect(await detectRestoredSchemaRewindFloor(archiveCatalog)).toBe(MESSAGE_ARCHIVE_SCHEMA_VERSION);
+
+    const root = await mkdtemp(join(tmpdir(), "fusion-restore-omitted-alter-"));
+    try {
+      const catalog = createRestoreCatalog(
+        allRelations,
+        sentinelColumnsBelow(CREDENTIAL_INSTANCE_SELECTION_VERSION),
+      );
+      const fixture = await createRestoreFixture(root, {
+        reconcileRestoredMigrations: () => reconcileRestoredSchemaMigrations(catalog),
+      });
+      await writeFile(fixture.projectPath, "pre-0039-project");
+      await writeFile(fixture.centralPath, "central-source");
+      expect(await catalog.columnExists("project.tasks", "credential_instance_id")).toBe(false);
+      expect(await catalog.columnExists("project.messages", "archived")).toBe(false);
+      await fixture.manager.restoreBackup(fixture.projectFilename, { createPreRestoreBackup: false });
+      expect(await catalog.columnExists("project.tasks", "credential_instance_id")).toBe(true);
+      expect(await catalog.columnExists("project.messages", "archived")).toBe(true);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

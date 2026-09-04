@@ -1,12 +1,13 @@
 /**
  * Reconcile public.fusion_schema_migrations after a project/archive restore.
  *
- * FNXC:PostgresBackup 2026-09-04-05:45:
+ * FNXC:PostgresBackup 2026-09-04-05:59:
  * Paired dumps replace `project`, `archive`, and `central` only. Restoring an
  * older dump therefore drops later relations or ALTER columns while leaving the
  * current binary's versions in `public.fusion_schema_migrations`. Startup then
  * skips those migrations and TaskStore queries fail. After every project restore,
- * rewind numeric ledger rows from the earliest missing table OR column sentinel
+ * rewind numeric ledger rows from the earliest missing table OR ALTER column
+ * sentinel — including credential-instance fields and `messages.archived` —
  * and replay `applySchemaBaseline` so restored schemas and bookkeeping match.
  *
  * Unstamp and baseline replay share one transaction so a failed apply cannot
@@ -31,6 +32,7 @@ import {
   CHAT_SESSION_PINS_VERSION,
   CHAT_SESSION_TAGS_VERSION,
   CONFIGURATION_REVISIONS_VERSION,
+  CREDENTIAL_INSTANCE_SELECTION_VERSION,
   EXECUTOR_ESCALATION_ATTEMPT_VERSION,
   EXECUTOR_TOOL_FAILURE_RETRY_VERSION,
   GITHUB_CHECK_STATES_VERSION,
@@ -38,25 +40,38 @@ import {
   IMPORT_TRANSLATION_CACHE_VERSION,
   LEGACY_CUTOVER_PRESERVATION_SCHEMA_VERSION,
   MEMORY_RECALL_RECORDS_VERSION,
+  MESSAGE_ARCHIVE_SCHEMA_VERSION,
   MIGRATION_BOOKKEEPING_TABLE,
+  MILESTONE_ASSERTION_PROVENANCE_VERSION,
+  MISSION_FEATURE_SPEC_ALIGNMENT_VERSION,
   MISSION_LINEAGE_STOP_VERSION,
   MISSION_TASK_PREFIX_VERSION,
+  MULTI_ROLE_WORKFLOW_AGENTS_VERSION,
   PATCHNODE_ENTRIES_VERSION,
   PLANNING_ACTIVE_TIMING_VERSION,
+  QUEUED_EPISODE_SIGNATURE_VERSION,
+  RESEARCH_FEATURE_PROVENANCE_VERSION,
   REVIEW_CONVERGENCE_STAGE_VERSION,
   SESSION_ADVISOR_ENABLED_SCHEMA_VERSION,
   SESSION_CONTENTION_WAIT_STATE_VERSION,
   SPEC_LOCK_DRIFT_REPORT_VERSION,
+  SQLITE_SCHEMA_PARITY_VERSION,
+  TASK_DECLARED_SYMBOLS_VERSION,
   TASK_EXTERNAL_BLOCK_VERSION,
   TASK_LIFECYCLE_CONSUMERS_VERSION,
   TASK_LIFECYCLE_OUTBOX_VERSION,
   TASK_MERGER_MODEL_LANE_VERSION,
+  TASK_PROPOSAL_CLAIM_VERSION,
   TASK_RECOMMENDATIONS_VERSION,
   TASK_REPOSITORY_SCOPE_VERSION,
   TASK_REQUIRE_PLAN_APPROVAL_VERSION,
   TASK_STEP_REPORTS_VERSION,
+  TASK_WEDGE_NOTIFICATION_VERSION,
   UNPLANNED_EXECUTION_BLOCK_DEDUPE_VERSION,
+  VALIDATOR_INPUT_FINGERPRINT_VERSION,
   WORKFLOW_IR_PIN_AND_LEGACY_ADOPTION_VERSION,
+  WORKFLOW_PRINCIPAL_FENCE_VERSION,
+  WORKFLOW_TASK_CONTINUATIONS_VERSION,
   WORKSPACE_COORDINATION_LEASES_SCHEMA_VERSION,
 } from "./schema-applier.js";
 
@@ -91,8 +106,21 @@ function tasksColumn(column: string): RestoredSchemaColumnSentinel {
  * after CREATE TABLE but before a later ALTER still rewinds that ALTER version.
  */
 export const RESTORED_SCHEMA_RELATION_SENTINELS: readonly RestoredSchemaRelationSentinel[] = [
-  { version: INITIAL_SCHEMA_VERSION, relations: ["project.tasks"] },
+  {
+    version: INITIAL_SCHEMA_VERSION,
+    relations: [
+      "project.tasks",
+      "project.messages",
+      "project.chat_sessions",
+      "project.missions",
+      "project.mission_features",
+      "project.mission_contract_assertions",
+      "project.workflow_work_items",
+      "project.agents",
+    ],
+  },
   { version: LEGACY_CUTOVER_PRESERVATION_SCHEMA_VERSION, relations: ["project.boards"] },
+  { version: SQLITE_SCHEMA_PARITY_VERSION, columns: [tasksColumn("board_id")] },
   { version: SESSION_ADVISOR_ENABLED_SCHEMA_VERSION, columns: [tasksColumn("session_advisor_enabled")] },
   { version: IMPORT_TRANSLATION_CACHE_VERSION, relations: ["project.import_translation_cache"] },
   { version: CHAT_SESSION_PINS_VERSION, columns: [{ relation: "project.chat_sessions", column: "pinned_at" }] },
@@ -100,13 +128,24 @@ export const RESTORED_SCHEMA_RELATION_SENTINELS: readonly RestoredSchemaRelation
   { version: EXECUTOR_ESCALATION_ATTEMPT_VERSION, columns: [tasksColumn("executor_escalation_attempted")] },
   { version: TASK_MERGER_MODEL_LANE_VERSION, columns: [tasksColumn("merger_model_id")] },
   { version: BULK_COMPLETION_REFUSAL_AT_VERSION, columns: [tasksColumn("bulk_completion_refusal_at")] },
+  { version: TASK_PROPOSAL_CLAIM_VERSION, columns: [tasksColumn("proposal_claim_id")] },
   { version: CONFIGURATION_REVISIONS_VERSION, relations: ["project.configuration_revisions"] },
   { version: IDEATION_SCHEMA_VERSION, relations: ["project.ideation_sessions"] },
+  { version: RESEARCH_FEATURE_PROVENANCE_VERSION, columns: [{ relation: "project.mission_features", column: "research_run_id" }] },
   { version: WORKFLOW_IR_PIN_AND_LEGACY_ADOPTION_VERSION, columns: [tasksColumn("workflow_ir_pin")] },
+  { version: TASK_DECLARED_SYMBOLS_VERSION, columns: [tasksColumn("declared_symbols")] },
   { version: PLANNING_ACTIVE_TIMING_VERSION, columns: [tasksColumn("cumulative_planning_ms")] },
-  { version: MISSION_LINEAGE_STOP_VERSION, relations: ["project.mission_lineage_stops"] },
+  { version: WORKFLOW_TASK_CONTINUATIONS_VERSION, columns: [{ relation: "project.workflow_work_items", column: "stable_workflow_run_id" }] },
+  { version: TASK_WEDGE_NOTIFICATION_VERSION, columns: [tasksColumn("wedge_notification")] },
+  { version: MILESTONE_ASSERTION_PROVENANCE_VERSION, columns: [{ relation: "project.mission_contract_assertions", column: "origin" }] },
+  {
+    version: MISSION_LINEAGE_STOP_VERSION,
+    relations: ["project.mission_lineage_stops"],
+    columns: [{ relation: "project.mission_features", column: "implementation_stop_reason" }],
+  },
   { version: CHAT_SESSION_TAGS_VERSION, relations: ["project.chat_tags"] },
   { version: MISSION_TASK_PREFIX_VERSION, columns: [{ relation: "project.missions", column: "task_prefix" }] },
+  { version: CREDENTIAL_INSTANCE_SELECTION_VERSION, columns: [tasksColumn("credential_instance_id")] },
   {
     version: TASK_LIFECYCLE_OUTBOX_VERSION,
     relations: ["project.task_lifecycle_events", "project.task_lifecycle_event_seq"],
@@ -115,12 +154,18 @@ export const RESTORED_SCHEMA_RELATION_SENTINELS: readonly RestoredSchemaRelation
     version: TASK_LIFECYCLE_CONSUMERS_VERSION,
     relations: ["project.task_lifecycle_consumer_registrations"],
   },
+  { version: VALIDATOR_INPUT_FINGERPRINT_VERSION, columns: [{ relation: "project.mission_features", column: "validation_budget_fingerprint" }] },
   { version: UNPLANNED_EXECUTION_BLOCK_DEDUPE_VERSION, relations: ["project.unplanned_execution_blocks"] },
+  { version: QUEUED_EPISODE_SIGNATURE_VERSION, columns: [tasksColumn("queued_log_episode_signature")] },
+  { version: MULTI_ROLE_WORKFLOW_AGENTS_VERSION, columns: [{ relation: "project.agents", column: "roles" }] },
+  { version: WORKFLOW_PRINCIPAL_FENCE_VERSION, columns: [{ relation: "project.workflow_work_items", column: "principal_agent_id" }] },
   { version: TASK_RECOMMENDATIONS_VERSION, columns: [tasksColumn("recommendations")] },
   { version: GITHUB_CHECK_STATES_VERSION, relations: ["project.github_check_states"] },
   { version: AGENT_ACTIVITY_EVENTS_VERSION, relations: ["project.agent_activity_events"] },
   { version: SPEC_LOCK_DRIFT_REPORT_VERSION, relations: ["project.spec_locks"] },
   { version: MEMORY_RECALL_RECORDS_VERSION, relations: ["project.memory_recall_records"] },
+  { version: MISSION_FEATURE_SPEC_ALIGNMENT_VERSION, columns: [{ relation: "project.mission_features", column: "spec_alignment" }] },
+  { version: MESSAGE_ARCHIVE_SCHEMA_VERSION, columns: [{ relation: "project.messages", column: "archived" }] },
   {
     version: WORKSPACE_COORDINATION_LEASES_SCHEMA_VERSION,
     relations: ["project.workspace_coordination_leases"],
