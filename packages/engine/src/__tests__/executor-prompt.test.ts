@@ -10,7 +10,7 @@ import { reviewStep as mockedReviewStepFn } from "../execution/reviewer.js";
 import { execSync } from "node:child_process";
 import { writeFile, rm } from "node:fs/promises";
 import { findWorktreeUser, aiMergeTask } from "../merger.js";
-import type { Task, TaskDetail } from "@fusion/core";
+import { resolveWorktreesDirLayout, type Task, type TaskDetail } from "@fusion/core";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { StepSessionExecutor } from "../execution/step-session-executor.js";
 import { executingTaskLock } from "../agents/active-session-registry.js";
@@ -1359,9 +1359,9 @@ describe("TaskExecutor pause behavior", () => {
       updatedAt: new Date().toISOString(),
     });
 
-    // Should use SessionManager.create for fresh execution
+    // FNXC:WorktreeLayout 2026-09-04-04:35: FN-268 moved new task worktrees beneath .fusion/worktrees; derive the expected root from the production resolver so this assertion tracks the authoritative layout contract.
     expect(mockedSessionManager.create).toHaveBeenCalledWith(
-      expect.stringContaining(".worktrees"),
+      `${resolveWorktreesDirLayout("/tmp/test", undefined)}/fn-001`,
     );
     expect(mockedSessionManager.open).not.toHaveBeenCalled();
 
@@ -1576,11 +1576,17 @@ describe("swallowed async store failure observability", () => {
     mockedWithRateLimitRetry.mockImplementation((fn: () => Promise<unknown>) => fn());
   });
 
+  afterEach(settleLeakedBackgroundRuns);
+
   /*
    * FNXC:StepLifecycle 2026-07-22-10:30:
    * A legacy inversion leaves the target in-progress even when the predecessor guard rejects
    * its restart. The executor must consume the atomic verdict instead of inferring acceptance
    * from that unchanged target status.
+   *
+   * FNXC:StepLifecycle 2026-09-04-04:35:
+   * FN-217 and FN-231 prohibit automatic backward moves from the WIP lane. A rejected start
+   * terminalizes in place after recording the graph-failure containment decision.
    */
   it("turns a blocked corrupted in-progress start into a failed step-session result", async () => {
     const store = createMockStore();
@@ -1649,10 +1655,12 @@ describe("swallowed async store failure observability", () => {
         ([taskId, stepIndex, status]) => taskId === "FN-8490" && stepIndex === 0 && status === "done",
       ),
     ).toBe(false);
-    expect(store.moveTask).toHaveBeenCalledWith(
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-8490", "todo", expect.anything());
+    expect(store.logEntry).toHaveBeenCalledWith(
       "FN-8490",
-      "todo",
-      expect.objectContaining({ preserveProgress: true, recoveryRehome: true }),
+      "Workflow graph failed at node 'steps#0:step-execute' (step-failed) — automatic recovery cannot move 'in-progress' backward; card remains in place",
+      undefined,
+      undefined,
     );
     expect(onError).toHaveBeenCalledWith(
       expect.objectContaining({ id: "FN-8490" }),
@@ -2272,6 +2280,8 @@ describe("TaskExecutor global pause behavior", () => {
     resetExecutorMocks();
     mockedExistsSync.mockReturnValue(true);
   });
+
+  afterEach(settleLeakedBackgroundRuns);
 
   it("disposes all active sessions when settings:updated fires with globalPause: true", async () => {
     const store = createMockStore();
