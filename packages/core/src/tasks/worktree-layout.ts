@@ -178,23 +178,32 @@ export function slugifyWorktreeSegment(value: string): string {
     .replace(/^-|-$/g, "");
 }
 
+function reservedSegmentKey(value: string): string {
+  return value.toLowerCase().replace(/^\.+/, "");
+}
+
 /*
 FNXC:WorkspaceWorktree 2026-09-04-07:51:
 A workspace directory segment is one path component. Generic `updateTask` is still a first-mint
 fallback for stores without `pinWorkspaceWorktreeDirSegment`; without this check a plugin can
 persist `../../outside` write-once and every later checkout follows it. Empty, `.`/`..`, separators,
 and absolute paths are refused. The dedicated pin writer uses the same predicate.
+FNXC:WorkspaceWorktree 2026-09-04-08:09:
+Generic first-mint and the pin writer share this predicate so reserved infrastructure names
+(`.ai-merge`, `.worktrees`, `.fusion-recovery`, the group-marker filename) cannot become the
+write-once workspace directory. Comparison matches `deriveWorkspaceTaskDirSegment`: case-insensitive
+and leading-dot-insensitive via `reservedSegmentKey`.
 */
 export function isSafeWorkspaceWorktreeDirSegment(segment: string): boolean {
   const candidate = segment.trim();
   if (!candidate || candidate === "." || candidate === "..") return false;
   if (candidate.includes("..") || candidate.includes("/") || candidate.includes("\\")) return false;
   if (isAbsolute(candidate)) return false;
+  const candidateKey = reservedSegmentKey(candidate);
+  if (WORKSPACE_RESERVED_TASK_DIR_SEGMENTS.some((reserved) => reservedSegmentKey(reserved) === candidateKey)) {
+    return false;
+  }
   return true;
-}
-
-function reservedSegmentKey(value: string): string {
-  return value.toLowerCase().replace(/^\.+/, "");
 }
 
 export function deriveWorkspaceTaskDirSegment(input: {

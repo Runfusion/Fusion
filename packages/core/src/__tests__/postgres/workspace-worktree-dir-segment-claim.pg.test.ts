@@ -100,10 +100,14 @@ pgTest("workspace worktree directory segment claim (PostgreSQL)", () => {
     FNXC:WorkspaceWorktree 2026-09-04-07:51:
     `updateTask` is still a first-mint fallback. Persist only a single path component so
     `../../outside` cannot become the write-once directory. Drive the shipped writer.
+    FNXC:WorkspaceWorktree 2026-09-04-08:09:
+    Reserved infrastructure names (`.ai-merge`) are refused on the same first-mint path.
     */
     const store = h.store();
     const task = await store.createTask({ description: "unsafe first pin" });
     await store.updateTask(task.id, { workspaceWorktreeDirSegment: "../../outside" } as never);
+    expect((await store.getTask(task.id)).workspaceWorktreeDirSegment).toBeUndefined();
+    await store.updateTask(task.id, { workspaceWorktreeDirSegment: ".ai-merge" } as never);
     expect((await store.getTask(task.id)).workspaceWorktreeDirSegment).toBeUndefined();
     await store.updateTask(task.id, { workspaceWorktreeDirSegment: "foo" } as never);
     expect((await store.getTask(task.id)).workspaceWorktreeDirSegment).toBe("foo");
