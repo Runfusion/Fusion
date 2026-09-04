@@ -18,6 +18,7 @@ import {
 import {
   AGENT_RATING_PROJECT_ISOLATION_VERSION,
   ANALYTICS_ISOLATION_SCHEMA_VERSION,
+  BIGINT_COUNTERS_VERSION,
   AUTOMATION_ISOLATION_SCHEMA_VERSION,
   CHAT_SESSION_PINS_VERSION,
   CONFIGURATION_REVISIONS_VERSION,
@@ -27,8 +28,10 @@ import {
   MULTI_PROJECT_CUTOVER_SCHEMA_VERSION,
   OWNER_PROJECT_ID_SPLIT_VERSION,
   PROJECT_OWNERSHIP_SCHEMA_VERSION,
+  SYMBOL_LOCKS_SCHEMA_VERSION,
   TASK_LIFECYCLE_OUTBOX_VERSION,
   TASK_REQUIRE_PLAN_APPROVAL_VERSION,
+  TASK_VERIFICATION_REQUEST_VERSION,
 } from "../postgres/schema-applier.js";
 import {
   clearActiveEmbeddedRuntimeUrl,
@@ -62,10 +65,18 @@ function expectedPrimaryKey(relation: string): readonly string[] | null {
   return match ? match.columns : null;
 }
 
+function expectedColumnType(relation: string, column: string): string | null {
+  const match = RESTORED_SCHEMA_RELATION_SENTINELS
+    .flatMap((sentinel) => [...(sentinel.columnTypes ?? [])])
+    .find((entry) => entry.relation === relation && entry.column === column);
+  return match ? match.dataType : null;
+}
+
 function createRestoreCatalog(
   presentRelations: readonly string[] = [],
   presentColumns: ReadonlyArray<{ relation: string; column: string }> = [],
   presentPrimaryKeys: ReadonlyArray<{ relation: string; columns: readonly string[] }> = [],
+  presentColumnTypes: ReadonlyArray<{ relation: string; column: string; dataType: string }> = [],
 ): RestoreMigrationCatalog & {
   insertLifecycleSeq(projectId: string): Promise<void>;
   insertConfigurationRevision(): Promise<void>;
@@ -76,6 +87,9 @@ function createRestoreCatalog(
   const columns = new Set(presentColumns.map((entry) => columnKey(entry.relation, entry.column)));
   const primaryKeys = new Map<string, readonly string[]>(
     presentPrimaryKeys.map((entry) => [entry.relation, entry.columns]),
+  );
+  const columnTypes = new Map<string, string>(
+    presentColumnTypes.map((entry) => [columnKey(entry.relation, entry.column), entry.dataType]),
   );
   const applied = new Set(RESTORED_SCHEMA_RELATION_SENTINELS.map((sentinel) => sentinel.version));
   const catalog: RestoreMigrationCatalog & {
@@ -90,6 +104,12 @@ function createRestoreCatalog(
     async columnExists(qualifiedRelation, column) {
       return columns.has(columnKey(qualifiedRelation, column));
     },
+    async columnDataType(qualifiedRelation, column) {
+      const key = columnKey(qualifiedRelation, column);
+      if (columnTypes.has(key)) return columnTypes.get(key)!;
+      if (!columns.has(key)) return null;
+      return expectedColumnType(qualifiedRelation, column);
+    },
     async primaryKeyColumns(qualifiedRelation) {
       if (primaryKeys.has(qualifiedRelation)) return [...primaryKeys.get(qualifiedRelation)!];
       const expected = expectedPrimaryKey(qualifiedRelation);
@@ -100,6 +120,7 @@ function createRestoreCatalog(
       const snapshotRelations = new Set(relations);
       const snapshotColumns = new Set(columns);
       const snapshotPrimaryKeys = new Map(primaryKeys);
+      const snapshotColumnTypes = new Map(columnTypes);
       try {
         if (floor) {
           const parsedFloor = Number.parseInt(floor, 10);
@@ -117,6 +138,10 @@ function createRestoreCatalog(
           for (const primaryKey of sentinel.primaryKeys ?? []) {
             primaryKeys.set(primaryKey.relation, primaryKey.columns);
           }
+          for (const columnType of sentinel.columnTypes ?? []) {
+            columns.add(columnKey(columnType.relation, columnType.column));
+            columnTypes.set(columnKey(columnType.relation, columnType.column), columnType.dataType);
+          }
           applied.add(sentinel.version);
         }
       } catch (error) {
@@ -130,6 +155,8 @@ function createRestoreCatalog(
         for (const [relation, columnsForKey] of snapshotPrimaryKeys) {
           primaryKeys.set(relation, columnsForKey);
         }
+        columnTypes.clear();
+        for (const [key, dataType] of snapshotColumnTypes) columnTypes.set(key, dataType);
         throw error;
       }
     },
@@ -603,6 +630,83 @@ describe("PostgreSQL paired restore orchestration", () => {
 
       expect(await catalog.primaryKeyColumns("project.agent_ratings")).toEqual(["project_id", "id"]);
       expect(catalog.hasApplied(AGENT_RATING_PROJECT_ISOLATION_VERSION)).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("unstamps 0024 when task_verification_requests is missing and later sentinels exist", async () => {
+    const allColumns = RESTORED_SCHEMA_RELATION_SENTINELS.flatMap((sentinel) => [...(sentinel.columns ?? [])]);
+    const catalogAtDetect = createRestoreCatalog(
+      sentinelRelationsExcept(TASK_VERIFICATION_REQUEST_VERSION),
+      allColumns,
+    );
+    expect(await detectRestoredSchemaRewindFloor(catalogAtDetect)).toBe(TASK_VERIFICATION_REQUEST_VERSION);
+    expect(await catalogAtDetect.relationExists("project.task_verification_requests")).toBe(false);
+    expect(await catalogAtDetect.relationExists("project.symbol_locks")).toBe(true);
+
+    const root = await mkdtemp(join(tmpdir(), "fusion-restore-0024-verify-"));
+    try {
+      const catalog = createRestoreCatalog(
+        sentinelRelationsExcept(TASK_VERIFICATION_REQUEST_VERSION),
+        allColumns,
+      );
+      const fixture = await createRestoreFixture(root, {
+        reconcileRestoredMigrations: () => reconcileRestoredSchemaMigrations(catalog),
+      });
+      await writeFile(fixture.projectPath, "pre-0024-project");
+      await writeFile(fixture.centralPath, "central-source");
+      expect(catalog.hasApplied(TASK_VERIFICATION_REQUEST_VERSION)).toBe(true);
+
+      await fixture.manager.restoreBackup(fixture.projectFilename, { createPreRestoreBackup: false });
+
+      expect(await catalog.relationExists("project.task_verification_requests")).toBe(true);
+      expect(catalog.hasApplied(TASK_VERIFICATION_REQUEST_VERSION)).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("unstamps 0025 when symbol_locks is missing after 0024 is present", async () => {
+    const allColumns = RESTORED_SCHEMA_RELATION_SENTINELS.flatMap((sentinel) => [...(sentinel.columns ?? [])]);
+    const catalog = createRestoreCatalog(
+      sentinelRelationsExcept(SYMBOL_LOCKS_SCHEMA_VERSION),
+      allColumns,
+    );
+    expect(await catalog.relationExists("project.task_verification_requests")).toBe(true);
+    expect(await catalog.relationExists("project.symbol_locks")).toBe(false);
+    expect(await detectRestoredSchemaRewindFloor(catalog)).toBe(SYMBOL_LOCKS_SCHEMA_VERSION);
+  });
+
+  it("unstamps 0026 when token counters exist as integer rather than bigint", async () => {
+    const allRelations = RESTORED_SCHEMA_RELATION_SENTINELS.flatMap((sentinel) => [...(sentinel.relations ?? [])]);
+    const allColumns = [
+      ...RESTORED_SCHEMA_RELATION_SENTINELS.flatMap((sentinel) => [...(sentinel.columns ?? [])]),
+      { relation: "project.tasks", column: "token_usage_input_tokens" },
+      { relation: "project.tasks", column: "cumulative_active_ms" },
+    ];
+    const integerCounters = [
+      { relation: "project.tasks", column: "token_usage_input_tokens", dataType: "integer" },
+    ];
+    const catalogAtDetect = createRestoreCatalog(allRelations, allColumns, [], integerCounters);
+    expect(await detectRestoredSchemaRewindFloor(catalogAtDetect)).toBe(BIGINT_COUNTERS_VERSION);
+    expect(await catalogAtDetect.columnExists("project.tasks", "token_usage_input_tokens")).toBe(true);
+    expect(await catalogAtDetect.columnDataType("project.tasks", "token_usage_input_tokens")).toBe("integer");
+
+    const root = await mkdtemp(join(tmpdir(), "fusion-restore-0026-bigint-"));
+    try {
+      const catalog = createRestoreCatalog(allRelations, allColumns, [], integerCounters);
+      const fixture = await createRestoreFixture(root, {
+        reconcileRestoredMigrations: () => reconcileRestoredSchemaMigrations(catalog),
+      });
+      await writeFile(fixture.projectPath, "pre-0026-project");
+      await writeFile(fixture.centralPath, "central-source");
+      expect(catalog.hasApplied(BIGINT_COUNTERS_VERSION)).toBe(true);
+
+      await fixture.manager.restoreBackup(fixture.projectFilename, { createPreRestoreBackup: false });
+
+      expect(await catalog.columnDataType("project.tasks", "token_usage_input_tokens")).toBe("bigint");
+      expect(catalog.hasApplied(BIGINT_COUNTERS_VERSION)).toBe(true);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

@@ -28,6 +28,11 @@
  * `(project_id, id)` when the column landed but the PK stayed `(id)`. Column
  * presence is not enough; rewind must also match that primary key.
  *
+ * FNXC:PostgresBackup 2026-09-04-08:27:
+ * Numbered project migrations 0024-0026 must sit between 0023 and 0027.
+ * Skipping them lets a 0023 dump keep those versions stamped and skip
+ * verification-request / symbol-lock isolation plus bigint counter repair.
+ *
  * Unstamp and baseline replay share one transaction so a failed apply cannot
  * leave `public.fusion_schema_migrations` rewound while project/archive still
  * reflects the restored dump.
@@ -48,6 +53,7 @@ import {
   AGENT_RATING_PROJECT_ISOLATION_VERSION,
   ANALYTICS_ISOLATION_SCHEMA_VERSION,
   AUTOMATION_ISOLATION_SCHEMA_VERSION,
+  BIGINT_COUNTERS_VERSION,
   BULK_COMPLETION_REFUSAL_AT_VERSION,
   CHAT_SESSION_MEMORY_FOCUS_VERSION,
   CHAT_SESSION_PINS_VERSION,
@@ -81,6 +87,7 @@ import {
   SESSION_CONTENTION_WAIT_STATE_VERSION,
   SPEC_LOCK_DRIFT_REPORT_VERSION,
   SQLITE_SCHEMA_PARITY_VERSION,
+  SYMBOL_LOCKS_SCHEMA_VERSION,
   TASK_DECLARED_SYMBOLS_VERSION,
   TASK_EXTERNAL_BLOCK_VERSION,
   TASK_LIFECYCLE_CONSUMERS_VERSION,
@@ -91,6 +98,7 @@ import {
   TASK_REPOSITORY_SCOPE_VERSION,
   TASK_REQUIRE_PLAN_APPROVAL_VERSION,
   TASK_STEP_REPORTS_VERSION,
+  TASK_VERIFICATION_REQUEST_VERSION,
   TASK_WEDGE_NOTIFICATION_VERSION,
   UNPLANNED_EXECUTION_BLOCK_DEDUPE_VERSION,
   VALIDATOR_INPUT_FINGERPRINT_VERSION,
@@ -103,6 +111,7 @@ import {
 export interface RestoreMigrationCatalog {
   relationExists(qualifiedName: string): Promise<boolean>;
   columnExists(qualifiedRelation: string, column: string): Promise<boolean>;
+  columnDataType(qualifiedRelation: string, column: string): Promise<string | null>;
   primaryKeyColumns(qualifiedRelation: string): Promise<readonly string[] | null>;
   applyRewindAndReplay(floor: string | null): Promise<void>;
 }
@@ -117,11 +126,18 @@ export interface RestoredSchemaPrimaryKeySentinel {
   readonly columns: readonly string[];
 }
 
+export interface RestoredSchemaColumnTypeSentinel {
+  readonly relation: string;
+  readonly column: string;
+  readonly dataType: string;
+}
+
 export interface RestoredSchemaRelationSentinel {
   readonly version: string;
   readonly relations?: readonly string[];
   readonly columns?: readonly RestoredSchemaColumnSentinel[];
   readonly primaryKeys?: readonly RestoredSchemaPrimaryKeySentinel[];
+  readonly columnTypes?: readonly RestoredSchemaColumnTypeSentinel[];
 }
 
 const INITIAL_SCHEMA_VERSION = "0000";
@@ -234,6 +250,15 @@ export const RESTORED_SCHEMA_RELATION_SENTINELS: readonly RestoredSchemaRelation
   { version: CONFIGURATION_REVISIONS_VERSION, relations: ["project.configuration_revisions"] },
   { version: IDEATION_SCHEMA_VERSION, relations: ["project.ideation_sessions"] },
   { version: RESEARCH_FEATURE_PROVENANCE_VERSION, columns: [{ relation: "project.mission_features", column: "research_run_id" }] },
+  { version: TASK_VERIFICATION_REQUEST_VERSION, relations: ["project.task_verification_requests"] },
+  { version: SYMBOL_LOCKS_SCHEMA_VERSION, relations: ["project.symbol_locks"] },
+  {
+    version: BIGINT_COUNTERS_VERSION,
+    columnTypes: [
+      { relation: "project.tasks", column: "token_usage_input_tokens", dataType: "bigint" },
+      { relation: "project.tasks", column: "cumulative_active_ms", dataType: "bigint" },
+    ],
+  },
   { version: WORKFLOW_IR_PIN_AND_LEGACY_ADOPTION_VERSION, columns: [tasksColumn("workflow_ir_pin")] },
   { version: TASK_DECLARED_SYMBOLS_VERSION, columns: [tasksColumn("declared_symbols")] },
   { version: PLANNING_ACTIVE_TIMING_VERSION, columns: [tasksColumn("cumulative_planning_ms")] },
@@ -315,6 +340,16 @@ export async function detectRestoredSchemaRewindFloor(
         break;
       }
     }
+    if (!missing) {
+      for (const columnType of sentinel.columnTypes ?? []) {
+        if (!(await catalog.relationExists(columnType.relation))) continue;
+        if (!(await catalog.columnExists(columnType.relation, columnType.column))) continue;
+        const actual = await catalog.columnDataType(columnType.relation, columnType.column);
+        if (actual != null && actual.toLowerCase() === columnType.dataType.toLowerCase()) continue;
+        missing = true;
+        break;
+      }
+    }
     if (missing) return sentinel.version;
   }
   return null;
@@ -378,6 +413,22 @@ export function createDrizzleRestoreMigrationCatalog(
         ) AS present
       `)) as unknown as Array<{ present: boolean }>;
       return rows[0]?.present === true;
+    },
+    async columnDataType(qualifiedRelation, column) {
+      /*
+       * FNXC:PostgresBackup 2026-09-04-08:27:
+       * 0026 widens existing int4 counters to bigint and no-ops missing
+       * columns. Bound schema/table/column names; postgres reports `bigint`.
+       */
+      const { schema, table } = splitQualifiedRelation(qualifiedRelation);
+      const rows = (await db.execute(sql`
+        SELECT data_type AS data_type
+        FROM information_schema.columns
+        WHERE table_schema = ${schema}
+          AND table_name = ${table}
+          AND column_name = ${column}
+      `)) as unknown as Array<{ data_type: string | null }>;
+      return rows[0]?.data_type ?? null;
     },
     async primaryKeyColumns(qualifiedRelation) {
       /*
