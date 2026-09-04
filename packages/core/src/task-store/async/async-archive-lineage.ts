@@ -388,6 +388,15 @@ export async function restoreTaskFromArchive(
           workspaceWorktrees: reconciledWorktreeState.workspaceWorktrees,
           worktree: reconciledWorktreeState.worktree,
           /*
+          FNXC:WorkspaceWorktree 2026-09-04-05:20:
+          Archive disposes the named checkout. Restore already drops missing workspace paths so they
+          cannot resurrect as a false land; the write-once directory segment is the same claim and
+          must not re-enter the live unique index if a successor already reused the released name.
+          */
+          workspaceWorktreeDirSegment: reconciledWorktreeState.workspaceWorktrees
+            ? existing.workspaceWorktreeDirSegment
+            : null,
+          /*
           FNXC:TaskStoreArchiveLineage 2026-08-01-23:23 DELIBERATE-LITERAL — STATE MARKER:
           Restore exposes the durable row before the caller's validated move out of the archive state.
           This is a physical transition sentinel, not the custom workflow's archived lane id.
