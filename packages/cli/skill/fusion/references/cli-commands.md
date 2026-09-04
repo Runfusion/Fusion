@@ -111,15 +111,13 @@ fn backup --cleanup                                     # Remove old pairs and a
 Before native backup operations, quiesce Fusion writers and competing
 create/list/cleanup/restore processes; the command has no cross-process lock.
 A restore validates every required archive and retains a current-state
-`fusion-pre-restore-pg-*` + `fusion-central-pre-restore-pg-*` pair first.
-Project/archive restores before central, each in its own transaction. If central
-fails, Fusion attempts project/archive rollback from the retained dump. The two
-dumps do not share one snapshot or one pair-wide transaction. In-progress backup
-artifacts are never listed or restorable, and cleanup removes only abandoned ones.
-After a project/archive restore, Fusion rewinds `public.fusion_schema_migrations`
-from the earliest missing CREATE-TABLE sentinel and replays pending migrations.
-If that reconciliation fails, Fusion rolls project/archive back from the
-retained pre-restore dump.
+`fusion-pre-restore-pg-*` + `fusion-central-pre-restore-pg-*` +
+`fusion-migrations-pre-restore-pg-*` stem first. Project/archive restores
+before central and captured migration bookkeeping. If a later group fails,
+Fusion rolls every committed group back from the retained stem. Legacy
+two-member stems remain restorable; Fusion then rewinds
+`public.fusion_schema_migrations` from the earliest missing CREATE-TABLE
+sentinel and replays pending migrations.
 
 ## Multi-Project
 

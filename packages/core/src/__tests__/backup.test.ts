@@ -444,9 +444,10 @@ describe("PostgreSQL paired restore orchestration", () => {
       );
       const restores = (await fixture.actions()).filter((action) => action.startsWith("RESTORE "));
       expect(restores[0]).toContain(fixture.projectFilename);
-      expect(restores[1]).toMatch(/^RESTORE fusion-pre-restore-pg-/);
-      expect(restores.some((action) => action.includes(fixture.centralFilename))).toBe(false);
-      expect(reconcileAttempts).toBe(2);
+      expect(restores[1]).toContain(fixture.centralFilename);
+      expect(restores[2]).toMatch(/^RESTORE fusion-pre-restore-pg-/);
+      expect(restores[3]).toMatch(/^RESTORE fusion-central-pre-restore-pg-/);
+      expect(reconcileAttempts).toBe(1);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

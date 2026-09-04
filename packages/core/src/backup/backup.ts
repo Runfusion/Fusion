@@ -5,6 +5,8 @@ import { CronExpressionParser } from "cron-parser";
 import { PgBackupManager, type PgBackupPair, type PgDumpResult } from "../postgres/pg-backup.js";
 import { resolveBackend } from "../postgres/backend-resolver.js";
 import { getActiveEmbeddedRuntimeUrl } from "../postgres/active-backend-registry.js";
+import { reconcileRestoredSchemaMigrationsFromUrl } from "../postgres/restore-migration-reconcile.js";
+import { redactCredentialsFromMessage } from "../postgres/credential-redact.js";
 import type { Settings } from "../types.js";
 import type { Routine } from "../automation/routine.js";
 
@@ -75,6 +77,13 @@ export interface BackupOptions {
   pgRestorePath?: string;
   /** Override the bounded native-client timeout. Defaults to 120 seconds. */
   clientTimeoutMs?: number;
+  /**
+   * FNXC:PostgresBackup 2026-09-04-05:26:
+   * Test seam for post-restore rewind/replay. Production reconnects and
+   * reconciles `public.fusion_schema_migrations` against restored relations so
+   * a legacy two-member stem (no bookkeeping dump) cannot skip later migrations.
+   */
+  reconcileRestoredMigrations?: () => Promise<void>;
 }
 
 /**
@@ -91,6 +100,8 @@ export class BackupManager {
   private backupDir: string;
   private retention: number;
   private includeCentralDb: boolean;
+  private readonly connectionString: string;
+  private readonly reconcileRestoredMigrations?: () => Promise<void>;
   private readonly pgManager: PgBackupManager;
 
   constructor(fusionDir: string, options?: BackupOptions) {
@@ -105,6 +116,8 @@ export class BackupManager {
           "Pass connectionString explicitly or ensure DATABASE_URL / embedded backend is configured.",
       );
     }
+    this.connectionString = connectionString;
+    this.reconcileRestoredMigrations = options?.reconcileRestoredMigrations;
     this.pgManager = new PgBackupManager(connectionString, fusionDir, {
       backupDir: this.backupDir,
       retention: this.retention,
@@ -169,10 +182,13 @@ export class BackupManager {
   }
 
   /**
-   * FNXC:PostgresBackup 2026-09-04-02:58:
+   * FNXC:PostgresBackup 2026-09-04-05:26:
    * Project/archive restores also restore captured migration bookkeeping. That
    * write is permitted only with a complete pre-restore stem so failures can
    * roll every committed group back to one consistent snapshot.
+   * After the dump groups commit, rewind/replay still runs so a legacy
+   * two-member stem (bookkeeping unavailable) cannot skip later CREATE-TABLE
+   * migrations. A thrown reconcile uses the same rollback helper as a dump failure.
    */
   async restoreBackup(
     filename: string,
@@ -242,11 +258,33 @@ export class BackupManager {
       }
       if (restoreCentral) { await this.pgManager.restoreBackup(selection.centralPath); result.restored.push("central"); }
       if (restoreBookkeeping) await this.pgManager.restoreBackup(selection.migrationsPath);
+      if (restoreProject) await this.reconcileProjectMigrationState();
     } catch (error) {
       if (!projectCommitted) throw error;
       await rollback(error);
     }
     return result;
+  }
+
+  /**
+   * FNXC:PostgresBackup 2026-09-04-05:26:
+   * Same-stem bookkeeping dumps restore the ledger when present. Legacy stems
+   * leave public.fusion_schema_migrations at the current binary version, so
+   * rewind from the earliest missing CREATE-TABLE sentinel and replay.
+   */
+  private async reconcileProjectMigrationState(): Promise<void> {
+    try {
+      if (this.reconcileRestoredMigrations) {
+        await this.reconcileRestoredMigrations();
+        return;
+      }
+      await reconcileRestoredSchemaMigrationsFromUrl(this.connectionString);
+    } catch (error) {
+      throw new Error(
+        `Restored schemas but failed to reconcile migration bookkeeping: ${redactCredentialsFromMessage(errorMessage(error))}`,
+        { cause: error },
+      );
+    }
   }
 }
 
