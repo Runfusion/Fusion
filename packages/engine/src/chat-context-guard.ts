@@ -668,8 +668,12 @@ export async function ensureContextWithinCompactionThreshold(
     );
   }
 
-  // outcome.reason === "compacted": the branch is mutated; the strict acceptance rule decides.
-  if (outcome.summary.trim().length === 0) {
+  // outcome.reason is now "compacted" | "no-progress": the branch is mutated; the strict
+  // acceptance rule decides. A `no-progress` outcome (RUFU-187) is a MEASURED non-reduction by
+  // construction, so it normalizes into the SAME not-accepted/escalation branch a `compacted`
+  // outcome with `reduced:false` already takes — the guard must not invent a second refusal shape
+  // for the same operator-visible fact.
+  if (outcome.reason === "compacted" && outcome.summary.trim().length === 0) {
     await emitAudit({
       tier,
       tiersAttempted,
@@ -704,7 +708,18 @@ export async function ensureContextWithinCompactionThreshold(
   const afterTokens = estimateLoadedContextTokens(session);
   const overLimit = afterTokens !== null && afterTokens >= bounds.hardLimit;
 
-  if (!outcome.reduced && outcome.estimatedTokensAfter !== null) {
+  /*
+  FNXC:CompactionNoProgress 2026-09-04-16:35:
+  RUFU-187 — normalize the two non-reduction sources into one decision so the guard has a single
+  non-acceptance path: `didReduce` is false for BOTH a `compacted` pi-report that did not beat
+  `tokensBefore` AND the `no-progress` kind; `measuredAfterTokens` is the pi after-count when usable
+  (a `number` on the `no-progress` arm by construction). The refusal/proceed split below is unchanged
+  for a `compacted` non-reduction; a `no-progress` outcome simply enters it through the same door.
+  */
+  const didReduce = outcome.reason === "compacted" ? outcome.reduced : false;
+  const measuredAfterTokens = outcome.estimatedTokensAfter;
+
+  if (!didReduce && measuredAfterTokens !== null) {
     // pi's measurement is usable and shows NO reduction: never a hard failure when the
     // send still fits (that would create refusals where today's sends work), but a
     // refusal when the un-reduced context is over the hard limit — the reason names the
@@ -723,13 +738,13 @@ export async function ensureContextWithinCompactionThreshold(
         refusalDetails("non-reducing-summary", {
           afterTokens,
           tokensBefore: outcome.tokensBefore,
-          estimatedTokensAfter: outcome.estimatedTokensAfter,
+          estimatedTokensAfter: measuredAfterTokens,
           stage: "post-compaction",
         }),
       );
     }
     piLog.warn(
-      `chat-context-guard: compaction summary did not reduce the context (pi estimated ${outcome.estimatedTokensAfter} tokens vs ${outcome.tokensBefore}); proceeding without a validated reduction`,
+      `chat-context-guard: compaction summary did not reduce the context (pi estimated ${measuredAfterTokens} tokens vs ${outcome.tokensBefore}); proceeding without a validated reduction`,
     );
     await emitAudit({
       tier,
@@ -739,7 +754,7 @@ export async function ensureContextWithinCompactionThreshold(
       afterTokens,
       retrySkippedReason: "branch-already-mutated",
     });
-    return { compacted: false, contextTokens: afterTokens ?? outcome.estimatedTokensAfter, threshold };
+    return { compacted: false, contextTokens: afterTokens ?? measuredAfterTokens, threshold };
   }
 
   if (outcome.estimatedTokensAfter === null) {

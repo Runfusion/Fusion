@@ -48,6 +48,14 @@ vi.mock("../pi.js", () => ({
   arms the real helper builds (the factory mocks ../pi.js itself and cannot import the
   real classifier). Old consumers saw raw-truthiness success and null failure; they now
   observe the compacted arm and the error/refusal arms with identical branch semantics.
+
+  FNXC:CompactionNoProgress 2026-09-04-16:35:
+  RUFU-187's `no-progress` arm is mirrored here with the same pi-reported rule (a non-empty summary
+  whose `estimatedTokensAfter` does not beat `tokensBefore`), otherwise every consumer test in this
+  factory would read a non-reducing compaction as `compacted` and the refusal could not be tested.
+  The `pure-estimate` fallback is intentionally NOT mirrored: this factory has no estimator to
+  snapshot before/after (it mocks the module that ships one), and its session fixtures expose no
+  `state.messages` anyway. That fallback is covered against the REAL classifier in pi.test.ts.
   */
   compactSessionContext: vi.fn(async (session, instructions) => {
     if (typeof (session as any).compact !== "function") {
@@ -65,6 +73,15 @@ vi.mock("../pi.js", () => ({
           typeof result.estimatedTokensAfter === "number" && Number.isFinite(result.estimatedTokensAfter)
             ? result.estimatedTokensAfter
             : null;
+        if (summary.trim().length > 0 && estimatedTokensAfter !== null && estimatedTokensAfter >= tokensBefore) {
+          return {
+            reason: "no-progress",
+            branchMutated: true,
+            tokensBefore,
+            estimatedTokensAfter,
+            basis: "pi-reported",
+          };
+        }
         return {
           reason: "compacted",
           branchMutated: true,

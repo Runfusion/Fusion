@@ -539,6 +539,35 @@ describe("ensureContextWithinCompactionThreshold", () => {
   });
 
   /*
+  FNXC:CompactionNoProgress 2026-09-04-16:35:
+  RUFU-187 — a null after-count WITH a substantive message baseline is now classified by the pure
+  estimator and arrives at the guard as `no-progress`. It must take the SAME non-acceptance door as
+  the pi-reported matrix case above (never the `measurement-unknown` door, which is reserved for when
+  there is genuinely nothing to measure). The contrast control is the `measurement-unknown` test just
+  below, whose baseline is EMPTY: identical pi payload, opposite classification, because the
+  difference is only whether a like-for-like before/after comparison was possible.
+  */
+  it("routes a pure-estimate no-progress through the non-acceptance path when it leaves the context over the hard limit", async () => {
+    const { session, compact } = makeFakePiSession({
+      usage: { tokens: 120000, contextWindow: 128000, percent: 93.75 },
+      // A 4000-token baseline is what makes the before/after comparison meaningful.
+      messages: [userMessageOf(16_000)],
+      attempts: [{ summaryChars: 2_000, estimatedTokensAfter: null, remainingUserChars: 470_000 }],
+    });
+    const { sink, events } = makeAuditSink();
+    const err = await captureGateError(session, { tokenCap: undefined, audit: { sink } });
+    expect(err).toBeInstanceOf(ChatContextOverflowError);
+    expect(err?.message).toContain("reason=non-reducing-summary");
+    expect(compact).toHaveBeenCalledTimes(1);
+    expect(auditEvent(events).metadata).toMatchObject({
+      reason: "non-reducing-summary",
+      outcome: "refused",
+      afterTokens: 118_000,
+      retrySkippedReason: "branch-already-mutated",
+    });
+  });
+
+  /*
   FNXC:ChatContextGuardEscalation 2026-09-04-10:57:
   Matrix case 6 — the saneca repro (chat-b6a74d40). Recorded usage 119,053 >= threshold
   fires the ladder; pi rejects with its absolute "Already compacted" guard; the fresh
