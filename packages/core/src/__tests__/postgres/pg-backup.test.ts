@@ -522,6 +522,7 @@ echo "$@" >> "${tempDir}/destructive-restore.log"
       expect(readdirSync(join(fusionDir, "..", ".fusion", "backups")))
         .toEqual(expect.arrayContaining([second.project!.filename, third.project!.filename]));
       const preRestore = await manager.createPreRestoreBackup();
+      await manager.cleanupOldBackups();
       expect(existsSync(preRestore.project!.path)).toBe(true);
       expect(preRestore.central && "path" in preRestore.central && existsSync(preRestore.central.path)).toBe(true);
     } finally {

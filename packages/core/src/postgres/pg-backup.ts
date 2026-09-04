@@ -477,12 +477,18 @@ export class PgBackupManager {
    * `retention` pairs. A pair is counted as one regardless of whether the
    * central half succeeded.
    */
+  /**
+   * FNXC:PostgresBackup 2026-09-04-01:55:
+   * Pre-restore pairs are recovery evidence, not rotating backups. Routine
+   * retention must never delete the rollback pair promised by restore.
+   */
   async cleanupOldBackups(): Promise<{ deleted: string[] }> {
     const reservedStems = await this.sweepAndCollectLiveReservations();
     const backups = (await this.listBackups()).filter((pair) => {
-      const family: PgBackupFamily = pair.timestamp.startsWith("pre-restore-") ? "pre-restore" : "regular";
-      const stem = pair.timestamp.replace(/^pre-restore-/, "");
-      return !reservedStems.has(`${family}:${stem}`);
+      // Recovery evidence is retained indefinitely; retention applies only to
+      // routine backups and must not erase a promised restore rollback pair.
+      if (pair.timestamp.startsWith("pre-restore-")) return false;
+      return !reservedStems.has(`regular:${pair.timestamp}`);
     });
     if (backups.length <= this.retention) return { deleted: [] };
 
