@@ -381,6 +381,27 @@ when the gate retargets. If that parity test fails, the port is wrong — do not
 the assertion.
 */
 export function classifyGitCommandForPermissions(command: string): { write: boolean; operation: string } | null {
+  /*
+  FNXC:IdentityPermissions 2026-09-04-05:05:
+  Compound shell commands used a non-global first-match, so `git status && git commit` was
+  classified from the read-only first segment and a git_write-only policy missed the commit.
+  Classify every git invocation and report write when ANY segment mutates.
+  */
+  const invocations = command
+    .split(/\s*(?:&&|\|\||;|\||\n)\s*/)
+    .map((part) => part.trim())
+    .filter((part) => /^git(?:\s|$)/.test(part));
+  if (invocations.length > 1) {
+    const results = invocations
+      .map((part) => classifySingleGitInvocationForPermissions(part))
+      .filter((result): result is NonNullable<typeof result> => result != null);
+    if (results.length === 0) return null;
+    return results.find((result) => result.write) ?? results[0]!;
+  }
+  return classifySingleGitInvocationForPermissions(command);
+}
+
+function classifySingleGitInvocationForPermissions(command: string): { write: boolean; operation: string } | null {
   const match = command.match(/(?:^|&&|\|\||;|\||\n)\s*git\s+([^\s]+)/);
   if (!match) return null;
   const sub = match[1]?.trim() ?? "";

@@ -17,6 +17,9 @@ anywhere else:
   U11 lands.
 */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import {
   AMBIGUOUS_ACTOR_ID,
   BOOTSTRAP_ACTOR,
@@ -177,29 +180,33 @@ describe("actor model (pure)", () => {
 // ── KTD16: the gated fail-open inversion ─────────────────────────────
 
 describe("session principal resolution (KTD16 inversion, gated)", () => {
+  let tmpRoot: string;
   beforeEach(() => {
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "fusion-actor-context-"));
     __clearFusionSessionIdentityRegistryForTests();
     __resetIdentityEnabledForTests();
   });
   afterEach(() => {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
     __resetIdentityEnabledForTests();
   });
 
   it("with identity DISABLED, an unregistered cwd still resolves to operator (human CLI unbroken until U11)", () => {
-    expect(resolveFusionSessionPrincipal("/tmp/never-registered-u3")).toEqual({ kind: "operator" });
+    expect(resolveFusionSessionPrincipal(path.join(tmpRoot, "never-registered-u3"))).toEqual({ kind: "operator" });
   });
 
   it("with identity ENABLED, an unregistered cwd resolves unresolved, not operator", () => {
     setIdentityEnabled(true);
-    const principal = resolveFusionSessionPrincipal("/tmp/never-registered-u3");
+    const principal = resolveFusionSessionPrincipal(path.join(tmpRoot, "never-registered-u3"));
     expect(principal).toEqual({ kind: "unresolved" });
     expect(isTaskExecutionSessionPrincipal(principal)).toBe(false);
   });
 
   it("a registered agent cwd still resolves to that agent with identity enabled (no regression)", () => {
     setIdentityEnabled(true);
-    const dispose = registerFusionSessionIdentity("/tmp/u3-wt-a", { agentId: "executor-FN-1" });
-    const principal = resolveFusionSessionPrincipal("/tmp/u3-wt-a");
+    const cwd = path.join(tmpRoot, "u3-wt-a");
+    const dispose = registerFusionSessionIdentity(cwd, { agentId: "executor-FN-1" });
+    const principal = resolveFusionSessionPrincipal(cwd);
     expect(principal.kind).toBe("agent");
     if (principal.kind === "agent") expect(principal.identity.agentId).toBe("executor-FN-1");
     dispose();
@@ -207,17 +214,19 @@ describe("session principal resolution (KTD16 inversion, gated)", () => {
 
   it("ambiguity still fails closed with identity enabled", () => {
     setIdentityEnabled(true);
-    const d1 = registerFusionSessionIdentity("/tmp/u3-wt-shared", { agentId: "a1" });
-    const d2 = registerFusionSessionIdentity("/tmp/u3-wt-shared", { agentId: "a2" });
-    expect(resolveFusionSessionPrincipal("/tmp/u3-wt-shared").kind).toBe("ambiguous");
+    const cwd = path.join(tmpRoot, "u3-wt-shared");
+    const d1 = registerFusionSessionIdentity(cwd, { agentId: "a1" });
+    const d2 = registerFusionSessionIdentity(cwd, { agentId: "a2" });
+    expect(resolveFusionSessionPrincipal(cwd).kind).toBe("ambiguous");
     d1();
     d2();
   });
 
   it("the invocation-context path still takes precedence over an unregistered cwd", () => {
     setIdentityEnabled(true);
-    runWithFusionSessionIdentity(["/tmp/u3-ctx"], { agentId: "ctx-agent" }, () => {
-      const principal = resolveFusionSessionPrincipal("/tmp/u3-ctx");
+    const cwd = path.join(tmpRoot, "u3-ctx");
+    runWithFusionSessionIdentity([cwd], { agentId: "ctx-agent" }, () => {
+      const principal = resolveFusionSessionPrincipal(cwd);
       expect(principal.kind).toBe("agent");
       if (principal.kind === "agent") expect(principal.identity.agentId).toBe("ctx-agent");
     });
