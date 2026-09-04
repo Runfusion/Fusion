@@ -1206,6 +1206,14 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       const planningInvalidation = dependenciesChanged
         ? {expectedCurrentDependencies: previousDependencies ?? []}
         : undefined;
+      /*
+      FNXC:PromptReadBack 2026-09-04-05:12:
+      Do not pass updates.prompt as specPlanPrompt into this row transaction. That path appends
+      current-plan evidence before PROMPT.md reaches disk, so a later I/O failure leaves spec-lock
+      and drift reconciliation observing an unwritten revision. The row still retires approval
+      (approvedPlanFingerprint above). Evidence is captured only after writePromptFileAtomic
+      succeeds.
+      */
       if (runContext) {
         await store.atomicWriteTaskJsonWithAudit(dir, task, {
           taskId: task.id,
@@ -1218,9 +1226,9 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
             updatedFields: Object.keys(updates).filter((k) => (updates as Record<string, unknown>)[k] !== undefined),
             ...(titleNormalized ? { titleNormalized: true } : {}),
           },
-        }, planningInvalidation, updates.prompt);
+        }, planningInvalidation);
       } else {
-        await store.atomicWriteTaskJsonWithAudit(dir, task, undefined, planningInvalidation, updates.prompt);
+        await store.atomicWriteTaskJsonWithAudit(dir, task, undefined, planningInvalidation);
       }
 
       /*
@@ -1231,7 +1239,7 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       if (updates.prompt !== undefined) {
         await writePromptFileAtomic(promptPath, updates.prompt);
         /*
-        FNXC:PromptReadBack 2026-09-04-04:43:
+        FNXC:PromptReadBack 2026-09-04-05:12:
         The PG tasks row has no prompt column, so the row re-read never hydrates task.prompt.
         Assign the content only after PROMPT.md reaches disk so a failed write cannot expose
         an unwritten revision through the in-memory task, watcher cache, or fallback hydration.
@@ -1242,12 +1250,11 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
 
       if (store.isBackendMode() && updates.prompt !== undefined) {
         /*
-        FNXC:SpecLock 2026-08-09-19:01:
-        The task row clears approval only after PROMPT.md reaches disk. Append the same persisted
-        prompt as current-plan evidence while the caller's planning lifecycle lock is still held;
-        reconciliation then has a comparable revision instead of reporting an inactive lock with
-        missing evidence. This runs after the authoritative row write so a failed file write never
-        fabricates a plan revision.
+        FNXC:SpecLock 2026-09-04-05:12:
+        Append current-plan evidence only after PROMPT.md reaches disk, while the caller's
+        planning lifecycle lock is still held. The row transaction must not receive specPlanPrompt
+        for this write: that earlier commit is what let spec-lock/drift observe an unwritten
+        revision when the file persist failed.
         */
         await store.captureCurrentPlanEvidenceWhilePlanningLocked(task.id, updates.prompt, Date.now(), task);
       }
