@@ -1,13 +1,14 @@
 /*
-FNXC:PromptReadBack 2026-08-22-16:10:
+FNXC:PromptReadBack 2026-09-04-04:43:
 STAS-103 pins the prompt-return contract of updateTaskUnlockedImpl: an explicit prompt
 update writes PROMPT.md to disk and must return a task whose prompt equals the persisted
 content. The PG tasks row has no prompt column (rowToTask never hydrates it), so without
-the assignment in the prompt branch the returned prompt stays undefined and the
-prompt-write tool's authoritative read-back check rejects every write.
+the assignment after a successful file write the returned prompt stays undefined and the
+prompt-write tool's authoritative read-back check rejects every write. A failed PROMPT.md
+write must not leave that assignment on the in-memory task.
 */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,11 +16,28 @@ import type { Task } from "../types.js";
 import type { TaskStore } from "../store.js";
 import { updateTaskUnlockedImpl } from "../task-store/task-update.js";
 
+const { persistPromptFile } = vi.hoisted(() => {
+  const persistPromptFile = vi.fn();
+  return { persistPromptFile };
+});
+
+vi.mock("../task-store/prompt-file.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../task-store/prompt-file.js")>();
+  persistPromptFile.mockImplementation((promptPath: string, content: string) =>
+    actual.writePromptFileAtomic(promptPath, content),
+  );
+  return {
+    ...actual,
+    writePromptFileAtomic: persistPromptFile,
+  };
+});
+
 const prompt = (body: string) =>
   `# Task\n\n## Mission\n\n${body}\n\n## File Scope\n\n- packages/core/src/store.ts\n\n## Steps\n\n1. Verify prompt return\n\n## Completion Criteria\n\n- [ ] updateTask returns the prompt\n\n## Do NOT\n\n- Drop the prompt\n\n## Dependencies\n\n- None\n`;
 
 const tempDirs: string[] = [];
 afterEach(() => {
+  persistPromptFile.mockClear();
   for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
@@ -119,5 +137,27 @@ describe("updateTask returns the persisted prompt", () => {
 
     expect(updated.prompt).toBe(next);
     expect(await readFile(join(taskDir, "PROMPT.md"), "utf-8")).toBe(next);
+  });
+
+  it("does not expose an unwritten prompt when PROMPT.md persistence fails", async () => {
+    /*
+    FNXC:PromptReadBack 2026-09-04-04:43:
+    If writePromptFileAtomic throws after the task-row commit, in-memory metadata and
+    the watcher cache must still omit the requested revision so fallback hydration cannot
+    surface a prompt the authoritative file never persisted.
+    */
+    const { store, row, taskDir, taskCache } = harness({}, { isWatching: true });
+    const content = prompt("must not leak");
+    persistPromptFile.mockRejectedValueOnce(
+      new Error("EIO: simulated PROMPT.md write failure"),
+    );
+
+    await expect(
+      updateTaskUnlockedImpl(store, "FN-1", { prompt: content } as never),
+    ).rejects.toThrow(/EIO: simulated PROMPT.md write failure/);
+
+    expect(row.prompt).toBeUndefined();
+    expect(taskCache.get("FN-1")).toBeUndefined();
+    expect(existsSync(join(taskDir, "PROMPT.md"))).toBe(false);
   });
 });
