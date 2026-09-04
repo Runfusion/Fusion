@@ -9,7 +9,7 @@ vi.mock("../ChatView", () => ({
   ChatView: ({ initialDirectSession, initialDirectSessionNonce, onOpenSessionInNewWindow }: any) => <div data-testid={`chat-${initialDirectSession.id}`} data-session-nonce={initialDirectSessionNonce} onClick={() => onOpenSessionInNewWindow(initialDirectSession)} />,
 }));
 
-const entry = (id: string, focusNonce = 1, cascadeSlot = 0) => ({ projectId: "project-a", session: { id, agentId: "agent-1", title: id, status: "active" as const, createdAt: "2026-08-21T00:00:00.000Z", updatedAt: "2026-08-21T00:00:00.000Z" }, focusNonce, cascadeSlot });
+const entry = (id: string, focusNonce = 1, cascadeSlot = 0) => ({ projectId: "project-a", session: { id, agentId: "agent-1", title: id, status: "active" as const, createdAt: "2026-08-21T00:00:00.000Z", updatedAt: "2026-08-21T00:00:00.000Z" }, focusNonce, cascadeSlot, minimized: false });
 
 describe("PoppedOutChatWindows", () => {
   it("renders independent selected chats and closes only the requested entry", () => {

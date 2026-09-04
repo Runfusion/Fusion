@@ -167,7 +167,7 @@ describe("workflow-step verdict note repair", () => {
       mutationType: "task:review-notes-repaired",
       metadata: expect.objectContaining({
         taskId: baseTask().id,
-        workflowStepId: "code-review-step",
+        workflowStepId: "code-review",
         verdict: "APPROVE",
         outcome: "repaired",
       }),
@@ -253,7 +253,7 @@ describe("workflow-step verdict note repair", () => {
 
     const first = await (executor as any).executeWorkflowStep(subject, step, subject.worktree, {});
     subject.workflowStepResults = [{
-      workflowStepId: "plan-review-step",
+      workflowStepId: "plan-review",
       workflowStepName: "Plan Review",
       phase: "pre-merge",
       status: "passed",

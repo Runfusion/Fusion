@@ -6,6 +6,9 @@ These windows deliberately omit outside dismissal so working in one cannot colla
 FNXC:ChatWindows 2026-08-23-03:33:
 FN-169 forwards each entry's focus nonce to the shared window and ChatView: every open raises the
 existing window and arrives on its requested thread without remounting an in-flight conversation.
+
+FNXC:ChatWindows 2026-09-02-05:24:
+A minimized chat window must retain its component identity and geometry rather than unmounting, while releasing read-acknowledgement and document Find ownership until it is visible again.
 */
 import { Suspense } from "react";
 import type { ChatSessionInfo } from "../hooks/useChat";
@@ -46,6 +49,7 @@ export function PoppedOutChatWindows({ entries, projectId, addToast, experimenta
       minSize={{ width: 300, height: 420 }}
       ariaLabel={entry.session.title || "Chat"}
       raiseToFrontSignal={entry.focusNonce}
+      hidden={entry.minimized}
     >
       <Suspense fallback={null}>
         <ChatView
@@ -53,6 +57,8 @@ export function PoppedOutChatWindows({ entries, projectId, addToast, experimenta
           addToast={addToast}
           experimentalFeatures={experimentalFeatures}
           floating
+          active={!entry.minimized}
+          findActive={!entry.minimized}
           initialDirectSession={entry.session}
           initialDirectSessionNonce={entry.focusNonce}
           persistChatPreferences={false}

@@ -173,6 +173,52 @@ Behaviour worth knowing:
 - **`--tunnel` only consumes a following token when it is numeric**, so `pnpm dev --tunnel dashboard`
   still forwards `dashboard` to the dev command.
 
+### Fusion inside Fusion: two instances, each with its own engine
+
+Developing Fusion from inside a container that is already running Fusion needs all three flags
+together. The container's own dashboard owns 4040 and its database, so a plain `pnpm dev --tunnel`
+collides with it in two ways that are easy to misread as unrelated breakage:
+
+```bash
+cd /home/node/fusion && pnpm dev dashboard --port 4050 --tunnel=4050 --isolated
+```
+
+- **`--isolated`** — own database, own project directory, and its own engine (it redirects `HOME` and
+  the working directory; the engine still starts normally, so both instances run a real one). Without
+  it the dev server shares the live database, and Command Center's **Restart engine**
+  (`POST /system/engine/restart`) enumerates every project in that shared database, pause/resumes each,
+  and on a failed resume leaves a **compensating pause** behind. That pause is durable: the container's
+  own project is left `status: "paused"`, its dashboard logs `Failed to start engine for project …:
+  Project … is paused`, and remote-access calls fail with `REMOTE_TUNNEL_ENGINE_UNAVAILABLE`. Nothing
+  self-heals it and recreating the container does not clear it — the fix is
+  `POST /projects/:id/resume`.
+- **`--port 4050`** — any free port other than the one the outer instance holds. Otherwise the
+  dashboard hits `EADDRINUSE` and falls back to `listen(0)`, binding a **different random port on
+  every restart**. The tunnel is opened once against whatever port that first start landed on, so the
+  next restart silently strands the URL you were using.
+- **`--tunnel=4050`** — names the target explicitly. `PORT=4050` alone is **not** enough: it only
+  feeds the tunnel's guess, while the dashboard resolves its own bind port separately, so the server
+  still lands on an ephemeral port.
+
+Verify the two are genuinely separate by comparing project lists — they must not match:
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:4050/api/projects   # dev sandbox
+curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:4040/api/projects   # the real instance
+```
+
+Two gotchas when restarting the dev instance:
+
+- **Killing it needs to match the tsx child.** Its command line is
+  `node --conditions=source --require …/tsx…` and contains neither `pnpm dev` nor `dev-with-memory`,
+  so a pattern matching only those leaves it alive holding the port — and the replacement instance
+  then quietly rebinds elsewhere while appearing to run. Confirm the port is free
+  (`curl` returns `000`) before starting a new one.
+- **`kill -9` strands the embedded Postgres.** A hard kill leaves `postmaster.pid` behind, and the
+  next start tries to JOIN that dead cluster instead of starting one, exiting 1 with
+  `joined instance was not yet accepting connections`. Delete
+  `~/.fusion-dev/<checkout-name>/home/.fusion/embedded-postgres/default/postmaster.pid` and start again.
+
 ## Deterministic workspace verification bootstrap
 
 Fusion codifies workspace verification as a deterministic contract:
@@ -290,6 +336,8 @@ Fusion supports standalone binary builds through Bun compile scripts in the CLI 
 pnpm build:exe      # build host-target executable
 pnpm build:exe:all  # build multi-target executables
 ```
+
+Cross-compiling a foreign target fetches the matching `@lydell/node-pty-<platform>-<arch>` payload, verifies its sha512 integrity against `pnpm-lock.yaml`, and caches it in `node_modules/.cache/fusion-node-pty/`. A build fails if the PTY payload cannot be staged; `--allow-missing-native` is the explicit opt-out for intentionally producing a terminal-less binary.
 
 ## CLI Integration Test Lanes
 

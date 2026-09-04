@@ -2164,7 +2164,7 @@ describe("Board", () => {
       expect(board).toHaveClass("board", "board-workflow-columns");
     });
 
-    it("disables desktop mouse panning at the mobile viewport without changing touch ownership", () => {
+    it("keeps intent-gated desktop mouse panning active at the mobile viewport without changing touch ownership", () => {
       const harness = installMobileBoardStabilizationHarness();
       try {
         enableFlag({});
@@ -2180,7 +2180,7 @@ describe("Board", () => {
         fireEvent.pointerMove(emptyText, { clientX: 40, clientY: 50, pointerId: 2, pointerType: "touch" });
         fireEvent.pointerUp(emptyText, { pointerId: 2, pointerType: "touch" });
 
-        expect(board.scrollLeft).toBe(100);
+        expect(board.scrollLeft).toBe(160);
         expect(board).not.toHaveClass("is-mouse-panning");
       } finally {
         harness.restore();

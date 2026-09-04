@@ -57,7 +57,12 @@ function createStore(task: Task): TaskStore & RecordingStore {
   const store = Object.assign(emitter, {
     task,
     moveTaskCalls,
-    getSettings: vi.fn().mockResolvedValue({ autoMerge: false }),
+    /*
+    FNXC:MergePush 2026-08-30-09:14:
+    FN-263 makes remote workspace publication opt-in. This suite exercises the fenced remote path,
+    so its shared fixture must state that policy rather than silently taking the new local-only path.
+    */
+    getSettings: vi.fn().mockResolvedValue({ autoMerge: false, pushAfterMerge: true }),
     updateTask: vi.fn(async (_id: string, patch: Partial<Task>) => {
       Object.assign(store.task, patch);
       return undefined;
@@ -234,6 +239,7 @@ pgDescribeIfGit("workspace land dispatch finalization (PostgreSQL)", () => {
     fx.cleanup();
     fx = await createWorkspaceFixture(["repo-a", "repo-b"]);
     const store = h.store();
+    await store.updateSettings({ pushAfterMerge: true });
     const taskId = "FN-9059-PG-REPO-B";
     for (const repoRel of fx.repos) {
       const remote = path.join(fx.rootDir, `${repoRel}.git`);
@@ -318,6 +324,7 @@ pgDescribeIfGit("workspace land dispatch finalization (PostgreSQL)", () => {
   */
   it("fences a real repository lander after a successor reclaims its durable repo lease", async () => {
     const store = h.store();
+    await store.updateSettings({ pushAfterMerge: true });
     const taskId = "FN-078-PG-REPO-TAKEOVER";
     const repoRel = "repo-a";
     const repo = fx.repoPath(repoRel);
@@ -409,6 +416,7 @@ pgDescribeIfGit("workspace land dispatch finalization (PostgreSQL)", () => {
 
   it("leaves a real pushed land unfinalized when a successor reclaims the dispatch fence", async () => {
     const store = h.store();
+    await store.updateSettings({ pushAfterMerge: true });
     const taskId = "FN-9059-PG-DISPATCH";
     const repo = fx.repoPath("repo-a");
     const remote = path.join(fx.rootDir, "origin.git");

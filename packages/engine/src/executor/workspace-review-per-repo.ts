@@ -26,6 +26,7 @@ import { resolve, sep } from "node:path";
 import type { Settings, Task, WorkflowRepositoryReviewOutcome, WorkflowReviewFinding } from "@fusion/core";
 import type { ReviewResult } from "../execution/reviewer.js";
 import { captureWorkspaceReviewEvidence } from "../worktree/workspace-review-evidence.js";
+import { isFastForwardAdvance } from "../worktree/review-inline-fix-recapture.js";
 import { classifyWorkspaceZeroAcquire, type WorkspaceZeroAcquireOptions } from "./workspace-zero-acquire.js";
 import { captureModifiedFiles } from "./worktree-capture-modified-files.js";
 
@@ -276,6 +277,40 @@ export async function reviewWorkspacePerRepo(
       : reviewedResults.some(({ result }) => !isApprovalFamilyVerdict(result.verdict))
         ? "UNAVAILABLE"
         : "APPROVE";
+  /*
+  FNXC:PreMergeApproval 2026-09-01-06:53:
+  FN-9234 fixes the same pre-dispatch-capture defect for workspace review evidence. Each repository
+  may advance only when its own reviewer finished on a proven fast-forward; workspace re-entry already
+  owns stale evidence, so this producer never applies the singular reroute.
+  */
+  let publishedModifiedFiles = modifiedFiles;
+  if (isApprovalFamilyVerdict(aggregateVerdict) && evidence && options.workspaceRootDir) {
+    try {
+      const refreshed = await captureWorkspaceReviewEvidence({ task, workspaceRootDir: options.workspaceRootDir, settings: options.settings ?? {} });
+      if (refreshed.outOfScopeRepositories.size > 0) {
+        return { verdict: "UNAVAILABLE", retryable: false, review: "Workspace Code Review cannot approve changes outside confirmed scope after review.", summary: "Unavailable: changes outside confirmed scope after review", repositoryScopeRevision };
+      }
+      for (const updated of refreshed.repositories) {
+        const original = evidence.repositories.find((candidate) => candidate.repository === updated.repository);
+        const worktreePath = workspaceWorktrees[updated.repository]?.worktreePath;
+        const outcome = repositoryReviewOutcomes.find((candidate) => candidate.repository === updated.repository && candidate.status === "REVIEWED");
+        /*
+        FNXC:PreMergeApproval 2026-09-01-07:46:
+        Only a repository whose own reviewer ran may re-bind. A clean repository can become dirty
+        while another repository is being reviewed, but it has no lane that inspected that tree and
+        must remain missing at the merge gate.
+        */
+        if (!original || !worktreePath || !updated.fingerprint || !outcome || !repositoryScope.has(updated.repository)) continue;
+        if (await isFastForwardAdvance(worktreePath, original.branch, updated.branch)) {
+          repositoryDiffFingerprints[updated.repository] = updated.fingerprint;
+          outcome.fingerprint = updated.fingerprint;
+        }
+      }
+      publishedModifiedFiles = refreshed.modifiedFiles;
+    } catch {
+      // Keep pre-review evidence on unreadable post-review Git state so landing fails closed.
+    }
+  }
   const blockingRepositories = reviewedResults
     .filter(({ result }) => !isApprovalFamilyVerdict(result.verdict))
     .map(({ repository }) => repository);
@@ -291,7 +326,7 @@ export async function reviewWorkspacePerRepo(
     review: `All ${repoKeys.length} modified in-scope sub-repository review(s) were evaluated. Aggregate verdict: ${aggregateVerdict}. ${blockingRepositories.length > 0 ? `Blocking repositories: ${blockingRepositories.join(", ")}.` : "No blocking repositories."}${coverageNotice} Per-repository outcomes:\n\n${reviewSections.join("\n\n")}`,
     summary: `${aggregateVerdict} — ${blockingSummary} — ${summarySections.join(" | ")}`,
     repositoryDiffFingerprints,
-    repositoryModifiedFiles: modifiedFiles,
+    repositoryModifiedFiles: publishedModifiedFiles,
     repositoryReviewOutcomes,
     ...(findings.length > 0 ? { findings } : {}),
     repositoryScopeRevision: repositoryScopeRevision,

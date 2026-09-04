@@ -108,12 +108,12 @@ export interface ExecutorStats {
   inReviewCount: number;
   /** Derived executor state: "idle", "running", "paused", or "stopped" */
   executorState: ExecutorState;
-  /** Configured maximum concurrent tasks. */
+  /** Configured maximum AI-active tasks. */
   maxConcurrent: number;
-  /** Engine-enforced ceiling after the worktree limit is applied. */
-  effectiveMaxConcurrent: number;
-  /** Setting that currently binds the effective ceiling. */
-  concurrencyBindingKnob: "maxConcurrent" | "maxWorktrees";
+  /** Configured maximum execution-worktree holders. */
+  maxWorktrees: number;
+  /** Whether execution-worktree capacity is enforced. */
+  worktreeLimitEnabled: boolean;
   /** ISO timestamp of most recent task event from activity log */
   lastActivityAt?: string;
 }
@@ -712,8 +712,8 @@ export function fetchExecutorStats(projectId?: string): Promise<{
   globalPause: boolean;
   enginePaused: boolean;
   maxConcurrent: number;
-  effectiveMaxConcurrent: number;
-  concurrencyBindingKnob: "maxConcurrent" | "maxWorktrees";
+  maxWorktrees: number;
+  worktreeLimitEnabled: boolean;
   lastActivityAt?: string;
 }> {
   const path = withProjectId("/executor/stats", projectId);
@@ -721,8 +721,8 @@ export function fetchExecutorStats(projectId?: string): Promise<{
     globalPause: boolean;
     enginePaused: boolean;
     maxConcurrent: number;
-    effectiveMaxConcurrent: number;
-    concurrencyBindingKnob: "maxConcurrent" | "maxWorktrees";
+    maxWorktrees: number;
+    worktreeLimitEnabled: boolean;
     lastActivityAt?: string;
   }>(path));
 }

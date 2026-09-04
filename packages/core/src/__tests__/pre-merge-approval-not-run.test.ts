@@ -64,13 +64,14 @@ describe("pre-merge approval for not-run workflow gates", () => {
     expect(approvals([
       result("custom-plan-review", { reviewKind: "plan" }),
     ], ["custom-plan-review"])[0]?.state).toBe("not-approved");
+    // FN-286 removed status-only approval authority from legacy review-kind rows.
     expect(approvals([
       result("custom-plan-review", {
         status: "passed",
         notRunReason: undefined,
         reviewKind: "plan",
       }),
-    ], ["custom-plan-review"])[0]?.state).toBe("approved");
+    ], ["custom-plan-review"])[0]?.state).toBe("not-approved");
   });
 
   it("keeps an honestly not-run non-content gate mergeable", () => {

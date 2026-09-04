@@ -54,6 +54,13 @@ describe("settings defaults invariants", () => {
     expect(Object.hasOwn(DEFAULT_GLOBAL_SETTINGS, "autoReloadOnVersionChange")).toBe(false);
   });
 
+  it("keeps global chat snippets schema-present but unset to avoid a shared mutable array", () => {
+    expect(DEFAULT_GLOBAL_SETTINGS.chatSnippets).toBeUndefined();
+    expect(Object.hasOwn(DEFAULT_GLOBAL_SETTINGS, "chatSnippets")).toBe(true);
+    expect(GLOBAL_SETTINGS_KEYS).toContain("chatSnippets");
+    expect(PROJECT_SETTINGS_KEYS).not.toContain("chatSnippets");
+  });
+
   it("defaults dashboard keyboard shortcuts globally", () => {
     expect(DEFAULT_GLOBAL_SETTINGS.dashboardKeyboardShortcuts).toEqual({
       quickChat: "Space",

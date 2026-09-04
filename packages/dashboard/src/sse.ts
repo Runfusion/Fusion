@@ -251,6 +251,25 @@ function sumTimedLogEntries(log: unknown): number {
   return total;
 }
 
+/*
+FNXC:TaskEventProjectScope 2026-09-01-06:16:
+Task rows intentionally have no dashboard project field, so task lifecycle frames must inherit the
+scope of their stream. Stamping both envelopes and nested tasks lets clients reject foreign same-ID
+updates without changing the core Task domain contract.
+*/
+export function withTaskEventProjectId<T>(payload: T, projectId: string | undefined): T {
+  if (!projectId || !payload || typeof payload !== "object" || Array.isArray(payload)) return payload;
+  const envelope = payload as Record<string, unknown>;
+  const nestedTask = envelope.task;
+  return {
+    ...envelope,
+    projectId,
+    ...(nestedTask && typeof nestedTask === "object" && !Array.isArray(nestedTask)
+      ? { task: { ...(nestedTask as Record<string, unknown>), projectId } }
+      : {}),
+  } as T;
+}
+
 export function stripTaskEventHeavyFields<T>(payload: T): T {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     return payload;
@@ -734,14 +753,27 @@ export function createSSE(
     const agentActivityPoll = setInterval(onAgentActivityNudge, resolveAgentActivityPollMs());
     agentActivityPoll.unref?.();
     // --- Event handler definitions ---
+    const taskEventProjectId = projectId ?? store.getProjectId?.() ?? undefined;
+    let warnedMismatchedTaskEventStore = false;
+    const sendTaskEvent = (event: string, payload: unknown, strip: (value: unknown) => unknown) => {
+      const emittingProjectId = store.getProjectId?.() ?? undefined;
+      if (projectId && emittingProjectId && emittingProjectId !== projectId) {
+        if (!warnedMismatchedTaskEventStore) {
+          warnedMismatchedTaskEventStore = true;
+          sseLog.warn(`connection ${connectionId} dropped task event from mismatched project store`);
+        }
+        return;
+      }
+      send(`event: ${event}\ndata: ${JSON.stringify(withTaskEventProjectId(strip(payload), taskEventProjectId))}\n\n`);
+    };
     const onCreated = (task: unknown) => {
-      send(`event: task:created\ndata: ${JSON.stringify(stripTaskListHeavyFields(task))}\n\n`);
+      sendTaskEvent("task:created", task, stripTaskListHeavyFields);
     };
     const onMoved = (data: unknown) => {
-      send(`event: task:moved\ndata: ${JSON.stringify(stripTaskEventHeavyFields(data))}\n\n`);
+      sendTaskEvent("task:moved", data, stripTaskEventHeavyFields);
     };
     const onUpdated = (task: unknown) => {
-      send(`event: task:updated\ndata: ${JSON.stringify(stripTaskListHeavyFields(task))}\n\n`);
+      sendTaskEvent("task:updated", task, stripTaskListHeavyFields);
     };
     const onTaskAssigned = (agent: unknown, taskId: string) => {
       const payload = {
@@ -755,10 +787,10 @@ export function createSSE(
       send(`event: task:assigned\ndata: ${JSON.stringify(payload)}\n\n`);
     };
     const onDeleted = (task: unknown) => {
-      send(`event: task:deleted\ndata: ${JSON.stringify(stripTaskListHeavyFields(task))}\n\n`);
+      sendTaskEvent("task:deleted", task, stripTaskListHeavyFields);
     };
     const onMerged = (result: unknown) => {
-      send(`event: task:merged\ndata: ${JSON.stringify(stripTaskEventHeavyFields(result))}\n\n`);
+      sendTaskEvent("task:merged", result, stripTaskEventHeavyFields);
     };
     const onAgentLog = (entry: AgentLogEntry) => {
       const payload = {
@@ -767,7 +799,7 @@ export function createSSE(
         type: entry.type,
         agent: entry.agent,
       };
-      send(`event: agent:log\ndata: ${JSON.stringify(payload)}\n\n`);
+      sendTaskEvent("agent:log", payload, (value) => value);
     };
     const onWorkflowSettingValuesUpdated = (data: {
       workflowId: string;

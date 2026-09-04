@@ -327,7 +327,6 @@ export async function updateWorkflowDefinitionImpl(store: TaskStore, id: string,
         projectScopeFor(schema.project.workflows.projectId, layer.projectId),
       ));
     
-      store.workflowDefinitionsCache = null;
       return next;
     });
 
@@ -396,7 +395,6 @@ export async function deleteWorkflowDefinitionImpl(store: TaskStore, id: string)
       projectScopeFor(schema.project.workflows.projectId, layer.projectId),
     )).returning();
     if (deleted.length === 0) throw new Error(`Workflow '${id}' not found`);
-    store.workflowDefinitionsCache = null;
     await layer.db.delete(schema.project.workflowSettings).where(and(
       eq(schema.project.workflowSettings.workflowId, id),
       projectScopeFor(schema.project.workflowSettings.projectId, layer.projectId),

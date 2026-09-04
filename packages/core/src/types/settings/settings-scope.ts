@@ -306,6 +306,11 @@ export interface VoiceInputSettings {
   language?: string;
 }
 
+export interface ChatSnippet {
+  name: string;
+  prompt: string;
+}
+
 export interface GlobalSettings {
   /**
    * FNXC:Identity 2026-08-09-03:04:
@@ -365,6 +370,11 @@ export interface GlobalSettings {
    * This global-only operator keyboard preference defaults to true to preserve Enter-submits behavior. When disabled, Enter inserts a newline and Cmd/Ctrl+Enter submits; shared projects must never change an operator's keyboard behavior.
    */
   quickAddSubmitOnEnter?: boolean;
+  /**
+   * FNXC:ChatSnippets 2026-09-03-15:56:
+   * Reusable dashboard-chat prompts are a global operator preference because direct and task chats span projects. They use the existing global settings transport and need neither project persistence nor a dedicated route.
+   */
+  chatSnippets?: ChatSnippet[];
   /** Active UI locale (e.g. `"en"`, `"zh-CN"`, `"fr"`). One of `SUPPORTED_LOCALES`.
    *  When unset, each surface resolves the locale at runtime (browser/env
    *  detection) and falls back to `DEFAULT_LOCALE` ("en"). */
@@ -1201,8 +1211,9 @@ export interface ProjectSettings {
    * positive integers set a custom cap; 0 disables the shared clamp; invalid values
    * fall back to the finite default. */
   agentToolOutputMaxChars?: number | null;
-  /** Maximum number of concurrent AI agents across all activity types
-   *  (triage specification, task execution, and merge operations). */
+  /** Maximum number of concurrent AI-active tasks across planning, execution,
+   *  review, and merge. This provider/LLM-load limit is independent of the
+   *  execution-worktree limit. */
   maxConcurrent: number;
   /**
    * FNXC:ExecutorToolFailureRetry 2026-08-06-14:56:
@@ -1237,15 +1248,14 @@ export interface ProjectSettings {
    * Max concurrent verification subprocesses (fn_run_verification / merge testCommand builds) across all tasks in this process. Caps stacked monorepo typecheck/build pegging CPU when many tasks are in-progress. Default 1. Raise only on high-core hosts.
    */
   maxConcurrentVerifications?: number;
+  /** Maximum number of live tasks that hold, or are entering, an execution
+   *  checkout. This host CPU/RAM/disk limit does not include checkout-free planning. */
   maxWorktrees: number;
   /**
-   * FNXC:CapacityModel 2026-07-28-22:15 (PR #2502 review):
-   * Whether Max Worktrees GATES DISPATCH for this project. Default true.
-   *
-   * Renamed from `worktreesEnabled`, which two reviewers read as "run tasks
-   * without worktrees" — it never meant that. Tasks always execute in their own
-   * git worktree; this only decides whether the worktree COUNT is a second limit
-   * alongside the agent count.
+   * FNXC:CapacityModel 2026-09-01-14:49:
+   * Whether Max Worktrees gates execution-checkout admission for this project.
+   * Default true. This is independent of the agent/provider limit: planning runs
+   * read-only on the project root and does not consume a worktree slot.
    *
    * When false the operator asked to "limit via total agents only": `maxWorktrees`
    * stops gating dispatch entirely — not raised, not skipped by convention, but
@@ -1254,12 +1264,8 @@ export interface ProjectSettings {
    * "maxWorktrees"). See `resolveWorktreeCapacityLimit` in workflow-capacity.ts
    * for why this is a boolean rather than `maxWorktrees: 0`.
    *
-   * SCOPE: this is a statement about COUNTING, not about isolation or execution.
-   * Both scheduler dispatch paths still allocate a worktree per task with this
-   * off, and planning still runs in the task's own worktree. It does not make
-   * concurrent agents safe to share one checkout — the non-worktree paths that
-   * exist today are fallbacks to the operator's own tree, one of which caused
-   * FN-8600. Turning this off does not grant shared-checkout concurrency.
+   * SCOPE: this is a statement about COUNTING, not execution isolation. Write-capable
+   * task execution still uses a private checkout even when this limit is disabled.
    */
   worktreeLimitEnabled?: boolean;
   pollIntervalMs: number;
@@ -1502,7 +1508,9 @@ export interface ProjectSettings {
    *  override only specified fields and inherit the rest. */
   worktrunk?: WorktrunkSettings;
   /** Optional container directory for task worktrees.
-   *  When unset, worktrees default to `<projectRoot>/.worktrees`.
+   *  When unset, worktrees default to `<projectRoot>/.fusion/worktrees`.
+   *  While unset, a pre-existing `<projectRoot>/.worktrees` root remains honored
+   *  for containment and cleanup sweeps so historic checkouts are not stranded.
    *  Supports leading `~` expansion and the `{repo}` token (basename of the project root).
    *  Accepts absolute paths or paths relative to the project root.
    *  Affects newly-created worktrees and pool/self-healing directory scans only;
@@ -2593,6 +2601,13 @@ export {
   resolvePersistAgentThinkingLog,
   sanitizeCliAgentSettings,
   sanitizeCliAgentsSettings,
+  normalizeChatSnippetName,
+  normalizeChatSnippets,
+  readChatSnippets,
+  CHAT_SNIPPET_RESERVED_NAMES,
+  CHAT_SNIPPET_MAX_ENTRIES,
+  CHAT_SNIPPET_MAX_NAME_LENGTH,
+  CHAT_SNIPPET_MAX_PROMPT_LENGTH,
   sanitizeMcpServers,
   CLI_AGENT_ADAPTER_IDS,
   CLI_AGENT_AUTONOMY_MODES,

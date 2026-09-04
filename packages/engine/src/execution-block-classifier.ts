@@ -48,6 +48,15 @@ export function classifyExternalObstacle(message: string): ExternalObstacleClass
   const normalized = message.trim();
   if (!normalized) return undefined;
 
+  /*
+  FNXC:ExternalBlock 2026-09-04-01:46:
+  A lifecycle refusal is an internal engine or spec defect, never an operator-recoverable
+  credentials state. Misclassifying it as credentials/CREDENTIALS froze cards and sent operators to auth.
+  */
+  if (/Forbidden lifecycle path|rejected by the task lifecycle projection|TransitionRejectionError/i.test(normalized)) {
+    return undefined;
+  }
+
   for (const code of HOST_EXTERNAL_CODES) {
     if (new RegExp(`\\b${code}\\b`, "i").test(normalized)) return { origin: "host-environment", code };
   }

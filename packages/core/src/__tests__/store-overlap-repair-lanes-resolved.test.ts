@@ -73,7 +73,7 @@ function card(id: string, column: string, extra: Record<string, unknown> = {}): 
   } as unknown as Task;
 }
 
-function harness(tasks: Task[], ir: unknown, subject: Task) {
+function harness(tasks: Task[], ir: unknown, subject: Task, scopes: Record<string, string[]> = {}) {
   const selection = { workflowId: "wf-renamed", stepIds: [] as string[] };
   let irReads = 0;
   const updates: Array<Record<string, unknown>> = [];
@@ -81,7 +81,7 @@ function harness(tasks: Task[], ir: unknown, subject: Task) {
     getTask: vi.fn(async (id: string) => tasks.find((t) => t.id === id) ?? subject),
     listTasks: vi.fn(async () => tasks),
     getSettings: vi.fn(async () => ({ overlapIgnorePaths: [] })),
-    parseFileScopeFromPrompt: vi.fn(async () => ["src/shared.ts"]),
+    parseFileScopeFromPrompt: vi.fn(async (taskId: string) => scopes[taskId] ?? ["src/shared.ts"]),
     updateTaskAtomic: vi.fn(async (_id: string, mutate: (t: Task) => unknown) => {
       const patch = mutate(subject);
       if (patch) updates.push(patch as Record<string, unknown>);
@@ -180,6 +180,52 @@ describe("repairOverlapBlocker resolves the board's own lanes", () => {
     const result = await run();
 
     expect(result.reason).toBe("scopes-still-overlap");
+  });
+
+  it("retains a workspace review blocker while any repository checkout exists", async () => {
+    const subject = card("FN-1", "backlog", { overlapBlockedBy: "FN-2" });
+    const { run } = harness(
+      [
+        subject,
+        card("FN-2", "signoff", {
+          status: "failed",
+          workspaceWorktrees: { "repo-a": { worktreePath: "/wt/fn-2/repo-a" } },
+        }),
+      ],
+      RENAMED_IR,
+      subject,
+    );
+
+    await expect(run()).resolves.toMatchObject({ reason: "scopes-still-overlap" });
+  });
+
+  it("matches a workspace blocker's unprefixed scope against the candidate's qualified repository path", async () => {
+    const subject = card("FN-1", "backlog", { overlapBlockedBy: "FN-2" });
+    const { run } = harness(
+      [
+        subject,
+        card("FN-2", "signoff", {
+          status: "failed",
+          workspaceWorktrees: { "repo-a": { worktreePath: "/wt/fn-2/repo-a" } },
+        }),
+      ],
+      RENAMED_IR,
+      subject,
+      { "FN-1": ["repo-a/src/shared.ts"], "FN-2": ["src/shared.ts"] },
+    );
+
+    await expect(run()).resolves.toMatchObject({ reason: "scopes-still-overlap" });
+  });
+
+  it("clears a workspace review blocker after its repository checkouts are removed", async () => {
+    const subject = card("FN-1", "backlog", { overlapBlockedBy: "FN-2" });
+    const { run } = harness(
+      [subject, card("FN-2", "signoff", { status: "failed", workspaceWorktrees: {} })],
+      RENAMED_IR,
+      subject,
+    );
+
+    await expect(run()).resolves.toMatchObject({ repaired: true, reason: "repaired" });
   });
 
   it("repairs a terminal blocker and a review blocker whose worktree is gone", async () => {

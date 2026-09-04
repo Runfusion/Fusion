@@ -28,6 +28,8 @@ import {
   resolveExecutorFallbackModel,
   resolvePersistAgentThinkingLog,
   resolveReviewBlockingSeverity,
+  resolveWorkflowStepVerdictRequirement,
+  requiresContentReviewProof,
   resolveValidatorFallbackModel,
   resolveTaskOutputLanguage,
   startPlanningSegment,
@@ -92,8 +94,11 @@ import { createSeenSteeringIds } from "./task-predicates.js";
 import {
   parseWorkflowStepNotesRepair,
   parseWorkflowStepOutput,
+  parseWorkflowStepVerdictRepair,
+  workflowStepMissingVerdictNotice,
   workflowStepVerdictNoNotesNotice,
   WORKFLOW_STEP_NOTES_REPAIR_PROMPT,
+  WORKFLOW_STEP_VERDICT_REPAIR_PROMPT,
   type WorkflowStepOutcome,
   type WorkflowStepVerdictNoNotesReason,
 } from "./workflow-step-verdict.js";
@@ -103,7 +108,13 @@ import {
   computeReviewDiffFingerprint,
   EMPTY_REVIEW_DIFF_FINGERPRINT,
   probeReviewChangesSinceCommit,
+  resolveContentReviewInputProof,
 } from "../worktree/review-diff-fingerprint.js";
+import {
+  classifyReviewInlineFixRecapture,
+  isFastForwardAdvance,
+  readHeadSha,
+} from "../worktree/review-inline-fix-recapture.js";
 // FNXC:PlanReviewConvergence 2026-08-15-22:15: FN-8768 convergence primer + revision-key classifier (restored post-wave-18).
 import { buildGraphPlanReviewConvergenceContext, buildReviewConvergenceContext, optionalStepRevisionKey } from "./optional-step-revision.js";
 // FNXC:CommandCenterActivity 2026-08-15-22:15: FN-8868 usage telemetry + session boundaries (restored post-wave-18).
@@ -112,8 +123,10 @@ import { attachAgentUsageTelemetry, emitAgentSessionStart } from "../agents/agen
 const execAsync = promisify(exec);
 
 export const WORKFLOW_STEP_NOTES_REPAIR_TIMEOUT_MS = 120_000;
+export const WORKFLOW_STEP_VERDICT_REPAIR_TIMEOUT_MS = 120_000;
 
 type WorkflowStepNotesRepairOutcome = "repaired" | Exclude<WorkflowStepVerdictNoNotesReason, "reused-empty">;
+type WorkflowStepVerdictRepairOutcome = "repaired" | "empty" | "timed-out" | "failed-soft" | "unavailable";
 
 /** Find the current reusable review result for one node, scope generation, and exact input fingerprint. */
 export function findReusableReviewResult(
@@ -227,6 +240,8 @@ export async function executeWorkflowStep(
     outputLanguage?: ResolvedTaskOutputLanguage;
     sessionBoundary?: SessionBoundaryDescriptor;
     diffBaseCommitSha?: string;
+    /** Node-captured proof for singular content-binding reviews; prevents a second Git probe. */
+    reviewInputFingerprint?: string;
     /** Identifies the repository inspected by a per-repository workspace dispatch. */
     dispatchLabel?: string;
   },
@@ -250,6 +265,8 @@ export async function executeWorkflowStep(
       requireExternalIntegrationEvidence?: boolean;
     };
     const optionalGroupId = workflowStepMetadata.optionalGroupId;
+    const effectiveWorkflowStepId = optionalGroupId ?? workflowStep.id.replace(/^graph:/, "");
+    const isContentBindingStep = requiresContentReviewProof(effectiveWorkflowStepId, workflowStepMetadata);
     /*
     FNXC:PlanReviewConvergence 2026-08-04-06:35 (FN-8768; restored 2026-08-15-22:15 after the wave-18
     executor.ts shell-ification dropped it): a RENAMED inner step of the canonical Plan Review optional
@@ -266,18 +283,31 @@ export async function executeWorkflowStep(
       || optionalGroupId === "plan-review"
       || optionalGroupId === "code-review"
       || optionalGroupId === "browser-verification";
-    const reviewerInlineFixesEnabled = (settings as Settings & { reviewerInlineFixes?: boolean }).reviewerInlineFixes !== false;
+    /*
+     * FNXC:WorkflowReviewers 2026-09-03-05:40:
+     * Graph execution supplies the raw project settings map, but `reviewerInlineFixes` is workflow-owned and absent from `DEFAULT_PROJECT_SETTINGS`. Resolve the review step's effective workflow settings once so both its declaration default and an operator's stored value reach the tool-policy decision; reading the raw map made both unreachable. The two-tier merge still lets an explicit base value win over a declaration default.
+     */
+    const effectiveReviewSettings = isReviewTypeWorkflowStep
+      ? await mergeEffectiveSettings(deps.store, task, settings).catch(() => settings)
+      : settings;
+    const reviewerInlineFixesEnabled = (effectiveReviewSettings as Settings & { reviewerInlineFixes?: boolean }).reviewerInlineFixes === true;
     const allowReviewerInlineFixes = reviewerInlineFixesEnabled && isReviewTypeWorkflowStep && workflowStep.mode === "prompt";
     const allowPlanReviewPromptWrite = allowReviewerInlineFixes && isPlanReviewStep;
     if (allowReviewerInlineFixes && !isPlanReviewStep) {
-      /*
-       * FNXC:WorkflowReviewers 2026-07-01-12:36:
-       * Review-type workflow nodes can now repair their own findings when the workflow setting `reviewerInlineFixes` is on. Use coding tools for implementation review sessions so Code Review, Browser Verification, and custom review/verification gates do not have to bounce through executor remediation for issues they can safely fix inline. Plan Review stays on a narrow PROMPT.md writer because it runs before implementation.
-       */
       toolMode = "coding";
     }
     const requireExternalIntegrationEvidence =
       workflowStepMetadata.requireExternalIntegrationEvidence === true;
+    const readonlyMcpServerAllowlist = toolMode === "readonly"
+      ? [...new Set((workflowStepMetadata.readonlyMcpServers ?? []).map((name) => name.trim()).filter(Boolean))]
+      : [];
+    /*
+     * FNXC:McpConfig 2026-09-01-06:06:
+     * A read-only step may use MCP from explicitly named servers without coding-mode promotion,
+     * which would expose the adjacent accepted write-capability gap. Coding steps pass no readonly
+     * MCP policy because their ordinary MCP behavior is deliberately unchanged.
+     */
+    const allowReadonlyMcpTools = toolMode === "readonly" && readonlyMcpServerAllowlist.length > 0;
 
     /*
      * FNXC:WorkflowReviewSpecInjection 2026-07-18-18:15:
@@ -301,7 +331,7 @@ export async function executeWorkflowStep(
     const workflowReviewSpecText = typeof workflowReviewSpecArtifact === "string" ? workflowReviewSpecArtifact : "";
     const planReviewSpecText = isPlanReviewStep ? workflowReviewSpecText : "";
     const latestTaskForUserComments = await deps.store.getTask(task.id).catch(() => task);
-    const sameGateStepId = workflowStep.id.replace(/^graph:/, "");
+    const sameGateStepId = effectiveWorkflowStepId;
     /*
     FNXC:ReviewConvergence 2026-08-28-10:57:
     Plan Review must assemble convergence from a fresh task snapshot because disputes recorded during
@@ -377,22 +407,49 @@ export async function executeWorkflowStep(
     let diffShortstat: string | undefined;
     let reviewInputFingerprint: string | undefined;
     let reviewedCommitSha: string | undefined;
+    let baseRef: string | undefined;
     try {
-      const baseRef = await resolveDiffBaseRef(worktreePath, diffBaseCommitSha);
-      if (baseRef) {
-        const { stdout } = await execAsync(`git diff --shortstat ${baseRef}..HEAD`, {
-          cwd: worktreePath,
-          encoding: "utf-8",
-        });
-        diffShortstat = stdout.trim() || undefined;
+      baseRef = await resolveDiffBaseRef(worktreePath, diffBaseCommitSha);
+    } catch {
+      // The content-proof resolver below reports the fail-closed diagnostic when this step binds content.
+    }
+    if (isContentBindingStep && task.workspaceWorktrees === undefined) {
+      const suppliedFingerprint = stepOptions?.reviewInputFingerprint?.trim();
+      const proof = suppliedFingerprint
+        ? { kind: "fingerprint" as const, fingerprint: suppliedFingerprint }
+        : await resolveContentReviewInputProof(worktreePath, diffBaseCommitSha);
+      if (proof.kind === "unprovable") {
+        const diagnostic = `${workflowStep.name} review input is unprovable (${proof.reason}); reviewer dispatch refused.`;
+        await deps.store.logEntry(
+          task.id,
+          `[pre-merge] ${diagnostic}`,
+          undefined,
+          deps.getRunContextFor(task.id),
+        );
+        return { success: false, error: diagnostic, failureValue: "review-input-unprovable" };
+      }
+      reviewInputFingerprint = proof.fingerprint;
+    } else if (baseRef) {
+      try {
         if (workflowStepMetadata.reviewKind === "code") {
           reviewInputFingerprint = await computeCodeReviewInputFingerprint(worktreePath, baseRef);
         } else if (isReviewTypeWorkflowStep) {
           reviewInputFingerprint = await computeReviewDiffFingerprint(worktreePath, baseRef);
         }
+      } catch {
+        // Non-content review fingerprints remain best-effort; content-binding singular steps fail above.
       }
-    } catch {
-      // best-effort — fall through with no shortstat
+    }
+    if (baseRef) {
+      try {
+        const { stdout } = await execAsync(`git diff --shortstat ${baseRef}..HEAD`, {
+          cwd: worktreePath,
+          encoding: "utf-8",
+        });
+        diffShortstat = stdout.trim() || undefined;
+      } catch {
+        // Shortstat is prompt context only and must never suppress an already-captured proof.
+      }
     }
     if (isReviewTypeWorkflowStep) {
       try {
@@ -478,18 +535,15 @@ CRITICAL SCOPING RULES — read before doing anything else:
      * Prompt/custom workflow-step reviewers, including Browser Verification agents, do not call reviewStep. They still gate quality, so their system prompt must carry the same canonical uncapped user comments plus legacy steering selected from a fresh task snapshot.
      */
 
-    // (KTD-6) Verdict-contract reconciliation. The trailing-verdict JSON is the
-    // gate-parsing contract — it only matters for steps that gate merge. A skill
-    // step that isn't a gate (e.g. ce-plan / ce-work / ce-compound) produces
-    // skill-native output (and may emit a ===FUSION_AWAIT_INPUT=== sentinel and
-    // stop), so forcing a verdict would contradict the U2 preamble. Require the
-    // verdict only for gate steps (and skill-less prompt steps, which keep the
-    // legacy reviewer contract); relax it for non-gate skill steps. The executor
-    // runs parseAwaitInputSentinel on output regardless, so the await-input
-    // sentinel always takes priority when present.
-    const isSkillStep = typeof workflowStep.skillName === "string" && workflowStep.skillName.trim().length > 0;
-    const isSummaryProjectionStep = (workflowStep as WorkflowStep & { summaryTarget?: string }).summaryTarget === "task";
-    const requireVerdict = !isSummaryProjectionStep && (workflowStep.gateMode === "gate" || !isSkillStep);
+    // (KTD-6) Verdict-contract reconciliation. Skill-native plan/work steps keep
+    // their own output contract, while prompt steps whose durable optional-group
+    // result reaches merge admission must author a structured verdict.
+    const requireVerdict = resolveWorkflowStepVerdictRequirement({
+      gateMode: workflowStep.gateMode,
+      skillName: workflowStep.skillName,
+      summaryTarget: (workflowStep as WorkflowStep & { summaryTarget?: string }).summaryTarget,
+      optionalGroupId,
+    });
     const reviewFindingsContract = workflowStepMetadata.reviewKind === "plan" || workflowStepMetadata.reviewKind === "code";
     /*
      * FNXC:ReviewSeverityGate 2026-08-10-17:33:
@@ -507,8 +561,7 @@ CRITICAL SCOPING RULES — read before doing anything else:
     const reviewBlockingSeverity = reviewFindingsContract
       ? resolveReviewBlockingSeverity({
         reviewKind: workflowStepMetadata.reviewKind as WorkflowReviewKind,
-        workflowSettings: await mergeEffectiveSettings(deps.store, task, settings)
-          .catch(() => settings) as unknown as Record<string, unknown>,
+        workflowSettings: effectiveReviewSettings as unknown as Record<string, unknown>,
         nodeBlockingSeverity: (workflowStep as WorkflowStep & { blockingSeverity?: unknown }).blockingSeverity,
       })
       : undefined;
@@ -978,6 +1031,12 @@ CRITICAL SCOPING RULES — read before doing anything else:
       const workflowStepFallbackThinkingLevel = isReviewTypeWorkflowStep
         ? resolveValidatorFallbackThinkingLevel(workflowStepThinkingSource, settings)
         : resolveExecutorFallbackThinkingLevel(workflowStepThinkingSource, settings);
+      if (allowReadonlyMcpTools) {
+        await deps.store.logEntry(
+          task.id,
+          `Workflow step '${workflowStep.name}' enabled read-only MCP servers: ${readonlyMcpServerAllowlist.join(", ")}`,
+        );
+      }
       const { session } = await createResolvedAgentSession({
         sessionPurpose: "executor",
         taskExecutionSession: true,
@@ -1000,6 +1059,12 @@ CRITICAL SCOPING RULES — read before doing anything else:
         settings,
         taskEnv: stepEnv,
         mcpServers: await deps.resolveMcpServers(undefined),
+        ...(allowReadonlyMcpTools
+          ? {
+              allowMcpToolsInReadonly: true,
+              readonlyMcpServerAllowlist,
+            }
+          : {}),
         // FNXC:SessionRouting 2026-06-24-11:20:
         // #1675: propagate task id so workflow-step requests carry the same
         // X-Session-Id/X-Session-Affinity as the primary session.
@@ -1143,7 +1208,12 @@ CRITICAL SCOPING RULES — read before doing anything else:
           await accumulateSessionTokenUsage(deps.store, task.id, session, { agentId: task.assignedAgentId ?? undefined, role: "executor" });
           try { session.dispose(); } catch { /* best-effort */ }
           await agentLogger.flush();
-          return { success: false, error: `workflow step timed out after ${timeoutMs}ms`, timedOut: true };
+          return {
+            success: false,
+            error: `workflow step timed out after ${timeoutMs}ms`,
+            timedOut: true,
+            ...(requireVerdict ? { verdictRequired: true } : {}),
+          };
         }
 
         // Completed within the timeout — let any post-completion errors surface.
@@ -1156,6 +1226,79 @@ CRITICAL SCOPING RULES — read before doing anything else:
         let parsed = requireVerdict
           ? parseWorkflowStepOutput(output, { optionalGroupId })
           : parseWorkflowStepOutput(output, { requireVerdict: false, optionalGroupId });
+
+        /*
+        FNXC:ReviewVerdictAuthority 2026-09-03-05:40:
+        A verdict-required review cannot finish without authored lifecycle authority. Ask the already-live
+        reviewer exactly once for the verdict envelope only, before token accounting and disposal; never
+        re-review, use tools, infer approval from prose, or loop. A missing, invalid, failed, or timed-out
+        repair remains malformed and is persisted as a failed review by the graph.
+        */
+        let verdictRepairResult: WorkflowStepVerdictRepairOutcome = "unavailable";
+        let repairedVerdict: ReturnType<typeof parseWorkflowStepVerdictRepair> = null;
+        if (requireVerdict && parsed.malformed) {
+          const repairStart = output.length;
+          const originalReviewOutput = output;
+          const repairTimeoutMs = Math.min(timeoutMs, WORKFLOW_STEP_VERDICT_REPAIR_TIMEOUT_MS);
+          let repairTimer: ReturnType<typeof setTimeout> | undefined;
+          try {
+            const repairTimeout = new Promise<"timeout">((resolve) => {
+              repairTimer = setTimeout(() => resolve("timeout"), repairTimeoutMs);
+            });
+            const repairPrompt = promptWithFallback(session, WORKFLOW_STEP_VERDICT_REPAIR_PROMPT(optionalGroupId));
+            const repairOutcome = await Promise.race([
+              repairPrompt.then(() => "completed" as const),
+              repairTimeout,
+            ]);
+            if (repairOutcome === "completed") {
+              repairedVerdict = parseWorkflowStepVerdictRepair(output.slice(repairStart), { optionalGroupId });
+              if (repairedVerdict) {
+                const repairedNotes = repairedVerdict === "CLOSE_NO_OP"
+                  ? undefined
+                  : parseWorkflowStepOutput(
+                    `${originalReviewOutput}\n${JSON.stringify({ verdict: repairedVerdict })}`,
+                    { optionalGroupId },
+                  );
+                parsed = repairedVerdict === "CLOSE_NO_OP"
+                  ? { output: "", verdict: repairedVerdict, notes: "" }
+                  : repairedNotes!;
+                verdictRepairResult = "repaired";
+              } else {
+                verdictRepairResult = "empty";
+              }
+            } else {
+              verdictRepairResult = "timed-out";
+            }
+          } catch {
+            verdictRepairResult = "failed-soft";
+          } finally {
+            if (repairTimer) clearTimeout(repairTimer);
+            try {
+              await deps.store.logEntry(
+                task.id,
+                `[pre-merge] Workflow step '${workflowStep.name}' requested a missing verdict`,
+                verdictRepairResult,
+              );
+            } catch {
+              // FNXC:ReviewVerdictAuthority 2026-09-03-05:40: Best-effort verdict-repair telemetry cannot fail the review step.
+            }
+            const context = deps.getRunContextFor(task.id);
+            if (context && verdictRepairResult !== "unavailable") await emitBoundedRunAudit(deps.store, {
+              taskId: task.id,
+              agentId: context.agentId,
+              runId: context.runId,
+              domain: "database",
+              mutationType: "task:review-verdict-repaired",
+              target: task.id,
+              metadata: {
+                taskId: task.id,
+                workflowStepId: sameGateStepId,
+                outcome: verdictRepairResult,
+                ...(repairedVerdict ? { verdict: repairedVerdict } : {}),
+              },
+            });
+          }
+        }
 
         /*
         FNXC:ReviewVerdictNotes 2026-08-28-21:23:
@@ -1257,6 +1400,73 @@ CRITICAL SCOPING RULES — read before doing anything else:
             });
           }
           const revisionRequested = effectiveVerdict === "REVISE";
+
+          /*
+          FNXC:PreMergeApproval 2026-09-01-06:53:
+          FN-9234 removes the inline-fix wedge where this lane approved the pre-fix diff while the
+          merge gate probes base..HEAD. Only this reviewing lane may re-bind after a proven
+          fast-forward because no other lane inspected its new content. REVISE retains the original
+          input identity because convergence compares the input each remediation round received.
+          */
+          if (isReviewTypeWorkflowStep && !isPlanReviewStep && !revisionRequested) {
+            const priorReviewedCommitSha = reviewedCommitSha;
+            const currentHeadSha = await readHeadSha(worktreePath);
+            const fastForwardAdvance = await isFastForwardAdvance(worktreePath, priorReviewedCommitSha, currentHeadSha);
+            const baseIsAncestor = await isFastForwardAdvance(worktreePath, baseRef, currentHeadSha);
+            const decision = classifyReviewInlineFixRecapture({
+              verdict: effectiveVerdict,
+              reviewKind: workflowStepMetadata.reviewKind,
+              reviewedCommitSha: priorReviewedCommitSha,
+              currentHeadSha,
+              baseRef,
+              fastForwardAdvance,
+              baseIsAncestor,
+              fingerprintProbeAvailable: true,
+            });
+            if (decision.recapture) {
+              // A post-review fingerprint is evidence only: an unreadable probe must preserve the
+              // already-recorded approval identity rather than converting a completed review to failure.
+              try {
+                const recapturedFingerprint = workflowStepMetadata.reviewKind === "code"
+                  ? await computeCodeReviewInputFingerprint(worktreePath, baseRef)
+                  : await computeReviewDiffFingerprint(worktreePath, baseRef);
+                const finalDecision = classifyReviewInlineFixRecapture({
+                  verdict: effectiveVerdict,
+                  reviewKind: workflowStepMetadata.reviewKind,
+                  reviewedCommitSha: priorReviewedCommitSha,
+                  currentHeadSha,
+                  baseRef,
+                  fastForwardAdvance,
+                  baseIsAncestor,
+                  fingerprintProbeAvailable: recapturedFingerprint !== undefined,
+                });
+                if (finalDecision.recapture && currentHeadSha) {
+                  reviewInputFingerprint = recapturedFingerprint;
+                  reviewedCommitSha = currentHeadSha;
+                  const resolvedInReviewFindingCount = parsed.findings?.filter((finding) => finding.resolution === "resolved-in-review").length ?? 0;
+                  await deps.store.logEntry(task.id, `[pre-merge] ${workflowStep.name} re-captured its own review identity after fast-forward ${priorReviewedCommitSha?.slice(0, 7)} → ${currentHeadSha.slice(0, 7)} (${finalDecision.reason})`);
+                  const runContext = deps.getRunContextFor(task.id);
+                  if (runContext) await emitBoundedRunAudit(deps.store, {
+                    taskId: task.id,
+                    agentId: runContext.agentId,
+                    runId: runContext.runId,
+                    domain: "git",
+                    mutationType: "task:review-input-recaptured",
+                    target: task.id,
+                    metadata: {
+                      taskId: task.id,
+                      workflowStepId: workflowStep.id,
+                      verdict: effectiveVerdict,
+                      resolvedInReviewFindingCount,
+                      reason: finalDecision.reason,
+                    },
+                  });
+                }
+              } catch {
+                // Keep the original pre-dispatch identity; an unproven tree must still face the gate.
+              }
+            }
+          }
           if (workflowStep.requiresBrowser === true) {
             await logBrowserVerificationActivity(`[browser-verification] finished browser verification for task ${task.id}: verdict ${effectiveVerdict}`);
           }
@@ -1269,6 +1479,7 @@ CRITICAL SCOPING RULES — read before doing anything else:
             revisionRequested,
             output: noNotesNotice ?? parsed.output,
             verdict: effectiveVerdict,
+            ...(requireVerdict ? { verdictRequired: true } : {}),
             notes: noNotesNotice ?? parsed.notes,
             ...(parsed.notesMissing ? { notesMissing: true } : {}),
             ...(parsed.findings ? { findings: parsed.findings } : {}),
@@ -1280,12 +1491,11 @@ CRITICAL SCOPING RULES — read before doing anything else:
         }
 
         if (parsed.malformed) {
-          // FNXC:ReviewLeniency 2026-07-02-00:30: malformed output (after the
-          // fallback-model retry) is recorded as a NON-BLOCKING advisory, not a
-          // hard gate block — see runGraphCustomNode's outcome mapping.
+          const malformedReason = parsed.malformedReason ?? "no-verdict";
+          const missingVerdictNotice = workflowStepMissingVerdictNotice(malformedReason);
           await deps.store.logEntry(
             task.id,
-            `[pre-merge] Workflow step '${workflowStep.name}' produced malformed output (no parseable verdict) — recorded as non-blocking advisory`,
+            `[pre-merge] Workflow step '${workflowStep.name}' produced malformed output (${malformedReason}) — ${missingVerdictNotice}`,
           );
           if (workflowStep.requiresBrowser === true) {
             await logBrowserVerificationActivity(`[browser-verification] finished browser verification for task ${task.id}: malformed output`);
@@ -1293,9 +1503,10 @@ CRITICAL SCOPING RULES — read before doing anything else:
           return {
             success: false,
             output: parsed.output,
-            error: "malformed output — no verdict extracted",
-            notes: undefined,
+            error: `malformed output — ${malformedReason}`,
+            notes: missingVerdictNotice,
             malformed: true,
+            ...(requireVerdict ? { verdictRequired: true } : {}),
             ...(reviewedCommitSha ? { reviewedCommitSha } : {}),
           };
         }

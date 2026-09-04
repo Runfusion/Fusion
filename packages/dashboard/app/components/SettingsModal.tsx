@@ -2544,17 +2544,11 @@ export function SettingsModal({
   }, []);
 
   useEffect(() => {
-    const copilotDeviceCode = deviceCodes["github-copilot"];
-    if (!copilotDeviceCode?.userCode) {
-      return;
+    for (const [stateKey, deviceCode] of Object.entries(deviceCodes)) {
+      if (!deviceCode.userCode || lastAutoCopiedDeviceCodesRef.current[stateKey] === deviceCode.userCode) continue;
+      lastAutoCopiedDeviceCodesRef.current[stateKey] = deviceCode.userCode;
+      void copyTextToClipboard(deviceCode.userCode);
     }
-
-    if (lastAutoCopiedDeviceCodesRef.current["github-copilot"] === copilotDeviceCode.userCode) {
-      return;
-    }
-
-    lastAutoCopiedDeviceCodesRef.current["github-copilot"] = copilotDeviceCode.userCode;
-    void copyTextToClipboard(copilotDeviceCode.userCode);
   }, [deviceCodes]);
 
   /*
@@ -2600,18 +2594,19 @@ export function SettingsModal({
         : label === undefined
           ? await loginProvider(providerId, instanceId)
           : await loginProvider(providerId, instanceId, label);
-      if (instructions?.trim() && !(providerId === "github-copilot" && deviceCode)) {
+      if (instructions?.trim() && !deviceCode) {
         setLoginInstructions((prev) => ({ ...prev, [stateKey]: instructions }));
       }
       if (manualCode) {
         setManualCodeConfigs((prev) => ({ ...prev, [stateKey]: manualCode }));
       }
-      if (deviceCode && providerId === "github-copilot") {
+      if (deviceCode) {
         setDeviceCodes((prev) => ({ ...prev, [stateKey]: deviceCode }));
       }
-      setLoginAuthUrls((prev) => ({ ...prev, [stateKey]: appendTokenQuery(deviceCode?.verificationUri ?? url) }));
-      if (providerId !== "github-copilot" || !deviceCode) {
-        openExternalUrl(appendTokenQuery(deviceCode?.verificationUri ?? url));
+      const authUrl = appendTokenQuery(deviceCode ? deviceCode.verificationUri : url);
+      setLoginAuthUrls((prev) => ({ ...prev, [stateKey]: authUrl }));
+      if (!deviceCode) {
+        openExternalUrl(authUrl);
       }
 
       // Poll for auth completion every 2 seconds

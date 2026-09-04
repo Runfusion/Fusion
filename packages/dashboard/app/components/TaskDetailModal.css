@@ -1601,7 +1601,6 @@ Planner Chat should not open expanded by default. When the user expands it, the 
 .task-detail-content--planner-chat-expanded .detail-plan-approval-banner,
 .task-detail-content--planner-chat-expanded .task-fields-section,
 .task-detail-content--planner-chat-expanded .branch-group-card,
-.task-detail-content--planner-chat-expanded .workspace-worktrees-summary,
 .task-detail-content--planner-chat-expanded .modal-actions,
 .task-detail-content--planner-chat-expanded .detail-tabs,
 .task-detail-content--planner-chat-expanded .detail-meta-inline-controls,
@@ -3666,9 +3665,16 @@ Reuse the near-duplicate banner layout; replan-cap escalations use a stronger wa
 FNXC:Workspace 2026-06-21-00:00:
 Flat read-only per-sub-repo worktree list for a workspace task (U3/KTD5 dashboard floor).
 Read-only list/placeholder only — not the deferred rich per-repo-status component.
+
+FNXC:Workspace 2026-09-03-14:19:
+FN-289 moves the full summary into the Details section, so Planner Chat no longer needs to hide it.
+Let the canonical detail-section margin own spacing instead of stacking the summary's header margin.
 */
 .workspace-worktrees-summary {
   margin: var(--space-sm) 0 0;
+}
+.detail-section--workspace-repos .workspace-worktrees-summary {
+  margin-top: 0;
 }
 .workspace-worktrees-placeholder {
   font-size: 0.75rem;
@@ -3791,17 +3797,23 @@ reuse source-grid spacing so long structural finding labels and immutable proven
   }
 }
 
-/* FNXC:AIMergeReviewReconciliation 2026-08-20-21:56: approved-but-unconfirmed findings need neutral status chrome rather than the rejected treatment, while terminal review state remains actionable on narrow hosts. */
+/*
+FNXC:AIMergeReviewReconciliation 2026-08-20-21:56:
+Approved-but-unconfirmed findings need neutral status chrome rather than the rejected treatment, while terminal review state remains actionable on narrow hosts.
+
+FNXC:DashboardStyling 2026-09-01-08:39:
+Every declaration in this panel referenced an undefined token, so the browser discarded its spacing, outline, and tint. Repair the block as a unit with the named spacing scale and semantic color mixes; fixing only its border would leave the panel half-styled.
+*/
 .ai-merge-review-reconciliation {
-  margin: var(--space-3) 0;
-  padding: var(--space-3);
-  border: var(--border-width) solid var(--color-info-border);
+  margin: var(--space-md) 0;
+  padding: var(--space-md);
+  border: var(--btn-border-width) solid color-mix(in srgb, var(--color-info) 35%, transparent);
   border-radius: var(--radius-md);
-  background: var(--color-info-subtle);
+  background: color-mix(in srgb, var(--color-info) 10%, var(--surface));
 }
 .ai-merge-review-reconciliation-terminal {
-  border-color: var(--color-warning-border);
-  background: var(--color-warning-subtle);
+  border-color: color-mix(in srgb, var(--color-warning) 35%, transparent);
+  background: color-mix(in srgb, var(--color-warning) 10%, var(--surface));
 }
 .ai-merge-review-reconciliation h3 { margin: 0; }
 .ai-merge-review-reconciliation p { margin: var(--space-2) 0 0; }

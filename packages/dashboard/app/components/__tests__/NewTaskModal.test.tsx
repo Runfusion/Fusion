@@ -28,9 +28,9 @@ vi.mock("lucide-react", () => ({
   Paperclip: () => null,
   ArrowDown: () => null,
   ArrowUp: () => null,
-  Flag: () => null,
+  Flag: () => <svg />,
   TriangleAlert: () => null,
-  Zap: () => null,
+  Zap: () => <svg />,
   ShieldCheck: () => null,
   Brain: () => null,
   Server: () => null,
@@ -156,6 +156,18 @@ describe("NewTaskModal", () => {
       viewportHeight: null,
       viewportOffsetTop: 0,
     });
+  });
+
+  it.each(["mobile", "desktop"] as const)("keeps the priority quick action accessible in the %s action row", (viewportMode) => {
+    mockViewportMode = viewportMode;
+    renderNewTaskModal();
+
+    const actions = screen.getByTestId("task-form-description-actions");
+    const priority = screen.getByTestId("task-form-inline-priority");
+    expect(actions).toContainElement(priority);
+    expect(priority).toHaveAttribute("aria-label", expect.stringMatching(/^Priority:/));
+    expect(priority).toHaveAttribute("title", expect.stringMatching(/^Priority:/));
+    expect(actions.querySelector("button:empty")).toBeNull();
   });
 
   it("restores desktop body density only for the 768px tablet resize class", () => {

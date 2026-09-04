@@ -63,6 +63,9 @@ describe("mailbox task recommendation production surfaces", () => {
     await user.click(await screen.findByTestId("mailbox-item-notice"));
     if (pane === "conversation") await waitFor(() => expect(screen.getByTestId("mailbox-conversation")).toBeInTheDocument());
     expect(await screen.findByRole("button", { name: "Create task" })).toBeInTheDocument();
+    const card = screen.getByTestId("mailbox-task-recommendations").querySelector("article");
+    expect(card).toHaveClass("mailbox-task-recommendations__item");
+    expect(card).not.toHaveClass("card");
   });
 
   it.each([

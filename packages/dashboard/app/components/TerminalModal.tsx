@@ -1465,12 +1465,12 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
     [],
   );
 
-  // Initialize xterm.js when session is ready.
+  // Initialize xterm.js when a session is attachable.
   // Keying this effect by active session id (not full activeTab object) avoids
   // tearing down xterm lifecycle wiring during unrelated tab metadata updates
   // such as title changes.
   useEffect(() => {
-    if (!isOpen || !isReady) return;
+    if (!isOpen) return;
 
     const currentSessionId = activeTab?.sessionId;
     if (!currentSessionId) return;
@@ -1795,7 +1795,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
       Deliberately NOT disposing here. This effect re-runs on every terminal-tab / session change, and the instance must survive a tab switch (the body above disposes+recreates only when the session actually changed). Release is owned by the close effect, the session-invalid swap, manual reinit, and the unmount teardown below — never by this cleanup.
       */
     };
-  }, [disposeXtermInstance, fitAndResizeForSession, isOpen, isReady, activeTab?.sessionId, projectId, remeasureAfterTerminalFontLoad]);
+  }, [disposeXtermInstance, fitAndResizeForSession, isOpen, activeTab?.sessionId, projectId, remeasureAfterTerminalFontLoad]);
 
   // (Input forwarding + window resize listener are wired inside initTerminal
   // so they share the xterm instance's lifetime — see comment there.)
@@ -2390,10 +2390,14 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
     }
   };
 
-  // Determine loading state for session bootstrap only.
-  // Once a tab exists we keep the xterm container visible while UI init runs,
-  // avoiding a retry-loop spinner flash after bootstrap recovery.
-  const isLoading = !isReady || (!activeTab && !bootstrapError);
+  /*
+  FNXC:Terminal 2026-09-01-03:46:
+  A terminal that already has a session id must restore immediately instead of re-running the start-up state. The start-up state remains deliberate when there is genuinely no session to attach to: on first open, and after validation prunes a dead persisted tab while auto-create is still replacing it.
+
+  Do not satisfy restore by keeping TerminalModal mounted while closed: App's terminalOpen guard must continue unmounting it, as enforced by TerminalModal.closed-mount-cost.test.tsx and App.test.tsx's mount-lifecycle guard, so closed terminals release their browser socket, timer, xterm buffer, and renderer. Attaching xterm before validation is safe because useTerminal already opens the same session socket pre-validation; useTerminalSessions keeps its separate FNXC:Terminal 2026-07-23-21:00 rule against forcing isReady and still owns validation, dead-tab pruning, and Windows manual-start ordering.
+  */
+  const hasRestorableSession = Boolean(activeTab?.sessionId);
+  const isLoading = !hasRestorableSession && !bootstrapError;
   /*
   FNXC:Terminal 2026-07-23-14:30:
   GitHub #2121/#2307: when the sessions hook will never auto-create the first

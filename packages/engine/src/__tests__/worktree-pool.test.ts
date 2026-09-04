@@ -51,8 +51,8 @@ vi.mock("../worktree/worktree-desktop-artifacts.js", () => ({
 vi.mock("../worktree/worktree-paths.js", () => ({
   isInsideConfiguredWorktreesDir: vi.fn(() => true),
   isReclaimableWorktreeCandidate: vi.fn().mockResolvedValue(true),
-  isWorktreeContainerDir: vi.fn((name: string) => name === ".ai-merge" || name === ".fusion-recovery"),
-  resolveWorktreesDir: vi.fn((rootDir: string) => `${rootDir}/.worktrees`),
+  isWorktreeContainerDir: vi.fn((name: string) => name === ".ai-merge" || name === ".fusion-recovery" || name === ".fusion-worktree-locks"),
+  resolveWorktreesDirScanRoots: vi.fn((rootDir: string) => [`${rootDir}/.worktrees`]),
 }));
 
 vi.mock("node:fs", () => ({
@@ -119,6 +119,51 @@ afterEach(() => {
   errorSpy.mockRestore();
   warnSpy.mockRestore();
 });
+
+function makeTask(id: string, column: Column, worktree?: string): Task {
+  return {
+    id,
+    title: `Task ${id}`,
+    description: `Description for ${id}`,
+    column,
+    dependencies: [],
+    worktree,
+    steps: [],
+    currentStep: 0,
+    log: [],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function createMockStore(tasks: Task[] = []) {
+  return { listTasks: vi.fn().mockResolvedValue(tasks) } as any;
+}
+
+function makeDirEntry(name: string) {
+  return { name, isDirectory: () => true } as any;
+}
+
+function mockRegisteredWorktrees(rootDir: string, names: string[]) {
+  mockedExecSync.mockImplementation((cmd: any) => {
+    if (String(cmd).includes("rev-parse --git-common-dir")) return Buffer.from(`${rootDir}/.git\n`);
+    if (String(cmd) === "git worktree list --porcelain") {
+      return [
+        `worktree ${rootDir}`,
+        "HEAD abc123",
+        "branch refs/heads/main",
+        "",
+        ...names.flatMap((name) => [
+          `worktree ${rootDir}/.worktrees/${name}`,
+          "HEAD def456",
+          `branch refs/heads/fusion/${name}`,
+          "",
+        ]),
+      ].join("\n") as any;
+    }
+    return Buffer.from("");
+  });
+}
 
 // ── scanIdleWorktrees tests ───────────────────────────────────────────
 
@@ -204,7 +249,7 @@ describe("scanIdleWorktrees", () => {
     const idle = await scanIdleWorktrees("/root", store);
     expect(idle).toEqual([]);
     expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("[worktree-pool] Failed to read .worktrees/ directory: Permission denied"),
+      expect.stringContaining("[worktree-pool] Failed to read worktrees directory /root/.worktrees: Permission denied"),
     );
   });
 
@@ -362,7 +407,7 @@ describe("cleanupOrphanedWorktrees", () => {
 
     expect(cleaned).toBe(0);
     expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("[worktree-pool] Failed to read .worktrees/ directory for cleanup: cleanup permission denied"),
+      expect.stringContaining("[worktree-pool] Failed to read worktrees directory /root/.worktrees for cleanup: cleanup permission denied"),
     );
   });
 

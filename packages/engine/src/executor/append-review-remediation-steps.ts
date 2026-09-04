@@ -1,4 +1,6 @@
 import {
+  buildStepLedgerReopenLog,
+  formatRemediationStepName,
   hasOpenEquivalentRemediationStep,
   remediationDeclaredFiles,
   remediationWaveCount,
@@ -42,10 +44,10 @@ export type AppendReviewRemediationOutcome =
  * work is recorded and released as non-blocking rather than producing either an empty executor
  * dispatch or an engine-authored human hold.
  *
- * FNXC:ReviewGatedRemediation 2026-08-28-16:10:
- * Review-to-fix passes are unbounded here, and `wave` is provenance rather than a count budget.
- * Only an optional group's authored `maxRevisions` may impose a numeric cap; all appender releases
- * are evidence-based so an unsatisfied plan with new actionable evidence keeps receiving fix work.
+ * FNXC:ReviewGatedRemediation 2026-09-03-05:40:
+ * `wave` remains provenance rather than a second budget. The caller resolves stored workflow policy
+ * and authored `maxRevisions`, then the atomic attempt claim enforces that bound while publishing
+ * named work; evidence-based releases remain separate from budget exhaustion.
  *
  * FNXC:ReviewGatedRemediation 2026-08-28-07:48:
  * Review remediation may ask for human action only when an operator authored that gate. Automatic
@@ -72,6 +74,30 @@ export type AppendReviewRemediationOptions = {
   worktreePath?: string;
   attemptClaim?: ReviewRemediationAttemptClaim;
 };
+
+/*
+FNXC:CodeReviewFixSteps 2026-08-30-12:57:
+A Code Review REVISE is a repair request, never an operator-blocking state merely because a model
+omitted a file-specific finding or pointed outside the original scope. The fallback is itself a
+structural pending Fix step: it tells the executor exactly which missing review artifact to turn into
+concrete implementation work while preserving the review feedback. Verification and other gates keep
+their stricter evidence-based release behavior.
+*/
+function missingCodeReviewFixSteps(info: RequestPreMergeOptionalStepFixInfo, wave: number): TaskStep {
+  const feedback = info.feedback.replace(/\s+/g, " ").trim().slice(0, 4_000) || "No review feedback was captured.";
+  const detail = "Code Review returned REVISE without usable file-scoped Fix steps. Inspect the review feedback, identify the affected implementation, make the correction, and leave concrete file-scoped remediation for any issue that remains. Reviewer feedback: " + feedback;
+  return {
+    name: formatRemediationStepName({ title: "Turn Code Review feedback into actionable fixes", detail }),
+    status: "pending",
+    remediation: {
+      wave,
+      gate: "Code Review",
+      gateStepId: info.nodeId ?? "code-review",
+      findingId: "missing-code-review-fix-steps",
+      detail,
+    },
+  };
+}
 
 export async function appendReviewRemediationSteps(
   deps: AppendReviewRemediationStepsDeps,
@@ -113,7 +139,10 @@ export async function appendReviewRemediationSteps(
       ? task.repositoryScope.repositories
       : undefined,
   });
-  if (derived.reason === "upstream-out-of-scope") {
+  const remediationSteps = gate === "Code Review" && derived.steps.length === 0
+    ? [missingCodeReviewFixSteps(info, wave)]
+    : derived.steps;
+  if (derived.reason === "upstream-out-of-scope" && gate !== "Code Review") {
     return release(
       deps.store,
       task.id,
@@ -121,7 +150,7 @@ export async function appendReviewRemediationSteps(
       "released-upstream-out-of-scope",
     );
   }
-  if (derived.steps.length === 0) {
+  if (remediationSteps.length === 0) {
     return release(
       deps.store,
       task.id,
@@ -188,7 +217,7 @@ export async function appendReviewRemediationSteps(
       }
       const existing = current.steps ?? [];
       const transactionWave = remediationWaveCount(existing) + 1;
-      appended = derived.steps
+      appended = remediationSteps
         .filter((candidate) => candidate.remediation !== undefined)
         .filter((candidate) => !hasOpenEquivalentRemediationStep([...existing, ...appended], candidate))
         .map((candidate) => ({
@@ -208,11 +237,31 @@ export async function appendReviewRemediationSteps(
             ...(claim.runContext ? { runContext: claim.runContext } : {}),
           }
         : undefined;
+      /*
+      FNXC:StepLedgerIntegrity 2026-09-01-00:45:
+      Reopen the step ledger HERE too. This is the branch Code Review actually takes.
+
+      The completion seal refuses any step transition after "Task marked done by agent" until a
+      re-entry marker supersedes it, and the stamp was added to `appendRemediationStepsImpl` -- the
+      `else` branch below. Code Review always supplies `attemptClaim`, so it takes THIS inline
+      transaction instead and never reached that stamp: the fix shipped into a path the failing case
+      does not traverse. Measured on FN-270 after the fix was live -- "Ignored post-completion
+      in-progress for step 12 (Fix: ...)" with no reopen entry anywhere before it.
+
+      Stamped inside the same atomic mutation as the steps, so no window exists in which the work is
+      present while the ledger still claims completion. Only a real seal is answered, so an append
+      during a live session still writes nothing.
+      */
+      const logWithAttempt = [...(current.log ?? []), ...(attemptEntry ? [attemptEntry] : [])];
+      const reopenedLog = buildStepLedgerReopenLog(
+        logWithAttempt,
+        `${appended.length} remediation step(s) appended after completion (wave ${transactionWave})`,
+      );
       return {
         steps: placement.steps,
         currentStep: placement.insertionIndex,
         ...(nextPrompt !== current.prompt ? { prompt: nextPrompt } : {}),
-        ...(attemptEntry ? { log: [...(current.log ?? []), attemptEntry] } : {}),
+        ...(attemptEntry || reopenedLog ? { log: reopenedLog ?? logWithAttempt } : {}),
       };
     }, options.attemptClaim?.runContext);
     if (scopeSuperseded) {
@@ -221,7 +270,7 @@ export async function appendReviewRemediationSteps(
     }
     if (budgetExhausted) return "budget-exhausted";
   } else {
-    const appendResult = await deps.store.appendRemediationSteps(task.id, derived.steps, { wave });
+    const appendResult = await deps.store.appendRemediationSteps(task.id, remediationSteps, { wave });
     appended = appendResult.appended;
     live = await deps.store.getTask(task.id);
     await widenPromptFileScope(deps.store, task.id, prompt, remediationDeclaredFiles(appended));

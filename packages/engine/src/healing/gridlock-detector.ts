@@ -21,7 +21,7 @@ future cleanup revisits this, the question to ask is whether dependency and over
 deadlock are still possible — not whether capacity is simpler.
 */
 import type { MissionStore, Task, TaskStore, WorkflowIr } from "@fusion/core";
-import { compareTasksByPriorityThenAgeAndId, fileScopeLeaseBlocksCandidate, resolveTaskLifecycleColumns, resolveWorkflowIrForTask, columnsWithFlag } from "@fusion/core";
+import { compareTasksByPriorityThenAgeAndId, fileScopeLeaseBlocksCandidate, normalizeOverlapScopeForTask, resolveTaskLifecycleColumns, resolveWorkflowIrForTask, columnsWithFlag } from "@fusion/core";
 import { createLogger } from "../logger.js";
 import { classifyFileScopeLease, filterPathsByIgnoreList, isCoordinationOnlyTask, pathsOverlap } from "../scheduler.js";
 
@@ -119,6 +119,10 @@ export class GridlockDetector {
     Gridlock reporting must use the same active/dormant lease classification as admission. A preserved
     worktree outside WIP or review remains a dormant holder, and priority → age → id picks the one
     holder that genuinely blocks a waiting card instead of reporting its files as free.
+
+    FNXC:OverlapScheduling 2026-09-01-14:49:
+    Checkout-free planning cards are not overlap holders and cannot manufacture a planning gridlock;
+    a retained checkout remains the durable evidence for a genuine dormant-holder cycle.
     */
     const rolesByTask = new Map<string, { wip?: string; review?: string; complete?: string; archived?: string } | undefined>();
     for (const task of tasks) {
@@ -173,7 +177,10 @@ export class GridlockDetector {
     const leaseScopes = new Map<string, string[]>();
     if (settings.groupOverlappingFiles) {
       for (const holder of leaseHolders) {
-        const scope = filterPathsByIgnoreList(await this.store.parseFileScopeFromPrompt(holder.id), overlapIgnorePaths, filterOptions);
+        const scope = normalizeOverlapScopeForTask(
+          holder,
+          filterPathsByIgnoreList(await this.store.parseFileScopeFromPrompt(holder.id), overlapIgnorePaths, filterOptions),
+        );
         if (scope.length > 0 && !isCoordinationOnlyTask(holder, scope)) {
           leaseScopes.set(holder.id, scope);
         }
@@ -231,7 +238,10 @@ export class GridlockDetector {
 
       if (!settings.groupOverlappingFiles) continue;
 
-      const taskScope = filterPathsByIgnoreList(await this.store.parseFileScopeFromPrompt(task.id), overlapIgnorePaths, filterOptions);
+      const taskScope = normalizeOverlapScopeForTask(
+        task,
+        filterPathsByIgnoreList(await this.store.parseFileScopeFromPrompt(task.id), overlapIgnorePaths, filterOptions),
+      );
       if (taskScope.length === 0 || isCoordinationOnlyTask(task, taskScope)) continue;
 
       const findBlockingHolder = (holders: readonly Task[]): Task | undefined => holders.find((holder) => {

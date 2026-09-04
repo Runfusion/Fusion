@@ -41,6 +41,25 @@ describe("refreshReusedWorktreeBase", () => {
     expect(store.updateTask).toHaveBeenCalledWith("FN-1", { baseCommitSha: c1 });
   });
 
+  it("uses the workspace baseline port without writing the singular task baseline", async () => {
+    const { root, worktree, c0, c1 } = fixture();
+    const store = { updateTask: vi.fn().mockResolvedValue(undefined) } as any;
+    const persist = vi.fn().mockResolvedValue(undefined);
+
+    const result = await refreshReusedWorktreeBase({
+      task: { id: "FN-1", baseCommitSha: c0 } as any,
+      rootDir: root,
+      worktreePath: worktree,
+      store,
+      settings: {},
+      baseline: { baseRef: "main", durableBaseSha: c0, persist },
+    });
+
+    expect(result).toMatchObject({ kind: "reset-to-base", baseSha: c1, durableBaseSha: c0 });
+    expect(persist).toHaveBeenCalledWith(c1);
+    expect(store.updateTask).not.toHaveBeenCalled();
+  });
+
   it("rebases own commit C2 onto C1 while storing C1, not C2", async () => {
     const { root, worktree, c0, c1 } = fixture();
     writeFileSync(join(worktree, "implementation.ts"), "export const implementation = true;\n");

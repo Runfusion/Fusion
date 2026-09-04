@@ -1611,17 +1611,76 @@ describe("TerminalModal", () => {
     }
   });
 
-  it("shows loading state while sessions are not ready", async () => {
+  it("shows the start-up state when no session exists while validation is incomplete", async () => {
     mockUseTerminalSessions.mockReturnValue({
       ...defaultSessionState,
+      tabs: [],
+      activeTab: null,
       isReady: false,
     });
 
     render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("terminal-loading")).toBeTruthy();
+      expect(screen.getByTestId("terminal-loading")).toHaveTextContent("Starting terminal...");
     });
+    expect(mockTerminalInstance.open).not.toHaveBeenCalled();
+  });
+
+  it("returns to the start-up state after validation prunes the last dead session", () => {
+    mockUseTerminalSessions.mockReturnValue({
+      ...defaultSessionState,
+      tabs: [],
+      activeTab: null,
+      isReady: true,
+    });
+
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    expect(screen.getByTestId("terminal-loading")).toHaveTextContent("Starting terminal...");
+    expect(mockTerminalInstance.open).not.toHaveBeenCalled();
+  });
+
+  it("keeps isReady as the manual-start gate without delaying the session-less start-up state", async () => {
+    mockUseTerminalSessions.mockReturnValue({
+      ...defaultSessionState,
+      tabs: [],
+      activeTab: null,
+      isReady: false,
+      autoCreateDisabled: true,
+    });
+
+    const view = render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    expect(screen.getByTestId("terminal-loading")).toHaveTextContent("Starting terminal...");
+    expect(screen.queryByTestId("terminal-manual-start")).toBeNull();
+
+    mockUseTerminalSessions.mockReturnValue({
+      ...defaultSessionState,
+      tabs: [],
+      activeTab: null,
+      isReady: true,
+      autoCreateDisabled: true,
+    });
+    view.rerender(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    expect(await screen.findByTestId("terminal-manual-start")).toBeInTheDocument();
+    expect(screen.queryByTestId("terminal-loading")).toBeNull();
+  });
+
+  it("ignores a stale bootstrap error once an attachable session exists", async () => {
+    mockUseTerminalSessions.mockReturnValue({
+      ...defaultSessionState,
+      bootstrapError: "Earlier bootstrap failed",
+    });
+
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    await waitFor(() => expect(mockTerminalInstance.open).toHaveBeenCalled());
+    expect(screen.queryByTestId("terminal-loading")).toBeNull();
+    expect(screen.queryByTestId("terminal-manual-start")).toBeNull();
+    expect(screen.queryByTestId("terminal-bootstrap-error")).toBeNull();
+    expect(screen.queryByTestId("terminal-xterm-init-error")).toBeNull();
   });
 
   /*
@@ -3283,21 +3342,24 @@ describe("TerminalModal", () => {
     });
   });
 
-  it("xterm container is rendered (visible under loading overlay) while loading", async () => {
+  it("keeps the xterm container measurable during a genuine cold start", async () => {
     mockUseTerminalSessions.mockReturnValue({
       ...defaultSessionState,
+      tabs: [],
+      activeTab: null,
       isReady: false,
     });
 
     render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
 
     await waitFor(() => {
-      // The xterm container is always rendered (no display:none) so that
-      // terminal.open() can measure dimensions even during a tab switch.
-      // The loading overlay visually covers it.
+      // The host remains measurable while the start-up overlay covers it, but
+      // xterm itself waits until a real session id exists.
       const xtermDiv = screen.getByTestId("terminal-xterm");
       expect(xtermDiv.style.display).toBe("");
+      expect(screen.getByTestId("terminal-loading")).toBeInTheDocument();
     });
+    expect(mockTerminalInstance.open).not.toHaveBeenCalled();
   });
 
   it("xterm container remains rendered when ready", async () => {

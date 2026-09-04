@@ -44,6 +44,21 @@ describe("file scope overlap reporting", () => {
     ]);
   });
 
+  it("matches unprefixed workspace scope with a peer's repository-qualified scope only in workspace mode", async () => {
+    const workspaceTasks = [
+      task("FN-1", { overlapBlockedBy: "FN-2", workspaceWorktrees: { "repo-a": {}, "repo-b": {} } as Task["workspaceWorktrees"] }),
+      task("FN-2", { workspaceWorktrees: { "repo-a": {}, "repo-b": {} } as Task["workspaceWorktrees"] }),
+    ];
+    const scopes = { "FN-1": ["src/index.ts"], "FN-2": ["repo-a/src/index.ts"] };
+
+    await expect(describeFileScopeOverlapBlocker(storeFor(workspaceTasks, scopes), "FN-1"))
+      .resolves.toMatchObject({ reason: "ok" });
+    await expect(describeFileScopeOverlapBlocker(
+      storeFor([task("FN-1", { overlapBlockedBy: "FN-2" }), task("FN-2")], scopes),
+      "FN-1",
+    )).resolves.toMatchObject({ reason: "no-overlap" });
+  });
+
   it("reports absent blockers, missing blocker rows, filtered scopes, and matches", async () => {
     const clear = await describeFileScopeOverlapBlocker(storeFor([task("FN-1")], {}), "FN-1");
     expect(clear).toMatchObject({ reason: "no-overlap-blocker", overlaps: [] });

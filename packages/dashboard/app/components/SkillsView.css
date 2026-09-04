@@ -159,6 +159,133 @@ The search controls at the top of the Skills list need breathing room below the 
   gap: var(--space-sm);
 }
 
+/*
+FNXC:ChatSnippets 2026-09-03-15:56:
+Snippet controls live above the unchanged execution-skill sections. Token-only cards and a narrow breakpoint keep the editor, prompt preview, and touch actions reachable without changing the master/detail behavior for skill documents.
+*/
+.skills-view-snippets__heading {
+  justify-content: space-between;
+}
+
+.skills-view-snippets__heading h3 {
+  margin: 0;
+  font: inherit;
+}
+
+.skills-view-snippets__count,
+.skills-view-snippets__description,
+.skills-view-snippets__help,
+.skills-view-snippets__pending {
+  color: var(--text-muted);
+}
+
+.skills-view-snippets__description {
+  margin: 0 0 var(--space-md);
+  line-height: 1.5;
+}
+
+.skills-view-snippets__form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  padding: var(--space-md);
+  margin-bottom: var(--space-md);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.skills-view-snippets__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  color: var(--text);
+}
+
+.skills-view-snippets__name-input {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-family: var(--font-mono);
+}
+
+.skills-view-snippets__name-input .form-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.skills-view-snippets__prompt {
+  width: 100%;
+  min-height: calc(var(--space-2xl) * 3);
+  resize: vertical;
+  font-family: var(--font-sans);
+}
+
+.skills-view-snippets__help {
+  font-size: 0.85em;
+}
+
+.skills-view-snippets__form-error {
+  margin: 0;
+  color: var(--color-error);
+}
+
+.skills-view-snippets__form-actions,
+.skills-view-snippets__item-actions,
+.skills-view-snippets__pending {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.skills-view-snippets__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.skills-view-snippets__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding: var(--space-md);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.skills-view-snippets__item-content {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.skills-view-snippets__trigger {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+
+.skills-view-snippets__preview {
+  display: -webkit-box;
+  margin: var(--space-xs) 0 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.skills-view-snippets__item-actions {
+  flex: 0 0 auto;
+}
+
+.skills-view-snippets__error,
+.skills-view-snippets__empty {
+  margin-bottom: var(--space-md);
+}
+
 /* Discovered skills list */
 .skills-view-list {
   display: flex;
@@ -581,6 +708,20 @@ FNXC:Skills 2026-06-26-13:38: FN-7072 reduces skill detail/metadata font size in
 }
 
 @media (max-width: 768px) {
+  .skills-view-snippets__form-actions {
+    flex-wrap: wrap;
+  }
+
+  .skills-view-snippets__item {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .skills-view-snippets__item-actions {
+    align-self: stretch;
+    justify-content: flex-end;
+  }
+
   .skills-view-content {
     padding: var(--space-md);
   }

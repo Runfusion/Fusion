@@ -11,7 +11,7 @@ onlyBuiltDependencies:
   - '@embedded-postgres/linux-arm64'
   - '@embedded-postgres/linux-x64'
   - '@embedded-postgres/windows-x64'
-  - '@homebridge/node-pty-prebuilt-multiarch'
+  # FNXC:Terminal 2026-09-04-01:43: The PTY binary is delivered by script-free platform packages, so Homebrew installs with scripts disabled need no build allowance.
   - esbuild
   - koffi
   - protobufjs
@@ -34,13 +34,16 @@ overrides:
   # FNXC:DesktopPackaging 2026-08-12-20:46: Advance the matched closure 0.82.1 → 0.84.1.
   # pi-coding-agent@0.84.1 adds pi-client and pi-protocol while pi-ai@0.84.1 adds pi-telemetry;
   # none were in the pre-bump lockfile, so pin every sibling for electron-builder's lockfile-free walk.
-  '@earendil-works/pi-agent-core': 0.84.1
-  '@earendil-works/pi-ai': 0.84.1
-  '@earendil-works/pi-client': 0.84.1
-  '@earendil-works/pi-coding-agent': 0.84.1
-  '@earendil-works/pi-protocol': 0.84.1
-  '@earendil-works/pi-telemetry': 0.84.1
-  '@earendil-works/pi-tui': 0.84.1
+  # FNXC:DesktopPackaging 2026-09-02-22:06: Advance the full staged Pi closure from 0.84.1 to
+  # 0.84.4. Keep all siblings exact and matched because electron-builder resolves production
+  # dependencies without this workspace lockfile and could otherwise split the runtime.
+  '@earendil-works/pi-agent-core': 0.84.4
+  '@earendil-works/pi-ai': 0.84.4
+  '@earendil-works/pi-client': 0.84.4
+  '@earendil-works/pi-coding-agent': 0.84.4
+  '@earendil-works/pi-protocol': 0.84.4
+  '@earendil-works/pi-telemetry': 0.84.4
+  '@earendil-works/pi-tui': 0.84.4
 # FNXC:DesktopEmbeddedPostgres 2026-07-14-09:30:
 # Desktop release jobs cross-build Intel and ARM64 artifacts on one host. Install
 # optional native payloads for both CPU families on the current OS so each

@@ -321,18 +321,19 @@ export async function listWorkflowDefinitionsImpl(store: TaskStore,
 }
 
 export async function readAllWorkflowDefinitionsImpl(store: TaskStore): Promise<WorkflowDefinition[]> {
-    if (store.workflowDefinitionsCache) return store.workflowDefinitionsCache;
-    // FNXC:WorkflowDefinitions 2026-06-27-06:00:
-    // PG backend mode reads custom workflow rows from project.workflows via the
-    // AsyncDataLayer (the sync store.db SELECT throws). Builtins are merged the
-    // same way in both backends. Every caller already awaits this method.
-        const layer = store.getAsyncLayer();
+    /*
+    FNXC:WorkflowDefinitions 2026-09-01-06:06:
+    Listing and getWorkflowDefinitionImpl must never disagree about stored workflow fields.
+    A process-lifetime per-instance snapshot survives commits from other TaskStore instances,
+    so list rows read through on every call. Hot callers own a per-pass cache when measured
+    necessary; see docs/solutions/workflow-selection-per-tick-cache.md.
+    */
+    const layer = store.getAsyncLayer();
     if (!layer) {
       throw new Error("workflow definitions: AsyncDataLayer not initialized in backend mode");
     }
     const rows = await listWorkflowRows(layer);
-    store.workflowDefinitionsCache = [...BUILTIN_WORKFLOWS, ...rows.map((row) => store.toWorkflowDefinition(row))];
-    return store.workflowDefinitionsCache;
+    return [...BUILTIN_WORKFLOWS, ...rows.map((row) => store.toWorkflowDefinition(row))];
 }
 
 export async function getWorkflowDefinitionImpl(store: TaskStore,
@@ -418,7 +419,6 @@ export function insertWorkflowDefinitionSyncImpl(store: TaskStore,
         if (!isWorkflowDefinitionIdPrimaryKeyCollision(error)) throw error;
         continue;
       }
-      store.workflowDefinitionsCache = null;
       return definition;
     }
     throw new Error("Unable to allocate a free workflow definition id after repeated id collisions");
@@ -1138,11 +1138,11 @@ export function getPluginStoreImpl(store: TaskStore): PluginStore {
           ...(pluginLayer ? { asyncLayer: pluginLayer } : {}),
         },
       );
-      const clearWorkflowDefinitionCache = () => {
-        store.workflowDefinitionsCache = null;
-      };
-      store.pluginStore.on("plugin:registered", clearWorkflowDefinitionCache);
-      store.pluginStore.on("plugin:unregistered", clearWorkflowDefinitionCache);
+      /*
+      FNXC:WorkflowDefinitions 2026-09-01-06:06:
+      Plugin-gated builtins are checked by listWorkflowDefinitionsImpl on every call.
+      Plugin registration therefore needs no store-local invalidation signal.
+      */
     }
     return store.pluginStore;
 }

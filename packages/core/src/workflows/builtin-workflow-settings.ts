@@ -167,16 +167,15 @@ export const BUILTIN_MOVED_WORKFLOW_SETTINGS: WorkflowSettingDefinition[] = [
     name: "Max post-review fixes",
     type: "number",
     /*
-     * FNXC:WorkflowOptionalStepCycle 2026-06-29-17:55:
-     * This global budget remains the fallback for custom optional gates that define neither a workflow setting nor node `maxRevisions`. Most built-in Code Review groups set `maxRevisions: "unbounded"`; Compound Engineering authors a two-pass cap so persistent CE reviewer findings park instead of rebounding forever.
+     * FNXC:WorkflowOptionalStepCycle 2026-09-03-05:40:
+     * This global budget remains the fallback for custom optional gates that define neither a workflow setting nor node `maxRevisions`. Standard Code Review now authors a three-round bound, Compound Engineering authors two, and Plan Review remains unbounded behind its separate replan cap.
      *
      * FNXC:WorkflowOptionalStepCycle 2026-07-26-19:35:
      * Raised 3 -> 10 (operator request). Three passes is below the observed convergence length for
-     * Browser Verification and custom gates — the gates this fallback actually governs, since
-     * Plan Review and most Code Review groups resolve to "unbounded" when unset. Compound
-     * Engineering instead resolves its authored two-pass Code Review cap. Exhausting a budget parks
-     * the card for a human, so a too-low cap converts "needs another pass" into operator toil.
-     * This is a fallback, not a ceiling: an explicit workflow value or node `maxRevisions` still wins.
+     * Browser Verification and custom gates — the gates this fallback actually governs. Exhausting
+     * a budget parks the card for a human, so a too-low generic fallback converts "needs another
+     * pass" into operator toil. This is a fallback, not a ceiling: an explicit workflow value or
+     * node `maxRevisions` still wins.
      */
     default: 10,
     description: "Maximum automatic fix passes after review/optional-step feedback; the step re-runs each pass until it passes or this budget is exhausted.",
@@ -506,13 +505,13 @@ export const BUILTIN_REVIEW_REVISION_SETTINGS: WorkflowSettingDefinition[] = [
     id: "reviewerInlineFixes",
     name: "Reviewer inline fixes",
     type: "boolean",
-    default: true,
+    default: false,
     /*
-     * FNXC:WorkflowReviewers 2026-07-01-12:33:
-     * Default Coding reviewers should fix issues in the same review session when possible instead of always returning REVISE and bouncing the task back through executor remediation. Operators can turn this off per workflow to restore the old review-only behavior.
+     * FNXC:WorkflowReviewers 2026-09-03-05:40:
+     * Reviewers judge without repairing by default so findings return to the executor as named remediation work. Operators may enable this workflow value explicitly when they accept same-session reviewer edits.
      */
     description:
-      "Allow review-type workflow nodes to fix issues in their own reviewer session before returning a final verdict. Turn off to route findings back to executor remediation.",
+      "Keep review-type workflow nodes judge-only by default and route findings back to executor remediation. Turn on to allow same-session reviewer repairs before the final verdict.",
   },
   {
     id: "planReviewMaxRevisions",
@@ -534,11 +533,11 @@ export const BUILTIN_REVIEW_REVISION_SETTINGS: WorkflowSettingDefinition[] = [
     minimum: 0,
     integer: true,
     /*
-     * FNXC:WorkflowRevisionBudget 2026-06-30-19:45:
-     * An unset workflow value defers to the authored Code Review node: Compound Engineering defaults to two remediation passes while other built-ins may remain unbounded. Operators can store a non-negative integer per workflow to override the authored cap, and `0` disables automatic Code Review remediation for that workflow.
+     * FNXC:WorkflowRevisionBudget 2026-09-03-05:40:
+     * An unset workflow value defers to the authored Code Review node: standard built-ins allow three remediation passes and Compound Engineering allows two. Operators can store a non-negative integer per workflow to override the authored cap, `0` to disable automatic remediation, or the unbounded sentinel to opt out of the cap.
      */
     description:
-      "Maximum automatic Code Review remediation attempts for this workflow. Leave unset to use the workflow's authored default; set 0 to disable automatic revision.",
+      "Maximum automatic Code Review remediation attempts for this workflow. Leave unset to use the workflow's authored bounded default; set 0 to disable automatic revision.",
   },
   /*
    * FNXC:ReviewSeverityGate 2026-08-10-17:33:

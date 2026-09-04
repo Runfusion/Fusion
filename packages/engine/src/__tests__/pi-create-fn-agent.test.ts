@@ -2483,7 +2483,7 @@ describe("createFnAgent", () => {
     }));
   });
 
-  it("does not duplicate Claude Sonnet 5 when the Anthropic registry already has it", async () => {
+  it("preserves upstream Claude Sonnet 5 while adding missing supplemental models", async () => {
     getAllMock.mockReturnValue([
       {
         provider: "anthropic",
@@ -2508,7 +2508,11 @@ describe("createFnAgent", () => {
     });
 
     const anthropicRegistrations = registerProviderMock.mock.calls.filter(([name]) => name === "anthropic");
-    expect(anthropicRegistrations).toHaveLength(0);
+    expect(anthropicRegistrations).toHaveLength(1);
+    expect(anthropicRegistrations[0]?.[1].models).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "claude-sonnet-5", name: "Claude Sonnet 5 Upstream" }),
+      expect.objectContaining({ id: "claude-fable-5-1", name: "Claude Fable 5.1" }),
+    ]));
   });
 
   it("synthesizes OpenAI Codex GPT-5.6 models from supplemental metadata when the pi registry lacks them", async () => {
@@ -2956,6 +2960,51 @@ describe("createFnAgent", () => {
 
     await created.session.dispose?.();
     expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it("connects and exposes only allowlisted MCP servers in readonly sessions", async () => {
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
+    const nav = {
+      connect: vi.fn(async () => undefined),
+      listTools: vi.fn(async () => ({ tools: [{ name: "find_symbol" }, { name: "find_references" }] })),
+      callTool: vi.fn(async () => ({ content: [] })),
+      close: vi.fn(async () => undefined),
+    };
+    const memory = {
+      connect: vi.fn(async () => undefined),
+      listTools: vi.fn(async () => ({ tools: [{ name: "recall_append" }] })),
+      callTool: vi.fn(async () => ({ content: [] })),
+      close: vi.fn(async () => undefined),
+    };
+
+    const created = await createFnAgent({
+      cwd: "/test/project",
+      systemPrompt: "test",
+      tools: "readonly",
+      defaultProvider: "anthropic",
+      defaultModelId: "claude-sonnet-4-5",
+      mcpServers: [
+        { name: "nav", transport: "stdio", command: "node", enabled: true },
+        { name: "memory", transport: "stdio", command: "node", enabled: true },
+      ],
+      allowMcpToolsInReadonly: true,
+      readonlyMcpServerAllowlist: ["nav"],
+      mcpClientFactory: (server) => (server.name === "nav" ? nav : memory) as any,
+    });
+
+    const customTools = (createAgentSessionMock.mock.calls[0]?.[0] as { customTools: Array<{ name: string }> }).customTools;
+    expect(customTools.map((tool) => tool.name)).toEqual(expect.arrayContaining([
+      "mcp__nav__find_symbol",
+      "mcp__nav__find_references",
+    ]));
+    expect(customTools.map((tool) => tool.name)).not.toContain("mcp__memory__recall_append");
+    expect(nav.connect).toHaveBeenCalledTimes(1);
+    expect(memory.connect).not.toHaveBeenCalled();
+    expect(customTools.map((tool) => tool.name)).not.toEqual(expect.arrayContaining(["edit", "write", "bash"]));
+
+    await created.session.dispose?.();
+    expect(nav.close).toHaveBeenCalledTimes(1);
+    expect(memory.close).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -3424,6 +3473,28 @@ describe("createFnAgent", () => {
       const result = await runtime.getAuth(anyModel);
 
       expect(result?.auth.headers).toEqual({});
+    });
+
+    it("adds OAuth identity alongside task routing headers", async () => {
+      modelRuntimeGetAuthMock.mockResolvedValueOnce({ auth: { apiKey: "sk-ant-oat-test", headers: {} } });
+      const runtime = await createAndCaptureRuntime({ taskId: "FN-9245" });
+
+      const result = await runtime.getAuth(anyModel);
+
+      expect(result?.auth.headers).toEqual({
+        "X-Session-Id": "FN-9245",
+        "X-Session-Affinity": "FN-9245",
+        "user-agent": "claude-cli/2.1.251",
+      });
+    });
+
+    it("adds OAuth identity without a task or pi session id", async () => {
+      modelRuntimeGetAuthMock.mockResolvedValueOnce({ auth: { apiKey: "sk-ant-oat-test", headers: {} } });
+      const runtime = await createAndCaptureRuntime();
+
+      const result = await runtime.getAuth(anyModel);
+
+      expect(result?.auth.headers).toEqual({ "user-agent": "claude-cli/2.1.251" });
     });
   });
 

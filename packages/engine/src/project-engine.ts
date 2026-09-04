@@ -111,12 +111,14 @@ import {
 } from "./merge/merger-ai.js";
 import { promoteBranchGroup, type BranchGroupPromotionResult, type CreateGroupPrFn, type SyncGroupPrFn } from "./merge/group-merge-coordinator.js";
 import { rerouteWorkspaceReviewToCodeReview } from "./merge/workspace-review-reroute.js";
+import { rerouteSingularStaleContentToReview } from "./merge/stale-content-review-reroute.js";
+import { rerouteUnrunPreMergeGateToReview } from "./merge/pre-merge-gate-reseed.js";
 import { WorkspaceEnvironmentError } from "./merge/workspace-integration-target.js";
 import {
   formatAdmissionCapacityQueuedReason,
   persistedTopLevelAgentTaskIdsFromStore,
   projectAdmissionCoordinator,
-  resolveActiveTaskCapacityLimit,
+  resolveAgentCapacityLimit,
 } from "./concurrency/concurrency.js";
 import { canStartNextMergeBody } from "./merge/merge-reclaim-policy.js";
 import { clearOwnedMergeStamp } from "./merge/clear-orphaned-merge-stamp.js";
@@ -148,17 +150,20 @@ import { finalizeProvenAutoMergeTask } from "./merge/auto-merge-finalization.js"
 import { isTransientError } from "./errors/transient-error-detector.js";
 import { classifyTransientMergeError, MAX_AUTO_MERGE_TRANSIENT_RETRIES } from "./errors/transient-merge-error-classifier.js";
 import { TunnelProcessManager } from "./remote-access/tunnel-process-manager.js";
-import { getLocalDashboardPort } from "./local-dashboard-port.js";
+import {
+  getRemoteTunnelService,
+  preserveRemoteTunnelForSupervisedRestart,
+  remoteTunnelScopeKey,
+  shutdownRemoteTunnelService,
+  type RemoteTunnelService,
+} from "./remote-access/remote-tunnel-service.js";
 import {
   deliverPostgresMigrationCompleteNoticeIfNeeded,
   deliverPostgresMigrationNoticeIfNeeded,
 } from "./project/postgres-migration-notice.js";
 import type {
   ExternalTunnelInfo,
-  TunnelProvider,
-  TunnelProviderConfig,
   TunnelRestoreDiagnostics,
-  TunnelRestoreReasonCode,
   TunnelStatusSnapshot,
 } from "./remote-access/types.js";
 
@@ -264,16 +269,6 @@ const deterministicMergerModeDeprecationWarnedProjects = new Set<string>();
 export function __resetDeterministicMergerModeDeprecationWarned(): void {
   deterministicMergerModeDeprecationWarnedProjects.clear();
 }
-
-interface RemoteLifecycleEvaluation {
-  provider: TunnelProvider;
-  config?: TunnelProviderConfig;
-  reason?: TunnelRestoreReasonCode;
-  message?: string;
-}
-
-const isRemoteActive = (ra: Settings["remoteAccess"] | undefined): boolean =>
-  ra?.activeProvider != null && (ra.providers[ra.activeProvider]?.enabled ?? false);
 
 function formatErrorDetails(error: unknown): { message: string; detail: string } {
   if (error instanceof Error) {
@@ -482,6 +477,7 @@ export interface ProjectEngineOptions {
 type MergeResolver = { resolve: (result: MergeResult) => void; reject: (err: Error) => void };
 
 export class ProjectEngine {
+  private readonly staleContentRerouteAuditKeys = new Set<string>();
   private runtime: InProcessRuntime;
   private started = false;
   private specDriftReconciler?: SpecDriftReconciler;
@@ -565,13 +561,6 @@ export class ProjectEngine {
   private automationStore?: AutomationStoreType;
   private researchOrchestrator?: ResearchOrchestrator;
   private researchDispatcher?: ResearchRunDispatcher;
-  private remoteTunnelManager?: TunnelProcessManager;
-  private remoteTunnelRestoreDiagnostics: TunnelRestoreDiagnostics = {
-    outcome: "skipped",
-    reason: "not_attempted",
-    at: new Date().toISOString(),
-    provider: null,
-  };
   private automationSubsystemHealth: AutomationSubsystemHealth = {
     status: "not-initialized",
     message: "Automation subsystem has not been initialized",
@@ -953,6 +942,7 @@ export class ProjectEngine {
             taskId: task.id,
             projectId,
             lane: "review",
+            consumesWorktree: false,
             createdAt: task.createdAt,
             start: async () => {
               // Do not run merge work in the coordinator; hand the exact queued
@@ -1240,12 +1230,17 @@ export class ProjectEngine {
       }
     }
 
-    this.remoteTunnelManager = new TunnelProcessManager();
+    /*
+    FNXC:RemoteAccess 2026-08-31-07:08:
+    The tunnel is NOT owned here any more (see remote-tunnel-service.ts). The engine only asks the
+    process-lifetime service to restore one if the persisted lifecycle markers say a tunnel was up;
+    when the tunnel is already running — the normal case after an engine restart — that is a no-op.
+    */
     try {
-      await this.restoreRemoteTunnelIfNeeded(store);
+      await this.remoteTunnelService().restoreIfNeeded(store);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      this.setRestoreDiagnostics("failed", "restore_start_failed", null, message);
+      this.remoteTunnelService().setRestoreDiagnostics("failed", "restore_start_failed", null, message);
       runtimeLog.warn(`Remote tunnel restore evaluation failed (continuing startup): ${message}`);
     }
 
@@ -1761,32 +1756,13 @@ export class ProjectEngine {
     this.researchDispatcher = undefined;
     this.researchOrchestrator = undefined;
 
-    const tunnelManager = this.remoteTunnelManager;
-    this.remoteTunnelManager = undefined;
-    if (tunnelManager) {
-      let shutdownStore: TaskStore | null = null;
-      try {
-        shutdownStore = this.runtime.getTaskStore();
-      } catch {
-        shutdownStore = null;
-      }
-
-      if (shutdownStore) {
-        try {
-          await this.persistShutdownRemoteLifecycle(shutdownStore, tunnelManager.getStatus());
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          runtimeLog.warn(`Failed to persist remote lifecycle shutdown markers: ${message}`);
-        }
-      }
-
-      try {
-        await tunnelManager.stop();
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        runtimeLog.warn(`Tunnel process manager stop failed (continuing shutdown): ${message}`);
-      }
-    }
+    /*
+    FNXC:RemoteAccess 2026-08-31-07:08:
+    DELIBERATELY NO TUNNEL TEARDOWN HERE. This method runs for "Stop engine", "Restart engine" and
+    ProjectEngineManager.pauseProject — operator actions that must leave remote access up, because the
+    tunnel is how the operator reaches this box to undo them. Real process shutdown stops the tunnel
+    from ProjectEngineManager.stopAll() instead, via shutdownRemoteTunnelService().
+    */
 
     // Stop the core runtime (Triage, Scheduler, Executor, etc.)
     await this.runtime.stop();
@@ -2473,113 +2449,82 @@ export class ProjectEngine {
     return this.researchDispatcher;
   }
 
-  /** Get the remote tunnel manager (available after start()). */
+  /**
+   * FNXC:RemoteAccess 2026-08-31-07:08:
+   * Scope key for this engine's tunnel. Shared derivation with the engine-less dashboard route so both
+   * resolve the SAME service — two keys would mean two tunnels for one project.
+   */
+  private remoteTunnelScopeKey(): string {
+    let rootDir: string | null = null;
+    try {
+      rootDir = this.runtime.getTaskStore().getRootDir?.() ?? null;
+    } catch {
+      rootDir = null;
+    }
+    return remoteTunnelScopeKey({
+      projectId: this.config.projectId,
+      rootDir: rootDir ?? this.config.workingDirectory,
+    });
+  }
+
+  /**
+   * FNXC:RemoteAccess 2026-08-31-07:08:
+   * Process-exit only — call from ProjectEngineManager.stopAll() BEFORE engine.stop(), while the
+   * TaskStore is still open, so the "was running" marker lands and restore-on-start can revive the
+   * tunnel. Never call this from stop()/pause: those must leave remote access up.
+   *
+   * FNXC:RemoteAccess 2026-09-01-02:54: `supervisedRestart` distinguishes the operator's Restart /
+   * "Update from source" relaunch from a genuine container shutdown; only the latter stops the tunnel.
+   */
+  async shutdownRemoteTunnelForProcessExit(
+    options: { supervisedRestart?: boolean } = {},
+  ): Promise<void> {
+    let store: TaskStore | null = null;
+    try {
+      store = this.runtime.getTaskStore();
+    } catch {
+      store = null;
+    }
+    /*
+    FNXC:RemoteAccess 2026-09-01-02:54:
+    A supervised restart exits this process but NOT the machine, so remote access is handed over rather
+    than torn down. See RemoteTunnelService.preserveForSupervisedRestart for the incident.
+    */
+    if (options.supervisedRestart) {
+      await preserveRemoteTunnelForSupervisedRestart(this.remoteTunnelScopeKey(), store);
+      return;
+    }
+    await shutdownRemoteTunnelService(this.remoteTunnelScopeKey(), store);
+  }
+
+  /** The process-lifetime tunnel service for this project. Survives engine stop/start. */
+  remoteTunnelService(): RemoteTunnelService {
+    return getRemoteTunnelService(this.remoteTunnelScopeKey());
+  }
+
+  /** Get the remote tunnel manager. Present regardless of engine lifecycle state. */
   getRemoteTunnelManager(): TunnelProcessManager | undefined {
-    return this.remoteTunnelManager;
+    return this.remoteTunnelService().getManager();
   }
 
   getRemoteTunnelRestoreDiagnostics(): TunnelRestoreDiagnostics {
-    return { ...this.remoteTunnelRestoreDiagnostics };
+    return this.remoteTunnelService().getRestoreDiagnostics();
   }
 
   async startRemoteTunnel(): Promise<TunnelStatusSnapshot> {
-    const manager = this.remoteTunnelManager;
-    if (!manager) {
-      throw new Error("remote_tunnel_unavailable:remote tunnel manager is not initialized");
-    }
-
-    const store = this.runtime.getTaskStore();
-    const settings = await store.getSettings();
-    const remoteAccess = settings.remoteAccess;
-    if (!remoteAccess || !isRemoteActive(remoteAccess)) {
-      throw new Error("invalid_config:no remote access provider enabled");
-    }
-
-    const provider = remoteAccess.activeProvider;
-    if (!provider) {
-      throw new Error("invalid_config:no active remote provider configured");
-    }
-
-    const lifecycle = await this.evaluateRemoteLifecycle(settings, provider);
-    if (!lifecycle.config) {
-      throw new Error(`${lifecycle.reason ?? "invalid_config"}:${lifecycle.message ?? "remote provider prerequisites are not met"}`);
-    }
-
-    const current = manager.getStatus();
-    if (current.state === "running" && current.provider === provider) {
-      await this.writeRemoteLifecycleState(store, remoteAccess, {
-        ...remoteAccess.lifecycle,
-        wasRunningOnShutdown: true,
-        lastRunningProvider: provider,
-      });
-      return manager.getStatus();
-    }
-
-    if (current.state === "running" && current.provider && current.provider !== provider) {
-      await manager.switchProvider(provider, lifecycle.config);
-    } else {
-      await manager.start(provider, lifecycle.config);
-    }
-
-    await this.writeRemoteLifecycleState(store, remoteAccess, {
-      ...remoteAccess.lifecycle,
-      wasRunningOnShutdown: true,
-      lastRunningProvider: provider,
-    });
-
-    return manager.getStatus();
+    return this.remoteTunnelService().start(this.runtime.getTaskStore());
   }
 
   async stopRemoteTunnel(): Promise<TunnelStatusSnapshot> {
-    const manager = this.remoteTunnelManager;
-    if (!manager) {
-      throw new Error("remote_tunnel_unavailable:remote tunnel manager is not initialized");
-    }
-
-    await manager.stop();
-
-    const store = this.runtime.getTaskStore();
-    const settings = await store.getSettings();
-    const remoteAccess = settings.remoteAccess;
-    if (remoteAccess) {
-      await this.writeRemoteLifecycleState(store, remoteAccess, {
-        ...remoteAccess.lifecycle,
-        wasRunningOnShutdown: false,
-        lastRunningProvider: null,
-      });
-    }
-
-    return manager.getStatus();
+    return this.remoteTunnelService().stop(this.runtime.getTaskStore());
   }
 
   async detectExternalTunnel(): Promise<ExternalTunnelInfo | null> {
-    const manager = this.remoteTunnelManager;
-    if (!manager) {
-      return null;
-    }
-
-    const settings = await this.runtime.getTaskStore().getSettings();
-    const provider = settings.remoteAccess?.activeProvider ?? null;
-    if (provider !== "tailscale") {
-      return null;
-    }
-
-    return manager.detectExternalFunnel();
+    return this.remoteTunnelService().detectExternal(this.runtime.getTaskStore());
   }
 
   async killExternalTunnel(): Promise<void> {
-    const manager = this.remoteTunnelManager;
-    if (!manager) {
-      return;
-    }
-
-    const settings = await this.runtime.getTaskStore().getSettings();
-    const provider = settings.remoteAccess?.activeProvider ?? null;
-    if (provider !== "tailscale") {
-      return;
-    }
-
-    await manager.killExternalFunnel();
+    await this.remoteTunnelService().killExternal(this.runtime.getTaskStore());
   }
 
   /** Get the RoutineRunner (if initialized). */
@@ -2785,21 +2730,6 @@ export class ProjectEngine {
     return this.onMerge(taskId, options);
   }
 
-  private setRestoreDiagnostics(
-    outcome: TunnelRestoreDiagnostics["outcome"],
-    reason: TunnelRestoreReasonCode,
-    provider: TunnelProvider | null,
-    message?: string,
-  ): void {
-    this.remoteTunnelRestoreDiagnostics = {
-      outcome,
-      reason,
-      provider,
-      message,
-      at: new Date().toISOString(),
-    };
-  }
-
   private setAutomationSubsystemHealth(
     status: AutomationSubsystemHealth["status"],
     message: string,
@@ -2809,295 +2739,6 @@ export class ProjectEngine {
       message,
       updatedAt: new Date().toISOString(),
     };
-  }
-
-  private async restoreRemoteTunnelIfNeeded(store: TaskStore): Promise<void> {
-    const manager = this.remoteTunnelManager;
-    if (!manager) {
-      return;
-    }
-
-    const settings = await store.getSettings();
-    const remoteAccess = settings.remoteAccess;
-    if (!remoteAccess || !isRemoteActive(remoteAccess)) {
-      this.setRestoreDiagnostics("skipped", "remote_access_disabled", null);
-      return;
-    }
-
-    const lifecycle = remoteAccess.lifecycle;
-    if (!lifecycle.rememberLastRunning) {
-      this.setRestoreDiagnostics("skipped", "remember_last_running_disabled", null);
-      if (lifecycle.wasRunningOnShutdown || lifecycle.lastRunningProvider) {
-        await this.writeRemoteLifecycleState(store, remoteAccess, {
-          ...lifecycle,
-          wasRunningOnShutdown: false,
-          lastRunningProvider: null,
-        });
-      }
-      return;
-    }
-
-    if (!lifecycle.wasRunningOnShutdown) {
-      this.setRestoreDiagnostics("skipped", "no_prior_running_marker", null);
-      return;
-    }
-
-    const provider = lifecycle.lastRunningProvider ?? remoteAccess.activeProvider;
-    if (!provider) {
-      this.setRestoreDiagnostics("skipped", "provider_missing", null);
-      await this.writeRemoteLifecycleState(store, remoteAccess, {
-        ...lifecycle,
-        wasRunningOnShutdown: false,
-        lastRunningProvider: null,
-      });
-      return;
-    }
-
-    const evaluation = await this.evaluateRemoteLifecycle(settings, provider);
-    if (!evaluation.config) {
-      this.setRestoreDiagnostics("skipped", evaluation.reason ?? "provider_not_configured", provider, evaluation.message);
-      await this.writeRemoteLifecycleState(store, remoteAccess, {
-        ...lifecycle,
-        wasRunningOnShutdown: false,
-        lastRunningProvider: null,
-      });
-      return;
-    }
-
-    try {
-      await manager.start(provider, evaluation.config);
-      this.setRestoreDiagnostics("applied", "restore_started", provider);
-      await this.writeRemoteLifecycleState(store, remoteAccess, {
-        ...lifecycle,
-        wasRunningOnShutdown: true,
-        lastRunningProvider: provider,
-      }, provider);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.setRestoreDiagnostics("failed", "restore_start_failed", provider, message);
-      runtimeLog.warn(`Remote tunnel restore failed for ${provider}: ${message}`);
-      await this.writeRemoteLifecycleState(store, remoteAccess, {
-        ...lifecycle,
-        wasRunningOnShutdown: false,
-        lastRunningProvider: null,
-      });
-    }
-  }
-
-  private async persistShutdownRemoteLifecycle(
-    store: TaskStore,
-    status: TunnelStatusSnapshot,
-  ): Promise<void> {
-    const settings = await store.getSettings();
-    const remoteAccess = settings.remoteAccess;
-    if (!remoteAccess) {
-      return;
-    }
-
-    const shouldRememberRunning =
-      (status.state === "running" || status.state === "starting" || status.state === "stopping") &&
-      status.provider !== null;
-
-    await this.writeRemoteLifecycleState(store, remoteAccess, {
-      ...remoteAccess.lifecycle,
-      wasRunningOnShutdown: shouldRememberRunning,
-      lastRunningProvider: shouldRememberRunning ? status.provider : null,
-    }, shouldRememberRunning ? status.provider : remoteAccess.activeProvider);
-  }
-
-  private async writeRemoteLifecycleState(
-    store: TaskStore,
-    remoteAccess: NonNullable<Settings["remoteAccess"]>,
-    lifecycle: NonNullable<Settings["remoteAccess"]>["lifecycle"],
-    activeProviderOverride?: TunnelProvider | null,
-  ): Promise<void> {
-    await store.updateSettings({
-      remoteAccess: {
-        ...remoteAccess,
-        activeProvider: activeProviderOverride === undefined ? remoteAccess.activeProvider : activeProviderOverride,
-        lifecycle,
-      },
-    });
-  }
-
-  private async evaluateRemoteLifecycle(
-    settings: Settings,
-    provider: TunnelProvider,
-  ): Promise<RemoteLifecycleEvaluation> {
-    const remoteAccess = settings.remoteAccess;
-    if (!remoteAccess || !isRemoteActive(remoteAccess)) {
-      return { provider, reason: "remote_access_disabled", message: "No remote provider is enabled" };
-    }
-
-    if (provider === "tailscale") {
-      const tailscale = remoteAccess.providers.tailscale;
-      if (!tailscale.enabled) {
-        return { provider, reason: "provider_not_enabled", message: "Tailscale provider is disabled" };
-      }
-      if (!Number.isFinite(tailscale.targetPort) || tailscale.targetPort <= 0) {
-        return { provider, reason: "provider_not_configured", message: "Tailscale target port must be configured" };
-      }
-
-      const executable = await this.checkExecutableAvailable("tailscale");
-      if (!executable.available) {
-        return { provider, reason: "runtime_prerequisite_missing", message: executable.message };
-      }
-
-      /*
-      FNXC:RemoteAccess 2026-08-23-02:03:
-      Binary presence is NOT readiness. `tailscale funnel <port>` is a thin client that talks to the
-      `tailscaled` daemon over a local socket, so a box with the CLI installed but no running daemon
-      (every slim container — the image ships the binary, the daemon is a separate process) fails the
-      instant it spawns: "failed to connect to local tailscaled", exit 1, no URL. Preflighting only
-      `which tailscale` let that reach the UI as a bare process-exited-1 with nothing actionable in it
-      (operator report). The same is true of a daemon that is running but logged out or stopped.
-
-      Checking the backend state here converts all three into a named prerequisite failure carrying
-      the command that fixes it, on the same `runtime_prerequisite_missing` channel the missing-binary
-      case already uses — so no new UI state is needed to show it.
-      */
-      const daemon = await this.checkTailscaleDaemonReady();
-      if (!daemon.ready) {
-        return { provider, reason: "runtime_prerequisite_missing", message: daemon.message };
-      }
-
-      return {
-        provider,
-        config: {
-          provider: "tailscale",
-          executablePath: "tailscale",
-          args: ["funnel", String(Math.floor(tailscale.targetPort))],
-        },
-      };
-    }
-
-    const cloudflare = remoteAccess.providers.cloudflare;
-    if (!cloudflare.enabled) {
-      return { provider, reason: "provider_not_enabled", message: "Cloudflare provider is disabled" };
-    }
-    if (cloudflare.quickTunnel === true) {
-      const executable = await this.checkExecutableAvailable("cloudflared");
-      if (!executable.available) {
-        return { provider, reason: "runtime_prerequisite_missing", message: executable.message };
-      }
-
-      return {
-        provider,
-        config: {
-          provider: "cloudflare",
-          quickTunnel: true,
-          executablePath: "cloudflared",
-          // FNXC:RemoteAccess 2026-08-19-04:00: target the port the dashboard actually bound, not a
-          // hardcoded 4040 that publishes whatever else happens to own it. See local-dashboard-port.
-          args: ["tunnel", "--url", `http://localhost:${getLocalDashboardPort()}`],
-        },
-      };
-    }
-
-    if (!cloudflare.tunnelName?.trim() || !cloudflare.ingressUrl?.trim()) {
-      return { provider, reason: "provider_not_configured", message: "Cloudflare tunnel name and ingress URL must be configured" };
-    }
-    if (!cloudflare.tunnelToken?.trim()) {
-      return { provider, reason: "provider_not_configured", message: "Cloudflare tunnel token is required" };
-    }
-
-    const executable = await this.checkExecutableAvailable("cloudflared");
-    if (!executable.available) {
-      return { provider, reason: "runtime_prerequisite_missing", message: executable.message };
-    }
-
-    return {
-      provider,
-      config: {
-        provider: "cloudflare",
-        executablePath: "cloudflared",
-        args: ["tunnel", "--no-autoupdate", "run", cloudflare.tunnelName.trim()],
-        tokenEnvVar: "TUNNEL_TOKEN",
-        env: {
-          TUNNEL_TOKEN: cloudflare.tunnelToken,
-        },
-      },
-    };
-  }
-
-  /**
-   * FNXC:RemoteAccess 2026-08-23-02:03:
-   * Resolve whether `tailscaled` is reachable AND its backend is usable for a tunnel.
-   *
-   * `tailscale status --json` is the probe because it answers both questions in one call and, unlike
-   * the human-readable form, keeps printing parseable JSON while logged out — it merely exits
-   * non-zero. So a non-zero exit WITH stdout is a state answer, not a transport failure; only an
-   * empty stdout means the daemon could not be reached at all. The stderr first line is carried into
-   * the message because it is where the real cause lands ("it doesn't appear to be running").
-   *
-   * Bounded by a short timeout: this runs on the tunnel-start path, and a wedged daemon socket must
-   * fail the preflight rather than hang the operator's click.
-   */
-  private async checkTailscaleDaemonReady(): Promise<{ ready: boolean; message?: string }> {
-    let stdout = "";
-    try {
-      const result = await execFileAsync("tailscale", ["status", "--json"], {
-        timeout: 5_000,
-        maxBuffer: 8 * 1024 * 1024,
-      });
-      stdout = result.stdout ?? "";
-    } catch (error) {
-      const failure = error as { stdout?: string; stderr?: string; message?: string };
-      stdout = failure.stdout ?? "";
-      if (!stdout.trim()) {
-        const detail = (failure.stderr ?? failure.message ?? "").trim().split("\n")[0] ?? "";
-        return {
-          ready: false,
-          message: `tailscaled is not reachable${detail ? `: ${detail}` : ""}. Start the daemon before enabling the tunnel (in a container: tailscaled --tun=userspace-networking).`,
-        };
-      }
-    }
-
-    let backendState: string | undefined;
-    try {
-      backendState = (JSON.parse(stdout) as { BackendState?: string }).BackendState;
-    } catch {
-      return {
-        ready: false,
-        message: "tailscale status returned unreadable output, so tailscaled readiness could not be confirmed",
-      };
-    }
-
-    if (backendState === "Running") {
-      return { ready: true };
-    }
-
-    if (backendState === "NeedsLogin" || backendState === "NoState") {
-      return {
-        ready: false,
-        message: "Tailscale is not logged in — run `tailscale up` to authenticate this machine, then start the tunnel again.",
-      };
-    }
-
-    if (backendState === "Stopped") {
-      return {
-        ready: false,
-        message: "Tailscale is stopped — run `tailscale up` to bring this machine back online.",
-      };
-    }
-
-    return {
-      ready: false,
-      message: `Tailscale is not ready (backend state: ${backendState ?? "unknown"})`,
-    };
-  }
-
-  private async checkExecutableAvailable(command: string): Promise<{ available: boolean; message?: string }> {
-    const checker = process.platform === "win32" ? "where" : "which";
-    try {
-      await execFileAsync(checker, [command]);
-      return { available: true };
-    } catch {
-      return {
-        available: false,
-        message: `${command} is not available on PATH`,
-      };
-    }
   }
 
   // ── Merge eligibility helpers (richer logic from dashboard.ts) ──
@@ -3244,11 +2885,58 @@ export class ProjectEngine {
       workspaceRootDir: this.config.workingDirectory,
       settings,
     });
-    return getTaskMergeBlocker(task, {
+    const blocker = getTaskMergeBlocker(task, {
       reviewColumns: mergeGate.reviewColumns.size > 0 ? mergeGate.reviewColumns : new Set(["in-review"]),
       requiredPreMergeStepIds: mergeGate.requiredPreMergeStepIds,
       mergeContent,
     });
+    if (blocker === PRE_MERGE_STEPS_NOT_RUN_BLOCKER && mergeContent.kind === "singular") {
+      const reroute = await rerouteUnrunPreMergeGateToReview(store, task, {
+        requiredPreMergeStepIds: mergeGate.requiredPreMergeStepIds,
+        mergeContent,
+      }).catch(() => ({ rerouted: false, reason: "no-unrun-gate" as const, nodeId: undefined, workflowStepId: undefined }));
+      if (reroute.rerouted) {
+        await store.logEntry(task.id, "[pre-merge] The workflow graph was re-seeded at an enabled pre-merge gate that never ran.");
+      }
+      await emitBoundedRunAudit(store, {
+        taskId: task.id, agentId: "merge-gate", runId: `${task.id}:merge-gate`, domain: "database",
+        mutationType: "task:merge-unrun-pre-merge-gate-rerouted", target: task.id,
+        metadata: { taskId: task.id, nodeId: reroute.nodeId, workflowStepId: reroute.workflowStepId, reason: reroute.reason, source: "merge-gate", missingGateCount: mergeGate.requiredPreMergeStepIds.size },
+      });
+    }
+    if (blocker === "task has a pre-merge approval recorded against different content" && mergeContent.kind === "singular") {
+      const reroute = await rerouteSingularStaleContentToReview(store, task, {
+        requiredPreMergeStepIds: mergeGate.requiredPreMergeStepIds,
+        mergeContent,
+      }).catch(() => ({
+        rerouted: false,
+        reason: "no-progress" as const,
+        nodeId: undefined,
+        workflowStepId: undefined,
+      }));
+      if (reroute.rerouted) {
+        await store.logEntry(task.id, `[pre-merge] Code Review re-entry is owned by the workflow graph after stale content evidence was refused.`);
+      }
+      const auditKey = `${task.id}:${reroute.reason}`;
+      if (!this.staleContentRerouteAuditKeys.has(auditKey)) {
+        this.staleContentRerouteAuditKeys.add(auditKey);
+        await emitBoundedRunAudit(store, {
+          taskId: task.id,
+          agentId: "merge-gate",
+          runId: `${task.id}:merge-gate`,
+          domain: "database",
+          mutationType: "task:merge-stale-content-review-rerouted",
+          target: task.id,
+          metadata: {
+            taskId: task.id,
+            nodeId: reroute.nodeId,
+            workflowStepId: reroute.workflowStepId,
+            reason: reroute.reason,
+          },
+        });
+      }
+    }
+    return blocker;
   }
 
   /**
@@ -4463,7 +4151,9 @@ export class ProjectEngine {
               }
               const checklist = planConfirmedMergeChecklistReconciliation(task as Task);
               if (checklist.skippedStepIndexes.length > 0 || checklist.reconciledWorkflowStepIds.length > 0) {
-                const steps = task.steps.map((step, index) => checklist.skippedStepIndexes.includes(index)
+                // FNXC:ConfirmedMergeFinalization 2026-09-01-05:49: same absent-`steps` tolerance as the
+                // reconciliation planner above — a landed merge must not be abandoned by a TypeError.
+                const steps = (task.steps ?? []).map((step, index) => checklist.skippedStepIndexes.includes(index)
                   ? { ...step, status: "skipped" as const }
                   : step);
                 const workflowStepResults = (task.workflowStepResults ?? []).map((result) =>
@@ -4770,10 +4460,8 @@ export class ProjectEngine {
             */
             await projectAdmissionCoordinator.admitNext({
               projectId: cwd,
-              maxConcurrent: resolveActiveTaskCapacityLimit({
+              maxConcurrent: resolveAgentCapacityLimit({
                 maxConcurrent: admissionSettings.maxConcurrent,
-                maxWorktrees: admissionSettings.maxWorktrees,
-                worktreeLimitEnabled: admissionSettings.worktreeLimitEnabled,
               }),
               claimed: async () => (await getMergeClaimSnapshot()).count,
               claimedTaskIds: async () => (await getMergeClaimSnapshot()).ids,
@@ -4781,6 +4469,7 @@ export class ProjectEngine {
                 taskId,
                 projectId: cwd,
                 lane: "review",
+                consumesWorktree: false,
                 createdAt: mergeCandidate?.createdAt,
                 start: async () => {
                   selected = true;
@@ -4790,10 +4479,8 @@ export class ProjectEngine {
             });
             if (!selected) {
               const snapshot = await getMergeClaimSnapshot();
-              const limit = resolveActiveTaskCapacityLimit({
+              const limit = resolveAgentCapacityLimit({
                 maxConcurrent: admissionSettings.maxConcurrent,
-                maxWorktrees: admissionSettings.maxWorktrees,
-                worktreeLimitEnabled: admissionSettings.worktreeLimitEnabled,
               });
               if (snapshot.count >= limit) {
                 /*
@@ -4803,9 +4490,8 @@ export class ProjectEngine {
                 snapshot proves exhaustion rather than a higher-priority candidate winning.
                 */
                 const reason = formatAdmissionCapacityQueuedReason({
-                  maxConcurrent: admissionSettings.maxConcurrent,
-                  maxWorktrees: admissionSettings.maxWorktrees,
-                  worktreeLimitEnabled: admissionSettings.worktreeLimitEnabled,
+                  gate: "maxConcurrent",
+                  limit,
                   claimed: snapshot.count,
                   holderTaskIds: snapshot.ids,
                 });

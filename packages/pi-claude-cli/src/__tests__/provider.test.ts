@@ -134,6 +134,7 @@ describe("provider registration (default export)", () => {
     for (const id of [
       "claude-sonnet-5",
       "claude-fable-5",
+      "claude-fable-5-1",
       "claude-opus-4-8",
       "claude-opus-4-7",
       "claude-sonnet-4-6",
@@ -143,11 +144,11 @@ describe("provider registration (default export)", () => {
       expect(modelIds.has(id)).toBe(true);
     }
 
-    expect(
-      config.models.find((m: { id: string }) => m.id === "claude-fable-5"),
-    ).toMatchObject({
-      cost: { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 },
-    });
+    for (const id of ["claude-fable-5", "claude-fable-5-1"]) {
+      expect(config.models.find((m: { id: string }) => m.id === id)).toMatchObject({
+        cost: { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 },
+      });
+    }
   });
 
   it("deduplicates extra models when catalog already includes them", async () => {
@@ -166,9 +167,17 @@ describe("provider registration (default export)", () => {
       maxTokens: 7_654,
     } as any;
 
+    const upstreamFable51 = {
+      ...upstreamSonnet5,
+      id: "claude-fable-5-1",
+      name: "Claude Fable 5.1 Upstream",
+      contextWindow: 654_321,
+    };
+
     getModelsMock.mockReturnValueOnce([
       ...mockModels,
       upstreamSonnet5,
+      upstreamFable51,
       {
         id: "claude-sonnet-4-6",
         name: "Claude Sonnet 4.6 Upstream",
@@ -186,23 +195,23 @@ describe("provider registration (default export)", () => {
     mod.default(mockPi);
 
     const config = registerProvider.mock.calls[0][1];
-    for (const id of ["claude-sonnet-5", "claude-sonnet-4-6"]) {
+    for (const id of ["claude-sonnet-5", "claude-fable-5-1", "claude-sonnet-4-6"]) {
       const matches = config.models.filter(
         (m: { id: string }) => m.id === id,
       );
       expect(matches).toHaveLength(1);
     }
 
-    expect(
-      config.models.find((m: { id: string }) => m.id === "claude-sonnet-5"),
-    ).toMatchObject({
-      name: upstreamSonnet5.name,
-      reasoning: upstreamSonnet5.reasoning,
-      input: upstreamSonnet5.input,
-      cost: upstreamSonnet5.cost,
-      contextWindow: upstreamSonnet5.contextWindow,
-      maxTokens: upstreamSonnet5.maxTokens,
-    });
+    for (const upstream of [upstreamSonnet5, upstreamFable51]) {
+      expect(config.models.find((m: { id: string }) => m.id === upstream.id)).toMatchObject({
+        name: upstream.name,
+        reasoning: upstream.reasoning,
+        input: upstream.input,
+        cost: upstream.cost,
+        contextWindow: upstream.contextWindow,
+        maxTokens: upstream.maxTokens,
+      });
+    }
   });
 });
 

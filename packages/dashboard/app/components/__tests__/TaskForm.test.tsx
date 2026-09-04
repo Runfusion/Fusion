@@ -1080,6 +1080,21 @@ describe("TaskForm description-adjacent actions layout (FN-781)", () => {
     expect(screen.getByTestId("task-form-description-actions").querySelector("button:empty")).toBeNull();
   });
 
+  it("marks only icon-only create actions with the compact sizing class", () => {
+    renderTaskForm({
+      onExecutionModeChange: vi.fn(),
+      executionMode: "standard",
+      onPriorityChange: vi.fn(),
+      onPlanningMode: vi.fn(),
+    });
+
+    expect(screen.getByTestId("task-form-inline-fast")).toHaveClass("task-form-inline-icon-btn");
+    expect(screen.getByTestId("task-form-inline-priority")).toHaveClass("task-form-inline-icon-btn");
+    expect(screen.getByTestId("task-form-inline-attach")).not.toHaveClass("task-form-inline-icon-btn");
+    expect(screen.getByTestId("task-form-inline-models")).not.toHaveClass("task-form-inline-icon-btn");
+    expect(screen.getByTestId("task-form-plan-button")).not.toHaveClass("task-form-inline-icon-btn");
+  });
+
   it("does not render description-actions or Start in edit mode", () => {
     renderTaskForm({
       mode: "edit",

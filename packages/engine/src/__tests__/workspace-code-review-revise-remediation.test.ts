@@ -292,27 +292,32 @@ describe("workspace Code Review REVISE symptom", () => {
     expect(store.logEntry.mock.calls.some((call) => /released as non-blocking/i.test(String(call[1])))).toBe(false);
   });
 
-  it("records a visible release when REVISE carries no findings", async () => {
+  it("turns a finding-less Code Review REVISE into a workspace repair step", async () => {
     const { task, store, deps, sendTaskBackForFix } = reportedSymptomHarness({ findings: [] });
 
     await expect(requestPreMergeOptionalStepFix(deps as never, task.id, task, {
       ...baseInfo, nodeId: "code-review-step", reviewKind: "code", findings: [],
-    })).resolves.toBe(false);
+    })).resolves.toBe(true);
 
-    expect(sendTaskBackForFix).not.toHaveBeenCalled();
-    expect(store.logEntry).toHaveBeenCalledWith(task.id, "Review remediation released as non-blocking", "review-remediation-no-actionable-findings");
+    expect(sendTaskBackForFix).toHaveBeenCalledOnce();
+    expect(task.steps).toContainEqual(expect.objectContaining({
+      remediation: expect.objectContaining({ findingId: "missing-code-review-fix-steps" }),
+    }));
+    expect(store.logEntry.mock.calls.some((call) => /released as non-blocking/i.test(String(call[1])))).toBe(false);
   });
 
-  it("does not create blocking remediation from findings below the severity threshold", async () => {
+  it("turns below-threshold Code Review feedback into a workspace repair step", async () => {
     const advisoryFinding = { ...reportedFinding, severity: "minor" as const };
-    const { task, store, deps, sendTaskBackForFix } = reportedSymptomHarness({ findings: [advisoryFinding] });
+    const { task, deps, sendTaskBackForFix } = reportedSymptomHarness({ findings: [advisoryFinding] });
 
     await expect(requestPreMergeOptionalStepFix(deps as never, task.id, task, {
       ...baseInfo, nodeId: "code-review-step", reviewKind: "code", findings: [advisoryFinding],
-    })).resolves.toBe(false);
+    })).resolves.toBe(true);
 
-    expect(sendTaskBackForFix).not.toHaveBeenCalled();
-    expect(store.logEntry).toHaveBeenCalledWith(task.id, "Review remediation released as non-blocking", "review-remediation-no-actionable-findings");
+    expect(sendTaskBackForFix).toHaveBeenCalledOnce();
+    expect(task.steps).toContainEqual(expect.objectContaining({
+      remediation: expect.objectContaining({ findingId: "missing-code-review-fix-steps" }),
+    }));
   });
 
   it("keeps the first verification pass done when a second remediation wave is appended", async () => {
@@ -487,15 +492,14 @@ describe("graph failure visibility after review advancement", () => {
     const executor = new TaskExecutor(store, "/tmp/fn-231");
     vi.spyOn(executor as any, "routeRetryableRemediationGraphFailureToPreMergeFix").mockResolvedValue(false);
     vi.spyOn(executor as any, "routeGraphFailureToExecutionResume").mockResolvedValue(false);
+    const request = vi.spyOn(executor as any, "requestPreMergeOptionalStepFix").mockResolvedValue(true);
 
     await (executor as any).handleGraphFailure(live, graphFailure);
 
-    expect(store.logEntry).toHaveBeenCalledWith(
-      live.id,
-      expect.stringMatching(/failed pre-merge step 'Code Review' still blocking merge/),
-      expect.stringMatching(/Retry the task.*privileged review bypass/s),
-      undefined,
-    );
+    /* FNXC:ReviewRemediation 2026-09-02-10:50: the graph-failure backstop re-triggers the sole remediation producer without an admission-claim argument. */
+    expect(request).toHaveBeenCalledWith(live.id, expect.objectContaining({ id: live.id }), expect.objectContaining({
+      nodeId: "code-review-step", reviewKind: "code", verdict: "REVISE",
+    }));
     expect(store.logEntry.mock.calls.some((call) => String(call[1]).includes("no further action needed"))).toBe(false);
   });
 

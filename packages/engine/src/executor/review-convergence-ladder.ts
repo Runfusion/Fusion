@@ -9,7 +9,7 @@ import type { Task, TaskStore, WorkflowReviewFinding } from "@fusion/core";
 import {
   collectDisputedFindings,
   hasConfiguredFallbackLane,
-  hasPendingRemediationWork,
+  hasPendingReviewRemediationWork,
   hasPreMergeRemediationAutoMergeHold,
   isOpenWorkflowReviewFinding,
   resolveExecutorFallbackModel,
@@ -143,7 +143,7 @@ export async function routeReviewConvergenceLadder(
       && (result.status === "failed" || result.status === "advisory_failure"))) return "declined";
   /*
   FNXC:ReviewEmptyContent 2026-08-28-13:14:
-  Empty Code Review input is terminal on first detection, including the built-in unbounded budget.
+  Empty Code Review input is terminal on first detection, independent of the configured revision budget.
   The checks above are only a pre-filter; the close owns its own exact-gate CAS because concurrent
   lifecycle writers can land after this read. Do not claim a ladder stage, increment convergence,
   dispatch escalation, or arbitrate content that does not exist.
@@ -299,11 +299,15 @@ export async function routeReviewConvergenceLadder(
     return routeReviewConvergenceLadder(deps, taskId, stop);
   }
 
-  if (stop.kind !== "plan-review-cap" && !hasPendingRemediationWork(claimedTask)) {
+  const workflowIr = await resolveWorkflowIrForTask(deps.store, taskId).catch(() => undefined);
+  const stepReopenPolicy = resolveStepReopenPolicy(workflowIr);
+  if (stop.kind !== "plan-review-cap"
+    && stepReopenPolicy === "none"
+    && !hasPendingReviewRemediationWork(claimedTask, { stepReopenPolicy })) {
     await deps.store.logEntry(
       taskId,
       "Review convergence released — no pending remediation work",
-      "A review-to-WIP transition requires a named pending remediation step.",
+      "This workflow requires named remediation before returning to implementation.",
       deps.getRunContextFor(taskId),
     );
     return "released";
@@ -316,7 +320,6 @@ export async function routeReviewConvergenceLadder(
   try {
     if (decision.source !== "none") {
       if (!remediationCheckout) throw new Error("Review convergence remediation checkout is unavailable");
-      const workflowIr = await resolveWorkflowIrForTask(deps.store, taskId).catch(() => undefined);
       mode = "alternate-model";
       await deps.sendTaskBackForFix(
         claimedTask,
@@ -329,7 +332,7 @@ export async function routeReviewConvergenceLadder(
         { attempt: stop.attempt + 1, max: stop.max },
         stop.findings,
         remediationCheckout.persist,
-        resolveStepReopenPolicy(workflowIr),
+        stepReopenPolicy,
       );
     } else if (stop.kind === "plan-review-cap") {
       mode = "replan";
@@ -351,7 +354,6 @@ export async function routeReviewConvergenceLadder(
     } else {
       if (!remediationCheckout) throw new Error("Review convergence remediation checkout is unavailable");
       mode = "executor-remediation";
-      const workflowIr = await resolveWorkflowIrForTask(deps.store, taskId).catch(() => undefined);
       await deps.sendTaskBackForFix(
         claimedTask,
         remediationCheckout.path,
@@ -363,7 +365,7 @@ export async function routeReviewConvergenceLadder(
         { attempt: stop.attempt + 1, max: stop.max },
         stop.findings,
         remediationCheckout.persist,
-        resolveStepReopenPolicy(workflowIr),
+        stepReopenPolicy,
       );
     }
   } catch (_error) {

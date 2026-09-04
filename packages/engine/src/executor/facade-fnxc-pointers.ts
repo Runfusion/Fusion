@@ -24,7 +24,7 @@
  * - 2026-08-04-03:20: step-inversion driver FNXC lives on run-graph-task-step.ts.
  * - 2026-08-04-03:20: projected step worktree-gating FNXC lives on run-projected-graph-task-step.ts.
  * - 2026-08-04-03:30: column-agent seam FNXC lives on resolve-seam-column-agent.ts / resolve-effective-principal-id.ts / is-agent-effectively-executing.ts.
- * - 2026-08-04-03:25: planning worktree acquisition FNXC lives on ensure-task-worktree-for-planning.ts.
+ * - 2026-09-01-14:49: checkout-free planning boundary FNXC lives in triage.ts and pi.ts.
  * - 2026-08-04-03:30: session-contention hold FNXC lives on session-contention-hold.ts.
  * - 2026-08-04-06:15: hasLiveTaskSessionSurface FNXC lives on has-live-task-session-surface host peel.
  * - 2026-08-04-06:15: isRemediationGraphNode FNXC lives on remediation-graph-node.ts.

@@ -164,6 +164,25 @@ describe("GridlockDetector", () => {
     expect(event?.blockingTaskIds).toEqual(["FN-9"]);
   });
 
+  it("detects a workspace review holder through its repository checkout and normalized scope", async () => {
+    tasks = [
+      createTask("FN-1", { column: "todo" }),
+      createTask("FN-WORKSPACE", {
+        column: "in-review",
+        workspaceWorktrees: { "repo-a": { worktreePath: "/wt/fn-workspace/repo-a" } } as Task["workspaceWorktrees"],
+      }),
+    ];
+    scopes = {
+      "FN-1": ["repo-a/src/shared.ts"],
+      "FN-WORKSPACE": ["src/shared.ts"],
+    };
+
+    const event = await detector.detectGridlock();
+
+    expect(event?.reasons).toEqual({ "FN-1": "overlap" });
+    expect(event?.blockingTaskIds).toEqual(["FN-WORKSPACE"]);
+  });
+
   it("reports a higher-priority dormant worktree holder as the overlap blocker", async () => {
     tasks = [
       createTask("FN-1", { column: "todo", priority: "normal" }),

@@ -22,6 +22,7 @@ in-dashboard debug/maintenance controls:
   - POST /system/rebuild              workspace/plugin rebuild job with streamed output,
                                       optional restart-on-success
   - GET  /system/rebuild/current      snapshot of the active/last rebuild job
+  - POST /system/source/update        git pull --ff-only + build the source checkout, restart on success
   - GET  /system/jobs/:id/stream      SSE live output of a rebuild job (replays buffered lines)
   - GET  /system/logs                 recent host-process log entries (ring buffer)
   - GET  /system/logs/stream          SSE live tail of host-process logs
@@ -98,8 +99,16 @@ function startSseHeartbeat(res: Response): () => void {
 
 type RebuildScope = "app" | "full" | "plugins";
 type FnBinaryScope = "link-local" | "use-global";
-type SystemJobScope = RebuildScope | FnBinaryScope;
-type SystemJobKind = "rebuild" | "fn-binary";
+/*
+FNXC:SystemPanelSourceUpdate 2026-09-01-01:22:
+The source update is a third job kind sharing the SAME single active-job slot as rebuild and
+fn-binary. That shared slot IS the concurrency guard: two contributors pressing "Update from source"
+at once would otherwise run two `git pull` + build passes over one checkout and corrupt each other's
+dist output, and the second restart could land on a half-written build.
+*/
+type SourceUpdateScope = "source-update";
+type SystemJobScope = RebuildScope | FnBinaryScope | SourceUpdateScope;
+type SystemJobKind = "rebuild" | "fn-binary" | "source-update";
 
 interface SystemJobLine {
   i: number;
@@ -210,6 +219,61 @@ function createLineSplitter(onLine: (text: string) => void): { push(chunk: Buffe
   };
 }
 
+/*
+FNXC:SystemPanelSourceUpdate 2026-09-01-01:22:
+Run one step of a multi-step job, streaming its output into the job log and returning the exit
+status plus captured stdout (needed so `git status --porcelain` can be INSPECTED, not just shown).
+Async `superviseSpawn` only — `execSync` is banned for user-configured commands, and blocking the
+event loop for a multi-minute `pnpm build` would freeze the dashboard that is reporting the progress.
+*/
+async function runJobStep(
+  job: SystemJob,
+  label: string,
+  command: string,
+  args: string[],
+  options: Parameters<typeof superviseSpawn>[2],
+): Promise<{ ok: boolean; stdout: string; detail: string }> {
+  appendJobLine(job, "system", `${label}…`);
+  let child: ReturnType<typeof superviseSpawn>;
+  try {
+    child = superviseSpawn(command, args, options);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    appendJobLine(job, "system", `${label} could not start: ${message}`);
+    return { ok: false, stdout: "", detail: `${label} could not start: ${message}` };
+  }
+
+  let stdoutText = "";
+  const stdout = createLineSplitter((text) => appendJobLine(job, "stdout", text));
+  const stderr = createLineSplitter((text) => appendJobLine(job, "stderr", text));
+  child.child.stdout?.on("data", (chunk: Buffer) => {
+    stdoutText += chunk.toString();
+    stdout.push(chunk);
+  });
+  child.child.stderr?.on("data", (chunk: Buffer) => stderr.push(chunk));
+
+  const exit = await child.waitExit();
+  stdout.flush();
+  stderr.flush();
+  const code = exit.code ?? (exit.signal ? 1 : 0);
+  if (code !== 0) {
+    const detail = `${label} failed (exit ${exit.code ?? exit.signal ?? "unknown"})`;
+    appendJobLine(job, "system", detail);
+    return { ok: false, stdout: stdoutText, detail };
+  }
+  return { ok: true, stdout: stdoutText, detail: "" };
+}
+
+/** Parse a test-only JSON-array command-prefix seam (FUSION_SYSTEM_*_ARGS). Throws on bad JSON. */
+function parseCommandPrefixEnv(raw: string | undefined, name: string): string[] {
+  if (!raw) return [];
+  const parsed: unknown = JSON.parse(raw);
+  if (!Array.isArray(parsed) || !parsed.every((arg) => typeof arg === "string")) {
+    throw new Error(`${name} must be a JSON array of strings`);
+  }
+  return parsed;
+}
+
 interface SystemRouteDeps {
   hasHeartbeatExecutor: boolean;
   heartbeatMonitor: import("../server.js").ServerOptions["heartbeatMonitor"];
@@ -272,6 +336,14 @@ export function registerSystemRoutes(ctx: ApiRoutesContext, deps: SystemRouteDep
       */
       fnBinaryLinkLocalSupported: fromSource,
       fnBinaryUseGlobalSupported: true,
+      /*
+      FNXC:SystemPanelSourceUpdate 2026-09-01-01:22:
+      "Update from source" needs a real GIT CHECKOUT, not merely a workspace root. The container's
+      image-baked /app satisfies the workspace-root probe (it ships package.json + pnpm-workspace.yaml)
+      but has no .git and no build scripts, so advertising the control there would offer an operator
+      an action that can only fail. The UI additionally requires restartSupported before enabling it.
+      */
+      sourceUpdateSupported: fromSource && existsSync(join(systemControl?.sourceWorkspaceRoot ?? "", ".git")),
       sourceWorkspaceRoot: systemControl?.sourceWorkspaceRoot,
       logsSupported: Boolean(systemLogs),
       // Engine restart needs both the manager and CentralCore (see the
@@ -507,6 +579,150 @@ export function registerSystemRoutes(ctx: ApiRoutesContext, deps: SystemRouteDep
     res.json({ job: job ? jobSnapshot(job, true) : null });
   });
 
+  /*
+  FNXC:SystemPanelSourceUpdate 2026-09-01-01:22:
+  POST /api/system/source/update — pull, rebuild, and restart into the new code.
+
+  Requirement: a remote contributor whose only access is this dashboard (no shell, no Docker socket,
+  no image rebuild) must be able to ship code and run it — and must NEVER be able to brick the
+  instance doing so. Every decision here follows from that second half:
+
+    - The checkout acted on is the one the running process was LAUNCHED from
+      (systemControl.sourceWorkspaceRoot). Updating some other checkout would leave the operator
+      looking at code that is not what is running.
+    - `git pull --ff-only` on a CLEAN tree only. A merge commit or a stashed conflict resolution
+      cannot be reviewed or undone from a browser, so a dirty tree or a diverged branch is REFUSED
+      with the reason rather than resolved automatically.
+    - The restart is requested only after the build EXITS ZERO. Restarting into a failed build is the
+      unrecoverable state this whole feature exists to avoid: the container would come back up
+      running nothing, with no dashboard left to fix it from. On failure the running instance is left
+      completely untouched and the job carries the reason.
+    - Work happens in a background job streamed over the existing /system/jobs/:id/stream SSE channel,
+      because `pnpm install` + a full workspace build takes minutes and no HTTP request may block on
+      it. Async superviseSpawn only; execSync is banned for user-configured commands.
+    - The shared activeJob slot rejects a concurrent invocation with 409, so two contributors pressing
+      the button at once cannot interleave two builds over one checkout.
+
+  Test seams: FUSION_SYSTEM_GIT_BIN / FUSION_SYSTEM_GIT_ARGS mirror the existing pnpm seam.
+  */
+  router.post("/system/source/update", (req, res) => {
+    if (rejectCrossOrigin(req, res)) return;
+    const root = systemControl?.sourceWorkspaceRoot;
+    if (!root) {
+      throw new ApiError(409, "Source update is only available when running from a Fusion source checkout");
+    }
+    if (!existsSync(join(root, ".git"))) {
+      throw new ApiError(409, `Source update needs a git checkout: ${root} is not one`);
+    }
+    const buildScriptPath = join(root, "scripts", "build-workspace.mjs");
+    if (!existsSync(buildScriptPath)) {
+      throw new ApiError(409, `Build script missing: ${buildScriptPath}`);
+    }
+    if (activeJob) {
+      throw new ApiError(409, `A ${activeJob.scope} job is already running`);
+    }
+
+    const body = (req.body ?? {}) as { restart?: unknown };
+    const restartAfter = body.restart !== false;
+
+    const job: SystemJob = {
+      id: randomUUID(),
+      kind: "source-update",
+      scope: "source-update",
+      restartAfter,
+      status: "running",
+      startedAt: Date.now(),
+      droppedLines: 0,
+      lines: [],
+      subscribers: new Set(),
+    };
+    activeJob = job;
+    jobsById.set(job.id, job);
+    if (jobsById.size > 5) {
+      const oldest = jobsById.keys().next().value;
+      if (oldest && oldest !== job.id) jobsById.delete(oldest);
+    }
+
+    const spawnOptions = {
+      cwd: root,
+      stdio: ["ignore", "pipe", "pipe"] as Array<"ignore" | "pipe">,
+      maxLifetimeMs: REBUILD_MAX_LIFETIME_MS,
+      env: { ...process.env, FUSION_SKIP_STARTUP_UPDATE_PREFLIGHT: "1", FORCE_COLOR: "0" },
+    };
+
+    const run = async (): Promise<void> => {
+      const gitBin = process.env.FUSION_SYSTEM_GIT_BIN ?? "git";
+      const gitPrefix = parseCommandPrefixEnv(process.env.FUSION_SYSTEM_GIT_ARGS, "FUSION_SYSTEM_GIT_ARGS");
+      const pnpmBin = process.env.FUSION_SYSTEM_PNPM_BIN ?? "pnpm";
+      const pnpmPrefix = parseCommandPrefixEnv(process.env.FUSION_SYSTEM_PNPM_ARGS, "FUSION_SYSTEM_PNPM_ARGS");
+
+      appendJobLine(job, "system", `Updating source checkout ${root}…`);
+
+      const status = await runJobStep(job, "git status --porcelain", gitBin, [...gitPrefix, "status", "--porcelain"], spawnOptions);
+      if (!status.ok) {
+        finishJob(job, "failed", { error: status.detail });
+        return;
+      }
+      if (status.stdout.trim().length > 0) {
+        const detail = `Refusing to update: ${root} has uncommitted changes. Commit, stash, or discard them first.`;
+        appendJobLine(job, "system", detail);
+        finishJob(job, "failed", { error: detail });
+        return;
+      }
+
+      const pull = await runJobStep(job, "git pull --ff-only", gitBin, [...gitPrefix, "pull", "--ff-only"], spawnOptions);
+      if (!pull.ok) {
+        const detail = `${pull.detail} — the branch may have diverged from its remote; a fast-forward-only pull will not create a merge commit.`;
+        appendJobLine(job, "system", detail);
+        finishJob(job, "failed", { error: detail });
+        return;
+      }
+
+      const install = await runJobStep(job, "pnpm install", pnpmBin, [...pnpmPrefix, "install"], {
+        ...spawnOptions,
+        shell: process.platform === "win32",
+      });
+      if (!install.ok) {
+        finishJob(job, "failed", { error: install.detail });
+        return;
+      }
+
+      const build = await runJobStep(job, "Building workspace", process.execPath, [buildScriptPath], spawnOptions);
+      if (!build.ok) {
+        appendJobLine(job, "system", "Build failed — the running instance was left untouched and was NOT restarted.");
+        finishJob(job, "failed", { error: build.detail });
+        return;
+      }
+
+      appendJobLine(job, "system", "Build succeeded.");
+      let restartScheduled = false;
+      if (restartAfter && systemControl) {
+        restartScheduled = systemControl.requestRestart("source-update");
+        appendJobLine(
+          job,
+          "system",
+          restartScheduled
+            ? "Restarting server into the updated build…"
+            : "Restart not available (no supervising parent) — restart manually to pick up the update.",
+        );
+      }
+      finishJob(job, "succeeded", { exitCode: 0, restartScheduled });
+      log.info("System source update succeeded", { jobId: job.id, restartScheduled });
+    };
+
+    void run().catch((err: unknown) => {
+      // Never strand activeJob: a stranded slot would 409 every later attempt until a restart, and a
+      // restart is exactly what the operator has lost the ability to trigger.
+      const message = err instanceof Error ? err.message : String(err);
+      appendJobLine(job, "system", `Source update failed: ${message}`);
+      finishJob(job, "failed", { error: message });
+      log.error("System source update failed", { jobId: job.id, error: message });
+    });
+
+    log.info("System source update started", { jobId: job.id, root, restartAfter });
+    res.status(202).json(jobSnapshot(job, false));
+  });
+
   /** GET /api/system/jobs/:id/stream — SSE output stream with Last-Event-ID replay. */
   router.get("/system/jobs/:id/stream", (req, res) => {
     const job = jobsById.get(req.params.id as string);
@@ -591,14 +807,32 @@ export function registerSystemRoutes(ctx: ApiRoutesContext, deps: SystemRouteDep
     }
     try {
       const projects = await centralCore.listProjects();
-      const runningIds = projects.filter((p) => engineManager.getEngine(p.id)).map((p) => p.id);
+      /*
+      FNXC:SystemPanel 2026-08-31-07:08:
+      RESTART MUST BE ABLE TO UNDO A STOP. This used to consider only projects with a live engine, so
+      a paused project was invisible to it — and "Stop engine" (ProjectCard) IS a project pause, as is
+      this route's own compensating pause when a resume fails. `ensureEngine` refuses paused projects
+      ("Project <id> is paused"), so the state the operator was left in had no UI exit at all: the one
+      control that would restart the engine skipped the only project that needed it. Reproduced twice
+      in production.
+
+      A paused project is therefore a restart candidate and is resumed directly — pausing it first
+      would be a no-op tear-down of an engine that does not exist. This mirrors the precedent in
+      POST /api/engine/start, which already resumes paused projects instead of calling ensureEngine.
+      */
+      const candidates = projects
+        .filter((p) => engineManager.getEngine(p.id) || (p.status as string) === "paused")
+        .map((p) => ({ projectId: p.id, paused: !engineManager.getEngine(p.id) }));
       const restarted: string[] = [];
       const failed: Array<{ projectId: string; error: string }> = [];
-      for (const projectId of runningIds) {
+      for (const { projectId, paused } of candidates) {
         try {
           // pause+resume is the only manager path that cleanly tears down the
           // engine (map removal + singleton lock release) before restarting.
-          await engineManager.pauseProject(projectId);
+          // An already-paused project has nothing to tear down — resume only.
+          if (!paused) {
+            await engineManager.pauseProject(projectId);
+          }
           await engineManager.resumeProject(projectId);
           restarted.push(projectId);
         } catch (err) {

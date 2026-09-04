@@ -6,6 +6,7 @@ import {
   __getProcessSupervisorStateForTests,
   __resetProcessSupervisorForTests,
   __terminateSupervisedChildrenForTests,
+  releaseSupervisedChild,
   superviseSpawn,
 } from "../process/process-supervisor.js";
 
@@ -58,6 +59,43 @@ describe("process-supervisor", () => {
     expect(__getProcessSupervisorStateForTests()).toEqual({ registrySize: 1, handlersInstalled: true });
     await expect(child.waitExit()).resolves.toEqual({ code: 0, signal: null });
     await waitFor(() => __getProcessSupervisorStateForTests().registrySize === 0);
+  });
+
+  /*
+  FNXC:RemoteAccess 2026-09-01-02:54:
+  A SUPERVISED RESTART IS NOT A SHUTDOWN. The dashboard exits with FUSION_RESTART_EXIT_CODE and a
+  supervisor relaunches it seconds later, so the parent-death teardown below must be skippable for a
+  child that has to outlive the swap — the Tailscale funnel that carries the operator's only remote
+  route to the box. Released children survive every path that otherwise reaps them.
+  */
+  it("releases a child from parent-death supervision so a relaunch cannot kill it", async () => {
+    if (process.platform === "win32") {
+      return;
+    }
+
+    const child = superviseSpawn(process.execPath, [fixturePath, "keepalive"], {
+      stdio: "ignore",
+      killGraceMs: 100,
+      maxLifetimeMs: Number.POSITIVE_INFINITY,
+    });
+    const pid = child.pid;
+    expect(typeof pid).toBe("number");
+    await waitFor(() => isAlive(pid as number));
+
+    expect(releaseSupervisedChild(pid)).toBe(true);
+    expect(__getProcessSupervisorStateForTests().registrySize).toBe(0);
+
+    // The exact teardown a parent exit performs. The released child must be untouched by it.
+    await __terminateSupervisedChildrenForTests("released");
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    expect(isAlive(pid as number)).toBe(true);
+
+    // Releasing twice is not a second claim — the caller must not be told it released anything.
+    expect(releaseSupervisedChild(pid)).toBe(false);
+    expect(releaseSupervisedChild(undefined)).toBe(false);
+
+    process.kill(-(pid as number), "SIGKILL");
+    await waitFor(() => !isAlive(pid as number));
   });
 
   it("cascades SIGTERM to the supervised process group", async () => {

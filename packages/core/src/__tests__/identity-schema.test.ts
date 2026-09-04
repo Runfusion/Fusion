@@ -1,6 +1,6 @@
 /**
  * FNXC:Identity 2026-08-09-03:04:
- * U2 of the pluggable user identity plan: migration 0067 adds the actor registry, credentials,
+ * U2 of the pluggable user identity plan: migration 0072 adds the actor registry, credentials,
  * sessions, and provider links to `central`, plus project-scoped role grants to `project`.
  *
  * What these tests exist to catch:
@@ -45,12 +45,12 @@ describe("identity schema: migration identity", () => {
   FNXC:Identity 2026-08-24-00:03: main then shipped 0066 (memory-focus); identity is 0067.
   */
   it("assigns the identity schema its own immutable migration version at the current ceiling", () => {
-    expect(IDENTITY_ACTORS_VERSION).toBe("0067");
-    expect(SCHEMA_BASELINE_VERSION).toBe("0067");
+    expect(IDENTITY_ACTORS_VERSION).toBe("0072");
+    expect(SCHEMA_BASELINE_VERSION).toBe("0072");
   });
 });
 
-pgDescribe("identity schema: migration 0067", () => {
+pgDescribe("identity schema: migration 0072", () => {
   async function withHarness(fn: (h: PgTestHarness) => Promise<void>): Promise<void> {
     const h = await createTaskStoreForTest({ prefix: "fusion_identity" });
     try {

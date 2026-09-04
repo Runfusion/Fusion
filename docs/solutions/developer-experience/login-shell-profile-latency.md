@@ -28,7 +28,7 @@ root-causing it. FN-7688 investigated this in isolation.
 
 ## Investigation
 
-An ad hoc timed PTY harness (same `@homebridge/node-pty-prebuilt-multiarch` binding the dashboard
+An ad hoc timed PTY harness (same `@lydell/node-pty` binding the dashboard
 bundles) measured wall-clock time from `pty.spawn()` to first readable output byte, for
 `bash`/`zsh` with and without `--login`, on (a) a typical/lean real developer profile and (b) a
 synthetic heavy profile (`ZDOTDIR` pointed at a temp dir whose `.zprofile`/`.zshrc` each `sleep 0.8`).

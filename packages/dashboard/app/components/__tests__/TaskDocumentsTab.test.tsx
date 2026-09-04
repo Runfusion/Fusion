@@ -272,7 +272,11 @@ describe("TaskDocumentsTab", () => {
 
     const dialog = screen.getByRole("dialog", { name: "Artifact media preview" });
     expect(dialog).toBeInTheDocument();
-    expect(screen.getAllByRole("img", { name: "Image artifact" })[1]).toHaveAttribute("src", "blob:secure-preview");
+    const expandedImage = screen.getAllByRole("img", { name: "Image artifact" })[1];
+    expect(expandedImage).toHaveAttribute("src", "blob:secure-preview");
+    expect(within(dialog).getByTestId("artifact-image-viewer-zoom-level")).toHaveTextContent("100%");
+    fireEvent.click(within(dialog).getByTestId("artifact-image-viewer-zoom-in"));
+    expect(expandedImage.style.transform).toContain("scale(1.25)");
 
     fireEvent.click(screen.getByRole("button", { name: "Close artifact preview" }));
 

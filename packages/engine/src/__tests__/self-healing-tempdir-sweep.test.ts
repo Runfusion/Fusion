@@ -130,6 +130,12 @@ function legacyRepoMergeDir(name = `fusion-ai-merge-fn-1-${Math.random().toStrin
   return dir;
 }
 
+function legacyWorktreesMergeDir(name = `fusion-ai-merge-fn-1-${Math.random().toString(36).slice(2)}`): string {
+  const dir = join(projectRoot, ".worktrees", ".ai-merge", name);
+  mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
 function makeAge(path: string, ageMs: number): void {
   const old = new Date(Date.now() - ageMs);
   utimesSync(path, old, old);
@@ -273,20 +279,24 @@ describe("SelfHealingManager temp-dir AI merge worktree sweep", () => {
     ]));
   });
 
-  it("removes stale AI merge directories from new and legacy repo-local roots", async () => {
+  it("removes stale AI merge directories from current and legacy repo-local roots", async () => {
     const staleNew = localMergeDir("fusion-ai-merge-fn-1-localstale");
     const staleLegacy = legacyRepoMergeDir("fusion-ai-merge-fn-1-legacystale");
+    const staleLegacyWorktrees = legacyWorktreesMergeDir("fusion-ai-merge-fn-1-legacyworktrees");
     makeStale(staleNew);
     makeStale(staleLegacy);
+    makeStale(staleLegacyWorktrees);
     const { manager, audits } = makeManager();
 
-    await expect(sweep(manager)).resolves.toBe(2);
+    await expect(sweep(manager)).resolves.toBe(3);
 
     expect(existsSync(staleNew)).toBe(false);
     expect(existsSync(staleLegacy)).toBe(false);
+    expect(existsSync(staleLegacyWorktrees)).toBe(false);
     expect(sweepAudits(audits)).toEqual(expect.arrayContaining([
       expect.objectContaining({ metadata: expect.objectContaining({ path: realpathSync(resolveAiMergeRootPath(projectRoot, undefined)) + "/fusion-ai-merge-fn-1-localstale", success: true, reason: "stale" }) }),
       expect.objectContaining({ metadata: expect.objectContaining({ path: realpathSync(resolveLegacyAiMergeRootPath(projectRoot)) + "/fusion-ai-merge-fn-1-legacystale", success: true, reason: "stale" }) }),
+      expect.objectContaining({ metadata: expect.objectContaining({ path: realpathSync(join(projectRoot, ".worktrees", ".ai-merge")) + "/fusion-ai-merge-fn-1-legacyworktrees", success: true, reason: "stale" }) }),
     ]));
   });
 

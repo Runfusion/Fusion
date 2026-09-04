@@ -30,6 +30,7 @@ import { resolveEffectivePlannerOversightLevel } from "../../../core/src/workflo
 import { resolveTaskSessionAdvisorEnabled } from "../../../core/src/agents/session-advisor";
 import { isNearDuplicateCanonicalInactive } from "../../../core/src/duplicates/near-duplicate-canonical";
 import { getRevertOfId, findOpenUndoTaskForSource, isTaskReverted } from "../utils/taskRevert";
+import { isForeignTaskEvent, readTaskEventProjectId } from "../utils/taskEventProjectScope";
 import {
   isArchivedColumnRole,
   isCompleteColumnRole,
@@ -52,6 +53,7 @@ import { useAgentLogs } from "../hooks/useAgentLogs";
 import { useConfirm } from "../hooks/useConfirm";
 import { runDuplicateTaskAction } from "../utils/duplicateTaskAction";
 import { AgentLogViewer } from "./AgentLogViewer";
+import { PreciseTimestamp } from "./PreciseTimestamp";
 import { ModelSelectorTab } from "./ModelSelectorTab";
 import { PrPanel } from "./PrPanel";
 import { PrCreateModal } from "./PrCreateModal";
@@ -1203,6 +1205,7 @@ export function TaskDetailContent({
   FN-173 makes the duplicate flag acknowledgeable rather than an opaque decision. The actions row only
   exists for Delete or Archive so ordinary cards without archive access do not leave an empty shell.
   */
+  // FNXC:WorkflowLifecycle 2026-08-31-07:33: DELIBERATE-LITERAL — absent canonical workflow flags require legacy terminal-column fallback semantics.
   const showNearDuplicateWarning = Boolean(nearDuplicateOf)
     && workingTask.sourceMetadata?.nearDuplicateDismissed !== true
     && task.column !== "archived"
@@ -1308,6 +1311,7 @@ export function TaskDetailContent({
   const isArchivedColumn = isArchivedColumnRole(detailColumnFlags, task.column);
   const isWipColumn = isWipColumnRole(detailColumnFlags, task.column);
   const isReviewColumn = isReviewColumnRole(detailColumnFlags, task.column);
+  // FNXC:WorkflowLifecycle 2026-08-31-07:33: DELIBERATE-LITERAL — absent detail workflow flags require the legacy mutable-column fallback.
   const isMutableLiveColumn = detailColumnFlags
     ? detailColumnFlags.complete !== true && detailColumnFlags.archived !== true
     : task.column !== "done" && task.column !== "archived";
@@ -2036,7 +2040,7 @@ export function TaskDetailContent({
       try {
         const updatedTask = JSON.parse(e.data);
         // Only update if this is for our task and has workflow step results
-        if (updatedTask.id === task.id && Array.isArray(updatedTask.workflowStepResults)) {
+        if (!isForeignTaskEvent(readTaskEventProjectId(updatedTask), projectId) && updatedTask.id === task.id && Array.isArray(updatedTask.workflowStepResults)) {
           setWorkflowResults(updatedTask.workflowStepResults);
           setWorkflowResultsLoadState("succeeded");
         }
@@ -4580,7 +4584,7 @@ export function TaskDetailContent({
     const handleTaskUpdated = (event: MessageEvent) => {
       try {
         const updatedTask = JSON.parse(event.data) as { id?: unknown };
-        if (updatedTask.id === task.id) scheduleResync();
+        if (!isForeignTaskEvent(readTaskEventProjectId(updatedTask), projectId) && updatedTask.id === task.id) scheduleResync();
       } catch {
         // FNXC:TaskActivityFeedFreshness 2026-08-28-00:13: Ignore malformed stream payloads; the next authoritative resync remains available.
       }
@@ -5842,14 +5846,6 @@ export function TaskDetailContent({
                   onOpenReviewTask={handleOpenMemberReview}
                 />
               )}
-              {/* FNXC:Workspace 2026-06-21-00:00: workspace tasks have no singular
-                  task.worktree/task.branch; surface their acquired per-sub-repo worktrees
-                  as a flat read-only list so the detail view isn't blank (U3/KTD5). */}
-              {/* FNXC:Workspace 2026-06-22-09:00: gate/render off the hydrated
-                  workingTask, not the sparse task row. workspaceWorktrees is only
-                  present in fetched detail, so keying off task renders blank on the
-                  optimistic-open path before the detail fetch resolves. */}
-              {isWorkspaceTask(workingTask) && <WorkspaceWorktreesSummary task={workingTask} />}
             </>
           )}
           <ExternalBlockNotice task={task as Task} variant="detail" onOpenChatWithPrefill={onOpenChatWithPrefill} onRetryTask={onRetryTask} addToast={addToast} />
@@ -6254,9 +6250,21 @@ export function TaskDetailContent({
                               data-stall-highlight={isHighlighted ? "true" : undefined}
                             >
                               <div className="detail-log-header">
-                                <span className="detail-log-timestamp">
-                                  {formatTimestamp(entry.timestamp)}
-                                </span>
+                                {/*
+                                FNXC:PreciseTaskLogTimestamps 2026-09-01-01:03:
+                                FN-272 keeps Feed's compact relative timestamp for scanability and adds the task action's precise local wall-clock time beside it.
+                                This wrapper exists only at the activity-log render site, leaving task metadata timestamps on their established relative contract.
+                                */}
+                                <div className="detail-log-timestamps">
+                                  <span className="detail-log-timestamp">
+                                    {formatTimestamp(entry.timestamp)}
+                                  </span>
+                                  <PreciseTimestamp
+                                    timestamp={entry.timestamp}
+                                    className="detail-log-precise-timestamp"
+                                    testId="task-activity-precise-timestamp"
+                                  />
+                                </div>
                                 <span className="detail-log-action">{action}</span>
                               </div>
                               {outcome && (
@@ -6698,6 +6706,17 @@ export function TaskDetailContent({
               </p>
             )}
           </div>
+          {/*
+          FNXC:Workspace 2026-09-03-14:19:
+          FN-289 keeps the multi-repository landing count and per-repository list in Details instead
+          of the permanent header. Render from the hydrated workingTask because workspaceWorktrees
+          arrives with fetched detail after optimistic opening; TaskCard deliberately remains count-only.
+          */}
+          {isWorkspaceTask(workingTask) && (
+            <div className="detail-section detail-section--workspace-repos">
+              <WorkspaceWorktreesSummary task={workingTask} />
+            </div>
+          )}
           {/* FNXC:TaskDetailSummaryTab 2026-07-29-00:00: FN-8197 keeps Definition focused on plan, retry, and source metadata; completed merge metadata renders exclusively in the done-only Summary tab. */}
           {(retrySummary?.total ?? 0) > 0 && (
             <div className="detail-section detail-retries-section">

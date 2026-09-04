@@ -9,10 +9,7 @@ import {
 
 const searchTranslations: Record<string, string> = {
   "settings.projectModels.chatHeading": "Chat",
-  "settings.projectModels.chatDescription": "Choose the default target for new Direct chats and whether New Chat should prompt or immediately use that default.",
-  "settings.projectModels.chatNewSessionMode": "New Chat behavior",
-  "settings.projectModels.chatNewSessionModePrompt": "Prompt for model each time",
-  "settings.projectModels.chatNewSessionModeAlwaysDefault": "Always use configured default",
+  "settings.projectModels.chatDescription": "Choose the default target for new Direct chats. New Chat always creates the conversation immediately from this default.",
   "settings.projectModels.chatDefaultKind": "Chat default target",
   "settings.projectModels.chatDefaultModel": "Chat Default Model",
   "settings.projectModels.chatDefaultAgent": "Chat Default Agent",

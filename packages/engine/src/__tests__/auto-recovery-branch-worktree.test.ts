@@ -58,6 +58,19 @@ function createFixtures(taskOverrides: Record<string, unknown> = {}, mode = "pro
   return { taskStore, runAudit, logger, spawnAiRecoverySession, handler, failure, decision, ctx };
 }
 
+/*
+FNXC:LifecycleContainment 2026-08-31-09:28:
+These expectations were written when branch/worktree recovery REHOMED the card backwards -- to
+`todo`, to a resolved hold lane, or nowhere at all when no backward destination existed. FN-207/
+FN-217 containment removed that: "Branch/worktree cleanup may repair metadata but cannot rehome the
+card. Keep the live column as the only target." Production now sets `reboundTarget = task.column`
+unconditionally, so the recovery requeues IN PLACE and preserves progress and resume state.
+
+The fixtures kept asserting the old backward targets and stayed red long after the behavior change
+that retired them. They are updated to state the containment invariant instead of the movement it
+replaced -- and the destination is now derived from each fixture's own column, so a future change
+that reintroduces a hardcoded lane fails here rather than passing by coincidence.
+*/
 describe("BranchWorktreeAutoRecoveryHandler", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -68,7 +81,8 @@ describe("BranchWorktreeAutoRecoveryHandler", () => {
     branchConflictMocks.inspectBranchConflict.mockResolvedValue({ kind: "fully-subsumed", livePath: "/tmp/wt", tipSha: "abc" });
     await f.handler.issueRetry(f.failure, f.decision, f.ctx);
     expect(f.taskStore.updateTask).toHaveBeenCalledWith("FN-4536", { branch: null, baseCommitSha: null, branchWriteOrigin: "engine" });
-    expect(f.taskStore.moveTask).toHaveBeenCalledWith("FN-4536", "todo", expect.objectContaining({ moveSource: "engine", preserveWorktree: false }));
+    expect(f.taskStore.moveTask).toHaveBeenCalledWith("FN-4536", "in-progress", expect.objectContaining({ moveSource: "engine", preserveWorktree: false }));
+    expect(f.taskStore.moveTask).not.toHaveBeenCalledWith("FN-4536", "todo", expect.anything());
     expect(f.runAudit.database).toHaveBeenCalledWith(expect.objectContaining({ type: "branch-worktree:auto-requeue" }));
   });
 
@@ -95,11 +109,13 @@ describe("BranchWorktreeAutoRecoveryHandler", () => {
     await f.handler.issueRetry(f.failure, f.decision, f.ctx);
 
     expect(f.taskStore.updateTask).toHaveBeenCalledWith("FN-4536", { branch: null, baseCommitSha: null, branchWriteOrigin: "engine" });
+    /* Contained in the card's OWN lane, not rehomed to the hold lane, and never to a literal `todo`. */
     expect(f.taskStore.moveTask).toHaveBeenCalledWith(
       "FN-4536",
-      RENAMED_VOCAB.hold,
+      RENAMED_VOCAB.wip,
       expect.objectContaining({ moveSource: "engine", preserveWorktree: false }),
     );
+    expect(f.taskStore.moveTask).not.toHaveBeenCalledWith("FN-4536", RENAMED_VOCAB.hold, expect.anything());
     expect(f.taskStore.moveTask).not.toHaveBeenCalledWith("FN-4536", "todo", expect.anything());
   });
 
@@ -120,20 +136,32 @@ describe("BranchWorktreeAutoRecoveryHandler", () => {
 
   This drives the rejection itself, which is the behaviour every route ends at.
   */
-  it("contains recovery when the source has no adjacent backward destination", async () => {
+  /*
+  FNXC:LifecycleContainment 2026-08-31-09:28:
+  This case used to assert the SKIP taken when no adjacent backward destination existed. Containment
+  retired that concept: the destination is the card's own column, so one always exists and the skip
+  is now only a defensive guard for an empty column. Asserting the retired skip would demand the
+  backward search back.
+
+  The case is re-aimed at what actually needs guarding on an unknown lane -- that recovery stays put
+  rather than inventing a destination. `building` belongs to no default vocabulary, which is exactly
+  the shape that used to be rehomed into a lane the board did not declare.
+  */
+  it("contains recovery in the card's own lane even when that lane is not a known vocabulary", async () => {
     const f = createFixtures({ column: "building" }, "programmatic");
     branchConflictMocks.inspectBranchConflict.mockResolvedValue({ kind: "fully-subsumed", livePath: "/tmp/wt", tipSha: "abc" });
 
-    /* The handler must not propagate — that is the regression. */
+    /* The handler must not propagate — that is the original regression, and it still holds. */
     await expect(f.handler.issueRetry(f.failure, f.decision, f.ctx)).resolves.not.toThrow();
 
-    expect(f.taskStore.moveTask).not.toHaveBeenCalled();
-    expect(f.runAudit.database).toHaveBeenCalledWith(expect.objectContaining({
-      type: "branch-worktree:auto-requeue-skipped",
-      metadata: expect.objectContaining({ reason: "no-contained-target", column: "building", branchPreserved: true }),
-    }));
-    /* And the success audit must NOT be written for a move that did not happen. */
-    expect(f.runAudit.database).not.toHaveBeenCalledWith(expect.objectContaining({ type: "branch-worktree:auto-requeue" }));
+    expect(f.taskStore.moveTask).toHaveBeenCalledWith(
+      "FN-4536",
+      "building",
+      expect.objectContaining({ lifecycleReason: "branch-worktree-recovery" }),
+    );
+    /* No invented destination: not a default lane, not a backward one. */
+    expect(f.taskStore.moveTask).not.toHaveBeenCalledWith("FN-4536", "todo", expect.anything());
+    expect(f.taskStore.moveTask).toHaveBeenCalledTimes(1);
   });
 
   /*
@@ -199,11 +227,13 @@ describe("BranchWorktreeAutoRecoveryHandler", () => {
     await f.handler.issueRetry(f.failure, f.decision, f.ctx);
 
     expect(f.taskStore.updateTask).not.toHaveBeenCalled();
+    /* Contained where the card actually rests — the review lane — not pulled back into wip. */
     expect(f.taskStore.moveTask).toHaveBeenCalledWith(
       "FN-4536",
-      RENAMED_VOCAB.wip,
+      RENAMED_VOCAB.review,
       expect.objectContaining({ lifecycleReason: "branch-worktree-recovery" }),
     );
+    expect(f.taskStore.moveTask).not.toHaveBeenCalledWith("FN-4536", RENAMED_VOCAB.wip, expect.anything());
   });
 
   it("reanchors bootstrap misbinding then requeues", async () => {
@@ -213,7 +243,7 @@ describe("BranchWorktreeAutoRecoveryHandler", () => {
     branchConflictMocks.reanchorBranchToBase.mockResolvedValue({});
     await f.handler.issueRetry(f.failure, f.decision, f.ctx);
     expect(branchConflictMocks.reanchorBranchToBase).toHaveBeenCalledTimes(1);
-    expect(f.taskStore.moveTask).toHaveBeenCalledWith("FN-4536", "todo", expect.objectContaining({ moveSource: "engine" }));
+    expect(f.taskStore.moveTask).toHaveBeenCalledWith("FN-4536", "in-progress", expect.objectContaining({ moveSource: "engine" }));
     expect(f.runAudit.database).toHaveBeenCalledWith(expect.objectContaining({ type: "branch-worktree:auto-requeue", metadata: expect.objectContaining({ rationale: "bootstrap-misbinding-reanchor" }) }));
 
     // Regression: prior to the fix, the handler passed `foreignCommits: []`
@@ -240,7 +270,7 @@ describe("BranchWorktreeAutoRecoveryHandler", () => {
       error: { strandedCommits: [] },
     });
     await f.handler.issueRetry(f.failure, f.decision, f.ctx);
-    expect(f.taskStore.moveTask).toHaveBeenCalledWith("FN-4536", "todo", expect.objectContaining({ moveSource: "engine" }));
+    expect(f.taskStore.moveTask).toHaveBeenCalledWith("FN-4536", "in-progress", expect.objectContaining({ moveSource: "engine" }));
     expect(f.runAudit.database).toHaveBeenCalledWith(expect.objectContaining({ type: "branch-worktree:foreign-branch-discarded" }));
     expect(f.runAudit.database).toHaveBeenCalledWith(expect.objectContaining({ type: "branch-worktree:auto-requeue", metadata: expect.objectContaining({ rationale: "live-foreign-discard-and-recreate" }) }));
   });

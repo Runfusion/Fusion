@@ -1,0 +1,7 @@
+.precise-timestamp {
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  font-size: var(--font-size-xs);
+}

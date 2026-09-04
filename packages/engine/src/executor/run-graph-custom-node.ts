@@ -19,7 +19,7 @@ import type {
   WorkflowStep,
   WorkspaceConfig,
 } from "@fusion/core";
-import { isFastExecutionMode, isFastLaneSkippableCustomNode, isLegacyWorkspaceWorktreeLayout, resolveEffectiveAgent, resolveWorkspaceTaskWorktreeDir, THINKING_LEVELS, WORKFLOW_STEP_NOT_RUN_REASONS } from "@fusion/core";
+import { isFastExecutionMode, isFastLaneSkippableCustomNode, isLegacyWorkspaceWorktreeLayout, requiresContentReviewProof, resolveEffectiveAgent, resolveWorkspaceTaskWorktreeDir, THINKING_LEVELS, WORKFLOW_STEP_NOT_RUN_REASONS } from "@fusion/core";
 import { executorLog } from "../logger.js";
 import type { EngineRunContext } from "../util/run-audit.js";
 import type { WorkflowNodeResult } from "../workflows/workflow-graph-executor.js";
@@ -47,6 +47,7 @@ import {
   type DependencyCommandRunner,
   type WorktreeDependencyReadiness,
 } from "../worktree/worktree-dependency-install.js";
+import { resolveContentReviewInputProof } from "../worktree/review-diff-fingerprint.js";
 
 const WORKFLOW_THINKING_LEVEL_SET: ReadonlySet<string> = new Set(THINKING_LEVELS);
 const WORKFLOW_STEP_NOT_RUN_REASON_SET: ReadonlySet<string> = new Set(WORKFLOW_STEP_NOT_RUN_REASONS);
@@ -208,7 +209,7 @@ export async function runPlanReviewDependencyGate(
       }
       targets.push({ repository, worktreePath: path });
     }
-  } else if (input.worktreePath && existsSync(input.worktreePath)) {
+  } else if (input.task.worktree && input.worktreePath && existsSync(input.worktreePath)) {
     targets.push({ repository: "task worktree", worktreePath: input.worktreePath });
   } else {
     await input.store.logEntry(
@@ -285,11 +286,19 @@ export function toWorkspaceRepoReviewResult(repoOutcome: WorkflowStepOutcome): R
     || repoOutcome.output?.trim()
     || repoOutcome.error?.trim()
     || WORKSPACE_REPO_REVIEW_NO_NOTES_NOTICE;
+  /*
+  FNXC:ReviewVerdictAuthority 2026-09-02-19:25:
+  A successful deterministic script still approves from its exit code, but a prompt review that owed
+  JSON cannot be promoted from transport success alone. Preserve its missing verdict as UNAVAILABLE
+  so workspace aggregation never fabricates authored approval evidence.
+  */
+  const verdict = repoOutcome.verdict
+    ?? (repoOutcome.success && !repoOutcome.verdictRequired ? "APPROVE" : "UNAVAILABLE");
   return {
-    verdict: (repoOutcome.verdict ?? (repoOutcome.success ? "APPROVE" : "UNAVAILABLE")) as ReviewResult["verdict"],
+    verdict: verdict as ReviewResult["verdict"],
     review: reviewText,
     summary: reviewText,
-    retryable: !repoOutcome.success,
+    retryable: !repoOutcome.success || verdict === "UNAVAILABLE",
     ...(repoOutcome.findings ? { findings: repoOutcome.findings } : {}),
   };
 }
@@ -403,6 +412,8 @@ export async function runGraphCustomNode(
       : graphContext?.[WORKFLOW_REVIEW_KIND_CONTEXT_KEY] === "plan" || graphContext?.[WORKFLOW_REVIEW_KIND_CONTEXT_KEY] === "code"
         ? graphContext[WORKFLOW_REVIEW_KIND_CONTEXT_KEY] as "plan" | "code"
         : undefined;
+    const effectiveStepId = optionalGroupId ?? node.id;
+    const isContentBindingStep = requiresContentReviewProof(effectiveStepId, { reviewKind: declaredReviewKind });
     /*
     FNXC:FastLane 2026-08-29-03:10:
     The pure route predicate keeps custom-node skips aligned with graph bypasses while preserving
@@ -436,24 +447,12 @@ export async function runGraphCustomNode(
     const rawCliCommand = executorKind === "cli" && typeof cfg.cliCommand === "string" && cfg.cliCommand.trim()
       ? cfg.cliCommand.trim()
       : undefined;
-    // Isolation guard: write-capable nodes must run inside a task worktree, not
-    // the shared repo root. Before the execute seam runs, live.worktree is unset
-    // — a coding/script/CLI node falling back to deps.rootDir would mutate the
-    // main checkout and cross-contaminate other tasks. Reject such nodes until a
-    // worktree exists. Read-only nodes (default toolMode) are safe against root.
-    /*
-    FNXC:WorkflowReviewers 2026-07-15-00:00:
-    Inline-fix Code Review, Browser Verification, and custom review nodes become
-    write-capable even when their workflow definition says `toolMode: readonly`.
-    Use the shared classifier consumed by graph preparation so issue #2075 cannot
-    leave runtime requiring a worktree that preparation declined to acquire.
-    Plan Review remains excluded because it uses the narrow PROMPT.md writer.
-    */
+    // Nodes that inspect or mutate delivered work must run inside a task worktree,
+    // not the shared repo root. Review nodes still need the checkout when their
+    // session tool policy is read-only; the classifier therefore answers checkout
+    // need rather than whether mutation tools will be exposed.
     const isDeterministicVerificationGate = cfg.workflowAction === "deterministic-verification";
-    const writeCapable = isDeterministicVerificationGate || workflowNodeRequiresWorktree(node, {
-      optionalGroupId,
-      reviewerInlineFixes: (settings as Settings & { reviewerInlineFixes?: boolean }).reviewerInlineFixes,
-    });
+    const writeCapable = isDeterministicVerificationGate || workflowNodeRequiresWorktree(node, { optionalGroupId });
     const workspaceConfig = deps.ensureWorkspaceConfig
       ? await deps.ensureWorkspaceConfig()
       : deps.workspaceConfig;
@@ -488,14 +487,13 @@ export async function runGraphCustomNode(
     }
 
     if (workspaceConfig?.repos.length) {
-      // Always re-read and acquire from the configured set. Repository scope remains durable review
-      // evidence, but is no longer an admission request or a way to narrow task provisioning.
+      // Re-read the configured set, but only write-capable execution may provision it.
       executionTarget = await deps.store.getTask(live.id);
       const missingRepository = workspaceConfig.repos.find((repository) => {
         const path = executionTarget.workspaceWorktrees?.[repository]?.worktreePath;
         return typeof path !== "string" || !existsSync(path);
       });
-      if (missingRepository) {
+      if (writeCapable && missingRepository) {
         await deps.store.logEntry(
           live.id,
           `Workflow node '${node.id}' is acquiring configured workspace checkout '${missingRepository}'`,
@@ -507,10 +505,12 @@ export async function runGraphCustomNode(
     } else if (!workspaceConfig) {
       const recordedWorktreeMissing = Boolean(executionTarget.worktree) && !existsSync(executionTarget.worktree!);
       /*
-      A node with no recorded worktree is pre-execution. A vanished implementation checkout is
-      not silently replaced for ordinary review, while Plan Review can re-acquire its plan tree.
+      FNXC:PlanningBoundary 2026-09-01-14:49:
+      Checkout provisioning belongs exclusively to write-capable execution nodes. Plan Review uses
+      main read-only and never reacquires a vanished path; write-capable nodes preserve stale-path
+      recovery by clearing the missing pointer before acquisition.
       */
-      const shouldAcquire = !executionTarget.worktree || (recordedWorktreeMissing && isPlanReviewNode);
+      const shouldAcquire = writeCapable && (!executionTarget.worktree || recordedWorktreeMissing);
       if (shouldAcquire) {
         const acquisitionTask = recordedWorktreeMissing
           ? ({ ...executionTarget, worktree: undefined, sessionFile: undefined } as TaskDetail)
@@ -574,24 +574,34 @@ export async function runGraphCustomNode(
       }
     }
 
-    const worktreePath = isWorkspaceTask
-      ? legacyWorkspacePath ?? workspaceTaskDir!
-      : executionTarget.worktree!;
-    const nodeSessionBoundary = resolveGraphNodeSessionBoundary({
-      isWorkspace: isWorkspaceTask,
-      writeCapable,
-      legacyWorkspaceLayout: Boolean(legacyWorkspacePath),
-      rootDir: deps.rootDir,
-      worktreePath,
-      confirmedRepositories: workspaceConfig?.repos,
-    });
+    const singularCheckoutAvailable = Boolean(executionTarget.worktree && existsSync(executionTarget.worktree));
+    const planLaneRootFallback = isPlanReviewNode && !singularCheckoutAvailable
+      && !legacyWorkspacePath && !hasWorkspaceCheckout;
+    const worktreePath = planLaneRootFallback
+      ? deps.rootDir
+      : isWorkspaceTask
+        ? legacyWorkspacePath ?? workspaceTaskDir!
+        : executionTarget.worktree ?? deps.rootDir;
+    const nodeSessionBoundary: SessionBoundaryDescriptor | undefined = planLaneRootFallback
+      ? {
+          kind: "read-only-root",
+          writableRoot: null,
+          projectRoot: deps.rootDir,
+          writableAllowlist: [join(deps.rootDir, ".fusion")],
+        }
+      : resolveGraphNodeSessionBoundary({
+          isWorkspace: isWorkspaceTask,
+          writeCapable,
+          legacyWorkspaceLayout: Boolean(legacyWorkspacePath),
+          rootDir: deps.rootDir,
+          worktreePath,
+          confirmedRepositories: workspaceConfig?.repos,
+        });
     /*
-    FNXC:WorktreeDependencies 2026-08-29-06:59:
-    Plan Review is the single lifecycle blocker for dependency readiness. It retries deterministic
-    matrix rows once at this pre-dispatch point, but unfamiliar package-manager evidence remains
-    unrecognized until the planning-only installer records an engine-observed resolution. The
-    returned REVISE follows the existing review budget/replan cap to awaiting-approval; acquisition
-    itself merely logs failures and optional/disabled Plan Review groups never reach this node.
+    FNXC:WorktreeDependencies 2026-09-01-14:49:
+    Fresh Plan Review owns no checkout, so dependency readiness is not determined here and the gate
+    falls through after logging. Execution-time acquisition owns dependency initialization; this
+    compatibility probe remains only for replans that already retain an execution checkout.
     */
     if (isPlanReviewNode) {
       const dependencyGate = await runPlanReviewDependencyGate({
@@ -758,6 +768,9 @@ export async function runGraphCustomNode(
     const stepThinkingLevel = typeof cfg.thinkingLevel === "string" && WORKFLOW_THINKING_LEVEL_SET.has(cfg.thinkingLevel)
       ? cfg.thinkingLevel as ThinkingLevel
       : undefined;
+    const readonlyMcpServers = Array.isArray(cfg.readonlyMcpServers)
+      ? [...new Set(cfg.readonlyMcpServers.filter((name): name is string => typeof name === "string").map((name) => name.trim()).filter(Boolean))]
+      : [];
     const step: WorkflowStep = {
       id: `graph:${node.id}`,
       name: typeof cfg.name === "string" && cfg.name.trim() ? cfg.name : node.id,
@@ -775,6 +788,7 @@ export async function runGraphCustomNode(
       ...(cfg.requiresBrowser === true ? { requiresBrowser: true } : {}),
       ...(modelProvider && modelId ? { modelProvider, modelId } : {}),
       ...(stepThinkingLevel ? { thinkingLevel: stepThinkingLevel } : {}),
+      ...(readonlyMcpServers.length > 0 ? { readonlyMcpServers } : {}),
     };
     if (cfg.summaryTarget === "task") {
       (step as WorkflowStep & { summaryTarget?: "task" }).summaryTarget = "task";
@@ -962,14 +976,45 @@ export async function runGraphCustomNode(
         outcome = buildWorkspaceReviewOutcome(aggregate, { superseded: reviewSuperseded });
       }
     } else {
-      outcome = mode === "script"
-        ? await deps.executeScriptWorkflowStep(live, step, worktreePath, settings, nodeEnv)
-        : await deps.executeWorkflowStep(live, step, worktreePath, settings, nodeEnv, {
+      const dispatchSingularStep = async (reviewInputFingerprint?: string): Promise<WorkflowStepOutcome> => {
+        if (mode === "script") {
+          const scriptOutcome = await deps.executeScriptWorkflowStep(live, step, worktreePath, settings, nodeEnv);
+          return reviewInputFingerprint === undefined
+            ? scriptOutcome
+            : { ...scriptOutcome, reviewInputFingerprint };
+        }
+        return deps.executeWorkflowStep(live, step, worktreePath, settings, nodeEnv, {
           unattended,
           principalAgentId,
           outputLanguage,
           ...(nodeSessionBoundary ? { sessionBoundary: nodeSessionBoundary } : {}),
+          ...(reviewInputFingerprint !== undefined ? { reviewInputFingerprint } : {}),
         });
+      };
+      /*
+      FNXC:ReviewInputProof 2026-09-01-11:18:
+      A singular content-binding review cannot be dispatched unless its exact input proof exists.
+      Use the merge gate's identity-or-kind predicate so an id-only `code-review` cannot escape the
+      guard, and mirror the workspace lane's existing refusal instead of spending a reviewer session
+      on an approval that persistence and merge admission must discard.
+      */
+      if (isContentBindingStep && !workspaceConfig) {
+        const proof = await resolveContentReviewInputProof(worktreePath, executionTarget.baseCommitSha);
+        if (proof.kind === "unprovable") {
+          const diagnostic = `${step.name} review input is unprovable (${proof.reason}); reviewer dispatch refused.`;
+          await deps.store.logEntry(
+            live.id,
+            `[pre-merge] ${diagnostic}`,
+            undefined,
+            deps.getRunContextFor(live.id),
+          );
+          outcome = { success: false, error: diagnostic, failureValue: "review-input-unprovable" };
+        } else {
+          outcome = await dispatchSingularStep(proof.fingerprint);
+        }
+      } else {
+        outcome = await dispatchSingularStep();
+      }
     }
     /*
      * FNXC:WorkflowReviewFindings 2026-08-05-06:29:
@@ -1033,6 +1078,7 @@ export async function runGraphCustomNode(
     if (outcome.repositoryScopeRevision !== undefined) contextPatch.repositoryScopeRevision = outcome.repositoryScopeRevision;
     if (outcome.reviewInputFingerprint !== undefined) contextPatch.reviewInputFingerprint = outcome.reviewInputFingerprint;
     if (outcome.reviewedCommitSha !== undefined) contextPatch.reviewedCommitSha = outcome.reviewedCommitSha;
+    if (outcome.verdictRequired) contextPatch.verdictRequired = true;
     if (outcome.supersededFindingIds?.length && outcome.supersededFindingSourceWorkflowStepId) {
       contextPatch.supersededFindingSourceWorkflowStepId = outcome.supersededFindingSourceWorkflowStepId;
       contextPatch.supersededFindingIds = outcome.supersededFindingIds;
@@ -1078,27 +1124,17 @@ export async function runGraphCustomNode(
     FNXC:ReviewLeniency 2026-07-02-00:30 (SUPERSEDED for blocking gates — see below):
     Malformed review output (no parseable verdict, even after the fallback-model retry in executeWorkflowStep) was treated as a NON-BLOCKING advisory rather than a hard gate failure. Operators asked that an unparseable reviewer response not block a task in review — a genuine REVISE (parsed verdict) still blocks, and the advisory_failure value keeps the malformed result visible on the Workflow tab.
 
-    FNXC:ReviewLeniency 2026-08-26-09:34:
-    A BLOCKING gate no longer approves on malformed output. Operator decision, reversing the line
-    above with the reason it was missing: "the only valid reason a task can be blocked is an LLM
-    problem (429, 503); everything else is fixed at the source, or the AI is made unable to return
-    anything other than what is expected — and if it does anyway, restart cleanly".
+    FNXC:ReviewVerdictAuthority 2026-09-02-19:25:
+    A verdict-less review can never authorize approval. The shared core requirement makes every
+    merge-consulted prompt request JSON; both parsers allow prose only to downgrade; this bridge
+    forwards `verdictRequired` and refuses workspace success-to-APPROVE synthesis; graph persistence
+    records a missing required verdict as failed; and merge admission independently rejects legacy
+    review-kind or marked rows without an authored approval verdict.
 
-    Restarting cleanly is ALREADY implemented, twice: `executeWorkflowStep` retries a malformed
-    primary on the fallback model, or self-retries once on the primary when no fallback is
-    configured. `malformed` therefore does not mean "one fumbled response" — it means the reviewer
-    failed to return a usable verdict across every attempt, which IS the LLM-class condition the
-    operator accepts as a legitimate stop.
-
-    What it must never mean is APPROVAL. Measured on a real card: a reviewer reported in prose that
-    the deliverables were absent, carried no verdict JSON, and the gate recorded success — unreviewed
-    work merged on a rejection nobody could see. The prose classifier cannot close this: that text
-    contained no rejection marker at all (no "revise", "reject", "must fix"), because it was a
-    factual statement of absence. Only the ABSENCE of a verdict is detectable, so absence must not
-    approve.
-
-    Advisory gates are untouched: `!blocking` still passes, keeping the original operator ask exactly
-    where it applies — a step that was never allowed to hold a card cannot start holding one.
+    The measured failure was a reviewer reporting absent deliverables in prose with no rejection
+    keyword and no JSON, followed by an advisory success record and merge. Keep the original text
+    visible, but never infer a verdict or rationale from it. Deterministic scripts remain governed by
+    exit status because they never carry `verdictRequired`.
     */
     return {
       /*

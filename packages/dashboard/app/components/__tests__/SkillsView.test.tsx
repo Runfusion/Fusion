@@ -3,6 +3,8 @@ import { render, screen, fireEvent, waitFor, act } from "@testing-library/react"
 import { SkillsView } from "../SkillsView";
 import * as apiModule from "../../api";
 import type { DiscoveredSkill, CatalogEntry, SkillContent } from "@fusion/dashboard";
+import type { ChatSnippet, GlobalSettings, Settings } from "@fusion/core";
+import { __test_resetChatSnippetsCache } from "../../hooks/useChatSnippetsCache";
 
 // Mock the API module
 vi.mock("../../api", () => ({
@@ -12,6 +14,8 @@ vi.mock("../../api", () => ({
   fetchSkillsCatalog: vi.fn(),
   fetchSkillContent: vi.fn(),
   fetchSkillFileContent: vi.fn(),
+  fetchGlobalSettings: vi.fn(),
+  updateGlobalSettings: vi.fn(),
 }));
 
 const mockFetchDiscoveredSkills = vi.mocked(apiModule.fetchDiscoveredSkills);
@@ -20,11 +24,14 @@ const mockInstallSkill = vi.mocked(apiModule.installSkill);
 const mockFetchSkillsCatalog = vi.mocked(apiModule.fetchSkillsCatalog);
 const mockFetchSkillContent = vi.mocked(apiModule.fetchSkillContent);
 const mockFetchSkillFileContent = vi.mocked(apiModule.fetchSkillFileContent);
+const mockFetchGlobalSettings = vi.mocked(apiModule.fetchGlobalSettings);
+const mockUpdateGlobalSettings = vi.mocked(apiModule.updateGlobalSettings);
 
 describe("SkillsView", () => {
   const mockAddToast = vi.fn();
   const projectId = "proj_123";
   const onClose = vi.fn();
+  let chatSnippets: ChatSnippet[];
 
   const mockDiscoveredSkills: DiscoveredSkill[] = [
     {
@@ -98,7 +105,9 @@ describe("SkillsView", () => {
   ];
 
   beforeEach(() => {
+    __test_resetChatSnippetsCache();
     vi.clearAllMocks();
+    chatSnippets = [];
     mockFetchDiscoveredSkills.mockResolvedValue(mockDiscoveredSkills);
     mockToggleExecutionSkill.mockResolvedValue({
       settingsPath: "skills",
@@ -106,6 +115,11 @@ describe("SkillsView", () => {
       targetFile: "/project/.fusion/settings.json",
     });
     mockInstallSkill.mockResolvedValue({ success: true });
+    mockFetchGlobalSettings.mockImplementation(async () => ({ chatSnippets: chatSnippets.map((snippet) => ({ ...snippet })) }));
+    mockUpdateGlobalSettings.mockImplementation(async (patch: Partial<GlobalSettings>) => {
+      chatSnippets = (patch.chatSnippets ?? []).map((snippet) => ({ ...snippet }));
+      return { chatSnippets: chatSnippets.map((snippet) => ({ ...snippet })) } as Settings;
+    });
     mockFetchSkillsCatalog.mockResolvedValue({
       entries: mockCatalogEntries,
       auth: {
@@ -122,7 +136,7 @@ describe("SkillsView", () => {
 
       await waitFor(() => {
         expect(screen.getByTestId("skills-view")).toBeTruthy();
-        expect(screen.getByText("Skills")).toBeTruthy();
+        expect(screen.getByText("Skills & Snippets")).toBeTruthy();
         expect(screen.getByText(/discovered/)).toBeTruthy();
       });
     });
@@ -245,6 +259,98 @@ describe("SkillsView", () => {
       await waitFor(() => {
         expect(screen.getByText("No skills available in the catalog.")).toBeTruthy();
       });
+    });
+  });
+
+  describe("chat snippets", () => {
+    it("creates, edits, and deletes a snippet while preserving prompt text", async () => {
+      render(<SkillsView addToast={mockAddToast} onClose={onClose} />);
+      await screen.findByTestId("snippets-empty");
+
+      const prompt = "  lance toujours les tests\navec chrome devtool mcp 😀  ";
+      fireEvent.change(screen.getByLabelText("Name"), { target: { value: "  ＴＥＳＴ  " } });
+      fireEvent.change(screen.getByLabelText("Prompt"), { target: { value: prompt } });
+      fireEvent.click(screen.getByRole("button", { name: "Add snippet" }));
+
+      await screen.findByText("/test");
+      expect(mockUpdateGlobalSettings).toHaveBeenLastCalledWith({
+        chatSnippets: [{ name: "test", prompt }],
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Edit /test" }));
+      fireEvent.change(screen.getByLabelText("Name"), { target: { value: "checks" } });
+      fireEvent.change(screen.getByLabelText("Prompt"), { target: { value: `${prompt}\nupdated` } });
+      fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+      const renamedTrigger = await screen.findByText("/checks");
+      expect(renamedTrigger.closest("article")?.querySelector(".skills-view-snippets__preview")?.textContent).toBe(`${prompt}\nupdated`);
+      fireEvent.click(screen.getByRole("button", { name: "Delete /checks" }));
+      await screen.findByTestId("snippets-empty");
+      expect(screen.queryByText("/checks")).toBeNull();
+    });
+
+    it("rejects reserved, duplicate, and over-capacity names before writing", async () => {
+      chatSnippets = [{ name: "existing", prompt: "existing prompt" }];
+      const first = render(<SkillsView addToast={mockAddToast} onClose={onClose} />);
+      await screen.findByText("/existing");
+
+      fireEvent.change(screen.getByLabelText("Name"), { target: { value: "STEER" } });
+      fireEvent.change(screen.getByLabelText("Prompt"), { target: { value: "prompt" } });
+      fireEvent.click(screen.getByRole("button", { name: "Add snippet" }));
+      expect(await screen.findByText("This name is reserved for a chat command.")).toBeTruthy();
+
+      fireEvent.change(screen.getByLabelText("Name"), { target: { value: "ＥＸＩＳＴＩＮＧ" } });
+      fireEvent.click(screen.getByRole("button", { name: "Add snippet" }));
+      expect(await screen.findByText("A snippet with this name already exists.")).toBeTruthy();
+      expect(mockUpdateGlobalSettings).not.toHaveBeenCalled();
+
+      first.unmount();
+      __test_resetChatSnippetsCache();
+      chatSnippets = Array.from({ length: 50 }, (_, index) => ({ name: `item-${index}`, prompt: `${index}` }));
+      render(<SkillsView addToast={mockAddToast} onClose={onClose} />);
+      await screen.findByText("/item-49");
+      fireEvent.change(screen.getByLabelText("Name"), { target: { value: "overflow" } });
+      fireEvent.change(screen.getByLabelText("Prompt"), { target: { value: "prompt" } });
+      fireEvent.click(screen.getByRole("button", { name: "Add snippet" }));
+      expect(await screen.findByText("You can save up to 50 snippets.")).toBeTruthy();
+      expect(mockUpdateGlobalSettings).not.toHaveBeenCalled();
+    });
+
+    it("keeps the loaded list and editable form after a failed write rebase", async () => {
+      chatSnippets = [{ name: "existing", prompt: "existing prompt" }];
+      mockUpdateGlobalSettings.mockRejectedValueOnce(new Error("write failed"));
+      render(<SkillsView addToast={mockAddToast} onClose={onClose} />);
+      await screen.findByText("/existing");
+
+      fireEvent.change(screen.getByLabelText("Name"), { target: { value: "test" } });
+      fireEvent.change(screen.getByLabelText("Prompt"), { target: { value: "keep editable" } });
+      fireEvent.click(screen.getByRole("button", { name: "Add snippet" }));
+
+      expect(await screen.findByText("The snippet could not be saved. Refresh and try again.")).toBeTruthy();
+      expect(screen.getByText("/existing")).toBeTruthy();
+      expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("test");
+      expect((screen.getByLabelText("Prompt") as HTMLTextAreaElement).value).toBe("keep editable");
+    });
+
+    it("disables writes before the first authoritative load and exposes retry after failure", async () => {
+      let rejectLoad!: (error: Error) => void;
+      mockFetchGlobalSettings.mockReturnValueOnce(new Promise((_, reject) => { rejectLoad = reject; }));
+      render(<SkillsView addToast={mockAddToast} onClose={onClose} />);
+
+      expect(screen.getByTestId("snippets-loading")).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Add snippet" })).toBeDisabled();
+      await act(async () => rejectLoad(new Error("read failed")));
+      expect(await screen.findByText("Snippets could not be refreshed. Your last loaded list is still shown.")).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Add snippet" })).toBeDisabled();
+      expect(mockUpdateGlobalSettings).not.toHaveBeenCalled();
+    });
+
+    it("keeps discovered skills and catalog actions available beside snippet management", async () => {
+      render(<SkillsView addToast={mockAddToast} onClose={onClose} />);
+      await screen.findByText("Chat Snippets");
+      expect(screen.getByText("Discovered Skills")).toBeTruthy();
+      expect(screen.getByText("Skills Catalog")).toBeTruthy();
+      expect(screen.getByLabelText("Disable test-skill")).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Install Test Skill" })).toBeTruthy();
     });
   });
 
@@ -550,11 +656,11 @@ describe("SkillsView", () => {
       render(<SkillsView addToast={mockAddToast} onClose={onClose} />);
 
       await waitFor(() => {
-        expect(screen.getByLabelText("Close skills view")).toBeTruthy();
+        expect(screen.getByLabelText("Close Skills & Snippets view")).toBeTruthy();
       });
 
       await act(async () => {
-        fireEvent.click(screen.getByLabelText("Close skills view"));
+        fireEvent.click(screen.getByLabelText("Close Skills & Snippets view"));
       });
 
       expect(onClose).toHaveBeenCalled();

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
   existsSyncMock,
+  rmdirSyncMock,
   removeWorktreeMock,
   ActiveSessionWorktreeRemovalErrorMock,
 } = vi.hoisted(() => {
@@ -13,12 +14,13 @@ const {
   }
   return {
     existsSyncMock: vi.fn(),
+    rmdirSyncMock: vi.fn(),
     removeWorktreeMock: vi.fn(),
     ActiveSessionWorktreeRemovalErrorMock,
   };
 });
 
-vi.mock("node:fs", () => ({ existsSync: existsSyncMock }));
+vi.mock("node:fs", () => ({ existsSync: existsSyncMock, rmdirSync: rmdirSyncMock }));
 vi.mock("../worktree/worktree-backend.js", () => ({
   ActiveSessionWorktreeRemovalError: ActiveSessionWorktreeRemovalErrorMock,
   RemovalReason: { CompletionLandedCleanup: "completion-landed-cleanup" },
@@ -26,7 +28,7 @@ vi.mock("../worktree/worktree-backend.js", () => ({
 }));
 
 import { finalizeProvenAutoMergeTask } from "../merge/auto-merge-finalization.js";
-import { cleanupLandedTaskWorktree } from "../merge/post-landing-worktree-cleanup.js";
+import { cleanupLandedTaskWorktree, cleanupLandedWorkspaceTaskWorktrees } from "../merge/post-landing-worktree-cleanup.js";
 
 function createFinalizationStore(options: { column?: string; worktree?: string | null } = {}) {
   const task: any = {
@@ -94,6 +96,7 @@ describe("cleanupLandedTaskWorktree", () => {
   beforeEach(() => {
     existsSyncMock.mockReset();
     existsSyncMock.mockReturnValue(true);
+    rmdirSyncMock.mockReset();
     removeWorktreeMock.mockReset();
     removeWorktreeMock.mockResolvedValue({ removed: true, classification: "removed" });
   });
@@ -276,6 +279,25 @@ describe("cleanupLandedTaskWorktree", () => {
     expect(task.worktree).toBeNull();
   });
 
+  it.each([
+    new Error("preserving /repo/.worktrees/fn-251: uncommitted or ignored content present"),
+    new Error("preserving /repo/.worktrees/fn-251: status probe failed (broken registration)"),
+  ])("finalizes a durable landing when cleanup preserves content", async (error) => {
+    const { store, task, moveTask } = createFinalizationStore();
+    removeWorktreeMock.mockRejectedValueOnce(error);
+
+    const result = await finalizeProvenAutoMergeTask({
+      store: store as never,
+      taskId: task.id,
+      rootDir: "/repo",
+      source: "workflow-graph-merge-finalize",
+    });
+
+    expect(result.outcome).toBe("done");
+    expect(moveTask).toHaveBeenCalledWith(task.id, "done", expect.any(Object));
+    expect(task.worktree).toBe("/repo/.worktrees/fn-251");
+  });
+
   it("skips cleanup without a root directory but still completes", async () => {
     const { store, task, moveTask } = createFinalizationStore();
 
@@ -376,5 +398,116 @@ describe("cleanupLandedTaskWorktree", () => {
 
     expect(getSettings).not.toHaveBeenCalled();
     expect(removeWorktreeMock).toHaveBeenCalledWith(expect.objectContaining({ settings: {} }));
+  });
+});
+
+describe("cleanupLandedWorkspaceTaskWorktrees", () => {
+  beforeEach(() => {
+    existsSyncMock.mockReset();
+    existsSyncMock.mockReturnValue(true);
+    rmdirSyncMock.mockReset();
+    removeWorktreeMock.mockReset();
+    removeWorktreeMock.mockResolvedValue({ removed: true, classification: "removed" });
+  });
+
+  function workspaceTask(workspaceWorktrees: Record<string, { worktreePath: string; branch: string }>) {
+    return { id: "FN-268", workspaceWorktrees } as any;
+  }
+
+  it("proof-cleans every repository once and retires the empty task directory", async () => {
+    const { store } = createStore();
+    const task = workspaceTask({
+      api: { worktreePath: "/workspace/.fusion/worktrees/fn-268/api", branch: "fusion/fn-268" },
+      "apps/web": { worktreePath: "/workspace/.fusion/worktrees/fn-268/apps/web", branch: "fusion/fn-268" },
+    });
+
+    await expect(cleanupLandedWorkspaceTaskWorktrees({
+      store: store as never,
+      task,
+      workspaceRootDir: "/workspace",
+      landedShas: { api: "api-sha", "apps/web": "web-sha" },
+      source: "workspace-finalize",
+    })).resolves.toEqual(expect.objectContaining({
+      removedRepoRels: ["api", "apps/web"],
+      preserved: [],
+      taskDirectoryRemoved: true,
+      removed: true,
+    }));
+
+    expect(removeWorktreeMock).toHaveBeenCalledTimes(2);
+    expect(removeWorktreeMock).toHaveBeenCalledWith(expect.objectContaining({
+      rootDir: "/workspace/api",
+      postLandingProof: { landedSha: "api-sha", source: "workspace-finalize" },
+    }));
+    expect(removeWorktreeMock).toHaveBeenCalledWith(expect.objectContaining({
+      rootDir: "/workspace/apps/web",
+      postLandingProof: { landedSha: "web-sha", source: "workspace-finalize" },
+    }));
+    expect(rmdirSyncMock).toHaveBeenCalledWith("/workspace/.fusion/worktrees/fn-268");
+  });
+
+  it("preserves active and deliverable checkout paths without retiring their task directory", async () => {
+    const { store, logEntry } = createStore();
+    const task = workspaceTask({
+      api: { worktreePath: "/workspace/.fusion/worktrees/fn-268/api", branch: "fusion/fn-268" },
+      web: { worktreePath: "/workspace/.fusion/worktrees/fn-268/web", branch: "fusion/fn-268" },
+    });
+    removeWorktreeMock.mockRejectedValueOnce(new Error("preserving /workspace/.fusion/worktrees/fn-268/api: uncommitted content present"));
+    removeWorktreeMock.mockRejectedValueOnce(new ActiveSessionWorktreeRemovalErrorMock());
+
+    const result = await cleanupLandedWorkspaceTaskWorktrees({
+      store: store as never,
+      task,
+      workspaceRootDir: "/workspace",
+      source: "workspace-finalize",
+    });
+
+    expect(result).toEqual(expect.objectContaining({ taskDirectoryRemoved: false, removed: false }));
+    expect(result.preserved).toEqual(expect.arrayContaining([
+      expect.objectContaining({ repoRel: "api", reason: "deliverable" }),
+      expect.objectContaining({ repoRel: "web", reason: "active-session" }),
+    ]));
+    expect(rmdirSyncMock).not.toHaveBeenCalled();
+    expect(logEntry).toHaveBeenCalledWith("FN-268", "Post-landing worktree cleanup preserved", expect.stringContaining("deliverable"));
+  });
+
+  it("settles absent paths and removes a duplicate recorded path only once", async () => {
+    const { store } = createStore();
+    const shared = "/workspace/.fusion/worktrees/fn-268/shared";
+    const task = workspaceTask({
+      api: { worktreePath: shared, branch: "fusion/fn-268" },
+      web: { worktreePath: shared, branch: "fusion/fn-268" },
+      absent: { worktreePath: "/workspace/.fusion/worktrees/fn-268/absent", branch: "fusion/fn-268" },
+    });
+    existsSyncMock.mockImplementation((path: string) => path !== "/workspace/.fusion/worktrees/fn-268/absent");
+
+    const result = await cleanupLandedWorkspaceTaskWorktrees({
+      store: store as never,
+      task,
+      workspaceRootDir: "/workspace",
+      source: "workspace-finalize",
+    });
+
+    expect(removeWorktreeMock).toHaveBeenCalledTimes(1);
+    expect(result.removedRepoRels).toEqual(["api", "web"]);
+    expect(result.preserved).toEqual([]);
+    expect(result.taskDirectoryRemoved).toBe(true);
+  });
+
+  it("does not remove a legacy-layout task directory", async () => {
+    const { store } = createStore();
+    const task = workspaceTask({
+      api: { worktreePath: "/workspace/api/.worktrees/fn-268", branch: "fusion/fn-268" },
+    });
+
+    const result = await cleanupLandedWorkspaceTaskWorktrees({
+      store: store as never,
+      task,
+      workspaceRootDir: "/workspace",
+      source: "workspace-finalize",
+    });
+
+    expect(result).toEqual(expect.objectContaining({ removedRepoRels: ["api"], taskDirectoryRemoved: false, removed: true }));
+    expect(rmdirSyncMock).not.toHaveBeenCalled();
   });
 });

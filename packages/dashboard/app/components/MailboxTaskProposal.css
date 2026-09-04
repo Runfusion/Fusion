@@ -1,3 +1,38 @@
-.mailbox-task-proposal { margin-block: var(--space-2); padding: var(--space-3); border: var(--border-width) solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); }
-.mailbox-task-proposal p { margin-block: var(--space-2); }
-@media (max-width: 768px) { .mailbox-task-proposal .btn { inline-size: 100%; } }
+/*
+FNXC:MailboxTaskCards 2026-09-01-05:06:
+Mailbox task cards must reference only defined dashboard tokens because an undefined custom property
+silently invalidates its declaration and previously erased card padding, spacing, borders, and backgrounds.
+*/
+.mailbox-task-proposal {
+  background: var(--card);
+  border: var(--btn-border-width) solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  display: grid;
+  gap: var(--space-sm);
+  margin-block: var(--space-md);
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+  padding: var(--space-md);
+}
+
+.mailbox-task-proposal strong {
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-tight);
+}
+
+.mailbox-task-proposal p {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
+  margin: 0;
+}
+
+@media (max-width: 768px) {
+  .mailbox-task-proposal {
+    padding: var(--space-sm);
+  }
+
+  .mailbox-task-proposal .btn {
+    inline-size: 100%;
+  }
+}

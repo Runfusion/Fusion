@@ -2,6 +2,9 @@ import {
   getCurrentRepo,
   computeBlockerFanoutMap,
   compareTasksByPriorityThenAgeAndId,
+  fileScopeLeaseBlocksCandidate,
+  normalizeOverlapScopeForTask,
+  taskHoldsUnmergedCheckout,
   HIGH_FANOUT_BLOCKER_TODO_THRESHOLD,
   nonExecutableDuplicateRedirectReason,
   isPlanReviewSatisfied,
@@ -22,9 +25,10 @@ import {
   dropPreHeldExecutorSlot,
   projectAdmissionCoordinator,
   persistedTopLevelAgentTaskIdsFromStore,
+  persistedWorktreeHolderTaskIdsFromStore,
   recoverIdleSemaphoreLeakCandidate,
   registerPreHeldExecutorSlot,
-  resolveActiveTaskCapacityLimit,
+  resolveAgentCapacityLimit,
   type AgentSemaphore,
 } from "./concurrency/concurrency.js";
 import { planTaskWorktreePath, resolveTaskWorkingBranch } from "./worktree/worktree-names.js";
@@ -55,6 +59,7 @@ import { decideMissionSymbolAdmission, resolveMissionFeatureForTask } from "./mi
 import { computeRecoveryDecision, formatDelay, MAX_RECOVERY_RETRIES } from "./healing/recovery-policy.js";
 
 const SYMBOL_LOCK_LEASE_MS = 10 * 60_000;
+type TaskUpdatePatch = Parameters<TaskStore["updateTask"]>[1];
 
 /*
 FNXC:WorkflowScheduling 2026-07-15-12:55:
@@ -580,14 +585,19 @@ export interface FileScopeLeaseOptions {
 /*
 FNXC:OverlapScheduling 2026-08-29-05:49:
 File-scope ownership is a lifetime contract: a task keeps its claim until its work has landed, is
-archived/deleted, or a non-WIP lane has released its worktree. Paused, failed, and external-blocked
-cards therefore retain their claim while their unmerged checkout exists; archiving, deleting, or
-clearing that checkout is the explicit escape hatch for a dead holder.
+archived/deleted, or a non-WIP lane has released its checkout. Paused, failed, and external-blocked
+cards therefore retain their claim while their unmerged singular or per-repository checkout exists;
+archiving, deleting, or clearing those checkouts is the explicit escape hatch for a dead holder.
 
-Check the worktree before granting a non-WIP card an active lease. A review card without one has
-already released its private work and must unblock peers. WIP deliberately skips that check because
-the scheduler moves a task there before implementation persists its worktree; gating that interval
-would let a second task begin editing the same files.
+Check every checkout form before granting a non-WIP card an active lease. A workspace task deliberately
+has no singular `task.worktree`, so review and dormant classification must recognize its repository
+checkouts. WIP deliberately skips that check because the scheduler moves a task there before implementation
+persists a checkout; gating that interval would let a second task begin editing the same files.
+
+FNXC:OverlapScheduling 2026-09-01-14:49:
+A card whose only live state is checkout-free planning owns no lease, so overlapping planners remain
+independently dispatchable. A hold-lane card retaining a checkout after a replan bounce still owns
+unmerged work and keeps its dormant lease; never replace this checkout proof with a column exemption.
 */
 export function classifyFileScopeLease(
   task: Task,
@@ -599,11 +609,11 @@ export function classifyFileScopeLease(
   Role questions stay parameterized with literal defaults so callers that cannot resolve a workflow
   retain legacy board semantics rather than silently dropping every overlap lease on renamed boards.
   */
-  /* DELIBERATE-LITERAL: the `??` fallbacks are the no-resolved-workflow defaults described directly
-     above — deleting them makes an unresolvable workflow drop every overlap lease, which is strictly
-     worse than the legacy semantics they preserve. Same posture as isTerminalDependencyColumn. */
+  // FNXC:WorkflowLifecycle 2026-08-30-07:27: DELIBERATE-LITERAL — callers without resolved workflow roles require the legacy WIP fallback.
   const isWipColumn = options?.isWipColumn ?? task.column === "in-progress";
+  // FNXC:WorkflowLifecycle 2026-08-30-07:27: DELIBERATE-LITERAL — callers without resolved workflow roles require the legacy review fallback.
   const isReviewColumn = options?.isReviewColumn ?? task.column === "in-review";
+  // FNXC:WorkflowLifecycle 2026-08-30-07:27: DELIBERATE-LITERAL — callers without resolved workflow roles require the legacy terminal fallback.
   const isTerminalColumn = options?.isTerminalColumn ?? (task.column === "done" || task.column === "archived");
 
   if (isTerminalColumn || task.deletedAt) {
@@ -627,10 +637,10 @@ export function classifyFileScopeLease(
     if (options?.mergeRequestContractShadowEnabled === true && options.handoffAccepted === true) {
       return { kind: "none", waivedForTaskIds: [] };
     }
-    return { kind: task.worktree ? "active" : "none", waivedForTaskIds: [] };
+    return { kind: taskHoldsUnmergedCheckout(task) ? "active" : "none", waivedForTaskIds: [] };
   }
 
-  return { kind: task.worktree ? "dormant" : "none", waivedForTaskIds: [] };
+  return { kind: taskHoldsUnmergedCheckout(task) ? "dormant" : "none", waivedForTaskIds: [] };
 }
 
 /**
@@ -841,15 +851,7 @@ export function formatConcurrencyLimitReason(diagnostic: ConcurrencyGateDiagnost
     return holders && holders.length > 0 ? holders.join(", ") : "none";
   };
   const gateLabel = diagnostic.bindingGates.join(", ");
-  const effectiveLimit = Math.min(
-    diagnostic.maxConcurrentGate.limit,
-    diagnostic.maxWorktreesGate?.limit ?? Infinity,
-  );
-  const bindingKnob = diagnostic.maxWorktreesGate && diagnostic.maxWorktreesGate.limit <= diagnostic.maxConcurrentGate.limit
-    ? "maxWorktrees"
-    : "maxConcurrent";
   const details = [
-    `effectiveLimit=${effectiveLimit} (bindingKnob=${bindingKnob})`,
     `maxConcurrent used=${diagnostic.maxConcurrentGate.used}/${diagnostic.maxConcurrentGate.limit} (holders: ${holdersText("maxConcurrent")})`,
   ];
   /*
@@ -1083,6 +1085,7 @@ export class Scheduler {
           taskId: task.id,
           projectId,
           lane: "execute",
+          consumesWorktree: true,
           createdAt: task.createdAt,
           reserve: () => registerPreHeldExecutorSlot(task.id, this.options.semaphore !== undefined),
           start: async () => {
@@ -2390,7 +2393,7 @@ export class Scheduler {
       };
       const maxWorktrees = resolveWorktreeCapacityLimit(capacitySettings);
       const maxConcurrent = resolveMaxConcurrentSetting(capacitySettings);
-      const activeTaskLimit = resolveActiveTaskCapacityLimit(capacitySettings);
+      const activeTaskLimit = resolveAgentCapacityLimit(capacitySettings);
       /*
       FNXC:WorkflowScheduling 2026-07-19-02:35 (U4/KTD-9):
       Count active WIP reservations by the `wip` trait, not the literal
@@ -2486,13 +2489,11 @@ export class Scheduler {
         .filter((task) => isWipColumnTask(task) && task.status !== "failed")
         .map((task) => task.id);
       /*
-      FNXC:WorktreeCapacity 2026-08-01-04:38 (inactive retained-worktree capacity inversion):
-      Worktree capacity is a LIVE-TASK budget, not a count of directories retained on disk. The
-      dashboard showed seven active tasks against maxWorktrees=9, but two dependency-blocked queued
-      cards retained worktree paths. Counting those inactive paths filled the ledger and prevented
-      the dependency-free roots from starting. Use the canonical enriched running-agent predicate
-      shared with the board; planning, WIP, and active review count, while queued/paused/terminal
-      tasks do not. Same-sweep reservations below keep newly released tasks visible immediately.
+      FNXC:CapacityModel 2026-09-01-14:49:
+      Worktree capacity counts canonically live tasks that are in WIP or retain an unmerged singular
+      or workspace checkout. Checkout-free planning is excluded, while WIP counts before acquisition
+      to close the dispatch-to-persistence window and a live replan card retains its real disk slot.
+      Same-sweep reservations below keep newly released execution candidates visible immediately.
       */
       /*
       FNXC:WorkflowScheduling 2026-08-09-11:01:
@@ -2517,7 +2518,7 @@ export class Scheduler {
           return typeof value === "function" ? value.bind(target) : value;
         },
       });
-      const activeWorktreeTaskIds = await persistedTopLevelAgentTaskIdsFromStore(selectionCachedStore, tasks);
+      const activeWorktreeTaskIds = await persistedWorktreeHolderTaskIdsFromStore(selectionCachedStore, tasks);
       let reservedWorktreeSlots = activeWorktreeTaskIds.length;
       let reservedConcurrentSlots = wipTaskIds.length;
       const dispatchPrepByTaskId = new Map<string, {
@@ -2526,6 +2527,7 @@ export class Scheduler {
         dispatchTimestamp: string;
         effectiveNodeId: string | null;
         effectiveNodeSource: string;
+        observedOverlapBlockedBy: string | null;
         task: Task;
       }>();
       const activeScopes = new Map<string, string[]>();
@@ -2535,12 +2537,15 @@ export class Scheduler {
       const leaseWaiverIds = new Map<string, readonly string[]>();
       const overlapIgnorePaths = settings.overlapIgnorePaths ?? [];
       const filteredScopeByTaskId = new Map<string, string[]>();
-      const getFilteredFileScope = async (taskId: string): Promise<string[]> => {
-        const cached = filteredScopeByTaskId.get(taskId);
+      const getFilteredFileScope = async (task: Pick<Task, "id" | "workspaceWorktrees">): Promise<string[]> => {
+        const cached = filteredScopeByTaskId.get(task.id);
         if (cached !== undefined) return cached;
-        const scope = await this.store.parseFileScopeFromPrompt(taskId);
-        const filteredScope = filterPathsByIgnoreList(scope, overlapIgnorePaths, { ignoreHiddenOverlapPaths: settings.ignoreHiddenOverlapPaths });
-        filteredScopeByTaskId.set(taskId, filteredScope);
+        const scope = await this.store.parseFileScopeFromPrompt(task.id);
+        const filteredScope = normalizeOverlapScopeForTask(
+          task,
+          filterPathsByIgnoreList(scope, overlapIgnorePaths, { ignoreHiddenOverlapPaths: settings.ignoreHiddenOverlapPaths }),
+        );
+        filteredScopeByTaskId.set(task.id, filteredScope);
         return filteredScope;
       };
 
@@ -2596,7 +2601,7 @@ export class Scheduler {
           });
           // Classification intentionally precedes prompt parsing: idle backlog cards do not own a lease.
           if (classification.kind === "none") continue;
-          const filteredScope = await getFilteredFileScope(task.id);
+          const filteredScope = await getFilteredFileScope(task);
           if (isCoordinationOnlyTask(task, filteredScope) || filteredScope.length === 0) continue;
 
           leaseWaiverIds.set(task.id, classification.waivedForTaskIds);
@@ -2652,6 +2657,71 @@ export class Scheduler {
           kind: "dormant",
           column: dormantScopeColumns.get(dormantHolder.id) ?? "todo",
         };
+      };
+
+      const freshOverlapBlockerStillBlocks = async (
+        candidate: Task,
+        blockerId: string,
+      ): Promise<boolean> => {
+        const freshSettings = await this.store.getSettings();
+        if (freshSettings.groupOverlappingFiles !== true) return false;
+        const blocker = await this.store.getTask(blockerId).catch(() => null);
+        if (!blocker) return false;
+        const liveTasks = tasks.map((entry) => {
+          if (entry.id === candidate.id) return candidate;
+          if (entry.id === blocker.id) return blocker;
+          return entry;
+        });
+        if (!liveTasks.some((entry) => entry.id === blocker.id)) liveTasks.push(blocker);
+        if (!liveTasks.some((entry) => entry.id === candidate.id)) liveTasks.push(candidate);
+        const classification = classifyFileScopeLease(blocker, liveTasks, {
+          mergeRequestContractShadowEnabled: freshSettings.mergeRequestContractShadowEnabled === true,
+          handoffAccepted: freshSettings.mergeRequestContractShadowEnabled === true && isReviewColumnTask(blocker)
+            ? (await this.store.getCompletionHandoffAcceptedMarker(blocker.id)) !== null
+            : false,
+          schedulingDependencyOptions,
+          isWipColumn: isWipColumnTask(blocker),
+          isReviewColumn: isReviewColumnTask(blocker),
+          isTerminalColumn: isTerminalColumnTask(blocker),
+        });
+        if (!fileScopeLeaseBlocksCandidate(blocker, candidate, classification)) return false;
+        const freshIgnorePaths = freshSettings.overlapIgnorePaths ?? [];
+        const candidateScope = normalizeOverlapScopeForTask(candidate, filterPathsByIgnoreList(
+          await this.store.parseFileScopeFromPrompt(candidate.id),
+          freshIgnorePaths,
+          { ignoreHiddenOverlapPaths: freshSettings.ignoreHiddenOverlapPaths },
+        ));
+        if (candidateScope.length === 0 || isCoordinationOnlyTask(candidate, candidateScope)) return false;
+        const blockerScope = normalizeOverlapScopeForTask(blocker, filterPathsByIgnoreList(
+          await this.store.parseFileScopeFromPrompt(blocker.id),
+          freshIgnorePaths,
+          { ignoreHiddenOverlapPaths: freshSettings.ignoreHiddenOverlapPaths },
+        ));
+        if (blockerScope.length === 0 || isCoordinationOnlyTask(blocker, blockerScope)) return false;
+        return this.pathsOverlap(candidateScope, blockerScope);
+      };
+      const clearObservedOverlapIfStillStale = async (
+        candidate: Task,
+        observedBlockerId: string | null | undefined,
+      ): Promise<boolean> => {
+        if (typeof observedBlockerId !== "string" || observedBlockerId.trim().length === 0) return false;
+        if (await freshOverlapBlockerStillBlocks(candidate, observedBlockerId)) return false;
+        let cleared = false;
+        const clearIfUnchanged = (live: Task): TaskUpdatePatch | null => {
+          if (live.deletedAt != null || (live.overlapBlockedBy ?? null) !== observedBlockerId) return null;
+          cleared = true;
+          return { overlapBlockedBy: null };
+        };
+        if (typeof this.store.updateTaskAtomic === "function") {
+          await this.store.updateTaskAtomic(candidate.id, clearIfUnchanged);
+          return cleared;
+        }
+        // Compatibility only for structural test/extension stores; production TaskStore is atomic.
+        const live = await this.store.getTask(candidate.id).catch(() => null);
+        if (!live) return false;
+        const patch = clearIfUnchanged(live);
+        if (patch) await this.store.updateTask(candidate.id, patch);
+        return cleared;
       };
 
       const result = await runHoldReleaseSweep(this.store, {
@@ -2712,7 +2782,7 @@ export class Scheduler {
             */
             let activeOverlapBlockedBy: string | null = null;
             try {
-              const taskScope = await getFilteredFileScope(task.id);
+              const taskScope = await getFilteredFileScope(task);
               if (taskScope.length > 0 && !isCoordinationOnlyTask(task, taskScope)) {
                 activeOverlapBlockedBy = findOverlappingFileScopeLease(task, taskScope)?.id ?? null;
               }
@@ -2815,6 +2885,7 @@ export class Scheduler {
             }
             return null;
           }
+          let observedOverlapBlockedBy = freshTask.overlapBlockedBy ?? null;
 
           if (freshTask.checkedOutBy && this.options.leaseManager) {
             const recovered = await this.options.leaseManager.recoverAbandonedLease(
@@ -3071,13 +3142,17 @@ export class Scheduler {
             { planApprovalRequired: latestSettings.planApprovalMode === "require-all" },
           );
           if (missionAdmission.kind === "lineage-blocked") {
-            await this.store.updateTask(task.id, { status: "queued", blockedBy: null, overlapBlockedBy: null });
+            if (observedOverlapBlockedBy) {
+              const cleared = await clearObservedOverlapIfStillStale(freshTask, observedOverlapBlockedBy);
+              if (cleared) observedOverlapBlockedBy = null;
+            }
+            await this.store.updateTask(task.id, { status: "queued", blockedBy: null });
             await this.logDispatchQueuedReason(task.id, `queued — mission lineage blocked: ${missionAdmission.reason}`);
             return null;
           }
 
           if (settings.groupOverlappingFiles && missionAdmission.kind === "coarse-fallback") {
-            const taskScope = await getFilteredFileScope(task.id);
+            const taskScope = await getFilteredFileScope(task);
             if (taskScope.length > 0 && !isCoordinationOnlyTask(task, taskScope)) {
               const overlapLease = findOverlappingFileScopeLease(task, taskScope);
 
@@ -3092,8 +3167,9 @@ export class Scheduler {
                 return null;
               }
 
-              if (task.overlapBlockedBy) {
-                await this.store.updateTask(task.id, { overlapBlockedBy: null });
+              if (observedOverlapBlockedBy) {
+                const cleared = await clearObservedOverlapIfStillStale(freshTask, observedOverlapBlockedBy);
+                if (cleared) observedOverlapBlockedBy = null;
               }
 
               priorActiveScope = activeScopes.get(task.id);
@@ -3113,8 +3189,9 @@ export class Scheduler {
               activeScopeColumns.set(task.id, "in-progress");
               leaseWaiverIds.set(task.id, []);
               reservedScope = true;
-            } else if (task.overlapBlockedBy) {
-              await this.store.updateTask(task.id, { overlapBlockedBy: null });
+            } else if (observedOverlapBlockedBy) {
+              const cleared = await clearObservedOverlapIfStillStale(freshTask, observedOverlapBlockedBy);
+              if (cleared) observedOverlapBlockedBy = null;
               if (isCoordinationOnlyTask(task, taskScope)) {
                 await this.store.logEntry(
                   task.id,
@@ -3131,33 +3208,46 @@ export class Scheduler {
           claim the final slot. The reservation remains until the executor observes the persisted
           WIP row and takes the handoff.
           */
-          let finalClaimSnapshot: Promise<{ count: number; ids: string[] }> | undefined;
+          let finalClaimSnapshot: Promise<{
+            agent: { count: number; ids: string[] };
+            worktree: { count: number; ids: string[] };
+          }> | undefined;
           const getFinalClaimSnapshot = () => finalClaimSnapshot ??= (async () => {
             /*
-            FNXC:WorkflowContinuationCapacity 2026-08-01-07:10:
-            Worktree preparation and startup recovery can make the sweep's original task list stale
-            before this serialized admission point. A planner that became live after that snapshot
-            was absent from `activeWorktreeTaskIds`; once its handoff reservation transferred to the
-            durable planning status, the coordinator could no longer see either claim and admitted a
-            tenth active task against maxWorktrees=9. Re-read full rows lazily inside the coordinator
-            drain so pending workflow-step leases and every newly durable lane holder participate in
-            the final decision. Same-sweep transient starts remain covered by coordinator reservations.
+            FNXC:CapacityModel 2026-09-01-14:49:
+            Re-read full rows inside the serialized drain and derive each dimension from its own
+            canonical predicate. Reservations bridge both persistence transfers without making
+            checkout-free planners appear in the worktree holder set.
             */
             const liveTasks = await this.store.listTasks({ slim: false, includeArchived: false });
-            const ids = await persistedTopLevelAgentTaskIdsFromStore(this.store, liveTasks);
-            return { count: ids.length, ids };
+            const [agentIds, worktreeIds] = await Promise.all([
+              persistedTopLevelAgentTaskIdsFromStore(this.store, liveTasks),
+              persistedWorktreeHolderTaskIdsFromStore(this.store, liveTasks),
+            ]);
+            return {
+              agent: { count: agentIds.length, ids: agentIds },
+              worktree: { count: worktreeIds.length, ids: worktreeIds },
+            };
           })();
           let projectSlotReserved = false;
           const admittedTaskId = await projectAdmissionCoordinator.admitNext({
             projectId: this.store.getRootDir(),
             maxConcurrent: activeTaskLimit,
-            claimed: async () => (await getFinalClaimSnapshot()).count,
-            claimedTaskIds: async () => (await getFinalClaimSnapshot()).ids,
+            claimed: async () => (await getFinalClaimSnapshot()).agent.count,
+            claimedTaskIds: async () => (await getFinalClaimSnapshot()).agent.ids,
+            ...(maxWorktrees === null ? {} : {
+              worktreeGate: {
+                limit: maxWorktrees,
+                claimed: async () => (await getFinalClaimSnapshot()).worktree.count,
+                claimedTaskIds: async () => (await getFinalClaimSnapshot()).worktree.ids,
+              },
+            }),
             semaphore: this.options.semaphore,
             refresh: async () => [{
               taskId: task.id,
               projectId: this.store.getRootDir(),
               lane: "execute",
+              consumesWorktree: true,
               createdAt: task.createdAt,
               reserve: () => registerPreHeldExecutorSlot(task.id, this.options.semaphore !== undefined),
               start: async () => {
@@ -3178,14 +3268,14 @@ export class Scheduler {
             const freshClaims = await getFinalClaimSnapshot();
             const exhausted = admittedTaskId === undefined;
             const freshDiagnostic = computeConcurrencyGateDiagnostic({
-              agentSlots: freshClaims.count,
+              agentSlots: freshClaims.agent.count,
               maxConcurrent,
-              activeWorktrees: freshClaims.count,
+              activeWorktrees: freshClaims.worktree.count,
               maxWorktrees,
-              worktreeHolderTaskIds: freshClaims.ids,
+              worktreeHolderTaskIds: freshClaims.worktree.ids,
               semaphore: this.options.semaphore,
-              inProgressTaskIds: freshClaims.ids,
-              topLevelClaimedSlots: freshClaims.count,
+              inProgressTaskIds: freshClaims.agent.ids,
+              topLevelClaimedSlots: freshClaims.agent.count,
             });
             const reason = exhausted
               ? formatConcurrencyLimitReason(freshDiagnostic)
@@ -3217,7 +3307,11 @@ export class Scheduler {
                 if (dropPreHeldExecutorSlot(task.id)) sem?.release();
                 releaseReservedScope();
                 const conflict = lockResult.conflicts[0];
-                await this.store.updateTask(task.id, { status: "queued", blockedBy: null, overlapBlockedBy: null });
+                if (observedOverlapBlockedBy) {
+                  const cleared = await clearObservedOverlapIfStillStale(freshTask, observedOverlapBlockedBy);
+                  if (cleared) observedOverlapBlockedBy = null;
+                }
+                await this.store.updateTask(task.id, { status: "queued", blockedBy: null });
                 await this.logDispatchQueuedReason(
                   task.id,
                   `queued — symbol contention: symbol=${conflict?.symbolKey ?? "unknown"} holder=${conflict?.ownerTaskId ?? "unknown"}`,
@@ -3234,6 +3328,7 @@ export class Scheduler {
               dispatchTimestamp,
               effectiveNodeId: effectiveNode.nodeId ?? null,
               effectiveNodeSource: effectiveNode.source,
+              observedOverlapBlockedBy,
               task: freshTask,
             });
 
@@ -3281,30 +3376,70 @@ export class Scheduler {
         */
         schedulerLog.log(`Starting ${taskId}: ${prep.task.title || taskId} (deps satisfied)`);
         const latest = await this.store.getTask(taskId).catch(() => null);
-        const dispatchUpdate = {
+        const dispatchUpdate: TaskUpdatePatch = {
           status: null,
           blockedBy: null,
           executionStartBranch: prep.baseBranch ?? undefined,
           effectiveNodeId: prep.effectiveNodeId,
-          effectiveNodeSource: prep.effectiveNodeSource,
+          effectiveNodeSource: prep.effectiveNodeSource as Task["effectiveNodeSource"],
           mergeRetries: 0,
           dispatchStormCount: prep.dispatchStormCount,
           lastDispatchAt: prep.dispatchTimestamp,
         };
-        const scheduledTask = {
-          ...(latest?.id === taskId ? latest : prep.task),
-          ...dispatchUpdate,
-          status: undefined,
-          blockedBy: undefined,
-          effectiveNodeId: prep.effectiveNodeId ?? undefined,
-          effectiveNodeSource: prep.effectiveNodeSource as Task["effectiveNodeSource"],
-          column: "in-progress" as const,
+        const observedOverlapBlockedBy = prep.observedOverlapBlockedBy;
+        const mayClearObservedOverlap = typeof observedOverlapBlockedBy === "string"
+          && observedOverlapBlockedBy.trim().length > 0
+          && latest?.id === taskId
+          && (latest.overlapBlockedBy ?? null) === observedOverlapBlockedBy
+          && !await freshOverlapBlockerStillBlocks(latest, observedOverlapBlockedBy);
+        let overlapClearApplied = false;
+        let persistedTask = latest?.id === taskId ? latest : prep.task;
+        const buildDispatchPatch = (live: Task): TaskUpdatePatch => {
+          const clearObservedOverlap = mayClearObservedOverlap
+            && live.deletedAt == null
+            && (live.overlapBlockedBy ?? null) === observedOverlapBlockedBy;
+          if (clearObservedOverlap) overlapClearApplied = true;
+          return {
+            ...dispatchUpdate,
+            ...(clearObservedOverlap ? { overlapBlockedBy: null } : {}),
+          };
         };
+        /*
+        FNXC:OverlapScheduling 2026-09-02-04:46:
+        Hold → WIP has no workflow-hook overlap clear, so the committed dispatch must scrub the stale
+        blocker it actually reserved against. Build the whole metadata patch under the task lock and
+        clear only that exact observed id: the executor pre-dispatch gate can stamp a different fresh
+        in-place hold between reservation and commit, and that newer edge must reach onSchedule intact.
+        */
         try {
-          await this.store.updateTask(taskId, dispatchUpdate);
+          if (typeof this.store.updateTaskAtomic === "function") {
+            persistedTask = await this.store.updateTaskAtomic(taskId, buildDispatchPatch);
+          } else {
+            // Compatibility only for structural test/extension stores; production TaskStore is atomic.
+            persistedTask = await this.store.updateTask(taskId, buildDispatchPatch(persistedTask));
+          }
         } catch (error) {
+          overlapClearApplied = false;
           schedulerLog.error(`Post-release dispatch metadata update failed for ${taskId}:`, error);
         }
+        /*
+        DELIBERATE-LITERAL — runHoldReleaseSweep has committed this task to its WIP lane before it
+        appears in `released`. Keep the legacy WIP fallback on the synthetic handoff shape so an
+        isolated post-release read/update failure cannot hand the executor the task's stale hold lane.
+        */
+        const scheduledTask: Task = {
+          ...persistedTask,
+          status: undefined,
+          blockedBy: undefined,
+          executionStartBranch: prep.baseBranch ?? undefined,
+          effectiveNodeId: prep.effectiveNodeId ?? undefined,
+          effectiveNodeSource: prep.effectiveNodeSource as Task["effectiveNodeSource"],
+          mergeRetries: 0,
+          dispatchStormCount: prep.dispatchStormCount,
+          lastDispatchAt: prep.dispatchTimestamp,
+          ...(overlapClearApplied ? { overlapBlockedBy: undefined } : {}),
+          column: "in-progress",
+        };
         try {
           this.options.onSchedule?.(scheduledTask);
         } catch (error) {

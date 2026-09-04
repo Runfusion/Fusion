@@ -49,7 +49,15 @@ const mockedCreateFnAgent = vi.mocked(createFnAgent);
 const mockedPromptWithFallback = vi.mocked(promptWithFallback);
 const CONTEXT_LIMIT_ERROR = "exceeded model token limit: 262144 (requested: 262879)";
 
+function approvingReview(reviewText: string): string {
+  return `${reviewText}\n\n### Authoritative Verdict\n{"verdict":"APPROVE","notes":"Test reviewer authored approval."}`;
+}
+
 function createMockSession(reviewText: string) {
+  const authoredReviewText = /(?:^|\n)\s*(?:#{1,6}\s*)?(?:verdict|decision)\s*:\s*APPROVE\b/i.test(reviewText)
+    && !/"verdict"\s*:/.test(reviewText)
+    ? approvingReview(reviewText)
+    : reviewText;
   return {
     session: {
       prompt: vi.fn().mockResolvedValue(undefined),
@@ -57,7 +65,7 @@ function createMockSession(reviewText: string) {
         // Simulate the reviewer producing text
         cb({
           type: "message_update",
-          assistantMessageEvent: { type: "text_delta", delta: reviewText },
+          assistantMessageEvent: { type: "text_delta", delta: authoredReviewText },
         });
       }),
       dispose: vi.fn(),
@@ -428,18 +436,18 @@ describe("reviewStep — model settings threading", () => {
    * truncated JSON payload exposes a quoted verdict key. The anti-laundering
    * guard applies only to Strategy 4 prose approval, never Strategies 1–2.
    */
-  it("keeps an explicit APPROVE heading authoritative over truncated JSON verdict intent", async () => {
+  it("refuses an explicit APPROVE heading when structured verdict intent is truncated", async () => {
     mockedCreateFnAgent.mockResolvedValue(createMockSession(
       '## Verdict: APPROVE\nlooks good\n{"verdict":"REVISE","notes":"truncated',
     ));
     const result = await reviewStep("/tmp/worktree", "FN-100", 1, "Test Step", "plan", "# prompt");
-    expect(result.verdict).toBe("APPROVE");
+    expect(result.verdict).toBe("UNAVAILABLE");
   });
 
-  it("preserves lenient prose approval without a structured verdict key", async () => {
+  it("refuses lenient prose approval without a structured verdict key", async () => {
     mockedCreateFnAgent.mockResolvedValue(createMockSession("looks good"));
     const result = await reviewStep("/tmp/worktree", "FN-100", 1, "Test Step", "plan", "# prompt");
-    expect(result.verdict).toBe("APPROVE");
+    expect(result.verdict).toBe("UNAVAILABLE");
   });
 });
 
@@ -644,7 +652,7 @@ describe("reviewStep — spec review type", () => {
         subscribe: vi.fn().mockImplementation((cb: any) => {
           cb({
             type: "message_update",
-            assistantMessageEvent: { type: "text_delta", delta: "### Verdict: APPROVE\n### Summary\nOK" },
+            assistantMessageEvent: { type: "text_delta", delta: approvingReview("### Verdict: APPROVE\n### Summary\nOK") },
           });
         }),
         dispose: vi.fn(),
@@ -681,7 +689,7 @@ describe("reviewStep — spec review type", () => {
         subscribe: vi.fn().mockImplementation((cb: any) => {
           cb({
             type: "message_update",
-            assistantMessageEvent: { type: "text_delta", delta: "### Verdict: APPROVE\n### Summary\nOK" },
+            assistantMessageEvent: { type: "text_delta", delta: approvingReview("### Verdict: APPROVE\n### Summary\nOK") },
           });
         }),
         dispose: vi.fn(),
@@ -778,7 +786,7 @@ describe("reviewStep — context-limit retry", () => {
           for (const subscriber of subscribers) {
             subscriber({
               type: "message_update",
-              assistantMessageEvent: { type: "text_delta", delta: "### Verdict: APPROVE\n### Summary\nCompacted retry worked." },
+              assistantMessageEvent: { type: "text_delta", delta: approvingReview("### Verdict: APPROVE\n### Summary\nCompacted retry worked.") },
             });
           }
         }),
@@ -1340,7 +1348,7 @@ describe("reviewStep — user comments in spec review", () => {
         subscribe: vi.fn().mockImplementation((cb: any) => {
           cb({
             type: "message_update",
-            assistantMessageEvent: { type: "text_delta", delta: "### Verdict: APPROVE\n### Summary\nOK" },
+            assistantMessageEvent: { type: "text_delta", delta: approvingReview("### Verdict: APPROVE\n### Summary\nOK") },
           });
         }),
         dispose: vi.fn(),
@@ -1360,7 +1368,7 @@ describe("reviewStep — user comments in spec review", () => {
         subscribe: vi.fn().mockImplementation((cb: any) => {
           cb({
             type: "message_update",
-            assistantMessageEvent: { type: "text_delta", delta: "### Verdict: APPROVE\n### Summary\nOK" },
+            assistantMessageEvent: { type: "text_delta", delta: approvingReview("### Verdict: APPROVE\n### Summary\nOK") },
           });
         }),
         dispose: vi.fn(),
@@ -1407,7 +1415,7 @@ describe("reviewStep — user comments in spec review", () => {
         subscribe: vi.fn().mockImplementation((cb: any) => {
           cb({
             type: "message_update",
-            assistantMessageEvent: { type: "text_delta", delta: "### Verdict: APPROVE\n### Summary\nOK" },
+            assistantMessageEvent: { type: "text_delta", delta: approvingReview("### Verdict: APPROVE\n### Summary\nOK") },
           });
         }),
         dispose: vi.fn(),
@@ -1433,7 +1441,7 @@ describe("reviewStep — user comments in spec review", () => {
         subscribe: vi.fn().mockImplementation((cb: any) => {
           cb({
             type: "message_update",
-            assistantMessageEvent: { type: "text_delta", delta: "### Verdict: APPROVE\n### Summary\nOK" },
+            assistantMessageEvent: { type: "text_delta", delta: approvingReview("### Verdict: APPROVE\n### Summary\nOK") },
           });
         }),
         dispose: vi.fn(),
@@ -1472,7 +1480,7 @@ describe("reviewStep — user comments in spec review", () => {
         subscribe: vi.fn().mockImplementation((cb: any) => {
           cb({
             type: "message_update",
-            assistantMessageEvent: { type: "text_delta", delta: "### Verdict: APPROVE\n### Summary\nOK" },
+            assistantMessageEvent: { type: "text_delta", delta: approvingReview("### Verdict: APPROVE\n### Summary\nOK") },
           });
         }),
         dispose: vi.fn(),
@@ -1498,7 +1506,7 @@ describe("reviewStep — user comments in spec review", () => {
         subscribe: vi.fn().mockImplementation((cb: any) => {
           cb({
             type: "message_update",
-            assistantMessageEvent: { type: "text_delta", delta: "### Verdict: APPROVE\n### Summary\nOK" },
+            assistantMessageEvent: { type: "text_delta", delta: approvingReview("### Verdict: APPROVE\n### Summary\nOK") },
           });
         }),
         dispose: vi.fn(),

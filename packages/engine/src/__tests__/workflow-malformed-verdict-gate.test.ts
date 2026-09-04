@@ -45,11 +45,11 @@ describe("workflow malformed-verdict gate", () => {
     });
     expect(parseWorkflowStepOutput("looks good to me")).toEqual({
       output: "looks good to me",
-      verdict: "APPROVE",
-      notes: "looks good to me",
+      malformed: true,
+      malformedReason: "prose-approval-without-json",
     });
     const malformed = parseWorkflowStepOutput("lorem ipsum");
-    expect(malformed).toEqual({ output: "lorem ipsum", malformed: true });
+    expect(malformed).toEqual({ output: "lorem ipsum", malformed: true, malformedReason: "no-verdict" });
     expect(malformed).not.toHaveProperty("notesMissing");
     expect(parseWorkflowStepOutput("native skill output", { requireVerdict: false })).toEqual({ output: "native skill output" });
   });
@@ -61,11 +61,21 @@ describe("workflow malformed-verdict gate", () => {
       'looks good\n{"verdict":"REVISE","notes":"truncated',
       'looks good\n{"verdict":"PASS"}',
     ]) {
-      expect(parseWorkflowStepOutput(output)).toEqual({ output, malformed: true });
+      expect(parseWorkflowStepOutput(output)).toEqual({
+        output,
+        malformed: true,
+        malformedReason: "unreadable-structured-verdict",
+      });
       expect(parseWorkflowStepOutput(output, { requireVerdict: false })).toEqual({ output });
     }
-    expect(parseWorkflowStepOutput("looks good")).toMatchObject({ verdict: "APPROVE" });
-    expect(parseWorkflowStepOutput("my verdict: looks good")).toMatchObject({ verdict: "APPROVE" });
+    expect(parseWorkflowStepOutput("looks good")).toMatchObject({
+      malformed: true,
+      malformedReason: "prose-approval-without-json",
+    });
+    expect(parseWorkflowStepOutput("my verdict: looks good")).toMatchObject({
+      malformed: true,
+      malformedReason: "prose-approval-without-json",
+    });
   });
 
   it("extracts only validated findings from the selected trailing verdict JSON", () => {

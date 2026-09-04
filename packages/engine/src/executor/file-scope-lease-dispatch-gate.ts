@@ -1,13 +1,19 @@
 /*
 FNXC:OverlapScheduling 2026-08-29-06:12:
 Execution can enter outside the scheduler, so this outer gate repeats the file-scope lifetime check
-before graph routing. It holds only a task that has not acquired a worktree yet; a task with one is a
-resume of work the scheduler already admitted. The hold is in-place and preserves dependency state so
-it never moves a card backward merely for overlap serialization.
+before graph routing. It holds only a task that has not acquired a checkout yet; singular and workspace
+per-repository checkouts both prove a scheduler-admitted resume. The hold is in-place and preserves dependency
+state so it never moves a card backward merely for overlap serialization.
+
+FNXC:OverlapScheduling 2026-09-01-14:49:
+A checkout-less planning peer is not a holder and cannot block this dispatch. A hold-lane peer with a
+retained execution checkout remains a dormant holder, preserving unmerged work across replan bounces.
 */
 import {
   compareTasksByPriorityThenAgeAndId,
   fileScopeLeaseBlocksCandidate,
+  normalizeOverlapScopeForTask,
+  taskHoldsUnmergedCheckout,
   isReviewColumnRole,
   isTerminalColumnRole,
   isWipColumnRole,
@@ -73,16 +79,16 @@ export async function blockOuterDispatchWhenFileScopeLeaseHeld(
   task: Task,
 ): Promise<boolean> {
   const settings = await deps.store.getSettings();
-  if (settings.groupOverlappingFiles !== true || Boolean(task.worktree)) return false;
+  if (settings.groupOverlappingFiles !== true || taskHoldsUnmergedCheckout(task)) return false;
 
   const tasks = await deps.store.listTasks({ includeArchived: false, slim: true });
   const liveTask = tasks.find((candidate) => candidate.id === task.id) ?? task;
   const overlapIgnorePaths = settings.overlapIgnorePaths ?? [];
-  const candidateScope = filterPathsByIgnoreList(
+  const candidateScope = normalizeOverlapScopeForTask(liveTask, filterPathsByIgnoreList(
     await deps.store.parseFileScopeFromPrompt(liveTask.id),
     overlapIgnorePaths,
     { ignoreHiddenOverlapPaths: settings.ignoreHiddenOverlapPaths },
-  );
+  ));
   if (candidateScope.length === 0 || isCoordinationOnlyTask(liveTask, candidateScope)) return false;
 
   const mergeShadowEnabled = settings.mergeRequestContractShadowEnabled === true;
@@ -116,11 +122,11 @@ export async function blockOuterDispatchWhenFileScopeLeaseHeld(
       isTerminalColumn: roles.isTerminalColumn,
     });
     if (classification.kind === "none") continue;
-    const holderScope = filterPathsByIgnoreList(
+    const holderScope = normalizeOverlapScopeForTask(holder, filterPathsByIgnoreList(
       await deps.store.parseFileScopeFromPrompt(holder.id),
       overlapIgnorePaths,
       { ignoreHiddenOverlapPaths: settings.ignoreHiddenOverlapPaths },
-    );
+    ));
     if (holderScope.length === 0 || isCoordinationOnlyTask(holder, holderScope)) continue;
     holders.push({
       task: holder,

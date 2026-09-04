@@ -31,8 +31,8 @@ interface BoardProps {
   tasks: Task[];
   projectId?: string;
   maxConcurrent: number;
-  /** Shared engine-enforced capacity for the board's Up Next preview. */
-  effectiveMaxConcurrent?: number;
+  /** Execution-worktree capacity for the board's Up Next preview. */
+  maxWorktrees: number;
   showWorktreeGrouping: boolean;
   onMoveTask: (id: string, column: ColumnId, optionsOrPosition?: { preserveProgress?: boolean; expectedColumn?: string } | number) => Promise<Task>;
   onPauseTask?: (id: string) => Promise<Task>;
@@ -109,6 +109,12 @@ interface BoardProps {
   /** Already-resolved app setting for whether workflow lanes should be used. */
   /** Relocates workflow controls into the Header portal slot when sidebar navigation owns the inline chrome. */
   workflowControlsInHeader?: boolean;
+  /*
+  FNXC:MainViewKeepAlive 2026-08-30-19:05:
+  A kept-alive host leaves Board mounted while hidden. Inactive means its local state stays intact,
+  but it must release shared workflow-header ownership until it is the visible main view again.
+  */
+  active?: boolean;
 }
 
 let boardWasPreviouslyInactive = false;
@@ -179,7 +185,7 @@ function columnDefOffersArchiveAllDone(columnDef: { flags: { complete?: boolean;
   return columnDef.flags.complete === true && columnDef.flags.archived !== true;
 }
 
-export function Board({ tasks, projectId, maxConcurrent, effectiveMaxConcurrent = maxConcurrent, showWorktreeGrouping, onMoveTask, onPauseTask, onUnpauseTask, onResetTask, onDuplicateTask, onMergeTask, onOpenDetail, onOpenRefine, onOpenGroupModal, addToast, onQuickCreate, onNewTask, autoMerge, mergeStrategy = "direct", onToggleAutoMerge, planAutoApproveEnabled, onTogglePlanAutoApprove, globalPaused, onUpdateTask, onRetryTask, onOpenChatWithPrefill, onArchiveTask, onUnarchiveTask, onRevertTask, onReviseTask, onDeleteTask, onArchiveAllDone, onLoadArchivedTasks, onLoadMoreArchivedTasks, archivedSortMode, onArchivedSortModeChange, archivedHasMore, archivedLoadingMore, searchQuery = "", availableModels, onPlanningMode, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, onOpenMission, staleHighFanoutBlockerAgeThresholdMs, lastFetchTimeMs, prAuthAvailable, onOpenWorkflowEditor, onCreateWorkflow, workflowControlsInHeader = false }: BoardProps) {
+export function Board({ tasks, projectId, maxConcurrent, maxWorktrees, showWorktreeGrouping, onMoveTask, onPauseTask, onUnpauseTask, onResetTask, onDuplicateTask, onMergeTask, onOpenDetail, onOpenRefine, onOpenGroupModal, addToast, onQuickCreate, onNewTask, autoMerge, mergeStrategy = "direct", onToggleAutoMerge, planAutoApproveEnabled, onTogglePlanAutoApprove, globalPaused, onUpdateTask, onRetryTask, onOpenChatWithPrefill, onArchiveTask, onUnarchiveTask, onRevertTask, onReviseTask, onDeleteTask, onArchiveAllDone, onLoadArchivedTasks, onLoadMoreArchivedTasks, archivedSortMode, onArchivedSortModeChange, archivedHasMore, archivedLoadingMore, searchQuery = "", availableModels, onPlanningMode, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, onOpenMission, staleHighFanoutBlockerAgeThresholdMs, lastFetchTimeMs, prAuthAvailable, onOpenWorkflowEditor, onCreateWorkflow, workflowControlsInHeader = false, active = true }: BoardProps) {
   const { t } = useTranslation("app");
   const [archivedCollapsed, setArchivedCollapsed] = useState(true);
   /*
@@ -242,7 +248,13 @@ export function Board({ tasks, projectId, maxConcurrent, effectiveMaxConcurrent 
   hook can capture a drag. Keep the class name and pan wiring unchanged so the intentional pan remains
   the sole pointer-driven horizontal scroll path while editable descendants opt back in through Board.css.
   */
-  const { isPanning: isBoardMousePanning, ...boardMousePanBindings } = useBoardMousePan(boardElement, viewportMode !== "mobile");
+  /*
+  FNXC:BoardNavigation 2026-08-30-07:01:
+  Mouse panning remains active at every viewport mode because a narrow non-touch browser resolves
+  to mobile. The snap owner ignores mouse input, while this owner captures only proven horizontal
+  intent and excludes controls, preserving stationary clicks; FN-9219 covered Electron only.
+  */
+  const { isPanning: isBoardMousePanning, ...boardMousePanBindings } = useBoardMousePan(boardElement, true);
   const boardClassName = `board board-workflow-columns${isBoardMousePanning ? " is-mouse-panning" : ""}`;
   const [headerWorkflowSlot, setHeaderWorkflowSlot] = useState<HTMLElement | null>(() => {
     if (typeof document === "undefined") return null;
@@ -251,14 +263,16 @@ export function Board({ tasks, projectId, maxConcurrent, effectiveMaxConcurrent 
   // Normalized search-active signal: trimmed and non-empty
   const isSearchActive = searchQuery.trim() !== "";
   useEffect(() => {
-    if (!workflowControlsInHeader || typeof document === "undefined") {
+    if (!active || !workflowControlsInHeader || typeof document === "undefined") {
       setHeaderWorkflowSlot(null);
       return;
     }
     setHeaderWorkflowSlot(document.getElementById("header-workflow-slot"));
-  }, [workflowControlsInHeader, viewportMode]);
+  }, [active, workflowControlsInHeader, viewportMode]);
 
   useEffect(() => {
+    if (!active) return;
+
     recordResumeEvent({
       view: "Board",
       trigger: boardWasPreviouslyInactive ? "route-active" : "remount",
@@ -276,7 +290,7 @@ export function Board({ tasks, projectId, maxConcurrent, effectiveMaxConcurrent 
         replayAttempted: false,
       });
     };
-  }, [projectId]);
+  }, [active, projectId]);
 
   const handleToggleArchivedCollapse = useCallback(() => {
     setArchivedCollapsed((current) => {
@@ -943,11 +957,17 @@ export function Board({ tasks, projectId, maxConcurrent, effectiveMaxConcurrent 
 
     FNXC:WorkflowControls 2026-06-20-15:42:
     Standalone workflow edit/create icon buttons were removed because those actions now live inside WorkflowSwitcher; keep this wrapper only when it contains the switcher to avoid empty toolbar shells.
+
+    FNXC:MainViewKeepAlive 2026-08-31-14:54:
+    React commits portals before the active-gate effect clears a retained Board's cached header slot.
+    Gate selection here too, so an inactive Board renders its toolbar inline inside the hidden wrapper
+    instead of claiming the shared slot for a commit.
     */
-    const relocatedWorkflowToolbar = workflowControlsInHeader && headerWorkflowSlot && workflowToolbar
-      ? createPortal(workflowToolbar, headerWorkflowSlot)
+    const shouldRelocateWorkflowToolbar = active && workflowControlsInHeader && Boolean(headerWorkflowSlot);
+    const relocatedWorkflowToolbar = shouldRelocateWorkflowToolbar && workflowToolbar
+      ? createPortal(workflowToolbar, headerWorkflowSlot!)
       : null;
-    const renderedWorkflowToolbar = workflowControlsInHeader && headerWorkflowSlot ? relocatedWorkflowToolbar : workflowToolbar;
+    const renderedWorkflowToolbar = shouldRelocateWorkflowToolbar ? relocatedWorkflowToolbar : workflowToolbar;
 
     if (isAllWorkflowsViewSelected) {
       return (
@@ -980,7 +1000,7 @@ export function Board({ tasks, projectId, maxConcurrent, effectiveMaxConcurrent 
                   tasks={aggregateTasksByColumn[columnDef.id] ?? []}
                   projectId={projectId}
                   maxConcurrent={maxConcurrent}
-                  effectiveMaxConcurrent={effectiveMaxConcurrent}
+                  maxWorktrees={maxWorktrees}
                   showWorktreeGrouping={showWorktreeGrouping}
                   onMoveTask={onMoveTask}
                   onPauseTask={onPauseTask}
@@ -1063,7 +1083,7 @@ export function Board({ tasks, projectId, maxConcurrent, effectiveMaxConcurrent 
                 allTasks={selectedWorkflowTasks}
                 projectId={projectId}
                 maxConcurrent={maxConcurrent}
-                effectiveMaxConcurrent={effectiveMaxConcurrent}
+                maxWorktrees={maxWorktrees}
                 showWorktreeGrouping={showWorktreeGrouping}
                 onMoveTask={onMoveTask}
                 onPauseTask={onPauseTask}
@@ -1123,7 +1143,7 @@ export function Board({ tasks, projectId, maxConcurrent, effectiveMaxConcurrent 
               allTasks={selectedWorkflowTasks}
               projectId={projectId}
               maxConcurrent={maxConcurrent}
-              effectiveMaxConcurrent={effectiveMaxConcurrent}
+              maxWorktrees={maxWorktrees}
               showWorktreeGrouping={showWorktreeGrouping}
               onMoveTask={onMoveTask}
               onPauseTask={onPauseTask}

@@ -330,8 +330,6 @@ export default defineConfig({
           name: "engine-default",
           include: ["src/**/*.test.ts"],
           exclude: [
-            // FNXC:WedgeNotificationFlake 2026-08-23-22:35 — quarantined (2nd sighting); see scripts/lib/test-quarantine.json for the evidence and the 2026-09-06 deletion deadline.
-            "src/__tests__/self-healing-pending-wedge-notification.test.ts",
             "src/__tests__/reliability-interactions/**/*.test.ts",
             // FNXC:PipelineSmoke 2026-08-23-14:52: FN-182's whole-pipeline fixture is opt-in, never a default or gate test.
             "src/__tests__/pipeline-smoke/**/*.test.ts",

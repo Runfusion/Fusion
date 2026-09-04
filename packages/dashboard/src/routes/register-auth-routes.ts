@@ -32,6 +32,18 @@ export function parseGitHubCopilotDeviceCode(instructions: string): string | und
   return match?.[1];
 }
 
+let loginInitiationTimeoutMs = 30_000;
+
+/*
+FNXC:ProviderAuth 2026-09-01-08:00:
+OAuth initiation is a user-visible boundary: a route must return an authorization method promptly
+without waiting for the full browser or device-code exchange. This test hook exercises expiry with
+real timers while preserving the production thirty-second window.
+*/
+export function __setLoginInitiationTimeoutMsForTests(ms?: number): void {
+  loginInitiationTimeoutMs = ms ?? 30_000;
+}
+
 export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
   const { router, options, store, getScopedStore, rethrowAsApiError } = ctx;
   const authStorage = options?.authStorage;
@@ -429,10 +441,25 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
     return true;
   }
 
-  function getManualCodeConfig(providerId: string, origin: string | undefined): ManualCodeConfig | undefined {
+  type OauthLoginMethod = "browser" | "device_code";
+
+  function resolveOauthLoginMethod(storageProviderId: string, origin: string | undefined, requested?: unknown): OauthLoginMethod {
+    if (storageProviderId !== "openai-codex") return "browser";
+    if (requested === "browser" || requested === "device_code") return requested;
+    if (!origin) return "browser";
+    try {
+      new URL(origin);
+      return isLocalhostOrigin(origin) ? "browser" : "device_code";
+    } catch {
+      return "browser";
+    }
+  }
+
+  function getManualCodeConfig(providerId: string, origin: string | undefined, method?: OauthLoginMethod): ManualCodeConfig | undefined {
     const remoteDashboard = origin !== undefined && !isLocalhostOrigin(origin);
 
     if (providerId === "openai-codex") {
+      if (method === "device_code") return undefined;
       return {
         prompt: "Paste the final redirect URL or authorization code",
         placeholder: "http://localhost:1455/auth/callback?code=...&state=... or just the code",
@@ -579,7 +606,11 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
   function selectOauthOption(
     providerId: string,
     prompt: { options: Array<{ id: string; label?: string }> },
+    preferredMethodId?: OauthLoginMethod,
   ): string | undefined {
+    if (preferredMethodId && prompt.options.some((option) => option.id === preferredMethodId)) {
+      return preferredMethodId;
+    }
     if (prompt.options.length === 1) {
       return prompt.options[0]?.id;
     }
@@ -616,8 +647,9 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
     instructions: string | undefined,
     providerId: string,
     origin: string | undefined,
+    method?: OauthLoginMethod,
   ): string | undefined {
-    const manualCode = getManualCodeConfig(providerId, origin);
+    const manualCode = getManualCodeConfig(providerId, origin, method);
     if (!manualCode) {
       return instructions;
     }
@@ -647,7 +679,14 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
    */
   router.get("/auth/status", async (req, res) => {
     try {
-      const origin = typeof req.headers.origin === "string" ? req.headers.origin : undefined;
+      const query = req.query ?? {};
+      const requestedOrigin = typeof query.origin === "string" ? query.origin : undefined;
+      /*
+      FNXC:ProviderAuth 2026-09-01-08:22:
+      Same-origin dashboard status polling does not send an Origin header. Accept its explicit
+      dashboard-origin query value so the status envelope and login route agree on Codex device code.
+      */
+      const origin = requestedOrigin ?? (typeof req.headers.origin === "string" ? req.headers.origin : undefined);
       const storage = getAuthStorage();
       let customProvidersConfigured = false;
       if (store) {
@@ -667,7 +706,6 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
       FNXC:ProviderAuth 2026-08-01-19:10:
       FN-8713: Express normally supplies `req.query`, but direct route consumers can omit it. Treat an absent query as empty while retaining instance validation; a well-formed dangling instance stays unauthenticated below and must never fall back to the provider default.
       */
-      const query = req.query ?? {};
       const requestedProvider = typeof query.provider === "string" ? query.provider : undefined;
       const rawRequestedInstance = typeof query.instance === "string" ? query.instance : undefined;
       if (rawRequestedInstance?.trim() && !requestedProvider) throw badRequest("instance requires provider");
@@ -737,7 +775,11 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
           type: "oauth" as const,
           expired: expired || missingInferenceScope,
           loginInProgress: [...loginInProgress.keys()].some((key) => key.startsWith(`${statusProvider.id}::`)),
-          requiresManualCode: getManualCodeConfig(toOauthLoginProviderId(statusProvider.id), origin) !== undefined || undefined,
+          requiresManualCode: getManualCodeConfig(
+            toOauthLoginProviderId(statusProvider.id),
+            origin,
+            resolveOauthLoginMethod(toOauthLoginProviderId(statusProvider.id), origin),
+          ) !== undefined || undefined,
           loginError: lastLoginError.get(statusProvider.id) ?? scopeLoginError ?? expiryLoginError,
         };
       }));
@@ -930,6 +972,13 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
           return { ...provider, instanceId, authenticated: false, expired: false, keyHint: undefined, instances: [] };
         }
         const refs = storage.listInstances?.(provider.id) ?? [];
+        /*
+        FNXC:ProviderAuth 2026-09-01-06:38:
+        FN-9229 suppresses a bare legacy Anthropic OAuth row whenever subscription accounts exist. The row remains stored for migration compatibility, so status must disclose its presence without exposing credential material; an invisible credential must never be a silent participant in resolution.
+        */
+        const legacyAnthropicOAuthPresent = provider.id === "anthropic-subscription"
+          && refs.length > 0
+          && storage.getInstance?.({ providerId: "anthropic", instanceId: "default" })?.type === "oauth";
         const targetedCredential = target ? credential : undefined;
         const targetedKey = targetedCredential?.type === "api_key" && typeof targetedCredential.key === "string"
           ? targetedCredential.key : undefined;
@@ -949,6 +998,7 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
             ...(targetedKey ? { keyHint: maskApiKey(targetedKey) } : { keyHint: undefined }),
           } : {}),
           instanceId,
+          ...(legacyAnthropicOAuthPresent ? { legacyAnthropicOAuthPresent: true } : {}),
           instances: (target ? refs.filter((item) => item.instanceId === instanceId) : refs)
             .map((item) => {
               const instanceCredential = storage.getInstance?.({ providerId: provider.id, instanceId: item.instanceId });
@@ -1587,13 +1637,18 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
    * poll GET /api/auth/status to detect completion.
    */
   router.post("/auth/login", async (req, res) => {
+    let createdPendingLogin: PendingLogin | undefined;
+    let initiationFailed = false;
     try {
-      const { provider, origin, instance, label } = req.body;
+      const { provider, origin, instance, label, method } = req.body;
       if (!provider || typeof provider !== "string") {
         throw badRequest("provider is required");
       }
       if (origin !== undefined && typeof origin !== "string") {
         throw badRequest("origin must be a string when provided");
+      }
+      if (method !== undefined && method !== "browser" && method !== "device_code") {
+        throw badRequest("method must be browser or device_code when provided");
       }
       // Validate before invoking OAuth; storage fallback retains legacy default behavior.
       const instanceId = resolveInstanceId(instance);
@@ -1630,6 +1685,13 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
         );
       }
       const loginProvider = found.id === provider ? provider : storageProvider;
+      /*
+      FNXC:ProviderAuth 2026-09-01-08:20:
+      A remote dashboard cannot receive Codex's localhost callback in the operator's browser.
+      Prefer pi's supported device-code method there, keep browser on local origins, and retain an
+      explicit request override for environments that intentionally need the browser flow.
+      */
+      const oauthMethod = resolveOauthLoginMethod(storageProvider, origin, method);
 
       const abortController = new AbortController();
       let resolveInput: (value: string) => void = () => {};
@@ -1643,7 +1705,7 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
       // does not create unhandled rejection noise.
       void inputPromise.catch((error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);
-        if (message !== "cancelled") {
+        if (message !== "cancelled" && message !== "Login initiation timed out") {
           severityAuditLog.warn(`[auth/login] manual OAuth input promise rejected for ${provider}: ${message}`);
         }
       });
@@ -1654,11 +1716,12 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
          resolveInput,
          rejectInput,
          inputSubmitted: false,
-         manualCode: getManualCodeConfig(storageProvider, origin),
+         manualCode: getManualCodeConfig(storageProvider, origin, oauthMethod),
          instanceId,
          label: instanceLabel,
        };
        loginInProgress.set(flowKey, pendingLogin);
+       createdPendingLogin = pendingLogin;
 
       let autoPromptConsumed = false;
 
@@ -1702,7 +1765,7 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
 
           resolveAuthInfo({
             url: info.url,
-            instructions: appendManualCodeHint(info.instructions, storageProvider, origin),
+            instructions: appendManualCodeHint(info.instructions, storageProvider, origin, oauthMethod),
             deviceCode: resolvedDeviceCode,
           });
         },
@@ -1714,7 +1777,7 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
 
           resolveAuthInfo({
             url: info.verificationUri,
-            instructions: appendManualCodeHint(undefined, storageProvider, origin),
+            instructions: appendManualCodeHint(undefined, storageProvider, origin, oauthMethod),
             deviceCode: resolvedDeviceCode,
           });
         },
@@ -1735,7 +1798,7 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
         */
         onManualCodeInput: async () => await pendingLogin.inputPromise,
         onProgress: () => {}, // no-op for web UI
-        onSelect: async (prompt) => selectOauthOption(storageProvider, prompt),
+        onSelect: async (prompt) => selectOauthOption(storageProvider, prompt, oauthMethod),
         signal: abortController.signal,
       };
       const loginPromise = hasNamedInstance && storage.loginInstance
@@ -1745,7 +1808,7 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
       // Race: either we get the auth URL or the login completes/fails first
       const timeout = setTimeout(() => {
         rejectAuthInfo(new Error("Login initiation timed out"));
-      }, 30_000);
+      }, loginInitiationTimeoutMs);
 
       loginPromise
         .then(() => {
@@ -1760,18 +1823,36 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
           // is already sent, rejectAuthInfo is a no-op, so this retained error
           // is the only channel by which the client learns why login failed.
           rejectAuthInfo(error);
-          if (error.message !== "cancelled") {
+          if (error.message !== "cancelled" && !initiationFailed) {
             lastLoginError.set(provider, error.message);
             severityAuditLog.error(`[auth/login] background login failed for ${provider}: ${error.message}`);
           }
         })
         .finally(() => {
           clearTimeout(timeout);
-          loginInProgress.delete(flowKey);
-          deleteOauthSessionsForFlow(flowKey);
+          if (loginInProgress.get(flowKey) === createdPendingLogin) {
+            loginInProgress.delete(flowKey);
+            deleteOauthSessionsForFlow(flowKey);
+          }
         });
 
-      const authInfo = await authUrlPromise;
+      let authInfo: { url: string; instructions?: string; deviceCode?: DeviceCodeInfo };
+      try {
+        authInfo = await authUrlPromise;
+      } catch (error: unknown) {
+        const initiationError = error instanceof Error ? error : new Error(String(error));
+        initiationFailed = true;
+        lastLoginError.set(provider, initiationError.message);
+        severityAuditLog.error(`[auth/login] login initiation failed for ${provider}: ${initiationError.message}`);
+        /*
+        FNXC:ProviderAuth 2026-09-01-08:10:
+        An initiation failure belongs only to the attempt that created it. Abort its upstream flow,
+        reject any pending manual input, and clean its sessions, but never delete a newer retry that
+        has reused the same provider-instance key.
+        */
+        cancelOauthFlow(flowKey, initiationError);
+        throw initiationError;
+      }
       clearTimeout(timeout);
 
       let responseUrl = authInfo.url;
@@ -1802,8 +1883,10 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
       const provider = req.body?.provider;
       if (provider) {
         const flowKey = loginKey(provider, resolveInstanceId(req.body?.instance));
-        loginInProgress.delete(flowKey);
-        deleteOauthSessionsForFlow(flowKey);
+        if (loginInProgress.get(flowKey) === createdPendingLogin) {
+          loginInProgress.delete(flowKey);
+          deleteOauthSessionsForFlow(flowKey);
+        }
       }
       rethrowAsApiError(err);
     }

@@ -8,6 +8,9 @@ export const FAST_LANE_STEP_NAME = "Fast implementation";
 /** Synthetic graph result for a top-level fast-lane bypass. */
 export const FAST_LANE_SKIP_VALUE = "fast-lane-skip";
 
+/** The sole machine actor allowed to author automated fast-lane bypass carriers. */
+export const FAST_MODE_BYPASS_ACTOR = "fast-mode";
+
 /*
 FNXC:FastLane 2026-08-29-02:44:
 A bypassed template step-review must follow its existing approve EDGE so the
