@@ -226,6 +226,40 @@ export function parseStepFileScopes(prompt: string): Map<number, string[]> {
   return result;
 }
 
+/*
+FNXC:WorkflowStepControl 2026-09-04-01:38:
+PROMPT.md is model-authored, but its heading numbers are execution indices. A fully 1-based run
+previously produced a phantom step at steps.length, so only that unambiguous legacy sequence rebases.
+*/
+export function resolveAuthoredStepHeadingOffset(headingNumbers: readonly number[]): 0 | 1 {
+  const sorted = [...headingNumbers].sort((a, b) => a - b);
+  return sorted.length > 0 && sorted.every((heading, index) => heading === index + 1) ? 1 : 0;
+}
+
+/*
+FNXC:WorkflowStepControl 2026-09-04-01:38:
+PROMPT.md is model-authored and an out-of-range heading is never schedulable. Normalize the
+unambiguous 1-based legacy shape, clamp malformed keys, and retain every valid task index.
+*/
+export function normalizeAuthoredStepScopes(
+  scopes: Map<number, string[]>,
+  stepCount: number,
+): Map<number, string[]> {
+  if (stepCount === 0) return scopes;
+
+  const offset = resolveAuthoredStepHeadingOffset([...scopes.keys()]);
+  const normalized = new Map<number, string[]>();
+  for (const [heading, paths] of scopes) {
+    const index = heading - offset;
+    if (index >= 0 && index < stepCount) normalized.set(index, paths);
+  }
+  const complete = new Map<number, string[]>();
+  for (let index = 0; index < stepCount; index++) {
+    complete.set(index, normalized.get(index) ?? []);
+  }
+  return complete;
+}
+
 /**
  * Extract backtick-wrapped file paths from a step section.
  *
@@ -642,7 +676,8 @@ function extractStepSection(prompt: string, stepIndex: number): string {
     splits.push({ index: match.index, stepNum: parseInt(match[1], 10) });
   }
 
-  const targetSplit = splits.find((s) => s.stepNum === stepIndex);
+  const offset = resolveAuthoredStepHeadingOffset(splits.map((split) => split.stepNum));
+  const targetSplit = splits.find((s) => s.stepNum === stepIndex + offset);
   if (!targetSplit) return "";
 
   const splitPos = splits.indexOf(targetSplit);
@@ -978,17 +1013,9 @@ export class StepSessionExecutor {
     const { taskDetail } = this.options;
     const prompt = taskDetail.prompt ?? "";
 
-    // Parse file scopes and determine execution plan
-    const stepScopes = parseStepFileScopes(prompt);
-
-    // Add all step indices that don't appear in the prompt's step sections
-    // (e.g. if steps are defined in taskDetail.steps but not in the prompt)
+    // Parse file scopes and determine execution plan.
     const stepCount = taskDetail.steps?.length ?? 0;
-    for (let i = 0; i < stepCount; i++) {
-      if (!stepScopes.has(i)) {
-        stepScopes.set(i, []);
-      }
-    }
+    const stepScopes = normalizeAuthoredStepScopes(parseStepFileScopes(prompt), stepCount);
 
     /*
      * FNXC:WorkflowStepControl 2026-06-29-10:45:

@@ -7,7 +7,7 @@
  * no recovery path applies — never leave a failed graph invisible in in-progress.
  */
 import { join } from "node:path";
-import { readFile } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import type { Task, TaskStore, WorkflowIr } from "@fusion/core";
 import {
   nonExecutableDuplicateRedirectReason,
@@ -100,6 +100,8 @@ export type HandleGraphFailureDeps = {
   activeCliTaskSessions: Map<string, unknown>;
   activeWorkflowGraphAbortControllers: Map<string, AbortController>;
   processWideGraphRouting: Set<string>;
+  /** Deferred terminal-park callbacks currently in flight (restart-recovery intent chain). */
+  deferredTerminalParksInFlight: Set<string>;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
   clearCompletedTaskWatchdog: (taskId: string) => void;
   clearPausedAborted: (taskId: string) => void;
@@ -131,6 +133,46 @@ export type HandleGraphFailureDeps = {
   safeLogEntry: AnyFn;
 };
 
+async function retryTerminalFailurePersistence(
+  store: TaskStore,
+  taskId: string,
+  message: string,
+  runContext: EngineRunContext | undefined,
+  capturedColumnMovedAt: string | undefined,
+): Promise<boolean> {
+  /*
+  FNXC:MergeRetryReliability 2026-09-04-02:24:
+  Bounded terminal persistence can outlive an operator requeue during a store
+  outage. Every retry therefore uses the same atomic lane-move fence as deferred
+  recovery, so an old graph run cannot fail the newly requeued execution.
+  */
+  const delays = [1000, 2000, 4000, 8000, 16000, 32000, 64000];
+  for (let attempt = 0; attempt < delays.length; attempt += 1) {
+    try {
+      await store.updateTaskAtomic(taskId, (current) => {
+        if (
+          !current
+          || current.deletedAt
+          || current.status != null
+          || current.paused
+          || current.userPaused
+          || (typeof capturedColumnMovedAt === "string"
+            && typeof current.columnMovedAt === "string"
+            && current.columnMovedAt !== capturedColumnMovedAt)
+        ) return null;
+        return { error: message, status: "failed" };
+      }, runContext);
+      return true;
+    } catch (error) {
+      if (attempt === delays.length - 1) {
+        executorLog.error(`${taskId}: terminal graph-failure persistence exhausted: ${error instanceof Error ? error.message : String(error)}`);
+        return false;
+      }
+      await new Promise((resolve) => setTimeout(resolve, delays[attempt]));
+    }
+  }
+  return false;
+}
 export async function handleGraphFailure(
   deps: HandleGraphFailureDeps,
   task: Task,
@@ -1451,10 +1493,162 @@ export async function handleGraphFailure(
         if (!escalationTerminalParked) return;
         await emitBoundedRunAudit(deps.store, { taskId: task.id, agentId: "executor", runId: generateSyntheticRunId("escalation-exhausted", task.id), domain: "database", mutationType: "task:execution-escalation-exhausted", target: task.id, metadata: { taskId: task.id, nodeId: failedNode ?? "unknown", hadModelTarget: escalationHadModelTarget, hadNodeTarget: escalationHadNodeTarget } });
       } else {
-        // status "failed" doubles as the self-healing exemption: review-task
-        // revival sweeps skip tasks carrying a non-null status, preventing the
-        // FN-5704-style loop of re-running the graph from scratch.
-        await deps.store.updateTask(task.id, { error: message, status: "failed" }, deps.getRunContextFor(task.id));
+        const parked = await retryTerminalFailurePersistence(
+          deps.store,
+          task.id,
+          message,
+          deps.getRunContextFor(task.id),
+          live.columnMovedAt,
+        );
+        if (!parked) {
+          /*
+          FNXC:MergeRetryReliability 2026-08-26-18:30 (Greptile P1 x6): during a
+          persistent store outage the bounded backoff can exhaust while the task
+          still sits in its lane. Keep re-attempting on a fixed interval until
+          the row is durably terminal or the write's fence rejects it — no round
+          cap, so a store that recovers hours later still finds the row parked
+          instead of lane-resident with null status. Every re-attempt is exactly
+          one fenced write: updateTaskAtomic's reducer re-checks the live row
+          (deleted / already-terminal / paused) atomically, so no separate
+          getTask probe exists — a probe could itself reject during the outage
+          and, landing outside the retry branch, would end the chain. Run
+          identity is fenced by STRICT equality with the id captured at
+          exhaustion, and no chain is scheduled at all when no execution context
+          exists then: two absent (undefined) contexts must never compare equal,
+          or a stale handler could park freshly recovered or requeued work.
+          resumeOrphaned() parks lane-resident null-status rows at restart.
+          */
+          /*
+          FNXC:MergeRetryReliability 2026-09-04-01:51:
+          columnMovedAt changes for every lane move, including operator requeue,
+          making it the durable execution identity. Do not use updatedAt: logs and
+          token usage mutate it without starting a new execution.
+          */
+          const capturedRunId = deps.getRunContextFor(task.id)?.runId;
+          const capturedColumnMovedAt = live.columnMovedAt;
+          // FNXC:MergeRetryReliability 2026-08-29-14:35 (Greptile round-9
+          // Issue 1): the in-memory deferred chain dies with the engine — an
+          // unref'd timeout has no durable ownership, so an exit during the
+          // store outage discards the pending failed-state write and restart
+          // recovery RE-RUNS a task that should have been parked. Persist the
+          // terminal-park intent next to the task's own directory so restart
+          // recovery (resumeOrphaned) can apply it instead of re-executing.
+          // FNXC:MergeRetryReliability 2026-08-29-16:52 (CodeRabbit L1331):
+          // persist the intent on EVERY exhaustion path — including the
+          // no-context branch below — so restart recovery parks the task even
+          // when the deferred chain was never schedulable.
+          const tasksDir = typeof deps.store.getTasksDir === "function"
+            ? deps.store.getTasksDir()
+            : join(deps.rootDir, ".fusion", "tasks");
+          const deferredParkIntentPath = join(tasksDir, task.id, "deferred-terminal-park.json");
+          // Fire-and-forget: the intent write must not delay scheduling the
+          // deferred chain (a blocked fs would push the timer past the
+          // retry window). If the filesystem is unavailable the in-memory
+          // chain still runs; restart recovery simply loses the intent.
+          // FNXC:MergeRetryReliability 2026-08-29-17:08 (CodeRabbit L1351):
+          // hold the write promise and await it inside the deferred chain
+          // before each rm, so a slow fs write cannot recreate the file
+          // after the intent was settled.
+          const intentWrite = writeFile(deferredParkIntentPath, JSON.stringify({ message, writtenAt: new Date().toISOString(), columnMovedAt: capturedColumnMovedAt }), "utf-8")
+            .catch((intentError) => {
+              executorLog.warn(`${task.id}: failed to persist deferred terminal-park intent: ${intentError instanceof Error ? intentError.message : String(intentError)}`);
+            });
+          if (capturedRunId === undefined) {
+            executorLog.warn(`${task.id}: no execution context at exhaustion — skipping deferred terminal park (a null-status lane row is parked at restart)`);
+          } else {
+            const scheduleDeferredTerminalPark = (attempt: number): void => {
+              const handle = setTimeout(() => {
+                void (async function deferredTerminalParkAttempt() {
+                  // FNXC:MergeRetryReliability 2026-08-29-17:40 (CodeRabbit L399):
+                  // expose an observable in-flight marker so tests drive the fence
+                  // from observed state instead of stack traces (rename/inlining
+                  // or a deep async stack could silently disable the fence tests).
+                  deps.deferredTerminalParksInFlight.add(task.id);
+                  try {
+                  const currentRunId = deps.getRunContextFor(task.id)?.runId;
+                  // FNXC:MergeRetryReliability 2026-08-29-12:05 (Greptile round-4
+                  // Issue 1): a cleared context (currentRunId === undefined) means
+                  // normal execution teardown already happened and NO OTHER run
+                  // owns the task — the lane-resident null-status row must still be
+                  // parked now the store recovered. Skipping on undefined made
+                  // recovery depend on an engine restart (resumeOrphaned), leaving
+                  // the task lane-resident indefinitely.
+                  // FNXC:MergeRetryReliability 2026-08-29-12:20 (Greptile round-8
+                  // Issue 1): a cleared context is NOT sufficient proof of a dead
+                  // run — a valid requeue also clears it while the task is live on
+                  // some execution surface. Fence both ways: different ACTIVE run
+                  // id, OR no run id but any live execution surface for the task
+                  // (same surface list the transient resume retry uses), means a
+                  // stale callback must not terminalize newer/requeued work.
+                  const taskHasLiveExecutionSurface =
+                    deps.executing.has(task.id)
+                    || deps.activeSessions.has(task.id)
+                    || deps.activeStepExecutors.has(task.id)
+                    || deps.activeWorkflowStepSessions.has(task.id)
+                    || deps.activeCliTaskSessions.has(task.id)
+                    || deps.activeWorkflowGraphAbortControllers.has(task.id)
+                    || deps.resumingUnpaused.has(task.id)
+                    || deps.processWideGraphRouting.has(task.id);
+                  if (
+                    (currentRunId !== undefined && currentRunId !== capturedRunId)
+                    || (currentRunId === undefined && taskHasLiveExecutionSurface)
+                  ) {
+                    // FNXC:MergeRetryReliability 2026-08-29-16:52 (CodeRabbit L1402):
+                    // a skipped fence ends the chain — the file must not leak so a
+                    // later restart parks work a NEWER run owns.
+                    await intentWrite;
+                    await rm(deferredParkIntentPath, { force: true }).catch(() => undefined);
+                    return;
+                  }
+                let fencedParked = false;
+                try {
+                  await deps.store.updateTaskAtomic(task.id, (current) => {
+                    if (
+                      !current
+                      || current.deletedAt
+                      || current.status != null
+                      || current.paused
+                      || current.userPaused
+                      || (typeof capturedColumnMovedAt === "string"
+                        && typeof current.columnMovedAt === "string"
+                        && current.columnMovedAt !== capturedColumnMovedAt)
+                    ) return null;
+                    fencedParked = true;
+                    return { error: message, status: "failed" };
+                  }, deps.getRunContextFor(task.id));
+                } catch (error) {
+                  if (attempt % 10 === 0) {
+                    executorLog.error(`${task.id}: deferred terminal persistence attempt ${attempt + 1} rejected (${error instanceof Error ? error.message : String(error)}) — re-attempting`);
+                  }
+                  scheduleDeferredTerminalPark(attempt + 1);
+                  return;
+                }
+                // FNXC:MergeRetryReliability 2026-08-29-16:52 (CodeRabbit L1402):
+                // reached only when the fenced write RESOLVED — either the row
+                // was parked (fencedParked) or the reducer declined it (row
+                // already terminal/deleted/paused). Both settle the intent:
+                // dropped the durable marker so a later restart does not re-apply
+                // stale terminal state.
+                // FNXC:MergeRetryReliability 2026-08-29-17:08 (CodeRabbit L1351):
+                // await the intent write BEFORE deleting it, so a slow fs write
+                // cannot recreate the file after the chain settled the intent.
+                await intentWrite;
+                await rm(deferredParkIntentPath, { force: true }).catch(() => undefined);
+                if (fencedParked) {
+                  executorLog.warn(`${task.id}: deferred terminal persistence parked the row after store recovery`);
+                }
+                  } finally {
+                    deps.deferredTerminalParksInFlight.delete(task.id);
+                  }
+              })().catch((error) => executorLog.error(
+                `${task.id}: deferred terminal persistence failed: ${error instanceof Error ? error.message : String(error)}`,
+              ));
+            }, process.env.VITEST || process.env.NODE_ENV === "test" ? 0 : 120_000);
+            handle.unref?.();
+            };
+            scheduleDeferredTerminalPark(0);
+          }
+        }
       }
       executorLog.warn(`${task.id}: ${message}`);
       await deps.store.logEntry(task.id, message, undefined, deps.getRunContextFor(task.id));

@@ -398,14 +398,11 @@ describe("executor graph execute self-requeue gate", () => {
       context: {},
     });
 
-    expect(store.updateTask).toHaveBeenCalledWith(
-      live.id,
-      expect.objectContaining({
-        status: "failed",
-        error: expect.stringContaining("Workflow graph terminated with failure at node 'code-review-remediation'"),
-      }),
-      undefined,
-    );
+    expect(store.updateTaskAtomic).toHaveBeenCalledWith(live.id, expect.any(Function), undefined);
+    await expect(store.getTask(live.id)).resolves.toEqual(expect.objectContaining({
+      status: "failed",
+      error: expect.stringContaining("Workflow graph terminated with failure at node 'code-review-remediation'"),
+    }));
   });
 
   it("does not hand generic graph failures to review", async () => {
@@ -429,14 +426,11 @@ describe("executor graph execute self-requeue gate", () => {
       context: { "node:parse:value": "parse-error" },
     });
 
-    expect(store.updateTask).toHaveBeenCalledWith(
-      live.id,
-      expect.objectContaining({
-        status: "failed",
-        error: expect.stringContaining("Workflow graph terminated with failure at node 'parse'"),
-      }),
-      undefined,
-    );
+    expect(store.updateTaskAtomic).toHaveBeenCalledWith(live.id, expect.any(Function), undefined);
+    await expect(store.getTask(live.id)).resolves.toEqual(expect.objectContaining({
+      status: "failed",
+      error: expect.stringContaining("Workflow graph terminated with failure at node 'parse'"),
+    }));
     expect(store.handoffToReview).not.toHaveBeenCalled();
     expect(store.moveTask).not.toHaveBeenCalledWith(live.id, "in-review", expect.anything());
   });

@@ -306,6 +306,11 @@ export interface VoiceInputSettings {
   language?: string;
 }
 
+export interface ChatSnippet {
+  name: string;
+  prompt: string;
+}
+
 export interface GlobalSettings {
   /** Maximum PostgreSQL server connections for Fusion's embedded database. Applied on the next Fusion restart. */
   embeddedPostgresMaxConnections?: number;
@@ -358,6 +363,11 @@ export interface GlobalSettings {
    * This global-only operator keyboard preference defaults to true to preserve Enter-submits behavior. When disabled, Enter inserts a newline and Cmd/Ctrl+Enter submits; shared projects must never change an operator's keyboard behavior.
    */
   quickAddSubmitOnEnter?: boolean;
+  /**
+   * FNXC:ChatSnippets 2026-09-03-15:56:
+   * Reusable dashboard-chat prompts are a global operator preference because direct and task chats span projects. They use the existing global settings transport and need neither project persistence nor a dedicated route.
+   */
+  chatSnippets?: ChatSnippet[];
   /** Active UI locale (e.g. `"en"`, `"zh-CN"`, `"fr"`). One of `SUPPORTED_LOCALES`.
    *  When unset, each surface resolves the locale at runtime (browser/env
    *  detection) and falls back to `DEFAULT_LOCALE` ("en"). */
@@ -2584,6 +2594,13 @@ export {
   resolvePersistAgentThinkingLog,
   sanitizeCliAgentSettings,
   sanitizeCliAgentsSettings,
+  normalizeChatSnippetName,
+  normalizeChatSnippets,
+  readChatSnippets,
+  CHAT_SNIPPET_RESERVED_NAMES,
+  CHAT_SNIPPET_MAX_ENTRIES,
+  CHAT_SNIPPET_MAX_NAME_LENGTH,
+  CHAT_SNIPPET_MAX_PROMPT_LENGTH,
   sanitizeMcpServers,
   CLI_AGENT_ADAPTER_IDS,
   CLI_AGENT_AUTONOMY_MODES,

@@ -4513,6 +4513,19 @@ export class TriageProcessor {
       return "PROMPT.md file not found or empty";
     }
 
+    /*
+    FNXC:PlanValidation 2026-09-04-01:47:
+    Heading numbering is engine-provable structure because the number is the execution index, not
+    Plan Review's AI quality judgement. Reject bad sequences before they can misroute step sessions.
+    */
+    const headingNumbers = Array.from(promptContent.matchAll(/^### Step (\d+):/gm), (match) => Number(match[1]));
+    if (headingNumbers.length > 0 && !headingNumbers.every((heading, index) => heading === index)) {
+      const diagnostic = `Step headings must be contiguous 0-based execution indices (observed: ${headingNumbers.join(", ")}). Renumber from Step 0 and update prose cross-references.`;
+      planLog.warn(`${taskId}: ${diagnostic}`);
+      await this.store.logEntry(taskId, "Generated plan validation failed: invalid step heading numbering");
+      return diagnostic;
+    }
+
     const danglingRefs = await detectDanglingTaskDocReferences(promptContent, {
       rootDir: this.rootDir,
       taskId,

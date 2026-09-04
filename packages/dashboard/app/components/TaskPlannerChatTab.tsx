@@ -1,4 +1,4 @@
-import type { ChatInFlightGenerationState, ChatMessage, ResolvedModelSelection, Settings, Task, TaskDetail } from "@fusion/core";
+import type { ChatInFlightGenerationState, ChatMessage, ChatSnippet, ResolvedModelSelection, Settings, Task, TaskDetail } from "@fusion/core";
 import { isWipColumnRole } from "../utils/columnRoles";
 import { getErrorMessage, isExperimentalFeatureEnabled, CHAT_FOCUS_FLAG } from "@fusion/core";
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -16,8 +16,10 @@ import { PendingChatMessageQueue } from "./PendingChatMessageQueue";
 import { ProviderIcon } from "./ProviderIcon";
 import { ChatThinkingLevelControl } from "./ChatThinkingLevelControl";
 import { useModelsCache } from "../hooks/useModelsCache";
+import { useChatSnippets } from "../hooks/useChatSnippetsCache";
 import { StandardChatActionButton, StandardChatMessageItem, StandardStreamingMessage, formatModelTag } from "./StandardChatSurface";
 import { filterChatCommands, getSlashTriggerMatch, matchChatCommand, selectChatCommands, type ChatCommand } from "./chat-commands";
+import { applySnippetToDraft, filterChatSnippets, matchStandaloneSnippetInvocation } from "./chat-snippets";
 import { useChatMessageLayout } from "../context/ChatMessageLayoutContext";
 import {
   createChatInputAutosizeController,
@@ -40,6 +42,10 @@ interface TaskPlannerChatTabProps {
 }
 
 type ComposerState = "idle" | "sending";
+
+type PlannerSlashMenuEntry =
+  | { kind: "command"; command: ChatCommand }
+  | { kind: "snippet"; snippet: ChatSnippet };
 
 type PendingQueueReservation = {
   sessionId: string;
@@ -348,6 +354,7 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
   const composerTextareaRef = useRef<HTMLTextAreaElement>(null);
   const autosizeRef = useRef<ChatInputAutosizeController | null>(null);
   const dictation = useComposerDictation({ textareaRef: composerTextareaRef, value: draft, onChange: setDraft, projectId });
+  const chatSnippets = useChatSnippets();
   const [showCommandMenu, setShowCommandMenu] = useState(false);
   const [commandFilter, setCommandFilter] = useState("");
   const [highlightedCommandIndex, setHighlightedCommandIndex] = useState(0);
@@ -544,6 +551,14 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
     () => filterChatCommands(commandFilter, selectedChatCommands),
     [commandFilter, selectedChatCommands],
   );
+  const filteredSnippets = useMemo(
+    () => filterChatSnippets(commandFilter, chatSnippets),
+    [chatSnippets, commandFilter],
+  );
+  const slashMenuEntries = useMemo<PlannerSlashMenuEntry[]>(() => [
+    ...filteredCommands.map((command) => ({ kind: "command" as const, command })),
+    ...filteredSnippets.map((snippet) => ({ kind: "snippet" as const, snippet })),
+  ], [filteredCommands, filteredSnippets]);
 
   useEffect(() => {
     setHighlightedCommandIndex(0);
@@ -1146,21 +1161,55 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
     setHighlightedCommandIndex(0);
   }, [agentRunning, t]);
 
+  const handleSnippetMenuSelect = useCallback((snippet: ChatSnippet) => {
+    const applied = applySnippetToDraft(
+      draft,
+      snippet,
+      composerTextareaRef.current?.selectionStart ?? draft.length,
+    );
+    if (!applied) return;
+    setDraft(applied.value);
+    setShowCommandMenu(false);
+    setCommandFilter("");
+    setHighlightedCommandIndex(0);
+    window.requestAnimationFrame(() => {
+      composerTextareaRef.current?.focus();
+      composerTextareaRef.current?.setSelectionRange(applied.cursorPosition, applied.cursorPosition);
+      autosizeRef.current?.resize();
+    });
+  }, [draft]);
+
   const sendMessage = useCallback(() => {
     const trimmed = draft.trim();
+    const snippetInvocation = matchStandaloneSnippetInvocation(trimmed, chatSnippets);
+    if (snippetInvocation) {
+      /*
+      FNXC:ChatSnippets 2026-09-03-15:56:
+      A standalone /name expands before command dispatch, streaming, optimistic transcript work, or persistent pending-queue writes. The operator must explicitly submit the inserted prompt a second time.
+      */
+      setDraft(snippetInvocation.prompt);
+      setShowCommandMenu(false);
+      setCommandFilter("");
+      window.requestAnimationFrame(() => {
+        composerTextareaRef.current?.focus();
+        composerTextareaRef.current?.setSelectionRange(snippetInvocation.prompt.length, snippetInvocation.prompt.length);
+        autosizeRef.current?.resize();
+      });
+      return;
+    }
     const commandMatch = matchChatCommand(trimmed, selectedChatCommands);
     if (commandMatch) {
       setShowCommandMenu(false);
       return dispatchSlashCommand(commandMatch.command, commandMatch.remainder);
     }
     return sendMessageContent(draft);
-  }, [draft, dispatchSlashCommand, selectedChatCommands, sendMessageContent]);
+  }, [chatSnippets, draft, dispatchSlashCommand, selectedChatCommands, sendMessageContent]);
 
   const handleDraftChange = useCallback((event: React.ChangeEvent<HTMLTextAreaElement>) => {
     const nextValue = event.target.value;
     setDraft(nextValue);
 
-    const triggerMatch = getSlashTriggerMatch(nextValue);
+    const triggerMatch = getSlashTriggerMatch(nextValue.slice(0, event.target.selectionStart ?? nextValue.length));
     if (triggerMatch) {
       setShowCommandMenu(true);
       setCommandFilter(triggerMatch.filter);
@@ -1302,25 +1351,27 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
   const handleKeyDown = useCallback((event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (showCommandMenu && event.key === "ArrowDown") {
       event.preventDefault();
-      if (filteredCommands.length > 0) {
-        setHighlightedCommandIndex((prev) => (prev + 1) % filteredCommands.length);
+      if (slashMenuEntries.length > 0) {
+        setHighlightedCommandIndex((prev) => (prev + 1) % slashMenuEntries.length);
       }
       return;
     }
 
     if (showCommandMenu && event.key === "ArrowUp") {
       event.preventDefault();
-      if (filteredCommands.length > 0) {
-        setHighlightedCommandIndex((prev) => (prev === 0 ? filteredCommands.length - 1 : prev - 1));
+      if (slashMenuEntries.length > 0) {
+        setHighlightedCommandIndex((prev) => (prev === 0 ? slashMenuEntries.length - 1 : prev - 1));
       }
       return;
     }
 
-    if (showCommandMenu && (event.key === "Enter" || event.key === "Tab") && !event.shiftKey && filteredCommands.length > 0) {
+    if (showCommandMenu && (event.key === "Enter" || event.key === "Tab") && !event.shiftKey && slashMenuEntries.length > 0) {
       event.preventDefault();
-      const commandToSelect = filteredCommands[highlightedCommandIndex] ?? filteredCommands[0];
-      if (commandToSelect) {
-        handleCommandMenuSelect(commandToSelect);
+      const entryToSelect = slashMenuEntries[highlightedCommandIndex] ?? slashMenuEntries[0];
+      if (entryToSelect?.kind === "command") {
+        handleCommandMenuSelect(entryToSelect.command);
+      } else if (entryToSelect?.kind === "snippet") {
+        handleSnippetMenuSelect(entryToSelect.snippet);
       }
       return;
     }
@@ -1334,7 +1385,7 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
     if (event.key !== "Enter" || event.shiftKey) return;
     event.preventDefault();
     void sendMessage();
-  }, [showCommandMenu, filteredCommands, highlightedCommandIndex, handleCommandMenuSelect, sendMessage]);
+  }, [showCommandMenu, slashMenuEntries, highlightedCommandIndex, handleCommandMenuSelect, handleSnippetMenuSelect, sendMessage]);
 
   const canSend = draft.trim().length > 0 && composerState !== "sending" && !queueActionPending;
   const showEmptyState = historyLoaded && !loading && !error && messages.length === 0;
@@ -1604,12 +1655,30 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
           className="chat-skill-menu task-planner-chat-command-menu"
           data-testid="task-planner-chat-command-menu"
           role="listbox"
-          aria-label={t("chat.commandSuggestions", "Command suggestions")}
+          aria-label={t("chat.slashSuggestions", "Slash suggestions")}
         >
-          {filteredCommands.length === 0 ? (
-            <div className="chat-skill-menu-empty">{t("chat.noCommandsFound", "No commands found")}</div>
+          {slashMenuEntries.length === 0 ? (
+            <div className="chat-skill-menu-empty">{t("chat.noSlashSuggestions", "No suggestions found")}</div>
           ) : (
-            filteredCommands.map((command, index) => {
+            slashMenuEntries.map((entry, index) => {
+              if (entry.kind === "snippet") {
+                return (
+                  <button
+                    key={`snippet-${entry.snippet.name}`}
+                    type="button"
+                    role="option"
+                    aria-selected={index === highlightedCommandIndex}
+                    className={`chat-skill-menu-item${index === highlightedCommandIndex ? " chat-skill-menu-item--highlighted" : ""}`}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onMouseEnter={() => setHighlightedCommandIndex(index)}
+                    onClick={() => handleSnippetMenuSelect(entry.snippet)}
+                  >
+                    <span className="chat-skill-menu-item-name">/{entry.snippet.name}</span>
+                    <span className="chat-skill-menu-item-description">{t("chat.snippetSuggestion", "Insert saved prompt")}</span>
+                  </button>
+                );
+              }
+
               /*
               FNXC:ChatMemoryFocus 2026-08-13:
               RUFU-068: disable only agent-gated commands (steer) when no agent is
@@ -1617,26 +1686,26 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
               appears disabled. Only the disabled item shows the no-running-agent hint so
               the focus menu entry keeps its real description.
               */
-              const commandDisabled = command.requiresAgent && !agentRunning;
+              const commandDisabled = entry.command.requiresAgent && !agentRunning;
               return (
-              <button
-                key={command.trigger}
-                type="button"
-                role="option"
-                aria-selected={index === highlightedCommandIndex}
-                aria-disabled={commandDisabled}
-                className={`chat-skill-menu-item chat-command-menu-item${index === highlightedCommandIndex ? " chat-skill-menu-item--highlighted" : ""}${commandDisabled ? " chat-command-menu-item--disabled" : ""}`}
-                onMouseDown={(e) => e.preventDefault()}
-                onMouseEnter={() => setHighlightedCommandIndex(index)}
-                onClick={() => handleCommandMenuSelect(command)}
-              >
-                <span className="chat-skill-menu-item-name">{command.trigger}</span>
-                <span className="chat-skill-menu-item-description">
-                  {commandDisabled
-                    ? t("chat.commandNoRunningAgentHint", "No running agent to steer")
-                    : command.description}
-                </span>
-              </button>
+                <button
+                  key={entry.command.trigger}
+                  type="button"
+                  role="option"
+                  aria-selected={index === highlightedCommandIndex}
+                  aria-disabled={commandDisabled}
+                  className={`chat-skill-menu-item chat-command-menu-item${index === highlightedCommandIndex ? " chat-skill-menu-item--highlighted" : ""}${commandDisabled ? " chat-command-menu-item--disabled" : ""}`}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onMouseEnter={() => setHighlightedCommandIndex(index)}
+                  onClick={() => handleCommandMenuSelect(entry.command)}
+                >
+                  <span className="chat-skill-menu-item-name">{entry.command.trigger}</span>
+                  <span className="chat-skill-menu-item-description">
+                    {commandDisabled
+                      ? t("chat.commandNoRunningAgentHint", "No running agent to steer")
+                      : entry.command.description}
+                  </span>
+                </button>
               );
             })
           )}

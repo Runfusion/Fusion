@@ -901,7 +901,7 @@ export function Header({
                         data-testid="view-overflow-skills"
                       >
                         <Zap size={14} />
-                        <span>{t("header.skillsView", "Skills")}</span>
+                        <span>{t("header.skillsView", "Skills & Snippets")}</span>
                       </button>
                     )}
                     {experimentalFeatures?.memoryView && (

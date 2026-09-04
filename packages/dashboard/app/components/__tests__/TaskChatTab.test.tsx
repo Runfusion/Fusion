@@ -8,7 +8,8 @@ import { TaskChatTab } from "../TaskChatTab";
 import { ChatMessageLayoutProvider } from "../../context/ChatMessageLayoutContext";
 import { isCliSessionLive, type CliSessionSummaryRecord } from "../TaskDetailModal";
 import { useAgentLogs } from "../../hooks/useAgentLogs";
-import { addSteeringComment, refineTask } from "../../api";
+import { addSteeringComment, fetchGlobalSettings, refineTask, updateGlobalSettings } from "../../api";
+import { __test_resetChatSnippetsCache } from "../../hooks/useChatSnippetsCache";
 import { readBoardWorkflowSelection, removeBoardWorkflowSelection, writeBoardWorkflowSelection } from "../../utils/boardWorkflowSelection";
 import { clampChatInputHeight, getChatInputAutomaticMaxHeight, getChatInputBoxMetrics } from "../../utils/chatInputAutosize";
 import { readAppFile } from "../../test/cssFixture";
@@ -20,11 +21,15 @@ vi.mock("../../hooks/useAgentLogs", () => ({
 vi.mock("../../api", () => ({
   addSteeringComment: vi.fn(),
   refineTask: vi.fn(),
+  fetchGlobalSettings: vi.fn(),
+  updateGlobalSettings: vi.fn(),
 }));
 
 const mockedUseAgentLogs = vi.mocked(useAgentLogs);
 const mockedAddSteeringComment = vi.mocked(addSteeringComment);
 const mockedRefineTask = vi.mocked(refineTask);
+const mockedFetchGlobalSettings = vi.mocked(fetchGlobalSettings);
+const mockedUpdateGlobalSettings = vi.mocked(updateGlobalSettings);
 const originalScrollTopDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollTop");
 const originalScrollHeightDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight");
 const originalClientHeightDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
@@ -355,7 +360,10 @@ function mockRequestAnimationFrame() {
 
 describe("TaskChatTab", () => {
   beforeEach(() => {
+    __test_resetChatSnippetsCache();
     vi.clearAllMocks();
+    mockedFetchGlobalSettings.mockReturnValue(new Promise(() => {}));
+    mockedUpdateGlobalSettings.mockResolvedValue({ chatSnippets: [] } as never);
     mockLogs();
   });
 
@@ -1904,6 +1912,51 @@ describe("TaskChatTab", () => {
     const sendButton = screen.getByRole("button", { name: "Send" });
     expect(sendButton).toHaveClass("task-chat-send");
     expect(sendButton).toHaveTextContent("");
+  });
+
+  it("offers chat snippets in the composer and inserts pointer and keyboard selections without sending", async () => {
+    const prompt = "lance toujours les tests avec chrome devtool mcp";
+    mockedFetchGlobalSettings.mockResolvedValue({ chatSnippets: [{ name: "test", prompt }] });
+    const user = userEvent.setup();
+    render(<TaskChatTab task={makeTask()} projectId="project-1" active addToast={vi.fn()} />);
+    const input = screen.getByLabelText("Message active agent session");
+
+    await user.type(input, "/te");
+    await user.click(await screen.findByRole("option", { name: /\/test/i }));
+    expect(input).toHaveValue(prompt);
+    expect(input).toHaveFocus();
+    expect(mockedAddSteeringComment).not.toHaveBeenCalled();
+
+    fireEvent.change(input, { target: { value: "/test" } });
+    await screen.findByRole("option", { name: /\/test/i });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(input).toHaveValue(prompt);
+    expect(mockedAddSteeringComment).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["steering", makeTask({ column: "in-progress" }), mockedAddSteeringComment],
+    ["refinement", makeTask({ column: "done" }), mockedRefineTask],
+  ] as const)("expands a standalone snippet before optimistic %s submission", async (_label, task, submitMock) => {
+    const prompt = "lance toujours les tests avec chrome devtool mcp";
+    mockedFetchGlobalSettings.mockResolvedValue({ chatSnippets: [{ name: "test", prompt }] });
+    let resolveSubmit!: (value: Task) => void;
+    submitMock.mockReturnValue(new Promise<Task>((resolve) => { resolveSubmit = resolve; }) as never);
+    render(<TaskChatTab task={task} projectId="project-1" active addToast={vi.fn()} />);
+    const input = screen.getByLabelText("Message active agent session");
+    const send = screen.getByRole("button", { name: "Send" });
+
+    fireEvent.change(input, { target: { value: "/test" } });
+    await screen.findByRole("option", { name: /\/test/i });
+    fireEvent.click(send);
+    await waitFor(() => expect(input).toHaveValue(prompt));
+    expect(submitMock).not.toHaveBeenCalled();
+
+    fireEvent.click(send);
+    await waitFor(() => expect(submitMock).toHaveBeenCalledWith("FN-001", prompt, "project-1"));
+    expect(within(screen.getByTestId("task-chat-transcript")).getByText(prompt)).toBeInTheDocument();
+    resolveSubmit(makeTask());
+    await waitFor(() => expect(input).toHaveValue(""));
   });
 
   it.each([

@@ -1691,7 +1691,7 @@ Planner rewrote mission without the raw request.
 
 ## Steps
 
-### Step 1: Implement
+### Step 0: Implement
 
 - [ ] Do the work
 `;
@@ -1729,7 +1729,7 @@ Planner rewrote mission without the raw request.
     try {
       const taskDir = join(tempRoot, ".fusion", "tasks", task.id);
       await mkdir(taskDir, { recursive: true });
-      const written = `# Task: ${task.id} - Missing release artifact\n\n## Steps\n\n### Step 1: Implement\n\n- [ ] Do the work\n`;
+      const written = `# Task: ${task.id} - Missing release artifact\n\n## Steps\n\n### Step 0: Implement\n\n- [ ] Do the work\n`;
       await writeFile(join(taskDir, "PROMPT.md"), written, "utf-8");
       const localStore = createMockStore({
         getTask: vi.fn().mockResolvedValue({ ...task, prompt: "" }),
@@ -2630,8 +2630,8 @@ describe("requirePlanApproval setting", () => {
    * awaiting-approval a second time; the fix must move straight to todo instead.
    */
   describe("FN-7569: plan approval fingerprint idempotency", () => {
-    const planText = "# Task: FN-IDEMPOTENT - Idempotent plan\n\n## Mission\n\nDo the thing.\n\n## File Scope\n\n- a.ts\n\n## Steps\n\n### Step 1: Implement\n\nDo the thing.\n";
-    const changedPlanText = "# Task: FN-IDEMPOTENT - Idempotent plan\n\n## Mission\n\nDo the thing, differently.\n\n## File Scope\n\n- a.ts\n- b.ts\n\n## Steps\n\n### Step 1: Implement differently\n\nDo the changed thing.\n";
+    const planText = "# Task: FN-IDEMPOTENT - Idempotent plan\n\n## Mission\n\nDo the thing.\n\n## File Scope\n\n- a.ts\n\n## Steps\n\n### Step 0: Implement\n\nDo the thing.\n";
+    const changedPlanText = "# Task: FN-IDEMPOTENT - Idempotent plan\n\n## Mission\n\nDo the thing, differently.\n\n## File Scope\n\n- a.ts\n- b.ts\n\n## Steps\n\n### Step 0: Implement differently\n\nDo the changed thing.\n";
 
     /*
     FNXC:PlanApproval 2026-07-15-14:05:
@@ -3015,7 +3015,7 @@ describe("requirePlanApproval setting", () => {
       finalizeApprovedTask(task: Task, writtenInput: string, settings: Settings): Promise<void>;
     }).finalizeApprovedTask(
       task,
-      "# Task: FN-7224 - Rebuilt plan task\n\n## Steps\n\n### Step 1: Fresh step\n- Execute the fresh plan.\n",
+      "# Task: FN-7224 - Rebuilt plan task\n\n## Steps\n\n### Step 0: Fresh step\n- Execute the fresh plan.\n",
       { requirePlanApproval: false } as Settings,
     );
 
@@ -3169,7 +3169,7 @@ describe("specified triage recovery", () => {
   it("recovers a structured implementation plan without a no-commits marker", async () => {
     await writeFile(
       join(rootDir, ".fusion", "tasks", "FN-001", "PROMPT.md"),
-      "# Task: FN-001 - Implement change\n\n**Size:** M\n\n## Steps\n\n### Step 1: Implement\n\nMake the change.\n",
+      "# Task: FN-001 - Implement change\n\n**Size:** M\n\n## Steps\n\n### Step 0: Implement\n\nMake the change.\n",
     );
     const store = createMockStore({
       getSettings: vi.fn().mockResolvedValue({
@@ -3538,7 +3538,7 @@ Forbidden paths / non-goals:
 
 ## Steps
 
-### Step 1: Fix poisoned scope
+### Step 0: Fix poisoned scope
 
 Apply the scoped implementation changes.
 `,
@@ -3615,7 +3615,7 @@ Apply the scoped implementation changes.
 
     await writeFile(
       join(rootDir, ".fusion", "tasks", "FN-001", "PROMPT.md"),
-      `# Task: FN-001 - ${fallbackTitle}\n\n**Size:** M\n\n## Steps\n\n### Step 1: Preserve the title\n\nKeep the planned title.`,
+      `# Task: FN-001 - ${fallbackTitle}\n\n**Size:** M\n\n## Steps\n\n### Step 0: Preserve the title\n\nKeep the planned title.`,
     );
 
     const store = createMockStore({
@@ -3650,7 +3650,7 @@ Apply the scoped implementation changes.
   it("updates malformed metadata title from prompt heading when task ID matches", async () => {
     await writeFile(
       join(rootDir, ".fusion", "tasks", "FN-001", "PROMPT.md"),
-      "# Task: FN-001 - Experimental AI Agent Onboarding Flow\n\n**Size:** M\n\n## Review Level: 2\n\nRecovered specification\n\n## Steps\n\n### Step 1: Implement onboarding flow\n\nMake the change.",
+      "# Task: FN-001 - Experimental AI Agent Onboarding Flow\n\n**Size:** M\n\n## Review Level: 2\n\nRecovered specification\n\n## Steps\n\n### Step 0: Implement onboarding flow\n\nMake the change.",
     );
 
     const store = createMockStore({
@@ -3689,7 +3689,7 @@ Apply the scoped implementation changes.
   it("does not overwrite title when heading task ID does not match", async () => {
     await writeFile(
       join(rootDir, ".fusion", "tasks", "FN-001", "PROMPT.md"),
-      "# Task: FN-999 - Wrong Task\n\n**Size:** M\n\n## Review Level: 2\n\nRecovered specification\n\n## Steps\n\n### Step 1: Implement change\n\nMake the change.",
+      "# Task: FN-999 - Wrong Task\n\n**Size:** M\n\n## Review Level: 2\n\nRecovered specification\n\n## Steps\n\n### Step 0: Implement change\n\nMake the change.",
     );
 
     const store = createMockStore({
@@ -3739,7 +3739,7 @@ Apply the scoped implementation changes.
   it("preserves imported GitHub issue titles during planning recovery", async () => {
     await writeFile(
       join(rootDir, ".fusion", "tasks", "FN-001", "PROMPT.md"),
-      "# Task: FN-001 - Different AI-generated planning title\n\n**Size:** M\n\n## Review Level: 2\n\nRecovered specification\n\n## Steps\n\n### Step 1: Implement issue fix\n\nMake the change.",
+      "# Task: FN-001 - Different AI-generated planning title\n\n**Size:** M\n\n## Review Level: 2\n\nRecovered specification\n\n## Steps\n\n### Step 0: Implement issue fix\n\nMake the change.",
     );
 
     const store = createMockStore({

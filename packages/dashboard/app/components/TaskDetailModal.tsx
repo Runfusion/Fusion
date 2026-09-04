@@ -5846,14 +5846,6 @@ export function TaskDetailContent({
                   onOpenReviewTask={handleOpenMemberReview}
                 />
               )}
-              {/* FNXC:Workspace 2026-06-21-00:00: workspace tasks have no singular
-                  task.worktree/task.branch; surface their acquired per-sub-repo worktrees
-                  as a flat read-only list so the detail view isn't blank (U3/KTD5). */}
-              {/* FNXC:Workspace 2026-06-22-09:00: gate/render off the hydrated
-                  workingTask, not the sparse task row. workspaceWorktrees is only
-                  present in fetched detail, so keying off task renders blank on the
-                  optimistic-open path before the detail fetch resolves. */}
-              {isWorkspaceTask(workingTask) && <WorkspaceWorktreesSummary task={workingTask} />}
             </>
           )}
           <ExternalBlockNotice task={task as Task} variant="detail" onOpenChatWithPrefill={onOpenChatWithPrefill} onRetryTask={onRetryTask} addToast={addToast} />
@@ -6714,6 +6706,17 @@ export function TaskDetailContent({
               </p>
             )}
           </div>
+          {/*
+          FNXC:Workspace 2026-09-03-14:19:
+          FN-289 keeps the multi-repository landing count and per-repository list in Details instead
+          of the permanent header. Render from the hydrated workingTask because workspaceWorktrees
+          arrives with fetched detail after optimistic opening; TaskCard deliberately remains count-only.
+          */}
+          {isWorkspaceTask(workingTask) && (
+            <div className="detail-section detail-section--workspace-repos">
+              <WorkspaceWorktreesSummary task={workingTask} />
+            </div>
+          )}
           {/* FNXC:TaskDetailSummaryTab 2026-07-29-00:00: FN-8197 keeps Definition focused on plan, retry, and source metadata; completed merge metadata renders exclusively in the done-only Summary tab. */}
           {(retrySummary?.total ?? 0) > 0 && (
             <div className="detail-section detail-retries-section">

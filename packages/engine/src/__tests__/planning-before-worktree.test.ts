@@ -121,7 +121,7 @@ describe("planning before execution worktree acquisition", () => {
     );
   });
 
-  it.each([false, true])("prepareGraphNodeExecution skips read-only acquisition (workspace=%s)", async (workspace) => {
+  it.each([false, true])("honors a read-only preparation requirement before store access (workspace=%s)", async (workspace) => {
     const row = task({ workspaceWorktrees: workspace ? {} : undefined });
     const deps = {
       store: { getTask: vi.fn(async () => row), logEntry: vi.fn(async () => undefined) },
@@ -133,7 +133,7 @@ describe("planning before execution worktree acquisition", () => {
       ensureGraphCustomNodeWorktree: vi.fn(),
     };
 
-    await prepareGraphNodeExecution(deps as never, PLAN_REVIEW_NODE, row, {} as Settings, { requiresWorktree: true });
+    await prepareGraphNodeExecution(deps as never, PLAN_REVIEW_NODE, row, {} as Settings, { requiresWorktree: false });
 
     expect(deps.store.getTask).not.toHaveBeenCalled();
     expect(deps.ensureGraphCustomNodeWorktree).not.toHaveBeenCalled();

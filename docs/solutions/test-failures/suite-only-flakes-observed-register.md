@@ -26,11 +26,21 @@ FNXC:TestFlakeRegister 2026-08-19-11:14:
 The flat register mixed closed narratives with open records, making it unusable as a quarantine-on-sight decision aid. Sections make the active decision surface explicit while entry numbers and heading text remain frozen for inbound anchors and cross-reference stability. Active status lines must distinguish first sightings from reproduced escalations and name the evidence owners retained by each record.
 -->
 
+<!--
+FNXC:TestFlakeRegister 2026-09-03-22:23:
+FN-9146 (the named evidence owner of active records 1 and 2 and the retained-evidence owner for
+entries 1, 2, and 13) was archived on 2026-09-03 without a named successor. A register that names
+an archived owner as live lies about ownership — the exact failure FN-9146 was created to fix — so
+the status lines and the common-shape summary now record the archived-owner fact and the unowned
+pending-next-sighting state. The pinned validator assertions in
+scripts/__tests__/observed-flake-register.test.mjs were updated in the same change.
+-->
+
 ## Active observation records
 
 ### 1. Project identity returns no stored identity
 
-- **Status:** Active reproduced-but-unattributed observation — evidence owner FN-9146.
+- **Status:** Active reproduced-but-unattributed observation — evidence owner FN-9146 (archived 2026-09-03; record unowned pending next sighting).
 
 - **File:** `packages/core/src/__tests__/postgres/project-identity.test.ts`
 - **Exact test:** `project-identity async (PostgreSQL integration) > returns null when no identity is stored`
@@ -84,11 +94,11 @@ FN-9146 requires every active core PostgreSQL record to retain its own complete 
 
 ### 2. Schema applier retains registered dependents
 
-- **Status:** Active first sighting — evidence owner FN-9146.
+- **Status:** Active first sighting — evidence owner FN-9146 (archived 2026-09-03; record unowned pending next sighting).
 
 The FN-9128 harness-isolation fix does not close this record because no reproduced failure explained the original assertion mechanism.
 
-- **Owner:** FN-9128
+- **Owner:** FN-9128 (archived); FN-9146 (archived 2026-09-03) retains the campaign evidence; record unowned pending next sighting.
 - **File:** `packages/core/src/__tests__/postgres/schema-applier.test.ts`
 - **Exact test:** `schema-applier: VAL-SCHEMA-001 final-schema parity (table counts) > retains unreplaced registered dependents for every delete action`
 - **Original observed tree:** PR [#2828](https://github.com/Runfusion/Fusion/pull/2828) merged-with-main.
@@ -233,7 +243,7 @@ The failure remains sequence-only evidence, not an attribution to FN-249: its ch
 
 ### Common shape and investigated result
 
-FN-9125 established that former entry 3 was not PostgreSQL-suite-adjacent: `plugin-runner.test.ts` used an in-memory mocked TaskStore and had no PostgreSQL/harness import. FN-9135 did not identify a root cause, but FN-9141's completed shuffled worker-reuse campaign reproduced and structurally fixed the logger mock-history fixture defect; the suite and its renamed-complete-lane dispatch coverage remain active. Entries 2 and 13 remain active, unreproduced PostgreSQL observations; entry 7 was closed on 2026-08-23 when the whole file was quarantined on a second sighting of a different test. FN-9146 completed the later A×4/B×3/C×3 campaign without the entry 2 or entry 13 exact identities failing. Entry 1 reproduced under FN-9126 and again under FN-9146's A02–A04 lanes, but remains unattributed rather than structurally fixed. The golden-template/advisory-lock lifecycle and schema-applier's inline baseline path are concrete architecture facts, not a demonstrated cause of these assertions. Core policy forbids inline PG quarantine: FN-9146 owns the retained evidence for entries 1, 2, and 13; entry 7 was closed on 2026-08-23 (see above). No source or fan-out change is justified before a diagnostic names a causal lifecycle seam. Entry 13 is a further unreproduced instance of that same 15s setup-hook mode, narrowed to the capped four-fork gate lane on a cold cluster. Entry 6 instead records a merge-gate eviction after a loaded-lane setup-hook timeout; `FNXC:PgTestTemplateDb 2026-07-19-17:20` and `FNXC:PgTestWorkerCap 2026-07-18-18:00` are already-landed mitigations for that mode, not new diagnoses to re-open. The Planning Mode entries are separate frontend timing observations.
+FN-9125 established that former entry 3 was not PostgreSQL-suite-adjacent: `plugin-runner.test.ts` used an in-memory mocked TaskStore and had no PostgreSQL/harness import. FN-9135 did not identify a root cause, but FN-9141's completed shuffled worker-reuse campaign reproduced and structurally fixed the logger mock-history fixture defect; the suite and its renamed-complete-lane dispatch coverage remain active. Entries 2 and 13 remain active, unreproduced PostgreSQL observations; entry 7 was closed on 2026-08-23 when the whole file was quarantined on a second sighting of a different test. FN-9146 completed the later A×4/B×3/C×3 campaign without the entry 2 or entry 13 exact identities failing. Entry 1 reproduced under FN-9126 and again under FN-9146's A02–A04 lanes, but remains unattributed rather than structurally fixed. The golden-template/advisory-lock lifecycle and schema-applier's inline baseline path are concrete architecture facts, not a demonstrated cause of these assertions. Core policy forbids inline PG quarantine: FN-9146's retained evidence for entries 1, 2, and 13 is durable, but FN-9146 was archived on 2026-09-03 without a named successor, so those records are presently unowned; the next sighting follows normal escalation from an unowned state. entry 7 was closed on 2026-08-23 (see above). No source or fan-out change is justified before a diagnostic names a causal lifecycle seam. Entry 13 is a further unreproduced instance of that same 15s setup-hook mode, narrowed to the capped four-fork gate lane on a cold cluster. Entry 6 instead records a merge-gate eviction after a loaded-lane setup-hook timeout; `FNXC:PgTestTemplateDb 2026-07-19-17:20` and `FNXC:PgTestWorkerCap 2026-07-18-18:00` are already-landed mitigations for that mode, not new diagnoses to re-open. The Planning Mode entries are separate frontend timing observations.
 
 
 

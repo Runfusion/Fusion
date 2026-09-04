@@ -11,7 +11,7 @@ onlyBuiltDependencies:
   - '@embedded-postgres/linux-arm64'
   - '@embedded-postgres/linux-x64'
   - '@embedded-postgres/windows-x64'
-  - '@homebridge/node-pty-prebuilt-multiarch'
+  # FNXC:Terminal 2026-09-04-01:43: The PTY binary is delivered by script-free platform packages, so Homebrew installs with scripts disabled need no build allowance.
   - esbuild
   - koffi
   - protobufjs

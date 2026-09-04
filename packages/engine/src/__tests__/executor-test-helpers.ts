@@ -689,6 +689,20 @@ export function createMockStore() {
       applyPatch(id, patch);
       return { ...(patches.get(id) ?? {}), id };
     }),
+    /*
+    FNXC:EngineTests 2026-09-04-03:21:
+    The shared executor store fake must model TaskStore's atomic reducer so terminal graph-failure
+    persistence can test its live-row fence without falling into production backoff retries.
+    */
+    updateTaskAtomic: vi.fn(async (
+      id: string,
+      updater: (current: Task) => Record<string, unknown> | null | Promise<Record<string, unknown> | null>,
+    ) => {
+      const current = await store.getTask(id) as Task;
+      const patch = await updater(current);
+      applyPatch(id, patch ?? undefined);
+      return store.getTask(id);
+    }),
     mergeWorkspaceWorktreeEntry: vi.fn((
       id: string,
       repoRelPath: string,

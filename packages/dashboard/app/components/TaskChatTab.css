@@ -549,6 +549,7 @@ another nested disclosure or make individual tool rows look failed when only arc
 }
 
 .task-chat-composer {
+  position: relative;
   display: flex;
   flex: 0 0 auto;
   flex-direction: column;
@@ -558,6 +559,17 @@ another nested disclosure or make individual tool rows look failed when only arc
   Activity Live and Planner Chat composers should share the same plain input-row treatment. Do not wrap Activity steering in a card shell or add extra composer padding around the input; the surrounding chat surface already owns the spacing.
   */
   padding: 0;
+}
+
+/*
+FNXC:ChatSnippets 2026-09-03-15:56:
+Activity Chat reuses the shared slash-menu rows and anchors the snippets list to its own composer. The menu is absent when closed or unmatched, so narrow task-detail hosts never retain an empty interactive shell.
+*/
+.task-chat-snippet-menu {
+  left: 0;
+  right: 0;
+  min-width: 0;
+  max-width: none;
 }
 
 .task-chat-composer-row {

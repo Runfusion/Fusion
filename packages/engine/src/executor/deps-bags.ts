@@ -175,6 +175,7 @@ export function buildHandleGraphFailureDeps(host: any): any {
       "activeWorktrees", "completionFinalizedTaskIds", "graphExecuteSelfRequeued",
       "graphToolFailureRunCursors", "pausedAborted", "pausedAbortProvenance", "userCanceledTaskIds",
       "executing", "resumingUnpaused", "activeSessions", "activeStepExecutors",
+      "deferredTerminalParksInFlight",
       "activeWorkflowStepSessions", "activeCliTaskSessions", "activeWorkflowGraphAbortControllers",
     ]),
     ...facadeMethods(host, [
@@ -1080,6 +1081,10 @@ export function buildMarkPausedAbortedDeps(host: any): any {
 export function buildResumeOrphanedDeps(host: any): any {
   return {
     ...facadeFields(host, ["store", "executing", "recoveringCompleted"]),
+    // FNXC:MergeRetryReliability 2026-08-29-17:00 (CodeRabbit L1331): the
+    // deferred-park intent reader must resolve the same tasks dir fallback
+    // the handleGraphFailure writer uses when the store has no getTasksDir.
+    rootDir: host.rootDir,
     processWideGraphRouting: host.constructor.processWideGraphRouting as Set<string>,
     ...facadeMethods(host, [
       "listWipLaneTasks", "clearResumeFailureState", "recoverApprovedStepsOnResume",

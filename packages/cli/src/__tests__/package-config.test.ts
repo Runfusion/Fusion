@@ -90,6 +90,27 @@ function assertRuntimeDepsAreNotOptionalPeers(pkg: any, label: string): void {
   });
 }
 
+describe("node-pty platform packaging", () => {
+  it("pins every runtime manifest to script-free platform prebuilds", () => {
+    const expected = "npm:@lydell/node-pty@1.2.0-beta.15";
+    for (const packageDir of ["cli", "dashboard", "engine"]) {
+      expect(loadPackageJson(packageDir).dependencies["node-pty"]).toBe(expected);
+    }
+
+    const lockfile = readFileSync(join(workspaceRoot, "pnpm-lock.yaml"), "utf8");
+    for (const target of ["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64", "win32-arm64", "win32-x64"]) {
+      expect(lockfile).toMatch(new RegExp(`'@lydell/node-pty-${target}@1\\.2\\.0-beta\\.15':\\n    resolution: \\{integrity: sha512-`));
+    }
+
+    const workspaceConfig = readFileSync(join(workspaceRoot, "pnpm-workspace.yaml"), "utf8");
+    const retiredPackage = `@homebridge/${"node-pty-prebuilt-multiarch"}`;
+    expect(workspaceConfig).not.toContain(retiredPackage);
+    for (const packageDir of ["cli", "dashboard", "engine"]) {
+      expect(JSON.stringify(loadPackageJson(packageDir))).not.toContain(retiredPackage);
+    }
+  });
+});
+
 describe("CLI package.json publishing config", () => {
   const pkg = loadPackageJson("cli");
   const prepackScript = loadCliPrepackScript();
@@ -313,7 +334,7 @@ describe("CLI package.json publishing config", () => {
     const TRANSITIVE_EXTERNALS: Record<string, string> = {
       ssh2: "transitive dep of dockerode",
       "cpu-features": "transitive dep of dockerode (via ssh2)",
-      "@homebridge/node-pty-prebuilt-multiarch":
+      "@lydell/node-pty":
         "aliased as node-pty in dependencies; the alias entry satisfies the import",
       jimp:
         "optional Baileys dynamic-require helper externalized only for bundled fusion-plugin-whatsapp-chat; not a @runfusion/fusion runtime dep — see tsup.config.ts bundlePluginEntry external",

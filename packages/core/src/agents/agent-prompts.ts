@@ -284,6 +284,10 @@ Fast planning also requires \`## Original Description\` (verbatim operator text)
 FNXC:FastPlanning 2026-08-27-10:22:
 Fast plans need the same plain-language product summary as standard plans so operators can
 verify at a glance that the task intent survived the compressed planning path.
+
+FNXC:FastPlanning 2026-09-04-01:38:
+The heading number is the 0-based execution index consumed by parseStepFileScopes and
+extractStepSection. A 1-based example previously scheduled a phantom step at steps.length.
 */
 const FAST_TRIAGE_PROMPT_TEXT = `You are a task specification agent for "fn". This task is running in **fast mode**.
 
@@ -300,7 +304,7 @@ Write a lean, executable PROMPT.md quickly. Preserve safety gates, but skip heav
 Before writing a spec, call \`fn_task_list\` for active work, then call \`fn_task_search\` with \`includeDone: false\` and \`includeArchived: false\` for 2-4 targeted keyword phrases from the title/description, such as file paths, symptoms, and symbols. Do not search completed or archived work for duplicate candidates. When an active match is a duplicate, do not write a spec — but still write PROMPT.md, with its entire contents being the single line \`DUPLICATE: {existing-task-id}\` and nothing else. That file is how the duplicate is recorded; announcing it only in your reply leaves no plan behind and re-plans the task in a loop.
 
 ## Required PROMPT.md shape
-Write PROMPT.md with Original Description, What This Delivers, Before → After Transformation, Mission, Dependencies, Context to Read First, File Scope, Steps, Documentation Requirements, Completion Criteria, Git Commit Convention, and Do NOT. Put \`## Original Description\` immediately after the title/\`Created\`/\`Size\` metadata with the operator's original task description copied **verbatim** (do not paraphrase). Immediately after it, write \`## What This Delivers\` in plain product language so anyone can verify at a glance what the operator will gain; do not use file paths, symbols, or framework terms. Put \`## Before → After Transformation\` next, before \`## Mission\`, with concise Before/After bullets: current state, target state, why it satisfies the user's request at a glance. In \`## Steps\`, every executable heading MUST use \`### Step N: <name>\` (e.g. \`### Step 1: Preflight\`). Do not write bare \`### Preflight\` / \`### Implementation\` headings, and do not add review-level, triage subtask, or proactive subtask headings.
+Write PROMPT.md with Original Description, What This Delivers, Before → After Transformation, Mission, Dependencies, Context to Read First, File Scope, Steps, Documentation Requirements, Completion Criteria, Git Commit Convention, and Do NOT. Put \`## Original Description\` immediately after the title/\`Created\`/\`Size\` metadata with the operator's original task description copied **verbatim** (do not paraphrase). Immediately after it, write \`## What This Delivers\` in plain product language so anyone can verify at a glance what the operator will gain; do not use file paths, symbols, or framework terms. Put \`## Before → After Transformation\` next, before \`## Mission\`, with concise Before/After bullets: current state, target state, why it satisfies the user's request at a glance. In \`## Steps\`, every executable heading MUST use \`### Step N: <name>\` (e.g. \`### Step 0: Preflight\`), numbered 0-based from \`### Step 0:\` through \`### Step N-1:\` with no gaps. Do not write bare \`### Preflight\` / \`### Implementation\` headings, and do not add review-level, triage subtask, or proactive subtask headings.
 
 ## Surface Enumeration
 For bug fixes and UI-affordance add/remove tasks, the spec MUST include a \`## Surface Enumeration\` section. The workflow Plan Review gate validates this before execution when plan review is enabled.

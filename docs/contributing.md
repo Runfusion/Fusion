@@ -337,6 +337,8 @@ pnpm build:exe      # build host-target executable
 pnpm build:exe:all  # build multi-target executables
 ```
 
+Cross-compiling a foreign target fetches the matching `@lydell/node-pty-<platform>-<arch>` payload, verifies its sha512 integrity against `pnpm-lock.yaml`, and caches it in `node_modules/.cache/fusion-node-pty/`. A build fails if the PTY payload cannot be staged; `--allow-missing-native` is the explicit opt-out for intentionally producing a terminal-less binary.
+
 ## CLI Integration Test Lanes
 
 Default workspace verification stays lean and deterministic:

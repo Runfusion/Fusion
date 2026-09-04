@@ -1161,6 +1161,8 @@ export {
   findStagedNativeDir,
   findInstalledNodePtyNativeDir,
   getNativePrebuildName,
+  nodePtyPlatformPackageName,
+  describePtyLoadFailure,
   resetPtyModuleCacheForTests,
 } from "./cli-runtime/pty-native.js";
 // CLI agent executor — session manager (U2), telemetry hub (U3), state machine (U3),

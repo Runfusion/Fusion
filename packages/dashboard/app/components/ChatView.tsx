@@ -33,7 +33,7 @@ import { useComposerDictation } from "../hooks/useComposerDictation";
 import { useViewportMode } from "./Header";
 import { isTabletTouchViewport } from "../hooks/useViewportMode";
 import { fetchSettings, fetchChatSession, type DiscoveredSkill } from "../api";
-import { isExperimentalFeatureEnabled, CHAT_FOCUS_FLAG, type Agent, type ChatTag, type Settings } from "@fusion/core";
+import { isExperimentalFeatureEnabled, CHAT_FOCUS_FLAG, type Agent, type ChatSnippet, type ChatTag, type Settings } from "@fusion/core";
 import { MicButton } from "./MicButton";
 import { ChatThinkingLevelControl } from "./ChatThinkingLevelControl";
 import { ChatThreadTitleSwitcher } from "./ChatThreadTitleSwitcher";
@@ -46,6 +46,7 @@ import { CliChatSurface, type CliChatTier } from "./CliChatSurface";
 import { useFileMention } from "../hooks/useFileMention";
 import { useModelsCache } from "../hooks/useModelsCache";
 import { useDiscoveredSkillsCache } from "../hooks/useDiscoveredSkillsCache";
+import { useChatSnippets } from "../hooks/useChatSnippetsCache";
 import { useAgentsMapCache } from "../hooks/useAgentsMapCache";
 import { useMobileKeyboard } from "../hooks/useMobileKeyboard";
 import { useMobileKeyboardViewportLock, isIOS } from "../hooks/useMobileScrollLock";
@@ -68,6 +69,7 @@ import {
 } from "./StandardChatSurface";
 import { buildChatReportHandoff, type ChatReportHandoff } from "./chatReportHandoff";
 import { matchChatCommand, filterChatCommands, getSlashTriggerMatch, selectChatCommands, type ChatCommand } from "./chat-commands";
+import { applySnippetToDraft, filterChatSnippets, matchStandaloneSnippetInvocation } from "./chat-snippets";
 import { useChatMessageLayout } from "../context/ChatMessageLayoutContext";
 import {
   createChatInputAutosizeController,
@@ -103,6 +105,7 @@ export interface ChatCommandContext {
  */
 export type SkillMenuEntry =
   | { kind: "command"; command: ChatCommand; disabled: boolean }
+  | { kind: "snippet"; snippet: ChatSnippet }
   | { kind: "skill"; skill: DiscoveredSkill };
 
 export interface ChatViewProps {
@@ -627,6 +630,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     return defaultModel;
   }, [chatDefaultTarget, defaultModel]);
   const { skills: discoveredSkills, loading: skillsLoading } = useDiscoveredSkillsCache(projectId);
+  const chatSnippets = useChatSnippets();
   const [showSkillMenu, setShowSkillMenu] = useState(false);
   const [skillFilter, setSkillFilter] = useState("");
   const [highlightedSkillIndex, setHighlightedSkillIndex] = useState(0);
@@ -776,6 +780,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
   const activeDraftKey = getChatDraftKey(activeSession?.id);
   const lastDraftKeyRef = useRef<string | null>(activeDraftKey);
   const skipNextDraftRestoreRef = useRef(false);
+  const snippetDraftEphemeralRef = useRef(false);
 
   useEffect(() => {
     if (activeDraftKey === lastDraftKeyRef.current) {
@@ -783,6 +788,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     }
 
     lastDraftKeyRef.current = activeDraftKey;
+    snippetDraftEphemeralRef.current = false;
     if (skipNextDraftRestoreRef.current) {
       skipNextDraftRestoreRef.current = false;
       return;
@@ -796,6 +802,11 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     }
 
     try {
+      if (snippetDraftEphemeralRef.current) {
+        localStorage.removeItem(activeDraftKey);
+        if (!messageInput) snippetDraftEphemeralRef.current = false;
+        return;
+      }
       if (messageInput) {
         localStorage.setItem(activeDraftKey, messageInput);
         return;
@@ -825,6 +836,11 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     return matchingSkills.slice(0, 10);
   }, [discoveredSkills, skillFilter]);
 
+  const filteredSnippets = useMemo(
+    () => filterChatSnippets(skillFilter, chatSnippets),
+    [chatSnippets, skillFilter],
+  );
+
   // Commands only contribute to the "/" menu when this ChatView instance is
   // bound to a task (chatCommandContext provided) — the general, non-task-bound
   // Chat surface never shows/dispatches them, so its skill-only behavior is unchanged.
@@ -839,9 +855,10 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
       command,
       disabled: command.requiresAgent && !chatCommandContext?.agentRunning,
     }));
+    const snippetEntries: SkillMenuEntry[] = filteredSnippets.map((snippet) => ({ kind: "snippet", snippet }));
     const skillEntries: SkillMenuEntry[] = filteredSkills.map((skill) => ({ kind: "skill", skill }));
-    return [...commandEntries, ...skillEntries];
-  }, [filteredCommands, filteredSkills, chatCommandContext]);
+    return [...commandEntries, ...snippetEntries, ...skillEntries];
+  }, [filteredCommands, filteredSnippets, filteredSkills, chatCommandContext]);
 
   /*
   FNXC:ChatDirectOnly 2026-08-23-03:10:
@@ -862,18 +879,19 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     return byName;
   }, [mentionAgents]);
 
-  // Key the reset on skill ids, not array identity: useDiscoveredSkillsCache
-  // (SWR) re-delivers content-identical lists with fresh identities (cache
-  // reads re-parse; revalidation notifies a new array). Resetting on identity
-  // alone wipes the user's keyboard highlight mid-navigation when a
-  // revalidation lands — only a *semantic* list change should reset it.
-  const filteredSkillsKey = useMemo(
-    () => filteredSkills.map((skill) => skill.id).join(" "),
-    [filteredSkills],
+  // Reset on semantic menu identity rather than fresh cache-array identities so
+  // revalidation cannot wipe a user's keyboard highlight mid-navigation.
+  const skillMenuEntriesKey = useMemo(
+    () => skillMenuEntries.map((entry) => {
+      if (entry.kind === "command") return `command:${entry.command.name}`;
+      if (entry.kind === "snippet") return `snippet:${entry.snippet.name}`;
+      return `skill:${entry.skill.id}`;
+    }).join("\u0000"),
+    [skillMenuEntries],
   );
   useEffect(() => {
     setHighlightedSkillIndex(0);
-  }, [filteredSkillsKey]);
+  }, [skillMenuEntriesKey]);
 
   useEffect(() => {
     setMentionHighlightIndex(0);
@@ -1626,6 +1644,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
   }, [initialComposerDraft, initialComposerDraftNonce]);
 
   const clearComposerState = useCallback(() => {
+    snippetDraftEphemeralRef.current = false;
     setMessageInput("");
     if (activeDraftKey) {
       try {
@@ -1665,11 +1684,47 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     });
   }, []);
 
+  /*
+  FNXC:ChatSnippets 2026-09-03-15:56:
+  Selecting or submitting /name expands only the editable draft. The inserted prompt is ephemeral until explicit clear or send: remove the active saved draft and fence the normal draft-persistence effect so reusable prompt content is never copied into localStorage by expansion.
+  */
+  const insertSnippetDraft = useCallback((snippet: ChatSnippet, cursorPosition = messageInput.length, standalone = false): boolean => {
+    const applied = standalone
+      ? { value: snippet.prompt, cursorPosition: snippet.prompt.length }
+      : applySnippetToDraft(messageInput, snippet, cursorPosition);
+    if (!applied) return false;
+    snippetDraftEphemeralRef.current = true;
+    if (activeDraftKey) {
+      try {
+        localStorage.removeItem(activeDraftKey);
+      } catch {
+        // Ignore storage errors.
+      }
+    }
+    setMessageInput(applied.value);
+    setShowSkillMenu(false);
+    setSkillFilter("");
+    setHighlightedSkillIndex(0);
+    window.requestAnimationFrame(() => {
+      if (!inputRef.current) return;
+      resizeComposer();
+      inputRef.current.focus();
+      inputRef.current.setSelectionRange(applied.cursorPosition, applied.cursorPosition);
+    });
+    return true;
+  }, [activeDraftKey, messageInput, resizeComposer]);
+
   // Handle send message including pending attachment uploads.
   const handleSend = useCallback(() => {
     const trimmed = messageInput.trim();
     const files = pendingAttachments.map((attachment) => attachment.file);
     if ((!trimmed && files.length === 0) || !activeSession) return;
+
+    const snippetInvocation = matchStandaloneSnippetInvocation(trimmed, chatSnippets);
+    if (snippetInvocation) {
+      insertSnippetDraft(snippetInvocation, messageInput.length, true);
+      return;
+    }
 
     if (chatCommandContext) {
       const commandMatch = matchChatCommand(trimmed, selectedChatCommands);
@@ -1774,6 +1829,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     }
 
     const sentFiles = new Set(files);
+    snippetDraftEphemeralRef.current = false;
     setMessageInput("");
     try {
       sendMessage(trimmed, files, {
@@ -1802,6 +1858,8 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     isStreaming,
     releaseSentAttachments,
     selectedChatCommands,
+    chatSnippets,
+    insertSnippetDraft,
     t,
   ]);
 
@@ -1855,6 +1913,10 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     },
     [resizeComposer],
   );
+
+  const handleSnippetSelect = useCallback((snippet: ChatSnippet) => {
+    insertSnippetDraft(snippet, inputRef.current?.selectionStart ?? messageInput.length);
+  }, [insertSnippetDraft, messageInput.length]);
 
   const handleCommandSelect = useCallback(
     (command: ChatCommand, disabled: boolean) => {
@@ -2021,6 +2083,8 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
         const entryToSelect = skillMenuEntries[highlightedSkillIndex] ?? skillMenuEntries[0];
         if (entryToSelect?.kind === "skill") {
           handleSkillSelect(entryToSelect.skill);
+        } else if (entryToSelect?.kind === "snippet") {
+          handleSnippetSelect(entryToSelect.snippet);
         } else if (entryToSelect?.kind === "command") {
           handleCommandSelect(entryToSelect.command, entryToSelect.disabled);
         }
@@ -2047,6 +2111,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
       skillMenuEntries,
       highlightedSkillIndex,
       handleSkillSelect,
+      handleSnippetSelect,
       handleCommandSelect,
       handleSendDispatch,
       fileMention,
@@ -2085,7 +2150,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     mentionCursorPosRef.current = cursorPos;
     setMessageInput(nextValue);
 
-    const skillTriggerMatch = getSkillTriggerMatch(nextValue);
+    const skillTriggerMatch = getSkillTriggerMatch(nextValue.slice(0, cursorPos));
     if (skillTriggerMatch) {
       setShowSkillMenu(true);
       setSkillFilter(skillTriggerMatch.filter);
@@ -2844,9 +2909,9 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
         }}
       />
       {showSkillMenu && (
-        <div className="chat-skill-menu" data-testid="chat-skill-menu" role="listbox" aria-label={t("chat.skillSuggestions", "Skill suggestions")}>
-          {skillsLoading && filteredCommands.length === 0 ? (
-            <div className="chat-skill-menu-empty">{t("chat.loadingSkills", "Loading skills…")}</div>
+        <div className="chat-skill-menu" data-testid="chat-skill-menu" role="listbox" aria-label={t("chat.slashSuggestions", "Slash suggestions")}>
+          {skillsLoading && skillMenuEntries.length === 0 ? (
+            <div className="chat-skill-menu-empty">{t("chat.loadingSlashSuggestions", "Loading suggestions…")}</div>
           ) : skillMenuEntries.length === 0 ? (
             <div className="chat-skill-menu-empty">
               {skillFilter ? t("chat.noSkillsFound", "No skills found") : t("chat.noSkillsAvailable", "No skills available")}
@@ -2870,6 +2935,22 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
                     {entry.disabled
                       ? t("chat.commandNoRunningAgentHint", "No running agent to steer")
                       : entry.command.description}
+                  </span>
+                </button>
+              ) : entry.kind === "snippet" ? (
+                <button
+                  key={`snippet-${entry.snippet.name}`}
+                  type="button"
+                  role="option"
+                  aria-selected={index === highlightedSkillIndex}
+                  className={`chat-skill-menu-item${index === highlightedSkillIndex ? " chat-skill-menu-item--highlighted" : ""}`}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onMouseEnter={() => setHighlightedSkillIndex(index)}
+                  onClick={() => handleSnippetSelect(entry.snippet)}
+                >
+                  <span className="chat-skill-menu-item-name">/{entry.snippet.name}</span>
+                  <span className="chat-skill-menu-item-description">
+                    {t("chat.snippetSuggestion", "Insert saved prompt")}
                   </span>
                 </button>
               ) : (

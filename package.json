@@ -119,7 +119,6 @@
       "@embedded-postgres/linux-ppc64",
       "@embedded-postgres/linux-x64",
       "@embedded-postgres/windows-x64",
-      "@homebridge/node-pty-prebuilt-multiarch",
       "electron",
       "esbuild",
       "koffi",
