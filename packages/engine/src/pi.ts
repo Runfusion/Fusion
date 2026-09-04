@@ -3636,6 +3636,14 @@ export async function createPiAgentSessionRaw(options: AgentOptions): Promise<Ag
          * primaryThinkingLevel, and a 429 while creating the lower-effort
          * fallback session used to throw that 429 while usingFallback, skipping
          * this bounded final-primary retry entirely.
+         *
+         * FNXC:ThinkingEffortFallback 2026-09-04-05:12:
+         * FN-8098's prompt-time contract is the same as session creation: once a
+         * distinct fallback has failed, retry the primary exactly once even when
+         * that fallback error is NOT retryable-model (500, compaction, etc.).
+         * Effort exhaustion stays terminal ModelFallbackExhaustedError; every
+         * other non-effort fallback-session failure still gets this bounded
+         * final-primary attempt.
          */
         usingFallback = false;
         primaryThinkingLevel = options.defaultThinkingLevel;
@@ -3656,11 +3664,13 @@ export async function createPiAgentSessionRaw(options: AgentOptions): Promise<Ag
         // terminal ModelFallbackExhaustedError contract the no-distinct-
         // fallback branch below uses instead of a raw rejection triage's
         // generic catch-all would re-admit into an endless cycle.
+        // FNXC:ThinkingEffortFallback 2026-09-04-05:12: do not require
+        // retryableFallbackFailure here. Session-create already retries primary
+        // when fallback failed non-retryably; prompt-time must match.
         if (
           usingFallback
           && selectedModel
           && hasDistinctFallback
-          && retryableFallbackFailure
           && !isReasoningEffortRejectionError(fallbackClassificationMessage)
         ) {
           try {
