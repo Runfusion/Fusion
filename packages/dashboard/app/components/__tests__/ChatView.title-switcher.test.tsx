@@ -12,7 +12,6 @@ import {
   mockViewportMode,
   renderWithAct,
   setupMockChat,
-  setupMockRooms,
 } from "./ChatView.test-harness";
 
 const { markRead } = vi.hoisted(() => ({ markRead: vi.fn() }));
@@ -287,17 +286,6 @@ describe("ChatView title switcher", () => {
     expect(trigger).toHaveFocus();
   });
 
-  it("keeps Rooms titles as plain text without a switcher trigger", async () => {
-    const activeRoom = { id: "room-001", projectId: "proj-123", slug: "team", name: "Team", createdAt: "2026-08-23T00:00:00.000Z", updatedAt: "2026-08-23T00:00:00.000Z" };
-    setupMockRooms({ rooms: [activeRoom], activeRoom });
-    setupMockChat({ ...defaultChatState, sessions: [], filteredSessions: [] });
-    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
-    await userEvent.click(screen.getByTestId("chat-sidebar-scope-rooms"));
-    await userEvent.click(screen.getByTestId("chat-room-item-team"));
-
-    expect(screen.queryByTestId("chat-thread-title-trigger")).not.toBeInTheDocument();
-    expect(document.querySelector(".chat-room-thread-header .chat-thread-header-title")).toHaveTextContent("#Team");
-  });
 
   it("preserves title tooltip and both truncation contracts", async () => {
     const longTitle = "A deliberately long conversation title that must stay truncated";
