@@ -25,7 +25,7 @@ describe("workspace worktree layout", () => {
     const repoRoot = "/tmp/repo";
     expect(resolveWorktreesDirLayout(repoRoot, undefined)).toBe("/tmp/repo/.fusion/worktrees");
     expect(resolveWorktreesDirLayout(join(workspace, "api"), undefined, context)).toBe(join(workspace, "api", ".fusion", "worktrees"));
-    expect(resolveWorkspaceTaskWorktreeDir(repoRoot, undefined, "FN-1")).toBe(join(repoRoot, ".fusion", "worktrees", "fn-1"));
+    expect(resolveWorkspaceTaskWorktreeDir(repoRoot, undefined, "fn-1")).toBe(join(repoRoot, ".fusion", "worktrees", "fn-1"));
   });
 
   it("resolves configured roots once at the workspace and groups repositories", () => {

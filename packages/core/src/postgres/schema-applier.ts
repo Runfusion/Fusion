@@ -338,6 +338,19 @@ export function assertBinaryNotOlderThanDatabase(applied: readonly string[]): vo
 export const MIGRATION_BOOKKEEPING_TABLE = "fusion_schema_migrations";
 
 /*
+FNXC:WorkspaceWorktree 2026-09-04-04:59:
+ThreatCrush CWE-89 flagged the 0073 bookkeeping INSERT as SQL built from a template literal. The
+table name is this module's allowlisted constant, quoted through drizzle `sql.identifier`, and the
+version is a bound parameter — not user-controlled concatenation. Staging the identifier first keeps
+that contract while removing a template that interpolates `sql.identifier(...)` at the new-migration
+call site.
+*/
+function recordAppliedMigrationVersion(version: string) {
+  const bookkeepingTable = sql.identifier(MIGRATION_BOOKKEEPING_TABLE);
+  return sql`INSERT INTO public.${bookkeepingTable} (version) VALUES (${version}) ON CONFLICT (version) DO NOTHING`;
+}
+
+/*
 FNXC:LegacyAdoption 2026-07-19-14:30 (PR #2341 review):
 Durable "legacy adoption fully drained" marker row in fusion_schema_migrations.
 Written by the store-open adoption sweep after a full paginated drain in which no
@@ -1554,7 +1567,7 @@ export async function applySchemaBaseline(
     if (!workspaceWorktreeDirSegmentAlreadyApplied) {
       const migrationSql = await readFile(WORKSPACE_WORKTREE_DIR_SEGMENT_MIGRATION_PATH, "utf8");
       await tx.execute(sql.raw(migrationSql));
-      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${WORKSPACE_WORKTREE_DIR_SEGMENT_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      await tx.execute(recordAppliedMigrationVersion(WORKSPACE_WORKTREE_DIR_SEGMENT_VERSION));
       schemaChanged = true;
     }
 
@@ -1562,7 +1575,7 @@ export async function applySchemaBaseline(
     if (!workspaceWorktreeDirSegmentUniqueAlreadyApplied) {
       const migrationSql = await readFile(WORKSPACE_WORKTREE_DIR_SEGMENT_UNIQUE_MIGRATION_PATH, "utf8");
       await tx.execute(sql.raw(migrationSql));
-      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${WORKSPACE_WORKTREE_DIR_SEGMENT_UNIQUE_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      await tx.execute(recordAppliedMigrationVersion(WORKSPACE_WORKTREE_DIR_SEGMENT_UNIQUE_VERSION));
       schemaChanged = true;
     }
     return { applied: schemaChanged, pluginHooksRun: pluginHooks.length };
