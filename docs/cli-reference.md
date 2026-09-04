@@ -1303,14 +1303,36 @@ fn git push --yes
 
 ## `fn backup`
 
-Database backup lifecycle.
+PostgreSQL backup lifecycle.
 
 ```bash
 fn backup --create
 fn backup --list
-fn backup --restore .fusion/backups/fusion-2026-04-08.db
+fn backup --restore .fusion/backups/fusion-pg-20260831-120000.dump
+fn backup --restore .fusion/backups/fusion-central-pg-20260831-120000.dump
 fn backup --cleanup
 ```
+
+`--create` writes a same-stem `fusion-pg-<timestamp>.dump` containing the
+`project` and `archive` schemas and a `fusion-central-pg-<timestamp>.dump`
+containing the `central` schema. `--list` shows complete pairs and either kind
+of orphan without treating legacy `.db` files as PostgreSQL backups.
+
+Restoring a project/archive dump validates both source archives, retains a new
+current-state `fusion-pre-restore-pg-*` +
+`fusion-central-pre-restore-pg-*` pair, then restores project/archive followed
+by its required same-stem central sibling. Selecting a
+`fusion-central-pg-*` dump is the explicit central-only operation. Each
+`pg_restore` is independently clean and transactional; if central fails after
+the project/archive transaction commits, Fusion attempts to roll
+project/archive back from the retained pre-restore dump and reports the restore
+as failed. The two source dumps are sequential snapshots, and no transaction
+spans both restore processes.
+
+Native backup commands do not provide cross-process locking or cluster-wide
+quiescence. Before list, create, cleanup, or especially restore, quiesce other
+Fusion writers and prevent competing native backup commands. Preserve every
+pre-restore dump after failure until recovery is reviewed.
 
 ---
 
