@@ -33,9 +33,9 @@
  */
 
 import { execFile } from "node:child_process";
-import { mkdir, readdir, stat, unlink } from "node:fs/promises";
+import { mkdir, open, readFile, readdir, rename, stat, unlink } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { delimiter, join } from "node:path";
+import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -59,6 +59,15 @@ export interface PgDumpResult {
 }
 
 /** Result of a paired backup (project + central). */
+export interface PgBackupSelection {
+  readonly family: "regular" | "pre-restore";
+  readonly stem: string;
+  readonly selectedKind: "project" | "central";
+  readonly selectedPath: string;
+  readonly projectPath: string;
+  readonly centralPath: string;
+}
+
 export interface PgBackupPair {
   readonly timestamp: string;
   readonly project?: PgDumpResult;
@@ -107,7 +116,21 @@ export interface PgBackupOptions {
    * See {@link PgBackupOptions.pgDumpPath} for the bundling/availability note.
    */
   readonly pgRestorePath?: string;
+  /** Bounded timeout for each pg_dump/pg_restore process. Defaults to 120s. */
+  readonly clientTimeoutMs?: number;
+  /**
+   * FNXC:PostgresBackup 2026-09-04-01:55:
+   * An injectable client seam proves timeout and credential redaction behavior
+   * without slow wall-clock process fixtures.
+   */
+  readonly clientExec?: PgClientExec;
 }
+
+export type PgClientExec = (
+  file: string,
+  args: readonly string[],
+  options: { env: NodeJS.ProcessEnv; maxBuffer: number; timeout: number },
+) => Promise<unknown>;
 
 /**
  * FNXC:PostgresBackup 2026-06-24-21:10:
@@ -169,6 +192,8 @@ export class PgBackupManager {
   private readonly includeCentral: boolean;
   private readonly pgDumpPath: string;
   private readonly pgRestorePath: string;
+  private readonly clientTimeoutMs: number;
+  private readonly clientExec: PgClientExec;
 
   constructor(connectionString: string, fusionDir: string, options?: PgBackupOptions) {
     this.connectionString = connectionString;
@@ -178,10 +203,97 @@ export class PgBackupManager {
     this.includeCentral = options?.includeCentral ?? true;
     this.pgDumpPath = options?.pgDumpPath ?? resolveClientBinary("pg_dump");
     this.pgRestorePath = options?.pgRestorePath ?? resolveClientBinary("pg_restore");
+    this.clientTimeoutMs = options?.clientTimeoutMs ?? 120_000;
+    this.clientExec = options?.clientExec ?? execFileAsync;
   }
 
   private getBackupDirPath(): string {
-    return join(this.fusionDir, "..", this.backupDir);
+    return resolve(this.fusionDir, "..", this.backupDir);
+  }
+
+  /**
+   * FNXC:PostgresBackup 2026-09-04-01:55:
+   * Filename existence checks are a cross-process TOCTOU. A single exclusively
+   * created marker is the stem claim; it covers both dump halves atomically.
+   */
+  private async allocateBackupStem(family: PgBackupFamily): Promise<BackupStemReservation> {
+    const initial = currentBackupTimestamp();
+    const backupDirPath = this.getBackupDirPath();
+    let counter = 0;
+    while (true) {
+      const stem = counter === 0 ? initial : `${initial}-${counter}`;
+      const projectPath = join(backupDirPath, formatBackupFilename("project", family, stem));
+      const centralPath = join(backupDirPath, formatBackupFilename("central", family, stem));
+      const markerPath = `${projectPath}.reserved`;
+      if (existsSync(projectPath) || existsSync(centralPath)) {
+        counter += 1;
+        continue;
+      }
+      const nonce = `${process.pid}:${crypto.randomUUID()}`;
+      try {
+        const handle = await open(markerPath, "wx");
+        await handle.writeFile(nonce, "utf8");
+        await handle.close();
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+          counter += 1;
+          continue;
+        }
+        throw error;
+      }
+      if (existsSync(projectPath) || existsSync(centralPath)) {
+        await this.releaseReservation(markerPath, nonce);
+        counter += 1;
+        continue;
+      }
+      return { stem, markerPath, nonce };
+    }
+  }
+
+  private async assertReservation(markerPath: string, nonce: string): Promise<void> {
+    let owner: string;
+    try {
+      owner = await readFile(markerPath, "utf8");
+    } catch {
+      throw new Error("Backup stem reservation was lost before dump publication");
+    }
+    if (owner !== nonce) throw new Error("Backup stem reservation ownership changed before dump publication");
+  }
+
+  private async releaseReservation(markerPath: string, nonce: string): Promise<void> {
+    try {
+      if (await readFile(markerPath, "utf8") === nonce) await unlink(markerPath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
+
+  resolveBackupSelection(input: string): PgBackupSelection {
+    const selectedFilename = basename(input);
+    const parsed = parseBackupFilename(selectedFilename);
+    if (!parsed) {
+      throw new Error(
+        `Invalid PostgreSQL backup filename: ${input}. Expected a canonical fusion-*-pg-<timestamp>.dump file.`,
+      );
+    }
+    const selectedPath = selectedFilename === input
+      ? join(this.getBackupDirPath(), selectedFilename)
+      : resolve(input);
+    const directory = dirname(selectedPath);
+    return {
+      family: parsed.family,
+      stem: parsed.stem,
+      selectedKind: parsed.kind,
+      selectedPath,
+      projectPath: join(
+        directory,
+        formatBackupFilename("project", parsed.family, parsed.stem),
+      ),
+      centralPath: join(
+        directory,
+        formatBackupFilename("central", parsed.family, parsed.stem),
+      ),
+    };
   }
 
   /**
@@ -198,47 +310,94 @@ export class PgBackupManager {
    * nothing behind.
    */
   async createBackup(): Promise<PgBackupPair> {
+    return this.createBackupPair({
+      family: "regular",
+      includeCentral: this.includeCentral,
+      cleanup: true,
+    });
+  }
+
+  /**
+   * Capture the current project/archive and central schemas before a restore.
+   * This deliberately skips retention cleanup so a selected source cannot be
+   * rotated away and recovery evidence survives every restore outcome.
+   */
+  async createPreRestoreBackup(): Promise<PgBackupPair> {
+    return this.createBackupPair({
+      family: "pre-restore",
+      includeCentral: true,
+      cleanup: false,
+    });
+  }
+
+  private async createBackupPair(options: {
+    family: PgBackupFamily;
+    includeCentral: boolean;
+    cleanup: boolean;
+  }): Promise<PgBackupPair> {
     const backupDirPath = this.getBackupDirPath();
     await mkdir(backupDirPath, { recursive: true });
-
-    const timestamp = currentBackupTimestamp();
-    const projectFilename = `fusion-pg-${timestamp}.dump`;
+    const reservation = await this.allocateBackupStem(options.family);
+    const projectFilename = formatBackupFilename("project", options.family, reservation.stem);
+    const centralFilename = formatBackupFilename("central", options.family, reservation.stem);
     const projectPath = join(backupDirPath, projectFilename);
-
-    const projectResult = await this.dumpSchemas(
-      PROJECT_BACKUP_SCHEMAS,
-      projectPath,
-      projectFilename,
-    );
-
-    const pair: MutablePgBackupPair = { timestamp, project: projectResult };
-
-    if (!this.includeCentral) {
-      return pair;
-    }
-
-    const centralFilename = `fusion-central-pg-${timestamp}.dump`;
     const centralPath = join(backupDirPath, centralFilename);
+    const projectPartPath = `${projectPath}.part`;
+    const centralPartPath = `${centralPath}.part`;
+    let publishedProject = false;
+    let pair: MutablePgBackupPair | undefined;
+
     try {
-      const centralResult = await this.dumpSchemas(
-        CENTRAL_BACKUP_SCHEMAS,
-        centralPath,
-        centralFilename,
-      );
-      pair.central = centralResult;
-    } catch (err) {
-      // FNXC:PostgresBackup 2026-06-26-15:10:
-      // Central dump failed. Remove the orphaned project dump so the backup
-      // directory does not hold a half-pair that `listBackups()` would later
-      // count as a complete pair. The error propagates to the caller.
-      await unlink(projectPath).catch(() => {
-        // best-effort cleanup; the original error is the one to surface.
-      });
-      throw err;
+      await this.dumpSchemas(PROJECT_BACKUP_SCHEMAS, projectPartPath);
+      const project = await this.publishDump(projectPartPath, projectPath, reservation);
+      publishedProject = true;
+      pair = {
+        timestamp: options.family === "pre-restore" ? `pre-restore-${reservation.stem}` : reservation.stem,
+        project,
+      };
+      if (options.includeCentral) {
+        await this.dumpSchemas(CENTRAL_BACKUP_SCHEMAS, centralPartPath);
+        pair.central = await this.publishDump(centralPartPath, centralPath, reservation);
+      }
+    } catch (error) {
+      if (publishedProject) await unlink(projectPath).catch(() => undefined);
+      throw error;
+    } finally {
+      await Promise.all([
+        unlink(projectPartPath).catch(() => undefined),
+        unlink(centralPartPath).catch(() => undefined),
+      ]);
+      await this.releaseReservation(reservation.markerPath, reservation.nonce);
     }
 
-    await this.cleanupOldBackups();
-    return pair;
+    /*
+     * FNXC:PostgresBackup 2026-09-04-01:55:
+     * Project-only backups are regular backups too. Retention runs after this
+     * run publishes and releases its claim, while pre-restore evidence never rotates.
+     */
+    if (options.cleanup) await this.cleanupOldBackups();
+    return pair!;
+  }
+
+  /**
+   * FNXC:PostgresBackup 2026-09-04-01:55:
+   * pg_dump writes a private .part path and publication is a rename only after
+   * ownership is rechecked, so truncated archives are never restorable.
+   */
+  private async publishDump(
+    partPath: string,
+    finalPath: string,
+    reservation: BackupStemReservation,
+  ): Promise<PgDumpResult> {
+    await this.assertReservation(reservation.markerPath, reservation.nonce);
+    await rename(partPath, finalPath);
+    const stats = await stat(finalPath);
+    return {
+      filename: basename(finalPath),
+      path: finalPath,
+      sizeBytes: stats.size,
+      createdAt: new Date().toISOString(),
+    };
   }
 
   /**
@@ -250,18 +409,26 @@ export class PgBackupManager {
    * Warning: restore is destructive — it replaces the target schemas' contents.
    * Callers should create a pre-restore backup first (the CLI layer does this).
    */
+  async validateBackup(dumpPath: string): Promise<void> {
+    await this.requireBackupFile(dumpPath);
+    await this.runPgRestore(["--list", dumpPath]);
+  }
+
   async restoreBackup(dumpPath: string, opts: { clean?: boolean } = {}): Promise<void> {
+    await this.requireBackupFile(dumpPath);
+    const clean = opts.clean ?? true;
+    const args = ["--format=custom", "--no-owner", "--no-privileges"];
+    if (clean) args.push("--clean", "--if-exists");
+    args.push("--single-transaction", dumpPath);
+    await this.runPgRestore(args);
+  }
+
+  private async requireBackupFile(dumpPath: string): Promise<void> {
     if (!existsSync(dumpPath)) {
       throw new Error(`Backup file not found: ${dumpPath}`);
     }
-    const clean = opts.clean ?? true;
-    const args = ["--format=custom"];
-    if (clean) {
-      args.push("--clean", "--if-exists");
-    }
-    args.push(dumpPath);
-
-    await this.runPgRestore(args);
+    const stats = await stat(dumpPath);
+    if (!stats.isFile()) throw new Error(`Backup path is not a file: ${dumpPath}`);
   }
 
   /**
@@ -273,44 +440,35 @@ export class PgBackupManager {
     const backupDirPath = this.getBackupDirPath();
     if (!existsSync(backupDirPath)) return [];
 
-    const entries = await readdir(backupDirPath);
-    const projectDumps = entries.filter((f) => /^fusion-pg-.*\.dump$/.test(f));
-    const centralDumps = entries.filter((f) => /^fusion-central-pg-.*\.dump$/.test(f));
+    const byStem = new Map<string, MutablePgBackupPair>();
+    for (const filename of await readdir(backupDirPath)) {
+      const parsed = parseBackupFilename(filename);
+      if (!parsed) continue;
 
-    const byTimestamp = new Map<string, MutablePgBackupPair>();
-
-    for (const filename of projectDumps) {
-      const timestamp = extractTimestamp(filename, "fusion-pg-", ".dump");
-      if (!timestamp) continue;
       const path = join(backupDirPath, filename);
       const stats = await stat(path);
-      byTimestamp.set(timestamp, {
-        timestamp,
-        project: {
-          filename,
-          path,
-          sizeBytes: stats.size,
-          createdAt: stats.mtime.toISOString(),
-        },
-      });
-    }
+      if (!stats.isFile()) continue;
 
-    for (const filename of centralDumps) {
-      const timestamp = extractTimestamp(filename, "fusion-central-pg-", ".dump");
-      if (!timestamp) continue;
-      const path = join(backupDirPath, filename);
-      const stats = await stat(path);
-      const existing = byTimestamp.get(timestamp) ?? { timestamp };
-      existing.central = {
+      const key = `${parsed.family}:${parsed.stem}`;
+      const pair = byStem.get(key) ?? {
+        timestamp: parsed.family === "pre-restore" ? `pre-restore-${parsed.stem}` : parsed.stem,
+      };
+      const result: PgDumpResult = {
         filename,
         path,
         sizeBytes: stats.size,
         createdAt: stats.mtime.toISOString(),
       };
-      byTimestamp.set(timestamp, existing);
+      if (parsed.kind === "project") pair.project = result;
+      else pair.central = result;
+      byStem.set(key, pair);
     }
 
-    return [...byTimestamp.values()].sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+    return [...byStem.values()].sort((left, right) => {
+      const leftCreated = latestPairCreatedAt(left);
+      const rightCreated = latestPairCreatedAt(right);
+      return rightCreated.localeCompare(leftCreated) || right.timestamp.localeCompare(left.timestamp);
+    });
   }
 
   /**
@@ -319,19 +477,25 @@ export class PgBackupManager {
    * `retention` pairs. A pair is counted as one regardless of whether the
    * central half succeeded.
    */
+  /**
+   * FNXC:PostgresBackup 2026-09-04-01:55:
+   * Pre-restore pairs are recovery evidence, not rotating backups. Routine
+   * retention must never delete the rollback pair promised by restore.
+   */
   async cleanupOldBackups(): Promise<{ deleted: string[] }> {
-    const backups = await this.listBackups();
+    const reservedStems = await this.sweepAndCollectLiveReservations();
+    const backups = (await this.listBackups()).filter((pair) => {
+      // Recovery evidence is retained indefinitely; retention applies only to
+      // routine backups and must not erase a promised restore rollback pair.
+      if (pair.timestamp.startsWith("pre-restore-")) return false;
+      return !reservedStems.has(`regular:${pair.timestamp}`);
+    });
     if (backups.length <= this.retention) return { deleted: [] };
 
-    const toDelete = backups.slice(this.retention);
     const deleted: string[] = [];
-    for (const pair of toDelete) {
-      if (pair.project) {
-        await unlink(pair.project.path).catch(() => {});
-        deleted.push(pair.project.filename);
-      }
-      if (pair.central && "path" in pair.central) {
-        await unlink(pair.central.path).catch(() => {});
+    for (const pair of backups.slice(this.retention)) {
+      if (pair.project && await unlinkIfPresent(pair.project.path)) deleted.push(pair.project.filename);
+      if (pair.central && "path" in pair.central && await unlinkIfPresent(pair.central.path)) {
         deleted.push(pair.central.filename);
       }
     }
@@ -339,33 +503,53 @@ export class PgBackupManager {
   }
 
   /**
+   * FNXC:PostgresBackup 2026-09-04-01:55:
+   * Cleanup can run in another process while pg_dump is active. Live claims do
+   * not count toward retention or deletion; only abandoned claims age out.
+   */
+  private async sweepAndCollectLiveReservations(): Promise<Set<string>> {
+    const backupDirPath = this.getBackupDirPath();
+    if (!existsSync(backupDirPath)) return new Set();
+    const live = new Set<string>();
+    const staleAfterMs = Math.max(MIN_ABANDONED_RESERVATION_MS, this.clientTimeoutMs * 2);
+    for (const filename of await readdir(backupDirPath)) {
+      if (!filename.endsWith(".reserved")) continue;
+      const dumpFilename = filename.slice(0, -".reserved".length);
+      const parsed = parseBackupFilename(dumpFilename);
+      if (!parsed || parsed.kind !== "project") continue;
+      const markerPath = join(backupDirPath, filename);
+      const markerStats = await stat(markerPath).catch(() => undefined);
+      if (!markerStats) continue;
+      if (Date.now() - markerStats.mtimeMs < staleAfterMs) {
+        live.add(`${parsed.family}:${parsed.stem}`);
+        continue;
+      }
+      const projectPartPath = `${join(backupDirPath, dumpFilename)}.part`;
+      const centralPartPath = `${join(backupDirPath, formatBackupFilename("central", parsed.family, parsed.stem))}.part`;
+      await Promise.all([
+        unlink(markerPath).catch(() => undefined),
+        unlink(projectPartPath).catch(() => undefined),
+        unlink(centralPartPath).catch(() => undefined),
+      ]);
+    }
+    return live;
+  }
+
+  /**
    * Run pg_dump for the given schemas into the target path. The connection
    * string is passed via PG_CONNECTION_STRING env var (credential safety).
    */
-  private async dumpSchemas(
-    schemas: readonly string[],
-    outputPath: string,
-    _filename: string,
-  ): Promise<PgDumpResult> {
+  private async dumpSchemas(schemas: readonly string[], outputPath: string): Promise<void> {
     const args = [
       "--format=custom",
       "--no-owner",
       "--no-privileges",
-      ...schemas.flatMap((s) => ["--schema", s]),
-      // Output to file (not stdout) so the dump lands directly on disk.
+      ...schemas.flatMap((schema) => ["--schema", schema]),
       "--file",
       outputPath,
     ];
-
     await this.runPgDump(args);
-
-    const stats = await stat(outputPath);
-    return {
-      filename: outputPath.split("/").pop() ?? outputPath,
-      path: outputPath,
-      sizeBytes: stats.size,
-      createdAt: new Date().toISOString(),
-    };
+    await stat(outputPath);
   }
 
   /**
@@ -381,27 +565,27 @@ export class PgBackupManager {
    */
   private async runPgDump(args: string[]): Promise<void> {
     try {
-      await execFileAsync(this.pgDumpPath, args, {
+      await this.clientExec(this.pgDumpPath, args, {
         env: this.buildLibpqEnv(),
         maxBuffer: 10 * 1024 * 1024,
-        timeout: 120_000,
+        timeout: this.clientTimeoutMs,
       });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      throw new Error(`pg_dump failed: ${redactConnStringInMessage(msg)}`);
+      throw new Error(`pg_dump failed: ${redactClientError(msg, this.connectionString)}`);
     }
   }
 
   private async runPgRestore(args: string[]): Promise<void> {
     try {
-      await execFileAsync(this.pgRestorePath, args, {
+      await this.clientExec(this.pgRestorePath, args, {
         env: this.buildLibpqEnv(),
         maxBuffer: 10 * 1024 * 1024,
-        timeout: 120_000,
+        timeout: this.clientTimeoutMs,
       });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      throw new Error(`pg_restore failed: ${redactConnStringInMessage(msg)}`);
+      throw new Error(`pg_restore failed: ${redactClientError(msg, this.connectionString)}`);
     }
   }
 
@@ -434,10 +618,63 @@ export class PgBackupManager {
   }
 }
 
-/**
- * Generate a backup timestamp matching the SQLite backup naming convention
- * (YYYYMMDD-HHMMSS), with collision avoidance handled by the caller.
- */
+const MIN_ABANDONED_RESERVATION_MS = 60_000;
+
+interface BackupStemReservation {
+  stem: string;
+  markerPath: string;
+  nonce: string;
+}
+
+async function unlinkIfPresent(path: string): Promise<boolean> {
+  try {
+    await unlink(path);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+type PgBackupKind = "project" | "central";
+type PgBackupFamily = "regular" | "pre-restore";
+
+interface ParsedBackupFilename {
+  kind: PgBackupKind;
+  family: PgBackupFamily;
+  stem: string;
+}
+
+function formatBackupFilename(
+  kind: PgBackupKind,
+  family: PgBackupFamily,
+  stem: string,
+): string {
+  const central = kind === "central" ? "central-" : "";
+  const preRestore = family === "pre-restore" ? "pre-restore-" : "";
+  return `fusion-${central}${preRestore}pg-${stem}.dump`;
+}
+
+function parseBackupFilename(filename: string): ParsedBackupFilename | null {
+  const match = filename.match(
+    /^fusion-(central-)?(pre-restore-)?pg-((?:\d{8}|\d{4}-\d{2}-\d{2})-\d{6}(?:-\d+)?)\.dump$/,
+  );
+  if (!match) return null;
+  return {
+    kind: match[1] ? "central" : "project",
+    family: match[2] ? "pre-restore" : "regular",
+    stem: match[3],
+  };
+}
+
+function latestPairCreatedAt(pair: MutablePgBackupPair): string {
+  const central = pair.central && "createdAt" in pair.central ? pair.central.createdAt : "";
+  return pair.project?.createdAt && pair.project.createdAt > central
+    ? pair.project.createdAt
+    : central;
+}
+
+/** Generate a production backup timestamp (YYYYMMDD-HHMMSS). */
 function currentBackupTimestamp(): string {
   const now = new Date();
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -447,17 +684,15 @@ function currentBackupTimestamp(): string {
   );
 }
 
-function extractTimestamp(filename: string, prefix: string, suffix: string): string | null {
-  if (!filename.startsWith(prefix) || !filename.endsWith(suffix)) return null;
-  return filename.slice(prefix.length, filename.length - suffix.length);
-}
-
 /**
  * Redact any connection-string password that may appear in a pg_dump/pg_restore
  * error message. Defense-in-depth for VAL-CONN-005.
  */
-function redactConnStringInMessage(msg: string): string {
-  return msg.replace(/(postgresql?:\/\/[^:]+:)[^@]+@/g, "$1***@");
+function redactClientError(msg: string, connectionString: string): string {
+  let redacted = msg.replace(/(postgresql?:\/\/[^:]+:)[^@]+@/g, "$1***@");
+  const password = parsePgUrl(connectionString).password;
+  if (password) redacted = redacted.split(password).join("***");
+  return redacted;
 }
 
 /**

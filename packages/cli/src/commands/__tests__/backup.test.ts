@@ -101,7 +101,14 @@ describe("backup commands", () => {
     mockRunBackupCommand.mockResolvedValue({ success: true, output: "backup created" });
     mockListBackups.mockResolvedValue([]);
     mockListBackupPairs.mockResolvedValue([]);
-    mockRestoreBackup.mockResolvedValue(undefined);
+    mockRestoreBackup.mockResolvedValue({
+      restored: ["project", "central"],
+      preRestoreBackup: {
+        timestamp: "pre-restore-20260831-120001",
+        project: { filename: "fusion-pre-restore-pg-20260831-120001.dump" },
+        central: { filename: "fusion-central-pre-restore-pg-20260831-120001.dump" },
+      },
+    });
     mockCleanupOldBackups.mockResolvedValue(0);
     mockResolveProject.mockResolvedValue({
       projectId: "proj-1",
@@ -130,23 +137,38 @@ describe("backup commands", () => {
 
   it("runBackupList uses resolved project store with --project", async () => {
     mockListBackupPairs.mockResolvedValue([
-      { timestamp: "2026-01-01-000000", project: { filename: "fusion-2026-01-01-000000.db", size: 1024, createdAt: "2026-01-01T00:00:00.000Z" }, central: { filename: "fusion-central-2026-01-01-000000.db", size: 512, createdAt: "2026-01-01T00:00:00.000Z" } },
-      { timestamp: "2026-01-01-000001", central: { filename: "fusion-central-2026-01-01-000001.db", size: 256, createdAt: "2026-01-01T00:00:01.000Z" } },
+      { timestamp: "20260101-000000", project: { filename: "fusion-pg-20260101-000000.dump", size: 1024, createdAt: "2026-01-01T00:00:00.000Z" }, central: { filename: "fusion-central-pg-20260101-000000.dump", size: 512, createdAt: "2026-01-01T00:00:00.000Z" } },
+      { timestamp: "20260101-000001", central: { filename: "fusion-central-pg-20260101-000001.dump", size: 256, createdAt: "2026-01-01T00:00:01.000Z" } },
     ]);
     await runBackupList("demo-project");
     expect(mockResolveProject).toHaveBeenCalledWith("demo-project");
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Date"));
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("2026-01-01 00:00:00"));
-    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("fusion-2026-01-01-000000.db"));
-    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("└─ fusion-central-2026-01-01-000000.db"));
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("fusion-pg-20260101-000000.dump"));
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("└─ fusion-central-pg-20260101-000000.dump"));
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("orphan central backup"));
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Total: 1.75 KB"));
   });
 
   it("runBackupRestore uses resolved project store with --project", async () => {
-    await runBackupRestore("fusion.db.bak", "demo-project");
+    const filename = "fusion-pg-20260831-120000.dump";
+    await runBackupRestore(filename, "demo-project");
     expect(mockResolveProject).toHaveBeenCalledWith("demo-project");
-    expect(mockRestoreBackup).toHaveBeenCalledWith("fusion.db.bak", { createPreRestoreBackup: true });
+    expect(mockRestoreBackup).toHaveBeenCalledWith(filename, { createPreRestoreBackup: true });
+    const output = logSpy.mock.calls.flat().join("\n");
+    expect(output).not.toContain(".db");
+    expect(output).toContain("project/archive and central schemas");
+    expect(output).toContain("fusion-pre-restore-pg-20260831-120001.dump");
+    expect(output).toContain("fusion-central-pre-restore-pg-20260831-120001.dump");
+    expect(output).toContain("migration bookkeeping in public is not restored");
+  });
+
+  it("warns about migration bookkeeping for central-only restores", async () => {
+    mockRestoreBackup.mockResolvedValueOnce({ restored: ["central"] });
+    await runBackupRestore("fusion-central-pg-20260831-120000.dump", "demo-project");
+    const output = logSpy.mock.calls.flat().join("\n");
+    expect(output).toContain("Successfully restored the central schema");
+    expect(output).toContain("migration bookkeeping in public is not restored");
   });
 
   it("runBackupCleanup uses resolved project store with --project", async () => {
