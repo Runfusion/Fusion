@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   PLUGIN_DESTRUCTIVE_TASK_STORE_METHODS,
+  PLUGIN_READ_SHAPED_WRITE_METHODS,
   createPluginGatedTaskStore,
 } from "../plugin-task-store-gate.js";
 import type { TaskStore } from "../store.js";
@@ -176,6 +177,18 @@ describe("createPluginGatedTaskStore: deny-by-default on the write surface", () 
     expect(calls.updateSettings).toHaveBeenCalled();
   });
 
+  it("denies write methods whose names match the read-prefix rule", () => {
+    for (const method of PLUGIN_READ_SHAPED_WRITE_METHODS) {
+      const raw = makeStoreWith({ [method]: vi.fn().mockResolvedValue(undefined) });
+      const gated = createPluginGatedTaskStore(raw, { pluginId: "fusion-plugin-test" }) as unknown as Record<
+        string,
+        () => unknown
+      >;
+      expect(() => gated[method]()).toThrow(new RegExp(`not permitted to call ${method}`));
+      expect((raw as unknown as Record<string, ReturnType<typeof vi.fn>>)[method]).not.toHaveBeenCalled();
+    }
+  });
+
   it("allows reads by verb prefix", async () => {
     const gated = createPluginGatedTaskStore(makeStoreWith({}), {
       pluginId: "fusion-plugin-test",
@@ -244,6 +257,6 @@ describe("plugin task-store gate: escapes around the get trap", () => {
   it("still allows the language to inspect the object", () => {
     const gated = createPluginGatedTaskStore({ getTask: vi.fn() } as never, { pluginId: "p" });
     expect(() => String(gated)).not.toThrow();
-    expect(() => `${JSON.stringify({ ok: true })}`).not.toThrow();
+    expect(() => JSON.stringify(gated)).not.toThrow();
   });
 });

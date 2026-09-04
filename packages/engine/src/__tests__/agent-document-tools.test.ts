@@ -222,7 +222,7 @@ describe("task_prompt_write tool", () => {
     const store = { updateTask, getTask: vi.fn().mockResolvedValue({ id: TASK_ID }) } as unknown as TaskStore;
 
     const result = await runTool(
-      createTaskPromptWriteTool(store, TASK_ID, TEST_PROMPT_WRITE_CONTEXT, () => false),
+      createTaskPromptWriteTool(store, TASK_ID, undefined, () => false),
       "call-reset-fenced",
       { content: "# Stale plan" },
     );
@@ -252,7 +252,7 @@ describe("task_prompt_write tool", () => {
     } as unknown as TaskStore;
 
     const resultPromise = runTool(
-      createTaskPromptWriteTool(store, TASK_ID, TEST_PROMPT_WRITE_CONTEXT, () => generationCurrent),
+      createTaskPromptWriteTool(store, TASK_ID, undefined, () => generationCurrent),
       "call-queued-before-reset",
       { content: "# Discarded plan" },
     );
@@ -293,7 +293,7 @@ describe("task_prompt_write tool", () => {
     });
     const store = { updateTask, getTask } as unknown as TaskStore;
 
-    const result = await runTool(createTaskPromptWriteTool(store, TASK_ID, TEST_PROMPT_WRITE_CONTEXT), "call-order", { content: "# Verified plan" });
+    const result = await runTool(createTaskPromptWriteTool(store, TASK_ID), "call-order", { content: "# Verified plan" });
 
     /*
     FNXC:PromptWriteVerification 2026-08-31-09:28:
@@ -316,7 +316,7 @@ describe("task_prompt_write tool", () => {
       getTask: vi.fn().mockResolvedValue({ id: TASK_ID, prompt: content }),
     } as unknown as TaskStore;
 
-    const result = await runTool(createTaskPromptWriteTool(store, TASK_ID, TEST_PROMPT_WRITE_CONTEXT), "call-duplicate", { content });
+    const result = await runTool(createTaskPromptWriteTool(store, TASK_ID), "call-duplicate", { content });
 
     expect(getText(result)).toBe(`Updated PROMPT.md for ${TASK_ID}.`);
   });
@@ -331,7 +331,7 @@ describe("task_prompt_write tool", () => {
       getTask: vi.fn().mockResolvedValue(readBack),
     } as unknown as TaskStore;
 
-    const result = await runTool(createTaskPromptWriteTool(store, TASK_ID, TEST_PROMPT_WRITE_CONTEXT), "call-unverified", { content: "# Complete plan" });
+    const result = await runTool(createTaskPromptWriteTool(store, TASK_ID), "call-unverified", { content: "# Complete plan" });
 
     expect(getText(result)).toContain("ERROR:");
     expect(getText(result)).toContain("could not be verified");
@@ -344,7 +344,7 @@ describe("task_prompt_write tool", () => {
       .mockRejectedValueOnce(new Error(`Task ${TASK_ID} not found`));
     const store = { updateTask: vi.fn().mockResolvedValue({ id: TASK_ID }), getTask } as unknown as TaskStore;
 
-    const result = await runTool(createTaskPromptWriteTool(store, TASK_ID, TEST_PROMPT_WRITE_CONTEXT), "call-reject", { content: "# Complete plan" });
+    const result = await runTool(createTaskPromptWriteTool(store, TASK_ID), "call-reject", { content: "# Complete plan" });
 
     expect(getText(result)).toContain("ERROR:");
     expect(getText(result)).toContain("could not be verified");
@@ -357,12 +357,12 @@ describe("task_prompt_write tool", () => {
     loadWorkspaceConfig.mockResolvedValue({ repos: ["packages/engine"] });
     const store = { updateTask, getTask, getRootDir: () => "/workspace" } as unknown as TaskStore;
 
-    const result = await runTool(createTaskPromptWriteTool(store, TASK_ID, TEST_PROMPT_WRITE_CONTEXT), "call-workspace", { content });
+    const result = await runTool(createTaskPromptWriteTool(store, TASK_ID), "call-workspace", { content });
 
     expect(updateTask).toHaveBeenCalledWith(TASK_ID, expect.objectContaining({
       prompt: content,
       repositoryScope: expect.objectContaining({ repositories: ["packages/engine"], state: "confirmed" }),
-    }), TEST_PROMPT_WRITE_CONTEXT);
+    }), undefined);
     expect(getText(result)).toBe(`Updated PROMPT.md for ${TASK_ID}.`);
   });
 
@@ -374,7 +374,7 @@ describe("task_prompt_write tool", () => {
       upsertTaskDocument: vi.fn().mockRejectedValue(new Error("database unavailable")),
     } as unknown as TaskStore;
 
-    const result = await runTool(createTaskPromptWriteTool(store, TASK_ID, TEST_PROMPT_WRITE_CONTEXT), "call-mirror-failure", { content });
+    const result = await runTool(createTaskPromptWriteTool(store, TASK_ID), "call-mirror-failure", { content });
 
     expect(getText(result)).toBe(`Updated PROMPT.md for ${TASK_ID}.`);
   });

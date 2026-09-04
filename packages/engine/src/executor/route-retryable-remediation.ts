@@ -57,6 +57,11 @@ export async function routeRetryableRemediationGraphFailureToPreMergeFix(
 
   const nextCount = budget.attempts + 1;
   const totalFixCount = (live.postReviewFixCount ?? 0) + 1;
+  /*
+  FNXC:Identity 2026-08-24-02:18:
+  Retryable remediation increments `postReviewFixCount` and logs through `runContextFor` so the
+  pre-merge fix handoff is attributable to the live graph run.
+  */
   await deps.store.updateTask(live.id, { postReviewFixCount: totalFixCount }, deps.runContextFor(live.id));
   await deps.store.logEntry(
     live.id,

@@ -1,5 +1,7 @@
 -- FNXC:Identity 2026-08-09-03:04:
 -- U2 of the pluggable user identity plan (docs/plans/2026-08-07-001-feat-pluggable-user-identity-plan.md).
+-- FNXC:Identity 2026-08-24-00:03: Renumbered 0066 -> 0067 because origin/main shipped
+-- 0066_chat_session_memory_focus.sql (RUFU-068). Unreleased; two migrations cannot share 0066.
 -- Additive only: introduces the actor registry, credentials, sessions, provider links, and
 -- project-scoped role grants. Nothing existing is dropped or altered.
 --

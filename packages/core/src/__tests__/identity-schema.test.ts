@@ -25,7 +25,6 @@ import {
 } from "../__test-utils__/pg-test-harness.js";
 import {
   applySchemaBaseline,
-  CHAT_SESSION_MEMORY_FOCUS_VERSION,
   getAppliedMigrations,
   IDENTITY_ACTORS_VERSION,
   SCHEMA_BASELINE_VERSION,
@@ -39,9 +38,11 @@ const NOW = "2026-08-09T03:04:00.000Z";
 
 describe("identity schema: migration identity", () => {
   /*
-  FNXC:Identity 2026-08-23-23:49:
-  Renumbered 0047 -> 0059 -> 0060 -> 0061 -> 0067 -> 0072 because main already shipped 0061-0066.
-  Two migrations sharing one bookkeeping identity would skip identity tables on upgraded databases.
+  FNXC:Identity 2026-08-15-22:52:
+  Renumbered 0047 -> 0059 -> 0060 -> 0061 -> 0066 because main already shipped 0061-0065 after
+  this slice. Two migrations sharing one bookkeeping identity would skip identity tables
+  on upgraded databases.
+  FNXC:Identity 2026-08-24-00:03: main then shipped 0066 (memory-focus); identity is 0067.
   */
   it("assigns the identity schema its own immutable migration version at the current ceiling", () => {
     expect(IDENTITY_ACTORS_VERSION).toBe("0072");
@@ -112,51 +113,6 @@ pgDescribe("identity schema: migration 0072", () => {
 
       const applied = await getAppliedMigrations(h.adminDb);
       expect(applied).toContain(IDENTITY_ACTORS_VERSION);
-    });
-  });
-
-  /*
-  FNXC:Identity 2026-08-24-02:12:
-  origin/main databases already recorded memory-focus as 0066. Identity must still apply as 0072
-  on that shape — nesting the 0067 gate inside the 0066 `if` would skip actor tables on every
-  upgraded install while a fresh database looked fine.
-  */
-  it("applies identity tables when memory-focus 0066 is already recorded", async () => {
-    await withHarness(async (h) => {
-      await h.adminSql.unsafe(`
-        DELETE FROM public.fusion_schema_migrations WHERE version = '${IDENTITY_ACTORS_VERSION}';
-        DROP TABLE IF EXISTS project.actor_role_grants;
-        DROP TABLE IF EXISTS central.actor_provider_links;
-        DROP TABLE IF EXISTS central.actor_sessions;
-        DROP TABLE IF EXISTS central.actor_credentials;
-        DROP TABLE IF EXISTS central.actors;
-      `);
-      const appliedBefore = await getAppliedMigrations(h.adminDb);
-      expect(appliedBefore).toContain(CHAT_SESSION_MEMORY_FOCUS_VERSION);
-      expect(appliedBefore).not.toContain(IDENTITY_ACTORS_VERSION);
-
-      await expect(applySchemaBaseline(h.adminDb, { pluginHooks: [] })).resolves.toMatchObject({
-        applied: true,
-      });
-
-      const appliedAfter = await getAppliedMigrations(h.adminDb);
-      expect(appliedAfter).toContain(CHAT_SESSION_MEMORY_FOCUS_VERSION);
-      expect(appliedAfter).toContain(IDENTITY_ACTORS_VERSION);
-
-      const rows = (await h.adminSql`
-        SELECT table_schema, table_name
-        FROM information_schema.tables
-        WHERE (table_schema = 'central' AND table_name IN ('actors', 'actor_credentials', 'actor_sessions', 'actor_provider_links'))
-           OR (table_schema = 'project' AND table_name = 'actor_role_grants')
-        ORDER BY table_schema, table_name
-      `) as unknown as Array<{ table_schema: string; table_name: string }>;
-      expect(rows.map((r) => `${r.table_schema}.${r.table_name}`)).toEqual([
-        "central.actor_credentials",
-        "central.actor_provider_links",
-        "central.actor_sessions",
-        "central.actors",
-        "project.actor_role_grants",
-      ]);
     });
   });
 
@@ -276,7 +232,7 @@ pgDescribe("identity schema: migration 0072", () => {
       try {
         /*
         FNXC:IdentityGrantEscalation 2026-08-09-03:04:
-        Seeded over the OWNER connection, not the runtime role, because 0059 revokes write on this
+        Seeded over the OWNER connection, not the runtime role, because 0067 revokes write on this
         table from `fusion_runtime` (that revoke is what stops a plugin granting itself a role). The
         runtime role keeps SELECT, which is the half this test is about: it asserts that RLS filters
         what each project can READ. project_id is explicit here — the owner connection runs with
@@ -579,7 +535,7 @@ pgDescribe("identity schema: migration 0072", () => {
   /*
   FNXC:Identity 2026-08-09-03:04:
   KTD11 — the `project_auth_*` tables have zero TypeScript readers but a live writer in the
-  SQLite→Postgres cutover migrator, where a missing target is a fail-closed startup error. 0061 is
+  SQLite→Postgres cutover migrator, where a missing target is a fail-closed startup error. 0067 is
   additive precisely so upgrades from a legacy SQLite database are not bricked.
   */
   it("leaves the legacy project_auth_* preservation tables untouched", async () => {

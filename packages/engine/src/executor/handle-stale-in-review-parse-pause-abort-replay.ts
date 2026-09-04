@@ -98,7 +98,7 @@ export async function handleStaleInReviewParsePauseAbortReplay(
     await deps.store.logEntry(live.id, message, undefined, deps.runContextFor(live.id));
     await deps.store.logEntry(live.id, "Auto-recovered: retrying stale in-review parse pause/resume replay — failure notification suppressed", undefined, deps.runContextFor(live.id));
     await deps.store.updateTask(live.id, { graphResumeRetryCount: nextRetries, status: null, error: null }, deps.runContextFor(live.id));
-      await emitBoundedRunAudit(deps.store, {
+    await emitBoundedRunAudit(deps.store, {
         taskId: live.id,
         agentId: "executor",
         runId: generateSyntheticRunId("workflow-stale-parse-retry", live.id),

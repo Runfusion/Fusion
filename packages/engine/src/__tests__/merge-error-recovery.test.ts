@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
-import { PreMergeStepsNotRunError, PRE_MERGE_STEPS_NOT_RUN_BLOCKER, validateCustomFieldPatch, type Settings, type Task } from "@fusion/core";
+import {
+  PreMergeStepsNotRunError,
+  PRE_MERGE_STEPS_NOT_RUN_BLOCKER,
+  validateCustomFieldPatch,
+  type Settings,
+  type Task,
+} from "@fusion/core";
+import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 
 const testState = vi.hoisted(() => {
   class MockVerificationError extends Error {

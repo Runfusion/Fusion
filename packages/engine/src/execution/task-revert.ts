@@ -50,7 +50,7 @@
 import { exec } from "node:child_process";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { isWorkspaceTask, type Settings, type Task, type TaskCommitAssociation, type TaskCreateInput, type TaskStore, type RunMutationContext } from "@fusion/core";
+import { isWorkspaceTask, type RunMutationContext, type Settings, type Task, type TaskCommitAssociation, type TaskCreateInput, type TaskStore } from "@fusion/core";
 import { collectOwnTaskCommitsForRange } from "./branch-attribution.js";
 import { type IntegrationBranchSettings } from "../merge/integration-branch.js";
 import { recordWorkspaceBaseBranchDecision, resolveWorkspaceRepoBaseBranch } from "../worktree/workspace-base-branch.js";

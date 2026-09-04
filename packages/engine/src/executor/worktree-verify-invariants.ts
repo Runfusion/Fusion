@@ -358,6 +358,11 @@ export async function verifyWorktreeInvariants(
           if (reanchor.reanchored) {
             await deps.store.updateTask(task.id, { worktree: reanchor.root });
             executorLog.log(`${task.id}: re-anchored nested task.worktree ${worktreePath} -> ${reanchor.root}`);
+            /*
+            FNXC:Identity 2026-08-24-02:18:
+            Nested-worktree re-anchor logs and the paired `createRunAuditor` calls use `runContextFor`
+            so invariant-update audit stays on the live executor run.
+            */
             await deps.store.logEntry(task.id, `Re-anchored nested task.worktree from ${worktreePath} to ${reanchor.root}`, undefined, deps.runContextFor(task.id));
             await deps.emitWorktreeReanchoredAudit(task.id, worktreePath, reanchor.root, "verify-worktree-invariants");
             return verifyWorktreeInvariants(deps, task, reanchor.root, false, options);

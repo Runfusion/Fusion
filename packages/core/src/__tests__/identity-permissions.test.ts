@@ -364,7 +364,6 @@ describe("R17 no escalation", () => {
         grantorKind: "agent",
         targetActorId: AGENT.id,
         targetKind: "agent",
-      targetKind: "agent",
         grants: [{ permission: "identity:configure", disposition: "allow" }],
       }),
     ).toEqual({ allowed: false, reason: "not-agent-grantable", permission: "identity:configure" });

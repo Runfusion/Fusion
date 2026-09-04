@@ -219,35 +219,19 @@ describe("resolveAgentPrompt", () => {
   });
 
   it("executor prompt variants block workflow moves unless asked or created", () => {
-    /*
-    FNXC:AgentPrompts 2026-08-23-06:40:
-    Both variants are resolved on the TASK-EXECUTION surface (both creation tools withheld), which is
-    the surface this test is about. Resolving with no options instead asks for the creator-capable
-    persona, where the carve-out below is CORRECT and rendering it is not a bug — `taskCreateToolAvailable`
-    defaults to available, and the executor's only production caller always passes the real surface
-    (`system-prompt.ts`), so an unspecified surface is a test artifact rather than a reachable state.
-    */
-    const executionSurface = { taskCreateToolAvailable: false, delegateTaskToolAvailable: false };
-    const defaultExecutor = resolveAgentPrompt("executor", undefined, executionSurface);
+    const defaultExecutor = resolveAgentPrompt("executor");
     const seniorEngineer = resolveAgentPrompt("executor", {
       roleAssignments: {
         executor: "senior-engineer",
       },
-    }, executionSurface);
+    });
 
     for (const result of [defaultExecutor, seniorEngineer]) {
       expect(result).toContain("Do not call `fn_workflow_select` to change the workflow of the task you are executing");
       expect(result).toContain("The only exception is when the user explicitly requested a specific workflow for this task");
-      /*
-      FNXC:AgentPrompts 2026-08-23-23:05:
-      FN-125 (0b4dbd219b) withheld `fn_task_create`/`fn_delegate_task` from workflow agents, so on a
-      task-execution surface the "you may still set the workflow on tasks you create" carve-out
-      describes an impossible action. The clause was made CONDITIONAL on the resolved tool surface,
-      not deleted outright — creator-capable personas still render it (see the sibling test). What
-      this test pins is that a task-execution executor gets the prohibition and its single
-      user-directed exception, and no carve-out.
-      */
-      expect(result).not.toContain("You may still set the workflow on tasks you create");
+      expect(result).toContain(
+        "You may still set the workflow on tasks you create via `fn_task_create` or `fn_delegate_task`.",
+      );
     }
   });
 
@@ -368,6 +352,22 @@ describe("resolveAgentPrompt", () => {
     expect(result).toContain("Task Documents");
   });
 
+  it("qualifies external blocked exits in both executor prompt variants", () => {
+    const standard = resolveAgentPrompt("executor");
+    const senior = resolveAgentPrompt("executor", {
+      roleAssignments: { executor: "senior-engineer" },
+    });
+
+    for (const prompt of [standard, senior]) {
+      expect(prompt).toContain("host-resource, network, model-provider, and credential failures");
+      expect(prompt).toContain("resolve missing tooling or optional services");
+      expect(prompt).toContain("substitute a runnable check");
+      expect(prompt).toContain("recommend the deferred verification");
+      expect(prompt).toContain("plain prose without backticked command names");
+      expect(prompt).not.toContain("honest blocked exit only for a real external blocker");
+    }
+  });
+
   it("senior-engineer prompt includes task_document_read guidance", () => {
     const config: AgentPromptsConfig = {
       roleAssignments: {
@@ -383,6 +383,21 @@ describe("resolveAgentPrompt", () => {
     const result = resolveAgentPrompt("triage");
     expect(result).toContain("task_document_write");
     expect(result).toContain("planning");
+  });
+
+  it("adds environment feasibility only to standard triage planning", () => {
+    const standardPrompt = resolveAgentPrompt("triage");
+    const fastPrompt = builtinSeamPrompt("planning-fast");
+    const concisePrompt = resolveAgentPrompt("triage", {
+      roleAssignments: { triage: "concise-triage" },
+    });
+
+    expect(standardPrompt).toContain("## Environment feasibility");
+    expect(standardPrompt).toContain("## Environment Capabilities");
+    expect(standardPrompt).toContain("## Environment Constraints");
+    expect(standardPrompt).toContain("Never state that a plan is blocked because a runtime is missing");
+    expect(fastPrompt).not.toContain("## Environment feasibility");
+    expect(concisePrompt).not.toContain("## Environment feasibility");
   });
 
   it("concise-triage prompt includes task_document_write guidance", () => {
@@ -407,6 +422,9 @@ describe("resolveAgentPrompt", () => {
     expect(fastPrompt).toBe(fastTemplate?.prompt);
     expect(fastPrompt).toContain("This task is running in **fast mode**");
     expect(fastPrompt).toContain("### Step N: <name>");
+    expect(fastPrompt).toContain("### Step 0: Preflight");
+    expect(fastPrompt).not.toContain("### Step 1: Preflight");
+    expect(fastPrompt).toContain("through `### Step N-1:` with no gaps");
     expect(fastPrompt).toContain("Do not write bare `### Preflight` / `### Implementation` headings");
     expect(fastPrompt).not.toContain("## Review Level");
     expect(fastPrompt.length).toBeLessThan(standardPrompt.length / 3);
@@ -442,7 +460,7 @@ describe("resolveAgentPrompt", () => {
 
     const standardTransformationIdx = standardPrompt.indexOf("## Before → After Transformation");
     const standardReviewLevelIdx = standardPrompt.indexOf("## Review Level");
-    const standardMissionIdx = standardPrompt.indexOf("## Mission");
+    const standardMissionIdx = standardPrompt.indexOf("\n## Mission");
     expect(standardTransformationIdx).toBeGreaterThan(-1);
     expect(standardReviewLevelIdx).toBeGreaterThan(-1);
     expect(standardMissionIdx).toBeGreaterThan(-1);
@@ -473,13 +491,43 @@ describe("resolveAgentPrompt", () => {
       expect(prompt.toLowerCase()).toMatch(/verbatim/);
     }
 
-    // Template order: Original Description before Before → After and Mission
+    const implementationOnly = builtinSeamPrompt("planning-implementation-only");
+    for (const prompt of [standardPrompt, fastPrompt, implementationOnly, concise]) {
+      expect(prompt).toContain("## What This Delivers");
+    }
+
+    // Template order: Original Description, product summary, transformation, then Mission.
     const originalIdx = standardPrompt.indexOf("## Original Description");
+    const summaryIdx = standardPrompt.indexOf("## What This Delivers");
     const transformIdx = standardPrompt.indexOf("## Before → After Transformation");
-    const missionIdx = standardPrompt.indexOf("## Mission");
+    const missionIdx = standardPrompt.indexOf("\n## Mission");
     expect(originalIdx).toBeGreaterThan(-1);
-    expect(originalIdx).toBeLessThan(transformIdx);
-    expect(originalIdx).toBeLessThan(missionIdx);
+    expect(originalIdx).toBeLessThan(summaryIdx);
+    expect(summaryIdx).toBeLessThan(transformIdx);
+    expect(transformIdx).toBeLessThan(missionIdx);
+
+    const fastOriginalIdx = fastPrompt.indexOf("## Original Description");
+    const fastSummaryIdx = fastPrompt.indexOf("## What This Delivers");
+    const fastTransformIdx = fastPrompt.indexOf("## Before → After Transformation");
+    expect(fastOriginalIdx).toBeLessThan(fastSummaryIdx);
+    expect(fastSummaryIdx).toBeLessThan(fastTransformIdx);
+    expect(standardPrompt).toContain("plain product language");
+    expect(standardPrompt).toContain("verify at a glance");
+    expect(fastPrompt).toContain("plain product language");
+    expect(fastPrompt).toContain("verify at a glance");
+  });
+
+  it("requires reviewers to block missing or jargon-only product summaries", () => {
+    const defaultReviewer = resolveAgentPrompt("reviewer");
+    const strictReviewer = resolveAgentPrompt("reviewer", {
+      roleAssignments: { reviewer: "strict-reviewer" },
+    });
+
+    for (const prompt of [defaultReviewer, strictReviewer]) {
+      expect(prompt).toContain("**Product summary:**");
+      expect(prompt).toContain("`## What This Delivers`");
+      expect(prompt).toContain("blocking REVISE");
+    }
   });
 
   it("triage planning prompt is sourced from workflow IR without an engine duplicate", () => {

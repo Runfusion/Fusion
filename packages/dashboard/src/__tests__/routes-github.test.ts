@@ -2069,8 +2069,6 @@ describe("projectId store scoping regressions", () => {
     expect(scopedStore.createTask).toHaveBeenCalledTimes(1);
     expect(defaultStore.createTask).not.toHaveBeenCalled();
   });
-
-
 });
 
 // --- Spec Revision route tests ---

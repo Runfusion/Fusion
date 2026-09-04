@@ -2632,6 +2632,10 @@ every existing REFERENCES central.* is central→central, and R4 requires a tomb
 resolve, so ON DELETE CASCADE would be wrong. Referential integrity is enforced in core.
 The PK is (projectId, actorId, role) because the steady-state ownership audit in schema-applier.ts
 throws on every subsequent boot unless each PK/unique key on a project table includes project_id.
+This row is EFFECTIVE STATE, not grant history: `grantActorRole` upserts on that key and clears
+`revokedAt`, so a revoke-then-regrant leaves no prior period. 1/5 keeps that shape because changing
+the key later needs a migration plus a backfill, and an append-only `actor_role_grant_events` table
+is the follow-up that preserves transitions without violating the project_id-in-PK rule.
 Materialized by migration 0067_fn_identity_actors.sql.
 */
 export const actorRoleGrants = projectSchema.table("actor_role_grants", {

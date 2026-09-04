@@ -62,7 +62,7 @@ describe("reliability interaction: branch/worktree auto-recovery", () => {
     expect(decision.action).toBe("retry");
     // FNXC:BranchWriteProvenance 2026-08-23-18:30: clearing `branch` is a branch write, so recovery
     // now stamps `branchWriteOrigin: "engine"` on it; the assertion records that provenance.
-    expect(taskStore.updateTask).toHaveBeenCalledWith(t.id, { branch: null, baseCommitSha: null, branchWriteOrigin: "engine" });
+    expect(taskStore.updateTask).toHaveBeenCalledWith(t.id, { branch: null, baseCommitSha: null, branchWriteOrigin: "engine" }, ANY_MUTATION_CONTEXT);
     expect(taskStore.moveTask).toHaveBeenCalledWith(t.id, "todo", expect.objectContaining({ moveSource: "engine" }), ANY_MUTATION_CONTEXT);
     expect(audit.database).toHaveBeenCalledWith(expect.objectContaining({ type: "branch-worktree:auto-requeue" }));
   });

@@ -555,11 +555,6 @@ cross-file state rather than a product defect. No timeout was widened, no retry 
 assertion relaxed. A SECOND sighting is an ordinary on-sight quarantine with no further discretion,
 per the standing rule in AGENTS.md.
 
-**Corroborating observation (identity branch, 2026-08-14):** independently seen once in a full
-`engine-default` run (821 files) and not reproducible in isolation (4 passed), on a tree where the
-file itself was unmodified. Same file, same suite-only signature as the entry above; recorded here
-rather than as a separate entry so the sighting count stays honest.
-
 ---
 
 ## Entry: `PlanningModeModal.planning-flow` under dashboard lane sharding (first sighting)

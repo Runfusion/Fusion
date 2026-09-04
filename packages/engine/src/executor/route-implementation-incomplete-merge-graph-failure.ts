@@ -56,6 +56,11 @@ export async function routeImplementationIncompleteMergeGraphFailure(
     deps.activeWorktrees.delete(live.id);
     const message = `Workflow graph merge blocked at node '${failedNode}': implementation incomplete with no executable proof to resume — failing instead of retrying merge`;
     executorLog.warn(`${live.id}: ${message}`);
+    /*
+    FNXC:Identity 2026-08-24-02:18:
+    Fail-closed incomplete-merge recovery (log + failed-status write) uses `runContextFor` so the
+    park is attributable to the live graph run.
+    */
     await deps.store.logEntry(live.id, message, undefined, deps.runContextFor(live.id));
     if (!(await resolveTerminalColumnsFor(deps.store, live.id)).includes(live.column) && live.error == null) {
       await deps.store.updateTask(live.id, { error: message, status: "failed" }, deps.runContextFor(live.id));

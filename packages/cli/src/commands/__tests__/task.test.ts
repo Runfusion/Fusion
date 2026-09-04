@@ -1334,7 +1334,13 @@ describe("project-aware task command behavior", () => {
     await runTaskUnarchive("FN-123", "demo-project");
 
     expect(archiveTask).toHaveBeenCalledWith("FN-123", {liveExecutionGuard: "refuse"});
-    expect(unarchiveTask).toHaveBeenCalledWith("FN-123");
+    expect(unarchiveTask).toHaveBeenCalledWith(
+      "FN-123",
+      expect.objectContaining({
+        agentId: "cli",
+        actor: expect.objectContaining({ actor: expect.objectContaining({ id: "cli", kind: "agent" }) }),
+      }),
+    );
   });
 
   it("refuses a live archive before calling the store and exits non-zero", async () => {

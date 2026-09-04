@@ -1,5 +1,5 @@
-import type { RunMutationContext } from "@fusion/core";
-import { resolveTaskOutputLanguage, type ResolvedTaskOutputLanguage, type Settings, type TaskDetail } from "@fusion/core";
+import { resolveTaskOutputLanguage, type ResolvedTaskOutputLanguage, type RunMutationContext, type Settings, type TaskDetail } from "@fusion/core";
+
 /*
 FNXC:Identity 2026-08-09-03:04 (U18/KTD2 — the seam restates the required context):
 Both members are hand-declared rather than picked off `TaskStore`, so neither inherits U18's

@@ -335,7 +335,9 @@ export interface ActorRoleGrant {
  * short-circuit.
  *
  * The grant is upserted on the `(project_id, actor_id, role)` primary key so re-granting a
- * previously revoked role clears `revoked_at` rather than colliding.
+ * previously revoked role clears `revoked_at` rather than colliding. That table is effective
+ * state, not an append-only history (schema-applier requires project_id in every project PK);
+ * grant-period events are a follow-up table, not a 1/5 key change.
  *
  */
 export async function grantActorRole(
@@ -344,7 +346,7 @@ export async function grantActorRole(
   handle?: QueryHandle,
 ): Promise<ActorRoleGrant> {
   if (isReservedActorId(input.actorId)) throw new ReservedActorIdError(input.actorId);
-  // Owner connection: 0059 revokes this table's write from `fusion_runtime`, the role `layer.db`
+  // Owner connection: 0067 revokes this table's write from `fusion_runtime`, the role `layer.db`
   // connects as. Safe there because `project_id` is set explicitly below — that connection bypasses
   // project isolation, so neither RLS nor the assign-project trigger would confine this row.
   const db = handle ?? layer.privilegedDb ?? layer.db;

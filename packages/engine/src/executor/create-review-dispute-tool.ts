@@ -17,9 +17,6 @@ const reviewDisputeParams = Type.Object({
 });
 
 export type ReviewDisputeToolDeps = {
-  /** FNXC:Identity 2026-08-23-06:40: total run carrier — main added this seam after U18 converted
-   *  the store, so its writes arrived with no actor. Required so a call site cannot omit it. */
-  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   store: TaskStore;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
 };
@@ -101,7 +98,7 @@ export function createReviewDisputeTool(deps: ReviewDisputeToolDeps, taskId: str
         const updated = addDispute(current.workflowStepResults, params.findingId, rationale, now);
         outcome = updated.result;
         return updated.result.outcome === "disputed" ? { workflowStepResults: updated.results } : null;
-      }, deps.runContextFor(taskId));
+      }, deps.getRunContextFor(taskId));
       const finalOutcome = outcome ?? { outcome: "not-found" as const };
       if (finalOutcome.outcome !== "disputed") {
         const message = finalOutcome.outcome === "not-found"
@@ -113,7 +110,7 @@ export function createReviewDisputeTool(deps: ReviewDisputeToolDeps, taskId: str
               : `Review finding ${params.findingId} is ambiguous across review gates and was not changed.`;
         return { content: [{ type: "text" as const, text: message }], details: { outcome: finalOutcome.outcome } };
       }
-      await deps.store.logEntry(taskId, `Implementer disputed review finding ${params.findingId}; it remains open pending reviewer adjudication.`, undefined, deps.runContextFor(taskId));
+      await deps.store.logEntry(taskId, `Implementer disputed review finding ${params.findingId}; it remains open pending reviewer adjudication.`, undefined, deps.getRunContextFor(taskId));
       await emitBoundedRunAudit(deps.store, {
         taskId,
         agentId: "executor",

@@ -12,9 +12,9 @@ import { emitBoundedRunAudit } from "../run-audit/emit-bounded-run-audit.js";
  */
 
 import { TaskStore } from "../store.js";
-import { UNATTRIBUTED_MUTATION_CONTEXT } from "../identity/mutation-context.js";
 import { buildPatchnodeEntryInput } from "../board/patchnode.js";
 import { appendPatchnodeEntryInTransaction } from "./async/async-patchnode.js";
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "../identity/mutation-context.js";
 import { resolveProjectColumnsForRoles } from "../project-lane-vocabulary.js";
 import {declaresAnyLifecycleTrait, resolveReviewColumns, resolveTaskLifecycleColumns} from "../workflows/workflow-lifecycle-traits.js";
 import {resolveWorkflowIrForTask} from "../workflows/workflow-ir-resolver.js";

@@ -73,6 +73,11 @@ export async function parkCompletedBlockedTask(
   */
   const reboundColumn = await resolveReboundColumnFor(deps.store, task.id);
   if (liveTask.column !== reboundColumn) {
+    /*
+    FNXC:Identity 2026-08-24-02:18:
+    Completed-blocked park move, pause, and logEntry all pass `runContextFor` so FN-7926's hold is
+    attributable to the live executor run.
+    */
     await deps.store.moveTask(task.id, reboundColumn, {
       preserveProgress: true,
       preserveResumeState: true,

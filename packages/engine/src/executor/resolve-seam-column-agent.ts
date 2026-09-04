@@ -64,6 +64,11 @@ export async function resolveSeamColumnAgent(
     // Best-effort audit: a logEntry failure (DB locked / mid-recovery) must NOT
     // escalate this graceful fallback into a hard session failure (R8).
     try {
+      /*
+      FNXC:Identity 2026-08-24-02:18:
+      Column-agent fallback and adoption logs use `runContextFor` so seam attribution matches the
+      live graph run instead of an unattributed executor-lane fallback.
+      */
       await deps.store.logEntry(
         task.id,
         `Workflow seam node '${governingNodeId}': column agent '${effective.agentId}' not found — falling back to assigned-agent resolution`,

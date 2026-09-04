@@ -503,8 +503,14 @@ export function buildCreateWorktreeDeps(
     maxWorktreeRetries: constants.maxWorktreeRetries,
     worktreeRetryDelaysMs: constants.worktreeRetryDelaysMs,
     tryCreateWorktree,
+    /*
+    FNXC:Identity 2026-08-24-02:18:
+    Outer createWorktree attributes squash-import, remote-rebase, start-point clear, and failure
+    logs through `runContextForTotal(deps.getRunContextFor, taskId)`. Omit this getter and those
+    writes throw or fall back instead of carrying the live run.
+    */
     ...facadeMethods(host, [
-      "resolveWorktreeStartPoint", "planSquashImportFromDep",
+      "getRunContextFor", "resolveWorktreeStartPoint", "planSquashImportFromDep",
       "squashImportDepIntoWorktree", "rebaseNewWorktreeOntoRemote",
     ]),
   };

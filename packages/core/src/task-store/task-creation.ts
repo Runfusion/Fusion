@@ -7,7 +7,6 @@
  * instance as its first parameter and performs byte-identical work.
  */
 import {TaskStore, storeLog, type CreateTaskOptions, type InternalCreateTaskOptions} from "../store.js";
-import { UNATTRIBUTED_MUTATION_CONTEXT } from "../identity/mutation-context.js";
 import {InvalidFileScopeError, SelfDefeatingDependencyError, detectSelfDefeatingDependency, TombstonedTaskResurrectionError} from "./errors.js";
 import {and, eq, inArray, isNull, sql} from "drizzle-orm";
 import {mkdir, readFile, rename, rm} from "node:fs/promises";
@@ -201,16 +200,6 @@ async function persistDeferredTaskTitleIfUntitled(
   store: TaskStore,
   taskId: string,
   title: string,
-  /*
-  FNXC:Identity 2026-08-23-06:40:
-  main added this deferred-title writer after U18 converted this file, so it arrived with no actor.
-  It performs a real UPDATE on `project.tasks` and emits `task:updated`, so it is a mutation like any
-  other and takes the carrier. It is accepted but currently unused BELOW because this writer goes
-  through a direct drizzle UPDATE rather than `store.updateTask`, which is where the context would be
-  recorded — threading it into that raw write is U18 follow-up, and naming the parameter here keeps
-  the gap visible instead of implying the write is attributed.
-  */
-  _runContext: RunMutationContext,
 ): Promise<boolean> {
   const observed = await store.getTask(taskId).catch(() => undefined);
   if (!observed || observed.title?.trim()) return false;
@@ -260,6 +249,7 @@ async function persistDeferredTaskTitleIfUntitled(
 }
 
 export async function createTaskBackendImpl(store: TaskStore, input: TaskCreateInput, options?: CreateTaskOptions & { runContext?: RunMutationContext },): Promise<Task> {
+
   /* FNXC:CredentialInstanceSelection 2026-08-01-05:43: validate task authoring input before persistence; ids are stored but runtime credential resolution remains unchanged. */
   input = normalizeCreateBranchProvenance(input);
   for (const key of ["credentialInstanceId", "validatorCredentialInstanceId", "planningCredentialInstanceId", "mergerCredentialInstanceId"] as const) {
@@ -559,7 +549,8 @@ export async function createTaskBackendImpl(store: TaskStore, input: TaskCreateI
               if (store.closing) return;
               const normalizedTitle = normalizeTitleForTaskId(sanitizedTitle, id);
               if (normalizedTitle.title && !store.closing) {
-                await persistDeferredTaskTitleIfUntitled(store, id, normalizedTitle.title, UNATTRIBUTED_MUTATION_CONTEXT);
+                await persistDeferredTaskTitleIfUntitled(store, id, normalizedTitle.title);
+
               }
             });
           }
@@ -611,6 +602,7 @@ export class TaskIntakeOwnerResolutionError extends Error {
 
 export async function _createTaskInternalBackendImpl(store: TaskStore, input: TaskCreateInput, title: string | undefined, resolvedWorkflowSteps: string[] | undefined, id: string, options?: InternalCreateTaskOptions,): Promise<Task> {
     input = normalizeCreateBranchProvenance(input);
+
     const layer = store.asyncLayer!;
     const now = options?.createdAt ?? new Date().toISOString();
     /*

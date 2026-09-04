@@ -60,7 +60,7 @@ export async function reenterPausedAbortedWorkflowNode(
     await deps.store.logEntry(live.id, message, undefined, deps.runContextFor(live.id));
     await deps.store.logEntry(live.id, `Auto-recovered: re-entering paused-aborted workflow graph node '${nodeId}' — failure notification suppressed`, undefined, deps.runContextFor(live.id));
     await deps.store.updateTask(live.id, { graphResumeRetryCount: nextRetries, status: null, error: null }, deps.runContextFor(live.id));
-      await emitBoundedRunAudit(deps.store, {
+    await emitBoundedRunAudit(deps.store, {
         taskId: live.id,
         agentId: "executor",
         runId: generateSyntheticRunId("workflow-node-reentry", live.id),

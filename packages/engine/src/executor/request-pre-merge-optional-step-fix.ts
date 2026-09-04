@@ -809,7 +809,7 @@ async function requestPreMergeOptionalStepFixInner(
       taskId,
       "Code Review did not converge — released as non-blocking",
       `The same Code Review revision was returned twice without a changed review input. Latest feedback:\n${info.feedback}`,
-      deps.runContextFor(taskId),
+      deps.getRunContextFor(taskId),
     );
     return false;
   }

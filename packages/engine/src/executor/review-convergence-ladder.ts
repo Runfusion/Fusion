@@ -43,9 +43,6 @@ export type ReviewConvergenceStop = {
 };
 
 export type ReviewConvergenceLadderDeps = {
-  /** FNXC:Identity 2026-08-23-06:40: total run carrier — main added this seam after U18 converted
-   *  the store, so its writes arrived with no actor. Required so a call site cannot omit it. */
-  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   store: TaskStore;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
   sendTaskBackForFix: (
@@ -201,10 +198,10 @@ export async function routeReviewConvergenceLadder(
   };
   const atomic = (deps.store as TaskStore & { updateTaskAtomic?: TaskStore["updateTaskAtomic"] }).updateTaskAtomic;
   if (atomic) {
-    await atomic.call(deps.store, taskId, claim, deps.runContextFor(taskId));
+    await atomic.call(deps.store, taskId, claim, deps.getRunContextFor(taskId));
   } else {
     const patch = await claim(task);
-    if (patch) await deps.store.updateTask(taskId, patch, deps.runContextFor(taskId));
+    if (patch) await deps.store.updateTask(taskId, patch, deps.getRunContextFor(taskId));
   }
   if (!claimed || !claimedTask || !claimedStage || !claimedCycle || !escalationDecision) return "declined";
   const decision = escalationDecision;
@@ -244,7 +241,7 @@ export async function routeReviewConvergenceLadder(
   };
 
   if (claimedStage === 3) {
-    const context = deps.runContextFor(taskId);
+    const context = deps.getRunContextFor(taskId);
     if (stop.kind !== "plan-review-cap") {
       await deps.store.logEntry(
         taskId,
@@ -298,7 +295,7 @@ export async function routeReviewConvergenceLadder(
     await emitEscalationAudit(2, "arbitration");
     if (outcome === "arbitrated") return outcome;
     // A malformed or unavailable arbiter is the final automatic rung, never a silent park.
-    await deps.store.updateTask(taskId, { reviewConvergenceStage: 2 }, deps.runContextFor(taskId));
+    await deps.store.updateTask(taskId, { reviewConvergenceStage: 2 }, deps.getRunContextFor(taskId));
     return routeReviewConvergenceLadder(deps, taskId, stop);
   }
 
@@ -353,7 +350,7 @@ export async function routeReviewConvergenceLadder(
         recoveryRetryCount: null,
         nextRecoveryAt: null,
         graphResumeRetryCount: 0,
-      }, deps.runContextFor(taskId));
+      }, deps.getRunContextFor(taskId));
     } else {
       if (!remediationCheckout) throw new Error("Review convergence remediation checkout is unavailable");
       mode = "executor-remediation";
@@ -375,9 +372,9 @@ export async function routeReviewConvergenceLadder(
     if (atomic) {
       await atomic.call(deps.store, taskId, (current) => current.reviewConvergenceStage === 1
         ? { reviewConvergenceStage: 0, reviewConvergenceEscalationCount: Math.max(0, (current.reviewConvergenceEscalationCount ?? 1) - 1) }
-        : null, deps.runContextFor(taskId));
+        : null, deps.getRunContextFor(taskId));
     } else {
-      await deps.store.updateTask(taskId, { reviewConvergenceStage: 0, reviewConvergenceEscalationCount: 0 }, deps.runContextFor(taskId));
+      await deps.store.updateTask(taskId, { reviewConvergenceStage: 0, reviewConvergenceEscalationCount: 0 }, deps.getRunContextFor(taskId));
     }
     return "declined";
   }

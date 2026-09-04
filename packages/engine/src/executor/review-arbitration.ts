@@ -21,9 +21,6 @@ import type { RequestPreMergeOptionalStepFixInfo } from "./request-pre-merge-opt
 import { resolveRemediationCheckout } from "./resolve-remediation-checkout.js";
 
 export type ReviewArbitrationReleaseDeps = {
-  /** FNXC:Identity 2026-08-23-06:40: total run carrier — main added this seam after U18 converted
-   *  the store, so its writes arrived with no actor. Required so a call site cannot omit it. */
-  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   store: TaskStore;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
 };
@@ -132,8 +129,8 @@ export async function applyReviewArbitrationRelease(
     }
     outcome = { applied: true };
     return { workflowStepResults: release.results };
-  }, deps.runContextFor(taskId));
-  const context = deps.runContextFor(taskId);
+  }, deps.getRunContextFor(taskId));
+  const context = deps.getRunContextFor(taskId);
   if (context) await emitBoundedRunAudit(deps.store, {
     taskId, agentId: context.agentId, runId: context.runId, domain: "database",
     mutationType: "task:review-arbitration", target: taskId,
@@ -223,7 +220,7 @@ export async function runReviewArbitration(
           : entry)
         : current.workflowStepResults,
     };
-  }, deps.runContextFor(task.id));
+  }, deps.getRunContextFor(task.id));
   /*
   FNXC:ReviewConvergence 2026-08-22-06:06:
   FN-149 fences review-upheld rulings as strictly as implementer releases. An arbiter that read an
@@ -231,7 +228,7 @@ export async function runReviewArbitration(
   compare-and-set is a declined, lifecycle-inert ruling rather than a remediation request.
   */
   if (!obligationsApplied) {
-    const context = deps.runContextFor(task.id);
+    const context = deps.getRunContextFor(task.id);
     if (context) await emitBoundedRunAudit(deps.store, {
       taskId: task.id, agentId: context.agentId, runId: context.runId, domain: "database",
       mutationType: "task:review-arbitration", target: task.id,

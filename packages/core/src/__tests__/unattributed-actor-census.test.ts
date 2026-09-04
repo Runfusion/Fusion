@@ -32,9 +32,6 @@ import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const CORE_SRC = join(fileURLToPath(new URL("../", import.meta.url)));
-const ENGINE_SRC = join(fileURLToPath(new URL("../../../engine/src/", import.meta.url)));
-const DASHBOARD_SRC = join(fileURLToPath(new URL("../../../dashboard/src/", import.meta.url)));
-const CLI_SRC = join(fileURLToPath(new URL("../../../cli/src/", import.meta.url)));
 
 /*
 FNXC:Identity 2026-08-09-03:04 (U18 step 2 — the census roots are per-PACKAGE, not per-file):
@@ -49,8 +46,11 @@ nobody can attribute.
 
 Add a root here the moment a package starts converting. `@fusion/dashboard` and `@runfusion/fusion`
 were deliberately absent until Stage D, because a root asserting a baseline of 0 over an unconverted
-package is a claim the package has no debt rather than a claim it has not started. Stage D converted
-both, so both now carry a REAL baseline.
+package is a claim the package has no debt rather than a claim it has not started.
+
+FNXC:Identity 2026-08-23-22:49:
+This slice is 1/5 (core only). Engine/dashboard/CLI roots return when those stacked PRs convert
+call sites; a 0 baseline here would claim they have no debt.
 
 Only `packages/dashboard/src` is censused, not `packages/dashboard/app`. `app/` is the browser client:
 it reaches the store exclusively over HTTP (`api.createTask`, `api.moveTask`, ...) and holds no store
@@ -60,9 +60,6 @@ authenticated actor it changes `src` route handlers, not `app`.
 */
 const CENSUS_ROOTS: readonly { pkg: string; dir: string }[] = [
   { pkg: "core", dir: CORE_SRC },
-  { pkg: "engine", dir: ENGINE_SRC },
-  { pkg: "dashboard", dir: DASHBOARD_SRC },
-  { pkg: "cli", dir: CLI_SRC },
 ];
 
 const MARKER = "UNATTRIBUTED_MUTATION_CONTEXT";
@@ -323,22 +320,8 @@ marker is the honest label for it.
 The ratchet still does its job from the new floor: it exists to make growth visible and explained,
 and raising it silently — or excluding these files — is the failure it guards against.
 */
-/*
-FNXC:Identity 2026-08-23-06:40 — floor LOWERED after the 220-commit main merge (499 -> 481).
-This is the ratchet working as designed: the drop is real, not an accounting change. Engine fell
-because main's own run-context threading replaced marker sites with derived actors, and dashboard
-fell because FN-074 deleted the task-splitting/parent-deletion paths that carried several of them.
-Lowering the floor in the same commit is what stops the reclaimed ground from being given back.
-
-Engine then settled at 312 rather than 307: reconciling with the remote branch's independent main
-merge brought in five self-healing writes carrying the marker. That is the correct carrier there —
-self-healing is automation acting with no human actor behind it — so they are counted, not converted.
-*/
 const BASELINE_BY_PACKAGE: Readonly<Record<string, number>> = {
-  core: 34,
-  engine: 312,
-  dashboard: 138,
-  cli: 2,
+  core: 33,
 };
 const BASELINE = Object.values(BASELINE_BY_PACKAGE).reduce((sum, n) => sum + n, 0);
 
@@ -353,7 +336,7 @@ function collectTsFiles(dir: string, out: string[] = []): string[] {
     if (entry === "node_modules" || entry === "dist" || entry === "__tests__") continue;
     const full = join(dir, entry);
     if (statSync(full).isDirectory()) collectTsFiles(full, out);
-    else if (entry.endsWith(".ts")) out.push(full);
+    else if (entry.endsWith(".ts") || entry.endsWith(".tsx")) out.push(full);
   }
   return out;
 }
@@ -473,5 +456,18 @@ describe("unattributed actor census (U18 ratchet)", () => {
     expect(derived.actor.actor.id).toBe("agent-7");
     expect(derived.actor.actor.kind).toBe("agent");
     expect(derived.actor.actingFor).toBeUndefined();
+  });
+
+  it("toRunMutationContext derives actor from agentId and preserves extra fields", async () => {
+    const { toRunMutationContext } = await import("../identity/mutation-context.js");
+    const converted = toRunMutationContext({
+      runId: "run-9",
+      agentId: "agent-9",
+      callerKind: "engine" as const,
+    });
+    expect(converted.actor.actor.id).toBe("agent-9");
+    expect(converted.actor.actor.kind).toBe("agent");
+    expect(converted.callerKind).toBe("engine");
+    expect(converted.runId).toBe("run-9");
   });
 });

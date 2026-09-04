@@ -36,6 +36,7 @@ import {
   authorizeAgentToolCall,
   createSession,
   getSession,
+  listSessionsForActor,
   renewAgentSession,
   revokeSession,
   rotateSessionForPrivilegeChange,
@@ -515,6 +516,46 @@ pgDescribe("identity sessions (U6)", () => {
 
       // Renewal must not resurrect what an operator killed.
       expect(await renewAgentSession(h.layer, issued.session.id, { now: at(2 * HOUR) })).toBeNull();
+    });
+  });
+
+  it("refuses renewal of an already-expired agent session", async () => {
+    await withHarness(async (h) => {
+      await seedActor(h, "agent-1", "agent");
+      const issued = await createSession(h.layer, {
+        actorId: "agent-1",
+        kind: "agent",
+        now: at(0),
+        hmacKey: HMAC_KEY,
+      });
+      const afterExpiry = Date.parse(issued.session.absoluteExpiresAt) + MINUTE;
+      expect(
+        await renewAgentSession(h.layer, issued.session.id, { now: at(afterExpiry - T0) }),
+      ).toBeNull();
+      const row = await getSession(h.layer, issued.session.id);
+      expect(row?.absoluteExpiresAt).toBe(issued.session.absoluteExpiresAt);
+    });
+  });
+
+  it("lists only live sessions for an actor", async () => {
+    await withHarness(async (h) => {
+      await seedActor(h, "agent-1", "agent");
+      const live = await createSession(h.layer, {
+        actorId: "agent-1",
+        kind: "agent",
+        now: at(0),
+        hmacKey: HMAC_KEY,
+      });
+      const revoked = await createSession(h.layer, {
+        actorId: "agent-1",
+        kind: "agent",
+        now: at(MINUTE),
+        hmacKey: HMAC_KEY,
+      });
+      await revokeSession(h.layer, revoked.session.id, at(2 * MINUTE));
+      const listed = await listSessionsForActor(h.layer, "agent-1");
+      expect(listed).toHaveLength(1);
+      expect(listed[0]?.id).toBe(live.session.id);
     });
   });
 

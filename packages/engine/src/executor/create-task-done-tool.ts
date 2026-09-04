@@ -400,7 +400,7 @@ export function createTaskDoneTool(
           agent cannot rewrite a shared checkout safely and previously created an identical loop.
           */
           if (invariantCheck.reason === "main_checkout_edit") {
-            await store.updateTask(taskId, { status: "failed", error: refusalMessage });
+            await store.updateTask(taskId, { status: "failed", error: refusalMessage }, deps.runContextFor(task.id));
             await store.logEntry(taskId, `${refusalMessage} — operator cleanup and Retry are required; executor retry budget preserved`, undefined, deps.runContextFor(task.id));
             return {
               content: [{ type: "text" as const, text: refusalMessage }],

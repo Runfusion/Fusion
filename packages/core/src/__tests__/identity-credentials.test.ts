@@ -15,7 +15,7 @@
  *     this file would notice.
  */
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { randomUUID, scryptSync, randomBytes } from "node:crypto";
 import { describe, expect, it } from "vitest";
@@ -227,6 +227,28 @@ describe("identity credentials: the password path and the token path are separat
     }
   });
 
+  it("the token module does not reach the password module transitively", () => {
+    const tokensUrl = new URL("../identity/tokens.ts", import.meta.url);
+    const seen = new Set<string>();
+    const queue = [tokensUrl];
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      const path = fileURLToPath(current);
+      if (seen.has(path) || !existsSync(path)) continue;
+      seen.add(path);
+      expect(path.endsWith("credentials.ts")).toBe(false);
+      const source = readFileSync(path, "utf8");
+      for (const kdf of ["scrypt", "pbkdf2", "argon2", "bcrypt"]) {
+        expect(source).not.toMatch(new RegExp(`${kdf}(Sync)?\\s*\\(`, "i"));
+      }
+      for (const spec of importSpecifiers(source)) {
+        if (!spec.startsWith(".")) continue;
+        queue.push(new URL(spec.replace(/\.js$/, ".ts"), current));
+      }
+    }
+    expect(seen.size).toBeGreaterThan(0);
+  });
+
   it("the password module never uses the token module's fast HMAC construction for passwords", () => {
     expect(credentialsSource).not.toMatch(/createHmac\s*\(/);
   });
@@ -264,7 +286,8 @@ that path by construction (rather than silently reinstating the scan as a fallba
 */
 pgDescribe("identity credentials: agent API keys use the KTD4 format", () => {
   it("resolves a minted key by its lookup id and refuses a wrong secret", async () => {
-    const h = await createTaskStoreForTest({ prefix: "fusion_agentkeys" });
+    const projectId = "p-identity-keys";
+    const h = await createTaskStoreForTest({ prefix: "fusion_agentkeys", projectId });
     try {
       const agentId = `agent-${randomUUID().slice(0, 8)}`;
       const now = new Date().toISOString();
@@ -276,7 +299,7 @@ pgDescribe("identity credentials: agent API keys use the KTD4 format", () => {
         createdAt: now,
         updatedAt: now,
         metadata: {},
-      } as never);
+      } as never, projectId);
 
       const minted = mintToken(TOKEN_PREFIX.agentKey);
       await insertApiKey(h.layer.db, {
@@ -285,10 +308,10 @@ pgDescribe("identity credentials: agent API keys use the KTD4 format", () => {
         lookupId: minted.lookupId,
         secretHash: minted.secretHash,
         createdAt: now,
-      });
+      }, projectId);
 
       const parsed = parseToken(minted.token, TOKEN_PREFIX.agentKey)!;
-      const found = await findApiKeyByLookupId(h.layer.db, parsed.lookupId);
+      const found = await findApiKeyByLookupId(h.layer.db, parsed.lookupId, projectId);
       expect(found).not.toBeNull();
       expect(found!.agentId).toBe(agentId);
       // The raw token is never persisted; only the lookup id and the HMAC are.
@@ -299,14 +322,18 @@ pgDescribe("identity credentials: agent API keys use the KTD4 format", () => {
       expect(verifyTokenSecret(parsed.secret.slice(0, 10), found!.secretHash!)).toBe(false);
 
       // An unknown lookup id resolves to nothing rather than falling back to a scan.
-      expect(await findApiKeyByLookupId(h.layer.db, "ff".repeat(12))).toBeNull();
+      expect(await findApiKeyByLookupId(h.layer.db, "ff".repeat(12), projectId)).toBeNull();
+      // Missing project scope must not fall open to an unscoped lookup.
+      expect(await findApiKeyByLookupId(h.layer.db, parsed.lookupId)).toBeNull();
+      expect(await findApiKeyByLookupId(h.layer.db, parsed.lookupId, "   ")).toBeNull();
     } finally {
       await h.teardown();
     }
   });
 
   it("leaves LEGACY pre-U6 rows unreachable through the lookup path", async () => {
-    const h = await createTaskStoreForTest({ prefix: "fusion_agentkeys_legacy" });
+    const projectId = "p-identity-keys-legacy";
+    const h = await createTaskStoreForTest({ prefix: "fusion_agentkeys_legacy", projectId });
     try {
       const agentId = `agent-${randomUUID().slice(0, 8)}`;
       const now = new Date().toISOString();
@@ -318,16 +345,16 @@ pgDescribe("identity credentials: agent API keys use the KTD4 format", () => {
         createdAt: now,
         updatedAt: now,
         metadata: {},
-      } as never);
+      } as never, projectId);
       // The old shape: a bare SHA-256, no lookup id, no prefix.
       await insertApiKey(h.layer.db, {
         id: `key-${randomUUID().slice(0, 8)}`,
         agentId,
         tokenHash: "a".repeat(64),
         createdAt: now,
-      });
+      }, projectId);
 
-      expect(await findApiKeyByLookupId(h.layer.db, "a".repeat(64))).toBeNull();
+      expect(await findApiKeyByLookupId(h.layer.db, "a".repeat(64), projectId)).toBeNull();
       expect(await findApiKeyByLookupId(h.layer.db, "")).toBeNull();
     } finally {
       await h.teardown();

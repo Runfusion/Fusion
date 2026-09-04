@@ -85,15 +85,10 @@ touches no data; it must advance in the same change that ships a new migration f
 /* FNXC:PlanApproval 2026-08-28-06:24: advance the ceiling with the per-task approval migration so task reads never precede its column. */
 /* FNXC:PatchnodeLedger 2026-08-28-12:16: the permanent ledger table must exist before TaskStore can commit a completion move atomically with its entry. */
 /*
-FNXC:Identity 2026-09-04-04:46:
-Identity renumbered 0047 -> 0059 -> 0060 -> 0061 -> 0067 -> 0072. Upstream claimed 0067-0071
-(session contention, step reports, external block, plan approval, patchnode) after the previous
-identity ceiling. A released upstream number is canonical, so identity moves rather than
-upstream; keeping 0067 would make an upgraded database SKIP the identity tables entirely.
-
-This marker is the binary's "highest migration I know" claim: it applies no SQL, but it MUST
-advance in the same change that ships a new migration file, or the next store open throws
-StaleBinarySchemaError against a ledger the same boot just wrote.
+FNXC:Identity 2026-08-30-00:20:
+Main released 0068-0071 while this branch held 0068, so identity — still unreleased — renumbers
+to 0072 and the ceiling advances with it. Sharing a number with a released migration would skip
+the identity tables on every upgraded database that already recorded the other one.
 */
 export const SCHEMA_BASELINE_VERSION = "0072";
 /** FNXC:SymbolLock 2026-07-20-10:00: upgrades need durable task declarations before admission resolves symbols. */
@@ -275,19 +270,20 @@ export const TASK_REQUIRE_PLAN_APPROVAL_VERSION = "0070";
 /** FNXC:PatchnodeLedger 2026-08-28-12:16: upgraded projects need the durable delivery ledger before any completion transaction runs. */
 export const PATCHNODE_ENTRIES_VERSION = "0071";
 
-/**
- * FNXC:Identity 2026-08-15-22:52:
- * The identity schema's own immutable bookkeeping identity.
- *
- * FNXC:Identity 2026-09-04-04:46:
- * Renumbered 0067 -> 0072 after origin/main shipped 0067-0071. The apply block is a sibling of
- * the 0071 gate, never nested inside it: a database that already recorded patchnode (every
- * current origin/main install) would otherwise skip the identity tables.
- */
-export const IDENTITY_ACTORS_VERSION = "0072";
-
 /** FNXC:MemoryFocus 2026-08-13-15:57: explicit registration prevents the per-conversation memory-focus migration from being skipped. Renumbered to 0060 (FN-9037 took 0059), then 0061, then 0065 (2026-08-20) when the upstream FN-066..FN-094 batch claimed 0061-0064. */
 export const CHAT_SESSION_MEMORY_FOCUS_VERSION = "0066";
+/**
+ * FNXC:Identity 2026-08-15-22:52:
+ * The identity schema's own immutable bookkeeping identity. Renumbered 0047 -> 0059 -> 0060 -> 0061
+ * across refreshes from main, each time because main had landed its own migration at the number this
+ * branch was holding. Two migrations sharing one identity means whichever check runs first records
+ * the version and marks the OTHER already-applied, so the identity tables would silently never be
+ * created on an upgraded database while a fresh one looked fine. A per-migration identity is
+ * immutable only once RELEASED; this one has not been.
+ * FNXC:Identity 2026-08-23-22:39: main shipped 0061-0065 after this slice, so identity is 0066.
+ * FNXC:Identity 2026-08-24-00:03: main then shipped 0066 (chat session memory-focus). Identity is unreleased, so it is 0067.
+ */
+export const IDENTITY_ACTORS_VERSION = "0072";
 
 /** SECURITY DEFINER helper that only inserts LEGACY_ADOPTION_DRAINED_MARKER. */
 export const LEGACY_ADOPTION_DRAINED_MARKER_FUNCTION = "fusion_mark_legacy_adoption_drained";
@@ -1428,7 +1424,6 @@ export async function applySchemaBaseline(
       await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${REVIEW_CONVERGENCE_STAGE_VERSION}) ON CONFLICT (version) DO NOTHING`);
       schemaChanged = true;
     }
-
     /* FNXC:MemoryFocus 2026-08-14-10:30: register 0066 explicitly (renumbered from 0061 on 2026-08-20 — the upstream FN-066..FN-094 batch owns 0061-0064 — and from 0065 on 2026-08-23 when upstream's FN-149 claimed 0065). */
     /*
     FNXC:MemoryFocus 2026-08-26-08:31:
@@ -1559,12 +1554,16 @@ export async function applySchemaBaseline(
       await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${PATCHNODE_ENTRIES_VERSION}) ON CONFLICT (version) DO NOTHING`);
       schemaChanged = true;
     }
-
     /*
-    FNXC:Identity 2026-09-04-04:46:
-    Identity storage is additive. Apply AFTER every upstream migration (through 0071) so
-    upgraded databases that already recorded 0067-0071 still receive the identity tables as 0072.
-    Sibling of the 0071 gate, not nested inside it.
+    FNXC:Identity 2026-08-15-22:52:
+    Identity storage is additive: it never touches the dead-looking project_auth_* tables, whose live
+    writer is the SQLite→Postgres cutover migrator (a missing target there is a fail-closed startup
+    error, so dropping them would brick legacy upgrades). Apply AFTER every upstream migration so an
+    upgraded database that already recorded those still receives the identity tables.
+
+    FNXC:Identity 2026-08-24-02:12:
+    Sibling of the upstream gates, not nested inside one. Nesting would skip identity on every
+    database that already recorded that migration — the production upgrade path from origin/main.
     */
     if (!identityActorsAlreadyApplied) {
       const migrationSql = await readFile(IDENTITY_ACTORS_MIGRATION_PATH, "utf8");

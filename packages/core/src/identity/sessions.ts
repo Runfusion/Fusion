@@ -363,6 +363,13 @@ export async function renewAgentSession(
 
   const nowIso = options?.now ?? new Date().toISOString();
   const now = ms(nowIso);
+  /*
+  FNXC:Identity 2026-08-24-02:20 (review finding — renewal must not resurrect a dead session):
+  `verifySession` already rejects `absolute-expired`. Renewal that writes a later
+  `absoluteExpiresAt` after that bound would revive a credential the absolute cap exists to
+  contain. Treat expiry like revocation: the session stays dead.
+  */
+  if (now >= ms(row.absoluteExpiresAt)) return null;
   const requested = options?.runDurationMs ?? AGENT_SESSION_POLICY.defaultRunMs;
   const ceiling = ms(row.issuedAt) + AGENT_SESSION_POLICY.maxLifetimeMs;
   const extended = Math.min(now + Math.max(requested, 0), ceiling);
@@ -510,6 +517,11 @@ export async function listSessionsForActor(
   const rows = (await db
     .select()
     .from(schema.central.actorSessions)
-    .where(eq(schema.central.actorSessions.actorId, actorId))) as SessionRow[];
+    .where(
+      and(
+        eq(schema.central.actorSessions.actorId, actorId),
+        isNull(schema.central.actorSessions.revokedAt),
+      ),
+    )) as SessionRow[];
   return rows.map(rowToSession);
 }
