@@ -1,4 +1,7 @@
-import { describe, it, expect, beforeAll, beforeEach } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   buildPerTurnMemoryRecallCue,
   deriveRecallKeywords,
@@ -33,7 +36,15 @@ turn), the full silent-skip surface enumeration, client-side score filtering, th
 whole-entry budget, top-K clamping, and the bounded session-scoped dedup registry.
 */
 
-const ROOT = "/tmp/perturn-recall-fake-project";
+/*
+FNXC:PerTurnMemoryRecall 2026-09-04-04:43:
+ThreatCrush CWE-377: do not use a predictable /tmp path. mkdtempSync gives an exclusive
+directory; recall only receives it as a fake rootDir string, and afterAll removes it.
+*/
+const ROOT = mkdtempSync(join(tmpdir(), "perturn-recall-fake-project-"));
+afterAll(() => {
+  rmSync(ROOT, { recursive: true, force: true });
+});
 const TOPIC = "čo sme diskutovali o LCM B.1 B.2";
 
 function makeSettings(overrides: Partial<Settings> = {}): Partial<Settings> {

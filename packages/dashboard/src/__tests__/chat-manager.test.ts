@@ -7,8 +7,9 @@ FN-6444 confirmed this ChatManager API-path suite is deterministic under dashboa
  * These tests verify the fix for FN-1857: Chat assistant messages not persisted after navigating away
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runWithFusionSessionIdentity, resolveFusionSessionPrincipal, type Settings } from "@fusion/core";
+import { mkdtempSync, rmSync } from "node:fs";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
@@ -24,6 +25,17 @@ import {
   CHAT_ASK_QUESTION_GUIDANCE,
   CHAT_CODEBASE_ACCURACY_GUIDANCE,
 } from "../chat.js";
+
+/*
+FNXC:PerTurnMemoryRecall 2026-09-04-04:43:
+ThreatCrush CWE-377: LCM recall tests (and the shared ChatManager helpers) must not use a
+predictable /tmp/test project root. mkdtempSync gives an exclusive directory; afterAll
+removes it even though most cases never write through this path.
+*/
+const TEST_ROOT = mkdtempSync(join(tmpdir(), "fusion-chat-manager-"));
+afterAll(() => {
+  rmSync(TEST_ROOT, { recursive: true, force: true });
+});
 
 // ── Mock Setup ──────────────────────────────────────────────────────────────
 
@@ -59,13 +71,13 @@ vi.mock("../sse.js", () => ({
 // for the edit-and-resend flow.
 const { mockSessionManagerCreate, mockSessionManagerOpen } = vi.hoisted(() => {
   const fakeManager = {
-    getSessionFile: () => "/tmp/test/.pi-fake/session-abc.jsonl",
+    getSessionFile: () => join(TEST_ROOT, ".pi-fake/session-abc.jsonl"),
     getLeafId: () => "leaf-fake",
     branch: () => {},
     resetLeaf: () => {},
     appendMessage: () => "entry-fake",
     buildSessionContext: () => ({ messages: [] }),
-    createBranchedSession: () => "/tmp/test/.pi-fake/session-branched.jsonl",
+    createBranchedSession: () => join(TEST_ROOT, ".pi-fake/session-branched.jsonl"),
   };
   return {
     mockSessionManagerCreate: vi.fn(() => fakeManager),
@@ -104,7 +116,7 @@ const mockAgentStore = {
 };
 
 function createChatManager(pluginRunner?: Record<string, unknown>, messageStore?: Record<string, unknown>): ChatManager {
-  return new ChatManager(mockChatStore as any, "/tmp/test", mockAgentStore as any, pluginRunner as any, undefined, messageStore as any);
+  return new ChatManager(mockChatStore as any, TEST_ROOT, mockAgentStore as any, pluginRunner as any, undefined, messageStore as any);
 }
 
 function createChatManagerForRoot(rootDir: string): ChatManager {
@@ -114,7 +126,7 @@ function createChatManagerForRoot(rootDir: string): ChatManager {
 function createChatManagerWithSettings(settings: Partial<Settings>): ChatManager {
   return new ChatManager(
     mockChatStore as any,
-    "/tmp/test",
+    TEST_ROOT,
     mockAgentStore as any,
     undefined,
     async () => settings,
@@ -122,7 +134,7 @@ function createChatManagerWithSettings(settings: Partial<Settings>): ChatManager
 }
 
 function createChatManagerWithoutAgentStore(): ChatManager {
-  return new ChatManager(mockChatStore as any, "/tmp/test");
+  return new ChatManager(mockChatStore as any, TEST_ROOT);
 }
 
 // Minimal stand-in TaskStore. The workflow tool factories only capture the
@@ -132,7 +144,7 @@ const mockTaskStore = {} as any;
 function createChatManagerWithTaskStore(): ChatManager {
   return new ChatManager(
     mockChatStore as any,
-    "/tmp/test",
+    TEST_ROOT,
     mockAgentStore as any,
     undefined,
     undefined,
@@ -216,7 +228,7 @@ describe("ChatManager.sendMessage", () => {
       sessionId: "chat-001", content: input.content, createdAt: "2026-08-09T00:00:00.000Z",
     }));
 
-    const manager = new ChatManager(mockChatStore as any, "/tmp/test", mockAgentStore as any, undefined, undefined, undefined, taskStore as any);
+    const manager = new ChatManager(mockChatStore as any, TEST_ROOT, mockAgentStore as any, undefined, undefined, undefined, taskStore as any);
     await manager.sendMessage("chat-001", "private chat text");
 
     expect(taskStore.emitUsageEvent).toHaveBeenCalledTimes(1);
@@ -233,7 +245,7 @@ describe("ChatManager.sendMessage", () => {
       session: { prompt: vi.fn().mockResolvedValue(undefined), dispose: vi.fn(), state: { messages: [] } },
     }) as any);
 
-    const manager = new ChatManager(mockChatStore as any, "/tmp/test", mockAgentStore as any, undefined, undefined, undefined, taskStore as any);
+    const manager = new ChatManager(mockChatStore as any, TEST_ROOT, mockAgentStore as any, undefined, undefined, undefined, taskStore as any);
     await manager.sendMessage("chat-001", "private task chat text");
 
     expect(taskStore.emitUsageEvent).toHaveBeenCalledWith({
@@ -257,7 +269,7 @@ describe("ChatManager.sendMessage", () => {
       emitUsageEvent: vi.fn(),
     };
     try {
-      await new ChatManager(mockChatStore as any, "/tmp/test", mockAgentStore as any, undefined, undefined, undefined, taskStore as any).sendMessage("chat-001", "resolve memory tools");
+      await new ChatManager(mockChatStore as any, TEST_ROOT, mockAgentStore as any, undefined, undefined, undefined, taskStore as any).sendMessage("chat-001", "resolve memory tools");
       expect(resolvedOptions?.mcpServers).toContainEqual(expect.objectContaining({ name: "fusion-memory" }));
     } finally {
       if (previousEntry === undefined) delete process.env.FUSION_MEMORY_MCP_ENTRY;
@@ -280,7 +292,7 @@ describe("ChatManager.sendMessage", () => {
       session: { prompt: vi.fn().mockResolvedValue(undefined), dispose: vi.fn(), state: { messages: [] } },
     }) as any);
 
-    await expect(new ChatManager(mockChatStore as any, "/tmp/test", mockAgentStore as any, undefined, undefined, undefined, taskStore as any)
+    await expect(new ChatManager(mockChatStore as any, TEST_ROOT, mockAgentStore as any, undefined, undefined, undefined, taskStore as any)
       .sendMessage("chat-001", "telemetry-failure turn")).resolves.toBeUndefined();
     await Promise.resolve();
 
@@ -292,7 +304,7 @@ describe("ChatManager.sendMessage", () => {
     const taskStore = { emitUsageEvent: vi.fn(), getSettings: vi.fn().mockResolvedValue({}) };
     mockChatStore.addMessage.mockRejectedValueOnce(new Error("database unavailable"));
 
-    await expect(new ChatManager(mockChatStore as any, "/tmp/test", mockAgentStore as any, undefined, undefined, undefined, taskStore as any)
+    await expect(new ChatManager(mockChatStore as any, TEST_ROOT, mockAgentStore as any, undefined, undefined, undefined, taskStore as any)
       .sendMessage("chat-001", "failed user turn")).resolves.toBeUndefined();
 
     expect(taskStore.emitUsageEvent).not.toHaveBeenCalled();
@@ -307,7 +319,7 @@ describe("ChatManager.sendMessage", () => {
       },
     }) as any);
 
-    await new ChatManager(mockChatStore as any, "/tmp/test", mockAgentStore as any, undefined, undefined, undefined, taskStore as any)
+    await new ChatManager(mockChatStore as any, TEST_ROOT, mockAgentStore as any, undefined, undefined, undefined, taskStore as any)
       .sendMessage("chat-001", "human turn");
 
     expect(taskStore.emitUsageEvent).toHaveBeenCalledTimes(1);
@@ -643,7 +655,7 @@ describe("ChatManager.sendMessage", () => {
       getSettings: vi.fn().mockResolvedValue({}),
     };
 
-    const chatManager = new ChatManager(mockChatStore as any, "/tmp/test", mockAgentStore as any, undefined, undefined, undefined, taskStore as any);
+    const chatManager = new ChatManager(mockChatStore as any, TEST_ROOT, mockAgentStore as any, undefined, undefined, undefined, taskStore as any);
     await chatManager.sendMessage("chat-planner", "How many tokens?");
 
     expect(mockChatStore.recordTokenUsage).toHaveBeenCalledWith(expect.objectContaining({
@@ -1005,14 +1017,14 @@ describe("ChatManager.sendMessage", () => {
     const createWorkflowDefinition = vi.fn().mockResolvedValue({ id: "WF-chat", name: "Chat Created" });
     const chatManager = new ChatManager(
       mockChatStore as any,
-      "/tmp/test",
+      TEST_ROOT,
       mockAgentStore as any,
       undefined,
       undefined,
       undefined,
       {
         createWorkflowDefinition,
-        getFusionDir: () => "/tmp/test/.fusion",
+        getFusionDir: () => join(TEST_ROOT, ".fusion"),
       } as any,
     );
     await chatManager.sendMessage("chat-001", "Author me a workflow");
@@ -1083,12 +1095,12 @@ describe("ChatManager.sendMessage", () => {
         defaultAgentPermissionPolicy: { rules: { task_agent_mutation: "block" } },
       }),
       getAsyncLayer: vi.fn(() => ({})),
-      getFusionDir: () => "/tmp/test/.fusion",
+      getFusionDir: () => join(TEST_ROOT, ".fusion"),
     };
 
     const chatManager = new ChatManager(
       mockChatStore as any,
-      "/tmp/test",
+      TEST_ROOT,
       mockAgentStore as any,
       undefined,
       undefined,
@@ -1156,7 +1168,7 @@ describe("ChatManager.sendMessage", () => {
     } as any;
     const chatManager = new ChatManager(
       mockChatStore as any,
-      "/tmp/test",
+      TEST_ROOT,
       mockAgentStore as any,
       undefined,
       undefined,
@@ -1567,7 +1579,7 @@ describe("ChatManager.sendMessage", () => {
 
     expect(pluginRunner.getPluginSkills).toHaveBeenCalledTimes(1);
     expect(createOptions.skillSelection).toMatchObject({
-      projectRootDir: "/tmp/test",
+      projectRootDir: TEST_ROOT,
       sessionPurpose: "executor",
     });
     expect(createOptions.skillSelection.requestedSkillNames).toEqual(["fusion", "ce-debug"]);
@@ -1768,7 +1780,7 @@ describe("ChatManager.sendMessage", () => {
     await chatManager.sendMessage("chat-001", "/skill:foo answer directly");
 
     expect(createOptions.skillSelection).toMatchObject({
-      projectRootDir: "/tmp/test",
+      projectRootDir: TEST_ROOT,
       sessionPurpose: "executor",
     });
     expect(createOptions.skillSelection.requestedSkillNames).toContain("foo");
@@ -2288,7 +2300,7 @@ describe("ChatManager.sendMessage", () => {
     };
     const chatManager = new ChatManager(
       mockChatStore as any,
-      "/tmp/test",
+      TEST_ROOT,
       mockAgentStore as any,
       undefined,
       undefined,
@@ -2383,7 +2395,7 @@ describe("ChatManager.sendMessage", () => {
         "test-provider:model-a": { inputPer1M: 1, outputPer1M: 2, cacheReadPer1M: 0.5, cacheWritePer1M: 1.5, source: "test" },
       },
     }));
-    const chatManager = new ChatManager(mockChatStore as any, "/tmp/test", mockAgentStore as any, undefined, getSettings as any, undefined, taskStore as any);
+    const chatManager = new ChatManager(mockChatStore as any, TEST_ROOT, mockAgentStore as any, undefined, getSettings as any, undefined, taskStore as any);
 
     await chatManager.sendMessage("chat-001", "How much did this task cost?");
 
@@ -2427,7 +2439,7 @@ describe("ChatManager.sendMessage", () => {
       addSteeringComment: vi.fn(),
       getSettings: vi.fn().mockResolvedValue({}),
     };
-    const chatManager = new ChatManager(mockChatStore as any, "/tmp/test", mockAgentStore as any, undefined, undefined, undefined, taskStore as any);
+    const chatManager = new ChatManager(mockChatStore as any, TEST_ROOT, mockAgentStore as any, undefined, undefined, undefined, taskStore as any);
 
     await chatManager.sendMessage("chat-001", "How many tokens?");
 
@@ -2448,7 +2460,7 @@ describe("ChatManager.sendMessage", () => {
     }));
     __setCreateResolvedAgentSession(createResolvedSession as any);
     const taskStore = { getTask: vi.fn(), refineTask: vi.fn(), getSettings: vi.fn().mockResolvedValue({}) };
-    const chatManager = new ChatManager(mockChatStore as any, "/tmp/test", mockAgentStore as any, undefined, undefined, undefined, taskStore as any);
+    const chatManager = new ChatManager(mockChatStore as any, TEST_ROOT, mockAgentStore as any, undefined, undefined, undefined, taskStore as any);
 
     await chatManager.sendMessage("chat-001", "How many tokens did FN-7310 use?");
 
@@ -2480,7 +2492,7 @@ describe("ChatManager.sendMessage", () => {
       refineTask: vi.fn().mockResolvedValue(refinedTask),
       getSettings: vi.fn().mockResolvedValue({}),
     };
-    const chatManager = new ChatManager(mockChatStore as any, "/tmp/test", mockAgentStore as any, undefined, undefined, undefined, taskStore as any);
+    const chatManager = new ChatManager(mockChatStore as any, TEST_ROOT, mockAgentStore as any, undefined, undefined, undefined, taskStore as any);
 
     await chatManager.sendMessage("chat-001", "Please create a follow-up to add export support");
 
@@ -2560,7 +2572,7 @@ describe("ChatManager.sendMessage", () => {
       getTaskWorkflowSelectionAsync: async () => selection,
       getWorkflowDefinition: async () => ({ id: "wf-renamed", ir: renamedIr }),
     };
-    const chatManager = new ChatManager(mockChatStore as any, "/tmp/test", mockAgentStore as any, undefined, undefined, undefined, taskStore as any);
+    const chatManager = new ChatManager(mockChatStore as any, TEST_ROOT, mockAgentStore as any, undefined, undefined, undefined, taskStore as any);
 
     await chatManager.sendMessage("chat-001", "Follow up on this");
 
@@ -2587,7 +2599,7 @@ describe("ChatManager.sendMessage", () => {
       refineTask: vi.fn(),
       getSettings: vi.fn().mockResolvedValue({}),
     };
-    const chatManager = new ChatManager(mockChatStore as any, "/tmp/test", mockAgentStore as any, undefined, undefined, undefined, taskStore as any);
+    const chatManager = new ChatManager(mockChatStore as any, TEST_ROOT, mockAgentStore as any, undefined, undefined, undefined, taskStore as any);
 
     await chatManager.sendMessage("chat-001", "Please update the implementation");
 
@@ -2612,7 +2624,7 @@ describe("ChatManager.sendMessage", () => {
       refineTask: vi.fn(),
       getSettings: vi.fn().mockResolvedValue({}),
     };
-    const chatManager = new ChatManager(mockChatStore as any, "/tmp/test", mockAgentStore as any, undefined, undefined, undefined, taskStore as any);
+    const chatManager = new ChatManager(mockChatStore as any, TEST_ROOT, mockAgentStore as any, undefined, undefined, undefined, taskStore as any);
 
     await chatManager.sendMessage("chat-001", "Create a follow-up");
 
@@ -2661,7 +2673,7 @@ describe("ChatManager.sendMessage", () => {
     };
     const chatManager = new ChatManager(
       mockChatStore as any,
-      "/tmp/test",
+      TEST_ROOT,
       mockAgentStore as any,
       undefined,
       undefined,
@@ -2705,7 +2717,7 @@ describe("ChatManager.sendMessage", () => {
         .mockResolvedValueOnce({ id: "FN-7310", steeringComments: [{ id: "steer-2", text: "Keep the narrow approach", author: "user" }] }),
       getSettings: vi.fn().mockResolvedValue({}),
     };
-    const chatManager = new ChatManager(mockChatStore as any, "/tmp/test", mockAgentStore as any, undefined, undefined, undefined, taskStore as any);
+    const chatManager = new ChatManager(mockChatStore as any, TEST_ROOT, mockAgentStore as any, undefined, undefined, undefined, taskStore as any);
 
     await chatManager.sendMessage("chat-001", "Tell the executor to keep the narrow approach");
 
@@ -2730,7 +2742,7 @@ describe("ChatManager.sendMessage", () => {
       addSteeringComment: vi.fn(),
       getSettings: vi.fn().mockResolvedValue({}),
     };
-    const chatManager = new ChatManager(mockChatStore as any, "/tmp/test", mockAgentStore as any, undefined, undefined, undefined, taskStore as any);
+    const chatManager = new ChatManager(mockChatStore as any, TEST_ROOT, mockAgentStore as any, undefined, undefined, undefined, taskStore as any);
 
     await chatManager.sendMessage("chat-001", "Tell the executor something");
 
@@ -3317,11 +3329,11 @@ describe("ChatManager.sendMessage", () => {
     const chatManager = createChatManager();
     await chatManager.sendMessage("chat-001", "First message");
 
-    expect(mockSessionManagerCreate).toHaveBeenCalledWith("/tmp/test");
+    expect(mockSessionManagerCreate).toHaveBeenCalledWith(TEST_ROOT);
     expect(mockSessionManagerOpen).not.toHaveBeenCalled();
     expect(mockChatStore.setCliSessionFile).toHaveBeenCalledWith(
       "chat-001",
-      "/tmp/test/.pi-fake/session-abc.jsonl",
+      join(TEST_ROOT, ".pi-fake/session-abc.jsonl"),
     );
     expect(createSpy.mock.calls[0]?.[0]?.sessionManager).toBeDefined();
   });
@@ -3407,7 +3419,7 @@ describe("ChatManager.sendMessage", () => {
       // Assert - summarizeTitle was called with the message content and model params
       expect(mockSummarizeTitle).toHaveBeenCalledWith(
         "This is a long message that needs to be summarized",
-        "/tmp/test",
+        TEST_ROOT,
         undefined,
         undefined,
         expect.objectContaining({ mode: "english", locale: "en" }),
@@ -3437,7 +3449,7 @@ describe("ChatManager.sendMessage", () => {
 
     expect(mockSummarizeTitle).toHaveBeenLastCalledWith(
       "Compare v2 par default vs v3, plus check the est timezone handling in scheduling.",
-      "/tmp/test",
+      TEST_ROOT,
       undefined,
       undefined,
       expect.objectContaining({ mode: "interface", locale: "fr" }),
@@ -3455,7 +3467,7 @@ describe("ChatManager.sendMessage", () => {
     }));
     const chatManager = new ChatManager(
       mockChatStore as any,
-      "/tmp/test",
+      TEST_ROOT,
       mockAgentStore as any,
       undefined,
       async () => Promise.reject(new Error("settings unavailable")),
@@ -3466,7 +3478,7 @@ describe("ChatManager.sendMessage", () => {
 
     expect(mockSummarizeTitle).toHaveBeenLastCalledWith(
       "Compare v2 par default vs v3, plus check the est timezone handling in scheduling.",
-      "/tmp/test",
+      TEST_ROOT,
       undefined,
       undefined,
       expect.objectContaining({ mode: "english", locale: "en" }),
@@ -3481,7 +3493,7 @@ describe("ChatManager.sendMessage", () => {
     let settingsReadCount = 0;
     const chatManager = new ChatManager(
       mockChatStore as any,
-      "/tmp/test",
+      TEST_ROOT,
       undefined,
       undefined,
       async () => {
@@ -4432,7 +4444,7 @@ describe("ChatManager generation isolation", () => {
     });
 
     const taskStore = { getTask: vi.fn(), getSettings: vi.fn().mockResolvedValue({}) };
-    const chatManager = new ChatManager(mockChatStore as any, "/tmp/test", mockAgentStore as any, undefined, undefined, undefined, taskStore as any);
+    const chatManager = new ChatManager(mockChatStore as any, TEST_ROOT, mockAgentStore as any, undefined, undefined, undefined, taskStore as any);
     await chatManager.sendRoomMessage("room-1", "How many tokens did FN-7310 use?");
 
     const names = capturedTools.map((tool) => tool.name);
@@ -4723,7 +4735,7 @@ describe("ChatManager per-turn memory recall forwarding (RUFU-120 B.2)", () => {
   function managerWithSettings(): ChatManager {
     return new ChatManager(
       mockChatStore as any,
-      "/tmp/test",
+      TEST_ROOT,
       mockAgentStore as any,
       undefined,
       async () => RECALL_SETTINGS,

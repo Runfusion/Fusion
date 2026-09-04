@@ -1,6 +1,8 @@
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChatInFlightGenerationState, ChatSession, ChatStore, TaskStore } from "@fusion/core";
 import { CHAT_IN_FLIGHT_GENERATION_STALE_MS, SelfHealingManager } from "../self-healing.js";
 
@@ -56,6 +58,17 @@ function chatStoreFor(sessions: ChatSession[]): ChatStore {
   } as unknown as ChatStore;
 }
 
+/*
+FNXC:ChatInFlightRecovery 2026-09-04-04:43:
+ThreatCrush CWE-377: SelfHealingManager rootDir in this suite is a dummy path, but a
+predictable /tmp name still trips CWE-377. mkdtempSync + afterAll cleanup keeps the
+fixture exclusive.
+*/
+const TEST_ROOT = mkdtempSync(join(tmpdir(), "rufu-144-chat-test-"));
+afterAll(() => {
+  rmSync(TEST_ROOT, { recursive: true, force: true });
+});
+
 function managerFor(sessions: ChatSession[], recordRunAuditEvent: ReturnType<typeof vi.fn>): {
   manager: SelfHealingManager;
   chatStore: ChatStore;
@@ -63,7 +76,7 @@ function managerFor(sessions: ChatSession[], recordRunAuditEvent: ReturnType<typ
   const chatStore = chatStoreFor(sessions);
   const manager = new SelfHealingManager(
     { recordRunAuditEvent } as unknown as TaskStore,
-    { rootDir: "/tmp/rufu-144-chat-test", chatStore },
+    { rootDir: TEST_ROOT, chatStore },
   );
   return { manager, chatStore };
 }
@@ -209,7 +222,7 @@ describe("RUFU-144: reconcile stale in-flight chat generations", () => {
 
   it("returns 0 without touching the store when no chatStore is configured", async () => {
     const recordRunAuditEvent = vi.fn().mockResolvedValue(undefined);
-    const manager = new SelfHealingManager({ recordRunAuditEvent } as unknown as TaskStore, { rootDir: "/tmp/rufu-144-chat-test" });
+    const manager = new SelfHealingManager({ recordRunAuditEvent } as unknown as TaskStore, { rootDir: TEST_ROOT });
 
     expect(await manager.reconcileStaleInFlightChatGenerations()).toBe(0);
     expect(recordRunAuditEvent).not.toHaveBeenCalled();
@@ -225,7 +238,7 @@ describe("RUFU-144: reconcile stale in-flight chat generations", () => {
     } as unknown as ChatStore;
     const manager = new SelfHealingManager(
       { recordRunAuditEvent } as unknown as TaskStore,
-      { rootDir: "/tmp/rufu-144-chat-test", chatStore },
+      { rootDir: TEST_ROOT, chatStore },
     );
 
     expect(await manager.reconcileStaleInFlightChatGenerations()).toBe(0);

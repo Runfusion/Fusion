@@ -36,7 +36,10 @@
  * `errorClass === "ChatContextOverflowError"`.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const { mockCreateResolvedAgentSession, mockPromptWithFallback, mockChatStore } = vi.hoisted(() => ({
   mockCreateResolvedAgentSession: vi.fn(),
@@ -81,6 +84,17 @@ vi.mock("@fusion/engine", async (importOriginal) => {
 
 import { ChatManager, RoomReplyGenerationError, __setBuildAgentChatPrompt, chatStreamManager } from "../chat.js";
 import { ChatContextOverflowError } from "@fusion/engine";
+
+/*
+FNXC:ChatContextGuardRoomSeam 2026-09-04-04:43:
+ThreatCrush CWE-377: ChatManager's projectRootDir must be an exclusive temp directory, not
+a predictable /tmp/test path. The suite never writes through this root; afterAll still
+removes it.
+*/
+const TEST_ROOT = mkdtempSync(join(tmpdir(), "fusion-chat-guard-"));
+afterAll(() => {
+  rmSync(TEST_ROOT, { recursive: true, force: true });
+});
 
 /*
 FNXC:ChatContextGuard 2026-08-18-18:06:
@@ -144,7 +158,7 @@ function makeManager(
   getSettings?: () => Promise<Record<string, unknown> | undefined>,
   agentStore?: unknown,
 ) {
-  return new ChatManager(mockChatStore as never, "/tmp/test", agentStore as never, undefined, getSettings);
+  return new ChatManager(mockChatStore as never, TEST_ROOT, agentStore as never, undefined, getSettings);
 }
 
 function setupSession(overrides: Record<string, unknown> = {}) {
