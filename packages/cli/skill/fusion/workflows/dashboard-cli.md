@@ -76,7 +76,9 @@ Quiesce Fusion writers and competing backup commands: backup operations have no
 cross-process lock or pair-wide restore transaction. In-progress artifacts are
 never listed or restorable; cleanup sweeps only abandoned artifacts. Dump pairs
 restore `project`, `archive`, and `central`. After a project restore, Fusion
-rewinds and replays schema migrations whose restored relations are missing.
+rewinds and replays schema migrations from the earliest missing CREATE-TABLE
+sentinel; a reconciliation failure rolls project/archive back from the
+pre-restore dump.
 
 **Multi-project support:**
 

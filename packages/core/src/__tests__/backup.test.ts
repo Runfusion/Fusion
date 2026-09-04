@@ -10,9 +10,14 @@ import {
 } from "../backup/backup.js";
 import {
   reconcileRestoredSchemaMigrations,
+  reconciliationPostgresSsl,
+  RESTORED_SCHEMA_RELATION_SENTINELS,
   type RestoreMigrationCatalog,
 } from "../postgres/restore-migration-reconcile.js";
-import { TASK_LIFECYCLE_OUTBOX_VERSION } from "../postgres/schema-applier.js";
+import {
+  CONFIGURATION_REVISIONS_VERSION,
+  TASK_LIFECYCLE_OUTBOX_VERSION,
+} from "../postgres/schema-applier.js";
 import {
   clearActiveEmbeddedRuntimeUrl,
   EmbeddedRuntimeStoppingError,
@@ -34,11 +39,12 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-function createPre0040RestoreCatalog(): RestoreMigrationCatalog & {
+function createRestoreCatalog(presentRelations: readonly string[] = []): RestoreMigrationCatalog & {
   insertLifecycleSeq(projectId: string): Promise<void>;
+  insertConfigurationRevision(): Promise<void>;
 } {
-  const relations = new Set<string>();
-  const applied = new Set(["0039", TASK_LIFECYCLE_OUTBOX_VERSION, "0071"]);
+  const relations = new Set(presentRelations);
+  const applied = new Set(RESTORED_SCHEMA_RELATION_SENTINELS.map((sentinel) => sentinel.version));
   return {
     async relationExists(qualifiedName) {
       return relations.has(qualifiedName);
@@ -52,10 +58,10 @@ function createPre0040RestoreCatalog(): RestoreMigrationCatalog & {
       }
     },
     async replayPendingMigrations() {
-      if (!applied.has(TASK_LIFECYCLE_OUTBOX_VERSION)) {
-        relations.add("project.task_lifecycle_events");
-        relations.add("project.task_lifecycle_event_seq");
-        applied.add(TASK_LIFECYCLE_OUTBOX_VERSION);
+      for (const sentinel of RESTORED_SCHEMA_RELATION_SENTINELS) {
+        if (applied.has(sentinel.version)) continue;
+        for (const relation of sentinel.relations) relations.add(relation);
+        applied.add(sentinel.version);
       }
     },
     async insertLifecycleSeq(projectId: string) {
@@ -63,6 +69,11 @@ function createPre0040RestoreCatalog(): RestoreMigrationCatalog & {
         throw new Error('relation "project.task_lifecycle_event_seq" does not exist');
       }
       if (!projectId) throw new Error("projectId is required");
+    },
+    async insertConfigurationRevision() {
+      if (!relations.has("project.configuration_revisions")) {
+        throw new Error('relation "project.configuration_revisions" does not exist');
+      }
     },
   };
 }
@@ -359,7 +370,11 @@ describe("PostgreSQL paired restore orchestration", () => {
   it("replays 0040 relations after restoring a dump that lacks them while the ledger claims current", async () => {
     const root = await mkdtemp(join(tmpdir(), "fusion-restore-0040-rewind-"));
     try {
-      const catalog = createPre0040RestoreCatalog();
+      const catalog = createRestoreCatalog(
+        RESTORED_SCHEMA_RELATION_SENTINELS
+          .filter((sentinel) => Number.parseInt(sentinel.version, 10) < Number.parseInt(TASK_LIFECYCLE_OUTBOX_VERSION, 10))
+          .flatMap((sentinel) => [...sentinel.relations]),
+      );
       const fixture = await createRestoreFixture(root, {
         reconcileRestoredMigrations: () => reconcileRestoredSchemaMigrations(catalog),
       });
@@ -377,6 +392,61 @@ describe("PostgreSQL paired restore orchestration", () => {
       expect(await catalog.relationExists("project.task_lifecycle_event_seq")).toBe(true);
       expect(await catalog.relationExists("project.task_lifecycle_events")).toBe(true);
       await expect(catalog.insertLifecycleSeq("proj")).resolves.toBeUndefined();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rewinds past a missing pre-0040 relation so later inserts succeed", async () => {
+    const root = await mkdtemp(join(tmpdir(), "fusion-restore-pre-0040-rewind-"));
+    try {
+      const catalog = createRestoreCatalog(
+        RESTORED_SCHEMA_RELATION_SENTINELS
+          .filter((sentinel) => Number.parseInt(sentinel.version, 10) < Number.parseInt(CONFIGURATION_REVISIONS_VERSION, 10))
+          .flatMap((sentinel) => [...sentinel.relations]),
+      );
+      const fixture = await createRestoreFixture(root, {
+        reconcileRestoredMigrations: () => reconcileRestoredSchemaMigrations(catalog),
+      });
+      await writeFile(fixture.projectPath, "pre-0021-project");
+      await writeFile(fixture.centralPath, "central-source");
+
+      await expect(catalog.insertConfigurationRevision()).rejects.toThrow(
+        /configuration_revisions/,
+      );
+
+      await fixture.manager.restoreBackup(fixture.projectFilename, {
+        createPreRestoreBackup: false,
+      });
+
+      expect(await catalog.relationExists("project.configuration_revisions")).toBe(true);
+      await expect(catalog.insertConfigurationRevision()).resolves.toBeUndefined();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rolls project/archive back when migration reconciliation fails after project restore", async () => {
+    const root = await mkdtemp(join(tmpdir(), "fusion-reconcile-rollback-"));
+    try {
+      let reconcileAttempts = 0;
+      const fixture = await createRestoreFixture(root, {
+        reconcileRestoredMigrations: async () => {
+          reconcileAttempts += 1;
+          if (reconcileAttempts === 1) throw new Error("reconcile exploded");
+        },
+      });
+      await writeFile(fixture.projectPath, "project-source");
+      await writeFile(fixture.centralPath, "central-source");
+
+      await expect(fixture.manager.restoreBackup(fixture.projectFilename)).rejects.toThrow(
+        /rolled back[\s\S]*reconcile exploded/i,
+      );
+      const restores = (await fixture.actions()).filter((action) => action.startsWith("RESTORE "));
+      expect(restores[0]).toContain(fixture.projectFilename);
+      expect(restores[1]).toMatch(/^RESTORE fusion-pre-restore-pg-/);
+      expect(restores.some((action) => action.includes(fixture.centralFilename))).toBe(false);
+      expect(reconcileAttempts).toBe(2);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -408,6 +478,15 @@ describe("PostgreSQL paired restore orchestration", () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe("restore reconciliation TLS policy", () => {
+  it("keeps SSL off for loopback and requires verify-full for remote hosts", () => {
+    expect(reconciliationPostgresSsl(pgUrl("secret", "postgres", "127.0.0.1", 55432))).toBe(false);
+    expect(reconciliationPostgresSsl(pgUrl("secret", "postgres", "localhost"))).toBe(false);
+    expect(reconciliationPostgresSsl("host=/tmp/fusion-pg user=postgres dbname=fusion")).toBe(false);
+    expect(reconciliationPostgresSsl(pgUrl("secret", "operator", "db.example.test"))).toBe("verify-full");
   });
 });
 
