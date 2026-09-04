@@ -151,7 +151,7 @@ import { buildBoardWorkflowsPayload } from "./board-workflows.js";
 import { resolveNativeStructurePreview } from "../native-structure-preview.js";
 import { isBackwardMoveBlockedByOpenPr, PR_OPEN_BLOCKS_MOVE_BACK_MESSAGE } from "./register-pull-requests-routes.js";
 import { allowsAutoMergeProcessing, computePlanApprovalFingerprint, isTaskAwaitingPlanning, isWorkspaceTask, type RunAuditEventInput } from "@fusion/core";
-import { FUSION_CLIENT_HEADER, resolveHttpDeleteCallerKind, isValidTaskBranchName } from "@fusion/core";
+import { FUSION_CLIENT_HEADER, resolveHttpDeleteCallerKind, isValidTaskBranchName, toRunMutationContext, UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import { ApiError, badRequest, conflict, notFound } from "../api-error.js";
 // FNXC:TaskLookup404 2026-07-26-11:40: shared task-miss -> 404 mapping seam.
 import { isTaskLookupMiss, rethrowTaskApiError } from "./task-lookup-error.js";
@@ -2855,12 +2855,21 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         }
       }
 
+      /*
+      FNXC:Identity 2026-09-04-06:30:
+      CreateAiUndoTaskDeps restates the canonical `createTask` arity plus a required `runContext`.
+      The only caller is this route; the actor is the human who pressed Undo. Neighboring dashboard
+      createTask routes pass the unattributed marker until U9 resolves the request session — keep
+      that same carrier here, and forward it as the third argument so the helper can record
+      authorship instead of wrapping the deprecated 1-arg overload.
+      */
       const createAiUndoResult = async (): Promise<AiUndoTaskResult> =>
         createAiUndoTask({
-          createTask: (input) => scopedStore.createTask(input),
+          createTask: (input, options, runContext) => scopedStore.createTask(input, options, runContext),
           findOpenRevertTaskForSource: (id) => scopedStore.findOpenRevertTaskForSource(id),
           sourceTask: task,
           workflowId: aiUndoWorkflowId,
+          runContext: UNATTRIBUTED_MUTATION_CONTEXT,
         });
 
       /*
@@ -7680,29 +7689,39 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         }
         githubIssueAction = githubIssueActionRaw as GithubIssueAction;
       }
+      /*
+      FNXC:Identity 2026-09-04-06:30:
+      TaskDeleteAuditContext extends RunMutationContext, so `actor` is required. ONE
+      `toRunMutationContext` conversion feeds both `auditContext` and the canonical
+      `deleteTask` third argument — independently resolving the actor on each carrier
+      would let a single delete persist two answers to "who did this". Extra fields
+      (`callerKind`) are preserved; do not drop the self-reported client class to
+      satisfy the actor field.
+      */
+      const deleteContext = toRunMutationContext({
+        /*
+        FNXC:TaskDeleteAttribution 2026-07-26-14:30:
+        This handler used to hardcode `agentId:"system"` with no caller field, so an operator
+        clicking Delete in the dashboard and any script or agent calling the same endpoint wrote
+        byte-identical audit rows — which is why a four-delete incident could not be attributed.
+        `callerKind` now records what the client SAID it was.
+
+        This is attribution, not authentication: `x-fusion-client` is self-reported and anything
+        can send it. A row therefore distinguishes "the client identified itself as the dashboard
+        UI" from "nothing identified itself" (`api-unattributed`, the default for absent or
+        unrecognized values). Do not gate deletes or permissions on it.
+        */
+        agentId: "system",
+        runId: `synthetic-dashboard-delete-${req.params.id}-${Date.now()}`,
+        callerKind: resolveHttpDeleteCallerKind(req.get(FUSION_CLIENT_HEADER)),
+      });
       const task = await scopedStore.deleteTask(req.params.id, {
         removeDependencyReferences,
         removeLineageReferences,
         allowResurrection,
         githubIssueAction,
-        auditContext: {
-          /*
-          FNXC:TaskDeleteAttribution 2026-07-26-14:30:
-          This handler used to hardcode `agentId:"system"` with no caller field, so an operator
-          clicking Delete in the dashboard and any script or agent calling the same endpoint wrote
-          byte-identical audit rows — which is why a four-delete incident could not be attributed.
-          `callerKind` now records what the client SAID it was.
-
-          This is attribution, not authentication: `x-fusion-client` is self-reported and anything
-          can send it. A row therefore distinguishes "the client identified itself as the dashboard
-          UI" from "nothing identified itself" (`api-unattributed`, the default for absent or
-          unrecognized values). Do not gate deletes or permissions on it.
-          */
-          agentId: "system",
-          runId: `synthetic-dashboard-delete-${req.params.id}-${Date.now()}`,
-          callerKind: resolveHttpDeleteCallerKind(req.get(FUSION_CLIENT_HEADER)),
-        },
-      });
+        auditContext: deleteContext,
+      }, deleteContext);
       scheduleReleaseExecutionAgentBindings(engine, req.params.id, runtimeLogger);
       res.json(task);
     } catch (err: unknown) {
