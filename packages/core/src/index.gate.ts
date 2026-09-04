@@ -464,6 +464,7 @@ export {
   registerBuiltinStepParsers,
   parseStepHeadings,
   parseJsonSteps,
+  resolveAuthoredStepHeadingOffset,
   __resetStepParserRegistryForTests,
 } from "./tasks/step-parsers.js";
 export type {

@@ -310,15 +310,22 @@ describe("executor consecutive tool-failure retry (FN-7996)", () => {
     expect(store.updateTask).not.toHaveBeenCalledWith(task.id, expect.objectContaining({ status: "failed" }), expect.anything());
   });
 
+  /*
+  FNXC:ExecutorToolFailureRetry 2026-09-04-04:35:
+  Terminal graph-failure parking is guarded by updateTaskAtomic so a stale handler cannot overwrite
+  a newer executor run. Assert the durable parked state rather than the retired non-atomic writer.
+  */
   it("preserves the immediate legacy park when disabled or errors are not consecutive", async () => {
     const disabled = makeHarness({ retries: 0, entries: [{ type: "tool_error" }, { type: "tool_error" }, { type: "tool_error" }] });
     await (disabled.executor as any).handleGraphFailure(disabled.task, graphFailure());
     expect(disabled.store.claimNextToolFailureRetry).not.toHaveBeenCalled();
-    expect(disabled.store.updateTask).toHaveBeenCalledWith(disabled.task.id, expect.objectContaining({ status: "failed" }), ANY_MUTATION_CONTEXT);
+    expect(disabled.store.updateTaskAtomic).toHaveBeenCalledWith(disabled.task.id, expect.any(Function), ANY_MUTATION_CONTEXT);
+    expect(disabled.task).toMatchObject({ status: "failed", error: "Workflow graph terminated with failure at node 'steps#0:step-execute'" });
 
     const interleaved = makeHarness({ retries: 2, entries: [{ type: "tool_error" }, { type: "tool_result" }] });
     await (interleaved.executor as any).handleGraphFailure(interleaved.task, graphFailure());
     expect(interleaved.store.claimNextToolFailureRetry).not.toHaveBeenCalled();
-    expect(interleaved.store.updateTask).toHaveBeenCalledWith(interleaved.task.id, expect.objectContaining({ status: "failed" }), ANY_MUTATION_CONTEXT);
+    expect(interleaved.store.updateTaskAtomic).toHaveBeenCalledWith(interleaved.task.id, expect.any(Function), ANY_MUTATION_CONTEXT);
+    expect(interleaved.task).toMatchObject({ status: "failed", error: "Workflow graph terminated with failure at node 'steps#0:step-execute'" });
   });
 });

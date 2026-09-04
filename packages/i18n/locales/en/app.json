@@ -7668,7 +7668,14 @@
     "snippetsAdd": "Add snippet",
     "snippetsEmpty": "No snippets saved yet.",
     "snippetsEdit": "Edit /{{name}}",
-    "snippetsDelete": "Delete /{{name}}"
+    "snippetsDelete": "Delete /{{name}}",
+    "tabSkills": "Skills",
+    "tabSnippets": "Snippets",
+    "tabsLabel": "Skills and snippets sections",
+    "skillsDescription": "Browse, enable, and install skills available to this project.",
+    "snippetsEmptyHint": "Create one here, then type /name in any chat to insert it.",
+    "refreshSkillsLabel": "Refresh skills",
+    "refreshSnippetsLabel": "Refresh snippets"
   },
   "specEditor": {
     "edit": "Edit",

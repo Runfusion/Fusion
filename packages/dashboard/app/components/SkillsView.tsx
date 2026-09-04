@@ -1,5 +1,5 @@
 import "./SkillsView.css";
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { Zap, RefreshCw, X, ChevronRight, ChevronDown, AlertCircle, Loader2, ArrowLeft, Plus, Pencil, Trash2 } from "lucide-react";
 import { ViewHeader } from "./ViewHeader";
@@ -56,6 +56,13 @@ export function SkillsView({ projectId, addToast, onClose }: SkillsViewProps) {
   const [catalogEntries, setCatalogEntries] = useState<CatalogEntry[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [installingCatalogEntryId, setInstallingCatalogEntryId] = useState<string | null>(null);
+  /*
+  FNXC:SkillsSnippetsLayout 2026-09-04-00:42:
+  Skills remains the default tab so opening this established route preserves its execution-skill browsing behavior. The snippet cache stays subscribed at view level, rather than inside its panel, so its count and data remain current before the Snippets tab is opened.
+  */
+  const [activeTab, setActiveTab] = useState<"skills" | "snippets">("skills");
+  const skillsTabRef = useRef<HTMLButtonElement>(null);
+  const snippetsTabRef = useRef<HTMLButtonElement>(null);
   const {
     snippets,
     loading: snippetsLoading,
@@ -269,6 +276,22 @@ export function SkillsView({ projectId, addToast, onClose }: SkillsViewProps) {
   useEffect(() => {
     void loadCatalog(debouncedQuery);
   }, [debouncedQuery, loadCatalog]);
+
+  const handleTabsKeyDown = useCallback((event: KeyboardEvent<HTMLDivElement>) => {
+    let nextTab: "skills" | "snippets" | null = null;
+    if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+      nextTab = activeTab === "skills" ? "snippets" : "skills";
+    } else if (event.key === "Home") {
+      nextTab = "skills";
+    } else if (event.key === "End") {
+      nextTab = "snippets";
+    }
+
+    if (!nextTab) return;
+    event.preventDefault();
+    setActiveTab(nextTab);
+    (nextTab === "skills" ? skillsTabRef : snippetsTabRef).current?.focus();
+  }, [activeTab]);
 
   // Handle toggle skill
   const handleToggleSkill = useCallback(async (skillId: string, currentEnabled: boolean) => {
@@ -586,7 +609,16 @@ export function SkillsView({ projectId, addToast, onClose }: SkillsViewProps) {
         title={t("skills.title", "Skills & Snippets")}
         actions={
           <>
-            <span className="skills-view-count" aria-label={t("skills.discoveredCount", "{{count}} discovered skills", { count: discoveredSkills.length })}>{discoveredSkills.length} {t("skills.discovered", "discovered")}</span>
+            <span
+              className="skills-view-count"
+              aria-label={activeTab === "skills"
+                ? t("skills.discoveredCount", "{{count}} discovered skills", { count: discoveredSkills.length })
+                : t("skills.snippetsCount", "{{count}} saved", { count: snippets.length })}
+            >
+              {activeTab === "skills"
+                ? `${discoveredSkills.length} ${t("skills.discovered", "discovered")}`
+                : t("skills.snippetsCount", "{{count}} saved", { count: snippets.length })}
+            </span>
             <button
               className="btn-icon skills-view-close touch-target"
               onClick={onClose}
@@ -597,10 +629,16 @@ export function SkillsView({ projectId, addToast, onClose }: SkillsViewProps) {
             {/* FNXC:Skills 2026-06-22-17:35: Refresh uses plain btn btn-sm (no touch-target min-height) so it matches the Mailbox Compose button height (also btn btn-sm). */}
             <button
               className="btn btn-sm"
-              onClick={() => void loadDiscoveredSkills()}
-              disabled={isLoadingDiscovered}
+              onClick={() => void (activeTab === "skills" ? loadDiscoveredSkills() : refreshSnippets())}
+              disabled={activeTab === "skills" ? isLoadingDiscovered : snippetsLoading}
+              aria-label={activeTab === "skills"
+                ? t("skills.refreshSkillsLabel", "Refresh skills")
+                : t("skills.refreshSnippetsLabel", "Refresh snippets")}
             >
-              <RefreshCw size={14} className={isLoadingDiscovered ? "spin" : ""} />
+              <RefreshCw
+                size={14}
+                className={(activeTab === "skills" ? isLoadingDiscovered : snippetsLoading) ? "spin" : ""}
+              />
               {t("common.refresh", "Refresh")}
             </button>
           </>
@@ -608,149 +646,70 @@ export function SkillsView({ projectId, addToast, onClose }: SkillsViewProps) {
       />
 
       {/*
+      FNXC:SkillsSnippetsLayout 2026-09-04-00:42:
+      The tab bar is a sibling below ViewHeader because the shared header constrains action heights. Separating the bounded skills master column from the full-width snippet workspace keeps the two domains clear without changing their data paths.
+      */}
+      <div
+        className="skills-view-tabs"
+        role="tablist"
+        aria-label={t("skills.tabsLabel", "Skills and snippets sections")}
+        onKeyDown={handleTabsKeyDown}
+      >
+        <button
+          ref={skillsTabRef}
+          type="button"
+          role="tab"
+          id="skills-tab-skills"
+          data-testid="skills-tab-skills"
+          aria-selected={activeTab === "skills"}
+          aria-controls="skills-panel-skills"
+          tabIndex={activeTab === "skills" ? 0 : -1}
+          className={`skills-view-tab${activeTab === "skills" ? " skills-view-tab--active" : ""}`}
+          onClick={() => setActiveTab("skills")}
+        >
+          {t("skills.tabSkills", "Skills")}
+          <span className="skills-view-tab-count">{discoveredSkills.length}</span>
+        </button>
+        <button
+          ref={snippetsTabRef}
+          type="button"
+          role="tab"
+          id="skills-tab-snippets"
+          data-testid="skills-tab-snippets"
+          aria-selected={activeTab === "snippets"}
+          aria-controls="skills-panel-snippets"
+          tabIndex={activeTab === "snippets" ? 0 : -1}
+          className={`skills-view-tab${activeTab === "snippets" ? " skills-view-tab--active" : ""}`}
+          onClick={() => setActiveTab("snippets")}
+        >
+          {t("skills.tabSnippets", "Snippets")}
+          <span className="skills-view-tab-count">{snippets.length}</span>
+        </button>
+      </div>
+
+      {/*
       FNXC:Skills 2026-06-23-01:45:
       Master/detail body. Holds the two always-rendered panes. CSS (container query on the `.skills-view` root) lays them out side-by-side when wide and stacks them (list, then detail-on-top) when narrow.
+
+      FNXC:SkillsSnippetsLayout 2026-09-04-00:42:
+      Both tab panels remain mounted while `hidden` changes their exposure. This keeps every inactive-tab ARIA reference valid and preserves snippet drafts and skill selection across tab switches.
       */}
-      <div className="skills-view-body">
+      <div
+        className="skills-view-body"
+        role="tabpanel"
+        id="skills-panel-skills"
+        aria-labelledby="skills-tab-skills"
+        tabIndex={0}
+        data-testid="skills-panel-skills"
+        hidden={activeTab !== "skills"}
+      >
         {/* FNXC:Skills 2026-06-23-01:45: LEFT pane = master list (search + discovered + catalog). Always in the DOM; CSS hides it only in the narrow stack once a skill is selected. */}
         <div className="skills-view__list" data-testid="skills-list">
       {/* Scrollable content area */}
       <div className="skills-view-content">
-        {/*
-        FNXC:ChatSnippets 2026-09-03-15:56:
-        Snippet management shares the Skills destination but remains independent from discovery, installation, and execution-skill toggles. Unknown global state disables writes; loaded state stays editable during refresh failures so the shared cache can rebase safely.
-        */}
-        <section className="skills-view-section skills-view-snippets" aria-labelledby="chat-snippets-title">
-          <div className="skills-view-section-title skills-view-snippets__heading">
-            <h3 id="chat-snippets-title">{t("skills.snippetsTitle", "Chat Snippets")}</h3>
-            <span className="skills-view-snippets__count">
-              {t("skills.snippetsCount", "{{count}} saved", { count: snippets.length })}
-            </span>
-          </div>
-
-          <p className="skills-view-snippets__description">
-            {t("skills.snippetsDescription", "Save reusable prompts, then type /name in any chat to insert one without sending it.")}
-          </p>
-
-          {snippetsLoading && !snippetsHaveLoaded ? (
-            <div className="skills-view-loading" data-testid="snippets-loading">
-              <span className="spinner" />
-              {t("skills.snippetsLoading", "Loading snippets...")}
-            </div>
-          ) : null}
-
-          {snippetsError ? (
-            <div className="skills-view-error skills-view-snippets__error" role="alert">
-              <p>{t("skills.snippetsLoadError", "Snippets could not be refreshed. Your last loaded list is still shown.")}</p>
-              <button type="button" className="btn btn-sm" onClick={() => void refreshSnippets()}>
-                {t("common.retry", "Retry")}
-              </button>
-            </div>
-          ) : null}
-
-          <form className="skills-view-snippets__form" onSubmit={handleSnippetSubmit} aria-label={t("skills.snippetsFormLabel", "Chat snippet editor")}>
-            <label className="skills-view-snippets__field">
-              <span>{t("skills.snippetsNameLabel", "Name")}</span>
-              <div className="skills-view-snippets__name-input">
-                <span aria-hidden="true">/</span>
-                <input
-                  type="text"
-                  className="form-input"
-                  value={snippetName}
-                  onChange={(event) => {
-                    setSnippetName(event.target.value);
-                    setSnippetFormError(null);
-                  }}
-                  autoComplete="off"
-                  aria-label={t("skills.snippetsNameLabel", "Name")}
-                  aria-describedby="chat-snippet-name-help"
-                />
-              </div>
-              <span id="chat-snippet-name-help" className="skills-view-snippets__help">
-                {t("skills.snippetsNameHelp", "Letters, numbers, underscores, or hyphens; up to 48 characters.")}
-              </span>
-            </label>
-            <label className="skills-view-snippets__field">
-              <span>{t("skills.snippetsPromptLabel", "Prompt")}</span>
-              <textarea
-                className="form-input skills-view-snippets__prompt"
-                value={snippetPrompt}
-                aria-label={t("skills.snippetsPromptLabel", "Prompt")}
-                onChange={(event) => {
-                  setSnippetPrompt(event.target.value);
-                  setSnippetFormError(null);
-                }}
-                rows={4}
-              />
-              <span className="skills-view-snippets__help">
-                {t("skills.snippetsPromptHelp", "{{count}} / {{max}} characters", { count: snippetPrompt.length, max: CHAT_SNIPPET_MAX_PROMPT_LENGTH })}
-              </span>
-            </label>
-            {snippetFormError ? <p className="skills-view-snippets__form-error" role="alert">{snippetFormError}</p> : null}
-            <div className="skills-view-snippets__form-actions">
-              <button
-                type="submit"
-                className="btn btn-sm"
-                disabled={!snippetsHaveLoaded || snippetMutationPending !== null}
-              >
-                {snippetMutationPending === (editingSnippetName ?? "create") ? <Loader2 size={14} className="spin" /> : <Plus size={14} />}
-                {snippetMutationPending === (editingSnippetName ?? "create")
-                  ? t("skills.snippetsSaving", "Saving...")
-                  : editingSnippetName
-                    ? t("skills.snippetsSaveChanges", "Save changes")
-                    : t("skills.snippetsAdd", "Add snippet")}
-              </button>
-              {editingSnippetName ? (
-                <button type="button" className="btn btn-sm" onClick={resetSnippetForm} disabled={snippetMutationPending !== null}>
-                  {t("common.cancel", "Cancel")}
-                </button>
-              ) : null}
-            </div>
-          </form>
-
-          {snippetsHaveLoaded && snippets.length === 0 ? (
-            <div className="skills-view-empty skills-view-snippets__empty" data-testid="snippets-empty">
-              <p>{t("skills.snippetsEmpty", "No snippets saved yet.")}</p>
-            </div>
-          ) : snippets.length > 0 ? (
-            <div className="skills-view-snippets__list" data-testid="snippets-list">
-              {snippets.map((snippet) => (
-                <article key={snippet.name} className="skills-view-snippets__item">
-                  <div className="skills-view-snippets__item-content">
-                    <code className="skills-view-snippets__trigger">/{snippet.name}</code>
-                    <p className="skills-view-snippets__preview">{snippet.prompt}</p>
-                  </div>
-                  <div className="skills-view-snippets__item-actions">
-                    {snippetMutationPending === snippet.name ? (
-                      <span className="skills-view-snippets__pending">
-                        <Loader2 size={14} className="spin" />
-                        {t("skills.snippetsSaving", "Saving...")}
-                      </span>
-                    ) : null}
-                    <button
-                      type="button"
-                      className="btn-icon touch-target"
-                      onClick={() => handleEditSnippet(snippet.name)}
-                      disabled={!snippetsHaveLoaded || snippetMutationPending !== null}
-                      aria-label={t("skills.snippetsEdit", "Edit /{{name}}", { name: snippet.name })}
-                    >
-                      <Pencil size={14} />
-                    </button>
-                    <button
-                      type="button"
-                      className="btn-icon touch-target"
-                      onClick={() => void handleDeleteSnippet(snippet.name)}
-                      disabled={!snippetsHaveLoaded || snippetMutationPending !== null}
-                      aria-label={t("skills.snippetsDelete", "Delete /{{name}}", { name: snippet.name })}
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                </article>
-              ))}
-            </div>
-          ) : null}
-        </section>
+        <p className="skills-view-section-description">
+          {t("skills.skillsDescription", "Browse, enable, and install skills available to this project.")}
+        </p>
 
         {/* Search — at top for both skill sections */}
         <div className="skills-view-search">
@@ -949,6 +908,157 @@ export function SkillsView({ projectId, addToast, onClose }: SkillsViewProps) {
             {renderDetailBody()}
           </div>
         </div>
+      </div>
+
+      <div
+        className="skills-view-snippets-panel"
+        role="tabpanel"
+        id="skills-panel-snippets"
+        aria-labelledby="skills-tab-snippets"
+        tabIndex={0}
+        data-testid="skills-panel-snippets"
+        hidden={activeTab !== "snippets"}
+      >
+        {/*
+        FNXC:SkillsSnippetsLayout 2026-09-04-00:42:
+        Snippet management owns a full-width panel instead of occupying the clamped skills master list. Its cache and validation remain unchanged; only the form and saved-list presentation move into this dedicated workspace.
+        */}
+        <section className="skills-view-section skills-view-snippets" aria-labelledby="chat-snippets-title">
+          <div className="skills-view-section-title skills-view-snippets__heading">
+            <h3 id="chat-snippets-title">{t("skills.snippetsTitle", "Chat Snippets")}</h3>
+            <span className="skills-view-snippets__count">
+              {t("skills.snippetsCount", "{{count}} saved", { count: snippets.length })}
+            </span>
+          </div>
+
+          <p className="skills-view-snippets__description">
+            {t("skills.snippetsDescription", "Save reusable prompts, then type /name in any chat to insert one without sending it.")}
+          </p>
+
+          <div className="skills-view-snippets__layout">
+            <form className="skills-view-snippets__form" onSubmit={handleSnippetSubmit} aria-label={t("skills.snippetsFormLabel", "Chat snippet editor")}>
+              <label className="skills-view-snippets__field">
+                <span>{t("skills.snippetsNameLabel", "Name")}</span>
+                <div className="skills-view-snippets__name-input">
+                  <span aria-hidden="true">/</span>
+                  <input
+                    type="text"
+                    className="form-input"
+                    value={snippetName}
+                    onChange={(event) => {
+                      setSnippetName(event.target.value);
+                      setSnippetFormError(null);
+                    }}
+                    autoComplete="off"
+                    aria-label={t("skills.snippetsNameLabel", "Name")}
+                    aria-describedby="chat-snippet-name-help"
+                  />
+                </div>
+                <span id="chat-snippet-name-help" className="skills-view-snippets__help">
+                  {t("skills.snippetsNameHelp", "Letters, numbers, underscores, or hyphens; up to 48 characters.")}
+                </span>
+              </label>
+              <label className="skills-view-snippets__field">
+                <span>{t("skills.snippetsPromptLabel", "Prompt")}</span>
+                <textarea
+                  className="form-input skills-view-snippets__prompt"
+                  value={snippetPrompt}
+                  aria-label={t("skills.snippetsPromptLabel", "Prompt")}
+                  onChange={(event) => {
+                    setSnippetPrompt(event.target.value);
+                    setSnippetFormError(null);
+                  }}
+                  rows={4}
+                />
+                <span className="skills-view-snippets__help">
+                  {t("skills.snippetsPromptHelp", "{{count}} / {{max}} characters", { count: snippetPrompt.length, max: CHAT_SNIPPET_MAX_PROMPT_LENGTH })}
+                </span>
+              </label>
+              {snippetFormError ? <p className="skills-view-snippets__form-error" role="alert">{snippetFormError}</p> : null}
+              <div className="skills-view-snippets__form-actions">
+                <button
+                  type="submit"
+                  className="btn btn-sm"
+                  disabled={!snippetsHaveLoaded || snippetMutationPending !== null}
+                >
+                  {snippetMutationPending === (editingSnippetName ?? "create") ? <Loader2 size={14} className="spin" /> : <Plus size={14} />}
+                  {snippetMutationPending === (editingSnippetName ?? "create")
+                    ? t("skills.snippetsSaving", "Saving...")
+                    : editingSnippetName
+                      ? t("skills.snippetsSaveChanges", "Save changes")
+                      : t("skills.snippetsAdd", "Add snippet")}
+                </button>
+                {editingSnippetName ? (
+                  <button type="button" className="btn btn-sm" onClick={resetSnippetForm} disabled={snippetMutationPending !== null}>
+                    {t("common.cancel", "Cancel")}
+                  </button>
+                ) : null}
+              </div>
+            </form>
+
+            <div className="skills-view-snippets__collection">
+              {snippetsLoading && !snippetsHaveLoaded ? (
+                <div className="skills-view-loading" data-testid="snippets-loading">
+                  <span className="spinner" />
+                  {t("skills.snippetsLoading", "Loading snippets...")}
+                </div>
+              ) : null}
+
+              {snippetsError ? (
+                <div className="skills-view-error skills-view-snippets__error" role="alert">
+                  <p>{t("skills.snippetsLoadError", "Snippets could not be refreshed. Your last loaded list is still shown.")}</p>
+                  <button type="button" className="btn btn-sm" onClick={() => void refreshSnippets()}>
+                    {t("common.retry", "Retry")}
+                  </button>
+                </div>
+              ) : null}
+
+              {snippetsHaveLoaded && snippets.length === 0 ? (
+                <div className="skills-view-empty skills-view-snippets__empty" data-testid="snippets-empty">
+                  <p>{t("skills.snippetsEmpty", "No snippets saved yet.")}</p>
+                  <p>{t("skills.snippetsEmptyHint", "Create one here, then type /name in any chat to insert it.")}</p>
+                </div>
+              ) : snippets.length > 0 ? (
+                <div className="skills-view-snippets__list" data-testid="snippets-list">
+                  {snippets.map((snippet) => (
+                    <article key={snippet.name} className="skills-view-snippets__item">
+                      <div className="skills-view-snippets__item-content">
+                        <code className="skills-view-snippets__trigger">/{snippet.name}</code>
+                        <p className="skills-view-snippets__preview">{snippet.prompt}</p>
+                      </div>
+                      <div className="skills-view-snippets__item-actions">
+                        {snippetMutationPending === snippet.name ? (
+                          <span className="skills-view-snippets__pending">
+                            <Loader2 size={14} className="spin" />
+                            {t("skills.snippetsSaving", "Saving...")}
+                          </span>
+                        ) : null}
+                        <button
+                          type="button"
+                          className="btn-icon touch-target"
+                          onClick={() => handleEditSnippet(snippet.name)}
+                          disabled={!snippetsHaveLoaded || snippetMutationPending !== null}
+                          aria-label={t("skills.snippetsEdit", "Edit /{{name}}", { name: snippet.name })}
+                        >
+                          <Pencil size={14} />
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-icon touch-target"
+                          onClick={() => void handleDeleteSnippet(snippet.name)}
+                          disabled={!snippetsHaveLoaded || snippetMutationPending !== null}
+                          aria-label={t("skills.snippetsDelete", "Delete /{{name}}", { name: snippet.name })}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </section>
       </div>
     </div>
   );

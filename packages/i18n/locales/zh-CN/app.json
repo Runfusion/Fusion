@@ -7640,7 +7640,14 @@
     "snippetsAdd": "添加片段",
     "snippetsEmpty": "尚未保存片段。",
     "snippetsEdit": "编辑 /{{name}}",
-    "snippetsDelete": "删除 /{{name}}"
+    "snippetsDelete": "删除 /{{name}}",
+    "tabSkills": "技能",
+    "tabSnippets": "片段",
+    "tabsLabel": "技能和片段分区",
+    "skillsDescription": "浏览、启用并安装此项目可用的技能。",
+    "snippetsEmptyHint": "在此创建一个片段，然后在任意聊天中输入 /名称 即可插入。",
+    "refreshSkillsLabel": "刷新技能",
+    "refreshSnippetsLabel": "刷新片段"
   },
   "specEditor": {
     "edit": "编辑",

@@ -80,7 +80,7 @@ describe("PgBackupManager", () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it("createBackup produces project + central dump files", async () => {
+  it("createBackup produces project, central, and migration bookkeeping dump files", async () => {
     const manager = new PgBackupManager(
       pgUrl("secret"),
       fusionDir,
@@ -92,6 +92,8 @@ describe("PgBackupManager", () => {
     expect(existsSync(pair.project!.path)).toBe(true);
     expect(pair.central).toBeDefined();
     expect("filename" in (pair.central as object)).toBe(true);
+    expect(pair.migrations).toBeDefined();
+    expect(pair.migrations && "filename" in pair.migrations && pair.migrations.filename).toMatch(/^fusion-migrations-pg-.*\.dump$/);
   });
 
   it("skips central dump when includeCentral is false", async () => {
@@ -103,6 +105,7 @@ describe("PgBackupManager", () => {
     const pair = await manager.createBackup();
     expect(pair.project).toBeDefined();
     expect(pair.central).toBeUndefined();
+    expect(pair.migrations && "filename" in pair.migrations).toBe(true);
   });
 
   it("passes connection components via libpq PG* env vars, not PG_CONNECTION_STRING (P0 #5)", async () => {
@@ -125,6 +128,7 @@ describe("PgBackupManager", () => {
     expect(invocation).not.toContain("PG_CONNECTION_STRING=");
     // The password must NOT appear in the args (credential safety, VAL-CONN-005).
     expect(invocation).not.toMatch(/ARGS:.*supersecret/);
+    expect(invocation).toContain("--table public.fusion_schema_migrations");
   });
 
   it("pg_restore receives the same libpq PG* env vars (P0 #6)", async () => {
