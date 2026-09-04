@@ -3,6 +3,7 @@ import type { TaskDetail } from "@fusion/core";
 import "./executor-test-helpers.js";
 import { TaskExecutor } from "../executor.js";
 import { createMockStore, resetExecutorMocks } from "./executor-test-helpers.js";
+import { mutationContextFor } from "./mutation-context-matchers.js";
 
 const now = "2026-06-23T00:00:00.000Z";
 
@@ -67,7 +68,7 @@ describe("executor graph execute self-requeue gate", () => {
       live.id,
       expect.stringContaining("executor recovery preserved"),
       undefined,
-      undefined,
+      mutationContextFor("executor"),
     );
     expect(store.moveTask).not.toHaveBeenCalledWith(live.id, "in-review", expect.anything());
     expect(store.updateTask).not.toHaveBeenCalledWith(
@@ -143,7 +144,7 @@ describe("executor graph execute self-requeue gate", () => {
     expect(store.updateTask).toHaveBeenCalledWith(
       live.id,
       expect.objectContaining({ status: null, error: null }),
-      undefined,
+      mutationContextFor("executor"),
     );
     expect(store.moveTask).not.toHaveBeenCalled();
     expect(store.updateTask).not.toHaveBeenCalledWith(
@@ -196,7 +197,7 @@ describe("executor graph execute self-requeue gate", () => {
       live.id,
       expect.stringContaining("not flagging as failed"),
       undefined,
-      undefined,
+      mutationContextFor("executor"),
     );
     expect(store.moveTask).not.toHaveBeenCalledWith(live.id, "in-review", expect.anything());
   });
@@ -250,7 +251,7 @@ describe("executor graph execute self-requeue gate", () => {
       context: { "node:code-review-remediation:value": "remediation-not-scheduled" },
     });
 
-    expect(store.updateTask).toHaveBeenCalledWith(live.id, { postReviewFixCount: 100 }, undefined);
+    expect(store.updateTask).toHaveBeenCalledWith(live.id, { postReviewFixCount: 100 }, mutationContextFor("executor"));
     expect(store.addTaskComment).toHaveBeenCalledWith(
       live.id,
       expect.stringContaining("Auto-revived from in-review: pre-merge workflow step \"Code Review\" had failed"),
@@ -260,7 +261,7 @@ describe("executor graph execute self-requeue gate", () => {
       live.id,
       expect.stringContaining("Auto-recovered retryable remediation node 'code-review-remediation'"),
       expect.stringContaining("Workflow revision key: code-review"),
-      undefined,
+      mutationContextFor("executor"),
     );
     expect(store.updateTask).not.toHaveBeenCalledWith(
       live.id,
@@ -321,8 +322,8 @@ describe("executor graph execute self-requeue gate", () => {
       expect.anything(),
       expect.anything(),
     );
-    expect(store.updateTask).not.toHaveBeenCalledWith(live.id, { status: null, error: null }, undefined);
-    expect(store.updateTask).not.toHaveBeenCalledWith(live.id, { workflowStepResults: [] }, undefined);
+    expect(store.updateTask).not.toHaveBeenCalledWith(live.id, { status: null, error: null }, mutationContextFor("executor"));
+    expect(store.updateTask).not.toHaveBeenCalledWith(live.id, { workflowStepResults: [] }, mutationContextFor("executor"));
   });
 
   it.each(["remediation-not-scheduled", "missing-remediation-context"])("FN-8910 keeps a completed review card in place when remediation reports %s", async (failureValue) => {
@@ -402,7 +403,7 @@ describe("executor graph execute self-requeue gate", () => {
       context: {},
     });
 
-    expect(store.updateTaskAtomic).toHaveBeenCalledWith(live.id, expect.any(Function), undefined);
+    expect(store.updateTaskAtomic).toHaveBeenCalledWith(live.id, expect.any(Function), mutationContextFor("executor"));
     await expect(store.getTask(live.id)).resolves.toEqual(expect.objectContaining({
       status: "failed",
       error: expect.stringContaining("Workflow graph terminated with failure at node 'code-review-remediation'"),
@@ -430,7 +431,7 @@ describe("executor graph execute self-requeue gate", () => {
       context: { "node:parse:value": "parse-error" },
     });
 
-    expect(store.updateTaskAtomic).toHaveBeenCalledWith(live.id, expect.any(Function), undefined);
+    expect(store.updateTaskAtomic).toHaveBeenCalledWith(live.id, expect.any(Function), mutationContextFor("executor"));
     await expect(store.getTask(live.id)).resolves.toEqual(expect.objectContaining({
       status: "failed",
       error: expect.stringContaining("Workflow graph terminated with failure at node 'parse'"),
