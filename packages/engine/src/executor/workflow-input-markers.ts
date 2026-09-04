@@ -1,3 +1,4 @@
+import type { TaskDetail, TaskStore, RunMutationContext } from "@fusion/core";
 /**
  * FNXC:CodeOrganization 2026-08-03-17:15:
  * Workflow-input watermark + marker resolution peeled from TaskExecutor (U4).
@@ -5,12 +6,10 @@
  * FNXC:WorkflowInput 2026-06-29-10:00:
  * A workflow graph can restart at an earlier node after pause/resume recovery while the durable pausedReason still points at the later skill node that asked the question. If the user already supplied a post-watermark reply, clear that stale marker before any node executes so Compound Engineering cannot loop at Plan while Commit & open PR's answered question remains attached.
  */
-import type { TaskDetail, TaskStore } from "@fusion/core";
-import type { EngineRunContext } from "../util/run-audit.js";
 
 export type WorkflowInputMarkerDeps = {
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
   runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
 };
 

@@ -1,24 +1,5 @@
-/**
- * FNXC:CodeOrganization 2026-08-03-22:05:
- * Simple worker-agent tool factories peeled from TaskExecutor (U4).
- *
- * These are thin wrappers over shared agent-tools factories. Kept free so
- * runImplementation can assemble the tool surface without one TaskExecutor
- * method per factory (and without bloating the runImplementation deps bag).
- *
- * FNXC:ArtifactRegistry 2026-07-10-14:30:
- * fn_artifact_register anchors relative paths at the task worktree and defaults
- * taskId to the executing task so agent media surfaces in the Artifacts tab.
- *
- * FNXC:EphemeralAgentTaskCreation 2026-07-01-00:00:
- * Pass callerIsEphemeral so fn_task_create honors ephemeralAgentsCanCreateTasks.
- *
- * FNXC:FileScope 2026-07-08-22:40:
- * fn_task_file_scope_add lets the coding agent extend declared ## File Scope at runtime.
- */
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
-import type { TaskStore } from "@fusion/core";
-import type { EngineRunContext } from "../util/run-audit.js";
+import type { TaskStore, RunMutationContext } from "@fusion/core";
 import {
   createArtifactListTool as sharedCreateArtifactListTool,
   createArtifactRegisterTool as sharedCreateArtifactRegisterTool,
@@ -39,14 +20,31 @@ import {
   createWorkflowUpdateTool as sharedCreateWorkflowUpdateTool,
   createWorkflowDeleteTool as sharedCreateWorkflowDeleteTool,
   createWorkflowSettingsTool as sharedCreateWorkflowSettingsTool,
-  createTraitListTool as sharedCreateTraitListTool,
-} from "../agent-tools.js";
+  createTraitListTool as sharedCreateTraitListTool } from "../agent-tools.js";
+/**
+ * FNXC:CodeOrganization 2026-08-03-22:05:
+ * Simple worker-agent tool factories peeled from TaskExecutor (U4).
+ *
+ * These are thin wrappers over shared agent-tools factories. Kept free so
+ * runImplementation can assemble the tool surface without one TaskExecutor
+ * method per factory (and without bloating the runImplementation deps bag).
+ *
+ * FNXC:ArtifactRegistry 2026-07-10-14:30:
+ * fn_artifact_register anchors relative paths at the task worktree and defaults
+ * taskId to the executing task so agent media surfaces in the Artifacts tab.
+ *
+ * FNXC:EphemeralAgentTaskCreation 2026-07-01-00:00:
+ * Pass callerIsEphemeral so fn_task_create honors ephemeralAgentsCanCreateTasks.
+ *
+ * FNXC:FileScope 2026-07-08-22:40:
+ * fn_task_file_scope_add lets the coding agent extend declared ## File Scope at runtime.
+ */
 
 export type SharedWorkerToolsDeps = {
   store: TaskStore;
   rootDir: string;
   messageStore?: import("@fusion/core").MessageStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
   runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
 };
 

@@ -1,16 +1,15 @@
+import type { Task, TaskStore, RunMutationContext } from "@fusion/core";
+import type { AgentSession } from "@earendil-works/pi-coding-agent";
+import { executorLog } from "../logger.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-09:25:
  * executeReviewHandoff peeled from TaskExecutor (U4).
  * Agent-requested review handoff: awaiting-user-review, handoff to in-review, dispose session.
  */
-import type { Task, TaskStore } from "@fusion/core";
-import type { AgentSession } from "@earendil-works/pi-coding-agent";
-import { executorLog } from "../logger.js";
-import type { EngineRunContext } from "../util/run-audit.js";
 
 export type ExecuteReviewHandoffDeps = {
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
   runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   persistTokenUsage: (taskId: string) => Promise<void>;
   handoffTaskToReview: (task: Task, reason: string) => Promise<unknown>;

@@ -1,3 +1,4 @@
+import type { TaskDetail, TaskStore, WorkflowIrNode, RunMutationContext } from "@fusion/core";
 /**
  * FNXC:CodeOrganization 2026-08-03-19:50:
  * runAwaitInputNode peeled from TaskExecutor (U4).
@@ -11,8 +12,6 @@
  * this line branches on node.kind — both node kinds share one pause/resume
  * contract so behavior can never drift between them.
  */
-import type { TaskDetail, TaskStore, WorkflowIrNode } from "@fusion/core";
-import type { EngineRunContext } from "../util/run-audit.js";
 
 export type AwaitInputNodeResult = {
   outcome: "success" | "failure";
@@ -22,7 +21,7 @@ export type AwaitInputNodeResult = {
 
 export type AwaitInputNodeDeps = {
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
   runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
 };
 

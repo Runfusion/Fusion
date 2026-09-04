@@ -1,3 +1,8 @@
+import type { ResolvedTaskOutputLanguage, Task, TaskDetail, TaskStore, RunMutationContext } from "@fusion/core";
+import { isMergeRequestContractShadowEnabled, resolveAgentActivityAttribution, UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
+import { toRunMutationContext } from "../util/run-audit.js";
+import { ensureWorkflowCompletionSummary } from "../workflows/workflow-completion-summary.js";
+import { executorLog } from "../logger.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-15:40:
  * handoffTaskToReview peeled from TaskExecutor (U4).
@@ -15,19 +20,13 @@
  * executable work for resume or fail in-place; `in-review` is reserved for
  * clean completion handoffs.
  */
-import type { ResolvedTaskOutputLanguage, Task, TaskDetail, TaskStore } from "@fusion/core";
-import { isMergeRequestContractShadowEnabled, resolveAgentActivityAttribution, UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
-import { toRunMutationContext } from "../util/run-audit.js";
-import { ensureWorkflowCompletionSummary } from "../workflows/workflow-completion-summary.js";
-import { executorLog } from "../logger.js";
-import type { EngineRunContext } from "../util/run-audit.js";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- mirror TaskExecutor method surface
 type AnyFn = (...args: any[]) => any;
 
 export type HandoffTaskToReviewDeps = {
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
   runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   generateCompletionFeatureVideo: AnyFn;
 };

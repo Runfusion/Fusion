@@ -1,3 +1,5 @@
+import type { Task, TaskStore, RunMutationContext } from "@fusion/core";
+import { executorLog } from "../logger.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-09:50:
  * parkPlanReviewReplanCapExhausted peeled from TaskExecutor (U4).
@@ -12,13 +14,10 @@
  * forever or silently sitting in place. The reason string is special-cased by the
  * dashboard + notifications, so it must be preserved verbatim.
  */
-import type { Task, TaskStore } from "@fusion/core";
-import { executorLog } from "../logger.js";
-import type { EngineRunContext } from "../util/run-audit.js";
 
 export type ParkPlanReviewReplanCapDeps = {
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
   runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
 };
 

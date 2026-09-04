@@ -1,14 +1,6 @@
-/**
- * FNXC:CodeOrganization 2026-08-03-15:00:
- * handleGraphFailure peeled from TaskExecutor (U4).
- *
- * Terminal failure sink for a graph run: honor blocked parks, route recoverable
- * failures (worktree/session/remediation/resume), and park the task visibly when
- * no recovery path applies — never leave a failed graph invisible in in-progress.
- */
 import { join } from "node:path";
 import { readFile, rm, writeFile } from "node:fs/promises";
-import type { Task, TaskStore, WorkflowIr } from "@fusion/core";
+import type { Task, TaskStore, WorkflowIr, RunMutationContext } from "@fusion/core";
 import {
   nonExecutableDuplicateRedirectReason,
   PERMISSION_DENIED_ERROR_CODE,
@@ -23,18 +15,16 @@ import {
   resolveStepReopenPolicy,
   resolveWorkflowIrForTask,
   resolvePreMergeGateForTask,
-  TransitionRejectionError,
-} from "@fusion/core";
+  TransitionRejectionError } from "@fusion/core";
 import {
   BRANCH_WRITE_PROVENANCE_FAILURE_VALUE,
   PLAN_REVIEW_PROVIDER_FAILURE_HOLD_VALUE,
-  WORKFLOW_DRIFT_PARK_CONTEXT_KEY,
-} from "../workflows/workflow-graph-executor.js";
+  WORKFLOW_DRIFT_PARK_CONTEXT_KEY } from "../workflows/workflow-graph-executor.js";
 import type { WorkflowGraphTaskRunResult } from "../workflows/workflow-graph-task-runner.js";
 import { isRequiredArtifactReadFailedValue } from "../execution/required-workflow-artifacts.js";
 import { getPromptPath } from "../execution/spec-staleness.js";
 import { executorLog } from "../logger.js";
-import { generateSyntheticRunId, type EngineRunContext } from "../util/run-audit.js";
+import { generateSyntheticRunId } from "../util/run-audit.js";
 import { emitBoundedRunAudit } from "./emit-bounded-run-audit.js";
 import { captureMergeContentDescriptor } from "../merge/merge-content-capture.js";
 import { rerouteUnrunPreMergeGateToReview } from "../merge/pre-merge-gate-reseed.js";
@@ -49,27 +39,30 @@ import {
   latestFailedPreMergeWorkflowStep,
   isSessionContentionGraphFailure,
   isWorkspacePreparationGraphFailure,
-  isWorktreeBaseRefreshGraphFailure,
-} from "./graph-failure-pure.js";
+  isWorktreeBaseRefreshGraphFailure } from "./graph-failure-pure.js";
 import {
   isBenignInReviewPauseAbort,
-  isTransientResumeAfterRestartGraphFailure,
-} from "./graph-resume-predicates.js";
+  isTransientResumeAfterRestartGraphFailure } from "./graph-resume-predicates.js";
 import {
   buildExecuteRequeueLoopHighWaterSignature,
   EXECUTE_REQUEUE_LOOP_VISIBLE_THRESHOLD,
-  MAX_EXECUTE_REQUEUE_LOOP_CYCLES,
-} from "./requeue-loop.js";
+  MAX_EXECUTE_REQUEUE_LOOP_CYCLES } from "./requeue-loop.js";
 import {
   resolveCompleteColumnFor,
   resolveReboundColumnFor,
-  resolveTerminalColumnsFor,
-} from "./lifecycle-columns.js";
+  resolveTerminalColumnsFor } from "./lifecycle-columns.js";
 import {
   isAwaitingGraphFailureValue,
-  isTerminalMergeGraphFailureValue,
-} from "./task-predicates.js";
+  isTerminalMergeGraphFailureValue } from "./task-predicates.js";
 import type { PausedAbortProvenance } from "./paused-abort-provenance.js";
+/**
+ * FNXC:CodeOrganization 2026-08-03-15:00:
+ * handleGraphFailure peeled from TaskExecutor (U4).
+ *
+ * Terminal failure sink for a graph run: honor blocked parks, route recoverable
+ * failures (worktree/session/remediation/resume), and park the task visibly when
+ * no recovery path applies — never leave a failed graph invisible in in-progress.
+ */
 
 const MAX_TRANSIENT_GRAPH_RESUME_RETRIES = 2;
 const TRANSIENT_GRAPH_RESUME_RETRY_BACKOFF_MS = process.env.VITEST || process.env.NODE_ENV === "test" ? 0 : 1_000;
@@ -166,7 +159,7 @@ export type HandleGraphFailureDeps = {
   processWideGraphRouting: Set<string>;
   /** Deferred terminal-park callbacks currently in flight (restart-recovery intent chain). */
   deferredTerminalParksInFlight: Set<string>;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
   runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   clearCompletedTaskWatchdog: (taskId: string) => void;
   clearPausedAborted: (taskId: string) => void;
@@ -202,7 +195,7 @@ async function retryTerminalFailurePersistence(
   store: TaskStore,
   taskId: string,
   message: string,
-  runContext: EngineRunContext | undefined,
+  runContext: RunMutationContext | undefined,
   capturedColumnMovedAt: string | undefined,
 ): Promise<boolean> {
   /*
