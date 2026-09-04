@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
+import { UNATTRIBUTED_CONTEXT_MATCHER } from "./mutation-context-matchers.js";
 import { BranchAttributionError, SilentNoOpAttributionMismatchError } from "../execution/branch-attribution.js";
 import * as attributionModule from "../execution/branch-attribution.js";
 import { createMockStore, mockedCreateFnAgent, mockedExecSync, mockedExistsSync, type Task } from "./merger-test-helpers.js";
@@ -210,8 +210,8 @@ describe("FN-4646 aiMergeTask landedFiles capture", () => {
     });
 
     await expect(mergerModule.aiMergeTask(store, "/tmp/root", "FN-4646")).rejects.toBeInstanceOf(SilentNoOpAttributionMismatchError);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-4646", "in-review", expect.any(Object), ANY_MUTATION_CONTEXT);
-    expect(store.updateTask).toHaveBeenCalledWith("FN-4646", expect.objectContaining({ status: "failed" }), ANY_MUTATION_CONTEXT);
+    expect(store.moveTask).toHaveBeenCalledWith("FN-4646", "in-review", expect.any(Object), UNATTRIBUTED_CONTEXT_MATCHER);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-4646", expect.objectContaining({ status: "failed" }), UNATTRIBUTED_CONTEXT_MATCHER);
     const detailsUpdate = (store.updateTask as any).mock.calls.find((call: any[]) => call[1]?.mergeDetails?.noOpVerifiedShortCircuit);
     expect(detailsUpdate).toBeUndefined();
   });
