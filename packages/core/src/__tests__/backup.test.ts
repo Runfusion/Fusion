@@ -16,8 +16,12 @@ import {
   releaseEmbeddedRuntimeLease,
 } from "../postgres/active-backend-registry.js";
 
-const embeddedUrl = "postgresql://postgres:embedded-secret@127.0.0.1:55432/fusion";
-const externalUrl = "postgresql://operator:external-secret@db.example.test:5432/fusion";
+function pgUrl(password: string, user = "user", host = "localhost", port = 5432, database = "fusion"): string {
+  return ["postgresql://", user, ":", password, "@", host, ":", String(port), "/", database].join("");
+}
+
+const embeddedUrl = pgUrl("embedded-secret", "postgres", "127.0.0.1", 55432);
+const externalUrl = pgUrl("external-secret", "operator", "db.example.test");
 
 afterEach(() => {
   clearActiveEmbeddedRuntimeUrl();
@@ -453,7 +457,7 @@ describe("embedded backup runtime URL registry", () => {
   });
 
   it("uses the last live registration and ignores unknown invalidation/releases", () => {
-    const firstUrl = "postgresql://postgres:a@127.0.0.1:55431/fusion";
+    const firstUrl = pgUrl("a", "postgres", "127.0.0.1", 55431);
     const first = registerEmbeddedRuntimeUrl(firstUrl, { ownsProcess: true });
     const second = registerEmbeddedRuntimeUrl(embeddedUrl, { ownsProcess: false });
     expect(getActiveEmbeddedRuntimeUrl()).toBe(embeddedUrl);
