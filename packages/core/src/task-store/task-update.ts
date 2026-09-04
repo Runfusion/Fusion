@@ -94,8 +94,18 @@ After PROMPT.md is durable, prompt-derived declaredSymbols must land on the task
 success boundary. Retry the follow-up row write so a later read sees matching symbols. If every
 attempt fails, restore the previous PROMPT.md (or remove a newly created file) before rejecting so
 updateTask cannot leave new file contents paired with previous declaredSymbols.
+
+FNXC:PromptReadBack 2026-09-04-08:08:
+Restore is the preferred rollback after deferred declaredSymbols persist fails. If the file cannot
+be restored, persist the new symbols so later symbol resolution cannot read stale persisted symbols
+against the new prompt that is still on disk. The in-memory task still holds the new declaredSymbols
+because the prior-symbols assignment runs only after a successful restore write.
 */
 const PROMPT_DERIVED_SYMBOLS_PERSIST_ATTEMPTS = 3;
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
 
 async function persistPromptDerivedDeclaredSymbols(
   store: TaskStore,
@@ -113,7 +123,7 @@ async function persistPromptDerivedDeclaredSymbols(
     } catch (error) {
       lastError = error;
       storeLog.warn(
-        `[prompt-symbols] deferred declaredSymbols persist for ${task.id} attempt ${attempt}/${PROMPT_DERIVED_SYMBOLS_PERSIST_ATTEMPTS}: ${error instanceof Error ? error.message : String(error)}`,
+        `[prompt-symbols] deferred declaredSymbols persist for ${task.id} attempt ${attempt}/${PROMPT_DERIVED_SYMBOLS_PERSIST_ATTEMPTS}: ${errorMessage(error)}`,
       );
     }
   }
@@ -128,8 +138,16 @@ async function persistPromptDerivedDeclaredSymbols(
     task.declaredSymbols = priorDeclaredSymbols;
   } catch (restoreError) {
     storeLog.warn(
-      `[prompt-symbols] failed to restore previous PROMPT.md for ${task.id}: ${restoreError instanceof Error ? restoreError.message : String(restoreError)}`,
+      `[prompt-symbols] failed to restore previous PROMPT.md for ${task.id}: ${errorMessage(restoreError)}`,
     );
+    try {
+      await store.atomicWriteTaskJsonWithAudit(dir, task, undefined, undefined);
+      return;
+    } catch (forwardError) {
+      throw new Error(
+        `declaredSymbols persist failed after PROMPT.md write (${errorMessage(lastError)}); PROMPT.md restore failed (${errorMessage(restoreError)}); forward declaredSymbols persist failed (${errorMessage(forwardError)})`,
+      );
+    }
   }
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
