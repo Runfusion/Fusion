@@ -72,4 +72,26 @@ pgTest("workspace worktree directory segment claim (PostgreSQL)", () => {
       await rm(surviving, { recursive: true, force: true });
     }
   });
+
+  it("ignores generic task updates that would rewrite a live pin", async () => {
+    /*
+    FNXC:WorkspaceWorktree 2026-09-04-06:15:
+    Only `pinWorkspaceWorktreeDirSegment` may take a live unique claim. A plugin-shaped
+    `updateTask` patch must not replace or path-traverse an existing pin.
+    */
+    const store = h.store();
+    const task = await store.createTask({ description: "already pinned" });
+    expect(await store.pinWorkspaceWorktreeDirSegment(task.id, "foo")).toMatchObject({
+      segment: "foo",
+      minted: true,
+      claimed: true,
+    });
+    await store.updateTask(task.id, { workspaceWorktreeDirSegment: "hijacked" } as never);
+    expect((await store.getTask(task.id)).workspaceWorktreeDirSegment).toBe("foo");
+    await store.updateTask(task.id, {
+      workspaceWorktrees: { "repo-a": { worktreePath: join(tmpdir(), "fn-3520-recorded"), branch: "fusion/a" } },
+      workspaceWorktreeDirSegment: null,
+    } as never);
+    expect((await store.getTask(task.id)).workspaceWorktreeDirSegment).toBe("foo");
+  });
 });

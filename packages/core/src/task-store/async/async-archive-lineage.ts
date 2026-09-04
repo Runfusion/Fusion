@@ -42,6 +42,7 @@ import {
 import type { ArchivedTaskEntry } from "../../types.js";
 import {acquireTaskAdvisoryXactLock} from "../task-advisory-lock.js";
 import {decideArchiveLiveness, type ArchiveLivenessVerdict} from "../../tasks/task-archive-liveness.js";
+import { isPostgresUniqueError } from "../../db/postgres-errors.js";
 
 /**
  * FNXC:TaskStoreArchiveLineage 2026-06-24-07:10:
@@ -359,6 +360,26 @@ export async function restoreTaskFromArchive(
   entry: ArchivedTaskEntry,
   options: { now?: string } = {},
 ): Promise<void> {
+  /*
+  FNXC:WorkspaceWorktree 2026-09-04-06:15:
+  Catch unique_violation OUTSIDE the restore transaction. A successor can pin the released name
+  after the live-claim lookup and before this UPDATE; catching inside the xact cannot COMMIT after
+  PostgreSQL aborts it. Retry once with the segment forced null so unarchive still lands.
+  */
+  try {
+    await restoreTaskFromArchiveOnce(layer, entry, options, false);
+  } catch (error) {
+    if (!isPostgresUniqueError(error)) throw error;
+    await restoreTaskFromArchiveOnce(layer, entry, options, true);
+  }
+}
+
+async function restoreTaskFromArchiveOnce(
+  layer: AsyncDataLayer,
+  entry: ArchivedTaskEntry,
+  options: { now?: string },
+  releaseSegment: boolean,
+): Promise<void> {
   const now = options.now ?? new Date().toISOString();
 
   await layer.transactionImmediate(async (tx) => {
@@ -390,7 +411,7 @@ export async function restoreTaskFromArchive(
         ? existing.workspaceWorktreeDirSegment
         : null;
       let workspaceWorktreeDirSegment: string | null = null;
-      if (reconciledWorktreeState.workspaceWorktrees && candidateSegment) {
+      if (!releaseSegment && reconciledWorktreeState.workspaceWorktrees && candidateSegment) {
         const liveClaim = await tx
           .select({ id: schema.project.tasks.id })
           .from(schema.project.tasks)

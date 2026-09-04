@@ -259,10 +259,22 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       R15: the pinned workspace task-directory segment is write-once in practice — acquisition
       mints it only when absent — but the write is an ordinary patch so a repair path can clear it
       (null) on a task with no recorded worktrees.
+      FNXC:WorkspaceWorktree 2026-09-04-06:15:
+      Generic updateTask is not the pin API. A plugin (or any other patch) must not clobber a live
+      unique claim or rewrite it to a traversal path. Keep a first mint for stores that still
+      degrade to this patch; ignore any later replacement. Null remains a repair only when this
+      patch already left the task with no recorded worktrees.
       */
+      const existingPin = typeof task.workspaceWorktreeDirSegment === "string" && task.workspaceWorktreeDirSegment.length > 0
+        ? task.workspaceWorktreeDirSegment
+        : undefined;
+      const recordedWorktrees = Boolean(
+        (task.workspaceWorktrees && Object.keys(task.workspaceWorktrees).length > 0)
+        || (typeof task.worktree === "string" && task.worktree.length > 0),
+      );
       if (updates.workspaceWorktreeDirSegment === null) {
-        task.workspaceWorktreeDirSegment = undefined;
-      } else if (updates.workspaceWorktreeDirSegment !== undefined) {
+        if (!recordedWorktrees) task.workspaceWorktreeDirSegment = undefined;
+      } else if (updates.workspaceWorktreeDirSegment !== undefined && !existingPin) {
         task.workspaceWorktreeDirSegment = updates.workspaceWorktreeDirSegment;
       }
       // New dependencies re-seed hold-lane tasks and exhausted Plan Review cap parks.
