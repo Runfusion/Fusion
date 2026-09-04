@@ -376,6 +376,16 @@ export async function restoreTaskFromArchive(
         existing.workspaceWorktrees,
         existing.worktree,
       );
+      /*
+      FNXC:WorkspaceWorktree 2026-09-04-05:37:
+      `readTaskRowInTransaction` is a `Record<string, unknown>` projection. The SET target is a
+      text column, so keep only a string pin or release to null — never pass the untyped cell.
+      */
+      const workspaceWorktreeDirSegment: string | null =
+        reconciledWorktreeState.workspaceWorktrees
+        && typeof existing.workspaceWorktreeDirSegment === "string"
+          ? existing.workspaceWorktreeDirSegment
+          : null;
       // Row exists (was soft-deleted). Restore it: clear deleted_at, keep
       // column as "archived" so the caller (unarchiveTaskImpl) can verify the
       // task is in the archived column and then moveTask it to the target
@@ -393,9 +403,7 @@ export async function restoreTaskFromArchive(
           cannot resurrect as a false land; the write-once directory segment is the same claim and
           must not re-enter the live unique index if a successor already reused the released name.
           */
-          workspaceWorktreeDirSegment: reconciledWorktreeState.workspaceWorktrees
-            ? existing.workspaceWorktreeDirSegment
-            : null,
+          workspaceWorktreeDirSegment,
           /*
           FNXC:TaskStoreArchiveLineage 2026-08-01-23:23 DELIBERATE-LITERAL — STATE MARKER:
           Restore exposes the durable row before the caller's validated move out of the archive state.
