@@ -5,9 +5,7 @@ import * as worktreePool from "../worktree/worktree-pool.js";
 import { SelfHealingManager } from "../self-healing.js";
 import { evaluateNoCommitsNoOpFinalize, TaskNotFoundError } from "@fusion/core";
 import {
-  captureNamedTool,
   createMockStore,
-  mockedCreateFnAgent,
   mockedExecSync,
   resetExecutorMocks,
 } from "./executor-test-helpers.js";
@@ -68,23 +66,18 @@ async function setup(overrides: Record<string, unknown> = {}) {
     task = { ...task, id, column };
   });
 
-  mockedCreateFnAgent.mockImplementation(async ({ customTools }: any) => {
-    tool = captureNamedTool(customTools, "fn_task_done", tool);
-    return { session: { prompt: vi.fn().mockResolvedValue(undefined), dispose: vi.fn() } } as any;
-  });
-
   const executor = new TaskExecutor(store as any, "/repo");
-  await executor.execute(task as any);
-
-  // execute() runs a mock session that never calls fn_task_done, so its own
-  // "finished without fn_task_done" recovery touches these mocks. Clear that
-  // history so assertions capture ONLY the direct tool.execute() call below.
-  store.getTask.mockClear();
-  store.updateTask.mockClear();
-  store.moveTask.mockClear();
-  store.updateStep.mockClear();
-  store.logEntry.mockClear();
-  store.recordRunAuditEvent.mockClear();
+  // FNXC:MergeRetryReliability 2026-09-04-02:24: this suite verifies the
+  // completion tool's observable park contract. Constructing it directly keeps
+  // that contract isolated from graph-session scheduling and its unrelated
+  // lifecycle waits.
+  tool = (executor as any).createTaskDoneTool(
+    task.id,
+    task.worktree,
+    "",
+    new Map(),
+    vi.fn(),
+  );
 
   return { store, tool, getTask: () => task };
 }
@@ -595,6 +588,10 @@ describe("FN-8141 follow-up 1 — blocked park survives graph teardown", () => {
       maxAutoMergeRetries: 3,
     } as any);
     store.recordRunAuditEvent = vi.fn().mockResolvedValue(undefined);
+    (store as any).updateTaskAtomic = vi.fn(async (id: string, reducer: (current: any) => any, context: unknown) => {
+      const patch = reducer(task);
+      return patch ? store.updateTask(id, patch, context) : task;
+    });
     const executor = new TaskExecutor(store as any, "/repo", {} as any);
     return { store, task, executor };
   }
@@ -740,5 +737,70 @@ describe("FN-8141 follow-up 1 — blocked park survives graph teardown", () => {
     );
     expect(parkedFailed).toBe(true);
     expect(store.moveTask).not.toHaveBeenCalled();
+  });
+
+  it("keeps re-attempting deferred terminal persistence until the store recovers (no round cap)", async () => {
+    // Store outage: every fenced terminal write is rejected. The initial bounded
+    // round exhausts, then deferred fenced rounds continue past the old 31-round
+    // cap and park the unchanged execution as soon as the store comes back.
+    const { store, task, executor } = makeHarness({
+      status: null,
+      error: null,
+    });
+    // A live execution owns the task — the run identity the deferred fence captures.
+    (executor as any).currentRunContexts.set(task.id, { runId: `exec-${task.id}-1`, agentId: "executor" });
+    const OUTAGE_ROUNDS = 33; // one past the old cap of 31 deferred attempts
+    let atomicAttempts = 0;
+    let parkedPatch: { status?: string } | null = null;
+    store.updateTaskAtomic = vi.fn(async (_id: string, reducer: (current: any) => any) => {
+      atomicAttempts += 1;
+      if (atomicAttempts <= 7 + OUTAGE_ROUNDS) throw new Error("store outage");
+      const patch = reducer({ ...task, status: null, deletedAt: null, paused: false, userPaused: false });
+      if (patch) parkedPatch = patch;
+      return patch ? { ...task, ...patch } : task;
+    });
+
+    const pending = invokeGraphFailure(executor, task, {
+      visitedNodeIds: ["plan", "execute"],
+      context: { "node:execute:value": "some-non-blocked-failure" },
+    });
+    await vi.advanceTimersByTimeAsync(300_000);
+    await pending;
+
+    // One bounded round of seven atomic attempts, followed by deferred rounds.
+    expect(atomicAttempts).toBe(7 + OUTAGE_ROUNDS + 1);
+    expect(parkedPatch).toEqual({ error: expect.any(String), status: "failed" });
+  });
+
+  it("does not let a bounded terminal retry fail an operator-requeued execution", async () => {
+    const columnMovedAt = "2026-09-04T02:24:00.000Z";
+    const { store, task, executor } = makeHarness({
+      status: null,
+      error: null,
+      columnMovedAt,
+    });
+    let current = { ...task, status: null, error: null, columnMovedAt };
+    let attempts = 0;
+    store.updateTaskAtomic = vi.fn(async (_id: string, reducer: (row: any) => any) => {
+      attempts += 1;
+      if (attempts === 1) throw new Error("store outage");
+      const patch = reducer(current);
+      if (patch) current = { ...current, ...patch };
+      return patch ? current : current;
+    });
+
+    const handling = invokeGraphFailure(executor, task, {
+      visitedNodeIds: ["plan", "execute"],
+      context: { "node:execute:value": "some-non-blocked-failure" },
+    });
+    await Promise.resolve();
+    // An operator requeue is a new execution identity while persistence waits.
+    current = { ...current, columnMovedAt: "2026-09-04T02:25:00.000Z" };
+    await vi.advanceTimersByTimeAsync(1_000);
+    await handling;
+
+    expect(attempts).toBe(2);
+    expect(current.status).toBeNull();
+    expect(current.error).toBeNull();
   });
 });

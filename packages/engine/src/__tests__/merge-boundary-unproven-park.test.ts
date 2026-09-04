@@ -31,10 +31,14 @@ describe("FN-9157 merge-boundary-unproven terminal routing", () => {
   it("parks an unprovable retry once without requesting merge and keeps its worktree-backed lease", async () => {
     const live = { ...task, worktree: "/worktree", status: undefined };
     const updateTask = vi.fn(async (_id, patch) => ({ ...live, ...patch }));
+    const updateTaskAtomic = vi.fn(async (id, reducer, context) => {
+      const patch = reducer(live);
+      return patch ? updateTask(id, patch, context) : live;
+    });
     const logEntry = vi.fn();
     const mergeRequester = vi.fn();
     const handled = await routeGraphMergeFailureToRetry({
-      store: { updateTask, logEntry } as any,
+      store: { updateTask, updateTaskAtomic, logEntry } as any,
       getRunContextFor: () => undefined,
       mergeRequester,
       ensureWorkflowMergeBoundaryTask: vi.fn().mockResolvedValue({ task: live, blocked: { reason: "no pre-merge node result recorded", code: "no-node-result", missingInstanceCount: 0 } }),
@@ -51,9 +55,13 @@ describe("FN-9157 merge-boundary-unproven terminal routing", () => {
   it("emits redacted audit metadata for parked and already-terminal retry boundaries", async () => {
     const live = { ...task, status: undefined };
     const updateTask = vi.fn(async (_id, patch) => ({ ...live, ...patch }));
+    const updateTaskAtomic = vi.fn(async (id, reducer, context) => {
+      const patch = reducer(live);
+      return patch ? updateTask(id, patch, context) : live;
+    });
     const recordRunAuditEvent = vi.fn().mockResolvedValue(undefined);
     const base = {
-      store: { updateTask, logEntry: vi.fn(), recordRunAuditEvent } as any,
+      store: { updateTask, updateTaskAtomic, logEntry: vi.fn(), recordRunAuditEvent } as any,
       getRunContextFor: () => undefined,
       mergeRequester: vi.fn(),
       persistTokenUsage: vi.fn(),
@@ -70,6 +78,10 @@ describe("FN-9157 merge-boundary-unproven terminal routing", () => {
     expect(JSON.stringify(recordRunAuditEvent.mock.calls[0][0].metadata)).not.toContain("secret-a");
 
     const terminal = { ...live, status: "failed", error: "existing" };
+    updateTaskAtomic.mockImplementation(async (id, reducer, context) => {
+      const patch = reducer(terminal);
+      return patch ? updateTask(id, patch, context) : terminal;
+    });
     await expect(routeGraphMergeFailureToRetry({
       ...base,
       ensureWorkflowMergeBoundaryTask: vi.fn().mockResolvedValue({ task: terminal, blocked: { reason: "no pre-merge node result recorded", code: "no-node-result", missingInstanceCount: 0 } }),
@@ -85,9 +97,13 @@ describe("FN-9157 merge-boundary-unproven terminal routing", () => {
   ])("keeps the terminal park intact when the audit sink %s", async (_name, recordRunAuditEvent) => {
     const live = { ...task, status: undefined };
     const updateTask = vi.fn(async (_id, patch) => ({ ...live, ...patch }));
+    const updateTaskAtomic = vi.fn(async (id, reducer, context) => {
+      const patch = reducer(live);
+      return patch ? updateTask(id, patch, context) : live;
+    });
     const persistTokenUsage = vi.fn();
     await expect(routeGraphMergeFailureToRetry({
-      store: { updateTask, logEntry: vi.fn(), recordRunAuditEvent } as any,
+      store: { updateTask, updateTaskAtomic, logEntry: vi.fn(), recordRunAuditEvent } as any,
       getRunContextFor: () => undefined,
       mergeRequester: vi.fn(),
       ensureWorkflowMergeBoundaryTask: vi.fn().mockResolvedValue({ task: live, blocked: { reason: "no pre-merge node result recorded", code: "no-node-result", missingInstanceCount: 0 } }),
@@ -102,9 +118,13 @@ describe("FN-9157 merge-boundary-unproven terminal routing", () => {
     try {
       const live = { ...task, status: undefined };
       const updateTask = vi.fn(async (_id, patch) => ({ ...live, ...patch }));
+      const updateTaskAtomic = vi.fn(async (id, reducer, context) => {
+        const patch = reducer(live);
+        return patch ? updateTask(id, patch, context) : live;
+      });
       const persistTokenUsage = vi.fn();
       const handled = routeGraphMergeFailureToRetry({
-        store: { updateTask, logEntry: vi.fn(), recordRunAuditEvent: vi.fn(() => new Promise<void>(() => {})) } as any,
+        store: { updateTask, updateTaskAtomic, logEntry: vi.fn(), recordRunAuditEvent: vi.fn(() => new Promise<void>(() => {})) } as any,
         getRunContextFor: () => undefined,
         mergeRequester: vi.fn(),
         ensureWorkflowMergeBoundaryTask: vi.fn().mockResolvedValue({ task: live, blocked: { reason: "no pre-merge node result recorded", code: "no-node-result", missingInstanceCount: 0 } }),
