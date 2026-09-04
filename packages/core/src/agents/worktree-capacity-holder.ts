@@ -18,6 +18,9 @@ A Plan Review replan bounce carries `status:"needs-replan"`, which is intentiona
 status, while retaining the execution checkout it will resume onto. Count that real checkout before
 consulting agent liveness so it cannot disappear from the host-resource gate; pause, failure, and
 terminal lifecycle state still release the slot.
+
+DELIBERATE-LITERAL — resolved lifecycle metadata wins when present. The legacy done, archived, and
+in-progress names are compatibility fallbacks for callers whose task shape predates those fields.
 */
 export function isWorktreeCapacityHolder(task: WorktreeCapacityTaskShape): boolean {
   const terminalKind = task.columnTerminalKind
