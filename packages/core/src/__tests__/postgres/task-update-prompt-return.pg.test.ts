@@ -32,8 +32,8 @@ vi.mock("../../task-store/prompt-file.js", async (importOriginal) => {
   };
 });
 
-const prompt = (body: string) =>
-  `# Task\n\n## Mission\n\n${body}\n\n## File Scope\n\n- packages/core/src/store.ts\n\n## Steps\n\n1. Verify prompt return\n\n## Completion Criteria\n\n- [ ] updateTask returns the prompt\n\n## Do NOT\n\n- Drop the prompt\n\n## Dependencies\n\n- None\n`;
+const prompt = (body: string, symbols?: string[]) =>
+  `# Task\n\n## Mission\n\n${body}\n\n## File Scope\n\n- packages/core/src/store.ts\n\n## Steps\n\n1. Verify prompt return\n\n## Completion Criteria\n\n- [ ] updateTask returns the prompt\n\n## Do NOT\n\n- Drop the prompt\n\n## Dependencies\n\n- None\n${symbols?.length ? `\n## Declared Symbols\n\n${symbols.map((symbol) => `- \`${symbol}\``).join("\n")}\n` : ""}`;
 
 pgDescribe("updateTask prompt return (PostgreSQL backend mode)", () => {
   const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({ prefix: "fusion_task_update_prompt_return" });
@@ -106,5 +106,56 @@ pgDescribe("updateTask prompt return (PostgreSQL backend mode)", () => {
     expect(after?.plan).toEqual(before?.plan);
     expect(JSON.stringify(after)).not.toContain("must not leak into plan evidence");
     expect(await readFile(join(store.taskDir(task.id), "PROMPT.md"), "utf8")).toBe(first);
+  });
+
+  it.sequential("does not persist prompt-derived declaredSymbols when PROMPT.md persistence fails", async () => {
+    /*
+    FNXC:PromptReadBack 2026-09-04-05:45:
+    Symbol hydration from a Declared Symbols section must not land in the PG row before
+    PROMPT.md reaches disk. A failed rewrite keeps the previously persisted symbols.
+    */
+    const task = await store.createTask({ description: "prompt symbols isolation" });
+    const first = prompt("first symbols revision", ["pkg/old.ts#A"]);
+    const leaked = prompt("must not leak symbols", ["pkg/new.ts#Foo"]);
+
+    await store.updateTask(task.id, { prompt: first });
+    expect((await store.getTask(task.id)).declaredSymbols).toEqual(["pkg/old.ts#a"]);
+
+    persistPromptFile.mockRejectedValueOnce(
+      new Error("EIO: simulated PROMPT.md write failure"),
+    );
+
+    await expect(store.updateTask(task.id, { prompt: leaked })).rejects.toThrow(
+      /EIO: simulated PROMPT.md write failure/,
+    );
+
+    expect((await store.getTask(task.id)).declaredSymbols).toEqual(["pkg/old.ts#a"]);
+    expect(await readFile(join(store.taskDir(task.id), "PROMPT.md"), "utf8")).toBe(first);
+  });
+
+  it.sequential("keeps the durable prompt when current-plan evidence capture fails", async () => {
+    /*
+    FNXC:PromptReadBack 2026-09-04-05:45:
+    A PlanEvidenceAppendError after writePromptFileAtomic must not reject the prompt update.
+    PROMPT.md is already the authoritative revision; updateTaskImpl reconciliation repairs
+    missing evidence from that file after the task lock is released.
+    */
+    const task = await store.createTask({ description: "prompt evidence defer" });
+    const first = prompt("first evidence revision");
+    const next = prompt("durable prompt after evidence failure");
+    await store.updateTask(task.id, { prompt: first });
+
+    const spy = vi.spyOn(store, "captureCurrentPlanEvidenceWhilePlanningLocked")
+      .mockRejectedValueOnce(new Error("simulated current-plan evidence insert failure"));
+    try {
+      const updated = await store.updateTask(task.id, { prompt: next });
+      expect(updated?.prompt).toBe(next);
+      expect(await readFile(join(store.taskDir(task.id), "PROMPT.md"), "utf8")).toBe(next);
+    } finally {
+      spy.mockRestore();
+    }
+
+    const evidence = await store.getLatestCurrentPlanEvidence(task.id);
+    expect(evidence?.plan.sections.mission.canonical).toContain("durable prompt after evidence failure");
   });
 });

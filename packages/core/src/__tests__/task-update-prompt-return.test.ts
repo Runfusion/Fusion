@@ -33,8 +33,8 @@ vi.mock("../task-store/prompt-file.js", async (importOriginal) => {
   };
 });
 
-const prompt = (body: string) =>
-  `# Task\n\n## Mission\n\n${body}\n\n## File Scope\n\n- packages/core/src/store.ts\n\n## Steps\n\n1. Verify prompt return\n\n## Completion Criteria\n\n- [ ] updateTask returns the prompt\n\n## Do NOT\n\n- Drop the prompt\n\n## Dependencies\n\n- None\n`;
+const prompt = (body: string, symbols?: string[]) =>
+  `# Task\n\n## Mission\n\n${body}\n\n## File Scope\n\n- packages/core/src/store.ts\n\n## Steps\n\n1. Verify prompt return\n\n## Completion Criteria\n\n- [ ] updateTask returns the prompt\n\n## Do NOT\n\n- Drop the prompt\n\n## Dependencies\n\n- None\n${symbols?.length ? `\n## Declared Symbols\n\n${symbols.map((symbol) => `- \`${symbol}\``).join("\n")}\n` : ""}`;
 
 const tempDirs: string[] = [];
 afterEach(() => {
@@ -165,5 +165,43 @@ describe("updateTask returns the persisted prompt", () => {
     const auditCalls = vi.mocked(store.atomicWriteTaskJsonWithAudit).mock.calls;
     expect(auditCalls.length).toBeGreaterThan(0);
     expect(auditCalls.every((call) => call[4] === undefined)).toBe(true);
+  });
+
+  it("does not persist prompt-derived declaredSymbols when PROMPT.md persistence fails", async () => {
+    /*
+    FNXC:PromptReadBack 2026-09-04-05:45:
+    Hydrating declaredSymbols from the incoming prompt before the file write would commit
+    those symbols in the row transaction. A later PROMPT.md failure would leave symbol
+    resolution observing the unwritten revision.
+    */
+    const { store, row } = harness({ declaredSymbols: ["pkg/old.ts#a"] });
+    const content = prompt("must not leak symbols", ["pkg/new.ts#Foo"]);
+    persistPromptFile.mockRejectedValueOnce(
+      new Error("EIO: simulated PROMPT.md write failure"),
+    );
+
+    await expect(
+      updateTaskUnlockedImpl(store, "FN-1", { prompt: content } as never),
+    ).rejects.toThrow(/EIO: simulated PROMPT.md write failure/);
+
+    expect(row.declaredSymbols).toEqual(["pkg/old.ts#a"]);
+    const writtenTasks = vi.mocked(store.atomicWriteTaskJsonWithAudit).mock.calls.map((call) => call[1] as { declaredSymbols?: string[] });
+    expect(writtenTasks.every((written) => JSON.stringify(written.declaredSymbols) === JSON.stringify(["pkg/old.ts#a"]))).toBe(true);
+  });
+
+  it("persists prompt-derived declaredSymbols only after PROMPT.md write succeeds", async () => {
+    const { store, row } = harness({ declaredSymbols: ["pkg/old.ts#a"] });
+    const content = prompt("symbols after file", ["pkg/new.ts#Foo"]);
+    const persistedSymbols: Array<string[] | undefined> = [];
+    vi.mocked(store.atomicWriteTaskJsonWithAudit).mockImplementation(async (_dir, task) => {
+      persistedSymbols.push([...((task as { declaredSymbols?: string[] }).declaredSymbols ?? [])]);
+    });
+
+    const updated = await updateTaskUnlockedImpl(store, "FN-1", { prompt: content } as never);
+
+    expect(updated.declaredSymbols).toEqual(["pkg/new.ts#foo"]);
+    expect(row.declaredSymbols).toEqual(["pkg/new.ts#foo"]);
+    expect(persistedSymbols[0]).toEqual(["pkg/old.ts#a"]);
+    expect(persistedSymbols.some((symbols) => JSON.stringify(symbols) === JSON.stringify(["pkg/new.ts#foo"]))).toBe(true);
   });
 });
