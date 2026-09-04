@@ -1,19 +1,18 @@
+import type { Task, TaskStore, RunMutationContext } from "@fusion/core";
+import { isNonContinuableSessionError } from "../errors/transient-error-detector.js";
+import { computeRecoveryDecision, formatDelay, MAX_RECOVERY_RETRIES } from "../healing/recovery-policy.js";
+import { executorLog } from "../logger.js";
+import { isTaskAlreadyCompleteForNonContinuableSession } from "./completion-predicates.js";
+import { resolveReboundColumnFor } from "./lifecycle-columns.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-17:40:
  * handleNonContinuableSessionError + handleNonContinuableSessionRetry peeled from TaskExecutor (U4).
  * Post-done non-continuable session suppression and fresh-session recovery retry budget.
  */
-import type { Task, TaskStore } from "@fusion/core";
-import { isNonContinuableSessionError } from "../errors/transient-error-detector.js";
-import { computeRecoveryDecision, formatDelay, MAX_RECOVERY_RETRIES } from "../healing/recovery-policy.js";
-import { executorLog } from "../logger.js";
-import type { EngineRunContext } from "../util/run-audit.js";
-import { isTaskAlreadyCompleteForNonContinuableSession } from "./completion-predicates.js";
-import { resolveReboundColumnFor } from "./lifecycle-columns.js";
 
 export type NonContinuableSessionDeps = {
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
   runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   resolveResumeLanes: (taskId: string) => Promise<{ hold: string; wip: string; review: string; wipDeclared: boolean }>;
   persistTokenUsage: (taskId: string) => Promise<void>;

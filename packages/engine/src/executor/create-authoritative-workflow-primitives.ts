@@ -1,3 +1,27 @@
+import type { ResolvedTaskOutputLanguage, Settings, TaskDetail, TaskStore, RunMutationContext } from "@fusion/core";
+import { emitWorkflowLifecycleEvent, resolveTaskLifecycleColumns, resolveTaskOutputLanguage } from "@fusion/core";
+import type { ImplementationExit } from "./implementation-exit.js";
+import type {
+  AuditPrimitiveInput,
+  PreparedWorktree,
+  WorkflowPrimitiveContext,
+  WorkflowRuntimePrimitives } from "../execution/runtime-primitives.js";
+import { WorkflowPlanningService } from "../workflows/workflow-planning-service.js";
+import { MERGE_BOUNDARY_UNPROVEN_VALUE } from "../workflows/workflow-merge-nodes.js";
+import {
+  FOREACH_ACTIVE_CONTEXT_KEY,
+  SEAM_GOVERNING_NODE_CONTEXT_KEY,
+  SEAM_SKILL_NAME_CONTEXT_KEY,
+  SPLIT_ACTIVE_CONTEXT_KEY,
+  type ForeachActiveContext } from "../workflows/workflow-node-handlers.js";
+import { graphActiveContextKey } from "./task-predicates.js";
+import { hasNonTerminalWorkflowSteps } from "./workflow-step-satisfaction.js";
+import { makeAncestryBlastRadiusGuard, resetStepToBaseline } from "../execution/step-runner.js";
+import { finalizeProvenAutoMergeTask } from "../merge/auto-merge-finalization.js";
+import { createRunAuditor } from "../util/run-audit.js";
+import { executorLog } from "../logger.js";
+import { resolveExternalExecutionCheckoutRoute } from "../execution/external-execution-checkout.js";
+import { runContextForTotal } from "./run-context-for.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-14:15:
  * createAuthoritativeWorkflowPrimitivesFromExecutor peeled from TaskExecutor (U4).
@@ -8,32 +32,6 @@
  * FNXC:WorkflowExecutionOwnership 2026-07-29-16:20:
  * runCodingSession is the live implementation owner and announces NodeCompleted exits.
  */
-import type { ResolvedTaskOutputLanguage, Settings, TaskDetail, TaskStore } from "@fusion/core";
-import { emitWorkflowLifecycleEvent, resolveTaskLifecycleColumns, resolveTaskOutputLanguage } from "@fusion/core";
-import type { ImplementationExit } from "./implementation-exit.js";
-import type {
-  AuditPrimitiveInput,
-  PreparedWorktree,
-  WorkflowPrimitiveContext,
-  WorkflowRuntimePrimitives,
-} from "../execution/runtime-primitives.js";
-import { WorkflowPlanningService } from "../workflows/workflow-planning-service.js";
-import { MERGE_BOUNDARY_UNPROVEN_VALUE } from "../workflows/workflow-merge-nodes.js";
-import {
-  FOREACH_ACTIVE_CONTEXT_KEY,
-  SEAM_GOVERNING_NODE_CONTEXT_KEY,
-  SEAM_SKILL_NAME_CONTEXT_KEY,
-  SPLIT_ACTIVE_CONTEXT_KEY,
-  type ForeachActiveContext,
-} from "../workflows/workflow-node-handlers.js";
-import { graphActiveContextKey } from "./task-predicates.js";
-import { hasNonTerminalWorkflowSteps } from "./workflow-step-satisfaction.js";
-import { makeAncestryBlastRadiusGuard, resetStepToBaseline } from "../execution/step-runner.js";
-import { finalizeProvenAutoMergeTask } from "../merge/auto-merge-finalization.js";
-import { createRunAuditor, type EngineRunContext } from "../util/run-audit.js";
-import { executorLog } from "../logger.js";
-import { resolveExternalExecutionCheckoutRoute } from "../execution/external-execution-checkout.js";
-import { runContextForTotal } from "./run-context-for.js";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- mirror TaskExecutor method surface without re-typing the class
 type AnyFn = (...args: any[]) => any;
@@ -46,7 +44,7 @@ export type CreateAuthoritativeWorkflowPrimitivesDeps = {
   pausedAborted: Set<string>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- merge requester accepts optional signal bag
   mergeRequester?: ((taskId: string, opts?: any) => Promise<any>) | null;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
   runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   buildParseStepsDeps: AnyFn;
   createAuthoritativeWorkflowSeams: AnyFn;

@@ -1,16 +1,15 @@
+import type { RunCommandResult, Settings, Task, TaskStore, WorkflowStep, RunMutationContext } from "@fusion/core";
+import { executorLog } from "../logger.js";
+import { createRunAuditor, generateSyntheticRunId, type RunAuditor } from "../util/run-audit.js";
+import {
+  configuredCommandErrorMessage,
+  truncateWorkflowScriptOutput } from "./configured-command.js";
+import { createConfiguredCommandAbortError } from "./task-predicates.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-17:05:
  * executeScriptWorkflowStep peeled from TaskExecutor (U4 Slice B / step-session edge).
  * Resolves settings.scripts[scriptName] and runs via runConfiguredCommand in the task worktree.
  */
-import type { RunCommandResult, Settings, Task, TaskStore, WorkflowStep } from "@fusion/core";
-import { executorLog } from "../logger.js";
-import { createRunAuditor, generateSyntheticRunId, type EngineRunContext, type RunAuditor } from "../util/run-audit.js";
-import {
-  configuredCommandErrorMessage,
-  truncateWorkflowScriptOutput,
-} from "./configured-command.js";
-import { createConfiguredCommandAbortError } from "./task-predicates.js";
 
 export type RunConfiguredCommandFn = (
   command: string,
@@ -23,7 +22,7 @@ export type RunConfiguredCommandFn = (
 
 export type ScriptWorkflowStepDeps = {
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
   runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   registerConfiguredCommandController: (taskId: string, controller: AbortController) => void;
   unregisterConfiguredCommandController: (taskId: string, controller: AbortController) => void;

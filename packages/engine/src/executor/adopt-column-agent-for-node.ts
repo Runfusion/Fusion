@@ -1,16 +1,15 @@
+import type { AgentStore, TaskDetail, TaskStore, WorkflowColumnAgent, WorkflowIrNode, RunMutationContext } from "@fusion/core";
+import { executorLog } from "../logger.js";
+import { buildAgentPersona } from "./agent-binding-pure.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-11:30:
  * adoptColumnAgentForNode peeled from TaskExecutor (U4).
  * Resolve column-agent model/persona for a graph node (best-effort R8 fallback).
  */
-import type { AgentStore, TaskDetail, TaskStore, WorkflowColumnAgent, WorkflowIrNode } from "@fusion/core";
-import { executorLog } from "../logger.js";
-import type { EngineRunContext } from "../util/run-audit.js";
-import { buildAgentPersona } from "./agent-binding-pure.js";
 
 export type AdoptColumnAgentForNodeDeps = {
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
   runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   agentStore?: AgentStore | null;
 };

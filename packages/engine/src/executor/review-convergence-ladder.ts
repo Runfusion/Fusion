@@ -1,11 +1,4 @@
-/*
-FNXC:ReviewConvergence 2026-08-22-05:54:
-FN-149 requires an exhausted or unchanged review cycle to take one bounded AI remediation action before reaching its terminal rung. The atomic stage claim prevents concurrent graph and recovery paths from scheduling duplicate bounces.
-
-FNXC:ReviewConvergence 2026-08-28-07:48:
-An exhausted Code Review convergence cycle is advisory, not a human gate. Its terminal rung records and releases the feedback without mutating lifecycle state. A provably empty review input is a separate terminal carve-out: no content was reviewed, so there is no advisory position to release and no remediation or arbitration round can create one. The operator-authored Plan Review replan-cap hold remains the other lifecycle-mutating exception.
-*/
-import type { Task, TaskStore, WorkflowReviewFinding } from "@fusion/core";
+import type { Task, TaskStore, WorkflowReviewFinding, RunMutationContext } from "@fusion/core";
 import {
   collectDisputedFindings,
   hasConfiguredFallbackLane,
@@ -16,18 +9,22 @@ import {
   resolveReviewConvergenceEscalationTarget,
   resolveStepReopenPolicy,
   resolveTaskExecutionModel,
-  resolveWorkflowIrForTask,
-} from "@fusion/core";
+  resolveWorkflowIrForTask } from "@fusion/core";
 import { mergeEffectiveSettings } from "../project/effective-settings.js";
 import { moveTaskToReplanColumn } from "../execution/replan-target.js";
-import type { EngineRunContext } from "../util/run-audit.js";
 import { emitBoundedRunAudit } from "./emit-bounded-run-audit.js";
 import { runReviewArbitration } from "./review-arbitration.js";
 import { resolveRemediationCheckout } from "./resolve-remediation-checkout.js";
 import {
   terminalizeEmptyReviewContent,
-  type EmptyReviewContentGateFence,
-} from "./review-empty-content-close.js";
+  type EmptyReviewContentGateFence } from "./review-empty-content-close.js";
+/*
+FNXC:ReviewConvergence 2026-08-22-05:54:
+FN-149 requires an exhausted or unchanged review cycle to take one bounded AI remediation action before reaching its terminal rung. The atomic stage claim prevents concurrent graph and recovery paths from scheduling duplicate bounces.
+
+FNXC:ReviewConvergence 2026-08-28-07:48:
+An exhausted Code Review convergence cycle is advisory, not a human gate. Its terminal rung records and releases the feedback without mutating lifecycle state. A provably empty review input is a separate terminal carve-out: no content was reviewed, so there is no advisory position to release and no remediation or arbitration round can create one. The operator-authored Plan Review replan-cap hold remains the other lifecycle-mutating exception.
+*/
 
 export const REVIEW_CONVERGENCE_MAX_LADDER_CYCLES = 3;
 
@@ -44,7 +41,7 @@ export type ReviewConvergenceStop = {
 
 export type ReviewConvergenceLadderDeps = {
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
   sendTaskBackForFix: (
     task: Task, worktreePath: string, failureFeedback: string, stepName: string, reason: string,
     preserveResumeState: boolean, mergeVerificationFailure: boolean,

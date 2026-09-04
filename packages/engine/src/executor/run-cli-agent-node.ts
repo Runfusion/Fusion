@@ -1,22 +1,20 @@
-/**
- * FNXC:CodeOrganization 2026-08-03-11:25:
- * runCliAgentNode + reapCliTaskSessionForHandoff peeled from TaskExecutor (U4).
- * CLI agent graph node: launch PTY session, map outcomes to WorkflowNodeResult.
- */
-import type { CliSessionStore, TaskDetail, TaskStore, WorkflowIrNode } from "@fusion/core";
+import type { CliSessionStore, TaskDetail, TaskStore, WorkflowIrNode, RunMutationContext } from "@fusion/core";
 import type { WorkflowNodeResult } from "../workflows/workflow-graph-executor.js";
 import { executorLog } from "../logger.js";
-import type { EngineRunContext } from "../util/run-audit.js";
 import { resolveCliExecutorConfig } from "./cli-executor-config.js";
 import {
   CliTaskSession,
   launchCliTaskSession,
   killLiveTaskSessions,
-  type CliTaskOutcome,
-} from "../cli-agent/task-session.js";
+  type CliTaskOutcome } from "../cli-agent/task-session.js";
 import { CliConcurrencyLimitError, type CliSessionManager } from "../cli-agent/session-manager.js";
 import type { TelemetryHub } from "../cli-agent/telemetry-hub.js";
 import type { CliAdapterRegistry } from "../cli-agent/adapter.js";
+/**
+ * FNXC:CodeOrganization 2026-08-03-11:25:
+ * runCliAgentNode + reapCliTaskSessionForHandoff peeled from TaskExecutor (U4).
+ * CLI agent graph node: launch PTY session, map outcomes to WorkflowNodeResult.
+ */
 
 /** Structural match for TaskExecutor's CliAgentRuntime (avoids circular import). */
 export type CliAgentRuntimeBundle = {
@@ -31,7 +29,7 @@ export type CliAgentRuntimeBundle = {
 
 export type RunCliAgentNodeDeps = {
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
   runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   activeCliTaskSessions: Map<string, CliTaskSession>;
   cliAgentRuntime?: CliAgentRuntimeBundle | null;

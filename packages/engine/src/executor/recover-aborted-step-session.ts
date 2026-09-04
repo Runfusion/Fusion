@@ -1,6 +1,6 @@
-import type { TaskStore } from "@fusion/core";
+import type { TaskStore, RunMutationContext } from "@fusion/core";
 import { emitBoundedRunAudit } from "./emit-bounded-run-audit.js";
-import { generateSyntheticRunId, type EngineRunContext } from "../util/run-audit.js";
+import { generateSyntheticRunId } from "../util/run-audit.js";
 
 export type StepSessionAbortTrigger =
   | "graceful-pause-abort"
@@ -16,7 +16,7 @@ export type StepSessionAbortRecoveryOutcome =
 export type RecoverAbortedStepSessionDeps = {
   store: TaskStore;
   markGraphExecuteSelfRequeued: (taskId: string) => void;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
 };
 
 /**

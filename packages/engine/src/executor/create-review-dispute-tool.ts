@@ -1,14 +1,15 @@
+import type { RunMutationContext } from "@fusion/core";
+import { Type, type Static } from "@earendil-works/pi-ai";
+import { isOpenWorkflowReviewFinding, type TaskStore, type WorkflowStepResult } from "@fusion/core";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { generateSyntheticRunId } from "../util/run-audit.js";
+import { emitBoundedRunAudit } from "./emit-bounded-run-audit.js";
 /*
 FNXC:ReviewConvergence 2026-08-22-05:20:
 FN-149 gives implementers a durable way to contest a review finding without resolving it. A dispute
 is an open annotation: only a later review verdict may uphold or rebut it, so this tool cannot
 reduce a finding's blocking power or release a merge gate.
 */
-import { Type, type Static } from "@earendil-works/pi-ai";
-import { isOpenWorkflowReviewFinding, type TaskStore, type WorkflowStepResult } from "@fusion/core";
-import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { generateSyntheticRunId, type EngineRunContext } from "../util/run-audit.js";
-import { emitBoundedRunAudit } from "./emit-bounded-run-audit.js";
 
 const MAX_DISPUTE_RATIONALE_LENGTH = 4_000;
 const reviewDisputeParams = Type.Object({
@@ -18,7 +19,8 @@ const reviewDisputeParams = Type.Object({
 
 export type ReviewDisputeToolDeps = {
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
+  runContextFor?: (taskId: string, fallbackAgentId?: string | null) => RunMutationContext;
 };
 
 type DisputeResult = { outcome: "disputed"; workflowStepId: string } | { outcome: "not-found" | "already-resolved" | "already-disputed" | "ambiguous" };

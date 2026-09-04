@@ -1,3 +1,7 @@
+import type { Task, TaskDetail, TaskStore, RunMutationContext } from "@fusion/core";
+import { isSessionContentionError } from "../errors/transient-error-detector.js";
+import { executorLog } from "../logger.js";
+import { graphFailureErrorTexts } from "./graph-failure-pure.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-19:40:
  * holdForSessionContention peeled from TaskExecutor (U4).
@@ -8,11 +12,6 @@
  * Persist the owner-local retry budget and an operator-visible wait reason, but never park a
  * contention wait as failed; a shared budget across unrelated failed-park owners remains out of scope.
  */
-import type { Task, TaskDetail, TaskStore } from "@fusion/core";
-import { isSessionContentionError } from "../errors/transient-error-detector.js";
-import { executorLog } from "../logger.js";
-import type { EngineRunContext } from "../util/run-audit.js";
-import { graphFailureErrorTexts } from "./graph-failure-pure.js";
 
 export const MAX_SESSION_CONTENTION_HOLD_RETRIES = 10;
 export const SESSION_CONTENTION_HOLD_BACKOFF_MS = process.env.VITEST || process.env.NODE_ENV === "test" ? 0 : 5_000;
@@ -20,7 +19,7 @@ export const SESSION_CONTENTION_HOLD_MAX_BACKOFF_MS = 60_000;
 
 export type SessionContentionHoldDeps = {
   store: TaskStore;
-  runContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string) => RunMutationContext | undefined;
   reexecute: (task: Task) => Promise<void>;
 };
 

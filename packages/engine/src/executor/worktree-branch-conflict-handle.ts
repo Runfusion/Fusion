@@ -1,3 +1,4 @@
+import type { RunMutationContext } from "@fusion/core";
 /**
  * FNXC:CodeOrganization 2026-08-03-16:05:
  * reclaimExistingWorktree + handleBranchConflict peeled from TaskExecutor (U4 Slice B).
@@ -29,7 +30,7 @@ const execAsync = promisify(exec);
 export type BranchConflictHandleDeps = {
   rootDir: string;
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
   runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   findActiveWorktreeOwner: (worktreePath: string, requestingTaskId: string) => Promise<string | null>;
   normalizeReclaimableWorktreePath: (

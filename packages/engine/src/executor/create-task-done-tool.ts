@@ -1,3 +1,31 @@
+import { Type } from "@earendil-works/pi-ai";
+import type { Settings, Task, TaskDetail, TaskRecommendation, TaskStore, RunMutationContext } from "@fusion/core";
+import {
+  buildTaskExternalBlockPatch,
+  isTaskNotFoundError,
+  parseNoOpCompletionMarker,
+  resolveWipTargetForTask } from "@fusion/core";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { ReviewVerdict } from "../execution/reviewer.js";
+import {
+  BLOCKED_THRASH_LIMIT,
+  buildExternalBlockMetadataPatch,
+  classifyBlockedExit,
+  classifyExternalObstacle,
+  countBlockedThrashHits,
+  detectRepairableObstacleHint,
+  partitionBlockedByRefs } from "../execution-block-classifier.js";
+import { mergeEffectiveSettings } from "../project/effective-settings.js";
+import { generateSyntheticRunId, type RunAuditor } from "../util/run-audit.js";
+import { emitBoundedRunAudit } from "./emit-bounded-run-audit.js";
+import { executorLog } from "../logger.js";
+import { resolveReboundColumnFor } from "./lifecycle-columns.js";
+import { evaluateTaskDoneRefusal } from "./task-done-refusal.js";
+import { skipBypassTaintUpdateForRefusal } from "./completion-predicates.js";
+import { MAX_TASK_DONE_REQUEUE_RETRIES } from "./task-done-refusal-handler.js";
+import { validateCompletionRecommendations } from "./validate-completion-recommendations.js";
+import { dispatchAcceptedCompletionRecommendationNotice } from "./completion-recommendation-notice.js";
+import type { FinalizeAcceptedNoOpCompletionParams } from "./plan-review-no-op.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-13:10:
  * createTaskDoneTool peeled from TaskExecutor (U4).
@@ -13,40 +41,10 @@
  * FNXC:WorkflowResolvedColumns 2026-07-31-09:20:
  * Completed-task watchdog arms on resolved WIP column, not literal in-progress.
  */
-import { Type } from "@earendil-works/pi-ai";
-import type { Settings, Task, TaskDetail, TaskRecommendation, TaskStore } from "@fusion/core";
-import {
-  buildTaskExternalBlockPatch,
-  isTaskNotFoundError,
-  parseNoOpCompletionMarker,
-  resolveWipTargetForTask,
-} from "@fusion/core";
-import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
-import type { ReviewVerdict } from "../execution/reviewer.js";
-import {
-  BLOCKED_THRASH_LIMIT,
-  buildExternalBlockMetadataPatch,
-  classifyBlockedExit,
-  classifyExternalObstacle,
-  countBlockedThrashHits,
-  detectRepairableObstacleHint,
-  partitionBlockedByRefs,
-} from "../execution-block-classifier.js";
-import { mergeEffectiveSettings } from "../project/effective-settings.js";
-import { generateSyntheticRunId, type EngineRunContext, type RunAuditor } from "../util/run-audit.js";
-import { emitBoundedRunAudit } from "./emit-bounded-run-audit.js";
-import { executorLog } from "../logger.js";
-import { resolveReboundColumnFor } from "./lifecycle-columns.js";
-import { evaluateTaskDoneRefusal } from "./task-done-refusal.js";
-import { skipBypassTaintUpdateForRefusal } from "./completion-predicates.js";
-import { MAX_TASK_DONE_REQUEUE_RETRIES } from "./task-done-refusal-handler.js";
-import { validateCompletionRecommendations } from "./validate-completion-recommendations.js";
-import { dispatchAcceptedCompletionRecommendationNotice } from "./completion-recommendation-notice.js";
-import type { FinalizeAcceptedNoOpCompletionParams } from "./plan-review-no-op.js";
 
 export type CreateTaskDoneToolDeps = {
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
   runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   workflowLifecycleMovesInFlight: Set<string>;
   persistTokenUsage: (taskId: string) => Promise<void>;

@@ -15,8 +15,7 @@ import type {
   WorkflowColumnAgent,
   WorkflowIr,
   WorkflowStepResult as CoreWorkflowStepResult,
-  WorkflowWorkItem,
-} from "@fusion/core";
+  WorkflowWorkItem, RunMutationContext } from "@fusion/core";
 import {
   ACTIVE_WORKFLOW_WORK_ITEM_STATES,
   computePlanApprovalFingerprint,
@@ -110,7 +109,7 @@ export type ExecuteWorkflowGraphDeps = {
   workflowGateActivityPrincipals: Map<string, string>;
   outerConcurrencyClaims: Set<string>;
   processWideGraphRouting: Set<string>;
-  runContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string) => RunMutationContext | undefined;
   advanceNoMergeWorkflowToCompleteColumn: AnyFn;
   applyGraphRethinkReset: AnyFn;
   buildBranchPersistence: AnyFn;

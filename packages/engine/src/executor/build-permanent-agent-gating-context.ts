@@ -1,3 +1,10 @@
+import type { Agent, MessageStore, PermanentAgentGatingContext, TaskStore, RunMutationContext } from "@fusion/core";
+import {
+  AWAITING_APPROVAL_PAUSE_REASON,
+  ApprovalRequestStore,
+  resolveEffectiveAgentPermissionPolicy } from "@fusion/core";
+import { emitApprovalMail } from "../agents/approval-mail.js";
+import { buildAgentGatedActionSummary } from "../agents/permanent-agent-gating.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-10:05:
  * buildPermanentAgentGatingContext peeled from TaskExecutor (U4).
@@ -16,19 +23,10 @@
  * in lanes WITHOUT an actionGateContext, where no executor in-flight
  * session surface exists to abort.
  */
-import type { Agent, MessageStore, PermanentAgentGatingContext, TaskStore } from "@fusion/core";
-import {
-  AWAITING_APPROVAL_PAUSE_REASON,
-  ApprovalRequestStore,
-  resolveEffectiveAgentPermissionPolicy,
-} from "@fusion/core";
-import { emitApprovalMail } from "../agents/approval-mail.js";
-import { buildAgentGatedActionSummary } from "../agents/permanent-agent-gating.js";
-import type { EngineRunContext } from "../util/run-audit.js";
 
 export type BuildPermanentAgentGatingContextDeps = {
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
   runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   approvalSuspended: Set<string>;
   approvalRequestStore: ApprovalRequestStore;

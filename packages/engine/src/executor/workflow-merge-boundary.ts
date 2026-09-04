@@ -1,13 +1,12 @@
+import type { RunMutationContext, TaskDetail, TaskStore } from "@fusion/core";
+import { hasNonTerminalSteps } from "@fusion/core";
+import { runContextForTotal } from "./run-context-for.js";
+import { resolveCompleteColumnFor } from "./lifecycle-columns.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-20:55:
  * ensureWorkflowMergeBoundaryTask peeled from TaskExecutor (U4).
  * Establish durable merge-column handoff + graph-native checklist projection before merge.
  */
-import type { RunMutationContext, TaskDetail, TaskStore } from "@fusion/core";
-import { hasNonTerminalSteps } from "@fusion/core";
-import type { EngineRunContext } from "../util/run-audit.js";
-import { runContextForTotal } from "./run-context-for.js";
-import { resolveCompleteColumnFor } from "./lifecycle-columns.js";
 
 export type WorkflowMergeBoundaryProof = {
   hasForeachStepExecute: boolean;
@@ -35,7 +34,7 @@ export type WorkflowMergeBoundaryResult = {
 
 export type WorkflowMergeBoundaryDeps = {
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
   runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   resolveMergeBoundaryColumn: (taskId: string, nodeId: string) => Promise<string>;
   evaluateWorkflowMergeBoundary: (
