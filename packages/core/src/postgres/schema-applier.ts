@@ -88,8 +88,8 @@ export const SCHEMA_BASELINE_VERSION = "0071";
 /** FNXC:SymbolLock 2026-07-20-10:00: upgrades need durable task declarations before admission resolves symbols. */
 export const TASK_DECLARED_SYMBOLS_VERSION = "0028";
 const INITIAL_SCHEMA_VERSION = "0000";
-const AUTOMATION_ISOLATION_SCHEMA_VERSION = "0001";
-const ANALYTICS_ISOLATION_SCHEMA_VERSION = "0002";
+export const AUTOMATION_ISOLATION_SCHEMA_VERSION = "0001";
+export const ANALYTICS_ISOLATION_SCHEMA_VERSION = "0002";
 /**
  * FNXC:PostgresMigrationIdentity 2026-07-14-01:41:
  * Each migration keeps an immutable bookkeeping identity even as SCHEMA_BASELINE_VERSION advances to newer migrations. Upgrade checks and inserts must use this dedicated 0003 identifier so a later latest-version marker cannot make an unrecorded monitor/approval migration look applied.
