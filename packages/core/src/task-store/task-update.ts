@@ -1200,13 +1200,6 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
         rewritten plan cannot inherit release authorization from its predecessor.
         */
         task.approvedPlanFingerprint = undefined;
-        /*
-        FNXC:PromptReadBack 2026-08-22-15:55:
-        The PG tasks row has no prompt column, so the row re-read never hydrates task.prompt.
-        Assign the content just written to PROMPT.md here so the returned task reflects the
-        authoritative write and the prompt-write tool's read-back check can verify it.
-        */
-        task.prompt = updates.prompt;
       }
 
       // When runContext is provided, record audit event atomically with task mutation
@@ -1237,6 +1230,14 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       */
       if (updates.prompt !== undefined) {
         await writePromptFileAtomic(promptPath, updates.prompt);
+        /*
+        FNXC:PromptReadBack 2026-09-04-04:43:
+        The PG tasks row has no prompt column, so the row re-read never hydrates task.prompt.
+        Assign the content only after PROMPT.md reaches disk so a failed write cannot expose
+        an unwritten revision through the in-memory task, watcher cache, or fallback hydration.
+        The prompt-write tool's read-back check still verifies against this returned value.
+        */
+        task.prompt = updates.prompt;
       }
 
       if (store.isBackendMode() && updates.prompt !== undefined) {

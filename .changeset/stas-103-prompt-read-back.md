@@ -4,4 +4,4 @@
 
 summary: Return the persisted prompt in task updates so prompt write read-back verifies.
 category: fix
-dev: `updateTask` now assigns the just-written prompt content onto the returned task — the PG `tasks` row has no `prompt` column, so the row re-read never hydrates it. The prompt-write tool's authoritative read-back compares against `updateTask`'s return, and the engine mock is aligned to the fixed store contract. Regression tests cover the read-back in core (in-memory + PG) and the engine tool path.
+dev: `updateTask` assigns the prompt onto the returned task only after PROMPT.md reaches disk — the PG `tasks` row has no `prompt` column, so the row re-read never hydrates it, and a failed file write cannot leak the unwritten revision. The prompt-write tool's authoritative read-back compares against `updateTask`'s return, and the engine mock is aligned to the fixed store contract. Regression tests cover the read-back in core (in-memory + PG), write-failure isolation, and the engine tool path.
