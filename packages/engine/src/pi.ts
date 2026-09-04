@@ -3546,7 +3546,14 @@ export async function createPiAgentSessionRaw(options: AgentOptions): Promise<Ag
             break;
           }
           thinkingEffortDegradationApplied = true;
-          primaryThinkingLevel = lower;
+          // FNXC:ThinkingEffortFallback 2026-09-04-05:44: only the PRIMARY walk
+          // owns primaryThinkingLevel. A fallback walk used to overwrite it, and
+          // retryPrimaryAfterFallback then either sent the fallback's rung or
+          // restored the original rejected effort. Keep the last primary rung
+          // so the bounded final-primary retry can apply it.
+          if (!usingFallback) {
+            primaryThinkingLevel = lower;
+          }
           // FNXC:ThinkingEffortFallback 2026-08-29-11:30 (Greptile Issue 1): pin
           // the degraded rung for THIS replacement session only — a fallback
           // swap outside the walk-down must keep the ORIGINAL configured level
@@ -3632,10 +3639,8 @@ export async function createPiAgentSessionRaw(options: AgentOptions): Promise<Ag
          * Resetting `usingFallback` ensures the final primary receives primary thinking.
          *
          * FNXC:ThinkingEffortFallback 2026-09-04-04:55:
-         * Restore the configured primary effort too. The fallback walk mutates
-         * primaryThinkingLevel, and a 429 while creating the lower-effort
-         * fallback session used to throw that 429 while usingFallback, skipping
-         * this bounded final-primary retry entirely.
+         * A 429 while creating the lower-effort fallback session used to throw
+         * that 429 while usingFallback, skipping this bounded final-primary retry.
          *
          * FNXC:ThinkingEffortFallback 2026-09-04-05:12:
          * FN-8098's prompt-time contract is the same as session creation: once a
@@ -3644,9 +3649,15 @@ export async function createPiAgentSessionRaw(options: AgentOptions): Promise<Ag
          * Effort exhaustion stays terminal ModelFallbackExhaustedError; every
          * other non-effort fallback-session failure still gets this bounded
          * final-primary attempt.
+         *
+         * FNXC:ThinkingEffortFallback 2026-09-04-05:44:
+         * Do NOT restore options.defaultThinkingLevel. If the primary already
+         * rejected that configured effort and selected a lower rung (even when
+         * that lower attempt then 429'd), the final primary retry must apply
+         * the last primary rung. Re-sending the rejected effort exhausted the
+         * sequence even when the primary supports the degraded level.
          */
         usingFallback = false;
-        primaryThinkingLevel = options.defaultThinkingLevel;
         degradedThinkingLevel = undefined;
         const primaryRetrySession = await swapPromptSession(selectedModel);
         await promptSessionAndCheck(primaryRetrySession, prompt, effectivePromptOptions);

@@ -1824,6 +1824,76 @@ describe("session failure diagnostics", () => {
     }));
   });
 
+  // FNXC:ThinkingEffortFallback 2026-09-04-05:44:
+  // Primary rejects configured max, the xhigh retry 429s, fallback also fails.
+  // The bounded final-primary retry must apply xhigh (the last primary rung),
+  // not restore max. Re-sending the rejected effort exhausted the sequence
+  // even when the primary supports the degraded level.
+  it("retries the primary at the last degraded effort instead of the rejected configured level", async () => {
+    const createAgentSessionMock = vi.mocked(createAgentSession);
+    const firstPrompt = vi.fn().mockRejectedValue(
+      new Error("400 invalid_request_error: reasoning_effort is not supported"),
+    );
+    const degradedPrompt = vi.fn().mockRejectedValue(new Error("429 Too Many Requests"));
+    const fallbackPrompt = vi.fn().mockRejectedValue(new Error("500 Internal Server Error"));
+    const primaryRetrySetThinkingLevel = vi.fn();
+    const primaryRetryPrompt = vi.fn().mockResolvedValue(undefined);
+    const firstSession = {
+      model: { provider: "test", id: "primary-model" },
+      prompt: firstPrompt,
+      subscribe: vi.fn(),
+      dispose: vi.fn(),
+      setThinkingLevel: vi.fn(),
+      sessionFile: undefined,
+    } as unknown as AgentSession;
+    const degradedSession = {
+      model: { provider: "test", id: "primary-model" },
+      prompt: degradedPrompt,
+      subscribe: vi.fn(),
+      dispose: vi.fn(),
+      setThinkingLevel: vi.fn(),
+      sessionFile: undefined,
+    } as unknown as AgentSession;
+    const fallbackSession = {
+      model: { provider: "test", id: "fallback-model" },
+      prompt: fallbackPrompt,
+      subscribe: vi.fn(),
+      dispose: vi.fn(),
+      setThinkingLevel: vi.fn(),
+      sessionFile: undefined,
+    } as unknown as AgentSession;
+    const primaryRetrySession = {
+      model: { provider: "test", id: "primary-model" },
+      prompt: primaryRetryPrompt,
+      subscribe: vi.fn(),
+      dispose: vi.fn(),
+      setThinkingLevel: primaryRetrySetThinkingLevel,
+      sessionFile: undefined,
+    } as unknown as AgentSession;
+    createAgentSessionMock.mockReset();
+    createAgentSessionMock
+      .mockResolvedValueOnce({ session: firstSession } as any)
+      .mockResolvedValueOnce({ session: degradedSession } as any)
+      .mockResolvedValueOnce({ session: fallbackSession } as any)
+      .mockResolvedValueOnce({ session: primaryRetrySession } as any);
+    const { session } = await createFnAgent({
+      cwd: "/test/project",
+      systemPrompt: "Test final primary retry keeps degraded effort",
+      defaultProvider: "test",
+      defaultModelId: "primary-model",
+      fallbackProvider: "test",
+      fallbackModelId: "fallback-model",
+      defaultThinkingLevel: "max",
+    });
+    await expect((session as any).promptWithFallback("Run task")).resolves.toBeUndefined();
+    expect(primaryRetryPrompt).toHaveBeenCalledTimes(1);
+    expect(primaryRetrySetThinkingLevel).toHaveBeenCalledWith("xhigh");
+    expect(primaryRetrySetThinkingLevel).not.toHaveBeenCalledWith("max");
+    expect(createAgentSessionMock.mock.calls[3][0]).toEqual(expect.objectContaining({
+      model: expect.objectContaining({ provider: "test", id: "primary-model" }),
+    }));
+  });
+
 
   // FNXC:ThinkingEffortFallback 2026-08-26-15:20 (review fix): the degraded
   // retry's error is the CURRENT failure. When it is not fallback-eligible the
