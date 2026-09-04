@@ -4318,6 +4318,13 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       const task = await scopedStore.archiveTask(req.params.id, {
         cleanup: true,
         removeLineageReferences,
+        // FNXC:ArchiveLogAttribution: mirrors the delete route — record what the client SAID it was
+        // (self-reported `x-fusion-client` header; attribution, not authentication).
+        auditContext: {
+          agentId: "system",
+          runId: `synthetic-dashboard-archive-${req.params.id}-${Date.now()}`,
+          callerKind: resolveHttpDeleteCallerKind(req.get(FUSION_CLIENT_HEADER)),
+        },
       });
       res.json(task);
     } catch (err: unknown) {
@@ -4377,7 +4384,13 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         );
       }
       const { store: scopedStore } = await getProjectContext(req);
-      const archived = await scopedStore.archiveAllDone();
+      const archived = await scopedStore.archiveAllDone({
+        auditContext: {
+          agentId: "system",
+          runId: `synthetic-dashboard-archive-all-done-${Date.now()}`,
+          callerKind: resolveHttpDeleteCallerKind(req.get(FUSION_CLIENT_HEADER)),
+        },
+      });
       res.json({ archived });
     } catch (err: unknown) {
       if (err instanceof ApiError) {

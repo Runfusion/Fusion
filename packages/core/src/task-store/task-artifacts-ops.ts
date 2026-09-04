@@ -345,7 +345,9 @@ export async function clearStaleExecutionStartBranchReferencesImpl(store: TaskSt
     return clearedIds;
 }
 
-export async function archiveAllDoneImpl(store: TaskStore, options?: { removeLineageReferences?: boolean }): Promise<Task[]> {
+import {type TaskDeleteAuditContext} from "../task-delete-attribution.js";
+
+export async function archiveAllDoneImpl(store: TaskStore, options?: { removeLineageReferences?: boolean; auditContext?: TaskDeleteAuditContext }): Promise<Task[]> {
     /*
     FNXC:WorkflowLifecycleColumns 2026-08-01-05:00:
     "Archive all done" archived NOTHING on a renamed board.
@@ -375,6 +377,7 @@ export async function archiveAllDoneImpl(store: TaskStore, options?: { removeLin
         store.archiveTask(task.id, {
           cleanup: true,
           removeLineageReferences: options?.removeLineageReferences,
+          auditContext: options?.auditContext,
         })
       )
     );

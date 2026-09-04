@@ -3445,6 +3445,8 @@ export function createTaskArchiveTool(store: TaskStore): ToolDefinition {
       try {
         const task = await store.archiveTask(params.id, {
           removeLineageReferences: params.removeLineageReferences === true,
+          // FNXC:ArchiveLogAttribution: same caller convention as fn_task_delete.
+          auditContext: { agentId: "chat", runId: `chat-archive-${params.id}-${Date.now()}`, taskId: params.id, callerKind: "agent-tool" },
         });
         return {
           content: [{ type: "text" as const, text: `Archived ${task.id} → ${task.column}` }],
