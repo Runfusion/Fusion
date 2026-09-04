@@ -1198,8 +1198,8 @@ export function buildEnsureTaskWorktreeForPlanningDeps(host: any): any {
     workspaceConfigOwner: host,
     getWorkspaceConfig: () => host.workspaceConfig,
     setWorkspaceConfig: (cfg: unknown) => { host.workspaceConfig = cfg; },
-    ensureGraphCustomNodeWorktree: (t: unknown, s: unknown, nodeId: string, refresh?: boolean) =>
-      host.ensureGraphCustomNodeWorktree(t, s, nodeId, refresh),
+    ensureGraphCustomNodeWorktree: (t: unknown, s: unknown, nodeId: string, refresh?: boolean, principal?: string | null) =>
+      host.ensureGraphCustomNodeWorktree(t, s, nodeId, refresh, principal),
   };
 }
 

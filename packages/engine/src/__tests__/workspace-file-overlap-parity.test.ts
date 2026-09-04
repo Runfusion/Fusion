@@ -191,7 +191,31 @@ describe("workspace implementation base-refresh enablement", () => {
     );
 
     expect(ensureGraphCustomNodeWorktree).toHaveBeenCalledOnce();
-    expect(ensureGraphCustomNodeWorktree).toHaveBeenCalledWith(live, settings, "implementation", true);
+    expect(ensureGraphCustomNodeWorktree).toHaveBeenCalledWith(live, settings, "implementation", true, undefined);
+  });
+
+  it("forwards node config.agentId as the worktree acquire principal", async () => {
+    const live = task({ assignedAgentId: "task-assignee" });
+    const ensureGraphCustomNodeWorktree = vi.fn(async (value: TaskDetail) => value);
+    const deps = {
+      store: { getTask: vi.fn(async () => live), logEntry: vi.fn(async () => undefined) } as unknown as TaskStore,
+      rootDir: "/workspace",
+      workspaceConfigOwner: {},
+      getWorkspaceConfig: () => null,
+      setWorkspaceConfig: vi.fn(),
+      getRunContextFor: () => undefined,
+      ensureGraphCustomNodeWorktree,
+    };
+
+    await prepareGraphNodeExecution(
+      deps,
+      { id: "custom-first", kind: "prompt", config: { agentId: "node-agent" } } as WorkflowIrNode,
+      live,
+      settings,
+      { requiresWorktree: true },
+    );
+
+    expect(ensureGraphCustomNodeWorktree).toHaveBeenCalledWith(live, settings, "custom-first", false, "node-agent");
   });
 
   it("passes the graph refresh flag into workspace acquisition", async () => {

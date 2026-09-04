@@ -48,21 +48,33 @@ export type EnsureGraphCustomNodeWorktreeDeps = {
 };
 
 /*
-FNXC:Identity 2026-09-04-07:57:
+FNXC:Identity 2026-09-04-08:13:
 First-executable custom graph nodes run BEFORE implementation, so `currentRunContexts` is empty.
-`runContextFor(task.id)` then derives executor/unknown — Greptile P1 on PR #3430. Prefer a live
-implementation carrier when one exists; otherwise attribute the acquire to the graph-node agent
-(`assignedAgentId`) and the synthetic worktree run already stamped on the auditor, so persist/
-acquire rows match the custom-node session instead of the implementation-lane fallback.
+`runContextFor(task.id)` then derives executor/unknown — Greptile P1 on PR #3430.
+
+Preference for the empty-map acquire: live implementation carrier, then an explicit node
+`principalAgentId` (`config.agentId` from prepareGraphNodeExecution), then `task.assignedAgentId`,
+then `"executor"`. Column-agent overlay stays in `run-graph-custom-node` after checkout mint —
+this helper does not call `adoptColumnAgentForNode`.
 */
+export function nodeConfigPrincipalAgentId(node: { config?: Record<string, unknown> }): string | undefined {
+  const raw = node.config?.agentId;
+  if (typeof raw !== "string") return undefined;
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
 function graphNodeWorktreeRunContext(
   deps: EnsureGraphCustomNodeWorktreeDeps,
   task: TaskDetail,
   syntheticRunId: string,
+  principalAgentId?: string | null,
 ): RunMutationContext {
   const live = deps.getRunContextFor(task.id);
   if (live) return "actor" in live && live.actor ? live : toRunMutationContext(live as EngineRunContext);
-  return mutationContextForAgent(task.assignedAgentId ?? "executor", syntheticRunId);
+  const explicit = principalAgentId?.trim();
+  const assigned = task.assignedAgentId?.trim();
+  return mutationContextForAgent(explicit || assigned || "executor", syntheticRunId);
 }
 
 export async function ensureGraphCustomNodeWorktree(
@@ -71,19 +83,20 @@ export async function ensureGraphCustomNodeWorktree(
   settings: Settings,
   nodeId: string,
   refreshStaleBase = false,
+  principalAgentId?: string | null,
 ): Promise<TaskDetail> {
   const workspaceConfig = await resolveWorkspaceConfigOnce(deps);
 
   const syntheticRunId = generateSyntheticRunId("workflow-node-worktree", task.id);
+  const graphNodeRunContext = graphNodeWorktreeRunContext(deps, task, syntheticRunId, principalAgentId);
   const audit = createRunAuditor(deps.store, {
     runId: syntheticRunId,
-    agentId: task.assignedAgentId ?? "executor",
+    agentId: graphNodeRunContext.agentId,
     taskId: task.id,
     phase: "execute",
   });
   const commandAbortController = new AbortController();
   deps.registerConfiguredCommandController(task.id, commandAbortController);
-  const graphNodeRunContext = graphNodeWorktreeRunContext(deps, task, syntheticRunId);
   try {
     /*
     FNXC:WorkspaceWorktree 2026-08-29-06:59:

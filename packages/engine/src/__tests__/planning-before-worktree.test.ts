@@ -161,7 +161,7 @@ describe("planning before execution worktree acquisition", () => {
     );
 
     expect(deps.ensureGraphCustomNodeWorktree).toHaveBeenCalledOnce();
-    expect(deps.ensureGraphCustomNodeWorktree).toHaveBeenCalledWith(row, expect.any(Object), "implementation", true);
+    expect(deps.ensureGraphCustomNodeWorktree).toHaveBeenCalledWith(row, expect.any(Object), "implementation", true, undefined);
   });
 
   it("does not require content-review diff proof for Plan Review", () => {

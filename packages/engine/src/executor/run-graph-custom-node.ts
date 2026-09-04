@@ -328,6 +328,7 @@ export async function runGraphCustomNode(
   outputLanguage?: ResolvedTaskOutputLanguage,
 ): Promise<WorkflowNodeResult> {
     const cfg = node.config ?? {};
+    const nodePrincipalAgentId = typeof cfg.agentId === "string" && cfg.agentId.trim() ? cfg.agentId.trim() : undefined;
     let live = await deps.store.getTask(nodeTask.id);
 
     const staleInput = await deps.resolveWorkflowInputMarkerForGraphNode(live, node.id);
@@ -496,7 +497,7 @@ export async function runGraphCustomNode(
           undefined,
           deps.getRunContextFor(live.id),
         );
-        executionTarget = await deps.ensureGraphCustomNodeWorktree(executionTarget, settings, node.id);
+        executionTarget = await deps.ensureGraphCustomNodeWorktree(executionTarget, settings, node.id, undefined, nodePrincipalAgentId);
       }
     } else if (!workspaceConfig) {
       const recordedWorktreeMissing = Boolean(executionTarget.worktree) && !existsSync(executionTarget.worktree!);
@@ -511,7 +512,7 @@ export async function runGraphCustomNode(
         const acquisitionTask = recordedWorktreeMissing
           ? ({ ...executionTarget, worktree: undefined, sessionFile: undefined } as TaskDetail)
           : executionTarget;
-        executionTarget = await deps.ensureGraphCustomNodeWorktree(acquisitionTask, settings, node.id);
+        executionTarget = await deps.ensureGraphCustomNodeWorktree(acquisitionTask, settings, node.id, undefined, nodePrincipalAgentId);
       }
     }
 
