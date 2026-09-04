@@ -235,4 +235,80 @@ describe("updateTask returns the persisted prompt", () => {
     expect(failedOnce).toBe(true);
     expect(persistedSymbols.filter((symbols) => JSON.stringify(symbols) === JSON.stringify(["pkg/new.ts#foo"])).length).toBeGreaterThanOrEqual(2);
   });
+
+  it("forward-repairs declaredSymbols when persist retries and PROMPT.md restore both fail", async () => {
+    /*
+    FNXC:PromptReadBack 2026-09-04-08:08:
+    After three deferred row writes fail, a restore/unlink failure must not leave the new prompt
+    on disk with previous declaredSymbols. One more atomicWrite of the in-memory new symbols
+    aligns the durable row with the durable file so updateTask can succeed.
+    */
+    const { store, row, taskDir } = harness({ declaredSymbols: ["pkg/old.ts#a"] });
+    writeFileSync(join(taskDir, "PROMPT.md"), prompt("previous spec", ["pkg/old.ts#a"]));
+    const content = prompt("symbols forward repair", ["pkg/new.ts#Foo"]);
+    const writeActual = persistPromptFile.getMockImplementation()!;
+    let promptWrites = 0;
+    persistPromptFile.mockImplementation(async (promptPath: string, next: string) => {
+      promptWrites += 1;
+      if (promptWrites > 1) throw new Error("simulated PROMPT.md restore failure");
+      return writeActual(promptPath, next);
+    });
+    let newSymbolWrites = 0;
+    vi.mocked(store.atomicWriteTaskJsonWithAudit).mockImplementation(async (_dir, task) => {
+      const symbols = [...((task as { declaredSymbols?: string[] }).declaredSymbols ?? [])];
+      if (JSON.stringify(symbols) === JSON.stringify(["pkg/new.ts#foo"])) {
+        newSymbolWrites += 1;
+        if (newSymbolWrites <= 3) throw new Error("simulated declaredSymbols persist failure");
+      }
+    });
+
+    try {
+      const updated = await updateTaskUnlockedImpl(store, "FN-1", { prompt: content } as never);
+
+      expect(updated.prompt).toBe(content);
+      expect(updated.declaredSymbols).toEqual(["pkg/new.ts#foo"]);
+      expect(row.declaredSymbols).toEqual(["pkg/new.ts#foo"]);
+      expect(await readFile(join(taskDir, "PROMPT.md"), "utf-8")).toBe(content);
+      expect(promptWrites).toBeGreaterThan(1);
+      expect(newSymbolWrites).toBe(4);
+    } finally {
+      persistPromptFile.mockImplementation(writeActual);
+    }
+  });
+
+  it("rejects with persist and restore/forward failures when both rollback and forward persist fail", async () => {
+    /*
+    FNXC:PromptReadBack 2026-09-04-08:08:
+    If restore cannot put the previous PROMPT.md back and the forward declaredSymbols write also
+    fails, updateTask must reject with persist, restore, and forward messages rather than swallow
+    the split.
+    */
+    const { store, taskDir } = harness({ declaredSymbols: ["pkg/old.ts#a"] });
+    writeFileSync(join(taskDir, "PROMPT.md"), prompt("previous spec", ["pkg/old.ts#a"]));
+    const content = prompt("symbols dual failure", ["pkg/new.ts#Foo"]);
+    const writeActual = persistPromptFile.getMockImplementation()!;
+    let promptWrites = 0;
+    persistPromptFile.mockImplementation(async (promptPath: string, next: string) => {
+      promptWrites += 1;
+      if (promptWrites > 1) throw new Error("simulated PROMPT.md restore failure");
+      return writeActual(promptPath, next);
+    });
+    vi.mocked(store.atomicWriteTaskJsonWithAudit).mockImplementation(async (_dir, task) => {
+      const symbols = [...((task as { declaredSymbols?: string[] }).declaredSymbols ?? [])];
+      if (JSON.stringify(symbols) === JSON.stringify(["pkg/new.ts#foo"])) {
+        throw new Error("simulated declaredSymbols persist failure");
+      }
+    });
+
+    try {
+      await expect(
+        updateTaskUnlockedImpl(store, "FN-1", { prompt: content } as never),
+      ).rejects.toThrow(
+        /declaredSymbols persist failed after PROMPT.md write \(simulated declaredSymbols persist failure\).*PROMPT.md restore failed \(simulated PROMPT.md restore failure\).*forward declaredSymbols persist failed \(simulated declaredSymbols persist failure\)/,
+      );
+      expect(await readFile(join(taskDir, "PROMPT.md"), "utf-8")).toBe(content);
+    } finally {
+      persistPromptFile.mockImplementation(writeActual);
+    }
+  });
 });
