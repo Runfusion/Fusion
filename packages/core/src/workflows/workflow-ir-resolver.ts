@@ -103,6 +103,9 @@ export type WorkflowSelection = { workflowId: string; stepIds: string[] };
 /** A caller-owned cache that is valid only for one resolver pass. */
 export type WorkflowSelectionCache = Map<string, WorkflowSelection | undefined>;
 
+/** Selection database work performed by one multi-row hydration pass. */
+export type WorkflowSelectionReadTally = { batched: number; singles: number };
+
 /*
 FNXC:WorkflowScheduling 2026-08-12-20:00 (RUFU-073):
 In-flight selection-read coalescing, keyed by the CALLER-OWNED per-pass cache object. Several
@@ -114,6 +117,30 @@ onto ONE in-flight read promise; the weak key binds it strictly to that pass, so
 uses a fresh cache (fresh WeakMap slot) and is always observed.
 */
 const inflightSelectionReads = new WeakMap<WorkflowSelectionCache, Map<string, Promise<WorkflowSelection | undefined>>>();
+
+/*
+FNXC:WorkflowScheduling 2026-09-05-23:12:
+Multi-row read hydration must prefetch into its caller-owned, per-pass cache: a cached undefined is
+intentional and prevents absent selections from becoming an N+1. Failed batch reads leave the cache
+unchanged so a later pass retries and hydration uses its established individual-read fallback. Callers
+must use this returned tally for accounting; cache growth cannot distinguish one batch from N reads.
+*/
+export async function prefetchWorkflowSelections(
+  store: WorkflowIrResolverStore,
+  taskIds: readonly string[],
+  cache: WorkflowSelectionCache,
+): Promise<WorkflowSelectionReadTally> {
+  const missingIds = [...new Set(taskIds)].filter((id) => !cache.has(id));
+  if (missingIds.length === 0) return { batched: 0, singles: 0 };
+  if (!store.getTaskWorkflowSelectionsAsync) return { batched: 0, singles: missingIds.length };
+  try {
+    const selections = await store.getTaskWorkflowSelectionsAsync(missingIds);
+    for (const id of missingIds) cache.set(id, selections.get(id));
+    return { batched: 1, singles: 0 };
+  } catch {
+    return { batched: 0, singles: missingIds.length };
+  }
+}
 
 export interface WorkflowIrResolverStore {
   getTaskWorkflowSelection(taskId: string): WorkflowSelection | undefined;

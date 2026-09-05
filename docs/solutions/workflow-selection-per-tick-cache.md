@@ -91,3 +91,27 @@ cache-key presence**.
   pin the per-call caching semantics; the sync-only store path dedups the same way.
 - Production verification: `task_workflow_selection` idx_scan growth rate must drop from ~232 q/s to
   below ~30 q/s, health API < 0.5s, CPU < 40%.
+
+## Read-path hydration: prefetch, never resolve per row (FN-9261)
+
+The same resolver is used by task-store hydration. `listTasks`, `searchTasks`, and
+`listTasksModifiedSince` used to resolve every row independently, turning one board read into one
+selection query per card (and two or three per card for incremental hydration). On an idle board of
+about 107 live tasks, hold-release prefetch alone took 1.7–3.2 seconds and regularly exceeded its
+10-second budget.
+
+Use `prefetchWorkflowSelections(store, taskIds, cache)` at the start of every multi-row hydration
+pass. It deduplicates ids, reads missing selections once through the batch reader, and writes every
+requested id to the pass cache. Missing persisted selections are deliberately stored as `undefined`:
+cache membership then prevents a second query while the normal resolver still selects
+`builtin:coding`. A failed or unavailable batch reader leaves missing keys untouched so existing
+individual resolution remains the safe fallback.
+
+`listTasks` additionally accepts optional caller-owned `selectionCache` and mutable
+`selectionReadTally` options. The tally reports actual `{ batched, singles }` work performed by the
+store; consumers such as hold-release must fold it into diagnostics rather than infer reads from
+cache size. Both a successful batch and a degraded sequence of individual reads populate identical
+cache entries, so size growth cannot truthfully distinguish them.
+
+**Rule:** every new multi-row task hydration pass prefetches selections once before per-row workflow
+resolution. Single-row `getTask` remains deliberately unbatched because it has no N+1.

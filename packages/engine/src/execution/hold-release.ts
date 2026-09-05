@@ -62,6 +62,7 @@ import {
   type WorkflowIrV2,
   type WorkflowIrColumn,
   type WorkflowSelectionCache,
+  type WorkflowSelectionReadTally,
   type WorkflowIrResolverStore,
 } from "@fusion/core";
 import { createHash } from "node:crypto";
@@ -719,7 +720,16 @@ export async function runHoldReleaseSweep(
     const settings = await store.getSettings();
     if (expired()) return logPreambleTruncation(0);
     counters.tasks += 1;
-    const allTasks = await store.listTasks({ includeArchived: false });
+    /*
+    FNXC:WorkflowScheduling 2026-09-05-23:12:
+    listTasks used to hide N individual selection reads behind one list call, making this diagnostic
+    claim selections=0. Its reported tally is folded in directly: cache-size growth is not evidence,
+    because both a successful batch and degraded individual reads populate the same cache.
+    */
+    const selectionReadTally: WorkflowSelectionReadTally = { batched: 0, singles: 0 };
+    const allTasks = await store.listTasks({ includeArchived: false, selectionCache, selectionReadTally });
+    counters.batchSelections += selectionReadTally.batched;
+    counters.selections += selectionReadTally.singles;
     if (expired()) return logPreambleTruncation(allTasks.length);
 
 

@@ -726,6 +726,7 @@ export {
   resolvePlanningPromptFromIr,
   resolveTaskSeamPrompt,
   resolveTaskPlanningPrompt,
+  prefetchWorkflowSelections,
   hashWorkflowIr,
   computeWorkflowIrPin,
   detectWorkflowDrift,
@@ -733,6 +734,7 @@ export {
   type WorkflowDriftReason,
   type WorkflowIrResolverStore,
   type WorkflowSelectionCache,
+  type WorkflowSelectionReadTally,
   type WorkflowSelection,
 } from "./workflows/workflow-ir-resolver.js";
 export {

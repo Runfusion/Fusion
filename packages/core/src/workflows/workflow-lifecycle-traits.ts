@@ -22,7 +22,7 @@ resolves to the same columns the old literals named):
 import type { WorkflowIr, WorkflowIrColumn } from "./workflow-ir-types.js";
 import type { TraitFlags } from "./trait-types.js";
 import { getTraitRegistry } from "./trait-registry.js";
-import { resolveWorkflowIrForTask, type WorkflowIrResolverStore } from "./workflow-ir-resolver.js";
+import { resolveWorkflowIrForTask, type WorkflowIrResolverStore, type WorkflowSelectionCache } from "./workflow-ir-resolver.js";
 
 /** The v2 column list, or [] for a v1/column-less IR. */
 function columnsOf(ir: WorkflowIr): WorkflowIrColumn[] {
@@ -471,9 +471,10 @@ export async function resolveTaskLifecycleColumns(
   store: WorkflowIrResolverStore,
   taskId: string,
   cache?: Map<string, WorkflowIr>,
+  selectionCache?: WorkflowSelectionCache,
 ): Promise<LifecycleColumns | undefined> {
   try {
-    const ir = await resolveWorkflowIrForTask(store, taskId, cache);
+    const ir = await resolveWorkflowIrForTask(store, taskId, cache, selectionCache);
     return resolveLifecycleColumns(ir);
   } catch {
     return undefined;

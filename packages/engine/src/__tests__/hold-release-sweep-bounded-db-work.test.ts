@@ -66,6 +66,41 @@ function storeWith(tasks: Task[], options: { batchFails?: boolean; batchAvailabl
 describe("hold-release bounded database work", () => {
   beforeEach(() => resetHoldReleaseInstrumentation());
 
+  it("reports the successful list hydration batch in the slow-sweep warning", async () => {
+    const tasks = [task("H-1")];
+    const store = storeWith(tasks);
+    const warn = vi.spyOn(schedulerLog, "warn").mockImplementation(() => {});
+    (store.listTasks as ReturnType<typeof vi.fn>).mockImplementation(async (options?: { selectionCache?: Map<string, unknown>; selectionReadTally?: { batched: number; singles: number } }) => {
+      options?.selectionCache?.set("H-1", { workflowId: "custom:wf-a", stepIds: [] });
+      if (options?.selectionReadTally) Object.assign(options.selectionReadTally, { batched: 1, singles: 0 });
+      return tasks;
+    });
+
+    let clockCalls = 0;
+    await runHoldReleaseSweep(store, { now: () => 1_000_000 + (clockCalls++ > 0 ? 3_000 : 0) });
+
+    expect(store.listTasks).toHaveBeenCalledWith(expect.objectContaining({ includeArchived: false, selectionCache: expect.any(Map), selectionReadTally: { batched: 1, singles: 0 } }));
+    expect(store.getTaskWorkflowSelectionsAsync).not.toHaveBeenCalled();
+    expect(warn.mock.calls.map(([line]) => String(line))).toContainEqual(expect.stringContaining("batchSelections=1, selections=0"));
+  });
+
+  it("reports degraded per-row list hydration reads without claiming a batch in the slow-sweep warning", async () => {
+    const tasks = [task("H-1"), task("H-2"), task("H-3")];
+    const store = storeWith(tasks);
+    const warn = vi.spyOn(schedulerLog, "warn").mockImplementation(() => {});
+    (store.listTasks as ReturnType<typeof vi.fn>).mockImplementation(async (options?: { selectionCache?: Map<string, unknown>; selectionReadTally?: { batched: number; singles: number } }) => {
+      for (const candidate of tasks) options?.selectionCache?.set(candidate.id, { workflowId: "custom:wf-a", stepIds: [] });
+      if (options?.selectionReadTally) Object.assign(options.selectionReadTally, { batched: 0, singles: tasks.length });
+      return tasks;
+    });
+
+    let clockCalls = 0;
+    await runHoldReleaseSweep(store, { now: () => 1_000_000 + (clockCalls++ > 0 ? 3_000 : 0) });
+
+    expect(store.getTaskWorkflowSelectionsAsync).not.toHaveBeenCalled();
+    expect(warn.mock.calls.map(([line]) => String(line))).toContainEqual(expect.stringContaining("batchSelections=0, selections=3"));
+  });
+
   it("shares one selection cache across the production scheduler pass and release reservation", async () => {
     const held = task("H-1");
     const store = storeWith([held]);
