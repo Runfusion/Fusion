@@ -89,15 +89,11 @@ import { resolvePermanentAgentToolDecision } from "./agents/permanent-agent-gati
 import type { SystemPromptLayers } from "./execution/prompt-layers.js";
 import { READONLY_ALLOWLIST, filterCustomToolsForReadonly, isReadonlyAllowed } from "./workflows/workflow-step-tool-policy.js";
 import { createStreamingDeltaNormalizer } from "./execution/streaming-delta.js";
-import {
-  applyReasoningSummaryToPayload,
-  isReasoningSummaryUnsupportedError,
-  type ReasoningSummaryDetail,
-} from "./execution/reasoning-summary-payload.js";
 import { isModelAuthTierIncompatibilityError, isProviderModelNotFoundError, isUnsupportedMessageRoleError } from "./errors/transient-error-detector.js";
 import { logMcpForwardingSkipped, runtimeSupportsMcp } from "./mcp/mcp-runtime-support.js";
 import { connectMcpSessionTools, type McpClientFactory, type McpSessionToolset } from "./mcp/mcp-session-tools.js";
 export { isModelAuthTierIncompatibilityError } from "./errors/transient-error-detector.js";
+import { THINKING_LEVEL_LADDER, degradeThinkingLevel, isReasoningEffortRejectionError } from "./errors/thinking-effort-rejection.js";
 import { buildBashContainmentDenialMessage, evaluateBashContainment } from "./bash-containment.js";
 import type { SessionBoundaryDescriptor } from "./agents/agent-runtime.js";
 import { resolveSandboxBackend, type SandboxBackend, type SandboxPolicy } from "./sandbox/index.js";
@@ -237,14 +233,12 @@ interface ToolHookResult {
 type AgentToolHookSession = AgentSession & {
   agent?: {
     afterToolCall?: (payload: ToolHookPayload) => Promise<ToolHookResult | undefined>;
-    onPayload?: (payload: unknown, model: { api?: unknown }) => unknown | undefined | Promise<unknown | undefined>;
     state?: {
       messages?: Array<Record<string, unknown>>;
     };
   };
   __fusionToolResultGuardInstalled?: boolean;
   __fusionMessageContentGuardInstalled?: boolean;
-  __fusionReasoningSummaryPayloadHookInstalled?: boolean;
 };
 const FN_MEMORY_APPEND_TOOL_NAME = "fn_memory_append";
 const FUSION_SHUTDOWN_WRAP_FLAG = "__fusionSessionShutdownDisposeWrapped";
@@ -1107,8 +1101,6 @@ export interface AgentOptions {
   fallbackThinkingLevel?: string;
   /** Default thinking effort level (e.g. "medium", "high"). When provided, sets the session's thinking level after creation. */
   defaultThinkingLevel?: string;
-  /** Detail requested for already-enabled Responses reasoning summaries; defaults to detailed. */
-  reasoningSummaryDetail?: ReasoningSummaryDetail;
   /** Optional pre-configured SessionManager. When provided, the agent session
    *  uses this instead of creating an in-memory session. Pass a file-based
    *  SessionManager to enable session persistence and pause/resume. */
@@ -3238,54 +3230,57 @@ export async function createPiAgentSessionRaw(options: AgentOptions): Promise<Ag
     piLog.debug("Fallback session created successfully");
   }
 
-  const reasoningSummaryDetail = options.reasoningSummaryDetail ?? "detailed";
-  let reasoningSummaryCompatibilityDisabled = reasoningSummaryDetail === "off";
-  /*
-  FNXC:ThinkingTrace 2026-08-27-10:45:
-  Pi may already own an onPayload hook for extension request processing. Chain it so a replacement payload remains authoritative, then upgrade only its existing Responses reasoning; fallback-swapped sessions install the same hook so recovery cannot revert to titles-only summaries.
-  */
-  const installReasoningSummaryPayloadHook = (session: AgentToolHookSession): void => {
-    if (session.__fusionReasoningSummaryPayloadHookInstalled || !session.agent) {
-      return;
-    }
-
-    const agent = session.agent;
-    const previousOnPayload = agent.onPayload;
-    agent.onPayload = async (payload, model) => {
-      const previousResult = previousOnPayload ? await previousOnPayload(payload, model) : undefined;
-      const effectivePayload = previousResult ?? payload;
-      const replacement = applyReasoningSummaryToPayload(
-        effectivePayload,
-        model,
-        reasoningSummaryCompatibilityDisabled ? "off" : reasoningSummaryDetail,
-      );
-      return replacement ?? previousResult;
-    };
-    session.__fusionReasoningSummaryPayloadHookInstalled = true;
-  };
-
   let activeSession = sessionResult.session;
   wrapSessionDisposeWithShutdown(activeSession);
   installToolResultContentGuard(activeSession as AgentToolHookSession);
   installMessageContentGuard(activeSession as AgentToolHookSession, sessionManager as unknown as SessionManagerLike);
-  installReasoningSummaryPayloadHook(activeSession as AgentToolHookSession);
   (activeSession as any).__fusionMemoryAppendAvailable = options.customTools?.some((tool) => tool.name === FN_MEMORY_APPEND_TOOL_NAME) === true;
   const promptableSession = activeSession as PromptableSession;
 
   let thinkingCompatibilityDisabled = false;
+  // FNXC:ThinkingEffortFallback 2026-08-25-00:00: ensure the single-step-down
+  // degradation runs at most once per agent session (latch survives across
+  // prompts) so a rejected lower rung cannot loop back to the original effort.
+  let thinkingEffortDegradationApplied = false;
+  let degradedRetryError: unknown = null;
+  // FNXC:ThinkingEffortFallback 2026-08-26-18:45 (review fix): the degraded effort
+  // lives in this session-local variable instead of being written back to
+  // options.defaultThinkingLevel — the caller's AgentOptions may be reused for
+  // later sessions, and the fallback branch must inherit the ORIGINAL configured
+  // level when no explicit fallbackThinkingLevel exists.
+  let primaryThinkingLevel: string | undefined = options.defaultThinkingLevel;
+  // FNXC:ThinkingEffortFallback 2026-08-29-11:30 (Greptile Issue 1): the walk-down
+  // rung must reach the REPLACEMENT session even when it is a fallback-model swap.
+  // applyThinkingLevelIfSupported derives the fallback effort from the original
+  // options (fallbackThinkingLevel ?? defaultThinkingLevel), so a degraded rung
+  // lived only in primaryThinkingLevel and a fallback retry re-sent the REJECTED
+  // effort. This pin carries the walk-down rung into the NEXT swap only; it is
+  // cleared on every exit of that swap, so a later fallback swap outside the
+  // walk-down keeps the ORIGINAL configured level.
+  let degradedThinkingLevel: string | undefined;
+  /*
+  FNXC:ThinkingEffortFallback 2026-09-04-04:55:
+  Last effort actually applied to the live session. Later prompts must walk down
+  FROM this rung: reconstructing activeThinkingLevel from the original fallback
+  config retried an already-rejected adjacent rung, and a 429 on that redundant
+  attempt exited before a supported lower rung ran.
+  */
+  let sessionThinkingLevel: string | undefined;
   const applyThinkingLevelIfSupported = (targetSession: AgentSession, sourceModel: string): void => {
     /*
      * FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
      * Fallback-swap sessions apply the fallback model's configured thinking level, or transparently keep the lane/default level when no fallback-specific value exists. The compatibility-disable guard remains shared so thinking/reasoning conflicts disable explicit thinking for both primary and fallback paths.
      */
-    const effectiveThinkingLevel = usingFallback
-      ? options.fallbackThinkingLevel ?? options.defaultThinkingLevel
-      : options.defaultThinkingLevel;
+    const effectiveThinkingLevel = degradedThinkingLevel
+      ?? (usingFallback
+        ? options.fallbackThinkingLevel ?? options.defaultThinkingLevel
+        : primaryThinkingLevel);
     if (!effectiveThinkingLevel || thinkingCompatibilityDisabled) {
       return;
     }
     try {
       (targetSession as PromptableSession).setThinkingLevel(effectiveThinkingLevel as any);
+      sessionThinkingLevel = effectiveThinkingLevel;
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       if (!isThinkingReasoningConflictError(message)) {
@@ -3302,7 +3297,6 @@ export async function createPiAgentSessionRaw(options: AgentOptions): Promise<Ag
       targetSession as unknown as AgentToolHookSession,
       sessionManager as unknown as SessionManagerLike,
     );
-    installReasoningSummaryPayloadHook(targetSession as unknown as AgentToolHookSession);
     (targetSession as any).__fusionMemoryAppendAvailable = options.customTools?.some((tool) => tool.name === FN_MEMORY_APPEND_TOOL_NAME) === true;
     const deltaNormalizer = createStreamingDeltaNormalizer();
     targetSession.subscribe((event) => {
@@ -3431,6 +3425,20 @@ export async function createPiAgentSessionRaw(options: AgentOptions): Promise<Ag
   };
 
   promptableSession.promptWithFallback = async (prompt: string, promptOptions?: unknown) => {
+    // FNXC:ThinkingEffortFallback 2026-08-26-15:20 (review fix): the degraded
+    // retry error describes ONE prompt attempt. Reset it per call so a failure
+    // from an earlier degraded retry cannot shadow a later call's own error
+    // during fallback classification.
+    degradedRetryError = null;
+    // FNXC:ThinkingEffortFallback 2026-08-29-06:54 (review fix K): the
+    // per-session degradation latch must NOT survive across prompt calls.
+    // When a successfully degraded session receives a FRESH effort rejection
+    // on a later prompt, the walk-down ladder needs to be available again —
+    // otherwise the rejection is stuck between a blocked degradation branch
+    // and a null degradedRetryError (no fallback classification evidence
+    // either). Reset the latch so each prompt call gets its own bounded
+    // walk-down budget.
+    thinkingEffortDegradationApplied = false;
     const effectivePromptOptions = withMcpPromptOptions(promptOptions, forwardedMcpServers);
     try {
       await promptSessionAndCheck(activeSession, prompt, effectivePromptOptions);
@@ -3489,43 +3497,220 @@ export async function createPiAgentSessionRaw(options: AgentOptions): Promise<Ag
         return;
       }
 
-      /*
-      FNXC:ThinkingTrace 2026-08-27-10:45:
-      Detailed summaries improve traces but are optional request metadata. A provider that rejects the field retries once on this same session with the hook disabled, so a capability mismatch never fails the run or leaks to another session.
-      */
-      if (!reasoningSummaryCompatibilityDisabled && isReasoningSummaryUnsupportedError(errorMessage)) {
-        reasoningSummaryCompatibilityDisabled = true;
-        piLog.warn(`Provider rejected detailed reasoning summary for ${describeModel(activeSession)}; retrying without the summary upgrade`);
-        await promptSessionAndCheck(activeSession, prompt, effectivePromptOptions);
-        return;
+      // FNXC:ThinkingEffortFallback 2026-08-25-00:00: when the provider
+      // rejected the requested thinking effort, swap the session to the SAME model
+      // and retry one step DOWN the effort ladder. FNXC:ThinkingEffortFallback
+      // 2026-08-29-06:54 (review fix J): the ladder may be walked down more
+      // than one rung — if the next-lower effort is ALSO rejected, drop again
+      // and retry, until either a rung is accepted, the ladder bottom is
+      // reached (off → null), or a non-effort error breaks the chain. Bounded
+      // by construction: the ladder is finite, strictly monotonic, and a
+      // non-effort error exits the loop immediately.
+      // FNXC:ThinkingEffortFallback 2026-08-29-10:40 (Greptile P1-C): walk-down
+      // also runs when the session is already on the configured fallback model
+      // (no !usingFallback guard) — an effort rejection on the fallback must be
+      // degradable too. The degraded retry stays on the CURRENT model: the swap
+      // targets the fallback while usingFallback, never hopping back to the
+      // primary. First-prompt-on-primary behavior is unchanged because the guard
+      // still requires an effort rejection and the latch stays per-call.
+      // FNXC:ThinkingEffortFallback 2026-08-29-11:45 (Greptile round-6 Issue 1):
+      // the ladder starts from the effort ACTUALLY applied to the active
+      // session. With a distinct fallbackThinkingLevel the fallback may
+      // support higher rungs than the primary — degrading from
+      // primaryThinkingLevel would skip them (primary low + fallback max
+      // would try minimal/off instead of xhigh/high) and throw
+      // ModelFallbackExhaustedError despite a supported fallback rung.
+      // FNXC:ThinkingEffortFallback 2026-08-29-11:52 (Greptile round-7 Issue 1):
+      // the ENTRY guard uses the same active level: a fallback-only effort
+      // (fallbackThinkingLevel set, defaultThinkingLevel absent) leaves
+      // primaryThinkingLevel undefined and must still be degradable — the
+      // primary's level is irrelevant once the fallback is the active session.
+      const activeThinkingLevel = sessionThinkingLevel
+        ?? (usingFallback
+          ? options.fallbackThinkingLevel ?? options.defaultThinkingLevel
+          : primaryThinkingLevel);
+      if (
+        activeThinkingLevel
+        && !thinkingCompatibilityDisabled
+        && !thinkingEffortDegradationApplied
+        && isReasoningEffortRejectionError(errorMessage)
+      ) {
+        let currentLevel: string | undefined = activeThinkingLevel;
+        let currentError: unknown = err;
+        // FNXC:ThinkingEffortFallback 2026-08-29-06:54: walk down as many
+        // rungs as the model rejects; stop on success, bottom, or non-effort.
+        while (currentLevel) {
+          const lower = degradeThinkingLevel(currentLevel);
+          if (!lower) {
+            // Bottom of the ladder — no further rung to try on the primary.
+            break;
+          }
+          thinkingEffortDegradationApplied = true;
+          // FNXC:ThinkingEffortFallback 2026-09-04-05:44: only the PRIMARY walk
+          // owns primaryThinkingLevel. A fallback walk used to overwrite it, and
+          // retryPrimaryAfterFallback then either sent the fallback's rung or
+          // restored the original rejected effort. Keep the last primary rung
+          // so the bounded final-primary retry can apply it.
+          if (!usingFallback) {
+            primaryThinkingLevel = lower;
+          }
+          // FNXC:ThinkingEffortFallback 2026-08-29-11:30 (Greptile Issue 1): pin
+          // the degraded rung for THIS replacement session only — a fallback
+          // swap outside the walk-down must keep the ORIGINAL configured level
+          // (fallbackThinkingLevel ?? defaultThinkingLevel), so the pin is
+          // cleared on every exit of the swap below.
+          degradedThinkingLevel = lower;
+          piLog.warn(
+            `Prompt failed with unsupported reasoning effort; degrading ${currentLevel} → ${lower} on same model: ${currentError instanceof Error ? currentError.message : String(currentError)}`,
+          );
+          try {
+            // FNXC:ThinkingEffortFallback 2026-08-29-10:40 (Greptile P1-C): the
+            // degraded retry stays on the model whose session just rejected —
+            // the fallback while usingFallback, the primary otherwise.
+            const downgradedSession = await swapPromptSession(usingFallback && fallbackModel ? fallbackModel : selectedModel);
+            degradedThinkingLevel = undefined;
+            await promptSessionAndCheck(downgradedSession, prompt, effectivePromptOptions);
+            return;
+          } catch (degradedErr: unknown) {
+            // FNXC:ThinkingEffortFallback 2026-08-29-11:30 (Greptile Issue 1):
+            // clear the rung pin on every failure exit too — the degraded
+            // attempt failed, so any later fallback swap is back to the
+            // original configured level for the fallback model.
+            degradedThinkingLevel = undefined;
+            /*
+             * FNXC:ThinkingEffortFallback 2026-08-26-05:30 (review fix):
+             * A failure of the degraded retry itself (another rejection, 429,
+             * model unavailable) must fall through to the configured-fallback
+             * classification below instead of escaping this catch — otherwise
+             * triage's generic path re-admits the card and can recreate the
+             * original failing effort. The fallback decision below classifies
+             * against degradedRetryError (what actually broke), not the
+             * original rejection.
+             */
+            degradedRetryError = degradedErr;
+            piLog.warn(`promptWithFallback: degraded-effort retry also failed: ${degradedErr instanceof Error ? degradedErr.message : String(degradedErr)}`);
+            // FNXC:ThinkingEffortFallback 2026-08-29-06:54: only continue
+            // walking if the latest failure is still an effort rejection. A
+            // 429 or any other retryable-model-selection error breaks the
+            // chain so the configured-fallback path can handle it.
+            const degradedMessage = degradedErr instanceof Error ? degradedErr.message : String(degradedErr);
+            if (!isReasoningEffortRejectionError(degradedMessage)) {
+              break;
+            }
+            currentLevel = lower;
+            currentError = degradedErr;
+          }
+        }
       }
 
-      if (!fallbackModel || usingFallback || !isRetryableModelSelectionError(errorMessage)) {
-        throw err;
+      // FNXC:ThinkingEffortFallback 2026-08-26-05:30: when a degraded-effort
+      // retry already ran and failed, classify the fallback decision by the
+      // DEGRADED attempt's error (it reflects the current model+level state),
+      // not by the original rejection.
+      const fallbackClassificationError = degradedRetryError ?? err;
+      // FNXC:ThinkingEffortFallback 2026-08-26-08:30 (review fix): a reasoning-effort
+      // rejection on the degraded retry itself means the model supports NEITHER the
+      // pinned nor the next-lower effort. isRetryableModelSelectionError does not
+      // recognize effort rejections, so the branch used to rethrow the original
+      // rejection instead of trying the configured fallback model (which may accept
+      // the pinned effort). Classify effort rejections as retryable here so the
+      // fallback path is tried once (the usingFallback guard keeps it to one swap).
+      const fallbackClassificationMessage =
+        fallbackClassificationError instanceof Error ? fallbackClassificationError.message : errorMessage;
+      const retryableFallbackFailure =
+        isRetryableModelSelectionError(fallbackClassificationMessage)
+        // FNXC:ThinkingEffortFallback 2026-08-29-10:40 (Greptile P1-A): a bare
+        // effort rejection is fallback-eligible when the primary's pinned effort
+        // is already the BOTTOM ladder rung (off) — the walk-down loop has no
+        // rung to try on the same model, so degradedRetryError stays null even
+        // though the same-model retry space is exhausted; a configured distinct
+        // fallback may accept the pinned effort and is consulted exactly once.
+        // A bare rejection at any NON-bottom rung (or an unknown custom label)
+        // remains ineligible: the walk-down has not run, and the rejection is a
+        // config error the caller should see.
+        || ((degradedRetryError !== null
+            || primaryThinkingLevel === THINKING_LEVEL_LADDER[THINKING_LEVEL_LADDER.length - 1])
+          && isReasoningEffortRejectionError(fallbackClassificationMessage));
+      const retryPrimaryAfterFallback = async (): Promise<void> => {
+        /*
+         * FNXC:ModelFallback 2026-07-16-00:00:
+         * Once a distinct fallback has failed, retry the primary exactly once regardless
+         * of whether the fallback error is retryable or a context/compaction failure.
+         * Resetting `usingFallback` ensures the final primary receives primary thinking.
+         *
+         * FNXC:ThinkingEffortFallback 2026-09-04-04:55:
+         * A 429 while creating the lower-effort fallback session used to throw
+         * that 429 while usingFallback, skipping this bounded final-primary retry.
+         *
+         * FNXC:ThinkingEffortFallback 2026-09-04-05:12:
+         * FN-8098's prompt-time contract is the same as session creation: once a
+         * distinct fallback has failed, retry the primary exactly once even when
+         * that fallback error is NOT retryable-model (500, compaction, etc.).
+         * Effort exhaustion stays terminal ModelFallbackExhaustedError; every
+         * other non-effort fallback-session failure still gets this bounded
+         * final-primary attempt.
+         *
+         * FNXC:ThinkingEffortFallback 2026-09-04-05:44:
+         * Do NOT restore options.defaultThinkingLevel. If the primary already
+         * rejected that configured effort and selected a lower rung (even when
+         * that lower attempt then 429'd), the final primary retry must apply
+         * the last primary rung. Re-sending the rejected effort exhausted the
+         * sequence even when the primary supports the degraded level.
+         */
+        usingFallback = false;
+        degradedThinkingLevel = undefined;
+        const primaryRetrySession = await swapPromptSession(selectedModel);
+        await promptSessionAndCheck(primaryRetrySession, prompt, effectivePromptOptions);
+      };
+      if (!fallbackModel || usingFallback || !retryableFallbackFailure) {
+        // FNXC:ThinkingEffortFallback 2026-08-26-15:20 (review fix): when a
+        // degraded retry already ran and failed, its error is the current
+        // failure — rethrowing the superseded original rejection made triage
+        // classify a stale error and re-admit under the wrong recovery policy.
+        // FNXC:ThinkingEffortFallback 2026-08-26-19:30 (review fix P1): an
+        // effort rejection that can no longer route anywhere (no fallback
+        // configured, fallback in use, or not fallback-eligible) is terminal
+        // for the pinned effort — the next triage admission would recreate the
+        // exact same failing configuration, so surface the same visible
+        // terminal ModelFallbackExhaustedError contract the no-distinct-
+        // fallback branch below uses instead of a raw rejection triage's
+        // generic catch-all would re-admit into an endless cycle.
+        // FNXC:ThinkingEffortFallback 2026-09-04-05:12: do not require
+        // retryableFallbackFailure here. Session-create already retries primary
+        // when fallback failed non-retryably; prompt-time must match.
+        if (
+          usingFallback
+          && selectedModel
+          && hasDistinctFallback
+          && !isReasoningEffortRejectionError(fallbackClassificationMessage)
+        ) {
+          try {
+            await retryPrimaryAfterFallback();
+            return;
+          } catch (primaryRetryErr: unknown) {
+            throw makeFallbackExhaustedError("prompt-time", 3, primaryRetryErr);
+          }
+        }
+        if (isReasoningEffortRejectionError(fallbackClassificationMessage)) {
+          throw makeFallbackExhaustedError("prompt-time", 1, fallbackClassificationError);
+        }
+        throw fallbackClassificationError;
       }
       if (!hasDistinctFallback) {
-        throw makeFallbackExhaustedError("prompt-time", 1, err);
+        throw makeFallbackExhaustedError("prompt-time", 1, fallbackClassificationError);
       }
 
       usingFallback = true;
       const fallbackSession = await swapPromptSession(fallbackModel);
-      await emitFallbackUsed("prompt-time", err);
+      await emitFallbackUsed("prompt-time", fallbackClassificationError);
 
       // Retry with fallback model, also with auto-compaction support
       try {
         await promptSessionAndCheck(fallbackSession, prompt, effectivePromptOptions);
         return;
       } catch (_fallbackErr: unknown) {
-        /*
-         * FNXC:ModelFallback 2026-07-16-00:00:
-         * Once a distinct fallback has failed, retry the primary exactly once regardless
-         * of whether the fallback error is retryable or a context/compaction failure.
-         * Resetting `usingFallback` ensures the final primary receives primary thinking.
-         */
-        usingFallback = false;
         try {
-          const primaryRetrySession = await swapPromptSession(selectedModel);
-          await promptSessionAndCheck(primaryRetrySession, prompt, effectivePromptOptions);
+          await retryPrimaryAfterFallback();
           return;
         } catch (primaryRetryErr: unknown) {
           throw makeFallbackExhaustedError("prompt-time", 3, primaryRetryErr);
