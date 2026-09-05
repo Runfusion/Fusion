@@ -31,7 +31,7 @@
  * surface through the existing chat failure paths.
  */
 
-import { estimateTokens, type AgentSession } from "@earendil-works/pi-coding-agent";
+import { estimateTokens, type AgentSession, type SessionEntry } from "@earendil-works/pi-coding-agent";
 import { piLog } from "./logger.js";
 import {
   classifyCompactionFailure,
@@ -41,6 +41,7 @@ import {
 } from "./pi.js";
 import { PermanentError } from "./errors/engine-errors.js";
 import { emitBoundedRunAudit, type RunAuditSinkHost } from "./util/emit-bounded-run-audit.js";
+import { buildDeterministicFallbackCompaction } from "./chat-context-deterministic-fallback.js";
 
 /**
  * Non-retryable: a context that overflows its model window (or cannot be compacted into
@@ -102,8 +103,18 @@ export type ChatContextOverflowReason =
   | "compaction-error"
   | "unsupported";
 
-/** LCM escalation tier. Tier 3 (partial branch rewrite) is RUFU-183 and is not a legal value here. */
-export type CompactionEscalationTier = "normal" | "aggressive";
+/**
+ * LCM escalation tier.
+ *
+ * FNXC:ChatOverflowCompaction 2026-09-04-19:20:
+ * RUFU-183 adds tier 3 (`fallback`): a deterministic, non-LLM truncation that runs when the LLM
+ * summarizer is unavailable or refuses, so an over-threshold session is never PERMANENTLY
+ * unsendable. It is a new TIER, not a ninth refusal reason — a tier-3 attempt that cannot converge
+ * still surfaces the existing reasons unchanged. Attempts are capped at one per send: escalation is
+ * bounded, not "loop while stuck", so a stuck card fails loudly on tier 3's own result instead of
+ * spinning on the one lever that has no model call to blame.
+ */
+export type CompactionEscalationTier = "normal" | "aggressive" | "fallback";
 
 /** Why the aggressive (tier-2) retry was not attempted, per branch-mutation legality. */
 export type CompactionRetrySkippedReason =
@@ -144,6 +155,35 @@ const FRESH_ESTIMATE_CHARS_PER_TOKEN = 3.5;
  * skips them (diagnostic warn, no throw) — they cannot be compacted from the dashboard
  * side and their overflow errors keep flowing through the existing failure paths.
  */
+/**
+ * The public surface of pi's `SessionManager` this gate is allowed to touch.
+ *
+ * FNXC:ChatOverflowCompaction 2026-09-04-19:20:
+ * Tier 3 needs five public members and no private ones: `buildContextEntries` (the active,
+ * compaction-aware leaf view to split), `getEntries` + `getLeafId` (real leaf-path order, needed to
+ * place the split past any live compaction — `buildSessionPath`/`getBranch` are NOT exported),
+ * `appendCompaction` (the only append it may use) and `buildSessionContext` (the rebuilt message
+ * list to install into the live view). `appendMessage` and `newSession` are deliberately ABSENT: a
+ * gate may not write messages or open a branch, so tier 3 cannot drop history outside
+ * `appendCompaction`. Every member is optional so a plugin/fake session that lacks the manager —
+ * or an older pi that lacks a member — is treated as CANNOT REDUCE and keeps today's refusal
+ * verbatim rather than receiving a weaker reduction or a crash on a missing method.
+ */
+export interface CompactionGateSessionManager {
+  buildContextEntries?: () => SessionEntry[];
+  buildSessionContext?: () => { messages?: unknown[] } | undefined;
+  getEntries?: () => SessionEntry[];
+  getLeafId?: () => string | null;
+  appendCompaction?: (
+    summary: string,
+    firstKeptEntryId: string,
+    tokensBefore: number,
+    details?: unknown,
+    fromHook?: boolean,
+    usage?: unknown,
+  ) => string;
+}
+
 export interface CompactionGateSession {
   /** pi's ContextUsage reader; absence marks a non-pi session shape. */
   getContextUsage?: () => { tokens: number | null; contextWindow: number; percent: number | null } | undefined;
@@ -167,6 +207,8 @@ export interface CompactionGateSession {
   getActiveToolNames?: () => string[];
   /** pi's configured tool definitions (name/description/parameters/…). */
   getAllTools?: () => Array<{ name?: string; description?: string; parameters?: unknown }>;
+  /** pi's public transcript manager. Its ABSENCE makes escalation tier 3 incapable. */
+  sessionManager?: CompactionGateSessionManager;
 }
 
 interface CompactionBounds {
@@ -294,8 +336,13 @@ export function freshLoadedContextEstimate(session: CompactionGateSession): numb
  * (chars / 3.5) so the two measurements cannot drift. Returns null when the session
  * does not expose a usable current system prompt — the gate then skips the static-floor
  * entry test (best-effort: a null floor never throws on its own).
+ *
+ * FNXC:ChatOverflowCompaction 2026-09-04-19:20:
+ * Exported for RUFU-183: escalation tier 3 must subtract this floor from its message budget AND
+ * prove its result against it — a message-only comparison would pass when the static floor alone
+ * already sits over target.
  */
-function staticContextFloorEstimate(session: CompactionGateSession): number | null {
+export function staticContextFloorEstimate(session: CompactionGateSession): number | null {
   let prompt = "";
   try {
     prompt = typeof session.systemPrompt === "string" ? session.systemPrompt : "";
@@ -328,6 +375,88 @@ function staticContextFloorEstimate(session: CompactionGateSession): number | nu
 }
 
 /**
+ * Where a compaction aims, as a fraction of the trigger threshold. pi keeps a flat
+ * `keepRecentTokens` (20 000) rather than a budget, so this target is the guard's own concept —
+ * the number both escalation steers toward.
+ */
+const COMPACTION_TARGET_FRACTION = 0.75;
+
+/**
+ * The compaction tier's target budget: strictly below the trigger threshold.
+ *
+ * FNXC:ChatOverflowCompaction 2026-09-04-19:20:
+ * RUFU-183 makes this ONE definition shared by tier 2's directive and tier 3's proof ceiling so the
+ * two cannot drift. It derives from the EFFECTIVE threshold rather than the raw window: the
+ * threshold is `min(tokenCap, hardLimit)`, and a target computed from the window alone can sit ABOVE
+ * a small operator tokenCap — breaking the invariant this function exists to hold
+ * (`target < threshold`). Deriving from the threshold keeps it true for every cap while staying
+ * window-sourced, because the threshold itself is computed from the same window.
+ *
+ * Why strictly below matters: a reduction landing between target and threshold satisfies this send
+ * but re-arms the next one, which is the loop the ladder exists to terminate. It is also what makes
+ * tier 3 provable: the deterministic fallback is only given `target - staticFloor` message tokens,
+ * so the rebuilt context ends under the target, not merely under the threshold.
+ */
+export function compactionTargetBudget(threshold: number): number {
+  return Math.floor(threshold * COMPACTION_TARGET_FRACTION);
+}
+
+/**
+ * Lowest active-entry index the tier-3 split may keep from, so it never re-projects the session's
+ * live compaction.
+ *
+ * FNXC:ChatOverflowCompaction 2026-09-04-19:20:
+ * `buildContextEntries()` projects the active context as
+ * `[live compaction, entries kept from firstKeptEntryId up to it, entries appended after it]`, while
+ * the leaf path runs in the opposite order for the middle group (they PRECEDE the compaction in
+ * leaf order). Cutting inside that middle group would make the new compaction re-include the old one
+ * and double-count it — the plan would promise more reduction than it delivers. The number of leaf
+ * entries after the last compaction (`afterCount`) is therefore also the number of active entries
+ * after it, so the first safe kept index is `activeEntryCount - afterCount`. No live compaction ⇒ 1
+ * (the builder's own default). pi's `buildSessionPath` is not exported, so the leaf path is
+ * reconstructed from the public `getEntries()` + `getLeafId()` by walking `parentId`; a malformed
+ * parent chain is bounded by the `seen` set and degrades to 1, which the builder's turn-start search
+ * still constrains.
+ */
+export function deterministicFallbackSplitFloor(
+  manager: CompactionGateSessionManager,
+  activeEntryCount: number,
+): number {
+  try {
+    const all = manager.getEntries?.();
+    if (!Array.isArray(all) || all.length === 0) return 1;
+    const byId = new Map<string, SessionEntry>();
+    for (const entry of all) {
+      if (entry && typeof entry.id === "string") byId.set(entry.id, entry);
+    }
+    const leafId = manager.getLeafId?.() ?? null;
+    const path: SessionEntry[] = [];
+    const seen = new Set<string>();
+    let current: SessionEntry | undefined = leafId ? byId.get(leafId) : all[all.length - 1];
+    while (current && !seen.has(current.id)) {
+      seen.add(current.id);
+      path.push(current);
+      const parentId = (current as { parentId?: unknown }).parentId;
+      current = typeof parentId === "string" ? byId.get(parentId) : undefined;
+    }
+    path.reverse();
+    let lastCompaction = -1;
+    for (let i = 0; i < path.length; i++) {
+      if (path[i]!.type === "compaction") lastCompaction = i;
+    }
+    if (lastCompaction < 0) return 1;
+    const afterCount = path.length - lastCompaction - 1;
+    const floor = activeEntryCount - afterCount;
+    if (!Number.isFinite(floor) || floor < 1) return 1;
+    return floor;
+  } catch {
+    // A broken transcript reader must not turn a rescue attempt into a crash: degrade to the
+    // builder's own default bound (supersession then relies on the builder's turn-start search).
+    return 1;
+  }
+}
+
+/**
  * Tier-2 escalation directive: an explicit target budget derived from the compaction
  * threshold (75% of it), so the summarizer is told to drop content rather than
  * re-summarize at the same granularity as the fallback directive. Must stay distinct
@@ -335,7 +464,7 @@ function staticContextFloorEstimate(session: CompactionGateSession): number | nu
  * no-silent-no-op contract for the escalation tier.
  */
 export function buildAggressiveCompactionDirective(threshold: number): string {
-  const targetTokens = Math.floor(threshold * 0.75);
+  const targetTokens = compactionTargetBudget(threshold);
   return [
     "This session's loaded context still exceeds the compaction threshold after a normal compaction pass.",
     `Produce ONE consolidated compaction summary that reduces the loaded context to a target budget of at most ${targetTokens} tokens (the threshold is ${threshold} tokens).`,
@@ -415,6 +544,44 @@ export interface CompactionGateResult {
   contextTokens: number | null;
   /** Effective threshold used for the decision (null when unknown/unavailable). */
   threshold: number | null;
+  /**
+   * Set ONLY when the send was rescued by escalation tier 3 (deterministic truncation).
+   *
+   * FNXC:ChatOverflowCompaction 2026-09-04-19:20:
+   * RUFU-183: the caller (dashboard chat send / room responder) persists this on the message it
+   * saves, so the operator can see the engine truncated their context WITHOUT an LLM summary. The
+   * run-audit row is not allowed to be the only trace: an invisible truncation is a silent content
+   * loss, and "the summarizer was unavailable" cannot be inferred from the reply alone. Absent on
+   * every other path (below threshold, tier 1/2 success, skip, refusal).
+   */
+  fallback?: Tier3RescueEvidence;
+}
+
+/**
+ * What a tier-3 deterministic truncation removed and what it could not touch.
+ *
+ * FNXC:ChatOverflowCompaction 2026-09-04-22:26:
+ * RUFU-183 review — one evidence shape serves BOTH the rescue (proof passed) and the refused
+ * after-truncation case (proof failed), because Route A has no deletion primitive: once
+ * `appendCompaction` lands, the shortening is durable and the refusal must describe the state
+ * actually left behind, not the pre-truncation numbers. `contextTokensAfter` is the floor-aware
+ * re-measurement after the rebuild (null when the rebuild could not be measured); the rescue
+ * narrows it to a proven number.
+ */
+export interface Tier3TruncationEvidence {
+  /** Active context entries the engine dropped (turns, tool results, prior summaries). */
+  droppedMessageCount: number;
+  /** Tokens removed, measured before-minus-after with the gate's own estimator (0 when unmeasurable). */
+  droppedTokens: number;
+  /** Static prompt/tool floor tokens that were not reducible and were excluded from the budget. */
+  floorTokens: number;
+  /** Floor-aware measurement of the rebuilt context; null when the rebuild could not be measured. */
+  contextTokensAfter: number | null;
+}
+
+/** Tier-3 evidence whose floor-aware proof passed — the reduction is real and measured. */
+export interface Tier3RescueEvidence extends Tier3TruncationEvidence {
+  contextTokensAfter: number;
 }
 
 /**
@@ -430,8 +597,11 @@ export interface CompactionGateResult {
  * branch unmutated; pi's absolute "Already compacted" / "Nothing to compact" refusals
  * and a missing compaction capability are terminal, because a larger directive cannot
  * unlock them). Acceptance is strict: the summary must be non-empty AND pi must report a
- * context reduction. Every throw names its {@link ChatContextOverflowReason}. The
- * prompt is never sent on a refusal.
+ * context reduction. Every arm that still ends in a refusal then gets escalation tier 3: one
+ * deterministic (non-LLM) partial rewrite of the branch, allowed to run only where it can PROVE the
+ * rebuilt context fits under the compaction target (RUFU-183) — incapable, static-floor-only, or
+ * unproven sessions keep the refusal exactly as written. Every throw names its
+ * {@link ChatContextOverflowReason}. The prompt is never sent on a refusal.
  */
 export async function ensureContextWithinCompactionThreshold(
   session: CompactionGateSession,
@@ -507,8 +677,7 @@ export async function ensureContextWithinCompactionThreshold(
 
   /*
   FNXC:ChatContextGuardEscalation 2026-09-04-10:57:
-  LCM escalation ladder, tiers 1-2 (tier 3, deterministic partial branch rewrite, is
-  RUFU-183 and must NOT appear here). compactSessionContext is total: it returns a
+  LCM escalation ladder, tiers 1-2. compactSessionContext is total: it returns a
   reason-coded CompactionOutcome instead of throwing or returning null, so every branch
   switches on outcome.reason. Tier 2 (aggressive directive) runs ONLY after an error
   arm — a transient upstream failure or a cancelled pass left the branch unmutated. pi's
@@ -527,6 +696,10 @@ export async function ensureContextWithinCompactionThreshold(
     outcome: CompactionAuditOutcome;
     afterTokens: number | null;
     retrySkippedReason: CompactionRetrySkippedReason;
+    /** Tier-3-only surface: what the deterministic truncation removed and what it could not touch. */
+    droppedMessageCount?: number;
+    droppedTokens?: number;
+    floorTokens?: number;
   }): Promise<void> => {
     if (!auditContext?.sink) return;
     await emitBoundedRunAudit(auditContext.sink, {
@@ -545,6 +718,13 @@ export async function ensureContextWithinCompactionThreshold(
         afterTokens: fields.afterTokens,
         threshold,
         retrySkippedReason: fields.retrySkippedReason,
+        // Tier-3 extras stay absent from tiers 1-2 rows so the RUFU-182 payload shape is unchanged
+        // for every pre-existing outcome; only a deterministic truncation names its removals.
+        ...(fields.droppedMessageCount !== undefined
+          ? { droppedMessageCount: fields.droppedMessageCount }
+          : {}),
+        ...(fields.droppedTokens !== undefined ? { droppedTokens: fields.droppedTokens } : {}),
+        ...(fields.floorTokens !== undefined ? { floorTokens: fields.floorTokens } : {}),
       },
     });
   };
@@ -582,6 +762,247 @@ export async function ensureContextWithinCompactionThreshold(
     outcome = await runTier(buildAggressiveCompactionDirective(threshold));
   }
 
+  /*
+  FNXC:ChatOverflowCompaction 2026-09-04-19:20:
+  Escalation tier 3 (RUFU-183): the LLM-free fallback. Tiers 1-2 both depend on a summarizer
+  round-trip, so saneca chat-b6a74d40 refused with the context at 221% of its hard limit — pi said
+  "Already compacted" while a 110,034-token message list was still loaded, because pi compares
+  message-only tokens against a 20 000-token keep-recent budget and never subtracts the static
+  prompt/tool floor it must still send. A deterministic partial branch rewrite cannot fix that
+  measurement (only pi owns it) but it CAN guarantee the outcome: the floor is constant, so cutting
+  the message list to `compactionTarget - floor` provably lands the rebuilt context under target.
+
+  Route A, mirroring pi's own compact() tail exactly — public `appendCompaction`, then
+  `buildSessionContext()`, then the live-view assignment — so there is no private-pi back door and
+  the durable transcript is re-read rather than assumed. pi's in-memory refresh is a direct
+  `agent.state.messages =` write with no event or handler, so Route A installs the rebuilt list the
+  same way; no pi event is replayed. Supersession is carried by the public `firstKeptEntryId`, which
+  is why a `newSession` branch is not needed and not used.
+
+  It runs AT MOST ONCE per send, never on a healthy send, never for `nothing-to-compact` (which is
+  "too small", not "too big") and never when the outcome was produced. An attempt reports four
+  outcomes (RUFU-183 review): `rescued` proves the reduction; `floor-dominated` means the static
+  floor alone leaves no message budget, so the refusal re-attributes to `static-floor` — blaming
+  pi's refusal there sends triage to retry compaction instead of trimming the tool set; a
+  `truncated-unproven` attempt keeps the arm's reason but carries the truncation evidence, because
+  Route A cannot un-append a durable compaction; `incapable` leaves the refusal arms byte-identical
+  to RUFU-182 — a tier that cannot prove convergence is not allowed to trade the honest refusal
+  for a weaker reduction.
+  */
+  const staticFloor = staticContextFloorEstimate(session);
+  const compactionTarget = compactionTargetBudget(threshold);
+  /**
+   * The ONE tier-3 outcome per send. The four statuses are kept DISTINCT on purpose
+   * (RUFU-183 review): floor-dominated refusals must re-attribute to `static-floor`, and
+   * truncated-but-unproven refusals must carry the truncation evidence, while only an
+   * incapable attempt leaves the arm's RUFU-182 shape byte-identical.
+   */
+  type Tier3Attempt =
+    | { status: "incapable" }
+    | { status: "floor-dominated"; floorTokens: number; target: number }
+    | { status: "truncated-unproven"; evidence: Tier3TruncationEvidence }
+    | { status: "rescued"; evidence: Tier3RescueEvidence };
+  let fallbackRan = false;
+  let fallbackAttempt: Tier3Attempt | null = null;
+
+  /**
+   * Attempt tier 3 once and report the typed outcome. Emits no audit row: every arm owns its
+   * single row, which is what preserves RUFU-182's "exactly one row per gate invocation".
+   */
+  const runDeterministicFallback = async (): Promise<Tier3Attempt> => {
+    if (fallbackRan && fallbackAttempt) return fallbackAttempt;
+    fallbackRan = true;
+    const settle = (attempt: Tier3Attempt): Tier3Attempt => {
+      fallbackAttempt = attempt;
+      return attempt;
+    };
+    const manager = session.sessionManager;
+    // A session that does not expose the public compaction surface (fake, plugin runtime, older pi)
+    // is NOT given a weaker reduction: it keeps today's refusal verbatim.
+    const capable =
+      !!manager &&
+      typeof manager.buildContextEntries === "function" &&
+      typeof manager.buildSessionContext === "function" &&
+      typeof manager.appendCompaction === "function" &&
+      typeof manager.getEntries === "function" &&
+      typeof manager.getLeafId === "function";
+    if (!capable || !session.state || typeof session.state !== "object") return settle({ status: "incapable" });
+    if (staticFloor === null) {
+      // Without the floor there is no honest floor-aware proof — and no measured domination to
+      // blame either, so the arm's own attribution stays honest.
+      return settle({ status: "incapable" });
+    }
+    const messageTokenBudget = compactionTarget - staticFloor;
+    if (messageTokenBudget <= 0) {
+      // The untouchable floor alone eats the target (the saneca class): the boundary IS the
+      // static context, so the refusal must say `static-floor` with the floor named, not quote
+      // pi's refusal — triage reading "retry compaction" would chase the wrong lever.
+      return settle({ status: "floor-dominated", floorTokens: staticFloor, target: compactionTarget });
+    }
+    tiersAttempted.push("fallback");
+    let appendedDroppedCount: number | null = null;
+    try {
+      const activeEntries = manager!.buildContextEntries!();
+      if (!Array.isArray(activeEntries) || activeEntries.length < 2) return settle({ status: "incapable" });
+      const plan = buildDeterministicFallbackCompaction({
+        activeEntries,
+        messageTokenBudget,
+        tokensBefore: contextTokens,
+        minSplitIndex: deterministicFallbackSplitFloor(manager!, activeEntries.length),
+      });
+      // No turn boundary makes the branch fit under the message budget. The floor left room
+      // (budget > 0), so this is not floor domination — the arm's own reason stays honest.
+      if (!plan) return settle({ status: "incapable" });
+      manager!.appendCompaction!(
+        plan.summary,
+        plan.firstKeptEntryId,
+        plan.tokensBefore,
+        {
+          deterministicFallback: true,
+          droppedEntryCount: plan.droppedEntryCount,
+          keptEntryCount: plan.keptEntryCount,
+        },
+        true,
+        undefined,
+      );
+      // From this line on the branch IS shortened — Route A has no deletion primitive, so any
+      // later failure must report the durable truncation instead of hiding it.
+      appendedDroppedCount = plan.droppedEntryCount;
+      // Re-read the durable transcript (never assume what was written) and install the rebuilt
+      // active context into the live view — the same write pi's own compact() performs.
+      const rebuilt = manager!.buildSessionContext!();
+      if (!rebuilt || !Array.isArray(rebuilt.messages)) {
+        return settle({
+          status: "truncated-unproven",
+          evidence: {
+            droppedMessageCount: appendedDroppedCount,
+            droppedTokens: 0,
+            floorTokens: staticFloor,
+            contextTokensAfter: null,
+          },
+        });
+      }
+      session.state.messages = rebuilt.messages;
+      // Floor-aware proof, measured through the existing estimator (never a new token math).
+      const afterTokens = freshLoadedContextEstimate(session) ?? estimateLoadedContextTokens(session);
+      const evidence: Tier3TruncationEvidence = {
+        droppedMessageCount: plan.droppedEntryCount,
+        // Unattributable (0) when the post-rebuild measurement failed; a fabricated guess would
+        // overstate what the operator lost.
+        droppedTokens: afterTokens === null ? 0 : Math.max(0, contextTokens - afterTokens),
+        floorTokens: staticFloor,
+        contextTokensAfter: afterTokens,
+      };
+      if (afterTokens === null || afterTokens >= compactionTarget) {
+        // The proof rejected the reduction, but the truncation stands on disk — the refusal
+        // must describe the shortened state actually left behind, not the pre-truncation numbers.
+        return settle({ status: "truncated-unproven", evidence });
+      }
+      if (afterTokens >= threshold) {
+        // Unreachable while target <= threshold; the guard's estimator is not the proof's
+        // contract, so fail loud rather than send. The truncation still happened.
+        piLog.warn(
+          `chat-context-guard: deterministic fallback truncated to ${afterTokens} tokens but the floor-aware re-measurement still exceeds the ${threshold}-token threshold; refusing to send`,
+        );
+        return settle({ status: "truncated-unproven", evidence });
+      }
+      return settle({ status: "rescued", evidence: evidence as Tier3RescueEvidence });
+    } catch {
+      // A broken transcript is not a reason to crash the gate. If the append already landed,
+      // though, the shortening is durable — report it rather than fall back silently.
+      if (appendedDroppedCount !== null) {
+        return settle({
+          status: "truncated-unproven",
+          evidence: {
+            droppedMessageCount: appendedDroppedCount,
+            droppedTokens: 0,
+            floorTokens: staticFloor,
+            contextTokensAfter: null,
+          },
+        });
+      }
+      return settle({ status: "incapable" });
+    }
+  };
+
+  /**
+   * The refusal attribution a tier-3 attempt dictates for the arm that called it.
+   *
+   * FNXC:ChatOverflowCompaction 2026-09-04-22:26:
+   * RUFU-183 review — an `incapable` overlay is empty so untouched arms stay byte-identical to
+   * RUFU-182; `floor-dominated` rewrites the reason to `static-floor` (the triage-relevant fact
+   * is "reduce the tool set / larger window", not "retry compaction"); `truncated-unproven`
+   * keeps the arm's reason but replaces the arm's pre-truncation measurement with the honest
+   * post-rebuild number and names the shortening — the persisted row and message must describe
+   * the state the session is actually in, because the truncation cannot be rolled back.
+   */
+  interface Tier3RefusalOverlay {
+    /** Replaces the arm's reason when tier 3 proved a different boundary (static-floor). */
+    reason: ChatContextOverflowReason | null;
+    /** Honest post-tier-3 measurement; `undefined` = keep the arm's own number. */
+    afterTokens: number | null | undefined;
+    /** Audit metadata present only when tier 3 acted; empty spreads keep rows unchanged. */
+    auditExtras: { droppedMessageCount?: number; droppedTokens?: number; floorTokens?: number };
+    /** Same evidence for the error details (bare `floorTokens` or a nested `tier3` object). */
+    detailExtras: Record<string, unknown>;
+    /** Sentence appended before "; the prompt was not sent". */
+    suffix: string;
+  }
+  const tier3RefusalOverlay = (attempt: Tier3Attempt): Tier3RefusalOverlay => {
+    if (attempt.status === "floor-dominated") {
+      return {
+        reason: "static-floor",
+        afterTokens: undefined,
+        auditExtras: { droppedMessageCount: 0, droppedTokens: 0, floorTokens: attempt.floorTokens },
+        detailExtras: { floorTokens: attempt.floorTokens },
+        suffix: `; the deterministic fallback was refused because the static context floor of ${attempt.floorTokens} tokens already exceeds the ${attempt.target}-token compaction target — the floor IS the boundary; reduce the agent's tools/memory or use a larger-window model`,
+      };
+    }
+    if (attempt.status === "truncated-unproven") {
+      const ev = attempt.evidence;
+      return {
+        reason: null,
+        afterTokens: ev.contextTokensAfter,
+        auditExtras: {
+          droppedMessageCount: ev.droppedMessageCount,
+          droppedTokens: ev.droppedTokens,
+          floorTokens: ev.floorTokens,
+        },
+        detailExtras: { tier3: ev },
+        suffix: `; the deterministic fallback truncated ${ev.droppedMessageCount} messages but ${
+          ev.contextTokensAfter === null
+            ? "the floor-aware re-measurement is unavailable"
+            : `the floor-aware re-measurement is ${ev.contextTokensAfter} tokens, not proven under the ${compactionTarget}-token compaction target`
+        } — the branch IS shortened on disk while this refusal stands`,
+      };
+    }
+    return { reason: null, afterTokens: undefined, auditExtras: {}, detailExtras: {}, suffix: "" };
+  };
+  /** Overlay-aware number pick: `??` would wrongly fall through a deliberate null. */
+  const reportedTokens = (overlay: Tier3RefusalOverlay, armValue: number | null): number | null =>
+    overlay.afterTokens === undefined ? armValue : overlay.afterTokens;
+
+  /** The single audit row + result for a tier-3 rescue; arms call this instead of duplicating it. */
+  const finishFallback = async (
+    rescued: Tier3RescueEvidence,
+  ): Promise<CompactionGateResult> => {
+    piLog.warn(
+      `chat-context-guard: escalation tier 3 truncated the context deterministically (no LLM summary) — ${rescued.droppedMessageCount} entries dropped, ${contextTokens} -> ${rescued.contextTokensAfter} tokens (target ${compactionTarget}, static floor ${rescued.floorTokens})`,
+    );
+    await emitAudit({
+      tier: "fallback",
+      tiersAttempted,
+      reason: null,
+      outcome: "compacted",
+      afterTokens: rescued.contextTokensAfter,
+      retrySkippedReason: "not-needed",
+      droppedMessageCount: rescued.droppedMessageCount,
+      droppedTokens: rescued.droppedTokens,
+      floorTokens: rescued.floorTokens,
+    });
+    return { compacted: true, contextTokens: rescued.contextTokensAfter, threshold, fallback: rescued };
+  };
+
   const refusalDetails = (reason: ChatContextOverflowReason, extra: Record<string, unknown> = {}) => ({
     reason,
     tiersAttempted,
@@ -594,6 +1015,11 @@ export async function ensureContextWithinCompactionThreshold(
   });
 
   if (outcome.reason === "unsupported") {
+    /*
+    FNXC:ChatOverflowCompaction 2026-09-04-19:20:
+    Tier 3 deliberately does NOT hook this arm: with no compaction capability there is no branch to
+    truncate at all, so "cannot reduce" is honest and the refusal stays exactly as RUFU-182 wrote it.
+    */
     await emitAudit({
       tier,
       tiersAttempted,
@@ -635,35 +1061,58 @@ export async function ensureContextWithinCompactionThreshold(
       });
       return { compacted: false, contextTokens: freshTokens, threshold };
     }
+    /*
+    FNXC:ChatOverflowCompaction 2026-09-04-19:20:
+    Tier 3 hooks this arm for `already-compacted` ONLY. `nothing-to-compact` means "too small to
+    compact", not "too big to send": truncating a branch pi just declared too small would reduce a
+    context that never needed reduction, and RUFU-182's reading of that refusal is "an over-imposed
+    static floor, not oversized history" — which a branch rewrite cannot fix either.
+    */
+    const attempt: Tier3Attempt =
+      outcome.reason === "already-compacted" ? await runDeterministicFallback() : { status: "incapable" };
+    if (attempt.status === "rescued") return finishFallback(attempt.evidence);
+    const refusal = tier3RefusalOverlay(attempt);
+    const refusalReason: ChatContextOverflowReason = refusal.reason ?? outcome.reason;
+    const reportedFreshTokens = reportedTokens(refusal, freshTokens);
     await emitAudit({
       tier,
       tiersAttempted,
-      reason: outcome.reason,
+      reason: refusalReason,
       outcome: "refused",
-      afterTokens: freshTokens,
+      afterTokens: reportedFreshTokens,
       retrySkippedReason: "pi-refuses-second-compaction",
+      ...refusal.auditExtras,
     });
     throw new ChatContextOverflowError(
-      `Pre-overflow compaction was refused by the session engine (reason=${outcome.reason}, tiers attempted: ${tiersAttempted.join(", ")}): pi: "${outcome.engineMessage ?? outcome.reason}" — this refusal is absolute, a larger compaction directive cannot unlock it; measured ${contextTokens} tokens >= threshold ${threshold}${hardLimit !== null ? `, hard limit ${hardLimit}` : ""}${freshTokens !== null ? `, fresh measurement of the current prompt + tools + messages is ${freshTokens} tokens${freshTokens >= threshold ? " — reduce the agent's tools/memory or use a larger-window model" : ""}` : "; the fresh measurement is unavailable"}; the prompt was not sent`,
-      refusalDetails(outcome.reason, { freshTokens, engineMessage: outcome.engineMessage }),
+      `Pre-overflow compaction was refused by the session engine (reason=${refusalReason}, tiers attempted: ${tiersAttempted.join(", ")}): pi: "${outcome.engineMessage ?? outcome.reason}" — this refusal is absolute, a larger compaction directive cannot unlock it; measured ${contextTokens} tokens >= threshold ${threshold}${hardLimit !== null ? `, hard limit ${hardLimit}` : ""}${reportedFreshTokens !== null ? `, fresh measurement of the current prompt + tools + messages is ${reportedFreshTokens} tokens${reportedFreshTokens >= threshold ? " — reduce the agent's tools/memory or use a larger-window model" : ""}` : "; the fresh measurement is unavailable"}${refusal.suffix}; the prompt was not sent`,
+      refusalDetails(refusalReason, {
+        freshTokens: reportedFreshTokens,
+        engineMessage: outcome.engineMessage,
+        ...refusal.detailExtras,
+      }),
     );
   }
 
   if (outcome.reason === "error") {
+    const attempt = await runDeterministicFallback();
+    if (attempt.status === "rescued") return finishFallback(attempt.evidence);
     // Reaching this arm means the tier-1 error escalated and the single legal retry
     // also errored — the retry was attempted, so it was never "skipped".
+    const refusal = tier3RefusalOverlay(attempt);
+    const refusalReason: ChatContextOverflowReason = refusal.reason ?? "compaction-error";
     await emitAudit({
       tier,
       tiersAttempted,
-      reason: "compaction-error",
+      reason: refusalReason,
       outcome: "refused",
-      afterTokens: null,
+      afterTokens: reportedTokens(refusal, null),
       retrySkippedReason: "not-needed",
+      ...refusal.auditExtras,
     });
     const engineMessage = outcome.engineMessage ?? "unknown engine error";
     throw new ChatContextOverflowError(
-      `Pre-overflow compaction failed (reason=compaction-error, tiers attempted: ${tiersAttempted.join(", ")}): ${engineMessage} — measured ${contextTokens} tokens >= threshold ${threshold}${hardLimit !== null ? `, hard limit ${hardLimit}` : ""}; the prompt was not sent`,
-      refusalDetails("compaction-error", { engineMessage }),
+      `Pre-overflow compaction failed (reason=${refusalReason}, tiers attempted: ${tiersAttempted.join(", ")}): ${engineMessage} — measured ${contextTokens} tokens >= threshold ${threshold}${hardLimit !== null ? `, hard limit ${hardLimit}` : ""}${refusal.suffix}; the prompt was not sent`,
+      refusalDetails(refusalReason, { engineMessage, ...refusal.detailExtras }),
       new Error(engineMessage),
     );
   }
@@ -674,17 +1123,22 @@ export async function ensureContextWithinCompactionThreshold(
   // outcome with `reduced:false` already takes — the guard must not invent a second refusal shape
   // for the same operator-visible fact.
   if (outcome.reason === "compacted" && outcome.summary.trim().length === 0) {
+    const attempt = await runDeterministicFallback();
+    if (attempt.status === "rescued") return finishFallback(attempt.evidence);
+    const refusal = tier3RefusalOverlay(attempt);
+    const refusalReason: ChatContextOverflowReason = refusal.reason ?? "empty-summary";
     await emitAudit({
       tier,
       tiersAttempted,
-      reason: "empty-summary",
+      reason: refusalReason,
       outcome: "refused",
-      afterTokens: null,
+      afterTokens: reportedTokens(refusal, null),
       retrySkippedReason: "branch-already-mutated",
+      ...refusal.auditExtras,
     });
     throw new ChatContextOverflowError(
-      `Pre-overflow compaction returned an empty summary (reason=empty-summary, tiers attempted: ${tiersAttempted.join(", ")}): the branch was mutated but nothing usable was produced for a ${contextTokens}-token context (threshold ${threshold}); the prompt was not sent`,
-      refusalDetails("empty-summary", { tokensBefore: outcome.tokensBefore }),
+      `Pre-overflow compaction returned an empty summary (reason=${refusalReason}, tiers attempted: ${tiersAttempted.join(", ")}): the branch was mutated but nothing usable was produced for a ${contextTokens}-token context (threshold ${threshold})${refusal.suffix}; the prompt was not sent`,
+      refusalDetails(refusalReason, { tokensBefore: outcome.tokensBefore, ...refusal.detailExtras }),
     );
   }
 
@@ -725,21 +1179,28 @@ export async function ensureContextWithinCompactionThreshold(
     // refusal when the un-reduced context is over the hard limit — the reason names the
     // failed reduction, not a generic over-limit claim.
     if (overLimit) {
+      const attempt = await runDeterministicFallback();
+      if (attempt.status === "rescued") return finishFallback(attempt.evidence);
+      const refusal = tier3RefusalOverlay(attempt);
+      const refusalReason: ChatContextOverflowReason = refusal.reason ?? "non-reducing-summary";
+      const reportedAfterTokens = reportedTokens(refusal, afterTokens);
       await emitAudit({
         tier,
         tiersAttempted,
-        reason: "non-reducing-summary",
+        reason: refusalReason,
         outcome: "refused",
-        afterTokens,
+        afterTokens: reportedAfterTokens,
         retrySkippedReason: "branch-already-mutated",
+        ...refusal.auditExtras,
       });
       throw new ChatContextOverflowError(
-        `Pre-overflow compaction produced a summary that did not reduce the context (reason=non-reducing-summary, tiers attempted: ${tiersAttempted.join(", ")}): ${afterTokens} tokens remain vs the ${bounds.hardLimit} hard limit (threshold ${threshold}, contextWindow ${contextWindow ?? "unknown"}); the prompt was not sent`,
-        refusalDetails("non-reducing-summary", {
-          afterTokens,
+        `Pre-overflow compaction produced a summary that did not reduce the context (reason=${refusalReason}, tiers attempted: ${tiersAttempted.join(", ")}): ${reportedAfterTokens} tokens remain vs the ${bounds.hardLimit} hard limit (threshold ${threshold}, contextWindow ${contextWindow ?? "unknown"})${refusal.suffix}; the prompt was not sent`,
+        refusalDetails(refusalReason, {
+          afterTokens: reportedAfterTokens,
           tokensBefore: outcome.tokensBefore,
           estimatedTokensAfter: measuredAfterTokens,
           stage: "post-compaction",
+          ...refusal.detailExtras,
         }),
       );
     }
@@ -767,20 +1228,29 @@ export async function ensureContextWithinCompactionThreshold(
     the guard's own estimator; a fitting send proceeds UNVALIDATED (compacted:false).
     */
     if (overLimit) {
+      const attempt = await runDeterministicFallback();
+      if (attempt.status === "rescued") return finishFallback(attempt.evidence);
+      const refusal = tier3RefusalOverlay(attempt);
+      // The outcome enum stays measurement-unknown even on a throw (RUFU-182): the honest
+      // statement is "we could not observe what compaction did", whichever boundary hit.
+      const refusalReason: ChatContextOverflowReason = refusal.reason ?? "post-compaction-over-limit";
+      const reportedAfterTokens = reportedTokens(refusal, afterTokens);
       await emitAudit({
         tier,
         tiersAttempted,
-        reason: "post-compaction-over-limit",
+        reason: refusalReason,
         outcome: "measurement-unknown",
-        afterTokens,
+        afterTokens: reportedAfterTokens,
         retrySkippedReason: "branch-already-mutated",
+        ...refusal.auditExtras,
       });
       throw new ChatContextOverflowError(
-        `Context measurement after compaction is unvalidated and the guard's own estimate is ${afterTokens} tokens, at or above the ${bounds.hardLimit} hard limit (reason=post-compaction-over-limit, tiers attempted: ${tiersAttempted.join(", ")}, threshold ${threshold}, contextWindow ${contextWindow ?? "unknown"}); the prompt was not sent`,
-        refusalDetails("post-compaction-over-limit", {
-          afterTokens,
+        `Context measurement after compaction is unvalidated and the guard's own estimate is ${reportedAfterTokens} tokens, at or above the ${bounds.hardLimit} hard limit (reason=${refusalReason}, tiers attempted: ${tiersAttempted.join(", ")}, threshold ${threshold}, contextWindow ${contextWindow ?? "unknown"})${refusal.suffix}; the prompt was not sent`,
+        refusalDetails(refusalReason, {
+          afterTokens: reportedAfterTokens,
           hardLimit: bounds.hardLimit,
           stage: "post-compaction",
+          ...refusal.detailExtras,
         }),
       );
     }
@@ -799,20 +1269,27 @@ export async function ensureContextWithinCompactionThreshold(
   }
 
   if (overLimit) {
+    const attempt = await runDeterministicFallback();
+    if (attempt.status === "rescued") return finishFallback(attempt.evidence);
+    const refusal = tier3RefusalOverlay(attempt);
+    const refusalReason: ChatContextOverflowReason = refusal.reason ?? "post-compaction-over-limit";
+    const reportedAfterTokens = reportedTokens(refusal, afterTokens);
     await emitAudit({
       tier,
       tiersAttempted,
-      reason: "post-compaction-over-limit",
+      reason: refusalReason,
       outcome: "refused",
-      afterTokens,
+      afterTokens: reportedAfterTokens,
       retrySkippedReason: "branch-already-mutated",
+      ...refusal.auditExtras,
     });
     throw new ChatContextOverflowError(
-      `Context is still ${afterTokens} tokens after compaction (reason=post-compaction-over-limit, tiers attempted: ${tiersAttempted.join(", ")}, hard limit ${bounds.hardLimit}, contextWindow ${contextWindow ?? "unknown"}); the prompt was not sent`,
-      refusalDetails("post-compaction-over-limit", {
-        afterTokens,
+      `Context is still ${reportedAfterTokens} tokens after compaction (reason=${refusalReason}, tiers attempted: ${tiersAttempted.join(", ")}, hard limit ${bounds.hardLimit}, contextWindow ${contextWindow ?? "unknown"})${refusal.suffix}; the prompt was not sent`,
+      refusalDetails(refusalReason, {
+        afterTokens: reportedAfterTokens,
         hardLimit: bounds.hardLimit,
         stage: "post-compaction",
+        ...refusal.detailExtras,
       }),
     );
   }
