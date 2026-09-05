@@ -742,6 +742,8 @@ Evidence is secret-redacted before persistence. Each assertion retains at most 1
 
 Generated fix features and their triaged tasks include the same **Validation cause** section with source feature, validator run, failed assertion IDs, bounded observations, and evidence. SQLite `MissionStore` and PostgreSQL `AsyncMissionStore` use the shared renderer, so a retry does not produce backend-specific causes or duplicate sections. A fix that is already linked to a canonical task is an idempotent race; otherwise Mission activity tells the operator to inspect and retry triage rather than exposing internal exception/loop-state prose.
 
+A generated fix superseded by successful validation is terminal because it is no longer needed; superseding it never invents a passed validator result. Autonomous reconciliation preserves that terminal state instead of re-blocking it. A task-less generated fix with an unvalidated passed marker is restored to `defined` automatically, and an operator may also use validation repair to clear that marker; a passed marker tied to a validator run remains genuine evidence and is not cleared.
+
 The loop state is internal scheduling context, not an operator diagnosis. Its public meanings and actions are:
 
 | Public state | Meaning | Operator action |

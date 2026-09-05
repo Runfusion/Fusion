@@ -3618,7 +3618,7 @@ export class Scheduler {
         for (const slice of hierarchy.milestones.flatMap((milestone) => milestone.slices).filter((slice) => slice.status === "active")) {
           try {
             const superseded = await missionStore.reconcileSupersededGeneratedFixFeatures(slice.id);
-            fixed += superseded.supersededCount;
+            fixed += superseded.supersededCount + (superseded.repairedCount ?? 0);
             if (superseded.supersededCount > 0) {
               const refreshed = await missionStore.getSlice(slice.id);
               if (refreshed?.status === "complete") { await this.onSliceComplete(refreshed); continue; }
@@ -3633,8 +3633,14 @@ export class Scheduler {
             const supersededFeatureIds = new Set(superseded.featureIds ?? []);
             const autoTriage = mission.autopilotEnabled === true || mission.autoAdvance === true;
             for (const feature of features) {
-              if (supersededFeatureIds.has(feature.id) || feature.taskId || !autoTriage || feature.status === "blocked") continue;
+              /*
+              FNXC:MissionAutoReconcile 2026-09-05-22:07:
+              Per-pass IDs disappear when the idempotent supersede writer is called a second time.
+              A terminal done state is the durable guard that prevents writer B re-blocking it (issue #3574).
+              */
+              if (supersededFeatureIds.has(feature.id) || feature.taskId || !autoTriage || feature.status === "blocked" || feature.status === "done") continue;
               if (feature.status !== "defined" && this.isGeneratedFixFeature(feature)) {
+                schedulerLog.warn(`Parking stranded generated Fix feature ${feature.id} from ${feature.status}: not triageable without a defined state`);
                 await missionStore.updateFeature(feature.id, { status: "blocked", loopState: "blocked", taskId: undefined });
                 fixed++;
                 continue;

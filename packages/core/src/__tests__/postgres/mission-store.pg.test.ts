@@ -1461,11 +1461,40 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
     expect(audited).toHaveLength(2);
     expect(audited.map((event) => (event.metadata as Record<string, unknown>)?.featureId))
       .toEqual(expect.arrayContaining([firstFix.id, secondFix.id]));
+    await expect(m.getFeature(firstFix.id)).resolves.toMatchObject({
+      status: "done",
+      loopState: "passed",
+      taskId: undefined,
+      lastValidatorStatus: undefined,
+    });
+    await expect(m.getFeature(secondFix.id)).resolves.toMatchObject({
+      status: "done",
+      loopState: "passed",
+      taskId: undefined,
+      lastValidatorStatus: undefined,
+    });
 
     await expect(m.reconcileSupersededGeneratedFixFeatures(slice.id)).resolves.toMatchObject({ supersededCount: 0, featureIds: [] });
     expect((await m.getMissionEvents(mission.id, { limit: 20 })).events
       .filter((event) => event.eventType === "feature_status_changed" && (event.metadata as Record<string, unknown>)?.source === "superseded-fix-reconcile"))
       .toHaveLength(2);
+  });
+
+  it("repairs a fabricated generated-fix marker and restores triage", async () => {
+    const m = missions();
+    const mission = await m.createMission({ title: "Fabricated generated-fix marker" });
+    const milestone = await m.addMilestone(mission.id, { title: "MS" });
+    const slice = await m.addSlice(milestone.id, { title: "SL" });
+    const root = await m.addFeature(slice.id, { title: "Root" });
+    const failedRun = await m.startValidatorRun(root.id, "scheduled");
+    await m.completeValidatorRun(failedRun.id, "failed", "needs fix");
+    const fix = await m.createGeneratedFixFeature(root.id, failedRun.id, [], "repair");
+    await m.updateFeature(fix.id, { status: "done", loopState: "passed", lastValidatorStatus: "passed", lastValidatorRunId: undefined, taskId: undefined });
+
+    await expect(m.reconcileSupersededGeneratedFixFeatures(slice.id)).resolves.toMatchObject({ repairedCount: 1, repairedFeatureIds: [fix.id] });
+    await expect(m.getFeature(fix.id)).resolves.toMatchObject({ status: "defined", loopState: "idle", lastValidatorStatus: undefined, taskId: undefined });
+    await expect(m.reconcileSupersededGeneratedFixFeatures(slice.id)).resolves.toMatchObject({ repairedCount: 0, repairedFeatureIds: [] });
+    await expect(m.triageFeature(fix.id)).resolves.toMatchObject({ taskId: expect.any(String) });
   });
 
   it("runs the validator/fix lifecycle and reaps stale runs in PostgreSQL", async () => {

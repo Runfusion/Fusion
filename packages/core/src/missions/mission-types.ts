@@ -139,7 +139,8 @@ export const FEATURE_LOOP_REPAIR_TRANSITIONS: Readonly<Record<FeatureLoopState, 
   implementing: [],
   validating: [],
   needs_fix: ["idle", "implementing"],
-  passed: [],
+  /* FNXC:Missions 2026-09-05-22:07: Explicit repair may return a fabricated unvalidated passed marker to idle (issue #3574). */
+  passed: ["idle"],
   blocked: ["idle", "implementing"],
 };
 
@@ -430,11 +431,12 @@ status remains live. A validating, implementing, or passed loop must not start a
 run; passed validation remains available through the normal Validate control.
 */
 export function featureValidationRepairEligibility(
-  feature: Pick<MissionFeature, "loopState" | "status">,
+  feature: Pick<MissionFeature, "loopState" | "status" | "lastValidatorStatus" | "lastValidatorRunId">,
 ): { clear: boolean; reRun: boolean } {
   const repairableLoop = feature.loopState === "blocked" || feature.loopState === "needs_fix";
+  const unvalidatedPassedMarker = feature.lastValidatorStatus === "passed" && !feature.lastValidatorRunId;
   return {
-    clear: repairableLoop || feature.status === "blocked",
+    clear: repairableLoop || feature.status === "blocked" || unvalidatedPassedMarker,
     reRun: repairableLoop || (feature.status === "blocked" && (feature.loopState === undefined || feature.loopState === "idle")),
   };
 }

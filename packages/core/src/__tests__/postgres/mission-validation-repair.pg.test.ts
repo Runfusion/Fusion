@@ -48,6 +48,26 @@ pgTest("mission validation repair", () => {
     });
   });
 
+  it("clears an unvalidated generated-fix marker only under an absent task fence", async () => {
+    const { store, mission, feature } = await blockedFeature();
+    await store.updateFeature(feature.id, { status: "defined", loopState: "idle", implementationAttemptCount: 0, lastValidatorStatus: undefined });
+    const failedRun = await store.startValidatorRun(feature.id, "scheduled");
+    await store.completeValidatorRun(failedRun.id, "failed", "needs fix");
+    const fix = await store.createGeneratedFixFeature(feature.id, failedRun.id, [], "repair");
+    const fabricated = await store.updateFeature(fix.id, { status: "done", loopState: "passed", lastValidatorStatus: "passed", lastValidatorRunId: undefined, taskId: undefined });
+    const fence = { featureId: fabricated.id, taskId: null, taskLiveness: "absent" as const, taskColumn: null, taskUpdatedAt: null, laneRole: "none" as const, resolvedAt: new Date().toISOString() };
+    await expect(store.repairFeatureValidationState(fabricated.id, { action: "clear", actor: { type: "operator", id: "operator", source: "test" }, groundTruth: fence }))
+      .resolves.toMatchObject({ feature: { status: "defined", loopState: "idle", lastValidatorStatus: undefined } });
+    expect((await store.getMissionEvents(mission.id, { limit: 20 })).events.some((event) => event.eventType === "feature_validation_repaired")).toBe(true);
+
+    const justified = await store.updateFeature(fabricated.id, { status: "done", loopState: "passed", lastValidatorStatus: "passed", lastValidatorRunId: "MVR-real" });
+    await expect(store.repairFeatureValidationState(justified.id, { action: "clear", actor: { type: "operator", id: "operator", source: "test" }, groundTruth: fence })).rejects.toThrow();
+
+    const ordinary = await store.updateFeature(feature.id, { status: "done", loopState: "passed", lastValidatorStatus: "passed", lastValidatorRunId: undefined, taskId: undefined });
+    await expect(store.repairFeatureValidationState(ordinary.id, { action: "clear", actor: { type: "operator", id: "operator", source: "test" } }))
+      .resolves.toMatchObject({ feature: { status: "done", loopState: "passed", lastValidatorStatus: undefined } });
+  });
+
   it("serves loop-only and status-only clear shapes without laundering ordinary transitions", async () => {
     const { store, feature } = await blockedFeature();
     const loopOnly = await store.updateFeature(feature.id, { status: "in-progress", loopState: "blocked" });

@@ -331,11 +331,15 @@ export class MissionExecutionLoop extends EventEmitter {
             if (slice.status !== "active") continue;
 
             const supersededFixes = await this.missionStore.reconcileSupersededGeneratedFixFeatures(slice.id);
-            const supersededFeatureIds = new Set(supersededFixes.featureIds);
+            const supersededFeatureIds = new Set(supersededFixes.featureIds ?? []);
+            if ((supersededFixes.repairedCount ?? 0) > 0) {
+              loopLog.warn(`Recovery: restored ${(supersededFixes.repairedCount ?? 0)} generated Fix Features in slice ${slice.id}: ${(supersededFixes.repairedFeatureIds ?? []).join(", ")}`);
+              recoveredCount += supersededFixes.repairedCount ?? 0;
+            }
             if (supersededFixes.supersededCount > 0) {
               loopLog.warn(
                 `Recovery: superseded ${supersededFixes.supersededCount} generated Fix Features in slice ${slice.id} `
-                + "because an ancestor feature already passed validation",
+                + "because an ancestor or the Fix feature's own validation already passed",
               );
               recoveredCount += supersededFixes.supersededCount;
             }

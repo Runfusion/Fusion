@@ -1829,11 +1829,21 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
         throw new RepairNotEligibleError(featureId, options.action);
       }
       const now = new Date().toISOString();
+      const hasUnvalidatedMarker = options.action === "clear" && feature.lastValidatorStatus === "passed" && !feature.lastValidatorRunId;
+      /*
+      FNXC:MissionValidationRepair 2026-09-05-22:07:
+      The escape hatch clears any unearned marker, but only the task-less generated-fix terminal
+      shape came from #3574 and may be reopened for triage. Never reopen an ordinary done feature.
+      */
+      const appliesUnvalidatedMarker = hasUnvalidatedMarker
+        && Boolean(feature.generatedFromFeatureId || feature.generatedFromRunId)
+        && !feature.taskId
+        && feature.status === "done";
       const priorLoopState = feature.loopState;
       const priorStatus = feature.status;
       let groundTruthMetadata: Record<string, unknown> = {};
 
-      if (options.action === "clear" && feature.status === "blocked") {
+      if (options.action === "clear" && (feature.status === "blocked" || appliesUnvalidatedMarker)) {
         const fence = options.groundTruth;
         if (!fence || fence.featureId !== featureId || fence.taskId !== (feature.taskId ?? null)) {
           throw new RepairGroundTruthStaleError(featureId);
@@ -1881,14 +1891,14 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
       let updated: MissionFeature;
       let run: MissionValidatorRun | undefined;
       if (options.action === "clear") {
-        const currentLoop = feature.loopState;
-        const appliesLoop = currentLoop === "blocked" || currentLoop === "needs_fix";
+        const currentLoop = feature.loopState ?? "idle";
+        const appliesLoop = currentLoop === "blocked" || currentLoop === "needs_fix" || appliesUnvalidatedMarker;
         const nextLoop = appliesLoop ? options.resolvedLoopState ?? "idle" : currentLoop;
         if (appliesLoop && !FEATURE_LOOP_REPAIR_TRANSITIONS[currentLoop].includes(nextLoop!)) {
           throw new Error(`Invalid validation repair transition from '${currentLoop}' to '${nextLoop}'`);
         }
-        const appliesStatus = feature.status === "blocked";
-        const nextStatus = appliesStatus ? options.resolvedStatus : feature.status;
+        const appliesStatus = feature.status === "blocked" || appliesUnvalidatedMarker;
+        const nextStatus = appliesUnvalidatedMarker ? "defined" : appliesStatus ? options.resolvedStatus : feature.status;
         if (appliesStatus && (nextStatus !== "in-progress" && nextStatus !== "triaged" && nextStatus !== "defined")) {
           throw new Error("Validation repair requires resolvedStatus of in-progress, triaged, or defined");
         }
@@ -1908,13 +1918,13 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
             || (nextStatus === "defined" && fence.taskLiveness === "absent" && fence.laneRole === "none");
           if (!matchesLane) throw new RepairGroundTruthStaleError(featureId);
         }
-        if (!appliesLoop && !appliesStatus) throw new RepairNotEligibleError(featureId, options.action);
+        if (!appliesLoop && !appliesStatus && !hasUnvalidatedMarker) throw new RepairNotEligibleError(featureId, options.action);
         updated = {
           ...feature,
           loopState: nextLoop,
           status: nextStatus!,
           implementationAttemptCount: 0,
-          ...(feature.lastValidatorStatus === "blocked" || feature.lastValidatorStatus === "failed" ? { lastValidatorStatus: undefined } : {}),
+          ...(feature.lastValidatorStatus === "blocked" || feature.lastValidatorStatus === "failed" || hasUnvalidatedMarker ? { lastValidatorStatus: undefined } : {}),
           updatedAt: now,
         };
         await updateFeature(tx, updated);
@@ -2438,7 +2448,7 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
     return feature;
   }
 
-  async reconcileSupersededGeneratedFixFeatures(sliceId: string): Promise<{ supersededCount: number; featureIds: string[] }> {
+  async reconcileSupersededGeneratedFixFeatures(sliceId: string): Promise<{ supersededCount: number; featureIds: string[]; repairedCount: number; repairedFeatureIds: string[] }> {
     const features = await listFeatures(this.db, sliceId);
     const byId = new Map(features.map((feature) => [feature.id, feature]));
     let missingSourceIds = [...new Set(features.map((feature) => feature.generatedFromFeatureId).filter((id): id is string => Boolean(id) && !byId.has(id!)))];
@@ -2455,10 +2465,87 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
       const source = byId.get(sourceId);
       return passed(source) || (source ? hasPassedAncestor(source, seen) : false);
     };
+    /*
+    FNXC:Missions 2026-09-05-22:07:
+    A passed marker without a validator run is fabricated state from the former supersede write.
+    Restore only task-less generated fixes without a passed ancestor, so genuine validation evidence remains terminal.
+    */
+    const isFabricatedMarker = (feature: MissionFeature) => Boolean(
+      (feature.generatedFromFeatureId || feature.generatedFromRunId)
+      && feature.lastValidatorStatus === "passed"
+      && !feature.lastValidatorRunId
+      && !feature.taskId
+      && feature.status === "done"
+      && !hasPassedAncestor(feature),
+    );
+    const repairIds = new Set(features.filter(isFabricatedMarker).map((feature) => feature.id));
     const ids: string[] = [];
     for (const feature of features) {
-      if (!feature.generatedFromFeatureId || !(passed(feature) || hasPassedAncestor(feature))) continue;
-      if (feature.status !== "done" || feature.loopState !== "passed" || feature.lastValidatorStatus !== "passed" || feature.taskId) ids.push(feature.id);
+      if (repairIds.has(feature.id) || !feature.generatedFromFeatureId || !(passed(feature) || hasPassedAncestor(feature))) continue;
+      if (feature.status !== "done" || feature.loopState !== "passed" || feature.taskId) ids.push(feature.id);
+    }
+    const repairedFeatureIds: string[] = [];
+    if (repairIds.size > 0) {
+      const now = new Date().toISOString();
+      const repaired = await this.layer.transactionImmediate(async (tx) => {
+        const locked = await tx.select({ id: schema.project.missionFeatures.id })
+          .from(schema.project.missionFeatures)
+          .where(inArray(schema.project.missionFeatures.id, [...repairIds]))
+          .for("update");
+        const preImages = locked.length > 0 ? await listFeaturesByIds(tx, locked.map((row) => row.id)) : [];
+        /*
+        FNXC:Missions 2026-09-05-22:07:
+        The repair decision must use ancestor evidence read under the same write fence as the
+        restoration. A source can pass after discovery; reopening its generated fix would then
+        let automation triage work that has already become genuinely superseded (issue #3574).
+        */
+        const currentById = new Map(preImages.map((feature) => [feature.id, feature]));
+        let missingAncestorIds = [...new Set(preImages
+          .map((feature) => feature.generatedFromFeatureId)
+          .filter((id): id is string => Boolean(id) && !currentById.has(id!)))];
+        while (missingAncestorIds.length > 0) {
+          const lockedAncestors = await tx.select({ id: schema.project.missionFeatures.id })
+            .from(schema.project.missionFeatures)
+            .where(inArray(schema.project.missionFeatures.id, missingAncestorIds))
+            .for("update");
+          const ancestors = lockedAncestors.length > 0 ? await listFeaturesByIds(tx, lockedAncestors.map((row) => row.id)) : [];
+          for (const ancestor of ancestors) currentById.set(ancestor.id, ancestor);
+          missingAncestorIds = [...new Set(ancestors
+            .map((ancestor) => ancestor.generatedFromFeatureId)
+            .filter((id): id is string => Boolean(id) && !currentById.has(id!)))];
+        }
+        const hasCurrentPassedAncestor = (feature: MissionFeature, seen = new Set<string>()): boolean => {
+          const sourceId = feature.generatedFromFeatureId;
+          if (!sourceId || seen.has(sourceId)) return false;
+          seen.add(sourceId);
+          const source = currentById.get(sourceId);
+          return passed(source) || (source ? hasCurrentPassedAncestor(source, seen) : false);
+        };
+        const changed = preImages.filter((feature) => Boolean(
+          (feature.generatedFromFeatureId || feature.generatedFromRunId)
+          && feature.lastValidatorStatus === "passed"
+          && !feature.lastValidatorRunId
+          && !feature.taskId
+          && feature.status === "done"
+          && !hasCurrentPassedAncestor(feature),
+        ));
+        if (changed.length === 0) return { events: [] as MissionEvent[], features: [] as MissionFeature[] };
+        await tx.update(schema.project.missionFeatures).set({
+          status: "defined", taskId: null, loopState: "idle", lastValidatorStatus: null, updatedAt: now,
+        }).where(inArray(schema.project.missionFeatures.id, changed.map((feature) => feature.id)));
+        let seq = await getMaxEventSeq(tx);
+        const events: MissionEvent[] = [];
+        for (const feature of changed) {
+          const event = await this.recordFeatureStatusChange(tx, feature, "defined", { type: "system", id: "mission-store", source: "superseded-fix-marker-repair" }, undefined, ++seq);
+          if (event) events.push(event);
+        }
+        return { events, features: changed };
+      });
+      for (const event of repaired.events) this.emit("mission:event", event);
+      for (const feature of repaired.features) {
+        this.emit("feature:updated", { ...feature, status: "defined", taskId: undefined, loopState: "idle", lastValidatorStatus: undefined, updatedAt: now });
+        repairedFeatureIds.push(feature.id);
+      }
     }
     if (ids.length > 0) {
       const now = new Date().toISOString();
@@ -2479,14 +2566,18 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
           .for("update");
         const lockedIds = locked.map((row) => row.id);
         const preImages = lockedIds.length > 0 ? await listFeaturesByIds(tx, lockedIds) : [];
-        const changed = preImages.filter((feature) => feature.status !== "done" || feature.loopState !== "passed" || feature.lastValidatorStatus !== "passed" || feature.taskId);
+        const changed = preImages.filter((feature) => feature.status !== "done" || feature.loopState !== "passed" || feature.taskId);
         if (changed.length === 0) return { events: [] as MissionEvent[], updatedFeatures: [] as MissionFeature[] };
 
+        /*
+        FNXC:Missions 2026-09-05-22:07:
+        Superseding a generated fix means it is no longer needed; it is not validator evidence.
+        Do not stamp an unearned passed marker because it re-arms this reconciliation trigger (issue #3574).
+        */
         await tx.update(schema.project.missionFeatures).set({
           status: "done",
           taskId: null,
           loopState: "passed",
-          lastValidatorStatus: "passed",
           updatedAt: now,
         }).where(inArray(schema.project.missionFeatures.id, changed.map((feature) => feature.id)));
         // One sequence read preserves contiguous ordering for the bulk statement without
@@ -2503,13 +2594,14 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
       });
       for (const event of events) this.emit("mission:event", event);
       for (const feature of updatedFeatures) {
-        const updated = { ...feature, status: "done" as const, taskId: undefined, loopState: "passed" as const, lastValidatorStatus: "passed" as const, updatedAt: now };
+        const updated = { ...feature, status: "done" as const, taskId: undefined, loopState: "passed" as const, updatedAt: now };
         this.emit("feature:updated", updated);
         if (feature.taskId) await clearTaskMissionLinkage(this.db, feature.taskId);
       }
       if (updatedFeatures.length > 0) await this.recomputeSliceStatus(sliceId);
     }
-    return { supersededCount: ids.length, featureIds: ids };
+    if (repairedFeatureIds.length > 0) await this.recomputeSliceStatus(sliceId);
+    return { supersededCount: ids.length, featureIds: ids, repairedCount: repairedFeatureIds.length, repairedFeatureIds };
   }
 
   async transitionLoopState(featureId: string, newState: FeatureLoopState): Promise<MissionFeature> {
