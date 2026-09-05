@@ -16,7 +16,7 @@ import {
 } from "../workflows/workflow-lifecycle-traits.js";
 import {resolveWorkflowIrForTask} from "../workflows/workflow-ir-resolver.js";
 import {InvalidFileScopeError, SelfSpawnedDependencyError, detectSelfSpawnedDependency} from "./errors.js";
-import {mkdir, readFile, stat} from "node:fs/promises";
+import {mkdir, readFile, stat, unlink} from "node:fs/promises";
 import {join} from "node:path";
 import {existsSync} from "node:fs";
 import type {Task, Column, TaskLogEntry, RunMutationContext, TaskRecommendation} from "../types.js";
@@ -86,6 +86,70 @@ function assertValidRecommendations(value: unknown): asserts value is TaskRecomm
     if (ids.has(candidate.id)) throw new Error("recommendations must have unique ids");
     ids.add(candidate.id);
   }
+}
+
+/*
+FNXC:PromptReadBack 2026-09-04-07:51:
+After PROMPT.md is durable, prompt-derived declaredSymbols must land on the task row in the same
+success boundary. Retry the follow-up row write so a later read sees matching symbols. If every
+attempt fails, restore the previous PROMPT.md (or remove a newly created file) before rejecting so
+updateTask cannot leave new file contents paired with previous declaredSymbols.
+
+FNXC:PromptReadBack 2026-09-04-08:08:
+Restore is the preferred rollback after deferred declaredSymbols persist fails. If the file cannot
+be restored, persist the new symbols so later symbol resolution cannot read stale persisted symbols
+against the new prompt that is still on disk. The in-memory task still holds the new declaredSymbols
+because the prior-symbols assignment runs only after a successful restore write.
+*/
+const PROMPT_DERIVED_SYMBOLS_PERSIST_ATTEMPTS = 3;
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function persistPromptDerivedDeclaredSymbols(
+  store: TaskStore,
+  dir: string,
+  task: Task,
+  promptPath: string,
+  previousPromptContents: string | null,
+  priorDeclaredSymbols: Task["declaredSymbols"],
+): Promise<void> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= PROMPT_DERIVED_SYMBOLS_PERSIST_ATTEMPTS; attempt++) {
+    try {
+      await store.atomicWriteTaskJsonWithAudit(dir, task, undefined, undefined);
+      return;
+    } catch (error) {
+      lastError = error;
+      storeLog.warn(
+        `[prompt-symbols] deferred declaredSymbols persist for ${task.id} attempt ${attempt}/${PROMPT_DERIVED_SYMBOLS_PERSIST_ATTEMPTS}: ${errorMessage(error)}`,
+      );
+    }
+  }
+  try {
+    if (previousPromptContents === null) {
+      if (existsSync(promptPath)) await unlink(promptPath);
+      task.prompt = undefined;
+    } else {
+      await writePromptFileAtomic(promptPath, previousPromptContents);
+      task.prompt = previousPromptContents;
+    }
+    task.declaredSymbols = priorDeclaredSymbols;
+  } catch (restoreError) {
+    storeLog.warn(
+      `[prompt-symbols] failed to restore previous PROMPT.md for ${task.id}: ${errorMessage(restoreError)}`,
+    );
+    try {
+      await store.atomicWriteTaskJsonWithAudit(dir, task, undefined, undefined);
+      return;
+    } catch (forwardError) {
+      throw new Error(
+        `declaredSymbols persist failed after PROMPT.md write (${errorMessage(lastError)}); PROMPT.md restore failed (${errorMessage(restoreError)}); forward declaredSymbols persist failed (${errorMessage(forwardError)})`,
+      );
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
 export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updates: Parameters<TaskStore["updateTask"]>[1], runContext?: RunMutationContext,): Promise<Task> {
@@ -1158,12 +1222,19 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
         task.modifiedFiles = updates.modifiedFiles;
       }
       /* FNXC:SymbolLock 2026-07-20-10:00: present undefined is an explicit clear; only absent declarations may hydrate from a prompt write. */
+      let persistPromptDerivedSymbols = false;
+      const priorDeclaredSymbols = task.declaredSymbols;
       if (hasOwnDeclaredSymbols(updates)) {
         const normalized = normalizeDeclaredSymbols(Array.isArray(updates.declaredSymbols) ? updates.declaredSymbols : []);
         task.declaredSymbols = normalized.length ? normalized : undefined;
       } else if (updates.prompt !== undefined) {
-        const normalized = normalizeDeclaredSymbols(extractDeclaredSymbolsFromPrompt(updates.prompt));
-        task.declaredSymbols = normalized.length ? normalized : undefined;
+        /*
+        FNXC:PromptReadBack 2026-09-04-05:45:
+        Do not hydrate declaredSymbols from the incoming prompt until PROMPT.md reaches disk.
+        The row transaction would otherwise persist symbols from an unwritten revision when the
+        subsequent file write fails, and symbol resolution would observe the failed spec.
+        */
+        persistPromptDerivedSymbols = true;
       }
       if (updates.missionId === null) {
         task.missionId = undefined;
@@ -1206,6 +1277,14 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       const planningInvalidation = dependenciesChanged
         ? {expectedCurrentDependencies: previousDependencies ?? []}
         : undefined;
+      /*
+      FNXC:PromptReadBack 2026-09-04-05:12:
+      Do not pass updates.prompt as specPlanPrompt into this row transaction. That path appends
+      current-plan evidence before PROMPT.md reaches disk, so a later I/O failure leaves spec-lock
+      and drift reconciliation observing an unwritten revision. The row still retires approval
+      (approvedPlanFingerprint above). Evidence is captured only after writePromptFileAtomic
+      succeeds.
+      */
       if (runContext) {
         await store.atomicWriteTaskJsonWithAudit(dir, task, {
           taskId: task.id,
@@ -1218,9 +1297,9 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
             updatedFields: Object.keys(updates).filter((k) => (updates as Record<string, unknown>)[k] !== undefined),
             ...(titleNormalized ? { titleNormalized: true } : {}),
           },
-        }, planningInvalidation, updates.prompt);
+        }, planningInvalidation);
       } else {
-        await store.atomicWriteTaskJsonWithAudit(dir, task, undefined, planningInvalidation, updates.prompt);
+        await store.atomicWriteTaskJsonWithAudit(dir, task, undefined, planningInvalidation);
       }
 
       /*
@@ -1228,20 +1307,54 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       The task-row commit is the observable scope-generation fence. Publish PROMPT.md only after it,
       so no reader can dispatch work from a new heading paired with the preceding scope generation.
       */
+      let previousPromptContents: string | null = null;
       if (updates.prompt !== undefined) {
+        if (persistPromptDerivedSymbols && existsSync(promptPath)) {
+          previousPromptContents = await readFile(promptPath, "utf-8");
+        }
         await writePromptFileAtomic(promptPath, updates.prompt);
+        /*
+        FNXC:PromptReadBack 2026-09-04-05:45:
+        The PG tasks row has no prompt column, so the row re-read never hydrates task.prompt.
+        Assign the content only after PROMPT.md reaches disk so a failed write cannot expose
+        an unwritten revision through the in-memory task, watcher cache, or fallback hydration.
+        The prompt-write tool's read-back check still verifies against this returned value.
+        */
+        task.prompt = updates.prompt;
+        if (persistPromptDerivedSymbols) {
+          const normalized = normalizeDeclaredSymbols(extractDeclaredSymbolsFromPrompt(updates.prompt));
+          task.declaredSymbols = normalized.length ? normalized : undefined;
+        }
+      }
+
+      if (persistPromptDerivedSymbols && updates.prompt !== undefined) {
+        const prior = JSON.stringify(priorDeclaredSymbols ?? []);
+        const next = JSON.stringify(task.declaredSymbols ?? []);
+        if (prior !== next) {
+          await persistPromptDerivedDeclaredSymbols(
+            store,
+            dir,
+            task,
+            promptPath,
+            previousPromptContents,
+            priorDeclaredSymbols,
+          );
+        }
       }
 
       if (store.isBackendMode() && updates.prompt !== undefined) {
         /*
-        FNXC:SpecLock 2026-08-09-19:01:
-        The task row clears approval only after PROMPT.md reaches disk. Append the same persisted
-        prompt as current-plan evidence while the caller's planning lifecycle lock is still held;
-        reconciliation then has a comparable revision instead of reporting an inactive lock with
-        missing evidence. This runs after the authoritative row write so a failed file write never
-        fabricates a plan revision.
+        FNXC:SpecLock 2026-09-04-05:45:
+        Append current-plan evidence after PROMPT.md reaches disk. A PlanEvidenceAppendError or
+        hostile evidence query must not reject the durable prompt update: updateTaskImpl already
+        reconciles from PROMPT.md after the task lock is released. Swallowing here keeps the file
+        and row in one success boundary and lets that repair path run.
         */
-        await store.captureCurrentPlanEvidenceWhilePlanningLocked(task.id, updates.prompt, Date.now(), task);
+        try {
+          await store.captureCurrentPlanEvidenceWhilePlanningLocked(task.id, updates.prompt, Date.now(), task);
+        } catch (error) {
+          storeLog.warn(`[spec-lock] deferred current-plan evidence capture for ${id}: ${error instanceof Error ? error.message : String(error)}`);
+        }
       }
 
       /*
