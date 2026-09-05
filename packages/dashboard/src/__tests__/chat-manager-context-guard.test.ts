@@ -32,6 +32,13 @@
  * - sendRoomMessage seam mirrors the main-seam contract: compact-before-prompt on the
  *   responder session, and compaction failure → no prompt + RoomReplyGenerationError
  *
+ * RUFU-183 Step 3 additions (tier-3 disclosure wiring, "ChatManager — tier-3
+ * truncation disclosure wiring"): a gate result carrying `fallback` rescue evidence
+ * persists `metadata.contextTruncation` on the NEW reply/room message in both lanes
+ * without touching existing history rows, and the operator kill switch
+ * (`chatPreOverflowCompactionEnabled: false`) is forwarded as `enabled: false` so the
+ * real gate bypasses compaction entirely (with/without-flag parity).
+ *
  * Note on failure persistence: `buildChatFailureInfo` uses `error.message` as the summary
  * (the "Chat context overflow" fallback only applies to empty messages), so the persisted
  * bubble content is the gate's descriptive message; the overflow identity travels in
@@ -41,7 +48,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockCreateResolvedAgentSession, mockPromptWithFallback, mockChatStore } = vi.hoisted(() => ({
+const { mockCreateResolvedAgentSession, mockPromptWithFallback, mockChatStore, mockEnsureContextWithinCompactionThreshold, gateHolder } = vi.hoisted(() => ({
   mockCreateResolvedAgentSession: vi.fn(),
   /*
   FNXC:ChatContextGuardRoomSeam 2026-08-18-19:29:
@@ -50,6 +57,16 @@ const { mockCreateResolvedAgentSession, mockPromptWithFallback, mockChatStore } 
   extracts) without fighting vitest's zero-parameter inference.
   */
   mockPromptWithFallback: vi.fn(async (_session: unknown, _prompt: string, _options?: unknown) => undefined),
+  /*
+  FNXC:ChatContextGuardTier3 2026-09-04-22:51:
+  RUFU-183 Step 5: the gate runs REAL by default through this pass-through spy; the
+  tier-3 disclosure-wiring tests override it per-test to resolve a `fallback` evidence
+  payload (the dashboard seam fakes are tier-3-incapable by design, so the rescue
+  itself is proven in the engine suite - this file proves the RESULT is consumed).
+  `gateHolder.real` captures the unmocked export inside the module factory.
+  */
+  mockEnsureContextWithinCompactionThreshold: vi.fn(),
+  gateHolder: { real: null as unknown as (session: unknown, options: unknown) => Promise<unknown> },
   mockChatStore: {
     getSession: vi.fn(),
     createSession: vi.fn(),
@@ -75,10 +92,12 @@ const { mockCreateResolvedAgentSession, mockPromptWithFallback, mockChatStore } 
 
 vi.mock("@fusion/engine", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@fusion/engine")>();
+  gateHolder.real = actual.ensureContextWithinCompactionThreshold;
   return {
     ...actual,
     createResolvedAgentSession: mockCreateResolvedAgentSession,
     promptWithFallback: mockPromptWithFallback,
+    ensureContextWithinCompactionThreshold: mockEnsureContextWithinCompactionThreshold,
   };
 });
 
@@ -201,6 +220,9 @@ beforeEach(() => {
   mockChatStore.getMessages.mockImplementation(async () => []);
   mockChatStore.getRoomMessages.mockImplementation(async () => []);
   mockPromptWithFallback.mockImplementation(async () => undefined);
+  // Default: the REAL gate behind the spy, so every pre-existing RUFU-118/182 case keeps
+  // exercising genuine gate behavior (RUFU-183 spy wrapper above).
+  mockEnsureContextWithinCompactionThreshold.mockImplementation((session: unknown, options: unknown) => gateHolder.real(session, options));
 });
 
 /*
@@ -540,6 +562,161 @@ describe("ChatManager.sendRoomMessage — pre-overflow compaction gate (room sea
     const auditRow = recordRunAuditEvent.mock.calls[0][0] as { target: string; metadata: Record<string, unknown> };
     expect(auditRow.target).toBe("chat:room:room-1");
     expect(auditRow.metadata).toMatchObject({ reason: "compaction-error", outcome: "refused" });
+  });
+});
+
+/*
+FNXC:ChatContextGuardTier3 2026-09-04-22:51:
+RUFU-183 Step 5 — tier-3 disclosure wiring at the dashboard seam. The rescue itself is
+proven in the engine suite (its fakes expose real SessionManager hook surfaces; the
+dashboard fakes here are deliberately minimal and tier-3-incapable, which is exactly why
+the gate mock may inject the rescue RESULT): what this block pins is that the dashboard
+CONSUMES the result — evidence rides `metadata.contextTruncation` on the new message in
+both lanes, existing history rows are never rewritten, and the kill switch reaches the
+gate as `enabled: false`.
+*/
+describe("ChatManager — tier-3 truncation disclosure wiring (RUFU-183)", () => {
+  const rescueEvidence = {
+    droppedMessageCount: 4,
+    droppedTokens: 45_000,
+    floorTokens: 12_000,
+    contextTokensAfter: 90_000,
+  };
+
+  const fakeRoomAgentStore = {
+    init: vi.fn(async () => undefined),
+    listAgents: vi.fn(async () => [{ id: "agent-1", name: "Agent One", role: "executor" } as never]),
+    getAgent: vi.fn(async () => ({ id: "agent-1", name: "Agent One", role: "executor" } as never)),
+    getRatingSummary: vi.fn(async () => null),
+  } as never;
+
+  function setupRoom(): void {
+    mockChatStore.getRoom.mockResolvedValue({ id: "room-1", name: "test-room", projectId: "proj-1" });
+    mockChatStore.listRoomMembers.mockResolvedValue([{ agentId: "agent-1" }]);
+    mockChatStore.addRoomMessage.mockImplementation(async () => ({ id: "room-msg-1", createdAt: "2026-01-01T00:00:00.000Z" }));
+    mockChatStore.getRoomMessages.mockImplementation(async () => []);
+    __setBuildAgentChatPrompt(async ({ basePrompt }: { basePrompt: string }) => basePrompt);
+  }
+
+  it("rides the gate's fallback evidence onto the direct-chat reply as metadata.contextTruncation", async () => {
+    const pushAssistantReply = async (sessionArg?: unknown) => {
+      const s = sessionArg as { state?: { messages?: Array<{ role: string; content?: string }> } };
+      s?.state?.messages?.push({ role: "assistant", content: "rescued reply" });
+      return undefined;
+    };
+
+    /*
+    FNXC:ChatContextGuardTier3 2026-09-04-22:51:
+    Byte-invariance of history at the seam, proven by PARITY: a plain below-threshold
+    send (no compaction at all) defines the baseline store-write shape; the rescued send
+    must produce EXACTLY the same writes. The only metadata write in either flow is the
+    routine piParentLeafId link onto the just-created USER row (chat-store metadata
+    updates merge by default, so the notice on the assistant row is never clobbered).
+    A recovery that rewrote or appended history rows would break this parity.
+    */
+    setupSession();
+    const { session: baselineSession } = makeFakeSession({
+      contextWindow: 128_000,
+      maxTokens: 16_384,
+      usageTokens: 50_000,
+    });
+    mockCreateResolvedAgentSession.mockResolvedValue({ session: baselineSession, model: { provider: "test-provider", modelId: "test-model" } });
+    mockPromptWithFallback.mockImplementation(pushAssistantReply);
+    const baselineManager = makeManager();
+    await baselineManager.sendMessage("chat-guard", "hello world");
+    const baselineWrites = {
+      addMessage: mockChatStore.addMessage.mock.calls.length,
+      updateMetadata: mockChatStore.updateMessageMetadata.mock.calls.length,
+      addRoomMessage: mockChatStore.addRoomMessage.mock.calls.length,
+    };
+    expect(baselineWrites.addMessage).toBe(2);
+    expect(baselineWrites.updateMetadata).toBeGreaterThanOrEqual(0);
+    vi.clearAllMocks();
+    mockChatStore.addMessage.mockImplementation(async () => ({ id: "msg-persisted" }));
+    mockChatStore.getMessages.mockImplementation(async () => []);
+    mockPromptWithFallback.mockImplementation(pushAssistantReply);
+
+    setupSession();
+    const { session } = makeFakeSession({
+      contextWindow: 128_000,
+      maxTokens: 16_384,
+      usageTokens: 150_000,
+    });
+    mockCreateResolvedAgentSession.mockResolvedValue({ session, model: { provider: "test-provider", modelId: "test-model" } });
+    mockEnsureContextWithinCompactionThreshold.mockImplementation(async () => ({
+      compacted: true,
+      contextTokens: 90_000,
+      threshold: 102_400,
+      fallback: rescueEvidence,
+    }));
+    const manager = makeManager();
+
+    await manager.sendMessage("chat-guard", "hello world");
+
+    expect(mockPromptWithFallback).toHaveBeenCalledTimes(1);
+    const assistantCall = mockChatStore.addMessage.mock.calls.find((call) => call[1]?.role === "assistant");
+    expect(assistantCall?.[1]?.content).toBe("rescued reply");
+    expect((assistantCall?.[1]?.metadata as { contextTruncation?: unknown } | undefined)?.contextTruncation).toStrictEqual(rescueEvidence);
+    expect({
+      addMessage: mockChatStore.addMessage.mock.calls.length,
+      updateMetadata: mockChatStore.updateMessageMetadata.mock.calls.length,
+      addRoomMessage: mockChatStore.addRoomMessage.mock.calls.length,
+    }).toStrictEqual(baselineWrites);
+  });
+
+  it("carries the same disclosure onto the room responder's reply message (room seam)", async () => {
+    setupRoom();
+    const { session } = makeFakeSession({
+      contextWindow: 128_000,
+      maxTokens: 16_384,
+      usageTokens: 150_000,
+    });
+    mockCreateResolvedAgentSession.mockResolvedValue({ session, model: { provider: "test-provider", modelId: "test-model" } });
+    mockPromptWithFallback.mockImplementation(async (sessionArg?: unknown) => {
+      const s = sessionArg as { state?: { messages?: Array<{ role: string; content?: string }> } };
+      s?.state?.messages?.push({ role: "assistant", content: "rescued room reply" });
+      return undefined;
+    });
+    mockEnsureContextWithinCompactionThreshold.mockImplementation(async () => ({
+      compacted: true,
+      contextTokens: 90_000,
+      threshold: 102_400,
+      fallback: rescueEvidence,
+    }));
+    const manager = makeManager(undefined, fakeRoomAgentStore);
+
+    const result = await manager.sendRoomMessage("room-1", "what is the status");
+
+    expect(result.responders).toEqual(["agent-1"]);
+    const assistantCall = mockChatStore.addRoomMessage.mock.calls.find((call) => call[1]?.role === "assistant");
+    expect(assistantCall?.[1]?.content).toBe("rescued room reply");
+    expect((assistantCall?.[1]?.metadata as { contextTruncation?: unknown; roomId?: unknown } | undefined)).toMatchObject({
+      roomId: "room-1",
+      contextTruncation: rescueEvidence,
+    });
+  });
+
+  it("forwards the operator kill switch as enabled:false — compaction is bypassed entirely (parity)", async () => {
+    setupSession();
+    // Same above-threshold session shape as the "compacts once" case: with the switch ON
+    // the real gate compacts; with it OFF nothing may compact and the prompt ships as-is.
+    const { session, compact } = makeFakeSession({
+      contextWindow: 128_000,
+      maxTokens: 16_384,
+      usageTokens: 150_000,
+      compactAfterTokens: 20_000,
+    });
+    mockCreateResolvedAgentSession.mockResolvedValue({ session, model: { provider: "test-provider", modelId: "test-model" } });
+    const manager = makeManager(async () => ({ chatPreOverflowCompactionEnabled: false }));
+
+    await manager.sendMessage("chat-guard", "hello world");
+
+    expect(mockEnsureContextWithinCompactionThreshold).toHaveBeenCalledTimes(1);
+    expect(mockEnsureContextWithinCompactionThreshold.mock.calls[0][1]).toMatchObject({ enabled: false });
+    expect(compact).not.toHaveBeenCalled();
+    expect(mockPromptWithFallback).toHaveBeenCalledTimes(1);
+    const assistantCall = mockChatStore.addMessage.mock.calls.find((call) => call[1]?.role === "assistant");
+    expect((assistantCall?.[1]?.metadata as { contextTruncation?: unknown } | undefined)?.contextTruncation).toBeUndefined();
   });
 });
 

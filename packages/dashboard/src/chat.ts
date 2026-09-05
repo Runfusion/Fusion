@@ -69,6 +69,7 @@ import {
   promptWithFallback as enginePromptWithFallback,
   ChatContextOverflowError,
   ensureContextWithinCompactionThreshold,
+  type CompactionGateResult,
   extractRuntimeHint,
   extractRuntimeModel,
   buildSessionSkillContextSync,
@@ -2472,6 +2473,13 @@ export class ChatManager {
      */
     const allowFallback = true;
     let roomFallbackInfo: { primaryModel: string; fallbackModel: string; triggerPoint: "session-creation" | "prompt-time" } | undefined;
+    /*
+    FNXC:ChatContextGuardTier3 2026-09-04-22:51:
+    RUFU-183: room replies carry the same tier-3 disclosure as direct-chat replies - the
+    gate's rescue evidence rides `metadata.contextTruncation` on the responder's NEW room
+    message (see the sendMessage lane for the notice contract). History rows untouched.
+    */
+    let roomContextTruncationNotice: CompactionGateResult["fallback"];
 
     const roomSkillContext = buildSessionSkillContextSync(
       input.responder,
@@ -2565,11 +2573,14 @@ export class ChatManager {
       sink, keyed to `room:<roomId>` so a room responder's overflow is answerable after
       the fact. A missing/throwing sink never changes the gate's outcome.
       */
-      await ensureContextWithinCompactionThreshold(resolvedSession.session, {
+      const roomGateResult = await ensureContextWithinCompactionThreshold(resolvedSession.session, {
         tokenCap: chatModelSettings.tokenCap,
         enabled: chatModelSettings.chatPreOverflowCompactionEnabled !== false,
         audit: { sink: this.taskStore, sessionId: `room:${input.roomId}` },
       });
+      if (roomGateResult.fallback) {
+        roomContextTruncationNotice = roomGateResult.fallback;
+      }
 
       await enginePromptWithFallback(
         resolvedSession.session,
@@ -2613,6 +2624,7 @@ export class ChatManager {
         metadata: {
           roomId: input.roomId,
           ...(roomFallbackInfo ? { fallback: roomFallbackInfo } : {}),
+          ...(roomContextTruncationNotice ? { contextTruncation: roomContextTruncationNotice } : {}),
         },
         ...(tokenDelta ? { tokenUsage: { ...tokenDelta, modelProvider: model.provider, modelId: model.modelId } } : {}),
       };
@@ -2866,6 +2878,16 @@ export class ChatManager {
     let fallbackInfo:
       | { primaryModel: string; fallbackModel: string; triggerPoint: "session-creation" | "prompt-time" }
       | undefined;
+    /*
+    FNXC:ChatContextGuardTier3 2026-09-04-22:51:
+    RUFU-183: a successful tier-3 deterministic truncation must be operator-visible in the
+    chat, not only in run-audit. The gate's rescue evidence (dropped counts, static floor,
+    rebuilt measurement) is captured here and merged as `metadata.contextTruncation` into
+    whichever message this send ultimately persists - reply, interrupted partial, or
+    failure - so a deterministic shortening is never silent. Existing history rows are
+    never rewritten: the notice rides only the NEW message this turn appends.
+    */
+    let contextTruncationNotice: CompactionGateResult["fallback"];
     let failureContextProvider: string | undefined;
     let failureContextModelId: string | undefined;
 
@@ -3486,11 +3508,14 @@ export class ChatManager {
       sink keyed to this chat session, so a refused send is answerable after the fact
       without reading provider logs. A missing/throwing sink never changes the outcome.
       */
-      await ensureContextWithinCompactionThreshold(agentResult.session, {
+      const gateResult = await ensureContextWithinCompactionThreshold(agentResult.session, {
         tokenCap: chatModelSettings.tokenCap,
         enabled: chatModelSettings.chatPreOverflowCompactionEnabled !== false,
         audit: { sink: this.taskStore, sessionId: session.id },
       });
+      if (gateResult.fallback) {
+        contextTruncationNotice = gateResult.fallback;
+      }
 
       // Send user message and get response
       await enginePromptWithFallback(
@@ -3578,6 +3603,23 @@ export class ChatManager {
       if (fallbackInfo) {
         assistantMetadata.fallback = fallbackInfo;
       }
+      if (contextTruncationNotice) {
+        assistantMetadata.contextTruncation = contextTruncationNotice;
+      }
+      /*
+      FNXC:ChatOutputBudget 2026-08-20-20:17 (RUFU-144):
+      A turn can end with stopReason "length" and NO visible content: the model spent the
+      entire maxTokens budget on thinking and was truncated before emitting any output
+      tokens, so the persisted assistant message is empty. Without an explicit marker the
+      UI shows a blank bubble and the user sees "thinking…" with no answer and no
+      explanation (the RUFU-144 complaint). Persist `budgetExhausted: true` exactly when
+      stopReason "length" is proven on the final assistant message AND the visible
+      content is empty; it is never set for failure turns (the failureInfo path) or
+      non-empty content, and the dashboard renders an inline notice from it.
+      */
+      if (lastMessage?.stopReason === "length" && finalResponseText.trim().length === 0) {
+        assistantMetadata.budgetExhausted = true;
+      }
       const usageSnapshot = await readChatSessionUsageSnapshot(agentResult.session);
       if (usageSnapshot.contextUsage) {
         assistantMetadata.contextUsage = usageSnapshot.contextUsage;
@@ -3656,6 +3698,7 @@ export class ChatManager {
               metadata: {
                 interrupted: true,
                 ...(fallbackInfo ? { fallback: fallbackInfo } : {}),
+                ...(contextTruncationNotice ? { contextTruncation: contextTruncationNotice } : {}),
                 ...(toolCallsAccum.length > 0 ? { toolCalls: toolCallsAccum } : {}),
               },
             });
@@ -3749,6 +3792,7 @@ export class ChatManager {
             metadata: {
               interrupted: true,
               ...(fallbackInfo ? { fallback: fallbackInfo } : {}),
+              ...(contextTruncationNotice ? { contextTruncation: contextTruncationNotice } : {}),
               ...(toolCallsAccum.length > 0 ? { toolCalls: toolCallsAccum } : {}),
             },
           });
@@ -3758,7 +3802,10 @@ export class ChatManager {
       }
 
       try {
-        await persistFailureMessage(this.chatStore, sessionId, failureInfo, fallbackInfo ? { fallback: fallbackInfo } : undefined);
+        await persistFailureMessage(this.chatStore, sessionId, failureInfo, {
+          ...(fallbackInfo ? { fallback: fallbackInfo } : {}),
+          ...(contextTruncationNotice ? { contextTruncation: contextTruncationNotice } : {}),
+        });
       } catch (persistErr) {
         diagnostics.error(`Failed to persist failure message for session ${sessionId}:`, persistErr);
       }
