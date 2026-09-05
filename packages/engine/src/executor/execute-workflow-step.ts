@@ -1,11 +1,3 @@
-/**
- * FNXC:CodeOrganization 2026-08-03-15:20:
- * executeWorkflowStep peeled from TaskExecutor (U4).
- *
- * Runs a single workflow step (prompt/skill/review) as an agent session with
- * structured verdict parsing, browser-verification probing, and await-input
- * sentinel handling.
- */
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import type {
@@ -16,8 +8,7 @@ import type {
   TaskStore,
   WorkflowReviewKind,
   WorkflowStep,
-  WorkflowStepResult,
-} from "@fusion/core";
+  WorkflowStepResult, RunMutationContext } from "@fusion/core";
 import {
   applyReviewSeverityGate,
   computePlanApprovalFingerprint,
@@ -32,8 +23,7 @@ import {
   requiresContentReviewProof,
   resolveValidatorFallbackModel,
   resolveTaskOutputLanguage,
-  startPlanningSegment,
-} from "@fusion/core";
+  startPlanningSegment } from "@fusion/core";
 import type { AgentSession, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { createTaskPromptWriteTool } from "./shared-worker-tools.js";
 import type { PluginRunner } from "../plugins/plugin-runner.js";
@@ -48,37 +38,31 @@ import {
   resolveExecutorThinkingLevel,
   resolveValidatorFallbackThinkingLevel,
   resolveValidatorSessionModel,
-  resolveValidatorThinkingLevel,
-} from "../agents/agent-session-helpers.js";
+  resolveValidatorThinkingLevel } from "../agents/agent-session-helpers.js";
 import {
   buildUserCommentsPromptSection,
-  selectUserCommentsForAgentContext,
-} from "../agents/agent-user-comments.js";
+  selectUserCommentsForAgentContext } from "../agents/agent-user-comments.js";
 import { buildSessionSkillContext } from "../cli-runtime/session-skill-context.js";
 import {
   extractCommandBinaries,
   formatEnvironmentCapabilitiesSection,
   probeEnvironmentCapabilities,
-  type EnvironmentCapabilityProbe,
-} from "../environment/environment-capabilities.js";
+  type EnvironmentCapabilityProbe } from "../environment/environment-capabilities.js";
 import { checkSessionError } from "../errors/usage-limit-detector.js";
 import {
   requiredArtifactMissingValue,
-  requiredArtifactReadFailedValue,
-} from "../execution/required-workflow-artifacts.js";
+  requiredArtifactReadFailedValue } from "../execution/required-workflow-artifacts.js";
 import { accumulateSessionTokenUsage } from "../execution/session-token-usage.js";
 import { createStreamingDeltaNormalizer } from "../execution/streaming-delta.js";
 import { describeModel, formatModelMarkerDetails, promptWithFallback } from "../pi.js";
 import {
   detectExternalIntegrationEvidenceGaps,
-  formatExternalIntegrationEvidenceDiagnostic,
-} from "../spec-validation/external-integration-evidence.js";
-import { createRunAuditor, type EngineRunContext } from "../util/run-audit.js";
+  formatExternalIntegrationEvidenceDiagnostic } from "../spec-validation/external-integration-evidence.js";
+import { createRunAuditor } from "../util/run-audit.js";
 import { emitBoundedRunAudit } from "../util/emit-bounded-run-audit.js";
 import {
   ReadonlyViolationError,
-  filterCustomToolsForReadonly,
-} from "../workflows/workflow-step-tool-policy.js";
+  filterCustomToolsForReadonly } from "../workflows/workflow-step-tool-policy.js";
 import { executorLog } from "../logger.js";
 import { mergeEffectiveSettings } from "../project/effective-settings.js";
 import { injectReviewAdvisoryNotes } from "./workflow-step-failure-injection.js";
@@ -87,8 +71,7 @@ import {
   augmentSessionSkillsForBrowserStep,
   formatAgentBrowserAvailabilityLog,
   probeAgentBrowserAvailability,
-  type AgentBrowserExec,
-} from "./browser-probe.js";
+  type AgentBrowserExec } from "./browser-probe.js";
 import { isWorkflowStepSkillDiscoverable, mergeAdditionalSkillPaths } from "./skill-path-helpers.js";
 import { createSeenSteeringIds } from "./task-predicates.js";
 import {
@@ -100,25 +83,30 @@ import {
   WORKFLOW_STEP_NOTES_REPAIR_PROMPT,
   WORKFLOW_STEP_VERDICT_REPAIR_PROMPT,
   type WorkflowStepOutcome,
-  type WorkflowStepVerdictNoNotesReason,
-} from "./workflow-step-verdict.js";
+  type WorkflowStepVerdictNoNotesReason } from "./workflow-step-verdict.js";
 import { resolveDiffBaseRef } from "./worktree-git-refs.js";
 import {
   computeCodeReviewInputFingerprint,
   computeReviewDiffFingerprint,
   EMPTY_REVIEW_DIFF_FINGERPRINT,
   probeReviewChangesSinceCommit,
-  resolveContentReviewInputProof,
-} from "../worktree/review-diff-fingerprint.js";
+  resolveContentReviewInputProof } from "../worktree/review-diff-fingerprint.js";
 import {
   classifyReviewInlineFixRecapture,
   isFastForwardAdvance,
-  readHeadSha,
-} from "../worktree/review-inline-fix-recapture.js";
-// FNXC:PlanReviewConvergence 2026-08-15-22:15: FN-8768 convergence primer + revision-key classifier (restored post-wave-18).
+  readHeadSha } from "../worktree/review-inline-fix-recapture.js";
 import { buildGraphPlanReviewConvergenceContext, buildReviewConvergenceContext, optionalStepRevisionKey } from "./optional-step-revision.js";
-// FNXC:CommandCenterActivity 2026-08-15-22:15: FN-8868 usage telemetry + session boundaries (restored post-wave-18).
 import { attachAgentUsageTelemetry, emitAgentSessionStart } from "../agents/agent-usage-telemetry.js";
+/**
+ * FNXC:CodeOrganization 2026-08-03-15:20:
+ * executeWorkflowStep peeled from TaskExecutor (U4).
+ *
+ * Runs a single workflow step (prompt/skill/review) as an agent session with
+ * structured verdict parsing, browser-verification probing, and await-input
+ * sentinel handling.
+ */
+// FNXC:PlanReviewConvergence 2026-08-15-22:15: FN-8768 convergence primer + revision-key classifier (restored post-wave-18).
+// FNXC:CommandCenterActivity 2026-08-15-22:15: FN-8868 usage telemetry + session boundaries (restored post-wave-18).
 
 const execAsync = promisify(exec);
 
@@ -200,7 +188,8 @@ export type ExecuteWorkflowStepDeps = {
   };
   activePlanningWorkflowSessions: Set<string>;
   activeWorkflowStepSessions: Map<string, AgentSession>;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   captureModifiedFiles: AnyFn;
   createSpawnAgentTool: AnyFn;
   /** FNXC:CodeOrganization 2026-08-03-22:25: plan-review prompt-write uses shared free factory */
@@ -1055,7 +1044,7 @@ CRITICAL SCOPING RULES — read before doing anything else:
         fallbackModelId: workflowFallback.modelId,
         fallbackThinkingLevel: workflowStepFallbackThinkingLevel,
         defaultThinkingLevel: workflowStepThinkingLevel,
-        runAuditor: createRunAuditor(deps.store, deps.getRunContextFor(task.id)),
+        runAuditor: createRunAuditor(deps.store, deps.runContextFor(task.id)),
         settings,
         taskEnv: stepEnv,
         mcpServers: await deps.resolveMcpServers(undefined),

@@ -1,17 +1,18 @@
+import type { Task, TaskStore, RunMutationContext } from "@fusion/core";
+import { computeRecoveryDecision, formatDelay, MAX_RECOVERY_RETRIES } from "../healing/recovery-policy.js";
+import { generateSyntheticRunId } from "../util/run-audit.js";
+import { emitBoundedRunAudit } from "./emit-bounded-run-audit.js";
+import { resolveTerminalColumnsFor } from "./lifecycle-columns.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-21:35:
  * recoverMissingRequiredArtifacts peeled from TaskExecutor (U4).
  * In-place execution recovery when required workflow artifacts are missing.
  */
-import type { Task, TaskStore } from "@fusion/core";
-import { computeRecoveryDecision, formatDelay, MAX_RECOVERY_RETRIES } from "../healing/recovery-policy.js";
-import { generateSyntheticRunId, type EngineRunContext } from "../util/run-audit.js";
-import { emitBoundedRunAudit } from "./emit-bounded-run-audit.js";
-import { resolveTerminalColumnsFor } from "./lifecycle-columns.js";
 
 export type RequiredArtifactRecoveryDeps = {
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   isRequiredArtifactRecoveryProtected: (task: Task) => Promise<boolean>;
   workflowLifecycleMovesInFlight: Set<string>;
 };
@@ -60,7 +61,7 @@ export async function recoverMissingRequiredArtifacts(
     nextRecoveryAt: task.nextRecoveryAt,
   });
   const attempt = decision.nextState.recoveryRetryCount ?? MAX_RECOVERY_RETRIES;
-  const context = deps.getRunContextFor(task.id);
+  const context = deps.runContextFor(task.id);
   const action = decision.shouldRetry ? "retry-in-place" : "park-failed";
 
   await emitBoundedRunAudit(deps.store, {

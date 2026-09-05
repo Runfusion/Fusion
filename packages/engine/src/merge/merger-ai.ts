@@ -98,7 +98,7 @@ import { withRateLimitRetry } from "../errors/rate-limit-retry.js";
 import { checkSessionError } from "../errors/usage-limit-detector.js";
 import { accumulateSessionTokenUsage } from "../execution/session-token-usage.js";
 import { moveTaskToContainedBackwardTarget } from "../execution/lifecycle-move.js";
-import { createRunAuditor, generateSyntheticRunId, type RunAuditor } from "../util/run-audit.js";
+import { createRunAuditor, generateSyntheticRunId, toRunMutationContext, type EngineRunContext, type RunAuditor } from "../util/run-audit.js";
 import { emitBoundedRunAudit, type RunAuditSinkHost } from "../util/emit-bounded-run-audit.js";
 import { deriveExecutorSignalMemory, evaluateNoOpFinalizeExecutorVeto } from "../overseer/overseer-noop-finalize-veto.js";
 import { createLogger } from "../logger.js";
@@ -1635,12 +1635,18 @@ export async function runAiMerge(
   });
   const mergeTarget = groupRouting?.mergeTarget ?? resolveTaskMergeTarget(task, { projectDefaultBranch });
   const integrationBranch = mergeTarget.branch;
-  const audit = createRunAuditor(store, {
+  /*
+  FNXC:Identity 2026-09-04-04:46:
+  Hoist the merge lane's run context out of the inline createRunAuditor argument so the run-audit
+  stream and every store mutation on this path carry the SAME run id and the SAME actor.
+  */
+  const mergeRunContext: EngineRunContext = {
     runId: generateSyntheticRunId("ai-merge", taskId),
     agentId: "merger",
     taskId,
     phase: "merge",
-  });
+  };
+  const audit = createRunAuditor(store, mergeRunContext);
 
   const fence = createMergeWriteFence({
     taskId,
@@ -1653,7 +1659,7 @@ export async function runAiMerge(
   });
   // Surface progress on the task detail (status pill) + the task log stream.
   const log = async (message: string): Promise<void> => {
-    await fence.write("log", () => store.logEntry(taskId, message, "AiMerge").catch(() => undefined));
+    await fence.write("log", () => store.logEntry(taskId, message, "AiMerge", toRunMutationContext(mergeRunContext)).catch(() => undefined));
     await fence.write("log", () => store.appendAgentLog(taskId, message, "status", undefined, "merger").catch(() => undefined));
   };
   /*
@@ -2455,12 +2461,18 @@ export async function landWorkspaceTask(
   assertMergeGenerationOwned(options.signal, taskId);
   const settings = await store.getSettings();
   const publishToRemote = isPushAfterMergeEnabled(settings, { lane: "workspace" });
-  const audit = createRunAuditor(store, {
+  /*
+  FNXC:Identity 2026-09-04-04:46:
+  Hoist the merge lane's run context out of the inline createRunAuditor argument so the run-audit
+  stream and every store mutation on this path carry the SAME run id and the SAME actor.
+  */
+  const mergeRunContext: EngineRunContext = {
     runId: generateSyntheticRunId("ai-merge", taskId),
     agentId: "merger",
     taskId,
     phase: "merge",
-  });
+  };
+  const audit = createRunAuditor(store, mergeRunContext);
   const fence = createMergeWriteFence({
     taskId,
     signal: options.signal,
@@ -2471,7 +2483,7 @@ export async function landWorkspaceTask(
     }, { log: aiMergeLog }),
   });
   const log = async (message: string): Promise<void> => {
-    await fence.write("log", () => store.logEntry(taskId, message, "AiMerge").catch(() => undefined));
+    await fence.write("log", () => store.logEntry(taskId, message, "AiMerge", toRunMutationContext(mergeRunContext)).catch(() => undefined));
     await fence.write("log", () => store.appendAgentLog(taskId, message, "status", undefined, "merger").catch(() => undefined));
   };
   /*
@@ -3182,7 +3194,7 @@ export async function landWorkspaceTask(
     callback: its already-pushed commits remain recoverable through landedSha/intent evidence, but
     this stale generation must not write the task outcome. Renewal only improves liveness.
     */
-    const finalize = () => finalizeWorkspaceTask(store, taskId, task, repos, workspaceRootDir, fence);
+    const finalize = () => finalizeWorkspaceTask(store, taskId, task, repos, workspaceRootDir, fence, toRunMutationContext(mergeRunContext));
     const withValidDispatchLease = (store as Partial<TaskStore>).withValidWorkspaceLease;
     if (options.workspaceDispatchFence && typeof withValidDispatchLease === "function") {
       try {
@@ -3307,6 +3319,7 @@ async function finalizeWorkspaceTask(
   repos: WorkspaceRepoLandResult[],
   workspaceRootDir: string,
   fence?: MergeWriteFence,
+  runContext?: import("@fusion/core").RunMutationContext,
 ): Promise<boolean> {
   const landed = repos.filter((r) => r.status === "landed" && r.landedSha);
   const workspaceLandedShas: Record<string, string> = {};
@@ -3351,9 +3364,9 @@ async function finalizeWorkspaceTask(
       fence,
       log: async (message) => {
         if (fence) {
-          await fence.write("log", () => store.logEntry(taskId, message, "AiMerge").catch(() => undefined));
+          await fence.write("log", () => store.logEntry(taskId, message, "AiMerge", runContext).catch(() => undefined));
         } else {
-          await store.logEntry(taskId, message, "AiMerge").catch(() => undefined);
+          await store.logEntry(taskId, message, "AiMerge", runContext).catch(() => undefined);
         }
       },
     });
@@ -3361,9 +3374,9 @@ async function finalizeWorkspaceTask(
   } catch (error) {
     const message = `Workspace post-landing worktree cleanup failed non-fatally: ${error instanceof Error ? error.message : String(error)}`;
     if (fence) {
-      await fence.write("log", () => store.logEntry(taskId, message, "AiMerge").catch(() => undefined));
+      await fence.write("log", () => store.logEntry(taskId, message, "AiMerge", runContext).catch(() => undefined));
     } else {
-      await store.logEntry(taskId, message, "AiMerge").catch(() => undefined);
+      await store.logEntry(taskId, message, "AiMerge", runContext).catch(() => undefined);
     }
   }
 

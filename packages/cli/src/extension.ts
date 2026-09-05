@@ -42,6 +42,7 @@ import {
   isTaskExecutionSessionPrincipal,
   taskExecutionTaskCreationRefusalText,
   resolveEffectiveAgentPermissionPolicy,
+  mutationContextForAgent,
   type FusionSessionPrincipal,
   type AgentPermissionPolicy,
   type ApprovalRequestActorSnapshot,
@@ -54,6 +55,7 @@ import {
   resolveWorkflowIrForTask,
   resolveReviewColumns,
 } from "@fusion/core";
+import { cliOperatorMutationContext } from "./identity/cli-operator-mutation-context.js";
 import {
   getGhErrorMessage,
   isGhAuthenticated,
@@ -941,7 +943,15 @@ function resolveSecretAccessPrincipal(ctx: ExtensionCallerContext):
   | { kind: "resolved"; actor: ApprovalRequestActorSnapshot; agentId: string | null; agentName?: string; taskId?: string }
   | { kind: "ambiguous" } {
   const principal = resolveExtensionCallerPrincipal(ctx);
-  if (principal.kind === "ambiguous") return { kind: "ambiguous" };
+  /*
+  FNXC:Identity 2026-08-09-03:04 (KTD16):
+  `unresolved` — no registration while identity is on — joins `ambiguous` on the fail-closed branch.
+  Both mean "we cannot name this caller", and a secret grant must never be minted or redeemed for a
+  caller we cannot name. It must NOT fall through to the operator branch below: that branch is the
+  pre-identity operator-as-absence default, and reaching it from an unresolved caller would hand a
+  nameless caller the operator's approval authority.
+  */
+  if (principal.kind === "ambiguous" || principal.kind === "unresolved") return { kind: "ambiguous" };
   if (principal.kind === "operator") {
     return {
       kind: "resolved",
@@ -991,6 +1001,67 @@ export function resolveExtensionCallerPrincipal(ctx: ExtensionCallerContext): Fu
     };
   }
   return resolveFusionSessionPrincipal(typeof ctx.cwd === "string" && ctx.cwd ? ctx.cwd : process.cwd());
+}
+
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2 — the CLI extension's mutation-context seam):
+
+U18 makes the mutation context a required argument on the mutating store surface, so every fn_* tool
+that writes has to name its actor. This extension is the one converted surface where the actor is
+sometimes GENUINELY UNDECIDABLE, and that case is not the same as "not wired yet":
+
+- `agent` — a real actor. Derive it. `mutationContextForAgent` off the resolved principal, carrying
+  `ctx.runId` when the engine supplied one, so the task log agrees with the run-audit stream.
+- `operator` / `unresolved` — NO actor assigned yet. Marker. The human CLI actor arrives with U11
+  (the CLI credential); `unresolved` sits here rather than with ambiguity because it means "there is
+  no registration for this cwd", which is the ordinary human-terminal shape and is exactly what U11
+  will name. It is reachable only while `identity.enabled` is on (see session-identity-registry).
+- `ambiguous` — TWO live sessions share one cwd and the registry cannot tell them apart. This is NOT
+  deferred debt and must never take the marker: the marker means "a later unit fills this in", while
+  ambiguity means "there are two candidates and we must not guess". Attributing the write to either
+  one fabricates an audit row naming an agent that may not have made it, and laundering a genuine
+  safety stop into the census as ordinary debt would hide it from U11 as well. So the tool REFUSES
+  the write and says why, the same fail-closed shape `resolveSecretAccessPrincipal` already uses for
+  secret approvals.
+
+The difference from the secrets path is deliberate and is only about `unresolved`: minting or
+redeeming a secret grant for a caller we cannot name is unrecoverable, so that path folds
+`unresolved` in with `ambiguous`. A task mutation is audit-visible and reversible, and folding
+`unresolved` in here would deny ordinary human CLI writes the moment identity is switched on — three
+phases before U11 gives those callers a name (KTD16).
+*/
+export type ExtensionMutationContextResolution =
+  | { kind: "resolved"; runContext: fusionCore.RunMutationContext }
+  | { kind: "ambiguous"; candidateCount: number };
+
+export function resolveExtensionMutationContext(ctx: ExtensionCallerContext): ExtensionMutationContextResolution {
+  const principal = resolveExtensionCallerPrincipal(ctx);
+  if (principal.kind === "ambiguous") {
+    return { kind: "ambiguous", candidateCount: principal.identities.length };
+  }
+  if (principal.kind === "agent") {
+    const runId = typeof ctx.runId === "string" && ctx.runId.trim() ? ctx.runId.trim() : undefined;
+    return { kind: "resolved", runContext: mutationContextForAgent(principal.identity.agentId, runId) };
+  }
+  // operator / unresolved: no actor assigned yet, U11 owns it (see cli-operator-mutation-context.ts).
+  return { kind: "resolved", runContext: cliOperatorMutationContext() };
+}
+
+/**
+ * FNXC:Identity 2026-08-09-03:04:
+ * The fail-closed tool result for an undecidable caller. Shaped like the other extension denials so
+ * a caller sees a refusal rather than a silent no-op, and names the remedy (end one of the
+ * concurrent sessions) because that is the only thing the caller can actually do about it.
+ */
+export function ambiguousActorToolError(toolName: string, candidateCount: number): AgentGateDenyResult {
+  return {
+    content: [{
+      type: "text",
+      text: `${toolName} refused: ${candidateCount} live agent sessions share this working directory, so the acting identity is ambiguous. Fusion will not attribute a task mutation to a guess. End one concurrent session and retry.`,
+    }],
+    isError: true,
+    details: { error: "ambiguous-caller-identity", tool: toolName, candidateCount },
+  };
 }
 
 /*
@@ -1993,6 +2064,9 @@ export default function kbExtension(pi: ExtensionAPI) {
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      // FNXC:Identity 2026-08-09-03:04 (U18): resolve the acting actor ONCE per invocation, before any write. An undecidable caller refuses the write rather than guessing.
+      const acting = resolveExtensionMutationContext(ctx as ExtensionCallerContext);
+      if (acting.kind === "ambiguous") return ambiguousActorToolError("fn_task_update", acting.candidateCount);
       const store = await getStore(ctx.cwd);
 
       // Validate task exists
@@ -2168,7 +2242,7 @@ export default function kbExtension(pi: ExtensionAPI) {
       }
 
       if (Object.keys(updates).length > 0) {
-        await store.updateTask(params.id, updates);
+        await store.updateTask(params.id, updates, acting.runContext);
       }
 
       return {
@@ -2553,6 +2627,9 @@ export default function kbExtension(pi: ExtensionAPI) {
       // FNXC:ToolPermissionGates 2026-07-26-13:55: policy-gated for agent principals; operators unaffected.
       const gated = await applyAgentPolicyGateForExtensionTool("fn_task_retry", params as Record<string, unknown>, ctx as ExtensionCallerContext);
       if (gated) return gated;
+      // FNXC:Identity 2026-08-09-03:04 (U18): one resolution for all four retry branches; an undecidable caller refuses the retry rather than crediting one of two live sessions with it.
+      const acting = resolveExtensionMutationContext(ctx as ExtensionCallerContext);
+      if (acting.kind === "ambiguous") return ambiguousActorToolError("fn_task_retry", acting.candidateCount);
       const store = await getStore(ctx.cwd);
 
       // Validate task exists
@@ -2638,12 +2715,12 @@ export default function kbExtension(pi: ExtensionAPI) {
           sessionFile: null,
           ...autoPauseClearPatch,
           ...buildManualRetryResetPatch({ resetMergeRetries: true }),
-        });
-        await store.logEntry(params.id, `Retry requested via Fusion extension (unusable worktree session-start recovery → todo, preserving progress${retryLogSuffix})`);
+        }, acting.runContext);
+        await store.logEntry(params.id, `Retry requested via Fusion extension (unusable worktree session-start recovery → todo, preserving progress${retryLogSuffix})`, undefined, acting.runContext);
         /* FNXC:WorkflowResolvedColumns 2026-07-30-22:20: census-invisible moveTask DESTINATION — a call argument, not a comparison. This is an OPERATOR-triggered Retry: on a board that does not declare `todo` the move is REJECTED and the retry fails in the operator's face. The reply text below uses the SAME resolved value so it cannot name a lane the card did not go to. */
         const retryTarget = await fusionCore.resolveReboundTargetForTask(store, params.id);
         /* FNXC:ToolPermissionGates 2026-07-30-13:55: fn_task_retry is a user-facing lever — carry the user move source (target resolves by role). */
-        await store.moveTask(params.id, retryTarget, { preserveProgress: true, moveSource: "user" });
+        await store.moveTask(params.id, retryTarget, { preserveProgress: true, moveSource: "user" }, acting.runContext);
         return {
           content: [{ type: "text", text: `Retried ${params.id} → ${retryTarget} (unusable worktree session metadata cleared)` }],
           details: { taskId: params.id, newColumn: 'todo' },
@@ -2658,17 +2735,19 @@ export default function kbExtension(pi: ExtensionAPI) {
             error: null,
             ...autoPauseClearPatch,
             ...buildManualRetryResetPatch(),
-          });
+          }, acting.runContext);
           await store.logEntry(
             params.id,
             isInReviewExecutionStall
               ? `Retry requested via Fusion extension (stranded in-review execution retry → todo, preserving progress${retryLogSuffix})`
               : `Retry requested via Fusion extension (execution failure in-review → todo, preserving progress${retryLogSuffix})`,
+            undefined,
+            acting.runContext,
           );
           /* FNXC:WorkflowResolvedColumns 2026-07-30-22:20: census-invisible moveTask DESTINATION — same operator Retry path as above. */
           const executionRetryTarget = await fusionCore.resolveReboundTargetForTask(store, params.id);
           /* FNXC:ToolPermissionGates 2026-07-30-13:55: fn_task_retry is a user-facing lever — carry the user move source (target resolves by role). */
-          await store.moveTask(params.id, executionRetryTarget, { preserveProgress: true, moveSource: "user" });
+          await store.moveTask(params.id, executionRetryTarget, { preserveProgress: true, moveSource: "user" }, acting.runContext);
           return {
             content: [{ type: "text", text: `Retried ${params.id} → ${executionRetryTarget} (execution failure, preserving step progress)` }],
             details: { taskId: params.id, newColumn: 'todo' },
@@ -2680,8 +2759,8 @@ export default function kbExtension(pi: ExtensionAPI) {
           error: null,
           ...autoPauseClearPatch,
           ...buildManualRetryResetPatch({ resetMergeRetries: true }),
-        });
-        await store.logEntry(params.id, `Retry requested via Fusion extension (in-review merge retry, mergeRetries reset${retryLogSuffix})`);
+        }, acting.runContext);
+        await store.logEntry(params.id, `Retry requested via Fusion extension (in-review merge retry, mergeRetries reset${retryLogSuffix})`, undefined, acting.runContext);
         return {
           content: [{ type: "text", text: `Retried ${params.id} → in-review (merge retry state cleared)` }],
           details: { taskId: params.id, newColumn: 'in-review' },
@@ -2694,7 +2773,7 @@ export default function kbExtension(pi: ExtensionAPI) {
         error: null,
         ...autoPauseClearPatch,
         ...buildManualRetryResetPatch({ resetMergeRetries: true }),
-      });
+      }, acting.runContext);
       
       /*
       FNXC:TaskRetry 2026-07-31-23:59 (the SECOND instance of the review finding on #3152):
@@ -2707,10 +2786,10 @@ export default function kbExtension(pi: ExtensionAPI) {
       */
       // FNXC:ToolPermissionGates 2026-07-26-13:55: user-facing retry move carries the user/hard-cancel source (Move-Task contract).
       const retryTarget = await fusionCore.resolveReboundTargetForTask(store, params.id);
-      await store.moveTask(params.id, retryTarget, { moveSource: "user" });
+      await store.moveTask(params.id, retryTarget, { moveSource: "user" }, acting.runContext);
 
       // Log the retry action
-      await store.logEntry(params.id, "Retry requested via Fusion extension", `Task reset to ${retryTarget} for retry`);
+      await store.logEntry(params.id, "Retry requested via Fusion extension", `Task reset to ${retryTarget} for retry`, acting.runContext);
 
       return {
         content: [{ type: "text", text: `Retried ${params.id} → ${retryTarget} (failure state cleared)` }],
@@ -3039,6 +3118,9 @@ export default function kbExtension(pi: ExtensionAPI) {
       // FNXC:ToolPermissionGates 2026-07-26-13:55: hard-withheld from agent/ambiguous principals (root cause of the live-task deletion incident); operators unaffected.
       const withheldDenied = denyWithheldToolForAgentPrincipal("fn_task_delete", ctx as ExtensionCallerContext);
       if (withheldDenied) return withheldDenied;
+      /* FNXC:Identity 2026-08-09-03:04 (U18): the withheld guard above already refuses agent AND ambiguous callers, so this resolution can only produce the operator marker today. It is spelled out anyway so the delete path carries the same required carrier as every other write and U11 finds it in the census. */
+      const acting = resolveExtensionMutationContext(ctx as ExtensionCallerContext);
+      if (acting.kind === "ambiguous") return ambiguousActorToolError("fn_task_delete", acting.candidateCount);
       const store = await getStore(ctx.cwd);
       const callerTaskId = (ctx as { taskId?: string }).taskId;
       const task = await store.deleteTask(params.id, {
@@ -3057,8 +3139,23 @@ export default function kbExtension(pi: ExtensionAPI) {
           runId: `synthetic-pi-delete-${params.id}-${Date.now()}`,
           taskId: callerTaskId,
           callerKind: "agent-tool",
+          /*
+          FNXC:Identity 2026-08-09-03:04:
+          R21 — the authenticated actor, resolved from the session-identity registry, kept as a
+          field SEPARATE from `callerKind` and never derived from it. This tool is hard-withheld
+          from agent and ambiguous principals above, so in practice the caller here is the operator
+          CLI; until U11 gives that surface a credential it is honestly unattributed.
+
+          FNXC:Identity 2026-08-09-03:04 (U18/KTD2 — Stage D):
+          It now reads the SAME resolution the required `runContext` parameter carries rather than
+          re-resolving the principal here. `TaskDeleteAuditContext` is the second, differently
+          shaped carrier KTD2 unifies into `RunMutationContext`; while both exist, two independent
+          resolutions on one delete could disagree about who did it, and the delete row is exactly
+          where that must not happen.
+          */
+          actor: acting.runContext.actor,
         },
-      });
+      }, acting.runContext);
 
       return {
         content: [{ type: "text", text: `Deleted ${task.id}` }],
@@ -3105,6 +3202,9 @@ export default function kbExtension(pi: ExtensionAPI) {
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       const taskExecutionDenied = denyTaskCreationForTaskExecutionPrincipal("fn_task_import_github", ctx as ExtensionCallerContext);
       if (taskExecutionDenied) return taskExecutionDenied;
+      // FNXC:Identity 2026-08-09-03:04 (U18): resolve the importing actor once; an undecidable caller imports nothing.
+      const acting = resolveExtensionMutationContext(ctx as ExtensionCallerContext);
+      if (acting.kind === "ambiguous") return ambiguousActorToolError("fn_task_import_github", acting.candidateCount);
       const [owner, repo] = params.ownerRepo.split("/");
       const limit = clampImportBrowseLimit(params.limit, 30);
       const labels = params.labels;
@@ -3149,9 +3249,9 @@ export default function kbExtension(pi: ExtensionAPI) {
             sourceMetadata: source.sourceMetadata,
           },
           ...(importedIssueGithubTracking ? { githubTracking: importedIssueGithubTracking } : {}),
-        });
+        }, undefined, acting.runContext);
 
-        await store.logEntry(task.id, "Imported from GitHub", sourceUrl);
+        await store.logEntry(task.id, "Imported from GitHub", sourceUrl, acting.runContext);
         createdTasks.push({ id: task.id, title: task.title || issue.title });
 
         existingTasks.push(task);
@@ -3201,6 +3301,9 @@ export default function kbExtension(pi: ExtensionAPI) {
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       const taskExecutionDenied = denyTaskCreationForTaskExecutionPrincipal("fn_task_import_github_issue", ctx as ExtensionCallerContext);
       if (taskExecutionDenied) return taskExecutionDenied;
+      // FNXC:Identity 2026-08-09-03:04 (U18): resolve the importing actor once; an undecidable caller imports nothing.
+      const acting = resolveExtensionMutationContext(ctx as ExtensionCallerContext);
+      if (acting.kind === "ambiguous") return ambiguousActorToolError("fn_task_import_github_issue", acting.candidateCount);
       const { owner, repo, issueNumber } = params;
       const issue = await fetchGitHubIssueViaGh(owner, repo, issueNumber, { signal });
 
@@ -3249,9 +3352,9 @@ export default function kbExtension(pi: ExtensionAPI) {
           sourceMetadata: source.sourceMetadata,
         },
         ...(importedIssueGithubTracking ? { githubTracking: importedIssueGithubTracking } : {}),
-      });
+      }, undefined, acting.runContext);
 
-      await store.logEntry(task.id, "Imported from GitHub", sourceUrl);
+      await store.logEntry(task.id, "Imported from GitHub", sourceUrl, acting.runContext);
 
       return {
         content: [
@@ -3370,7 +3473,14 @@ export default function kbExtension(pi: ExtensionAPI) {
     return { store, client: new dashboard.GitLabClient(auth.auth) };
   }
 
-  async function importGitLabItems(ctx: { cwd: string }, resourceType: dashboard.GitLabResourceType, target: string, items: Array<dashboard.GitLabIssue | dashboard.GitLabMergeRequest>) {
+  /*
+  FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
+  `runContext` is REQUIRED, not optional with a fallback. Three import tools share this helper, so an
+  optional parameter would let a fourth caller land unattributed and still compile — the whole point
+  of the required parameter. Each caller resolves its own actor and fails closed on ambiguity BEFORE
+  reaching here, so this helper never has to decide.
+  */
+  async function importGitLabItems(ctx: { cwd: string }, resourceType: dashboard.GitLabResourceType, target: string, items: Array<dashboard.GitLabIssue | dashboard.GitLabMergeRequest>, runContext: fusionCore.RunMutationContext) {
     const { store, client } = await createGitLabClient(ctx);
     const existingTasks = await store.listTasks({ slim: false, includeArchived: false });
     const createdTasks: Array<{ id: string; title: string }> = [];
@@ -3378,8 +3488,8 @@ export default function kbExtension(pi: ExtensionAPI) {
       const provenance = dashboard.buildGitLabTaskProvenance({ auth: client.auth, resourceType, item, projectInput: resourceType !== "group_issue" ? target : undefined, groupInput: resourceType === "group_issue" ? target : undefined });
       if (existingTasks.some((task) => dashboard.isGitLabAlreadyImported(task, provenance))) continue;
       const title = resourceType === "merge_request" ? `Review MR !${item.iid}: ${item.title.slice(0, 180)}` : item.title.slice(0, 200);
-      const task = await store.createTask({ title: title || undefined, description: dashboard.buildGitLabTaskDescription(item), dependencies: [], sourceIssue: provenance.sourceIssue, gitlabTracking: provenance.gitlabTracking, source: { sourceType: "gitlab_import", sourceMetadata: provenance.sourceMetadata } });
-      await store.logEntry(task.id, resourceType === "merge_request" ? "Imported merge request from GitLab" : "Imported from GitLab", item.webUrl);
+      const task = await store.createTask({ title: title || undefined, description: dashboard.buildGitLabTaskDescription(item), dependencies: [], sourceIssue: provenance.sourceIssue, gitlabTracking: provenance.gitlabTracking, source: { sourceType: "gitlab_import", sourceMetadata: provenance.sourceMetadata } }, undefined, runContext);
+      await store.logEntry(task.id, resourceType === "merge_request" ? "Imported merge request from GitLab" : "Imported from GitLab", item.webUrl, runContext);
       existingTasks.push(task);
       createdTasks.push({ id: task.id, title: task.title || item.title });
     }
@@ -3408,9 +3518,12 @@ export default function kbExtension(pi: ExtensionAPI) {
     async execute(_id, params, _signal, _onUpdate, ctx) {
       const taskExecutionDenied = denyTaskCreationForTaskExecutionPrincipal("fn_task_import_gitlab_project_issues", ctx as ExtensionCallerContext);
       if (taskExecutionDenied) return taskExecutionDenied;
+      // FNXC:Identity 2026-08-09-03:04 (U18): resolve the importing actor once; an undecidable caller imports nothing.
+      const acting = resolveExtensionMutationContext(ctx as ExtensionCallerContext);
+      if (acting.kind === "ambiguous") return ambiguousActorToolError("fn_task_import_gitlab_project_issues", acting.candidateCount);
       const { client } = await createGitLabClient(ctx);
       const issues = await client.listProjectIssues(params.project, { limit: clampImportBrowseLimit(params.limit, 30), labels: params.labels });
-      const createdTasks = await importGitLabItems(ctx, "project_issue", params.project, issues);
+      const createdTasks = await importGitLabItems(ctx, "project_issue", params.project, issues, acting.runContext);
       return { content: [{ type: "text", text: `Imported ${createdTasks.length} GitLab project issue tasks.` }], details: { createdTasks } };
     },
   });
@@ -3437,9 +3550,12 @@ export default function kbExtension(pi: ExtensionAPI) {
     async execute(_id, params, _signal, _onUpdate, ctx) {
       const taskExecutionDenied = denyTaskCreationForTaskExecutionPrincipal("fn_task_import_gitlab_group_issues", ctx as ExtensionCallerContext);
       if (taskExecutionDenied) return taskExecutionDenied;
+      // FNXC:Identity 2026-08-09-03:04 (U18): resolve the importing actor once; an undecidable caller imports nothing.
+      const acting = resolveExtensionMutationContext(ctx as ExtensionCallerContext);
+      if (acting.kind === "ambiguous") return ambiguousActorToolError("fn_task_import_gitlab_group_issues", acting.candidateCount);
       const { client } = await createGitLabClient(ctx);
       const issues = await client.listGroupIssues(params.group, { limit: clampImportBrowseLimit(params.limit, 30), labels: params.labels });
-      const createdTasks = await importGitLabItems(ctx, "group_issue", params.group, issues);
+      const createdTasks = await importGitLabItems(ctx, "group_issue", params.group, issues, acting.runContext);
       return { content: [{ type: "text", text: `Imported ${createdTasks.length} GitLab group issue tasks.` }], details: { createdTasks } };
     },
   });
@@ -3466,9 +3582,12 @@ export default function kbExtension(pi: ExtensionAPI) {
     async execute(_id, params, _signal, _onUpdate, ctx) {
       const taskExecutionDenied = denyTaskCreationForTaskExecutionPrincipal("fn_task_import_gitlab_merge_requests", ctx as ExtensionCallerContext);
       if (taskExecutionDenied) return taskExecutionDenied;
+      // FNXC:Identity 2026-08-09-03:04 (U18): resolve the importing actor once; an undecidable caller imports nothing.
+      const acting = resolveExtensionMutationContext(ctx as ExtensionCallerContext);
+      if (acting.kind === "ambiguous") return ambiguousActorToolError("fn_task_import_gitlab_merge_requests", acting.candidateCount);
       const { client } = await createGitLabClient(ctx);
       const mergeRequests = await client.listMergeRequests(params.project, { limit: clampImportBrowseLimit(params.limit, 30), labels: params.labels });
-      const createdTasks = await importGitLabItems(ctx, "merge_request", params.project, mergeRequests);
+      const createdTasks = await importGitLabItems(ctx, "merge_request", params.project, mergeRequests, acting.runContext);
       return { content: [{ type: "text", text: `Imported ${createdTasks.length} GitLab merge request tasks.` }], details: { createdTasks } };
     },
   });
@@ -6616,6 +6735,15 @@ export default function kbExtension(pi: ExtensionAPI) {
         const gated = await applyAgentPolicyGateForExtensionTool("fn_delegate_task", params as Record<string, unknown>, ctx as ExtensionCallerContext);
         if (gated) return gated;
       }
+      /*
+      FNXC:Identity 2026-08-09-03:04 (U18): the actor is the DELEGATING caller, never `params.agent_id`
+      — that names the agent the work is delegated TO, and attributing the create to it would produce a
+      row claiming an agent assigned itself the task. Delegation is also exactly where an ambiguous cwd
+      is dangerous: crediting the wrong one of two live sessions with queueing work is unrecoverable
+      from the audit trail, so it refuses.
+      */
+      const acting = resolveExtensionMutationContext(ctx as ExtensionCallerContext);
+      if (acting.kind === "ambiguous") return ambiguousActorToolError("fn_delegate_task", acting.candidateCount);
       // Validate target agent exists and is not ephemeral
       const delegateTask: Pick<Task, "id" | "column"> = { id: "<new>", column: "todo" };
       const agentError = await validateAssignableAgentId(ctx.cwd ?? process.cwd(), params.agent_id, delegateTask, params.override === true);
@@ -6671,7 +6799,7 @@ export default function kbExtension(pi: ExtensionAPI) {
             sourceType: "api",
             ...(params.override === true ? { sourceMetadata: { executorRoleOverride: true } } : {}),
           },
-        });
+        }, undefined, acting.runContext);
 
         let landedColumn = task.column;
         let landingError: string | undefined;
@@ -6789,7 +6917,7 @@ export default function kbExtension(pi: ExtensionAPI) {
           landingError = "this workflow declares no hold (ready-to-pick-up) lane";
         } else if (holdColumn && holdColumn !== task.column) {
           try {
-            await store.moveTask(task.id, holdColumn);
+            await store.moveTask(task.id, holdColumn, undefined, acting.runContext);
             landedColumn = holdColumn;
           } catch (moveError) {
             landingError = moveError instanceof Error ? moveError.message : String(moveError);

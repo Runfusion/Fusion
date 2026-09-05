@@ -40,6 +40,7 @@ import type { Settings, Task, TaskDetail, TaskStore, WorkflowIr } from "@fusion/
 import {
   getWorkflowEventBus,
   resetWorkflowEventBusForTesting,
+  UNATTRIBUTED_MUTATION_CONTEXT,
   type WorkflowLifecycleEvent,
 } from "@fusion/core";
 
@@ -187,6 +188,7 @@ pgDescribe("live lifecycle E2E: real graph + real PostgreSQL store", () => {
       store,
       task: { id: taskId },
       workflowRunId: runId,
+      runContext: UNATTRIBUTED_MUTATION_CONTEXT,
       markMoveInFlight: (id) => moveMarks.push(`+${id}`),
       clearMoveInFlight: (id) => moveMarks.push(`-${id}`),
     });

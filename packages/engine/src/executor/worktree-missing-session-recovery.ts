@@ -1,3 +1,22 @@
+import type { RunMutationContext } from "@fusion/core";
+import { resolve as resolvePath } from "node:path";
+import { isWorkspaceTask, loadWorkspaceConfig, type Task, type TaskStore } from "@fusion/core";
+import {
+  classifyMissingWorktreeSessionStartFailure,
+  extractMissingWorktreePathFromSessionStartFailure,
+  isMissingWorktreeSessionStartFailure } from "../healing/restart-recovery-coordinator.js";
+import {
+  isInsideWorktreesDir,
+  removeWorktree,
+  RemovalReason } from "../worktree/worktree-pool.js";
+import {
+  autoRecoverWorktreeSessionStartFailure,
+  MAX_WORKTREE_SESSION_RETRIES } from "../self-healing.js";
+import { executorLog, formatError } from "../logger.js";
+import type {  RunAuditor } from "../util/run-audit.js";
+import {
+  isTransientMissingTaskJsonError,
+  TRANSIENT_WORKTREE_TASK_JSON_ENOENT_PATTERN } from "./requeue-loop.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-16:05:
  * recoverMissingWorktreeSessionStartFailure peeled from TaskExecutor (U4 Slice B).
@@ -8,33 +27,12 @@
  * "escalate-exhausted" (fall through to the visible terminal park for human inspection).
  * Existing session-start callers treat any truthy outcome as handled, unchanged.
  */
-import { resolve as resolvePath } from "node:path";
-import { isWorkspaceTask, loadWorkspaceConfig, type Task, type TaskStore } from "@fusion/core";
-import {
-  classifyMissingWorktreeSessionStartFailure,
-  extractMissingWorktreePathFromSessionStartFailure,
-  isMissingWorktreeSessionStartFailure,
-} from "../healing/restart-recovery-coordinator.js";
-import {
-  isInsideWorktreesDir,
-  removeWorktree,
-  RemovalReason,
-} from "../worktree/worktree-pool.js";
-import {
-  autoRecoverWorktreeSessionStartFailure,
-  MAX_WORKTREE_SESSION_RETRIES,
-} from "../self-healing.js";
-import { executorLog, formatError } from "../logger.js";
-import type { EngineRunContext, RunAuditor } from "../util/run-audit.js";
-import {
-  isTransientMissingTaskJsonError,
-  TRANSIENT_WORKTREE_TASK_JSON_ENOENT_PATTERN,
-} from "./requeue-loop.js";
 
 export type MissingSessionRecoveryDeps = {
   rootDir: string;
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   hasActiveWorktreeBinding: (taskId: string, worktreePath: string) => boolean;
   markGraphExecuteSelfRequeued: (taskId: string) => void;
 };
@@ -132,14 +130,14 @@ export async function recoverMissingWorktreeSessionStartFailure(
       task.id,
       `Worktree session-start auto-recovery exhausted (${recovery.retries}/${MAX_WORKTREE_SESSION_RETRIES}); task left for human inspection`,
       undefined,
-      deps.getRunContextFor(task.id),
+      deps.runContextFor(task.id),
     );
   } else {
     await deps.store.logEntry(
       task.id,
       `Worktree was ${classification} at session start; requeued to todo for clean retry (attempt ${recovery.retries}/${MAX_WORKTREE_SESSION_RETRIES})`,
       undefined,
-      deps.getRunContextFor(task.id),
+      deps.runContextFor(task.id),
     );
   }
   return recovery.outcome === "escalate-exhausted" ? "escalate-exhausted" : "requeue-todo";

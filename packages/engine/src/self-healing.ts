@@ -44,8 +44,7 @@ import { loadWorkspaceConfig, type TaskMoveLanes, resolveColumnFlags, IN_REVIEW_
   isFusionDeletableBranch,
   isTaskExternallyBlocked,
   fileScopeLeaseBlocksCandidate,
-  normalizeOverlapScopeForTask,
-} from "@fusion/core";
+  normalizeOverlapScopeForTask, UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import { finalizePlanningSegment, isLegacyWorkspaceWorktreeLayout, resolveWorkspaceTaskWorktreeDir } from "@fusion/core";
 import type { WorkspaceLandIntent } from "@fusion/core";
 import type { MeshLeaseManager } from "./project/mesh-lease-manager.js";
@@ -2457,8 +2456,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     */
     await this.store.logEntry(
       task.id,
-      `[recovery] already-merged rejected ${task.id} candidate=${candidateSha.slice(0, 12)} owner=${candidateOwner ?? "unknown"} branch=${taskBranch ?? "?"} base=${baseBranch} reason=${reason}`,
-    );
+      `[recovery] already-merged rejected ${task.id} candidate=${candidateSha.slice(0, 12)} owner=${candidateOwner ?? "unknown"} branch=${taskBranch ?? "?"} base=${baseBranch} reason=${reason}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
     try {
       await emitBoundedRunAudit(this.store, {
         taskId: task.id,
@@ -2699,11 +2697,11 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         source,
         audit,
         log: async (message) => {
-          await this.store.logEntry(task.id, message).catch(() => undefined);
+          await this.store.logEntry(task.id, message, undefined, UNATTRIBUTED_MUTATION_CONTEXT).catch(() => undefined);
         },
       });
     }
-    return await this.store.moveTask(task.id, completeLane);
+    return await this.store.moveTask(task.id, completeLane, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
   }
 
   /*
@@ -3242,8 +3240,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             try {
               await this.store.logEntry(
                 task.id,
-                `[self-healing] Auto-archive abandoned after ${count} consecutive ${reason} failures. ${remedy}`,
-              );
+                `[self-healing] Auto-archive abandoned after ${count} consecutive ${reason} failures. ${remedy}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
             } catch (logErr: unknown) {
               log.warn(`Could not record auto-archive escalation for ${task.id}: ${logErr instanceof Error ? logErr.message : String(logErr)}`);
             }
@@ -3730,8 +3727,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           if (!moved.moved) continue;
           await this.store.logEntry(
             live.id,
-            `Auto-recovered workflow task stranded in triage — resumed at pinned ${resumeColumn} column`,
-          );
+            `Auto-recovered workflow task stranded in triage — resumed at pinned ${resumeColumn} column`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
           recovered++;
         } catch (err: unknown) {
           const errorMessage = err instanceof Error ? err.message : String(err);
@@ -3871,12 +3867,11 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           let current: Task;
           if (typeof this.store.updateTaskAtomic === "function") {
             current = await this.store.updateTaskAtomic(task.id, (live) =>
-              clearIfStillStale(live) ? { status: null } : null,
-            );
+              clearIfStillStale(live) ? { status: null } : null, UNATTRIBUTED_MUTATION_CONTEXT);
           } else {
             // Compatibility only for structural test/extension stores; production TaskStore is atomic.
             current = await this.store.getTask(task.id);
-            if (clearIfStillStale(current)) await this.store.updateTask(task.id, { status: null });
+            if (clearIfStillStale(current)) await this.store.updateTask(task.id, { status: null }, UNATTRIBUTED_MUTATION_CONTEXT);
           }
           if (previousStatus === undefined) continue;
 
@@ -3890,8 +3885,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           this.options.clearMergeActive?.(task.id);
           await this.store.logEntry(
             task.id,
-            `Auto-recovered: cleared stale '${previousStatus}' status (no active merger)`,
-          );
+            `Auto-recovered: cleared stale '${previousStatus}' status (no active merger)`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
           /*
           FNXC:MergeReliability 2026-08-10-05:32:
           Clearing the false badge is not permission to restart parked work. Check the live row returned
@@ -3988,13 +3982,12 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       this.options.clearMergeActive?.(activeId);
       if (task) {
         if (task.status && ACTIVE_MERGE_STATUSES.has(task.status)) {
-          await this.store.updateTask(activeId, { status: null, error: null }).catch(() => undefined);
+          await this.store.updateTask(activeId, { status: null, error: null }, UNATTRIBUTED_MUTATION_CONTEXT).catch(() => undefined);
         }
         await this.store
           .logEntry(
             activeId,
-            "Auto-recovered: wedged active merge reclaimed after merger agent silence — merge will be retried",
-          )
+            "Auto-recovered: wedged active merge reclaimed after merger agent silence — merge will be retried", undefined, UNATTRIBUTED_MUTATION_CONTEXT)
           .catch(() => undefined);
       }
       await this.emitWedgedActiveMergeAudit(activeId, {
@@ -4126,7 +4119,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         return withPerPr({ outcome: "skipped", reason: "stale" });
       }
       if (inspection.kind === "stale-resolved") {
-        await this.store.updateTask(task.id, { worktree: null, branch: null, branchWriteOrigin: "engine" as const, baseCommitSha: null });
+        await this.store.updateTask(task.id, { worktree: null, branch: null, branchWriteOrigin: "engine" as const, baseCommitSha: null }, UNATTRIBUTED_MUTATION_CONTEXT);
         await auditor.database({ type: "task:pr-conflict-reclaim", target: task.id, metadata: { outcome: "stale-resolved" } });
         return withPerPr({ outcome: "stale-resolved" });
       }
@@ -4172,7 +4165,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           if (isFusionDeletableBranch(task, task.branch)) {
             await execAsync(`git branch -D ${JSON.stringify(task.branch)}`, { cwd: this.options.rootDir, timeout: 120_000, maxBuffer: 10 * 1024 * 1024 });
           }
-          await this.store.updateTask(task.id, { worktree: null, branch: null, branchWriteOrigin: "engine" as const, paused: false, pausedReason: undefined, status: null, error: null });
+          await this.store.updateTask(task.id, { worktree: null, branch: null, branchWriteOrigin: "engine" as const, paused: false, pausedReason: undefined, status: null, error: null }, UNATTRIBUTED_MUTATION_CONTEXT);
           await auditor.database({ type: "task:pr-conflict-reclaim", target: task.id, metadata: { outcome: "reclaimed", mode: "fully-subsumed", recoveredFromPaused: wasPausedBranchConflict } });
           return withPerPr({ outcome: "reclaimed" });
         }
@@ -4205,7 +4198,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             pausedReason: undefined,
             status: null,
             error: null,
-          });
+          }, UNATTRIBUTED_MUTATION_CONTEXT);
           await this.reboundTask(task.id, "self-healing-worktree-reclaim", task.column, {
             recoveryRehome: true,
             preserveWorktree: true,
@@ -4228,7 +4221,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           pausedReason: undefined,
           status: null,
           error: null,
-        });
+        }, UNATTRIBUTED_MUTATION_CONTEXT);
       }
       await auditor.database({ type: "task:pr-conflict-reclaim", target: task.id, metadata: { outcome: "reclaimed", mode: inspection.kind } });
       return withPerPr({ outcome: "reclaimed" });
@@ -4245,12 +4238,12 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       if (!classification.class.startsWith("branch-conflict-")) {
         const reason = `reclaim deferred — non-conflict error, retrying next sweep: ${message}`;
         log.warn(`[self-healing] ${task.id} PR ${reason}`);
-        await this.store.logEntry(task.id, `Auto-recovery warning: PR ${reason}`).catch(() => undefined);
+        await this.store.logEntry(task.id, `Auto-recovery warning: PR ${reason}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT).catch(() => undefined);
         return withPerPr({ outcome: "skipped", reason: message });
       }
       const patchPath = await preserveWorktreeChanges(this.options.rootDir, task.worktree, task.id);
       if (patchPath) {
-        await this.store.logEntry(task.id, `Preserved uncommitted worktree changes before pause: ${patchPath}`);
+        await this.store.logEntry(task.id, `Preserved uncommitted worktree changes before pause: ${patchPath}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
       }
       const dispatcher = this.options.autoRecoveryDispatcher ?? new AutoRecoveryDispatcher({
         taskStore: this.store,
@@ -4278,9 +4271,9 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           error: `Task branch conflict: ${task.branch} is not safely reclaimable (${message})`,
           paused: true,
           pausedReason: "branch-conflict-unrecoverable",
-        });
+        }, UNATTRIBUTED_MUTATION_CONTEXT);
         await this.handoffTaskToReview(task.id, "branch-conflict-unrecoverable-repromote");
-        await this.store.logEntry(task.id, `Auto-recovery failed: branch conflict unrecoverable — ${message}`);
+        await this.store.logEntry(task.id, `Auto-recovery failed: branch conflict unrecoverable — ${message}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
       }
       return withPerPr({ outcome: "paused-unrecoverable", reason: message });
     }
@@ -4320,12 +4313,11 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       if (!recovered.recovered) return false;
       await this.store.logEntry(
         task.id,
-        `Auto-reanchored ${task.branch} to base (foreign-only contamination, subtype=${recovered.subtype ?? "unknown"})`,
-      );
+        `Auto-reanchored ${task.branch} to base (foreign-only contamination, subtype=${recovered.subtype ?? "unknown"})`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
       return true;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      await this.store.logEntry(task.id, `Foreign-only reanchor attempt failed: ${message}`).catch(() => undefined);
+      await this.store.logEntry(task.id, `Foreign-only reanchor attempt failed: ${message}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT).catch(() => undefined);
       return false;
     }
   }
@@ -4580,11 +4572,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
               worktree: null,
               branch: null, branchWriteOrigin: "engine" as const,
               baseCommitSha: null,
-            });
+            }, UNATTRIBUTED_MUTATION_CONTEXT);
             await this.store.logEntry(
               task.id,
-              `[recovery] cache-invalidate ${task.id} branch=${task.branch ?? "?"} reason=stale-resolved-no-live-ref-or-mapping`,
-            );
+              `[recovery] cache-invalidate ${task.id} branch=${task.branch ?? "?"} reason=stale-resolved-no-live-ref-or-mapping`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
             continue;
           }
           if (inspection.kind === "tip-already-merged") {
@@ -4683,11 +4674,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
                 pausedReason: undefined,
                 status: null,
                 error: null,
-              });
+              }, UNATTRIBUTED_MUTATION_CONTEXT);
               await this.store.logEntry(
                 task.id,
-                `[recovery] tip-already-merged ${task.id} branch=${branchName} tip=${inspection.tipSha.slice(0, 12)} integrationRef=${inspection.integrationRef} reason=stale-cached-metadata-ghost-conflict`,
-              );
+                `[recovery] tip-already-merged ${task.id} branch=${branchName} tip=${inspection.tipSha.slice(0, 12)} integrationRef=${inspection.integrationRef} reason=stale-cached-metadata-ghost-conflict`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
 
               /*
               FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (SELF-AUDIT after #2916 found the same class):
@@ -4738,7 +4728,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
               reclaimedCleanly = true;
             } catch (tipMergedErr: unknown) {
               const message = tipMergedErr instanceof Error ? tipMergedErr.message : String(tipMergedErr);
-              await this.store.logEntry(task.id, `Auto-recovery warning: tip-already-merged cleanup failed — ${message}`);
+              await this.store.logEntry(task.id, `Auto-recovery warning: tip-already-merged cleanup failed — ${message}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
               log.warn(`Failed tip-already-merged cleanup for ${task.id}: ${message}`);
             }
 
@@ -4812,11 +4802,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
                   pausedReason: undefined,
                   status: null,
                   error: null,
-                });
+                }, UNATTRIBUTED_MUTATION_CONTEXT);
                 await this.store.logEntry(
                   task.id,
-                  `[recovery] reclaim-live-zero-commits ${task.id} branch=${task.branch} worktree=${inspection.livePath} tip=${inspection.tipSha.slice(0, 12)} reason=zero-unique-commits-vs-main`,
-                );
+                  `[recovery] reclaim-live-zero-commits ${task.id} branch=${task.branch} worktree=${inspection.livePath} tip=${inspection.tipSha.slice(0, 12)} reason=zero-unique-commits-vs-main`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
 
                 if (lanesOfReclaim(task.id).review.has(task.column)) {
                   if (!reviewProof?.ok) {
@@ -4862,7 +4851,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
                 reclaimedCleanly = true;
               } catch (reclaimErr: unknown) {
                 const reclaimMessage = reclaimErr instanceof Error ? reclaimErr.message : String(reclaimErr);
-                await this.store.logEntry(task.id, `Auto-recovery warning: reclaim-live-zero-commits failed — ${reclaimMessage}`);
+                await this.store.logEntry(task.id, `Auto-recovery warning: reclaim-live-zero-commits failed — ${reclaimMessage}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
                 log.warn(`Failed reclaim-live-zero-commits for ${task.id}: ${reclaimMessage}`);
               }
 
@@ -4890,8 +4879,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           if (placement.kind === "deferred-live") {
             await this.store.logEntry(
               task.id,
-              `[recovery] deferred relocation of active preserved worktree ${placement.path}`,
-            );
+              `[recovery] deferred relocation of active preserved worktree ${placement.path}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
             continue;
           }
           const reclaimedWorktreePath = placement.path;
@@ -4899,8 +4887,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             relocatedWorktreePath = reclaimedWorktreePath;
             await this.store.logEntry(
               task.id,
-              `[recovery] relocated preserved worktree from ${inspection.livePath} to ${reclaimedWorktreePath}`,
-            );
+              `[recovery] relocated preserved worktree from ${inspection.livePath} to ${reclaimedWorktreePath}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
           }
           const stepSignature = buildResumeLimboStepSignature(task);
           const hasActiveSessionSignal = Boolean(task.checkedOutBy) || activeTaskIds.has(task.id.toUpperCase());
@@ -4928,7 +4915,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
               resumeLimboCount: 0,
               resumeLimboTipSha: inspection.tipSha,
               resumeLimboStepSignature: stepSignature,
-            });
+            }, UNATTRIBUTED_MUTATION_CONTEXT);
             await this.store.logEntry(
               task.id,
               `[recovery] resume-limbo-escalated ${task.id} moved to todo after ${resumeAttemptCount} no-progress reclaim/resume attempts`,
@@ -4937,8 +4924,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
                 idleMs,
                 resumeAttemptCount,
                 currentStep: task.currentStep ?? null,
-              }),
-            );
+              }), UNATTRIBUTED_MUTATION_CONTEXT);
             try {
               await createRunAuditor(this.store, {
                 runId: generateSyntheticRunId("self-heal", task.id),
@@ -4981,11 +4967,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             resumeLimboCount: resumeAttemptCount,
             resumeLimboTipSha: inspection.tipSha,
             resumeLimboStepSignature: stepSignature,
-          });
+          }, UNATTRIBUTED_MUTATION_CONTEXT);
           await this.store.logEntry(
             task.id,
-            `[recovery] ${wasPausedBranchConflict ? "reclaim-paused-review" : "reclaim-self-owned"} ${task.id} at ${reclaimedWorktreePath} (${preservedCommitCount} commits preserved, tip ${inspection.tipSha.slice(0, 12)})`,
-          );
+            `[recovery] ${wasPausedBranchConflict ? "reclaim-paused-review" : "reclaim-self-owned"} ${task.id} at ${reclaimedWorktreePath} (${preservedCommitCount} commits preserved, tip ${inspection.tipSha.slice(0, 12)})`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
 
           if (lanesOfReclaim(task.id).review.has(task.column)) {
             if (!reviewProof?.ok) {
@@ -5046,22 +5031,22 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
               A successful git worktree move and its task-row persist are not transactional. FN-213 keeps one reclaim commit point, then best-effort re-points only the worktree and relies on the immediately following registry-sourced metadata reconcile if that write also fails; a crash inside git worktree move remains git prune/repair territory.
               */
               try {
-                await this.store.updateTask(task.id, { worktree: relocatedWorktreePath });
-                await this.store.logEntry(task.id, `[recovery] re-pointed relocated worktree after deferred reclaim: ${relocatedWorktreePath}`);
+                await this.store.updateTask(task.id, { worktree: relocatedWorktreePath }, UNATTRIBUTED_MUTATION_CONTEXT);
+                await this.store.logEntry(task.id, `[recovery] re-pointed relocated worktree after deferred reclaim: ${relocatedWorktreePath}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
               } catch (repointErr: unknown) {
                 const repointMessage = repointErr instanceof Error ? repointErr.message : String(repointErr);
                 log.warn(`[self-healing] failed to re-point relocated worktree for ${task.id}; registry reconcile will retry: ${repointMessage}`);
-                await this.store.logEntry(task.id, `Auto-recovery warning: relocated worktree re-point failed; registry reconcile will retry — ${repointMessage}`).catch(() => undefined);
+                await this.store.logEntry(task.id, `Auto-recovery warning: relocated worktree re-point failed; registry reconcile will retry — ${repointMessage}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT).catch(() => undefined);
               }
             }
             const reason = `reclaim deferred — non-conflict error, retrying next sweep: ${message}`;
             log.warn(`[self-healing] ${task.id} ${reason}`);
-            await this.store.logEntry(task.id, `Auto-recovery warning: ${reason}`).catch(() => undefined);
+            await this.store.logEntry(task.id, `Auto-recovery warning: ${reason}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT).catch(() => undefined);
             continue;
           }
           const patchPath = await preserveWorktreeChanges(this.options.rootDir, task.worktree, task.id);
           if (patchPath) {
-            await this.store.logEntry(task.id, `Preserved uncommitted worktree changes before pause: ${patchPath}`);
+            await this.store.logEntry(task.id, `Preserved uncommitted worktree changes before pause: ${patchPath}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
           }
           const dispatcher = this.options.autoRecoveryDispatcher ?? new AutoRecoveryDispatcher({
             taskStore: this.store,
@@ -5092,9 +5077,9 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
               error: `Task branch conflict: ${task.branch} is not safely reclaimable (${message})`,
               paused: true,
               pausedReason: "branch-conflict-unrecoverable",
-            });
+            }, UNATTRIBUTED_MUTATION_CONTEXT);
             await this.handoffTaskToReview(task.id, "branch-conflict-unrecoverable-repromote");
-            await this.store.logEntry(task.id, `Auto-recovery failed: branch conflict unrecoverable — ${message}`);
+            await this.store.logEntry(task.id, `Auto-recovery failed: branch conflict unrecoverable — ${message}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
           }
         }
       }
@@ -5285,11 +5270,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           worktree: null,
           branch: null, branchWriteOrigin: "engine" as const,
           baseCommitSha: null,
-        });
+        }, UNATTRIBUTED_MUTATION_CONTEXT);
         await this.store.logEntry(
           task.id,
-          `[recovery] stale-active-branch-reclaim ${task.id} branch=${branch} reason=${reclaimReason}`,
-        );
+          `[recovery] stale-active-branch-reclaim ${task.id} branch=${branch} reason=${reclaimReason}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
 
         try {
           const auditor = createRunAuditor(this.store, {
@@ -5483,13 +5467,13 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           return { ...basePatch, ...overlapPatch };
         };
         if (typeof this.store.updateTaskAtomic === "function") {
-          await this.store.updateTaskAtomic(dependentId, buildPatch);
+          await this.store.updateTaskAtomic(dependentId, buildPatch, UNATTRIBUTED_MUTATION_CONTEXT);
           return overlapCleared;
         }
         // Compatibility only for structural test/extension stores; production TaskStore is atomic.
         const live = await this.store.getTask(dependentId).catch(() => null);
         if (!live) return false;
-        await this.store.updateTask(dependentId, buildPatch(live));
+        await this.store.updateTask(dependentId, buildPatch(live), UNATTRIBUTED_MUTATION_CONTEXT);
         return overlapCleared;
       };
       /*
@@ -5620,8 +5604,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
               );
               await this.store.logEntry(
                 dependent.id,
-                `Auto-recovered (FN-4523): cleared stale blockedBy — blocker ${taskId} is done`,
-              );
+                `Auto-recovered (FN-4523): cleared stale blockedBy — blocker ${taskId} is done`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
             }
           } else {
             await updateDependentWithOverlapClear(
@@ -5631,8 +5614,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             );
             await this.store.logEntry(
               dependent.id,
-              `Auto-recovered (FN-4523): cleared stale blockedBy — blocker ${taskId} is done`,
-            );
+              `Auto-recovered (FN-4523): cleared stale blockedBy — blocker ${taskId} is done`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
           }
           result.blockedByCleared++;
         } catch (err: unknown) {
@@ -5686,7 +5668,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
               source: "self-healing-completion-convergence",
               audit,
               log: async (message) => {
-                await this.store.logEntry(taskId, message).catch(() => undefined);
+                await this.store.logEntry(taskId, message, undefined, UNATTRIBUTED_MUTATION_CONTEXT).catch(() => undefined);
               },
             });
             result.worktreeRemoved = cleanup.removed;
@@ -5705,7 +5687,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
                 worktree: null as string | null,
                 ...(task.branch === branchName ? { branch: null as string | null, branchWriteOrigin: "engine" as const } : {}),
               };
-              await this.store.updateTask(task.id, patch as Partial<Task>);
+              await this.store.updateTask(task.id, patch as Partial<Task>, UNATTRIBUTED_MUTATION_CONTEXT);
             }
           }
         } catch (err: unknown) {
@@ -6015,7 +5997,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             result.outcomes.push({ taskId: task.id, result: "skipped", reason: safety.reason });
             continue;
           }
-          await this.store.updateTask(task.id, patch);
+          await this.store.updateTask(task.id, patch, UNATTRIBUTED_MUTATION_CONTEXT);
           await this.emitBranchRebindAuditEvent({
             taskId: task.id,
             mutationType: "task:auto-rebind-applied",
@@ -6130,7 +6112,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         const liveWorktree = branchMap.get(normalizedBranch);
 
         if (liveWorktree) {
-          await this.store.updateTask(task.id, { worktree: liveWorktree });
+          await this.store.updateTask(task.id, { worktree: liveWorktree }, UNATTRIBUTED_MUTATION_CONTEXT);
           await this.emitWorktreeMetadataAuditEvent({
             taskId: task.id,
             mutationType: "task:auto-recover-worktree-metadata-rebound",
@@ -6158,7 +6140,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
           FNXC:MissingWorktreeRecovery 2026-07-10 (code review): the FN-5256 guard immediately below exists precisely because column==="in-progress"/"in-review" tasks can be live even when this heuristic's existsSync/registered-path check calls them stale (that's the guard's own stated rationale). Restrict this scopeOverride bypass to the narrow #1992 bug shape reproduced in the task report — in-review AND a merge-active sub-status (merging/merging-pr/merging-fix) — so a scopeOverride task that is genuinely in-progress, or in-review mid-step (status: null) with a live but momentarily undetected session, still falls through to the FN-5256 protection instead of having its worktree/branch/sessionFile yanked out from under it.
           */
-          await this.store.updateTask(task.id, { worktree: null, branch: null, branchWriteOrigin: "engine" as const, sessionFile: null });
+          await this.store.updateTask(task.id, { worktree: null, branch: null, branchWriteOrigin: "engine" as const, sessionFile: null }, UNATTRIBUTED_MUTATION_CONTEXT);
           await this.emitWorktreeMetadataAuditEvent({
             taskId: task.id,
             mutationType: "task:auto-recover-worktree-metadata-cleared",
@@ -6193,7 +6175,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           continue;
         }
 
-        await this.store.updateTask(task.id, { worktree: null, branch: null, branchWriteOrigin: "engine" });
+        await this.store.updateTask(task.id, { worktree: null, branch: null, branchWriteOrigin: "engine" }, UNATTRIBUTED_MUTATION_CONTEXT);
         await this.emitWorktreeMetadataAuditEvent({
           taskId: task.id,
           mutationType: "task:auto-recover-worktree-metadata-cleared",
@@ -6276,8 +6258,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       });
       await this.store.logEntry(
         task.id,
-        `Auto-rebounded (FN-4890): paused in-progress holder exceeded scope-decay threshold with ${followerCount} blocked follower(s)`,
-      );
+        `Auto-rebounded (FN-4890): paused in-progress holder exceeded scope-decay threshold with ${followerCount} blocked follower(s)`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
       const auditor = createRunAuditor(this.store, {
         runId: generateSyntheticRunId("fn4890-paused-scope-decay", task.id),
         agentId: "self-healing",
@@ -6723,14 +6704,14 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           return Object.keys(patch).length > 0 ? patch : null;
         };
         if (typeof this.store.updateTaskAtomic === "function") {
-          await this.store.updateTaskAtomic(taskId, buildPatch);
+          await this.store.updateTaskAtomic(taskId, buildPatch, UNATTRIBUTED_MUTATION_CONTEXT);
           return overlapCleared;
         }
         // Compatibility only for structural test/extension stores; production TaskStore is atomic.
         const live = await this.store.getTask(taskId).catch(() => null);
         if (!live) return false;
         const patch = buildPatch(live);
-        if (patch) await this.store.updateTask(taskId, patch);
+        if (patch) await this.store.updateTask(taskId, patch, UNATTRIBUTED_MUTATION_CONTEXT);
         return overlapCleared;
       };
 
@@ -6841,8 +6822,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             if (overlapCleared) {
               await this.store.logEntry(
                 task.id,
-                `Auto-recovered: cleared stale file-scope overlap blocker ${observedOverlapBlockerId}`,
-              );
+                `Auto-recovered: cleared stale file-scope overlap blocker ${observedOverlapBlockerId}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
               markRecovered(task.id);
             }
           }
@@ -6935,8 +6915,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
                   if (nextBlocker === blockerId) {
                     continue;
                   }
-                  await this.store.updateTask(task.id, { blockedBy: nextBlocker, status: "queued" });
-                  await this.store.logEntry(task.id, `Auto-recovered (FN-5488): refreshed stale blockedBy — blocker=${blockerId} blockerStatus=${blocker?.status ?? "none"} reason=${reasonCode ?? "unspecified"}; ${reason}; now blocked by ${nextBlocker}`);
+                  await this.store.updateTask(task.id, { blockedBy: nextBlocker, status: "queued" }, UNATTRIBUTED_MUTATION_CONTEXT);
+                  await this.store.logEntry(task.id, `Auto-recovered (FN-5488): refreshed stale blockedBy — blocker=${blockerId} blockerStatus=${blocker?.status ?? "none"} reason=${reasonCode ?? "unspecified"}; ${reason}; now blocked by ${nextBlocker}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
                   didRecover = true;
                 } else if (hasActiveOverlapBlocker) {
                   const transition = await this.store.transitionQueuedEpisode(task.id, {
@@ -6953,12 +6933,12 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
                     canClearOverlap ? observedOverlapBlockerId : null,
                     { blockedBy: null, ...clearBlockedStatusOnly(task) },
                   );
-                  await this.store.logEntry(task.id, `Auto-recovered (FN-5488): cleared stale blockedBy — blocker=${blockerId} blockerStatus=${blocker?.status ?? "none"} reason=${reasonCode ?? "unspecified"}; ${reason}`);
+                  await this.store.logEntry(task.id, `Auto-recovered (FN-5488): cleared stale blockedBy — blocker=${blockerId} blockerStatus=${blocker?.status ?? "none"} reason=${reasonCode ?? "unspecified"}; ${reason}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
                   didRecover = true;
                 }
               } else {
-                await this.store.updateTask(task.id, { blockedBy: null });
-                await this.store.logEntry(task.id, `Auto-recovered (FN-4091): cleared stale blockedBy — ${reason}`);
+                await this.store.updateTask(task.id, { blockedBy: null }, UNATTRIBUTED_MUTATION_CONTEXT);
+                await this.store.logEntry(task.id, `Auto-recovered (FN-4091): cleared stale blockedBy — ${reason}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
                 didRecover = true;
               }
               if (didRecover) markRecovered(task.id);
@@ -7005,7 +6985,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         const nextBlocker = unresolvedDeps[0] ?? null;
         if (nextBlocker && task.blockedBy !== nextBlocker) {
           try {
-            await this.store.updateTask(task.id, { blockedBy: nextBlocker, status: "queued" });
+            await this.store.updateTask(task.id, { blockedBy: nextBlocker, status: "queued" }, UNATTRIBUTED_MUTATION_CONTEXT);
           } catch (err: unknown) {
             const errorMessage = err instanceof Error ? err.message : String(err);
             log.error(`Failed to refresh blockedBy for ${task.id}: ${errorMessage}`);
@@ -7175,12 +7155,11 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         recoveryRehome: true,
       });
       if (deadlockingDependency.overlapBlockedBy === holder.id) {
-        await this.store.updateTask(deadlockingDependency.id, { overlapBlockedBy: null, status: null });
+        await this.store.updateTask(deadlockingDependency.id, { overlapBlockedBy: null, status: null }, UNATTRIBUTED_MUTATION_CONTEXT);
       }
       await this.store.logEntry(
         holder.id,
-        `Auto-rebounded (FN-6292): released dependency-blocking file-scope lease; dependency ${deadlockingDependency.id} can run before this task resumes`,
-      );
+        `Auto-rebounded (FN-6292): released dependency-blocking file-scope lease; dependency ${deadlockingDependency.id} can run before this task resumes`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
       await createRunAuditor(this.store, {
         runId: generateSyntheticRunId("fn6292-dependency-blocking-lease", holder.id),
         agentId: "self-healing",
@@ -7289,7 +7268,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           blockedBy: null,
           executeRequeueLoopCount: null,
           executeRequeueLoopSignature: null,
-        });
+        }, UNATTRIBUTED_MUTATION_CONTEXT);
         const fresh = await this.store.getTask(snapshot.id);
         const advanced = await this.options.recoverCompletedTask(fresh);
         if (!advanced) {
@@ -7297,13 +7276,12 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             paused: true,
             pausedReason: COMPLETED_BLOCKED_PAUSE_REASON,
             status: "queued",
-          });
+          }, UNATTRIBUTED_MUTATION_CONTEXT);
           continue;
         }
         await this.store.logEntry(
           snapshot.id,
-          "Auto-advanced completed blocked work to review after blocker cleared",
-        );
+          "Auto-advanced completed blocked work to review after blocker cleared", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
         await createRunAuditor(this.store, {
           runId: generateSyntheticRunId("completed-blocked-advance", snapshot.id),
           agentId: "self-healing",
@@ -7437,11 +7415,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           recoveryRehome: true,
           bypassGuards: true,
         });
-        await this.store.updateTask(task.id, { status: "queued", blockedBy: unmetDeps[0] });
+        await this.store.updateTask(task.id, { status: "queued", blockedBy: unmetDeps[0] }, UNATTRIBUTED_MUTATION_CONTEXT);
         await this.store.logEntry(
           task.id,
-          `Auto-rebounded (FN-6793): in-review task had unmet dependencies: ${unmetDeps.join(", ")}`,
-        );
+          `Auto-rebounded (FN-6793): in-review task had unmet dependencies: ${unmetDeps.join(", ")}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
         await createRunAuditor(this.store, {
           runId: generateSyntheticRunId("fn6793-in-review-unmet-dependencies", task.id),
           agentId: "self-healing",
@@ -7524,7 +7501,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           || this.options.isTaskActive?.(current.id) === true
           || !current.dependencies.includes(dependencyId)) continue;
         try {
-          await this.store.updateTaskDependencies(current.id, { operation: "remove", dependency: dependencyId });
+          await this.store.updateTaskDependencies(current.id, { operation: "remove", dependency: dependencyId }, UNATTRIBUTED_MUTATION_CONTEXT);
           removed += 1;
         } catch (error) {
           // A concurrent dependency replacement wins; a later sweep re-discovers any surviving residue.
@@ -7532,7 +7509,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         }
       }
       if (removed === 0) continue;
-      await this.store.logEntry(snapshot.id, `Auto-reconciled ${removed} missing dependency reference(s); replanning required.`);
+      await this.store.logEntry(snapshot.id, `Auto-reconciled ${removed} missing dependency reference(s); replanning required.`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
       repaired += 1;
     }
     return repaired;
@@ -7563,11 +7540,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         if (nextDependencies.length === originalDependencies.length) continue;
 
         try {
-          await this.store.updateTask(task.id, { dependencies: nextDependencies });
+          await this.store.updateTask(task.id, { dependencies: nextDependencies }, UNATTRIBUTED_MUTATION_CONTEXT);
           await this.store.logEntry(
             task.id,
-            `Auto-reconciled self-defeating dependency: removed ${match.operandTaskId} (matched verb: "${match.matchedVerb}") from dependencies.`,
-          );
+            `Auto-reconciled self-defeating dependency: removed ${match.operandTaskId} (matched verb: "${match.matchedVerb}") from dependencies.`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
 
           const auditor = createRunAuditor(this.store, {
             runId: generateSyntheticRunId("self-heal-self-defeating-dep", task.id),
@@ -7679,11 +7655,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         if (isTwoNodeCycle && foundationTask && foundationChildId && umbrellaTaskId && umbrellaDependsOnFoundation && foundationDependsOnUmbrella) {
           const nextDependencies = foundationTask.dependencies.filter((dep) => dep.toUpperCase() !== umbrellaTaskId.toUpperCase());
           if (nextDependencies.length !== foundationTask.dependencies.length) {
-            await this.store.updateTask(foundationChildId, { dependencies: nextDependencies });
+            await this.store.updateTask(foundationChildId, { dependencies: nextDependencies }, UNATTRIBUTED_MUTATION_CONTEXT);
             await this.store.logEntry(
               foundationChildId,
-              `Auto-cleared umbrella back-edge: removed ${umbrellaTaskId} from dependencies (cycle: ${cyclePath.join(" → ")})`,
-            );
+              `Auto-cleared umbrella back-edge: removed ${umbrellaTaskId} from dependencies (cycle: ${cyclePath.join(" → ")})`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
             await auditor.database({
               type: "task:auto-reconciled-dependency-cycle",
               target: foundationChildId,
@@ -7771,7 +7746,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           const previousStatus = task.status;
           const updatedAtMs = Date.parse(task.updatedAt ?? "") || Date.now();
           const ageMs = Math.max(0, Date.now() - updatedAtMs);
-          await this.store.updateTask(task.id, { status: null });
+          await this.store.updateTask(task.id, { status: null }, UNATTRIBUTED_MUTATION_CONTEXT);
           await this.recordIntegrityAudit(task.id, "task:auto-recover-stale-merger-status", {
             previousColumn: task.column,
             previousStatus,
@@ -7781,8 +7756,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           });
           await this.store.logEntry(
             task.id,
-            `Auto-recovered: cleared stale status="${previousStatus}" on ${task.column} task (age ${Math.round(ageMs / 1000)}s) — was blocking merger queue`,
-          );
+            `Auto-recovered: cleared stale status="${previousStatus}" on ${task.column} task (age ${Math.round(ageMs / 1000)}s) — was blocking merger queue`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
           cleared++;
         } catch (err: unknown) {
           const errorMessage = err instanceof Error ? err.message : String(err);
@@ -7896,15 +7870,14 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             }
           }
           if (resolveExplicitDuplicateMarker(null, task.title).marker?.canonicalId === canonicalMarkerId) {
-            await this.store.updateTask(task.id, { title: `Duplicate redirect cleared: ${canonicalMarkerId}` });
+            await this.store.updateTask(task.id, { title: `Duplicate redirect cleared: ${canonicalMarkerId}` }, UNATTRIBUTED_MUTATION_CONTEXT);
           }
-          await this.store.updateTask(task.id, buildMarkerClearedReplanTaskPatch(canonicalId));
+          await this.store.updateTask(task.id, buildMarkerClearedReplanTaskPatch(canonicalId), UNATTRIBUTED_MUTATION_CONTEXT);
           if (typeof this.store.logEntry === "function") {
             await Promise.resolve(this.store.logEntry(
               task.id,
               TRIAGE_MARKER_CLEARED_REPLAN_LOG_ACTION,
-              buildInactiveDuplicateClearFeedback(canonicalId),
-            )).catch(() => {});
+              buildInactiveDuplicateClearFeedback(canonicalId), UNATTRIBUTED_MUTATION_CONTEXT)).catch(() => {});
           }
           await createRunAuditor(this.store, {
             runId: generateSyntheticRunId("reconcile-stale-duplicate-decision", task.id),
@@ -7985,7 +7958,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           if (plan.action === "skip" || !plan.patch) continue;
 
           try {
-            await this.store.updateTask(task.id, plan.patch);
+            await this.store.updateTask(task.id, plan.patch, UNATTRIBUTED_MUTATION_CONTEXT);
             await createRunAuditor(this.store, {
               runId: generateSyntheticRunId("reconcile-legacy-adoption", task.id),
               agentId: "self-healing",
@@ -8271,7 +8244,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
    * capacity-boundary continuation). Unowned by both lanes, not looping — silent.
    *
    * The repair restores the replan signal so triage retries the routing. It is deliberately signal-only: it
-   * does not retire the continuation (triage's own atomic replace does that when it takes the slot), does not
+   * does not retire the continuation (triage's own atomic replace does that when it takes the slot, UNATTRIBUTED_MUTATION_CONTEXT), does not
    * move columns, and never touches an operator pause. Routing exhaustion is usually transient — a busy or
    * momentarily disabled role agent — so retrying is the correct response, not parking for a human.
    */
@@ -8358,11 +8331,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
                 await audit("task:reconcile-principal-held-planning-no-action", "raced");
                 return false;
               }
-              await this.store.updateTask(task.id, { status: "needs-replan" });
+              await this.store.updateTask(task.id, { status: "needs-replan" }, UNATTRIBUTED_MUTATION_CONTEXT);
               await this.store.logEntry(
                 task.id,
-                `[recovery] planning re-queued — ${heldPlanning.blockedReason} held with no retry owner`,
-              );
+                `[recovery] planning re-queued — ${heldPlanning.blockedReason} held with no retry owner`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
               await audit("task:reconcile-principal-held-planning");
               return true;
             };
@@ -8479,8 +8451,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           if (verdict.action === "requeue") {
             await this.store.logEntry(
               item.taskId,
-              `[recovery] workflow continuation re-queued — ${item.nodeId} was stranded in '${item.state}' (${verdict.reason})`,
-            ).catch(() => undefined);
+              `[recovery] workflow continuation re-queued — ${item.nodeId} was stranded in '${item.state}' (${verdict.reason})`, undefined, UNATTRIBUTED_MUTATION_CONTEXT).catch(() => undefined);
           }
           await createRunAuditor(this.store, {
             runId: generateSyntheticRunId("reconcile-stranded-continuation", item.taskId),
@@ -8743,7 +8714,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           if (orphanedCount === 0) continue;
 
           try {
-            await this.store.updateTask(task.id, { workflowStepResults: results });
+            await this.store.updateTask(task.id, { workflowStepResults: results }, UNATTRIBUTED_MUTATION_CONTEXT);
             // Counted on the successful mutation; a failed audit emit below must not
             // understate how many tasks were actually recovered.
             recovered += 1;
@@ -8872,7 +8843,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
               needsOperatorBypass: settings ? !allowsAutoMergeProcessing(live, settings) : undefined,
             };
             return { workflowStepResults: results };
-          });
+          }, UNATTRIBUTED_MUTATION_CONTEXT);
           if (!repair) continue;
           repairedTasks += 1;
         } catch (error) {
@@ -8882,8 +8853,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
         await this.store.logEntry(
           fresh.id,
-          `[pre-merge] Invalid proofless approval repaired for ${repair.stepIds.join(", ")}: ${repair.reason}`,
-        ).catch(() => undefined);
+          `[pre-merge] Invalid proofless approval repaired for ${repair.stepIds.join(", ")}: ${repair.reason}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT).catch(() => undefined);
         await emitBoundedRunAudit(this.store, {
           taskId: fresh.id,
           agentId: "self-healing",
@@ -9005,8 +8975,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             await this.store.logEntry(
               task.id,
               `Finalize blocked: unproven ownership evidence (${classification.reason}); no owned landed commit was found — auto-retrying via todo requeue`,
-              JSON.stringify(classification.details, null, 2),
-            );
+              JSON.stringify(classification.details, null, 2), UNATTRIBUTED_MUTATION_CONTEXT);
             await this.store.updateTask(task.id, {
               mergeDetails: {
                 ...(task.mergeDetails || {}),
@@ -9015,7 +8984,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
                   reason: classification.reason,
                 },
               },
-            });
+            }, UNATTRIBUTED_MUTATION_CONTEXT);
           } else {
             // Hydrate the in-memory dedup Set from the persisted record so subsequent
             // checks in this process don't have to re-query the task.
@@ -9064,8 +9033,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             mergeTargetBranch: ahead.baseRef,
           };
           confirmedMergeDetails = mergeDetails;
-          await this.store.updateTask(task.id, { mergeDetails });
-          await this.store.logEntry(task.id, `Auto-finalized: recovered owned landed commit ${classification.commit.sha.slice(0, 8)}`);
+          await this.store.updateTask(task.id, { mergeDetails }, UNATTRIBUTED_MUTATION_CONTEXT);
+          await this.store.logEntry(task.id, `Auto-finalized: recovered owned landed commit ${classification.commit.sha.slice(0, 8)}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
         } else {
           // FN-5490/FN-5517/FN-5526/FN-5540 guard: same lost-work check as
           // merger.ts:aiMergeTask. The self-heal path was the historical
@@ -9083,7 +9052,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
              * FNXC:Lifecycle 2026-06-14-20:14:
              * FN-6461/FN-6455 requires self-healing no-op finalization to demote no-commits tasks with incomplete/skipped work and set an error so stranded-todo recovery will not immediately re-promote them.
              */
-            await this.store.updateTask(task.id, { error: reason });
+            await this.store.updateTask(task.id, { error: reason }, UNATTRIBUTED_MUTATION_CONTEXT);
             await this.store.logEntry(
               task.id,
               `Finalize blocked (no-commits incomplete-work guard): ${reason} — moving back to todo with progress preserved`,
@@ -9093,8 +9062,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
                 classification: "proven-no-op",
                 baseRef: classification.baseRef,
                 lane: "self-healing-finalize-no-op-review",
-              }, null, 2),
-            );
+              }, null, 2), UNATTRIBUTED_MUTATION_CONTEXT);
             await this.recordIntegrityAudit(task.id, "task:no-commits-finalize-blocked-incomplete-steps", {
               reason,
               doneCount: noCommitsFinalize.doneCount,
@@ -9116,8 +9084,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
                 modifiedFilesSample: task.modifiedFiles.slice(0, 5),
                 classification: "proven-no-op",
                 baseRef: classification.baseRef,
-              }, null, 2),
-            );
+              }, null, 2), UNATTRIBUTED_MUTATION_CONTEXT);
             await this.recordIntegrityAudit(task.id, "task:finalize-lost-work-blocked", {
               modifiedFilesCount: task.modifiedFiles.length,
               classification: "proven-no-op",
@@ -9142,12 +9109,12 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           // patch so a leaked `mergeActive` slot from a prior merge attempt cannot survive
           // this auto-finalize path. Same bug class as recoverBranchMisboundInReviewTasks().
           confirmedMergeDetails = mergeDetails;
-          await this.store.updateTask(task.id, { mergeDetails, modifiedFiles: [], status: null, error: null, paused: false });
+          await this.store.updateTask(task.id, { mergeDetails, modifiedFiles: [], status: null, error: null, paused: false }, UNATTRIBUTED_MUTATION_CONTEXT);
           await this.recordIntegrityAudit(task.id, "task:integrity-reconcile-modified-files", {
             reason: "proven-no-op-finalize",
             clearedCount: task.modifiedFiles?.length ?? 0,
           });
-          await this.store.logEntry(task.id, `Auto-finalized no-op (proven): start point on ${classification.baseRef}; modifiedFiles cleared`);
+          await this.store.logEntry(task.id, `Auto-finalized no-op (proven): start point on ${classification.baseRef}; modifiedFiles cleared`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
         }
 
         const completeLane = (await resolveTaskLifecycleColumns(this.store, task.id))?.complete ?? "done";
@@ -9291,7 +9258,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
               deletions: classification.commit.deletions,
               mergeCommitMessage,
             },
-          });
+          }, UNATTRIBUTED_MUTATION_CONTEXT);
           await this.recordIntegrityAudit(task.id, "task:integrity-reconcile-modified-files", {
             reason: "recovered-owned-commit",
             commitSha: classification.commit.sha,
@@ -9312,7 +9279,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
               noOpReason: `branch has zero commits ahead of ${classification.baseRef}`,
               landedFiles: [],
             },
-          });
+          }, UNATTRIBUTED_MUTATION_CONTEXT);
           await this.recordIntegrityAudit(task.id, "task:integrity-reconcile-modified-files", {
             reason: "proven-no-op",
             clearedCount: task.modifiedFiles?.length ?? 0,
@@ -9333,7 +9300,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
               noOpReason: "verification-only finalize: no branch and no owned commits",
               landedFiles: [],
             },
-          });
+          }, UNATTRIBUTED_MUTATION_CONTEXT);
           await this.recordIntegrityAudit(task.id, "task:integrity-reconcile-modified-files", {
             reason: "verification-only-finalize",
             clearedCount: task.modifiedFiles?.length ?? 0,
@@ -9342,8 +9309,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           });
           await this.store.logEntry(
             task.id,
-            "Finalize: verification-only task — no owned commits and no branch; cleared stale modifiedFiles snapshot",
-          );
+            "Finalize: verification-only task — no owned commits and no branch; cleared stale modifiedFiles snapshot", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
           reconciled++;
           continue;
         }
@@ -9357,8 +9323,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           await this.store.logEntry(
             task.id,
             `Integrity warning: done-task finalize evidence is unproven (${classification.reason})`,
-            JSON.stringify(classification.details, null, 2),
-          );
+            JSON.stringify(classification.details, null, 2), UNATTRIBUTED_MUTATION_CONTEXT);
           await this.store.updateTask(task.id, {
             mergeDetails: {
               ...(task.mergeDetails || {}),
@@ -9367,7 +9332,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
                 reason: classification.reason,
               },
             },
-          });
+          }, UNATTRIBUTED_MUTATION_CONTEXT);
           await this.recordIntegrityAudit(task.id, "task:integrity-warning", {
             reason: classification.reason,
             modifiedFilesCount: task.modifiedFiles?.length ?? 0,
@@ -9451,7 +9416,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       workflowStepId: undefined,
     }));
     if (reroute.rerouted) {
-      await this.store.logEntry(task.id, "[pre-merge] Self-healing re-seeded Code Review after stale content evidence blocked merge.");
+      await this.store.logEntry(task.id, "[pre-merge] Self-healing re-seeded Code Review after stale content evidence blocked merge.", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
       log.warn(`Stale content approval for ${task.id} re-seeded at ${reroute.nodeId ?? "code-review"}`);
     }
 
@@ -9486,7 +9451,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, { requiredPreMergeStepIds: mergeGate.requiredPreMergeStepIds, mergeContent })
       .catch(() => ({ rerouted: false, reason: "no-unrun-gate" as const, nodeId: undefined, workflowStepId: undefined }));
     if (reroute.rerouted) {
-      await this.store.logEntry(task.id, "[pre-merge] Self-healing re-seeded the workflow graph at an enabled pre-merge gate that never ran.");
+      await this.store.logEntry(task.id, "[pre-merge] Self-healing re-seeded the workflow graph at an enabled pre-merge gate that never ran.", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
       log.warn(`Unrun pre-merge gate for ${task.id} re-seeded at ${reroute.nodeId ?? "unknown"}`);
     }
     const auditKey = `${task.id}:${reroute.reason}:${reroute.nodeId ?? ""}`;
@@ -9668,8 +9633,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
               );
               if (drops >= MAX_STARVATION_DROPS) {
                 const error = `Auto-merge starvation: ${MAX_STARVATION_DROPS} consecutive enqueue attempts were dropped by the engine merge queue; task requires manual intervention.`;
-                await this.store.updateTask(task.id, { status: "failed", error });
-                await this.store.logEntry(task.id, error);
+                await this.store.updateTask(task.id, { status: "failed", error }, UNATTRIBUTED_MUTATION_CONTEXT);
+                await this.store.logEntry(task.id, error, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
                 this.mergeStarvationDrops.delete(task.id);
                 recovered++;
               }
@@ -9683,8 +9648,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             task.id,
             enqueueMerge
               ? "Auto-recovered: eligible in-review task re-enqueued for merge"
-              : "Auto-recovered: eligible in-review task was merged and moved to done",
-          );
+              : "Auto-recovered: eligible in-review task was merged and moved to done", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
           log.log(`Recovered mergeable review task ${task.id}`);
           recovered++;
         } catch (err: unknown) { const errorMessage = err instanceof Error ? err.message : String(err);
@@ -9965,12 +9929,11 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         const nextCount = budget.attempts + 1;
         const totalFixCount = (admittedTask.postReviewFixCount ?? 0) + 1;
         try {
-          await this.store.updateTask(task.id, { postReviewFixCount: totalFixCount });
+          await this.store.updateTask(task.id, { postReviewFixCount: totalFixCount }, UNATTRIBUTED_MUTATION_CONTEXT);
           await this.store.logEntry(
             task.id,
             `Auto-reviving in-review task with failed pre-merge workflow step (attempt ${nextCount}/${budget.label})`,
-            optionalStepRevisionLogOutcome(`Step: ${budget.stepName ?? budget.key}`, budget.key),
-          );
+            optionalStepRevisionLogOutcome(`Step: ${budget.stepName ?? budget.key}`, budget.key), UNATTRIBUTED_MUTATION_CONTEXT);
           /*
           FNXC:LifecycleContainment 2026-08-30-13:36:
           The claim must travel WITH the work it admitted. The claim-scoped recovery addresses the
@@ -10011,7 +9974,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
                 + "This review is not retried until its findings change. Re-run the review after addressing it manually, "
                 + "or use the privileged review bypass when the failed review is known to be non-blocking.",
             };
-            await this.store.logEntry(task.id, refusalEntry.action, refusalEntry.outcome);
+            await this.store.logEntry(task.id, refusalEntry.action, refusalEntry.outcome, UNATTRIBUTED_MUTATION_CONTEXT);
             continue;
           }
           if (outcome.kind === "scheduled") {
@@ -10159,13 +10122,13 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         }
 
         if (signal.code === "non-retryable-provider-error" && task.userPaused !== true) {
-          await this.store.logEntry(task.id, `${IN_REVIEW_STALL_TERMINAL_LOG_PREFIX}${signal.code}]: ${signal.reason}`);
+          await this.store.logEntry(task.id, `${IN_REVIEW_STALL_TERMINAL_LOG_PREFIX}${signal.code}]: ${signal.reason}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
           await this.store.updateTask(task.id, {
             paused: true,
             pausedReason: "non-retryable-provider-error",
             status: "failed",
             error: `Terminal provider error (non-retryable): ${signal.reason}`,
-          });
+          }, UNATTRIBUTED_MUTATION_CONTEXT);
           const auditor = createRunAuditor(this.store, {
             runId: generateSyntheticRunId("self-healing-stall-terminal-provider-error", task.id),
             agentId: "self-healing",
@@ -10206,14 +10169,13 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         if (shouldDispose) {
           await this.store.logEntry(
             task.id,
-            `${IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX}${signal.code}]: deadlock-prevention threshold reached after ${nextCount} identical stalls — pausing task. last reason: ${signal.reason}`,
-          );
+            `${IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX}${signal.code}]: deadlock-prevention threshold reached after ${nextCount} identical stalls — pausing task. last reason: ${signal.reason}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
           await this.store.updateTask(task.id, {
             paused: true,
             pausedReason: "in-review-stall-deadlock",
             status: "failed",
             error: `In-review stall deadlock: ${signal.code} repeated ${nextCount}× without progress. ${signal.reason}`,
-          });
+          }, UNATTRIBUTED_MUTATION_CONTEXT);
           const auditor = createRunAuditor(this.store, {
             runId: generateSyntheticRunId("self-healing-stall-deadlock", task.id),
             agentId: "self-healing",
@@ -10236,7 +10198,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           continue;
         }
 
-        await this.store.logEntry(task.id, `${IN_REVIEW_STALL_LOG_PREFIX}${signal.code}]: ${signal.reason}`);
+        await this.store.logEntry(task.id, `${IN_REVIEW_STALL_LOG_PREFIX}${signal.code}]: ${signal.reason}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
         surfaced += 1;
       }
 
@@ -10554,11 +10516,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           if (!errorText.includes("[transient-recovery-budget-exhausted]")) {
             await this.store.logEntry(
               task.id,
-              `[FN-5627] Transient merge failure auto-recovery budget exhausted (${transientClass}, ${currentCount}/${MAX_TRANSIENT_MERGE_RECOVERIES}). Task remains parked in in-review for manual review.`,
-            );
+              `[FN-5627] Transient merge failure auto-recovery budget exhausted (${transientClass}, ${currentCount}/${MAX_TRANSIENT_MERGE_RECOVERIES}). Task remains parked in in-review for manual review.`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
             await this.store.updateTask(task.id, {
               error: `${errorText} [transient-recovery-budget-exhausted]`,
-            });
+            }, UNATTRIBUTED_MUTATION_CONTEXT);
             try {
               await audit.database({
                 type: "merger:transient-failure-budget-exhausted",
@@ -10591,8 +10552,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         // even though the task is being auto-recovered cleanly.
         await this.store.logEntry(
           task.id,
-          `Auto-recovered: transient merge failure (${transientClass}); resetting mergeRetries=0 and re-enqueueing (recovery ${nextCount}/${MAX_TRANSIENT_MERGE_RECOVERIES}) [FN-5627]`,
-        );
+          `Auto-recovered: transient merge failure (${transientClass}); resetting mergeRetries=0 and re-enqueueing (recovery ${nextCount}/${MAX_TRANSIENT_MERGE_RECOVERIES}) [FN-5627]`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
         await this.store.updateTask(task.id, {
           mergeRetries: 0,
           status: null,
@@ -10601,7 +10561,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             ...task.mergeDetails,
             transientRecoveryCount: nextCount,
           },
-        });
+        }, UNATTRIBUTED_MUTATION_CONTEXT);
         try {
           await audit.database({
             type: "merger:transient-failure-auto-recovered",
@@ -10733,12 +10693,11 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           repos. The partial-land reconciler (KTD2) is the standing recovery for a re-enqueue drop.
           */
           if (isWorkspaceTask(task)) {
-            await this.store.updateTask(task.id, { status: null, error: null });
+            await this.store.updateTask(task.id, { status: null, error: null }, UNATTRIBUTED_MUTATION_CONTEXT);
             this.options.clearMergeActive?.(task.id);
             await this.store.logEntry(
               task.id,
-              "Auto-recovered (workspace): cleared stale 'merging' status; per-repo land will be re-enqueued (no single-commit finalize)",
-            );
+              "Auto-recovered (workspace): cleared stale 'merging' status; per-repo land will be re-enqueued (no single-commit finalize)", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
             try {
               this.options.enqueueMerge?.(task.id);
             } catch (enqueueErr: unknown) {
@@ -10761,7 +10720,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
               mergeTargetBranch: mergeTarget.branch,
               mergeTargetSource: mergeTarget.source ?? null,
             });
-            await this.store.updateTask(task.id, { status: null, error: null });
+            await this.store.updateTask(task.id, { status: null, error: null }, UNATTRIBUTED_MUTATION_CONTEXT);
             try {
               this.options.enqueueMerge?.(task.id);
             } catch { /* rely on polling sweep */ }
@@ -10797,7 +10756,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
               error: null,
               mergeRetries: 0,
               mergeDetails,
-            });
+            }, UNATTRIBUTED_MUTATION_CONTEXT);
             await this.recordSelfHealingBranchGroupMemberLanding(task, mergeTarget, "recover-interrupted-merging");
             const completeLane = (await resolveTaskLifecycleColumns(this.store, task.id))?.complete ?? "done";
             const movedTask = await this.moveToCompleteLaneAfterLandedCleanup(task, completeLane, "recover-interrupted-merging", mergeDetails);
@@ -10805,8 +10764,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             await this.cleanupInterruptedMergeArtifacts(task);
             await this.store.logEntry(
               task.id,
-              `Auto-recovered: stale merge status finalized from landed commit ${landedCommit.sha.slice(0, 8)}`,
-            );
+              `Auto-recovered: stale merge status finalized from landed commit ${landedCommit.sha.slice(0, 8)}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
             log.log(`Recovered interrupted merge ${task.id}: finalized landed commit ${landedCommit.sha.slice(0, 8)}`);
             recovered++;
             continue;
@@ -10815,11 +10773,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           await this.store.updateTask(task.id, {
             status: null,
             error: null,
-          });
+          }, UNATTRIBUTED_MUTATION_CONTEXT);
           await this.store.logEntry(
             task.id,
-            "Auto-recovered: stale merge status cleared; merge will be retried",
-          );
+            "Auto-recovered: stale merge status cleared; merge will be retried", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
           log.log(`Recovered interrupted merge ${task.id}: cleared stale status for retry`);
           try {
             this.options.enqueueMerge?.(task.id);
@@ -11081,11 +11038,11 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             turn an unreadable repository into an infinite five-minute recovery loop.
             */
             const defers = (task.mergeTransientRetryCount ?? 0) + 1;
-            await this.store.updateTask(task.id, { mergeTransientRetryCount: defers });
+            await this.store.updateTask(task.id, { mergeTransientRetryCount: defers }, UNATTRIBUTED_MUTATION_CONTEXT);
             if (defers >= MAX_STARVATION_DROPS) {
               const error = `Workspace partial-land evidence unavailable: branch state could not be read after ${MAX_STARVATION_DROPS} sweeps for sub-repo(s) ${evidenceUnavailableRepos.join(", ")} — manual intervention required.`;
-              await this.store.updateTask(task.id, { status: "failed", error });
-              await this.store.logEntry(task.id, error);
+              await this.store.updateTask(task.id, { status: "failed", error }, UNATTRIBUTED_MUTATION_CONTEXT);
+              await this.store.logEntry(task.id, error, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
               await auditor.database({
                 type: "task:reconcile-workspace-partial-land",
                 target: task.id,
@@ -11121,8 +11078,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
                 branch: entry?.branch,
               }).catch(() => undefined);
             }
-            await this.store.updateTask(task.id, { status: "failed", error });
-            await this.store.logEntry(task.id, error);
+            await this.store.updateTask(task.id, { status: "failed", error }, UNATTRIBUTED_MUTATION_CONTEXT);
+            await this.store.logEntry(task.id, error, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
             await auditor.database({
               type: "task:reconcile-workspace-partial-land",
               target: task.id,
@@ -11208,7 +11165,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     if (!enqueueMerge) {
       // Option not wired (standalone/tests with no queue) → graceful no-op; rely on next sweep.
       this.workspacePartialLandDrops.delete(task.id);
-      await this.store.logEntry(task.id, `${input.successLog} (enqueue not wired — deferred to next sweep)`);
+      await this.store.logEntry(task.id, `${input.successLog} (enqueue not wired — deferred to next sweep)`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
       await auditor.database({
         type: "task:reconcile-workspace-partial-land",
         target: task.id,
@@ -11220,7 +11177,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     const queued = enqueueMerge(task.id);
     if (queued) {
       this.workspacePartialLandDrops.delete(task.id);
-      await this.store.logEntry(task.id, input.successLog);
+      await this.store.logEntry(task.id, input.successLog, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
       await auditor.database({
         type: "task:reconcile-workspace-partial-land",
         target: task.id,
@@ -11236,13 +11193,13 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     `mergeTransientRetryCount` is the established task-owned ceiling for transient merge attempts.
     */
     const drops = (task.mergeTransientRetryCount ?? 0) + 1;
-    await this.store.updateTask(task.id, { mergeTransientRetryCount: drops });
+    await this.store.updateTask(task.id, { mergeTransientRetryCount: drops }, UNATTRIBUTED_MUTATION_CONTEXT);
     this.workspacePartialLandDrops.set(task.id, drops);
     log.warn(`reconcileWorkspacePartialLands: enqueue dropped for ${task.id} (${drops}/${MAX_STARVATION_DROPS}); merge queue rejected re-enqueue`);
     if (drops >= MAX_STARVATION_DROPS) {
       const error = `Workspace partial-land starvation: ${MAX_STARVATION_DROPS} consecutive enqueue attempts were dropped by the merge queue; task requires manual intervention.`;
-      await this.store.updateTask(task.id, { status: "failed", error });
-      await this.store.logEntry(task.id, error);
+      await this.store.updateTask(task.id, { status: "failed", error }, UNATTRIBUTED_MUTATION_CONTEXT);
+      await this.store.logEntry(task.id, error, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
       this.workspacePartialLandDrops.delete(task.id);
       await auditor.database({
         type: "task:reconcile-workspace-partial-land",
@@ -11284,13 +11241,13 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           : null;
       };
       if (typeof this.store.updateTaskAtomic === "function") {
-        const updated = await this.store.updateTaskAtomic(snapshot.id, clearIfStillOrphaned);
+        const updated = await this.store.updateTaskAtomic(snapshot.id, clearIfStillOrphaned, UNATTRIBUTED_MUTATION_CONTEXT);
         if (updated.status !== "contention-hold") cleared++;
       } else {
         const live = await this.store.getTask(snapshot.id).catch(() => null);
         const patch = live ? clearIfStillOrphaned(live) : null;
         if (!patch) continue;
-        await this.store.updateTask(snapshot.id, patch);
+        await this.store.updateTask(snapshot.id, patch, UNATTRIBUTED_MUTATION_CONTEXT);
         cleared++;
       }
     }
@@ -11850,7 +11807,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
               Done-task metadata repair is not allowed to convert stale workflow proof into truth. Missing merge confirmation, pending workflow steps, or invalid no-op proof still block repair; stale branch residue does not, because finalization only needs durable evidence that the task patch landed.
               */
               log.warn(`recoverDoneTaskMergeMetadata: skipped ${task.id} — invalid done merge proof (${confirmedProofVerdict.reason})`);
-              await this.store.logEntry(task.id, `Done-task merge metadata repair skipped: invalid workflow merge proof (${confirmedProofVerdict.reason})`).catch(() => undefined);
+              await this.store.logEntry(task.id, `Done-task merge metadata repair skipped: invalid workflow merge proof (${confirmedProofVerdict.reason})`, undefined, UNATTRIBUTED_MUTATION_CONTEXT).catch(() => undefined);
               continue;
             }
             const landedFilesMismatch = Boolean(
@@ -11896,14 +11853,13 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
                 prNumber: getPrimaryPrInfo(task)?.number,
               },
               modifiedFiles: liveLandedFiles && liveLandedFiles.length > 0 ? liveLandedFiles : undefined,
-            });
+            }, UNATTRIBUTED_MUTATION_CONTEXT);
             if ((statsMismatch && liveShortstat) || landedFilesMismatch) {
               await this.store.logEntry(
                 task.id,
-                `Auto-recovered: stale mergeDetails repaired (was ${task.mergeDetails?.filesChanged ?? "?"}/${task.mergeDetails?.insertions ?? "?"}/${task.mergeDetails?.deletions ?? "?"}, now ${liveShortstat?.filesChanged ?? nextFilesChanged}/${liveShortstat?.insertions ?? nextInsertions}/${liveShortstat?.deletions ?? nextDeletions})${landedFilesMismatch ? ` (files ${task.mergeDetails?.landedFiles?.length ?? 0} → ${liveLandedFiles?.length ?? task.mergeDetails?.landedFiles?.length ?? 0})` : ""} — sha unchanged ${storedSha.slice(0, 8)}`,
-              );
+                `Auto-recovered: stale mergeDetails repaired (was ${task.mergeDetails?.filesChanged ?? "?"}/${task.mergeDetails?.insertions ?? "?"}/${task.mergeDetails?.deletions ?? "?"}, now ${liveShortstat?.filesChanged ?? nextFilesChanged}/${liveShortstat?.insertions ?? nextInsertions}/${liveShortstat?.deletions ?? nextDeletions})${landedFilesMismatch ? ` (files ${task.mergeDetails?.landedFiles?.length ?? 0} → ${liveLandedFiles?.length ?? task.mergeDetails?.landedFiles?.length ?? 0})` : ""} — sha unchanged ${storedSha.slice(0, 8)}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
             } else {
-              await this.store.logEntry(task.id, `Auto-recovered: reconciled done-task mergeDetails to owned commit ${landed.sha.slice(0, 8)}`);
+              await this.store.logEntry(task.id, `Auto-recovered: reconciled done-task mergeDetails to owned commit ${landed.sha.slice(0, 8)}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
             }
             repaired++;
             continue;
@@ -11914,8 +11870,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             if (!storedSha) {
               continue;
             }
-            await this.store.updateTask(task.id, { mergeDetails: undefined });
-            await this.store.logEntry(task.id, "Auto-recovered: cleared unowned done-task mergeDetails commitSha");
+            await this.store.updateTask(task.id, { mergeDetails: undefined }, UNATTRIBUTED_MUTATION_CONTEXT);
+            await this.store.logEntry(task.id, "Auto-recovered: cleared unowned done-task mergeDetails commitSha", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
             repaired++;
             continue;
           }
@@ -11937,7 +11893,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           } as Task);
           if (!repairedProofVerdict.ok) {
             log.warn(`recoverDoneTaskMergeMetadata: skipped ${task.id} — invalid repaired merge proof (${repairedProofVerdict.reason})`);
-            await this.store.logEntry(task.id, `Done-task merge metadata repair skipped: invalid repaired workflow merge proof (${repairedProofVerdict.reason})`).catch(() => undefined);
+            await this.store.logEntry(task.id, `Done-task merge metadata repair skipped: invalid repaired workflow merge proof (${repairedProofVerdict.reason})`, undefined, UNATTRIBUTED_MUTATION_CONTEXT).catch(() => undefined);
             continue;
           }
 
@@ -11975,8 +11931,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
               prNumber: getPrimaryPrInfo(task)?.number,
             },
             modifiedFiles: landedFiles && landedFiles.length > 0 ? landedFiles : undefined,
-          });
-          await this.store.logEntry(task.id, `Auto-recovered: reconciled done-task mergeDetails to owned commit ${landed.sha.slice(0, 8)}`);
+          }, UNATTRIBUTED_MUTATION_CONTEXT);
+          await this.store.logEntry(task.id, `Auto-recovered: reconciled done-task mergeDetails to owned commit ${landed.sha.slice(0, 8)}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
           repaired++;
         } catch (err: unknown) {
           log.error(`Failed done-task merge metadata recovery for ${task.id}: ${err instanceof Error ? err.message : String(err)}`);
@@ -12103,7 +12059,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
                 mergeTargetBranch: task.mergeDetails?.mergeTargetBranch ?? mergeTarget.branch,
                 mergeTargetSource: task.mergeDetails?.mergeTargetSource ?? mergeTarget.source,
               },
-            });
+            }, UNATTRIBUTED_MUTATION_CONTEXT);
           }
           await this.recordSelfHealingBranchGroupMemberLanding(task, mergeTarget, "recover-merged-review");
           /*
@@ -12130,15 +12086,13 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           if (finalization.outcome === "blocked") {
             await this.store.logEntry(
               task.id,
-              `Auto-recovery skipped: merge confirmed but finalization blocked — ${finalization.reason ?? "unknown"}`,
-            );
+              `Auto-recovery skipped: merge confirmed but finalization blocked — ${finalization.reason ?? "unknown"}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
             continue;
           }
           this.emitTaskMerged(finalization.task, { mergeConfirmed: true });
           await this.store.logEntry(
             task.id,
-            `Auto-finalized from ${task.column}: content proven via mergeConfirmed metadata. Cleared soft state paused=${clearedFlags.paused}, status=${clearedFlags.status}, error=${clearedFlags.error}, blockedBy=${clearedFlags.blockedBy}, overlapBlockedBy=${clearedFlags.overlapBlockedBy}`,
-          );
+            `Auto-finalized from ${task.column}: content proven via mergeConfirmed metadata. Cleared soft state paused=${clearedFlags.paused}, status=${clearedFlags.status}, error=${clearedFlags.error}, blockedBy=${clearedFlags.blockedBy}, overlapBlockedBy=${clearedFlags.overlapBlockedBy}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
           try {
             await auditor.database({
               type: "task:auto-recover-finalize-already-on-main",
@@ -12308,12 +12262,11 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           workspace task backward here.
           */
           if (isWorkspaceTask(task)) {
-            if (task.status) await this.store.updateTask(task.id, { status: null, error: null });
+            if (task.status) await this.store.updateTask(task.id, { status: null, error: null }, UNATTRIBUTED_MUTATION_CONTEXT);
             this.options.clearMergeActive?.(task.id);
             await this.store.logEntry(
               task.id,
-              "Auto-recovery (workspace): cleared stale deadlock 'failed' status; partial-land reconciler owns per-repo re-land (no single-commit finalize)",
-            );
+              "Auto-recovery (workspace): cleared stale deadlock 'failed' status; partial-land reconciler owns per-repo re-land (no single-commit finalize)", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
             log.warn(`self-heal:deadlock-recovery-workspace-skip ${JSON.stringify({ stuckTaskId: task.id, blockedTaskIds, action: "cleared-status-deferred-to-partial-land-reconciler" })}`);
             recovered++;
             continue;
@@ -12361,7 +12314,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
               mergeRetries: 0,
               branch: null, branchWriteOrigin: "engine" as const,
               mergeDetails,
-            });
+            }, UNATTRIBUTED_MUTATION_CONTEXT);
             await this.recordSelfHealingBranchGroupMemberLanding(task, mergeTarget, "recover-stuck-merge-deadlocks");
             const completeLane = (await resolveTaskLifecycleColumns(this.store, task.id))?.complete ?? "done";
             const movedTask = await this.moveToCompleteLaneAfterLandedCleanup(task, completeLane, "recover-stuck-merge-deadlocks", mergeDetails);
@@ -12371,8 +12324,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             const clearedDependents: string[] = [];
             for (const dep of blockedDependents) {
               try {
-                await this.store.updateTask(dep.id, { blockedBy: null });
-                await this.store.logEntry(dep.id, `Auto-recovered: cleared stale blockedBy ${task.id} after deadlock recovery`);
+                await this.store.updateTask(dep.id, { blockedBy: null }, UNATTRIBUTED_MUTATION_CONTEXT);
+                await this.store.logEntry(dep.id, `Auto-recovered: cleared stale blockedBy ${task.id} after deadlock recovery`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
                 clearedDependents.push(dep.id);
               } catch (depErr: unknown) {
                 const depErrMessage = depErr instanceof Error ? depErr.message : String(depErr);
@@ -12382,8 +12335,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
             await this.store.logEntry(
               task.id,
-              `Auto-recovered: merge deadlock resolved via landed commit ${landedCommit.sha.slice(0, 8)}${clearedDependents.length > 0 ? `; cleared blockedBy on ${clearedDependents.join(", ")}` : ""}`,
-            );
+              `Auto-recovered: merge deadlock resolved via landed commit ${landedCommit.sha.slice(0, 8)}${clearedDependents.length > 0 ? `; cleared blockedBy on ${clearedDependents.join(", ")}` : ""}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
             log.log(`self-heal:deadlock-recovered ${JSON.stringify({ stuckTaskId: task.id, blockedTaskIds, attributedSha: landedCommit.sha, action: "reattributed" })}`);
             recovered++;
           } else {
@@ -12402,8 +12354,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
               but it must carry durable automation provenance. That lets stale-stamp recovery repair only
               this engine-owned false badge without treating a no-reason human pause as eligible.
               */
-              await this.store.updateTask(task.id, { paused: true, pausedReason: "merge-deadlock-detected" });
-              await this.store.logEntry(task.id, "merge-deadlock-detected: requires manual intervention — verified content not on main");
+              await this.store.updateTask(task.id, { paused: true, pausedReason: "merge-deadlock-detected" }, UNATTRIBUTED_MUTATION_CONTEXT);
+              await this.store.logEntry(task.id, "merge-deadlock-detected: requires manual intervention — verified content not on main", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
               log.warn(`self-heal:deadlock-recovered ${JSON.stringify({ stuckTaskId: task.id, blockedTaskIds, attributedSha: null, action: "paused-for-manual" })}`);
               recovered++;
             }
@@ -12586,11 +12538,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
               status: "failed",
               error: `Confirmed merge finalization deferred: ${postMergeBlocker}`,
               mergeDetails,
-            });
+            }, UNATTRIBUTED_MUTATION_CONTEXT);
             await this.store.logEntry(
               task.id,
-              `Auto-recovery parked task in in-review: merged content found on ${baseBranch} (${landed.sha.slice(0, 8)}) but finalization deferred — ${postMergeBlocker}`,
-            );
+              `Auto-recovery parked task in in-review: merged content found on ${baseBranch} (${landed.sha.slice(0, 8)}) but finalization deferred — ${postMergeBlocker}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
             continue;
           }
 
@@ -12609,15 +12560,14 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             mergeDetails,
             steps: (task.steps ?? []).map((step, index) => checklistReconciliation.skippedStepIndexes.includes(index) ? { ...step, status: reconciledWorkflowStatus } : step),
             workflowStepResults: (task.workflowStepResults ?? []).map((result) => checklistReconciliation.reconciledWorkflowStepIds.includes(result.workflowStepId) ? { ...result, status: reconciledWorkflowStatus } : result),
-          });
+          }, UNATTRIBUTED_MUTATION_CONTEXT);
           await this.recordSelfHealingBranchGroupMemberLanding(task, mergeTarget, "recover-orphan-only-scope-violations");
           const completeLane = (await resolveTaskLifecycleColumns(this.store, task.id))?.complete ?? "done";
           const movedTask = await this.moveToCompleteLaneAfterLandedCleanup(task, completeLane, "recover-orphan-only-scope-violations", mergeDetails);
           this.emitTaskMerged(movedTask, { mergeConfirmed: true });
           await this.store.logEntry(
             task.id,
-            `Auto-finalized from in-review/paused: content proven on ${baseBranch} (${landed.sha.slice(0, 8)}). Cleared soft state paused=${clearedFlags.paused}, status=${clearedFlags.status}, error=${clearedFlags.error}`,
-          );
+            `Auto-finalized from in-review/paused: content proven on ${baseBranch} (${landed.sha.slice(0, 8)}). Cleared soft state paused=${clearedFlags.paused}, status=${clearedFlags.status}, error=${clearedFlags.error}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
           await this.cleanupWorktreeOnly(task);
           try {
             const auditor = createRunAuditor(this.store, {
@@ -12851,11 +12801,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
               status: "failed",
               error: `Confirmed merge finalization deferred: ${postMergeBlocker}`,
               mergeDetails,
-            });
+            }, UNATTRIBUTED_MUTATION_CONTEXT);
             await this.store.logEntry(
               task.id,
-              `Auto-recovery parked task in in-review: merged content found on ${baseBranch} (${landed.sha.slice(0, 8)}) but finalization deferred — ${postMergeBlocker}`,
-            );
+              `Auto-recovery parked task in in-review: merged content found on ${baseBranch} (${landed.sha.slice(0, 8)}) but finalization deferred — ${postMergeBlocker}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
             continue;
           }
 
@@ -12874,7 +12823,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             mergeDetails,
             steps: (task.steps ?? []).map((step, index) => checklistReconciliation.skippedStepIndexes.includes(index) ? { ...step, status: reconciledWorkflowStatus } : step),
             workflowStepResults: (task.workflowStepResults ?? []).map((result) => checklistReconciliation.reconciledWorkflowStepIds.includes(result.workflowStepId) ? { ...result, status: reconciledWorkflowStatus } : result),
-          });
+          }, UNATTRIBUTED_MUTATION_CONTEXT);
           const worktreeHint = task.worktree;
           await this.recordSelfHealingBranchGroupMemberLanding(task, mergeTarget, "recover-already-merged-review");
           const completeLane = (await resolveTaskLifecycleColumns(this.store, task.id))?.complete ?? "done";
@@ -12882,8 +12831,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           this.emitTaskMerged(movedTask, { mergeConfirmed: true });
           await this.store.logEntry(
             task.id,
-            `Auto-finalized from in-review/paused: content proven on ${baseBranch} (${landed.sha.slice(0, 8)}). Cleared soft state paused=${clearedFlags.paused}, status=${clearedFlags.status}, error=${clearedFlags.error}`,
-          );
+            `Auto-finalized from in-review/paused: content proven on ${baseBranch} (${landed.sha.slice(0, 8)}). Cleared soft state paused=${clearedFlags.paused}, status=${clearedFlags.status}, error=${clearedFlags.error}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
           await this.reconcileCompletedTask(task.id, { worktreeHint });
           try {
             const auditor = createRunAuditor(this.store, {
@@ -13041,12 +12989,11 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           completionHandoffLimboRecoveryCount: currentCount + 1,
           status: null,
           error: null,
-        });
+        }, UNATTRIBUTED_MUTATION_CONTEXT);
         await this.store.logEntry(
           task.id,
           "Auto-recovered completed-task non-continuable wedge — cleared failed status after post-done session continuation error",
-          evidence,
-        );
+          evidence, UNATTRIBUTED_MUTATION_CONTEXT);
         await audit.database({
           type: "task:auto-recover-post-done-noncontinuable-wedge",
           target: task.id,
@@ -13203,7 +13150,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     */
     if (recoverableCandidates.length !== 1) {
       if (recoverableCandidates.length > 1) {
-        await this.store.logEntry(task.id, `Skipped stranded AI merge recovery: ${recoverableCandidates.length} approved clean-room candidates were ambiguous`).catch(() => undefined);
+        await this.store.logEntry(task.id, `Skipped stranded AI merge recovery: ${recoverableCandidates.length} approved clean-room candidates were ambiguous`, undefined, UNATTRIBUTED_MUTATION_CONTEXT).catch(() => undefined);
       }
       return false;
     }
@@ -13256,14 +13203,13 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       source: "self-healing",
       rootDir: this.options.rootDir,
       log: async (message) => {
-        await this.store.logEntry(task.id, message).catch(() => undefined);
+        await this.store.logEntry(task.id, message, undefined, UNATTRIBUTED_MUTATION_CONTEXT).catch(() => undefined);
       },
     });
     if (finalized.outcome === "done" || finalized.outcome === "already-done") {
       await this.store.logEntry(
         task.id,
-        `Auto-recovered stranded AI merge clean-room commit ${selected.strandedSha.slice(0, 8)} — advanced ${integrationBranch} and finalized task`,
-      );
+        `Auto-recovered stranded AI merge clean-room commit ${selected.strandedSha.slice(0, 8)} — advanced ${integrationBranch} and finalized task`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
       await auditor.git({
         type: "merge:ai-landed",
         target: integrationBranch,
@@ -13321,11 +13267,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           status: null,
           error: null,
           completionHandoffLimboRecoveryCount: 0,
-        });
+        }, UNATTRIBUTED_MUTATION_CONTEXT);
         await this.store.logEntry(
           task.id,
-          "Auto-recovered: cleared false completion-handoff exhaustion while task is already owned by merge queue",
-        );
+          "Auto-recovered: cleared false completion-handoff exhaustion while task is already owned by merge queue", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
         continue;
       }
       if (!(await this.canRecoverMergeRequest(task, settings))) continue;
@@ -13350,7 +13295,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         await this.store.updateTask(task.id, {
           status: "failed",
           error: "Completion handoff limbo recovery exhausted",
-        });
+        }, UNATTRIBUTED_MUTATION_CONTEXT);
         const exhaustedAudit = createRunAuditor(this.store, {
           runId: generateSyntheticRunId("self-heal", task.id),
           agentId: "self-healing",
@@ -13392,7 +13337,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
       await this.store.updateTask(task.id, {
         completionHandoffLimboRecoveryCount: currentCount + 1,
-      });
+      }, UNATTRIBUTED_MUTATION_CONTEXT);
 
       const audit = createRunAuditor(this.store, {
         runId: generateSyntheticRunId("self-heal", task.id),
@@ -13407,7 +13352,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         metadata: { ageMs, source: "self-healing-in-review-sweep", attempts: currentCount + 1 },
       });
 
-      await this.store.logEntry(task.id, "Auto-recovered (FN-4999): task in 'in-review' past handoff grace with no merge fan-out — re-emitting auto-merge handoff");
+      await this.store.logEntry(task.id, "Auto-recovered (FN-4999): task in 'in-review' past handoff grace with no merge fan-out — re-emitting auto-merge handoff", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
     }
   }
 
@@ -13506,14 +13451,14 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             branch: null, branchWriteOrigin: "engine" as const,
             status: null,
             error: null,
-          });
+          }, UNATTRIBUTED_MUTATION_CONTEXT);
 
           // FN-5092 hotfix: clear transient merger-queue status (`status: "merging"` set
           // by the original merger attempt) before transitioning to done. Without this,
           // a stale `mergeActive` slot for this task leaks indefinitely and blocks the
           // entire merger queue until engine restart. Mirrors the pattern in
           // merger.ts completeTask() and project-engine.ts auto-merge already-confirmed path.
-          await this.store.updateTask(task.id, { status: null, error: null, paused: false });
+          await this.store.updateTask(task.id, { status: null, error: null, paused: false }, UNATTRIBUTED_MUTATION_CONTEXT);
           await this.recordSelfHealingBranchGroupMemberLanding(task, mergeTarget, "recover-branch-misbound-in-review");
           const completeLane = (await resolveTaskLifecycleColumns(this.store, task.id))?.complete ?? "done";
           const movedTask = await this.moveToCompleteLaneAfterLandedCleanup(task, completeLane, "recover-branch-misbound-in-review", mergeDetails);
@@ -13521,8 +13466,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           await this.clearCompletionBranchIfSubsumed(task, branch).catch(() => false);
           await this.store.logEntry(
             task.id,
-            `Auto-recovered: branch tip misbound but content found on ${baseBranch} at ${check.landed.sha.slice(0, 8)} via ${check.landed.strategy}`,
-          );
+            `Auto-recovered: branch tip misbound but content found on ${baseBranch} at ${check.landed.sha.slice(0, 8)} via ${check.landed.strategy}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
           await this.reconcileCompletedTask(task.id, { worktreeHint: task.worktree ?? undefined });
 
           try {
@@ -13752,7 +13696,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             }),
           });
           if (result.recovered) {
-            await this.store.logEntry(task.id, `Auto-recovered foreign-only contamination via ${result.subtype ?? "unknown"}`);
+            await this.store.logEntry(task.id, `Auto-recovered foreign-only contamination via ${result.subtype ?? "unknown"}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
             recovered += 1;
           }
         } catch (err: unknown) {
@@ -13823,11 +13767,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           await this.store.updateTask(task.id, {
             status: null,
             error: null,
-          });
+          }, UNATTRIBUTED_MUTATION_CONTEXT);
           await this.store.logEntry(
             task.id,
-            "Auto-recovered: all steps complete despite 'no fn_task_done' failure — cleared error for normal review",
-          );
+            "Auto-recovered: all steps complete despite 'no fn_task_done' failure — cleared error for normal review", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
           log.log(`Recovered misclassified failure ${task.id}: ${task.title || task.description?.slice(0, 60) || "(untitled)"}`);
           recovered++;
         } catch (err: unknown) { const errorMessage = err instanceof Error ? err.message : String(err);
@@ -13979,7 +13922,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             ...(fresh.column === requeueTarget && workflowTransitionNotification
               ? { workflowTransitionNotification }
               : {}),
-          });
+          }, UNATTRIBUTED_MUTATION_CONTEXT);
           if (route.kind === "node-requeue" && fresh.column !== requeueTarget) {
             await this.store.moveTask(task.id, requeueTarget, {
               preserveProgress: true,
@@ -13987,8 +13930,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
               moveSource: "engine",
               lifecycleReason: "self-healing-session-recovery",
               recoveryRehome: true,
-            });
-            await this.store.updateTask(task.id, { workflowTransitionNotification });
+            }, UNATTRIBUTED_MUTATION_CONTEXT);
+            await this.store.updateTask(task.id, { workflowTransitionNotification }, UNATTRIBUTED_MUTATION_CONTEXT);
           }
           /*
           FNXC:NodeWorktreeIsolation 2026-07-29-06:05 (FN-6756 — ordering, PR #2531 review):
@@ -14026,7 +13969,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             freshColumns.review.has(fresh.column)
               ? "Auto-recovered: in-review pause-abort park cleared — preserved for normal review progression"
               : "Auto-recovered: pause-abort park cleared — requeued for normal scheduling",
-          );
+            undefined,
+            UNATTRIBUTED_MUTATION_CONTEXT);
           /*
           FNXC:RunAudit 2026-08-20-04:15:
           FN-9175 routes this post-mutation telemetry through the bounded shared seam. A failed
@@ -14222,8 +14166,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         reaped++;
         await this.store.logEntry(
           taskId,
-          "Auto-recovered: released leaked worktree/concurrency slot (holder no longer in-progress)",
-        );
+          "Auto-recovered: released leaked worktree/concurrency slot (holder no longer in-progress)", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
         log.warn(`Reaped leaked worktree slot held by ${taskId} (column=${task?.column ?? "missing"})`);
       } catch (err: unknown) {
         const errorMessage = err instanceof Error ? err.message : String(err);
@@ -15560,11 +15503,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             error: null,
             sessionFile: null,
             taskDoneRetryCount: nextCount,
-          });
+          }, UNATTRIBUTED_MUTATION_CONTEXT);
           await this.store.logEntry(
             task.id,
-            `Auto-retry ${nextCount}/${MAX_TASK_DONE_RETRIES}: agent finished without fn_task_done — requeuing to todo to resume partial work`,
-          );
+            `Auto-retry ${nextCount}/${MAX_TASK_DONE_RETRIES}: agent finished without fn_task_done — requeuing to todo to resume partial work`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
           // #1411: backward recovery — skip order-derived adjacency.
           await this.reboundTask(task.id, "self-healing-stranded-recovery", task.column, { preserveProgress: true, preserveWorktree: true, recoveryRehome: true });
           recovered++;
@@ -15676,11 +15618,11 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         if (!isTaskStillInPlanningStage(live)) return null;
         persisted = true;
         return patch;
-      });
+      }, UNATTRIBUTED_MUTATION_CONTEXT);
     } else {
       const live = await this.store.getTask(task.id);
       if (live && isTaskStillInPlanningStage(live)) {
-        await this.store.updateTask(task.id, patch);
+        await this.store.updateTask(task.id, patch, UNATTRIBUTED_MUTATION_CONTEXT);
         persisted = true;
       }
     }
@@ -15689,7 +15631,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     const action = decision.shouldRetry
       ? `Planning lifecycle lock transport failure during approved triage recovery — retry ${decision.nextState.recoveryRetryCount}/${MAX_RECOVERY_RETRIES} in ${formatDelay(decision.delayMs)}: ${error.message}`
       : exhaustedMessage;
-    await this.store.logEntry(task.id, action).catch(() => undefined);
+    await this.store.logEntry(task.id, action, undefined, UNATTRIBUTED_MUTATION_CONTEXT).catch(() => undefined);
   }
 
   async recoverApprovedTriageTasks(): Promise<number> {
@@ -15846,19 +15788,18 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
               // FNXC:DuplicateIntake 2026-08-09-02:14: preserve a real PROMPT.md for a title-only redirect.
               if (duplicateResolution.source !== "title") rmSync(promptPath, { force: true });
               if (resolveExplicitDuplicateMarker(null, task.title).marker?.canonicalId === marker.canonicalId) {
-                await this.store.updateTask(task.id, { title: `Duplicate redirect cleared: ${marker.canonicalId}` });
+                await this.store.updateTask(task.id, { title: `Duplicate redirect cleared: ${marker.canonicalId}` }, UNATTRIBUTED_MUTATION_CONTEXT);
               }
               const priorClearCount = typeof task.sourceMetadata?.duplicateMarkerClearCount === "number"
                 ? task.sourceMetadata.duplicateMarkerClearCount
                 : 0;
               const patch = buildMarkerClearedReplanTaskPatch(marker.canonicalId, priorClearCount);
-              await this.store.updateTask(task.id, patch);
+              await this.store.updateTask(task.id, patch, UNATTRIBUTED_MUTATION_CONTEXT);
               if (typeof this.store.logEntry === "function") {
                 await Promise.resolve(this.store.logEntry(
                   task.id,
                   TRIAGE_MARKER_CLEARED_REPLAN_LOG_ACTION,
-                  buildInactiveDuplicateClearFeedback(marker.canonicalId),
-                )).catch(() => {});
+                  buildInactiveDuplicateClearFeedback(marker.canonicalId), UNATTRIBUTED_MUTATION_CONTEXT)).catch(() => {});
               }
               resolved += 1;
             }
@@ -15877,7 +15818,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
               // FNXC:DuplicateIntake 2026-08-09-02:14: preserve a real PROMPT.md for a title-only redirect.
               if (duplicateResolution.source !== "title") rmSync(promptPath, { force: true });
               if (resolveExplicitDuplicateMarker(null, task.title).marker?.canonicalId === marker.canonicalId) {
-                await this.store.updateTask(task.id, { title: `Duplicate redirect cleared: ${marker.canonicalId}` });
+                await this.store.updateTask(task.id, { title: `Duplicate redirect cleared: ${marker.canonicalId}` }, UNATTRIBUTED_MUTATION_CONTEXT);
               }
               const priorKeepClears = typeof task.sourceMetadata?.duplicateMarkerClearCount === "number"
                 ? task.sourceMetadata.duplicateMarkerClearCount
@@ -15887,39 +15828,36 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
                 task.id,
                 keepExhausted
                   ? buildMarkerExhaustedFailedTaskPatch(canonicalTask.id, priorKeepClears)
-                  : buildMarkerClearedReplanTaskPatch(canonicalTask.id, priorKeepClears),
-              );
+                  : buildMarkerClearedReplanTaskPatch(canonicalTask.id, priorKeepClears), UNATTRIBUTED_MUTATION_CONTEXT);
               if (typeof this.store.logEntry === "function") {
                 await Promise.resolve(this.store.logEntry(
                   task.id,
                   keepExhausted
                     ? buildDuplicateReplanExhaustedError(canonicalTask.id)
                     : TRIAGE_MARKER_CLEARED_REPLAN_LOG_ACTION,
-                  buildKeepDuplicateClearFeedback(canonicalTask.id),
-                )).catch(() => {});
+                  buildKeepDuplicateClearFeedback(canonicalTask.id), UNATTRIBUTED_MUTATION_CONTEXT)).catch(() => {});
               }
               resolved += 1;
             }
             continue;
           }
           if (resolution === "delete") {
-            await this.store.deleteTask(task.id, { removeLineageReferences: true, auditContext: { agentId: "self-healing", runId: generateSyntheticRunId("self-heal-explicit-duplicate", task.id), callerKind: "engine" } });
+            await this.store.deleteTask(task.id, { removeLineageReferences: true, auditContext: { agentId: "self-healing", runId: generateSyntheticRunId("self-heal-explicit-duplicate", task.id), callerKind: "engine", actor: UNATTRIBUTED_MUTATION_CONTEXT.actor } }, UNATTRIBUTED_MUTATION_CONTEXT);
           } else if (resolution === "prompt") {
             await flagTriageDuplicate(this.store, task.id, canonicalTask.id);
-            await this.store.updateTask(task.id, { paused: true, pausedReason: "duplicate-decision-required", status: null });
+            await this.store.updateTask(task.id, { paused: true, pausedReason: "duplicate-decision-required", status: null }, UNATTRIBUTED_MUTATION_CONTEXT);
           } else {
             // FNXC:DuplicateIntake 2026-08-09-02:14: title-only redirects must not erase executable prompts.
             if (duplicateResolution.source !== "title") rmSync(promptPath, { force: true });
             if (resolveExplicitDuplicateMarker(null, task.title).marker?.canonicalId === marker.canonicalId) {
-              await this.store.updateTask(task.id, { title: `Duplicate redirect cleared: ${marker.canonicalId}` });
+              await this.store.updateTask(task.id, { title: `Duplicate redirect cleared: ${marker.canonicalId}` }, UNATTRIBUTED_MUTATION_CONTEXT);
             }
-            await this.store.updateTask(task.id, buildMarkerClearedReplanTaskPatch(canonicalTask.id));
+            await this.store.updateTask(task.id, buildMarkerClearedReplanTaskPatch(canonicalTask.id), UNATTRIBUTED_MUTATION_CONTEXT);
             if (typeof this.store.logEntry === "function") {
               await Promise.resolve(this.store.logEntry(
                 task.id,
                 TRIAGE_MARKER_CLEARED_REPLAN_LOG_ACTION,
-                buildKeepDuplicateClearFeedback(canonicalTask.id),
-              )).catch(() => {});
+                buildKeepDuplicateClearFeedback(canonicalTask.id), UNATTRIBUTED_MUTATION_CONTEXT)).catch(() => {});
             }
           }
           log.log(`[self-healing] resolved explicit duplicate marker ${task.id} → ${canonicalTask.id}`);
@@ -16005,11 +15943,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             new Date(peer.updatedAt).getTime() > createdAtMs,
           ).length;
 
-          await this.store.updateTask(task.id, { priority: nextPriority });
+          await this.store.updateTask(task.id, { priority: nextPriority }, UNATTRIBUTED_MUTATION_CONTEXT);
           await this.store.logEntry(
             task.id,
-            `Auto-recovered starved refinement triage task: priority ${task.priority ?? "normal"} -> ${nextPriority} (age=${Math.max(0, now - createdAtMs)}ms, peerProgress=${peerProgressCount})`,
-          );
+            `Auto-recovered starved refinement triage task: priority ${task.priority ?? "normal"} -> ${nextPriority} (age=${Math.max(0, now - createdAtMs)}ms, peerProgress=${peerProgressCount})`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
 
           try {
             const auditor = createRunAuditor(this.store, {
@@ -16116,12 +16053,12 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
               const patch = finalizePlanningSegment(live, endMs);
               applied = patch.planningStartedAt === null;
               return patch;
-            });
+            }, UNATTRIBUTED_MUTATION_CONTEXT);
           } else {
             const live = await this.store.getTask(task.id);
             if (live?.planningStartedAt && !planningIds.has(live.id) && !this.options.hasActivePlanningWorkflowSession?.(live.id)) {
               const patch = finalizePlanningSegment(live, endMs);
-              if (patch.planningStartedAt === null) { await this.store.updateTask(task.id, patch); applied = true; }
+              if (patch.planningStartedAt === null) { await this.store.updateTask(task.id, patch, UNATTRIBUTED_MUTATION_CONTEXT); applied = true; }
             }
           }
           if (!applied) continue;
@@ -16230,19 +16167,18 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
               if (!isTaskStillInPlanningStage(live)) return null;
               applied = true;
               return { status: null };
-            });
+            }, UNATTRIBUTED_MUTATION_CONTEXT);
           } else {
             const live = await this.store.getTask(task.id);
             if (live && isTaskStillInPlanningStage(live)) {
-              await this.store.updateTask(task.id, { status: null });
+              await this.store.updateTask(task.id, { status: null }, UNATTRIBUTED_MUTATION_CONTEXT);
               applied = true;
             }
           }
           if (!applied) continue;
           await this.store.logEntry(
             task.id,
-            "Auto-recovered orphaned planning task — agent session lost, cleared for re-planning",
-          );
+            "Auto-recovered orphaned planning task — agent session lost, cleared for re-planning", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
           recovered++;
         } catch (err: unknown) { const errorMessage = err instanceof Error ? err.message : String(err);
           log.error(`Failed to recover orphaned planning task ${task.id}: ${errorMessage}`);

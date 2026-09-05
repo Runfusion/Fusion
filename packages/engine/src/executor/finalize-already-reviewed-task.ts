@@ -1,3 +1,6 @@
+import type { TaskStore, RunMutationContext } from "@fusion/core";
+import { getTaskMergeBlocker, resolvePreMergeGateForTask } from "@fusion/core";
+import type { ResumeLanes } from "./resolve-resume-lanes.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-17:00:
  * finalizeAlreadyReviewedTask peeled from TaskExecutor (U4).
@@ -5,14 +8,11 @@
  * When a completed task is already in the review lane, finalize merge if no merge
  * blocker remains; otherwise log deferral. Uses resolved resume lanes (not literals).
  */
-import type { TaskStore } from "@fusion/core";
-import { getTaskMergeBlocker, resolvePreMergeGateForTask } from "@fusion/core";
-import type { EngineRunContext } from "../util/run-audit.js";
-import type { ResumeLanes } from "./resolve-resume-lanes.js";
 
 export type FinalizeAlreadyReviewedTaskDeps = {
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   resolveResumeLanes: (taskId: string, memo?: { lanes?: ResumeLanes }) => Promise<ResumeLanes>;
 };
 
@@ -51,7 +51,7 @@ export async function finalizeAlreadyReviewedTask(
     requiredPreMergeStepIds: mergeGate.requiredPreMergeStepIds,
   });
   if (blocker) {
-    await deps.store.logEntry(taskId, "Task already in-review; merge deferred", blocker, deps.getRunContextFor(taskId));
+    await deps.store.logEntry(taskId, "Task already in-review; merge deferred", blocker, deps.runContextFor(taskId));
     return "blocked";
   }
 
@@ -59,7 +59,7 @@ export async function finalizeAlreadyReviewedTask(
     taskId,
     "Task already in-review after completion — finalizing merge",
     undefined,
-    deps.getRunContextFor(taskId),
+    deps.runContextFor(taskId),
   );
   await deps.store.mergeTask(taskId);
   return "merged";

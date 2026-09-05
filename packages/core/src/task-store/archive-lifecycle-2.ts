@@ -7,6 +7,8 @@
  * instance as its first parameter and performs byte-identical work.
  */
 import {TaskStore, storeLog} from "../store.js";
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "../identity/mutation-context.js";
+import type {RunMutationContext} from "../types.js";
 import { columnsWithFlag, declaresAnyLifecycleTrait } from "../workflows/workflow-lifecycle-traits.js";
 import { resolveWorkflowIrForTask } from "../workflows/workflow-ir-resolver.js";
 import { toTaskMoveLanes } from "../workflows/workflow-lifecycle-traits.js";
@@ -145,7 +147,16 @@ export async function taskToArchiveEntryImpl(store: TaskStore, task: Task, archi
     };
   }
 
-type DeleteTaskBackendOptions = { removeDependencyReferences?: boolean; removeLineageReferences?: boolean; allowResurrection?: boolean; githubIssueAction?: GithubIssueAction; auditContext?: TaskDeleteAuditContext; };
+/*
+FNXC:Identity 2026-08-09-03:04 (U18):
+`runContext` is the U18 actor carrier on the delete path. It coexists with `auditContext` rather
+than replacing it: KTD2 requires the two shapes to be unified, but that rewrite spans 35 production
+occurrences in three packages and is deliberately not folded into U18's mechanical diff. Where both
+are present `runContext` wins for run/agent attribution, because it is the shape that carries the
+authenticated actor; `auditContext` keeps its self-reported caller-kind and session fields, which
+are attribution-only and never authentication (R21).
+*/
+type DeleteTaskBackendOptions = { removeDependencyReferences?: boolean; removeLineageReferences?: boolean; allowResurrection?: boolean; githubIssueAction?: GithubIssueAction; auditContext?: TaskDeleteAuditContext; runContext?: RunMutationContext; };
 type DeleteTaskClaimResult = { task: Task; claimed: boolean };
 
 /*
@@ -317,8 +328,9 @@ async function deleteTaskBackendWithClaimResultImpl(store: TaskStore, id: string
         mutationType: "task:deleted",
         target: id,
         taskId: id,
-        agentId: options?.auditContext?.agentId ?? "system",
-        runId: options?.auditContext?.runId ?? store.makeSyntheticDeleteRunId(id),
+        // FNXC:Identity 2026-08-09-03:04 (U18): the authenticated carrier wins; auditContext remains the legacy fallback.
+        agentId: options?.runContext?.agentId ?? options?.auditContext?.agentId ?? "system",
+        runId: options?.runContext?.runId ?? options?.auditContext?.runId ?? store.makeSyntheticDeleteRunId(id),
         metadata: {
           previousColumn: task.column,
           previousStatus: task.status ?? null,
@@ -349,7 +361,15 @@ async function deleteTaskBackendWithClaimResultImpl(store: TaskStore, id: string
           deletedAt,
           allowResurrection,
           githubIssueAction: options?.githubIssueAction ?? null,
-          deletedBy: options?.auditContext?.agentId ?? null,
+          /*
+          FNXC:Identity 2026-08-15-06:20 (review finding — one precedence rule, not two):
+          The audit row above prefers `runContext` and falls back to `auditContext`; this field read
+          `auditContext` ONLY. When the two carried different agents, one delete produced two
+          different actors in two places, and a consumer reading the lifecycle payload disagreed with
+          the audit trail about who deleted the task. Same precedence, same answer.
+          FNXC:Identity 2026-08-23-22:39: `closureContext` was dropped with FN-074's task-splitting removal on main.
+          */
+          deletedBy: options?.runContext?.agentId ?? options?.auditContext?.agentId ?? null,
         },
       });
       /*
@@ -677,7 +697,7 @@ export async function listArchivedTasksImpl(store: TaskStore, options?: {
     return { tasks, total, hasMore: offset + tasks.length < total };
 }
 
-export async function unarchiveTaskImpl(store: TaskStore, id: string): Promise<Task> {
+export async function unarchiveTaskImpl(store: TaskStore, id: string, runContext?: RunMutationContext): Promise<Task> {
     /*
      * FNXC:SqliteFinalRemoval 2026-06-25:
      * Backend-mode unarchiveTask: uses async archive helpers to read from PG
@@ -772,7 +792,13 @@ export async function unarchiveTaskImpl(store: TaskStore, id: string): Promise<T
     const updatedTask = await store.getTask(id);
 
     // Log the unarchive action.
-    await store.logEntry(id, "Task unarchived");
+    /*
+    FNXC:Identity 2026-08-24-02:20:
+    Unarchive is reached from dashboard/CLI restore. Thread the caller's `runContext` when present;
+    the unattributed marker is only the fallback for a caller that has not been converted yet
+    (U9/U11). Using the marker unconditionally made every restore look like an unwired write.
+    */
+    await store.logEntry(id, "Task unarchived", undefined, runContext ?? UNATTRIBUTED_MUTATION_CONTEXT);
 
     // Remove from archive table.
     await deleteArchivedTaskEntry(layer.db, id, layer.projectId);

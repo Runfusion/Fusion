@@ -1,3 +1,5 @@
+import type { Task, TaskStore, RunMutationContext } from "@fusion/core";
+import { executorLog } from "../logger.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-11:55:
  * shouldDeferWorkflowStepCompletion peeled from TaskExecutor (U4).
@@ -7,13 +9,11 @@
  * completion handoff — the card was never in `in-progress`, so this read "no longer active"
  * for a card that was actively executing, and the handoff was dropped with a log line.
  */
-import type { Task, TaskStore } from "@fusion/core";
-import { executorLog } from "../logger.js";
-import type { EngineRunContext } from "../util/run-audit.js";
 
 export type ShouldDeferWorkflowStepCompletionDeps = {
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   pausedAborted: { has(taskId: string): boolean };
   userCanceledTaskIds: Set<string>;
   clearCompletedTaskWatchdog: (taskId: string) => void;
@@ -40,7 +40,7 @@ export async function shouldDeferWorkflowStepCompletion(
       taskId,
       `Completion handoff deferred — task paused (${context})`,
       undefined,
-      deps.getRunContextFor(taskId),
+      deps.runContextFor(taskId),
     ).catch(() => undefined);
     return true;
   }
@@ -52,7 +52,7 @@ export async function shouldDeferWorkflowStepCompletion(
       taskId,
       `Completion handoff deferred — task no longer active (${context})`,
       undefined,
-      deps.getRunContextFor(taskId),
+      deps.runContextFor(taskId),
     ).catch(() => undefined);
     return true;
   }

@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "./identity/mutation-context.js";
 import type { TaskMoveLanes } from "./workflows/workflow-lifecycle-traits.js";
 import { TaskLaneCache } from "./task-lane-cache.js";
 import { randomUUID } from "node:crypto";
@@ -301,6 +302,12 @@ export { parseStepHeadings } from "./tasks/step-parsers.js";
 export {
   TaskHasDependentsError,
   TaskSelfDeleteError,
+  // FNXC:Authorization 2026-08-09-03:04: exported through the store facade so
+  // @fusion/engine and @fusion/dashboard can discriminate a permission denial
+  // without importing a deep path or matching on error strings.
+  PermissionDeniedError,
+  isPermissionDeniedError,
+  PERMISSION_DENIED_ERROR_CODE,
   TaskDeletedError,
   TaskNotFoundError,
   isTaskNotFoundError,
@@ -354,6 +361,80 @@ export interface MoveTaskOptions {
   recoveryRehome?: boolean;
 }
 
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2 — named option shapes for the staged mutation-context overloads):
+`createTask`, `updateTask`, `deleteTask`, and `addComment` declared their option/patch shapes as
+inline literals. U18 gives each of them TWO overload signatures (canonical + deprecated staging),
+so an inline literal would have to be repeated three times per method and could drift between the
+copies. Naming them once is what keeps the overload pair provably the same shape.
+`Parameters<TaskStore["updateTask"]>[1]` — used by updateTaskAtomic/updateTaskUnlocked and by three
+task-store op modules — resolves to the LAST declared overload, which is the deprecated one, and it
+carries `updates` at index 1 exactly as before, so those references are unaffected.
+*/
+
+/** Options for {@link TaskStore.createTask}. */
+export interface CreateTaskOptions {
+  onSummarize?: (description: string) => Promise<string | null>;
+  settings?: { autoSummarizeTitles?: boolean };
+  invokeTaskCreatedHook?: boolean;
+  onProposalClaimConflict?: (task: Task) => void;
+  // FNXC:Identity 2026-08-15-22:52: keep main's intake-ownership exemption on the typed create options.
+  ownershipExemption?: IntakeOwnershipExemption;
+}
+
+/**
+ * @internal Options for the internal create path (`_createTaskInternal` / `_createTaskInternalBackend`).
+ *
+ * FNXC:Identity 2026-08-09-03:04 (U18):
+ * `runContext` rides the options object rather than a new positional parameter because the create
+ * chain is four hops deep (createTask -> createTaskImpl -> createTaskBackend ->
+ * _createTaskInternalBackend) and a positional add at each hop would churn every internal caller.
+ * Its destination is the `"Task created"` log entry, which previously had no `runContext` at all -
+ * so a task row carried no record of who created it.
+ */
+export interface InternalCreateTaskOptions {
+  createdAt?: string;
+  updatedAt?: string;
+  promptOverride?: string;
+  invokeTaskCreatedHook?: boolean;
+  resolvedEntryColumn?: string;
+  resolvedWorkflowIdForOwnership?: string;
+  onProposalClaimConflict?: (task: Task) => void;
+  deferTaskCreatedEvent?: boolean;
+  onTaskInserted?: (task: Task) => void;
+  ownershipExemption?: IntakeOwnershipExemption;
+  runContext?: RunMutationContext;
+}
+
+/** Options for {@link TaskStore.deleteTask} and {@link TaskStore.deleteTaskIf}. */
+export interface DeleteTaskOptions {
+  removeDependencyReferences?: boolean;
+  removeLineageReferences?: boolean;
+  allowResurrection?: boolean;
+  githubIssueAction?: GithubIssueAction;
+  /*
+  FNXC:Identity 2026-08-09-03:04:
+  KTD2 names `TaskDeleteAuditContext` as a SECOND, differently-shaped attribution seam on the delete
+  path that must ultimately be unified into `RunMutationContext`. That unification is deliberately
+  NOT done here: it rewrites 35 production occurrences across three packages and would hide a
+  semantic change inside U18's mechanical one. Until then the two coexist, and `runContext` is the
+  authoritative actor carrier while `auditContext` keeps its caller-kind/session fields.
+  FNXC:Identity 2026-08-23-22:39: `closureContext` was dropped with FN-074's task-splitting removal on main.
+  */
+  auditContext?: TaskDeleteAuditContext;
+}
+
+/** Options for {@link TaskStore.addComment}. */
+export interface AddCommentOptions {
+  skipRefinement?: boolean;
+  source?: "user" | "agent" | "github-review" | "github-review-comment";
+  externalId?: string;
+  reviewState?: "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED";
+}
+
+/** The patch shape accepted by {@link TaskStore.updateTask}. */
+export type TaskUpdateInput = { title?: string; description?: string; priority?: TaskPriority | null; prompt?: string; worktree?: string | null; workspaceWorktrees?: import("./types.js").Task["workspaceWorktrees"]; repositoryScope?: import("./types.js").Task["repositoryScope"] | null; status?: string | null; awaitingApprovalReason?: import("./types.js").Task["awaitingApprovalReason"] | null; dependencies?: string[]; steps?: import("./types.js").TaskStep[]; customFields?: Record<string, unknown>; currentStep?: number; blockedBy?: string | null; overlapBlockedBy?: string | null; assignedAgentId?: string | null; pausedByAgentId?: string | null; pausedReason?: string | null; wedgeNotification?: import("./types.js").TaskWedgeNotificationState | null; tokenBudgetSoftAlertedAt?: string | null; worktrunkFallbackAlertedAt?: string | null; worktrunkFailure?: import("./types.js").Task["worktrunkFailure"] | null; tokenBudgetHardAlertedAt?: string | null; tokenBudgetOverride?: import("./types.js").TaskTokenBudgetOverride | null; dispatchStormCount?: number | null; lastDispatchAt?: string | null; assigneeUserId?: string | null; scopeOverride?: boolean | null; scopeOverrideReason?: string | null; scopeAutoWiden?: string[] | null; nodeId?: string | null; effectiveNodeId?: string | null; effectiveNodeSource?: string | null; checkedOutBy?: string | null; checkedOutAt?: string | null; checkoutNodeId?: string | null; checkoutRunId?: string | null; checkoutLeaseRenewedAt?: string | null; checkoutLeaseEpoch?: number | null; paused?: boolean; baseBranch?: string | null; autoMerge?: boolean | null; branch?: string | null; branchWriteOrigin?: "operator" | "engine"; branchContext?: import("./types.js").TaskBranchContext | null; executionStartBranch?: string | null; baseCommitSha?: string | null; size?: "S" | "M" | "L"; reviewLevel?: number; executionMode?: import("./types.js").ExecutionMode | null; mergeRetries?: number; aiMergeReviewReconciliation?: import("./types.js").Task["aiMergeReviewReconciliation"] | null; log?: import("./types.js").TaskLogEntry[]; workflowStepRetries?: number; stuckKillCount?: number | null; resumeLimboCount?: number | null; executeRequeueLoopCount?: number | null; graphResumeRetryCount?: number | null; consecutiveToolFailureRetryCount?: number | null; executorEscalationAttempted?: boolean | null; toolFailureDetectorLogCursor?: number | null; toolFailureRetryExhaustedAuditEmitted?: boolean | null; resumeLimboTipSha?: string | null; resumeLimboStepSignature?: string | null; executeRequeueLoopSignature?: string | null; postReviewFixCount?: number | null; planReviewReplanCount?: number | null; recoveryRetryCount?: number | null; externalBlock?: import("./types.js").Task["externalBlock"] | null; sessionContentionHoldCount?: number | null; sessionContentionWaitReason?: string | null; taskDoneRetryCount?: number | null; bulkCompletionRefusalAt?: string | null; workflowIrPin?: string | null; workflowIrPinNodeId?: string | null; workflowIrPinColumnId?: string | null; legacyAdoptedAt?: string | null; worktreeSessionRetryCount?: number | null; completionHandoffLimboRecoveryCount?: number | null; verificationFailureCount?: number | null; mergeConflictBounceCount?: number | null; mergeAuditBounceCount?: number | null; mergeTransientRetryCount?: number | null; branchConflictRecoveryCount?: number | null; reviewerContextRetryCount?: number | null; reviewerFallbackRetryCount?: number | null; reviewConvergenceStage?: number | null; reviewConvergenceEscalationCount?: number | null; nextRecoveryAt?: string | null; enabledWorkflowSteps?: string[]; noCommitsExpected?: boolean | null; modelProvider?: string | null; credentialInstanceId?: string | null; modelId?: string | null; validatorModelProvider?: string | null; validatorCredentialInstanceId?: string | null; validatorModelId?: string | null; planningModelProvider?: string | null; planningCredentialInstanceId?: string | null; planningModelId?: string | null; mergerModelProvider?: string | null; mergerCredentialInstanceId?: string | null; mergerModelId?: string | null; thinkingLevel?: string | null; validatorThinkingLevel?: string | null; planningThinkingLevel?: string | null; mergerThinkingLevel?: string | null; error?: string | null; summary?: string | null; recommendations?: import("./types.js").TaskRecommendation[]; sessionFile?: string | null; firstExecutionAt?: string | null; cumulativeActiveMs?: number | null; cumulativePlanningMs?: number | null; planningStartedAt?: string | null; executionStartedAt?: string | null; executionCompletedAt?: string | null; review?: import("./types.js").TaskReview | null; reviewState?: import("./types.js").TaskReviewState | null; workflowStepResults?: import("./types.js").WorkflowStepResult[] | null; mergeDetails?: import("./types.js").MergeDetails | null; sourceIssue?: import("./types.js").TaskSourceIssue | null; sourceMetadataPatch?: Record<string, unknown> | null; githubTracking?: import("./types.js").TaskGithubTracking | null; tokenUsage?: import("./types.js").TaskTokenUsage | null; modifiedFiles?: string[] | null; declaredSymbols?: string[] | null | undefined; missionId?: string | null; sliceId?: string | null; workflowTransitionNotification?: import("./types.js").WorkflowTransitionNotificationMarker | undefined; plannerOversightLevel?: string | null; sessionAdvisorEnabled?: boolean | null; approvedPlanFingerprint?: string | null };
+
 /** @internal Extracted to task-store/moves.ts */
 export interface MoveTaskInternalOptions {
   fromHandoff: boolean;
@@ -363,7 +444,14 @@ export interface MoveTaskInternalOptions {
     patch: Parameters<TaskStore["updateTask"]>[1];
     expectedColumn: ColumnId;
   };
-  runContext?: Pick<RunMutationContext, "runId" | "agentId"> | { runId?: string; agentId?: string };
+  /*
+  FNXC:Identity 2026-08-09-03:04:
+  Was `Pick<RunMutationContext,"runId"|"agentId"> | { runId?: string; agentId?: string }`. The second
+  arm of that union structurally accepts `{}`, so every field the type appeared to guarantee — the
+  actor included — was fictional: any object satisfied it. Narrowed to the real carrier. The
+  PARAMETER stays optional here; U18 makes it required across the mutating surface.
+  */
+  runContext?: RunMutationContext;
   ownerAgentId?: string | null;
   evidence?: HandoffToReviewOptions["evidence"];
   now?: string;
@@ -1131,8 +1219,13 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   async resolveTaskSymbolsForWorkItem(workItem: Pick<import("./types/merge/merge-queue.js").WorkflowWorkItem, "taskId">): Promise<TaskSymbolResolution> {
     return this.resolveTaskSymbols(workItem.taskId);
   }
+  /*
+  FNXC:Identity 2026-08-09-03:04 (U18):
+  Symbol declaration is driven by the merge/overlap scheduler in `@fusion/engine`, which has the run
+  and agent in hand but does not pass them down this method yet. Marker until U13 widens the caller.
+  */
   async setTaskDeclaredSymbols(taskId: string, symbols: readonly string[]): Promise<Task> {
-    return this.updateTask(taskId, { declaredSymbols: [...symbols] });
+    return this.updateTask(taskId, { declaredSymbols: [...symbols] }, UNATTRIBUTED_MUTATION_CONTEXT);
   }
 
   /** Reconcile committed reservations whose task and archive representations are absent. */
@@ -1278,7 +1371,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       if (!Number.isFinite(startedMs) || startedMs > heartbeatMs) continue;
       const shiftedStartedMs = Math.min(nowMs, startedMs + downtimeMs);
       if (shiftedStartedMs <= startedMs) continue;
-      await this.updateTask(task.id, { executionStartedAt: new Date(shiftedStartedMs).toISOString() });
+      // FNXC:Identity 2026-08-09-03:04 (U18): engine-downtime timing reconciliation is a system sweep; U13 owns its actor.
+      await this.updateTask(task.id, { executionStartedAt: new Date(shiftedStartedMs).toISOString() }, UNATTRIBUTED_MUTATION_CONTEXT);
       shiftedTaskIds.push(task.id);
     }
 
@@ -1377,14 +1471,14 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   /**
    * FNXC:RuntimeTaskOrchestrationAsync 2026-06-24-13:15:
    */
-  public async createTaskBackend( input: TaskCreateInput, options?: { onSummarize?: (description: string) => Promise<string | null>; settings?: { autoSummarizeTitles?: boolean }; invokeTaskCreatedHook?: boolean; onProposalClaimConflict?: (task: Task) => void; }, ): Promise<Task> {
+  public async createTaskBackend( input: TaskCreateInput, options?: CreateTaskOptions & { runContext?: RunMutationContext }, ): Promise<Task> {
     return createTaskBackendImpl(this, input, options);
   }
 
   /**
    * FNXC:RuntimeTaskOrchestrationAsync 2026-06-24-13:25:
    */
-  public async _createTaskInternalBackend( input: TaskCreateInput, title: string | undefined, resolvedWorkflowSteps: string[] | undefined, id: string, options?: { createdAt?: string; updatedAt?: string; promptOverride?: string; invokeTaskCreatedHook?: boolean; resolvedEntryColumn?: string; resolvedWorkflowIdForOwnership?: string; onProposalClaimConflict?: (task: Task) => void; deferTaskCreatedEvent?: boolean; onTaskInserted?: (task: Task) => void; ownershipExemption?: IntakeOwnershipExemption; }, ): Promise<Task> {
+  public async _createTaskInternalBackend( input: TaskCreateInput, title: string | undefined, resolvedWorkflowSteps: string[] | undefined, id: string, options?: InternalCreateTaskOptions, ): Promise<Task> {
     return _createTaskInternalBackendImpl(this, input, title, resolvedWorkflowSteps, id, options);
   }
 
@@ -1394,13 +1488,30 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   public async _maybeAutoArchiveSameAgentDuplicateBackend( task: Task, input: TaskCreateInput, ): Promise<void> {
     return _maybeAutoArchiveSameAgentDuplicateBackendImpl(this, task, input);
   }
-  async createTask( input: TaskCreateInput, options?: { onSummarize?: (description: string) => Promise<string | null>; settings?: { autoSummarizeTitles?: boolean }; invokeTaskCreatedHook?: boolean; onProposalClaimConflict?: (task: Task) => void; ownershipExemption?: IntakeOwnershipExemption; } ): Promise<Task> {
-    return createTaskImpl(this, input, options);
+  /*
+  FNXC:Identity 2026-08-09-03:04 (U18/KTD2 — the staged required mutation context):
+  The FIRST overload is canonical: the mutation context is REQUIRED, so a call site that cannot say
+  who is acting is a compile error rather than a silent unattributed write. The SECOND overload is a
+  STAGING DEVICE and is deprecated on purpose. A method signature is one artifact shared by every
+  consumer, so flipping the parameter to required in a single commit would invalidate every call site
+  in `@fusion/engine`, `@fusion/dashboard`, and `@runfusion/fusion` at once and nothing would compile.
+  Callers convert package by package against the deprecated arity; U18's final commit DELETES the
+  deprecated overload, and only then is the requirement enforced by the compiler.
+  Do not add new callers of the deprecated overload, and do not "fix" a converted call site by
+  dropping back to it. Where no authenticated actor exists yet, pass the unattributed marker defined
+  in `identity/actor.ts` so the debt is greppable and counted - never the bootstrap context, which
+  would read as real attribution.
+  */
+  createTask(input: TaskCreateInput, options: CreateTaskOptions | undefined, runContext: RunMutationContext): Promise<Task>;
+  /** @deprecated U18 staging overload - pass a `RunMutationContext`. Deleted in U18's final commit; the actor is not recorded on the creation log entry without it. */
+  createTask(input: TaskCreateInput, options?: CreateTaskOptions): Promise<Task>;
+  async createTask(input: TaskCreateInput, options?: CreateTaskOptions, runContext?: RunMutationContext): Promise<Task> {
+    return createTaskImpl(this, input, runContext ? { ...options, runContext } : options);
   }
   async createTaskWithReservedId( input: TaskCreateInput, options: { taskId: string; createdAt?: string; updatedAt?: string; prompt?: string; applyDefaultWorkflowSteps?: boolean; invokeTaskCreatedHook?: boolean; ownershipExemption?: IntakeOwnershipExemption; }, ): Promise<Task> {
     return createTaskWithReservedIdImpl(this, input, options);
   }
-  public async _createTaskInternal( input: TaskCreateInput, title: string | undefined, resolvedWorkflowSteps: string[] | undefined, id: string, options?: { createdAt?: string; updatedAt?: string; promptOverride?: string; invokeTaskCreatedHook?: boolean; resolvedEntryColumn?: string; resolvedWorkflowIdForOwnership?: string; onProposalClaimConflict?: (task: Task) => void; deferTaskCreatedEvent?: boolean; onTaskInserted?: (task: Task) => void; ownershipExemption?: IntakeOwnershipExemption; }, ): Promise<Task> {
+  public async _createTaskInternal( input: TaskCreateInput, title: string | undefined, resolvedWorkflowSteps: string[] | undefined, id: string, options?: InternalCreateTaskOptions, ): Promise<Task> {
     /*
     FNXC:SqliteDualPathCleanup 2026-07-26-14:05:
     Task create is PostgreSQL-only (layer.transactionImmediate + insertTaskRowInTransaction). The former sync SQLite _createTaskInternalImpl arm is deleted; production always injects AsyncDataLayer.
@@ -1901,8 +2012,25 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   public async readTaskForMove(id: string): Promise<Task> {
     return readTaskForMoveImpl(this, id);
   }
-  async moveTask( id: string, toColumn: ColumnId, options?: MoveTaskOptions, ): Promise<Task> {
-    return moveTaskImpl(this, id, toColumn, options);
+  /*
+  FNXC:Identity 2026-08-09-03:04 (U18/KTD2 — the staged required mutation context):
+  The FIRST overload is canonical: the mutation context is REQUIRED, so a call site that cannot say
+  who is acting is a compile error rather than a silent unattributed write. The SECOND overload is a
+  STAGING DEVICE and is deprecated on purpose. A method signature is one artifact shared by every
+  consumer, so flipping the parameter to required in a single commit would invalidate every call site
+  in `@fusion/engine`, `@fusion/dashboard`, and `@runfusion/fusion` at once and nothing would compile.
+  Callers convert package by package against the deprecated arity; U18's final commit DELETES the
+  deprecated overload, and only then is the requirement enforced by the compiler.
+  Do not add new callers of the deprecated overload, and do not "fix" a converted call site by
+  dropping back to it. Where no authenticated actor exists yet, pass the unattributed marker defined
+  in `identity/actor.ts` so the debt is greppable and counted - never the bootstrap context, which
+  would read as real attribution.
+  */
+  moveTask(id: string, toColumn: ColumnId, options: MoveTaskOptions | undefined, runContext: RunMutationContext): Promise<Task>;
+  /** @deprecated U18 staging overload - pass a `RunMutationContext`. Deleted in U18's final commit; the move audit rows fall back to a synthetic system agent id without it. */
+  moveTask(id: string, toColumn: ColumnId, options?: MoveTaskOptions): Promise<Task>;
+  async moveTask(id: string, toColumn: ColumnId, options?: MoveTaskOptions, runContext?: RunMutationContext): Promise<Task> {
+    return moveTaskImpl(this, id, toColumn, options, runContext);
   }
 
   /** Publish the post-cleanup fresh-planning reset as one project-scoped transaction. */
@@ -1963,10 +2091,24 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   async updateTaskDependencies( id: string, mutation: TaskDependencyMutation, runContext?: RunMutationContext, ): Promise<Task> {
     return updateTaskDependenciesImpl(this, id, mutation, runContext);
   }
-  async updateTask(
-    id: string,
-    updates: { title?: string; description?: string; priority?: TaskPriority | null; prompt?: string; worktree?: string | null; workspaceWorktrees?: import("./types.js").Task["workspaceWorktrees"]; externalBlock?: import("./types.js").Task["externalBlock"] | null; status?: string | null; awaitingApprovalReason?: import("./types.js").Task["awaitingApprovalReason"] | null; dependencies?: string[]; steps?: import("./types.js").TaskStep[]; customFields?: Record<string, unknown>; currentStep?: number; blockedBy?: string | null; overlapBlockedBy?: string | null; assignedAgentId?: string | null; pausedByAgentId?: string | null; pausedReason?: string | null; wedgeNotification?: import("./types.js").TaskWedgeNotificationState | null; tokenBudgetSoftAlertedAt?: string | null; worktrunkFallbackAlertedAt?: string | null; worktrunkFailure?: import("./types.js").Task["worktrunkFailure"] | null; tokenBudgetHardAlertedAt?: string | null; tokenBudgetOverride?: import("./types.js").TaskTokenBudgetOverride | null; dispatchStormCount?: number | null; lastDispatchAt?: string | null; assigneeUserId?: string | null; scopeOverride?: boolean | null; scopeOverrideReason?: string | null; scopeAutoWiden?: string[] | null; nodeId?: string | null; effectiveNodeId?: string | null; effectiveNodeSource?: string | null; checkedOutBy?: string | null; checkedOutAt?: string | null; checkoutNodeId?: string | null; checkoutRunId?: string | null; checkoutLeaseRenewedAt?: string | null; checkoutLeaseEpoch?: number | null; paused?: boolean; baseBranch?: string | null; autoMerge?: boolean | null; branch?: string | null; branchWriteOrigin?: "operator" | "engine"; branchContext?: import("./types.js").TaskBranchContext | null; executionStartBranch?: string | null; baseCommitSha?: string | null; size?: "S" | "M" | "L"; reviewLevel?: number; executionMode?: import("./types.js").ExecutionMode | null; mergeRetries?: number; aiMergeReviewReconciliation?: import("./types.js").Task["aiMergeReviewReconciliation"] | null; log?: import("./types.js").TaskLogEntry[]; workflowStepRetries?: number; stuckKillCount?: number | null; resumeLimboCount?: number | null; executeRequeueLoopCount?: number | null; graphResumeRetryCount?: number | null; consecutiveToolFailureRetryCount?: number | null; executorEscalationAttempted?: boolean | null; toolFailureDetectorLogCursor?: number | null; toolFailureRetryExhaustedAuditEmitted?: boolean | null; resumeLimboTipSha?: string | null; resumeLimboStepSignature?: string | null; executeRequeueLoopSignature?: string | null; postReviewFixCount?: number | null; planReviewReplanCount?: number | null; recoveryRetryCount?: number | null; sessionContentionHoldCount?: number | null; sessionContentionWaitReason?: string | null; taskDoneRetryCount?: number | null; bulkCompletionRefusalAt?: string | null; workflowIrPin?: string | null; workflowIrPinNodeId?: string | null; workflowIrPinColumnId?: string | null; legacyAdoptedAt?: string | null; worktreeSessionRetryCount?: number | null; completionHandoffLimboRecoveryCount?: number | null; verificationFailureCount?: number | null; mergeConflictBounceCount?: number | null; mergeAuditBounceCount?: number | null; mergeTransientRetryCount?: number | null; branchConflictRecoveryCount?: number | null; reviewerContextRetryCount?: number | null; reviewerFallbackRetryCount?: number | null; reviewConvergenceStage?: number | null; reviewConvergenceEscalationCount?: number | null; nextRecoveryAt?: string | null; enabledWorkflowSteps?: string[]; noCommitsExpected?: boolean | null; modelProvider?: string | null; credentialInstanceId?: string | null; modelId?: string | null; validatorModelProvider?: string | null; validatorCredentialInstanceId?: string | null; validatorModelId?: string | null; planningModelProvider?: string | null; planningCredentialInstanceId?: string | null; planningModelId?: string | null; mergerModelProvider?: string | null; mergerCredentialInstanceId?: string | null; mergerModelId?: string | null; thinkingLevel?: string | null; validatorThinkingLevel?: string | null; planningThinkingLevel?: string | null; mergerThinkingLevel?: string | null; error?: string | null; summary?: string | null; recommendations?: import("./types.js").TaskRecommendation[]; sessionFile?: string | null; firstExecutionAt?: string | null; cumulativeActiveMs?: number | null; cumulativePlanningMs?: number | null; planningStartedAt?: string | null; executionStartedAt?: string | null; executionCompletedAt?: string | null; review?: import("./types.js").TaskReview | null; reviewState?: import("./types.js").TaskReviewState | null; workflowStepResults?: import("./types.js").WorkflowStepResult[] | null; mergeDetails?: import("./types.js").MergeDetails | null; sourceIssue?: import("./types.js").TaskSourceIssue | null; sourceMetadataPatch?: Record<string, unknown> | null; githubTracking?: import("./types.js").TaskGithubTracking | null; tokenUsage?: import("./types.js").TaskTokenUsage | null; modifiedFiles?: string[] | null; declaredSymbols?: string[] | null | undefined; missionId?: string | null; sliceId?: string | null; workflowTransitionNotification?: import("./types.js").WorkflowTransitionNotificationMarker | undefined; plannerOversightLevel?: string | null; sessionAdvisorEnabled?: boolean | null; approvedPlanFingerprint?: string | null },    runContext?: RunMutationContext,
-  ): Promise<Task> {
+  /*
+  FNXC:Identity 2026-08-09-03:04 (U18/KTD2 — the staged required mutation context):
+  The FIRST overload is canonical: the mutation context is REQUIRED, so a call site that cannot say
+  who is acting is a compile error rather than a silent unattributed write. The SECOND overload is a
+  STAGING DEVICE and is deprecated on purpose. A method signature is one artifact shared by every
+  consumer, so flipping the parameter to required in a single commit would invalidate every call site
+  in `@fusion/engine`, `@fusion/dashboard`, and `@runfusion/fusion` at once and nothing would compile.
+  Callers convert package by package against the deprecated arity; U18's final commit DELETES the
+  deprecated overload, and only then is the requirement enforced by the compiler.
+  Do not add new callers of the deprecated overload, and do not "fix" a converted call site by
+  dropping back to it. Where no authenticated actor exists yet, pass the unattributed marker defined
+  in `identity/actor.ts` so the debt is greppable and counted - never the bootstrap context, which
+  would read as real attribution.
+  */
+  updateTask(id: string, updates: TaskUpdateInput, runContext: RunMutationContext): Promise<Task>;
+  /** @deprecated U18 staging overload - pass a `RunMutationContext`. Deleted in U18's final commit; the update log row persists with no `runContext`. */
+  updateTask(id: string, updates: TaskUpdateInput, runContext?: RunMutationContext): Promise<Task>;
+  async updateTask(id: string, updates: TaskUpdateInput, runContext?: RunMutationContext): Promise<Task> {
     /*
     FNXC:SpecLock 2026-08-09-20:34:
     updateTaskImpl owns the planning lifecycle fence for every authoritative plan mutation. Keep
@@ -2725,6 +2867,23 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   async transitionQueuedEpisode(id: string, transition: QueuedEpisodeTransition): Promise<import("./task-store/audit-ops.js").QueuedEpisodeTransitionResult> {
     return transitionQueuedEpisodeImpl(this, id, transition);
   }
+  /*
+  FNXC:Identity 2026-08-09-03:04 (U18/KTD2 — the staged required mutation context):
+  The FIRST overload is canonical: the mutation context is REQUIRED, so a call site that cannot say
+  who is acting is a compile error rather than a silent unattributed write. The SECOND overload is a
+  STAGING DEVICE and is deprecated on purpose. A method signature is one artifact shared by every
+  consumer, so flipping the parameter to required in a single commit would invalidate every call site
+  in `@fusion/engine`, `@fusion/dashboard`, and `@runfusion/fusion` at once and nothing would compile.
+  Callers convert package by package against the deprecated arity; U18's final commit DELETES the
+  deprecated overload, and only then is the requirement enforced by the compiler.
+  Do not add new callers of the deprecated overload, and do not "fix" a converted call site by
+  dropping back to it. Where no authenticated actor exists yet, pass the unattributed marker defined
+  in `identity/actor.ts` so the debt is greppable and counted - never the bootstrap context, which
+  would read as real attribution.
+  */
+  logEntry(id: string, action: string, outcome: string | undefined, runContext: RunMutationContext): Promise<Task>;
+  /** @deprecated U18 staging overload - pass a `RunMutationContext`. Deleted in U18's final commit; the log row persists with no `runContext` at all. */
+  logEntry(id: string, action: string, outcome?: string, runContext?: RunMutationContext): Promise<Task>;
   async logEntry(id: string, action: string, outcome?: string, runContext?: RunMutationContext): Promise<Task> {
     return logEntryImpl(this, id, action, outcome, runContext);
   }
@@ -3216,7 +3375,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         return { overlapBlockedBy: currentOverlapBlocker, status: "queued" };
       });
       if (skipped) return skipped;
-      await this.logEntry(id, `Repaired stale overlap blocker: rerouted from ${previousOverlapBlockedBy} to ${currentOverlapBlocker}${options.reason ? ` — ${options.reason}` : ""}`);
+      await this.logEntry(id, `Repaired stale overlap blocker: rerouted from ${previousOverlapBlockedBy} to ${currentOverlapBlocker}${options.reason ? ` — ${options.reason}` : ""}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
       return {
         taskId: id,
         dryRun,
@@ -3265,6 +3424,9 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     await this.logEntry(
       id,
       `Repaired stale overlap blocker: cleared ${previousOverlapBlockedBy}; statusCleared=${statusCleared}${unresolvedDeps.length > 0 ? `; dependency blocker remains ${unresolvedDeps[0]}` : ""}${options.reason ? ` — ${options.reason}` : ""}`,
+      undefined,
+      // FNXC:Identity 2026-08-09-03:04 (U18): operator/engine repair entry point; actor arrives with U9/U13.
+      UNATTRIBUTED_MUTATION_CONTEXT,
     );
 
     return {
@@ -3370,7 +3532,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   /**
    * FNXC:RuntimeLifecycleAsync 2026-06-24-12:05:
    */
-  public async deleteTaskBackend( id: string, options?: { removeDependencyReferences?: boolean; removeLineageReferences?: boolean; allowResurrection?: boolean; githubIssueAction?: GithubIssueAction; auditContext?: TaskDeleteAuditContext; }, ): Promise<Task> {
+  public async deleteTaskBackend( id: string, options?: DeleteTaskOptions & { runContext?: RunMutationContext }, ): Promise<Task> {
     return deleteTaskBackendImpl(this, id, options);
   }
 
@@ -3381,10 +3543,27 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
    */
   public async recordRunAuditEventBackend( tx: DbTransaction, event: { domain: string; mutationType: string; target: string; taskId: string; agentId: string; runId: string; metadata: Record<string, unknown>; }, ): Promise<void> {    return recordRunAuditEventBackendImpl(this, tx, event);
   }
-  async deleteTask( id: string, options?: { removeDependencyReferences?: boolean; removeLineageReferences?: boolean; allowResurrection?: boolean; githubIssueAction?: GithubIssueAction; auditContext?: TaskDeleteAuditContext; }, ): Promise<Task> {
+  /*
+  FNXC:Identity 2026-08-09-03:04 (U18/KTD2 — the staged required mutation context):
+  The FIRST overload is canonical: the mutation context is REQUIRED, so a call site that cannot say
+  who is acting is a compile error rather than a silent unattributed write. The SECOND overload is a
+  STAGING DEVICE and is deprecated on purpose. A method signature is one artifact shared by every
+  consumer, so flipping the parameter to required in a single commit would invalidate every call site
+  in `@fusion/engine`, `@fusion/dashboard`, and `@runfusion/fusion` at once and nothing would compile.
+  Callers convert package by package against the deprecated arity; U18's final commit DELETES the
+  deprecated overload, and only then is the requirement enforced by the compiler.
+  Do not add new callers of the deprecated overload, and do not "fix" a converted call site by
+  dropping back to it. Where no authenticated actor exists yet, pass the unattributed marker defined
+  in `identity/actor.ts` so the debt is greppable and counted - never the bootstrap context, which
+  would read as real attribution.
+  */
+  deleteTask(id: string, options: DeleteTaskOptions | undefined, runContext: RunMutationContext): Promise<Task>;
+  /** @deprecated U18 staging overload - pass a `RunMutationContext`. Deleted in U18's final commit; the task:deleted audit row falls back to a synthetic system agent id without it. */
+  deleteTask(id: string, options?: DeleteTaskOptions): Promise<Task>;
+  async deleteTask(id: string, options?: DeleteTaskOptions, runContext?: RunMutationContext): Promise<Task> {
     // FNXC:TaskWedgeNotifications 2026-08-10-20:30: The backend delete transaction clears
     // a terminal-failure budget only after it wins the soft-delete claim; never pre-clear here.
-    return deleteTaskImpl(this, id, options);
+    return deleteTaskImpl(this, id, runContext ? { ...options, runContext } : options);
   }
   async deleteTaskIf(
     id: string,
@@ -3457,8 +3636,11 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   public async readPreArchiveColumnFromTaskFile(dir: string): Promise<Column | undefined> {
     return readPreArchiveColumnFromTaskFileImpl(this, dir);
   }
-  async unarchiveTask(id: string): Promise<Task> {
-    return unarchiveTaskImpl(this, id);
+  unarchiveTask(id: string, runContext: RunMutationContext): Promise<Task>;
+  /** @deprecated U18 staging overload - pass a `RunMutationContext`. Deleted in U18's final commit; unarchive log rows otherwise persist unattributed. */
+  unarchiveTask(id: string, runContext?: RunMutationContext): Promise<Task>;
+  async unarchiveTask(id: string, runContext?: RunMutationContext): Promise<Task> {
+    return unarchiveTaskImpl(this, id, runContext);
   }
   public async moveToDone(task: Task, dir: string): Promise<void> {
     return moveToDoneImpl(this, task, dir);
@@ -3540,7 +3722,24 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   async deleteTaskComment(id: string, commentId: string): Promise<Task> {
     return deleteTaskCommentImpl(this, id, commentId);
   }
-  async addComment( id: string, text: string, author: string = "user", options?: { skipRefinement?: boolean; source?: "user" | "agent" | "github-review" | "github-review-comment"; externalId?: string; reviewState?: "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED"; }, runContext?: RunMutationContext, ): Promise<Task> {
+  /*
+  FNXC:Identity 2026-08-09-03:04 (U18/KTD2 — the staged required mutation context):
+  The FIRST overload is canonical: the mutation context is REQUIRED, so a call site that cannot say
+  who is acting is a compile error rather than a silent unattributed write. The SECOND overload is a
+  STAGING DEVICE and is deprecated on purpose. A method signature is one artifact shared by every
+  consumer, so flipping the parameter to required in a single commit would invalidate every call site
+  in `@fusion/engine`, `@fusion/dashboard`, and `@runfusion/fusion` at once and nothing would compile.
+  Callers convert package by package against the deprecated arity; U18's final commit DELETES the
+  deprecated overload, and only then is the requirement enforced by the compiler.
+  Do not add new callers of the deprecated overload, and do not "fix" a converted call site by
+  dropping back to it. Where no authenticated actor exists yet, pass the unattributed marker defined
+  in `identity/actor.ts` so the debt is greppable and counted - never the bootstrap context, which
+  would read as real attribution.
+  */
+  addComment(id: string, text: string, author: string | undefined, options: AddCommentOptions | undefined, runContext: RunMutationContext): Promise<Task>;
+  /** @deprecated U18 staging overload - pass a `RunMutationContext`. Deleted in U18's final commit; the comment log row persists with no `runContext`. */
+  addComment(id: string, text: string, author?: string, options?: AddCommentOptions, runContext?: RunMutationContext): Promise<Task>;
+  async addComment(id: string, text: string, author: string = "user", options?: AddCommentOptions, runContext?: RunMutationContext): Promise<Task> {
     return addCommentImpl(this, id, text, author, options, runContext);
   }
   public hasActiveTask(taskId: string): boolean {

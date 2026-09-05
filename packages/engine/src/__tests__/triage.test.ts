@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { ANY_MUTATION_CONTEXT, UNATTRIBUTED_CONTEXT_MATCHER } from "./mutation-context-matchers.js";
 import type { Agent, TaskStore, Task, TaskDetail, Settings } from "@fusion/core";
 import { applyOriginalDescription, builtinSeamPrompt, buildBootstrapPrompt, computePlanApprovalFingerprint, deriveFallbackTaskTitle, MAX_TASK_LIST_TEXT_CHARS, renderTriagePolicyPlaceholders, resolveAgentPrompt } from "@fusion/core";
 import {
@@ -1752,7 +1753,7 @@ Planner rewrote mission without the raw request.
         status: null,
         recoveryRetryCount: 1,
         nextRecoveryAt: expect.any(String),
-      }));
+      }), ANY_MUTATION_CONTEXT);
       expect(localStore.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
         mutationType: "task:required-artifact-missing",
         metadata: expect.objectContaining({ source: "planning-release", action: "replan" }),
@@ -2097,7 +2098,7 @@ Planner rewrote mission without the raw request.
         "FN-PLANNER-UNDEFINED",
       ]);
       for (const task of tasks) {
-        expect(triageStore.updateTask).toHaveBeenCalledWith(task.id, { status: "planning" });
+        expect(triageStore.updateTask).toHaveBeenCalledWith(task.id, { status: "planning" }, ANY_MUTATION_CONTEXT);
       }
     });
   });
@@ -2581,7 +2582,7 @@ describe("requirePlanApproval setting", () => {
       planApprovalMode: "require-all",
     } as Settings);
 
-    expect(store.updateTask).toHaveBeenCalledWith("FN-APPROVAL", expect.objectContaining({ status: "awaiting-approval" }));
+    expect(store.updateTask).toHaveBeenCalledWith("FN-APPROVAL", expect.objectContaining({ status: "awaiting-approval" }), ANY_MUTATION_CONTEXT);
     expect(store.moveTask).not.toHaveBeenCalled();
   });
 
@@ -2685,8 +2686,7 @@ describe("requirePlanApproval setting", () => {
       expect(store.updateTask).not.toHaveBeenCalledWith("FN-IDEMPOTENT", expect.objectContaining({ status: "awaiting-approval" }));
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-IDEMPOTENT",
-        "Plan unchanged since prior approval — proceeding without re-approval",
-      );
+        "Plan unchanged since prior approval — proceeding without re-approval", undefined, ANY_MUTATION_CONTEXT);
     });
 
     it("re-specifying a CHANGED plan after prior approval still re-asks for approval", async () => {
@@ -2709,7 +2709,7 @@ describe("requirePlanApproval setting", () => {
         { requirePlanApproval: true, planApprovalMode: "require-all" } as Settings,
       );
 
-      expect(store.updateTask).toHaveBeenCalledWith("FN-IDEMPOTENT-CHANGED", expect.objectContaining({ status: "awaiting-approval", awaitingApprovalReason: null }));
+      expect(store.updateTask).toHaveBeenCalledWith("FN-IDEMPOTENT-CHANGED", expect.objectContaining({ status: "awaiting-approval", awaitingApprovalReason: null }), ANY_MUTATION_CONTEXT);
       expect(store.moveTask).not.toHaveBeenCalled();
     });
 
@@ -2811,7 +2811,7 @@ describe("requirePlanApproval setting", () => {
         { requirePlanApproval: true, planApprovalMode: "require-all" } as Settings,
       );
 
-      expect(store.updateTask).toHaveBeenCalledWith("FN-LEGACY-FP-CHANGED", expect.objectContaining({ status: "awaiting-approval" }));
+      expect(store.updateTask).toHaveBeenCalledWith("FN-LEGACY-FP-CHANGED", expect.objectContaining({ status: "awaiting-approval" }), ANY_MUTATION_CONTEXT);
       expect(store.moveTask).not.toHaveBeenCalled();
       expect(store.updateTask).not.toHaveBeenCalledWith("FN-LEGACY-FP-CHANGED", expect.objectContaining({ approvedPlanFingerprint: expect.anything() }));
     });
@@ -2894,7 +2894,7 @@ describe("requirePlanApproval setting", () => {
         { requirePlanApproval: true, planApprovalMode: "require-all" } as Settings,
       );
 
-      expect(store.updateTask).toHaveBeenCalledWith("FN-NEVER-APPROVED", expect.objectContaining({ status: "awaiting-approval" }));
+      expect(store.updateTask).toHaveBeenCalledWith("FN-NEVER-APPROVED", expect.objectContaining({ status: "awaiting-approval" }), ANY_MUTATION_CONTEXT);
       expect(store.moveTask).not.toHaveBeenCalled();
     });
 
@@ -2917,7 +2917,7 @@ describe("requirePlanApproval setting", () => {
         { requirePlanApproval: true, planApprovalMode: "require-all" } as Settings,
       );
 
-      expect(store.updateTask).toHaveBeenCalledWith("FN-REJECTED-THEN-RESPECIFIED", expect.objectContaining({ status: "awaiting-approval" }));
+      expect(store.updateTask).toHaveBeenCalledWith("FN-REJECTED-THEN-RESPECIFIED", expect.objectContaining({ status: "awaiting-approval" }), ANY_MUTATION_CONTEXT);
       expect(store.moveTask).not.toHaveBeenCalled();
     });
 
@@ -3033,7 +3033,7 @@ describe("requirePlanApproval setting", () => {
     } as Settings);
 
     if (expectedApproval) {
-      expect(store.updateTask).toHaveBeenCalledWith("FN-APPROVAL", expect.objectContaining({ status: "awaiting-approval" }));
+      expect(store.updateTask).toHaveBeenCalledWith("FN-APPROVAL", expect.objectContaining({ status: "awaiting-approval" }), ANY_MUTATION_CONTEXT);
       expect(store.moveTask).not.toHaveBeenCalled();
     } else {
       expect(store.moveTask).toHaveBeenCalledWith("FN-APPROVAL", "todo");
@@ -3075,8 +3075,7 @@ describe("specified triage recovery", () => {
 
     expect(recovered).toBe(true);
     expect(store.updateTask).toHaveBeenCalledWith(
-      "FN-001", expect.objectContaining({ status: "awaiting-approval" }),
-    );
+      "FN-001", expect.objectContaining({ status: "awaiting-approval" }), ANY_MUTATION_CONTEXT);
     expect(store.moveTask).not.toHaveBeenCalled();
   });
 
@@ -3116,14 +3115,13 @@ describe("specified triage recovery", () => {
       dependencies: ["FN-1247"],
       size: "M",
       noCommitsExpected: true,
-    });
+    }, ANY_MUTATION_CONTEXT);
     expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo");
     // FNXC:TriageStuckKill 2026-07-18-21:05: terminal status clear after release move (FN-1312).
-    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: null, error: null });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: null, error: null }, ANY_MUTATION_CONTEXT);
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-001",
-      "Auto-recovered specified task stuck in planning — moved to todo",
-    );
+      "Auto-recovered specified task stuck in planning — moved to todo", undefined, ANY_MUTATION_CONTEXT);
   });
 
   it("does not recover a prose-only partial planning draft into execution", async () => {
@@ -3162,8 +3160,7 @@ describe("specified triage recovery", () => {
     expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "todo");
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-001",
-      "Planning recovery withheld: PROMPT.md has no executable steps and does not declare no commits expected",
-    );
+      "Planning recovery withheld: PROMPT.md has no executable steps and does not declare no commits expected", undefined, ANY_MUTATION_CONTEXT);
   });
 
   it("recovers a structured implementation plan without a no-commits marker", async () => {
@@ -3405,7 +3402,7 @@ describe("specified triage recovery", () => {
     );
 
     // Must not force needs-replan while the in-flight finalize owns the handoff.
-    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { stuckKillCount: 1 });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { stuckKillCount: 1 }, ANY_MUTATION_CONTEXT);
     expect(store.updateTask).not.toHaveBeenCalledWith(
       "FN-001",
       expect.objectContaining({ status: "needs-replan" }),
@@ -3462,7 +3459,7 @@ describe("specified triage recovery", () => {
       "catch",
     );
 
-    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { stuckKillCount: 1 });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { stuckKillCount: 1 }, ANY_MUTATION_CONTEXT);
     expect(store.updateTask).not.toHaveBeenCalledWith(
       "FN-001",
       expect.objectContaining({ status: "needs-replan" }),
@@ -3511,8 +3508,7 @@ describe("specified triage recovery", () => {
 
     expect(store.updateTask).toHaveBeenCalledWith(
       "FN-001",
-      expect.objectContaining({ status: "needs-replan", stuckKillCount: 1 }),
-    );
+      expect.objectContaining({ status: "needs-replan", stuckKillCount: 1 }), ANY_MUTATION_CONTEXT);
   });
 
   it("stamps source metadata from sanitized effective write scope during recovery", async () => {
@@ -3587,8 +3583,7 @@ Apply the scoped implementation changes.
             ],
           }),
         }),
-      }),
-    );
+      }), ANY_MUTATION_CONTEXT);
     const metadataPatch = (store.updateTask as ReturnType<typeof vi.fn>).mock.calls
       .map(([, patch]) => patch?.sourceMetadataPatch)
       .find(Boolean);
@@ -3682,8 +3677,7 @@ Apply the scoped implementation changes.
     expect(recovered).toBe(true);
     expect(store.updateTask).toHaveBeenCalledWith(
       "FN-001",
-      expect.objectContaining({ title: "Experimental AI Agent Onboarding Flow" }),
-    );
+      expect.objectContaining({ title: "Experimental AI Agent Onboarding Flow" }), ANY_MUTATION_CONTEXT);
   });
 
   it("does not overwrite title when heading task ID does not match", async () => {
@@ -3721,8 +3715,7 @@ Apply the scoped implementation changes.
     expect(recovered).toBe(true);
     expect(store.updateTask).toHaveBeenCalledWith(
       "FN-001",
-      expect.not.objectContaining({ title: expect.any(String) }),
-    );
+      expect.not.objectContaining({ title: expect.any(String) }), ANY_MUTATION_CONTEXT);
   });
 
   it("includes decision-only noCommitsExpected heuristic instructions in system prompts", () => {
@@ -3815,7 +3808,7 @@ Apply the scoped implementation changes.
     expect(store.updateTask).toHaveBeenCalledWith("FN-001", expect.objectContaining({
       status: null,
       error: null,
-    }));
+    }), ANY_MUTATION_CONTEXT);
     expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo");
   });
 
@@ -3857,8 +3850,7 @@ Apply the scoped implementation changes.
     expect(store.updateTask).not.toHaveBeenCalledWith("FN-001", expect.objectContaining({ status: "awaiting-approval" }));
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-001",
-      "Auto-recovered specified task stuck in planning — moved to todo",
-    );
+      "Auto-recovered specified task stuck in planning — moved to todo", undefined, ANY_MUTATION_CONTEXT);
   });
 
   it("moves approved planning task to awaiting-approval when manual approval is required", async () => {
@@ -3900,11 +3892,10 @@ Apply the scoped implementation changes.
     expect(store.updateTask).toHaveBeenCalledWith("FN-001", {
       status: "awaiting-approval",
       awaitingApprovalReason: null,
-    });
+    }, ANY_MUTATION_CONTEXT);
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-001",
-      "Auto-recovered specified task stuck in planning — awaiting manual approval",
-    );
+      "Auto-recovered specified task stuck in planning — awaiting manual approval", undefined, ANY_MUTATION_CONTEXT);
   });
 });
 
@@ -4068,11 +4059,10 @@ describe("taskCreate tool model inheritance", () => {
         error: null,
         recoveryRetryCount: 1,
         nextRecoveryAt: expect.any(String),
-      }));
+      }), ANY_MUTATION_CONTEXT);
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-202",
-        expect.stringContaining("Generated plan failed deterministic validation (PROMPT.md file not found or empty)"),
-      );
+        expect.stringContaining("Generated plan failed deterministic validation (PROMPT.md file not found or empty)"), undefined, ANY_MUTATION_CONTEXT);
     });
 
     /*
@@ -4117,7 +4107,7 @@ describe("taskCreate tool model inheritance", () => {
           status: null,
           recoveryRetryCount: 1,
           nextRecoveryAt: expect.any(String),
-        }));
+        }), ANY_MUTATION_CONTEXT);
         expect(onSpecifyComplete).not.toHaveBeenCalled();
       } finally {
         await cleanupTriageFixtureRoot(root);
@@ -4159,7 +4149,7 @@ describe("taskCreate tool model inheritance", () => {
         expect(store.updateTask).toHaveBeenCalledWith(task.id, expect.objectContaining({
           status: null,
           recoveryRetryCount: 1,
-        }));
+        }), ANY_MUTATION_CONTEXT);
         expect(onSpecifyComplete).not.toHaveBeenCalled();
       } finally {
         await cleanupTriageFixtureRoot(root);
@@ -4186,7 +4176,7 @@ describe("taskCreate tool model inheritance", () => {
           status: null,
           recoveryRetryCount: 1,
           nextRecoveryAt: expect.any(String),
-        }));
+        }), ANY_MUTATION_CONTEXT);
         expect(onSpecifyComplete).not.toHaveBeenCalled();
       } finally {
         await cleanupTriageFixtureRoot(root);
@@ -4244,7 +4234,7 @@ describe("taskCreate tool model inheritance", () => {
         expect(store.updateTask).toHaveBeenCalledWith(task.id, expect.objectContaining({
           status: null,
           recoveryRetryCount: 1,
-        }));
+        }), ANY_MUTATION_CONTEXT);
         expect(onSpecifyComplete).not.toHaveBeenCalled();
         expect(store.appendAgentLog).toHaveBeenCalledWith(task.id, expect.stringContaining("[fallback] triage"), "status", undefined, "triage");
       } finally {
@@ -4329,8 +4319,8 @@ describe("taskCreate tool model inheritance", () => {
           status: null,
           recoveryRetryCount: 1,
           nextRecoveryAt: expect.any(String),
-        }));
-        expect(store.logEntry).toHaveBeenCalledWith(task.id, expect.stringContaining("did not provide a fallback-dispatch settlement boundary"));
+        }), ANY_MUTATION_CONTEXT);
+        expect(store.logEntry).toHaveBeenCalledWith(task.id, expect.stringContaining("did not provide a fallback-dispatch settlement boundary"), undefined, ANY_MUTATION_CONTEXT);
         expect(onSpecifyComplete).not.toHaveBeenCalled();
         await delay(0);
         expect(store.appendAgentLog).toHaveBeenCalledWith(task.id, expect.stringContaining("[fallback] triage"), "status", undefined, "triage");
@@ -4417,7 +4407,7 @@ describe("taskCreate tool model inheritance", () => {
         expect(store.updateTask).toHaveBeenCalledWith(task.id, expect.objectContaining({
           recoveryRetryCount: null,
           nextRecoveryAt: null,
-        }));
+        }), ANY_MUTATION_CONTEXT);
       } finally {
         await cleanupTriageFixtureRoot(root);
       }
@@ -4509,7 +4499,7 @@ describe("taskCreate tool model inheritance", () => {
           expect(store.updateTask).toHaveBeenCalledWith(taskId, expect.objectContaining({
             recoveryRetryCount: recoveryRetryCount + 1,
             nextRecoveryAt: expect.any(String),
-          }));
+          }), ANY_MUTATION_CONTEXT);
         }
         expect(store.updateTask).not.toHaveBeenCalledWith(taskId, expect.objectContaining({
           recoveryRetryCount: 0,
@@ -4556,7 +4546,7 @@ describe("taskCreate tool model inheritance", () => {
           error: expect.stringContaining("Planner fallback engaged"),
           recoveryRetryCount: null,
           nextRecoveryAt: null,
-        }));
+        }), ANY_MUTATION_CONTEXT);
         expect(onSpecifyComplete).not.toHaveBeenCalled();
       } finally {
         await cleanupTriageFixtureRoot(root);
@@ -4592,7 +4582,7 @@ describe("taskCreate tool model inheritance", () => {
       expect(store.updateTask).toHaveBeenCalledWith("FN-200", expect.objectContaining({
         recoveryRetryCount: 1,
         nextRecoveryAt: expect.any(String),
-      }));
+      }), ANY_MUTATION_CONTEXT);
     });
 
     it("persists terminal planning error when prompt-time primary and fallback models are exhausted", async () => {
@@ -4653,8 +4643,7 @@ describe("taskCreate tool model inheritance", () => {
 
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-7437",
-        "Planning using model: mock-model (thinking effort: low)",
-      );
+        "Planning using model: mock-model (thinking effort: low)", undefined, ANY_MUTATION_CONTEXT);
       expect(store.appendAgentLog).toHaveBeenCalledWith(
         "FN-7437",
         "Planning using model: mock-model (thinking effort: low)",
@@ -4664,14 +4653,13 @@ describe("taskCreate tool model inheritance", () => {
       );
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-7437",
-        expect.stringContaining("Triage failed: unable to select a usable model after 2 attempts"),
-      );
+        expect.stringContaining("Triage failed: unable to select a usable model after 2 attempts"), undefined, ANY_MUTATION_CONTEXT);
       expect(store.updateTask).toHaveBeenCalledWith("FN-7437", expect.objectContaining({
         status: "failed",
         error: expect.stringContaining("openai/gpt-4o"),
         recoveryRetryCount: null,
         nextRecoveryAt: null,
-      }));
+      }), ANY_MUTATION_CONTEXT);
       expect(store.updateTask).not.toHaveBeenCalledWith("FN-7437", expect.objectContaining({
         status: null,
         error: null,
@@ -4720,7 +4708,7 @@ describe("taskCreate tool model inheritance", () => {
       expect(store.updateTask).toHaveBeenCalledWith("FN-7437-STATE", expect.objectContaining({
         status: "failed",
         error: expect.stringContaining("fallback session state error: 403 forbidden"),
-      }));
+      }), ANY_MUTATION_CONTEXT);
     });
 
     describe("implicit planning fallback (FN-7719)", () => {
@@ -4852,7 +4840,7 @@ describe("taskCreate tool model inheritance", () => {
           status: "failed",
           recoveryRetryCount: null,
           nextRecoveryAt: null,
-        }));
+        }), ANY_MUTATION_CONTEXT);
         expect(onSpecifyError).toHaveBeenCalledTimes(1);
       });
 
@@ -5004,7 +4992,7 @@ describe("taskCreate tool model inheritance", () => {
         steps: [{ id: "implementation", status: "in-progress" }],
       });
       expect(store.updateTask).toHaveBeenCalledTimes(1);
-      expect(store.updateTask).toHaveBeenCalledWith("FN-7977-ADVANCED", { status: "planning" });
+      expect(store.updateTask).toHaveBeenCalledWith("FN-7977-ADVANCED", { status: "planning" }, ANY_MUTATION_CONTEXT);
     });
 
     it("keeps advanced worktree and steps after model fallback exhaustion", async () => {
@@ -5039,10 +5027,10 @@ describe("taskCreate tool model inheritance", () => {
       await new TriageProcessor(store, "/test/root", { pollIntervalMs: 100_000 }).specifyTask(task);
 
       expect(liveTask).toMatchObject({ column: "in-review", status: "reviewing", worktree: "/tmp/FN-7977-MODEL", steps: [{ id: "1" }] });
-      expect(store.updateTask).toHaveBeenCalledWith(task.id, { status: "planning" });
+      expect(store.updateTask).toHaveBeenCalledWith(task.id, { status: "planning" }, ANY_MUTATION_CONTEXT);
       expect(store.updateTask).toHaveBeenCalledWith(task.id, {
         planningStartedAt: expect.any(String),
-      });
+      }, ANY_MUTATION_CONTEXT);
     });
 
     it("keeps advanced worktree and steps after deterministic validation recovery", async () => {
@@ -5072,10 +5060,10 @@ describe("taskCreate tool model inheritance", () => {
       await new TriageProcessor(store, "/test/root", { pollIntervalMs: 100_000 }).specifyTask(task);
 
       expect(liveTask).toMatchObject({ column: "in-progress", status: "executing", worktree: "/tmp/FN-7977-VALIDATION", steps: [{ id: "1" }] });
-      expect(store.updateTask).toHaveBeenCalledWith(task.id, { status: "planning" });
+      expect(store.updateTask).toHaveBeenCalledWith(task.id, { status: "planning" }, ANY_MUTATION_CONTEXT);
       expect(store.updateTask).toHaveBeenCalledWith(task.id, {
         planningStartedAt: expect.any(String),
-      });
+      }, ANY_MUTATION_CONTEXT);
     });
 
     it("escalates to error state when triage retries are exhausted via specifyTask", async () => {
@@ -5111,7 +5099,7 @@ describe("taskCreate tool model inheritance", () => {
         error: expect.stringContaining("Specification failed after 3 transient errors"),
         recoveryRetryCount: null,
         nextRecoveryAt: null,
-      }));
+      }), ANY_MUTATION_CONTEXT);
       expect(onSpecifyError).toHaveBeenCalled();
     });
 
@@ -5141,7 +5129,7 @@ describe("taskCreate tool model inheritance", () => {
         error: "Specification failed: No API key for provider: anthropic",
         recoveryRetryCount: null,
         nextRecoveryAt: null,
-      }));
+      }), ANY_MUTATION_CONTEXT);
       expect(store.updateTask).not.toHaveBeenCalledWith("FN-7952", expect.objectContaining({ status: null }));
     });
 
@@ -5170,7 +5158,7 @@ describe("taskCreate tool model inheritance", () => {
         status: null,
         recoveryRetryCount: 1,
         nextRecoveryAt: expect.any(String),
-      }));
+      }), ANY_MUTATION_CONTEXT);
       expect(store.updateTask).not.toHaveBeenCalledWith("FN-7952-TRANSIENT", expect.objectContaining({ status: "failed" }));
       expect(store.updateTask).not.toHaveBeenCalledWith("FN-7952-TRANSIENT", expect.objectContaining({
         title: expect.any(String),
@@ -5217,7 +5205,7 @@ describe("taskCreate tool model inheritance", () => {
         error: null,
         recoveryRetryCount: 2,
         nextRecoveryAt: expect.any(String),
-      }));
+      }), ANY_MUTATION_CONTEXT);
       expect(store.updateTask).not.toHaveBeenCalledWith("FN-8155-DETERMINISTIC-RETRY", expect.objectContaining({ status: "failed" }));
       expect(store.updateTask).not.toHaveBeenCalledWith("FN-8155-DETERMINISTIC-RETRY", expect.objectContaining({
         title: expect.any(String),
@@ -5251,7 +5239,7 @@ describe("taskCreate tool model inheritance", () => {
         status: null,
         recoveryRetryCount: 2,
         nextRecoveryAt: expect.any(String),
-      }));
+      }), ANY_MUTATION_CONTEXT);
       expect(store.updateTask).not.toHaveBeenCalledWith("FN-8155-TRANSIENT-RETRY", expect.objectContaining({ status: "failed" }));
       expect(store.updateTask).not.toHaveBeenCalledWith("FN-8155-TRANSIENT-RETRY", expect.objectContaining({
         title: expect.any(String),
@@ -5294,10 +5282,10 @@ describe("taskCreate tool model inheritance", () => {
         error: expectedError,
         recoveryRetryCount: null,
         nextRecoveryAt: null,
-      });
+      }, ANY_MUTATION_CONTEXT);
       expect(store.updateTask).toHaveBeenCalledWith("FN-7961-DETERMINISTIC", {
         title: "Backfill blank titles after deterministic prompt",
-      });
+      }, ANY_MUTATION_CONTEXT);
     });
 
     it("backfills blank titles when planner model fallback is exhausted", async () => {
@@ -5344,10 +5332,10 @@ describe("taskCreate tool model inheritance", () => {
         error: expect.stringContaining("Triage failed: unable to select a usable model after 2 attempts"),
         recoveryRetryCount: null,
         nextRecoveryAt: null,
-      }));
+      }), ANY_MUTATION_CONTEXT);
       expect(store.updateTask).toHaveBeenCalledWith("FN-7961-MODEL", {
         title: "Repair blank title rows after planner model fallback",
-      });
+      }, ANY_MUTATION_CONTEXT);
     });
 
     it("backfills blank titles when operator-actionable provider failures park planning", async () => {
@@ -5377,10 +5365,10 @@ describe("taskCreate tool model inheritance", () => {
         error: "Specification failed: No API key for provider: anthropic",
         recoveryRetryCount: null,
         nextRecoveryAt: null,
-      });
+      }, ANY_MUTATION_CONTEXT);
       expect(store.updateTask).toHaveBeenCalledWith("FN-7961-OPERATOR", {
         title: "Show failed tasks when provider credentials are unavailable",
-      });
+      }, ANY_MUTATION_CONTEXT);
     });
 
     it("backfills blank titles when transient retries are exhausted", async () => {
@@ -5410,10 +5398,10 @@ describe("taskCreate tool model inheritance", () => {
         error: "Specification failed after 3 transient errors: connection reset",
         recoveryRetryCount: null,
         nextRecoveryAt: null,
-      });
+      }, ANY_MUTATION_CONTEXT);
       expect(store.updateTask).toHaveBeenCalledWith("FN-7961-TRANSIENT", {
         title: "Identify failed rows after exhausted transient planning",
-      });
+      }, ANY_MUTATION_CONTEXT);
     });
 
     /*
@@ -5535,7 +5523,7 @@ describe("taskCreate tool model inheritance", () => {
         status: "failed",
         recoveryRetryCount: null,
         nextRecoveryAt: null,
-      }));
+      }), ANY_MUTATION_CONTEXT);
       expect(store.updateTask).not.toHaveBeenCalledWith("FN-7961-EXISTING", expect.objectContaining({
         title: expect.any(String),
       }));
@@ -5707,8 +5695,7 @@ describe("taskCreate tool model inheritance", () => {
       // Verify appendAgentLog was called with model and thinking effort info on the same triage row.
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-300",
-        "Planning using model: mock-model (thinking effort: high)",
-      );
+        "Planning using model: mock-model (thinking effort: high)", undefined, ANY_MUTATION_CONTEXT);
       expect(store.appendAgentLog).toHaveBeenCalledWith(
         "FN-300",
         "Planning using model: mock-model (thinking effort: high)",
@@ -7651,7 +7638,7 @@ describe("TriageProcessor.sweepStalePlanningStatuses", () => {
   it("clears a stale planning status so triage can re-pick the card", async () => {
     const store = createMockStore();
     await sweep(store, [createTriageTask({ id: "FN-8596", status: "planning", updatedAt: STALE })]);
-    expect(store.updateTask).toHaveBeenCalledWith("FN-8596", { status: null });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-8596", { status: null }, ANY_MUTATION_CONTEXT);
   });
 
   /*
@@ -7684,7 +7671,7 @@ describe("TriageProcessor.sweepStalePlanningStatuses", () => {
 
     await sweep(store, [createTriageTask({ id: "FN-RENAMED", column: "drafting" as never, status: "planning", updatedAt: STALE })]);
 
-    expect(store.updateTask).toHaveBeenCalledWith("FN-RENAMED", { status: null });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-RENAMED", { status: null }, ANY_MUTATION_CONTEXT);
   });
 
   it("does not touch a card whose planner is live in this process", async () => {

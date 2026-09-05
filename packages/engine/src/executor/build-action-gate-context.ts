@@ -1,3 +1,15 @@
+import type { Agent, AgentStore, MessageStore, TaskStore, RunMutationContext } from "@fusion/core";
+import {
+  AWAITING_APPROVAL_PAUSE_REASON,
+  ApprovalRequestStore,
+  isEphemeralAgent,
+  resolveEffectiveAgentPermissionPolicy,
+  resolveWorkflowIrForTask } from "@fusion/core";
+import type { AgentActionGateContext } from "../agents/agent-action-gate.js";
+import { emitApprovalMail } from "../agents/approval-mail.js";
+import { isCurrentReviewerNodeOverride } from "../agents/workflow-agent-router.js";
+import { executorLog } from "../logger.js";
+import type { ActiveWorkflowAuthority } from "./workflow-principal-before-node.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-09:55:
  * buildActionGateContext peeled from TaskExecutor (U4).
@@ -30,24 +42,11 @@
  * FNXC:ApprovalRedemption 2026-07-26-14:35:
  * ownership guard — an agent must not be able to burn another agent's approval by id.
  */
-import type { Agent, AgentStore, MessageStore, TaskStore } from "@fusion/core";
-import {
-  AWAITING_APPROVAL_PAUSE_REASON,
-  ApprovalRequestStore,
-  isEphemeralAgent,
-  resolveEffectiveAgentPermissionPolicy,
-  resolveWorkflowIrForTask,
-} from "@fusion/core";
-import type { AgentActionGateContext } from "../agents/agent-action-gate.js";
-import { emitApprovalMail } from "../agents/approval-mail.js";
-import { isCurrentReviewerNodeOverride } from "../agents/workflow-agent-router.js";
-import { executorLog } from "../logger.js";
-import type { EngineRunContext } from "../util/run-audit.js";
-import type { ActiveWorkflowAuthority } from "./workflow-principal-before-node.js";
 
 export type BuildActionGateContextDeps = {
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   approvalSuspended: Set<string>;
   awaitAbortInFlightTaskWork: (taskId: string, reason: string) => Promise<void>;
   agentStore?: AgentStore | null;
@@ -173,7 +172,12 @@ export function buildActionGateContext(
       if (taskId) {
         deps.approvalSuspended.add(taskId);
         try {
-          await deps.store.pauseTask(taskId, true, deps.getRunContextFor(taskId), { pausedByAgentId: actorId, pausedReason: AWAITING_APPROVAL_PAUSE_REASON });
+          /*
+          FNXC:Identity 2026-08-24-02:18:
+          Approval-pause mutations and the matching logEntry use `runContextFor` so the hold is
+          attributed to the agent that requested the gated action.
+          */
+          await deps.store.pauseTask(taskId, true, deps.runContextFor(taskId), { pausedByAgentId: actorId, pausedReason: AWAITING_APPROVAL_PAUSE_REASON });
         } catch (error) {
           deps.approvalSuspended.delete(taskId);
           throw error;
@@ -182,7 +186,7 @@ export function buildActionGateContext(
           taskId,
           `Approval required for ${decision.toolName}. Request ${approvalRequestId} created; task and agent paused awaiting decision.`,
           undefined,
-          deps.getRunContextFor(taskId),
+          deps.runContextFor(taskId),
         );
         void deps.awaitAbortInFlightTaskWork(taskId, `awaiting-approval:${decision.toolName}`).catch((error) => {
           executorLog.warn(`${taskId}: failed to suspend in-flight session while awaiting approval: ${error instanceof Error ? error.message : String(error)}`);

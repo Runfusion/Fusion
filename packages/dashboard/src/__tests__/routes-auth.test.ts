@@ -1,5 +1,6 @@
 // @vitest-environment node
 
+import { UNATTRIBUTED_CONTEXT_MATCHER } from "./mutation-context-matchers.js";
 import { describe, it, expect, vi, beforeAll, beforeEach, afterAll, afterEach } from "vitest";
 import express from "express";
 import http from "node:http";
@@ -5180,7 +5181,7 @@ describe("Pause/Unpause endpoints", () => {
       expect(pushSpy).not.toHaveBeenCalledWith(["push", "-u", "origin", "fusion/fn-001"], expect.anything(), expect.anything());
       expect(store.updatePrInfo).toHaveBeenCalledWith("FN-001", expect.objectContaining({ number: 77, manual: true }));
       expect(res.body).toEqual(expect.objectContaining({ number: 77, manual: true }));
-      expect(store.logEntry).toHaveBeenCalledWith("FN-001", "Linked existing PR", "PR #77: https://github.com/owner/repo/pull/77");
+      expect(store.logEntry).toHaveBeenCalledWith("FN-001", "Linked existing PR", "PR #77: https://github.com/owner/repo/pull/77", UNATTRIBUTED_CONTEXT_MATCHER);
 
       if (originalEnv) process.env.GITHUB_REPOSITORY = originalEnv;
       else delete process.env.GITHUB_REPOSITORY;
@@ -5239,7 +5240,7 @@ describe("Pause/Unpause endpoints", () => {
       expect(createSpy).toHaveBeenCalledWith(expect.objectContaining({ head: "fusion/fn-001" }));
       expect(store.updatePrInfo).toHaveBeenCalledWith("FN-001", expect.objectContaining({ number: 42, manual: true }));
       expect(res.body).toEqual(expect.objectContaining({ number: 42, manual: true }));
-      expect(store.logEntry).toHaveBeenCalledWith("FN-001", "Created PR", "PR #42: https://github.com/owner/repo/pull/42");
+      expect(store.logEntry).toHaveBeenCalledWith("FN-001", "Created PR", "PR #42: https://github.com/owner/repo/pull/42", UNATTRIBUTED_CONTEXT_MATCHER);
 
       if (originalEnv) process.env.GITHUB_REPOSITORY = originalEnv;
       else delete process.env.GITHUB_REPOSITORY;

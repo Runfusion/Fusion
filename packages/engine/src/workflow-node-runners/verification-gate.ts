@@ -1,11 +1,12 @@
-import type { Settings, Task, TaskStore, WorkflowIrNode } from "@fusion/core";
+import type { Settings, Task, TaskStore, WorkflowIrNode, RunMutationContext } from "@fusion/core";
 import { runExecutorDeterministicVerification } from "../executor/deterministic-verification.js";
 import { truncateWithEllipsis } from "../execution/verification-utils.js";
-import type { EngineRunContext } from "../util/run-audit.js";
+import { runContextForTotal } from "../executor/run-context-for.js";
 
 export type DeterministicVerificationGateDeps = {
   store: TaskStore;
-  getRunContextFor?: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor?: (taskId: string) => RunMutationContext | undefined;
+  runContextFor?: (taskId: string, fallbackAgentId?: string | null) => RunMutationContext;
   runVerification?: typeof runExecutorDeterministicVerification;
 };
 
@@ -52,8 +53,13 @@ export async function runDeterministicVerificationGate(
   }
 
   const runVerification = deps.runVerification ?? runExecutorDeterministicVerification;
+  const getRunContextFor = deps.getRunContextFor ?? (() => undefined);
   const result = await runVerification(
-    { store: deps.store, getRunContextFor: deps.getRunContextFor ?? (() => undefined) },
+    {
+      store: deps.store,
+      getRunContextFor,
+      runContextFor: deps.runContextFor ?? ((taskId, fallbackAgentId) => runContextForTotal(getRunContextFor, taskId, fallbackAgentId)),
+    },
     task,
     worktreePath,
     settings,

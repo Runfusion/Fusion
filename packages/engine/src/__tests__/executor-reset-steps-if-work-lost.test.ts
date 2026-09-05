@@ -3,6 +3,8 @@ import "./executor-test-helpers.js";
 import { TaskExecutor } from "../executor.js";
 import type { Task } from "@fusion/core";
 import { createMockStore, mockedExecSync, resetExecutorMocks } from "./executor-test-helpers.js";
+/* FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage C): the executor threads a real mutation context to every store call, so these assertions pin it rather than dropping the argument. */
+import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 
 describe("TaskExecutor.resetStepsIfWorkLost", () => {
   beforeEach(() => {
@@ -56,7 +58,7 @@ describe("TaskExecutor.resetStepsIfWorkLost", () => {
     expect(task.currentStep).toBe(0);
     expect(store.logEntry).toHaveBeenCalledWith(
       task.id,
-      expect.stringContaining("currentStep"),
+      expect.stringContaining("currentStep"), undefined, ANY_MUTATION_CONTEXT,
     );
   });
 });

@@ -130,8 +130,10 @@ import {
   resolveTaskLifecycleColumns,
   isFusionDeletableBranch,
   classifyTaskBranchOrigin,
-  type WorkflowIr
+  type WorkflowIr,
+  toRunMutationContext,
 } from "@fusion/core";
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import { evaluateAutoMergeFactProviders } from "./merge/auto-merge-fact-providers.js";
 import { resolveMergePolicy } from "./merge/merge-trait.js";
 import { describeModel, promptWithFallback } from "./pi.js";
@@ -704,7 +706,7 @@ async function syncDependenciesForMerge(
     signal,
     context: "before merge verification",
     logger: mergerLog,
-    log: async (message) => { await store.logEntry(taskId, message); },
+    log: async (message) => { await store.logEntry(taskId, message, undefined, UNATTRIBUTED_MUTATION_CONTEXT); },
   });
 }
 
@@ -841,7 +843,7 @@ export async function runDeterministicVerification(
     */
     result.notRun = true;
     const message = "Deterministic merge verification not executed because no test or build command is configured — NOTHING WAS VERIFIED.";
-    await store.logEntry(taskId, message);
+    await store.logEntry(taskId, message, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
     await store.appendAgentLog(taskId, message, "status", undefined, "merger");
     return result;
   }
@@ -869,7 +871,7 @@ export async function runDeterministicVerification(
       const sha7 = treeSha.slice(0, 7);
       const msg = `Skipping deterministic verification — cached pass for tree ${sha7} (recorded at ${cacheHit.recordedAt}, by ${cacheHit.taskId ?? "unknown"})`;
       mergerLog.debug(`${taskId}: ${msg}`);
-      await store.logEntry(taskId, msg);
+      await store.logEntry(taskId, msg, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
       await store.appendAgentLog(taskId, msg, "status", undefined, "merger");
       const syntheticResult: VerificationCommandResult = {
         command: "",
@@ -900,7 +902,7 @@ export async function runDeterministicVerification(
     "Running deterministic merge verification" +
     (hasTestCommand ? ` (test${testSourceDisplayLabel}: ${normalizedTestCommand})` : "") +
     (hasBuildCommand ? ` (build${buildSource === "inferred" ? " [inferred]" : ""}: ${normalizedBuildCommand})` : "");
-  await store.logEntry(taskId, deterministicVerificationMessage);
+  await store.logEntry(taskId, deterministicVerificationMessage, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
   await store.appendAgentLog(taskId, deterministicVerificationMessage, "status", undefined, "merger");
 
   const bootstrapScriptPath = join(rootDir, "scripts/ensure-test-artifacts.mjs");
@@ -908,11 +910,11 @@ export async function runDeterministicVerification(
     if (!existsSync(bootstrapScriptPath)) {
       const bootstrapMissingMessage = `${taskId}: [verification:bootstrap] script missing at scripts/ensure-test-artifacts.mjs — skipping preamble`;
       mergerLog.warn(bootstrapMissingMessage);
-      await store.logEntry(taskId, bootstrapMissingMessage);
+      await store.logEntry(taskId, bootstrapMissingMessage, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
       await store.appendAgentLog(taskId, bootstrapMissingMessage, "status", undefined, "merger");
     } else {
       const bootstrapCommand = "node scripts/ensure-test-artifacts.mjs";
-      await store.logEntry(taskId, `[verification:bootstrap] running: ${bootstrapCommand}`);
+      await store.logEntry(taskId, `[verification:bootstrap] running: ${bootstrapCommand}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
       await store.appendAgentLog(taskId, "[verification:bootstrap] running bootstrap preamble", "tool", bootstrapCommand, "merger");
       try {
         throwIfAborted(signal, taskId);
@@ -923,7 +925,7 @@ export async function runDeterministicVerification(
           signal,
         });
         throwIfAborted(signal, taskId);
-        await store.logEntry(taskId, "[verification:bootstrap] bootstrap preamble succeeded");
+        await store.logEntry(taskId, "[verification:bootstrap] bootstrap preamble succeeded", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
         await store.appendAgentLog(taskId, "[verification:bootstrap] bootstrap preamble succeeded", "tool_result", undefined, "merger");
       } catch (error) {
         throwIfAborted(signal, taskId);
@@ -940,8 +942,7 @@ export async function runDeterministicVerification(
         await store.logEntry(
           taskId,
           `[verification:bootstrap] bootstrap preamble failed (exit ${bootstrapExitCode ?? "unknown"}): ${truncateWithEllipsis(bootstrapOutput, VERIFICATION_LOG_MAX_CHARS)}`,
-          "VerificationError",
-        );
+          "VerificationError", UNATTRIBUTED_MUTATION_CONTEXT);
         await store.appendAgentLog(
           taskId,
           "[verification:bootstrap] bootstrap preamble failed",
@@ -979,7 +980,7 @@ export async function runDeterministicVerification(
     missingEntryRetryAttempted = true;
     const packageName = missingWorkspaceEntry.packageName;
     const rebuildCommand = `pnpm --filter ${packageName} build`;
-    await store.logEntry(taskId, `[verification:retry] bootstrap-built: detected missing workspace entry for ${packageName}; running ${rebuildCommand}`);
+    await store.logEntry(taskId, `[verification:retry] bootstrap-built: detected missing workspace entry for ${packageName}; running ${rebuildCommand}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
     await store.appendAgentLog(taskId, "[verification:retry] bootstrap-built", "tool", rebuildCommand, "merger");
 
     try {
@@ -993,7 +994,7 @@ export async function runDeterministicVerification(
       throwIfAborted(signal, taskId);
     } catch (_error) {
       throwIfAborted(signal, taskId);
-      await store.logEntry(taskId, `[verification:retry] retry-different-failure: workspace rebuild failed for ${packageName}`);
+      await store.logEntry(taskId, `[verification:retry] retry-different-failure: workspace rebuild failed for ${packageName}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
       await store.appendAgentLog(taskId, "[verification:retry] retry-different-failure", "tool_error", packageName, "merger");
       return firstAttempt;
     }
@@ -1007,7 +1008,7 @@ export async function runDeterministicVerification(
         packageName,
         recovered: true,
       };
-      await store.logEntry(taskId, `[verification:retry] retry-success: rebuilt ${packageName} and ${failedCommandLabel} now passes`);
+      await store.logEntry(taskId, `[verification:retry] retry-success: rebuilt ${packageName} and ${failedCommandLabel} now passes`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
       await store.appendAgentLog(taskId, "[verification:retry] retry-success", "tool_result", packageName, "merger");
       return retryAttempt;
     }
@@ -1019,12 +1020,12 @@ export async function runDeterministicVerification(
         packageName,
         recovered: false,
       };
-      await store.logEntry(taskId, `[verification:retry] retry-still-missing: ${packageName} still missing after rebuild`);
+      await store.logEntry(taskId, `[verification:retry] retry-still-missing: ${packageName} still missing after rebuild`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
       await store.appendAgentLog(taskId, "[verification:retry] retry-still-missing", "tool_error", packageName, "merger");
       return retryAttempt;
     }
 
-    await store.logEntry(taskId, `[verification:retry] retry-different-failure: rebuild fixed entry point but ${failedCommandLabel} still failed`);
+    await store.logEntry(taskId, `[verification:retry] retry-different-failure: rebuild fixed entry point but ${failedCommandLabel} still failed`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
     await store.appendAgentLog(taskId, "[verification:retry] retry-different-failure", "tool_error", packageName, "merger");
     return retryAttempt;
   };
@@ -1042,8 +1043,7 @@ export async function runDeterministicVerification(
       await store.logEntry(
         taskId,
         `Deterministic test verification failed (exit ${testResult.exitCode}) — see prior [verification] entry for truncated output`,
-        "VerificationError",
-      );
+        "VerificationError", UNATTRIBUTED_MUTATION_CONTEXT);
       await store.appendAgentLog(
         taskId,
         "Verification failed",
@@ -1071,8 +1071,7 @@ export async function runDeterministicVerification(
       await store.logEntry(
         taskId,
         `Deterministic build verification failed (exit ${buildResult.exitCode}) — see prior [verification] entry for truncated output`,
-        "VerificationError",
-      );
+        "VerificationError", UNATTRIBUTED_MUTATION_CONTEXT);
       await store.appendAgentLog(
         taskId,
         "Verification failed",
@@ -1089,7 +1088,7 @@ export async function runDeterministicVerification(
 
   // FNXC:EngineDiagnostics 2026-07-26-09:33: merge verification success/cache bookkeeping is expected steady-state; failures stay error/warn.
   mergerLog.debug(`${taskId}: deterministic verification passed`);
-  await store.logEntry(taskId, "Deterministic merge verification passed");
+  await store.logEntry(taskId, "Deterministic merge verification passed", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
   await store.appendAgentLog(taskId, "Deterministic merge verification passed", "status", undefined, "merger");
 
   // ── Record cache pass ──────────────────────────────────────────────────
@@ -1097,7 +1096,7 @@ export async function runDeterministicVerification(
     try {
       await store.recordVerificationCachePass(treeSha, effectiveTestCommand, effectiveBuildCommand, taskId);
       mergerLog.debug(`${taskId}: Recorded verification pass for tree ${treeSha.slice(0, 7)}`);
-      await store.logEntry(taskId, `Recorded verification pass for tree ${treeSha.slice(0, 7)}`);
+      await store.logEntry(taskId, `Recorded verification pass for tree ${treeSha.slice(0, 7)}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
     } catch (err) {
       mergerLog.warn(`${taskId}: could not record verification cache pass: ${String(err)}`);
     }
@@ -1280,7 +1279,8 @@ Do not refactor, rename broadly, or make opportunistic improvements.
         store,
         taskId,
         taskTitle: taskForSkillContext?.title,
-      }),
+        runContext: UNATTRIBUTED_MUTATION_CONTEXT,
+        }),
     });
     // Register so engine.stop() can dispose this session — without this the
     // fix agent keeps streaming past shutdown because it's not the autostash
@@ -1300,8 +1300,7 @@ Do not refactor, rename broadly, or make opportunistic improvements.
     const agentId = mergeRunContext?.agentId ?? "merger";
     await store.logEntry(
       taskId,
-      `In-merge verification fix agent started (model: ${describeModel(session)}, runId: ${runId ?? "unknown"}, agentId: ${agentId})`,
-    );
+      `In-merge verification fix agent started (model: ${describeModel(session)}, runId: ${runId ?? "unknown"}, agentId: ${agentId})`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
     await store.appendAgentLog(
       taskId,
       `Fix agent started (model: ${describeModel(session)})`,
@@ -1367,8 +1366,7 @@ ${failureContext.output.slice(0, VERIFICATION_LOG_MAX_CHARS)}
         mergerLog.warn(`${taskId}: in-merge fix agent made no changes — skipping verification re-run`);
         await store.logEntry(
           taskId,
-          `In-merge fix agent made no changes — skipping verification re-run (attempt ${fixAttemptNumber ?? "unknown"})`,
-        );
+          `In-merge fix agent made no changes — skipping verification re-run (attempt ${fixAttemptNumber ?? "unknown"})`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
         await store.appendAgentLog(
           taskId,
           `Fix agent made no changes — skipping verification re-run`,
@@ -1405,7 +1403,7 @@ ${failureContext.output.slice(0, VERIFICATION_LOG_MAX_CHARS)}
                   `Merge verification failed in files outside branch scope — likely pre-existing flake on ${baseBranch}. ` +
                   `Failing files: [${failingFiles.join(", ")}]. Branch diff files: [${branchFiles.slice(0, 10).join(", ")}${branchFiles.length > 10 ? ", ..." : ""}].`;
                 mergerLog.warn(`${taskId}: ${msg}`);
-                await store.logEntry(taskId, msg);
+                await store.logEntry(taskId, msg, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
                 await store.appendAgentLog(taskId, "Out-of-scope verification failure detected — not retrying", "status", undefined, "merger");
                 throw new OutOfScopeVerificationError(msg, failingFiles, branchFiles);
               }
@@ -1419,8 +1417,7 @@ ${failureContext.output.slice(0, VERIFICATION_LOG_MAX_CHARS)}
       // Re-run deterministic verification command after the fix attempt.
       await store.logEntry(
         taskId,
-        `Re-running deterministic merge verification (attempt ${fixAttemptNumber ?? "unknown"})`,
-      );
+        `Re-running deterministic merge verification (attempt ${fixAttemptNumber ?? "unknown"})`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
       await store.appendAgentLog(
         taskId,
         `Re-running verification (attempt ${fixAttemptNumber ?? "unknown"})`,
@@ -1473,7 +1470,7 @@ ${failureContext.output.slice(0, VERIFICATION_LOG_MAX_CHARS)}
     }
     const errorMessage = err instanceof Error ? err.message : String(err);
     mergerLog.warn(`${taskId}: in-merge fix agent error: ${errorMessage}`);
-    await store.logEntry(taskId, "In-merge verification fix agent encountered an error", errorMessage);
+    await store.logEntry(taskId, "In-merge verification fix agent encountered an error", errorMessage, UNATTRIBUTED_MUTATION_CONTEXT);
     await store.appendAgentLog(taskId, "Fix agent encountered an error", "tool_error", errorMessage, "merger");
     return false;
   }
@@ -2056,8 +2053,7 @@ async function sweepAutostashOrphans(
       .logEntry(
         taskId,
         `Cleaned up ${subsumed.length} subsumed autostash orphan(s) — their content already on HEAD`,
-        subsumed.map((o) => `${o.ref}@${o.sha.slice(0, 7)} (${o.label})`).join("\n"),
-      )
+        subsumed.map((o) => `${o.ref}@${o.sha.slice(0, 7)} (${o.label})`).join("\n"), UNATTRIBUTED_MUTATION_CONTEXT)
       .catch(() => undefined);
   }
 
@@ -2075,8 +2071,7 @@ async function sweepAutostashOrphans(
             (o) =>
               `${o.ref}@${o.sha.slice(0, 7)} (${o.label})\n  recover: git stash apply ${o.sha}`,
           )
-          .join("\n\n"),
-      )
+          .join("\n\n"), UNATTRIBUTED_MUTATION_CONTEXT)
       .catch(() => undefined);
   }
 
@@ -2407,8 +2402,7 @@ export async function dropAutostashHandle(
     await options.store.logEntry(
       taskId,
       `${options.context}: autostash cleanup dropped ${dropped}, preserved ${keptLive} live, failed ${failed}`,
-      entries.map((entry) => `${entry.kind} ${entry.sha.slice(0, 7)} (${entry.label})`).join("\n"),
-    ).catch(() => undefined);
+      entries.map((entry) => `${entry.kind} ${entry.sha.slice(0, 7)} (${entry.label})`).join("\n"), UNATTRIBUTED_MUTATION_CONTEXT).catch(() => undefined);
   }
 
   return { dropped, keptLive, failed };
@@ -2571,7 +2565,8 @@ ${fileList}
       store,
       taskId,
       taskTitle: taskForSkillContext?.title,
-    }),
+      runContext: UNATTRIBUTED_MUTATION_CONTEXT,
+        }),
   });
   emitAgentSessionStart({
     store,
@@ -2609,7 +2604,7 @@ ${fileList}
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     mergerLog.warn(`${taskId}: autostash-conflict agent error: ${msg}`);
-    await store.logEntry(taskId, "Autostash conflict agent encountered an error", msg);
+    await store.logEntry(taskId, "Autostash conflict agent encountered an error", msg, UNATTRIBUTED_MUTATION_CONTEXT);
     return { success: false, error: msg };
   } finally {
     try {
@@ -2732,8 +2727,7 @@ async function tryRecoverHardFailApply(params: {
     await ctx.store.logEntry(
       taskId,
       `Autostash apply hit hard failure but recovered via git apply --3way (stash ${sha.slice(0, 7)})`,
-      `Original error: ${applyErrorMsg}\n${applyStderr ? `\nGit stderr:\n${applyStderr}\n` : ""}${dropResult.dropped ? "" : `\nStash drop failed (${dropResult.reason ?? "unknown"}); clean up manually.`}`,
-    ).catch(() => undefined);
+      `Original error: ${applyErrorMsg}\n${applyStderr ? `\nGit stderr:\n${applyStderr}\n` : ""}${dropResult.dropped ? "" : `\nStash drop failed (${dropResult.reason ?? "unknown"}); clean up manually.`}`, UNATTRIBUTED_MUTATION_CONTEXT).catch(() => undefined);
     return { status: "restored", stashSha: sha };
   }
 
@@ -2757,8 +2751,7 @@ async function tryRecoverHardFailApply(params: {
       await ctx.store.logEntry(
         taskId,
         `Autostash 3-way left conflict markers — manual resolution required (smart resolution disabled)`,
-        message,
-      ).catch(() => undefined);
+        message, UNATTRIBUTED_MUTATION_CONTEXT).catch(() => undefined);
       return { status: "conflict-needs-manual", stashSha: sha, conflictedFiles: aiConflictedFiles, message };
     }
 
@@ -2767,16 +2760,14 @@ async function tryRecoverHardFailApply(params: {
       await ctx.store.logEntry(
         taskId,
         "Autostash hard-fail recovered via 3-way scope partition (no in-scope conflicts remained)",
-        `${dropResult.dropped ? "" : `Stash drop failed (${dropResult.reason ?? "unknown"}); clean up manually.`}`,
-      ).catch(() => undefined);
+        `${dropResult.dropped ? "" : `Stash drop failed (${dropResult.reason ?? "unknown"}); clean up manually.`}`, UNATTRIBUTED_MUTATION_CONTEXT).catch(() => undefined);
       return { status: "ai-resolved", stashSha: sha, conflictedFiles: [] };
     }
 
     await ctx.store.logEntry(
       taskId,
       `Autostash 3-way left conflicts in ${aiConflictedFiles.length} file(s) — invoking AI to resolve`,
-      aiConflictedFiles.join("\n"),
-    ).catch(() => undefined);
+      aiConflictedFiles.join("\n"), UNATTRIBUTED_MUTATION_CONTEXT).catch(() => undefined);
 
     const aiResult = await runAiAgentForAutostashConflict({
       store: ctx.store,
@@ -2796,13 +2787,12 @@ async function tryRecoverHardFailApply(params: {
       await ctx.store.logEntry(
         taskId,
         `Autostash hard-fail recovered via 3-way + AI conflict resolution (${aiConflictedFiles.length} file(s))`,
-        `Resolved files:\n${aiConflictedFiles.join("\n")}${dropResult.dropped ? "" : `\n\nStash drop failed (${dropResult.reason ?? "unknown"}); clean up manually.`}`,
-      ).catch(() => undefined);
+        `Resolved files:\n${aiConflictedFiles.join("\n")}${dropResult.dropped ? "" : `\n\nStash drop failed (${dropResult.reason ?? "unknown"}); clean up manually.`}`, UNATTRIBUTED_MUTATION_CONTEXT).catch(() => undefined);
       return { status: "ai-resolved", stashSha: sha, conflictedFiles: aiConflictedFiles };
     }
 
     const failureMsg = `3-way+AI resolution incomplete; markers remain in ${stillConflicted.join(", ") || "(unknown)"}. Stash ${sha.slice(0, 7)} left intact.`;
-    await ctx.store.logEntry(taskId, `Autostash 3-way+AI resolution failed`, failureMsg).catch(() => undefined);
+    await ctx.store.logEntry(taskId, `Autostash 3-way+AI resolution failed`, failureMsg, UNATTRIBUTED_MUTATION_CONTEXT).catch(() => undefined);
     return { status: "conflict-needs-manual", stashSha: sha, conflictedFiles: stillConflicted, message: failureMsg };
   }
 
@@ -2813,16 +2803,14 @@ async function tryRecoverHardFailApply(params: {
     await ctx.store.logEntry(
       taskId,
       `Autostash apply failed — stash ${sha.slice(0, 7)} left intact for manual recovery`,
-      `${applyErrorMsg}${applyStderr ? `\n\nGit stderr:\n${applyStderr}` : ""}\n\nRecover with:\n  cd ${rootDir} && git stash apply ${sha}`,
-    ).catch(() => undefined);
+      `${applyErrorMsg}${applyStderr ? `\n\nGit stderr:\n${applyStderr}` : ""}\n\nRecover with:\n  cd ${rootDir} && git stash apply ${sha}`, UNATTRIBUTED_MUTATION_CONTEXT).catch(() => undefined);
     return { status: "failed", stashSha: sha, errorMessage: applyErrorMsg };
   }
 
   await ctx.store.logEntry(
     taskId,
     `Autostash apply hard-failed — invoking AI patch-recovery agent (${stashFiles.length} file(s))`,
-    `${applyErrorMsg}${applyStderr ? `\n\nGit stderr:\n${applyStderr}` : ""}\n\nFiles in stash:\n${stashFiles.join("\n")}`,
-  ).catch(() => undefined);
+    `${applyErrorMsg}${applyStderr ? `\n\nGit stderr:\n${applyStderr}` : ""}\n\nFiles in stash:\n${stashFiles.join("\n")}`, UNATTRIBUTED_MUTATION_CONTEXT).catch(() => undefined);
 
   const patchAiResult = await runAiAgentForAutostashHardFail({
     store: ctx.store,
@@ -2838,7 +2826,7 @@ async function tryRecoverHardFailApply(params: {
 
   if (!patchAiResult.success) {
     const failMsg = `AI patch-recovery failed (${patchAiResult.error ?? "unknown"}). Stash ${sha.slice(0, 7)} left intact.`;
-    await ctx.store.logEntry(taskId, `Autostash AI patch-recovery failed`, failMsg).catch(() => undefined);
+    await ctx.store.logEntry(taskId, `Autostash AI patch-recovery failed`, failMsg, UNATTRIBUTED_MUTATION_CONTEXT).catch(() => undefined);
     return { status: "failed", stashSha: sha, errorMessage: failMsg };
   }
 
@@ -2846,7 +2834,7 @@ async function tryRecoverHardFailApply(params: {
   const remainingMarkers = await findFilesWithConflictMarkers(rootDir, stashFiles);
   if (remainingMarkers.length > 0) {
     const failMsg = `AI patch-recovery left conflict markers in: ${remainingMarkers.join(", ")}. Stash ${sha.slice(0, 7)} left intact.`;
-    await ctx.store.logEntry(taskId, `AI patch-recovery incomplete — manual recovery required`, failMsg).catch(() => undefined);
+    await ctx.store.logEntry(taskId, `AI patch-recovery incomplete — manual recovery required`, failMsg, UNATTRIBUTED_MUTATION_CONTEXT).catch(() => undefined);
     return { status: "conflict-needs-manual", stashSha: sha, conflictedFiles: remainingMarkers, message: failMsg };
   }
 
@@ -2854,8 +2842,7 @@ async function tryRecoverHardFailApply(params: {
   await ctx.store.logEntry(
     taskId,
     `Autostash hard-fail recovered by AI patch-recovery agent (${stashFiles.length} file(s))`,
-    `Recovered files:\n${stashFiles.join("\n")}${dropResult.dropped ? "" : `\n\nStash drop failed (${dropResult.reason ?? "unknown"}); clean up manually.`}`,
-  ).catch(() => undefined);
+    `Recovered files:\n${stashFiles.join("\n")}${dropResult.dropped ? "" : `\n\nStash drop failed (${dropResult.reason ?? "unknown"}); clean up manually.`}`, UNATTRIBUTED_MUTATION_CONTEXT).catch(() => undefined);
   return { status: "ai-resolved", stashSha: sha, conflictedFiles: stashFiles };
 }
 
@@ -3019,7 +3006,8 @@ ${fileList}
       store,
       taskId,
       taskTitle: taskForSkillContext?.title,
-    }),
+      runContext: UNATTRIBUTED_MUTATION_CONTEXT,
+        }),
   });
   emitAgentSessionStart({
     store,
@@ -3057,7 +3045,7 @@ ${fileList}
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     mergerLog.warn(`${taskId}: autostash hard-fail agent error: ${msg}`);
-    await store.logEntry(taskId, "Autostash hard-fail recovery agent encountered an error", msg);
+    await store.logEntry(taskId, "Autostash hard-fail recovery agent encountered an error", msg, UNATTRIBUTED_MUTATION_CONTEXT);
     return { success: false, error: msg };
   } finally {
     try {
@@ -3127,8 +3115,7 @@ async function restoreRescueAutostashes(
   await ctx.store.logEntry(
     taskId,
     `Race-rescue autostash restore attempted: ${rescueShas.length - unresolvedCount} restored, ${unresolvedCount} preserved`,
-    rescueShas.map((r) => `${r.sha.slice(0, 7)} (${r.label})`).join("\n"),
-  ).catch(() => undefined);
+    rescueShas.map((r) => `${r.sha.slice(0, 7)} (${r.label})`).join("\n"), UNATTRIBUTED_MUTATION_CONTEXT).catch(() => undefined);
 
   return { unresolvedCount };
 }
@@ -3195,8 +3182,7 @@ export async function restoreUnrelatedRootDirChanges(
       await ctx.store
         .logEntry(
           taskId,
-          `Restored pre-merge autostash ${sha.slice(0, 7)} cleanly`,
-        )
+          `Restored pre-merge autostash ${sha.slice(0, 7)} cleanly`, undefined, UNATTRIBUTED_MUTATION_CONTEXT)
         .catch(() => undefined);
     } else {
       // Apply succeeded but drop failed — the working tree has the dev's
@@ -3206,8 +3192,7 @@ export async function restoreUnrelatedRootDirChanges(
         .logEntry(
           taskId,
           `Restored pre-merge autostash ${sha.slice(0, 7)} (apply clean), but stash entry failed to drop and is still in the list`,
-          `Drop failure: ${dropResult.reason ?? "unknown"}\n\nClean up manually with:\n  cd ${rootDir} && git stash list | grep ${sha.slice(0, 7)} && git stash drop <ref>`,
-        )
+          `Drop failure: ${dropResult.reason ?? "unknown"}\n\nClean up manually with:\n  cd ${rootDir} && git stash list | grep ${sha.slice(0, 7)} && git stash drop <ref>`, UNATTRIBUTED_MUTATION_CONTEXT)
         .catch(() => undefined);
     }
     return { status: "restored", stashSha: sha };
@@ -3237,8 +3222,7 @@ export async function restoreUnrelatedRootDirChanges(
       .logEntry(
         taskId,
         `Autostash apply conflicted in ${aiConflictedFiles.length} file(s) — manual resolution required (smart resolution disabled)`,
-        message,
-      )
+        message, UNATTRIBUTED_MUTATION_CONTEXT)
       .catch(() => undefined);
     return {
       status: "conflict-needs-manual",
@@ -3251,7 +3235,7 @@ export async function restoreUnrelatedRootDirChanges(
   if (aiConflictedFiles.length === 0) {
     const aiDropResult = await dropAutostashBySha(rootDir, taskId, sha);
     if (aiDropResult.dropped) {
-      await ctx.store.logEntry(taskId, "Autostash conflict resolved by Layer 3 scope partition (no in-scope conflicts remained)");
+      await ctx.store.logEntry(taskId, "Autostash conflict resolved by Layer 3 scope partition (no in-scope conflicts remained)", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
     }
     return {
       status: "ai-resolved",
@@ -3263,8 +3247,7 @@ export async function restoreUnrelatedRootDirChanges(
   await ctx.store.logEntry(
     taskId,
     `Autostash apply conflicted in ${aiConflictedFiles.length} file(s) — invoking AI to resolve`,
-    aiConflictedFiles.join("\n"),
-  );
+    aiConflictedFiles.join("\n"), UNATTRIBUTED_MUTATION_CONTEXT);
 
   const aiResult = await runAiAgentForAutostashConflict({
     store: ctx.store,
@@ -3279,7 +3262,7 @@ export async function restoreUnrelatedRootDirChanges(
     const message = `Autostash apply conflict, AI resolution failed (${aiResult.error ?? "unknown error"}). Stash ${sha.slice(0, 7)} left intact; recover with: cd ${rootDir} && git status (conflicts in working tree) && # resolve, then git stash drop <ref>`;
     mergerLog.warn(`${taskId}: ${message}`);
     await ctx.store
-      .logEntry(taskId, `Autostash AI conflict resolution failed — manual recovery required`, message)
+      .logEntry(taskId, `Autostash AI conflict resolution failed — manual recovery required`, message, UNATTRIBUTED_MUTATION_CONTEXT)
       .catch(() => undefined);
     return {
       status: "conflict-needs-manual",
@@ -3295,7 +3278,7 @@ export async function restoreUnrelatedRootDirChanges(
     const message = `AI agent reported success but conflict markers remain in: ${stillConflicted.join(", ")}. Stash ${sha.slice(0, 7)} left intact; recover manually.`;
     mergerLog.warn(`${taskId}: ${message}`);
     await ctx.store
-      .logEntry(taskId, `Autostash AI conflict resolution incomplete — manual recovery required`, message)
+      .logEntry(taskId, `Autostash AI conflict resolution incomplete — manual recovery required`, message, UNATTRIBUTED_MUTATION_CONTEXT)
       .catch(() => undefined);
     return {
       status: "conflict-needs-manual",
@@ -3315,14 +3298,12 @@ export async function restoreUnrelatedRootDirChanges(
     await ctx.store.logEntry(
       taskId,
       `Autostash conflict resolved by AI in ${aiConflictedFiles.length} file(s)`,
-      aiConflictedFiles.join("\n"),
-    );
+      aiConflictedFiles.join("\n"), UNATTRIBUTED_MUTATION_CONTEXT);
   } else {
     await ctx.store.logEntry(
       taskId,
       `Autostash conflict resolved by AI in ${aiConflictedFiles.length} file(s), but stash entry failed to drop`,
-      `Resolved files:\n${aiConflictedFiles.join("\n")}\n\nDrop failure: ${aiDropResult.reason ?? "unknown"}\n\nClean up manually with:\n  cd ${rootDir} && git stash list | grep ${sha.slice(0, 7)} && git stash drop <ref>`,
-    );
+      `Resolved files:\n${aiConflictedFiles.join("\n")}\n\nDrop failure: ${aiDropResult.reason ?? "unknown"}\n\nClean up manually with:\n  cd ${rootDir} && git stash list | grep ${sha.slice(0, 7)} && git stash drop <ref>`, UNATTRIBUTED_MUTATION_CONTEXT);
   }
 
   return {
@@ -3652,8 +3633,7 @@ async function persistFinalizeResetLeftovers(rootDir: string, taskId: string, st
       await store.logEntry(
         taskId,
         `Persisted ${dirtyPaths.length} dirty rootDir path(s) before finalize reset/amend cleanup`,
-        `stash: ${sha}\nlabel: ${label}\nphase: finalize-reset\npaths:\n${dirtyPaths.join("\n")}`,
-      ).catch(() => undefined);
+        `stash: ${sha}\nlabel: ${label}\nphase: finalize-reset\npaths:\n${dirtyPaths.join("\n")}`, UNATTRIBUTED_MUTATION_CONTEXT).catch(() => undefined);
       await notifyAutostashOrphans(store, rootDir, { detectedByTaskId: taskId }).catch(() => undefined);
     }
   } catch (err: unknown) {
@@ -4338,7 +4318,7 @@ export async function applyLayer3ConflictScopePartition(params: {
   if (outOfScope.length > 0) {
     const summary = `Layer 3 arbiter: skipped ${outOfScope.length} foreign file(s) — took main's version for: ${outOfScope.join(", ")}`;
     await store.appendAgentLog(taskId, summary, "status", undefined, "merger");
-    await store.logEntry(taskId, summary, "Layer3AIArbiterScopeSkip");
+    await store.logEntry(taskId, summary, "Layer3AIArbiterScopeSkip", UNATTRIBUTED_MUTATION_CONTEXT);
     if (auditor) {
       await auditor.git({
         type: "merge:layer3:foreign-file-skipped",
@@ -4834,9 +4814,9 @@ async function applyBranchCommitsPreservingHistory(params: {
 
   const fullySubsumedByMain = landedCommitShas.length === 0 && skippedEmptyCount === commitShas.length && commitShas.length > 0;
   if (fullySubsumedByMain) {
-    await store.logEntry(taskId, `Auto-merge skipped: branch fully subsumed by main (${skippedEmptyCount} commit(s) already present)`);
+    await store.logEntry(taskId, `Auto-merge skipped: branch fully subsumed by main (${skippedEmptyCount} commit(s) already present)`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
   } else if (skippedEmptyCount > 0 && landedCommitShas.length > 0) {
-    await store.logEntry(taskId, `Auto-merge skipped ${skippedEmptyCount} empty cherry-pick(s); proceeded with ${landedCommitShas.length} non-empty commit(s)`);
+    await store.logEntry(taskId, `Auto-merge skipped ${skippedEmptyCount} empty cherry-pick(s); proceeded with ${landedCommitShas.length} non-empty commit(s)`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
   }
 
   try {
@@ -5621,7 +5601,7 @@ export async function handleDirtyPostMergeAuditOutcome(opts: {
       formatSquashAuditAgentLog(opts.findings),
       "merger",
     );
-    await opts.store.updateTask(opts.taskId, { status: null });
+    await opts.store.updateTask(opts.taskId, { status: null }, UNATTRIBUTED_MUTATION_CONTEXT);
     throw auditError;
   }
 
@@ -6071,7 +6051,8 @@ You are assisting with a paused \`git pull --rebase\`.
       label: "rebase conflict resolver",
       store,
       taskId,
-    }),
+      runContext: UNATTRIBUTED_MUTATION_CONTEXT,
+        }),
   });
   // Register so engine.stop() can dispose this session — without this, an
   // in-progress rebase conflict resolution keeps streaming past shutdown
@@ -6519,7 +6500,7 @@ async function tryEarlyEmptyOwnDiffFinalize(input: {
      * FNXC:Lifecycle 2026-06-14-20:06:
      * FN-6461/FN-6455 requires the early empty-own-diff fast-path to block before mergeDetails writes or branch/worktree cleanup so incomplete release/ops work remains recoverable.
      */
-    await store.updateTask(taskId, { error: reason });
+    await store.updateTask(taskId, { error: reason }, UNATTRIBUTED_MUTATION_CONTEXT);
     await store.logEntry(
       taskId,
       `Finalize blocked (no-commits incomplete-work guard): ${reason} — moving back to todo with progress preserved`,
@@ -6529,8 +6510,7 @@ async function tryEarlyEmptyOwnDiffFinalize(input: {
         branch,
         mergeTargetBranch,
         lane: "early-empty-own-diff",
-      }, null, 2),
-    );
+      }, null, 2), UNATTRIBUTED_MUTATION_CONTEXT);
     await audit.database({
       type: "task:no-commits-finalize-blocked-incomplete-steps" as Parameters<typeof audit.database>[0]["type"],
       target: taskId,
@@ -6570,11 +6550,10 @@ async function tryEarlyEmptyOwnDiffFinalize(input: {
     mergeTargetBranch,
     mergeTargetSource,
   };
-  await store.updateTask(taskId, { mergeDetails, modifiedFiles: [] });
+  await store.updateTask(taskId, { mergeDetails, modifiedFiles: [] }, UNATTRIBUTED_MUTATION_CONTEXT);
   await store.logEntry(
     taskId,
-    `Auto-finalized no-op (early fast-path, FN-5345/FN-5377): ${noOpReason}`,
-  );
+    `Auto-finalized no-op (early fast-path, FN-5345/FN-5377): ${noOpReason}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
   try {
     await audit.database({
       type: "task:auto-recover-finalize-already-on-main",
@@ -6686,7 +6665,7 @@ async function tryEarlyEmptyOwnDiffFinalize(input: {
       await store.updateTask(taskId, {
         ...(worktreeRemoved ? { worktree: null } : {}),
         ...(branchDeleted ? { branch: null, branchWriteOrigin: "engine" as const } : {}),
-      });
+      }, UNATTRIBUTED_MUTATION_CONTEXT);
       // Keep the in-memory task in sync with the DB so the returned
       // MergeResult.task does not advertise a removed path / deleted branch.
       // (updateTask uses null as the "clear this field" sentinel; the
@@ -7221,7 +7200,7 @@ export async function aiMergeTask(
            * FNXC:BranchWriteOrigin 2026-08-28-10:12: merge-reuse can re-pin an operator-override branch, so the stamp derives from the
            * classifier (#3523 Greptile P1) — hardcoding "engine" here made cleanup eligible to delete operator-supplied branches.
            */
-          await store.updateTask(taskId, { worktree: reusableMatch.path, branch: reusableMatch.branch, branchWriteOrigin: classifyTaskBranchOrigin(task, reusableMatch.branch) === "operator-supplied" ? "operator" : "engine" });
+          await store.updateTask(taskId, { worktree: reusableMatch.path, branch: reusableMatch.branch, branchWriteOrigin: classifyTaskBranchOrigin(task, reusableMatch.branch) === "operator-supplied" ? "operator" : "engine" }, UNATTRIBUTED_MUTATION_CONTEXT);
           await emitReuseHandoffAuditEvent(
             "merge:reuse-fallback-reused-existing-registration",
             {
@@ -7278,7 +7257,7 @@ export async function aiMergeTask(
       settings,
       logger: mergerLog,
       audit,
-      runContext: engineRunContext,
+      runContext: toRunMutationContext(engineRunContext),
       runInitCommand: true,
       runConfiguredCommand: async (command, cwd, timeoutMs, env) =>
         runConfiguredMergeWorktreeCommand(command, cwd, timeoutMs, env, audit),
@@ -7615,8 +7594,8 @@ export async function aiMergeTask(
         prNumber: task.prInfo?.number,
         mergeTargetBranch: aheadInfo.baseRef,
       };
-      await store.updateTask(taskId, { mergeDetails });
-      await store.logEntry(taskId, `Auto-finalized: recovered owned landed commit ${classification.commit.sha.slice(0, 8)}`);
+      await store.updateTask(taskId, { mergeDetails }, UNATTRIBUTED_MUTATION_CONTEXT);
+      await store.logEntry(taskId, `Auto-finalized: recovered owned landed commit ${classification.commit.sha.slice(0, 8)}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
       const result: MergeResult = {
         task,
         branch,
@@ -7650,7 +7629,7 @@ export async function aiMergeTask(
          * FNXC:Lifecycle 2026-06-14-20:08:
          * FN-6461/FN-6455 extends the FN-5490 no-op demotion pattern to no-commits tasks whose skipped/incomplete steps outweigh completed work.
          */
-        await store.updateTask(taskId, { error: reason });
+        await store.updateTask(taskId, { error: reason }, UNATTRIBUTED_MUTATION_CONTEXT);
         await store.logEntry(
           taskId,
           `Finalize blocked (no-commits incomplete-work guard): ${reason} — moving back to todo with progress preserved`,
@@ -7660,8 +7639,7 @@ export async function aiMergeTask(
             classification: classification.kind,
             baseRef: classification.baseRef,
             lane: "legacy-no-op-classifier",
-          }, null, 2),
-        );
+          }, null, 2), UNATTRIBUTED_MUTATION_CONTEXT);
         await emitBoundedRunAudit(store, {
           domain: "database",
           mutationType: "task:no-commits-finalize-blocked-incomplete-steps",
@@ -7691,15 +7669,14 @@ export async function aiMergeTask(
       }
       if (task.modifiedFiles && task.modifiedFiles.length > 0) {
         const reason = `lost-work-detected: ${task.modifiedFiles.length} modifiedFiles claimed but no commit landed`;
-        await store.updateTask(taskId, { error: reason });
+        await store.updateTask(taskId, { error: reason }, UNATTRIBUTED_MUTATION_CONTEXT);
         await store.logEntry(
           taskId,
           `Finalize blocked (lost-work guard): task claims ${task.modifiedFiles.length} modifiedFiles but classification would finalize as no-op — moving back to todo with progress preserved`,
           JSON.stringify({
             modifiedFilesSample: task.modifiedFiles.slice(0, 5),
             classification: classification.kind,
-          }, null, 2),
-        );
+          }, null, 2), UNATTRIBUTED_MUTATION_CONTEXT);
         await emitBoundedRunAudit(store, {
           domain: "database",
           mutationType: "task:finalize-lost-work-blocked",
@@ -7733,13 +7710,12 @@ export async function aiMergeTask(
         prNumber: task.prInfo?.number,
         mergeTargetBranch: classification.baseRef,
       };
-      await store.updateTask(taskId, { mergeDetails, modifiedFiles: [] });
+      await store.updateTask(taskId, { mergeDetails, modifiedFiles: [] }, UNATTRIBUTED_MUTATION_CONTEXT);
       await store.logEntry(
         taskId,
         classification.kind === "proven-no-op"
           ? `Auto-finalized no-op (proven): start point on ${classification.baseRef}; modifiedFiles cleared`
-          : "Auto-finalized verification-only no-change task: branch absent with no owned commits; modifiedFiles cleared",
-      );
+          : "Auto-finalized verification-only no-change task: branch absent with no owned commits; modifiedFiles cleared", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
       const result: MergeResult = {
         task,
         branch,
@@ -7760,12 +7736,11 @@ export async function aiMergeTask(
     }
 
     const unprovenError = `finalize-unproven: ${classification.reason}`;
-    await store.updateTask(taskId, { error: unprovenError });
+    await store.updateTask(taskId, { error: unprovenError }, UNATTRIBUTED_MUTATION_CONTEXT);
     await store.logEntry(
       taskId,
       `Finalize blocked: unproven ownership evidence (${classification.reason}); no owned landed commit was found — auto-retrying via todo requeue`,
-      JSON.stringify(classification.details, null, 2),
-    );
+      JSON.stringify(classification.details, null, 2), UNATTRIBUTED_MUTATION_CONTEXT);
     await emitBoundedRunAudit(store, {
       domain: "database",
       mutationType: "task:finalize-unproven-blocked",
@@ -7809,8 +7784,8 @@ export async function aiMergeTask(
       // Surface to the task feed so the developer sees their edits are still
       // in the working tree (not destroyed) — we just refused to proceed.
       const message = `Merge aborted: could not autostash dirty working tree in ${rootDir} (${err.message}). Your uncommitted changes are intact. Commit, stash, or revert them and retry the merge.`;
-      await store.logEntry(taskId, "Merge aborted: autostash creation failed (dirty edits preserved)", message).catch(() => undefined);
-      await store.updateTask(taskId, { error: "autostash-create-failed" }).catch(() => undefined);
+      await store.logEntry(taskId, "Merge aborted: autostash creation failed (dirty edits preserved)", message, UNATTRIBUTED_MUTATION_CONTEXT).catch(() => undefined);
+      await store.updateTask(taskId, { error: "autostash-create-failed" }, UNATTRIBUTED_MUTATION_CONTEXT).catch(() => undefined);
       clearActiveMergerStatus(activeStatusPath, taskId);
       await releaseReuseHandoffEarly("autostash-create-failed");
       return {
@@ -7832,8 +7807,7 @@ export async function aiMergeTask(
       await store.logEntry(
         taskId,
         `Race-rescue stash created during pre-merge autostash: ${r.sha.slice(0, 7)} (${r.label})`,
-        `These are working-tree changes that landed AFTER the initial autostash snapshot but BEFORE the destructive reset. Recover with:\n  cd ${rootDir} && git stash apply ${r.sha}`,
-      ).catch(() => undefined);
+        `These are working-tree changes that landed AFTER the initial autostash snapshot but BEFORE the destructive reset. Recover with:\n  cd ${rootDir} && git stash apply ${r.sha}`, UNATTRIBUTED_MUTATION_CONTEXT).catch(() => undefined);
     }
   }
   // Hoisted so the finally block (below) can attach the autostash outcome
@@ -7895,12 +7869,11 @@ export async function aiMergeTask(
     const classification = await classifyOwnedLandedEvidence(rootDir, task, { mergeTargetBranch: mergeTarget.branch });
     if (classification.kind === "unproven") {
       result.error = `finalize-unproven: ${classification.reason}`;
-      await store.updateTask(taskId, { error: result.error });
+      await store.updateTask(taskId, { error: result.error }, UNATTRIBUTED_MUTATION_CONTEXT);
       await store.logEntry(
         taskId,
         `Finalize blocked: unproven ownership evidence (${classification.reason}); branch missing and no owned landed commit was found — auto-retrying via todo requeue`,
-        JSON.stringify(classification.details, null, 2),
-      );
+        JSON.stringify(classification.details, null, 2), UNATTRIBUTED_MUTATION_CONTEXT);
       await emitBoundedRunAudit(store, {
         domain: "database",
         mutationType: "task:finalize-unproven-blocked",
@@ -7934,7 +7907,7 @@ export async function aiMergeTask(
           mergeTargetBranch: mergeTarget.branch,
           mergeTargetSource: mergeTarget.source,
         },
-      });
+      }, UNATTRIBUTED_MUTATION_CONTEXT);
       result.merged = true;
       result.mergeConfirmed = true;
       result.commitSha = classification.commit.sha;
@@ -7959,7 +7932,7 @@ export async function aiMergeTask(
         result.error = reason;
         result.reason = reason;
         result.noOp = false;
-        await store.updateTask(taskId, { error: reason });
+        await store.updateTask(taskId, { error: reason }, UNATTRIBUTED_MUTATION_CONTEXT);
         await store.logEntry(
           taskId,
           `Finalize blocked (no-commits incomplete-work guard): ${reason} — moving back to todo with progress preserved`,
@@ -7969,8 +7942,7 @@ export async function aiMergeTask(
             classification: classification.kind,
             baseRef: classification.baseRef,
             lane: "legacy-branch-missing-no-op",
-          }, null, 2),
-        );
+          }, null, 2), UNATTRIBUTED_MUTATION_CONTEXT);
         await emitBoundedRunAudit(store, {
           domain: "database",
           mutationType: "task:no-commits-finalize-blocked-incomplete-steps",
@@ -8002,7 +7974,7 @@ export async function aiMergeTask(
           mergeTargetBranch: classification.baseRef,
           mergeTargetSource: mergeTarget.source,
         },
-      });
+      }, UNATTRIBUTED_MUTATION_CONTEXT);
       result.merged = true;
       result.mergeConfirmed = true;
       result.noOp = true;
@@ -8011,7 +7983,7 @@ export async function aiMergeTask(
       result.mergedAt = mergedAt;
       result.mergeTargetBranch = classification.baseRef;
       result.mergeTargetSource = mergeTarget.source;
-      await store.logEntry(taskId, `Auto-finalized no-op (proven): start point on ${classification.baseRef}; modifiedFiles cleared`);
+      await store.logEntry(taskId, `Auto-finalized no-op (proven): start point on ${classification.baseRef}; modifiedFiles cleared`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
     }
 
     // Audit trail: record merge completion (FN-1404)
@@ -8407,8 +8379,7 @@ export async function aiMergeTask(
           );
           await store.logEntry(
             taskId,
-            `Pre-merge recovery (Layer 1): dropped dependency commits from ${task.executionStartBranch} via rebase --onto ${rebaseTarget.slice(0, 8)} ${depTip.slice(0, 8)} ${branch}; the merge will proceed against the cleaned branch`,
-          );
+            `Pre-merge recovery (Layer 1): dropped dependency commits from ${task.executionStartBranch} via rebase --onto ${rebaseTarget.slice(0, 8)} ${depTip.slice(0, 8)} ${branch}; the merge will proceed against the cleaned branch`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
         } catch (layer1Err) {
           rethrowIfMergeAborted(layer1Err);
           mergerLog.warn(
@@ -8515,8 +8486,7 @@ export async function aiMergeTask(
               );
               await store.logEntry(
                 taskId,
-                `Pre-merge recovery (Layer 2): patch-id matched ${dropped} branch commit(s) against the last 500 main commits and dropped them as duplicates; cherry-picked ${surviving.length} unique commit(s) onto ${rebaseTarget.slice(0, 8)}`,
-              );
+                `Pre-merge recovery (Layer 2): patch-id matched ${dropped} branch commit(s) against the last 500 main commits and dropped them as duplicates; cherry-picked ${surviving.length} unique commit(s) onto ${rebaseTarget.slice(0, 8)}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
             } catch (replayErr) {
               await restoreOriginalBranch();
               throw replayErr;
@@ -8551,8 +8521,7 @@ export async function aiMergeTask(
       await store.logEntry(
         taskId,
         `Pre-merge recovery (Layer 3): both surgical and patch-id recovery failed; AI arbiter takes over. SAFETY CONSTRAINT for the AI: do NOT re-introduce content that current main has deleted. If hunks are ambiguous, prefer main's version. Post-merge test/build verification will reject any resolution that breaks main's intent.`,
-        "PreMergeRebaseFallthrough",
-      );
+        "PreMergeRebaseFallthrough", UNATTRIBUTED_MUTATION_CONTEXT);
     }
   }
 
@@ -8617,7 +8586,7 @@ export async function aiMergeTask(
         `for smart-prefer-main (${mergeStrategyOverlapBehavior}): ${overlapSummary}`;
       mergerLog.warn(`${taskId}: ${overlapMessage}`);
       await store.appendAgentLog(taskId, overlapMessage, "status", undefined, "merger");
-      await store.logEntry(taskId, overlapMessage);
+      await store.logEntry(taskId, overlapMessage, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
 
       if (mergeStrategyOverlapBehavior === "flip-to-prefer-branch") {
         for (const file of overlap.overlappingFiles) {
@@ -8702,12 +8671,12 @@ export async function aiMergeTask(
     const scopeResult = await validateDiffScope(store, taskId, diffStat, settings.strictScopeEnforcement);
     for (const warning of scopeResult.warnings) {
       mergerLog.warn(`${taskId}: ${warning}`);
-      await store.logEntry(taskId, warning);
+      await store.logEntry(taskId, warning, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
     }
   } catch (scopeError: any) {
     if (settings.strictScopeEnforcement && scopeError.message?.includes("Scope enforcement failed")) {
       // Strict mode — block the merge
-      await store.logEntry(taskId, `Merge blocked: ${scopeError.message}`);
+      await store.logEntry(taskId, `Merge blocked: ${scopeError.message}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
       throw scopeError;
     }
     // Soft mode — scope validation is best-effort
@@ -8722,7 +8691,7 @@ export async function aiMergeTask(
       `Cannot merge ${taskId}: task ${activeMerge} is already merging (cross-process conflict)`,
     );
   }
-  await store.updateTask(taskId, { status: "merging" });
+  await store.updateTask(taskId, { status: "merging" }, UNATTRIBUTED_MUTATION_CONTEXT);
 
   // Normalize explicit verification commands from settings
   const explicitTestCommand = settings.testCommand?.trim() || undefined;
@@ -8880,8 +8849,8 @@ export async function aiMergeTask(
         await store.updateTask(taskId, {
           status: "failed",
           error: outOfScopeMsg,
-        });
-        await store.logEntry(taskId, outOfScopeMsg, "OutOfScopeVerificationError");
+        }, UNATTRIBUTED_MUTATION_CONTEXT);
+        await store.logEntry(taskId, outOfScopeMsg, "OutOfScopeVerificationError", UNATTRIBUTED_MUTATION_CONTEXT);
         // Re-throw so the outer merge runner does not attempt further retries.
         throw error;
       }
@@ -8898,7 +8867,7 @@ export async function aiMergeTask(
 
         if (maxFixRetries > 0 && (verificationErr.verificationResult.testResult || verificationErr.verificationResult.buildResult)) {
           mergerLog.log(`${taskId}: deterministic verification failed — attempting in-merge fix (up to ${maxFixRetries} attempts)`);
-          await store.logEntry(taskId, `Verification failed during merge — attempting in-merge fix (up to ${maxFixRetries} attempts)`);
+          await store.logEntry(taskId, `Verification failed during merge — attempting in-merge fix (up to ${maxFixRetries} attempts)`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
           await store.appendAgentLog(
             taskId,
             `Verification failed — attempting in-merge fix (up to ${maxFixRetries} attempts)`,
@@ -8923,7 +8892,7 @@ export async function aiMergeTask(
             for (let fixAttempt = 1; fixAttempt <= maxFixRetries; fixAttempt++) {
               const fixAttemptStartedAt = Date.now();
               mergerLog.log(`${taskId}: in-merge verification fix attempt ${fixAttempt}/${maxFixRetries}`);
-              await store.logEntry(taskId, `In-merge verification fix attempt ${fixAttempt}/${maxFixRetries}`);
+              await store.logEntry(taskId, `In-merge verification fix attempt ${fixAttempt}/${maxFixRetries}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
               await store.appendAgentLog(
                 taskId,
                 `In-merge verification fix attempt ${fixAttempt}/${maxFixRetries}`,
@@ -8957,7 +8926,7 @@ export async function aiMergeTask(
               const fixAttemptDurationMs = Date.now() - fixAttemptStartedAt;
               if (fixSuccess) {
                 mergerLog.log(`${taskId}: in-merge verification fix succeeded on attempt ${fixAttempt} in ${fixAttemptDurationMs}ms`);
-                await store.logEntry(taskId, `[timing] In-merge verification fix succeeded on attempt ${fixAttempt} in ${fixAttemptDurationMs}ms — verification now passes`);
+                await store.logEntry(taskId, `[timing] In-merge verification fix succeeded on attempt ${fixAttempt} in ${fixAttemptDurationMs}ms — verification now passes`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
                 await store.appendAgentLog(
                   taskId,
                   `In-merge verification fix succeeded on attempt ${fixAttempt}`,
@@ -8969,7 +8938,7 @@ export async function aiMergeTask(
               }
 
               mergerLog.warn(`${taskId}: in-merge verification fix attempt ${fixAttempt} — verification still fails (${fixAttemptDurationMs}ms)`);
-              await store.logEntry(taskId, `[timing] In-merge verification fix attempt ${fixAttempt} — verification still fails (${fixAttemptDurationMs}ms)`);
+              await store.logEntry(taskId, `[timing] In-merge verification fix attempt ${fixAttempt} — verification still fails (${fixAttemptDurationMs}ms)`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
               await store.appendAgentLog(
                 taskId,
                 `In-merge verification fix attempt ${fixAttempt} failed`,
@@ -9015,7 +8984,7 @@ export async function aiMergeTask(
                   `via=${finalized.strategy} sha=${finalized.mergeSha?.slice(0, 8)}`,
                   "merger",
                 );
-                await store.logEntry(taskId, `Auto-recovered: verification fix produced no content but task already landed on main at ${finalized.mergeSha?.slice(0, 8)} via ${finalized.strategy}`);
+                await store.logEntry(taskId, `Auto-recovered: verification fix produced no content but task already landed on main at ${finalized.mergeSha?.slice(0, 8)} via ${finalized.strategy}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
                 return true;
               }
               if (!finalized.ok) {
@@ -9058,7 +9027,7 @@ export async function aiMergeTask(
         // Try in-merge fix before falling back to build retry
         if (maxFixRetries > 0 && (effectiveTestCommand || effectiveBuildCommand)) {
           mergerLog.log(`${taskId}: build verification failed — attempting in-merge fix`);
-          await store.logEntry(taskId, `Build verification failed during merge — attempting in-merge fix`);
+          await store.logEntry(taskId, `Build verification failed during merge — attempting in-merge fix`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
           await store.appendAgentLog(
             taskId,
             "Build verification failed — attempting in-merge fix",
@@ -9077,7 +9046,7 @@ export async function aiMergeTask(
           for (let fixAttempt = 1; fixAttempt <= maxFixRetries; fixAttempt++) {
             const fixAttemptStartedAt = Date.now();
             mergerLog.log(`${taskId}: in-merge verification fix attempt ${fixAttempt}/${maxFixRetries}`);
-            await store.logEntry(taskId, `In-merge verification fix attempt ${fixAttempt}/${maxFixRetries}`);
+            await store.logEntry(taskId, `In-merge verification fix attempt ${fixAttempt}/${maxFixRetries}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
             await store.appendAgentLog(
               taskId,
               `In-merge verification fix attempt ${fixAttempt}/${maxFixRetries}`,
@@ -9111,7 +9080,7 @@ export async function aiMergeTask(
             const fixAttemptDurationMs = Date.now() - fixAttemptStartedAt;
             if (fixSuccess) {
               mergerLog.log(`${taskId}: in-merge verification fix succeeded on attempt ${fixAttempt} in ${fixAttemptDurationMs}ms`);
-              await store.logEntry(taskId, `[timing] In-merge verification fix succeeded on attempt ${fixAttempt} in ${fixAttemptDurationMs}ms`);
+              await store.logEntry(taskId, `[timing] In-merge verification fix succeeded on attempt ${fixAttempt} in ${fixAttemptDurationMs}ms`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
               await store.appendAgentLog(
                 taskId,
                 `In-merge verification fix succeeded on attempt ${fixAttempt}`,
@@ -9121,7 +9090,7 @@ export async function aiMergeTask(
               );
               break;
             }
-            await store.logEntry(taskId, `[timing] In-merge verification fix attempt ${fixAttempt} — verification still fails (${fixAttemptDurationMs}ms)`);
+            await store.logEntry(taskId, `[timing] In-merge verification fix attempt ${fixAttempt} — verification still fails (${fixAttemptDurationMs}ms)`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
             await store.appendAgentLog(
               taskId,
               `In-merge verification fix attempt ${fixAttempt} failed`,
@@ -9164,7 +9133,7 @@ export async function aiMergeTask(
                 `via=${finalized.strategy} sha=${finalized.mergeSha?.slice(0, 8)}`,
                 "merger",
               );
-              await store.logEntry(taskId, `Auto-recovered: verification fix produced no content but task already landed on main at ${finalized.mergeSha?.slice(0, 8)} via ${finalized.strategy}`);
+              await store.logEntry(taskId, `Auto-recovered: verification fix produced no content but task already landed on main at ${finalized.mergeSha?.slice(0, 8)} via ${finalized.strategy}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
               return true;
             }
             if (!finalized.ok) {
@@ -9200,7 +9169,7 @@ export async function aiMergeTask(
         if (buildRetryCount > 0 && !result._buildRetried) {
           // Allow one build retry — reset merge state and re-attempt same strategy
           mergerLog.log(`${taskId}: build failed, retrying (${buildRetryCount} retry allowed)...`);
-          await store.logEntry(taskId, "Build failed — retrying merge attempt");
+          await store.logEntry(taskId, "Build failed — retrying merge attempt", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
           result._buildRetried = true;
           try {
             execSync("git reset --merge", { cwd: rootDir, stdio: "pipe" });
@@ -9308,8 +9277,7 @@ export async function aiMergeTask(
       await store.logEntry(
         taskId,
         `Attempt 3 (-X ours fallback) suppressed: pre-merge rebase recovery layers 1+2 failed under smart-prefer-main, so the unsafe ours-side fallback is skipped to honor the strategy's safety contract. Verification-gated AI Attempts 1+2 already exhausted; merge cannot complete safely without manual intervention.`,
-        "PreMergeRebaseFallthrough",
-      );
+        "PreMergeRebaseFallthrough", UNATTRIBUTED_MUTATION_CONTEXT);
     }
 
     // Bubble the empty-merge flag up to the metadata block.
@@ -9534,8 +9502,8 @@ export async function aiMergeTask(
           await store.updateTask(taskId, {
             status: "failed",
             error: captureError.message,
-          });
-          await store.moveTask(taskId, await resolveMergerLifecycleColumn(store, taskId, "merge"), { preserveProgress: true, moveSource: "engine" } as any);
+          }, UNATTRIBUTED_MUTATION_CONTEXT);
+          await store.moveTask(taskId, await resolveMergerLifecycleColumn(store, taskId, "merge"), { preserveProgress: true, moveSource: "engine" } as any, UNATTRIBUTED_MUTATION_CONTEXT);
           throw captureError;
         }
         // non-fatal
@@ -9585,7 +9553,7 @@ export async function aiMergeTask(
     await store.updateTask(taskId, {
       mergeDetails,
       modifiedFiles: noOpVerifiedShortCircuit ? undefined : landedFiles && landedFiles.length > 0 ? landedFiles : undefined,
-    });
+    }, UNATTRIBUTED_MUTATION_CONTEXT);
     if (recordedSha) {
       const currentTask = await store.getTask(taskId);
       if (currentTask?.lineageId) {
@@ -9698,7 +9666,7 @@ export async function aiMergeTask(
           if (currentMergeDetails && !currentMergeDetails.mergeConfirmed) {
             await store.updateTask(taskId, {
               mergeDetails: { ...currentMergeDetails, mergeConfirmed: true },
-            });
+            }, UNATTRIBUTED_MUTATION_CONTEXT);
           }
         } catch (promoteErr: unknown) {
           // Non-fatal: log + continue. The ref already advanced; the worst
@@ -9827,7 +9795,7 @@ export async function aiMergeTask(
         }
         if (result.worktreeRemoved) {
           try {
-            await store.updateTask(taskId, { worktree: null, branch: null, branchWriteOrigin: "engine" });
+            await store.updateTask(taskId, { worktree: null, branch: null, branchWriteOrigin: "engine" }, UNATTRIBUTED_MUTATION_CONTEXT);
           } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
             mergerLog.warn(`${taskId}: failed to clear worktree pointer after removal: ${msg}`);
@@ -9912,7 +9880,7 @@ export async function aiMergeTask(
                   insertions: updatedStats.insertions,
                   deletions: updatedStats.deletions,
                 },
-              });
+              }, UNATTRIBUTED_MUTATION_CONTEXT);
               mergerLog.log(
                 `${taskId}: post-push HEAD changed from ${existingDetails.commitSha.slice(0, 8)} to ${postPushSha.slice(0, 8)} — refreshed mergeDetails.commitSha (stats: ${updatedStats.filesChanged ?? 0}f/${updatedStats.insertions ?? 0}i/${updatedStats.deletions ?? 0}d, was ${existingDetails.filesChanged ?? 0}f/${existingDetails.insertions ?? 0}i/${existingDetails.deletions ?? 0}d)`,
               );
@@ -9936,8 +9904,7 @@ export async function aiMergeTask(
         await store.logEntry(
           taskId,
           `Push to remote failed after merge — task marked done anyway; local main may diverge from origin: ${pushResult.error}`,
-          "PushToRemoteFailed",
-        ).catch(() => undefined);
+          "PushToRemoteFailed", UNATTRIBUTED_MUTATION_CONTEXT).catch(() => undefined);
       }
       result.pushedToRemote = pushResult.pushed;
       if (pushResult.error) {
@@ -9959,7 +9926,7 @@ export async function aiMergeTask(
             outcome: "aborted",
           },
         }).catch(() => undefined);
-        await store.logEntry(taskId, message, "PushToRemoteFailed").catch(() => undefined);
+        await store.logEntry(taskId, message, "PushToRemoteFailed", UNATTRIBUTED_MUTATION_CONTEXT).catch(() => undefined);
       } else {
         mergerLog.error(`${taskId}: push to remote error: ${err.message}`);
         result.pushedToRemote = false;
@@ -9977,8 +9944,7 @@ export async function aiMergeTask(
         await store.logEntry(
           taskId,
           `Push to remote threw after merge — task marked done anyway; local main may diverge from origin: ${err.message}`,
-          "PushToRemoteFailed",
-        ).catch(() => undefined);
+          "PushToRemoteFailed", UNATTRIBUTED_MUTATION_CONTEXT).catch(() => undefined);
       }
     }
   }
@@ -10589,7 +10555,7 @@ export async function executeMergeAttempt(
       // amended the *previous* task's commit because HEAD looked unchanged
       // and there was nothing left of the current task's branch to commit.
       const errorMessage = agentResult.error || "Build verification failed";
-      await store.logEntry(taskId, "Build verification failed during merge", errorMessage);
+      await store.logEntry(taskId, "Build verification failed during merge", errorMessage, UNATTRIBUTED_MUTATION_CONTEXT);
       throw new Error(`Build verification failed for ${taskId}: ${errorMessage}`);
     }
 
@@ -11120,7 +11086,8 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
       store,
       taskId,
       taskTitle: taskForSkillContext?.title,
-    }),
+      runContext: UNATTRIBUTED_MUTATION_CONTEXT,
+        }),
   });
 
   emitAgentSessionStart({
@@ -11176,7 +11143,7 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
       const errorMessage = err instanceof Error ? err.message : String(err);
       if (isContextLimitError(errorMessage)) {
         mergerLog.warn(`${taskId}: context limit hit after auto-compaction — retrying with minimal merge prompt`);
-        await store.logEntry(taskId, "Context limit reached during merge after auto-compaction — retrying with reduced prompt");
+        await store.logEntry(taskId, "Context limit reached during merge after auto-compaction — retrying with reduced prompt", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
 
         // Build minimal prompt: omit diff stat, use placeholder for commit log.
         // The fall-through preamble is preserved (it's the safety constraint,
@@ -11503,7 +11470,7 @@ export async function completeTask(
   mergerLog.log(`${taskId}: completeTask — clearing status, moving to done`);
   const preMoveTask = await store.getTask(taskId);
   // Clear transient status before moving to done
-  await store.updateTask(taskId, { status: null });
+  await store.updateTask(taskId, { status: null }, UNATTRIBUTED_MUTATION_CONTEXT);
   /*
   FNXC:MergerMoveAttribution 2026-08-29-07:37:
   Legacy merger completion remains a forward merge authority. Its own neutral provenance keeps the
@@ -11513,7 +11480,7 @@ export async function completeTask(
   // Use moveTask for proper event emission.
   const task = await store.moveTask(taskId, await resolveMergerLifecycleColumn(store, taskId, "complete"), {
     workflowMoveSource: "merger-complete-task",
-  });
+  }, UNATTRIBUTED_MUTATION_CONTEXT);
   const settings = await store.getSettings();
   if (isMergeRequestContractShadowEnabled(settings) && preMoveTask?.autoMerge !== false) {
     const mergeRequestRecord = await store.getMergeRequestRecordAsync(taskId);

@@ -1,3 +1,12 @@
+import type { TaskDetail, TaskStore, RunMutationContext } from "@fusion/core";
+import type { WorkflowGraphTaskRunResult } from "../workflows/workflow-graph-task-runner.js";
+import type { PausedAbortProvenance } from "./paused-abort-provenance.js";
+import { isGenericAbortProvenance } from "./paused-abort-provenance.js";
+import { graphFailureValue } from "./graph-failure-pure.js";
+import { executorLog } from "../logger.js";
+import { MERGE_BOUNDARY_UNPROVEN_VALUE } from "../workflows/workflow-merge-nodes.js";
+import { emitMergeBoundaryUnprovenParked } from "./emit-merge-boundary-unproven-audit.js";
+import type { MergeBoundaryUnprovenReasonCode } from "./workflow-merge-boundary.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-13:45:
  * routeGraphMergeFailureToRetry peeled from TaskExecutor (U4).
@@ -5,20 +14,11 @@
  * FNXC:WorkflowMerge 2026-07-12-17:38:
  * FN-1165: never route implementation-incomplete merge failures to the merge requester.
  */
-import type { TaskDetail, TaskStore } from "@fusion/core";
-import type { WorkflowGraphTaskRunResult } from "../workflows/workflow-graph-task-runner.js";
-import type { PausedAbortProvenance } from "./paused-abort-provenance.js";
-import { isGenericAbortProvenance } from "./paused-abort-provenance.js";
-import { graphFailureValue } from "./graph-failure-pure.js";
-import type { EngineRunContext } from "../util/run-audit.js";
-import { executorLog } from "../logger.js";
-import { MERGE_BOUNDARY_UNPROVEN_VALUE } from "../workflows/workflow-merge-nodes.js";
-import { emitMergeBoundaryUnprovenParked } from "./emit-merge-boundary-unproven-audit.js";
-import type { MergeBoundaryUnprovenReasonCode } from "./workflow-merge-boundary.js";
 
 export type RouteGraphMergeFailureToRetryDeps = {
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   mergeRequester?: ((taskId: string) => Promise<unknown>) | null;
   ensureWorkflowMergeBoundaryTask: (
     live: TaskDetail,
@@ -40,7 +40,7 @@ async function parkTaskFailed(
   store: TaskStore,
   taskId: string,
   errorMessage: string,
-  runContext: EngineRunContext | undefined,
+  runContext: RunMutationContext | undefined,
   capturedColumnMovedAt: string | undefined,
 ): Promise<boolean> {
   /*
@@ -123,7 +123,12 @@ export async function routeGraphMergeFailureToRetry(
     const failedNode = result.visitedNodeIds[result.visitedNodeIds.length - 1] ?? "unknown";
     const message = `Workflow graph merge failure at node '${failedNode}' routed to bounded auto-merge retry${abortProvenance === "merge-seam" ? " after merge-seam abort" : isGenericAbortProvenance(abortProvenance) || abortProvenance === undefined ? " after benign pause/resume abort" : ""}`;
     executorLog.warn(`${live.id}: ${message}`);
-    await deps.store.logEntry(live.id, message, undefined, deps.getRunContextFor(live.id));
+    /*
+    FNXC:Identity 2026-08-24-02:18:
+    Merge-failure retry routing logs through `runContextFor` so the bounded auto-merge retry is
+    attributed to the live graph run.
+    */
+    await deps.store.logEntry(live.id, message, undefined, deps.runContextFor(live.id));
 
     /*
     FNXC:MergeRetryReliability 2026-08-26-13:40 (Greptile P1): the boundary-try scope
@@ -172,7 +177,7 @@ export async function routeGraphMergeFailureToRetry(
       */
       if (mergeBoundary.blocked) {
         const { reason, code, missingInstanceCount } = mergeBoundary.blocked;
-        await deps.store.logEntry(live.id, `Workflow merge boundary retry parked task: ${reason}`, undefined, deps.getRunContextFor(live.id));
+        await deps.store.logEntry(live.id, `Workflow merge boundary retry parked task: ${reason}`, undefined, deps.runContextFor(live.id));
         let parked = false;
         /*
         FNXC:MergeRetryReliability 2026-09-04-03:01:
@@ -197,7 +202,7 @@ export async function routeGraphMergeFailureToRetry(
             status: "failed",
             error: `${MERGE_BOUNDARY_UNPROVEN_VALUE.toUpperCase().replaceAll("-", "_")}: ${reason}`,
           };
-        }, deps.getRunContextFor(live.id));
+        }, deps.runContextFor(live.id));
         const outcome = parked ? "parked" as const : "already-terminal" as const;
         /*
         FNXC:RunAudit 2026-08-20-02:00:

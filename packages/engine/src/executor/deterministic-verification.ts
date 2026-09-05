@@ -1,3 +1,8 @@
+import type { Settings, Task, TaskStore, RunMutationContext } from "@fusion/core";
+import {
+  runVerificationCommand,
+  type VerificationResult } from "../execution/verification-utils.js";
+import { executorLog } from "../logger.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-18:40:
  * runExecutorDeterministicVerification peeled from TaskExecutor (U4).
@@ -6,17 +11,11 @@
  * FNXC:EngineDiagnostics 2026-07-26-09:33:
  * Green path verification start/pass is expected work — debug so failures stay prominent.
  */
-import type { Settings, Task, TaskStore } from "@fusion/core";
-import {
-  runVerificationCommand,
-  type VerificationResult,
-} from "../execution/verification-utils.js";
-import { executorLog } from "../logger.js";
-import type { EngineRunContext } from "../util/run-audit.js";
 
 export type DeterministicVerificationDeps = {
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
 };
 
 export async function runExecutorDeterministicVerification(
@@ -43,7 +42,7 @@ export async function runExecutorDeterministicVerification(
     task.id,
     `[verification] Running deterministic verification (${parts.join(", ")})`,
     undefined,
-    deps.getRunContextFor(task.id),
+    deps.runContextFor(task.id),
   );
 
   const result: VerificationResult = { allPassed: true };
@@ -83,7 +82,7 @@ export async function runExecutorDeterministicVerification(
     task.id,
     `[verification] Deterministic verification passed`,
     undefined,
-    deps.getRunContextFor(task.id),
+    deps.runContextFor(task.id),
   );
   return result;
 }

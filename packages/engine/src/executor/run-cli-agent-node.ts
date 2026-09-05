@@ -1,22 +1,20 @@
-/**
- * FNXC:CodeOrganization 2026-08-03-11:25:
- * runCliAgentNode + reapCliTaskSessionForHandoff peeled from TaskExecutor (U4).
- * CLI agent graph node: launch PTY session, map outcomes to WorkflowNodeResult.
- */
-import type { CliSessionStore, TaskDetail, TaskStore, WorkflowIrNode } from "@fusion/core";
+import type { CliSessionStore, TaskDetail, TaskStore, WorkflowIrNode, RunMutationContext } from "@fusion/core";
 import type { WorkflowNodeResult } from "../workflows/workflow-graph-executor.js";
 import { executorLog } from "../logger.js";
-import type { EngineRunContext } from "../util/run-audit.js";
 import { resolveCliExecutorConfig } from "./cli-executor-config.js";
 import {
   CliTaskSession,
   launchCliTaskSession,
   killLiveTaskSessions,
-  type CliTaskOutcome,
-} from "../cli-agent/task-session.js";
+  type CliTaskOutcome } from "../cli-agent/task-session.js";
 import { CliConcurrencyLimitError, type CliSessionManager } from "../cli-agent/session-manager.js";
 import type { TelemetryHub } from "../cli-agent/telemetry-hub.js";
 import type { CliAdapterRegistry } from "../cli-agent/adapter.js";
+/**
+ * FNXC:CodeOrganization 2026-08-03-11:25:
+ * runCliAgentNode + reapCliTaskSessionForHandoff peeled from TaskExecutor (U4).
+ * CLI agent graph node: launch PTY session, map outcomes to WorkflowNodeResult.
+ */
 
 /** Structural match for TaskExecutor's CliAgentRuntime (avoids circular import). */
 export type CliAgentRuntimeBundle = {
@@ -31,7 +29,8 @@ export type CliAgentRuntimeBundle = {
 
 export type RunCliAgentNodeDeps = {
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   activeCliTaskSessions: Map<string, CliTaskSession>;
   cliAgentRuntime?: CliAgentRuntimeBundle | null;
   reapCliTaskSessionForHandoff: (session: CliTaskSession, taskId: string) => Promise<void>;
@@ -45,11 +44,16 @@ export async function runCliAgentNode(
 ): Promise<WorkflowNodeResult> {
   const runtime = deps.cliAgentRuntime;
   if (!runtime) {
+    /*
+    FNXC:Identity 2026-08-24-02:18:
+    CLI-agent error logs (runtime missing, no worktree, missing adapter, capacity) go through
+    `runContextFor` so the graph node's live run owns the failure breadcrumb.
+    */
     await deps.store.logEntry(
       live.id,
       `Workflow node '${node.id}' uses the cli-agent executor but no CLI agent runtime is wired`,
       undefined,
-      deps.getRunContextFor(live.id),
+      deps.runContextFor(live.id),
     );
     return { outcome: "failure", value: "cli-agent-runtime-unavailable" };
   }
@@ -59,7 +63,7 @@ export async function runCliAgentNode(
       live.id,
       `Workflow node '${node.id}' (cli-agent) is write-capable but no task worktree exists yet — place it after the execute seam`,
       undefined,
-      deps.getRunContextFor(live.id),
+      deps.runContextFor(live.id),
     );
     return { outcome: "failure", value: "no-worktree-for-write-node" };
   }
@@ -69,7 +73,7 @@ export async function runCliAgentNode(
       live.id,
       `Workflow node '${node.id}' (cli-agent) is missing 'cliAdapterId'`,
       undefined,
-      deps.getRunContextFor(live.id),
+      deps.runContextFor(live.id),
     );
     return { outcome: "failure", value: "cli-agent-adapter-missing" };
   }
@@ -101,7 +105,7 @@ export async function runCliAgentNode(
         live.id,
         `cli-agent session for node '${node.id}' rejected at PTY pool ceiling (${err.active}/${err.ceiling}) — queued`,
         undefined,
-        deps.getRunContextFor(live.id),
+        deps.runContextFor(live.id),
       );
       // A typed, surfaced state — NOT a silent stall. The graph failure handler
       // parks the task; a later sweep / capacity opening re-runs it.

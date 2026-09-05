@@ -41,7 +41,8 @@
  * This ensures manual/non-run paths are unaffected by audit instrumentation.
  */
 
-import type { TaskStore, RunAuditEventInput } from "@fusion/core";
+import type { TaskStore, RunAuditEventInput, ActorContext, RunMutationContext } from "@fusion/core";
+import { actorContextForAgent } from "@fusion/core";
 import { emitBoundedRunAudit, emitBoundedRunAuditWithOutcome, type BoundedRunAuditResult } from "./emit-bounded-run-audit.js";
 
 /** Structured context for a run correlation ID. */
@@ -59,6 +60,33 @@ export interface EngineRunContext {
   phase?: string;
   /** Invocation source for heartbeat runs (e.g., "timer", "on_demand", "assignment"). */
   source?: string;
+  /**
+   * FNXC:Identity 2026-08-09-03:04:
+   * The acting actor, when the lane knows it. Optional here and required on `RunMutationContext`
+   * deliberately: this is an engine-internal correlation record, and a lane that has not yet been
+   * threaded an authenticated actor must not be able to fabricate one by leaving a required field
+   * to a default. {@link toRunMutationContext} makes the fallback explicit at the boundary instead.
+   */
+  actor?: ActorContext;
+}
+
+/**
+ * FNXC:Identity 2026-08-09-03:04:
+ * Convert an engine run context into the store's `RunMutationContext`.
+ *
+ * `EngineRunContext` and `RunMutationContext` were structurally interchangeable until `actor` became
+ * required, and several lanes passed the former straight into a store method. This is the one
+ * boundary where the missing actor is filled in, and it fills it HONESTLY: the lane's own agent id,
+ * or the bootstrap actor when the lane is not agent-attributed at all. Once U18 threads authenticated
+ * actors through the lanes, `context.actor` is already carried and no fallback applies.
+ */
+export function toRunMutationContext(context: EngineRunContext): RunMutationContext {
+  return {
+    runId: context.runId,
+    agentId: context.agentId,
+    ...(context.source ? { source: context.source } : {}),
+    actor: context.actor ?? actorContextForAgent(context.agentId),
+  };
 }
 
 // ── Git mutation types ─────────────────────────────────────────────────────────
@@ -1215,12 +1243,18 @@ export function createRunAuditor(store: TaskStore, context: EngineRunContext | n
     };
   }
 
+  const mutation = toRunMutationContext(context);
+  const actorMetadata = {
+    actorId: mutation.actor.actor.id,
+    actorKind: mutation.actor.actor.kind,
+  };
+
   return {
     git: async (input: GitAuditInput) => {
       const eventInput: RunAuditEventInput = {
         taskId: context.taskId,
-        agentId: context.agentId,
-        runId: context.runId,
+        agentId: mutation.agentId,
+        runId: mutation.runId,
         domain: "git",
         mutationType: input.type,
         target: input.target,
@@ -1228,6 +1262,7 @@ export function createRunAuditor(store: TaskStore, context: EngineRunContext | n
           phase: context.phase,
           ...(context.source ? { source: context.source } : {}),
           ...(context.taskLineageId ? { taskLineageId: context.taskLineageId } : {}),
+          ...actorMetadata,
           ...input.metadata,
         },
       };
@@ -1244,8 +1279,8 @@ export function createRunAuditor(store: TaskStore, context: EngineRunContext | n
 
       const eventInput: RunAuditEventInput = {
         taskId: inferredTaskId,
-        agentId: context.agentId,
-        runId: context.runId,
+        agentId: mutation.agentId,
+        runId: mutation.runId,
         domain: "database",
         mutationType: input.type,
         target: input.target,
@@ -1253,6 +1288,7 @@ export function createRunAuditor(store: TaskStore, context: EngineRunContext | n
           phase: context.phase,
           ...(context.source ? { source: context.source } : {}),
           ...(context.taskLineageId ? { taskLineageId: context.taskLineageId } : {}),
+          ...actorMetadata,
           ...input.metadata,
         },
       };
@@ -1270,8 +1306,8 @@ export function createRunAuditor(store: TaskStore, context: EngineRunContext | n
         : context.taskId;
       return await emitBoundedRunAuditWithOutcome(store, {
         taskId: inferredTaskId,
-        agentId: context.agentId,
-        runId: context.runId,
+        agentId: mutation.agentId,
+        runId: mutation.runId,
         domain: "database",
         mutationType: input.type,
         target: input.target,
@@ -1279,6 +1315,7 @@ export function createRunAuditor(store: TaskStore, context: EngineRunContext | n
           phase: context.phase,
           ...(context.source ? { source: context.source } : {}),
           ...(context.taskLineageId ? { taskLineageId: context.taskLineageId } : {}),
+          ...actorMetadata,
           ...input.metadata,
         },
       } as RunAuditEventInput);
@@ -1287,8 +1324,8 @@ export function createRunAuditor(store: TaskStore, context: EngineRunContext | n
     filesystem: async (input: FilesystemAuditInput) => {
       const eventInput: RunAuditEventInput = {
         taskId: context.taskId,
-        agentId: context.agentId,
-        runId: context.runId,
+        agentId: mutation.agentId,
+        runId: mutation.runId,
         domain: "filesystem",
         mutationType: input.type,
         target: input.target,
@@ -1296,6 +1333,7 @@ export function createRunAuditor(store: TaskStore, context: EngineRunContext | n
           phase: context.phase,
           ...(context.source ? { source: context.source } : {}),
           ...(context.taskLineageId ? { taskLineageId: context.taskLineageId } : {}),
+          ...actorMetadata,
           ...input.metadata,
         },
       };
@@ -1305,8 +1343,8 @@ export function createRunAuditor(store: TaskStore, context: EngineRunContext | n
     sandbox: async (input: SandboxAuditInput) => {
       const eventInput: RunAuditEventInput = {
         taskId: context.taskId,
-        agentId: context.agentId,
-        runId: context.runId,
+        agentId: mutation.agentId,
+        runId: mutation.runId,
         domain: "sandbox",
         mutationType: input.type,
         target: input.target,
@@ -1314,6 +1352,7 @@ export function createRunAuditor(store: TaskStore, context: EngineRunContext | n
           phase: context.phase,
           ...(context.source ? { source: context.source } : {}),
           ...(context.taskLineageId ? { taskLineageId: context.taskLineageId } : {}),
+          ...actorMetadata,
           ...input.metadata,
         },
       };

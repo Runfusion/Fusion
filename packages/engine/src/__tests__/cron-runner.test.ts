@@ -1,4 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
+These call-arg assertions now include the mutation context the converted sweep passes.
+Adding it is what keeps them load-bearing: left at the old arity every
+`toHaveBeenCalledWith` here would fail, and every `.not.toHaveBeenCalledWith` would pass
+vacuously — an assertion that can no longer fail is worse than one that is red.
+*/
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import { CronRunner, createAiPromptExecutor, isInProcessBackupCommand, isInProcessMemoryBackupCommand, isInProcessScheduledEvalCommand } from "../scheduling/cron-runner.js";
 import type { AiPromptExecutor } from "../scheduling/cron-runner.js";
 import type { TaskStore, AutomationStore, ScheduledTask, AutomationRunResult, AutomationStep, Settings } from "@fusion/core";
@@ -1609,7 +1617,7 @@ describe("CronRunner", () => {
           sourceType: "cron",
           sourceMetadata: { scheduleId: "test-schedule-id", stepId: expect.any(String) },
         },
-      });
+      }, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
     });
 
     it("maps explicit create-task thinkingLevel and leaves omitted level unset", async () => {
@@ -1630,8 +1638,8 @@ describe("CronRunner", () => {
 
       await runner.executeSchedule(schedule);
 
-      expect(createTaskMock).toHaveBeenNthCalledWith(1, expect.objectContaining({ thinkingLevel: "high" }));
-      expect(createTaskMock).toHaveBeenNthCalledWith(2, expect.objectContaining({ thinkingLevel: undefined }));
+      expect(createTaskMock).toHaveBeenNthCalledWith(1, expect.objectContaining({ thinkingLevel: "high" }), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
+      expect(createTaskMock).toHaveBeenNthCalledWith(2, expect.objectContaining({ thinkingLevel: undefined }), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
     });
 
     /*
@@ -1661,7 +1669,7 @@ describe("CronRunner", () => {
       await runner.executeSchedule(schedule);
 
       expect(createTaskMock).toHaveBeenCalledWith(
-        expect.objectContaining({ column: undefined }),
+        expect.objectContaining({ column: undefined }), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
       expect(createTaskMock.mock.calls[0][0].column, "not `triage`, and not a substituted `todo`").toBeUndefined();
     });
@@ -1680,7 +1688,7 @@ describe("CronRunner", () => {
 
       await runner.executeSchedule(schedule);
 
-      expect(createTaskMock).toHaveBeenCalledWith(expect.objectContaining({ column: "in-progress" }));
+      expect(createTaskMock).toHaveBeenCalledWith(expect.objectContaining({ column: "in-progress" }), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
     });
 
     it("handles store.createTask() errors gracefully", async () => {
@@ -1729,7 +1737,7 @@ describe("CronRunner", () => {
           description: "Trimmed",
           modelProvider: "anthropic",
           modelId: "claude-sonnet-4-5",
-        }),
+        }), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
     });
 

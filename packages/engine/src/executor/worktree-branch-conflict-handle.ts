@@ -1,3 +1,4 @@
+import type { RunMutationContext } from "@fusion/core";
 /**
  * FNXC:CodeOrganization 2026-08-03-16:05:
  * reclaimExistingWorktree + handleBranchConflict peeled from TaskExecutor (U4 Slice B).
@@ -29,7 +30,8 @@ const execAsync = promisify(exec);
 export type BranchConflictHandleDeps = {
   rootDir: string;
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   findActiveWorktreeOwner: (worktreePath: string, requestingTaskId: string) => Promise<string | null>;
   normalizeReclaimableWorktreePath: (
     sourcePath: string,
@@ -55,18 +57,28 @@ export async function reclaimExistingWorktree(
 ): Promise<void> {
   const targetPath = preservedWorktreeTargetPathForTask(task.id, livePath, settings, deps.rootDir);
   const normalizedPath = await deps.normalizeReclaimableWorktreePath(livePath, targetPath, task.id, settings);
+  /*
+  FNXC:Identity 2026-08-24-02:18:
+  Branch-conflict recovery logs (reclaim, refusal, sticky) use `runContextFor` so the mutation
+  breadcrumb is attributable to the live executor run.
+
+  FNXC:Identity 2026-08-24-02:57:
+  The reclaim persist write is the same attributed mutation as the recovery log. 4/5 asserts
+  ANY_MUTATION_CONTEXT on this updateTask (engine vs operator branchWriteOrigin from #3507);
+  omitting the context would keep the provenance patch and still look unattributed.
+  */
   await deps.store.updateTask(task.id, {
     worktree: normalizedPath,
     branch,
     branchWriteOrigin: classifyTaskBranchOrigin(task, branch) === "operator-supplied" ? "operator" : "engine",
-  });
+  }, deps.runContextFor(task.id));
   const latestTask = await deps.store.getTask(task.id);
   const baseRef = await resolveDiffBaseRef(normalizedPath, latestTask.baseCommitSha);
   if (baseRef) {
     await assertCleanBranchAtBase(deps.rootDir, branch, baseRef, task.id);
   }
   const message = `[recovery] reclaimed existing worktree for ${task.id} at ${normalizedPath} (${count} commits preserved, tip ${tipSha.slice(0, 12)})`;
-  await deps.store.logEntry(task.id, message, undefined, deps.getRunContextFor(task.id));
+  await deps.store.logEntry(task.id, message, undefined, deps.runContextFor(task.id));
   await deps.store.appendAgentLog(task.id, "Branch conflict auto-recovery", "status", message, "executor");
 }
 
@@ -83,7 +95,7 @@ export async function handleBranchConflict(
   if (activeOwner !== null) {
     const refusalMessage = `[FN-4811] Branch conflict on ${error.branchName} deferred: conflicting worktree ${error.conflictingWorktreePath} is actively owned by ${activeOwner}`;
     executorLog.warn(refusalMessage);
-    await deps.store.logEntry(task.id, refusalMessage, undefined, deps.getRunContextFor(task.id));
+    await deps.store.logEntry(task.id, refusalMessage, undefined, deps.runContextFor(task.id));
     return "sticky";
   }
   const settings = await mergeEffectiveSettings(deps.store, task, await deps.store.getSettings());
@@ -102,7 +114,7 @@ export async function handleBranchConflict(
   if (inspection.kind === "stale-resolved") {
     await deps.store.updateTask(task.id, { worktree: null, branch: null, branchWriteOrigin: "engine" as const, baseCommitSha: null });
     const message = `[recovery] ${task.id} stage-A: pruned stale admin entry for ${error.branchName}`;
-    await deps.store.logEntry(task.id, message, undefined, deps.getRunContextFor(task.id));
+    await deps.store.logEntry(task.id, message, undefined, deps.runContextFor(task.id));
     await deps.store.appendAgentLog(task.id, "Branch conflict auto-recovery", "status", message, "executor");
     return "retry";
   }
@@ -131,7 +143,7 @@ export async function handleBranchConflict(
     }
     await deps.store.updateTask(task.id, { worktree: null, branch: null, branchWriteOrigin: "engine" as const, baseCommitSha: null });
     const message = `[recovery] ${task.id} stage-A: tip-already-merged cleanup for ${error.branchName} (${inspection.tipSha.slice(0, 12)} on ${inspection.integrationRef})`;
-    await deps.store.logEntry(task.id, message, undefined, deps.getRunContextFor(task.id));
+    await deps.store.logEntry(task.id, message, undefined, deps.runContextFor(task.id));
     await deps.store.appendAgentLog(task.id, "Branch conflict auto-recovery", "status", message, "executor");
     return "retry";
   }
@@ -168,9 +180,9 @@ export async function handleBranchConflict(
 
   const conflictMessage = `Task branch conflict: ${error.branchName} is already checked out at ${error.conflictingWorktreePath}. ` +
     `Resolve the local branch/worktree conflict with git tooling (inspect/reclaim or discard) before retrying.`;
-  await deps.store.logEntry(task.id, formatBranchConflictLifecycleLog(task.id, error), undefined, deps.getRunContextFor(task.id));
+  await deps.store.logEntry(task.id, formatBranchConflictLifecycleLog(task.id, error), undefined, deps.runContextFor(task.id));
   await deps.store.appendAgentLog(task.id, "Branch conflict recovery required", "tool_error", formatBranchConflictAgentLog(task.id, error), "executor");
-  const autoRecoveryDispatcher = deps.getAutoRecoveryDispatcher(deps.createRunAuditor(deps.getRunContextFor(task.id)));
+  const autoRecoveryDispatcher = deps.getAutoRecoveryDispatcher(deps.createRunAuditor(deps.runContextFor(task.id)));
   const decision = await autoRecoveryDispatcher.dispatch({
     class: "branch-conflict-unrecoverable",
     taskId: task.id,

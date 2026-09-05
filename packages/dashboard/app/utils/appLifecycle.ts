@@ -82,6 +82,13 @@ export interface DesktopShellRedirectShellState {
     state: "stopped" | "starting" | "running" | "error";
     port?: number;
     baseUrl?: string;
+    /*
+    FNXC:DesktopHostAuth 2026-08-09-03:04:
+    Bearer token for the embedded desktop API, published by the desktop LocalRuntimeManager
+    (packages/desktop/src/local-runtime.ts). The embedded server is now bearer-gated and loopback-
+    bound, so a redirect that drops this token lands on an origin whose `/api/*` answers 401.
+    */
+    authToken?: string;
   };
 }
 
@@ -125,7 +132,24 @@ export function resolveDesktopShellRedirectTarget(
     } catch {
       // fall through and navigate — currentHref/baseUrl were not parseable URLs
     }
-    return baseUrl;
+    /*
+    FNXC:DesktopHostAuth 2026-08-09-03:04:
+    Carry the embedded runtime's bearer token across the "Switch server" -> Local redirect. This is
+    the SECOND navigation into the local-runtime origin (DesktopLaunchGate is the first); the
+    embedded API is bearer-gated now, so a token-less redirect reaches the dashboard shell and then
+    401s on every `/api/*` call. `?token=` is the carrier the SPA already understands
+    (captureTokenFromUrl in app/auth.ts stores it and strips it from history).
+    */
+    if (!runtime.authToken) {
+      return baseUrl;
+    }
+    try {
+      const target = new URL(baseUrl);
+      target.searchParams.set("token", runtime.authToken);
+      return target.toString();
+    } catch {
+      return baseUrl;
+    }
   }
 
   if (shellState.desktopMode === "remote") {

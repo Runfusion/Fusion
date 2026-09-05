@@ -1,3 +1,5 @@
+import type { TaskStore, RunMutationContext } from "@fusion/core";
+import { executorLog } from "../logger.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-18:30:
  * safeLogEntry peeled from TaskExecutor (U4).
@@ -12,13 +14,11 @@
  * in-review handoff. Route every breadcrumb write through safeLogEntry() so both synchronous throws
  * and async rejections are swallowed into a warn.
  */
-import type { TaskStore } from "@fusion/core";
-import { executorLog } from "../logger.js";
-import type { EngineRunContext } from "../util/run-audit.js";
 
 export type SafeLogEntryDeps = {
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
 };
 
 export function safeLogEntry(
@@ -27,7 +27,7 @@ export function safeLogEntry(
   message: string,
 ): void {
   try {
-    const result = deps.store.logEntry(taskId, message, undefined, deps.getRunContextFor(taskId));
+    const result = deps.store.logEntry(taskId, message, undefined, deps.runContextFor(taskId));
     void Promise.resolve(result).catch((error) => {
       executorLog.warn(`${taskId}: failed to write task-log breadcrumb: ${error instanceof Error ? error.message : String(error)}`);
     });

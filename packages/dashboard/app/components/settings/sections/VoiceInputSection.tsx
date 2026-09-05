@@ -104,7 +104,13 @@ export function VoiceInputSection({ form, setForm }: SectionBaseProps) {
   };
   const performRuntimeRecheck = async () => {
     setRecheckingRuntime(true);
-    try { await api("/voice/runtime/recheck", { method: "POST" }); } catch {} finally {
+    try {
+      await api("/voice/runtime/recheck", { method: "POST" });
+    } catch {
+      // Deliberately swallowed: `loadStatus()` in `finally` re-reads authoritative runtime state, so
+      // it reports the real outcome whether or not the recheck call itself succeeded. Surfacing this
+      // error too would show a failure toast next to a panel that just refreshed correctly.
+    } finally {
       await loadStatus();
       if (mounted.current) setRecheckingRuntime(false);
     }

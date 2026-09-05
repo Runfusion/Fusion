@@ -1,3 +1,16 @@
+import type { Task, TaskStore, WorkflowStepResult as CoreWorkflowStepResult, RunMutationContext } from "@fusion/core";
+import { hasPreMergeRemediationAutoMergeHold, resolveStepReopenPolicy, resolveWorkflowIrForTask } from "@fusion/core";
+import { executorLog } from "../logger.js";
+import type {
+  AppendReviewRemediationOptions,
+  AppendReviewRemediationOutcome } from "./append-review-remediation-steps.js";
+import { reassertRemediationAttempt } from "./claim-review-remediation-attempt.js";
+import { ClaimSupersededError, fenceStoreForClaim } from "./fence-store-for-claim.js";
+import { routeReviewConvergenceLadder } from "./review-convergence-ladder.js";
+import { hasRepeatedUnchangedReview, reviewInputSignature, type RequestPreMergeOptionalStepFixInfo } from "./request-pre-merge-optional-step-fix.js";
+import { resolveReviewRemediationGate } from "./review-remediation-gate.js";
+import { resolveRemediationCheckout } from "./resolve-remediation-checkout.js";
+import { isDefiniteEmptyCodeReviewRevise } from "./review-empty-content-close.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-09:20:
  * recoverFailedPreMergeWorkflowStep peeled from TaskExecutor (U4).
@@ -6,21 +19,6 @@
  * A failed pre-merge result is a blocking gate failure by construction. Recovery revives the task
  * from that failed gate while retaining the gate's structured findings for the implementer.
  */
-import type { Task, TaskStore, WorkflowStepResult as CoreWorkflowStepResult } from "@fusion/core";
-import { hasPreMergeRemediationAutoMergeHold, resolveStepReopenPolicy, resolveWorkflowIrForTask } from "@fusion/core";
-import { executorLog } from "../logger.js";
-import type { EngineRunContext } from "../util/run-audit.js";
-import type {
-  AppendReviewRemediationOptions,
-  AppendReviewRemediationOutcome,
-} from "./append-review-remediation-steps.js";
-import { reassertRemediationAttempt } from "./claim-review-remediation-attempt.js";
-import { ClaimSupersededError, fenceStoreForClaim } from "./fence-store-for-claim.js";
-import { routeReviewConvergenceLadder } from "./review-convergence-ladder.js";
-import { hasRepeatedUnchangedReview, reviewInputSignature, type RequestPreMergeOptionalStepFixInfo } from "./request-pre-merge-optional-step-fix.js";
-import { resolveReviewRemediationGate } from "./review-remediation-gate.js";
-import { resolveRemediationCheckout } from "./resolve-remediation-checkout.js";
-import { isDefiniteEmptyCodeReviewRevise } from "./review-empty-content-close.js";
 
 export type RemediationRefusalReason =
   | "no-actionable-findings"
@@ -43,7 +41,8 @@ export type RecoverFailedPreMergeStepOutcome =
 
 export type RecoverFailedPreMergeStepDeps = {
   store: TaskStore;
-  getRunContextFor?: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor?: (taskId: string) => RunMutationContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   resolveFailedPreMergeWorkflowStepBudget: (
     task: Task,
     target: CoreWorkflowStepResult,
@@ -217,7 +216,7 @@ export async function recoverFailedPreMergeWorkflowStepDetailed(
         liveTask.id,
         "Failed pre-merge step recovery not scheduled — revision budget zero/invalid",
         `Step: ${stepName}\nAttempts: ${budget.attempts}\nMax: ${String(budget.max)}`,
-        deps.getRunContextFor?.(liveTask.id),
+        deps.runContextFor?.(liveTask.id),
       );
       return { kind: "skipped" };
     }
@@ -253,7 +252,7 @@ export async function recoverFailedPreMergeWorkflowStepDetailed(
       });
       if (outcome === "escalated" || outcome === "arbitrated") return { kind: "scheduled" };
       executorLog.warn(`${liveTask.id}: failed pre-merge step recovery NOT scheduled for "${stepName}" — revision budget exhausted (attempts=${budget.attempts}, max=${String(budget.max)}). Card left parked.`);
-      await deps.store.logEntry(liveTask.id, "Failed pre-merge step recovery not scheduled — revision budget exhausted", `Step: ${stepName}\nAttempts: ${budget.attempts}\nMax: ${String(budget.max)}`, deps.getRunContextFor?.(liveTask.id));
+      await deps.store.logEntry(liveTask.id, "Failed pre-merge step recovery not scheduled — revision budget exhausted", `Step: ${stepName}\nAttempts: ${budget.attempts}\nMax: ${String(budget.max)}`, deps.runContextFor?.(liveTask.id));
       return { kind: "skipped" };
     }
 

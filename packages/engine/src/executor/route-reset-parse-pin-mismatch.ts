@@ -1,3 +1,6 @@
+import type { TaskDetail, TaskStore, RunMutationContext } from "@fusion/core";
+import { executorLog } from "../logger.js";
+import { resolveTerminalColumnsFor, resolveReboundColumnFor } from "./lifecycle-columns.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-12:00:
  * routeResetParsePinMismatchToRetry peeled from TaskExecutor (U4).
@@ -5,14 +8,11 @@
  * FNXC:WorkflowReset 2026-06-29-10:04:
  * A user reset/retry can race an aborting graph-owned foreach instance that persists after the route cleared pins. If the next run reaches parse and sees only stale foreach pins while the task has no implementation progress, recover by deleting all graph instance rows and requeueing to todo. Do not hand the task to in-review, because parse has not executed work or produced mergeable output.
  */
-import type { TaskDetail, TaskStore } from "@fusion/core";
-import { executorLog } from "../logger.js";
-import type { EngineRunContext } from "../util/run-audit.js";
-import { resolveTerminalColumnsFor, resolveReboundColumnFor } from "./lifecycle-columns.js";
 
 export type RouteResetParsePinMismatchDeps = {
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   clearPausedAborted: (taskId: string) => void;
   activeWorktrees: Map<string, unknown>;
   persistTokenUsage: (taskId: string) => Promise<void>;
@@ -43,18 +43,23 @@ export async function routeResetParsePinMismatchToRetry(
   }
   deps.clearPausedAborted(live.id);
   deps.activeWorktrees.delete(live.id);
+  /*
+  FNXC:Identity 2026-08-24-02:18:
+  Parse-pin reset clears graph resume state through `runContextFor` so the auto-recovery write is
+  attributed to the live executor run.
+  */
   await deps.store.updateTask(live.id, {
     status: null,
     error: null,
     graphResumeRetryCount: 0,
-  }, deps.getRunContextFor(live.id));
+  }, deps.runContextFor(live.id));
   const reboundColumn = await resolveReboundColumnFor(deps.store, live.id);
   if (live.column !== reboundColumn) {
     await deps.store.moveTask(live.id, reboundColumn, { preserveProgress: false });
   }
   const message = "Auto-recovered: cleared stale workflow parse pins after reset/retry — task requeued before execution";
   executorLog.warn(`${live.id}: ${message}`);
-  await deps.store.logEntry(live.id, message, undefined, deps.getRunContextFor(live.id));
+  await deps.store.logEntry(live.id, message, undefined, deps.runContextFor(live.id));
   await deps.persistTokenUsage(live.id);
   return true;
 }

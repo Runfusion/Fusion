@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TaskExecutor } from "../executor.js";
 import { resetExecutorMocks } from "./executor-test-helpers.js";
+/* FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage C): the lease renewal now carries the executor run's mutation context to the agent store. */
+import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 
 function createStore() {
   const listeners = new Map<string, ((payload: unknown) => void)[]>();
@@ -64,7 +66,7 @@ describe("TaskExecutor lease renewal fallback", () => {
         leaseEpoch: 4,
         renewedAt: expect.any(String),
       }),
-      undefined,
+      ANY_MUTATION_CONTEXT,
     );
     expect(store.renewCheckoutLease).not.toHaveBeenCalled();
     expect(store.updateTask).not.toHaveBeenCalled();

@@ -7,18 +7,28 @@
  * - Triggers heartbeat execution for routines
  */
 
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
+Extracted helper of the unattended self-healing / scheduler sweeps, so its store writes carry
+the same MARKER as the sweeps that call it: a timer-driven repair has no session, no request,
+and no acting agent, and the only ids in scope name the SUBJECT of the write rather than its
+author. Counted by `unattributed-actor-census.test.ts`; U13 owns whether these lanes get a real
+system actor.
+*/
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import { CronExpressionParser } from "cron-parser";
 import { isInProcessBackupCommand, isInProcessMemoryBackupCommand } from "./cron-runner.js";
-import type {
-  RoutineStore,
-  Routine,
-  RoutineExecutionResult,
-  AutomationRunResult,
-  AutomationStep,
-  AutomationStepResult,
-  Column,
-  TaskCreateInput,
-  TaskStore,
+import {
+  toRunMutationContext,
+  type RoutineStore,
+  type Routine,
+  type RoutineExecutionResult,
+  type AutomationRunResult,
+  type AutomationStep,
+  type AutomationStepResult,
+  type Column,
+  type TaskCreateInput,
+  type TaskStore,
 } from "@fusion/core";
 import type { HeartbeatMonitor } from "../agent-heartbeat.js";
 import type { AiPromptExecutor, AiPromptLiveCallbacks } from "./cron-runner.js";
@@ -305,12 +315,12 @@ export class RoutineRunner {
     }
 
     // FN-4689: close FN-4640 follow-up by wiring routine command sandbox execution through RunAuditor.
-    const engineRunContext: EngineRunContext = {
+    const engineRunContext: EngineRunContext = toRunMutationContext({
       runId: generateSyntheticRunId("routine", routine.id),
       agentId: routine.agentId ?? "routine-runner",
       phase: "routine-execute",
       source: "routine",
-    };
+    });
 
     return createRunAuditor(this.options.taskStore, engineRunContext);
   }
@@ -533,7 +543,7 @@ export class RoutineRunner {
         },
       };
       try {
-        const task = await this.options.taskStore.createTask(taskInput);
+        const task = await this.options.taskStore.createTask(taskInput, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
         return { stepId: step.id, stepName: step.name, stepIndex, success: true, output: `Created task ${task.id}: ${task.title || task.description.slice(0, 80)}`, startedAt, completedAt: new Date().toISOString() };
       } catch (err) {
         return { stepId: step.id, stepName: step.name, stepIndex, success: false, output: "", error: err instanceof Error ? err.message : String(err), startedAt, completedAt: new Date().toISOString() };

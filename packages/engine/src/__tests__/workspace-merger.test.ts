@@ -24,6 +24,7 @@ The single-repo runAiMerge regression lives in the existing merger-ai*.test.ts (
 extraction is byte-for-byte; runAiMerge is landOneRepo's single-repo caller).
 */
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 import { EventEmitter } from "node:events";
 import { execSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -713,8 +714,7 @@ describeIfGit("landWorkspaceTask — per-repo merge loop (Phase C U1)", () => {
     expect(store.moveTaskCalls).toEqual([]);
     expect(store.updateTask).toHaveBeenCalledWith(
       TASK_ID,
-      expect.objectContaining({ error: expect.stringContaining("operator review required") }),
-    );
+      expect.objectContaining({ error: expect.stringContaining("operator review required") }), ANY_MUTATION_CONTEXT);
     expect(store.emitted.some((e) => e.event === "task:merged")).toBe(false);
 
     // Integration refs unchanged.

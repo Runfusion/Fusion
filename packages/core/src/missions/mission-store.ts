@@ -1,4 +1,5 @@
 import { createLogger } from "../process/logger.js";
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "../identity/mutation-context.js";
 
 const severityAuditLog = createLogger("core-mission-store");
 /**
@@ -4471,6 +4472,12 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
           taskSegment,
         });
 
+        /*
+        FNXC:Identity 2026-08-09-03:04 (U18):
+        Mission feature -> task materialization. The requesting actor is whoever triggered the
+        mission triage (dashboard route or CLI); neither reaches this frame yet, so the marker holds
+        the place until U9/U11 thread it through the mission entry points.
+        */
         const createdTask = await this.taskStore.createTask({
           title: taskTitle || feature.title,
           description,
@@ -4500,12 +4507,12 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
           // FNXC:MissionTaskPrefix 2026-07-26-12:00: thread the mission's optional taskPrefix into TaskCreateInput for distributed id minting.
           ...(mission?.taskPrefix ? { taskPrefix: mission.taskPrefix } : {}),
           ...(branchOptions?.workflowId !== undefined ? { workflowId: branchOptions.workflowId } : {}),
-        });
+        }, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
 
         if (guard.fingerprint) {
           await this.taskStore.updateTask(createdTask.id, {
             sourceMetadataPatch: { contentFingerprint: guard.fingerprint },
-          });
+          }, UNATTRIBUTED_MUTATION_CONTEXT);
         }
 
         const reconcile = await reconcileDeterministicDuplicate(this.taskStore, {

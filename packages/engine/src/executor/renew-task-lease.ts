@@ -1,16 +1,16 @@
+import type { AgentStore, TaskStore, RunMutationContext } from "@fusion/core";
 /**
  * FNXC:CodeOrganization 2026-08-03-17:15:
  * renewTaskLease peeled from TaskExecutor (U4).
  *
  * Renews the agent checkout lease (AgentStore) or store checkout lease metadata.
  */
-import type { AgentStore, TaskStore } from "@fusion/core";
-import type { EngineRunContext } from "../util/run-audit.js";
 
 export type RenewTaskLeaseDeps = {
   store: TaskStore;
   options: { agentStore?: AgentStore | null; [k: string]: unknown };
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
 };
 
 export async function renewTaskLease(
@@ -32,7 +32,7 @@ export async function renewTaskLease(
         leaseEpoch,
         renewedAt,
       },
-      deps.getRunContextFor(taskId),
+      deps.runContextFor(taskId),
     );
     return;
   }

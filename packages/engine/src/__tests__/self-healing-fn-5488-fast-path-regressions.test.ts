@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 import type { Settings, Task, TaskStore } from "@fusion/core";
 import { SelfHealingManager } from "../self-healing.js";
 
@@ -178,8 +179,7 @@ describe("SelfHealingManager FN-5488 fast-path regressions", () => {
 
     expect(store.logEntry).toHaveBeenCalledWith(
       depOnlyBlocker.id,
-      expect.stringContaining(`${AUDIT_PREFIX} cleared stale blockedBy`),
-    );
+      expect.stringContaining(`${AUDIT_PREFIX} cleared stale blockedBy`), undefined, ANY_MUTATION_CONTEXT);
     expect(store.logEntry).toHaveBeenCalledWith(
       depOnlyBlocker.id,
       expect.stringContaining(`reason=${REASON_FAILED_RETRY_EXHAUSTED}`),
@@ -221,8 +221,7 @@ describe("SelfHealingManager FN-5488 fast-path regressions", () => {
     expect(tasks.get(blocker.id)?.status).toBe("merging");
     expect(store.logEntry).toHaveBeenCalledWith(
       dependent.id,
-      expect.stringContaining(`${AUDIT_PREFIX} cleared stale blockedBy`),
-    );
+      expect.stringContaining(`${AUDIT_PREFIX} cleared stale blockedBy`), undefined, ANY_MUTATION_CONTEXT);
     expect(store.logEntry).toHaveBeenCalledWith(
       dependent.id,
       expect.stringContaining(`reason=${REASON_UNBACKED_MERGING}`),
@@ -269,8 +268,7 @@ describe("SelfHealingManager FN-5488 fast-path regressions", () => {
     expect(tasks.get(dependent.id)?.status).toBeNull();
     expect(store.logEntry).toHaveBeenCalledWith(
       dependent.id,
-      expect.stringContaining(`reason=${REASON_UNBACKED_MERGING}`),
-    );
+      expect.stringContaining(`reason=${REASON_UNBACKED_MERGING}`), undefined, ANY_MUTATION_CONTEXT);
   });
 
   it("preserves overlapBlockedBy when a failed review holder still owns a worktree", async () => {

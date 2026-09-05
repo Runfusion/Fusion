@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 import type { Agent, AgentHeartbeatRun } from "@fusion/core";
 import { HeartbeatMonitor } from "../agent-heartbeat.js";
 import * as worktreeAcquisition from "../worktree/worktree-acquisition.js";
@@ -76,10 +77,10 @@ describe("heartbeat worktree cwd", () => {
     const monitor = new HeartbeatMonitor({ store, taskStore, rootDir: "/repo" });
     await monitor.executeHeartbeat({ agentId: "a1", source: "on_demand" });
     expect(piModule.createFnAgent).not.toHaveBeenCalled();
-    expect(taskStore.moveTask).toHaveBeenCalledWith("FN-1", "todo", { preserveProgress: true });
+    expect(taskStore.moveTask).toHaveBeenCalledWith("FN-1", "todo", { preserveProgress: true }, ANY_MUTATION_CONTEXT);
     // FN-7721: first failure bumps the bounded cross-heartbeat retry counter
     // (reuses Task.recoveryRetryCount) rather than terminally failing the task.
-    expect(taskStore.updateTask).toHaveBeenCalledWith("FN-1", { recoveryRetryCount: 1 });
+    expect(taskStore.updateTask).toHaveBeenCalledWith("FN-1", { recoveryRetryCount: 1 }, ANY_MUTATION_CONTEXT);
   });
 
   it("parks typed base-refresh refusals without consuming acquisition retries", async () => {
@@ -105,9 +106,8 @@ describe("heartbeat worktree cwd", () => {
     expect(taskStore.logEntry).toHaveBeenCalledWith(
       "FN-1",
       "Worktree base refresh blocked heartbeat execution (base-reconciliation-required)",
-      expect.any(String),
-    );
-    expect(taskStore.moveTask).toHaveBeenCalledWith("FN-1", "todo", { preserveProgress: true });
+      expect.any(String), ANY_MUTATION_CONTEXT);
+    expect(taskStore.moveTask).toHaveBeenCalledWith("FN-1", "todo", { preserveProgress: true }, ANY_MUTATION_CONTEXT);
   });
 
   // FN-7721 regression: reproduces the reported "worktree-setup loop" symptom
@@ -150,7 +150,7 @@ describe("heartbeat worktree cwd", () => {
     expect(taskStore.updateTask).toHaveBeenCalledWith("FN-1", expect.objectContaining({
       status: "failed",
       recoveryRetryCount: null,
-    }));
+    }), ANY_MUTATION_CONTEXT);
     expect(onTaskAcquisitionExhausted).toHaveBeenCalledTimes(1);
     expect(onTaskAcquisitionExhausted.mock.calls[0][0]).toBe("FN-1");
 
@@ -160,6 +160,6 @@ describe("heartbeat worktree cwd", () => {
     // the `status: "failed"` written just above is silently wiped, and the
     // task looks like an ordinary todo task that gets reassigned and retried
     // from scratch — defeating the terminal-failure intent of this fix.
-    expect(taskStore.moveTask).toHaveBeenCalledWith("FN-1", "todo", expect.objectContaining({ preserveStatus: true }));
+    expect(taskStore.moveTask).toHaveBeenCalledWith("FN-1", "todo", expect.objectContaining({ preserveStatus: true }), ANY_MUTATION_CONTEXT);
   });
 });

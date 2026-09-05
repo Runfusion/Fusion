@@ -1,3 +1,4 @@
+import { UNATTRIBUTED_CONTEXT_MATCHER } from "../../__tests__/mutation-context-matchers.js";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 /*
@@ -455,7 +456,7 @@ describe("task node overrides", () => {
     }));
 
     await runTaskSetNode("FN-001", "my-remote");
-    expect(updateTask).toHaveBeenCalledWith("FN-001", { nodeId: "node-123" });
+    expect(updateTask).toHaveBeenCalledWith("FN-001", { nodeId: "node-123" }, UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("runTaskSetNode accepts raw node id", async () => {
@@ -475,7 +476,7 @@ describe("task node overrides", () => {
     }));
 
     await runTaskSetNode("FN-001", "12345678-1234-1234-1234-123456789012");
-    expect(updateTask).toHaveBeenCalledWith("FN-001", { nodeId: "12345678-1234-1234-1234-123456789012" });
+    expect(updateTask).toHaveBeenCalledWith("FN-001", { nodeId: "12345678-1234-1234-1234-123456789012" }, UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("runTaskSetNode blocks in-progress tasks", async () => {
@@ -514,7 +515,7 @@ describe("task node overrides", () => {
     }));
 
     await runTaskClearNode("FN-001");
-    expect(updateTask).toHaveBeenCalledWith("FN-001", { nodeId: null });
+    expect(updateTask).toHaveBeenCalledWith("FN-001", { nodeId: null }, UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("runTaskClearNode blocks in-progress tasks", async () => {
@@ -561,7 +562,7 @@ describe("task node overrides", () => {
     }));
 
     await runTaskCreate("new task", undefined, undefined, undefined, "remote-a");
-    expect(updateTask).toHaveBeenCalledWith("FN-900", { nodeId: "node-123" });
+    expect(updateTask).toHaveBeenCalledWith("FN-900", { nodeId: "node-123" }, UNATTRIBUTED_CONTEXT_MATCHER);
   });
 });
 
@@ -682,7 +683,7 @@ describe("project-aware task command behavior", () => {
       description: "test task",
       dependencies: undefined,
       source: { sourceType: "cli", sourceMetadata: { contentFingerprint: "fp-1" } },
-    }, { invokeTaskCreatedHook: false });
+    }, { invokeTaskCreatedHook: false }, UNATTRIBUTED_CONTEXT_MATCHER);
     expect(logSpy.mock.calls.some((call) => String(call[0]).includes("Project: demo-project"))).toBe(true);
 
     logSpy.mockRestore();
@@ -707,6 +708,7 @@ describe("project-aware task command behavior", () => {
     expect(mockCreateTask).toHaveBeenCalledWith(
       { description: "default task", dependencies: undefined, source: { sourceType: "cli", sourceMetadata: undefined } },
       { invokeTaskCreatedHook: false },
+      UNATTRIBUTED_CONTEXT_MATCHER,
     );
   });
 
@@ -738,6 +740,7 @@ describe("project-aware task command behavior", () => {
     expect(mockCreateTask).toHaveBeenCalledWith(
       { description: "local task", dependencies: undefined, source: { sourceType: "cli", sourceMetadata: { contentFingerprint: "fp-local" } } },
       { invokeTaskCreatedHook: false },
+      UNATTRIBUTED_CONTEXT_MATCHER,
     );
     cwdSpy.mockRestore();
   });
@@ -878,6 +881,7 @@ describe("project-aware task command behavior", () => {
         }),
       }),
       { invokeTaskCreatedHook: false },
+      UNATTRIBUTED_CONTEXT_MATCHER,
     );
     expect(close).toHaveBeenCalled();
 
@@ -967,6 +971,7 @@ describe("project-aware task command behavior", () => {
         }),
       }),
       { invokeTaskCreatedHook: false },
+      UNATTRIBUTED_CONTEXT_MATCHER,
     );
   });
 
@@ -1224,7 +1229,7 @@ describe("project-aware task command behavior", () => {
     expect(resolveProject).toHaveBeenCalledWith("demo-project");
     // FNXC:TaskMovement 2026-07-26-12:35: `fn task move` is a human board action and
     // must carry the user move source so user-move semantics (hard cancel) apply.
-    expect(mockMoveTask).toHaveBeenCalledWith("FN-123", "done", { moveSource: "user" });
+    expect(mockMoveTask).toHaveBeenCalledWith("FN-123", "done", { moveSource: "user" }, UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("runTaskMove passes the user source through to the task-move disposer seam (hard cancel)", async () => {
@@ -1329,7 +1334,13 @@ describe("project-aware task command behavior", () => {
     await runTaskUnarchive("FN-123", "demo-project");
 
     expect(archiveTask).toHaveBeenCalledWith("FN-123", {liveExecutionGuard: "refuse"});
-    expect(unarchiveTask).toHaveBeenCalledWith("FN-123");
+    expect(unarchiveTask).toHaveBeenCalledWith(
+      "FN-123",
+      expect.objectContaining({
+        agentId: "cli",
+        actor: expect.objectContaining({ actor: expect.objectContaining({ id: "cli", kind: "agent" }) }),
+      }),
+    );
   });
 
   it("refuses a live archive before calling the store and exits non-zero", async () => {
@@ -1412,7 +1423,7 @@ describe("project-aware task command behavior", () => {
 
     expect(getTask).toHaveBeenCalledWith("FN-123");
     expect(updateTask).toHaveBeenCalled();
-    expect(moveTask).toHaveBeenCalledWith("FN-123", "todo");
+    expect(moveTask).toHaveBeenCalledWith("FN-123", "todo", undefined, UNATTRIBUTED_CONTEXT_MATCHER);
     expect(logEntry).toHaveBeenCalled();
   });
 
@@ -1436,7 +1447,7 @@ describe("project-aware task command behavior", () => {
         agentId: "cli",
         runId: expect.stringMatching(/^synthetic-cli-delete-FN-123-/),
       }),
-    }));
+    }), UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("runTaskComment, runTaskComments, and runTaskSteer use resolved project store", async () => {
@@ -1949,7 +1960,7 @@ describe("runTaskCreate with --depends", () => {
       description: "test task",
       dependencies: ["FN-124"],
       source: { sourceType: "cli", sourceMetadata: undefined },
-    }, { invokeTaskCreatedHook: false });
+    }, { invokeTaskCreatedHook: false }, UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("passes multiple dependencies correctly", async () => {
@@ -1959,7 +1970,7 @@ describe("runTaskCreate with --depends", () => {
       description: "test task",
       dependencies: ["FN-124", "FN-100"],
       source: { sourceType: "cli", sourceMetadata: undefined },
-    }, { invokeTaskCreatedHook: false });
+    }, { invokeTaskCreatedHook: false }, UNATTRIBUTED_CONTEXT_MATCHER);
 
     const depsLine = logSpy.mock.calls.find(
       (call) => typeof call[0] === "string" && call[0].includes("Dependencies:"),
@@ -1976,7 +1987,7 @@ describe("runTaskCreate with --depends", () => {
       description: "test task",
       dependencies: undefined,
       source: { sourceType: "cli", sourceMetadata: undefined },
-    }, { invokeTaskCreatedHook: false });
+    }, { invokeTaskCreatedHook: false }, UNATTRIBUTED_CONTEXT_MATCHER);
   });
 });
 
@@ -2072,7 +2083,7 @@ describe("runTaskImportGitHubInteractive", () => {
         url: "https://github.com/owner/repo/issues/1",
       },
       source: { sourceType: "github_import", sourceMetadata: { issueUrl: "https://github.com/owner/repo/issues/1", issueNumber: 1 } },
-    });
+    }, undefined, UNATTRIBUTED_CONTEXT_MATCHER);
     expect(mockCreateTask).toHaveBeenCalledWith({
       title: "Third Issue",
       description: "Description 3\n\nSource: https://github.com/owner/repo/issues/3",
@@ -2085,7 +2096,7 @@ describe("runTaskImportGitHubInteractive", () => {
         url: "https://github.com/owner/repo/issues/3",
       },
       source: { sourceType: "github_import", sourceMetadata: { issueUrl: "https://github.com/owner/repo/issues/3", issueNumber: 3 } },
-    });
+    }, undefined, UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("marks interactive imports as tracked when tracking defaults are on", async () => {
@@ -2109,7 +2120,7 @@ describe("runTaskImportGitHubInteractive", () => {
     expect(mockCreateTask).toHaveBeenCalledWith(expect.objectContaining({
       githubTracking: { enabled: true },
       sourceIssue: expect.objectContaining({ provider: "github", repository: "owner/repo", issueNumber: 1 }),
-    }));
+    }), undefined, UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("marks interactive imports as tracked when import linking is on and new-task defaults are off", async () => {
@@ -2137,7 +2148,7 @@ describe("runTaskImportGitHubInteractive", () => {
       description: "(no description)\n\nSource: https://github.com/owner/repo/issues/1",
       githubTracking: { enabled: true },
       sourceIssue: expect.objectContaining({ provider: "github", repository: "owner/repo", issueNumber: 1 }),
-    }));
+    }), undefined, UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it('imports all issues when "all" is selected', async () => {
@@ -2203,7 +2214,7 @@ describe("runTaskImportGitHubInteractive", () => {
         url: "https://github.com/owner/repo/issues/2",
       },
       source: { sourceType: "github_import", sourceMetadata: { issueUrl: "https://github.com/owner/repo/issues/2", issueNumber: 2 } },
-    });
+    }, undefined, UNATTRIBUTED_CONTEXT_MATCHER);
 
     const skipLine = logSpy.mock.calls.find(
       (call) => typeof call[0] === "string" && call[0].includes("Skipping #1"),
@@ -2458,7 +2469,7 @@ describe("runTaskImportFromGitHub", () => {
         url: "https://github.com/owner/repo/issues/1",
       },
       source: { sourceType: "github_import", sourceMetadata: { issueUrl: "https://github.com/owner/repo/issues/1", issueNumber: 1 } },
-    });
+    }, undefined, UNATTRIBUTED_CONTEXT_MATCHER);
 
     const successLine = logSpy.mock.calls.find(
       (call) => typeof call[0] === "string" && call[0].includes("✓ Imported 2 tasks"),
@@ -2485,7 +2496,7 @@ describe("runTaskImportFromGitHub", () => {
     expect(mockCreateTask).toHaveBeenCalledWith(expect.objectContaining({
       githubTracking: { enabled: true },
       sourceIssue: expect.objectContaining({ provider: "github", repository: "owner/repo", issueNumber: 1 }),
-    }));
+    }), undefined, UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("delegates provenance-first deduplication to the dashboard helper", async () => {
@@ -2579,7 +2590,7 @@ describe("runTaskImportFromGitHub", () => {
         url: "https://github.com/owner/repo/issues/1",
       },
       source: { sourceType: "github_import", sourceMetadata: { issueUrl: "https://github.com/owner/repo/issues/1", issueNumber: 1 } },
-    });
+    }, undefined, UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("truncates long titles to 200 chars", async () => {
@@ -2600,7 +2611,7 @@ describe("runTaskImportFromGitHub", () => {
         url: "https://github.com/owner/repo/issues/1",
       },
       source: { sourceType: "github_import", sourceMetadata: { issueUrl: "https://github.com/owner/repo/issues/1", issueNumber: 1 } },
-    });
+    }, undefined, UNATTRIBUTED_CONTEXT_MATCHER);
   });
 });
 
@@ -2870,7 +2881,7 @@ describe("runTaskDelete", () => {
         agentId: "cli",
         runId: expect.stringMatching(/^synthetic-cli-delete-FN-001-/),
       }),
-    }));
+    }), UNATTRIBUTED_CONTEXT_MATCHER);
 
     const successLine = logSpy.mock.calls.find(
       (call) => typeof call[0] === "string" && call[0].includes("✓ Deleted"),
@@ -2893,7 +2904,7 @@ describe("runTaskDelete", () => {
         agentId: "cli",
         runId: expect.stringMatching(/^synthetic-cli-delete-FN-001-/),
       }),
-    }));
+    }), UNATTRIBUTED_CONTEXT_MATCHER);
 
     const successLine = logSpy.mock.calls.find(
       (call) => typeof call[0] === "string" && call[0].includes("✓ Deleted"),
@@ -3106,9 +3117,9 @@ describe("runTaskRetry", () => {
       mergeAuditBounceCount: 0,
       mergeRetries: 0,
       resumeLimboCount: 0,
-    });
-    expect(mockMoveTask).toHaveBeenCalledWith("FN-001", "todo");
-    expect(mockLogEntry).toHaveBeenCalledWith("FN-001", "Retry requested from CLI", "Task reset to todo for retry");
+    }, UNATTRIBUTED_CONTEXT_MATCHER);
+    expect(mockMoveTask).toHaveBeenCalledWith("FN-001", "todo", undefined, UNATTRIBUTED_CONTEXT_MATCHER);
+    expect(mockLogEntry).toHaveBeenCalledWith("FN-001", "Retry requested from CLI", "Task reset to todo for retry", UNATTRIBUTED_CONTEXT_MATCHER);
 
     const successLine = logSpy.mock.calls.find(
       (call) => typeof call[0] === "string" && call[0].includes("✓ Retried"),
@@ -3201,9 +3212,9 @@ describe("runTaskRetry", () => {
       mergeAuditBounceCount: 0,
       mergeRetries: 0,
       resumeLimboCount: 0,
-    });
-    expect(mockMoveTask).toHaveBeenCalledWith("FN-001", "todo");
-    expect(mockLogEntry).toHaveBeenCalledWith("FN-001", "Retry requested from CLI", "Task reset to todo for retry");
+    }, UNATTRIBUTED_CONTEXT_MATCHER);
+    expect(mockMoveTask).toHaveBeenCalledWith("FN-001", "todo", undefined, UNATTRIBUTED_CONTEXT_MATCHER);
+    expect(mockLogEntry).toHaveBeenCalledWith("FN-001", "Retry requested from CLI", "Task reset to todo for retry", UNATTRIBUTED_CONTEXT_MATCHER);
 
     const successLine = logSpy.mock.calls.find(
       (call) => typeof call[0] === "string" && call[0].includes("✓ Retried"),
@@ -3234,12 +3245,13 @@ describe("runTaskRetry", () => {
     expect(mockUpdateTask).toHaveBeenCalledWith("FN-001", expect.objectContaining({
       status: null,
       error: null,
-    }));
+    }), UNATTRIBUTED_CONTEXT_MATCHER);
     expect(mockUpdateTask.mock.calls[0][1]).not.toHaveProperty("mergeRetries");
-    expect(mockMoveTask).toHaveBeenCalledWith("FN-001", "todo", { preserveProgress: true });
+    expect(mockMoveTask).toHaveBeenCalledWith("FN-001", "todo", { preserveProgress: true }, UNATTRIBUTED_CONTEXT_MATCHER);
     expect(mockLogEntry).toHaveBeenCalledWith(
       "FN-001",
       "Retry requested from CLI (stranded in-review execution retry → todo, preserving progress)",
+      undefined, UNATTRIBUTED_CONTEXT_MATCHER,
     );
   });
 
@@ -3257,10 +3269,11 @@ describe("runTaskRetry", () => {
 
     await runTaskRetry("FN-001");
 
-    expect(mockMoveTask).toHaveBeenCalledWith("FN-001", "todo", { preserveProgress: true });
+    expect(mockMoveTask).toHaveBeenCalledWith("FN-001", "todo", { preserveProgress: true }, UNATTRIBUTED_CONTEXT_MATCHER);
     expect(mockLogEntry).toHaveBeenCalledWith(
       "FN-001",
       "Retry requested from CLI (stranded in-review execution retry → todo, preserving progress)",
+      undefined, UNATTRIBUTED_CONTEXT_MATCHER,
     );
   });
 
@@ -3284,11 +3297,12 @@ describe("runTaskRetry", () => {
       status: null,
       error: null,
       mergeRetries: 0,
-    }));
-    expect(mockMoveTask).toHaveBeenCalledWith("FN-001", "todo");
+    }), UNATTRIBUTED_CONTEXT_MATCHER);
+    expect(mockMoveTask).toHaveBeenCalledWith("FN-001", "todo", undefined, UNATTRIBUTED_CONTEXT_MATCHER);
     expect(mockLogEntry).toHaveBeenCalledWith(
       "FN-001",
       "Retry requested from CLI (merge retry → todo, mergeRetries reset)",
+      undefined, UNATTRIBUTED_CONTEXT_MATCHER,
     );
   });
 
@@ -3888,7 +3902,7 @@ describe("runTaskPrCreate", () => {
       number: 42,
       url: "https://github.com/owner/repo/pull/42",
     }));
-    expect(mockLogEntry).toHaveBeenCalledWith("FN-001", "Created PR", "PR #42: https://github.com/owner/repo/pull/42");
+    expect(mockLogEntry).toHaveBeenCalledWith("FN-001", "Created PR", "PR #42: https://github.com/owner/repo/pull/42", UNATTRIBUTED_CONTEXT_MATCHER);
     
     const successLine = logSpy.mock.calls.find(
       (call) => typeof call[0] === "string" && call[0].includes("✓ Created PR")

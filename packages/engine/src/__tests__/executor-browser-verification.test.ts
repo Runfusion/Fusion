@@ -15,6 +15,8 @@ import {
   mockedExecSync,
   resetExecutorMocks,
 } from "./executor-test-helpers.js";
+/* FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage C): the executor threads a real mutation context to every store call, so these assertions pin it rather than dropping the argument. */
+import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 
 type CapturedSession = {
   skillSelection?: { requestedSkillNames?: string[]; projectRootDir?: string; sessionPurpose?: string };
@@ -225,7 +227,7 @@ describe("browser-verification workflow-step browser capability", () => {
     expect(cap.last?.skillSelection?.requestedSkillNames).toContain(AGENT_BROWSER_NAVIGATION_SKILL_ID);
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-7130",
-      "[browser-verification] agent-browser available — version agent-browser 9.9.9",
+      "[browser-verification] agent-browser available — version agent-browser 9.9.9", undefined, ANY_MUTATION_CONTEXT,
     );
     expect(store.appendAgentLog).toHaveBeenCalledWith(
       "FN-7130",
@@ -277,7 +279,7 @@ describe("browser-verification workflow-step browser capability", () => {
     expect(String(result.output)).toContain("NOTHING WAS VERIFIED");
     expect(cap.last).toBeUndefined();
     expect(formatAgentBrowserAvailabilityLog({ available: false, reason: "not installed" })).toBe(warning);
-    expect(store.logEntry).toHaveBeenCalledWith("FN-7130", warning);
+    expect(store.logEntry).toHaveBeenCalledWith("FN-7130", warning, undefined, ANY_MUTATION_CONTEXT);
     expect(store.appendAgentLog).toHaveBeenCalledWith("FN-7130", warning, "status", undefined, "reviewer");
   });
 
@@ -367,7 +369,7 @@ describe("browser-verification workflow-step browser capability", () => {
     expect(mockedCreateFnAgent).not.toHaveBeenCalled();
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-7130",
-      expect.stringContaining("Plan Review deterministic external-integration evidence check requested revision"),
+      expect.stringContaining("Plan Review deterministic external-integration evidence check requested revision"), undefined, ANY_MUTATION_CONTEXT,
     );
   });
 

@@ -1,3 +1,7 @@
+import type { Task, TaskDetail, TaskStore, RunMutationContext } from "@fusion/core";
+import { isSessionContentionError } from "../errors/transient-error-detector.js";
+import { executorLog } from "../logger.js";
+import { graphFailureErrorTexts } from "./graph-failure-pure.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-19:40:
  * holdForSessionContention peeled from TaskExecutor (U4).
@@ -8,11 +12,6 @@
  * Persist the owner-local retry budget and an operator-visible wait reason, but never park a
  * contention wait as failed; a shared budget across unrelated failed-park owners remains out of scope.
  */
-import type { Task, TaskDetail, TaskStore } from "@fusion/core";
-import { isSessionContentionError } from "../errors/transient-error-detector.js";
-import { executorLog } from "../logger.js";
-import type { EngineRunContext } from "../util/run-audit.js";
-import { graphFailureErrorTexts } from "./graph-failure-pure.js";
 
 export const MAX_SESSION_CONTENTION_HOLD_RETRIES = 10;
 export const SESSION_CONTENTION_HOLD_BACKOFF_MS = process.env.VITEST || process.env.NODE_ENV === "test" ? 0 : 5_000;
@@ -20,7 +19,7 @@ export const SESSION_CONTENTION_HOLD_MAX_BACKOFF_MS = 60_000;
 
 export type SessionContentionHoldDeps = {
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string) => RunMutationContext | undefined;
   reexecute: (task: Task) => Promise<void>;
 };
 
@@ -43,23 +42,23 @@ export async function holdForSessionContention(
   if (attempt > MAX_SESSION_CONTENTION_HOLD_RETRIES) {
     const message = `Still waiting on another task to release a shared session path after ${MAX_SESSION_CONTENTION_HOLD_RETRIES} attempts — leaving the task queued for normal re-dispatch (not a failure)${detail ? `: ${detail}` : ""}`;
     executorLog.warn(`${task.id}: ${message}`);
-    await deps.store.logEntry(task.id, message, undefined, deps.getRunContextFor(task.id));
+    await deps.store.logEntry(task.id, message, undefined, deps.runContextFor(task.id));
     // FNXC:WorkspaceContention 2026-08-23-07:30: Exhaustion releases the visible wait so ordinary
     // scheduling can retry after the holder settles, but it must not erase the durable budget.
     // Only explicit lifecycle reset owners (manual retry, clean completion, and done cleanup) may
     // start a new contention episode; otherwise scheduler rediscovery recreates the incident loop.
-    await deps.store.updateTask(task.id, { status: null, error: null, sessionContentionWaitReason: null }, deps.getRunContextFor(task.id));
+    await deps.store.updateTask(task.id, { status: null, error: null, sessionContentionWaitReason: null }, deps.runContextFor(task.id));
     return;
   }
 
   const message = `Waiting on another task to release a shared session path — retrying in place (${attempt}/${MAX_SESSION_CONTENTION_HOLD_RETRIES})${detail ? `: ${detail}` : ""}`;
   executorLog.warn(`${task.id}: ${message}`);
-  await deps.store.logEntry(task.id, message, undefined, deps.getRunContextFor(task.id));
+  await deps.store.logEntry(task.id, message, undefined, deps.runContextFor(task.id));
   // A contention hold is a scheduling wait, not a failure. Its token makes the owner visible.
   await deps.store.updateTask(task.id, {
     status: "contention-hold", error: null, sessionContentionHoldCount: attempt,
     sessionContentionWaitReason: reason,
-  }, deps.getRunContextFor(task.id));
+  }, deps.runContextFor(task.id));
 
   const delayMs = SESSION_CONTENTION_HOLD_BACKOFF_MS === 0
     ? 0
@@ -69,7 +68,7 @@ export async function holdForSessionContention(
       try {
         const resume = await deps.store.getTask(task.id);
         if (!resume || resume.deletedAt || resume.paused || resume.userPaused) {
-          if (resume) await deps.store.updateTask(task.id, { status: null, sessionContentionWaitReason: null }, deps.getRunContextFor(task.id));
+          if (resume) await deps.store.updateTask(task.id, { status: null, sessionContentionWaitReason: null }, deps.runContextFor(task.id));
           return;
         }
         /*
@@ -78,7 +77,7 @@ export async function holdForSessionContention(
         durable count so a repeated live-holder refusal consumes the bounded budget
         instead of restarting at attempt one after every scheduled re-execution.
         */
-        await deps.store.updateTask(task.id, { status: null, sessionContentionWaitReason: null }, deps.getRunContextFor(task.id));
+        await deps.store.updateTask(task.id, { status: null, sessionContentionWaitReason: null }, deps.runContextFor(task.id));
         await deps.reexecute(resume);
       } catch (err) {
         executorLog.error(`Failed session-contention retry for ${task.id}:`, err);

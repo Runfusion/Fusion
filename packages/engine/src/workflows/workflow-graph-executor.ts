@@ -11,7 +11,7 @@ import type {
   WorkflowStepResult,
   WorkflowStepNotRunReason,
 } from "@fusion/core";
-import { BUILTIN_CODING_WORKFLOW_IR, FAST_LANE_SKIP_VALUE, FAST_MODE_BYPASS_ACTOR, PLAN_REVIEW_GROUP_ID, WORKFLOW_STEP_NOT_RUN_REASONS, WorkflowIrError, computeWorkflowIrPin, getWorkflowExtensionRegistry, instanceNodeId, resolveFastLaneRoute, resolveMaxReworkCycles, isExperimentalFeatureEnabled, GRAPH_NATIVE_POST_MERGE_FLAG, isCompletionSummaryNode, classifyReviewLease, isWorkflowOptionalGroupEnabled, isPlanReviewSatisfied, parseNoOpCompletionMarker, requiresContentReviewProof } from "@fusion/core";
+import { BUILTIN_CODING_WORKFLOW_IR, FAST_LANE_SKIP_VALUE, FAST_MODE_BYPASS_ACTOR, PLAN_REVIEW_GROUP_ID, WORKFLOW_STEP_NOT_RUN_REASONS, WorkflowIrError, computeWorkflowIrPin, getWorkflowExtensionRegistry, instanceNodeId, resolveFastLaneRoute, resolveMaxReworkCycles, isExperimentalFeatureEnabled, GRAPH_NATIVE_POST_MERGE_FLAG, isCompletionSummaryNode, classifyReviewLease, isWorkflowOptionalGroupEnabled, isPlanReviewSatisfied, parseNoOpCompletionMarker, requiresContentReviewProof, isPermissionDeniedError, PERMISSION_DENIED_ERROR_CODE } from "@fusion/core";
 import { isNonPlanDefectPlanReviewFailure } from "../errors/transient-error-detector.js";
 import { isSessionContentionError } from "../errors/transient-error-patterns.js";
 import { isRequiredArtifactReadFailedValue, parseRequiredArtifactMissingValue } from "../execution/required-workflow-artifacts.js";
@@ -166,6 +166,30 @@ export const WORKFLOW_OPTIONAL_GROUP_CONTEXT_KEY = "workflow:optionalGroupActive
 /** Explicit parent marker for template execution; never inferred from template labels or output. */
 export const WORKFLOW_REVIEW_KIND_CONTEXT_KEY = "workflow:reviewKind";
 export const WORKFLOW_NODE_ENGINE_PAUSE_ABORT_KIND: WorkflowNodeAbortKind = "engine-pause";
+
+/*
+FNXC:Authorization 2026-08-09-03:04:
+A node handler's thrown error does NOT survive as an Error object: every throw sink below
+flattens it to `error.message` and stores that string under `node:<id>:error`. Everything past
+this boundary — including the executor's terminal park — only ever sees prose, which is why a
+permission denial was indistinguishable from any other exception downstream.
+Carry the `code` discriminant across the flattening in its own context key so the receiver can
+recognise a denial WITHOUT matching on message text. This is the minimum plumbing that makes the
+typed error useful outside the throwing frame; widening the whole contextPatch channel to carry
+structured errors is a larger change than the one denial case justifies.
+*/
+export const WORKFLOW_NODE_ERROR_CODE_CONTEXT_KEY_SUFFIX = ":errorCode";
+
+export function workflowNodeErrorCodeContextKey(nodeId: string): string {
+  return `node:${nodeId}${WORKFLOW_NODE_ERROR_CODE_CONTEXT_KEY_SUFFIX}`;
+}
+
+/** Context patch carrying the typed error code, or empty when the error is untyped. */
+function nodeErrorCodeContextPatch(nodeId: string, error: unknown): Record<string, unknown> {
+  return isPermissionDeniedError(error)
+    ? { [workflowNodeErrorCodeContextKey(nodeId)]: PERMISSION_DENIED_ERROR_CODE }
+    : {};
+}
 
 export interface WorkflowNodeResult {
   outcome: WorkflowNodeOutcome;
@@ -2048,6 +2072,7 @@ export class WorkflowGraphExecutor {
           contextPatch: {
             [`node:${node.id}:error`]: error instanceof Error ? error.message : String(error),
             [`node:${node.id}:extensionId`]: extensionId,
+            ...nodeErrorCodeContextPatch(node.id, error),
           },
         };
       }
@@ -2287,6 +2312,7 @@ export class WorkflowGraphExecutor {
         : isSessionContentionError(lastErrorText) ? SESSION_CONTENTION_HOLD_VALUE : "exception",
       contextPatch: {
         [`node:${node.id}:error`]: lastErrorText,
+        ...nodeErrorCodeContextPatch(node.id, lastError),
       },
     };
     if (recordProgress && this.shouldRecordNodeProgress(node)) {
