@@ -72,6 +72,7 @@ import {
   type TaskStore,
   type WorkspaceLeaseHandle,
   resolveReviewColumns,
+  requiresRepositoryReviewEvidence as requiresTaskRepositoryReviewEvidence,
 } from "@fusion/core";
 import { selectUserCommentsForAgentContext } from "../agents/agent-user-comments.js";
 import { resolveTaskWorkingBranch } from "../worktree/worktree-names.js";
@@ -2562,8 +2563,7 @@ export async function landWorkspaceTask(
   This durable evidence survives result cleanup; direct legacy tasks stay open
   only when no diff-domain review gate and no evidence record exist.
   */
-  const requiresRepositoryReviewEvidence = mergeBoundaryTask.repositoryScope?.reviewEvidence !== undefined
-    || (mergeBoundaryTask.enabledWorkflowSteps ?? []).some((step) => /review/i.test(step));
+  const requiresRepositoryReviewEvidence = requiresTaskRepositoryReviewEvidence(mergeBoundaryTask);
   const workspaceApproval = evaluatePreMergeApprovals(mergeBoundaryTask, {
     requiredPreMergeStepIds: workflowIr && requiresRepositoryReviewEvidence
       ? resolveRequiredPreMergeStepIds(workflowIr, mergeBoundaryTask.enabledWorkflowSteps)
@@ -2584,6 +2584,13 @@ export async function landWorkspaceTask(
   including when the selected workflow resolves an explicit empty gate list. Compare repository
   evidence directly while the canonical evaluator additionally enforces enabled workflow verdicts.
   Legacy callers with neither signal retain the merge-agent review path.
+
+  FNXC:WorkspaceFinalization 2026-08-23-21:55:
+  Gate the file comparison on the SAME `requiresRepositoryReviewEvidence` fence as the two repository
+  comparisons above. Without it a legacy/direct workspace caller — no recorded review evidence and no
+  enabled review step — was compared against an empty `task.modifiedFiles` and hard-failed with
+  `content-changed` for every file it touched. A card that DOES carry a review episode still has
+  every file compared, so the post-approval drift fence is unchanged.
   */
   const fallbackMissingRepositories = requiresRepositoryReviewEvidence
     ? [...mergeBoundaryModifiedRepositories].filter((repository) => !approvedReviewEvidence?.[repository]).sort()

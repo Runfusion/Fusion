@@ -42,6 +42,7 @@ import {
 import type { ArchivedTaskEntry } from "../../types.js";
 import {acquireTaskAdvisoryXactLock} from "../task-advisory-lock.js";
 import {decideArchiveLiveness, type ArchiveLivenessVerdict} from "../../tasks/task-archive-liveness.js";
+import { isPostgresUniqueError } from "../../db/postgres-errors.js";
 
 /**
  * FNXC:TaskStoreArchiveLineage 2026-06-24-07:10:
@@ -359,6 +360,26 @@ export async function restoreTaskFromArchive(
   entry: ArchivedTaskEntry,
   options: { now?: string } = {},
 ): Promise<void> {
+  /*
+  FNXC:WorkspaceWorktree 2026-09-04-06:15:
+  Catch unique_violation OUTSIDE the restore transaction. A successor can pin the released name
+  after the live-claim lookup and before this UPDATE; catching inside the xact cannot COMMIT after
+  PostgreSQL aborts it. Retry once with the segment forced null so unarchive still lands.
+  */
+  try {
+    await restoreTaskFromArchiveOnce(layer, entry, options, false);
+  } catch (error) {
+    if (!isPostgresUniqueError(error)) throw error;
+    await restoreTaskFromArchiveOnce(layer, entry, options, true);
+  }
+}
+
+async function restoreTaskFromArchiveOnce(
+  layer: AsyncDataLayer,
+  entry: ArchivedTaskEntry,
+  options: { now?: string },
+  releaseSegment: boolean,
+): Promise<void> {
   const now = options.now ?? new Date().toISOString();
 
   await layer.transactionImmediate(async (tx) => {
@@ -376,6 +397,32 @@ export async function restoreTaskFromArchive(
         existing.workspaceWorktrees,
         existing.worktree,
       );
+      /*
+      FNXC:WorkspaceWorktree 2026-09-04-05:37:
+      `readTaskRowInTransaction` is a `Record<string, unknown>` projection. The SET target is a
+      text column, so keep only a string pin or release to null — never pass the untyped cell.
+      FNXC:WorkspaceWorktree 2026-09-04-05:44:
+      The unique claim is live-only. A successor can pin the released name while this tombstone still
+      holds surviving workspace paths. Restoring that pin while clearing `deleted_at` would 23505 and
+      abort unarchive; if another live row already owns the segment, leave it null so restore
+      succeeds and the next acquisition remints.
+      */
+      const candidateSegment = typeof existing.workspaceWorktreeDirSegment === "string"
+        ? existing.workspaceWorktreeDirSegment
+        : null;
+      let workspaceWorktreeDirSegment: string | null = null;
+      if (!releaseSegment && reconciledWorktreeState.workspaceWorktrees && candidateSegment) {
+        const liveClaim = await tx
+          .select({ id: schema.project.tasks.id })
+          .from(schema.project.tasks)
+          .where(and(
+            eq(schema.project.tasks.projectId, projectPartition(layer.projectId)),
+            eq(schema.project.tasks.workspaceWorktreeDirSegment, candidateSegment),
+            ACTIVE_TASK_FILTER,
+          ))
+          .limit(1);
+        workspaceWorktreeDirSegment = liveClaim.length > 0 ? null : candidateSegment;
+      }
       // Row exists (was soft-deleted). Restore it: clear deleted_at, keep
       // column as "archived" so the caller (unarchiveTaskImpl) can verify the
       // task is in the archived column and then moveTask it to the target
@@ -387,6 +434,13 @@ export async function restoreTaskFromArchive(
           deletedAt: null,
           workspaceWorktrees: reconciledWorktreeState.workspaceWorktrees,
           worktree: reconciledWorktreeState.worktree,
+          /*
+          FNXC:WorkspaceWorktree 2026-09-04-05:20:
+          Archive disposes the named checkout. Restore already drops missing workspace paths so they
+          cannot resurrect as a false land; the write-once directory segment is the same claim and
+          must not re-enter the live unique index if a successor already reused the released name.
+          */
+          workspaceWorktreeDirSegment,
           /*
           FNXC:TaskStoreArchiveLineage 2026-08-01-23:23 DELIBERATE-LITERAL — STATE MARKER:
           Restore exposes the durable row before the caller's validated move out of the archive state.

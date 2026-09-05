@@ -240,6 +240,8 @@ export const tasks = projectSchema.table("tasks", {
   sourceIssueClosedAt: text("source_issue_closed_at"),
   mergeDetails: jsonb("merge_details"),
   workspaceWorktrees: jsonb("workspace_worktrees"),
+  // FNXC:WorkspaceWorktree 2026-08-24-06:10: R15 pins the workspace task directory segment so recorded paths are never re-derived.
+  workspaceWorktreeDirSegment: text("workspace_worktree_dir_segment"),
   // FNXC:RepositoryScope 2026-08-20-23:07: explicit task intent must survive PostgreSQL reads independently of acquired worktrees.
   repositoryScope: jsonb("repository_scope"),
   // FNXC:ExternalBlock 2026-08-28-03:48: obstacle origin and exact resume coordinates survive process restarts.
@@ -336,6 +338,9 @@ export const tasks = projectSchema.table("tasks", {
   index("idxTasksProjectSourceAgentId").on(t.projectId, t.sourceAgentId).where(sql`${t.sourceAgentId} IS NOT NULL`),
   // FNXC:EphemeralAgentTaskCreation 2026-07-30-12:00: proposal retries share one stable key, so the database—not a read-before-create race—enforces at-most-once materialization.
   uniqueIndex("uqTasksProjectProposalClaimId").on(t.projectId, t.proposalClaimId).where(sql`${t.proposalClaimId} IS NOT NULL`),
+  // FNXC:WorkspaceWorktree 2026-08-25-08:12: the workspace directory segment is a CLAIM, so the database — not a read-before-write scan — is what stops two tasks from pinning one directory.
+  // FNXC:WorkspaceWorktree 2026-09-04-05:15: live rows only (`deleted_at IS NULL`); archive tombstones must not keep the released name.
+  uniqueIndex("uqTasksWorkspaceWorktreeDirSegment").on(t.projectId, t.workspaceWorktreeDirSegment).where(sql`${t.workspaceWorktreeDirSegment} IS NOT NULL AND ${t.deletedAt} IS NULL`),
   /*
   FNXC:TaskStoreReads 2026-06-26-10:00:
   Partial index for the hot kanban / board-read query shape

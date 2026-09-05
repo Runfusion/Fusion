@@ -112,15 +112,160 @@ refer to the same `repo/path` spelling; a one-repository workspace is the degene
 export function resolveWorkspaceTaskWorktreeDir(
   workspaceRootDir: string,
   settings: Pick<Settings, "worktreesDir"> | undefined,
-  taskId: string,
+  taskDirSegment: string,
 ): string {
-  const normalizedTaskId = taskId.toLowerCase();
-  if (!settings?.worktreesDir) return join(workspaceRootDir, ".fusion", "worktrees", normalizedTaskId);
+  if (!taskDirSegment) throw new Error("resolveWorkspaceTaskWorktreeDir requires a resolved task directory segment");
+  if (!settings?.worktreesDir) return join(workspaceRootDir, ".fusion", "worktrees", taskDirSegment);
   return join(
     resolveWorktreesDirLayout(workspaceRootDir, settings),
     workspaceWorktreeGroupSegment(workspaceRootDir),
-    normalizedTaskId,
+    taskDirSegment,
   );
+}
+
+/*
+FNXC:WorkspaceWorktree 2026-08-24-06:10:
+R15 pins a workspace task's directory segment on the task at first acquisition, so a later
+branch rename, title edit, or `worktreeNaming` change never moves, re-derives, or invalidates
+its recorded paths. Every call site that resolves a workspace task directory reads the pin
+through this function rather than deriving a segment of its own — a site that re-derived would
+disagree with what is on disk and mix layouts inside one task. A task with no pin (every task
+that predates pinning) reproduces the historic `taskId.toLowerCase()` segment exactly.
+The group segment above this one stays basename-derived and settings-independent (R17), so
+archive disposal and the pi-extension candidate builder still resolve grouped roots with no Task.
+*/
+export function resolveWorkspaceTaskDirSegment(
+  task: { id: string; workspaceWorktreeDirSegment?: string | null },
+): string {
+  const pinned = task.workspaceWorktreeDirSegment;
+  if (typeof pinned === "string" && pinned.length > 0) return pinned;
+  return task.id.toLowerCase();
+}
+
+/*
+FNXC:WorkspaceWorktree 2026-08-24-06:11:
+R14/KTD15: workspace checkouts are named through the project's existing `worktreeNaming` setting
+rather than a new key, so an operator who already derives `feature/PRD-1234-my-slug` from a ticket
+gets `prd-1234-my-slug` as the directory name with nothing else to configure. Naming applies in both
+layouts; only the grouping level above it is opt-in behind a configured `worktreesDir` (KTD8).
+
+R16/KTD11: derivation degrades, it never rejects. A branch-derived name is operator convenience, so
+an unusable candidate falls back to the task id and the caller records why. The reserved-name check
+is case-insensitive and dot-insensitive on both sides: the default macOS filesystem treats
+`.AI-Merge` and `.ai-merge` as one directory while `isAiMergeContainerDir` compares the name
+case-sensitively, so a surviving case variant would stop being filtered out of the one-level sweeps
+KTD8 depends on.
+*/
+export const WORKSPACE_RESERVED_TASK_DIR_SEGMENTS = [
+  ".ai-merge",
+  ".fusion-recovery",
+  ".worktrees",
+  WORKSPACE_GROUP_MARKER_FILENAME,
+] as const;
+
+export type WorkspaceTaskDirSegmentFallbackReason = "empty-slug" | "reserved-name" | "sibling-collision";
+
+/**
+ * Lowercase hyphenated slug shared with the engine's `slugify` so a workspace task directory and a
+ * single-repository worktree directory can never drift apart in spelling.
+ */
+export function slugifyWorktreeSegment(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+function reservedSegmentKey(value: string): string {
+  return value.toLowerCase().replace(/^\.+/, "");
+}
+
+/*
+FNXC:WorkspaceWorktree 2026-09-04-07:51:
+A workspace directory segment is one path component. Generic `updateTask` is still a first-mint
+fallback for stores without `pinWorkspaceWorktreeDirSegment`; without this check a plugin can
+persist `../../outside` write-once and every later checkout follows it. Empty, `.`/`..`, separators,
+and absolute paths are refused. The dedicated pin writer uses the same predicate.
+FNXC:WorkspaceWorktree 2026-09-04-08:09:
+Generic first-mint and the pin writer share this predicate so reserved infrastructure names
+(`.ai-merge`, `.worktrees`, `.fusion-recovery`, the group-marker filename) cannot become the
+write-once workspace directory. Comparison matches `deriveWorkspaceTaskDirSegment`: case-insensitive
+and leading-dot-insensitive via `reservedSegmentKey`.
+*/
+export function isSafeWorkspaceWorktreeDirSegment(segment: string): boolean {
+  const candidate = segment.trim();
+  if (!candidate || candidate === "." || candidate === "..") return false;
+  if (candidate.includes("..") || candidate.includes("/") || candidate.includes("\\")) return false;
+  if (isAbsolute(candidate)) return false;
+  const candidateKey = reservedSegmentKey(candidate);
+  if (WORKSPACE_RESERVED_TASK_DIR_SEGMENTS.some((reserved) => reservedSegmentKey(reserved) === candidateKey)) {
+    return false;
+  }
+  return true;
+}
+
+export function deriveWorkspaceTaskDirSegment(input: {
+  taskId: string;
+  /** The project's `worktreeNaming` setting; unknown and absent values keep the historic task-id segment. */
+  worktreeNaming?: string;
+  /** The task's resolved working branch, so an operator-supplied or JIRA-derived branch is the input. */
+  branch?: string | null;
+  title?: string | null;
+  description?: string | null;
+  /** Live segments already pinned by sibling tasks under the same group. */
+  siblingSegments?: Iterable<string>;
+  /*
+  FNXC:WorkspaceWorktree 2026-08-25-08:33:
+  Other live task ids, so a DERIVED name can never occupy another task's fallback. A branch named
+  `feature/FN-A` slugs to exactly `fn-a`; if task FN-B claimed that, task FN-A would lose its derived
+  claim AND find its own task-id fallback taken — and because the pin is write-once, it could never
+  acquire a workspace at all. Reserving the task-id namespace keeps the last resort always available.
+  */
+  siblingTaskIds?: Iterable<string>;
+}): { segment: string; fallbackReason?: WorkspaceTaskDirSegmentFallbackReason } {
+  const taskIdSegment = input.taskId.toLowerCase();
+  let candidate: string;
+  switch (input.worktreeNaming) {
+    case "branch":
+      // Drop the namespace: `feature/PRD-1234-my-slug` identifies the ticket, not the prefix.
+      candidate = slugifyWorktreeSegment((input.branch ?? "").split("/").filter(Boolean).pop() ?? "");
+      break;
+    case "task-title":
+      candidate = slugifyWorktreeSegment(input.title || (input.description ?? "").slice(0, 60));
+      break;
+    default:
+      return { segment: taskIdSegment };
+  }
+
+  if (!candidate) return { segment: taskIdSegment, fallbackReason: "empty-slug" };
+  const candidateKey = reservedSegmentKey(candidate);
+  if (WORKSPACE_RESERVED_TASK_DIR_SEGMENTS.some((reserved) => reservedSegmentKey(reserved) === candidateKey)) {
+    return { segment: taskIdSegment, fallbackReason: "reserved-name" };
+  }
+  for (const sibling of input.siblingSegments ?? []) {
+    if (sibling.toLowerCase() === candidate.toLowerCase()) {
+      return { segment: taskIdSegment, fallbackReason: "sibling-collision" };
+    }
+  }
+  /*
+  FNXC:WorkspaceWorktree 2026-08-25-08:52:
+  Reserve each sibling's WHOLE task-id namespace — `fn-a` and anything starting `fn-a-` — not just the
+  bare id. Fallback segments are minted inside that namespace (`fn-a`, then `fn-a-<hash>`, then
+  `fn-a-<hash>-2`…), so a derived name allowed to land on any of those shapes could claim another
+  task's last resort. Since the pin is write-once, that task could then never acquire a workspace at
+  all. Making the two namespaces disjoint ends the regress: a derived name can occupy no fallback,
+  and the fallback space stays open for its owner.
+  */
+  for (const siblingTaskId of input.siblingTaskIds ?? []) {
+    const reserved = siblingTaskId.toLowerCase();
+    const lowered = candidate.toLowerCase();
+    if (lowered === reserved || lowered.startsWith(`${reserved}-`)) {
+      return { segment: taskIdSegment, fallbackReason: "sibling-collision" };
+    }
+  }
+  return { segment: candidate };
 }
 
 /** Resolves a repository child without flattening nested workspace repository names. */

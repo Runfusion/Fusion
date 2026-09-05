@@ -19,7 +19,7 @@ import type {
   WorkflowStep,
   WorkspaceConfig,
 } from "@fusion/core";
-import { isFastExecutionMode, isFastLaneSkippableCustomNode, isLegacyWorkspaceWorktreeLayout, requiresContentReviewProof, resolveEffectiveAgent, resolveWorkspaceTaskWorktreeDir, THINKING_LEVELS, WORKFLOW_STEP_NOT_RUN_REASONS } from "@fusion/core";
+import { isFastExecutionMode, isFastLaneSkippableCustomNode, isLegacyWorkspaceWorktreeLayout, requiresContentReviewProof, resolveEffectiveAgent, resolveWorkspaceTaskDirSegment, resolveWorkspaceTaskWorktreeDir, THINKING_LEVELS, WORKFLOW_STEP_NOT_RUN_REASONS } from "@fusion/core";
 import { executorLog } from "../logger.js";
 import type { EngineRunContext } from "../util/run-audit.js";
 import type { WorkflowNodeResult } from "../workflows/workflow-graph-executor.js";
@@ -521,7 +521,7 @@ export async function runGraphCustomNode(
 
     const isWorkspaceTask = Boolean(workspaceConfig?.repos.length);
     const workspaceTaskDir = isWorkspaceTask
-      ? resolveWorkspaceTaskWorktreeDir(deps.rootDir, settings, executionTarget.id)
+      ? resolveWorkspaceTaskWorktreeDir(deps.rootDir, settings, resolveWorkspaceTaskDirSegment(executionTarget))
       : undefined;
     const legacyWorkspacePath = isWorkspaceTask && workspaceTaskDir
       && isLegacyWorkspaceWorktreeLayout(executionTarget, workspaceTaskDir)
@@ -857,7 +857,7 @@ export async function runGraphCustomNode(
       if (workspaceReviewTarget.repositoryScope?.state !== "confirmed") {
         outcome = { success: false, error: "Workspace Code Review requires confirmed repository scope", failureValue: "workspace-review-scope-unresolved" };
       } else {
-        const workspaceTaskDir = resolveWorkspaceTaskWorktreeDir(deps.rootDir, settings, workspaceReviewTarget.id);
+        const workspaceTaskDir = resolveWorkspaceTaskWorktreeDir(deps.rootDir, settings, resolveWorkspaceTaskDirSegment(workspaceReviewTarget));
         const legacyWorkspaceLayout = isLegacyWorkspaceWorktreeLayout(workspaceReviewTarget, workspaceTaskDir);
         const scopedRepoRoots = workspaceReviewTarget.repositoryScope.repositories.map((repoRelPath) => ({
           repoRelPath,

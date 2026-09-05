@@ -1496,6 +1496,36 @@ export interface ProjectSettings {
    *  branches like `fusion/FN-123-2` when the canonical task branch is already
    *  checked out elsewhere. Default: false. */
   executorAllowSiblingBranchRename?: boolean;
+
+  /** Controls how worktree directory names are generated when creating fresh worktrees.
+   *  - "random": Human-friendly adjective-noun names (e.g., swift-falcon) — default
+   *  - "task-id": Use the task ID (e.g., fn-042) — ALSO enables task-pinned worktrees (see below)
+   *  - "task-title": Use a slugified version of the task title (e.g., fix-login-bug)
+   *  Default: "random".
+   *
+   *  For "random" and "task-title", this only affects the generated name and applies when
+   *  recycleWorktrees is NOT enabled (pooled worktrees retain their existing names).
+   *
+   *  FNXC:TaskPinnedWorktrees 2026-07-16-00:00:
+   *  "task-id" additionally enables the TASK-PINNED invariant: a task lives in exactly one derivable
+   *  directory `<worktreesDir>/<lowercased-task-id>` for its whole lifecycle. Acquisition
+   *  derives→validates→reuses-or-recreates at that same path (never suffixed), and `task.worktree` becomes a
+   *  self-correcting cache. Task pinning and `recycleWorktrees` are MUTUALLY EXCLUSIVE — enabling both is
+   *  rejected at the settings-write boundary (see `assertWorktreeNamingRecycleExclusive`), because pinning
+   *  each task to its own directory is incompatible with the cross-task recycle pool. Pinning therefore only
+   *  applies when `recycleWorktrees` is off; the runtime also degrades a legacy config that carries both back
+   *  to recycling. Worktrunk-managed layouts own their own path derivation, so pinning is bypassed when that
+   *  backend is on.
+   *
+   *  FNXC:WorkspaceWorktree 2026-08-24-06:11:
+   *  R14/KTD15: "branch" names a checkout after the ticket its working branch identifies
+   *  (`feature/PRD-1234-my-slug` -> `prd-1234-my-slug`), which is what makes workspace tasks
+   *  honor this setting instead of hardcoding the task id. It composes with the JIRA branch
+   *  derivation by construction and adds no second key to configure. Unlike "task-id" it does
+   *  NOT enable the task-pinned invariant, so it behaves like "task-title" with respect to
+   *  `recycleWorktrees`: pooled worktrees keep their existing names and naming is ignored. */
+  worktreeNaming?: "random" | "task-id" | "task-title" | "branch";
+
   /** Project-level worktrunk integration overrides.
    *  Merged with global `worktrunk` field-by-field so partial project values
    *  override only specified fields and inherit the rest. */

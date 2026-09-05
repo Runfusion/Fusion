@@ -9,11 +9,12 @@ root. The TaskStore is an in-memory fake (no DB / no network) per FN-5048 — re
 git only where the invariant needs it; everything else is a narrow seam.
 */
 import { execSync, spawnSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   WORKSPACE_GROUP_MARKER_FILENAME,
+  WORKSPACE_RESERVED_TASK_DIR_SEGMENTS,
   workspaceRepoSegment,
   workspaceWorktreeGroupSegment,
   type Settings,
@@ -23,10 +24,12 @@ import {
 import {
   acquireTaskWorktree,
   acquireWorkspaceRepoWorktree,
+  acquireWorkspaceTaskWorktrees,
   WorkspaceRepoAcquireBusyError,
 } from "../worktree/worktree-acquisition.js";
 import { ActiveSessionRegistry } from "../agents/active-session-registry.js";
 import { cleanupOrphanedWorktrees } from "../worktree/worktree-pool.js";
+import { AI_MERGE_DIRNAME, WORKTREE_RECOVERY_DIRNAME } from "../worktree/worktree-paths.js";
 import { createWorkspaceFixture, hasGit, type WorkspaceFixture } from "./_workspace-fixture.js";
 
 const describeIfGit = hasGit ? describe : describe.skip;
@@ -829,5 +832,505 @@ describeIfGit("acquireWorkspaceRepoWorktree (U2 per-repo hardening)", { timeout:
       branch: result.branch,
       branchWriteOrigin: "engine",
     });
+  });
+});
+
+/*
+FNXC:WorkspaceWorktree 2026-08-24-06:10:
+R15: the workspace task directory segment is minted once, at first acquisition, and every later
+resolution reads that pin. These tests drive the production task-level acquisition seam against the
+real two-repository fixture, because the failure this pin prevents is a path disagreement between
+what was recorded and what a later resolution derives.
+*/
+describeIfGit("workspace task directory segment pin (R15)", { timeout: 60_000 }, () => {
+  let fixture: WorkspaceFixture | undefined;
+
+  afterEach(() => fixture?.cleanup());
+
+  it("mints the historic task-id segment at first acquisition and records it on the task", async () => {
+    fixture = await createWorkspaceFixture(["repo-a", "repo-b"]);
+    const { store, current } = makeFakeStore(makeTask("FN-PIN-1"));
+
+    const result = await acquireWorkspaceTaskWorktrees({
+      workspaceConfig: { repos: fixture.repos },
+      workspaceRootDir: fixture.rootDir,
+      task: current(),
+      store,
+      settings: SETTINGS,
+      registry: new ActiveSessionRegistry(),
+    });
+
+    expect(current().workspaceWorktreeDirSegment).toBe("fn-pin-1");
+    expect(result.taskWorktreeDir).toBe(join(fixture.rootDir, ".fusion", "worktrees", "fn-pin-1"));
+    expect(result.taskWorktreeDir.endsWith(join(".fusion", "worktrees", current().workspaceWorktreeDirSegment!))).toBe(true);
+    expect(existsSync(result.taskWorktreeDir)).toBe(true);
+  });
+
+  /*
+  FNXC:WorkspaceWorktree 2026-08-24-06:11:
+  The mint is a compare-and-set, so a store whose row ALREADY carries a pin (another node, or the
+  sibling acquisition that won the race) must be adopted rather than overwritten — the losing caller
+  has to build its paths from the winner's segment or the two disagree about one task's directory.
+  */
+  it("adopts a pin another writer already recorded instead of overwriting it", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const racing = makeTask("FN-PIN-5");
+    (racing as Task).branch = "feature/PRD-1234-my-slug";
+    const { store, current } = makeFakeStore(racing);
+    (store as unknown as { pinWorkspaceWorktreeDirSegment: (id: string, segment: string) => Promise<unknown> })
+      .pinWorkspaceWorktreeDirSegment = async (id: string, segment: string) => {
+        expect(segment).toBe("prd-1234-my-slug");
+        // The winner already pinned a different segment for this task.
+        await store.updateTask(id, { workspaceWorktreeDirSegment: "won-by-another-writer" });
+        return { task: current(), segment: "won-by-another-writer", minted: false, claimed: true };
+      };
+
+    const result = await acquireWorkspaceTaskWorktrees({
+      workspaceConfig: { repos: ["repo-a"] },
+      workspaceRootDir: fixture.rootDir,
+      task: current(),
+      store,
+      settings: { ...SETTINGS, worktreeNaming: "branch" },
+      registry: new ActiveSessionRegistry(),
+    });
+
+    expect(result.taskWorktreeDir).toBe(join(fixture.rootDir, ".fusion", "worktrees", "won-by-another-writer"));
+    expect(current().workspaceWorktrees?.["repo-a"]?.worktreePath).toBe(join(result.taskWorktreeDir, "repo-a"));
+  });
+
+  /*
+  FNXC:WorkspaceWorktree 2026-08-25-08:12:
+  The segment is a project-wide CLAIM and the pin is never rewritten. The sibling scan cannot see a
+  task that has not written yet, so two tasks can derive the same slug and reach the write together;
+  the database settles it and the loser re-mints its task id BEFORE any checkout exists. A post-mint
+  rewrite would instead move a root a concurrent acquisition for the SAME task may already be
+  building under, and leaving both pins would wedge the loser permanently — its path reservation
+  would fail on every retry, since the pin can never change.
+  */
+  it("re-mints with the task id when another task already claimed the derived segment", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const racing = makeTask("FN-PIN-7");
+    (racing as Task).branch = "feature/PRD-1234-my-slug";
+    const { store, current } = makeFakeStore(racing);
+    const rival = { ...makeTask("FN-PIN-6"), workspaceWorktreeDirSegment: "prd-1234-my-slug" } as Task;
+    // The rival's pin becomes visible only AFTER this mint lands — the mint race the pre-mint scan
+    // cannot see. The pin must stand regardless.
+    let rivalVisible = false;
+    const pinWrites: string[] = [];
+    (store as unknown as { pinWorkspaceWorktreeDirSegment: (id: string, segment: string) => Promise<unknown> })
+      .pinWorkspaceWorktreeDirSegment = async (id: string, segment: string) => {
+        // Models the store contract: the segment is a project-wide claim, so a segment another task
+        // already holds is refused rather than written.
+        const existing = current().workspaceWorktreeDirSegment;
+        if (typeof existing === "string" && existing.length > 0) return { task: current(), segment: existing, minted: false, claimed: true };
+        // The rival holds the claim in the database from the start; only the *scan* (listTasks) is
+        // blind to it — that gap is the race this settles.
+        if (rival.workspaceWorktreeDirSegment === segment) return { task: current(), segment, minted: false, claimed: false };
+        pinWrites.push(segment);
+        await store.updateTask(id, { workspaceWorktreeDirSegment: segment });
+        rivalVisible = true;
+        return { task: current(), segment, minted: true, claimed: true };
+      };
+    (store as unknown as { listTasks: () => Promise<Task[]> }).listTasks = async () =>
+      (rivalVisible ? [rival, current()] : [current()]);
+
+    const result = await acquireWorkspaceTaskWorktrees({
+      workspaceConfig: { repos: ["repo-a"] },
+      workspaceRootDir: fixture.rootDir,
+      task: current(),
+      store,
+      settings: { ...SETTINGS, worktreeNaming: "branch" },
+      registry: new ActiveSessionRegistry(),
+    });
+
+    // The claim, not a read-before-write scan, is what settles the race: the first write wins and
+    // the loser re-mints its task id BEFORE any checkout exists, so no pin is ever rewritten.
+    expect(pinWrites).toEqual(["fn-pin-7"]);
+    expect(current().workspaceWorktreeDirSegment).toBe("fn-pin-7");
+    expect(rival.workspaceWorktreeDirSegment).toBe("prd-1234-my-slug");
+    expect(result.taskWorktreeDir).toBe(join(fixture.rootDir, ".fusion", "worktrees", "fn-pin-7"));
+    expect(current().workspaceWorktrees?.["repo-a"]?.worktreePath).toBe(join(result.taskWorktreeDir, "repo-a"));
+  });
+
+  /*
+  FNXC:WorkspaceWorktree 2026-08-25-08:33:
+  The last resort must never throw: the pin is write-once, so a task that cannot claim any segment
+  could never acquire a workspace on any future retry either. A pre-existing pin holding this task's
+  id yields a deterministic suffixed claim instead.
+  */
+  it("uses a deterministic suffixed segment when even the task-id fallback is claimed", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const blocked = makeTask("FN-PIN-14");
+    (blocked as Task).branch = "feature/PRD-1234-my-slug";
+    const { store, current, logs } = makeFakeStore(blocked);
+    // Both the derived name and the first two rungs of this task's own fallback ladder are taken.
+    const claimed = new Set(["prd-1234-my-slug", "fn-pin-14"]);
+    const attempted: string[] = [];
+    (store as unknown as { pinWorkspaceWorktreeDirSegment: (id: string, segment: string) => Promise<unknown> })
+      .pinWorkspaceWorktreeDirSegment = async (id: string, segment: string) => {
+        const existing = current().workspaceWorktreeDirSegment;
+        if (typeof existing === "string" && existing.length > 0) return { task: current(), segment: existing, minted: false, claimed: true };
+        attempted.push(segment);
+        if (claimed.has(segment)) return { task: current(), segment, minted: false, claimed: false };
+        await store.updateTask(id, { workspaceWorktreeDirSegment: segment });
+        return { task: current(), segment, minted: true, claimed: true };
+      };
+    (store as unknown as { listTasks: () => Promise<Task[]> }).listTasks = async () => [current()];
+
+    const result = await acquireWorkspaceTaskWorktrees({
+      workspaceConfig: { repos: ["repo-a"] },
+      workspaceRootDir: fixture.rootDir,
+      task: current(),
+      store,
+      settings: { ...SETTINGS, worktreeNaming: "branch" },
+      registry: new ActiveSessionRegistry(),
+    });
+
+    const pinned = current().workspaceWorktreeDirSegment!;
+    expect(attempted).toEqual(["prd-1234-my-slug", "fn-pin-14", pinned]);
+    expect(pinned).toMatch(/^fn-pin-14-[a-f0-9]{8}$/);
+    expect(attempted.slice(1).every((rung) => rung.startsWith("fn-pin-14"))).toBe(true);
+    expect(result.taskWorktreeDir).toBe(join(fixture.rootDir, ".fusion", "worktrees", pinned));
+    expect(current().workspaceWorktrees?.["repo-a"]?.worktreePath).toBe(join(result.taskWorktreeDir, "repo-a"));
+    expect(logs.some((line) => line.includes("sibling-collision"))).toBe(true);
+  });
+
+  it("walks past a claimed rung of its own fallback ladder", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const blocked = makeTask("FN-PIN-15");
+    (blocked as Task).branch = "feature/PRD-1234-my-slug";
+    const { store, current } = makeFakeStore(blocked);
+    const attempted: string[] = [];
+    // Everything up to and including the hashed rung is claimed; only a numbered rung is free.
+    (store as unknown as { pinWorkspaceWorktreeDirSegment: (id: string, segment: string) => Promise<unknown> })
+      .pinWorkspaceWorktreeDirSegment = async (id: string, segment: string) => {
+        const existing = current().workspaceWorktreeDirSegment;
+        if (typeof existing === "string" && existing.length > 0) return { task: current(), segment: existing, minted: false, claimed: true };
+        attempted.push(segment);
+        if (!/-[a-f0-9]{8}-\d+$/.test(segment)) return { task: current(), segment, minted: false, claimed: false };
+        await store.updateTask(id, { workspaceWorktreeDirSegment: segment });
+        return { task: current(), segment, minted: true, claimed: true };
+      };
+    (store as unknown as { listTasks: () => Promise<Task[]> }).listTasks = async () => [current()];
+
+    const result = await acquireWorkspaceTaskWorktrees({
+      workspaceConfig: { repos: ["repo-a"] },
+      workspaceRootDir: fixture.rootDir,
+      task: current(),
+      store,
+      settings: { ...SETTINGS, worktreeNaming: "branch" },
+      registry: new ActiveSessionRegistry(),
+    });
+
+    const pinned = current().workspaceWorktreeDirSegment!;
+    expect(pinned).toMatch(/^fn-pin-15-[a-f0-9]{8}-2$/);
+    expect(attempted[0]).toBe("prd-1234-my-slug");
+    expect(attempted[1]).toBe("fn-pin-15");
+    expect(attempted[2]).toMatch(/^fn-pin-15-[a-f0-9]{8}$/);
+    expect(attempted[3]).toBe(pinned);
+    expect(result.taskWorktreeDir).toBe(join(fixture.rootDir, ".fusion", "worktrees", pinned));
+  });
+
+  it("falls back before minting when a sibling's segment is already visible", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const second = makeTask("FN-PIN-12");
+    (second as Task).branch = "feature/PRD-1234-my-slug";
+    const { store, current, logs } = makeFakeStore(second);
+    const holder = { ...makeTask("FN-PIN-13"), workspaceWorktreeDirSegment: "prd-1234-my-slug", column: "in-progress" } as Task;
+    (store as unknown as { listTasks: () => Promise<Task[]> }).listTasks = async () => [holder, current()];
+
+    const result = await acquireWorkspaceTaskWorktrees({
+      workspaceConfig: { repos: ["repo-a"] },
+      workspaceRootDir: fixture.rootDir,
+      task: current(),
+      store,
+      settings: { ...SETTINGS, worktreeNaming: "branch" },
+      registry: new ActiveSessionRegistry(),
+    });
+
+    expect(current().workspaceWorktreeDirSegment).toBe("fn-pin-12");
+    expect(result.taskWorktreeDir).toBe(join(fixture.rootDir, ".fusion", "worktrees", "fn-pin-12"));
+    expect(logs.some((line) => line.includes("sibling-collision"))).toBe(true);
+  });
+
+  it("reuses an existing pin verbatim instead of re-deriving it from the task", async () => {
+    fixture = await createWorkspaceFixture(["repo-a", "repo-b"]);
+    const pinned = makeTask("FN-PIN-2");
+    (pinned as Task).workspaceWorktreeDirSegment = "prd-1234-my-slug";
+    const { store, current, patches } = makeFakeStore(pinned);
+
+    const result = await acquireWorkspaceTaskWorktrees({
+      workspaceConfig: { repos: fixture.repos },
+      workspaceRootDir: fixture.rootDir,
+      task: current(),
+      store,
+      settings: SETTINGS,
+      registry: new ActiveSessionRegistry(),
+    });
+
+    expect(result.taskWorktreeDir).toBe(join(fixture.rootDir, ".fusion", "worktrees", "prd-1234-my-slug"));
+    expect(current().workspaceWorktreeDirSegment).toBe("prd-1234-my-slug");
+    expect(patches.some((patch) => "workspaceWorktreeDirSegment" in patch)).toBe(false);
+    for (const repoRelPath of fixture.repos) {
+      expect(current().workspaceWorktrees?.[repoRelPath]?.worktreePath).toBe(join(result.taskWorktreeDir, repoRelPath));
+    }
+  });
+
+  it("mints in the configured grouped layout as well as the unset layout", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const configuredRoot = join(fixture.rootDir, "trees-root");
+    const { store, current } = makeFakeStore(makeTask("FN-PIN-3"));
+
+    const result = await acquireWorkspaceTaskWorktrees({
+      workspaceConfig: { repos: ["repo-a"] },
+      workspaceRootDir: fixture.rootDir,
+      task: current(),
+      store,
+      settings: { ...SETTINGS, worktreesDir: configuredRoot },
+      registry: new ActiveSessionRegistry(),
+    });
+
+    expect(current().workspaceWorktreeDirSegment).toBe("fn-pin-3");
+    expect(result.taskWorktreeDir).toBe(join(configuredRoot, workspaceWorktreeGroupSegment(fixture.rootDir), "fn-pin-3"));
+    expect(existsSync(result.taskWorktreeDir)).toBe(true);
+  });
+
+  it("keeps a pre-pinning task on its recorded legacy paths", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const legacy = makeTask("FN-PIN-4");
+    const legacyPath = join(fixture.repoPath("repo-a"), ".worktrees", "fn-pin-4");
+    (legacy as Task).workspaceWorktrees = { "repo-a": { worktreePath: legacyPath, branch: "fusion/fn-pin-4" } } as Task["workspaceWorktrees"];
+    const { store, current } = makeFakeStore(legacy);
+    const acquired = await acquireWorkspaceRepoWorktree({
+      repoRelPath: "repo-a",
+      workspaceRootDir: fixture.rootDir,
+      task: current(),
+      store,
+      settings: SETTINGS,
+      registry: new ActiveSessionRegistry(),
+    });
+    expect(acquired.worktreePath).toBe(legacyPath);
+
+    const result = await acquireWorkspaceTaskWorktrees({
+      workspaceConfig: { repos: ["repo-a"] },
+      workspaceRootDir: fixture.rootDir,
+      task: current(),
+      store,
+      settings: SETTINGS,
+      registry: new ActiveSessionRegistry(),
+    });
+
+    // Legacy classification wins: the session root stays the recorded per-repository path.
+    expect(result.taskWorktreeDir).toBe(legacyPath);
+    expect(current().workspaceWorktrees?.["repo-a"]?.worktreePath).toBe(legacyPath);
+  });
+
+  /*
+  FNXC:WorkspaceWorktree 2026-08-24-06:10:
+  Structural guard, not prose: a call site that passes a task id straight into
+  resolveWorkspaceTaskWorktreeDir re-derives its own segment and reintroduces the split-directory
+  failure the pin exists to prevent. Every production call site must route through
+  resolveWorkspaceTaskDirSegment.
+  */
+  it("resolves every production workspace task directory through the pin reader", () => {
+    const roots = [
+      join(import.meta.dirname, "..", "..", "..", "engine", "src"),
+      join(import.meta.dirname, "..", "..", "..", "core", "src"),
+      join(import.meta.dirname, "..", "..", "..", "cli", "src"),
+    ];
+    const offenders: string[] = [];
+    const visit = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        if (entry.name === "node_modules" || entry.name === "dist" || entry.name === "__tests__") continue;
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) { visit(full); continue; }
+        if (!entry.name.endsWith(".ts")) continue;
+        const source = readFileSync(full, "utf8");
+        for (const call of source.matchAll(/resolveWorkspaceTaskWorktreeDir\(([^;]*?)\)/gs)) {
+          const args = call[1];
+          if (/\bresolveWorkspaceTaskDirSegment\(/.test(args)) continue;
+          if (full.endsWith(join("tasks", "worktree-layout.ts"))) continue; // the definition itself
+          offenders.push(`${full}: ${args.replace(/\s+/g, " ").slice(0, 120)}`);
+        }
+      }
+    };
+    for (const root of roots) visit(root);
+    expect(offenders).toEqual([]);
+  });
+});
+
+/*
+FNXC:WorkspaceWorktree 2026-08-24-06:11:
+R14/R16 at the production acquisition seam: the mode names the real directory that gets created,
+and every rung of the fallback ladder lands on the task id instead of failing the acquisition.
+*/
+describeIfGit("ticket-derived workspace worktree directory names (R14/R16)", { timeout: 60_000 }, () => {
+  let fixture: WorkspaceFixture | undefined;
+
+  afterEach(() => fixture?.cleanup());
+
+  const BRANCH_SETTINGS: Partial<Settings> = { ...SETTINGS, worktreeNaming: "branch" };
+
+  function branchTask(id: string, branch: string): Task {
+    const task = makeTask(id);
+    (task as Task).branch = branch;
+    return task;
+  }
+
+  /*
+  FNXC:WorkspaceWorktree 2026-08-24-06:11:
+  Core cannot import engine, so core's reserved-segment list is a forced duplicate of the engine
+  container-directory constants. This drift guard lives on the engine side, where both are
+  importable: a rename on either side that desyncs them stops the fallback ladder from refusing a
+  name that would collide with a real container directory.
+  */
+  it("keeps the reserved-segment list in sync with the engine container-directory constants", () => {
+    expect(WORKSPACE_RESERVED_TASK_DIR_SEGMENTS).toContain(AI_MERGE_DIRNAME);
+    expect(WORKSPACE_RESERVED_TASK_DIR_SEGMENTS).toContain(WORKTREE_RECOVERY_DIRNAME);
+    expect(WORKSPACE_RESERVED_TASK_DIR_SEGMENTS).toContain(WORKSPACE_GROUP_MARKER_FILENAME);
+  });
+
+  it("names the checkout after the ticket in the configured grouped layout", async () => {
+    fixture = await createWorkspaceFixture(["repo-a", "repo-b"]);
+    const configuredRoot = join(fixture.rootDir, "trees-root");
+    const { store, current } = makeFakeStore(branchTask("FN-9210", "feature/PRD-1234-my-slug"));
+
+    const result = await acquireWorkspaceTaskWorktrees({
+      workspaceConfig: { repos: fixture.repos },
+      workspaceRootDir: fixture.rootDir,
+      task: current(),
+      store,
+      settings: { ...BRANCH_SETTINGS, worktreesDir: configuredRoot },
+      registry: new ActiveSessionRegistry(),
+    });
+
+    expect(result.taskWorktreeDir).toBe(join(configuredRoot, workspaceWorktreeGroupSegment(fixture.rootDir), "prd-1234-my-slug"));
+    expect(current().workspaceWorktreeDirSegment).toBe("prd-1234-my-slug");
+    expect(existsSync(join(result.taskWorktreeDir, "repo-a"))).toBe(true);
+    expect(existsSync(join(result.taskWorktreeDir, "repo-b"))).toBe(true);
+  });
+
+  it("names the checkout with worktreesDir unset, since only grouping is opt-in", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const { store, current } = makeFakeStore(branchTask("FN-9211", "feature/PRD-1234-my-slug"));
+
+    const result = await acquireWorkspaceTaskWorktrees({
+      workspaceConfig: { repos: ["repo-a"] },
+      workspaceRootDir: fixture.rootDir,
+      task: current(),
+      store,
+      settings: BRANCH_SETTINGS,
+      registry: new ActiveSessionRegistry(),
+    });
+
+    expect(result.taskWorktreeDir).toBe(join(fixture.rootDir, ".fusion", "worktrees", "prd-1234-my-slug"));
+    expect(existsSync(join(result.taskWorktreeDir, "repo-a"))).toBe(true);
+  });
+
+  it("does not move or re-derive the directory when the branch is renamed after acquisition", async () => {
+    fixture = await createWorkspaceFixture(["repo-a", "repo-b"]);
+    const { store, current } = makeFakeStore(branchTask("FN-9212", "feature/PRD-1234-my-slug"));
+    const first = await acquireWorkspaceTaskWorktrees({
+      workspaceConfig: { repos: fixture.repos },
+      workspaceRootDir: fixture.rootDir,
+      task: current(),
+      store,
+      settings: BRANCH_SETTINGS,
+      registry: new ActiveSessionRegistry(),
+    });
+    expect(first.taskWorktreeDir.endsWith("prd-1234-my-slug")).toBe(true);
+
+    await store.updateTask("FN-9212", { branch: "feature/PRD-9999-renamed" });
+    const second = await acquireWorkspaceTaskWorktrees({
+      workspaceConfig: { repos: fixture.repos },
+      workspaceRootDir: fixture.rootDir,
+      task: current(),
+      store,
+      settings: BRANCH_SETTINGS,
+      registry: new ActiveSessionRegistry(),
+    });
+
+    expect(second.taskWorktreeDir).toBe(first.taskWorktreeDir);
+    expect(current().workspaceWorktreeDirSegment).toBe("prd-1234-my-slug");
+    for (const repoRelPath of fixture.repos) {
+      expect(current().workspaceWorktrees?.[repoRelPath]?.worktreePath).toBe(join(first.taskWorktreeDir, repoRelPath));
+    }
+  });
+
+  it("falls back to the task id and logs why for an empty slug and a reserved name", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    for (const [id, branch, reason] of [
+      ["FN-9213", "feature/---", "empty-slug"],
+      ["FN-9214", "feature/.AI-Merge", "reserved-name"],
+    ] as const) {
+      const { store, current, logs } = makeFakeStore(branchTask(id, branch));
+      const result = await acquireWorkspaceTaskWorktrees({
+        workspaceConfig: { repos: ["repo-a"] },
+        workspaceRootDir: fixture.rootDir,
+        task: current(),
+        store,
+        settings: BRANCH_SETTINGS,
+        registry: new ActiveSessionRegistry(),
+      });
+      expect(result.taskWorktreeDir, branch).toBe(join(fixture.rootDir, ".fusion", "worktrees", id.toLowerCase()));
+      expect(current().workspaceWorktreeDirSegment).toBe(id.toLowerCase());
+      expect(logs.some((line) => line.includes(reason)), `${branch} -> ${reason}`).toBe(true);
+    }
+  });
+
+  it("gives a second task with an identical slug its own directory", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    // A done sibling counts too: its checkout survives until archive cleanup removes it.
+    const sibling = makeTask("FN-9215");
+    (sibling as Task).workspaceWorktreeDirSegment = "prd-1234-my-slug";
+    (sibling as Task).column = "done";
+    const { store, current, logs } = makeFakeStore(branchTask("FN-9216", "feature/PRD-1234-MY-SLUG"));
+    (store as unknown as { listTasks: () => Promise<Task[]> }).listTasks = async () => [sibling, current()];
+
+    const result = await acquireWorkspaceTaskWorktrees({
+      workspaceConfig: { repos: ["repo-a"] },
+      workspaceRootDir: fixture.rootDir,
+      task: current(),
+      store,
+      settings: BRANCH_SETTINGS,
+      registry: new ActiveSessionRegistry(),
+    });
+
+    expect(result.taskWorktreeDir).toBe(join(fixture.rootDir, ".fusion", "worktrees", "fn-9216"));
+    expect(logs.some((line) => line.includes("sibling-collision"))).toBe(true);
+  });
+
+  it("reproduces the task-id path for task-id naming and for an unset mode", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    for (const worktreeNaming of ["task-id", undefined] as const) {
+      const { store, current } = makeFakeStore(branchTask("FN-9217", "feature/PRD-1234-my-slug"));
+      const result = await acquireWorkspaceTaskWorktrees({
+        workspaceConfig: { repos: ["repo-a"] },
+        workspaceRootDir: fixture.rootDir,
+        task: current(),
+        store,
+        settings: { ...SETTINGS, worktreeNaming },
+        registry: new ActiveSessionRegistry(),
+      });
+      expect(result.taskWorktreeDir, String(worktreeNaming)).toBe(join(fixture.rootDir, ".fusion", "worktrees", "fn-9217"));
+    }
+  });
+
+  it("slugs the title for task-title naming", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const titled = makeTask("FN-9218");
+    (titled as Task).title = "Close the late acquire gap";
+    const { store, current } = makeFakeStore(titled);
+
+    const result = await acquireWorkspaceTaskWorktrees({
+      workspaceConfig: { repos: ["repo-a"] },
+      workspaceRootDir: fixture.rootDir,
+      task: current(),
+      store,
+      settings: { ...SETTINGS, worktreeNaming: "task-title" },
+      registry: new ActiveSessionRegistry(),
+    });
+
+    expect(result.taskWorktreeDir).toBe(join(fixture.rootDir, ".fusion", "worktrees", "close-the-late-acquire-gap"));
   });
 });

@@ -28,6 +28,8 @@ import { CONFIG_CHANGED_BY_SYSTEM } from "../types.js";
 import {validateSettingValuePatch, WorkflowSettingRejectionError} from "../workflows/workflow-settings.js";
 import "../builtin-traits.js";
 import {toJson} from "../db/db.js";
+import { isPostgresUniqueError } from "../db/postgres-errors.js";
+import { isSafeWorkspaceWorktreeDirSegment } from "../tasks/worktree-layout.js";
 import {resolveSameAgentDuplicateIntake} from "./task-creation.js";
 import {type TaskRow, TASK_COLUMN_DESCRIPTORS} from "../task-store/persistence.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
@@ -44,7 +46,7 @@ import {and, asc, eq, inArray, isNotNull, isNull, sql} from "drizzle-orm";
 import {recoverExpiredMergeQueueLeases as recoverExpiredMergeQueueLeasesAsync} from "../task-store/async/async-merge-coordination.js";
 import {updateBranchGroup as updateBranchGroupAsync, updatePrEntity as updatePrEntityAsync} from "../task-store/async/async-branch-groups.js";
 import {recordCompletionHandoff as recordCompletionHandoffAsync, getCompletionHandoffMarker as getCompletionHandoffMarkerAsync} from "../task-store/async/async-workflow-workitems.js";
-import { projectScopeFor, taskProjectScope } from "../postgres/data-layer.js";
+import { projectOwnershipPartition, projectScopeFor, taskProjectScope } from "../postgres/data-layer.js";
 import type { AsyncDataLayer, DbTransaction } from "../postgres/data-layer.js";
 import {getActivityLog as getActivityLogAsync} from "../task-store/async/async-audit.js";
 import {insertArtifactRow as insertArtifactRowAsync} from "../task-store/async/async-comments-attachments.js";
@@ -75,7 +77,11 @@ export function getTaskSelectClauseWithActivityLogLimitImpl(store: TaskStore, li
       "tokenUsageInputTokens", "tokenUsageOutputTokens", "tokenUsageCachedTokens", "tokenUsageCacheWriteTokens", "tokenUsageTotalTokens", "tokenUsageFirstUsedAt", "tokenUsageLastUsedAt", "tokenUsageModelProvider", "tokenUsageModelId", "tokenUsagePerModel", "tokenBudgetSoftAlertedAt", "tokenBudgetHardAlertedAt", "tokenBudgetOverride",
       "createdAt", "updatedAt", "columnMovedAt", "firstExecutionAt", "cumulativeActiveMs", "cumulativePlanningMs", "planningStartedAt", "executionStartedAt", "executionCompletedAt",
       "dependencies", "steps", "customFields", "attachments", "steeringComments",
-      "comments", "review", "reviewState", "workflowStepResults", "prInfo", "prInfos", "issueInfo", "githubTracking", "sourceIssueProvider", "sourceIssueRepository", "sourceIssueExternalIssueId", "sourceIssueNumber", "sourceIssueUrl", "sourceIssueClosedAt", "mergeDetails", "workspaceWorktrees", "repositoryScope", "externalBlock",
+      "comments", "review", "reviewState", "workflowStepResults", "prInfo", "prInfos", "issueInfo", "githubTracking", "sourceIssueProvider", "sourceIssueRepository", "sourceIssueExternalIssueId", "sourceIssueNumber", "sourceIssueUrl", "sourceIssueClosedAt", "mergeDetails", "workspaceWorktrees",
+      // FNXC:WorkspaceWorktree 2026-08-24-06:11: R15's pinned segment must appear in BOTH projections
+      // (see getTaskSelectClauseImpl2). A task read through this path without it reads as UNPINNED, so
+      // every later resolution re-derives `taskId.toLowerCase()` and disagrees with what is on disk.
+      "workspaceWorktreeDirSegment", "repositoryScope", "externalBlock",
       "noCommitsExpected", "enabledWorkflowSteps", "modifiedFiles", "declaredSymbols",
       "missionId", "sliceId", "scopeOverride", "scopeOverrideReason", "scopeAutoWiden", "assignedAgentId", "pausedByAgentId", "assigneeUserId", "nodeId", "effectiveNodeId", "effectiveNodeSource",
       "sourceType", "sourceAgentId", "sourceRunId", "sourceSessionId", "sourceMessageId", "sourceParentTaskId", "sourceMetadata",
@@ -766,11 +772,27 @@ FN-258 removes per-task repository selection. This engine-only replacement write
 scope from workspace.json under the existing planning and advisory locks, preserving the review fence
 only when the complete configured set is unchanged.
 */
+/*
+FNXC:WorkspaceLateAcquire 2026-09-04-04:42:
+Late repository acquisition records a delta against the durable scope so a running review-stage
+task can extend membership without replacing a stale snapshot. FN-258 still materializes the
+confirmed set from workspace.json; the mutation is the executor/operator event that forces that
+refresh and the full-re-review cost.
+*/
+export type TaskRepositoryScopeMutation = {
+  action: "add" | "refuse";
+  repositories: string[];
+  reason: string;
+  actor: string;
+};
+
 export async function updateTaskRepositoryScopeImpl(
   store: TaskStore,
   id: string,
-  requestedScope: TaskRepositoryScope | undefined,
+  requestedScope: TaskRepositoryScope | TaskRepositoryScopeMutation | undefined,
 ): Promise<Task> {
+  const isMutation = requestedScope !== undefined && "action" in requestedScope;
+  const requestedAsScope = isMutation ? undefined : requestedScope;
   const configuredRepositories = [...new Set(((await loadWorkspaceConfig(store.getRootDir()))?.repos ?? [])
     .map((repository) => repository.trim())
     .filter(Boolean))].sort();
@@ -800,7 +822,7 @@ export async function updateTaskRepositoryScopeImpl(
       const replacement = configuredRepositories.length === 0
         ? undefined
         : {
-            ...requestedScope,
+            ...requestedAsScope,
             repositories: configuredRepositories,
             state: "confirmed" as const,
             confirmedBy: "workspace" as const,
@@ -871,6 +893,96 @@ export async function updateWorkspaceReviewStateImpl(
       return { task: store.rowToTask(store.pgRowToTaskRow(updatedRow)), updated: true };
     });
     if (outcome.updated) {
+      await store.writeTaskJsonFile(store.taskDir(id), outcome.task);
+      if (store.isWatching) store.taskCache.set(id, { ...outcome.task });
+      store.emitTaskLifecycleEventSafely("task:updated", [outcome.task]);
+    }
+    return outcome;
+  });
+}
+
+/*
+FNXC:WorkspaceWorktree 2026-08-24-06:11:
+R15/KTD10: the workspace task-directory segment is WRITE-ONCE, so its mint is a compare-and-set,
+not a read-then-write. `updateTaskAtomic`'s `withTaskLock` is an in-process Map lock — it serializes
+one store instance, and this repo supports several nodes against one central database, so two
+processes racing a task's first workspace acquisition would both read "no pin" and the later write
+would win. Because the pin is never re-derived afterwards, a lost race leaves one node's recorded
+paths permanently disagreeing with the directory the other created. This mirrors the transactional
+advisory-lock CAS the sibling repository-scope writers in this file already use: the first mint wins
+and every later caller adopts it.
+*/
+export async function pinWorkspaceWorktreeDirSegmentImpl(
+  store: TaskStore,
+  id: string,
+  segment: string,
+): Promise<{ task: Task; segment: string; minted: boolean; claimed: boolean }> {
+  const candidate = segment.trim();
+  if (!isSafeWorkspaceWorktreeDirSegment(candidate)) {
+    throw new Error(`Cannot pin an unsafe workspace worktree directory segment for ${id}`);
+  }
+  return store.withTaskLock(id, async () => {
+    const layer = store.asyncLayer!;
+    let snapshot: Task | undefined;
+    let outcome: { task: Task; segment: string; minted: boolean; claimed: boolean };
+    try {
+      /*
+      FNXC:WorkspaceWorktree 2026-08-25-08:12:
+      The segment is a project-wide CLAIM, enforced by `uqTasksWorkspaceWorktreeDirSegment`, not a
+      per-row write. Two tasks that derive the same slug can both read an empty sibling scan, and a
+      per-task compare-and-set would let both persist it — permanently, since the pin never changes,
+      so the loser's later path reservation would fail with no way to retry. The unique index makes
+      the second write raise instead, and the caller re-mints with its task-id fallback before any
+      checkout exists. A conflict is reported, never thrown: it is an ordinary outcome here.
+      FNXC:WorkspaceWorktree 2026-09-04-05:15:
+      The unique predicate is live-only (`deleted_at IS NULL`). Archive tombstones keep their
+      segment for forensics but must not occupy the name a later task is about to pin.
+      FNXC:WorkspaceWorktree 2026-09-04-05:20:
+      Drizzle wraps postgres.js unique_violation as `Failed query` with `cause.code === "23505"`.
+      Catching inside the transaction cannot COMMIT after PostgreSQL aborted the xact, so the
+      unique fence is an ordinary pin outcome only when the writer lets that transaction roll back.
+      */
+      outcome = await layer.transactionImmediate(async (tx) => {
+        await acquireTaskAdvisoryXactLock(tx, layer.projectId, id);
+        const row = await readTaskRowInTransaction(tx, id, { includeDeleted: true }, layer.projectId);
+        if (!row) throw new TaskNotFoundError(id);
+        if (row.deletedAt) throw new TaskDeletedError(id, row.deletedAt as string);
+        const current = store.rowToTask(store.pgRowToTaskRow(row));
+        snapshot = current;
+        const existing = current.workspaceWorktreeDirSegment;
+        /*
+        FNXC:WorkspaceWorktree 2026-08-25-07:53:
+        Write-once with no rewrite path. A rewrite — even a guarded one — can always move a root that a
+        concurrent acquisition for the same task is already building under, because that writer records
+        its `workspaceWorktrees` entry only after the checkout exists. One task split across two roots
+        is silent and unrecoverable, so the pin never changes once set and collisions are settled
+        before minting instead.
+        */
+        if (typeof existing === "string" && existing.length > 0) {
+          return { task: current, segment: existing, minted: false, claimed: true };
+        }
+        /*
+        FNXC:WorkspaceWorktree 2026-09-04-04:59:
+        The pin UPDATE must use the same ownership partition as `readTaskRowInTransaction`.
+        `taskProjectScope(layer)` is a no-op when the layer is unbound, so `WHERE id = $id` would
+        rewrite every project's same-id row and `.returning()` would surface only the first. Unbound
+        stores still exist; they write `__legacy_unscoped__`, never a cross-project scan.
+        */
+        const [updatedRow] = await tx.update(schema.project.tasks).set({
+          workspaceWorktreeDirSegment: candidate,
+          updatedAt: new Date().toISOString(),
+        }).where(and(
+          eq(schema.project.tasks.id, id),
+          eq(schema.project.tasks.projectId, projectOwnershipPartition(layer.projectId)),
+        )).returning();
+        if (!updatedRow) throw new TaskNotFoundError(id);
+        return { task: store.rowToTask(store.pgRowToTaskRow(updatedRow)), segment: candidate, minted: true, claimed: true };
+      });
+    } catch (error: unknown) {
+      if (!isPostgresUniqueError(error) || !snapshot) throw error;
+      outcome = { task: snapshot, segment: candidate, minted: false, claimed: false };
+    }
+    if (outcome.minted) {
       await store.writeTaskJsonFile(store.taskDir(id), outcome.task);
       if (store.isWatching) store.taskCache.set(id, { ...outcome.task });
       store.emitTaskLifecycleEventSafely("task:updated", [outcome.task]);

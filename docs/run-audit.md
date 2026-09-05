@@ -94,6 +94,12 @@ FN-9178 classified awaited sites with hostile-sink characterization tests. FN-91
 
 All `recordRunAuditEventWithinTransaction(tx, ...)` calls and the `recordRunAuditEventBackend(tx, ...)` transactional call are permanently out of scope. Their audit row shares a transaction with the mutation it describes; bounding would split that atomicity. The full matrix and evidence pointers are in the FN-9178 `decision` task document; `excluded-awaited-run-audit-store-sites.test.ts`, `excluded-awaited-run-audit-layer-sites.test.ts`, and the core routing ratchet pin this boundary.
 
+### Workspace late-acquisition scope extension
+
+`task:workspace-scope-extended-post-review` records a repository acquired while its task was sitting in a **review** column with nothing landed — the tier-1 admission of the workspace late-acquire gate. It is emitted exactly once per permitted late acquisition, after the checkout and the scope extension and before the forced Code Review re-entry, through the FN-9175 bounded seam. Metadata is ids, counts, and fixed outcomes only (`taskId`, `repo`, `column`, `repositoryCount`); the executor's extension reason prose is never recorded.
+
+The row is the audit trail for a deliberate cost: a repository-scope change clears the task's whole `reviewEvidence` map, so the re-entry re-reviews **every** repository in scope, not only the new one. Acquisition stays refused once landing has begun (any `landedSha`, a merging status, or a pending/active merge) — that case has no bounded recovery and is directed to a follow-up task instead. This event is deliberately not part of the curated delivery-pipeline catalogue above.
+
 ### Review convergence events
 
 `task:review-finding-disputed`, `task:review-convergence-escalation`, `task:review-arbitration`, and `task:review-convergence-human-escalation` record review-cycle progression. `task:review-convergence-escalation` includes the fixed `escalationSource` outcome (`dedicated`, `execution-fallback`, or `none`); its `hasModelTarget` flag is true only when a distinct model pair was resolved and persisted. Metadata contains only ids, counts, and fixed outcomes; provider/model identifiers, dispute rationales, findings, reviewer feedback, and arbiter output are never recorded. All five emission sites use the FN-9175 bounded best-effort seam, so hostile telemetry cannot alter or block the ladder, arbitration release, or dispute result.
