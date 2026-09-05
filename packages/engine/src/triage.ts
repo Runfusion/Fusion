@@ -62,6 +62,7 @@ import {
   deriveFallbackTaskTitle,
   resolveTaskOutputLanguage,
   parsePlanningPlanMd,
+  matchStepHeadings,
   loadWorkspaceConfig,
   isLegacyWorkspaceWorktreeLayout,
   resolveWorkspaceTaskWorktreeDir,
@@ -3853,7 +3854,7 @@ export class TriageProcessor {
               planLog.warn(`${task.id} ${retryMessage}`);
               await this.store.logEntry(task.id, retryMessage);
               await this.updatePlanningStateIfStillCurrent(task, {
-                status: this.restoreStatusAfterInterruptedTriageWork(task),
+                status: await this.resolvePlanningRetryHoldStatus(task, written),
                 error: null,
                 recoveryRetryCount: decision.nextState.recoveryRetryCount,
                 nextRecoveryAt: decision.nextState.nextRecoveryAt,
@@ -3894,9 +3895,13 @@ export class TriageProcessor {
                 `Generated plan failed deterministic validation (${deterministicSpecFailure}) — retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}.`;
               planLog.warn(`${task.id} ${retryMessage}`);
               await this.store.logEntry(task.id, retryMessage);
-              const restoreStatus = this.restoreStatusAfterInterruptedTriageWork(task);
+              await this.store.logEntry(
+                task.id,
+                "AI spec revision requested",
+                `Deterministic plan validation rejected the generated plan: ${deterministicSpecFailure}`,
+              ).catch(() => undefined);
               await this.updatePlanningStateIfStillCurrent(task, {
-                status: restoreStatus,
+                status: await this.resolvePlanningRetryHoldStatus(task, written),
                 error: null,
                 recoveryRetryCount: decision.nextState.recoveryRetryCount,
                 nextRecoveryAt: decision.nextState.nextRecoveryAt,
@@ -4109,9 +4114,10 @@ export class TriageProcessor {
             const retryMessage = `${failureMessage} — retry ${decision.nextState.recoveryRetryCount}/${MAX_RECOVERY_RETRIES} in ${formatDelay(decision.delayMs)}.`;
             planLog.warn(`${task.id} ${retryMessage}`);
             await this.store.logEntry(task.id, retryMessage).catch(() => undefined);
+            const retryHoldStatus = await this.resolvePlanningRetryHoldStatus(task);
             await this.updatePlanningStateIfStillCurrent(task, (live) => ({
               ...persistMarker(live),
-              status: this.restoreStatusAfterInterruptedTriageWork(task),
+              status: retryHoldStatus,
               error: null,
               recoveryRetryCount: decision.nextState.recoveryRetryCount,
               nextRecoveryAt: decision.nextState.nextRecoveryAt,
@@ -4144,7 +4150,7 @@ export class TriageProcessor {
                 planLog.warn(`${task.id}: failed to log transient-error retry entry: ${msg}`);
               });
             }
-            const restoreStatus = this.restoreStatusAfterInterruptedTriageWork(task);
+            const restoreStatus = await this.resolvePlanningRetryHoldStatus(task);
             await this.updatePlanningStateIfStillCurrent(task, {
               status: restoreStatus,
               recoveryRetryCount: decision.nextState.recoveryRetryCount,
@@ -4223,7 +4229,7 @@ export class TriageProcessor {
           });
           // For interrupted recovery states, restore the original triage-held status;
           // otherwise clear to null so the next poll can re-pick ordinary tasks up.
-          const restoreStatus = this.restoreStatusAfterInterruptedTriageWork(task);
+          const restoreStatus = await this.resolvePlanningRetryHoldStatus(task);
           await this.updatePlanningStateIfStillCurrent(task, {
             status: restoreStatus,
             recoveryRetryCount: genericDecision.nextState.recoveryRetryCount,
@@ -4624,6 +4630,18 @@ export class TriageProcessor {
     return null;
   }
 
+  /*
+  FNXC:TriagePlanningRetry 2026-09-05-22:06:
+  A retry over a finished-looking PROMPT.md must hold `needs-replan`, matching scheduler validation
+  retries. Clearing status makes the card dispatchable and bypasses finalizeApprovedTask approval.
+  */
+  private async resolvePlanningRetryHoldStatus(task: Task, knownPromptContent?: string): Promise<Task["status"] | null> {
+    const restored = this.restoreStatusAfterInterruptedTriageWork(task);
+    if (restored) return restored;
+    const content = knownPromptContent ?? await this.readNonEmptyPromptDraft(task.id, "planning retry hold");
+    return content && !isTaskAwaitingPlanning(task, content) ? "needs-replan" : null;
+  }
+
   private async validateGeneratedPrompt(taskId: string, promptContent: string): Promise<string | null> {
     /*
     FNXC:PlanReview 2026-06-29-01:52:
@@ -4641,7 +4659,7 @@ export class TriageProcessor {
     Heading numbering is engine-provable structure because the number is the execution index, not
     Plan Review's AI quality judgement. Reject bad sequences before they can misroute step sessions.
     */
-    const headingNumbers = Array.from(promptContent.matchAll(/^### Step (\d+):/gm), (match) => Number(match[1]));
+    const headingNumbers = matchStepHeadings(promptContent).map((match) => match.headingNumber);
     if (headingNumbers.length > 0 && !headingNumbers.every((heading, index) => heading === index)) {
       const diagnostic = `Step headings must be contiguous 0-based execution indices (observed: ${headingNumbers.join(", ")}). Renumber from Step 0 and update prose cross-references.`;
       planLog.warn(`${taskId}: ${diagnostic}`);

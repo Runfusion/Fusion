@@ -534,12 +534,14 @@ export {
   unregisterStepParser,
   registerBuiltinStepParsers,
   parseStepHeadings,
+  matchStepHeadings,
   parseJsonSteps,
   resolveAuthoredStepHeadingOffset,
   __resetStepParserRegistryForTests,
 } from "./tasks/step-parsers.js";
 export type {
   StepParser,
+  StepHeadingMatch,
   StepParseResult,
   ParsedStep,
   StepParserRegistrationReason,

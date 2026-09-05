@@ -4113,7 +4113,7 @@ describe("taskCreate tool model inheritance", () => {
       try {
         await new TriageProcessor(store, root, { onSpecifyComplete }).specifyTask(task);
         expect(store.updateTask).toHaveBeenCalledWith(task.id, expect.objectContaining({
-          status: null,
+          status: "needs-replan",
           recoveryRetryCount: 1,
           nextRecoveryAt: expect.any(String),
         }));
@@ -4156,7 +4156,7 @@ describe("taskCreate tool model inheritance", () => {
       try {
         await new TriageProcessor(store, root, { onSpecifyComplete }).specifyTask(task);
         expect(store.updateTask).toHaveBeenCalledWith(task.id, expect.objectContaining({
-          status: null,
+          status: "needs-replan",
           recoveryRetryCount: 1,
         }));
         expect(onSpecifyComplete).not.toHaveBeenCalled();
@@ -4182,7 +4182,7 @@ describe("taskCreate tool model inheritance", () => {
       try {
         await new TriageProcessor(store, root, { onSpecifyComplete }).specifyTask(task);
         expect(store.updateTask).toHaveBeenCalledWith(task.id, expect.objectContaining({
-          status: null,
+          status: "needs-replan",
           recoveryRetryCount: 1,
           nextRecoveryAt: expect.any(String),
         }));
@@ -4241,7 +4241,7 @@ describe("taskCreate tool model inheritance", () => {
       try {
         await new TriageProcessor(store, root, { onSpecifyComplete }).specifyTask(task);
         expect(store.updateTask).toHaveBeenCalledWith(task.id, expect.objectContaining({
-          status: null,
+          status: "needs-replan",
           recoveryRetryCount: 1,
         }));
         expect(onSpecifyComplete).not.toHaveBeenCalled();
@@ -4325,7 +4325,7 @@ describe("taskCreate tool model inheritance", () => {
         expect(pluginRunner.getRuntimeById).toHaveBeenCalledWith("deferred-planner");
         expect(pluginRuntime.createSession).toHaveBeenCalledTimes(1);
         expect(store.updateTask).toHaveBeenCalledWith(task.id, expect.objectContaining({
-          status: null,
+          status: "needs-replan",
           recoveryRetryCount: 1,
           nextRecoveryAt: expect.any(String),
         }));

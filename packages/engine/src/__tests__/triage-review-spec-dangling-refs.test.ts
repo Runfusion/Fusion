@@ -132,6 +132,14 @@ describe("triage deterministic plan validation for dangling references", () => {
         "FN-5112",
         "## Steps\n### First\n- plain heading\n",
       )).resolves.toBeNull();
+      await expect((processor as any).validateGeneratedPrompt(
+        "FN-5112",
+        "## Steps\n### Step 0: Preflight\n### Step 1: Plan\n### Step 2: Build\n### Step 3 (depends: 0): Parallel A\n### Step 4: Continue\n### Step 5 (depends: 4): Parallel B\n### Step 6 (depends: 0): Parallel C\n### Step 7: Verify\n### Step 8: Deliver\n",
+      )).resolves.toBeNull();
+      await expect((processor as any).validateGeneratedPrompt(
+        "FN-5112",
+        "## Steps\n### Step 0: First\n### Step 1 (depends: 0): Second\n### Step 3 (depends: 1): Gap\n",
+      )).resolves.toContain("contiguous 0-based execution indices");
     } finally {
       await rm(rootDir, { recursive: true, force: true });
     }

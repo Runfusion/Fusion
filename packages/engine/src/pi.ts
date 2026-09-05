@@ -58,6 +58,7 @@ import {
   runWithFusionSessionIdentity,
   resolvePiExtensionProjectRoot,
   resolveToolOutputBudget,
+  matchStepHeadings,
 } from "@fusion/core";
 import type {
   AgentPermissionPolicyActionCategory,
@@ -751,7 +752,7 @@ function extractMarkdownSection(document: string, headingName: string): string {
 }
 
 function compactTaskPromptStepsSection(section: string): string {
-  const stepTitles = Array.from(section.matchAll(/^### Step \d+:.*$/gm), (match) => match[0].trim());
+  const stepTitles = matchStepHeadings(section).map(({ index, headingLineEnd }) => section.slice(index, headingLineEnd).trim());
   if (stepTitles.length === 0) {
     return section.trim();
   }

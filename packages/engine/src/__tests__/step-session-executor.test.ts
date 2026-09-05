@@ -114,6 +114,14 @@ describe("parseStepFileScopes", () => {
     ]);
   });
 
+  it("keeps file scopes under dependency-annotated headings", () => {
+    const scopes = parseStepFileScopes(makePrompt([
+      "### Step 0: Preflight\n- prepare",
+      "### Step 1 (depends: 0): Implement\n\n**Artifacts:**\n- `packages/engine/src/annotated.ts` (new)",
+    ]));
+    expect(scopes.get(1)).toEqual(["packages/engine/src/annotated.ts"]);
+  });
+
   it("returns empty arrays for steps with no file scope", () => {
     const prompt = makePrompt([
       `### Step 0: Preflight

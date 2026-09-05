@@ -1,5 +1,6 @@
 import { access } from "node:fs/promises";
 import { join } from "node:path";
+import { matchStepHeadings } from "@fusion/core";
 import { extractSection } from "../execution/step-session-executor.js";
 
 export interface DanglingTaskDocReference {
@@ -26,12 +27,12 @@ function collectTaskPaths(text: string): string[] {
 
 function collectStepSections(stepsSection: string): Array<{ name: string; body: string }> {
   const sections: Array<{ name: string; body: string }> = [];
-  const headingMatches = Array.from(stepsSection.matchAll(/^### Step (\d+):[^\n]*$/gm));
+  /* FNXC:WorkflowSteps 2026-09-05-22:06: FN-9260 keeps dangling-reference attribution aligned with annotated step headings. */
+  const headingMatches = matchStepHeadings(stepsSection);
   for (let i = 0; i < headingMatches.length; i += 1) {
     const heading = headingMatches[i];
-    const start = (heading.index ?? 0) + heading[0].length;
-    const end = i + 1 < headingMatches.length ? (headingMatches[i + 1].index ?? stepsSection.length) : stepsSection.length;
-    sections.push({ name: `Step ${heading[1]}`, body: stepsSection.slice(start, end).trim() });
+    const end = i + 1 < headingMatches.length ? headingMatches[i + 1].index : stepsSection.length;
+    sections.push({ name: `Step ${heading.headingNumber}`, body: stepsSection.slice(heading.headingLineEnd, end).trim() });
   }
   return sections;
 }

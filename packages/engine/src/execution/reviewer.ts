@@ -19,6 +19,7 @@ import {
   resolvePersistAgentThinkingLog,
   resolveTaskSeamPrompt,
   resolveValidatorFallbackModel,
+  matchStepHeadings,
 } from "@fusion/core";
 import { recordRetry } from "../errors/retry-burned-logger.js";
 import { mergeEffectiveSettings } from "../project/effective-settings.js";
@@ -922,7 +923,7 @@ function extractPromptSection(promptContent: string, sectionName: string): strin
 }
 
 function summarizePromptSteps(promptContent: string): string {
-  const stepTitles = Array.from(promptContent.matchAll(/^### Step \d+:.*$/gm), (match) => match[0].trim());
+  const stepTitles = matchStepHeadings(promptContent).map(({ index, headingLineEnd }) => promptContent.slice(index, headingLineEnd).trim());
   if (stepTitles.length === 0) {
     return "";
   }
