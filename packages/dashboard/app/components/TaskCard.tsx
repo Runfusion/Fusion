@@ -691,9 +691,13 @@ export function PlanApprovalNotice({
   if (isTaskExternallyBlocked(task) || !awaitingApproval) return null;
 
   const replanCap = isReviewBudgetExhaustedApproval(task);
+  /*
+  FNXC:PlanApproval 2026-09-05-22:04:
+  Board and List rows are slim and never carry prompt, so a client prompt gate makes the enabled primary action silently fail after a reload. The approve-plan endpoint owns status, column, and PROMPT.md validation; its refusal is shown through this notice's error toast.
+  */
   const approve = async (event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
-    if (!task.prompt || isApproving) return;
+    if (isApproving) return;
     setIsApproving(true);
     try {
       const updated = await approvePlan(task.id, projectId);
@@ -723,7 +727,7 @@ export function PlanApprovalNotice({
             : t("tasks.planApproval.copy", "Review the plan before implementation starts.")}
         </span>
         <span className="plan-approval-notice__actions">
-          <button type="button" className="btn btn-primary btn-sm" onClick={(event) => void approve(event)} disabled={!task.prompt || isApproving}>
+          <button type="button" className="btn btn-primary btn-sm" onClick={(event) => void approve(event)} disabled={isApproving}>
             {isApproving ? t("tasks.planApproval.approving", "Approving...") : t("tasks.planApproval.approve", "Approve")}
           </button>
         </span>
