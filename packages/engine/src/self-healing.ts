@@ -264,6 +264,7 @@ import {
   extractTaskIdFromTempMergeDir,
   getErrorMessage,
   isTaskNotFoundError,
+  isMissingTaskLookupError,
   readLinkedTaskOrUndefined,
   buildResumeLimboStepSignature,
   formatRecoveryTimestamp,
@@ -7485,8 +7486,19 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   /** Repair legacy dependency residue before it can re-enter executor dispatch. */
   async reconcileMissingDependencies(): Promise<number> {
     let repaired = 0;
-    const tasks = await this.store.listTasks({ slim: true });
+    const archivedColumns = new Set(await Promise.resolve()
+      .then(() => resolveProjectColumnsForRoles(this.store, ["archived"]))
+      .catch(() => new Set<string>()));
+    archivedColumns.add("archived");
+    const tasks = await this.store.listTasks({ slim: true, includeArchived: false });
     for (const snapshot of tasks) {
+      /*
+      FNXC:DependencyIntegrity 2026-09-05-22:04:
+      Runfusion/Fusion#3565 requires archived history to stay outside this mutable repair pass.
+      Archiving tombstones the live dependent, while archived dependencies resolve as terminal tasks
+      rather than dangling references.
+      */
+      if (snapshot.deletedAt || archivedColumns.has(snapshot.column)) continue;
       if (!snapshot.dependencies.length || snapshot.userPaused || snapshot.paused || snapshot.autoMerge === false) continue;
       const livePaths = activeSessionRegistry.pathsForTask(snapshot.id);
       const liveExecution = livePaths.some((path) => activeSessionRegistry.isPathActive(path))
@@ -7504,18 +7516,15 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       that could erase a concurrent operator edit.
       */
       for (const dependencyId of snapshot.dependencies) {
-        try {
-          const dependency = await this.store.getTask(dependencyId, { includeDeleted: true });
-          if (!dependency.deletedAt) continue;
-        } catch (error) {
-          if (!isTaskNotFoundError(error)) throw error;
-        }
+        /*
+        FNXC:DependencyIntegrity 2026-09-05-22:04:
+        Missing means absent from both live and archived storage. A successful archive lookup is a
+        terminal dependency, so deletedAt alone must never classify it as residue.
+        */
+        if (await readLinkedTaskOrUndefined(this.store, dependencyId)) continue;
 
         // Recheck control and execution fences against the latest task before mutating it.
-        const current = await this.store.getTask(snapshot.id).catch((error: unknown) => {
-          if (isTaskNotFoundError(error)) return undefined;
-          throw error;
-        });
+        const current = await readLinkedTaskOrUndefined(this.store, snapshot.id);
         if (!current || current.userPaused || current.paused || current.autoMerge === false
           || current.checkedOutBy
           || activeSessionRegistry.pathsForTask(current.id).some((path) => activeSessionRegistry.isPathActive(path))
@@ -7527,6 +7536,15 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           await this.store.updateTaskDependencies(current.id, { operation: "remove", dependency: dependencyId });
           removed += 1;
         } catch (error) {
+          /*
+          FNXC:DependencyIntegrity 2026-09-05-22:04:
+          Live-only enumeration cannot fence a row archived after discovery: the locked mutation
+          then raises TaskDeletedError. Skip only that lookup race so later live candidates repair.
+          */
+          if (isMissingTaskLookupError(error)) {
+            log.debug(`reconcileMissingDependencies: skipped unreadable ${current.id} dependency ${dependencyId}`);
+            continue;
+          }
           // A concurrent dependency replacement wins; a later sweep re-discovers any surviving residue.
           if (!/does not depend on/i.test(error instanceof Error ? error.message : String(error))) throw error;
         }
