@@ -127,6 +127,20 @@ test("observed-flake register active count, escalation state, and owners stay sy
       heading: "14. Merge-node paused-abort retry sequence",
       status: "Quarantined 2026-08-29 after a second sequence-only sighting.",
     },
+    {
+      heading: "13. CLI bin no-args dashboard-launch test timeout",
+      /*
+      FNXC:TestFlakeRegister 2026-08-20-15:54:
+      Second sighting of the bin.test.ts no-args dashboard-launch timeout
+      (2026-08-20, host load 15.22) escalated entry 13 to an on-sight
+      file-level quarantine (deletion ratchet: ledger + vitest exclude, no
+      appeasement). The register status line moved with it; this pinned state
+      must name the QUARANTINED escalation, not the superseded first-sighting
+      status.
+      */
+      status:
+        "QUARANTINED 2026-08-20 (second sighting; file-level quarantine in `scripts/lib/test-quarantine.json` + `packages/cli/vitest.config.ts` exclude, deletion deadline 2026-09-03) — evidence owner RUFU-128.",
+    },
   ]);
 });
 

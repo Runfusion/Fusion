@@ -2392,10 +2392,59 @@ export interface ProjectSettings {
   /** Cron expression for dream processing. Only used when memoryDreamsEnabled
    *  is true. Default: "0 4 * * *" (daily at 4 AM). */
   memoryDreamsSchedule?: string;
-  /** Maximum token count before auto-compact triggers. When undefined, compact
-   *  only on overflow errors. When set, the engine monitors token usage after
-   *  each prompt and proactively compacts context when the token count reaches
-   *  this threshold. */
+  /** When true, a per-turn proactive memory recall runs before every chat/step prompt on
+   *  the current topic (B.2 LCM phase 2, RUFU-120): derive 2–3 content keywords,
+   *  search the memory backend via MemoryBackend.search, and inject a deduped,
+   *  client-side score-filtered, top-K cue block (<=800 chars) under the pre-steering
+   *  marker. Silent skip on empty/stopword-only topics, fully-deduped sessions, or
+   *  unavailable/unsupported backend search. Only used when memoryEnabled is true.
+   *  Default: true (B.2: on by default). */
+  memoryPerTurnRecallEnabled?: boolean;
+  /** Top-K for the per-turn memory recall cue block; clamped to 1–10 by the core module.
+   *  Only used when memoryPerTurnRecallEnabled is true.
+   *  Default: 3 (Volt topK=3 parity). */
+  memoryPerTurnRecallTopK?: number;
+  /** When true (default), the deterministic chat pre-overflow compaction gate (RUFU-118,
+   *  LCM phase 1) measures the loaded chat context before each prompt and compacts it
+   *  once the context reaches the effective threshold (80% of the model window by
+   *  default, bounded by tokenCap), so a prompt never exceeds the model window. Set
+   *  false to disable the gate for this project (the raw pi-only behavior: prompts are
+   *  sent even when the loaded context already exceeds the threshold). The gate is an
+   *  opt-out selectable feature, not always-on — not every operator wants it.
+   *  Default: true. */
+  chatPreOverflowCompactionEnabled?: boolean;
+  /** Chat context budget (RUFU-135) — opt-out selectable feature, default true.
+   *  When true the chat system prompt is bounded: oversized project/agent
+   *  memory is inlined as a bounded heading index (full content stays
+   *  reachable via fn_memory_search / fn_memory_get) and chat sessions are
+   *  filtered to the curated chat toolset, so agent chat fits 64K-window
+   *  models. When false the pre-RUFU-135 behavior is restored: unbounded
+   *  memory injection and the full registered tool set (runtime kill switch
+   *  — no redeploy needed to disable the budget in production). */
+  chatContextBudgetEnabled?: boolean;
+  /** Token compaction threshold — dual-lane semantics:
+   *
+   *  - Executor/agent tasks (TokenCapDetector): optional pre-overflow cap.
+   *    When undefined the detector is disabled and context compacts only on
+   *    overflow errors. When set, the engine monitors token usage after each
+   *    prompt and proactively compacts context when the token count reaches
+   *    this threshold.
+   *  - Chat/CLI sessions (RUFU-118 pre-overflow compaction gate): upper bound
+   *    on the effective compaction threshold. When undefined the gate defaults
+   *    to 80% of the per-model context window; when set, the effective
+   *    threshold is `min(tokenCap, contextWindow − max(16,384, maxTokens))`,
+   *    so a value above the hard limit compacts at the hard limit rather than
+   *    letting a prompt exceed the window. (The 80% default only applies when
+   *    tokenCap is unset; a set tokenCap is never reduced by the 80% figure.)
+   *
+   * FNXC:ChatContextGuard 2026-08-18-18:06:
+   * RUFU-118 added the chat/CLI lane because pi's own threshold compaction is
+   * blind when the provider omits usage (dsai1 zero-usage blind spot) — the
+   * engine now re-measures the loaded context and compacts BEFORE the prompt.
+   * This value is an upper bound on that threshold, not a hard cap; the hard
+   * limit remains `contextWindow − reserve`. The executor lane is unchanged:
+   * empty = no cap (compact only on overflow errors).
+   */
   tokenCap?: number;
   /** Optional per-task token budget defaults (soft/hard with optional size overrides). */
   taskTokenBudget?: TaskTokenBudget;

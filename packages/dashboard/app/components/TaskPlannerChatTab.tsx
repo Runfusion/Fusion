@@ -296,6 +296,15 @@ function toStandardChatMessage(message: ChatMessage): ChatMessageInfo {
     content: message.content,
     thinkingOutput: message.thinkingOutput,
     toolCalls: extractToolCalls(message),
+    /*
+    FNXC:ChatOutputBudget 2026-08-20-21:40 (RUFU-144):
+    Forward server message metadata so the shared StandardChatMessageItem can render
+    surface-specific persisted markers on this tab too — notably `budgetExhausted`
+    (stopReason "length" + empty visible content), whose inline notice must appear in the
+    task-planner chat exactly as in the main chat surface. Tool calls already travel via
+    the dedicated `toolCalls` field; the generic metadata carries everything else.
+    */
+    ...(message.metadata ? { metadata: message.metadata } : {}),
     createdAt: message.createdAt,
   };
 }

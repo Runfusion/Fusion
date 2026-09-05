@@ -1330,6 +1330,7 @@
     "noSkillsAvailable": "Nenhuma habilidade disponível",
     "noSkillsFound": "Nenhuma habilidade encontrada",
     "openQuickChat": "Abrir chat rápido",
+    "outputBudgetExhausted": "O modelo usou todo o seu orçamento de saída para raciocínio — aumente o maxTokens para este modelo.",
     "preserveToStash": "",
     "preserveToStashDone": "",
     "preserveToStashFailed": "",
@@ -1436,6 +1437,7 @@
     "currentModelTarget": "Modelo atual: {{model}}",
     "currentDefaultTarget": "Usando o destino de chat padrão",
     "restore": "",
+    "backToConversations": "",
     "quoteMessage": "Citar mensagem",
     "agentRepliesFailed": "Alguns agentes não puderam responder: {{agents}}",
     "noDefaultModelConfigured": "Configure um modelo de chat padrão nas Configurações antes de criar uma conversa.",
@@ -2406,7 +2408,9 @@
     "closeLightbox": "Fechar pré-visualização do artefato",
     "expandArtifact": "Expandir {{title}}",
     "expandArtifactHint": "Clique para expandir",
-    "lightboxLabel": "Pré-visualização de mídia do artefato"
+    "lightboxLabel": "Pré-visualização de mídia do artefato",
+    "closeArtifactPreview": "",
+    "loadingImageArtifact": ""
   },
   "droidCli": {
     "active": "Ativo",
@@ -5214,7 +5218,8 @@
       "modelNameLabel": "Nome do modelo",
       "models": "Modelos",
       "name": "Nome de exibição",
-      "reasoning": "Raciocínio"
+      "reasoning": "Raciocínio",
+      "timeoutSeconds": "Tempo limite HTTP (s)"
     },
     "llamaCpp": {
       "disable": "Desativar",
@@ -5855,6 +5860,29 @@
     "inProgress": "Em andamento"
   },
   "settings": {
+    "jira": {
+      "configuration": "",
+      "enable": "",
+      "enabledHelp": "",
+      "baseUrl": "",
+      "globalBaseUrl": "",
+      "baseUrlHelp": "",
+      "apiBaseUrl": "",
+      "globalApiBaseUrl": "",
+      "apiBaseUrlHelp": "",
+      "email": "",
+      "globalEmail": "",
+      "emailHelp": "",
+      "secretKey": "",
+      "globalSecretKey": "",
+      "secretHelp": "",
+      "secretScope": "",
+      "globalSecretScope": "",
+      "scopeHelp": "",
+      "template": "",
+      "globalTemplate": "",
+      "templateHelp": ""
+    },
     "merge": {
       "abort": "Abortar",
       "abortOneAIAttemptRequireManualResolutionIf": "Abortar — uma tentativa de IA; exige resolução manual se falhar",
@@ -6530,7 +6558,7 @@
       "advancedWorkflowPolicy": " Política avançada de fluxo de trabalho ",
       "aIMergeCommitSummaries": " Resumos de commit de merge por IA ",
       "aITitleAndGitCommitMessageSummarization": " Resumo de título e mensagem de commit do Git por IA ",
-      "automaticallyCompactContextWhenApproachingThisTokenCount": "Compacta o contexto automaticamente ao se aproximar desta contagem de tokens. Deixe em branco para não haver limite (compactação apenas em erros de overflow). Defina um número para compactar proativamente ao atingir essa contagem de tokens. Sem padrão — não definido (sem limite).",
+      "automaticallyCompactContextWhenApproachingThisTokenCount": "Limite superior do limiar de compactação de contexto. Sessões de chat compactam por padrão quando atingem 80% da janela de contexto do modelo; um valor menor compacta mais cedo, e valores acima do limite rígido do modelo são limitados. Tarefas de executor/agent: vazio = sem limite (compacta apenas em erros de overflow). Sem padrão — não definido.",
       "autoSelectPresetBasedOnTaskSize": " Selecionar predefinição automaticamente com base no tamanho da tarefa ",
       "autoSummarizeLongDescriptionsAsTitles": " Resumir automaticamente títulos de tarefas ",
       "taskOutputLanguage": "AI-authored task language",
@@ -6834,6 +6862,8 @@
       "wedgeNotificationSettleMsHelp": "Por quanto tempo uma falha terminal deve persistir antes de alertar um operador. 0 = notificar imediatamente. Padrão: 300000 (5 minutos)."
     },
     "memory": {
+      "chatContextBudget": "",
+      "chatContextBudgetHelp": "",
       "backendFile": "",
       "backendHelp": "",
       "backendLabel": "",
@@ -6865,6 +6895,12 @@
       "dreamNow": "Sonhar agora",
       "dreamSchedule": "Cronograma de sonhos",
       "enableMemoryTools": " Ativar ferramentas de memória ",
+      "perTurnRecall": "Recuperação de memória por turno",
+      "perTurnRecallTopK": "Top K da recuperação por turno",
+      "perTurnRecallHelp": "Antes de cada chat do agente ou prompt de etapa, uma recuperação limitada do tópico atual é adicionada no início para que a memória relevante esteja no contexto mesmo se dicas anteriores tiverem sido removidas pela compactação. Padrão: habilitado.",
+      "perTurnRecallTopKHelp": "Máximo de trechos de memória adicionados por prompt. Padrão: 3 (limite 10).",
+      "preOverflowCompaction": "",
+      "preOverflowCompactionHelp": "",
       "failedToLoadBackendStatus": "Falha ao carregar o status do backend: ",
       "for": "para \"",
       "installing": "Instalando…",
@@ -7150,29 +7186,6 @@
       "maxSourcesPerRunHint": "Padrão: 20.",
       "maxDurationMsHint": "Padrão: 300000 (5 minutos).",
       "requestTimeoutMsHint": "Padrão: 30000 (30 segundos)."
-    },
-    "jira": {
-      "configuration": "",
-      "enable": "",
-      "enabledHelp": "",
-      "baseUrl": "",
-      "globalBaseUrl": "",
-      "baseUrlHelp": "",
-      "apiBaseUrl": "",
-      "globalApiBaseUrl": "",
-      "apiBaseUrlHelp": "",
-      "email": "",
-      "globalEmail": "",
-      "emailHelp": "",
-      "secretKey": "",
-      "globalSecretKey": "",
-      "secretHelp": "",
-      "secretScope": "",
-      "globalSecretScope": "",
-      "scopeHelp": "",
-      "template": "",
-      "globalTemplate": "",
-      "templateHelp": ""
     }
   },
   "setup": {
@@ -8430,6 +8443,13 @@
       "candidate": "",
       "dismissFinding": "",
       "terminalGuidance": ""
+    },
+    "aiMergeReviewReconciliation": {
+      "title": "",
+      "approvedPending": "",
+      "candidate": "",
+      "dismissFinding": "",
+      "terminalHint": ""
     },
     "debug": {
       "none": ""

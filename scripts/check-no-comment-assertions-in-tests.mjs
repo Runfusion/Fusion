@@ -1,5 +1,14 @@
 #!/usr/bin/env node
 /*
+ * FNXC:LintHygiene 2026-08-24-01:41: the FNXC:TestHygiene header block below used to embed a
+ * zero-width space that tripped the no-irregular-whitespace rule, which temporarily required a
+ * file-wide eslint-disable below this comment.
+ *
+ * FNXC:LintHygiene 2026-08-24-03:30: upstream c192971053 removed the irregular character and
+ * reworded the header; the v25 merge adopts that fix and drops the now-unused disable
+ * directive (lint flagged it as unused), leaving this note as the merge record.
+ */
+/*
 FNXC:TestHygiene 2026-08-23-23:50:
 TESTS ASSERT BEHAVIOR, NEVER COMMENT TEXT. A test that pins an `FNXC:` block, a date stamp, or any
 comment prose from a source/CSS file guards documentation instead of behavior — and this repo's own

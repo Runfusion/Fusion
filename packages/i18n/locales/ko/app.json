@@ -1314,6 +1314,7 @@
     "noSkillsAvailable": "사용 가능한 스킬 없음",
     "noSkillsFound": "스킬을 찾을 수 없습니다",
     "openQuickChat": "빠른 채팅 열기",
+    "outputBudgetExhausted": "모델이 전체 출력 예산을 모두 추론에 사용했습니다. 이 모델의 maxTokens를 높이세요.",
     "preserveToStash": "",
     "preserveToStashDone": "",
     "preserveToStashFailed": "",
@@ -1426,6 +1427,7 @@
     "currentDefaultTarget": "Using the default chat target",
     "newNotAllowedForTaskChat": "",
     "restore": "",
+    "backToConversations": "",
     "quoteMessage": "메시지 인용",
     "agentRepliesFailed": "일부 에이전트가 응답하지 못했습니다: {{agents}}",
     "noDefaultModelConfigured": "대화를 만들기 전에 설정에서 기본 채팅 모델을 구성하세요.",
@@ -2396,7 +2398,9 @@
     "expandArtifactHint": "Click to expand",
     "lightboxLabel": "Artifact media preview",
     "readOnly": "",
-    "readOnlyHint": ""
+    "readOnlyHint": "",
+    "closeArtifactPreview": "",
+    "loadingImageArtifact": ""
   },
   "droidCli": {
     "active": "활성",
@@ -5204,7 +5208,8 @@
       "modelNameLabel": "",
       "models": "모델",
       "name": "표시 이름",
-      "reasoning": "추론"
+      "reasoning": "추론",
+      "timeoutSeconds": "HTTP 타임아웃 (초)"
     },
     "llamaCpp": {
       "disable": "비활성화",
@@ -5845,6 +5850,29 @@
     "inProgress": ""
   },
   "settings": {
+    "jira": {
+      "configuration": "",
+      "enable": "",
+      "enabledHelp": "",
+      "baseUrl": "",
+      "globalBaseUrl": "",
+      "baseUrlHelp": "",
+      "apiBaseUrl": "",
+      "globalApiBaseUrl": "",
+      "apiBaseUrlHelp": "",
+      "email": "",
+      "globalEmail": "",
+      "emailHelp": "",
+      "secretKey": "",
+      "globalSecretKey": "",
+      "secretHelp": "",
+      "secretScope": "",
+      "globalSecretScope": "",
+      "scopeHelp": "",
+      "template": "",
+      "globalTemplate": "",
+      "templateHelp": ""
+    },
     "actions": {
       "cancel": "취소",
       "save": "저장"
@@ -6342,6 +6370,8 @@
     "keepRemote": "원격 유지",
     "loading": "불러오는 중…",
     "memory": {
+      "chatContextBudget": "",
+      "chatContextBudgetHelp": "",
       "backendFile": "",
       "backendHelp": "",
       "backendLabel": "",
@@ -6373,6 +6403,12 @@
       "dreamNow": "지금 드림",
       "dreamSchedule": "",
       "enableMemoryTools": "",
+      "perTurnRecall": "턴별 메모리 회상",
+      "perTurnRecallTopK": "턴별 회상 Top K",
+      "perTurnRecallHelp": "에이전트 채팅 또는 단계 프롬프트마다 현재 주제에 대한 제한된 회상을 앞단에 붙여, 이전 힌트가 압축으로 제거되었더라도 관련 메모리가 컨텍스트에 있게 합니다. 기본: 켬.",
+      "perTurnRecallTopKHelp": "프롬프트당 앞단에 붙일 최대 메모리 조각 수. 기본: 3 (최대 10).",
+      "preOverflowCompaction": "",
+      "preOverflowCompactionHelp": "",
       "failedToLoadBackendStatus": "",
       "for": "",
       "installing": "설치 중…",
@@ -7140,29 +7176,6 @@
       "runtimeIncompatible": "The installed voice runtime is incompatible. Repair it, then re-check the runtime.",
       "recheckRuntime": "Re-check runtime",
       "recheckingRuntime": "Re-checking runtime…"
-    },
-    "jira": {
-      "configuration": "",
-      "enable": "",
-      "enabledHelp": "",
-      "baseUrl": "",
-      "globalBaseUrl": "",
-      "baseUrlHelp": "",
-      "apiBaseUrl": "",
-      "globalApiBaseUrl": "",
-      "apiBaseUrlHelp": "",
-      "email": "",
-      "globalEmail": "",
-      "emailHelp": "",
-      "secretKey": "",
-      "globalSecretKey": "",
-      "secretHelp": "",
-      "secretScope": "",
-      "globalSecretScope": "",
-      "scopeHelp": "",
-      "template": "",
-      "globalTemplate": "",
-      "templateHelp": ""
     }
   },
   "setup": {
@@ -8420,6 +8433,13 @@
       "candidate": "",
       "dismissFinding": "",
       "terminalGuidance": ""
+    },
+    "aiMergeReviewReconciliation": {
+      "title": "",
+      "approvedPending": "",
+      "candidate": "",
+      "dismissFinding": "",
+      "terminalHint": ""
     },
     "debug": {
       "none": ""

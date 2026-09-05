@@ -8,6 +8,7 @@ import { join, dirname } from "node:path";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createSecureServer as createHttp2SecureServer, type Http2SecureServer } from "node:http2";
+import type { CliAgentMemoryRecallHandle } from "./routes/cli-agent-memory-recall.js";
 import type { Server as HttpServer } from "node:http";
 import type {
   Task,
@@ -256,6 +257,20 @@ export interface ServerOptions {
     projectId: string | undefined,
     sessionId: string,
   ) => import("@fusion/engine").TelemetryHub | undefined;
+  /*
+  FNXC:CliChatRecall 2026-08-19-11:08:
+  Resolver for the engine-held CLI-agent per-turn memory-recall handle
+  (RUFU-128). Given a request's projectId (if any) and the target session id,
+  returns the in-process recall handle (token validation + session existence
+  + recall service) or undefined when no recall wiring is live. The
+  memory-recall route authenticates with the per-session token, then delegates
+  the cue to the handle — the cue travels only through the CLI agent's native
+  extension channel, never the PTY/composer.
+  */
+  cliAgentMemoryRecallResolver?: (
+    projectId: string | undefined,
+    sessionId: string,
+  ) => CliAgentMemoryRecallHandle | undefined;
   /** Shared CentralCore instance used by the engine manager.
    *  Routes that mutate central runtime state should use this instance so
    *  in-process listeners (for example global concurrency changes) are notified. */

@@ -759,11 +759,23 @@ export const StandardChatMessageItem = memo(function StandardChatMessageItem({
     if (failureInfo) {
       return <div className="chat-message-content chat-message-content--failure"><div className="chat-message-failure-summary-row"><span className="status-dot status-dot--error" aria-hidden="true" /><span className="chat-message-failure-label">{t("chat.responseFailed", "Response failed")}</span></div><div className="chat-message-failure-summary">{failureInfo.summary}</div>{(failureInfo.errorClass || failureInfo.code) && <div className="chat-message-failure-badges">{failureInfo.errorClass && <span className="chat-message-failure-badge">{failureInfo.errorClass}</span>}{failureInfo.code && <span className="chat-message-failure-badge">{failureInfo.code}</span>}</div>}{(failureInfo.detail || failureInfo.reference) && <details className="chat-message-failure-details"><summary><TriangleAlert size={14} aria-hidden="true" /><span>{t("chat.failureDetails", "Failure details")}</span></summary>{failureInfo.detail && <pre className="chat-message-failure-detail">{linkifyFilePaths(failureInfo.detail)}</pre>}{renderFailureReference(failureInfo.reference, t)}</details>}</div>;
     }
+    /*
+    FNXC:ChatOutputBudget 2026-08-20-20:17 (RUFU-144):
+    An empty assistant turn persisted with `metadata.budgetExhausted` means the model spent
+    the entire maxTokens budget on thinking and was truncated before emitting output. The
+    explicit inline notice replaces the silent empty body (failure UI still takes
+    precedence above; non-empty content never reaches this branch) and the thinking
+    disclosure below stays visible when `thinkingOutput` exists, so the user sees both
+    the explanation and what the model actually thought.
+    */
+    if (message.content.trim().length === 0 && message.metadata?.budgetExhausted === true) {
+      return <div className="chat-message-content chat-message-content--budget-exhausted" role="note" data-testid="chat-message-budget-exhausted">{t("chat.outputBudgetExhausted", "The model used its entire output budget on thinking — raise maxTokens for this model.")}</div>;
+    }
     if (isEmptyAssistantMessage) {
       return <div className="chat-message-content chat-message-content--empty" data-testid="chat-message-empty">{t("chat.noMessage", "No message")}</div>;
     }
     return renderStandardAssistantContent(message.content, forcePlain);
-  }, [failureInfo, forcePlain, isAssistantMessage, isEmptyAssistantMessage, message.content, t]);
+  }, [failureInfo, forcePlain, isAssistantMessage, isEmptyAssistantMessage, message.content, message.metadata, t]);
   /* FNXC:ChatQuoteReply 2026-08-23-02:31: A quote action is rendered only for persisted non-empty messages, allowing direct chat to re-mention an agent author without adding controls to streaming or planner surfaces. */
   const showQuoteAction = Boolean(onQuoteMessage) && !failureInfo && message.content.trim().length > 0;
   const hasAssistantFooterRow = isAssistantMessage && !failureInfo && Boolean(message.thinkingOutput || copyAction || onScrollToTop || showQuoteAction);

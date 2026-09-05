@@ -969,6 +969,23 @@ export { RoutineScheduler, type RoutineSchedulerOptions } from "./scheduling/rou
 export { StuckTaskDetector, type StuckTaskDetectorOptions, type DisposableSession } from "./healing/stuck-task-detector.js";
 export { HeartbeatMonitor, HeartbeatTriggerScheduler, type WakeContext } from "./agent-heartbeat.js";
 export { TokenCapDetector, type TokenCapCheckResult } from "./errors/token-cap-detector.js";
+/*
+FNXC:ChatContextGuard 2026-08-18-18:06:
+RUFU-118 phase 1: export the deterministic pre-overflow compaction gate for the
+chat/CLI pi-session path so the dashboard chat seams (sendMessage / sendRoomMessage)
+can enforce it before enginePromptWithFallback. tokenCap becomes an upper bound on the
+effective chat threshold here; the executor TokenCapDetector above keeps its
+undefined = disabled semantics.
+*/
+export {
+  ChatContextOverflowError,
+  computeCompactionThreshold,
+  ensureContextWithinCompactionThreshold,
+  estimateLoadedContextTokens,
+  type CompactionGateOptions,
+  type CompactionGateResult,
+  type CompactionGateSession,
+} from "./chat-context-guard.js";
 export { SelfHealingManager, type SelfHealingOptions, type RebindResult } from "./self-healing.js";
 /*
 FNXC:MergeReliability 2026-07-15-21:45 (FN-8004 follow-up):
@@ -1242,6 +1259,11 @@ export {
   type CliAdapterCapabilities,
   type CliAdapterElevationMarkers,
 } from "./cli-agent/adapter.js";
+// CLI Agent Executor — per-turn memory recall service (RUFU-128).
+export {
+  recallForChatTurn,
+  type MemoryRecallChatTurnInput,
+} from "./cli-agent/memory-recall-service.js";
 // CLI Agent Executor — autonomy posture resolution + approval gate (U15).
 export {
   resolveEffectivePosture,

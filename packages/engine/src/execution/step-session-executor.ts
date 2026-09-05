@@ -19,7 +19,7 @@ import { existsSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type { AgentHeartbeatRun, AgentStore, MessageStore, PermanentAgentGatingContext, ProviderInstanceRef, ResolvedMcpServerDefinition, TaskDetail, Settings, SteeringComment, TaskStore, TaskStep } from "@fusion/core";
-import { isFastExecutionMode, isValidProviderInstanceId, resolvePersistAgentThinkingLog, resolveExecutorFallbackModel, resolveTrailingVerificationStepIndex, resolveAuthoredStepHeadingOffset } from "@fusion/core";
+import { buildPerTurnMemoryRecallCue, isFastExecutionMode, isValidProviderInstanceId, resolvePersistAgentThinkingLog, resolveExecutorFallbackModel, resolveTrailingVerificationStepIndex, resolveAuthoredStepHeadingOffset } from "@fusion/core";
 
 export { resolveAuthoredStepHeadingOffset };
 
@@ -1475,6 +1475,35 @@ export class StepSessionExecutor {
     const promptTaskDetail = this.consumeTaskDetailForStepPrompt();
     const stepPrompt = buildStepPrompt(promptTaskDetail, stepIndex, this.options.rootDir, settings, worktreePath);
 
+    /*
+    FNXC:PerTurnMemoryRecall 2026-08-19-01:11:
+    RUFU-120 (B.2 LCM phase 2): per-step per-turn memory recall. The step topic
+    (task title + step name) drives a bounded, keyword-normalized recall for THIS
+    step's LLM call; dedup is task-scoped (sessionKey task:<id>) so a cue is not
+    re-injected when later steps repeat the topic. Compaction in a long session
+    may evict older cues — the bounded registry re-injects only if the topic
+    truly recurs.
+    */
+    let recallCue = "";
+    try {
+      const stepName = taskDetail.steps?.[stepIndex]?.name ?? `Step ${stepIndex + 1}`;
+      const recallTopic = `${taskDetail.title ?? taskDetail.id} — Step ${stepIndex + 1}: ${stepName}`;
+      recallCue = await buildPerTurnMemoryRecallCue({
+        rootDir: this.options.rootDir,
+        topic: recallTopic,
+        settings,
+        sessionKey: `task:${taskDetail.id}`,
+      });
+    } catch (error) {
+      // Recall is additive: any failure leaves the step prompt unchanged.
+      const reason = error instanceof Error ? error.message : String(error);
+      stepExecLog.warn(`Step ${stepIndex} per-turn memory recall skipped: ${reason}`);
+    }
+    const stepPromptWithRecall = recallCue
+      ? `${stepPrompt}\n\n## Memory Recall\n\n${recallCue}`
+      : stepPrompt;
+
+    // Build reduced step prompt for context-limit recovery (simpler, shorter).
     // Fast recovery stays in the same original-request lane instead of restoring step scaffolding.
     const reducedStepPrompt = isFastExecutionMode(promptTaskDetail)
       ? buildFastLanePrompt(promptTaskDetail, this.options.rootDir, settings, worktreePath)
@@ -1764,7 +1793,7 @@ Follow instructions precisely and avoid unrelated changes.`,
           );
 
           // Send prompt
-          await promptWithAutoRetry(session, stepPrompt);
+          await promptWithAutoRetry(session, stepPromptWithRecall);
 
           // Re-raise errors that pi-coding-agent swallowed after exhausting retries.
           // session.prompt() resolves normally even when retries are exhausted —

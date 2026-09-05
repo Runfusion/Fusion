@@ -1314,6 +1314,7 @@
     "noSkillsAvailable": "No hay habilidades disponibles",
     "noSkillsFound": "No se encontraron habilidades",
     "openQuickChat": "Abrir chat rápido",
+    "outputBudgetExhausted": "El modelo usó todo su presupuesto de salida en pensar; aumenta maxTokens para este modelo.",
     "preserveToStash": "",
     "preserveToStashDone": "",
     "preserveToStashFailed": "",
@@ -1426,6 +1427,7 @@
     "currentDefaultTarget": "Using the default chat target",
     "newNotAllowedForTaskChat": "",
     "restore": "",
+    "backToConversations": "",
     "quoteMessage": "Citar mensaje",
     "agentRepliesFailed": "Algunos agentes no pudieron responder: {{agents}}",
     "noDefaultModelConfigured": "Configura un modelo de chat predeterminado en Ajustes antes de crear una conversación.",
@@ -2396,7 +2398,9 @@
     "expandArtifactHint": "Click to expand",
     "lightboxLabel": "Artifact media preview",
     "readOnly": "",
-    "readOnlyHint": ""
+    "readOnlyHint": "",
+    "closeArtifactPreview": "",
+    "loadingImageArtifact": ""
   },
   "droidCli": {
     "active": "Activo",
@@ -5204,7 +5208,8 @@
       "modelNameLabel": "",
       "models": "Modelos",
       "name": "Nombre para mostrar",
-      "reasoning": "Razonamiento"
+      "reasoning": "Razonamiento",
+      "timeoutSeconds": "Timeout HTTP (s)"
     },
     "llamaCpp": {
       "disable": "Desactivar",
@@ -5845,6 +5850,29 @@
     "inProgress": ""
   },
   "settings": {
+    "jira": {
+      "configuration": "",
+      "enable": "",
+      "enabledHelp": "",
+      "baseUrl": "",
+      "globalBaseUrl": "",
+      "baseUrlHelp": "",
+      "apiBaseUrl": "",
+      "globalApiBaseUrl": "",
+      "apiBaseUrlHelp": "",
+      "email": "",
+      "globalEmail": "",
+      "emailHelp": "",
+      "secretKey": "",
+      "globalSecretKey": "",
+      "secretHelp": "",
+      "secretScope": "",
+      "globalSecretScope": "",
+      "scopeHelp": "",
+      "template": "",
+      "globalTemplate": "",
+      "templateHelp": ""
+    },
     "actions": {
       "cancel": "Cancelar",
       "save": "Guardar"
@@ -6342,6 +6370,8 @@
     "keepRemote": "Mantener remoto",
     "loading": "Cargando…",
     "memory": {
+      "chatContextBudget": "",
+      "chatContextBudgetHelp": "",
       "backendFile": "",
       "backendHelp": "",
       "backendLabel": "",
@@ -6373,6 +6403,12 @@
       "dreamNow": "Soñar ahora",
       "dreamSchedule": "",
       "enableMemoryTools": "",
+      "perTurnRecall": "Recuperación de memoria por turno",
+      "perTurnRecallTopK": "Máximo de fragmentos por turno",
+      "perTurnRecallHelp": "Antes de cada chat de agente o prompt de paso, se antepone una recuperación acotada del tema actual para que la memoria relevante esté en contexto incluso si las pistas anteriores fueron eliminadas por compactación. Predeterminado: habilitado.",
+      "perTurnRecallTopKHelp": "Número máximo de fragmentos de memoria antepuestos por turno. Predeterminado: 3.",
+      "preOverflowCompaction": "",
+      "preOverflowCompactionHelp": "",
       "failedToLoadBackendStatus": "",
       "for": "",
       "installing": "Instalando…",
@@ -7140,29 +7176,6 @@
       "runtimeIncompatible": "The installed voice runtime is incompatible. Repair it, then re-check the runtime.",
       "recheckRuntime": "Re-check runtime",
       "recheckingRuntime": "Re-checking runtime…"
-    },
-    "jira": {
-      "configuration": "",
-      "enable": "",
-      "enabledHelp": "",
-      "baseUrl": "",
-      "globalBaseUrl": "",
-      "baseUrlHelp": "",
-      "apiBaseUrl": "",
-      "globalApiBaseUrl": "",
-      "apiBaseUrlHelp": "",
-      "email": "",
-      "globalEmail": "",
-      "emailHelp": "",
-      "secretKey": "",
-      "globalSecretKey": "",
-      "secretHelp": "",
-      "secretScope": "",
-      "globalSecretScope": "",
-      "scopeHelp": "",
-      "template": "",
-      "globalTemplate": "",
-      "templateHelp": ""
     }
   },
   "setup": {
@@ -8420,6 +8433,13 @@
       "candidate": "",
       "dismissFinding": "",
       "terminalGuidance": ""
+    },
+    "aiMergeReviewReconciliation": {
+      "title": "",
+      "approvedPending": "",
+      "candidate": "",
+      "dismissFinding": "",
+      "terminalHint": ""
     },
     "debug": {
       "none": ""

@@ -9,7 +9,9 @@ import {
   updateCustomProvider,
   type CustomProvider,
 } from "../api";
-import { AlertCircle, Loader2, Pencil, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
+import { AlertCircle, Loader2, Pencil, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
+import type { CustomProviderThinkingFormat } from "@fusion/core";
+import { CUSTOM_PROVIDER_THINKING_FORMAT_OPTIONS } from "./custom-provider-thinking-format";
 import { OnboardingDisclosure } from "./OnboardingDisclosure";
 import "./CustomProvidersSection.css";
 
@@ -24,7 +26,15 @@ type LegacyProvider = {
   api: "openai-completions" | "openai-responses" | "anthropic-messages" | "google-generative-ai";
   apiKey?: string;
   anthropicPromptCaching?: boolean;
-  models?: Array<{ id: string; name?: string }>;
+  // FNXC:CustomProviderModelWindows 2026-08-19-16:49: RUFU-123 legacy records can carry the
+  // per-model windows too; normalizeProviders carries them through so the edit form pre-fills.
+  // FNXC:CustomProviderThinkingFormat 2026-08-21-05:59: RUFU-143 same for the per-model
+  // thinking flags (thinkingFormat/reasoning) — legacy records may carry them too.
+  // FNXC:CustomProviderHttpTimeout 2026-08-25-01:58: legacy records carry the per-model HTTP
+  // timeout too; normalizeProviders must carry it through as well. fetchCustomProviders always
+  // returns the legacy shape, so EVERY provider record flows through this conversion branch —
+  // dropping the field here silently emptied the row editor (and the next save wiped the value).
+  models?: Array<{ id: string; name?: string; contextWindow?: number; maxTokens?: number; timeoutSeconds?: number; thinkingFormat?: string; reasoning?: boolean }>;
 };
 
 function normalizeProviders(result: Awaited<ReturnType<typeof fetchCustomProviders>>): CustomProvider[] {
@@ -50,17 +60,276 @@ function normalizeProviders(result: Awaited<ReturnType<typeof fetchCustomProvide
       models: (provider.models ?? []).map((model) => ({
         id: model.id,
         name: model.name ?? model.id,
+        // FNXC:CustomProviderModelWindows 2026-08-19-16:49: RUFU-123 keep only valid positive windows.
+        ...(isPositiveTokenValue(model.contextWindow) ? { contextWindow: model.contextWindow } : {}),
+        ...(isPositiveTokenValue(model.maxTokens) ? { maxTokens: model.maxTokens } : {}),
+        // FNXC:CustomProviderHttpTimeout 2026-08-25-01:58: carry the per-model HTTP timeout
+        // through the legacy normalize so the edit form pre-fills it. Unlike the window fields,
+        // 0 is a valid persisted value ("timeout disabled"), so the guard is >= 0, not > 0 —
+        // a positive-only guard would collapse the disabled sentinel to blank and the next
+        // save would omit the key, wiping the stored value.
+        ...(typeof model.timeoutSeconds === "number" && Number.isFinite(model.timeoutSeconds) && model.timeoutSeconds >= 0
+          ? { timeoutSeconds: model.timeoutSeconds }
+          : {}),
+        // FNXC:CustomProviderThinkingFormat 2026-08-21-05:59: RUFU-143 carry the per-model
+        // thinking flags through the legacy normalize so the edit form pre-fills them. The
+        // legacy record type is string-typed; the route is the authority for the literal union.
+        ...(typeof model.thinkingFormat === "string" && model.thinkingFormat.length > 0 ? { thinkingFormat: model.thinkingFormat as CustomProviderThinkingFormat } : {}),
+        ...(model.reasoning === false ? { reasoning: false } : {}),
       })),
     } satisfies CustomProvider;
   });
 }
 
-function parseModels(modelsInput: string): { id: string; name: string }[] {
-  return modelsInput
-    .split(",")
-    .map((model) => model.trim())
-    .filter(Boolean)
-    .map((model) => ({ id: model, name: model }));
+/*
+FNXC:CustomProviderModelWindows 2026-08-19-16:49:
+RUFU-123 (source finding: RUFU-118 finding 2): the single comma-separated "Available models"
+input is replaced by per-model rows so each custom-provider model can carry an optional
+context window and max output tokens. Rows hold the window fields as strings while editing;
+only values that parse to a positive finite number reach the save payload (blank or invalid
+=> key omitted => the registry builder's 128000/16384 fallback applies). ModelRowsEditor is
+a module-scope component (never declared inside CustomProvidersSection's render) per the
+no-nested-component-definitions rule; both the edit form and the new-provider form render it.
+
+FNXC:CustomProviderThinkingFormat 2026-08-21-05:59:
+RUFU-143: each row also carries the per-model thinking flags — a "Thinking format" select
+("") = pi-ai default; any UI-safe value is sent as-is) and a "No thinking params" checkbox
+(reasoning: false, which wins over the select and disables it). Both reach the save payload
+only when set, so default rows keep the byte-identical registration shape. Rows with a
+persisted value outside the UI-safe set (chat-template/baseten via models.json or the raw
+API) keep it in row.thinkingFormat and round-trip unchanged — the select simply renders
+blank for a value it has no option for.
+*/
+type ModelRow = {
+  id: string;
+  name: string;
+  contextWindow: string;
+  maxTokens: string;
+  /**
+   * FNXC:CustomProviderHttpTimeout 2026-08-24-19:52:
+   * RUFU-145 follow-up surface fix: the settings section's row editor (this component) is a
+   * SEPARATE surface from CustomProviderForm (onboarding modal) — the first fix only added
+   * the input to the modal, so the main Settings → Custom Providers editor had no timeout
+   * field and operators could not configure it where they actually edit providers. "" =
+   * default 300 s; "0" = disabled (both must round-trip, so this is a string like the other
+   * window fields and 0 is a VALID parsed value, unlike contextWindow/maxTokens).
+   */
+  timeoutSeconds: string;
+  /** "" = pi-ai default; otherwise a value from CUSTOM_PROVIDER_THINKING_FORMAT_OPTIONS. */
+  thinkingFormat: string;
+  /** True = send reasoning: false (opt out of all thinking params; wins over thinkingFormat). */
+  noThinkingParams: boolean;
+};
+
+function emptyModelRow(): ModelRow {
+  return { id: "", name: "", contextWindow: "", maxTokens: "", timeoutSeconds: "", thinkingFormat: "", noThinkingParams: false };
+}
+
+function isPositiveTokenValue(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
+/** Parse a row's window input; blank or non-positive/non-finite values stay absent so defaults apply. */
+function parsePositiveTokenValue(value: string): number | undefined {
+  const trimmed = value.trim();
+  if (trimmed === "") return undefined;
+  const parsed = Number(trimmed);
+  return isPositiveTokenValue(parsed) ? parsed : undefined;
+}
+
+/**
+ * FNXC:CustomProviderHttpTimeout 2026-08-24-19:52:
+ * Unlike the window fields, 0 is a meaningful persisted value ("timeout disabled") and
+ * must reach the save payload; only blank or non-finite/negative input stays absent.
+ */
+function parseNonNegativeTimeoutValue(value: string): number | undefined {
+  const trimmed = value.trim();
+  if (trimmed === "") return undefined;
+  const parsed = Number(trimmed);
+  return typeof parsed === "number" && Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+function modelRowFromModel(model: { id: string; name?: string; contextWindow?: number; maxTokens?: number; timeoutSeconds?: number; thinkingFormat?: string; reasoning?: boolean }): ModelRow {
+  return {
+    id: model.id,
+    name: model.name ?? model.id,
+    contextWindow: model.contextWindow != null ? String(model.contextWindow) : "",
+    maxTokens: model.maxTokens != null ? String(model.maxTokens) : "",
+    // FNXC:CustomProviderHttpTimeout 2026-08-24-19:52: 0 must pre-fill as "0" (disabled),
+    // never collapse to the blank default.
+    timeoutSeconds: model.timeoutSeconds != null ? String(model.timeoutSeconds) : "",
+    // FNXC:CustomProviderThinkingFormat 2026-08-21-05:59: RUFU-143 pre-fill the thinking flags;
+    // only reasoning === false counts as opted out (true/absent = presumed thinking-capable).
+    thinkingFormat: typeof model.thinkingFormat === "string" ? model.thinkingFormat : "",
+    noThinkingParams: model.reasoning === false,
+  };
+}
+
+function isEmptyModelRow(row: ModelRow): boolean {
+  return row.id.trim() === "" && row.name.trim() === "" && row.contextWindow.trim() === "" && row.maxTokens.trim() === "" &&
+    row.timeoutSeconds.trim() === "" &&
+    row.thinkingFormat.trim() === "" && !row.noThinkingParams;
+}
+
+interface ModelRowsEditorProps {
+  rows: ModelRow[];
+  onChange: (rows: ModelRow[]) => void;
+  onDetect: () => void;
+  detecting: boolean;
+  canDetect: boolean;
+  canAddRow: boolean;
+  disabled?: boolean;
+}
+
+function ModelRowsEditor({ rows, onChange, onDetect, detecting, canDetect, canAddRow, disabled = false }: ModelRowsEditorProps) {
+  const { t } = useTranslation("app");
+
+  const updateRow = (index: number, patch: Partial<ModelRow>) => {
+    onChange(rows.map((row, i) => (i === index ? { ...row, ...patch } : row)));
+  };
+
+  const removeRow = (index: number) => {
+    // The single remaining row cannot be removed — the form always keeps one row, and
+    // blanking that last row is how the operator deletes every model (the edit save then
+    // sends an explicit empty models array; see handleSave's FNXC:CustomProviderModelWindows
+    // note). A blank row on a new provider stores no models.
+    if (rows.length <= 1) return;
+    onChange(rows.filter((_, i) => i !== index));
+  };
+
+  return (
+    <div className="custom-provider-model-rows">
+      {rows.map((row, index) => (
+        <div key={index} className="custom-provider-model-row">
+          <input
+            className="input"
+            aria-label={`${t("providers.modelRowModelId", "Model ID")} ${index + 1}`}
+            placeholder={t("providers.modelRowModelId", "Model ID")}
+            value={row.id}
+            onChange={(event) => updateRow(index, { id: event.target.value })}
+            disabled={disabled}
+          />
+          <input
+            className="input"
+            aria-label={`${t("providers.modelRowName", "Display name")} ${index + 1}`}
+            placeholder={t("providers.modelRowName", "Display name")}
+            value={row.name}
+            onChange={(event) => updateRow(index, { name: event.target.value })}
+            disabled={disabled}
+          />
+          <input
+            className="input"
+            aria-label={`${t("providers.fields.contextWindow", "Context window")} ${index + 1}`}
+            placeholder={t("providers.fields.contextWindowPlaceholder", "e.g. 200000 (default)")}
+            type="number"
+            min={1}
+            inputMode="numeric"
+            value={row.contextWindow}
+            onChange={(event) => updateRow(index, { contextWindow: event.target.value })}
+            disabled={disabled}
+          />
+          <input
+            className="input"
+            aria-label={`${t("providers.fields.maxTokens", "Max output tokens")} ${index + 1}`}
+            placeholder={t("providers.fields.maxTokensPlaceholder", "e.g. 4096 (default)")}
+            type="number"
+            min={1}
+            inputMode="numeric"
+            value={row.maxTokens}
+            onChange={(event) => updateRow(index, { maxTokens: event.target.value })}
+            disabled={disabled}
+          />
+          {/*
+          FNXC:CustomProviderHttpTimeout 2026-08-24-19:52:
+          RUFU-145 follow-up surface fix: the per-model HTTP timeout input belongs on the SAME
+          surface operators edit providers (this section), not only in the onboarding modal.
+          min={0} unlike the window fields: 0 = "timeout disabled" is a valid value. The
+          route accepts non-negative finite numbers; the engine maps 0 to the disabled
+          sentinel (2147483647 ms for the SDK, no idle timer for undici).
+          */}
+          <input
+            className="input"
+            aria-label={`${t("providers.fields.timeoutSeconds", "HTTP timeout (s)")} ${index + 1}`}
+            placeholder={t("providers.fields.timeoutSeconds", "HTTP timeout (s)")}
+            type="number"
+            min={0}
+            inputMode="numeric"
+            value={row.timeoutSeconds}
+            onChange={(event) => updateRow(index, { timeoutSeconds: event.target.value })}
+            disabled={disabled}
+          />
+          {/*
+          FNXC:CustomProviderThinkingFormat 2026-08-21-05:59:
+          RUFU-143: per-model thinking controls. The select offers only the UI-safe pi-ai
+          formats (blank = default) and is disabled while "No thinking params" is checked —
+          the opt-out wins, so a disabled select's value never reaches the save payload.
+          */}
+          <select
+            className="select custom-provider-model-row-thinking-format"
+            aria-label={`${t("providers.modelRow.thinkingFormat", "Thinking format")} ${index + 1}`}
+            title={t("providers.modelRow.thinkingFormat", "Thinking format")}
+            value={row.thinkingFormat}
+            onChange={(event) => updateRow(index, { thinkingFormat: event.target.value })}
+            disabled={disabled || row.noThinkingParams}
+          >
+            <option value="">{t("providers.modelRow.thinkingFormatDefault", "Default")}</option>
+            {CUSTOM_PROVIDER_THINKING_FORMAT_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {t(option.labelKey, option.label)}
+              </option>
+            ))}
+          </select>
+          <label className="custom-provider-model-row-no-thinking">
+            <input
+              type="checkbox"
+              aria-label={`${t("providers.modelRow.noThinkingParams", "No thinking params")} ${index + 1}`}
+              checked={row.noThinkingParams}
+              onChange={(event) => updateRow(index, { noThinkingParams: event.target.checked })}
+              disabled={disabled}
+            />{" "}
+            {t("providers.modelRow.noThinkingParams", "No thinking params")}
+          </label>
+          <button
+            type="button"
+            className="btn btn-icon btn-sm"
+            onClick={() => removeRow(index)}
+            disabled={disabled || rows.length <= 1}
+            aria-label={t("providers.removeModelRowLabel", "Remove model {{index}}", { index: index + 1 })}
+          >
+            <X aria-hidden="true" />
+          </button>
+        </div>
+      ))}
+
+      <div className="custom-provider-model-row-actions">
+        <button
+          type="button"
+          className="btn btn-sm"
+          onClick={() => onChange([...rows, emptyModelRow()])}
+          disabled={disabled || !canAddRow}
+        >
+          <Plus aria-hidden="true" /> {t("providers.addModelRow", "Add model row")}
+        </button>
+        <button
+          type="button"
+          className="btn btn-sm"
+          onClick={onDetect}
+          disabled={disabled || detecting || !canDetect}
+          title={t("providers.detectTitle", "Auto-detect models from the provider's /models endpoint")}
+        >
+          {detecting ? (
+            <>
+              <Loader2 className="custom-provider-spin" size={14} /> {t("providers.detecting", "Detecting…")}
+            </>
+          ) : (
+            <>
+              <Search size={14} /> {t("providers.detectModels", "Detect Models")}
+            </>
+          )}
+        </button>
+      </div>
+    </div>
+  );
 }
 
 interface CustomProvidersSectionProps {
@@ -80,7 +349,9 @@ export function CustomProvidersSection({ embedded = false, onProviderChange }: C
   const [apiType, setApiType] = useState<ProviderApiType>("openai-compatible");
   const [baseUrl, setBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
-  const [models, setModels] = useState("");
+  // FNXC:CustomProviderModelWindows 2026-08-19-16:49: RUFU-123 per-model rows replace the
+  // comma-separated string so each model can carry optional contextWindow/maxTokens.
+  const [modelRows, setModelRows] = useState<ModelRow[]>([emptyModelRow()]);
   // FNXC:ProviderAuth 2026-07-08-00:00:
   // FN-7689: opt-in for Anthropic-style prompt caching on openai-compatible/openai-responses
   // custom gateways that proxy an Anthropic backend. Shown only for those two apiTypes —
@@ -128,7 +399,7 @@ export function CustomProvidersSection({ embedded = false, onProviderChange }: C
     setApiType("openai-compatible");
     setBaseUrl("");
     setApiKey("");
-    setModels("");
+    setModelRows([emptyModelRow()]);
     setAnthropicPromptCaching(false);
     setFormError(null);
     setDetectError(null);
@@ -142,7 +413,7 @@ export function CustomProvidersSection({ embedded = false, onProviderChange }: C
     setApiType("openai-compatible");
     setBaseUrl("");
     setApiKey("");
-    setModels("");
+    setModelRows([emptyModelRow()]);
     setAnthropicPromptCaching(false);
     setFormError(null);
     setDetectError(null);
@@ -160,7 +431,11 @@ export function CustomProvidersSection({ embedded = false, onProviderChange }: C
     // masked value to save/probe (which the server rejects). Start empty; an
     // unchanged blank field leaves the stored key untouched on save.
     setApiKey("");
-    setModels((provider.models ?? []).map((model) => model.id).join(", "));
+    // FNXC:CustomProviderModelWindows 2026-08-19-16:49: RUFU-123 seed rows from the persisted
+    // models including any per-model windows so the edit form round-trips them unchanged.
+    setModelRows((provider.models ?? []).length > 0
+      ? (provider.models ?? []).map(modelRowFromModel)
+      : [emptyModelRow()]);
     setAnthropicPromptCaching(provider.anthropicPromptCaching === true);
     setFormError(null);
     setDetectError(null);
@@ -215,16 +490,55 @@ export function CustomProvidersSection({ embedded = false, onProviderChange }: C
       });
 
       if (result.models.length > 0) {
-        setModels((prev) => {
-          const existingIds = new Set(
-            prev.split(",").map((s) => s.trim()).filter(Boolean),
-          );
-          const newIds = result.models
-            .map((m) => m.id.trim())
-            .filter((id) => !existingIds.has(id));
-          if (newIds.length === 0) return prev;
-          const existing = prev.trim();
-          return newIds.join(", ") + (existing ? ", " + existing : "");
+        setModelRows((prev) => {
+          // FNXC:CustomProviderModelWindows 2026-08-19-16:49: RUFU-123 merge by id: append new
+          // models with their probed windows, and only fill blank fields on existing rows —
+          // manual window values typed by the operator are never clobbered by the probe.
+          // FNXC:CustomProviderModelWindows 2026-08-20-22:06: RUFU-145 PR #3493 review:
+          // the merge writes the merged object back into the rows array by index. The
+          // original code updated a parallel byId map and then returned the untouched
+          // rows, so probed windows for already-typed model ids never reached the form.
+          const rows = prev.filter((row) => !isEmptyModelRow(row));
+          const indexById = new Map(rows.map((row, i) => [row.id.trim(), i] as const));
+          for (const discovered of result.models) {
+            const discoveredId = discovered.id.trim();
+            if (!discoveredId) continue;
+            const existingIndex = indexById.get(discoveredId);
+            if (existingIndex !== undefined) {
+              const existing = rows[existingIndex]!;
+              rows[existingIndex] = {
+                ...existing,
+                name: existing.name.trim() !== "" ? existing.name : (discovered.name ?? discoveredId),
+                contextWindow: existing.contextWindow.trim() !== ""
+                  ? existing.contextWindow
+                  : (discovered.contextWindow != null ? String(discovered.contextWindow) : ""),
+                maxTokens: existing.maxTokens.trim() !== ""
+                  ? existing.maxTokens
+                  : (discovered.maxTokens != null ? String(discovered.maxTokens) : ""),
+              };
+            } else {
+              /*
+              FNXC:CustomProviderThinkingFormat 2026-08-21-06:07:
+              RUFU-143: newly probed rows start at the thinking-flag defaults — the probe
+              reports no thinking capability, and pre-filling from heuristics is forbidden
+              (the operator sets the format explicitly).
+              */
+              const row: ModelRow = {
+                id: discoveredId,
+                name: discovered.name ?? discoveredId,
+                contextWindow: discovered.contextWindow != null ? String(discovered.contextWindow) : "",
+                maxTokens: discovered.maxTokens != null ? String(discovered.maxTokens) : "",
+                // FNXC:CustomProviderHttpTimeout 2026-08-24-19:52: the probe cannot report a
+                // timeout; new rows start blank (300 s default) and the operator opts in.
+                timeoutSeconds: "",
+                thinkingFormat: "",
+                noThinkingParams: false,
+              };
+              rows.push(row);
+              indexById.set(discoveredId, rows.length - 1);
+            }
+          }
+          return rows.length > 0 ? rows : [emptyModelRow()];
         });
       } else {
         setDetectError(t("providers.noModelsFound", "No models found. The provider may require an API key."));
@@ -243,13 +557,49 @@ export function CustomProvidersSection({ embedded = false, onProviderChange }: C
     setFormError(validationError);
     if (validationError) return;
 
-    const parsedModels = parseModels(models);
+    // FNXC:CustomProviderModelWindows 2026-08-19-16:49: RUFU-123 build the models array from
+    // rows — blank ids are dropped (a provider may be saved with zero models), a blank display
+    // name falls back to the id, and window keys are included only when the field parses to a
+    // positive finite number (blank/invalid persist as absent so defaults apply at registration).
+    // FNXC:CustomProviderThinkingFormat 2026-08-21-05:59: RUFU-143 the thinking flags follow
+    // the same conditional-spread rule — thinkingFormat only when non-blank AND not opted
+    // out (the opt-out wins); reasoning: false only when the checkbox is checked. Default
+    // rows (both at default) keep the byte-identical { id, name, ...windows } shape.
+    const parsedModels = modelRows.flatMap((row) => {
+      const id = row.id.trim();
+      if (id === "") return [];
+      const contextWindow = parsePositiveTokenValue(row.contextWindow);
+      const maxTokens = parsePositiveTokenValue(row.maxTokens);
+      // FNXC:CustomProviderHttpTimeout 2026-08-24-19:52: 0 persists as 0 (disabled);
+      // blank/invalid persists as absent so the 300 s default applies at registration.
+      const timeoutSeconds = parseNonNegativeTimeoutValue(row.timeoutSeconds);
+      const thinkingFormat = !row.noThinkingParams ? row.thinkingFormat.trim() : "";
+      return [{
+        id,
+        name: row.name.trim() || id,
+        ...(contextWindow !== undefined ? { contextWindow } : {}),
+        ...(maxTokens !== undefined ? { maxTokens } : {}),
+        ...(timeoutSeconds !== undefined ? { timeoutSeconds } : {}),
+        // The row keeps the raw string so values outside the UI-safe set (chat-template/
+        // baseten via models.json or the raw API) round-trip unchanged; the route validator
+        // is the authority on the full pi-ai union, so the cast is safe.
+        ...(thinkingFormat !== "" ? { thinkingFormat: thinkingFormat as CustomProviderThinkingFormat } : {}),
+        ...(row.noThinkingParams ? { reasoning: false } : {}),
+      }];
+    });
     const payload: Omit<CustomProvider, "id"> = {
       name: name.trim(),
       apiType,
       baseUrl: baseUrl.trim(),
       ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
-      ...(parsedModels.length > 0 ? { models: parsedModels } : {}),
+      // FNXC:CustomProviderModelWindows 2026-08-21-00:06:
+      // RUFU-145 PR #3493 review (Greptile P1 "Cleared models remain persisted"): the PUT
+      // update path is a partial merge — an omitted `models` key keeps the stored list.
+      // The edit form must therefore always send the row result, including an explicit
+      // empty array, or the operator's cleared rows silently reappear after reload. The
+      // create path omits `models` when blank so a new provider simply has no registered
+      // models.
+      ...(editingProvider || parsedModels.length > 0 ? { models: parsedModels } : {}),
       // FNXC:ProviderAuth 2026-07-08-00:00: only send the caching opt-in for apiTypes where it
       // applies (openai-compatible/openai-responses); anthropic-compatible/google-generative-ai
       // never surface the checkbox so this is always false for them.
@@ -273,7 +623,7 @@ export function CustomProvidersSection({ embedded = false, onProviderChange }: C
     } finally {
       setSaving(false);
     }
-  }, [anthropicPromptCaching, apiKey, apiType, baseUrl, editingProvider, loadProviders, models, name, resetForm, validateForm, t]);
+  }, [anthropicPromptCaching, apiKey, apiType, baseUrl, editingProvider, loadProviders, modelRows, name, resetForm, validateForm, t]);
 
   const handleDelete = useCallback(
     async (provider: CustomProvider) => {
@@ -305,9 +655,14 @@ export function CustomProvidersSection({ embedded = false, onProviderChange }: C
           /*
           FNXC:CustomProviders 2026-06-30-00:00:
           Manual refresh can run while a provider edit form is open. Keep that form's model input synchronized with the persisted refresh result so saving unrelated edits cannot overwrite newly discovered models with the pre-refresh list.
+          FNXC:CustomProviderModelWindows 2026-08-19-16:49:
+          RUFU-123: the refresh response's models already carry the server-side id-merge of
+          probed and persisted windows, so re-seed the row editor from them and the open form
+          saves the merged list (windows included) instead of the pre-refresh rows.
           */
-          const refreshedModels = (result.provider.models ?? []).map((model) => model.id).join(", ");
-          setModels(refreshedModels);
+          setModelRows((result.provider.models ?? []).length > 0
+            ? (result.provider.models ?? []).map(modelRowFromModel)
+            : [emptyModelRow()]);
           setEditingProvider((current) => current?.id === provider.id
             ? { ...current, models: result.provider.models ?? [] }
             : current);
@@ -478,36 +833,20 @@ export function CustomProvidersSection({ embedded = false, onProviderChange }: C
                     </div>
 
                     <div className="form-group custom-provider-form-row">
-                      <label htmlFor="custom-provider-models">{t("providers.modelsLabel", "Available models")}</label>
-                      <input
-                        id="custom-provider-models"
-                        className="input"
-                        placeholder="e.g., gpt-4, gpt-3.5-turbo"
-                        value={models}
-                        onChange={(event) => setModels(event.target.value)}
+                      <label id="custom-provider-models-label-edit">{t("providers.modelsLabel", "Available models")}</label>
+                      <div role="group" aria-labelledby="custom-provider-models-label-edit">
+                      <ModelRowsEditor
+                        rows={modelRows}
+                        onChange={setModelRows}
+                        onDetect={() => void handleDetectModels()}
+                        detecting={detecting}
+                        canDetect={baseUrl.trim() !== ""}
+                        canAddRow
                         disabled={saving}
                       />
+                      </div>
                     </div>
 
-                    <div className="custom-provider-detect-actions">
-                      <button
-                        type="button"
-                        className="btn btn-sm"
-                        onClick={() => void handleDetectModels()}
-                        disabled={saving || detecting || !baseUrl.trim()}
-                        title={t("providers.detectTitle", "Auto-detect models from the provider's /models endpoint")}
-                      >
-                        {detecting ? (
-                          <>
-                            <Loader2 className="custom-provider-spin" size={14} /> {t("providers.detecting", "Detecting…")}
-                          </>
-                        ) : (
-                          <>
-                            <Search size={14} /> {t("providers.detectModels", "Detect Models")}
-                          </>
-                        )}
-                      </button>
-                    </div>
                     {detectError ? <div className="custom-provider-form-error">{detectError}</div> : null}
 
                     {formError ? <div className="custom-provider-form-error">{formError}</div> : null}
@@ -616,36 +955,20 @@ export function CustomProvidersSection({ embedded = false, onProviderChange }: C
           </div>
 
           <div className="form-group custom-provider-form-row">
-            <label htmlFor="custom-provider-models">{t("providers.modelsLabel", "Available models")}</label>
-            <input
-              id="custom-provider-models"
-              className="input"
-              placeholder="e.g., gpt-4, gpt-3.5-turbo"
-              value={models}
-              onChange={(event) => setModels(event.target.value)}
+            <label id="custom-provider-models-label-create">{t("providers.modelsLabel", "Available models")}</label>
+            <div role="group" aria-labelledby="custom-provider-models-label-create">
+            <ModelRowsEditor
+              rows={modelRows}
+              onChange={setModelRows}
+              onDetect={() => void handleDetectModels()}
+              detecting={detecting}
+              canDetect={baseUrl.trim() !== ""}
+              canAddRow
               disabled={saving}
             />
+            </div>
           </div>
 
-          <div className="custom-provider-detect-actions">
-            <button
-              type="button"
-              className="btn btn-sm"
-              onClick={() => void handleDetectModels()}
-              disabled={saving || detecting || !baseUrl.trim()}
-              title={t("providers.detectTitle", "Auto-detect models from the provider's /models endpoint")}
-            >
-              {detecting ? (
-                <>
-                  <Loader2 className="custom-provider-spin" size={14} /> {t("providers.detecting", "Detecting…")}
-                </>
-              ) : (
-                <>
-                  <Search size={14} /> {t("providers.detectModels", "Detect Models")}
-                </>
-              )}
-            </button>
-          </div>
           {detectError ? <div className="custom-provider-form-error">{detectError}</div> : null}
 
           {formError ? <div className="custom-provider-form-error">{formError}</div> : null}

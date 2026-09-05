@@ -2421,6 +2421,17 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       const engine = projectId ? engineManager.getEngine(projectId) : cwdEngine;
       return engine?.getCliAgentRuntime()?.bundle.hub;
     };
+    /*
+    FNXC:CliChatRecall 2026-08-19-11:08:
+    Per-session memory-recall handle for the /api/cli-agent/memory-recall route
+    (RUFU-128). Resolves to the engine runtime bundle's memoryRecall slice
+    (token validation + session existence + recall service); undefined when the
+    cli-agent executor feature is off or the recall wiring is absent.
+    */
+    const cliAgentMemoryRecallResolver = (projectId: string | undefined, _sessionId: string) => {
+      const engine = projectId ? engineManager.getEngine(projectId) : cwdEngine;
+      return engine?.getCliAgentRuntime()?.bundle.memoryRecall;
+    };
     const cwdCliAgentRuntime = cwdEngine?.getCliAgentRuntime();
     const cliSessionTransport = cwdCliAgentRuntime
       ? {
@@ -2441,6 +2452,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       engine: cwdEngine,
       engineManager,
       cliAgentHubResolver,
+      cliAgentMemoryRecallResolver,
       cliSessionTransport,
       hybridExecutor,
       centralCore: centralCoreForEngine,

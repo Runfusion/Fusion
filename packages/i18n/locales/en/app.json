@@ -1331,6 +1331,7 @@
     "noSkillsAvailable": "No skills available",
     "noSkillsFound": "No skills found",
     "openQuickChat": "Open quick chat",
+    "outputBudgetExhausted": "The model used its entire output budget on thinking — raise maxTokens for this model.",
     "preserveToStash": "Preserve to Stash",
     "preserveToStashDone": "Uploaded {{uploaded}} messages to Stash ({{skipped}} already stored)",
     "preserveToStashFailed": "Stash upload failed: {{error}}",
@@ -1440,6 +1441,7 @@
     "currentModelTarget": "Current model: {{model}}",
     "currentDefaultTarget": "Using the default chat target",
     "restore": "Restore",
+    "backToConversations": "Back to conversations",
     "minimizeAllChats": "Minimize all chats",
     "restoreAllChats": "Restore all chats",
     "slashSuggestions": "Slash suggestions",
@@ -2406,7 +2408,9 @@
     "closeLightbox": "Close artifact preview",
     "expandArtifact": "Expand {{title}}",
     "expandArtifactHint": "Click to expand",
-    "lightboxLabel": "Artifact media preview"
+    "lightboxLabel": "Artifact media preview",
+    "closeArtifactPreview": "Close artifact preview",
+    "loadingImageArtifact": "Loading image artifact…"
   },
   "droidCli": {
     "active": "Active",
@@ -5232,7 +5236,8 @@
       "modelNameLabel": "Model name",
       "models": "Models",
       "name": "Display Name",
-      "reasoning": "Reasoning"
+      "reasoning": "Reasoning",
+      "timeoutSeconds": "HTTP timeout (s)"
     },
     "llamaCpp": {
       "disable": "Disable",
@@ -6409,6 +6414,14 @@
       "dreamNow": "Dream Now",
       "dreamSchedule": "Dream Schedule",
       "enableMemoryTools": " Enable memory tools ",
+      "perTurnRecall": " Per-turn memory recall ",
+      "perTurnRecallTopK": " Max snippets per turn ",
+      "perTurnRecallHelp": "Recalls the most relevant memory snippets for the current topic before each chat or task step turn and injects a short, deduped cue into the prompt. Default: enabled.",
+      "perTurnRecallTopKHelp": "Maximum number of memory snippets injected per turn. Default: 3.",
+      "preOverflowCompaction": "Pre-overflow compaction guard",
+      "preOverflowCompactionHelp": "Compacts the chat context at ~80% of the model window before a turn would overflow it, preventing single-token replies at the context wall. Default: enabled.",
+      "chatContextBudget": "Chat context budget (64K window fit)",
+      "chatContextBudgetHelp": "Bounds the chat static context: oversized memory becomes a bounded heading index and chat sessions use the curated chat toolset, so agent chat fits 64K-window models. Disable to restore unbounded memory injection and the full tool set (pre-RUFU-135 behavior). Default: enabled.",
       "executorSessionCapture": "Executor session capture",
       "failedToLoadBackendStatus": "Failed to load backend status: ",
       "for": "for \"",
@@ -6727,7 +6740,7 @@
       "advancedWorkflowPolicy": " Advanced workflow policy ",
       "aIMergeCommitSummaries": " AI merge commit summaries ",
       "aITitleAndGitCommitMessageSummarization": " AI Title and Git Commit Message Summarization ",
-      "automaticallyCompactContextWhenApproachingThisTokenCount": "Automatically compact context when approaching this token count. Leave empty for no cap (compact only on overflow errors). Set a number to proactively compact when reaching this token count. No default — unset (no cap).",
+      "automaticallyCompactContextWhenApproachingThisTokenCount": "Upper bound on the context-compaction threshold. Chat sessions compact by default when they reach 80% of the model's context window; a smaller value compacts earlier, and values above the model's hard limit are clamped. Executor/agent tasks: empty = no cap (compact only on overflow errors). No default — unset.",
       "autoSelectPresetBasedOnTaskSize": " Auto-select preset based on task size ",
       "autoSummarizeLongDescriptionsAsTitles": " Auto-summarize task titles ",
       "taskOutputLanguage": "AI-authored task language",
@@ -8448,6 +8461,13 @@
       "candidate": "Candidate:",
       "dismissFinding": "Dismiss this finding",
       "terminalGuidance": "Rebase or re-push the branch, dismiss a finding with justification, or land manually."
+    },
+    "aiMergeReviewReconciliation": {
+      "title": "AI merge review reconciliation",
+      "approvedPending": "Approved — {{count}} prior finding(s) unconfirmed",
+      "candidate": "Candidate: ",
+      "dismissFinding": "Dismiss this finding",
+      "terminalHint": "Rebase or re-push the branch, dismiss a finding with justification, or land manually."
     },
     "debug": {
       "none": "No debug details available."

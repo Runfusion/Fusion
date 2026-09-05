@@ -70,7 +70,20 @@ const mapLegacyCustomProviderToConfig = (
         ? "anthropic-messages"
         : "openai-responses",
   apiKey: provider.apiKey,
-  models: provider.models?.map((model) => ({ id: model.id, name: model.name })) ?? [],
+  // FNXC:CustomProviderModelWindows 2026-08-19-16:01:
+  // RUFU-123: carry persisted per-model contextWindow/maxTokens into the legacy form config
+  // so the row editor's numeric fields pre-fill on edit (the old mapping dropped them).
+  // FNXC:CustomProviderThinkingFormat 2026-08-21-06:40: RUFU-143 same for the per-model
+  // thinking flags — thinkingFormat when set, reasoning only when false (the only meaningful
+  // value; absent/true is the presumed-thinking-capable default).
+  models: provider.models?.map((model) => ({
+    id: model.id,
+    name: model.name,
+    ...(model.contextWindow !== undefined ? { contextWindow: model.contextWindow } : {}),
+    ...(model.maxTokens !== undefined ? { maxTokens: model.maxTokens } : {}),
+    ...(model.thinkingFormat !== undefined ? { thinkingFormat: model.thinkingFormat } : {}),
+    ...(model.reasoning === false ? { reasoning: false } : {}),
+  })) ?? [],
 });
 
 /** Provider-specific API key setup metadata for onboarding form rendering */

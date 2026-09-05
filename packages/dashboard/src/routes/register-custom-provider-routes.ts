@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import dns from "node:dns/promises";
 import net from "node:net";
-import type { CustomProvider } from "@fusion/core";
+import { CUSTOM_PROVIDER_THINKING_FORMATS, type CustomProvider, type CustomProviderThinkingFormat } from "@fusion/core";
 import { ApiError, badRequest, notFound } from "../api-error.js";
 import type { ApiRouteRegistrar } from "./types.js";
 import { invalidateAllGlobalSettingsCaches } from "../project-store-resolver.js";
@@ -96,11 +96,73 @@ function assertBaseUrl(value: unknown): string {
 }
 
 /**
+ * FNXC:CustomProviderModelWindows 2026-08-19-14:16:
+ * RUFU-123: per-model contextWindow/maxTokens arrived on the custom-provider settings
+ * shape (CustomProvider.models entries). Request bodies may carry either field per model
+ * entry; a value that is not a positive finite number is rejected 400 with the exact
+ * field path named, mirroring the registry builder's positive-finite fallback contract
+ * (custom-provider-registry.ts) so a corrupted value can never be persisted and later
+ * collapse a compaction threshold. Absent keys are omitted entirely — never persisted
+ * as explicit undefined.
+ *
+ * FNXC:CustomProviderThinkingFormat 2026-08-21-05:46:
+ * RUFU-143: the same entries may also carry the per-model thinking flags — thinkingFormat
+ * (a pi-ai thinkingFormat literal, see assertThinkingFormat) and reasoning (strict boolean).
+ * Both are optional and omitted when absent, so default registrations round-trip unchanged.
+ */
+function assertPositiveFiniteNumber(value: unknown, fieldName: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    throw badRequest(`${fieldName} must be a positive finite number`);
+  }
+  return value;
+}
+
+/*
+FNXC:CustomProviderHttpTimeout 2026-08-24-13:54:
+Per-model `timeoutSeconds` (HTTP idle/first-byte timeout, seconds) is a NON-NEGATIVE finite
+number — unlike the window fields, `0` is a meaningful persisted value (user-facing "off",
+disabled at both timeout seams), so the guard allows zero and rejects negative/NaN input with
+the exact field path, mirroring the window-field 400 contract.
+*/
+function assertNonNegativeFiniteNumber(value: unknown, fieldName: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    throw badRequest(`${fieldName} must be a non-negative finite number`);
+  }
+  return value;
+}
+
+/*
+FNXC:CustomProviderThinkingFormat 2026-08-21-05:46:
+RUFU-143: the dashboard persists the per-model thinking flags verbatim (they are additive to the
+RUFU-123 window fields). thinkingFormat must be one of the pi-ai thinkingFormat literals
+(CUSTOM_PROVIDER_THINKING_FORMATS, in lockstep with the pinned pi-ai version); reasoning is a
+strict boolean (false = opt out of all thinking params). Invalid values are rejected 400 with the
+exact field path named so a corrupted flag can never be persisted and later sent to the provider.
+*/
+function assertThinkingFormat(value: unknown, fieldName: string): CustomProviderThinkingFormat {
+  if (typeof value !== "string" || !(CUSTOM_PROVIDER_THINKING_FORMATS as readonly string[]).includes(value)) {
+    throw badRequest(`Invalid ${fieldName} "${value}". Allowed: ${CUSTOM_PROVIDER_THINKING_FORMATS.join(", ")}`);
+  }
+  return value as CustomProviderThinkingFormat;
+}
+
+function assertReasoning(value: unknown, fieldName: string): boolean {
+  if (typeof value !== "boolean") {
+    throw badRequest(`${fieldName} must be a boolean`);
+  }
+  return value;
+}
+
+/**
  * Validates and normalizes a models array from a request body.
- * Returns undefined if models is omitted, or an array of { id, name } objects.
+ * Returns undefined if models is omitted, or an array of
+ * { id, name, contextWindow?, maxTokens?, timeoutSeconds?, thinkingFormat?, reasoning? } objects
+ * (window, timeout, and thinking-flag keys omitted when absent).
  * @throws {ApiError} with status 400 if the structure is invalid.
  */
-function validateModels(value: unknown): Array<{ id: string; name: string }> | undefined {
+function validateModels(
+  value: unknown,
+): Array<{ id: string; name: string; contextWindow?: number; maxTokens?: number; timeoutSeconds?: number; thinkingFormat?: CustomProviderThinkingFormat; reasoning?: boolean }> | undefined {
   if (value === undefined) {
     return undefined;
   }
@@ -115,10 +177,46 @@ function validateModels(value: unknown): Array<{ id: string; name: string }> | u
     }
 
     const row = entry as Record<string, unknown>;
-    return {
+    const model: { id: string; name: string; contextWindow?: number; maxTokens?: number; timeoutSeconds?: number; thinkingFormat?: CustomProviderThinkingFormat; reasoning?: boolean } = {
       id: assertNonEmptyString(row.id, `models[${index}].id`),
       name: assertNonEmptyString(row.name, `models[${index}].name`),
     };
+    if (row.contextWindow !== undefined) {
+      model.contextWindow = assertPositiveFiniteNumber(row.contextWindow, `models[${index}].contextWindow`);
+    }
+    if (row.maxTokens !== undefined) {
+      model.maxTokens = assertPositiveFiniteNumber(row.maxTokens, `models[${index}].maxTokens`);
+    }
+    // FNXC:CustomProviderHttpTimeout 2026-08-24-13:54:
+    // 0 is a valid persisted value here ("off"); the registry builder converts it to the
+    // disabled sentinel for the SDK path and to a no-timer undici idle bound.
+    if (row.timeoutSeconds !== undefined) {
+      model.timeoutSeconds = assertNonNegativeFiniteNumber(row.timeoutSeconds, `models[${index}].timeoutSeconds`);
+    }
+    /*
+    FNXC:CustomProviderModelWindows 2026-08-20-22:27: RUFU-145 PR #3493 review invariant:
+    the output reservation must fit inside the context window. A pair where
+    maxTokens >= contextWindow makes the chat-lane compaction hard limit
+    (contextWindow - max(16384, maxTokens)) non-positive, so every chat call enters
+    compaction or fails before sending. An explicitly registered contradictory pair is
+    an operator input error — reject 400 with both field paths named.
+    */
+    if (
+      model.contextWindow !== undefined &&
+      model.maxTokens !== undefined &&
+      model.maxTokens >= model.contextWindow
+    ) {
+      throw badRequest(
+        `models[${index}].maxTokens (${model.maxTokens}) must be smaller than models[${index}].contextWindow (${model.contextWindow})`,
+      );
+    }
+    if (row.thinkingFormat !== undefined) {
+      model.thinkingFormat = assertThinkingFormat(row.thinkingFormat, `models[${index}].thinkingFormat`);
+    }
+    if (row.reasoning !== undefined) {
+      model.reasoning = assertReasoning(row.reasoning, `models[${index}].reasoning`);
+    }
+    return model;
   });
 }
 
@@ -194,6 +292,272 @@ interface CustomProviderSettingsStore {
 }
 
 const MAX_PROBE_MODELS = 100;
+
+/*
+FNXC:LocalProviderWindowDetection 2026-08-22-02:05:
+RUFU-138: local backends (Ollama, LM Studio, vLLM) expose per-model context windows in backend-
+specific fields of the OpenAI-compatible /v1/models entry, so the server-side probe reads them
+body-level instead of forcing operators to type each window into the custom-provider row editor.
+The openai-compatible branch resolves contextWindow as the first positive finite number in the
+precedence order limit.context (existing OpenRouter shape, behavior unchanged) -> max_model_len
+(vLLM --max-model-len) -> max_context_size (LM Studio) -> max_context_length (generic) ->
+context_length (generic). Body-level reads are safe on public hosts: they parse the already-fetched
+main-probe response and add no outbound calls. vLLM LoRA adapters are listed as separate ids with a
+`parent` field pointing at the base model id; an adapter inherits the parent's body-level window
+(one level only, non-transitive).
+*/
+const MAIN_PROBE_TIMEOUT_MS = 10_000;
+
+/*
+FNXC:LocalProviderWindowDetection 2026-08-22-02:05:
+RUFU-138: trusted local-backend enrichment budget. The Ollama tags / LM Studio native passes are
+single bounded local round-trips (5s each); the per-model Ollama /api/show fallback is capped at
+25 parallel 5s calls, so even a 100-model install adds at most one 5s batch to the trusted
+refresh path. Enrichment is reachable only via the trusted refresh path (allowPrivateAddress +
+literal local hostname) and only when at least one model still lacks a window after body-level
+extraction and LoRA inheritance — a fully windowed list costs exactly one fetch (the main probe).
+*/
+const ENRICH_TIMEOUT_MS = 5_000;
+const MAX_OLLAMA_SHOW_PROBES = 25;
+
+function isPositiveFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
+/**
+ * FNXC:LocalProviderWindowDetection 2026-08-22-02:05:
+ * RUFU-138: shared bounded fetch for the main probe and the trusted local-backend enrichment
+ * phases. Each call gets its own AbortController so a stalled enrichment round-trip can never
+ * hold the main-probe budget, and the timer is always cleared. The controller's signal supersedes
+ * any caller-provided signal (callers never pass one).
+ */
+async function probeFetch(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+/**
+ * FNXC:LocalProviderWindowDetection 2026-08-22-02:05:
+ * RUFU-138: vLLM lists LoRA adapters as separate ids carrying a `parent` field that points at the
+ * base model's id, so an adapter inherits the parent's body-level window and a --max-model-len
+ * server reports one window for the whole family. Inheritance is exactly one level: the parent's
+ * own inherited window is never propagated, so an adapter-of-an-adapter chain stays undefined
+ * rather than silently borrowing a grandparent's value.
+ */
+function applyLoraWindowInheritance(rawEntries: Record<string, unknown>[], results: ProbeModelResult[]): ProbeModelResult[] {
+  const bodyWindowById = new Map<string, number | undefined>();
+  for (const result of results) {
+    bodyWindowById.set(result.id, result.contextWindow);
+  }
+  return results.map((result, index) => {
+    if (result.contextWindow !== undefined) {
+      return result;
+    }
+    const raw = rawEntries[index];
+    const parent = raw?.parent;
+    if (!raw || typeof parent !== "string") {
+      return result;
+    }
+    const parentWindow = bodyWindowById.get(parent);
+    return typeof parentWindow === "number" ? { ...result, contextWindow: parentWindow } : result;
+  });
+}
+
+/**
+ * FNXC:LocalProviderWindowDetection 2026-08-22-02:05:
+ * RUFU-138: literal-only local hostname gate for the trusted-refresh enrichment phase.
+ * Intentionally conservative: a hostname that merely *resolves* to a private IP does not
+ * qualify — the existing SSRF block owns DNS-based checks, and enrichment must not run on
+ * public or corporate DNS names. Mirrors the SSRF block's literal ranges (loopback,
+ * 127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, fc00::/7, fe80::/10) plus
+ * .local/.internal mDNS-style names; 169.254.0.0/16 cloud-metadata literals are deliberately
+ * absent from the allowlist.
+ */
+function isLocalHostname(hostname: string): boolean {
+  const h = hostname.toLowerCase();
+  if (
+    h === "localhost" ||
+    h === "127.0.0.1" ||
+    h === "::1" ||
+    h === "[::1]" ||
+    h.endsWith(".local") ||
+    h.endsWith(".internal")
+  ) {
+    return true;
+  }
+  if (net.isIP(h) === 4) {
+    const [a, b] = h.split(".").map(Number);
+    if (a === 127) return true; // 127.0.0.0/8
+    if (a === 10) return true; // 10.0.0.0/8
+    if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12
+    if (a === 192 && b === 168) return true; // 192.168.0.0/16
+    return false;
+  }
+  if (net.isIP(h) === 6) {
+    // fc00::/7 — Unique Local Addresses (hex prefixes fc/fd)
+    if (h.startsWith("fc") || h.startsWith("fd")) return true;
+    // fe80::/10 — link-local addresses
+    return h.startsWith("fe8") || h.startsWith("fe9") || h.startsWith("fea") || h.startsWith("feb");
+  }
+  return false;
+}
+
+/**
+ * FNXC:LocalProviderWindowDetection 2026-08-22-02:05:
+ * RUFU-138: best-effort same-origin native-API enrichment of per-model context windows for local
+ * backends (Ollama, LM Studio) whose OpenAI-compatible /v1/models listing is not a reliable
+ * window source. Contract: mutates contextWindow only where it is currently undefined; never
+ * touches maxTokens (deriving maxTokens from a window field would silently disable the engine
+ * chat-context guard's pre-overflow compaction reservation); never overwrites a body-level or
+ * LoRA-inherited window; never throws or fails the probe — non-2xx, abort/timeout, network
+ * error, json() rejection, or an unexpected shape skips that phase silently (at most one
+ * console.debug line per skipped phase, never per model); and derives every URL exclusively
+ * from the already-SSRF-validated baseUrl origin — never from response content (no
+ * response-driven request targeting).
+ *
+ * Phase order: (1) Ollama GET /api/tags — detection plus the tags' details.context_length map;
+ * (2) only when Ollama was detected, per-model POST /api/show (capped at
+ * MAX_OLLAMA_SHOW_PROBES ids) reading the first positive-finite *.context_length key of
+ * model_info (JSON key iteration order); (3) only when Ollama was NOT detected, LM Studio
+ * GET /api/v1/models (key -> max_context_length, falling back to
+ * loaded_instances[0].config.context_length; OpenAI-compat ids may carry a @variant suffix the
+ * native key omits, so match on exact key or startsWith(key + "@")), so a backend that exposes
+ * both native APIs is only ever probed as Ollama.
+ */
+async function enrichOpenAiCompatibleWindows(
+  base: URL,
+  models: ProbeModelResult[],
+  opts: { headers: Record<string, string> },
+): Promise<void> {
+  if (!models.some((m) => m.contextWindow === undefined)) {
+    return;
+  }
+  const origin = base.origin;
+  const headers = opts.headers;
+
+  // --- Phase 1: Ollama native GET /api/tags — single bounded local round-trip ---
+  const ollamaWindowsById = new Map<string, number>();
+  let ollamaDetected = false;
+  try {
+    const tagsResponse = await probeFetch(new URL("/api/tags", origin).toString(), { headers }, ENRICH_TIMEOUT_MS);
+    if (tagsResponse.ok) {
+      const tagsData: unknown = await tagsResponse.json();
+      const entries = tagsData && typeof tagsData === "object" ? (tagsData as Record<string, unknown>).models : undefined;
+      if (Array.isArray(entries)) {
+        ollamaDetected = true;
+        for (const entry of entries) {
+          if (!entry || typeof entry !== "object") continue;
+          const row = entry as Record<string, unknown>;
+          const key = row.name ?? row.model;
+          const win = (row.details as Record<string, unknown> | undefined)?.context_length;
+          if (typeof key === "string" && key.length > 0 && isPositiveFiniteNumber(win)) {
+            ollamaWindowsById.set(key, win);
+          }
+        }
+      }
+    }
+  } catch {
+    console.debug("RUFU-138: Ollama /api/tags enrichment skipped (non-2xx, timeout, or unexpected shape)");
+  }
+
+  if (ollamaDetected) {
+    // Apply the tags map (exact id match); tags-provided windows are authoritative for that model.
+    for (const model of models) {
+      if (model.contextWindow === undefined) {
+        const win = ollamaWindowsById.get(model.id);
+        if (win !== undefined) model.contextWindow = win;
+      }
+    }
+    // --- Phase 2: Ollama native POST /api/show — capped parallel batch (25 ids, 5s each) ---
+    const pending = models.filter((m) => m.contextWindow === undefined).slice(0, MAX_OLLAMA_SHOW_PROBES);
+    if (pending.length > 0) {
+      try {
+        const settled = await Promise.allSettled(
+          pending.map((m) =>
+            probeFetch(
+              new URL("/api/show", origin).toString(),
+              { method: "POST", headers, body: JSON.stringify({ name: m.id }) },
+              ENRICH_TIMEOUT_MS,
+            ),
+          ),
+        );
+        await Promise.all(
+          settled.map(async (outcome, index) => {
+            if (outcome.status !== "fulfilled") return; // per-model transport failure — silent by design
+            try {
+              const response = outcome.value;
+              if (!response.ok) return;
+              const data: unknown = await response.json();
+              const modelInfo = data && typeof data === "object" ? (data as Record<string, unknown>).model_info : undefined;
+              if (!modelInfo || typeof modelInfo !== "object") return;
+              // model_info is Ollama's merged params.json: the context key carries the model
+              // architecture prefix (e.g. llama.context_length, qwen3.context_length), so take
+              // the first key (JSON key iteration order) ending in ".context_length" whose
+              // value is positive and finite.
+              for (const [key, value] of Object.entries(modelInfo)) {
+                if (key.endsWith(".context_length") && isPositiveFiniteNumber(value)) {
+                  pending[index].contextWindow = value;
+                  break;
+                }
+              }
+            } catch {
+              // Per-model json() rejection — leave that model windowless (silent by design).
+            }
+          }),
+        );
+      } catch {
+        console.debug("RUFU-138: Ollama /api/show enrichment skipped (timeout or unexpected shape)");
+      }
+    }
+    return; // Ollama detected — skip the LM Studio pass entirely.
+  }
+
+  // --- Phase 3: LM Studio native GET /api/v1/models (only when Ollama was NOT detected) ---
+  try {
+    const nativeResponse = await probeFetch(new URL("/api/v1/models", origin).toString(), { headers }, ENRICH_TIMEOUT_MS);
+    if (!nativeResponse.ok) return;
+    const nativeData: unknown = await nativeResponse.json();
+    const nativeEntries = nativeData && typeof nativeData === "object" ? (nativeData as Record<string, unknown>).models : undefined;
+    if (!Array.isArray(nativeEntries)) return;
+    const nativeWindowsByKey = new Map<string, number>();
+    for (const entry of nativeEntries) {
+      if (!entry || typeof entry !== "object") continue;
+      const row = entry as Record<string, unknown>;
+      if (typeof row.key !== "string" || row.key.length === 0) continue;
+      const loadedInstances = Array.isArray(row.loaded_instances) ? row.loaded_instances : undefined;
+      const firstInstance = loadedInstances?.[0];
+      const config = firstInstance && typeof firstInstance === "object" ? (firstInstance as Record<string, unknown>).config : undefined;
+      const configWindow = config && typeof config === "object" ? (config as Record<string, unknown>).context_length : undefined;
+      const win = isPositiveFiniteNumber(row.max_context_length) ? row.max_context_length : configWindow;
+      if (isPositiveFiniteNumber(win)) {
+        nativeWindowsByKey.set(row.key, win);
+      }
+    }
+    for (const model of models) {
+      if (model.contextWindow !== undefined) continue;
+      const exact = nativeWindowsByKey.get(model.id);
+      if (exact !== undefined) {
+        model.contextWindow = exact;
+        continue;
+      }
+      // LM Studio OpenAI-compat ids may carry a @variant suffix (e.g. "nomic-embed@q8_0")
+      // that the native key omits.
+      for (const [key, win] of nativeWindowsByKey) {
+        if (model.id.startsWith(key + "@")) {
+          model.contextWindow = win;
+          break;
+        }
+      }
+    }
+  } catch {
+    console.debug("RUFU-138: LM Studio /api/v1/models enrichment skipped (non-2xx, timeout, or unexpected shape)");
+  }
+}
 
 type ProbeApiType = "openai-compatible" | "anthropic-compatible" | "google-generative-ai" | "openai-responses";
 
@@ -358,92 +722,123 @@ export async function probeProviderModels(
     }
   }
 
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 10_000);
+  // FNXC:LocalProviderWindowDetection 2026-08-22-02:05:
+  // RUFU-138: behavior-preserving refactor — the inline AbortController/10s timeout moved into
+  // probeFetch so the trusted local-backend enrichment phases share the same bounded-fetch
+  // contract; the main probe no longer needs a try/finally timer cleanup.
+  const response = await probeFetch(modelsUrl, { method: "GET", headers }, MAIN_PROBE_TIMEOUT_MS);
 
-  try {
-    const response = await fetch(modelsUrl, {
-      method: "GET",
-      headers,
-      signal: controller.signal,
-    });
-
-    if (!response.ok) {
-      const errorBody = await response.text().catch(() => "");
-      const message = errorBody.slice(0, 200);
-      throw new ApiError(
-        response.status,
-        `Provider returned ${response.status} ${response.statusText}${message ? `: ${message}` : ""}`,
-      );
-    }
-
-    const data = await response.json();
-    const rawModels = data?.data ?? data?.models ?? [];
-
-    if (!Array.isArray(rawModels) || rawModels.length === 0) {
-      throw new ApiError(404, "No models found in provider response");
-    }
-
-    // Filter out embedding/reranking/audio-only models and truncate
-    const chatModels = rawModels.filter((m: Record<string, unknown>) => !isNonChatModel(m));
-    const trimmed = chatModels.length > MAX_PROBE_MODELS ? chatModels.slice(0, MAX_PROBE_MODELS) : chatModels;
-
-    return trimmed.map((m: Record<string, unknown>) => {
-      // Extract ID based on provider format
-      let id: string;
-      let name: string;
-      let contextWindow: number | undefined;
-      let maxTokens: number | undefined;
-      let reasoning: boolean;
-
-      if (apiType === "google-generative-ai") {
-        // Google: name = "models/gemini-2.0-flash", baseModelId = "gemini-2.0-flash"
-        id = String(m.baseModelId ?? m.name ?? "");
-        // Strip "models/" prefix if present
-        if (id.startsWith("models/")) id = id.slice(7);
-        name = String(m.displayName ?? id);
-        contextWindow = typeof m.inputTokenLimit === "number" && m.inputTokenLimit > 0
-          ? m.inputTokenLimit
-          : undefined;
-        maxTokens = typeof m.outputTokenLimit === "number" && m.outputTokenLimit > 0
-          ? m.outputTokenLimit
-          : undefined;
-        reasoning = Boolean(m.thinking);
-      } else if (apiType === "anthropic-compatible") {
-        // Anthropic: id = "claude-sonnet-4-20250514", display_name = "Claude Sonnet 4"
-        id = String(m.id ?? "");
-        name = String(m.display_name ?? id);
-        // Anthropic doesn't return context/max_tokens in the models list
-        reasoning = Boolean(
-          id.toLowerCase().includes("opus") ||
-            (id.toLowerCase().includes("sonnet") && id.toLowerCase().includes("think")),
-        );
-      } else {
-        // OpenAI-compatible
-        id = String(m.id ?? "");
-        name = String(m.name ?? m.display_name ?? id);
-        reasoning = Boolean(
-          m.reasoning ||
-            (Array.isArray(m.capabilities) && m.capabilities.includes("reasoning")) ||
-            id.toLowerCase().includes("reason") ||
-            id.toLowerCase().includes("o1") ||
-            id.toLowerCase().includes("o3"),
-        );
-        // Extract context window and max tokens from limit object
-        const limit = m.limit as Record<string, unknown> | undefined;
-        contextWindow = typeof limit?.context === "number" && limit.context > 0
-          ? limit.context
-          : undefined;
-        maxTokens = typeof limit?.output === "number" && limit.output > 0
-          ? limit.output
-          : undefined;
-      }
-
-      return { id, name, reasoning, contextWindow, maxTokens };
-    }).filter((m) => m.id.length > 0);
-  } finally {
-    clearTimeout(timeoutId);
+  if (!response.ok) {
+    const errorBody = await response.text().catch(() => "");
+    const message = errorBody.slice(0, 200);
+    throw new ApiError(
+      response.status,
+      `Provider returned ${response.status} ${response.statusText}${message ? `: ${message}` : ""}`,
+    );
   }
+
+  const data = await response.json();
+  const rawModels = data?.data ?? data?.models ?? [];
+
+  if (!Array.isArray(rawModels) || rawModels.length === 0) {
+    throw new ApiError(404, "No models found in provider response");
+  }
+
+  // Filter out embedding/reranking/audio-only models and truncate
+  const chatModels = rawModels.filter((m: Record<string, unknown>) => !isNonChatModel(m));
+  const trimmed = chatModels.length > MAX_PROBE_MODELS ? chatModels.slice(0, MAX_PROBE_MODELS) : chatModels;
+
+  const mapped = trimmed.map((m: Record<string, unknown>) => {
+    // Extract ID based on provider format
+    let id: string;
+    let name: string;
+    let contextWindow: number | undefined;
+    let maxTokens: number | undefined;
+    let reasoning: boolean;
+
+    if (apiType === "google-generative-ai") {
+      // Google: name = "models/gemini-2.0-flash", baseModelId = "gemini-2.0-flash"
+      id = String(m.baseModelId ?? m.name ?? "");
+      // Strip "models/" prefix if present
+      if (id.startsWith("models/")) id = id.slice(7);
+      name = String(m.displayName ?? id);
+      contextWindow = typeof m.inputTokenLimit === "number" && m.inputTokenLimit > 0
+        ? m.inputTokenLimit
+        : undefined;
+      maxTokens = typeof m.outputTokenLimit === "number" && m.outputTokenLimit > 0
+        ? m.outputTokenLimit
+        : undefined;
+      reasoning = Boolean(m.thinking);
+    } else if (apiType === "anthropic-compatible") {
+      // Anthropic: id = "claude-sonnet-4-20250514", display_name = "Claude Sonnet 4"
+      id = String(m.id ?? "");
+      name = String(m.display_name ?? id);
+      // Anthropic doesn't return context/max_tokens in the models list
+      reasoning = Boolean(
+        id.toLowerCase().includes("opus") ||
+          (id.toLowerCase().includes("sonnet") && id.toLowerCase().includes("think")),
+      );
+    } else {
+      // OpenAI-compatible
+      id = String(m.id ?? "");
+      name = String(m.name ?? m.display_name ?? id);
+      reasoning = Boolean(
+        m.reasoning ||
+          (Array.isArray(m.capabilities) && m.capabilities.includes("reasoning")) ||
+          id.toLowerCase().includes("reason") ||
+          id.toLowerCase().includes("o1") ||
+          id.toLowerCase().includes("o3"),
+      );
+      /*
+      FNXC:LocalProviderWindowDetection 2026-08-22-02:05:
+      RUFU-138: resolve the body-level context window as the first positive finite number in
+      precedence order — limit.context (existing OpenRouter shape, behavior unchanged) ->
+      max_model_len (vLLM --max-model-len server value) -> max_context_size (LM Studio
+      OpenAI-compatible listing) -> max_context_length (generic) -> context_length (generic).
+      maxTokens stays limit.output-only and is NEVER derived from a context-window field: the
+      engine chat-context guard reserves max(16384, maxTokens) for the reply, so a maxTokens >=
+      contextWindow would silently disable the pre-overflow compaction gate.
+      */
+      const limit = m.limit as Record<string, unknown> | undefined;
+      const windowCandidates: unknown[] = [
+        limit?.context,
+        m.max_model_len,
+        m.max_context_size,
+        m.max_context_length,
+        m.context_length,
+      ];
+      contextWindow = windowCandidates.find(isPositiveFiniteNumber);
+      maxTokens = typeof limit?.output === "number" && limit.output > 0
+        ? limit.output
+        : undefined;
+    }
+
+    return { id, name, reasoning, contextWindow, maxTokens };
+  });
+
+  // FNXC:LocalProviderWindowDetection 2026-08-22-02:05:
+  // RUFU-138: one-level vLLM LoRA parent inheritance runs before the trusted local-backend
+  // enrichment phase so the enrichment gate sees post-inheritance windows and stays silent when
+  // every model has a window (directly or via parent).
+  const resolved = applyLoraWindowInheritance(trimmed, mapped);
+
+  // FNXC:LocalProviderWindowDetection 2026-08-22-02:05:
+  // RUFU-138: trusted local-backend enrichment gate. The browser-facing probe-models route
+  // never passes allowPrivateAddress (loopback/LAN inputs 400 earlier in the SSRF block), and
+  // public hosts fail isLocalHostname, so this same-origin native-API pass is reachable only
+  // from the startup sweep and the saved-provider Refresh Models action — and only when some
+  // model still lacks a window after body-level extraction + LoRA inheritance (a fully
+  // windowed list adds zero fetches).
+  if (
+    (apiType === "openai-compatible" || apiType === "openai-responses") &&
+    options.allowPrivateAddress === true &&
+    isLocalHostname(url.hostname) &&
+    resolved.some((m) => m.contextWindow === undefined)
+  ) {
+    await enrichOpenAiCompatibleWindows(url, resolved, { headers });
+  }
+
+  return resolved.filter((m) => m.id.length > 0);
 }
 
 function dedupeProviderModels(models: ProbeModelResult[]): ProbeModelResult[] {
@@ -471,6 +866,134 @@ async function discoverUsableProviderModels(provider: Pick<CustomProvider, "base
 }
 
 /**
+ * FNXC:CustomProviderModelWindows 2026-08-19-14:16:
+ * RUFU-123: probes do not always report per-model windows (Anthropic-compatible never
+ * does; OpenAI-compatible endpoints may omit the limit object), so a naive list
+ * replacement would silently drop operator-entered contextWindow/maxTokens. Build a
+ * model-id -> persisted-windows map from the pre-refresh provider record and let the
+ * probe value win when present (positive-finite), otherwise keep the prior persisted
+ * value for that id. Discovered models that no longer exist are still dropped (list
+ * replacement semantics unchanged).
+ *
+ * FNXC:CustomProviderThinkingFormat 2026-08-21-05:46:
+ * RUFU-143: the same map now also carries the per-model thinking flags. The probe never
+ * reports them, so a prior thinkingFormat is carried over when set and a prior
+ * reasoning opt-out (false) is the only prior reasoning re-emitted (true/absent means the
+ * default presumed-thinking-capable behavior and must not be re-emitted as an explicit value).
+ *
+ * FNXC:CustomProviderHttpTimeout 2026-08-24-23:35:
+ * The per-model HTTP timeout feature (timeoutSeconds next to contextWindow/maxTokens)
+ * missed this carry-over surface: refresh rebuilt the persisted model list with windows
+ * and thinking flags only, so every model refresh (startup auto-refresh for all
+ * providers, manual refresh) silently dropped the persisted timeoutSeconds — save 3600,
+ * next refresh, value gone. timeoutSeconds now carries over by id as well, including
+ * the 0 "disabled" sentinel (probes never report a timeout). Extracted as a pure
+ * exported function so the carry-over invariant across ALL per-model fields is testable
+ * without probing a live endpoint.
+ */
+export function mergeRefreshedCustomProviderModels(
+  discovered: ProbeModelResult[],
+  priorModels: Array<{
+    id: string;
+    contextWindow?: number;
+    maxTokens?: number;
+    timeoutSeconds?: number;
+    thinkingFormat?: CustomProviderThinkingFormat;
+    reasoning?: boolean;
+  }>,
+): Array<{
+  id: string;
+  name: string;
+  contextWindow?: number;
+  maxTokens?: number;
+  timeoutSeconds?: number;
+  thinkingFormat?: CustomProviderThinkingFormat;
+  reasoning?: boolean;
+}> {
+  const persistedModelFieldsById = new Map<
+    string,
+    { contextWindow?: number; maxTokens?: number; timeoutSeconds?: number; thinkingFormat?: CustomProviderThinkingFormat; reasoning?: boolean }
+  >();
+  for (const model of priorModels) {
+    if (
+      model.contextWindow !== undefined ||
+      model.maxTokens !== undefined ||
+      model.timeoutSeconds !== undefined ||
+      model.thinkingFormat !== undefined ||
+      model.reasoning === false
+    ) {
+      persistedModelFieldsById.set(model.id, {
+        contextWindow: model.contextWindow,
+        maxTokens: model.maxTokens,
+        timeoutSeconds: model.timeoutSeconds,
+        thinkingFormat: model.thinkingFormat,
+        reasoning: model.reasoning,
+      });
+    }
+  }
+  return discovered.map((model) => {
+    const prior = persistedModelFieldsById.get(model.id);
+    const entry: {
+      id: string;
+      name: string;
+      contextWindow?: number;
+      maxTokens?: number;
+      timeoutSeconds?: number;
+      thinkingFormat?: CustomProviderThinkingFormat;
+      reasoning?: boolean;
+    } = {
+      id: model.id,
+      name: model.name,
+    };
+    if (typeof model.contextWindow === "number" && model.contextWindow > 0) {
+      entry.contextWindow = model.contextWindow;
+    } else if (prior?.contextWindow !== undefined) {
+      entry.contextWindow = prior.contextWindow;
+    }
+    if (typeof model.maxTokens === "number" && model.maxTokens > 0) {
+      entry.maxTokens = model.maxTokens;
+    } else if (prior?.maxTokens !== undefined) {
+      entry.maxTokens = prior.maxTokens;
+    }
+    // FNXC:CustomProviderHttpTimeout 2026-08-24-23:35: probes never report timeoutSeconds, so
+    // the persisted value (including the 0 "disabled" sentinel) is the only source.
+    if (prior?.timeoutSeconds !== undefined) {
+      entry.timeoutSeconds = prior.timeoutSeconds;
+    }
+    /*
+    FNXC:CustomProviderThinkingFormat 2026-08-21-05:46:
+    RUFU-143: probes never report thinkingFormat and never report a *negative* reasoning (the probe
+    heuristic only guesses the positive, and the default is already "presumed thinking-capable"), so
+    a prior flag is carried over only from the persisted record — never pre-filled from probe
+    heuristics, which would silently change the wire behavior of a model that was working. A prior
+    reasoning opt-out (false) is the only meaningful explicit value, so it survives re-probing; a
+    prior true/absent is not re-emitted.
+    */
+    if (prior?.thinkingFormat !== undefined) {
+      entry.thinkingFormat = prior.thinkingFormat;
+    }
+    if (prior?.reasoning === false) {
+      entry.reasoning = false;
+    }
+    /*
+    FNXC:CustomProviderModelWindows 2026-08-20-22:27: RUFU-145 PR #3493 review
+    invariant (refresh surface): a probe that reports an output limit at/above its
+    own context window is internally inconsistent; persisting it would make the
+    compaction hard limit non-positive. Drop the limit and let the engine default +
+    safe small-window guard threshold apply.
+    */
+    if (
+      typeof entry.contextWindow === "number" &&
+      typeof entry.maxTokens === "number" &&
+      entry.maxTokens >= entry.contextWindow
+    ) {
+      delete entry.maxTokens;
+    }
+    return entry;
+  });
+}
+
+/**
  * FNXC:CustomProviders 2026-06-29-00:00:
  * Startup and Settings refreshes share this seam so persisted custom-provider model lists can be updated from the stored provider record while the browser only receives sanitized providers. The refresh must reuse probe SSRF checks, use the raw stored API key, and preserve the previous model list when probing fails or yields no chat models.
  */
@@ -487,7 +1010,8 @@ export async function refreshCustomProviderModels(
 
   const targetProvider = providers[targetIndex];
   const models = await discoverUsableProviderModels(targetProvider);
-  const persistedModels = models.map((model) => ({ id: model.id, name: model.name }));
+
+  const persistedModels = mergeRefreshedCustomProviderModels(models, targetProvider.models ?? []);
 
   /*
    * FNXC:CustomProviders 2026-06-30-00:00:

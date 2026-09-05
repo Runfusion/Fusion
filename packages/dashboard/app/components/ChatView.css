@@ -1431,6 +1431,23 @@ User messages in direct (model-loop) chat carry a compact edit affordance inline
   font-size: var(--font-size-sm);
 }
 
+/*
+FNXC:ChatOutputBudget 2026-08-20-20:17 (RUFU-144):
+Inline notice for assistant turns that ended stopReason "length" with no visible
+content — the model spent its whole maxTokens budget on thinking. Muted warning
+accent (left rule + 8% tint via color-mix) so it reads as an explanation, not an
+error; design tokens only per the styling guide.
+*/
+.chat-message-content--budget-exhausted {
+  color: var(--color-warning);
+  font-size: var(--font-size-sm);
+  line-height: 1.4;
+  padding: var(--space-xs) var(--space-sm);
+  border-left: 2px solid var(--color-warning);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-warning) 8%, transparent);
+}
+
 /* Input area */
 .chat-input-area {
   position: relative;

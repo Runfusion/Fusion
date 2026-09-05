@@ -66,6 +66,7 @@ capacity-model table drop that landed while this PR was open.
 /* FNXC:TaskRecommendations 2026-08-13-22:23: upgrades must install the source-agent index before duplicate intake queries it. */
 /* FNXC:WorkspaceLease 2026-08-15-12:00: the baseline ceiling must include durable coordination tables so an upgraded database is never rejected by the current binary. */
 /* FNXC:ActivityLogTaskSearch 2026-08-20-04:17: advance the schema ceiling so durable central task-ID lookups receive their indexed upgrade. */
+/* FNXC:MemoryFocus 2026-08-21-06:10: 0065 adds the per-conversation chat_sessions.memory_focus read-time topic column (RUFU-068); renumbered from 0059 (FN-9037), then 0060 (FN-9059 workspace leases), then 0061 (FN-066 activity-log index), landing on 0065 above the FN-066..FN-101 batch. Advancing the baseline to 0065 keeps the upgrade guard (${SCHEMA_BASELINE_VERSION} vs applied) from rejecting databases that already carry the batch. */
 /*
 FNXC:ReviewConvergence 2026-08-22-18:58:
 Advance the ceiling to 0065 for FN-149's review-convergence columns. FN-149 registered
@@ -84,7 +85,12 @@ touches no data; it must advance in the same change that ships a new migration f
 /* FNXC:ExternalBlock 2026-08-28-03:48: advance the schema ceiling so upgraded projects materialize the external-obstacle freeze before task reads begin. */
 /* FNXC:PlanApproval 2026-08-28-06:24: advance the ceiling with the per-task approval migration so task reads never precede its column. */
 /* FNXC:PatchnodeLedger 2026-08-28-12:16: the permanent ledger table must exist before TaskStore can commit a completion move atomically with its entry. */
-export const SCHEMA_BASELINE_VERSION = "0071";
+/*
+FNXC:MigrationCollisionRepair 2026-08-30-00:20:
+Main released 0068-0071 while this branch held 0068, so the idempotent mixed-0065 repair
+renumbers to 0072 and the ceiling advances with it.
+*/
+export const SCHEMA_BASELINE_VERSION = "0072";
 /** FNXC:SymbolLock 2026-07-20-10:00: upgrades need durable task declarations before admission resolves symbols. */
 export const TASK_DECLARED_SYMBOLS_VERSION = "0028";
 const INITIAL_SCHEMA_VERSION = "0000";
@@ -264,8 +270,11 @@ export const TASK_REQUIRE_PLAN_APPROVAL_VERSION = "0070";
 /** FNXC:PatchnodeLedger 2026-08-28-12:16: upgraded projects need the durable delivery ledger before any completion transaction runs. */
 export const PATCHNODE_ENTRIES_VERSION = "0071";
 
-/** FNXC:MemoryFocus 2026-08-13-15:57: explicit registration prevents the per-conversation memory-focus migration from being skipped. Renumbered to 0060 (FN-9037 took 0059), then 0061, then 0065 (2026-08-20) when the upstream FN-066..FN-094 batch claimed 0061-0064. */
+/** FNXC:MemoryFocus 2026-08-21-06:10: explicit registration prevents the per-conversation memory-focus migration from being skipped. Renumbered to 0060, then 0061, then 0065: the upstream FN-066..FN-101 batch (2026-08-21) owns 0061-0064 (activity-log index, splitting removal, AI-merge review, repository scope). */
+/* FNXC:MemoryFocus 2026-08-23-07:07: renumbered 0065 -> 0066 in the RUFU-160 origin/main merge: origin/main independently shipped 0065 as FN-149's review-convergence migration (v0.77.0-beta.7); keeping both lines' migrations requires the deploy-line file to take the next free sequence. */
 export const CHAT_SESSION_MEMORY_FOCUS_VERSION = "0066";
+/* FNXC:MigrationCollisionRepair 2026-08-23-07:07: idempotent re-run of both 0065-collision migrations; repairs databases that recorded 0065 with the other line's content. */
+export const MIXED_0065_REPAIR_VERSION = "0072";
 
 /** SECURITY DEFINER helper that only inserts LEGACY_ADOPTION_DRAINED_MARKER. */
 export const LEGACY_ADOPTION_DRAINED_MARKER_FUNCTION = "fusion_mark_legacy_adoption_drained";
@@ -505,13 +514,15 @@ const REMOVE_TASK_SUBTASK_SPLITTING_MIGRATION_PATH = join(MIGRATIONS_DIR, "0062_
 const AI_MERGE_REVIEW_RECONCILIATION_MIGRATION_PATH = join(MIGRATIONS_DIR, "0063_fn_090_ai_merge_review_reconciliation.sql");
 const TASK_REPOSITORY_SCOPE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0064_fn_094_task_repository_scope.sql");
 const REVIEW_CONVERGENCE_STAGE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0065_fn_149_review_convergence_stage.sql");
-/* FNXC:MemoryFocus 2026-08-14-10:30: renumbered to 0061 (FN-9059 workspace leases own 0060), then to 0065 (2026-08-20) when the upstream FN-066..FN-094 batch claimed 0061-0064, then to 0066 (2026-08-23) when upstream's FN-149 claimed 0065. */
+/* FNXC:MemoryFocus 2026-08-23-07:07: renumbered 0065 -> 0066 in the RUFU-160 origin/main merge: origin/main shipped 0065 as FN-149's review-convergence migration (v0.77.0-beta.7), so the deploy line's chat_sessions.memory_focus migration takes the next free sequence. */
 const CHAT_SESSION_MEMORY_FOCUS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0066_chat_session_memory_focus.sql");
 const SESSION_CONTENTION_WAIT_STATE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0067_fn_179_session_contention_wait_state.sql");
 const TASK_STEP_REPORTS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0068_fn_208_task_step_reports.sql");
 const TASK_EXTERNAL_BLOCK_MIGRATION_PATH = join(MIGRATIONS_DIR, "0069_fn_209_task_external_block.sql");
 const TASK_REQUIRE_PLAN_APPROVAL_MIGRATION_PATH = join(MIGRATIONS_DIR, "0070_fn_212_task_require_plan_approval.sql");
 const PATCHNODE_ENTRIES_MIGRATION_PATH = join(MIGRATIONS_DIR, "0071_fn_227_patchnode_entries.sql");
+/* FNXC:MigrationCollisionRepair 2026-08-23-07:07: re-runs both idempotent 0065-collision migrations so databases that recorded 0065 with the other line's content converge on the full schema. */
+const MIXED_0065_REPAIR_MIGRATION_PATH = join(MIGRATIONS_DIR, "0072_repair_mixed_0065_migrations.sql");
 
 /**
  * Ensure the migration bookkeeping table exists. Lives in the public schema so
@@ -653,6 +664,7 @@ export async function applySchemaBaseline(
     const taskExternalBlockAlreadyApplied = applied.includes(TASK_EXTERNAL_BLOCK_VERSION);
     const taskRequirePlanApprovalAlreadyApplied = applied.includes(TASK_REQUIRE_PLAN_APPROVAL_VERSION);
     const patchnodeEntriesAlreadyApplied = applied.includes(PATCHNODE_ENTRIES_VERSION);
+    const mixed0065RepairAlreadyApplied = applied.includes(MIXED_0065_REPAIR_VERSION);
     assertBinaryNotOlderThanDatabase(applied);
     let schemaChanged = false;
 
@@ -1533,6 +1545,14 @@ export async function applySchemaBaseline(
       const migrationSql = await readFile(PATCHNODE_ENTRIES_MIGRATION_PATH, "utf8");
       await tx.execute(sql.raw(migrationSql));
       await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${PATCHNODE_ENTRIES_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+
+    /* FNXC:MigrationCollisionRepair 2026-08-23-07:07: register 0072 last; it is idempotent, so databases that already carry both 0065-collision migrations simply record the version. */
+    if (!mixed0065RepairAlreadyApplied) {
+      const migrationSql = await readFile(MIXED_0065_REPAIR_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${MIXED_0065_REPAIR_VERSION}) ON CONFLICT (version) DO NOTHING`);
       schemaChanged = true;
     }
     return { applied: schemaChanged, pluginHooksRun: pluginHooks.length };

@@ -957,11 +957,16 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
       The reset affordance stays conditional on an actual cap being set: "no cap" is the unset state, so offering to reset a lane that is already unset would advertise an action with nothing to undo.
       `v ? Math.trunc(v) : null` reproduces the previous `val ? parseInt(val, 10) : null` contract exactly \u2014 a token cap is a whole number of tokens, and 0 means "no cap" (null), not a cap of zero.
       */}
+      /*
+      FNXC:ChatContextGuard 2026-08-18-18:06:
+      RUFU-118: tokenCap now documents dual-lane semantics — for chat/CLI sessions it is an upper bound on the compaction threshold (chat compacts at 80% of the model's context window by default; smaller values compact earlier; values above the hard limit clamp), while executor/agent tasks keep "empty = no cap" (TokenCapDetector). Help-text only: the row, value shape, and reset affordance are unchanged.
+      Rebased 2026-08-20: origin moved the tokenCap row into this dedicated Token Cap section; the RUFU-118 help-text update lands here instead of the old Project Model Lanes position.
+      */
       <SettingsNumberRow
         descriptor={{
           key: "tokenCap",
           label: t("settings.projectModels.tokenCap", "Token Cap"),
-          help: t("settings.projectModels.automaticallyCompactContextWhenApproachingThisTokenCount", "Automatically compact context when approaching this token count. Leave empty for no cap (compact only on overflow errors). Set a number to proactively compact when reaching this token count. No default \u2014 unset (no cap)."),
+          help: t("settings.projectModels.automaticallyCompactContextWhenApproachingThisTokenCount", "Upper bound on the context-compaction threshold. Chat sessions compact by default when they reach 80% of the model's context window; a smaller value compacts earlier, and values above the model's hard limit are clamped. Executor/agent tasks: empty = no cap (compact only on overflow errors). No default \u2014 unset."),
           scope: "project",
           placeholder: t("settings.projectModels.noCap", "No cap"),
         }}

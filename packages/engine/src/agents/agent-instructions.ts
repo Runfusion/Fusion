@@ -4,16 +4,18 @@ import { isAbsolute, resolve, relative, normalize, sep, dirname } from "node:pat
 import {
   readProjectMemory,
   buildMemoryPreSteeringNudge,
+  buildPerTurnMemoryRecallCue,
   type Agent,
   type AgentMemoryInclusionMode,
   type AgentRatingSummary,
   type AgentStore,
   type PluginPromptSurface,
+  type Settings,
 } from "@fusion/core";
 import type { PluginRunner } from "../plugins/plugin-runner.js";
 import { createLogger } from "../logger.js";
 import { readAgentMemoryWorkspaceLongTerm } from "../agent-tools.js";
-import { buildMemoryIndex } from "./agent-memory-index.js";
+import { buildMemoryIndex, buildMemoryHeadingIndex } from "./agent-memory-index.js";
 
 const log = createLogger("agent-instructions");
 
@@ -197,6 +199,7 @@ async function formatMemorySection(
   agentId: string,
   rootDir: string,
   inclusionMode: AgentMemoryInclusionMode,
+  memoryCapChars?: number,
 ): Promise<string> {
   if (inclusionMode === "off") {
     return "";
@@ -217,6 +220,51 @@ async function formatMemorySection(
   const workspaceTrimmed = trimAndClamp(workspaceMemory, MAX_MEMORY_LENGTH, "workspace memory", agentId);
   if (!inlineTrimmed && !workspaceTrimmed) {
     return "";
+  }
+
+  /*
+  FNXC:ChatContextBudget 2026-08-20-11:56:
+  User requirement: agent chat must work on models with a 64K context window.
+  The per-agent workspace MEMORY.md can grow past 800K chars (the 50K MAX_MEMORY_LENGTH
+  clamp alone is ~14K tokens), which made the chat static context floor exceed the
+  128K model window's 80% compaction threshold and dead-end every send with
+  ChatContextOverflowError (nothing left for pi compaction to compress). When a
+  chat-path budget is set and the combined inline+workspace memory exceeds it, render
+  a bounded heading index instead of the full bodies. The full content stays reachable
+  via fn_memory_search / fn_memory_get (both the inline memory — synced to the
+  workspace file — and the daily/dream files are indexed by the memory backend).
+  Engine lanes (triage/executor/reviewer/merger/heartbeat) pass no cap and keep the
+  full-mode behavior unchanged.
+  */
+  if (memoryCapChars != null) {
+    const combinedChars = `${inlineTrimmed}\n\n${workspaceTrimmed}`.trim().length;
+    if (combinedChars > memoryCapChars) {
+      const lines = [
+        "## Agent Memory",
+        "",
+        `Agent memory exceeds this session's ${memoryCapChars}-char context budget, so only a bounded index is inlined. Use fn_memory_search first, then fn_memory_get for the relevant entries, instead of assuming the memory content is present in the prompt.`,
+        "",
+      ];
+      if (workspaceTrimmed) {
+        lines.push(
+          buildMemoryHeadingIndex({
+            sectionHeader: "## Agent Memory Index (use fn_memory_search / fn_memory_get to read)",
+            displayPath: memoryWorkspaceDisplayPath(agentId),
+            content: workspaceMemory,
+            // When inline memory also needs a slice, split the budget 3:1; otherwise
+            // the index may take the full budget.
+            maxBytes: Math.max(256, Math.floor(memoryCapChars * (inlineTrimmed ? 0.75 : 1))),
+          }),
+        );
+      }
+      if (inlineTrimmed) {
+        // Budget slice without trimAndClamp's per-turn log warning: this clamp is the
+        // intended steady state for chat, not an anomaly.
+        const inlineBudget = Math.max(256, Math.floor(memoryCapChars * 0.25));
+        lines.push(Buffer.byteLength(inlineTrimmed, "utf8") > inlineBudget ? `${inlineTrimmed.slice(0, inlineBudget)}…` : inlineTrimmed);
+      }
+      return lines.join("\n");
+    }
   }
 
   const lines = [
@@ -286,6 +334,7 @@ export async function resolveAgentInstructions(
   rootDir: string,
   ratingSummary?: AgentRatingSummary,
   inclusionMode: AgentMemoryInclusionMode = "full",
+  memoryCapChars?: number,
 ): Promise<string> {
   if (!agent) return "";
 
@@ -348,6 +397,7 @@ export async function resolveAgentInstructions(
     agent.id,
     rootDir,
     inclusionMode,
+    memoryCapChars,
   );
   if (memorySection) {
     parts.push(memorySection);
@@ -369,12 +419,13 @@ export async function resolveAgentInstructionsWithRatings(
   rootDir: string,
   agentStore: AgentStore | undefined,
   inclusionMode: AgentMemoryInclusionMode = "full",
+  memoryCapChars?: number,
 ): Promise<string> {
   if (!agent) {
     return "";
   }
 
-  const baseInstructions = await resolveAgentInstructions(agent, rootDir, undefined, inclusionMode);
+  const baseInstructions = await resolveAgentInstructions(agent, rootDir, undefined, inclusionMode, memoryCapChars);
 
   if (!agentStore || !agent.id) {
     return baseInstructions;
@@ -382,7 +433,7 @@ export async function resolveAgentInstructionsWithRatings(
 
   try {
     const ratingSummary = await agentStore.getRatingSummary(agent.id);
-    return await resolveAgentInstructions(agent, rootDir, ratingSummary, inclusionMode);
+    return await resolveAgentInstructions(agent, rootDir, ratingSummary, inclusionMode, memoryCapChars);
   } catch {
     return baseInstructions;
   }
@@ -395,6 +446,26 @@ export async function buildAgentChatPrompt(options: {
   basePrompt: string;
   includeProjectMemory?: boolean;
   inclusionMode?: AgentMemoryInclusionMode;
+  /**
+   * Current-turn topic (last user message / room reply input) used for the B.2
+   * per-turn proactive memory recall cue (RUFU-120). Optional — recall is a no-op
+   * without it.
+   */
+  topic?: string;
+  /**
+   * FNXC:ChatContextBudget 2026-08-20-11:56:
+   * Context budget (chars) for the memory sections of the chat system prompt.
+   * Dashboard chat passes this so agent + project memory stay bounded on small
+   * model windows (user requirement: chat must work on 64K-context models).
+   * When a memory source exceeds the budget it is inlined as a heading index;
+   * full content stays reachable via fn_memory_search / fn_memory_get.
+   * Undefined (engine lanes) keeps the legacy full-injection behavior.
+   */
+  memoryCapChars?: number;
+  /** Stable per-chat session id for the session-scoped recall cue dedup. */
+  sessionId?: string;
+  /** Project settings for the recall enable/topK/memoryEnabled gates. */
+  settings?: Partial<Settings>;
 }): Promise<string> {
   const { agent, rootDir, agentStore, basePrompt, includeProjectMemory = false, inclusionMode = "full" } = options;
 
@@ -403,7 +474,7 @@ export async function buildAgentChatPrompt(options: {
 
   const instructionParts = [identitySection];
 
-  const resolvedInstructions = await resolveAgentInstructionsWithRatings(agent, rootDir, agentStore, inclusionMode);
+  const resolvedInstructions = await resolveAgentInstructionsWithRatings(agent, rootDir, agentStore, inclusionMode, options.memoryCapChars);
   if (resolvedInstructions.trim()) {
     instructionParts.push(resolvedInstructions);
   }
@@ -412,13 +483,64 @@ export async function buildAgentChatPrompt(options: {
     try {
       const projectMemory = (await readProjectMemory(rootDir)).trim();
       if (projectMemory) {
-        instructionParts.push(`## Project Memory\n\n${projectMemory}`);
+        /*
+        FNXC:ChatContextBudget 2026-08-20-11:56:
+        The project long-term memory (.fusion/memory/MEMORY.md) had grown to ~230K chars
+        (~65K tokens) and was inlined in full into every agent-bound chat system prompt —
+        the dominant component of the static context floor that overflowed the 128K
+        window's compaction threshold (ChatContextOverflowError dead-end). With a chat
+        budget set, oversized project memory is inlined as a bounded heading index
+        instead; the entries stay reachable via fn_memory_search / fn_memory_get. Without
+        a budget (engine lanes) the legacy full injection is preserved.
+        */
+        if (options.memoryCapChars != null && projectMemory.length > options.memoryCapChars) {
+          instructionParts.push(
+            `## Project Memory\n\n` +
+              buildMemoryHeadingIndex({
+                sectionHeader: "## Project Memory Index (use fn_memory_search / fn_memory_get to read)",
+                displayPath: ".fusion/memory/MEMORY.md",
+                content: projectMemory,
+                maxBytes: Math.max(512, options.memoryCapChars),
+              }) +
+              `\n_Project memory exceeds this session's ${options.memoryCapChars}-char context budget; the index above lists what is available. Read the relevant entries with fn_memory_search / fn_memory_get before answering from memory._`,
+          );
+        } else {
+          instructionParts.push(`## Project Memory\n\n${projectMemory}`);
+        }
       }
     } catch (error: unknown) {
       // Graceful fallback for chat/heartbeat: if project memory cannot be read,
       // continue with available identity + agent instructions.
       const message = error instanceof Error ? error.message : String(error);
       log.warn(`Failed to read project memory for agent ${agent.id}: ${message}`);
+    }
+  }
+
+  /*
+  FNXC:PerTurnMemoryRecall 2026-08-19-01:05:
+  RUFU-120 (B.2 LCM phase 2): per-turn proactive memory recall on the chat path. The
+  dashboard chat manager rebuilds this system prompt before EVERY turn's LLM call, so a
+  bounded, keyword-normalized recall for the current topic (2-3 terms, top-K=3, client-side
+  score filter, session-scoped dedup, <=800-char cue under the pre-steering marker) keeps
+  the agent focused across long chats — the once-per-session pre-steering nudge alone left
+  later turns blind to recent memory. Recall is strictly additive: any failure here (or a
+  silent-skip result) degrades to the previous prompt, never to a broken turn.
+  */
+  if (options.topic?.trim() && inclusionMode !== "off") {
+    try {
+      const recallCue = await buildPerTurnMemoryRecallCue({
+        rootDir,
+        topic: options.topic,
+        settings: options.settings,
+        sessionKey: `chat:${options.sessionId ?? "anonymous"}`,
+      });
+      if (recallCue) {
+        instructionParts.push(`## Memory Recall\n\n${recallCue}`);
+      }
+    } catch (error: unknown) {
+      // Additive recall must never break prompt assembly — log and continue without the cue.
+      const message = error instanceof Error ? error.message : String(error);
+      log.warn(`Per-turn memory recall failed for agent ${agent.id}: ${message}`);
     }
   }
 

@@ -28,7 +28,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmdirSy
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { loadWorkspaceConfig, type TaskMoveLanes, resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, hasSharedBranchMemberAutoMergeHold, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getPostMergeFinalizeBlocker, planConfirmedMergeChecklistReconciliation, getTaskMergeBlocker, resolvePreMergeGateForTask, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isLiveSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, resolveExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, getBuiltinWorkflow, isBuiltinWorkflowId, resolveWorkflowIrForTask, resolveWorkflowIrForTaskWithProvenance, resolveRequiredPreMergeStepIds, resolveReboundTarget, columnsWithFlag, resolveLifecycleColumns, resolveTaskLifecycleColumns, isWipColumnRole, isReviewColumnRole, isTerminalColumnRole, workflowHasColumn, planLegacyAdoption, resolveOrphanedPendingStepResults, resolveUnprovenReviewApproval, classifyReviewLease, PLAN_REVIEW_LEASE_STALENESS_MS, DEFAULT_MAX_POST_REVIEW_FIXES, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type MoveTaskOptions, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult, type WorkflowIr, type WorkflowIrV2,
+import { loadWorkspaceConfig, type TaskMoveLanes, resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, hasSharedBranchMemberAutoMergeHold, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getPostMergeFinalizeBlocker, planConfirmedMergeChecklistReconciliation, getTaskMergeBlocker, resolvePreMergeGateForTask, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isLiveSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, resolveExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, getBuiltinWorkflow, isBuiltinWorkflowId, resolveWorkflowIrForTask, resolveWorkflowIrForTaskWithProvenance, resolveRequiredPreMergeStepIds, resolveReboundTarget, columnsWithFlag, resolveLifecycleColumns, resolveTaskLifecycleColumns, isWipColumnRole, isReviewColumnRole, isTerminalColumnRole, workflowHasColumn, planLegacyAdoption, resolveOrphanedPendingStepResults, resolveUnprovenReviewApproval, classifyReviewLease, PLAN_REVIEW_LEASE_STALENESS_MS, DEFAULT_MAX_POST_REVIEW_FIXES, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatInFlightGenerationState, type ChatSession, type ChatStore, type MessageStore, type TaskStore, type MoveTaskOptions, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult, type WorkflowIr, type WorkflowIrV2,
 
   resolveNearDuplicateCanonicalFlags,
   LEGACY_COLUMN_IDS_BY_ROLE,
@@ -214,6 +214,7 @@ export {
   PAUSE_ABORT_PARK_OPERATOR_MARKER,
   MAX_AUTO_MERGE_RETRIES,
   MAX_TRANSIENT_MERGE_RECOVERIES,
+  CHAT_IN_FLIGHT_GENERATION_STALE_MS,
 } from "./healing/self-healing-constants.js";
 import {
   COMPLETED_BLOCKED_PAUSE_REASON,
@@ -227,6 +228,7 @@ import {
   PAUSE_ABORT_PARK_ERROR_MARKER,
   PAUSE_ABORT_PARK_OPERATOR_MARKER,
   MAX_TRANSIENT_MERGE_RECOVERIES,
+  CHAT_IN_FLIGHT_GENERATION_STALE_MS,
 } from "./healing/self-healing-constants.js";
 export { isBranchAheadOfBase } from "./healing/self-healing-branch.js";
 import { isBranchAheadOfBase } from "./healing/self-healing-branch.js";
@@ -898,6 +900,14 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   private principalHeldPlanningNoActionAudited = new Set<string>();
   /* FNXC:SymbolLock 2026-07-30-14:20: idle symbol-lock sweeps emit one no-action audit until a stale lock re-arms the diagnostic. */
   private symbolLockNoActionAudited = false;
+  /*
+   * FNXC:ChatInFlightRecovery 2026-08-20-20:17 (RUFU-144):
+   * Idle in-flight chat-generation sweeps emit one no-action audit (candidates seen,
+   * none stale) until a cleared stale flag re-arms the diagnostic — mirrors
+   * symbolLockNoActionAudited so periodic maintenance stays visible without flooding
+   * run-audit.
+   */
+  private inFlightChatGenerationNoActionAudited = false;
   private maintenanceTickCounter = 0;
   private readonly taskLifecycleRetentionLastPrunedAt = new Map<string, number>();
   private readonly staleContentRerouteAuditKeys = new Set<string>();
@@ -2000,6 +2010,9 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       { name: "reconcile-missing-dependencies", fn: () => this.reconcileMissingDependencies().then(() => undefined) },
       { name: "reconcile-dependency-blocking-leases", fn: () => this.reconcileDependencyBlockingLeases().then(() => undefined) },
       { name: "reconcile-stale-symbol-locks", fn: () => this.reconcileStaleSymbolLocks().then(() => undefined) },
+      // FNXC:ChatInFlightRecovery 2026-08-20-20:17 (RUFU-144): clear in_flight_generation flags stranded by a
+      // dashboard restart before any client re-attach can reopen a dead streaming UI state.
+      { name: "reconcile-stale-in-flight-chat-generations", fn: () => this.reconcileStaleInFlightChatGenerations().then(() => undefined) },
       { name: "reconcile-completed-blocked", fn: () => this.reconcileCompletedBlockedTasks().then(() => undefined) },
       { name: "reconcile-in-review-unmet-dependencies", fn: () => this.reconcileInReviewUnmetDependencies().then(() => undefined) },
       { name: "reconcile-engine-downtime-active-timing", fn: () => this.reconcileEngineDowntimeActiveTiming().then(() => undefined) },
@@ -2821,6 +2834,12 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
               log.debug(`Maintenance batch 1 step "cleanup-old-chats" succeeded — sessions=${sessionsDeleted} rooms=${roomsDeleted}`);
             }
           },
+        },
+        {
+          // FNXC:ChatInFlightRecovery 2026-08-20-20:17 (RUFU-144): periodic net — catches a generation stranded
+          // while the dashboard stayed up (crash between the last snapshot and the final clear), not just restarts.
+          name: "reconcile-stale-in-flight-chat-generations",
+          fn: () => this.reconcileStaleInFlightChatGenerations(),
         },
         {
           name: "cleanup-old-mail",
@@ -7047,6 +7066,99 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       }, { log });
     }
     return 0;
+  }
+
+  /**
+   * FNXC:ChatInFlightRecovery 2026-08-20-20:17 (RUFU-144):
+   * Crash recovery for dashboard chat in-flight generation flags. A restart (or crash)
+   * of the dashboard process leaves `project.chat_sessions.in_flight_generation` stuck
+   * at {"status":"generating"} forever, and every client re-attach reopens a streaming
+   * UI state that never resolves (zombie "generating" thinking boxes — four stale rows
+   * 1–9 days old were observed 2026-08-20). A generation cannot outlive the process that
+   * started it and no owner/PID is recorded, so staleness is the liveness proof: a
+   * candidate's `startedAt` (fallback: session `updated_at`) older than
+   * CHAT_IN_FLIGHT_GENERATION_STALE_MS is provably dead and gets cleared. Rows whose age
+   * cannot be proven (both timestamps unparseable) are NEVER cleared — a false clear
+   * would kill a live generation's UI state. The in-memory activeGenerations map is
+   * deliberately not consulted: it is empty right after a restart, which is exactly the
+   * bug this sweep fixes. One listSessions pass, one setInFlightGeneration(null) per
+   * confirmed stale row; per-row failures are logged and do not stop the sweep.
+   */
+  async reconcileStaleInFlightChatGenerations(): Promise<number> {
+    const chatStore = this.options.chatStore;
+    if (!chatStore) return 0;
+
+    let sessions: ChatSession[];
+    try {
+      sessions = await chatStore.listSessions();
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      log.warn(`reconcileStaleInFlightChatGenerations: failed to list chat sessions: ${errorMessage}`);
+      return 0;
+    }
+
+    const now = Date.now();
+    const clearedSessionIds: string[] = [];
+    let candidateCount = 0;
+
+    for (const session of sessions) {
+      const inFlight = session.inFlightGeneration;
+      if (!inFlight || typeof inFlight !== "object" || inFlight.status !== "generating") continue;
+      candidateCount += 1;
+      const referenceMs = this.chatInFlightGenerationReferenceMs(inFlight, session.updatedAt);
+      // Unknown age (no parseable startedAt AND no parseable updated_at): never clear.
+      if (referenceMs === null) continue;
+      if (now - referenceMs <= CHAT_IN_FLIGHT_GENERATION_STALE_MS) continue;
+      try {
+        await chatStore.setInFlightGeneration(session.id, null);
+        clearedSessionIds.push(session.id);
+        log.debug(
+          `reconcileStaleInFlightChatGenerations: cleared stale in-flight generation for chat session ${session.id} ` +
+          `(reference ${new Date(referenceMs).toISOString()}, age ${Math.round((now - referenceMs) / 60000)} min)`,
+        );
+      } catch (err: unknown) {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        log.warn(`reconcileStaleInFlightChatGenerations: failed to clear session ${session.id}: ${errorMessage}`);
+      }
+    }
+
+    if (clearedSessionIds.length > 0) {
+      this.inFlightChatGenerationNoActionAudited = false;
+      await emitBoundedRunAudit(this.store, {
+        agentId: "self-healing", runId: "chat-in-flight-generation-reconcile", domain: "database",
+        mutationType: "chat:stale-in-flight-generation-cleared", target: "chat-sessions",
+        metadata: { count: clearedSessionIds.length, sessionIds: clearedSessionIds.slice(0, 20), outcome: "cleared" },
+      }, { log });
+      return clearedSessionIds.length;
+    }
+    /* FNXC:ChatInFlightRecovery 2026-08-20-20:17 (RUFU-144): one deduped no-action row when candidates exist but none are stale yet. */
+    if (candidateCount > 0 && !this.inFlightChatGenerationNoActionAudited) {
+      this.inFlightChatGenerationNoActionAudited = true;
+      await emitBoundedRunAudit(this.store, {
+        agentId: "self-healing", runId: "chat-in-flight-generation-reconcile", domain: "database",
+        mutationType: "chat:stale-in-flight-generation-no-action", target: "chat-sessions",
+        metadata: { count: 0, outcome: "no-action" },
+      }, { log });
+    }
+    return 0;
+  }
+
+  /**
+   * FNXC:ChatInFlightRecovery 2026-08-20-20:17 (RUFU-144):
+   * Resolve the staleness reference timestamp for an in-flight generation: the
+   * snapshot's `startedAt` when it parses as a finite ISO time, otherwise the
+   * session's `updated_at` (pre-fix legacy rows lack `startedAt`), otherwise null
+   * (unknown age — the caller must skip the row rather than clear it).
+   */
+  private chatInFlightGenerationReferenceMs(
+    inFlight: ChatInFlightGenerationState,
+    sessionUpdatedAt: string,
+  ): number | null {
+    const startedMs = Date.parse(inFlight.startedAt ?? "");
+    if (Number.isFinite(startedMs)) return startedMs;
+    const updatedAtMs = Date.parse(sessionUpdatedAt);
+    if (Number.isFinite(updatedAtMs)) return updatedAtMs;
+    return null;
   }
 
   async reconcileDependencyBlockingLeases(): Promise<number> {

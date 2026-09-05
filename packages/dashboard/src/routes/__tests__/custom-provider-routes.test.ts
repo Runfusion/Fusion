@@ -275,6 +275,54 @@ describe("custom provider routes", () => {
     });
   });
 
+  it("PUT /custom-providers/:id clears the stored model list on an explicit empty models array", async () => {
+    settings.customProviders = [
+      {
+        id: "cp-1",
+        name: "Original",
+        apiType: "openai-compatible",
+        baseUrl: "https://original.example.com",
+        models: [{ id: "old-model", name: "Old model" }],
+      },
+    ];
+
+    const app = createApp(settings);
+    // FNXC:CustomProviderModelWindows 2026-08-21-00:06: RUFU-145 PR #3493 review (Greptile
+    // P1): the partial merge must distinguish an omitted `models` key (keep stored list)
+    // from an explicit empty array (persist the operator's clear). This is the server-side
+    // half of the invariant the editor's explicit models: [] save depends on.
+    const res = await REQUEST(app, "PUT", "/api/custom-providers/cp-1", {
+      name: "Original",
+      apiType: "openai-compatible",
+      models: [],
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ id: "cp-1", models: [] });
+    expect(settings.customProviders?.[0]?.models).toEqual([]);
+  });
+
+  it("PUT /custom-providers/:id keeps the stored model list when models is omitted", async () => {
+    settings.customProviders = [
+      {
+        id: "cp-1",
+        name: "Original",
+        apiType: "openai-compatible",
+        baseUrl: "https://original.example.com",
+        models: [{ id: "old-model", name: "Old model" }],
+      },
+    ];
+
+    const app = createApp(settings);
+    const res = await REQUEST(app, "PUT", "/api/custom-providers/cp-1", {
+      name: "Renamed",
+      apiType: "openai-compatible",
+    });
+
+    expect(res.status).toBe(200);
+    expect(settings.customProviders?.[0]?.models).toEqual([{ id: "old-model", name: "Old model" }]);
+  });
+
   it("PUT /custom-providers/:id preserves stored key when a masked key is echoed back", async () => {
     settings.customProviders = [
       {
@@ -459,6 +507,49 @@ describe("custom provider routes", () => {
     expect(settings.customProviders?.[0]?.models).toEqual([{ id: "local-model", name: "Local model" }]);
   });
 
+  /*
+  FNXC:LocalProviderWindowDetection 2026-08-22-02:05:
+  RUFU-138: the trusted-refresh enrichment shape check keys on the `models` array (not `data`),
+  so a local backend that serves only `{data: [...]}`-shaped responses (like the catch-all
+  fetchMock above) triggers the bounded tags + native round-trips but no windows are applied
+  and no per-model /api/show batch starts — the refresh stays behavior-identical to the
+  pre-enrichment flow.
+  */
+  it("POST /custom-providers/:id/refresh-models leaves {data:[...]}-shaped local backends unchanged (bounded enrichment shape check)", async () => {
+    settings.customProviders = [
+      {
+        id: "cp-local",
+        name: "Local Data-Shaped Backend",
+        apiType: "openai-compatible",
+        baseUrl: "http://localhost:1234/v1",
+        apiKey: "local-secret",
+        models: [{ id: "stale-local", name: "Stale local" }],
+      },
+    ];
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ data: [{ id: "local-model", name: "Local model" }] }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const app = createApp(settings);
+
+    const res = await REQUEST(app, "POST", "/api/custom-providers/cp-local/refresh-models");
+
+    expect(res.status).toBe(200);
+    // Bounded budget: main probe + one tags + one native = exactly 3 fetches; no /api/show
+    // batch — the shape check keys on the `models` array, so `{data: [...]}` applies nothing.
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    const urls = fetchMock.mock.calls.map((c) => c[0]);
+    expect(urls).toEqual([
+      "http://localhost:1234/v1/models",
+      "http://localhost:1234/api/tags",
+      "http://localhost:1234/api/v1/models",
+    ]);
+    expect(urls).not.toContain("http://localhost:1234/api/show");
+    // No window applied from a non-native shape; stored models are unchanged in shape.
+    expect(settings.customProviders?.[0]?.models).toEqual([{ id: "local-model", name: "Local model" }]);
+  });
+
   it("POST /custom-providers/:id/refresh-models preserves concurrent provider changes made during probing", async () => {
     settings.customProviders = [
       {
@@ -573,7 +664,13 @@ describe("custom provider routes", () => {
         apiType: "openai-compatible",
         baseUrl: "https://api.example.com/v1",
         apiKey: "sk-stored-secret",
-        models: [{ id: "stale-model", name: "Stale model" }],
+        /*
+         * FNXC:CustomProviderModelWindows 2026-08-19-14:18:
+         * RUFU-123: the preservation fixture carries manually persisted per-model
+         * windows — a failed probe must keep the full previous list INCLUDING those
+         * values, not drop them.
+         */
+        models: [{ id: "stale-model", name: "Stale model", contextWindow: 32768, maxTokens: 4096 }],
       },
     ];
     vi.stubGlobal("fetch", vi.fn(async () => ({
@@ -589,7 +686,9 @@ describe("custom provider routes", () => {
 
     expect(res.status).toBe(401);
     expect(updates).toHaveLength(0);
-    expect(settings.customProviders?.[0]?.models).toEqual([{ id: "stale-model", name: "Stale model" }]);
+    expect(settings.customProviders?.[0]?.models).toEqual([
+      { id: "stale-model", name: "Stale model", contextWindow: 32768, maxTokens: 4096 },
+    ]);
   });
 
   it("POST /custom-providers/:id/refresh-models preserves models when only non-chat models are returned", async () => {
@@ -623,5 +722,571 @@ describe("custom provider routes", () => {
     const res = await REQUEST(app, "POST", "/api/custom-providers/missing/refresh-models");
 
     expect(res.status).toBe(404);
+  });
+});
+
+/*
+FNXC:CustomProviderModelWindows 2026-08-19-14:18:
+RUFU-123: per-model contextWindow/maxTokens on the custom-provider CRUD + refresh
+paths. Symptom-verification assertion 1 (settings round-trip): POST/PUT with
+contextWindow 32768 / maxTokens 4096 persist and GET returns them unchanged; invalid
+values are rejected 400 with the field path named. The refresh-models id-merge keeps
+manual windows when the probe reports none (Anthropic-compatible) and lets probe
+windows win when present (OpenAI-compatible limit fields).
+*/
+describe("RUFU-123: per-model contextWindow/maxTokens round-trip", () => {
+  let settings: GlobalSettings;
+
+  beforeEach(() => {
+    settings = {};
+    vi.unstubAllGlobals();
+  });
+
+  it("POST + GET + PUT round-trip preserves per-model windows unchanged", async () => {
+    const app = createApp(settings);
+    const posted = await REQUEST(app, "POST", "/api/custom-providers", {
+      name: "RUFU-123 Provider",
+      apiType: "openai-compatible",
+      baseUrl: "https://api.example.com/v1",
+      models: [
+        { id: "deepseek-v4", name: "DeepSeek V4", contextWindow: 32768, maxTokens: 4096 },
+        { id: "legacy-model", name: "Legacy Model" },
+      ],
+    });
+    expect(posted.status).toBe(201);
+    expect(posted.body.models).toEqual([
+      { id: "deepseek-v4", name: "DeepSeek V4", contextWindow: 32768, maxTokens: 4096 },
+      { id: "legacy-model", name: "Legacy Model" },
+    ]);
+    const providerId = posted.body.id as string;
+
+    const fetched = await REQUEST(app, "GET", "/api/custom-providers");
+    expect(fetched.status).toBe(200);
+    const fetchedModel = fetched.body.find((p: any) => p.id === providerId)?.models?.[0];
+    expect(fetchedModel).toEqual({ id: "deepseek-v4", name: "DeepSeek V4", contextWindow: 32768, maxTokens: 4096 });
+
+    const updated = await REQUEST(app, "PUT", `/api/custom-providers/${providerId}`, {
+      models: [
+        { id: "deepseek-v4", name: "DeepSeek V4", contextWindow: 65536, maxTokens: 8192 },
+        { id: "legacy-model", name: "Legacy Model" },
+      ],
+    });
+    expect(updated.status).toBe(200);
+    expect(updated.body.models).toEqual([
+      { id: "deepseek-v4", name: "DeepSeek V4", contextWindow: 65536, maxTokens: 8192 },
+      { id: "legacy-model", name: "Legacy Model" },
+    ]);
+    // The model entry without window fields stays key-free — no explicit undefined.
+    expect(settings.customProviders?.[0]?.models?.[1]).toEqual({ id: "legacy-model", name: "Legacy Model" });
+  });
+
+  it.each([
+    { field: "contextWindow", values: [0, -1, "abc"] },
+    { field: "maxTokens", values: [0, -1, "abc"] },
+  ])("POST rejects invalid models[0].%s as 400", async ({ field, values }) => {
+    const app = createApp(settings);
+    for (const value of values) {
+      const res = await REQUEST(app, "POST", "/api/custom-providers", {
+        name: "RUFU-123 Provider",
+        apiType: "openai-compatible",
+        baseUrl: "https://api.example.com/v1",
+        models: [{ id: "m", name: "M", [field]: value }],
+      });
+      expect(res.status, `value=${String(value)}`).toBe(400);
+      expect(res.body.error).toContain(`models[0].${field}`);
+    }
+    expect(settings.customProviders).toBeUndefined();
+  });
+
+  it("PUT rejects invalid models[0].contextWindow as 400", async () => {
+    settings.customProviders = [
+      { id: "cp-1", name: "P", apiType: "openai-compatible", baseUrl: "https://api.example.com/v1" },
+    ];
+    const app = createApp(settings);
+    const res = await REQUEST(app, "PUT", "/api/custom-providers/cp-1", {
+      models: [{ id: "m", name: "M", contextWindow: Number.NaN }],
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("models[0].contextWindow");
+    expect(settings.customProviders?.[0]?.models).toBeUndefined();
+  });
+
+  it("refresh-models overwrites prior windows when the OpenAI-compatible probe reports limit fields", async () => {
+    settings.customProviders = [
+      {
+        id: "cp-1",
+        name: "OpenAI Proxy",
+        apiType: "openai-compatible",
+        baseUrl: "https://api.example.com/v1",
+        apiKey: "sk-stored-secret",
+        models: [
+          { id: "fresh-model", name: "Fresh model", contextWindow: 100000, maxTokens: 8192 },
+          { id: "probe-only-model", name: "Probe only" },
+        ],
+      },
+    ];
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        data: [
+          { id: "fresh-model", name: "Fresh model", limit: { context: 32768, output: 4096 } },
+          { id: "probe-only-model", name: "Probe only", limit: { context: 8192 } },
+        ],
+      }),
+    })));
+    const app = createApp(settings);
+
+    const res = await REQUEST(app, "POST", "/api/custom-providers/cp-1/refresh-models");
+
+    expect(res.status).toBe(200);
+    expect(settings.customProviders?.[0]?.models).toEqual([
+      { id: "fresh-model", name: "Fresh model", contextWindow: 32768, maxTokens: 4096 },
+      // Probe reported only the window for this model — prior (absent) maxTokens stays absent.
+      { id: "probe-only-model", name: "Probe only", contextWindow: 8192 },
+    ]);
+  });
+
+  it("refresh-models on an Anthropic-compatible provider preserves manual windows the probe never reports", async () => {
+    settings.customProviders = [
+      {
+        id: "cp-1",
+        name: "Anthropic Proxy",
+        apiType: "anthropic-compatible",
+        baseUrl: "https://anthropic.example.com/v1",
+        apiKey: "sk-stored-secret",
+        models: [
+          { id: "claude-sonnet-4-20250514", name: "Claude Sonnet 4", contextWindow: 200000, maxTokens: 8192 },
+          { id: "legacy-model", name: "Legacy model" },
+        ],
+      },
+    ];
+    // Anthropic's models list carries no window data — the probe returns id/display_name only.
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        data: [
+          { id: "claude-sonnet-4-20250514", display_name: "Claude Sonnet 4" },
+          { id: "claude-opus-4-20250514", display_name: "Claude Opus 4" },
+        ],
+      }),
+    })));
+    const app = createApp(settings);
+
+    const res = await REQUEST(app, "POST", "/api/custom-providers/cp-1/refresh-models");
+
+    expect(res.status).toBe(200);
+    expect(settings.customProviders?.[0]?.models).toEqual([
+      // The manual 200000/8192 windows survive the refresh via the id-merge.
+      { id: "claude-sonnet-4-20250514", name: "Claude Sonnet 4", contextWindow: 200000, maxTokens: 8192 },
+      // Newly discovered model: no prior windows to merge.
+      { id: "claude-opus-4-20250514", name: "Claude Opus 4" },
+    ]);
+  });
+
+  /*
+  FNXC:CustomProviderModelWindows 2026-08-20-22:24: RUFU-145 PR #3493 review regression:
+  the refresh merged the probe against the PRE-PROBE persisted windows, so a concurrent
+  model-limit edit during the probe window was overwritten on write-back. The
+  source-of-truth map must be built from the re-read record. Production getSettings()
+  returns a fresh object per read, so this test clones per read — the shared settings
+  alias of the surrounding harness would hide the stale-map bug.
+  */
+  it("refresh-models preserves a concurrent model-limit edit made during probing", async () => {
+    settings.customProviders = [
+      {
+        id: "cp-1",
+        name: "P",
+        apiType: "openai-compatible",
+        baseUrl: "https://api.example.com/v1",
+        apiKey: "sk-stored-secret",
+        models: [{ id: "m1", name: "M1", contextWindow: 32768, maxTokens: 4096 }],
+      },
+    ];
+    const store = createMockStore(settings, () => undefined);
+    store.getGlobalSettingsStore = vi.fn(() => ({
+      getSettings: vi.fn(async () => structuredClone(settings)),
+      updateSettings: vi.fn(),
+      getSettingsPath: vi.fn(),
+      init: vi.fn(),
+      invalidateCache: vi.fn(),
+    }));
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+
+    // The probe omits limit objects (common for OpenAI-compatible endpoints). During
+    // the probe window a concurrent PUT raises m1's contextWindow to 65536.
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      settings.customProviders![0]!.models = [{ id: "m1", name: "M1", contextWindow: 65536, maxTokens: 4096 }];
+      return {
+        ok: true,
+        json: async () => ({ data: [{ id: "m1", name: "M1" }] }),
+      };
+    }));
+
+    const res = await REQUEST(app, "POST", "/api/custom-providers/cp-1/refresh-models");
+    expect(res.status).toBe(200);
+    // The concurrent edit must survive the refresh write-back (stale-map regression).
+    expect(settings.customProviders?.[0]?.models).toEqual([
+      { id: "m1", name: "M1", contextWindow: 65536, maxTokens: 4096 },
+    ]);
+  });
+
+  /*
+  FNXC:CustomProviderModelWindows 2026-08-20-22:27: RUFU-145 PR #3493 review invariant:
+  the output reservation must fit inside the context window on every persistence
+  surface (POST, PUT, refresh). A pair where maxTokens >= contextWindow makes the
+  chat-lane compaction hard limit (contextWindow - max(16384, maxTokens)) non-positive
+  — the review fixture persisted contextWindow 8192 with no maxTokens, the engine
+  defaulted maxTokens to 16384, and the documented threshold became -8192.
+  */
+  it("POST rejects a model whose maxTokens cannot fit its contextWindow (incompatible pair invariant)", async () => {
+    const app = createApp(settings);
+    const res = await REQUEST(app, "POST", "/api/custom-providers", {
+      name: "RUFU-123 Provider",
+      apiType: "openai-compatible",
+      baseUrl: "https://api.example.com/v1",
+      models: [{ id: "probe-only-model", name: "Probe only", contextWindow: 8192, maxTokens: 16384 }],
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("models[0].maxTokens");
+    expect(res.body.error).toContain("models[0].contextWindow");
+    expect(settings.customProviders).toBeUndefined();
+  });
+
+  it("PUT rejects a model whose maxTokens cannot fit its contextWindow (incompatible pair invariant)", async () => {
+    const app = createApp(settings);
+    const posted = await REQUEST(app, "POST", "/api/custom-providers", {
+      name: "RUFU-123 Provider",
+      apiType: "openai-compatible",
+      baseUrl: "https://api.example.com/v1",
+      models: [{ id: "probe-only-model", name: "Probe only", contextWindow: 8192 }],
+    });
+    expect(posted.status).toBe(201);
+    const providerId = posted.body.id as string;
+    const res = await REQUEST(app, "PUT", `/api/custom-providers/${providerId}`, {
+      models: [{ id: "probe-only-model", name: "Probe only", contextWindow: 8192, maxTokens: 16384 }],
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("models[0].maxTokens");
+    // The rejected update is not persisted.
+    expect(settings.customProviders?.[0]?.models).toEqual([{ id: "probe-only-model", name: "Probe only", contextWindow: 8192 }]);
+  });
+
+  it("refresh-models drops a probed output limit that cannot fit the probed context window (incompatible pair invariant)", async () => {
+    const settings: GlobalSettings = {
+      customProviders: [
+        {
+          id: "cp-1",
+          name: "Small window",
+          apiType: "openai-compatible",
+          baseUrl: "https://api.small.example.com/v1",
+          apiKey: "sk-test-1",
+        },
+      ],
+    };
+    const app = createApp(settings);
+    vi.stubGlobal("fetch", vi.fn(async (_url: unknown, init?: { method?: string }) => {
+      if (init?.method === "GET") {
+        return {
+          ok: true,
+          json: async () => ({ data: [{ id: "m1", name: "M1", limit: { context: 8192, output: 16384 } }] }),
+        };
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    }));
+
+    const res = await REQUEST(app, "POST", "/api/custom-providers/cp-1/refresh-models");
+    expect(res.status).toBe(200);
+    // The inconsistent probed output limit is dropped; the window persists alone so
+    // the engine default + safe small-window guard threshold apply downstream.
+    expect(settings.customProviders?.[0]?.models).toEqual([{ id: "m1", name: "M1", contextWindow: 8192 }]);
+  });
+
+  /*
+  FNXC:CustomProviderThinkingFormat 2026-08-21-05:47:
+  RUFU-143: the dashboard persists the per-model thinking flags verbatim (additive to the
+  RUFU-123 window fields). Invalid thinkingFormat values and non-boolean reasoning are rejected
+  400 with the exact field path named; the flags round-trip through sanitizeProvider into the
+  create/list responses; refresh-models carries a prior thinkingFormat over when set and a prior
+  reasoning opt-out (false) across re-probing — never pre-filling flags from the probe heuristic,
+  which would silently change the wire behavior of a model that was working.
+  */
+  it("POST /custom-providers accepts and persists per-model thinking flags (RUFU-143)", async () => {
+    const updates: Array<Partial<GlobalSettings>> = [];
+    const app = createApp(settings, (patch) => updates.push(patch));
+
+    const res = await REQUEST(app, "POST", "/api/custom-providers", {
+      name: "Qwen LiteLLM",
+      apiType: "openai-compatible",
+      baseUrl: "https://litellm.example.com/v1",
+      apiKey: "sk-qwen-1234",
+      models: [
+        { id: "qwen3", name: "Qwen3", thinkingFormat: "qwen-chat-template", reasoning: false },
+        { id: "other", name: "Other" },
+      ],
+    });
+
+    expect(res.status).toBe(201);
+    // Flags round-trip through the create response (sanitizeProvider keeps model entries verbatim).
+    expect(res.body.models).toEqual([
+      { id: "qwen3", name: "Qwen3", thinkingFormat: "qwen-chat-template", reasoning: false },
+      { id: "other", name: "Other" },
+    ]);
+    const persisted = updates[0].customProviders as CustomProvider[];
+    expect(persisted[0]?.models).toEqual([
+      { id: "qwen3", name: "Qwen3", thinkingFormat: "qwen-chat-template", reasoning: false },
+      { id: "other", name: "Other" },
+    ]);
+
+    // GET round-trip: the flag appears on the listed (sanitized) provider.
+    const listRes = await REQUEST(app, "GET", "/api/custom-providers");
+    expect(listRes.status).toBe(200);
+    expect(listRes.body[0]?.models?.[0]).toEqual({ id: "qwen3", name: "Qwen3", thinkingFormat: "qwen-chat-template", reasoning: false });
+  });
+
+  it("POST /custom-providers rejects an invalid thinkingFormat with the field path (RUFU-143)", async () => {
+    const app = createApp(settings);
+
+    const res = await REQUEST(app, "POST", "/api/custom-providers", {
+      name: "Qwen LiteLLM",
+      apiType: "openai-compatible",
+      baseUrl: "https://litellm.example.com/v1",
+      models: [{ id: "qwen3", name: "Qwen3", thinkingFormat: "bogus-format" }],
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('Invalid models[0].thinkingFormat "bogus-format". Allowed:');
+    expect(res.body.error).toContain("qwen-chat-template");
+    expect(settings.customProviders).toBeUndefined();
+  });
+
+  it("POST /custom-providers rejects a non-boolean reasoning (RUFU-143)", async () => {
+    const app = createApp(settings);
+
+    const res = await REQUEST(app, "POST", "/api/custom-providers", {
+      name: "Qwen LiteLLM",
+      apiType: "openai-compatible",
+      baseUrl: "https://litellm.example.com/v1",
+      models: [{ id: "qwen3", name: "Qwen3", reasoning: "no" }],
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("models[0].reasoning must be a boolean");
+  });
+
+  it("PUT /custom-providers/:id persists per-model thinking flags (RUFU-143)", async () => {
+    settings.customProviders = [
+      {
+        id: "cp-1",
+        name: "Qwen LiteLLM",
+        apiType: "openai-compatible",
+        baseUrl: "https://litellm.example.com/v1",
+        apiKey: "sk-qwen-1234",
+        models: [{ id: "qwen3", name: "Qwen3" }],
+      },
+    ];
+    const updates: Array<Partial<GlobalSettings>> = [];
+    const app = createApp(settings, (patch) => updates.push(patch));
+
+    const res = await REQUEST(app, "PUT", "/api/custom-providers/cp-1", {
+      models: [{ id: "qwen3", name: "Qwen3", thinkingFormat: "deepseek", reasoning: true }],
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.models).toEqual([{ id: "qwen3", name: "Qwen3", thinkingFormat: "deepseek", reasoning: true }]);
+    const persisted = updates[0].customProviders as CustomProvider[];
+    expect(persisted[0]?.models).toEqual([{ id: "qwen3", name: "Qwen3", thinkingFormat: "deepseek", reasoning: true }]);
+  });
+
+  it("refresh-models preserves prior thinkingFormat and reasoning opt-out, never pre-filling from the probe (RUFU-143)", async () => {
+    settings.customProviders = [
+      {
+        id: "cp-1",
+        name: "Qwen LiteLLM",
+        apiType: "openai-compatible",
+        baseUrl: "https://litellm.example.com/v1",
+        apiKey: "sk-qwen-1234",
+        models: [
+          { id: "qwen3", name: "Qwen3", thinkingFormat: "qwen-chat-template", reasoning: false },
+          { id: "reasoning-o1", name: "Reasoning O1" },
+          { id: "prior-true", name: "Prior True", reasoning: true },
+        ],
+      },
+    ];
+    // The probe reports no thinkingFormat and guesses reasoning=true for the "o1"/"reason" ids —
+    // neither guess may be persisted. No limit objects, so windows are all undefined too.
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        data: [
+          { id: "qwen3", name: "Qwen3" },
+          { id: "reasoning-o1", name: "Reasoning O1" },
+          { id: "prior-true", name: "Prior True" },
+        ],
+      }),
+    })));
+    const app = createApp(settings);
+
+    const res = await REQUEST(app, "POST", "/api/custom-providers/cp-1/refresh-models");
+
+    expect(res.status).toBe(200);
+    expect(settings.customProviders?.[0]?.models).toEqual([
+      // Prior thinkingFormat + reasoning opt-out survive the re-probe.
+      { id: "qwen3", name: "Qwen3", thinkingFormat: "qwen-chat-template", reasoning: false },
+      // The probe's reasoning:true heuristic ("reason"/"o1" in the id) is NOT pre-filled.
+      { id: "reasoning-o1", name: "Reasoning O1" },
+      // A prior explicit reasoning:true is not re-emitted — the default is already presumed-capable.
+      { id: "prior-true", name: "Prior True" },
+    ]);
+  });
+});
+
+/*
+ * FNXC:CustomProviderModelWindows 2026-08-22-02:05:
+ * RUFU-138 Step 3: end-to-end refresh-models persistence for the local auto-detection paths —
+ * the probed/enriched windows must flow through the RUFU-123 id-merge into the persisted
+ * per-model rows (probe-wins, else prior persisted), with exactly one settings update per
+ * refresh and manual windows surviving windowless probes.
+ */
+describe("RUFU-138: refresh-models end-to-end window persistence", () => {
+  let settings: GlobalSettings;
+
+  beforeEach(() => {
+    settings = {};
+    vi.unstubAllGlobals();
+  });
+
+  it("auto-fills per-model windows for a local Ollama provider and persists them via one settings update", async () => {
+    settings.customProviders = [
+      {
+        id: "cp-ollama",
+        name: "Local Ollama",
+        apiType: "openai-compatible",
+        baseUrl: "http://localhost:11434/v1",
+        apiKey: "ollama-key",
+        models: [],
+      },
+    ];
+    const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
+      if (input === "http://localhost:11434/v1/models") {
+        return { ok: true, json: async () => ({ data: [{ id: "llama3:latest" }, { id: "mistral:7b" }] }) };
+      }
+      if (input === "http://localhost:11434/api/tags") {
+        return { ok: true, json: async () => ({ models: [
+          { name: "llama3:latest", details: { context_length: 8192 } },
+          { name: "mistral:7b", details: { format: "gguf" } },
+        ] }) };
+      }
+      if (input === "http://localhost:11434/api/show") {
+        const name = JSON.parse(String(init?.body)).name;
+        if (name === "mistral:7b") {
+          return { ok: true, json: async () => ({ model_info: { "mistral.context_length": 32768 } }) };
+        }
+        return { ok: false, status: 404, json: async () => ({ error: "model not found" }) };
+      }
+      throw new Error(`unexpected fetch URL: ${input}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const onUpdate = vi.fn();
+    const app = createApp(settings, onUpdate);
+
+    const res = await REQUEST(app, "POST", "/api/custom-providers/cp-ollama/refresh-models");
+
+    expect(res.status).toBe(200);
+    // Names follow dedupeProviderModels id-fallback defaults; no maxTokens/thinking-flag keys for a
+    // window-only probe of a provider with an empty prior model list.
+    expect(settings.customProviders?.[0]?.models).toEqual([
+      { id: "llama3:latest", name: "llama3:latest", contextWindow: 8192 },
+      { id: "mistral:7b", name: "mistral:7b", contextWindow: 32768 },
+    ]);
+    // Exactly one settings update landed, carrying the patched customProviders.
+    expect(onUpdate).toHaveBeenCalledTimes(1);
+    expect(onUpdate.mock.calls[0][0].customProviders).toEqual([
+      expect.objectContaining({
+        id: "cp-ollama",
+        models: [
+          { id: "llama3:latest", name: "llama3:latest", contextWindow: 8192 },
+          { id: "mistral:7b", name: "mistral:7b", contextWindow: 32768 },
+        ],
+      }),
+    ]);
+  });
+
+  it("preserves manual windows for models the probe reports windowless (RUFU-123 merge guard)", async () => {
+    settings.customProviders = [
+      {
+        id: "cp-ollama",
+        name: "Local Ollama",
+        apiType: "openai-compatible",
+        baseUrl: "http://localhost:11434/v1",
+        apiKey: "ollama-key",
+        models: [
+          { id: "a", name: "A", contextWindow: 65536 },
+          { id: "b", name: "B" },
+        ],
+      },
+    ];
+    const fetchMock = vi.fn(async (input: string) => {
+      if (input === "http://localhost:11434/v1/models") {
+        // 'a' has no window anywhere (absent from tags, 404 on /api/show); 'b' only via tags.
+        return { ok: true, json: async () => ({ data: [{ id: "a" }, { id: "b" }] }) };
+      }
+      if (input === "http://localhost:11434/api/tags") {
+        return { ok: true, json: async () => ({ models: [
+          { name: "b", details: { context_length: 131072 } },
+        ] }) };
+      }
+      if (input === "http://localhost:11434/api/show") {
+        return { ok: false, status: 404, json: async () => ({ error: "model not found" }) };
+      }
+      throw new Error(`unexpected fetch URL: ${input}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const app = createApp(settings);
+
+    const res = await REQUEST(app, "POST", "/api/custom-providers/cp-ollama/refresh-models");
+
+    expect(res.status).toBe(200);
+    const refreshed = settings.customProviders?.[0]?.models ?? [];
+    const byId = new Map(refreshed.map((m: { id: string }) => [m.id, m]));
+    // 'a' has no window in the probe -> the prior persisted 65536 wins (probe-wins, else prior).
+    expect(byId.get("a")?.contextWindow).toBe(65536);
+    // 'b' picks up the tags window.
+    expect(byId.get("b")?.contextWindow).toBe(131072);
+    expect(refreshed.map((m: { id: string }) => m.id).sort()).toEqual(["a", "b"]);
+  });
+
+  it("persists vLLM body-level windows plus LoRA parent inheritance with exactly one fetch call", async () => {
+    settings.customProviders = [
+      {
+        id: "cp-vllm",
+        name: "Local vLLM",
+        apiType: "openai-compatible",
+        baseUrl: "http://localhost:8000/v1",
+        apiKey: "vllm-key",
+        models: [],
+      },
+    ];
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ data: [
+        { id: "llama-70b", max_model_len: 131072 },
+        { id: "lora-x", parent: "llama-70b" },
+      ] }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const app = createApp(settings);
+
+    const res = await REQUEST(app, "POST", "/api/custom-providers/cp-vllm/refresh-models");
+
+    expect(res.status).toBe(200);
+    expect(settings.customProviders?.[0]?.models).toEqual([
+      { id: "llama-70b", name: "llama-70b", contextWindow: 131072 },
+      { id: "lora-x", name: "lora-x", contextWindow: 131072 },
+    ]);
+    // Body-level max_model_len + one-level LoRA inheritance resolve every window, so the
+    // enrichment gate (at least one windowless model) never fires.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

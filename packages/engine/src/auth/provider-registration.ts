@@ -29,6 +29,7 @@ import {
 } from "./provider-auth.js";
 import { registerCustomProviders, reregisterCustomProviders } from "./custom-provider-registry.js";
 import { refreshFusionModelRegistry, type RefreshableModelRegistry } from "./model-registry-refresh.js";
+import { applyHttpIdleTimeouts, buildHttpIdleTimeoutMap } from "./http-idle-timeouts.js";
 
 export interface SeedDashboardProvidersStore {
   getGlobalSettingsStore(): {
@@ -80,16 +81,32 @@ export async function seedDashboardProviders(
     log: (message) => log("extensions", message),
   });
 
+  let customProviders: CustomProvider[] | undefined;
   try {
     const globalSettings = await store.getGlobalSettingsStore().getSettings();
+    customProviders = globalSettings.customProviders;
     await registerCustomProviders(
       modelRegistry,
-      globalSettings.customProviders,
+      customProviders,
       (message) => log("custom-providers", message),
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     log("custom-providers", `Failed to load custom providers from global settings: ${message}`);
+  }
+
+  /*
+  FNXC:CustomProviderHttpTimeout 2026-08-24-13:54:
+  Install the per-origin undici idle-timeout dispatcher at startup so the 300s
+  body/headers idle default (the second half of the classic 5-minute stop for local slow
+  models) can be extended or disabled per model via custom-provider `timeoutSeconds`.
+  Best-effort: a failure keeps Node's default dispatcher and never blocks startup.
+  */
+  try {
+    applyHttpIdleTimeouts(buildHttpIdleTimeoutMap(customProviders));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    log("custom-providers", `Failed to install HTTP idle timeout dispatcher: ${message}`);
   }
 
   const onSettingsUpdated = (data: { settings: { customProviders?: CustomProvider[] }; previous: { customProviders?: CustomProvider[] } }) => {
@@ -108,6 +125,20 @@ export async function seedDashboardProviders(
       const message = error instanceof Error ? error.message : String(error);
       log("custom-providers", `Failed to refresh custom providers: ${message}`);
     });
+
+    /*
+    FNXC:CustomProviderHttpTimeout 2026-08-24-13:54:
+    Reinstall the per-origin idle-timeout dispatcher whenever the persisted custom providers
+    change. Swapping the global dispatcher takes effect on the next connection; in-flight
+    connections finish under the previous dispatcher (same best-effort semantics pi accepts
+    for its own CLI dispatcher). Most-permissive-wins on shared origins; 0 = disabled.
+    */
+    try {
+      applyHttpIdleTimeouts(buildHttpIdleTimeoutMap(currentProviders));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      log("custom-providers", `Failed to refresh HTTP idle timeout dispatcher: ${message}`);
+    }
   };
 
   store.on("settings:updated", onSettingsUpdated);

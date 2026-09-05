@@ -90,4 +90,35 @@ describe("filePathLinkify", () => {
     expect(filePathLinkRule?.style.textAlign).toBe("left");
     expect(filePathLinkRule?.style.color).toBe("inherit");
   });
+
+  describe("backtracking-linear guard (Firefox `too much recursion` regression)", () => {
+    // FNXC:FilePathLinkify 2026-08-21-23:31:
+    // Regression guard for the "Something went wrong / too much recursion" crash
+    // in the "stash" project chat. The previous FILE_PATH_REGEX was
+    // exponentially ambiguous on slash-heavy near-misses (segments could
+    // contain "/" themselves); SpiderMonkey's recursive backtracker overflowed
+    // the stack while linkifying an ~80KB assistant message, tearing the chat
+    // view down through the ErrorBoundary. These inputs complete instantly
+    // under the linear regex; if a future edit reintroduces backtracking
+    // ambiguity, matchAll stalls here and the test times out instead of
+    // shipping another stack overflow.
+
+    it("does not linkify slash-separated id runs (the exact line that crashed Firefox)", () => {
+      const value =
+        "1. Stash MCP server (STAS-001/002/003/004/005/006/008/015/018/019/020/021/024/025/037/040/041/043/044/045/047/051/052/053/054/055/056/057): the entire FastMCP server, tools (search, vfs, memory, session), Heavi connector, X saves hardening, pi plugin integration, logger SDK…";
+      expect(linkifyFilePaths(value)).toEqual([value]);
+    });
+
+    it("completes on adversarial slash-heavy input without links", () => {
+      const value = "a/".repeat(500) + "b/c";
+      expect(linkifyFilePaths(value)).toEqual([value]);
+    });
+
+    it.each([
+      "https://github.com/user/repo/blob/main/src/file.ts",
+      "http://host.com/a/b.ts",
+    ])("does not match URL path tails (%s)", (value) => {
+      expect(linkifyFilePaths(value)).toEqual([value]);
+    });
+  });
 });

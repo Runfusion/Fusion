@@ -2606,3 +2606,21 @@ export { promoteResearchFinding } from "./research/research-feature-promotion.js
 export type { ResearchFeaturePromotionInput } from "./research/research-feature-promotion.js";
 export { ACTIVE_WORKFLOW_WORK_ITEM_STATES } from "./types.js";
 export * from "./task-document-concurrency.js";
+
+export {
+  buildPerTurnMemoryRecallCue,
+  deriveRecallKeywords,
+  __resetPerTurnRecallDedupForTests,
+  PER_TURN_RECALL_CUE_MAX_CHARS,
+  PER_TURN_RECALL_SNIPPET_MAX_CHARS,
+  PER_TURN_RECALL_TOPIC_MAX_CHARS,
+  PER_TURN_RECALL_TOPK_DEFAULT,
+  PER_TURN_RECALL_TOPK_MAX,
+  PER_TURN_RECALL_TOPK_MIN,
+  PER_TURN_RECALL_DEDUP_MAX_SESSIONS,
+  PER_TURN_RECALL_DEDUP_MAX_SIGNATURES,
+  RECALL_KEYWORD_MAX_QUERY_LENGTH,
+  RECALL_KEYWORD_MAX_TERM_LENGTH,
+  RECALL_KEYWORD_MAX_TERMS,
+} from "./memory/recall/per-turn-recall.js";
+export type { PerTurnRecallOptions } from "./memory/recall/per-turn-recall.js";

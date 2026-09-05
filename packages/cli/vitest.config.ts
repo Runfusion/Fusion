@@ -6,6 +6,13 @@ const maxWorkers = computeMaxWorkers();
 
 const quarantinedCliTests: string[] = [
   /*
+  FNXC:CliTests 2026-08-29-23:50:
+  bin.test.ts reached its 14-day quarantine deadline (quarantined 2026-08-20, deadline 2026-09-03) with no
+  root-cause fix for the loaded-host wall time, so the deletion ratchet applied: the file is DELETED, not
+  re-dated. Rescue required evidence it catches real regressions plus a fix for the timeout — a longer
+  timeout would have been appeasement. Its coverage was already dormant while excluded.
+  */
+  /*
   FNXC:CliTests 2026-06-14-01:36:
   The full @runfusion/fusion package lane timed out or leaked mock state across 24 CLI integration-heavy files under changed-test load, while the same files passed in smaller direct runs.
   They were quarantined per the flaky-test deletion ratchet instead of raising the 5s test timeout or relaxing assertions.

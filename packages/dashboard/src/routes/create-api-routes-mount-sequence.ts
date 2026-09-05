@@ -13,7 +13,7 @@ export const CREATE_API_ROUTES_REGISTRAR_MOUNT_SEQUENCE = [
   "registerCustomProviderRoutes", "registerAuthRoutes", "registerRuntimeProviderRoutes", "registerFnBinaryRoutes",
   "registerAiTextAssistantRoutes", "registerUsageRoutes", "registerCommandCenterRoutes", "registerKnowledgeRoutes", "registerReportRoutes",
   "registerSignalRoutes", "registerMonitorRoutes", "registerUpdateCheckRoutes", "registerVoiceRoutes", "registerDiagnosticsRoutes",
-  "registerCliAgentHooksRoute", "registerCliAgentSettingsRoutes", "registerActivityLogRoutes", "registerAgentCoreListCreateRoutes", "registerAgentImportExportRoutes",
+  "registerCliAgentHooksRoute", "registerCliAgentMemoryRecallRoute", "registerCliAgentSettingsRoutes", "registerActivityLogRoutes", "registerAgentCoreListCreateRoutes", "registerAgentImportExportRoutes",
   "registerOrgPortabilityRoutes", "registerAgentCoreRoutes", "registerAgentRuntimeRoutes", "registerSystemRoutes",
   "registerAgentReflectionRatingRoutes", "registerAgentGenerationRoutes", "registerIntegratedRouters", "registerProjectRoutes",
   "registerNodeRoutes", "registerDockerNodeRoutes", "registerDockerProvisioningRoutes", "registerSettingsSyncRoutes",

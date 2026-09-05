@@ -974,6 +974,38 @@ export const DEFAULT_PROJECT_SETTINGS = {
   memoryAutoSummarizeSchedule: "0 3 * * *",
   memoryDreamsEnabled: false,
   memoryDreamsSchedule: "0 4 * * *",
+  // FNXC:PerTurnMemoryRecall 2026-08-18-22:35:
+  // RUFU-120 B.2 (Stále fokusovaný na to, čo sa rieši): a per-turn proactive memory recall
+  // runs before every chat/step prompt on the current topic. On by default; the core
+  // module applies a client-side score filter (Stash has no server-side score filter),
+  // top-K (default 3, Volt parity) and a session-scoped cue dedup.
+  memoryPerTurnRecallEnabled: true,
+  memoryPerTurnRecallTopK: 3,
+  // FNXC:ChatContextGuard 2026-08-19-15:05:
+  // RUFU-118: the RUFU-118 pre-overflow compaction gate is an opt-out project option,
+  // not always-on — user requirement: „ak to chceme mat len ako volitelnu featuru — to
+  // nemusi kazdy chciet". On by default: without the gate a context at the model wall
+  // degrades to 1-token replies (pi threshold compaction never fires for zero-usage
+  // providers, earendil-works/pi#8328). `false` bypasses the gate entirely per project.
+  chatPreOverflowCompactionEnabled: true,
+  // FNXC:ChatContextBudget 2026-08-20-16:20:
+  // RUFU-135 kill switch: the chat context budget (bounded memory inlining +
+  // curated chat tool allowlist, see CHAT_MEMORY_CAP_CHARS in the dashboard
+  // chat runner) is an opt-out project option, mirroring the guard toggle
+  // above. On by default: without the budget the static chat floor exceeds
+  // 64K-window models and dead-ends on 128K-window models at the context
+  // wall. `false` restores the pre-RUFU-135 behavior (unbounded memory
+  // injection into the chat prompt, full registered tool set visible to the
+  // chat session) so an operator can disable the budget at runtime without a
+  // redeploy if it ever misbehaves in production (user requirement: every LCM
+  // behavior change must be disableable as a feature).
+  chatContextBudgetEnabled: true,
+  // FNXC:ChatContextGuard 2026-08-18-18:06:
+  // RUFU-118: the chat/CLI lane's 80%-of-context-window compaction default is
+  // applied in the engine guard (packages/engine/src/chat-context-guard.ts),
+  // not here — this value stays `undefined` so "no explicit tokenCap" means
+  // "use the engine default" for chat/CLI sessions and "no cap" for
+  // executor/agent tasks (TokenCapDetector).
   tokenCap: undefined,
   taskTokenBudget: undefined,
   // runStepsInNewSessions / maxParallelSteps MOVED to workflow settings (U4) —

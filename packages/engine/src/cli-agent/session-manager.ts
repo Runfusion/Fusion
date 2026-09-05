@@ -309,7 +309,13 @@ export interface SpawnCliSessionOptions {
    * duplicate record. The adapter MUST advertise `supportsResume`/`buildResume`.
    */
   resume?: {
-    /** The existing session record id to relaunch in place. */
+    /**
+     * The existing session record id to relaunch in place. The chat-runner
+     * resume path only knows the CHAT session id (the minted `cli-<…>` record
+     * id is not available to it), so this may be the chat session id; when the
+     * direct lookup misses, the manager resolves the record through the spawn
+     * `chatSessionId` linkage (FNXC:CliChatResumeIdLinkage).
+     */
     sessionId: string;
     /** The recorded native (vendor) session id handed to `buildResume`. */
     nativeSessionId: string;
@@ -369,6 +375,27 @@ export interface CliSessionManagerOptions {
    * loader. Lets tests mock node-pty at the loadPtyModule seam.
    */
   loadPty?: typeof loadPtyModule;
+  /**
+   * Optional launch-settings provider (RUFU-128 per-turn chat recall).
+   *
+   * Called with the session RECORD id (the minted `cli-<uuid8>` row id on fresh
+   * spawn; the reused record id on resume) BEFORE launch/resume argv
+   * construction, on both paths. A null/undefined result means "no extra
+   * launch settings" — the bare spawn is unchanged (task sessions and
+   * settings-gated declinations). Provider errors PROPAGATE: a provisioning
+   * failure must fail the spawn loudly, never degrade silently.
+   */
+  launchSettingsProvider?: (sessionId: string) => Promise<Record<string, unknown> | null>;
+  /**
+   * Optional termination callback (RUFU-128 per-turn chat recall).
+   *
+   * Fired exactly once per live-session teardown — deduped by the existing
+   * `live.terminated` guard — from the kill, natural-exit, and kill-all paths.
+   * Lets a per-spawn artifact provisioner tear its scratch dir down and
+   * invalidate the session token. Callback errors are swallowed: teardown must
+   * never throw.
+   */
+  onSessionTerminated?: (sessionId: string) => void;
 }
 
 // ── CliSessionManager ────────────────────────────────────────────────────────
@@ -381,6 +408,8 @@ export class CliSessionManager {
   private readonly highWatermark: number;
   private readonly injectionQuietWindowMs: number;
   private readonly loadPty: typeof loadPtyModule;
+  private readonly launchSettingsProvider?: (sessionId: string) => Promise<Record<string, unknown> | null>;
+  private readonly onSessionTerminated?: (sessionId: string) => void;
 
   /** Process registry: session id → live session. Self-cleaning on exit. */
   private readonly sessions = new Map<string, LiveSession>();
@@ -397,6 +426,8 @@ export class CliSessionManager {
     this.highWatermark = options.highWatermark ?? DEFAULT_HIGH_WATERMARK;
     this.injectionQuietWindowMs = options.injectionQuietWindowMs ?? 0;
     this.loadPty = options.loadPty ?? loadPtyModule;
+    this.launchSettingsProvider = options.launchSettingsProvider;
+    this.onSessionTerminated = options.onSessionTerminated;
     this.installExitHook();
   }
 
@@ -435,32 +466,74 @@ export class CliSessionManager {
 
     const adapter = this.registry.get(options.adapterId);
     const posture = options.posture ?? null;
-    const launchCtx = {
-      settings: (options.settings ?? {}) as Record<string, unknown>,
-      posture,
-    };
+    const baseSettings = (options.settings ?? {}) as Record<string, unknown>;
 
     // Resume vs fresh launch. A resume relaunches the recorded native session id
     // via the adapter's `buildResume` and REUSES the existing record (no
     // duplicate row); a fresh launch uses `buildLaunch` and mints a new record.
     let launch: CliLaunchSpec;
     let record: CliSession;
+    let launchCtx: { settings: Record<string, unknown>; posture: CliAutonomyPosture | null };
     if (options.resume) {
       if (!adapter.capabilities.supportsResume || typeof adapter.buildResume !== "function") {
         throw new CliResumeUnsupportedError(options.adapterId);
       }
-      launch = adapter.buildResume({ ...launchCtx, nativeSessionId: options.resume.nativeSessionId });
-      const existing = this.store.getSession(options.resume.sessionId);
+      let existing = this.store.getSession(options.resume.sessionId);
+      /*
+      FNXC:CliChatResumeIdLinkage 2026-08-23-02:51:
+      RUFU-142 closes the id-linkage gap RUFU-128 sidestepped: the chat-runner
+      resume path identifies the session by its CHAT session id because the
+      minted cli-<…> record id is not available to the runner (the cli_sessions
+      row is minted under a fresh id at spawn; the runner only remembers the
+      native session id persisted on the chat record). When the direct
+      getSession lookup misses, resolve the record through the persisted
+      chat_session_id linkage (listByChatSession sorts updatedAt desc): prefer
+      the record whose nativeSessionId matches the resume request, else the
+      newest record for the chat. The resume-coordinator caller passes the real
+      record id, so the direct lookup wins there and this fallback is a no-op.
+      A chat with zero records still throws UnknownCliSessionError carrying the
+      caller's (chat) id for operator traceability.
+      */
+      if (!existing && options.chatSessionId) {
+        // Narrowed local — property narrowing on options.resume does not
+        // survive into the find() closure.
+        const resumeNativeId = options.resume.nativeSessionId;
+        const chatRecords = this.store.listByChatSession(options.chatSessionId);
+        existing =
+          chatRecords.find((r) => r.nativeSessionId === resumeNativeId) ??
+          chatRecords[0];
+      }
       if (!existing) throw new UnknownCliSessionError(options.resume.sessionId);
-      // Move the reused record back to "starting" for the relaunch.
-      record = this.store.updateSession(options.resume.sessionId, {
+      // Move the reused record back to "starting" for the relaunch. Always by
+      // the record's OWN id — the caller may have identified it by chat id.
+      record = this.store.updateSession(existing.id, {
         agentState: "starting",
         worktreePath: options.worktreePath ?? existing.worktreePath ?? null,
       }) ?? existing;
+      /*
+      FNXC:CliChatRecall 2026-08-19-11:08:
+      RUFU-128 terminate→resume contract: a kill tears the per-spawn recall
+      artifacts down (scratch dir deleted, session token invalidated), so a
+      resume of the SAME record must re-invoke the launch-settings provider
+      for the reused record id BEFORE argv construction — the provisioner
+      rebuilds a fresh scratch dir and re-issues the token, and a null result
+      (task session / settings off) leaves the bare resume unchanged.
+      */
+      launchCtx = {
+        // FNXC:CliChatResumeIdLinkage 2026-08-23-02:51:
+        // The launch-settings provider (RUFU-128 provisioner) is keyed by the
+        // record id — it does getSession(sessionId) — so pass the resolved
+        // record's own id, which may differ from the caller's (chat) id.
+        settings: await this.mergeLaunchSettings(baseSettings, existing.id),
+        posture,
+      };
+      launch = adapter.buildResume({ ...launchCtx, nativeSessionId: options.resume.nativeSessionId });
     } else {
-      launch = adapter.buildLaunch(launchCtx);
       // Persist the session record BEFORE spawning so a crash mid-spawn still has
-      // a durable record to reason about.
+      // a durable record to reason about. The record is created BEFORE argv
+      // construction (RUFU-128) because the launch-settings provider keys its
+      // per-spawn artifacts to the MINTED record id; the PTY still starts only
+      // after the durable-write flush below.
       record = this.store.createSession({
         adapterId: options.adapterId,
         projectId: options.projectId,
@@ -471,6 +544,11 @@ export class CliSessionManager {
         autonomyPosture: posture,
         agentState: "starting",
       });
+      launchCtx = {
+        settings: await this.mergeLaunchSettings(baseSettings, record.id),
+        posture,
+      };
+      launch = adapter.buildLaunch(launchCtx);
     }
 
     // FNXC:CliAgentPostgres 2026-07-14-12:00:
@@ -606,6 +684,38 @@ export class CliSessionManager {
     }
   }
 
+  /**
+   * Merge the caller's adapter launch settings with any launch settings the
+   * provider supplies for this session (RUFU-128). A null provider result — no
+   * provider wired, or a declination (task session / settings gate off) —
+   * leaves the caller settings unchanged. Provider errors propagate: a
+   * provisioning failure fails the spawn loudly rather than degrading silent.
+   */
+  private async mergeLaunchSettings(
+    baseSettings: Record<string, unknown>,
+    sessionId: string,
+  ): Promise<Record<string, unknown>> {
+    if (!this.launchSettingsProvider) return baseSettings;
+    const extra = await this.launchSettingsProvider(sessionId);
+    if (!extra) return baseSettings;
+    return { ...baseSettings, ...extra };
+  }
+
+  /**
+   * Fire the optional termination callback (RUFU-128) exactly once per live
+   * session — call sites are guarded by the `live.terminated` flag set BEFORE
+   * this runs, so kill/natural-exit/kill-all each fire at most once. Callback
+   * errors are swallowed: teardown must never throw.
+   */
+  private notifyTerminated(live: LiveSession): void {
+    if (!this.onSessionTerminated) return;
+    try {
+      this.onSessionTerminated(live.id);
+    } catch {
+      // Teardown must not throw (RUFU-128 provisioner contract).
+    }
+  }
+
   /** Settle one-shot exit waiters exactly once with the captured result. */
   private settleExit(live: LiveSession, exitCode: number, signal: number | undefined): void {
     if (live.exitResult) return;
@@ -618,6 +728,7 @@ export class CliSessionManager {
     if (live.terminated) return;
     live.terminated = true;
     this.sessions.delete(live.id);
+    this.notifyTerminated(live);
     this.settleExit(live, exitCode, signal);
 
     for (const stream of live.streams) stream.close();
@@ -856,6 +967,7 @@ export class CliSessionManager {
     }
     live.terminated = true;
     this.sessions.delete(live.id);
+    this.notifyTerminated(live);
     // A killed PTY exited via signal — surface a nonzero result to one-shot waiters.
     this.settleExit(live, -1, 9);
 

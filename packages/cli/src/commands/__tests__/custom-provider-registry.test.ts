@@ -13,6 +13,11 @@ model-registry refresh made both register/reregister entry points ASYNC. Their
 `refresh()` call now lands after an await, so every case here must await the
 call before asserting; a fire-and-forget call asserted synchronously sees zero
 refreshes.
+
+FNXC:CustomProviderModelWindows 2026-08-23-23:42:
+RUFU-123/RUFU-143 keep the same await-before-assert contract: per-model
+contextWindow/maxTokens and thinking-format flags ride the same async
+register/reregister path and would go silent if asserted synchronously.
 */
 describe("custom-provider-registry", () => {
   it.each([
@@ -254,6 +259,120 @@ describe("custom-provider-registry", () => {
     const refresh = vi.fn();
 
     await reregisterCustomProviders({ registerProvider, refresh }, [], [], vi.fn());
+
+    expect(registerProvider).not.toHaveBeenCalled();
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  /*
+  FNXC:CustomProviderModelWindows 2026-08-19-16:49:
+  RUFU-123: per-model contextWindow/maxTokens must reach the registered provider config
+  (unset models keep the 128000/16384 builder fallback), and a window-only settings edit
+  must trip providersDiffer so the live settings:updated re-registration path picks it up.
+  */
+  it("carries per-model contextWindow/maxTokens into the registered config (RUFU-123)", async () => {
+    const registerProvider = vi.fn();
+    const refresh = vi.fn();
+
+    await registerCustomProviders(
+      { registerProvider, refresh },
+      [
+        {
+          id: "f00e8400-e29b-41d4-a716-446655440010",
+          name: "Windowed",
+          apiType: "openai-compatible",
+          baseUrl: "https://win.test",
+          models: [
+            { id: "deepseek-v4", name: "DeepSeek V4", contextWindow: 32768, maxTokens: 4096 },
+            { id: "default-model", name: "Default" },
+          ],
+        },
+      ],
+      vi.fn(),
+    );
+
+    expect(registerProvider).toHaveBeenCalledWith("windowed", expect.objectContaining({
+      models: [
+        expect.objectContaining({ id: "deepseek-v4", name: "DeepSeek V4", contextWindow: 32768, maxTokens: 4096 }),
+        // Unset windows fall back to the builder defaults.
+        expect.objectContaining({ id: "default-model", name: "Default", contextWindow: 128000, maxTokens: 16384 }),
+      ],
+    }));
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("reregisters when only a model's contextWindow changes (RUFU-123 settings:updated path)", async () => {
+    const registerProvider = vi.fn();
+    const refresh = vi.fn();
+
+    await reregisterCustomProviders(
+      { registerProvider, refresh },
+      [{ id: "g00e8400-e29b-41d4-a716-446655440011", name: "Provider", apiType: "openai-compatible", baseUrl: "https://one.test", models: [{ id: "m", name: "M" }] }],
+      [{ id: "g00e8400-e29b-41d4-a716-446655440011", name: "Provider", apiType: "openai-compatible", baseUrl: "https://one.test", models: [{ id: "m", name: "M", contextWindow: 32768 }] }],
+      vi.fn(),
+    );
+
+    expect(registerProvider).toHaveBeenCalledTimes(1);
+    expect(registerProvider).toHaveBeenCalledWith("provider", expect.objectContaining({
+      models: [expect.objectContaining({ id: "m", name: "M", contextWindow: 32768, maxTokens: 16384 })],
+    }));
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  /*
+  FNXC:CustomProviderThinkingFormat 2026-08-21-05:45:
+  RUFU-143: the per-model thinking flags must reach the registered provider config and trip
+  providersDiffer so the live settings:updated re-registration path picks up a flag edit. The
+  provider name is deliberately NOT part of toProviderConfig, so a name-only rename must not
+  false-positive into a re-registration (beyond the pre-existing behavior).
+  */
+  it("reregisters when a model's thinkingFormat is removed (RUFU-143 settings:updated path)", async () => {
+    const registerProvider = vi.fn();
+    const refresh = vi.fn();
+
+    await reregisterCustomProviders(
+      { registerProvider, refresh },
+      [{ id: "h00e8400-e29b-41d4-a716-446655440012", name: "Provider", apiType: "openai-compatible", baseUrl: "https://one.test", models: [{ id: "m", name: "M", thinkingFormat: "qwen-chat-template" }] }],
+      [{ id: "h00e8400-e29b-41d4-a716-446655440012", name: "Provider", apiType: "openai-compatible", baseUrl: "https://one.test", models: [{ id: "m", name: "M" }] }],
+      vi.fn(),
+    );
+
+    expect(registerProvider).toHaveBeenCalledTimes(1);
+    // The re-registered model's compat no longer carries the format (deep equality on compat).
+    expect(registerProvider).toHaveBeenCalledWith("provider", expect.objectContaining({
+      models: [expect.objectContaining({ id: "m", name: "M", compat: { supportsDeveloperRole: false } })],
+    }));
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("reregisters when a model opts out of thinking via reasoning: false (RUFU-143)", async () => {
+    const registerProvider = vi.fn();
+    const refresh = vi.fn();
+
+    await reregisterCustomProviders(
+      { registerProvider, refresh },
+      [{ id: "i00e8400-e29b-41d4-a716-446655440013", name: "Provider", apiType: "openai-compatible", baseUrl: "https://one.test", models: [{ id: "m", name: "M" }] }],
+      [{ id: "i00e8400-e29b-41d4-a716-446655440013", name: "Provider", apiType: "openai-compatible", baseUrl: "https://one.test", models: [{ id: "m", name: "M", reasoning: false }] }],
+      vi.fn(),
+    );
+
+    expect(registerProvider).toHaveBeenCalledTimes(1);
+    const models = registerProvider.mock.calls[0]?.[1]?.models as Array<Record<string, unknown>>;
+    expect(models[0]).toMatchObject({ id: "m", reasoning: false });
+    expect(models[0]).not.toHaveProperty("thinkingLevelMap");
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not reregister when only an unrelated field (name) changes (RUFU-143 no false positive)", async () => {
+    const registerProvider = vi.fn();
+    const refresh = vi.fn();
+
+    await reregisterCustomProviders(
+      { registerProvider, refresh },
+      [{ id: "j00e8400-e29b-41d4-a716-446655440014", name: "Provider A", apiType: "openai-compatible", baseUrl: "https://one.test", models: [{ id: "m", name: "M", thinkingFormat: "qwen-chat-template" }] }],
+      [{ id: "j00e8400-e29b-41d4-a716-446655440014", name: "Provider B", apiType: "openai-compatible", baseUrl: "https://one.test", models: [{ id: "m", name: "M", thinkingFormat: "qwen-chat-template" }] }],
+      vi.fn(),
+    );
 
     expect(registerProvider).not.toHaveBeenCalled();
     expect(refresh).toHaveBeenCalledTimes(1);

@@ -1384,9 +1384,28 @@ export class InProcessRuntime
           }
           this.cliAgentRuntime = await createCliAgentRuntime({
             fusionDir: this.taskStore.getFusionDir(),
+            /*
+            FNXC:CliChatRecall 2026-08-20-09:19:
+            RUFU-128 P0 fix: the recall backend (file/qmd/Stash) resolves
+            .fusion/memory BENEATH the project root — pass the TaskStore's
+            rootDir, NOT the .fusion dir (fusionDir above is the hook-scratch
+            root, a different contract). The RUFU-120 call sites (dashboard
+            chat, executor step sessions) all pass the project root.
+            */
+            projectRoot: this.taskStore.getRootDir(),
             asyncLayer,
             projectId: this.config.projectId,
             hookEndpointUrl: this.resolveCliAgentHookEndpointUrl(),
+            /*
+            FNXC:CliChatRecall 2026-08-19-19:30:
+            RUFU-128: per-turn recall wiring for purpose=chat CLI sessions.
+            The recall endpoint derives from the SAME loopback origin as the
+            hook endpoint (sibling route); the settings getter reads FRESH
+            settings on every spawn/recall (no caching) so a live memory
+            toggle takes effect on the next prompt.
+            */
+            recallEndpointUrl: this.resolveCliAgentMemoryRecallEndpointUrl(),
+            getSettings: async () => (this.taskStore ? await this.taskStore.getSettings() : undefined),
             onNotification: (info) => {
               /*
                * FNXC:ToolPermissionNotifications 2026-06-27-00:00:
@@ -2684,6 +2703,27 @@ export class InProcessRuntime
     }
     const port = Number(process.env.FUSION_DASHBOARD_PORT) || 4040;
     return `http://127.0.0.1:${port}/api/cli-agent/hooks`;
+  }
+
+  /**
+   * Resolve the dashboard CLI-agent memory-recall endpoint URL (RUFU-128).
+   * Same loopback origin as the hook endpoint (a sibling route —
+   * `/api/cli-agent/memory-recall`); the origin honors a threaded hook URL
+   * (parsed) and otherwise falls back to `FUSION_DASHBOARD_PORT` (4040).
+   */
+  private resolveCliAgentMemoryRecallEndpointUrl(): string {
+    let origin: string;
+    if (this.config.cliAgentHookEndpointUrl) {
+      try {
+        origin = new URL(this.config.cliAgentHookEndpointUrl).origin;
+      } catch {
+        origin = `http://127.0.0.1:${Number(process.env.FUSION_DASHBOARD_PORT) || 4040}`;
+      }
+    } else {
+      const port = Number(process.env.FUSION_DASHBOARD_PORT) || 4040;
+      origin = `http://127.0.0.1:${port}`;
+    }
+    return `${origin}/api/cli-agent/memory-recall`;
   }
 
   /**

@@ -1314,6 +1314,7 @@
     "noSkillsAvailable": "暂无可用技能",
     "noSkillsFound": "未找到技能",
     "openQuickChat": "打开快速聊天",
+    "outputBudgetExhausted": "模型的全部输出预算都消耗在了思考上——请为该模型调高 maxTokens。",
     "preserveToStash": "",
     "preserveToStashDone": "",
     "preserveToStashFailed": "",
@@ -1426,6 +1427,7 @@
     "currentDefaultTarget": "Using the default chat target",
     "newNotAllowedForTaskChat": "",
     "restore": "",
+    "backToConversations": "",
     "quoteMessage": "引用消息",
     "agentRepliesFailed": "部分代理无法回复：{{agents}}",
     "noDefaultModelConfigured": "请先在设置中配置默认聊天模型，再创建对话。",
@@ -2396,7 +2398,9 @@
     "expandArtifactHint": "Click to expand",
     "lightboxLabel": "Artifact media preview",
     "readOnly": "",
-    "readOnlyHint": ""
+    "readOnlyHint": "",
+    "closeArtifactPreview": "",
+    "loadingImageArtifact": ""
   },
   "droidCli": {
     "active": "活跃",
@@ -5204,7 +5208,8 @@
       "modelNameLabel": "",
       "models": "模型",
       "name": "显示名称",
-      "reasoning": "推理"
+      "reasoning": "推理",
+      "timeoutSeconds": "HTTP 超时（秒）"
     },
     "llamaCpp": {
       "disable": "禁用",
@@ -5845,6 +5850,29 @@
     "inProgress": ""
   },
   "settings": {
+    "jira": {
+      "configuration": "",
+      "enable": "",
+      "enabledHelp": "",
+      "baseUrl": "",
+      "globalBaseUrl": "",
+      "baseUrlHelp": "",
+      "apiBaseUrl": "",
+      "globalApiBaseUrl": "",
+      "apiBaseUrlHelp": "",
+      "email": "",
+      "globalEmail": "",
+      "emailHelp": "",
+      "secretKey": "",
+      "globalSecretKey": "",
+      "secretHelp": "",
+      "secretScope": "",
+      "globalSecretScope": "",
+      "scopeHelp": "",
+      "template": "",
+      "globalTemplate": "",
+      "templateHelp": ""
+    },
     "actions": {
       "cancel": "取消",
       "save": "保存"
@@ -6342,6 +6370,8 @@
     "keepRemote": "保留远程",
     "loading": "加载中…",
     "memory": {
+      "chatContextBudget": "",
+      "chatContextBudgetHelp": "",
       "backendFile": "",
       "backendHelp": "",
       "backendLabel": "",
@@ -6373,6 +6403,12 @@
       "dreamNow": "立即触发梦境",
       "dreamSchedule": "",
       "enableMemoryTools": "",
+      "perTurnRecall": "每轮记忆召回",
+      "perTurnRecallTopK": "每轮召回 Top K",
+      "perTurnRecallHelp": "在每次智能体聊天或步骤提示词前，为当前主题附加一段有界的记忆召回，即使较早的提示已被压缩移除，相关记忆也能保持在上下文中。默认：启用。",
+      "perTurnRecallTopKHelp": "每次提示词前附加的记忆片段最大数量。默认：3（上限 10）。",
+      "preOverflowCompaction": "",
+      "preOverflowCompactionHelp": "",
       "failedToLoadBackendStatus": "",
       "for": "",
       "installing": "安装中…",
@@ -7140,29 +7176,6 @@
       "runtimeIncompatible": "The installed voice runtime is incompatible. Repair it, then re-check the runtime.",
       "recheckRuntime": "Re-check runtime",
       "recheckingRuntime": "Re-checking runtime…"
-    },
-    "jira": {
-      "configuration": "",
-      "enable": "",
-      "enabledHelp": "",
-      "baseUrl": "",
-      "globalBaseUrl": "",
-      "baseUrlHelp": "",
-      "apiBaseUrl": "",
-      "globalApiBaseUrl": "",
-      "apiBaseUrlHelp": "",
-      "email": "",
-      "globalEmail": "",
-      "emailHelp": "",
-      "secretKey": "",
-      "globalSecretKey": "",
-      "secretHelp": "",
-      "secretScope": "",
-      "globalSecretScope": "",
-      "scopeHelp": "",
-      "template": "",
-      "globalTemplate": "",
-      "templateHelp": ""
     }
   },
   "setup": {
@@ -8420,6 +8433,13 @@
       "candidate": "",
       "dismissFinding": "",
       "terminalGuidance": ""
+    },
+    "aiMergeReviewReconciliation": {
+      "title": "",
+      "approvedPending": "",
+      "candidate": "",
+      "dismissFinding": "",
+      "terminalHint": ""
     },
     "debug": {
       "none": ""

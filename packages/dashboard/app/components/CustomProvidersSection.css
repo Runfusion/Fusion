@@ -68,7 +68,52 @@
   white-space: nowrap;
 }
 
-.custom-provider-detect-actions {
+/*
+FNXC:CustomProviderModelWindows 2026-08-19-16:49:
+RUFU-123: per-model row editor for the Advanced: Custom Providers forms, replacing the old
+single comma-separated input and the custom-provider-detect-actions block (the Detect Models
+button now lives in the editor's action row). Grid layout mirrors the legacy
+custom-provider-form__model-row pattern; design tokens only, no hardcoded px/hex.
+*/
+.custom-provider-model-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.custom-provider-model-row {
+  display: grid;
+  /*
+  FNXC:CustomProviderThinkingFormat 2026-08-21-06:04:
+  RUFU-143: three trailing auto tracks hold the "Thinking format" select (content-sized to its
+  option labels), the "No thinking params" checkbox, and the remove button next to the
+  existing 4 inputs — 7 children need 7 tracks or the remove button wraps to a second row.
+  The <768px rule below still collapses the whole row to a single column.
+  */
+  /*
+  FNXC:CustomProviderHttpTimeout 2026-08-24-19:52:
+  RUFU-145 follow-up surface fix: fifth flexible column for the per-model HTTP timeout input
+  (same change as CustomProviderForm.css); the thinking-format select, no-thinking checkbox
+  and delete action stay on the auto columns. The mobile override below already collapses to
+  a single column, so no breakpoint change is needed.
+  */
+  grid-template-columns: repeat(5, minmax(0, 1fr)) auto auto auto;
+  gap: var(--space-sm);
+  align-items: center;
+}
+
+.custom-provider-model-row-no-thinking {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  white-space: nowrap;
+  /* Match the 13px of the .select/.input row primitives via the closest defined token. */
+  font-size: var(--font-size-xs);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.custom-provider-model-row-actions {
   display: flex;
   align-items: center;
   gap: var(--space-sm);
@@ -197,5 +242,22 @@ openai-compatible/openai-responses providers. Follows the existing form-row toke
   .custom-provider-refresh-btn {
     flex: 1 1 auto;
     justify-content: center;
+  }
+
+  /*
+  FNXC:CustomProviderModelWindows 2026-08-19-16:49:
+  RUFU-123: model rows stack to a single column on mobile so the four inputs + remove button
+  remain usable at narrow widths (matches the legacy form's mobile row treatment).
+
+  FNXC:CustomProviderThinkingFormat 2026-08-21-06:15:
+  RUFU-143: the same 1fr collapse now also stacks the "Thinking format" select and the
+  "No thinking params" checkbox (grid tracks grow to 6 + actions); all controls stay usable.
+  */
+  .custom-provider-model-row {
+    grid-template-columns: 1fr;
+  }
+
+  .custom-provider-model-row-actions {
+    flex-wrap: wrap;
   }
 }
