@@ -679,6 +679,7 @@ async function dispatchPlanningContinuationIfCurrent(input: {
   task: Task;
   item: WorkflowWorkItem;
   isPlannerLive?: (taskId: string) => boolean;
+  resolveTerminalColumns?: (taskId: string) => Promise<ReadonlySet<string>>;
   dispatch: () => void;
 }): Promise<boolean> {
   const validateAndDispatch = async (): Promise<boolean> => {
@@ -686,7 +687,14 @@ async function dispatchPlanningContinuationIfCurrent(input: {
     const currentTask = typeof input.store.getTask === "function"
       ? await input.store.getTask(input.task.id).catch(() => undefined)
       : input.task;
-    if (!isPlanningContinuationTaskDispatchable(currentTask)) return false;
+    /*
+    FNXC:PlanningContinuationDispatch 2026-09-06-00:39:
+    Re-resolve the task's terminal lanes at the locked point of use. Capacity admission can outlive
+    the drain's first read, and a renamed completion lane must stop the continuation before its
+    durable running claim is written. Resolver failure retains the built-in Done fallback.
+    */
+    const terminalColumns = await input.resolveTerminalColumns?.(input.task.id).catch(() => undefined);
+    if (!isPlanningContinuationTaskDispatchable(currentTask, terminalColumns)) return false;
     if (isTaskBlockedOnApproval(currentTask)) return false;
     const currentItem = typeof input.store.getWorkflowWorkItem === "function"
       ? await input.store.getWorkflowWorkItem(input.item.id).catch(() => null)
@@ -740,6 +748,7 @@ export async function admitPlanningContinuation(input: {
   task: Task;
   item: WorkflowWorkItem;
   isPlannerLive?: (taskId: string) => boolean;
+  resolveTerminalColumns?: (taskId: string) => Promise<ReadonlySet<string>>;
   dispatch: () => Promise<void>;
   onDispatchSettled?: () => void;
 }): Promise<boolean> {
@@ -773,6 +782,7 @@ export async function admitPlanningContinuation(input: {
       task: input.task,
       item: input.item,
       isPlannerLive: input.isPlannerLive,
+      resolveTerminalColumns: input.resolveTerminalColumns,
       dispatch: () => {
         void input.dispatch()
           .then(() => input.onDispatchSettled?.())
@@ -823,6 +833,7 @@ export async function admitPlanningContinuation(input: {
           task: input.task,
           item: input.item,
           isPlannerLive: input.isPlannerLive,
+          resolveTerminalColumns: input.resolveTerminalColumns,
           dispatch: () => {
             selected = true;
             planningContinuationRuns.add(runKey);
@@ -889,6 +900,7 @@ export function createPlanningContinuationDispatcher(input: {
   execute: (task: Task) => Promise<void>;
   isPlannerLive?: (taskId: string) => boolean;
   kick?: () => void;
+  resolveTerminalColumns?: (taskId: string) => Promise<ReadonlySet<string>>;
   onError?: (task: Task, item: WorkflowWorkItem, error: unknown) => void;
 }): (task: Task, item: WorkflowWorkItem) => Promise<boolean> {
   return (task, item) => {
@@ -899,6 +911,7 @@ export function createPlanningContinuationDispatcher(input: {
       task,
       item,
       isPlannerLive: input.isPlannerLive,
+      resolveTerminalColumns: input.resolveTerminalColumns,
       dispatch: async () => {
         const leaseOwner = planningContinuationDispatchLeaseOwner(item);
         await input.execute(task).catch((error) => {
@@ -922,6 +935,7 @@ export function createPlanningContinuationDispatcher(input: {
       },
     });
   };
+
 }
 
 /**
@@ -3039,6 +3053,13 @@ export class InProcessRuntime
       isTaskActive: () => false,
       getPlanningTaskIds: () => this.triageProcessor?.getPlanningTaskIds() ?? new Set<string>(),
     });
+    const resolveTerminalColumns = async (taskId: string): Promise<ReadonlySet<string>> => {
+      const lifecycle = await resolveTaskLifecycleColumns(this.taskStore, taskId);
+      return new Set([
+        lifecycle?.complete ?? "done",
+        "done",
+      ]);
+    };
     try {
       await drainDuePlanningContinuations({
         listDue: () => this.taskStore.listDueWorkflowWorkItems({
@@ -3047,16 +3068,13 @@ export class InProcessRuntime
           limit: DUE_PLANNING_CONTINUATION_BATCH_LIMIT,
         }),
         getTask: (taskId) => Promise.resolve(this.taskStore.getTask(taskId)),
-        /* FNXC:WorkflowLifecycleColumns 2026-08-02-15:20 (fleet): the PRODUCTION resolver for the drain's
-           terminal check — the pure pass keeps the built-in Done fallback when this is omitted. One IR read per due item, and the batch is capped by
-           DUE_PLANNING_CONTINUATION_BATCH_LIMIT. */
-        resolveTerminalColumns: async (taskId) => {
-          const lifecycle = await resolveTaskLifecycleColumns(this.taskStore, taskId);
-          return new Set([
-            lifecycle?.complete ?? "done",
-            "done",
-          ]);
-        },
+        /*
+        FNXC:WorkflowLifecycleColumns 2026-09-06-00:39:
+        Share one task-scoped resolver between the drain's first classification and the locked
+        point-of-use recheck. Renamed completion lanes must remain terminal if capacity admission
+        delays dispatch; resolver failure at either boundary uses the built-in Done fallback.
+        */
+        resolveTerminalColumns,
         /*
         FNXC:PlanningContinuationDispatch 2026-09-06-00:29:
         Restrict the shared predicate to its two planning inputs here. Executor liveness is already
@@ -3072,6 +3090,7 @@ export class InProcessRuntime
           execute: (task) => this.executor.execute(task),
           isPlannerLive,
           kick: () => this.kickWorkflowContinuationProcessor(),
+          resolveTerminalColumns,
           onError: (_task, item, error) => {
             runtimeLog.error(`Workflow continuation ${item.id} failed:`, error);
           },
