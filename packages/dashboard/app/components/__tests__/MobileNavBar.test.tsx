@@ -9,6 +9,9 @@ import { readAppFile } from "../../test/cssFixture";
 
 vi.mock("../../api", () => ({
   fetchScripts: vi.fn(),
+  normalizeScriptCatalog: (value: Record<string, string> | Array<{ name: string; command: string; description?: string }>) => Array.isArray(value)
+    ? value
+    : Object.entries(value).map(([name, command]) => ({ name, command })),
 }));
 
 import { fetchScripts } from "../../api";
@@ -1244,6 +1247,21 @@ describe("MobileNavBar", () => {
         expect(screen.getByTestId("mobile-more-script-item-build")).toBeDefined();
         expect(screen.getByTestId("mobile-more-script-item-test")).toBeDefined();
       });
+    });
+
+    it("shows descriptions with command fallback and runs spaced Unicode names exactly", async () => {
+      vi.mocked(fetchScripts).mockResolvedValue([
+        { name: "Build production", command: "pnpm build", description: "Production bundle" },
+        { name: "Déployer 🚀", command: "pnpm deploy" },
+      ]);
+      const props = createDefaultProps();
+      render(<MobileNavBar {...props} />);
+      fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
+      fireEvent.click(screen.getByTestId("mobile-more-terminal-split-toggle"));
+      expect(await screen.findByText("Production bundle")).toBeInTheDocument();
+      expect(screen.getByText("pnpm deploy")).toBeInTheDocument();
+      fireEvent.click(screen.getByTestId("mobile-more-script-item-Build production"));
+      expect(props.onRunScript).toHaveBeenCalledWith("Build production", "pnpm build");
     });
 
     it("clicking a script item calls onRunScript and closes sheet", async () => {

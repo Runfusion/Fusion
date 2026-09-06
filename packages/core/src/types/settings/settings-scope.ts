@@ -2270,6 +2270,9 @@ export interface ProjectSettings {
   /** Named scripts that can be referenced by setupScript or other automation.
    *  A map of script name to shell command. */
   scripts?: Record<string, string>;
+  /** Optional display metadata keyed by the same stable script name. Legacy
+   *  settings omit this map and continue to execute through `scripts`. */
+  scriptMetadata?: Record<string, { description?: string }>;
   /** Reference to a named script in the scripts map that runs before task execution.
    *  Used for pre-task setup like environment preparation. */
   setupScript?: string;

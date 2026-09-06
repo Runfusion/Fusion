@@ -3543,7 +3543,9 @@
     "videoArtifactAria": "",
     "viewTask": "",
     "viewTaskAria": "",
-    "viewTaskLabel": ""
+    "viewTaskLabel": "",
+    "recommendationsUnavailableIdsReason": "",
+    "recommendationsUnavailableTaskReason": ""
   },
   "memory": {
     "auditChecksTitle": "审计检查",
@@ -5714,13 +5716,13 @@
     "confirmDelete": "确认删除",
     "confirmDeleteNamed": "确认删除 {{name}}",
     "deleteScriptNamed": "删除 {{name}}",
+    "description": "描述（可选）",
+    "descriptionPlaceholder": "此脚本用于做什么？",
     "editScriptNamed": "编辑 {{name}}",
     "failedToDelete": "无法删除脚本",
     "failedToLoadScripts": "加载脚本失败",
     "failedToSave": "无法保存脚本",
     "loadingScripts": "正在加载脚本...",
-    "nameErrorMsg": "名称只能包含字母、数字、连字符和下划线（不能有空格）",
-    "nameHint": "仅允许字母、数字、连字符和下划线",
     "noScriptsDefined": "未定义脚本",
     "noScriptsYet": "尚未定义脚本。",
     "runScript": "运行脚本",

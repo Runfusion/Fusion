@@ -920,6 +920,7 @@ export const DEFAULT_PROJECT_SETTINGS = {
   prTitlePromptInstructions: undefined,
   prDescriptionPromptInstructions: undefined,
   scripts: undefined,
+  scriptMetadata: undefined,
   setupScript: undefined,
   insightExtractionEnabled: false,
   insightExtractionSchedule: "0 2 * * *",

@@ -15,6 +15,38 @@ Non-Command-Center dashboard CSS must use the canonical --text token. The legacy
   overflow-y: auto;
 }
 
+.scripts-modal-label {
+  display: block;
+  margin-bottom: var(--space-xs);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: var(--text);
+}
+
+.scripts-modal-description-input {
+  width: 100%;
+  resize: vertical;
+}
+
+.script-card-description,
+.script-card-command {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.script-card-description {
+  margin-bottom: var(--space-xs);
+  color: var(--text);
+  font-size: var(--font-size-sm);
+}
+
+.script-card-command {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+}
+
 @media (max-width: 768px) {
   .scripts-modal-body {
     max-height: none;

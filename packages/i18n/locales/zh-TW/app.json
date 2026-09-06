@@ -3543,7 +3543,9 @@
     "videoArtifactAria": "",
     "viewTask": "",
     "viewTaskAria": "",
-    "viewTaskLabel": ""
+    "viewTaskLabel": "",
+    "recommendationsUnavailableIdsReason": "",
+    "recommendationsUnavailableTaskReason": ""
   },
   "memory": {
     "auditChecksTitle": "稽核檢查",
@@ -5714,13 +5716,13 @@
     "confirmDelete": "確認刪除",
     "confirmDeleteNamed": "確認刪除 {{name}}",
     "deleteScriptNamed": "刪除 {{name}}",
+    "description": "描述（選填）",
+    "descriptionPlaceholder": "此指令碼用來做什麼？",
     "editScriptNamed": "編輯 {{name}}",
     "failedToDelete": "無法刪除指令碼",
     "failedToLoadScripts": "載入腳本失敗",
     "failedToSave": "無法保存指令碼",
     "loadingScripts": "正在載入指令碼...",
-    "nameErrorMsg": "名稱只能包含字母、數字、連字符和下劃線（不能有空格）",
-    "nameHint": "僅允許字母、數字、連字符和下劃線",
     "noScriptsDefined": "未定義指令碼",
     "noScriptsYet": "尚未定義指令碼。",
     "runScript": "執行指令碼",

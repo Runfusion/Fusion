@@ -17,6 +17,9 @@ useViewportMode: () => viewportModeMock.value,
 
 vi.mock("../../api", () => ({
   fetchScripts: (...args: unknown[]) => mockFetchScripts(...args),
+  normalizeScriptCatalog: (value: Record<string, string> | Array<{ name: string; command: string; description?: string }>) => Array.isArray(value)
+    ? value
+    : Object.entries(value).map(([name, command]) => ({ name, command })),
 }));
 
 // Mock the useExecutorStats hook
@@ -326,6 +329,19 @@ describe("ExecutorStatusBar", () => {
       expect(screen.getByTestId("scripts-btn")).toBeInTheDocument();
       expect(await screen.findByTestId("quick-scripts-dropdown")).toBeInTheDocument();
       await waitFor(() => expect(mockFetchScripts).toHaveBeenCalledWith(undefined));
+    });
+
+    it("runs the enriched catalog command from the desktop footer", async () => {
+      const user = userEvent.setup();
+      const onRunScript = vi.fn();
+      mockFetchScripts.mockResolvedValueOnce([
+        { name: "Build production", command: "pnpm build", description: "Production bundle" },
+      ]);
+      render(<ExecutorStatusBar tasks={emptyTasks} onToggleTerminal={vi.fn()} onOpenScripts={vi.fn()} onRunScript={onRunScript} />);
+      await user.click(screen.getByTestId("scripts-btn"));
+      expect(await screen.findByText("Production bundle")).toBeInTheDocument();
+      await user.click(screen.getByTestId("quick-script-item-Build production"));
+      expect(onRunScript).toHaveBeenCalledWith("Build production", "pnpm build");
     });
 
     it("keeps the footer terminal scripts chevron usable when scripts are empty", async () => {

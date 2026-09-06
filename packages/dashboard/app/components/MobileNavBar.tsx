@@ -33,7 +33,8 @@ import {
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { fetchScripts } from "../api";
-import type { PluginDashboardViewEntry } from "../api";
+import { normalizeScriptCatalog } from "../api/system/workflows";
+import type { PluginDashboardViewEntry, ScriptEntry } from "../api";
 import { useViewportMode } from "./Header";
 import { NavigationHistoryContext } from "../hooks/useNavigationHistory";
 import type { TaskView } from "../hooks/useViewState";
@@ -188,7 +189,7 @@ export function MobileNavBar({
   const navigationHistory = useContext(NavigationHistoryContext);
   const [isMoreOpen, setIsMoreOpen] = useState(false);
   const [isScriptsSubmenuOpen, setIsScriptsSubmenuOpen] = useState(false);
-  const [scripts, setScripts] = useState<Record<string, string>>({});
+  const [scripts, setScripts] = useState<ScriptEntry[]>([]);
   const [scriptsLoading, setScriptsLoading] = useState(false);
   const [dragOffset, setDragOffset] = useState(0);
   const [isSheetDragging, setIsSheetDragging] = useState(false);
@@ -204,7 +205,7 @@ export function MobileNavBar({
   const dragOffsetRef = useRef(0);
 
   const scriptEntries = useMemo(
-    () => Object.entries(scripts).sort(([a], [b]) => a.localeCompare(b)),
+    () => [...scripts].sort((a, b) => a.name.localeCompare(b.name)),
     [scripts],
   );
 
@@ -217,10 +218,10 @@ export function MobileNavBar({
 
     fetchScripts(projectId)
       .then((data) => {
-        if (!cancelled) setScripts(data);
+        if (!cancelled) setScripts(normalizeScriptCatalog(data));
       })
       .catch(() => {
-        if (!cancelled) setScripts({});
+        if (!cancelled) setScripts([]);
       })
       .finally(() => {
         if (!cancelled) setScriptsLoading(false);
@@ -616,20 +617,25 @@ export function MobileNavBar({
                   </div>
                 ) : scriptEntries.length > 0 ? (
                   <>
-                    {scriptEntries.map(([name, command]) => (
+                    {scriptEntries.map((script) => (
                       <button
-                        key={name}
+                        key={script.name}
                         type="button"
                         className="mobile-more-item mobile-more-subitem"
-                        data-testid={`mobile-more-script-item-${name}`}
+                        data-testid={`mobile-more-script-item-${script.name}`}
                         onClick={() => {
-                          if (onRunScript) onRunScript(name, command);
+                          if (onRunScript) onRunScript(script.name, script.command);
                           dismissMore();
                           setIsScriptsSubmenuOpen(false);
                         }}
                       >
                         <Play />
-                        <span>{name}</span>
+                        <span className="mobile-more-script-info">
+                          <span className="mobile-more-script-name">{script.name}</span>
+                          <span className="mobile-more-script-description" title={script.description ?? script.command}>
+                            {script.description ?? script.command}
+                          </span>
+                        </span>
                       </button>
                     ))}
                     {onOpenScripts && (

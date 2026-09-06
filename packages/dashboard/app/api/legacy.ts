@@ -753,6 +753,7 @@ export {
   fetchWorkflowStepTemplates,
   fetchWorkflows,
   importWorkflow,
+  normalizeScriptCatalog,
   removeScript,
   runScript,
   selectTaskWorkflow,

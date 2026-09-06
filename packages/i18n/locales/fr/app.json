@@ -3544,7 +3544,9 @@
     "videoArtifactAria": "",
     "viewTask": "",
     "viewTaskAria": "",
-    "viewTaskLabel": ""
+    "viewTaskLabel": "",
+    "recommendationsUnavailableIdsReason": "",
+    "recommendationsUnavailableTaskReason": ""
   },
   "memory": {
     "auditChecksTitle": "Vérifications d'audit",
@@ -5733,13 +5735,13 @@
     "confirmDelete": "Confirmer la suppression",
     "confirmDeleteNamed": "Confirmer la suppression de {{name}}",
     "deleteScriptNamed": "Supprimer {{name}}",
+    "description": "Description (facultative)",
+    "descriptionPlaceholder": "À quoi sert ce script ?",
     "editScriptNamed": "Modifier {{name}}",
     "failedToDelete": "Impossible de supprimer le script",
     "failedToLoadScripts": "Échec du chargement des scripts",
     "failedToSave": "Impossible d'enregistrer le script",
     "loadingScripts": "Chargement des scripts...",
-    "nameErrorMsg": "Le nom ne doit contenir que des lettres, des chiffres, des tirets et des traits de soulignement (pas d'espaces)",
-    "nameHint": "Lettres, chiffres, tirets et traits de soulignement uniquement",
     "noScriptsDefined": "Aucun script défini",
     "noScriptsYet": "Aucun script défini pour l'instant.",
     "runScript": "Exécuter le script",

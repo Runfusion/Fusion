@@ -808,8 +808,9 @@ Database backups work with both external PostgreSQL and Fusion's default embedde
 | `titleSummarizerFallbackThinkingLevel` | `ThinkingLevel` | `undefined` | Optional project title-summarizer fallback thinking override. Inherits the title-summarizer/global/default thinking level when unset. |
 | `prTitlePromptInstructions` | `string` | `undefined` | Optional project guidance appended to the Create PR dialog's AI metadata system prompt for the generated PR title. Blank or whitespace-only values are treated as unset and keep the default prompt behavior. |
 | `prDescriptionPromptInstructions` | `string` | `undefined` | Optional project guidance appended to the Create PR dialog's AI metadata system prompt for generated PR body fields (`summary`, `changes`, `testing`). Blank or whitespace-only values are treated as unset and keep the default prompt behavior. |
-| `scripts` | `Record<string, string>` | `undefined` | Named script map used by script-mode workflow steps and setup hooks. |
-| `setupScript` | `string` | `undefined` | Script key from `scripts` to run before task execution. |
+| `scripts` | `Record<string, string>` | `undefined` | Named script map used by script-mode workflow steps and setup hooks. Names may contain spaces, Unicode, and punctuation; commands remain plain string values for backward compatibility. |
+| `scriptMetadata` | `Record<string, { description?: string }>` | `undefined` | Optional display metadata keyed by script name. Empty descriptions are omitted, and legacy configurations without this map remain valid. |
+| `setupScript` | `string` | `undefined` | Script key from `scripts` to run before task execution. Atomic script renames update this reference. |
 | `insightExtractionEnabled` | `boolean` | `false` | Enable scheduled memory insight extraction. |
 | `insightExtractionSchedule` | `string` | `"0 2 * * *"` | Insight extraction cron schedule. |
 | `insightExtractionMinIntervalMs` | `number` | `86400000` | Minimum interval between extractions (24h). |
