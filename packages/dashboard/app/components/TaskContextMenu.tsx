@@ -22,9 +22,18 @@ getLatestFailedPreMergeReviewStep. Keep this in lockstep with that function
 and self-healing.ts's latestFailedPreMergeStep (FN-7720): most-recent
 phase!=="post-merge" result with status==="failed".
 */
+/*
+FNXC:ReviewLaneBypass 2026-09-06-00:47:
+Dashboard imports only core types, so this predicate mirrors the core selector. An archived failed
+carrier retains history yet must stay reachable by the audited operator bypass.
+*/
 function hasFailedPreMergeReviewStep(task: Pick<Task, "workflowStepResults">): boolean {
-  return (task.workflowStepResults ?? []).some(
-    (result: WorkflowStepResult) => (result.phase || "pre-merge") === "pre-merge" && result.status === "failed",
+  return (task.workflowStepResults ?? []).some((result: WorkflowStepResult) =>
+    (result.phase || "pre-merge") === "pre-merge"
+    && (result.status === "failed" || (result.remediationArchivedAt != null
+      && (result.remediationArchivedFromStatus === "failed" || result.remediationArchivedFromStatus === "advisory_failure")
+      && !result.bypassedBy
+      && !result.supersededAt)),
   );
 }
 

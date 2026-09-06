@@ -114,10 +114,16 @@ function evaluateStep(
     const approved = (result.status === "passed" && (requiresExplicitVerdict ? approvedVerdict : (result.verdict === undefined || approvedVerdict)))
       || (result.status === "skipped" && !!result.bypassedBy)
       || notRunApproves;
-    if (!approved || !!result.remediationArchivedAt) return { workflowStepId, state: "not-approved" };
+    /*
+    FNXC:PreMergeApproval 2026-09-06-00:47:
+    Remediation archives suppress automatic re-approval, but cannot disarm the audited FN-7720
+    operator waiver. Without this narrow exception, a crash-archived gate is permanently unmergeable.
+    */
+    const auditedOperatorWaiver = isAuditedOperatorBypass(result) && descriptor?.kind !== "workspace";
+    if (!approved || (result.remediationArchivedAt != null && !auditedOperatorWaiver)) return { workflowStepId, state: "not-approved" };
     // Plan fingerprints bind plan text rather than source diff and must never be cross-compared.
     if (result.reviewKind === "plan") return { workflowStepId, state: "approved" };
-    if (isAuditedOperatorBypass(result) && descriptor?.kind !== "workspace") {
+    if (auditedOperatorWaiver) {
       return { workflowStepId, state: "approved" };
     }
     /*

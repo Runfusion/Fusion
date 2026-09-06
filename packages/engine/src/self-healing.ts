@@ -650,6 +650,33 @@ const ORPHANED_WITH_WORKTREE_GRACE_MS = 300_000;
  * terminal-failure owner clears the latter display mirror after each failure.
  */
 export const MAX_TASK_DONE_RETRIES = 3;
+
+export type MergeableReviewRecoveryCounts = {
+  enqueued: number;
+  merged: number;
+  parked: number;
+};
+
+type ResolvedMergeRecoveryGate = Awaited<ReturnType<typeof resolvePreMergeGateForTask>>;
+type CapturedMergeRecoveryContent = Awaited<ReturnType<typeof captureMergeContentDescriptor>>;
+
+/*
+FNXC:SelfHealing 2026-09-06-00:59:
+Merge recovery may enqueue work for a separate merger rather than landing it directly. Its summary
+must name that branch truthfully: only the direct merge branch may claim a task moved to done.
+*/
+export function formatMergeableReviewRecoverySummary({
+  enqueued,
+  merged,
+  parked,
+}: MergeableReviewRecoveryCounts): string {
+  const outcomes: string[] = [];
+  if (enqueued > 0) outcomes.push(`${enqueued} re-enqueued for merge`);
+  if (merged > 0) outcomes.push(`${merged} merged → done`);
+  if (parked > 0) outcomes.push(`${parked} parked after enqueue starvation`);
+  return `Mergeable review recovery: ${outcomes.join(", ") || "no tasks recovered"}`;
+}
+
 const RECONCILE_SCOPE_OVERRIDE_MERGE_ACTIVE_STATUS_SET = new Set<string>(MERGE_ACTIVE_MISSING_WORKTREE_STATUSES);
 /**
  * FNXC:WorkflowLifecycle 2026-06-20-00:00: single source of truth for the
@@ -885,6 +912,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   private maintenanceTickCounter = 0;
   private readonly taskLifecycleRetentionLastPrunedAt = new Map<string, number>();
   private readonly staleContentRerouteAuditKeys = new Set<string>();
+  private readonly mergeRecoveryBlockerWarnKeys = new Set<string>();
   private readonly staleContentParkRecoveryAttempts = new Map<string, number>();
   private readonly staleContentParkRecoveryBudgetLogged = new Set<string>();
   private readonly unrunPreMergeGateRerouteAuditKeys = new Set<string>();
@@ -9246,7 +9274,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   private async routeStaleSingularApprovalBackToReview(
     task: Task,
     reviewColumns: ReadonlySet<string>,
-    settings: Settings,
+    mergeGate: ResolvedMergeRecoveryGate,
+    mergeContent: CapturedMergeRecoveryContent,
     parkShape?: ReturnType<typeof classifyStaleContentPark>,
   ): Promise<{
     handled: boolean;
@@ -9256,20 +9285,6 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     parkCleared: boolean;
     mergeRetriesReset: boolean;
   }> {
-    let mergeGate;
-    try {
-      mergeGate = await resolvePreMergeGateForTask(this.store, task.id, task.enabledWorkflowSteps, task);
-    } catch {
-      return { handled: false, seeded: false, parkCleared: false, mergeRetriesReset: false };
-    }
-    if (mergeGate.provenance === "default" && !mergeGate.selectionAbsent) {
-      return { handled: false, seeded: false, parkCleared: false, mergeRetriesReset: false };
-    }
-
-    const mergeContent = await captureMergeContentDescriptor(task, {
-      workspaceRootDir: this.options.rootDir,
-      settings,
-    });
     const blocker = getTaskMergeBlocker(task, {
       reviewColumns,
       requiredPreMergeStepIds: mergeGate.requiredPreMergeStepIds,
@@ -9345,11 +9360,12 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     };
   }
 
-  private async routeUnrunPreMergeGateBackToReview(task: Task, reviewColumns: ReadonlySet<string>, settings: Settings): Promise<boolean> {
-    let mergeGate;
-    try { mergeGate = await resolvePreMergeGateForTask(this.store, task.id, task.enabledWorkflowSteps, task); } catch { return false; }
-    if (mergeGate.provenance === "default" && !mergeGate.selectionAbsent) return false;
-    const mergeContent = await captureMergeContentDescriptor(task, { workspaceRootDir: this.options.rootDir, settings });
+  private async routeUnrunPreMergeGateBackToReview(
+    task: Task,
+    reviewColumns: ReadonlySet<string>,
+    mergeGate: ResolvedMergeRecoveryGate,
+    mergeContent: CapturedMergeRecoveryContent,
+  ): Promise<boolean> {
     if (getTaskMergeBlocker(task, { reviewColumns, requiredPreMergeStepIds: mergeGate.requiredPreMergeStepIds, mergeContent }) !== "task has enabled pre-merge workflow steps that never ran") return false;
     const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, { requiredPreMergeStepIds: mergeGate.requiredPreMergeStepIds, mergeContent })
       .catch(() => ({ rerouted: false, reason: "no-unrun-gate" as const, nodeId: undefined, workflowStepId: undefined }));
@@ -9488,9 +9504,40 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       for (const task of mergeable) {
         const reviewColumns = await ownReviewLanesFor(task);
         if (!reviewColumns.has(task.column)) continue;
-        if ((await this.routeStaleSingularApprovalBackToReview(task, reviewColumns, settings)).handled) continue;
-        if (await this.routeUnrunPreMergeGateBackToReview(task, reviewColumns, settings)) continue;
-        if (getTaskMergeBlocker(task, { reviewColumns }) !== undefined) continue;
+        /*
+        FNXC:PreMergeApproval 2026-09-06-00:59:
+        One candidate gets one workflow-gate resolution and one content capture. Reroute and admission
+        must decide from identical evidence; a changed selection or diff between independent captures
+        could otherwise seed a review lane and enqueue its merge under contradictory contracts.
+        */
+        let mergeGate: ResolvedMergeRecoveryGate;
+        try {
+          mergeGate = await resolvePreMergeGateForTask(this.store, task.id, task.enabledWorkflowSteps, task);
+        } catch {
+          continue;
+        }
+        if (mergeGate.provenance === "default" && !mergeGate.selectionAbsent) continue;
+        const mergeContent = await captureMergeContentDescriptor(task, { workspaceRootDir: this.options.rootDir, settings });
+        if ((await this.routeStaleSingularApprovalBackToReview(task, reviewColumns, mergeGate, mergeContent)).handled) continue;
+        if (await this.routeUnrunPreMergeGateBackToReview(task, reviewColumns, mergeGate, mergeContent)) continue;
+        /*
+        FNXC:PreMergeApproval 2026-09-06-00:47:
+        The recovery sweep previously omitted requiredPreMergeStepIds, making its blocker silently
+        skip approval evaluation and re-enqueue a card that every merge door would refuse.
+        */
+        const blocker = getTaskMergeBlocker(task, {
+          reviewColumns,
+          requiredPreMergeStepIds: mergeGate.requiredPreMergeStepIds,
+          mergeContent,
+        });
+        if (blocker !== undefined) {
+          const warningKey = `${task.id}:${blocker}`;
+          if (!this.mergeRecoveryBlockerWarnKeys.has(warningKey)) {
+            this.mergeRecoveryBlockerWarnKeys.add(warningKey);
+            log.warn(`mergeable-review recovery declined ${task.id}: ${blocker}`);
+          }
+          continue;
+        }
         laneQualifiedMergeable.push(task);
       }
       /*
@@ -9515,7 +9562,15 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           await this.store.logEntry(task.id, `[pre-merge] Stopped stale-content park recovery after ${MAX_STARVATION_DROPS} attempts; operator attention is required.`);
         }
         if (attempts > MAX_STARVATION_DROPS) continue;
-        await this.routeStaleSingularApprovalBackToReview(task, reviewColumns, settings, parkShape);
+        let mergeGate: ResolvedMergeRecoveryGate;
+        try {
+          mergeGate = await resolvePreMergeGateForTask(this.store, task.id, task.enabledWorkflowSteps, task);
+        } catch {
+          continue;
+        }
+        if (mergeGate.provenance === "default" && !mergeGate.selectionAbsent) continue;
+        const mergeContent = await captureMergeContentDescriptor(task, { workspaceRootDir: this.options.rootDir, settings });
+        await this.routeStaleSingularApprovalBackToReview(task, reviewColumns, mergeGate, mergeContent, parkShape);
       }
       /*
       FNXC:PreMergeApproval 2026-09-06-00:28:
@@ -9561,6 +9616,9 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       // when no enqueue callback is wired (standalone/tests).
       const enqueueMerge = this.options.enqueueMerge;
       let recovered = 0;
+      let enqueued = 0;
+      let merged = 0;
+      let parked = 0;
       for (const task of unownedMergeable) {
         try {
           if (enqueueMerge) {
@@ -9576,13 +9634,16 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
                 await this.store.updateTask(task.id, { status: "failed", error });
                 await this.store.logEntry(task.id, error);
                 this.mergeStarvationDrops.delete(task.id);
+                parked++;
                 recovered++;
               }
               continue;
             }
             this.mergeStarvationDrops.delete(task.id);
+            enqueued++;
           } else {
             await this.store.mergeTask(task.id);
+            merged++;
           }
           await this.store.logEntry(
             task.id,
@@ -9590,7 +9651,9 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
               ? "Auto-recovered: eligible in-review task re-enqueued for merge"
               : "Auto-recovered: eligible in-review task was merged and moved to done",
           );
-          log.log(`Recovered mergeable review task ${task.id}`);
+          log.log(enqueueMerge
+            ? `Re-enqueued mergeable review task ${task.id} for merge`
+            : `Merged review task ${task.id} and moved it to done`);
           recovered++;
         } catch (err: unknown) { const errorMessage = err instanceof Error ? err.message : String(err);
           log.error(`Failed to recover mergeable review task ${task.id}: ${errorMessage}`);
@@ -9598,7 +9661,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       }
 
       if (recovered > 0) {
-        log.log(`Recovered ${recovered} mergeable review task(s) → done`);
+        log.log(formatMergeableReviewRecoverySummary({ enqueued, merged, parked }));
       }
       return recovered;
     } catch (err: unknown) { const errorMessage = err instanceof Error ? err.message : String(err);

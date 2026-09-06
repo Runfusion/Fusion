@@ -2506,7 +2506,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
           bypassedBy: actor,
           bypassedAt: now,
           bypassReason: reason,
-          bypassedFromStatus: failedTarget.status,
+          bypassedFromStatus: failedTarget.remediationArchivedFromStatus ?? failedTarget.status,
           bypassedFromVerdict: failedTarget.verdict,
         }
         : {
@@ -2521,6 +2521,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         };
       // A bypass never fabricates a reviewer verdict.
       delete bypassed.verdict;
+      // Preserve archive provenance: the merge gate recognizes only the audited waiver as its exception.
 
       const nextResults = [...results];
       if (targetIndex === -1) nextResults.push(bypassed);
@@ -2548,8 +2549,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         metadata: {
           workflowStepId: target.workflowStepId,
           workflowStepName: target.workflowStepName,
-          bypassedFromStatus: target.status,
-          bypassedFromVerdict: failedTarget?.verdict ?? null,
+          bypassedFromStatus: bypassed.bypassedFromStatus,
+          bypassedFromVerdict: bypassed.bypassedFromVerdict ?? null,
           reason,
         },
       });
@@ -2634,9 +2635,16 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         );
       }
       if (target.status !== "pending") {
-        throw new Error(
-          `Cannot resume workflow step for ${id}: only pending steps can be resumed`,
-        );
+        const archivedFailure = target.remediationArchivedAt != null
+          && (target.remediationArchivedFromStatus === "failed" || target.remediationArchivedFromStatus === "advisory_failure")
+          && !target.bypassedBy
+          && !target.supersededAt;
+        /*
+        FNXC:StepResume 2026-09-06-00:47:
+        Resume must remain pending-only, but an archived failed carrier now has a supported audited
+        bypass path. Name it so the documented recovery chain does not dead-end after a crash archive.
+        */
+        throw new Error(`Cannot resume workflow step for ${id}: only pending steps can be resumed${archivedFailure ? ` (step '${stepId}' is an archived remediation carrier — use fn_task_bypass_review / POST /tasks/:id/bypass-review to clear it)` : ""}`);
       }
 
       const now = new Date().toISOString();

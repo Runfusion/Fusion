@@ -35,6 +35,29 @@ describe("TaskContextMenu shared task action model", () => {
     expect(actionIds(makeTask({ column: "archived" }), { onRetry, onReset: vi.fn() })).toEqual(["delete"]);
   });
 
+  it("offers Bypass failed review for live and eligible archived pre-merge failures only", () => {
+    const onBypassReview = vi.fn();
+    const archivedFailure = {
+      workflowStepId: "plan-review",
+      phase: "pre-merge" as const,
+      status: "skipped" as const,
+      remediationArchivedAt: "2026-09-02T00:00:00.000Z",
+      remediationArchivedFromStatus: "failed" as const,
+    };
+    const withBypass = (workflowStepResults: Task["workflowStepResults"], overrides: Partial<Task> = {}) => actionIds(
+      makeTask({ column: "in-review", workflowStepResults, ...overrides }),
+      { onBypassReview },
+    );
+
+    expect(withBypass([archivedFailure])).toContain("bypass-review");
+    expect(withBypass([{ ...archivedFailure, status: "failed", remediationArchivedAt: undefined }])).toContain("bypass-review");
+    expect(withBypass([{ ...archivedFailure, bypassedBy: "operator" }])).not.toContain("bypass-review");
+    expect(withBypass([{ ...archivedFailure, remediationArchivedFromStatus: "passed" }])).not.toContain("bypass-review");
+    expect(withBypass([{ ...archivedFailure, phase: "post-merge" }])).not.toContain("bypass-review");
+    expect(withBypass([archivedFailure], { column: "in-progress" })).not.toContain("bypass-review");
+    expect(actionIds(makeTask({ column: "in-review", workflowStepResults: [archivedFailure] }))).not.toContain("bypass-review");
+  });
+
   it("offers exactly the supported recovery actions", () => {
     const supported = buildTaskActionMenuModel({
       task: makeTask({ column: "in-progress" }),

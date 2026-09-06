@@ -3,6 +3,7 @@ import { taskHasManualOpenPullRequest } from "../tasks/task-helpers.js";
 import type { BranchGroup, Settings, Task, WorkflowStepResult } from "../types.js";
 import type { MergeContentDescriptor } from "./merge-content-descriptor.js";
 import { evaluatePreMergeApprovals } from "./pre-merge-approval.js";
+import { isArchivedRemediationCarrier } from "../workflows/workflow-step-results.js";
 
 export interface LandedMemberReviewAdvisory {
   taskId: string;
@@ -551,25 +552,28 @@ export function getTaskMergeBlocker(
   return undefined;
 }
 
-/**
- * Returns the most-recently-completed `status:"failed"` pre-merge workflow
- * step result on a task, or `undefined` when none exists. Mirrors the sort
- * (most-recent `completedAt`/`startedAt` first) used by self-healing's
- * `latestFailedPreMergeStep` (packages/engine/src/self-healing.ts) so the
- * bypass primitive and the recovery sweep select the identical step
- * (FN-7720). Post-merge failed steps are excluded — they do not block merge
- * and are out of scope for the bypass.
- */
+/*
+FNXC:ReviewLaneBypass 2026-09-06-00:47:
+An archived remediation carrier preserves a failed review for history but used to erase the only
+status the audited operator bypass could select. Select that carrier without changing archive writers;
+a live failure remains preferred and automatic remediation continues to select only live failures.
+*/
 export function getLatestFailedPreMergeReviewStep(
   task: Pick<Task, "workflowStepResults">,
 ): WorkflowStepResult | undefined {
-  return (task.workflowStepResults ?? [])
-    .filter((result) => (result.phase || "pre-merge") === "pre-merge" && result.status === "failed")
-    .sort((a, b) => {
-      const aTs = Date.parse(a.completedAt || a.startedAt || "");
-      const bTs = Date.parse(b.completedAt || b.startedAt || "");
-      return (Number.isFinite(bTs) ? bTs : 0) - (Number.isFinite(aTs) ? aTs : 0);
-    })[0];
+  const results = task.workflowStepResults ?? [];
+  const recentFirst = (a: WorkflowStepResult, b: WorkflowStepResult) => {
+    const aTs = Date.parse(a.completedAt || a.startedAt || "");
+    const bTs = Date.parse(b.completedAt || b.startedAt || "");
+    return (Number.isFinite(bTs) ? bTs : 0) - (Number.isFinite(aTs) ? aTs : 0);
+  };
+  const isPreMerge = (result: WorkflowStepResult) => (result.phase || "pre-merge") === "pre-merge";
+  return results.filter((result) => isPreMerge(result) && result.status === "failed").sort(recentFirst)[0]
+    ?? results.filter((result) => isPreMerge(result)
+      && isArchivedRemediationCarrier(result)
+      && (result.remediationArchivedFromStatus === "failed" || result.remediationArchivedFromStatus === "advisory_failure")
+      && !result.bypassedBy
+      && !result.supersededAt).sort(recentFirst)[0];
 }
 
 /*
