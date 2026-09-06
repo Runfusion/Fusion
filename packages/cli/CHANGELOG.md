@@ -1,5 +1,70 @@
 # @runfusion/fusion
 
+## 0.78.0-beta.3
+
+### Minor Changes
+
+- 075ef85: summary: Reference another Direct chat with copied conversation IDs and bounded #id context.
+  category: feature
+  dev: Adds `fn_chat_conversation_read`, `fn_chat_conversation_search`, and the scoped conversation-reference module.
+- 5f717b4: summary: Rename the chat delivery-history tool to fn_history_read.
+  category: feature
+  dev: Renames `fn_patchnode_read` to `fn_history_read`, `createPatchnodeReadTool` to `createHistoryReadTool`, and `patchnodeReadParams` to `historyReadParams`. The `patchnode` view id, `nav.patchnode` and `patchnode.*` keys, `GET /api/patchnode`, `project.patchnode_entries`, and `@fusion/core` types and methods remain unchanged.
+
+### Patch Changes
+
+- a8d1e93: summary: An operator review retry now starts the gate's revision budget fresh instead of inheriting it.
+  category: fix
+  dev: The log-derived attempt ledger honours an append-only reset marker (`optionalStepRevisionResetOutcome`) that the dashboard restart-stage route stamps per discarded gate, so a restarted review is no longer refused for a budget the previous episode spent.
+- 6b909aa: summary: Restore review gates archived by another gate's remediation so blocked cards stay recoverable.
+  category: fix
+  dev: Adds `resolveCollateralArchivedReviewGate` in `@fusion/core` and the `reconcile-collateral-archived-review-gates` self-healing sweep (startup + maintenance), emitting `task:reconcile-collateral-archived-review-gate`. The sweep restores the pre-archive terminal status so the FN-7720 audited bypass can select the gate again; it never fabricates a verdict, and skips operator waivers, the remediation-owning gate, workspace cards, user-paused cards, and live sessions.
+- c57562e: summary: The review bypass now reaches any blocking gate, and merge blockers name the gate at fault.
+  category: fix
+  dev: `bypassFailedPreMergeReviewStep` falls back to a required gate whose result is not an approval (including a remediation-archived row) and erases the archive stamps the approval evaluator vetoes on; the `not-approved` merge blocker string now carries the offending gate id.
+- d9986ec: summary: A review remediation now archives only the gate it is remediating, not every failed gate.
+  category: fix
+  dev: `archiveTerminalWorkflowStepFailures` accepts an optional `workflowStepIds` scope; `clearTerminalStepFailuresForRetry("archive")` scopes it to the latest terminal pre-merge failure. Unscoped calls keep the historical blanket behaviour.
+- 8d1f1f7: summary: A review verdict rescued from a malformed reply can no longer be downgraded to an approval.
+  category: fix
+  dev: `applyReviewSeverityGate` accepts `findingsUnreadable`; the verdict-repair path in `execute-workflow-step.ts` sets it when the repaired parse recovered no findings, so an empty list reads as "unknown" instead of "nothing blocking".
+- 48fefd0: summary: A task being planned is no longer treated as abandoned work and re-dispatched mid-planning.
+  category: fix
+  dev: `reconcileStrandedWorkflowContinuations` now consults `isPlanningLive` alongside the session registry and executing-task lock, so a planner that holds no worktree (post plan-before-worktree) is not read as a dead lease.
+- 12d270b: summary: Restore workflow step activity history for unassigned tasks.
+  category: fix
+  dev: Proves activity-run agents against the roster with a bounded resolver, widens effective step identity, and skips unattributable runs.
+- 839ae75: summary: Keep automatic dependency repair working without archived-history error noise.
+  category: fix
+  dev: Updates reconcileMissingDependencies to exclude archived dependents and contain deletion races.
+- 86f99ad: summary: Preserve annotated plan steps and manual approval during planning retries.
+  category: fix
+  dev: Uses matchStepHeadings and the needs-replan retry hold.
+- 8b3b974: summary: Speed up task lists and hold-release scheduling by batching workflow selection reads.
+  category: performance
+  dev: Adds prefetchWorkflowSelections and listTasks selectionCache/selectionReadTally options.
+- 84e4243: summary: Archive completed refinement chains reliably and report items that remain active.
+  category: fix
+  dev: Bulk archive now returns ArchiveAllDoneResult with archived and skipped route payload arrays.
+- 6a019f6: summary: Preserve new agent-log entries after an interrupted prior write.
+  category: fix
+  dev: `appendAgentLogEntriesSync` separates unterminated tails, and reader corruption warnings are aggregated per read.
+- 9584eb6: summary: Recover stale review approvals that previously left merge cards permanently failed.
+  category: fix
+  dev: Classifies stale-content merge parks and routes their outdated review lane back to current content.
+- 1ae91da: summary: Fix the Approve button on board and list cards doing nothing after a page reload.
+  category: fix
+  dev: Removes the task.prompt gate from PlanApprovalNotice so slim task rows can approve plans.
+- d11d360: summary: Restore operator recovery for archived pre-merge review failures.
+  category: fix
+  dev: Updates getLatestFailedPreMergeReviewStep, evaluateStep audited-waiver handling, and self-healing requiredPreMergeStepIds admission.
+- f19209c: summary: Restore generated fix features so validated defects can become board tasks.
+  category: fix
+  dev: Updates reconcileSupersededGeneratedFixFeatures, the scheduler terminal-state guard, and validation repair eligibility.
+- de93935: summary: Explain why stale recommendation mailbox notices cannot show inline actions.
+  category: fix
+  dev: Adds distinct dashboard copy for missing parent tasks versus replaced recommendation IDs.
+
 ## 0.78.0-beta.2
 
 ### Minor Changes

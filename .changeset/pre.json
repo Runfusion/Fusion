@@ -42,6 +42,7 @@
   "changesets": [
     "cloud-link-cloudflare-tunnel",
     "cloud-link-mode-a",
+    "fn-1711-revision-ledger-reset",
     "fn-282-planning-before-worktree",
     "fn-283-stale-overlap-blocker",
     "fn-285-chat-visibility-toggle",
@@ -51,6 +52,13 @@
     "fn-289-workspace-repos-details-tab",
     "fn-290-chat-snippets",
     "fn-291-skills-snippets-tabs",
+    "fn-292-conversation-references",
+    "fn-293-history-tool-rename",
+    "fn-295-collateral-archived-review-gate",
+    "fn-295-operator-bypass-reach",
+    "fn-295-remediation-archive-scope",
+    "fn-295-verdict-repair-fail-closed",
+    "fn-299-planning-liveness-continuation",
     "fn-9242-fable-5-1",
     "fn-9243-unrun-pre-merge-gate-reseed",
     "fn-9244-pi-0-84-4-muse-spark",
@@ -63,6 +71,17 @@
     "fn-9253-step-session-abort-containment",
     "fn-9254-depends-annotation-indexing",
     "fn-9255-migration-bookkeeping-backup",
-    "kb-044-postgres-backup-pairs"
+    "fn-9257-workflow-step-run-attribution",
+    "fn-9259-missing-dependency-sweep",
+    "fn-9260-step-heading-matcher",
+    "fn-9261-list-tasks-selection-batching",
+    "fn-9262-bulk-archive-ordering",
+    "fn-9263-agent-log-append-newline",
+    "fn-9264-stale-content-park-recovery",
+    "fn-9265-card-approve-prompt-gate",
+    "fn-9266-archived-review-bypass",
+    "fn-9267-generated-fix-feature-flip-flop",
+    "kb-044-postgres-backup-pairs",
+    "recommendation-unavailable-reasons"
   ]
 }

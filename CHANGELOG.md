@@ -2,6 +2,44 @@
 
 User-facing release notes aggregated across all packages. This file is auto-synced from each `packages/*/CHANGELOG.md` by `scripts/release.mjs` — do not edit by hand.
 
+## 0.78.0-beta.3
+
+### Highlights
+
+- Approve button on board and list cards works again after a page reload
+- Review bypass now reaches any blocking gate, and merge blockers name the gate at fault
+- Blocked review cards stay recoverable: collateral-archived gates are restored automatically
+- Reference another Direct chat by conversation ID with bounded #id context
+- Task lists and hold-release scheduling are faster from batched workflow selection reads
+
+### New
+
+- Reference another Direct chat by pasting its conversation ID, and pull in bounded `#id` context.
+- The chat delivery-history tool is now named `fn_history_read`. The Patchnode view, navigation, and API stay where they are.
+
+### Fixed
+
+- The Approve button on board and list cards no longer does nothing after a page reload.
+- The review bypass now reaches any blocking gate, not just a failed one, and the merge blocker names the gate at fault.
+- Review gates archived as collateral by another gate's remediation are restored on startup and during maintenance, so blocked cards stay recoverable. No verdict is ever fabricated, and operator waivers, workspace cards, paused cards, and live sessions are left alone.
+- A review remediation now archives only the gate it is remediating instead of every failed gate.
+- Restarting an operator review starts the gate's revision budget fresh instead of inheriting what the previous episode spent.
+- Archived pre-merge review failures are recoverable again through operator bypass.
+- A verdict rescued from a malformed reviewer reply can no longer be downgraded to an approval — an empty finding list reads as unknown, not as nothing blocking.
+- Stale review approvals no longer leave merge cards permanently failed; the outdated review lane is routed back to current content.
+- A task being planned is no longer read as abandoned work and re-dispatched mid-planning.
+- Planning retries preserve annotated plan steps and manual approval.
+- Workflow step activity history shows up again for unassigned tasks.
+- Automatic dependency repair keeps working without archived-history error noise.
+- Bulk archive completes refinement chains reliably and reports which items are still active.
+- New agent-log entries survive an interrupted prior write, and corruption warnings are aggregated per read.
+- Generated fix features come back, so validated defects can become board tasks again.
+- Stale recommendation notices in the mailbox now explain why they have no inline actions, distinguishing a missing parent task from a replaced recommendation.
+
+### Performance
+
+- Task lists and hold-release scheduling batch their workflow selection reads instead of issuing one per task.
+
 ## 0.78.0-beta.2
 
 ### Highlights

@@ -1,5 +1,13 @@
 # @fusion-plugin-examples/reports
 
+## 0.1.56-beta.3
+
+### Patch Changes
+
+- @fusion/core@0.78.0-beta.3
+- @fusion/dashboard@0.78.0-beta.3
+- @fusion/plugin-sdk@0.78.0-beta.3
+
 ## 0.1.56-beta.2
 
 ### Patch Changes
