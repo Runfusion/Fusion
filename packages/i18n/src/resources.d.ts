@@ -3611,6 +3611,8 @@ export default interface Resources {
       "outboxTab": "Outbox",
       "pending": "Pending",
       "recommendationsUnavailable": "Recommendations are no longer available.",
+      "recommendationsUnavailableIdsReason": "The source task no longer contains the recommendation IDs from this message. A later completion retry may have replaced them.",
+      "recommendationsUnavailableTaskReason": "The source task can no longer be loaded. It may have been deleted or moved out of this project.",
       "refreshTitle": "Refresh",
       "reply": "Reply",
       "replyButton": "Reply",

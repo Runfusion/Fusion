@@ -30,7 +30,7 @@ export function MailboxTaskRecommendations({
   const { t } = useTranslation("app");
   const target = getNoticeTarget(metadata);
   const [recommendations, setRecommendations] = useState<TaskRecommendation[] | null>(null);
-  const [unavailable, setUnavailable] = useState(false);
+  const [unavailableReason, setUnavailableReason] = useState<"task-unavailable" | "recommendations-missing" | null>(null);
   const [createdIds, setCreatedIds] = useState<Record<string, string>>({});
   const [creatingActions, setCreatingActions] = useState<Record<string, true>>({});
   const [errorActions, setErrorActions] = useState<Record<string, true>>({});
@@ -44,7 +44,7 @@ export function MailboxTaskRecommendations({
     let active = true;
     creatingIdsRef.current.clear();
     setRecommendations(null);
-    setUnavailable(false);
+    setUnavailableReason(null);
     setCreatedIds({});
     setCreatingActions({});
     setErrorActions({});
@@ -61,10 +61,15 @@ export function MailboxTaskRecommendations({
       const allowedIds = new Set(recommendationIds);
       const matched = (task.recommendations ?? []).filter((recommendation) => allowedIds.has(recommendation.id));
       setRecommendations(matched);
-      setUnavailable(matched.length === 0);
+      /*
+      FNXC:TaskRecommendations 2026-09-04-13:58:
+      Operators need to know whether a stale mailbox notice lost its parent task or only lost the
+      referenced recommendation ids after a completion retry rewrote the task's proposal list.
+      */
+      setUnavailableReason(matched.length === 0 ? "recommendations-missing" : null);
     }).catch(() => {
       if (!active) return;
-      setUnavailable(true);
+      setUnavailableReason("task-unavailable");
     });
     return () => { active = false; };
   }, [projectId, recommendationIdsKey, taskId]);
@@ -99,7 +104,12 @@ export function MailboxTaskRecommendations({
     }
   };
 
-  if (unavailable) return <p className="mailbox-task-recommendations__unavailable" data-testid="mailbox-task-recommendations-unavailable">{t("mailbox.recommendationsUnavailable", "Recommendations are no longer available.")}</p>;
+  if (unavailableReason) {
+    const reason = unavailableReason === "task-unavailable"
+      ? t("mailbox.recommendationsUnavailableTaskReason", "The source task can no longer be loaded. It may have been deleted or moved out of this project.")
+      : t("mailbox.recommendationsUnavailableIdsReason", "The source task no longer contains the recommendation IDs from this message. A later completion retry may have replaced them.");
+    return <p className="mailbox-task-recommendations__unavailable" data-testid="mailbox-task-recommendations-unavailable">{t("mailbox.recommendationsUnavailable", "Recommendations are no longer available.")} <span>{reason}</span></p>;
+  }
   if (!recommendations) return null;
 
   return <section className="mailbox-task-recommendations" data-testid="mailbox-task-recommendations" aria-label={t("mailbox.taskRecommendations", "Task recommendations")}>

@@ -26,12 +26,21 @@ describe("MailboxTaskRecommendations", () => {
     }
   });
 
-  it("keeps a failed parent lookup inert", async () => {
+  it("keeps a failed parent lookup inert and explains the missing parent", async () => {
     vi.mocked(fetchTaskDetail).mockRejectedValue(new Error("not found"));
     render(<MailboxTaskRecommendations metadata={metadata} />);
     await waitFor(() => expect(screen.getByTestId("mailbox-task-recommendations-unavailable")).toBeInTheDocument());
+    expect(screen.getByText(/source task can no longer be loaded/i)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Create task" })).not.toBeInTheDocument();
     expect(screen.queryByTestId("mailbox-task-recommendations")).not.toBeInTheDocument();
+  });
+
+  it("explains when a stale notice points at recommendation ids no longer on the task", async () => {
+    vi.mocked(fetchTaskDetail).mockResolvedValue({ ...detail, recommendations: [] } as never);
+    render(<MailboxTaskRecommendations metadata={metadata} />);
+    await waitFor(() => expect(screen.getByTestId("mailbox-task-recommendations-unavailable")).toBeInTheDocument());
+    expect(screen.getByText(/no longer contains the recommendation IDs/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Create task" })).not.toBeInTheDocument();
   });
 
   it("creates once and replaces the action with the linked task", async () => {
