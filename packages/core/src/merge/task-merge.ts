@@ -377,6 +377,15 @@ terminal park.
 export const PRE_MERGE_STEPS_NOT_RUN_BLOCKER =
   "task has enabled pre-merge workflow steps that never ran";
 
+/*
+FNXC:PreMergeApproval 2026-09-06-00:11:
+Four production sites and three merge doors classify this blocker after it is wrapped in their
+own error text. Keeping the wording as a named contract prevents an editorial change from silently
+disabling stale-content recovery at every door.
+*/
+export const STALE_CONTENT_APPROVAL_BLOCKER =
+  "task has a pre-merge approval recorded against different content";
+
 /**
  * Thrown by merge doors when the ONLY thing standing between a card and merge is an
  * enabled pre-merge gate that has not run yet. Callers must treat it as "retry after the
@@ -396,6 +405,11 @@ export class PreMergeStepsNotRunError extends Error {
 /** True when a `getTaskMergeBlocker` reason is the deferrable unrun-gate reason. */
 export function isPreMergeStepsNotRunBlocker(blocker: string | undefined): boolean {
   return blocker === PRE_MERGE_STEPS_NOT_RUN_BLOCKER;
+}
+
+/** True when a merge door or terminal park reports an approval against superseded content. */
+export function isStaleContentApprovalBlocker(blocker: string | undefined | null): boolean {
+  return typeof blocker === "string" && blocker.trim().endsWith(STALE_CONTENT_APPROVAL_BLOCKER);
 }
 
 export const TASK_DONE_BYPASS_BLOCKER_MESSAGE =
@@ -493,8 +507,16 @@ export function getTaskMergeBlocker(
   */
   const approval = evaluatePreMergeApprovals(task, options).find((candidate) => candidate.state !== "approved");
   if (approval?.state === "missing") return PRE_MERGE_STEPS_NOT_RUN_BLOCKER;
-  if (approval?.state === "not-approved") return "task has enabled pre-merge workflow steps without a current approval";
-  if (approval?.state === "stale-content") return "task has a pre-merge approval recorded against different content";
+  /*
+  FNXC:PreMergeApproval 2026-09-05-23:08:
+  FN-295: name the gate. The bare sentence sent an operator hunting through three review lanes for the
+  one row without an approval, and the wrong guess cost three full review re-runs. The gate id is the
+  single fact needed to act; every other approval blocker already implies its own remedy.
+  */
+  if (approval?.state === "not-approved") {
+    return `task has enabled pre-merge workflow steps without a current approval (gate '${approval.workflowStepId}')`;
+  }
+  if (approval?.state === "stale-content") return STALE_CONTENT_APPROVAL_BLOCKER;
   if (approval?.state === "unprovable-content") return "task has no provable approval for the content being merged";
 
   // Only pre-merge workflow step failures block merge.

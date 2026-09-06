@@ -4,8 +4,10 @@ import {
   getMergeConfirmedFinalizationBlocker,
   getUnfinishedStepTitles,
   isPreMergeStepsNotRunBlocker,
+  isStaleContentApprovalBlocker,
   PreMergeStepsNotRunError,
   PRE_MERGE_STEPS_NOT_RUN_BLOCKER,
+  STALE_CONTENT_APPROVAL_BLOCKER,
   BLOCKING_TASK_STATUSES,
   collectLandedMemberReviewAdvisories,
   HARD_BLOCKING_TASK_STATUSES,
@@ -533,6 +535,16 @@ describe("getTaskMergeBlocker", () => {
     expect(isPreMergeStepsNotRunBlocker(undefined)).toBe(false);
     expect(new PreMergeStepsNotRunError("FN-9191").message)
       .toBe(`Cannot merge FN-9191: ${PRE_MERGE_STEPS_NOT_RUN_BLOCKER}`);
+  });
+
+  it("classifies stale-content blockers through merge-door and park wrappers", () => {
+    expect(isStaleContentApprovalBlocker(STALE_CONTENT_APPROVAL_BLOCKER)).toBe(true);
+    expect(isStaleContentApprovalBlocker(`Cannot merge FN-1: ${STALE_CONTENT_APPROVAL_BLOCKER}`)).toBe(true);
+    expect(isStaleContentApprovalBlocker(`AUTO_MERGE_RETRY_REJECTED: Cannot merge FN-1: ${STALE_CONTENT_APPROVAL_BLOCKER}`)).toBe(true);
+    expect(isStaleContentApprovalBlocker(PRE_MERGE_STEPS_NOT_RUN_BLOCKER)).toBe(false);
+    expect(isStaleContentApprovalBlocker("Cannot merge FN-1: task is marked 'needs-replan'")).toBe(false);
+    expect(isStaleContentApprovalBlocker(undefined)).toBe(false);
+    expect(isStaleContentApprovalBlocker(null)).toBe(false);
   });
 
   it("accepts an operator-bypassed skipped result for a required pre-merge group", () => {

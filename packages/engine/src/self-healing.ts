@@ -28,7 +28,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmdirSy
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { loadWorkspaceConfig, type TaskMoveLanes, resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, hasSharedBranchMemberAutoMergeHold, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getPostMergeFinalizeBlocker, planConfirmedMergeChecklistReconciliation, getTaskMergeBlocker, resolvePreMergeGateForTask, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isLiveSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, resolveExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, getBuiltinWorkflow, isBuiltinWorkflowId, resolveWorkflowIrForTask, resolveWorkflowIrForTaskWithProvenance, resolveRequiredPreMergeStepIds, resolveReboundTarget, columnsWithFlag, resolveLifecycleColumns, resolveTaskLifecycleColumns, isWipColumnRole, isReviewColumnRole, isTerminalColumnRole, workflowHasColumn, planLegacyAdoption, resolveOrphanedPendingStepResults, resolveUnprovenReviewApproval, classifyReviewLease, PLAN_REVIEW_LEASE_STALENESS_MS, DEFAULT_MAX_POST_REVIEW_FIXES, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type MoveTaskOptions, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult, type WorkflowIr, type WorkflowIrV2,
+import { loadWorkspaceConfig, type TaskMoveLanes, resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, hasSharedBranchMemberAutoMergeHold, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getPostMergeFinalizeBlocker, planConfirmedMergeChecklistReconciliation, getTaskMergeBlocker, isStaleContentApprovalBlocker, resolvePreMergeGateForTask, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isLiveSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, resolveExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, getBuiltinWorkflow, isBuiltinWorkflowId, resolveWorkflowIrForTask, resolveWorkflowIrForTaskWithProvenance, resolveRequiredPreMergeStepIds, resolveReboundTarget, columnsWithFlag, resolveLifecycleColumns, resolveTaskLifecycleColumns, isWipColumnRole, isReviewColumnRole, isTerminalColumnRole, workflowHasColumn, planLegacyAdoption, resolveOrphanedPendingStepResults, resolveUnprovenReviewApproval, classifyReviewLease, PLAN_REVIEW_LEASE_STALENESS_MS, DEFAULT_MAX_POST_REVIEW_FIXES, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type MoveTaskOptions, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult, type WorkflowIr, type WorkflowIrV2,
 
   resolveNearDuplicateCanonicalFlags,
   LEGACY_COLUMN_IDS_BY_ROLE,
@@ -48,6 +48,7 @@ import { loadWorkspaceConfig, type TaskMoveLanes, resolveColumnFlags, IN_REVIEW_
 } from "@fusion/core";
 import { finalizePlanningSegment, isLegacyWorkspaceWorktreeLayout, resolveWorkspaceTaskWorktreeDir } from "@fusion/core";
 import type { WorkspaceLandIntent } from "@fusion/core";
+import { classifyStaleContentPark } from "./merge/stale-content-park.js";
 import type { MeshLeaseManager } from "./project/mesh-lease-manager.js";
 import { createLogger, schedulerLog } from "./logger.js";
 import { registerLifecycleMoveLog } from "./execution/lifecycle-move-log.js";
@@ -884,6 +885,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   private maintenanceTickCounter = 0;
   private readonly taskLifecycleRetentionLastPrunedAt = new Map<string, number>();
   private readonly staleContentRerouteAuditKeys = new Set<string>();
+  private readonly staleContentParkRecoveryAttempts = new Map<string, number>();
+  private readonly staleContentParkRecoveryBudgetLogged = new Set<string>();
   private readonly unrunPreMergeGateRerouteAuditKeys = new Set<string>();
   private readonly githubCheckStateRetentionLastPrunedAt = new Map<string, number>();
   private readonly processBootStartedAt = Date.now();
@@ -9244,14 +9247,24 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     task: Task,
     reviewColumns: ReadonlySet<string>,
     settings: Settings,
-  ): Promise<boolean> {
+    parkShape?: ReturnType<typeof classifyStaleContentPark>,
+  ): Promise<{
+    handled: boolean;
+    seeded: boolean;
+    nodeId?: string;
+    parkShape?: ReturnType<typeof classifyStaleContentPark>;
+    parkCleared: boolean;
+    mergeRetriesReset: boolean;
+  }> {
     let mergeGate;
     try {
       mergeGate = await resolvePreMergeGateForTask(this.store, task.id, task.enabledWorkflowSteps, task);
     } catch {
-      return false;
+      return { handled: false, seeded: false, parkCleared: false, mergeRetriesReset: false };
     }
-    if (mergeGate.provenance === "default" && !mergeGate.selectionAbsent) return false;
+    if (mergeGate.provenance === "default" && !mergeGate.selectionAbsent) {
+      return { handled: false, seeded: false, parkCleared: false, mergeRetriesReset: false };
+    }
 
     const mergeContent = await captureMergeContentDescriptor(task, {
       workspaceRootDir: this.options.rootDir,
@@ -9262,8 +9275,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       requiredPreMergeStepIds: mergeGate.requiredPreMergeStepIds,
       mergeContent,
     });
-    if (blocker !== "task has a pre-merge approval recorded against different content" || mergeContent.kind !== "singular") {
-      return false;
+    if (!isStaleContentApprovalBlocker(blocker) || mergeContent.kind !== "singular") {
+      return { handled: false, seeded: false, parkCleared: false, mergeRetriesReset: false };
     }
 
     const reroute = await rerouteSingularStaleContentToReview(this.store, task, {
@@ -9275,12 +9288,32 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       nodeId: undefined,
       workflowStepId: undefined,
     }));
+    /*
+    FNXC:PreMergeApproval 2026-09-06-00:28:
+    A hidden stale-content park may race a new operator hold or successor owner after the idle
+    seed succeeds. Clear only through the same atomic classification fence, then audit the actual
+    outcome so recovery telemetry never claims that a refused clear re-opened a card.
+    */
+    let parkCleared = false;
+    if (reroute.rerouted && parkShape) {
+      await this.store.updateTaskAtomic(task.id, (live) => {
+        if (classifyStaleContentPark(live) !== parkShape || live.paused || live.userPaused || live.deletedAt) {
+          return null;
+        }
+        parkCleared = true;
+        return { status: null, error: null, mergeRetries: 0 };
+      });
+    }
+    const mergeRetriesReset = parkCleared;
     if (reroute.rerouted) {
-      await this.store.logEntry(task.id, "[pre-merge] Self-healing re-seeded Code Review after stale content evidence blocked merge.");
+      await this.store.logEntry(task.id, `[pre-merge] Review lane '${reroute.nodeId ?? "code-review"}' approved older content; self-healing re-seeded it against current content.`);
+      if (parkCleared) {
+        await this.store.logEntry(task.id, `[pre-merge] Cleared the stale-content merge park after re-seeding review lane '${reroute.nodeId ?? "code-review"}' against current content.`);
+      }
       log.warn(`Stale content approval for ${task.id} re-seeded at ${reroute.nodeId ?? "code-review"}`);
     }
 
-    const auditKey = `${task.id}:${reroute.reason}:${reroute.nodeId ?? ""}`;
+    const auditKey = `${task.id}:${reroute.reason}:${reroute.nodeId ?? ""}:${parkShape ?? ""}`;
     if (!this.staleContentRerouteAuditKeys.has(auditKey)) {
       this.staleContentRerouteAuditKeys.add(auditKey);
       await emitBoundedRunAudit(this.store, {
@@ -9296,10 +9329,20 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           workflowStepId: reroute.workflowStepId,
           reason: reroute.reason,
           source: "self-healing",
+          parkShape,
+          parkCleared,
+          mergeRetriesReset,
         },
       });
     }
-    return true;
+    return {
+      handled: true,
+      seeded: reroute.rerouted,
+      nodeId: reroute.nodeId,
+      parkShape,
+      parkCleared,
+      mergeRetriesReset,
+    };
   }
 
   private async routeUnrunPreMergeGateBackToReview(task: Task, reviewColumns: ReadonlySet<string>, settings: Settings): Promise<boolean> {
@@ -9445,11 +9488,48 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       for (const task of mergeable) {
         const reviewColumns = await ownReviewLanesFor(task);
         if (!reviewColumns.has(task.column)) continue;
-        if (await this.routeStaleSingularApprovalBackToReview(task, reviewColumns, settings)) continue;
+        if ((await this.routeStaleSingularApprovalBackToReview(task, reviewColumns, settings)).handled) continue;
         if (await this.routeUnrunPreMergeGateBackToReview(task, reviewColumns, settings)) continue;
         if (getTaskMergeBlocker(task, { reviewColumns }) !== undefined) continue;
         laneQualifiedMergeable.push(task);
       }
+      /*
+      FNXC:PreMergeApproval 2026-09-06-00:11:
+      Bounded retry and both throwing merge doors leave precise stale-content parks. Admit only
+      those shapes here; the reroute independently re-derives current-content staleness before
+      clearing a failed card, so ordinary failures remain excluded from merge recovery.
+      */
+      const hiddenStaleContentCandidateIds = new Set<string>();
+      for (const task of tasks) {
+        if (mergeable.includes(task)) continue;
+        const parkShape = classifyStaleContentPark(task);
+        if (!parkShape || mergeAdmissionByTaskId.get(task.id) !== true || executingIds.has(task.id)
+          || task.status === "merging" || task.status === "merging-pr") continue;
+        const reviewColumns = await ownReviewLanesFor(task);
+        if (!reviewColumns.has(task.column)) continue;
+        hiddenStaleContentCandidateIds.add(task.id);
+        const attempts = (this.staleContentParkRecoveryAttempts.get(task.id) ?? 0) + 1;
+        this.staleContentParkRecoveryAttempts.set(task.id, attempts);
+        if (attempts === MAX_STARVATION_DROPS && !this.staleContentParkRecoveryBudgetLogged.has(task.id)) {
+          this.staleContentParkRecoveryBudgetLogged.add(task.id);
+          await this.store.logEntry(task.id, `[pre-merge] Stopped stale-content park recovery after ${MAX_STARVATION_DROPS} attempts; operator attention is required.`);
+        }
+        if (attempts > MAX_STARVATION_DROPS) continue;
+        await this.routeStaleSingularApprovalBackToReview(task, reviewColumns, settings, parkShape);
+      }
+      /*
+      FNXC:PreMergeApproval 2026-09-06-00:28:
+      The recovery budget belongs to one continuous hidden park, not a task ID forever. Prune it
+      when the sweep no longer sees that precise candidate so a later independent stale approval
+      receives its own bounded recovery window.
+      */
+      for (const taskId of this.staleContentParkRecoveryAttempts.keys()) {
+        if (!hiddenStaleContentCandidateIds.has(taskId)) {
+          this.staleContentParkRecoveryAttempts.delete(taskId);
+          this.staleContentParkRecoveryBudgetLogged.delete(taskId);
+        }
+      }
+
       if (unresolvedMergeableCards.length > 0) {
         log.warn(
           `mergeable-review recovery: ${unresolvedMergeableCards.length} card(s) measured against the `

@@ -15,6 +15,7 @@ import { executorLog } from "../logger.js";
 import { MERGE_BOUNDARY_UNPROVEN_VALUE } from "../workflows/workflow-merge-nodes.js";
 import { emitMergeBoundaryUnprovenParked } from "./emit-merge-boundary-unproven-audit.js";
 import type { MergeBoundaryUnprovenReasonCode } from "./workflow-merge-boundary.js";
+import { AUTO_MERGE_RETRY_REJECTED_PREFIX } from "../merge/stale-content-park.js";
 
 export type RouteGraphMergeFailureToRetryDeps = {
   store: TaskStore;
@@ -293,7 +294,7 @@ export async function routeGraphMergeFailureToRetry(
     const parked = await parkTaskFailed(
       deps.store,
       live.id,
-      `AUTO_MERGE_RETRY_REJECTED: ${reason}`,
+      `${AUTO_MERGE_RETRY_REJECTED_PREFIX} ${reason}`,
       deps.getRunContextFor(live.id),
       live.columnMovedAt,
     );

@@ -4944,7 +4944,7 @@ describe("SelfHealingManager", () => {
       }));
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-9234-STUCK",
-        expect.stringContaining("Self-healing re-seeded Code Review"),
+        expect.stringContaining("Review lane 'code-review' approved older content"),
       );
 
       managerWithRecovery.stop();
