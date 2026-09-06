@@ -29,6 +29,11 @@ declare module "@fusion/dashboard/app/components/TaskCard" {
   import type { ReactElement } from "react";
 
   interface TaskCardProps {
+    /*
+    FNXC:TaskArchiveRemoval 2026-09-06-01:01:
+    The dependency-graph mirror must expose only real TaskCard actions. Archive and unarchive were
+    removed from the live dashboard contract, so phantom callbacks must not remain passable here.
+    */
     task: Task;
     projectId?: string;
     onOpenDetail: (task: Task | TaskDetail) => void;
@@ -38,8 +43,6 @@ declare module "@fusion/dashboard/app/components/TaskCard" {
       id: string,
       updates: { title?: string; description?: string; dependencies?: string[] }
     ) => Promise<Task>;
-    onArchiveTask?: (id: string) => Promise<Task>;
-    onUnarchiveTask?: (id: string) => Promise<Task>;
     onDeleteTask?: (id: string, options?: { removeDependencyReferences?: boolean }) => Promise<Task>;
     onRetryTask?: (id: string) => Promise<Task>;
     onOpenDetailWithTab?: (task: Task | TaskDetail, initialTab: "changes") => void;
