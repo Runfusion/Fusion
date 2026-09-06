@@ -517,6 +517,35 @@ describe("triage planning continuation lease", () => {
     expect(h.workItem).toMatchObject({ state: "succeeded", leaseOwner: null });
   });
 
+  /*
+  FNXC:PlanningContinuationDispatch 2026-09-06-00:39:
+  Capacity admission can outlive the drain's first task read. The locked point-of-use recheck must
+  reject a task that is now in its workflow's renamed completion lane before claiming or dispatching
+  the continuation; falling back to the built-in Done id would restart completed work.
+  */
+  it("rechecks renamed completion lanes before claiming a continuation", async () => {
+    const h = harness();
+    const runnable = runnablePlanningContinuation(h.current.id);
+    h.replaceWorkItem(runnable);
+    h.current.column = "shipped";
+    const execute = vi.fn().mockResolvedValue(undefined);
+    const resolveTerminalColumns = vi.fn().mockResolvedValue(new Set(["shipped"]));
+    const dispatch = createPlanningContinuationDispatcher({
+      store: h.store,
+      projectId: "fn-299-project",
+      execute,
+      isPlannerLive: () => false,
+      resolveTerminalColumns,
+    });
+
+    await expect(dispatch(h.current, runnable)).resolves.toBe(true);
+
+    expect(resolveTerminalColumns).toHaveBeenCalledWith(h.current.id);
+    expect(execute).not.toHaveBeenCalled();
+    expect(h.transitions).not.toHaveBeenCalled();
+    expect(h.workItem).toEqual(runnable);
+  });
+
   it("does not mutate task state when dispatch-claim inspection fails before planner ownership", async () => {
     const h = harness();
     const runnable = runnablePlanningContinuation(h.current.id);
