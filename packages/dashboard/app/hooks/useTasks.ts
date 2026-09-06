@@ -1483,8 +1483,11 @@ export function useTasks(options?: UseTasksOptions) {
       tasksRef.current = nextTasks;
       setTasks(nextTasks);
     };
-    /* DELIBERATE-LITERAL: the `column === "done"` below is intentional as the degraded fallback when the
-       workflow column resolver is unavailable — `done` is the built-in Complete column id. */
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-09-06-00:46:
+    DELIBERATE-LITERAL: task-scoped workflow flags are authoritative for live SSE reconciliation.
+    `done` is only the degraded fallback when no flag resolver is available.
+    */
     const isCompletedTask = (task: Task, column: ColumnId = task.column): boolean => (
       resolveColumnFlagsRef.current?.({ ...task, column })?.complete === true || column === "done"
     );
