@@ -60,26 +60,9 @@ function runProbe(command: string, args: string[], timeoutMs: number): Promise<P
     FNXC:FnBinaryProbe 2026-07-15-10:05:
     Always settle the probe on timeout even if SIGKILL does not promptly emit close —
     otherwise detectFnBinary can hang past vitest's default 15s and leave orphan children.
-
-    FNXC:FnBinaryProbe 2026-09-06-05:22:
-    Settling on time is not the same as killing on time. ChildProcess.kill() is a silent
-    no-op before the 'spawn' event has assigned a pid, so a probe that times out during a
-    slow fork settles on schedule while the orphan child this timeout exists to prevent
-    survives anyway. Defer the kill to the 'spawn' event when there is no pid yet.
     */
-    let killPending = false;
-    const forceKill = () => {
-      if (child.pid === undefined) {
-        killPending = true;
-        return;
-      }
-      try { child.kill("SIGKILL"); } catch { /* already dead */ }
-    };
-    child.once("spawn", () => {
-      if (killPending) forceKill();
-    });
     const timer = setTimeout(() => {
-      forceKill();
+      try { child.kill("SIGKILL"); } catch { /* ignore */ }
       finish({ exitCode: null, stdout, stderr: stderr || "probe timed out" });
     }, timeoutMs);
     child.stdout?.on("data", (chunk: Buffer) => { stdout += chunk.toString("utf8"); });

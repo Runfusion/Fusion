@@ -1932,14 +1932,23 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
 
     /*
     FNXC:FasterStartup 2026-09-06-05:22:
-    Extension discovery imports third-party extension modules and cold-starts CLI
-    binaries to probe them, so its worst case is bounded by nothing this process
-    controls. Measured 2026-09-06: this phase took 399,809ms (6m40s) under heavy
-    disk contention while every other startup phase finished under 1.5s, leaving
-    the dashboard pinned on "Loading extensions...". Bound it like the model-registry
+    Extension discovery loads third-party extension modules and awaits each factory
+    SERIALLY (pi's loadExtensionsInternal loops `await factory(api)`), so one slow
+    factory -- a CLI cold-start probe, a network call -- stalls every extension
+    behind it, and the worst case is bounded by nothing this process controls.
+    Measured 2026-09-06: this phase took 399,809ms (6m40s) under heavy disk
+    contention while every other startup phase finished under 1.5s, leaving the
+    dashboard pinned on "Loading extensions...". Bound it like the model-registry
     refresh below: on timeout the catch path builds an empty extension runtime and
     boot continues degraded (no extension-provided providers) rather than never
     reaching "Starting engine...".
+
+    Scope of the fix, stated honestly: this covers an await-stalled phase. In the
+    measured incident a 5s probe timeout inside that phase also failed to fire on
+    schedule, which points at event-loop starvation (a large synchronous module
+    compile) rather than an await -- and no timer, including this one, can preempt
+    that. Root-causing the starvation is separate, still-open work; this bound is
+    the floor that keeps an await-stalled boot from being unrecoverable.
     */
     // Load all enabled extensions: Fusion/Pi filesystem-discovered + package-resolved.
     const extensionsResult = await boundedPhaseTime("discoverAndLoadExtensions", () => discoverAndLoadExtensions(

@@ -41,6 +41,12 @@ export async function phaseTime<T>(
  * site. Rejecting is the point: callers are expected to have a degradation path
  * (an empty extension runtime, cached models) that is strictly better than an
  * unbounded wait, so the phase must fail loudly rather than block boot.
+ *
+ * Known limit, so nobody mistakes this for a general hang cure: the bound is a
+ * timer, so it only fires if the event loop is turning. It covers a phase stalled
+ * on an await; it cannot interrupt one blocking the loop synchronously (a large
+ * module compile, a sync fs walk). A phase that can block the loop needs to stop
+ * doing that -- no timer can rescue it.
  */
 export class StartupPhaseTimeoutError extends Error {
   constructor(

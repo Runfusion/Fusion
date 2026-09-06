@@ -222,15 +222,6 @@ export function captureStderr(proc: ChildProcess): () => string {
  *
  * FNXC:CliRuntime 2026-06-20-17:25:
  * FN-6808/FN-6801 require this fire-and-forget auth/presence probe to never reject. Catch synchronous spawn throws from the Vitest child-process guard or platform launch errors and resolve 127, matching the async error sentinel so callers degrade to unauthenticated/not-present instead of surfacing unhandled promise rejections.
- *
- * FNXC:CliRuntime 2026-09-06-05:22:
- * The timeout must actually terminate the probe child, not merely stop waiting on it.
- * Measured 2026-09-06: a `claude auth status` child outlived this 5s timeout by more than
- * five minutes while dashboard startup sat on "Loading extensions...", because
- * ChildProcess.kill() is a silent no-op before the 'spawn' event has assigned a pid — so
- * under heavy I/O, when a slow fork is exactly what makes the probe time out, the kill is
- * guaranteed to be the one that does nothing. Defer it to the 'spawn' event instead.
- * Settling stays single-shot so a late exit after a timeout cannot re-resolve the probe.
  */
 function runClaudeProbe(args: string[], timeoutMs = 5000): Promise<number> {
   return new Promise((resolve) => {
@@ -242,39 +233,22 @@ function runClaudeProbe(args: string[], timeoutMs = 5000): Promise<number> {
       return;
     }
 
-    let settled = false;
-    let killPending = false;
-
-    const forceKill = () => {
-      if (proc.pid === undefined) {
-        // No pid yet: kill() would silently do nothing, so remember to kill on 'spawn'.
-        killPending = true;
-        return;
-      }
+    const timer = setTimeout(() => {
       try {
         proc.kill("SIGKILL");
       } catch {
         // already dead
       }
-    };
-
-    const settle = (code: number) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve(code);
-    };
-
-    const timer = setTimeout(() => {
-      forceKill();
-      settle(124);
+      resolve(124);
     }, timeoutMs);
-
-    proc.once("spawn", () => {
-      if (killPending) forceKill();
+    proc.once("error", () => {
+      clearTimeout(timer);
+      resolve(127);
     });
-    proc.once("error", () => settle(127));
-    proc.once("exit", (code) => settle(code ?? 1));
+    proc.once("exit", (code) => {
+      clearTimeout(timer);
+      resolve(code ?? 1);
+    });
   });
 }
 
