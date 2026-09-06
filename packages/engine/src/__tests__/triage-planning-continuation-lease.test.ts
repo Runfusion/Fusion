@@ -5,6 +5,7 @@ import { isPlanningContinuationDispatchClaim } from "../agents/planning-executio
 import {
   createPlanningContinuationDispatcher,
   releaseFileScopeWaitingContinuations,
+  planningContinuationTerminalColumns,
 } from "../runtimes/in-process-runtime.js";
 import { PLANNING_CONTINUATION_LEASE_MS, TriageProcessor } from "../triage.js";
 
@@ -544,6 +545,11 @@ describe("triage planning continuation lease", () => {
     expect(execute).not.toHaveBeenCalled();
     expect(h.transitions).not.toHaveBeenCalled();
     expect(h.workItem).toEqual(runnable);
+  });
+
+  it("does not treat built-in Done as terminal when the resolved workflow does not", () => {
+    expect([...planningContinuationTerminalColumns({ complete: "shipped" })]).toEqual(["shipped"]);
+    expect([...planningContinuationTerminalColumns(undefined)]).toEqual(["done"]);
   });
 
   it("does not mutate task state when dispatch-claim inspection fails before planner ownership", async () => {
