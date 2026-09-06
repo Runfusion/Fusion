@@ -2218,7 +2218,13 @@ export async function listFeaturesForAssertion(handle: QueryHandle, assertionId:
   return rows.map((row) => rowToFeature(row as FeatureRow));
 }
 
-/** Filter task ids to live rows, excluding soft-deleted and historical-sentinel records. */
+/**
+ * Filter task ids to live rows, excluding soft-deleted and historical-sentinel records.
+ *
+ * FNXC:TaskArchiveRemoval 2026-09-06-00:46:
+ * DELIBERATE-LITERAL: `archived` is the physical pre-reintegration sentinel excluded from live
+ * mission linkage. It is not a terminal role or a configurable workflow lane.
+ */
 export async function listLiveLinkedTaskIds(handle: QueryHandle, taskIds: string[]): Promise<Set<string>> {
   if (taskIds.length === 0) return new Set();
   const rows = await handle
@@ -2249,6 +2255,10 @@ export type TerminalTaskEvidence =
 /**
  * FNXC:MissionReconciliation 2026-07-20-08:34:
  * Terminal delivery evidence accepts only a live Complete row. Historical or soft-deleted rows remain invalid delivery evidence and are never resurrected into mission state.
+ *
+ * FNXC:WorkflowLifecycleColumns 2026-09-06-00:46:
+ * DELIBERATE-LITERAL: task-scoped Complete columns are authoritative. `done` is only the degraded
+ * built-in fallback when the caller cannot provide resolved workflow metadata.
  */
 export async function getTerminalTaskEvidence(
   handle: QueryHandle,

@@ -1417,16 +1417,17 @@ function formatDuplicateLineageLine(task: Task): string | null {
   return lineage.length > 0 ? `Duplicate of: ${lineage.join(", ")}` : null;
 }
 
+/**
+ * FNXC:CliTaskFormatting 2026-09-06-00:46:
+ * DELIBERATE-LITERAL: this synchronous formatter receives no workflow metadata. Live task listings
+ * exclude deleted history, so `done` is the built-in Complete fallback only for the paused suffix.
+ */
 export function formatTaskLine(t: Task): string {
   const label =
     t.title || t.description.slice(0, 60) + (t.description.length > 60 ? "…" : "");
   const source = getTaskSourceLabel(t);
   const sourceSuffix = source ? ` [via: ${source}]` : "";
   const deps = t.dependencies.length ? ` [deps: ${t.dependencies.join(", ")}]` : "";
-  /* Degraded synchronous formatter: live task listings exclude deleted/historical rows, and `done`/`archived`
-     are the built-in terminal fallbacks when no workflow metadata is available. FN-9295: both suppress the
-     paused marker, matching the lifecycle census. DELIBERATE-LITERAL: the `archived` literal is intentional
-     here as the degraded fallback for the historical sentinel column. */
   const isTerminalColumn = t.column === "done" || t.column === "archived";
   const paused = t.paused && !isTerminalColumn ? " (paused)" : "";
   return `${t.id}  ${label}${sourceSuffix}${deps}${paused}`;

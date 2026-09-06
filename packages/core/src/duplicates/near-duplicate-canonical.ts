@@ -19,9 +19,9 @@ canonical on a renamed board still read as ACTIVE, so the flag never cleared and
 stayed parked behind a user decision that could never arrive — the exact stranding the FNXC note
 above says this function was written to prevent.
 
-DELIBERATE-LITERAL: the `column === "archived"` below is intentional — historical pre-reintegration
-rows in the sentinel column are inactive evidence, not a workflow terminal role, so they must be
-excluded by the literal sentinel id.
+FNXC:TaskArchiveRemoval 2026-09-06-00:46:
+DELIBERATE-LITERAL: `archived` is the physical pre-reintegration historical sentinel. It remains
+inactive evidence without pretending that archive state is a configurable workflow terminal role.
 */
 export function isActiveNearDuplicateColumn(
   column: ColumnId | null | undefined,
