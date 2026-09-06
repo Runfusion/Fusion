@@ -46,6 +46,7 @@ import { FileMentionPopup } from "./FileMentionPopup";
 import { CliChatSurface, type CliChatTier } from "./CliChatSurface";
 import { useFileMention } from "../hooks/useFileMention";
 import { useModelsCache } from "../hooks/useModelsCache";
+import { useFavorites } from "../hooks/useFavorites";
 import { useDiscoveredSkillsCache } from "../hooks/useDiscoveredSkillsCache";
 import { useChatSnippets } from "../hooks/useChatSnippetsCache";
 import { useAgentsMapCache } from "../hooks/useAgentsMapCache";
@@ -625,7 +626,24 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
   const [conversationSearchIndex, setConversationSearchIndex] = useState(0);
   const { agentsMap: cachedAgentsMap } = useAgentsMapCache(projectId);
   const agentsMap = useMemo(() => (chatAgentsMap.size > 0 ? chatAgentsMap : cachedAgentsMap), [cachedAgentsMap, chatAgentsMap]);
-  const { models, favoriteProviders, favoriteModels, defaultProvider, defaultModelId } = useModelsCache();
+  const { defaultProvider, defaultModelId } = useModelsCache();
+  const {
+    availableModels: models,
+    favoriteProviders,
+    favoriteModels,
+    toggleFavoriteProvider,
+    toggleFavoriteModel,
+  } = useFavorites();
+  const handleToggleFavoriteProvider = useCallback((provider: string) => {
+    void toggleFavoriteProvider(provider).catch(() => {
+      addToast(t("models.errors.failedUpdateFavorites", "Failed to update favorites"), "error");
+    });
+  }, [addToast, t, toggleFavoriteProvider]);
+  const handleToggleFavoriteModel = useCallback((modelId: string) => {
+    void toggleFavoriteModel(modelId).catch(() => {
+      addToast(t("models.errors.failedUpdateModelFavorites", "Failed to update model favorites"), "error");
+    });
+  }, [addToast, t, toggleFavoriteModel]);
   const defaultModel = useMemo<DefaultModelSelection>(() => ({ provider: defaultProvider, modelId: defaultModelId }), [defaultModelId, defaultProvider]);
   const _dialogDefaultModel = useMemo<DefaultModelSelection>(() => {
     if (chatDefaultTarget?.kind === "model") {
@@ -3113,7 +3131,9 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
             defaultThinkingLevel={resolvedDefaultThinkingLevel}
             models={models}
             favoriteProviders={favoriteProviders}
+            onToggleFavorite={handleToggleFavoriteProvider}
             favoriteModels={favoriteModels}
+            onToggleModelFavorite={handleToggleFavoriteModel}
             agents={Array.from(agentsMap.values())}
             agentId={activeSession?.agentId}
             modelProvider={activeSession?.modelProvider}

@@ -439,24 +439,16 @@ describe("ChatThinkingLevelControl", () => {
 });
 
 describe("ChatThinkingLevelControl CSS contract", () => {
-  it("keeps the popover fit keyed to narrow chat surfaces while preserving desktop sizing", () => {
+  it("keeps one fixed viewport-bounded popover contract across desktop and narrow chat surfaces", () => {
     const css = chatViewCss();
-    const desktopPopoverRule = cssRule(css, ".chat-thinking-popover");
-    const narrowRootRule = cssRule(css, ".chat-view--narrow .chat-thinking-level-root");
-    const narrowPopoverRule = cssRule(css, ".chat-view--narrow .chat-thinking-popover");
+    const popoverRule = cssRule(css, ".chat-thinking-popover");
     const narrowListRule = cssRule(css, ".chat-view--narrow .chat-thinking-agent-list,\n.chat-view--narrow .chat-thinking-popover-list");
 
-    expect(desktopPopoverRule).toContain("left: 0;");
-    expect(desktopPopoverRule).toContain("width: min(calc(var(--space-xl) * 15), calc(100vw - (var(--space-lg) * 2)));");
-    expect(desktopPopoverRule).toContain("max-width: calc(100vw - (var(--space-lg) * 2));");
-
-    expect(narrowRootRule).toContain("position: static;");
-    expect(narrowPopoverRule).toContain("left: var(--space-md);");
-    expect(narrowPopoverRule).toContain("right: var(--space-md);");
-    expect(narrowPopoverRule).toContain("width: auto;");
-    expect(narrowPopoverRule).toContain("max-width: none;");
-    expect(narrowPopoverRule).toContain("max-inline-size: none;");
-    expect(narrowPopoverRule).toContain("max-height: min(calc(var(--space-xl) * 20), calc(100vh - (var(--space-xl) * 5)));");
+    expect(popoverRule).toContain("position: fixed;");
+    expect(popoverRule).toContain("max-width: calc(100vw - (var(--space-lg) * 2));");
+    expect(popoverRule).toContain("overflow-y: auto;");
+    expect(cssRule(css, ".chat-view--narrow .chat-thinking-level-root")).toBe("");
+    expect(cssRule(css, ".chat-view--narrow .chat-thinking-popover")).toBe("");
     expect(narrowListRule).toContain("max-height: calc(var(--space-xl) * 7);");
   });
 });

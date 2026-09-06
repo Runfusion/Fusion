@@ -16,7 +16,7 @@ import { ChatQuestionResponse } from "./ChatQuestionResponse";
 import { PendingChatMessageQueue } from "./PendingChatMessageQueue";
 import { ProviderIcon } from "./ProviderIcon";
 import { ChatThinkingLevelControl } from "./ChatThinkingLevelControl";
-import { useModelsCache } from "../hooks/useModelsCache";
+import { useFavorites } from "../hooks/useFavorites";
 import { useChatSnippets } from "../hooks/useChatSnippetsCache";
 import { StandardChatActionButton, StandardChatMessageItem, StandardStreamingMessage, formatModelTag } from "./StandardChatSurface";
 import { filterChatCommands, getSlashTriggerMatch, matchChatCommand, selectChatCommands, type ChatCommand } from "./chat-commands";
@@ -427,7 +427,23 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
   const selectedChatCommands = useMemo(() => selectChatCommands({ chatFocusEnabled }), [chatFocusEnabled]);
   const [sessionModel, setSessionModel] = useState<ResolvedModelSelection & { thinkingLevel?: string }>(taskChatModel);
   const hasLocalTargetOverrideRef = useRef(false);
-  const { models, favoriteProviders, favoriteModels } = useModelsCache();
+  const {
+    availableModels: models,
+    favoriteProviders,
+    favoriteModels,
+    toggleFavoriteProvider,
+    toggleFavoriteModel,
+  } = useFavorites();
+  const handleToggleFavoriteProvider = useCallback((provider: string) => {
+    void toggleFavoriteProvider(provider).catch(() => {
+      addToastRef.current(t("models.errors.failedUpdateFavorites", "Failed to update favorites"), "error");
+    });
+  }, [t, toggleFavoriteProvider]);
+  const handleToggleFavoriteModel = useCallback((modelId: string) => {
+    void toggleFavoriteModel(modelId).catch(() => {
+      addToastRef.current(t("models.errors.failedUpdateModelFavorites", "Failed to update model favorites"), "error");
+    });
+  }, [t, toggleFavoriteModel]);
   const displayedModel = sessionModel;
   const displayedModelProvider = isUsableModel(displayedModel) ? displayedModel.provider : undefined;
   const displayedModelId = isUsableModel(displayedModel) ? displayedModel.modelId : undefined;
@@ -1810,7 +1826,9 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
           targetKey={plannerChatScopeKey}
           models={models}
           favoriteProviders={favoriteProviders}
+          onToggleFavorite={handleToggleFavoriteProvider}
           favoriteModels={favoriteModels}
+          onToggleModelFavorite={handleToggleFavoriteModel}
           modelProvider={displayedModelProvider ?? null}
           modelId={displayedModelId ?? null}
           modelPickerLabel={t("taskDetail.plannerChat.modelLabel", "Chat model")}

@@ -15,6 +15,9 @@ const originalScrollHeightDescriptor = Object.getOwnPropertyDescriptor(HTMLEleme
 const originalClientHeightDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
 
 const mockModelCatalog = vi.hoisted(() => ({
+  favoriteProviders: [] as string[],
+  favoriteModels: [] as string[],
+  refresh: vi.fn().mockResolvedValue(undefined),
   models: [
     { provider: "anthropic", id: "claude-plan", name: "Claude Plan", reasoning: true, contextWindow: 200000 },
     { provider: "enterprise-provider", id: "very-long-production-model", name: "Enterprise Production Model With A Readable Long Name", reasoning: true, contextWindow: 200000 },
@@ -49,8 +52,9 @@ const { mockEnsureTaskPlannerChatSession, mockFetchTaskPlannerChatSession, mockF
 vi.mock("../../hooks/useModelsCache", () => ({
   useModelsCache: () => ({
     models: mockModelCatalog.models,
-    favoriteProviders: [],
-    favoriteModels: [],
+    favoriteProviders: mockModelCatalog.favoriteProviders,
+    favoriteModels: mockModelCatalog.favoriteModels,
+    refresh: mockModelCatalog.refresh,
   }),
 }));
 
@@ -316,6 +320,37 @@ describe("TaskPlannerChatTab", () => {
       undefined,
       { taskId: "FN-7310" },
     );
+  });
+
+  it("persists model favorites from the task-chat portal and reports rollback failures", async () => {
+    const user = userEvent.setup();
+    const addToast = vi.fn();
+    renderPlannerChat({ addToast });
+
+    await screen.findByTestId("task-planner-chat-empty");
+    await user.click(screen.getByTestId("chat-thinking-btn"));
+    expect(screen.getByTestId("chat-thinking-popover").parentElement).toBe(document.body);
+    expect(document.querySelector(".task-planner-chat-composer")?.contains(screen.getByTestId("chat-thinking-popover"))).toBe(false);
+    await user.click(screen.getByRole("button", { name: "Chat model" }));
+    let portal = await screen.findByTestId("model-combobox-portal");
+    const claudeFavoriteButton = within(portal).getByText("Claude Plan").closest("[role=option]")?.querySelector<HTMLButtonElement>(".model-combobox-option-favorite");
+    expect(claudeFavoriteButton).toBeTruthy();
+    await user.click(claudeFavoriteButton!);
+
+    await waitFor(() => expect(mockUpdateGlobalSettings).toHaveBeenCalledWith({
+      favoriteProviders: [],
+      favoriteModels: ["anthropic/claude-plan"],
+    }));
+    expect(screen.getByTestId("chat-thinking-popover")).toBeInTheDocument();
+    expect(mockUpdateChatSession).not.toHaveBeenCalled();
+
+    mockUpdateGlobalSettings.mockRejectedValueOnce(new Error("write failed"));
+    portal = screen.getByTestId("model-combobox-portal");
+    const enterpriseFavoriteButton = within(portal).getByText("Enterprise Production Model With A Readable Long Name").closest("[role=option]")?.querySelector<HTMLButtonElement>(".model-combobox-option-favorite");
+    expect(enterpriseFavoriteButton).toBeTruthy();
+    await user.click(enterpriseFavoriteButton!);
+    await waitFor(() => expect(addToast).toHaveBeenCalledWith("Failed to update model favorites", "error"));
+    expect(enterpriseFavoriteButton).toHaveTextContent("☆");
   });
 
   it("restores the project default model through the unified popover and closes only after choosing a thinking level", async () => {

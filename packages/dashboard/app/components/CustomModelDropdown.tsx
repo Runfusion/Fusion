@@ -142,10 +142,16 @@ export function CustomModelDropdown({
     }, {});
   }, [filteredModels]);
 
-  // Build favorited model entries - models that are in the favoriteModels list and in filteredModels
+  /*
+  FNXC:ModelDropdown 2026-09-06-21:10:
+  Chat model pickers expose the same favorite stars as settings surfaces. Normalize duplicate or stale persisted identifiers before rendering pinned rows so each available model has exactly one coherent action and invalid favorites never leave an empty affordance.
+  */
   const favoritedModelEntries = useMemo(() => {
     const result: Array<{ model: ModelInfo; fullId: string }> = [];
+    const seen = new Set<string>();
     for (const fullId of favoriteModels) {
+      if (seen.has(fullId)) continue;
+      seen.add(fullId);
       const slashIdx = fullId.indexOf("/");
       if (slashIdx === -1) continue;
       const provider = fullId.slice(0, slashIdx);

@@ -49,6 +49,9 @@ vi.mock("../../hooks/useModelsCache", () => ({
     refresh: vi.fn(),
   }),
 }));
+vi.mock("../../hooks/useFavorites", () => ({
+  useFavorites: () => ({ availableModels: [{ provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5" }], favoriteProviders: [], favoriteModels: [], providerInstances: {}, toggleFavoriteProvider: vi.fn(), toggleFavoriteModel: vi.fn() }),
+}));
 vi.mock("../../api", () => ({
   fetchSettings: vi.fn().mockResolvedValue({}),
   fetchModels: vi.fn().mockResolvedValue({ models: [], favoriteProviders: [], favoriteModels: [] }),

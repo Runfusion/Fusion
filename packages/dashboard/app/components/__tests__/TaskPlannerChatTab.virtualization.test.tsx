@@ -12,6 +12,9 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../../hooks/useModelsCache", () => ({ useModelsCache: () => ({ models: [], favoriteProviders: [], favoriteModels: [] }) }));
+vi.mock("../../hooks/useFavorites", () => ({
+  useFavorites: () => ({ availableModels: [], favoriteProviders: [], favoriteModels: [], providerInstances: {}, toggleFavoriteProvider: vi.fn(), toggleFavoriteModel: vi.fn() }),
+}));
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: mocks.t }) }));
 vi.mock("../../api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../api")>()),

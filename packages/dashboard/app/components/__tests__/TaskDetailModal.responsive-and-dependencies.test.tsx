@@ -172,7 +172,8 @@ describe("TaskDetailModal", () => {
       expect(mobileComposerBlock).toContain("flex-direction: row;");
       expect(mobileComposerBlock).toContain("flex-wrap: wrap;");
       expect(css).not.toContain(".task-planner-chat-target-controls");
-      expect(css).toMatch(/\.task-planner-chat-composer \.chat-thinking-popover\s*\{[^}]*left:\s*var\(--space-md\);[^}]*right:\s*var\(--space-md\);[^}]*width:\s*auto;/);
+      expect(css).not.toMatch(/\.task-planner-chat-composer \.chat-thinking-popover\s*\{/);
+      expect(css).toMatch(/\.chat-thinking-popover\s*\{[^}]*position:\s*fixed;/);
       expect(mobileComposerBlock).toContain("align-items: flex-end;");
       /*
       FNXC:ChatComposerHeight 2026-08-23-20:15:

@@ -13,6 +13,16 @@ describe("portal surfaces", () => {
     expect(isInsidePortaledModelMenu(text)).toBe(true);
   });
 
+  it("recognizes the fixed chat-thinking portal as a safe host surface", () => {
+    const popover = document.createElement("div");
+    popover.dataset.portalSurface = "chat-thinking";
+    const child = document.createElement("button");
+    popover.append(child);
+    document.body.append(popover);
+    expect(isInsidePortalSafeSurface(child)).toBe(true);
+    expect(isInsidePortaledModelMenu(child)).toBe(false);
+  });
+
   it("separates generic safe surfaces from model-menu surfaces", () => {
     const dialog = document.createElement("div");
     dialog.setAttribute("role", "dialog");

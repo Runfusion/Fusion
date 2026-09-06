@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { THINKING_LEVELS } from "@fusion/core";
 import { Bot, Brain } from "lucide-react";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import type { ModelInfo } from "../api";
 import { FN_AGENT_ID } from "../hooks/useChat";
+import { computeFixedMenuPosition, getLayoutViewportSize, type FixedMenuPosition } from "../utils/fixedMenuPosition";
 import { isInsidePortaledModelMenu } from "../utils/portalSurfaces";
 
 /*
@@ -22,8 +24,8 @@ introducing a parallel thinking-level list.
 FNXC:Chat-ThinkingLevel 2026-07-12-20:08:
 The Default entry must describe the resolved project/global default supplied by ChatView, while omitted props preserve the legacy isolated fallback label `Default (off)`.
 
-FNXC:Chat-ModelSwitch 2026-08-27-12:03:
-Task Chat reuses this one brain-icon popover with model-only targeting, so selecting its model can never impersonate a durable agent. Direct Chat retains the agent lane; hosts that opt out of it render only the model picker and the shared thinking-level list.
+FNXC:Chat-ModelSwitch 2026-09-06-21:10:
+Task Chat reuses this one brain-icon popover with model-only targeting, so selecting its model can never impersonate a durable agent. Direct Chat retains the agent lane; hosts that opt out of it render only the model picker and the shared thinking-level list. Chat hosts also pass the shared favorite-provider and favorite-model actions through this control so the existing dropdown renders the same persistent star affordance on desktop and mobile.
 
 FNXC:Chat-ThinkingLevel 2026-07-16-00:34:
 FN-8030 lets room composers reuse this control with showTargetSection={false}. A room's thinking effort is the default reasoning effort for every responder, and rooms have no per-composer model or agent target to switch.
@@ -56,7 +58,9 @@ export interface ChatThinkingLevelControlProps {
   defaultModelValue?: string;
   models?: ModelInfo[];
   favoriteProviders?: string[];
+  onToggleFavorite?: (provider: string) => void;
   favoriteModels?: string[];
+  onToggleModelFavorite?: (modelId: string) => void;
   agents?: ChatThinkingLevelControlAgent[];
   agentId?: string | null;
   modelProvider?: string | null;
@@ -82,7 +86,9 @@ export function ChatThinkingLevelControl({
   defaultModelValue,
   models = [],
   favoriteProviders = [],
+  onToggleFavorite,
   favoriteModels = [],
+  onToggleModelFavorite,
   agents = [],
   agentId,
   modelProvider,
@@ -94,6 +100,9 @@ export function ChatThinkingLevelControl({
   const [open, setOpen] = useState(false);
   const [targetMode, setTargetMode] = useState<TargetMode>(() => (showAgentTarget && agentId && agentId !== FN_AGENT_ID ? "agent" : "model"));
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const popoverRef = useRef<HTMLDivElement | null>(null);
+  const [popoverPosition, setPopoverPosition] = useState<FixedMenuPosition | null>(null);
   const normalizedLevel = level ?? "";
   const currentModelValue = modelProvider && modelId ? `${modelProvider}/${modelId}` : "";
   const selectedAgentId = agentId && agentId !== FN_AGENT_ID ? agentId : "";
@@ -127,8 +136,8 @@ export function ChatThinkingLevelControl({
       FNXC:ModelDropdown 2026-08-15-12:27:
       Use the shared portal predicate for pointer and touch origins. Mobile outside-close handlers can receive touchstart before a re-anchored menu's synthesized click lands on the popup backdrop.
       */
-      const clickedInsideRoot = rootRef.current?.contains(target);
-      if (!clickedInsideRoot && !isInsidePortaledModelMenu(target)) {
+      const clickedInsideControl = rootRef.current?.contains(target) || popoverRef.current?.contains(target);
+      if (!clickedInsideControl && !isInsidePortaledModelMenu(target)) {
         pendingTargetRef.current = null;
         setOpen(false);
       }
@@ -140,6 +149,44 @@ export function ChatThinkingLevelControl({
       document.removeEventListener("touchstart", handleOutsidePress);
     };
   }, [open]);
+
+  const updatePopoverPosition = useCallback(() => {
+    const trigger = triggerRef.current;
+    if (!trigger || typeof document === "undefined") return;
+    const viewport = getLayoutViewportSize();
+    const rootStyles = getComputedStyle(document.documentElement);
+    const readToken = (name: string, fallback: number) => Number.parseFloat(rootStyles.getPropertyValue(name)) || fallback;
+    const spaceXs = readToken("--space-xs", 4);
+    const spaceLg = readToken("--space-lg", 16);
+    const spaceXl = readToken("--space-xl", 32);
+    const rect = trigger.getBoundingClientRect();
+    setPopoverPosition(computeFixedMenuPosition({
+      triggerRect: rect,
+      viewportWidth: viewport.width,
+      viewportHeight: viewport.height,
+      preferredWidth: spaceXl * 15,
+      preferredHeight: spaceXl * 24,
+      minWidth: rect.width,
+      horizontalPadding: spaceLg,
+      verticalPadding: spaceLg,
+      gap: spaceXs,
+    }));
+  }, []);
+
+  /*
+  FNXC:Chat-ModelSwitch 2026-09-06-21:10:
+  The Brain panel is a fixed body portal, just like its nested model list. Measuring from the trigger in layout-viewport coordinates keeps both layers overlaid above the composer/footer on narrow and mobile chats; resize and capture-phase scroll re-anchor it without letting either portal enlarge a scroll container.
+  */
+  useLayoutEffect(() => {
+    if (!open) return;
+    updatePopoverPosition();
+    window.addEventListener("resize", updatePopoverPosition);
+    window.addEventListener("scroll", updatePopoverPosition, true);
+    return () => {
+      window.removeEventListener("resize", updatePopoverPosition);
+      window.removeEventListener("scroll", updatePopoverPosition, true);
+    };
+  }, [open, updatePopoverPosition]);
 
   /*
   FNXC:Chat-ModelSwitch 2026-08-27-12:03:
@@ -265,6 +312,7 @@ export function ChatThinkingLevelControl({
   return (
     <div className="chat-thinking-level-root" ref={rootRef}>
       <button
+        ref={triggerRef}
         type="button"
         className={`btn-icon chat-thinking-btn${isActive ? " chat-thinking-btn--active" : ""}`}
         data-testid="chat-thinking-btn"
@@ -283,8 +331,23 @@ export function ChatThinkingLevelControl({
         <Brain size={16} />
       </button>
 
-      {open ? (
-        <div className="chat-thinking-popover" role="presentation" data-testid="chat-thinking-popover">
+      {open && popoverPosition && typeof document !== "undefined" ? createPortal(
+        <div
+          ref={popoverRef}
+          className="chat-thinking-popover"
+          role="presentation"
+          data-testid="chat-thinking-popover"
+          data-portal-surface="chat-thinking"
+          data-open-direction={popoverPosition.openUpward ? "up" : "down"}
+          style={{
+            position: "fixed",
+            top: popoverPosition.top ?? undefined,
+            bottom: popoverPosition.bottom ?? undefined,
+            left: popoverPosition.left,
+            width: popoverPosition.width,
+            maxHeight: popoverPosition.maxHeight,
+          }}
+        >
           {showTargetSection ? (
           <section className="chat-thinking-target-section" aria-label={showAgentTarget ? t("chat.modelAgentSection", "Model / Agent") : t("chat.newChatModeModel", "Model")}>
             <div className="chat-thinking-section-title">{showAgentTarget ? t("chat.modelAgentSection", "Model / Agent") : t("chat.newChatModeModel", "Model")}</div>
@@ -332,7 +395,9 @@ export function ChatThinkingLevelControl({
                   defaultOptionLabel={modelDefaultOptionLabel}
                   disabled={!onChangeModel || models.length === 0}
                   favoriteProviders={favoriteProviders}
+                  onToggleFavorite={onToggleFavorite}
                   favoriteModels={favoriteModels}
+                  onToggleModelFavorite={onToggleModelFavorite}
                   menuWidth="readable"
                 />
                 {models.length === 0 ? (
@@ -425,7 +490,8 @@ export function ChatThinkingLevelControl({
               })}
             </div>
           </section>
-        </div>
+        </div>,
+        document.body,
       ) : null}
     </div>
   );
