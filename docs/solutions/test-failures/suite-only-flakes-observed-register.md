@@ -145,7 +145,7 @@ DDL microbenchmarks of the pre-fix pristine shape measured `CREATE DATABASE` 44.
 
 ### 7. Mission store PostgreSQL teardown hook
 
-- **Status:** Closed 2026-08-23 — file-level quarantine (second sighting of a different test in the same file).
+- **Status:** Closed 2026-08-23 — file-level quarantine (second sighting of a different test in the same file); quarantine RESCUED and lifted 2026-09-02 by `9b29c6beab` (PR #3549).
 
 - **File:** `packages/core/src/__tests__/postgres/mission-store.pg.test.ts`
 - **Exact test:** `MissionStore (PostgreSQL backend mode)` suite `afterAll` hook (`h.afterAll`).
@@ -197,7 +197,9 @@ The 12-worker snapshots show 21 backends and concurrent template `CREATE DATABAS
 | D01 | configured pg gate / 4 forks | 3.6s | not selected | green, 2 files / 10 pass | 100/97; not sampled |
 | D02 | configured pg gate / 4 forks | 3.7s | not selected | green, 2 files / 10 pass | 100/97; not sampled |
 
-**Closed 2026-08-23.** This observation is no longer active: the entire file was quarantined on 2026-08-23 because a different test in it (`serializes concurrent claims on the same task (Greptile P1 race)`) received a second loaded-lane sighting. Per the file-level quarantine rule the whole file is excluded from `packages/core/vitest.config.ts` with a 2026-09-06 deletion deadline. See `scripts/lib/test-quarantine.json` for the ledger reason.
+**Closed 2026-08-23.** This observation is no longer active: the entire file was quarantined on 2026-08-23 because a different test in it (`serializes concurrent claims on the same task (Greptile P1 race)`) received a second loaded-lane sighting. See `scripts/lib/test-quarantine.json` for the ledger reason.
+
+**Rescued 2026-09-02 (`9b29c6beab`, PR #3549).** The quarantine was lifted before the 2026-09-06 deletion deadline as a genuine rescue, not appeasement: the race test's 250ms wall-clock sleep was replaced with a deterministic `pg_blocking_pids()` blocking-graph probe over `pg_stat_activity` (the lock-wait rescue path the ledger reason named), and the file's ledger entry plus the `packages/core/vitest.config.ts` exclude were removed in the same commit. The file is live in the suite again; the deletion deadline above is moot. Note the commit message does not mention the rescue — the evidence is in the test-file diff.
 
 
 ### 13. Handoff-to-review atomicity PostgreSQL setup hook
@@ -509,6 +511,7 @@ This resolves the previously unclassified “unrelated satellite-store ordering 
 
 ## Entry: `self-healing-pending-wedge-notification` marker-selection count (first sighting)
 
+- **Status:** Closed 2026-08-23 — file-level quarantine (second sighting); quarantine RESCUED and lifted 2026-09-02 by `9b29c6beab` (PR #3549).
 - **File:** `packages/engine/src/__tests__/self-healing-pending-wedge-notification.test.ts`
 - **Exact test:** `reconcile pending wedge notifications > selects elapsed markers and audits the completion outcome verbatim`
 - **Owner:** unowned — first sighting, recorded rather than quarantined because the file's remaining coverage (4 tests over the pending-wedge reconciler) is substantial and quarantine is file-level.
@@ -532,6 +535,16 @@ AssertionError: expected 2 to be 1 // Object.is equality
 Reads as cross-test state bleed into the reconciler's marker selection (an expected-1 selection saw 2),
 not a timing wait — so no timeout, retry, or assertion change was made. A SECOND sighting is an
 ordinary on-sight quarantine with no further discretion, per the standing rule in AGENTS.md.
+
+**Second sighting 2026-08-23, quarantine lifted 2026-09-02 (`9b29c6beab`, PR #3549).** The second
+sighting arrived on a full engine-suite run at `a97aa84a20` and the file was quarantined on sight
+(ledger entry plus a `packages/engine/vitest.config.ts` exclude, with a 2026-09-06 deletion
+deadline). The quarantine was then lifted as a genuine rescue, not appeasement: the test now pins
+its own clock (`vi.useFakeTimers()` plus `vi.setSystemTime`) and restores real timers in
+`afterEach`, removing the cross-suite timer-state bleed this entry hypothesized — no timeout was
+widened, no retry added, and no assertion relaxed. The ledger entry and the engine vitest exclude
+were removed in the same commit and the file is live in the suite again. The commit message does
+not mention the rescue — the evidence is in the test-file diff.
 
 ---
 
