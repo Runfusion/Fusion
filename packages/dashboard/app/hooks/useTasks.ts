@@ -1488,9 +1488,10 @@ export function useTasks(options?: UseTasksOptions) {
     DELIBERATE-LITERAL: task-scoped workflow flags are authoritative for live SSE reconciliation.
     `done` is only the degraded fallback when no flag resolver is available.
     */
-    const isCompletedTask = (task: Task, column: ColumnId = task.column): boolean => (
-      resolveColumnFlagsRef.current?.({ ...task, column })?.complete === true || column === "done"
-    );
+    const isCompletedTask = (task: Task, column: ColumnId = task.column): boolean => {
+      const resolvedFlags = resolveColumnFlagsRef.current?.({ ...task, column });
+      return resolvedFlags !== undefined ? resolvedFlags.complete === true : column === "done";
+    };
     const syncCompletedMembership = (
       task: Task,
       previousTask: Task | undefined,
