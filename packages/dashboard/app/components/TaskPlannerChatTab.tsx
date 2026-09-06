@@ -6,6 +6,7 @@ import { Loader2, Maximize2, Minimize2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { ToastType } from "../hooks/useToast";
 import { useComposerDictation } from "../hooks/useComposerDictation";
+import { useVirtualizedChatTranscript } from "../hooks/useVirtualizedChatTranscript";
 import { getPersistedPendingChatMessages, setPersistedPendingChatMessages } from "../hooks/chatPendingMessageStorage";
 import { MicButton } from "./MicButton";
 import type { ChatMessageInfo, ToolCallInfo } from "../hooks/chatTypes";
@@ -125,7 +126,10 @@ function isUsableModel(model: ResolvedModelSelection): model is ResolvedModelSel
 }
 
 function sortMessages(messages: ChatMessage[]): ChatMessage[] {
-  return [...messages].sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+  return [...messages].sort((a, b) => {
+    const createdOrder = Date.parse(a.createdAt) - Date.parse(b.createdAt);
+    return createdOrder || a.id.localeCompare(b.id);
+  });
 }
 
 function makeOptimisticUserMessage(sessionId: string, content: string): ChatMessage {
@@ -364,6 +368,8 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
   const [composerState, setComposerState] = useState<ComposerState>("idle");
   const composerStateRef = useRef<ComposerState>("idle");
   const [loading, setLoading] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [hasMoreHistory, setHasMoreHistory] = useState(false);
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const streamRef = useRef<{ close: () => void } | null>(null);
@@ -379,6 +385,12 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
   } | null>(null);
   const cancellationInProgressRef = useRef<Promise<void> | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
+  const historySentinelRef = useRef<HTMLDivElement | null>(null);
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
+  const transcriptKeys = useMemo(() => messages.map((message) => message.id), [messages]);
+  const virtualTranscript = useVirtualizedChatTranscript({ transcriptKey: sessionId, keys: transcriptKeys, scrollRef: transcriptRef });
+  const paginationInFlightRef = useRef<Promise<void> | null>(null);
   const [isTranscriptAtBottom, setIsTranscriptAtBottom] = useState(true);
   const isTranscriptAtBottomRef = useRef(true);
   const previousMessageCountRef = useRef(0);
@@ -575,14 +587,12 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
   }, []);
 
   const refreshMessagesForSession = useCallback(async (resolvedSessionId: string, isCurrentRequest: () => boolean, options?: { mergeOptimistic?: boolean }) => {
+    void options;
     try {
-      const { messages: refreshed } = await fetchChatMessages(resolvedSessionId, { order: "asc" }, projectId);
+      const { messages: refreshed } = await fetchChatMessages(resolvedSessionId, { limit: 50, order: "desc" }, projectId);
       if (!isCurrentRequest()) return;
-      if (options?.mergeOptimistic) {
-        setMessages((current) => mergePlannerTranscriptWithOptimistic(current, refreshed));
-      } else {
-        setMessages(sortMessages(refreshed));
-      }
+      setMessages((current) => mergePlannerTranscriptWithOptimistic(current, refreshed));
+      if (messagesRef.current.length === 0) setHasMoreHistory(refreshed.length >= 50);
       setHistoryLoaded(true);
     } catch (refreshError) {
       if (!isCurrentRequest()) return;
@@ -794,6 +804,7 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
         replacePendingMessages([], null);
         setSessionMemoryFocus(null);
         setMessages([]);
+        setHasMoreHistory(false);
         setHistoryLoaded(true);
         return;
       }
@@ -801,7 +812,7 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
       setSessionId(lookupSession.id);
       replacePendingMessages(getPersistedPendingChatMessages(lookupSession.id), lookupSession.id);
       const [{ messages: loadedMessages }, refreshedSessionResult] = await Promise.all([
-        fetchChatMessages(lookupSession.id, { order: "asc" }, projectId),
+        fetchChatMessages(lookupSession.id, { limit: 50, order: "desc" }, projectId),
         fetchChatSession(lookupSession.id, projectId).catch(() => ({ session: lookupSession })),
       ]);
       if (loadRequestRef.current !== requestId) return;
@@ -817,6 +828,7 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
       );
       setSessionMemoryFocus(resolvedSession.memoryFocus ?? null);
       setMessages(sortMessages(loadedMessages));
+      setHasMoreHistory(loadedMessages.length >= 50);
       setHistoryLoaded(true);
       if (resolvedSession.isGenerating || resolvedSession.inFlightGeneration) {
         const streamRequestId = streamRequestRef.current + 1;
@@ -856,6 +868,8 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
     setQueueActionPending(false);
     setSessionMemoryFocus(null);
     setMessages([]);
+    setHasMoreHistory(false);
+    paginationInFlightRef.current = null;
     setDraft("");
     composerStateRef.current = "idle";
     setStreamingThinking("");
@@ -897,12 +911,62 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
     }
   }, [setTranscriptAtBottom]);
 
+  /*
+  FNXC:ChatMessagePagination 2026-09-06-13:40:
+  Planner Chat keeps its lookup and streaming lifecycle separate from Direct Chat, but uses the same strict `(createdAt, id)` history cursor. One fenced page may run at a time; stable-ID merging preserves already loaded pages during refreshes and a duplicate-only page cannot spin.
+  */
+  const loadOlderMessages = useCallback(async () => {
+    const resolvedSessionId = sessionIdRef.current;
+    if (!resolvedSessionId || !hasMoreHistory || paginationInFlightRef.current) return paginationInFlightRef.current ?? undefined;
+    const cursor = messagesRef.current.find((message) => !message.id.startsWith("optimistic-") && message.id !== "streaming-assistant");
+    if (!cursor) return;
+    const requestGeneration = loadRequestRef.current;
+    const request = (async () => {
+      setLoadingOlder(true);
+      try {
+        const { messages: page } = await fetchChatMessages(resolvedSessionId, {
+          limit: 50,
+          order: "desc",
+          before: cursor.createdAt,
+          beforeId: cursor.id,
+        }, projectId);
+        if (sessionIdRef.current !== resolvedSessionId || loadRequestRef.current !== requestGeneration) return;
+        const existingIds = new Set(messagesRef.current.map((message) => message.id));
+        const added = page.filter((message) => !existingIds.has(message.id));
+        if (added.length > 0) setMessages((current) => mergePlannerTranscriptWithOptimistic(current, page));
+        setHasMoreHistory(page.length >= 50 && added.length > 0);
+      } catch {
+        // Preserve the current cursor for an observer or user retry.
+      } finally {
+        if (sessionIdRef.current === resolvedSessionId) setLoadingOlder(false);
+      }
+    })();
+    paginationInFlightRef.current = request;
+    try {
+      await request;
+    } finally {
+      if (paginationInFlightRef.current === request) paginationInFlightRef.current = null;
+    }
+  }, [hasMoreHistory, projectId]);
+
   const handleTranscriptScroll = useCallback(() => {
     if (isProgrammaticTranscriptScrollRef.current) return;
+    virtualTranscript.onScroll();
     const container = transcriptRef.current;
     if (!container) return;
     setTranscriptAtBottom(isTranscriptNearBottom(container));
-  }, [setTranscriptAtBottom]);
+  }, [setTranscriptAtBottom, virtualTranscript.onScroll]);
+
+  useEffect(() => {
+    const sentinel = historySentinelRef.current;
+    const container = transcriptRef.current;
+    if (!active || !hasMoreHistory || !sentinel || !container || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) void loadOlderMessages();
+    }, { root: container });
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [active, hasMoreHistory, loadOlderMessages]);
 
   useEffect(() => {
     const container = transcriptRef.current;
@@ -1262,7 +1326,7 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
 
         // Reconciliation is part of the cancellation barrier: queued text is not released
         // until the durable interrupted assistant row can be read back from chat history.
-        const refreshed = (await fetchChatMessages(snapshot.sessionId, { order: "asc" }, projectId)).messages;
+        const refreshed = (await fetchChatMessages(snapshot.sessionId, { limit: 50, order: "desc" }, projectId)).messages;
         if (sessionIdRef.current !== snapshot.sessionId) return;
         const persisted = cancellationResult.message ? [cancellationResult.message] : [];
         const reconciled = [
@@ -1541,6 +1605,7 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
         </button>
       )}
       <div className="task-planner-chat-transcript" ref={transcriptRef} onScroll={handleTranscriptScroll} data-testid="task-planner-chat-transcript">
+        {hasMoreHistory && <div ref={historySentinelRef} className="task-planner-chat-history-sentinel" aria-hidden="true">{loadingOlder ? t("chat.loadingOlderMessages", "Loading older messages…") : null}</div>}
         {error && <div className="task-planner-chat-error" role="alert">{error}</div>}
         {loading ? (
           <div className="task-planner-chat-state" role="status" aria-live="polite">
@@ -1583,12 +1648,14 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
           </div>
         ) : (
           <>
-            {messages.map((message) => {
+            {virtualTranscript.topSpacerHeight > 0 && <div className="task-planner-chat-transcript-spacer" style={{ height: virtualTranscript.topSpacerHeight }} aria-hidden="true" />}
+            {virtualTranscript.visibleKeys.map((key) => {
+              const message = messages.find((candidate) => candidate.id === key);
+              if (!message) return null;
               if (message.id === "streaming-assistant") {
                 const streamingToolCalls = extractToolCalls(message);
-                return (
+                return <div key={key} ref={virtualTranscript.measureRow(key)} className="task-planner-chat-transcript-row">
                   <StandardStreamingMessage
-                    key={message.id}
                     streamingText={message.content}
                     streamingThinking={message.thinkingOutput ?? streamingThinking}
                     streamingToolCalls={streamingToolCalls}
@@ -1600,7 +1667,7 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
                     activeModelProvider={displayedModelProvider ?? null}
                     toolCallRenderer={(toolCall, index) => renderPlannerToolCall(message, toolCall, index)}
                   />
-                );
+                </div>;
               }
               /*
                * FNXC:ChatMessageEdit 2026-07-07-10:15:
@@ -1610,9 +1677,8 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
                * streaming-assistant placeholders, never assistant/system rows, and never while a
                * generation is in flight) so StandardChatMessageItem never renders a dead/no-op button.
                */
-              return (
+              return <div key={key} ref={virtualTranscript.measureRow(key)} className="task-planner-chat-transcript-row">
                 <StandardChatMessageItem
-                  key={message.id}
                   message={toStandardChatMessage(message)}
                   forcePlain={false}
                   agentName={t("taskDetail.plannerChat.assistant", "Task Chat")}
@@ -1626,15 +1692,11 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
                   onQuestionSubmit={(answerText) => void sendMessageContent(answerText)}
                   toolCallRenderer={(toolCall, index) => renderPlannerToolCall(message, toolCall, index)}
                   onEditMessage={editMessageAndResend}
-                  canEdit={
-                    message.role === "user"
-                    && !message.id.startsWith("optimistic-")
-                    && message.id !== "streaming-assistant"
-                    && composerState !== "sending"
-                  }
+                  canEdit={message.role === "user" && !message.id.startsWith("optimistic-") && composerState !== "sending"}
                 />
-              );
+              </div>;
             })}
+            {virtualTranscript.bottomSpacerHeight > 0 && <div className="task-planner-chat-transcript-spacer" style={{ height: virtualTranscript.bottomSpacerHeight }} aria-hidden="true" />}
             {composerState === "sending" && !messages.some((message) => message.id === "streaming-assistant") && (
               <StandardStreamingMessage
                 streamingText=""

@@ -77,11 +77,25 @@ Planner Chat expansion should use the same in-view floating affordance as Activi
   overflow: auto;
   display: flex;
   flex-direction: column;
-  gap: var(--space-md);
+  gap: 0;
   border: var(--btn-border-width) solid var(--border);
   border-radius: var(--radius-lg);
   padding: var(--space-md);
   background: var(--surface);
+}
+
+/*
+FNXC:ChatTranscriptVirtualization 2026-09-06-13:40:
+Planner Chat mounts only its measured viewport window while strict pagination retains the complete transcript. Measured rows own spacing and inert spacers preserve scroll geometry without creating focusable or named accessibility shells in normal, expanded, or mobile layouts.
+*/
+.task-planner-chat-transcript-row {
+  padding-block-end: var(--space-md);
+}
+
+.task-planner-chat-transcript-spacer,
+.task-planner-chat-history-sentinel {
+  flex: 0 0 auto;
+  pointer-events: none;
 }
 
 .task-planner-chat-state,

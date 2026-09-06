@@ -268,7 +268,7 @@ describe("TaskPlannerChatTab", () => {
       undefined,
     );
     expect(mockEnsureTaskPlannerChatSession).not.toHaveBeenCalled();
-    expect(mockFetchChatMessages).toHaveBeenCalledWith("chat-planner", { order: "asc" }, undefined);
+    expect(mockFetchChatMessages).toHaveBeenCalledWith("chat-planner", { limit: 50, order: "desc" }, undefined);
     const modelBadge = screen.getByTestId("task-planner-chat-model");
     expect(modelBadge).toHaveAccessibleName("anthropic/claude-plan");
     expect(modelBadge).toHaveAttribute("title", "anthropic/claude-plan");
@@ -789,7 +789,7 @@ describe("TaskPlannerChatTab", () => {
 
     await Promise.resolve();
     await Promise.resolve();
-    expect(mockFetchChatMessages).not.toHaveBeenCalledWith("chat-old-task", { order: "asc" }, undefined);
+    expect(mockFetchChatMessages).not.toHaveBeenCalledWith("chat-old-task", { limit: 50, order: "desc" }, undefined);
     expect(screen.queryByText("Stale old task answer")).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: /Summarize recent activity/ }));
     expect(mockStreamChatResponse).toHaveBeenCalledWith(
@@ -2045,7 +2045,7 @@ describe("TaskPlannerChatTab", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Planner provider rate limit");
     await waitFor(() => expect(screen.getAllByText("hello after 429")).toHaveLength(1));
-    expect(mockFetchChatMessages).toHaveBeenCalledWith("chat-planner", { order: "asc" }, undefined);
+    expect(mockFetchChatMessages).toHaveBeenCalledWith("chat-planner", { limit: 50, order: "desc" }, undefined);
   });
 
   it("rolls back planner optimistic message for pre-acceptance failures", async () => {

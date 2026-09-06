@@ -275,7 +275,10 @@ export interface ChatSessionUpdateInput {
 
 /**
  * Filter options for retrieving messages.
- * Supports cursor-based pagination via `before` timestamp.
+ * Supports legacy timestamp pagination and strict tuple pagination.
+ *
+ * FNXC:ChatMessagePagination 2026-09-06-13:40:
+ * A timestamp alone is not a total cursor because bursts can contain more rows than one page with the same creation time. Pairing `before` with `beforeId` follows the store's `(createdAt, id)` order and preserves every older row; omitting the ID deliberately retains the inclusive legacy contract.
  */
 export interface ChatMessagesFilter {
   /** Maximum number of messages to return */
@@ -287,6 +290,8 @@ export interface ChatMessagesFilter {
    * Used for loading older messages in a conversation.
    */
   before?: string;
+  /** ID tie-breaker paired with `before` for a strict total cursor. */
+  beforeId?: string;
   /** Sort order: 'asc' (oldest first, default) or 'desc' (newest first) */
   order?: "asc" | "desc";
 }

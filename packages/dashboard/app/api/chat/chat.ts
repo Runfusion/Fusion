@@ -276,13 +276,14 @@ export function backfillChatSessionToStash(id: string, projectId?: string): Prom
 /** Fetch messages for a chat session */
 export function fetchChatMessages(
   sessionId: string,
-  opts?: { limit?: number; offset?: number; before?: string; order?: "asc" | "desc" },
+  opts?: { limit?: number; offset?: number; before?: string; beforeId?: string; order?: "asc" | "desc" },
   projectId?: string,
 ): Promise<ChatMessageListResponse> {
   const search = new URLSearchParams();
   if (opts?.limit !== undefined) search.set("limit", String(opts.limit));
   if (opts?.offset !== undefined) search.set("offset", String(opts.offset));
   if (opts?.before) search.set("before", opts.before);
+  if (opts?.beforeId) search.set("beforeId", opts.beforeId);
   if (opts?.order) search.set("order", opts.order);
   const qs = search.toString();
   return api<ChatMessageListResponse>(

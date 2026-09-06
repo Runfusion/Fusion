@@ -4221,10 +4221,64 @@ describe("useChat", () => {
     expect(secondCall[0]).toBe("session-001");
     expect(secondCall[1]).toHaveProperty("limit");
     expect(secondCall[1]).toHaveProperty("before");
+    expect(secondCall[1]).toHaveProperty("beforeId", "msg-0");
 
     await waitFor(() => {
       expect(result.current.messages).toHaveLength(51);
     });
+  });
+
+  it("walks a 125-message equal-timestamp history once with tuple cursors", async () => {
+    const session = makeSession({ id: "session-ties", agentId: "agent-001" });
+    mockFetchChatSessions.mockResolvedValueOnce({ sessions: [session] });
+    const tied = Array.from({ length: 125 }, (_, index) => makeMessage({
+      id: `tie-${String(index).padStart(3, "0")}`,
+      sessionId: session.id,
+      role: "user",
+      content: `Message ${index}`,
+      createdAt: "2026-09-06T12:00:00.000Z",
+    }));
+    mockFetchChatMessages
+      .mockResolvedValueOnce({ messages: tied.slice(75).reverse() })
+      .mockResolvedValueOnce({ messages: tied.slice(25, 75).reverse() })
+      .mockResolvedValueOnce({ messages: tied.slice(0, 25).reverse() });
+
+    const { result } = renderHook(() => useChat());
+    await waitFor(() => expect(result.current.sessions).toHaveLength(1));
+    act(() => result.current.selectSession(session.id));
+    await waitFor(() => expect(result.current.messages).toHaveLength(50));
+    await act(async () => result.current.loadMoreMessages());
+    await act(async () => result.current.loadMoreMessages());
+
+    expect(result.current.messages.map((message) => message.id)).toEqual(tied.map((message) => message.id));
+    expect(new Set(result.current.messages.map((message) => message.id)).size).toBe(125);
+    expect(mockFetchChatMessages.mock.calls[1]?.[1]).toEqual(expect.objectContaining({ beforeId: "tie-075" }));
+    expect(mockFetchChatMessages.mock.calls[2]?.[1]).toEqual(expect.objectContaining({ beforeId: "tie-025" }));
+    expect(result.current.hasMoreMessages).toBe(false);
+  });
+
+  it("serializes concurrent pages and stops a duplicate-only defensive page", async () => {
+    const session = makeSession({ id: "session-serial", agentId: "agent-001" });
+    const initial = Array.from({ length: 50 }, (_, index) => makeMessage({ id: `serial-${String(index).padStart(3, "0")}`, sessionId: session.id, role: "user", content: "row" }));
+    const deferred = createDeferredPromise<{ messages: ChatMessage[] }>();
+    mockFetchChatSessions.mockResolvedValueOnce({ sessions: [session] });
+    mockFetchChatMessages.mockResolvedValueOnce({ messages: initial.slice().reverse() }).mockReturnValueOnce(deferred.promise);
+    const { result } = renderHook(() => useChat());
+    await waitFor(() => expect(result.current.sessions).toHaveLength(1));
+    act(() => result.current.selectSession(session.id));
+    await waitFor(() => expect(result.current.messages).toHaveLength(50));
+
+    let first!: Promise<void>;
+    let second!: Promise<void>;
+    act(() => {
+      first = result.current.loadMoreMessages();
+      second = result.current.loadMoreMessages();
+    });
+    expect(mockFetchChatMessages).toHaveBeenCalledTimes(2);
+    deferred.resolve({ messages: initial.slice().reverse() });
+    await act(async () => Promise.all([first, second]));
+    expect(result.current.messages).toHaveLength(50);
+    expect(result.current.hasMoreMessages).toBe(false);
   });
 
   it("sets hasMoreMessages to false when fewer messages returned", async () => {

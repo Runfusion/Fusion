@@ -17,7 +17,7 @@
  *   consume.
  */
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, exists, gt, ilike, inArray, isNull, lte, ne, or as orFn, sql as drizzleSql } from "drizzle-orm";
+import { and, asc, desc, eq, exists, gt, ilike, inArray, isNull, lt, lte, ne, or as orFn, sql as drizzleSql } from "drizzle-orm";
 import * as schema from "../postgres/schema/index.js";
 import { projectScopeFor, type AsyncDataLayer, type DbTransaction } from "../postgres/data-layer.js";
 import { sanitizeTextValue, sanitizeJsonbValue } from "../postgres/nul-sanitize.js";
@@ -396,14 +396,26 @@ export async function getChatMessage(
 export async function getChatMessages(
   handle: QueryHandle,
   sessionId: string,
-  filter?: { limit?: number; offset?: number; before?: string; order?: "asc" | "desc" },
+  filter?: { limit?: number; offset?: number; before?: string; beforeId?: string; order?: "asc" | "desc" },
   projectId?: string,
 ): Promise<ChatMessage[]> {
   const conditions = [
     eq(schema.project.chatMessages.sessionId, sessionId),
     ...chatMessageProjectConditions(handle, projectId),
   ];
-  if (filter?.before) {
+  if (filter?.before && filter.beforeId) {
+    /*
+    FNXC:ChatMessagePagination 2026-09-06-13:40:
+    Direct and Planner Chat page newest-to-oldest. Their strict tuple cursor must match the total descending order so a page boundary inside a same-timestamp burst neither repeats nor skips rows; date-only callers retain the historical inclusive predicate.
+    */
+    conditions.push(orFn(
+      lt(schema.project.chatMessages.createdAt, filter.before),
+      and(
+        eq(schema.project.chatMessages.createdAt, filter.before),
+        lt(schema.project.chatMessages.id, filter.beforeId),
+      ),
+    )!);
+  } else if (filter?.before) {
     conditions.push(lte(schema.project.chatMessages.createdAt, filter.before));
   }
   const limit = filter?.limit ?? 100;

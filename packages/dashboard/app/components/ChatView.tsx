@@ -29,6 +29,7 @@ import {
 } from "lucide-react";
 import { FN_AGENT_ID, TASK_PLANNER_CHAT_AGENT_ID_PREFIX, useChat, type ChatMessageInfo, type ChatSessionInfo } from "../hooks/useChat";
 import { useChatUnread } from "../hooks/useChatUnread";
+import { useVirtualizedChatTranscript } from "../hooks/useVirtualizedChatTranscript";
 import { useComposerDictation } from "../hooks/useComposerDictation";
 import { useViewportMode } from "./Header";
 import { isTabletTouchViewport } from "../hooks/useViewportMode";
@@ -697,8 +698,18 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     wasPinnedBefore: boolean;
     capturedAtMs: number;
   } | null>(null);
+  const previousVirtualizedMessagesRef = useRef<{ threadId: string | null; ids: readonly string[] }>({ threadId: null, ids: [] });
   const hideSkillMenuTimeoutRef = useRef<number | null>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const transcriptKeys = useMemo(
+    () => [...messages.map((message) => message.id), ...(isStreaming ? ["__streaming__"] : [])],
+    [isStreaming, messages],
+  );
+  const virtualTranscript = useVirtualizedChatTranscript({
+    transcriptKey: activeSession?.id ?? null,
+    keys: transcriptKeys,
+    scrollRef: messagesContainerRef,
+  });
   const chatThreadRef = useRef<HTMLDivElement | null>(null);
   const clippedMessageFrameRef = useRef<number | null>(null);
   const [topClippedMessageIds, setTopClippedMessageIds] = useState<Set<string>>(() => new Set());
@@ -1116,9 +1127,39 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     setIsUserScrolling(true);
   }, [getActiveThreadId, getMessageElement]);
 
+  /*
+  FNXC:ChatTranscriptVirtualization 2026-09-06-14:15:
+  Lorsqu’une page est préfixée, le virtualiseur est l’unique propriétaire de l’ancre et ajoute la hauteur estimée au scroll avant cet effet. La restauration DOM historique ne doit pas annuler ce déplacement lorsque l’ancienne ligne-ancre est hors fenêtre ; son snapshot est rebasé sur la géométrie déjà ajustée pour que les ResizeObserver ultérieurs conservent la lecture détachée.
+  */
   useLayoutEffect(() => {
+    const threadId = getActiveThreadId();
+    const currentIds = activeThreadMessages.map((message) => message.id);
+    const previous = previousVirtualizedMessagesRef.current;
+    const prefixCount = currentIds.length - previous.ids.length;
+    const isVirtualizedPrepend = previous.threadId === threadId
+      && prefixCount > 0
+      && previous.ids.every((id, index) => currentIds[index + prefixCount] === id);
+    previousVirtualizedMessagesRef.current = { threadId, ids: currentIds };
+
+    if (isVirtualizedPrepend) {
+      const messagesContainer = messagesContainerRef.current;
+      const snapshot = scrollRestoreSnapshotRef.current;
+      if (messagesContainer && snapshot?.threadId === threadId && !snapshot.wasPinnedBefore) {
+        scrollRestoreSnapshotRef.current = {
+          ...snapshot,
+          scrollTop: messagesContainer.scrollTop,
+          scrollHeight: messagesContainer.scrollHeight,
+          clientHeight: messagesContainer.clientHeight,
+          anchorMessageId: null,
+          anchorOffset: 0,
+          capturedAtMs: typeof performance !== "undefined" ? performance.now() : Date.now(),
+        };
+      }
+      return;
+    }
+
     restoreDetachedScrollSnapshot();
-  }, [activeThreadMessages, restoreDetachedScrollSnapshot]);
+  }, [activeThreadMessages, getActiveThreadId, restoreDetachedScrollSnapshot]);
 
   const logScrollDebug = useCallback((cause: string) => {
     if (typeof window === "undefined") {
@@ -2630,9 +2671,8 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
 
   useEffect(() => {
     if (!activeConversationMatchId) return;
-    const message = messagesContainerRef.current?.querySelector<HTMLElement>(`[data-message-id="${activeConversationMatchId}"]`);
-    message?.scrollIntoView({ block: "nearest" });
-  }, [activeConversationMatchId]);
+    virtualTranscript.scrollToKey(activeConversationMatchId, "center");
+  }, [activeConversationMatchId, virtualTranscript.scrollToKey]);
 
   useEffect(() => {
     const root = chatViewRef.current;
@@ -2834,16 +2874,8 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
   }, [addToast, copyFeedbackByMessageId, handleCopyResponse, onSendAsReport, showProviderResponseCopy, t]);
 
   const handleScrollMessageToTop = useCallback((messageId: string) => {
-    const containerEl = messagesContainerRef.current;
-    if (!containerEl) return;
-    const selector = `[data-testid="chat-message-${messageId}"]`;
-    const targetEl = containerEl.querySelector<HTMLElement>(selector);
-    if (!targetEl) return;
-
-    const top = targetEl.getBoundingClientRect().top - containerEl.getBoundingClientRect().top + containerEl.scrollTop;
-    const prefersReducedMotion = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-    containerEl.scrollTo({ top, behavior: prefersReducedMotion ? "auto" : "smooth" });
-  }, []);
+    virtualTranscript.scrollToKey(messageId, "start");
+  }, [virtualTranscript.scrollToKey]);
 
   /*
    * FNXC:ChatMessageEdit 2026-08-24-03:34:
@@ -2856,93 +2888,74 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
   // provider path and the CLI-backed path (CliChatSurface thunks) render the
   // exact same JSX — no parallel message/composer UI.
   const renderSessionMessagesPane = () => (
-    <div className="chat-messages" ref={messagesContainerRef} onScroll={updateScrollState}>
+    <div className="chat-messages" ref={messagesContainerRef} onScroll={() => { virtualTranscript.onScroll(); updateScrollState(); }}>
       <div ref={loadMoreSentinelRef} className="chat-load-more-sentinel">
         {hasMoreMessages && messagesLoading && (
           <div className="chat-loading-older">{t("chat.loadingOlderMessages", "Loading older messages…")}</div>
         )}
       </div>
-      {isStreaming ? (
-        <>
-          {messages.map((message, index) => (
-            <StandardChatMessageItem
-              key={message.id}
-              message={message}
-              forcePlain={false}
-              agentName={resolveMessageAssistantIdentity(message).agentName}
-              hideAssistantIdentity={resolveMessageAssistantIdentity(message).hideAssistantIdentity}
-              showAssistantModelTag={showAssistantModelTag}
-              activeModelTag={activeModelTag}
-              activeModelProvider={activeModelProvider}
-              activeSessionId={activeSession?.id ?? null}
-              projectId={projectId}
-              mentionAgentsByName={mentionAgentsByName}
-              roomContext={null}
-              copyAction={renderMessageActions(message.id, message.content, message.role)}
-              onQuoteMessage={handleQuoteMessage}
-              onScrollToTop={handleScrollMessageToTop}
-              isTopClipped={topClippedMessageIds.has(message.id)}
-              isAwaitingQuestionAnswer={message.role === "assistant" && index === messages.length - 1 && !isStreaming}
-              submittedQuestionAnswer={findSubmittedQuestionAnswer(messages, index)}
-              onQuestionSubmit={handleQuestionSubmit}
-              canEdit={canEditChatMessages}
-              onEditMessage={editMessageAndResend}
-              isSearchMatch={conversationSearchMatches.includes(message.id)}
-              isSearchActive={activeConversationMatchId === message.id}
-            />
-          ))}
-          <StandardStreamingMessage
-            streamingText={streamingText}
-            streamingThinking={streamingThinking}
-            streamingToolCalls={streamingToolCalls}
-            forcePlain={false}
-            agentName={agentName}
-            hideAssistantIdentity={hideAssistantIdentity}
-            showAssistantModelTag={showAssistantModelTag}
-            activeModelTag={activeModelTag}
-            activeModelProvider={activeModelProvider}
-            /* FNXC:StructuralMail 2026-08-09-09:09: A streaming answer is unfinished and must never be routed as a report. */
-            copyAction={showProviderResponseCopy && streamingText ? renderMessageActions("__streaming__", streamingText, "assistant", "chat-copy-response-streaming", false) : undefined}
-            onQuestionSubmit={handleQuestionSubmit}
-            isSearchMatch={conversationSearchMatches.includes("__streaming__")}
-            isSearchActive={activeConversationMatchId === "__streaming__"}
-          />
-        </>
-      ) : messagesLoading && messages.length === 0 ? (
+      {messagesLoading && messages.length === 0 && !isStreaming ? (
         <div className="chat-empty-state">{t("chat.loadingMessages", "Loading messages...")}</div>
-      ) : messages.length === 0 && !activeSession ? (
+      ) : messages.length === 0 && !isStreaming && !activeSession ? (
         renderEmptyState()
-      ) : messages.length === 0 && activeSession ? (
+      ) : messages.length === 0 && !isStreaming && activeSession ? (
         <div className="chat-empty-state">{t("chat.noMessagesYet", "No messages yet. Start the conversation!")}</div>
       ) : (
         <>
-          {messages.map((message, index) => (
-            <StandardChatMessageItem
-              key={message.id}
-              message={message}
-              forcePlain={false}
-              agentName={resolveMessageAssistantIdentity(message).agentName}
-              hideAssistantIdentity={resolveMessageAssistantIdentity(message).hideAssistantIdentity}
-              showAssistantModelTag={showAssistantModelTag}
-              activeModelTag={activeModelTag}
-              activeModelProvider={activeModelProvider}
-              activeSessionId={activeSession?.id ?? null}
-              projectId={projectId}
-              mentionAgentsByName={mentionAgentsByName}
-              roomContext={null}
-              copyAction={renderMessageActions(message.id, message.content, message.role)}
-              onQuoteMessage={handleQuoteMessage}
-              onScrollToTop={handleScrollMessageToTop}
-              isTopClipped={topClippedMessageIds.has(message.id)}
-              isAwaitingQuestionAnswer={message.role === "assistant" && index === messages.length - 1 && !isStreaming}
-              submittedQuestionAnswer={findSubmittedQuestionAnswer(messages, index)}
-              onQuestionSubmit={handleQuestionSubmit}
-              canEdit={canEditChatMessages}
-              onEditMessage={editMessageAndResend}
-              isSearchMatch={conversationSearchMatches.includes(message.id)}
-              isSearchActive={activeConversationMatchId === message.id}
-            />
-          ))}
+          {virtualTranscript.topSpacerHeight > 0 && <div className="chat-transcript-spacer" style={{ height: virtualTranscript.topSpacerHeight }} aria-hidden="true" />}
+          {virtualTranscript.visibleKeys.map((key) => {
+            if (key === "__streaming__") {
+              return <div key={key} ref={virtualTranscript.measureRow(key)} className="chat-transcript-row">
+                <StandardStreamingMessage
+                  streamingText={streamingText}
+                  streamingThinking={streamingThinking}
+                  streamingToolCalls={streamingToolCalls}
+                  forcePlain={false}
+                  agentName={agentName}
+                  hideAssistantIdentity={hideAssistantIdentity}
+                  showAssistantModelTag={showAssistantModelTag}
+                  activeModelTag={activeModelTag}
+                  activeModelProvider={activeModelProvider}
+                  /* FNXC:StructuralMail 2026-08-09-09:09: A streaming answer is unfinished and must never be routed as a report. */
+                  copyAction={showProviderResponseCopy && streamingText ? renderMessageActions("__streaming__", streamingText, "assistant", "chat-copy-response-streaming", false) : undefined}
+                  onQuestionSubmit={handleQuestionSubmit}
+                  isSearchMatch={conversationSearchMatches.includes("__streaming__")}
+                  isSearchActive={activeConversationMatchId === "__streaming__"}
+                />
+              </div>;
+            }
+            const index = messages.findIndex((message) => message.id === key);
+            const message = messages[index];
+            if (!message) return null;
+            const identity = resolveMessageAssistantIdentity(message);
+            return <div key={key} ref={virtualTranscript.measureRow(key)} className="chat-transcript-row">
+              <StandardChatMessageItem
+                message={message}
+                forcePlain={false}
+                agentName={identity.agentName}
+                hideAssistantIdentity={identity.hideAssistantIdentity}
+                showAssistantModelTag={showAssistantModelTag}
+                activeModelTag={activeModelTag}
+                activeModelProvider={activeModelProvider}
+                activeSessionId={activeSession?.id ?? null}
+                projectId={projectId}
+                mentionAgentsByName={mentionAgentsByName}
+                roomContext={null}
+                copyAction={renderMessageActions(message.id, message.content, message.role)}
+                onQuoteMessage={handleQuoteMessage}
+                onScrollToTop={handleScrollMessageToTop}
+                isTopClipped={topClippedMessageIds.has(message.id)}
+                isAwaitingQuestionAnswer={message.role === "assistant" && index === messages.length - 1 && !isStreaming}
+                submittedQuestionAnswer={findSubmittedQuestionAnswer(messages, index)}
+                onQuestionSubmit={handleQuestionSubmit}
+                canEdit={canEditChatMessages}
+                onEditMessage={editMessageAndResend}
+                isSearchMatch={conversationSearchMatches.includes(message.id)}
+                isSearchActive={activeConversationMatchId === message.id}
+              />
+            </div>;
+          })}
+          {virtualTranscript.bottomSpacerHeight > 0 && <div className="chat-transcript-spacer" style={{ height: virtualTranscript.bottomSpacerHeight }} aria-hidden="true" />}
         </>
       )}
       <div ref={messagesEndRef} />

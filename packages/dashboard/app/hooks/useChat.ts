@@ -508,6 +508,7 @@ export function useChat(
 
   // Pagination
   const [hasMoreMessages, setHasMoreMessages] = useState(false);
+  const paginationInFlightRef = useRef(new Map<string, Promise<void>>());
 
   // Agent name resolution map
   const { agentsMap } = useAgentsMapCache(projectId);
@@ -735,7 +736,7 @@ export function useChat(
 
   // Load messages when active session changes
   const loadMessages = useCallback(
-    async (sessionId: string, opts?: { offset?: number; before?: string; commitForStreamingAttach?: boolean }) => {
+    async (sessionId: string, opts?: { offset?: number; before?: string; beforeId?: string; commitForStreamingAttach?: boolean }) => {
       const isPaginationRequest = (typeof opts?.offset === "number" && opts.offset > 0) || typeof opts?.before === "string";
       const cacheKey = getChatMessagesCacheKey(projectId, sessionId);
       const cachedMessages = !isPaginationRequest ? readCachedMessages(projectId, sessionId) : [];
@@ -765,8 +766,12 @@ export function useChat(
           || (opts?.commitForStreamingAttach === true && lastAttachedGenerationRef.current?.sessionId === sessionId);
         if (isPaginationRequest) {
           if (shouldCommitMessages) {
-            setMessages((prev) => sortChatMessagesChronologically([...mappedMessages, ...prev]));
-            setHasMoreMessages(data.messages.length >= 50);
+            setMessages((prev) => {
+              const byId = new Map(prev.map((message) => [message.id, message]));
+              for (const message of mappedMessages) byId.set(message.id, message);
+              return sortChatMessagesChronologically([...byId.values()]);
+            });
+            setHasMoreMessages(data.messages.length >= 50 && mappedMessages.some((message) => !messagesRef.current.some((current) => current.id === message.id)));
           }
         } else {
           if (shouldCommitMessages) {
@@ -1536,17 +1541,52 @@ export function useChat(
     [projectId],
   );
 
-  // Load more messages (pagination — use before cursor for oldest displayed message)
-  // messagesRef is assigned on every render; reading from the ref here avoids
-  // closing over `messages` and prevents this callback from being recreated on
-  // every streamed token (which would cause the IntersectionObserver to churn).
+  /*
+  FNXC:ChatMessagePagination 2026-09-06-13:40:
+  Direct Chat serializes one strict tuple page per session. A response may prepend only while its session and oldest-row cursor are still current; stable-ID merging protects defensive overlap, and a duplicate-only page stops rather than spinning without progress.
+  */
   const loadMoreMessages = useCallback(async () => {
     if (!activeSession || !hasMoreMessages) return;
-    // messagesRef.current[0] is the oldest visible message; fetch older ones using its createdAt
-    const cursor = messagesRef.current[0]?.createdAt;
-    if (!cursor) return;
-    await loadMessages(activeSession.id, { before: cursor });
-  }, [activeSession, hasMoreMessages, loadMessages]);
+    const sessionId = activeSession.id;
+    const existing = paginationInFlightRef.current.get(sessionId);
+    if (existing) return existing;
+    const cursor = messagesRef.current[0];
+    if (!cursor?.createdAt || !cursor.id) return;
+
+    const request = (async () => {
+      setMessagesLoading(true);
+      try {
+        const data = await fetchChatMessages(sessionId, {
+          limit: 50,
+          order: "desc",
+          before: cursor.createdAt,
+          beforeId: cursor.id,
+        }, projectId);
+        if (activeSessionRef.current?.id !== sessionId || messagesRef.current[0]?.id !== cursor.id) return;
+        const mapped = sortChatMessagesChronologically(data.messages.map(mapChatMessageToInfo));
+        const existingIds = new Set(messagesRef.current.map((message) => message.id));
+        const added = mapped.filter((message) => !existingIds.has(message.id));
+        if (added.length > 0) {
+          setMessages((current) => {
+            const byId = new Map(current.map((message) => [message.id, message]));
+            for (const message of mapped) byId.set(message.id, message);
+            return sortChatMessagesChronologically([...byId.values()]);
+          });
+        }
+        setHasMoreMessages(data.messages.length >= 50 && added.length > 0);
+      } catch {
+        // Keep the current page and cursor retryable after a transient read failure.
+      } finally {
+        if (activeSessionRef.current?.id === sessionId) setMessagesLoading(false);
+      }
+    })();
+    paginationInFlightRef.current.set(sessionId, request);
+    try {
+      await request;
+    } finally {
+      if (paginationInFlightRef.current.get(sessionId) === request) paginationInFlightRef.current.delete(sessionId);
+    }
+  }, [activeSession, hasMoreMessages, projectId]);
 
   /*
   FNXC:ChatPendingQueue 2026-09-06-01:36:

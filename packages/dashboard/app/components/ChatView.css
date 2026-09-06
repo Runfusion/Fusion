@@ -563,7 +563,7 @@ FN-110 keeps the conversation-local Find row compact across Chat hosts and disti
   padding: var(--space-lg);
   display: flex;
   flex-direction: column;
-  gap: var(--space-md);
+  gap: 0;
   -webkit-overflow-scrolling: touch;
   touch-action: pan-y;
   /* Stop iOS rubber-band scroll from propagating to the parent /
@@ -573,6 +573,19 @@ FN-110 keeps the conversation-local Find row compact across Chat hosts and disti
      transform momentarily exposes the body background as a gray
      box partially covering the messages. */
   overscroll-behavior: contain;
+}
+
+/*
+FNXC:ChatTranscriptVirtualization 2026-09-06-13:40:
+The transcript keeps every loaded message reachable while mounting only a viewport-bounded set of rich Markdown, thinking, tool-call, and attachment subtrees. Structural spacers remain inert and row spacing belongs inside measured rows so virtual offsets stay accurate on desktop, mobile, floating, and docked hosts.
+*/
+.chat-transcript-row {
+  padding-block-end: var(--space-md);
+}
+
+.chat-transcript-spacer {
+  flex: 0 0 auto;
+  pointer-events: none;
 }
 
 .chat-messages > .chat-empty-state {
