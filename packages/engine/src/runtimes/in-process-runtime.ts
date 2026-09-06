@@ -674,6 +674,12 @@ export async function releaseFileScopeWaitingContinuations(
   return released;
 }
 
+export function planningContinuationTerminalColumns(
+  lifecycle: { complete?: string } | undefined,
+): ReadonlySet<string> {
+  return new Set([lifecycle?.complete ?? "done"]);
+}
+
 async function dispatchPlanningContinuationIfCurrent(input: {
   store: TaskStore;
   task: Task;
@@ -3055,10 +3061,7 @@ export class InProcessRuntime
     });
     const resolveTerminalColumns = async (taskId: string): Promise<ReadonlySet<string>> => {
       const lifecycle = await resolveTaskLifecycleColumns(this.taskStore, taskId);
-      return new Set([
-        lifecycle?.complete ?? "done",
-        "done",
-      ]);
+      return planningContinuationTerminalColumns(lifecycle);
     };
     try {
       await drainDuePlanningContinuations({
