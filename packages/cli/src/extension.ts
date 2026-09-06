@@ -1420,7 +1420,8 @@ function formatDuplicateLineageLine(task: Task): string | null {
 /**
  * FNXC:CliTaskFormatting 2026-09-06-00:46:
  * DELIBERATE-LITERAL: this synchronous formatter receives no workflow metadata. Live task listings
- * exclude deleted history, so `done` is the built-in Complete fallback only for the paused suffix.
+ * use `done` as the built-in Complete fallback, while a historical `archived` row is also terminal
+ * for the paused suffix so legacy callers never print contradictory “archived (paused)” output.
  */
 export function formatTaskLine(t: Task): string {
   const label =
