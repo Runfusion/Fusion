@@ -87,9 +87,13 @@ export interface ArchivedTaskHistoryInspection {
   malformedColdEntryIds: string[];
 }
 
-/** Read every historical carrier without mutating either source.
-DELIBERATE-LITERAL: the `column: "archived"` query filter is intentional here — this function
-specifically reads the historical sentinel column to inspect archived task history. */
+/**
+ * Read every historical carrier without mutating either source.
+ *
+ * FNXC:TaskArchiveRestoration 2026-09-06-09:47:
+ * DELIBERATE-LITERAL: `archived` is the physical legacy sentinel being inspected for restoration;
+ * it is historical storage state, not a configurable live workflow lane.
+ */
 export async function inspectArchivedTaskHistory(store: TaskStore): Promise<ArchivedTaskHistoryInspection> {
   const layer = store.asyncLayer;
   if (!layer?.projectId?.trim()) throw new Error("Archive history inspection requires an exact project identity");
