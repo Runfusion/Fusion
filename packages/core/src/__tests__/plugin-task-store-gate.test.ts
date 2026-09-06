@@ -20,7 +20,7 @@ function makeFakeStore() {
     deleteTaskById: vi.fn().mockResolvedValue(undefined),
     deleteTaskBackend: vi.fn().mockResolvedValue(undefined),
     bypassFailedPreMergeReviewStep: vi.fn().mockResolvedValue({ id: "FN-1" }),
-    archiveAllDone: vi.fn().mockResolvedValue([]),
+    archiveAllDone: vi.fn().mockResolvedValue({ archived: [], skipped: [] }),
     cleanupArchivedTasks: vi.fn().mockResolvedValue(0),
     getDatabase: vi.fn().mockReturnValue({ raw: "sync-db" }),
     getAsyncLayer: vi.fn().mockReturnValue({ raw: "async-layer" }),

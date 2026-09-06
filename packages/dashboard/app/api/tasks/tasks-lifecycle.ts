@@ -4,6 +4,7 @@
  */
 import type {
   Task,
+  ArchiveAllDoneResult,
   MergeResult,
   BranchGroup,
   BranchGroupPrState,
@@ -317,20 +318,18 @@ export function revertTask(id: string, projectId?: string, body?: RevertTaskOpti
   });
 }
 
-export function archiveAllDone(projectId?: string): Promise<Task[]> {
+export function archiveAllDone(projectId?: string): Promise<ArchiveAllDoneResult> {
   /*
   FNXC:ArchiveConfirmGate 2026-07-26-16:30:
   The bulk archive route now requires an explicit `{ confirm: true }` body (400 without
   it) so non-UI callers cannot silently sweep the Done column. The UI's own user-facing
   confirmation happens before this client call; this body is the machine-level ack.
   */
-  return api<{ archived: Task[] }>(withProjectId("/tasks/archive-all-done", projectId), {
+  return api<{ archived: Task[]; skipped?: ArchiveAllDoneResult["skipped"] }>(withProjectId("/tasks/archive-all-done", projectId), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ confirm: true }),
-  }).then(
-    (response) => response.archived
-  );
+  }).then((response) => ({ archived: response.archived, skipped: response.skipped ?? [] }));
 }
 
 export function approvePlan(id: string, projectId?: string): Promise<Task> {

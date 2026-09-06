@@ -1038,6 +1038,9 @@ export {
   TransitionRejectionError,
   type LegacyAutoMergeStampReconcileResult,
   type MoveTaskOptions,
+  type ArchiveAllDoneResult,
+  type ArchiveAllDoneSkip,
+  type ArchiveAllDoneSkipReason,
 } from "./store.js";
 export {
   STOPWORDS,

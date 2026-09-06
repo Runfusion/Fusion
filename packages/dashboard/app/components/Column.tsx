@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useFlashOnIncrease } from "../hooks/useFlashOnIncrease";
 import { useConfirm } from "../hooks/useConfirm";
 import { rebuildTaskSpec } from "../api";
-import { COLUMN_LABELS, COLUMN_DESCRIPTIONS, getErrorMessage, type TaskColumnSortMode, type DoneColumnSortMode, type Task, type TaskDetail, type Column as ColumnType, type ColumnId, type TaskCreateInput, type GithubIssueAction, type MergeResult } from "@fusion/core";
+import { COLUMN_LABELS, COLUMN_DESCRIPTIONS, getErrorMessage, type TaskColumnSortMode, type DoneColumnSortMode, type Task, type TaskDetail, type Column as ColumnType, type ColumnId, type TaskCreateInput, type GithubIssueAction, type MergeResult, type ArchiveAllDoneResult } from "@fusion/core";
 import { enrichRunningAgentTaskShapeFromFlags, isRunningAgentTask } from "../../../core/src/agents/live-agent-count";
 import { isNearDuplicateCanonicalInactive } from "../../../core/src/duplicates/near-duplicate-canonical";
 import { TaskCard } from "./TaskCard";
@@ -171,7 +171,7 @@ interface ColumnProps {
     removeLineageReferences?: boolean;
     githubIssueAction?: GithubIssueAction;
   }) => Promise<Task>;
-  onArchiveAllDone?: () => Promise<Task[]>;
+  onArchiveAllDone?: () => Promise<ArchiveAllDoneResult>;
   /** Current display order for this Board lane. */
   sortMode?: TaskColumnSortMode;
   /** Updates this lane's Board-local display order. */
@@ -654,8 +654,13 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, effectiveMax
     if (!confirmed) return;
 
     try {
-      const archived = await onArchiveAllDone();
-      addToast(t("column.archivedTasks", "Archived {{count}} tasks", { count: archived.length }), "success");
+      const { archived, skipped } = await onArchiveAllDone();
+      addToast(
+        skipped.length === 0
+          ? t("column.archivedTasks", "Archived {{count}} tasks", { count: archived.length })
+          : t("column.archivedTasksWithSkips", "Archived {{archived}} tasks; skipped {{skipped}}: {{ids}}", { count: archived.length, archived: archived.length, skipped: skipped.length, ids: skipped.slice(0, 3).map((entry) => entry.id).join(", ") }),
+        "success",
+      );
     } catch (err) {
       addToast(getErrorMessage(err) || t("column.failedToArchive", "Failed to archive tasks"), "error");
     }

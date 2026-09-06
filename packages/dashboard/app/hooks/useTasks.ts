@@ -4,7 +4,7 @@ import {
   releaseGateEvidenceFingerprint,
 } from "../utils/releaseGate";
 import { useState, useEffect, useCallback, useRef } from "react";
-import type { Task, Column, ColumnId, TaskCreateInput, MergeResult, GithubIssueAction, AgentLogEntry, TaskColumnSortMode } from "@fusion/core";
+import type { Task, Column, ColumnId, TaskCreateInput, MergeResult, GithubIssueAction, AgentLogEntry, TaskColumnSortMode, ArchiveAllDoneResult } from "@fusion/core";
 // FNXC:WorkflowLifecycleColumns 2026-07-30-11:50: these are AGENT ROLE comparisons, not
 // column guards — the planner LANE keeps the name `triage`; U11 removed only the COLUMN.
 import { PLANNER_AGENT_ROLE, normalizeColumnId } from "@fusion/core";
@@ -1831,16 +1831,16 @@ export function useTasks(options?: UseTasksOptions) {
     return result;
   }, [projectId]);
 
-  const archiveAllDone = useCallback(async (): Promise<Task[]> => {
-    const archived = await api.archiveAllDone(projectId);
-    const normalized = archived.map(normalizeNonBoardTask);
+  const archiveAllDone = useCallback(async (): Promise<ArchiveAllDoneResult> => {
+    const result = await api.archiveAllDone(projectId);
+    const normalized = result.archived.map(normalizeNonBoardTask);
     setTasks((prev) =>
       prev.map((t) => {
         const updated = normalized.find((archived) => archived.id === t.id);
         return updated || t;
       })
     );
-    return normalized;
+    return { archived: normalized, skipped: result.skipped };
   }, [projectId]);
 
   const ingestCreatedTasks = useCallback((incomingTasks: Task[]): void => {

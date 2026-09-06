@@ -1,4 +1,4 @@
-import { sortTasksForDisplayColumn, type TaskColumnSortMode, type Task, type TaskDetail, type Column as ColumnType, type ColumnId, type TaskCreateInput, type GithubIssueAction, type MergeResult } from "@fusion/core";
+import { sortTasksForDisplayColumn, type TaskColumnSortMode, type Task, type TaskDetail, type Column as ColumnType, type ColumnId, type TaskCreateInput, type GithubIssueAction, type MergeResult, type ArchiveAllDoneResult } from "@fusion/core";
 import { Column } from "./Column";
 import "./Lane.css";
 import "./Board.css";
@@ -70,7 +70,7 @@ interface BoardProps {
     removeLineageReferences?: boolean;
     githubIssueAction?: GithubIssueAction;
   }) => Promise<Task>;
-  onArchiveAllDone?: () => Promise<Task[]>;
+  onArchiveAllDone?: () => Promise<ArchiveAllDoneResult>;
   /** Lazy-load archived tasks. Called the first time the user expands the archived column. */
   onLoadArchivedTasks?: () => Promise<void>;
   /** FNXC:ArchivePagination 2026-07-08-00:00: FN-7659 — fetch the next 100-item page of archived tasks (newest-first). Threaded to the Archived column's server-backed "Show more" button. */

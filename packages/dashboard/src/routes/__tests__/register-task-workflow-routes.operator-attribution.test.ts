@@ -26,7 +26,7 @@ import { request as REQUEST } from "../../test-request.js";
 
 function makeHarness() {
   const bypassSpy = vi.fn(async (id: string, _input: { reason: string; actor: string }) => ({ id, column: "in-review" }));
-  const archiveAllDoneSpy = vi.fn(async () => []);
+  const archiveAllDoneSpy = vi.fn(async () => ({ archived: [], skipped: [] }));
 
   const store = {
     getRootDir: vi.fn(() => process.cwd()),
@@ -102,6 +102,6 @@ describe("POST /tasks/archive-all-done — confirm gate", () => {
 
     expect(res.status).toBe(200);
     expect(archiveAllDoneSpy).toHaveBeenCalledTimes(1);
-    expect(res.body).toEqual({ archived: [] });
+    expect(res.body).toEqual({ archived: [], skipped: [] });
   });
 });

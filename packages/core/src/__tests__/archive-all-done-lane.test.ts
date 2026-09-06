@@ -30,7 +30,7 @@ function store(tasksByColumn: Record<string, unknown[]>, definitions: unknown[])
   const archived: string[] = [];
   const impl = {
     listWorkflowDefinitions: vi.fn(async () => definitions),
-    listTasks: vi.fn(async ({ column }: { column: string }) => tasksByColumn[column] ?? []),
+    listTasks: vi.fn(async ({ column }: { column?: string }) => column ? tasksByColumn[column] ?? [] : Object.values(tasksByColumn).flat()),
     archiveTask: vi.fn(async (id: string) => { archived.push(id); return { id } as never; }),
     logEntry: vi.fn(async () => undefined),
   } as unknown as TaskStore;
@@ -43,8 +43,9 @@ describe("archiveAllDone resolves the board's own complete lane", () => {
   it("archives a card sitting in a RENAMED complete lane", async () => {
     const { impl, archived } = store({ shipped: [card("FN-1", "shipped")] }, [{ ir: RENAMED_IR }]);
 
-    await archiveAllDoneImpl(impl);
+    const result = await archiveAllDoneImpl(impl);
 
+    expect(result.archived.map((task) => task.id)).toEqual(["FN-1"]);
     expect(archived).toEqual(["FN-1"]);
   });
 
@@ -52,8 +53,9 @@ describe("archiveAllDone resolves the board's own complete lane", () => {
     // The union keeps rows stored under the old id reachable while a rename is in flight.
     const { impl, archived } = store({ done: [card("FN-2", "done")] }, [{ ir: RENAMED_IR }]);
 
-    await archiveAllDoneImpl(impl);
+    const result = await archiveAllDoneImpl(impl);
 
+    expect(result.archived.map((task) => task.id)).toEqual(["FN-2"]);
     expect(archived).toEqual(["FN-2"]);
   });
 
@@ -61,8 +63,9 @@ describe("archiveAllDone resolves the board's own complete lane", () => {
     // The action must stay scoped — archiving everything would be its own bug.
     const { impl, archived } = store({ building: [card("FN-3", "building")] }, [{ ir: RENAMED_IR }]);
 
-    await archiveAllDoneImpl(impl);
+    const result = await archiveAllDoneImpl(impl);
 
+    expect(result.archived).toEqual([]);
     expect(archived).toEqual([]);
   });
 });

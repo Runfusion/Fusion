@@ -4377,8 +4377,16 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         );
       }
       const { store: scopedStore } = await getProjectContext(req);
-      const archived = await scopedStore.archiveAllDone();
-      res.json({ archived });
+      const result = await scopedStore.archiveAllDone();
+      /*
+      FNXC:BulkArchiveOrdering 2026-09-05-23:44:
+      Per-task archive skips are a successful, inspectable sweep result, not a route failure.
+      Normalize legacy plugin/mocked array results while stores adopt ArchiveAllDoneResult.
+      */
+      const { archived, skipped } = Array.isArray(result)
+        ? { archived: result, skipped: [] }
+        : result;
+      res.json({ archived, skipped });
     } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;

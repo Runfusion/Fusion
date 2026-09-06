@@ -1519,6 +1519,8 @@ export default interface Resources {
       "archiveAllMessage_one": "Archive all {{count}} done tasks?",
       "archiveAllMessage_other": "Archive all {{count}} done tasks?",
       "archiveAllTitle": "Archive All Done",
+      "archivedTasksWithSkips_one": "Archived {{archived}} task; skipped {{skipped}}: {{ids}}",
+      "archivedTasksWithSkips_other": "Archived {{archived}} tasks; skipped {{skipped}}: {{ids}}",
       "archivedTasks_one": "Archived {{count}} tasks",
       "archivedTasks_other": "Archived {{count}} tasks",
       "autoMerge": "Auto-merge",

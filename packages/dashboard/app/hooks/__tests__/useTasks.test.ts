@@ -3342,7 +3342,7 @@ describe("useTasks", () => {
         createMockTask({ id: "FN-001", column: "archived" as Column }),
         createMockTask({ id: "FN-002", column: "archived" as Column }),
       ];
-      mockArchiveAllDone.mockResolvedValueOnce(archivedTasks);
+      mockArchiveAllDone.mockResolvedValueOnce({ archived: archivedTasks, skipped: [] });
 
       const { result } = renderHook(() => useTasks());
 
@@ -3365,7 +3365,7 @@ describe("useTasks", () => {
     it("returns empty array when no done tasks exist", async () => {
       const todoTask = createMockTask({ id: "FN-001", column: "todo" as Column });
       mockFetchTasks.mockResolvedValueOnce([todoTask]);
-      mockArchiveAllDone.mockResolvedValueOnce([]);
+      mockArchiveAllDone.mockResolvedValueOnce({ archived: [], skipped: [] });
 
       const { result } = renderHook(() => useTasks());
 
@@ -3377,7 +3377,7 @@ describe("useTasks", () => {
         return await result.current.archiveAllDone();
       });
 
-      expect(archived).toEqual([]);
+      expect(archived).toEqual({ archived: [], skipped: [] });
       expect(result.current.tasks[0].column).toBe("todo");
     });
   });

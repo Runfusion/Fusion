@@ -669,6 +669,14 @@ Behavior:
 - Direct reads of a retained named document and its revisions remain available for historical evidence, while list/global document registries stay live-only.
 - The sole immutability exception is authenticated operator HTTP `POST /api/tasks/:id/documents/:key/archived-publications`. It can only append `"\n\n" + appendContent` after matching mandatory revision/hash CAS against a consistent PostgreSQL tombstone plus archive snapshot. It cannot replace content or metadata, restore/move/update the task, change archive/mission/link state, emit citations/task events, or wake execution. Fusion launched with `--no-auth` rejects this capability.
 
+### Bulk archive behavior
+
+The Done-lane **Archive all done tasks** action processes refinement lineage leaves before their parents. This allows a completed refinement chain to archive in one sweep without a still-live child blocking its parent.
+
+The API returns `{ archived, skipped }` and treats per-task skips as a successful request. A skip includes the task ID, a reason, and blocking IDs: `open-lineage-children` means a child is still outside the completed batch, `blocked-by-unarchived-batch-member` means another completed batch member could not be archived, and `archive-failed` records an individual archive error. Other eligible tasks continue even when one item is skipped.
+
+The default action preserves lineage references. The opt-in `removeLineageReferences: true` mode instead treats lineage as an ordering hint only: it archives the entire batch, including cyclic lineage or parents with open children, unless an individual archive operation itself fails.
+
 ### Cleanup behavior
 
 - Archived entries are persisted as compact snapshots in PostgreSQL cold-storage tables; legacy `archive.db`, in-main-DB `archivedTasks`, and older `.fusion/archive.jsonl` data remain migration inputs only.

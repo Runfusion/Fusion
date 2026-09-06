@@ -40,6 +40,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { storeLog } from "../store.js";
 import { resolveArchivedLanes } from "../project-lane-vocabulary.js";
+import { TaskHasDependentsError, TaskHasLineageChildrenError } from "./errors.js";
 
 /* DELIBERATE-LITERAL — the no-resolution fallback for the archive lane above. */
 const LEGACY_ARCHIVE_LANES: readonly string[] = ["archived"];
@@ -345,7 +346,34 @@ export async function clearStaleExecutionStartBranchReferencesImpl(store: TaskSt
     return clearedIds;
 }
 
-export async function archiveAllDoneImpl(store: TaskStore, options?: { removeLineageReferences?: boolean }): Promise<Task[]> {
+export type ArchiveAllDoneSkipReason =
+  | "open-lineage-children"
+  | "blocked-by-unarchived-batch-member"
+  | "archive-failed";
+
+export interface ArchiveAllDoneSkip {
+  id: string;
+  reason: ArchiveAllDoneSkipReason;
+  blockers: string[];
+  message: string;
+}
+
+export interface ArchiveAllDoneResult {
+  archived: Task[];
+  skipped: ArchiveAllDoneSkip[];
+}
+
+/**
+ * FNXC:BulkArchiveOrdering 2026-09-05-23:44:
+ * Bulk archive processes lineage leaves before parents because the archive gate rejects a parent
+ * while a live child still references it. Promise.allSettled isolates a failed item: Promise.all
+ * previously returned an error while sibling mutations continued in the background.
+ *
+ * Only lineage is predicted because the archive path has no dependency gate. The list-based census
+ * retains the pure fake-store seam. removeLineageReferences bypasses the lineage gate, so edges are
+ * ordering hints only and cyclic residue drains instead of becoming a lineage skip.
+ */
+export async function archiveAllDoneImpl(store: TaskStore, options?: { removeLineageReferences?: boolean }): Promise<ArchiveAllDoneResult> {
     /*
     FNXC:WorkflowLifecycleColumns 2026-08-01-05:00:
     "Archive all done" archived NOTHING on a renamed board.
@@ -363,23 +391,92 @@ export async function archiveAllDoneImpl(store: TaskStore, options?: { removeLin
     for (const column of completeColumns) {
       for (const task of await store.listTasks({ slim: true, column })) doneById.set(task.id, task);
     }
-    const doneTasks = [...doneById.values()];
+    if (doneById.size === 0) return { archived: [], skipped: [] };
 
-    if (doneTasks.length === 0) {
-      return [];
+    const archivedColumns = await resolveArchivedLanes(store).catch(() => undefined) ?? new Set(LEGACY_ARCHIVE_LANES);
+    const liveTasks = (await store.listTasks({ slim: true, includeArchived: false }))
+      .filter((task) => !task.deletedAt && !archivedColumns.has(task.column));
+    const childrenByParentId = new Map<string, string[]>();
+    for (const task of liveTasks) {
+      if (!task.sourceParentTaskId) continue;
+      const children = childrenByParentId.get(task.sourceParentTaskId) ?? [];
+      children.push(task.id);
+      childrenByParentId.set(task.sourceParentTaskId, children);
+    }
+    for (const children of childrenByParentId.values()) children.sort();
+
+    const bypassLineageGate = options?.removeLineageReferences === true;
+    const archivableIds = new Set(doneById.keys());
+    const skipped: ArchiveAllDoneSkip[] = [];
+    if (!bypassLineageGate) {
+      let firstRemovalWave = true;
+      while (true) {
+        const removals = [...archivableIds].filter((id) =>
+          (childrenByParentId.get(id) ?? []).some((childId) => !archivableIds.has(childId)),
+        ).sort();
+        if (removals.length === 0) break;
+        for (const id of removals) {
+          const blockers = (childrenByParentId.get(id) ?? []).filter((childId) => !archivableIds.has(childId));
+          skipped.push({
+            id,
+            reason: firstRemovalWave ? "open-lineage-children" : "blocked-by-unarchived-batch-member",
+            blockers,
+            message: firstRemovalWave
+              ? `Live lineage children prevent archiving ${id}.`
+              : `Unarchived batch members prevent archiving ${id}.`,
+          });
+          archivableIds.delete(id);
+        }
+        firstRemovalWave = false;
+      }
     }
 
-    // Archive all done tasks concurrently
-    const archivedTasks = await Promise.all(
-      doneTasks.map((task) =>
-        store.archiveTask(task.id, {
-          cleanup: true,
-          removeLineageReferences: options?.removeLineageReferences,
-        })
-      )
-    );
+    const archived: Task[] = [];
+    const remaining = new Set(archivableIds);
+    const archivedIds = new Set<string>();
+    const archiveWave = async (ids: string[]) => {
+      const settled = await Promise.allSettled(ids.map((id) => store.archiveTask(id, {
+        cleanup: true,
+        removeLineageReferences: options?.removeLineageReferences,
+      })));
+      for (const [index, result] of settled.entries()) {
+        const id = ids[index]!;
+        if (result.status === "fulfilled") {
+          archived.push(result.value);
+          archivedIds.add(id);
+        } else {
+          const error = result.reason;
+          const blockers = error instanceof TaskHasLineageChildrenError ? error.childIds
+            : error instanceof TaskHasDependentsError ? error.dependentIds : [];
+          skipped.push({ id, reason: "archive-failed", blockers, message: error instanceof Error ? error.message : String(error) });
+        }
+        remaining.delete(id);
+      }
+    };
 
-    return archivedTasks;
+    while (remaining.size > 0) {
+      const wave = [...remaining].filter((id) =>
+        bypassLineageGate
+          ? (childrenByParentId.get(id) ?? []).filter((childId) => remaining.has(childId)).length === 0
+          : (childrenByParentId.get(id) ?? []).filter((childId) => archivableIds.has(childId)).every((childId) => archivedIds.has(childId)),
+      ).sort();
+      if (wave.length > 0) {
+        await archiveWave(wave);
+        continue;
+      }
+      if (bypassLineageGate) {
+        await archiveWave([...remaining].sort());
+      } else {
+        for (const id of [...remaining].sort()) {
+          const blockers = (childrenByParentId.get(id) ?? []).filter((childId) => remaining.has(childId) || !archivedIds.has(childId));
+          skipped.push({ id, reason: "blocked-by-unarchived-batch-member", blockers, message: `Unarchived batch members prevent archiving ${id}.` });
+          remaining.delete(id);
+        }
+      }
+    }
+
+    skipped.sort((left, right) => left.id.localeCompare(right.id));
+    return { archived, skipped };
 }
 
 /*

@@ -232,7 +232,7 @@ export interface MainContentProps {
       allowResurrection?: boolean;
     },
   ) => Promise<Task>;
-  archiveAllDone: () => Promise<Task[]>;
+  archiveAllDone: () => Promise<import("@fusion/core").ArchiveAllDoneResult>;
   loadArchivedTasks: () => Promise<void>;
   /** FNXC:ArchivePagination 2026-07-08-00:00: FN-7659 — fetch the next 100-item page of archived tasks (newest-first). */
   loadMoreArchivedTasks: () => Promise<void>;
