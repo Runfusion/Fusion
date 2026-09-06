@@ -9,8 +9,9 @@ vi.mock("node:child_process", () => ({
 
 import { validateCliAuthAsync, validateCliPresenceAsync } from "../process-manager.js";
 
-function makeProbeProc() {
+function makeProbeProc(pid: number | undefined = 4242) {
   const proc = new EventEmitter() as any;
+  proc.pid = pid;
   proc.killed = false;
   proc.kill = vi.fn(() => {
     proc.killed = true;
@@ -54,13 +55,33 @@ describe("Droid startup validation probes", () => {
 
   it("SIGKILLs and resolves unavailable when `droid --version` hangs", async () => {
     vi.useFakeTimers();
-    const proc = makeProbeProc();
+    const proc = makeProbeProc(4242);
     spawnMock.mockImplementationOnce(() => proc);
 
     const pending = validateCliPresenceAsync();
     await vi.advanceTimersByTimeAsync(45_001);
 
     await expect(pending).resolves.toMatchObject({ ok: false });
+    expect(proc.kill).toHaveBeenCalledWith("SIGKILL");
+  });
+
+  it("still kills a hung probe whose fork had no pid when the budget elapsed", async () => {
+    vi.useFakeTimers();
+    const proc = makeProbeProc();
+    // A default parameter would swallow an explicit `undefined`; clear it after construction
+    // so the probe really sees a fork that has not been assigned a pid yet.
+    proc.pid = undefined;
+    spawnMock.mockImplementationOnce(() => proc);
+
+    const pending = validateCliPresenceAsync();
+    await vi.advanceTimersByTimeAsync(45_001);
+
+    await expect(pending).resolves.toMatchObject({ ok: false });
+    expect(proc.kill).not.toHaveBeenCalled();
+
+    proc.pid = 909;
+    proc.emit("spawn");
+
     expect(proc.kill).toHaveBeenCalledWith("SIGKILL");
   });
 

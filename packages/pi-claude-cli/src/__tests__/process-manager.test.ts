@@ -478,6 +478,87 @@ describe("validateCliAuthAsync", () => {
   });
 });
 
+/*
+ * The probe's timeout exists to terminate the child, not merely to stop waiting on it.
+ * Measured 2026-09-06: a `claude auth status` child outlived this 5s timeout by more
+ * than five minutes while dashboard startup sat on "Loading extensions...".
+ */
+describe("claude probe timeout containment", () => {
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    warnSpy.mockRestore();
+  });
+
+  const stallingChild = (pid?: number) => {
+    const EventEmitter = require("node:events");
+    const proc = new EventEmitter();
+    proc.pid = pid;
+    proc.kill = vi.fn();
+    return proc;
+  };
+
+  it("SIGKILLs the child when the budget elapses", async () => {
+    const proc = stallingChild(4242);
+    (spawn as any).mockImplementationOnce(() => proc);
+
+    const pending = validateCliAuthAsync();
+    await vi.advanceTimersByTimeAsync(5000);
+
+    expect(await pending).toBe(false);
+    expect(proc.kill).toHaveBeenCalledWith("SIGKILL");
+  });
+
+  it("still kills the child when the budget elapses before the fork has a pid", async () => {
+    // kill() is a silent no-op with no pid, and a slow fork is exactly what makes a probe
+    // time out — so without the deferred kill the child outlives its own timeout.
+    const proc = stallingChild(undefined);
+    (spawn as any).mockImplementationOnce(() => proc);
+
+    const pending = validateCliAuthAsync();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(await pending).toBe(false);
+    expect(proc.kill).not.toHaveBeenCalled();
+
+    proc.pid = 777;
+    proc.emit("spawn");
+
+    expect(proc.kill).toHaveBeenCalledWith("SIGKILL");
+  });
+
+  it("keeps the timed-out verdict when the child exits late", async () => {
+    const proc = stallingChild(555);
+    (spawn as any).mockImplementationOnce(() => proc);
+
+    const pending = validateCliAuthAsync();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(await pending).toBe(false);
+
+    // A late success must not retroactively claim the CLI was reachable.
+    expect(() => proc.emit("exit", 0)).not.toThrow();
+    expect(await pending).toBe(false);
+  });
+
+  it("does not kill a child that answers inside the budget", async () => {
+    const proc = stallingChild(999);
+    (spawn as any).mockImplementationOnce(() => proc);
+
+    const pending = validateCliAuthAsync();
+    proc.emit("exit", 0);
+    expect(await pending).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(proc.kill).not.toHaveBeenCalled();
+  });
+});
+
 describe("CLI flags", () => {
   beforeEach(() => {
     vi.clearAllMocks();

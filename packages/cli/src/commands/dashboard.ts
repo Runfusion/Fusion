@@ -163,7 +163,7 @@ import { registerCustomProviders, reregisterCustomProviders } from "./custom-pro
 import { handleOpencodeGoApiKeySaved, syncStartupModels } from "./startup-model-sync.js";
 import { DashboardTUI, DashboardLogSink, isTTYAvailable, type SystemInfo, type GitStatus, type GitCommit, type GitCommitDetail, type GitBranch, type GitWorktree, type FileEntry, type FileReadResult, type TaskStep as TUITaskStep, type TaskLogEntry as TUITaskLogEntry, type TaskDetailData, type TaskEvent } from "./dashboard-tui/index.js";
 import { DASHBOARD_STARTUP_STATUS, runTuiStartupPrelude } from "./dashboard-startup-chain.js";
-import { phaseTime } from "../startup-phase.js";
+import { boundedPhaseTime, phaseTime, StartupPhaseTimeoutError } from "../startup-phase.js";
 import {
   DEV_SERVER_LISTENING_MESSAGE,
   DEV_TUNNEL_READY_MESSAGE,
@@ -202,6 +202,21 @@ let diagnosticDbHealthCheck: (() => boolean) | null = null;
 let diagnosticStoreListenerCheck: (() => Record<string, number>) | null = null;
 
 const STREAM_LOG_FLUSH_IDLE_MS = 100;
+
+/**
+ * Wall-clock budget for `discoverAndLoadExtensions`.
+ *
+ * FNXC:FasterStartup 2026-09-06-05:22:
+ * Sized to be unreachable by a healthy boot (the phase normally finishes in
+ * seconds) while still capping the pathological one measured at 399,809ms. The
+ * env override exists because the ceiling is a heuristic about someone else's
+ * disk and extension set, not an invariant, and an operator with a genuinely slow
+ * extension set must be able to raise it without a code change.
+ */
+const EXTENSION_DISCOVERY_TIMEOUT_MS = (() => {
+  const raw = Number(process.env.FUSION_EXTENSION_DISCOVERY_TIMEOUT_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : 120_000;
+})();
 
 function formatRuntimeContext(context: Record<string, unknown> | undefined): string {
   if (context === undefined) {
@@ -1915,8 +1930,19 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     // dashboard's extension runtime.
     setHostExtensionPaths(selfExtensionPaths);
 
+    /*
+    FNXC:FasterStartup 2026-09-06-05:22:
+    Extension discovery imports third-party extension modules and cold-starts CLI
+    binaries to probe them, so its worst case is bounded by nothing this process
+    controls. Measured 2026-09-06: this phase took 399,809ms (6m40s) under heavy
+    disk contention while every other startup phase finished under 1.5s, leaving
+    the dashboard pinned on "Loading extensions...". Bound it like the model-registry
+    refresh below: on timeout the catch path builds an empty extension runtime and
+    boot continues degraded (no extension-provided providers) rather than never
+    reaching "Starting engine...".
+    */
     // Load all enabled extensions: Fusion/Pi filesystem-discovered + package-resolved.
-    const extensionsResult = await phaseTime("discoverAndLoadExtensions", () => discoverAndLoadExtensions(
+    const extensionsResult = await boundedPhaseTime("discoverAndLoadExtensions", () => discoverAndLoadExtensions(
       [
         ...selfExtensionPaths,
         ...getEnabledPiExtensionPaths(cwd),
@@ -1927,7 +1953,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       ],
       cwd,
       join(cwd, ".fusion", "disabled-auto-extension-discovery"),
-    ), logPhase);
+    ), logPhase, EXTENSION_DISCOVERY_TIMEOUT_MS);
 
     for (const { path, error } of extensionsResult.errors) {
       logSink.log(`Failed to load ${path}: ${error}`, "extensions");
@@ -1969,6 +1995,14 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     logSink.log(`Failed to discover extensions: ${message}`, "extensions");
+    if (error instanceof StartupPhaseTimeoutError) {
+      // Say what was lost, not just that a timer fired: providers contributed by
+      // extensions (Claude/Droid/llama.cpp CLI runtimes) are absent for this boot.
+      logSink.warn(
+        "Extension discovery exceeded its startup budget; continuing without extension-provided providers. Restart to retry.",
+        "extensions",
+      );
+    }
     createExtensionRuntime();
     await refreshFusionModelRegistry(modelRegistry, {
       log: (message) => logSink.log(message, "extensions"),
