@@ -1,5 +1,58 @@
 # @runfusion/fusion
 
+## 0.78.0-beta.4
+
+### Minor Changes
+
+- 094f313: summary: Add dedicated recommendation navigation and new-item badges for recommendations and artifacts.
+  category: feature
+  dev: Categorizes inbox rows as message, recommendation, or artifact and exposes categoryUnreadCounts.
+- 1c7260e: summary: Let Enter create new lines in mobile conversation composers, with a global behavior setting.
+  category: feature
+  dev: Adds the global `chatSubmitOnEnter` setting and `ChatSubmitOnEnterContext` across the three conversation composers; `auto` makes plain Enter a newline for a coarse primary pointer and a send action for a fine pointer, while `always` and `never` force that branch. Shift+Enter never sends, including with Cmd/Ctrl held; it inserts a newline except while one of Chat's files/tasks, agents, or skills autocomplete menus is open, whereas it passes through the task Chat and planner Chat menus. Cmd/Ctrl+Enter without Shift ignores the setting and device after the existing guards. An open autocomplete menu consumes both Enter and Cmd/Ctrl+Enter until Escape closes it, and task Chat IME composition takes priority over every Enter path. Plain Enter without Cmd/Ctrl or Shift follows the setting, Alt does not alter it, and Send remains active whenever the draft is not empty.
+- a9db52e: summary: Move task metadata into Details and quick controls into the footer Actions menu.
+  category: feature
+  dev: Removes the inline action row, Priority/Oversight popovers, and level select; keeps action and option testids while retiring container and trigger testids.
+- 5257eec: summary: Add editable quick-script names and descriptions across terminal launchers.
+  category: feature
+  dev: Keeps command storage compatible while atomically updating script references on rename.
+
+### Patch Changes
+
+- 0190f23: summary: Keep chat composers editable immediately after stopping a response.
+  category: fix
+  dev: Queues text at the dispatch fence, clears cancellation before draining, and refuses attachments during reconciliation.
+- 20262e7: summary: One Coding (Ideas) workflow remains (formerly V2); Coding is now Coding (Auto).
+  category: internal
+  dev: Removes `builtin:coding-ideas` from the offered catalog and maps it to `builtin:coding-ideas-v2` across all five catalog-read seams, including `isBuiltinWorkflowEnabled`. Both authoritative selection readers canonicalize persisted legacy rows so the board and scheduler share one Ideas identity and never render homonymous lanes. The four persistence paths (`selectTaskWorkflowImpl`, `selectTaskWorkflowAndReconcileImpl`, `materializeExplicitWorkflowStepsImpl`, and `setDefaultWorkflowIdImpl`) normalize requests before writing, while all three prompt-override/plugin-gating lookups use the successor key. Operator-owned `enabledBuiltinWorkflowIds` values remain unchanged but are understood through the mapping. No migration ships and `SCHEMA_BASELINE_VERSION` remains `0071`, so older Fusion binaries retain database access. Repointed cards adopt the successor's `stepReopenPolicy: "none"` named-remediation behavior; an in-flight card uses the existing one-time IR-drift requeue and resumes on the current graph.
+- 0e466ad: summary: Prevent Plan Review from running before planning finishes and keep its outcome exclusive.
+  category: fix
+  dev: Adds planner-aware liveness, renewable continuation leases, dispatch deferral, and fail-closed Plan Review routing.
+- 33b2a89: summary: Preserve the Chat reading position while sending and follow streaming replies only when pinned to the bottom.
+  category: fix
+  dev: Captures viewport ownership before optimistic sends and fences deferred scroll callbacks after manual scrolling.
+- dd808ed: summary: Restore complete task history and metrics when legacy archives return to Done.
+  category: fix
+  dev: Uses project-scoped, non-destructive archive draining and an auditable dry-run/apply repair tool.
+- 540b0b6: summary: Restore favorite stars in chat model selectors and keep mobile menus overlaid.
+  category: fix
+  dev: Routes chat favorite changes through the shared optimistic settings hook and portals the Brain panel to the viewport.
+- b064573: summary: Keep OAuth re-login status consistent after automatic token renewal.
+  category: fix
+  dev: Routes non-Anthropic OAuth refreshes through pi ModelRuntime and promptly revalidates the dashboard banner.
+- 9d198f0: summary: Use the full phone width for the GitHub import screen's top controls and insets.
+  category: fix
+  dev: GitHubImportModal.css adds a final phone-breakpoint cascade override for embedded import spacing.
+- 75c32ee: summary: Prevent task-description headings from blocking plan approval.
+  category: fix
+  dev: Shares bounded original-description parsing across approval fingerprints and spec locks, with actionable lock failures.
+- 1f52dc0: summary: Keep long Direct and Planner Chat conversations responsive while preserving complete history.
+  category: performance
+  dev: Uses bounded variable-height transcript windows and strict timestamp-plus-ID history cursors.
+- d3204c1: summary: Remove task archiving; completed history now remains in the paginated Done column.
+  category: breaking
+  dev: Removes archive and unarchive commands, task tools, routes, settings, and the Archived workflow role.
+
 ## 0.78.0-beta.3
 
 ### Minor Changes
