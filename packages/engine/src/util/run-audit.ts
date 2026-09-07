@@ -596,8 +596,9 @@ export type DatabaseMutationType =
   | "task:auto-recover-paused-abort-park"
   // FNXC:Lifecycle FNXC_LOG 2026-06-20-00:00: audit type for reaping a leaked worktree/lease/semaphore slot whose holder left in-progress.
   | "task:reap-leaked-concurrency-slot"
-  // task:auto-archived-ghost-bug metadata: { findings: Array<{ construct: { kind: string; raw: string; filePath?: string; line?: number }; matched: boolean; probeError?: string; output?: string }>; reason: string }
-  // task:auto-archived-duplicate metadata: { siblingTaskIds: string[]; scores: Record<string, number> }
+  // Historical compatibility metadata: { findings: Array<{ construct: { kind: string; raw: string; filePath?: string; line?: number }; matched: boolean; probeError?: string; output?: string }>; reason: string }
+  // FNXC:GhostBugPreflight 2026-09-07-17:01: Auto-delete visibility records IDs, counts, and fixed outcomes only: { taskId, reason, constructCount, definitiveCount, missingCount, controlOutcome }.
+  | "task:auto-deleted-ghost-bug"
   | "task:auto-archived-ghost-bug"
   | "task:auto-archived-duplicate"
   /** Metadata: { taskId, source: "live-column" | "cold-storage", movedCount, restoredCount, outcome } */

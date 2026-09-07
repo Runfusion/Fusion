@@ -309,7 +309,7 @@ async function resolvePlanningDependencyInstruction(input: {
 }
 
 
-import { exec } from "node:child_process";
+import { execFile, type ExecFileOptions } from "node:child_process";
 import { existsSync } from "node:fs";
 import { readFile, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -337,7 +337,7 @@ import {
   getResearchGuidanceForSurface,
   isResearchToolSurfaceEnabled,
 } from "./execution/tool-availability.js";
-import { runGhostBugPreflight } from "./triage-domain/triage-preflight.js";
+import { runGhostBugPreflight, type ExecResult, type ProbeExec } from "./triage-domain/triage-preflight.js";
 import { runConfiguredCommand } from "./executor/configured-command.js";
 import {
   detectUnrecognizedDependencyEvidence,
@@ -511,6 +511,39 @@ reads markers from leading comments — an inline one attaches to the wrong node
 */
 function isOrphanedLegacyTriageRow(column: string, declaresTriage: boolean): boolean {
   return column === "triage" && !declaresTriage;
+}
+
+export type GhostBugExecFile = (file: string, args: string[], options: ExecFileOptions) => Promise<{ stdout: string; stderr: string }>;
+
+/**
+ * FNXC:GhostBugPreflight 2026-09-07-17:01:
+ * The former command-string wiring ignored `timeoutMs` because child_process expects `timeout`.
+ * This bounded async adapter uses execFile without a shell, preserving plan text as argv data only.
+ */
+export function createGhostBugProbeExec(
+  runExecFile: GhostBugExecFile = async (file, args, options) => {
+    const result = await promisify(execFile)(file, args, options);
+    return { stdout: String(result.stdout), stderr: String(result.stderr) };
+  },
+): ProbeExec {
+  return async (argv, options): Promise<ExecResult> => {
+    try {
+      const result = await runExecFile(argv[0]!, argv.slice(1), {
+        cwd: options?.cwd,
+        timeout: options?.timeoutMs,
+        maxBuffer: 1024 * 1024,
+        shell: false,
+      });
+      return { stdout: result.stdout, stderr: result.stderr, exitCode: 0 };
+    } catch (error) {
+      const result = error as { code?: unknown; stdout?: unknown; stderr?: unknown };
+      return {
+        stdout: typeof result.stdout === "string" ? result.stdout : "",
+        stderr: typeof result.stderr === "string" ? result.stderr : "",
+        ...(typeof result.code === "number" ? { exitCode: result.code } : {}),
+      };
+    }
+  };
 }
 
 export class TriageProcessor {
@@ -5317,14 +5350,17 @@ export class TriageProcessor {
           written,
           {
             cwd: this.rootDir,
-            exec: promisify(exec),
+            exec: createGhostBugProbeExec(),
           },
         ),
         new Promise<null>((resolve) => setTimeout(() => resolve(null), 15_000)),
       ]);
 
       if (preflightDecision && preflightDecision.decision === "delete") {
-        await softDeleteAsGhostBug(this.store, task.id, preflightDecision);
+        await softDeleteAsGhostBug(this.store, task.id, preflightDecision, {
+          messageStore: this.options.messageStore,
+          taskTitle: task.title ?? undefined,
+        });
         planLog.log(`${task.id} auto-deleted as ghost bug`);
         return;
       }

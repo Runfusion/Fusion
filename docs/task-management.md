@@ -155,14 +155,14 @@ The duplicate-close task log line remains `Duplicate of <canonicalTaskId> — cl
 
 Fusion applies two conservative intake heuristics before execution starts:
 
-- **Ghost-bug preflight** (triage finalize path): for bug-fix-shaped specs that cite concrete constructs or commands, Fusion probes current `main`. If every definitive probe shows that the cited bug does not reproduce, Fusion soft-deletes the task without permitting ID resurrection.
+- **Ghost-bug preflight** (triage finalize path): for bug-fix-shaped specs that cite concrete constructs, Fusion probes the project checkout repository-wide using shell-free `git` argument vectors. Cited text is passed only as an argument value; matches come from process exit codes, while failures and ambiguous results are inconclusive. Command-kind citations are never executed. Fusion soft-deletes without permitting ID resurrection only when every definitive probe is missing and a positive control sampled from `git ls-files` successfully proves the probe apparatus works.
 - **Same-agent duplicate intake** (all task-create backends): if the same `source.sourceAgentId` or `source.sourceParentTaskId` filed a highly similar task within 24 hours (threshold `0.75`), Fusion leaves the later task in place and records `sourceMetadata.nearDuplicateOf` / `nearDuplicateScore`. The dashboard exposes the duplicate for a Keep/Delete decision; there is no archive setting or automatic archive outcome.
 
 Both heuristics are **fail-open**: probe or detection errors, timeouts, and inconclusive signals do not block normal intake. Tombstone-resurrection blocking remains fail-closed and always throws `TombstonedTaskResurrectionError` when a forbidden resurrection is detected.
 
-Historical activity event names retain `task:auto-archived-ghost-bug` and `task:auto-archived-duplicate` for stored-log compatibility only. Current cleanup emits no new auto-archive events: ghost-bug cleanup soft-deletes, while duplicate flagging uses `task:near-duplicate-flagged`.
+Historical activity event names retain `task:auto-archived-ghost-bug` and `task:auto-archived-duplicate` for stored-log compatibility only. Ghost-bug cleanup now emits `task:auto-deleted-ghost-bug` with IDs, counts, and fixed outcomes, while duplicate flagging uses `task:near-duplicate-flagged`.
 
-These appear in task activity history; run-audit entries are emitted where run context exists (triage/engine paths). Store-only intake paths record activity without synthetic run context.
+Ghost-bug deletes also send a best-effort dashboard inbox notification identifying the removed task, reason, and cited constructs. These appear in task activity history; run-audit entries are emitted where run context exists (triage/engine paths). Store-only intake paths record activity without synthetic run context.
 
 #### Revert/Undo affordance (FN-7525)
 
