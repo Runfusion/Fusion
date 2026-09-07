@@ -1445,6 +1445,41 @@ describe("removeWorktree", () => {
     });
   });
 
+  it("does not let task-deletion force bypass an executor session", async () => {
+    activeSessionRegistry.registerPath("/repo/.worktrees/fn-1", {
+      taskId: "FN-1",
+      kind: "executor",
+      ownerKey: "FN-1/executor",
+    });
+
+    await expect(removeWorktree({
+      rootDir: "/repo",
+      worktreePath: "/repo/.worktrees/fn-1",
+      settings: {},
+      reason: RemovalReason.TaskDeletion,
+      taskId: "FN-1",
+      force: true,
+    })).rejects.toBeInstanceOf(ActiveSessionWorktreeRemovalError);
+  });
+
+  it("accepts only the matching task-deletion cleanup reservation", async () => {
+    execMock.mockResolvedValue({ stdout: "", stderr: "" });
+    activeSessionRegistry.registerPath("/repo/.worktrees/fn-1", {
+      taskId: "FN-1",
+      kind: "task-deletion-cleanup",
+      ownerKey: "deleted-task-cleanup:FN-1",
+    });
+
+    await expect(removeWorktree({
+      rootDir: "/repo",
+      worktreePath: "/repo/.worktrees/fn-1",
+      settings: {},
+      reason: RemovalReason.TaskDeletion,
+      taskId: "FN-1",
+      force: true,
+    })).resolves.toMatchObject({ removed: true });
+  });
+
   it("keeps pre-FN-5346 behavior when defensive owner hints are omitted", async () => {
     activeSessionRegistry.registerPath("/repo/.worktrees/fn-1", {
       taskId: "FN-1",

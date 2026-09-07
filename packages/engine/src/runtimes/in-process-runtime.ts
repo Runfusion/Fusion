@@ -2066,6 +2066,11 @@ export class InProcessRuntime
       FNXC:CrossProcessDeleteObservation 2026-08-01-13:03:
       Engine-owned stores do not call watch(), so runtime startup owns durable delete observation.
       Start only after its bridge is attached so the initial poll cannot lose a cross-process delete.
+
+      FNXC:TaskDeletionWorktrees 2026-09-07-12:00:
+      SelfHealingManager is already started above, so its asynchronous worktree-cleanup listener exists
+      before the first outbox poll can redeliver a remote deletion. Git cleanup remains outside both the
+      outbox acknowledgement transaction and the original delete response.
       */
       await this.taskStore.startTaskDeletedOutboxConsumer();
 

@@ -998,18 +998,33 @@ describeIfGit("workspace-aware self-healing (Phase D U1)", () => {
     );
   });
 
+  it("keeps a recently failed workspace worktree until the ordinary terminal floor expires", async () => {
+    fx = await createWorkspaceFixture(["repo-a"]);
+    const worktreePath = path.join(fx.repoPath("repo-a"), ".wt-recent-failed");
+    fx.git("repo-a", `git worktree add -b ${BRANCH} ${worktreePath} HEAD`);
+    const recent = new Date().toISOString();
+    const task = workspaceTask(
+      { "repo-a": { worktreePath, branch: BRANCH, landedSha: fx.git("repo-a", "git rev-parse HEAD").trim() } },
+      { status: "failed", updatedAt: recent, columnMovedAt: recent },
+    );
+
+    expect(await makeManager(createStore([task]), fx.rootDir).reconcileOrphanedWorkspaceWorktrees()).toBe(0);
+    expect(existsSync(worktreePath)).toBe(true);
+    expect(fx.git("repo-a", `git branch --list ${BRANCH}`).trim()).toContain(BRANCH);
+  });
+
   /*
   FNXC:Workspace 2026-08-15-05:33:
-  Failed and soft-deleted workspace rows are destructive candidates only after their one-day floor.
-  These real-git cases lock the worktree/prune/branch policy so terminal cleanup cannot regress into
-  either leaking abandoned repositories or destroying an unlanded failed-task branch.
+  Failed workspace rows remain destructive candidates only after their one-day floor. Explicitly
+  soft-deleted rows are immediately eligible because the operator authorized discarding task-owned
+  checkout content; real-Git cases keep failed-task unlanded branches protected.
   */
   it("tears down a soft-deleted workspace worktree and branch as operator-discarded", async () => {
     fx = await createWorkspaceFixture(["repo-a"]);
     const worktreePath = path.join(fx.repoPath("repo-a"), ".wt-deleted");
     fx.git("repo-a", `git worktree add -b ${BRANCH} ${worktreePath} HEAD`);
-    const old = new Date(Date.now() - 25 * 60 * 60_000).toISOString();
-    const task = workspaceTask({ "repo-a": { worktreePath, branch: BRANCH } }, { deletedAt: old, updatedAt: old, columnMovedAt: old });
+    const deletedAt = new Date().toISOString();
+    const task = workspaceTask({ "repo-a": { worktreePath, branch: BRANCH } }, { deletedAt, updatedAt: deletedAt, columnMovedAt: deletedAt });
     const manager = makeManager(createStore([task]), fx.rootDir);
 
     expect(await manager.reconcileOrphanedWorkspaceWorktrees()).toBe(1);

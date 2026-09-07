@@ -247,6 +247,7 @@ async function resolveWorktreeBackendMarkerPath(worktreePath: string): Promise<s
   const { stdout } = await execAsync(`git rev-parse --git-path ${JSON.stringify(WORKTREE_BACKEND_MARKER)}`, {
     cwd: worktreePath,
     encoding: "utf-8",
+    timeout: NATIVE_TIMEOUT_MS,
   });
   const markerPath = stdout.trim();
   return isAbsolute(markerPath) ? markerPath : resolve(worktreePath, markerPath);
@@ -1108,16 +1109,23 @@ export const RemovalReason = {
   TaskReset: "task-reset",
   WorkspaceAcquireRollback: "workspace-acquire-rollback",
   CompletionLandedCleanup: "completion-landed-cleanup",
+  TaskDeletion: "task-deletion",
 } as const;
 
 export type RemovalReason = typeof RemovalReason[keyof typeof RemovalReason];
 
+/*
+FNXC:TaskDeletionWorktrees 2026-09-07-12:00:
+Explicit task deletion may force-discard a proven task-owned checkout, including dirty content, but it
+never inherits executor teardown's authority to remove a currently registered session worktree.
+*/
 const ALLOWED_FORCE_REASONS = new Set<RemovalReason>([
   RemovalReason.HardCancel,
   RemovalReason.ExecutorDispose,
   RemovalReason.ExecutorTransientRetry,
   RemovalReason.ExecutorStuckKilled,
   RemovalReason.WorkspaceAcquireRollback,
+  RemovalReason.TaskDeletion,
 ]);
 
 const DEFENSIVE_REMOVAL_REASONS = new Set<RemovalReason>([
@@ -1358,7 +1366,12 @@ export async function removeWorktree(input: {
   }
 
   const active = activeSessionRegistry.lookupByPath(input.worktreePath);
-  if (active && input.force !== true) {
+  const ownsDeletionReservation = input.reason === RemovalReason.TaskDeletion
+    && active?.kind === "task-deletion-cleanup"
+    && active.taskId === input.taskId;
+  const mayBypassActiveSession = ownsDeletionReservation
+    || (input.force === true && input.reason !== RemovalReason.TaskDeletion);
+  if (active && !mayBypassActiveSession) {
     await input.audit?.git({
       type: "worktree:removal-refused-active-session",
       target: input.worktreePath,
@@ -1373,7 +1386,7 @@ export async function removeWorktree(input: {
     });
   }
 
-  if (active && input.force === true) {
+  if (active && mayBypassActiveSession && !ownsDeletionReservation) {
     await input.audit?.git({
       type: "worktree:removal-forced-over-active-session",
       target: input.worktreePath,

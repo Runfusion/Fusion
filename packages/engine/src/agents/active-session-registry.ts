@@ -33,7 +33,18 @@ running in, and escalated the resulting failure to `branch-conflict-unrecoverabl
 healthy card `paused` with no operator action. A planner holding a worktree is a live session and
 must be as visible as an executor or merger.
 */
-export type ActiveSessionKind = "executor" | "planning" | "step-session" | "workflow-step" | "step-session-parallel" | "ai-merge" | "workspace-repo-acquire" | "workspace-repo-land";
+/*
+FNXC:TaskDeletionWorktrees 2026-09-07-12:44:
+Deletion cleanup reserves each canonical target exclusively in the shared registry while Git removes it.
+Unlike ordinary same-task session refreshes, neither a same-task session nor another cleanup may replace
+this reservation, and cleanup cannot replace a session that won the race first.
+
+FNXC:TaskDeletionWorktrees 2026-09-07-13:06:
+An exclusive deletion claim has an opaque release token. Session teardown and stale-entry reconcilers may
+still call the legacy path-only release after losing acquisition, but that call cannot clear the cleanup
+claim while destructive Git work is in flight; only the cleanup owner holding the token can release it.
+*/
+export type ActiveSessionKind = "executor" | "planning" | "step-session" | "workflow-step" | "step-session-parallel" | "ai-merge" | "workspace-repo-acquire" | "workspace-repo-land" | "task-deletion-cleanup";
 
 export interface ActiveSessionRegistration {
   taskId: string;
@@ -45,9 +56,14 @@ export interface ActiveSessionRecord extends ActiveSessionRegistration {
   registeredAt: number;
 }
 
+export interface ActiveSessionPathLease {
+  readonly path: string;
+  readonly releaseToken: symbol;
+}
+
 export interface ReconcileStaleSelfOwnedResult {
   reconciled: boolean;
-  reason: "no-entry" | "foreign-task" | "reconciled";
+  reason: "no-entry" | "foreign-task" | "exclusive-reservation" | "reconciled";
 }
 
 export type LiveBindingProbe = (worktreePath: string, taskId: string) => boolean;
@@ -59,6 +75,7 @@ export type SelfOwnedReconcileOutcome =
   | { action: "live-binding-refuses"; ownerTaskId: string }
   | { action: "process-active-refuses"; ownerTaskId: string }
   | { action: "too-recent-refuses"; ownerTaskId: string; ageMs: number; minIdleMs: number }
+  | { action: "exclusive-reservation-refuses"; ownerTaskId: string }
   | { action: "reconciled" };
 
 /**
@@ -89,8 +106,20 @@ export class ActiveSessionPathHeldByForeignTaskError extends Error {
   }
 }
 
+export class ActiveSessionPathHeldError extends Error {
+  constructor(
+    public readonly path: string,
+    public readonly holder: ActiveSessionRecord,
+    public readonly requesting: ActiveSessionRegistration,
+  ) {
+    super(`active-session path ${path} is held by ${holder.kind} (${holder.ownerKey})`);
+    this.name = "ActiveSessionPathHeldError";
+  }
+}
+
 export class ActiveSessionRegistry {
   private readonly records = new Map<string, ActiveSessionRecord>();
+  private readonly exclusiveReleaseTokens = new Map<string, symbol>();
 
   /*
   FNXC:Workspace 2026-06-22-04:10 (Phase C review A2 — taskId-aware lease across kinds):
@@ -110,14 +139,35 @@ export class ActiveSessionRegistry {
     if (existing && existing.taskId !== registration.taskId) {
       throw new ActiveSessionPathHeldByForeignTaskError(worktreePath, existing.taskId, registration.taskId);
     }
+    if (existing?.kind === "task-deletion-cleanup") {
+      throw new ActiveSessionPathHeldError(worktreePath, existing, registration);
+    }
     this.records.set(worktreePath, {
       ...registration,
       registeredAt: Date.now(),
     });
   }
 
-  unregisterPath(worktreePath: string): void {
-    this.records.delete(worktreePath);
+  /** FNXC:TaskDeletionWorktrees 2026-09-07-13:06: Claim a path exclusively and return its only valid release proof. */
+  registerPathExclusive(worktreePath: string, registration: ActiveSessionRegistration): ActiveSessionPathLease {
+    const existing = this.records.get(worktreePath);
+    if (existing) throw new ActiveSessionPathHeldError(worktreePath, existing, registration);
+    const releaseToken = Symbol("active-session-exclusive-release");
+    this.records.set(worktreePath, {
+      ...registration,
+      registeredAt: Date.now(),
+    });
+    this.exclusiveReleaseTokens.set(worktreePath, releaseToken);
+    return { path: worktreePath, releaseToken };
+  }
+
+  unregisterPath(worktreePath: string, lease?: ActiveSessionPathLease): boolean {
+    const requiredToken = this.exclusiveReleaseTokens.get(worktreePath);
+    if (requiredToken !== undefined && (lease?.path !== worktreePath || lease.releaseToken !== requiredToken)) {
+      return false;
+    }
+    this.exclusiveReleaseTokens.delete(worktreePath);
+    return this.records.delete(worktreePath);
   }
 
   lookupByPath(worktreePath: string): ActiveSessionRecord | null {
@@ -168,12 +218,15 @@ export class ActiveSessionRegistry {
       return { reconciled: false, reason: "foreign-task" };
     }
 
-    this.unregisterPath(worktreePath);
+    if (!this.unregisterPath(worktreePath)) {
+      return { reconciled: false, reason: "exclusive-reservation" };
+    }
     return { reconciled: true, reason: "reconciled" };
   }
 
   clear(): void {
     this.records.clear();
+    this.exclusiveReleaseTokens.clear();
   }
 }
 
@@ -293,7 +346,9 @@ export function reconcileSelfOwnedActiveSessionForRemoval(
     }
   }
 
-  registry.unregisterPath(worktreePath);
+  if (!registry.unregisterPath(worktreePath)) {
+    return { action: "exclusive-reservation-refuses", ownerTaskId: requestingTaskId };
+  }
   return { action: "reconciled" };
 }
 

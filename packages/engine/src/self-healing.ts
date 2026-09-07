@@ -91,6 +91,7 @@ import { captureMergeContentDescriptor } from "./merge/merge-content-capture.js"
 import { rerouteSingularStaleContentToReview } from "./merge/stale-content-review-reroute.js";
 import { rerouteUnrunPreMergeGateToReview } from "./merge/pre-merge-gate-reseed.js";
 import { cleanupLandedTaskWorktree, removeEmptyWorkspaceTaskDirectory } from "./merge/post-landing-worktree-cleanup.js";
+import { cleanupDeletedTaskWorktrees } from "./worktree/deleted-task-worktree-cleanup.js";
 import { AutoRecoveryDispatcher } from "./healing/auto-recovery.js";
 import { activeSessionRegistry, executingTaskLock } from "./agents/active-session-registry.js";
 import {
@@ -861,6 +862,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   /* FNXC:WorkflowResolvedColumns 2026-07-31-23:40: `lanes` is the emitter-resolved payload #3109
      added; optional, because an emit path that cannot resolve sends none. */
   private taskMovedFanoutListener: ((data: { task: Task; from: string; to: string; source: string; lanes?: TaskMoveLanes }) => void) | null = null;
+  private taskDeletedWorktreeListener: ((task: Task, meta?: { observed?: boolean; outboxEventId?: string }) => void) | null = null;
+  private readonly pendingDeletedWorktreeCleanups = new Set<string>();
+  private readonly deletedWorktreeCleanupHandles = new Set<ReturnType<typeof setImmediateCb>>();
+  private deletedWorktreeCleanupGeneration = 0;
   private lifecycleMoveLogDisposer: (() => void) | null = null;
 
   // ── Per-task deadlock recovery cooldown ─────────────────────────────
@@ -1859,6 +1864,32 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     };
     this.store.on("task:moved", this.taskMovedFanoutListener);
 
+    /*
+    FNXC:TaskDeletionWorktrees 2026-09-07-12:00:
+    Delete publishers remain bounded by their committed database work. Queue Git cleanup after every
+    local or observed event, deduplicate concurrent deliveries by task id, and re-read the tombstone so
+    the local pre-delete event snapshot and outbox snapshot converge through one recovery seam.
+    */
+    const listenerGeneration = ++this.deletedWorktreeCleanupGeneration;
+    this.taskDeletedWorktreeListener = (task) => {
+      if (this.pendingDeletedWorktreeCleanups.has(task.id)) return;
+      this.pendingDeletedWorktreeCleanups.add(task.id);
+      const handle = setImmediateCb(() => {
+        this.deletedWorktreeCleanupHandles.delete(handle);
+        if (listenerGeneration !== this.deletedWorktreeCleanupGeneration) {
+          this.pendingDeletedWorktreeCleanups.delete(task.id);
+          return;
+        }
+        void this.reconcileDeletedTaskWorktrees({ includeTaskIds: new Set([task.id]) })
+          .catch((error: unknown) => {
+            log.warn(`[self-healing] task:deleted worktree cleanup failed for ${task.id}: ${error instanceof Error ? error.message : String(error)}`);
+          })
+          .finally(() => this.pendingDeletedWorktreeCleanups.delete(task.id));
+      });
+      this.deletedWorktreeCleanupHandles.add(handle);
+    };
+    this.store.on("task:deleted", this.taskDeletedWorktreeListener);
+
     // Start periodic maintenance
     this.startMaintenance();
 
@@ -1904,6 +1935,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       removed archive role. Periodic maintenance repeats the same idempotent pass until it is empty.
       */
       { name: "reconcile-archived-tasks-into-done", fn: () => this.reconcileArchivedTasksIntoDone().then(() => undefined) },
+      { name: "reconcile-deleted-task-worktrees", fn: () => this.reconcileDeletedTaskWorktrees().then(() => undefined) },
       // FNXC:WorkflowColumns 2026-07-26-18:30: immediately after status adoption and before every
       // column-reasoning step below — a row in an undeclared column carries NO trait flags, so each
       // of those steps would silently classify it as "not my case" and leave it stranded.
@@ -2119,6 +2151,19 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         log.warn(`Failed to remove lifecycle move log listener during stop(): ${errorMessage}`);
       }
       this.lifecycleMoveLogDisposer = null;
+    }
+
+    this.deletedWorktreeCleanupGeneration++;
+    for (const handle of this.deletedWorktreeCleanupHandles) clearImmediate(handle);
+    this.deletedWorktreeCleanupHandles.clear();
+    this.pendingDeletedWorktreeCleanups.clear();
+    if (this.taskDeletedWorktreeListener) {
+      try {
+        this.store.off("task:deleted", this.taskDeletedWorktreeListener);
+      } catch (err: unknown) {
+        log.warn(`Failed to remove task:deleted worktree listener during stop(): ${err instanceof Error ? err.message : String(err)}`);
+      }
+      this.taskDeletedWorktreeListener = null;
     }
 
     if (this.taskMovedFanoutListener) {
@@ -2968,6 +3013,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         const maintenanceSurfacing = this.surfacingCycleMemo();
         const batch2Fns: Array<{ name: string; fn: () => Promise<unknown> }> = [
           { name: "reconcile-archived-tasks-into-done", fn: () => this.reconcileArchivedTasksIntoDone() },
+          { name: "reconcile-deleted-task-worktrees", fn: () => this.reconcileDeletedTaskWorktrees() },
           {
             name: "recover-active-mission-validations",
             fn: async () => {
@@ -11606,6 +11652,54 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     }
   }
 
+  /**
+   * Reconcile only persisted tombstone paths. Git work stays outside the delete transaction and each
+   * target remains independently retryable on the next event, startup pass, or maintenance cycle.
+   */
+  async reconcileDeletedTaskWorktrees(options: { includeTaskIds?: ReadonlySet<string> } = {}): Promise<number> {
+    const settings = await this.store.getSettings();
+    if (settings.globalPause || settings.enginePaused) return 0;
+    /*
+    FNXC:TaskDeletionWorktrees 2026-09-07-12:44:
+    Targeted delete delivery must read past the startup slim-list memo: that memo can predate the
+    soft-delete commit. Deleted rows retain the historical sentinel column, so this forensic pass must
+    also include that storage class to recover the tombstone and its persisted worktree paths.
+    */
+    const allTasks = await this.store.listTasks({
+      slim: true,
+      includeDeleted: true,
+      includeArchived: true,
+      startupMemo: false,
+    });
+    const deletedTasks = allTasks.filter((task) => task.deletedAt && (!options.includeTaskIds || options.includeTaskIds.has(task.id)));
+    let removed = 0;
+    for (const task of deletedTasks) {
+      try {
+        const result = await cleanupDeletedTaskWorktrees({
+          task,
+          allTasks,
+          rootDir: this.options.rootDir,
+          settings,
+          isTaskActive: (taskId) => this.options.isTaskActive?.(taskId) === true
+            || this.options.hasLiveSessionSurface?.(taskId) === true,
+          isPlanningActive: (taskId) => this.options.getPlanningTaskIds?.().has(taskId) === true
+            || this.options.hasActivePlanningWorkflowSession?.(taskId) === true,
+          isMergePending: this.options.isMergePending,
+          getActiveMergeTaskId: this.options.getActiveMergeTaskId,
+        });
+        removed += result.targets.filter((target) => target.status === "removed").length;
+        for (const target of result.targets) {
+          if (target.status === "failed") {
+            log.warn(`[self-healing] deleted worktree cleanup will retry ${task.id}/${target.repoRelPath ?? "root"}: ${target.detail ?? "unknown failure"}`);
+          }
+        }
+      } catch (error) {
+        log.warn(`[self-healing] deleted worktree cleanup will retry ${task.id}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    return removed;
+  }
+
   /*
   FNXC:Workspace 2026-06-22-09:30 (Phase D U1, KTD4 — per-repo worktree cleanup from STORED paths):
   For done/dead workspace tasks, remove each recorded per-repo worktree. The paths are ADDRESSABLE
@@ -11657,7 +11751,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         const lane: Lane | null = task.deletedAt ? "soft-deleted" : task.status === "failed" ? "failed" : null;
         if (!lane) continue;
         const touched = Math.max(Date.parse(task.columnMovedAt ?? "") || 0, Date.parse(task.updatedAt ?? "") || 0, Date.parse(task.deletedAt ?? "") || 0);
-        if (!touched || now - touched < TERMINAL_WORKSPACE_WORKTREE_TEARDOWN_MIN_IDLE_MS) continue;
+        // Explicit deletion authorizes immediate discard; retryable failed rows retain the one-day floor.
+        if (lane === "failed" && (!touched || now - touched < TERMINAL_WORKSPACE_WORKTREE_TEARDOWN_MIN_IDLE_MS)) continue;
         if (this.isWorkspaceTaskLive(task).live || await this.options.isMergePending?.(task.id) === true || this.options.getActiveMergeTaskId?.() === task.id) continue;
         candidates.push({ task, lane });
       }
