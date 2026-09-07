@@ -26,8 +26,13 @@ import type { Task, Column } from "@fusion/core";
 // Mock the api module
 vi.mock("../../api", async (importOriginal) => {
   const { createDashboardApiMock } = await import("../../test/mockApi");
+  const fetchTasks = vi.fn().mockResolvedValue([]);
   return createDashboardApiMock(() => importOriginal<typeof import("../../api")>(), {
-    fetchTasks: vi.fn().mockResolvedValue([]),
+    fetchTasks,
+    fetchTaskPage: vi.fn(async (projectId?: string, options?: { query?: string }) => {
+      const tasks = await fetchTasks(undefined, undefined, projectId, options?.query, options?.query ? false : true);
+      return { tasks, total: tasks.length, hasMore: false, nextCursor: null };
+    }),
     createTask: vi.fn(),
     moveTask: vi.fn(),
     deleteTask: vi.fn(),
@@ -49,6 +54,7 @@ async function flushPromises(): Promise<void> {
 }
 
 const mockFetchTasks = vi.mocked(api.fetchTasks);
+const mockFetchTaskPage = vi.mocked(api.fetchTaskPage);
 const mockFetchCompletedTasks = vi.mocked(api.fetchCompletedTasks);
 const mockCreateTask = vi.mocked(api.createTask);
 const mockMoveTask = vi.mocked(api.moveTask);
@@ -105,6 +111,10 @@ beforeEach(() => {
   MockEventSource.instances = [];
   (globalThis as any).EventSource = MockEventSource;
   mockFetchTasks.mockReset().mockResolvedValue([]);
+  mockFetchTaskPage.mockReset().mockImplementation(async (projectId?: string, options?: { query?: string }) => {
+    const tasks = await mockFetchTasks(undefined, undefined, projectId, options?.query, options?.query ? false : true);
+    return { tasks, total: tasks.length, hasMore: false, nextCursor: null };
+  });
   mockFetchCompletedTasks.mockReset().mockResolvedValue({ tasks: [], total: 0, hasMore: false });
   mockMoveTask.mockReset();
   mockDeleteTask.mockReset();
@@ -730,6 +740,47 @@ describe("useTasks", () => {
       await waitFor(() => {
         expect(result.current.tasks[0]?.id).toBe("FN-SEARCH");
       });
+    });
+
+    it("paginates active search results and deduplicates overlapping pages", async () => {
+      const first = createMockTask({ id: "FN-SEARCH-1", title: "match one" });
+      const second = createMockTask({ id: "FN-SEARCH-2", title: "match two" });
+      mockFetchTaskPage
+        .mockResolvedValueOnce({ tasks: [first], total: 2, hasMore: true, nextCursor: "search-next" })
+        .mockResolvedValueOnce({ tasks: [first, second], total: 2, hasMore: false, nextCursor: null });
+
+      const { result } = renderHook(() => useTasks({ searchQuery: "match", sseEnabled: false }));
+      await waitFor(() => expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-SEARCH-1"]));
+
+      await act(async () => result.current.loadMoreCurrentTasks());
+
+      expect(mockFetchTaskPage).toHaveBeenNthCalledWith(1, undefined, { limit: 100, query: "match" });
+      expect(mockFetchTaskPage).toHaveBeenNthCalledWith(2, undefined, { limit: 100, cursor: "search-next", query: "match" });
+      expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-SEARCH-1", "FN-SEARCH-2"]);
+      expect(result.current.currentTasksHasMore).toBe(false);
+    });
+
+    it("rejects a late search page after the search scope changes", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      let resolveLatePage!: (page: Awaited<ReturnType<typeof api.fetchTaskPage>>) => void;
+      mockFetchTaskPage
+        .mockResolvedValueOnce({ tasks: [createMockTask({ id: "FN-A" })], total: 2, hasMore: true, nextCursor: "a-next" })
+        .mockImplementationOnce(() => new Promise((resolve) => { resolveLatePage = resolve; }))
+        .mockResolvedValueOnce({ tasks: [createMockTask({ id: "FN-B" })], total: 1, hasMore: false, nextCursor: null });
+
+      const { result, rerender } = renderHook(
+        ({ searchQuery }) => useTasks({ searchQuery, sseEnabled: false }),
+        { initialProps: { searchQuery: "alpha" } },
+      );
+      await waitFor(() => expect(result.current.tasks[0]?.id).toBe("FN-A"));
+      void result.current.loadMoreCurrentTasks();
+
+      rerender({ searchQuery: "beta" });
+      await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+      await waitFor(() => expect(result.current.tasks[0]?.id).toBe("FN-B"));
+
+      await act(async () => resolveLatePage({ tasks: [createMockTask({ id: "FN-A-LATE" })], total: 2, hasMore: false, nextCursor: null }));
+      expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-B"]);
     });
 
     it("does not refetch when toggling between already-live task views", async () => {

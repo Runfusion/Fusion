@@ -163,7 +163,7 @@ import type { TaskDeleteAuditContext } from "./task-delete-attribution.js";
 import { updateSettingsImpl, updateGlobalSettingsImpl } from "./task-store/settings-ops.js";
 import { mutateScriptImpl, type MutateScriptInput, type ScriptCatalogEntry } from "./task-store/script-ops.js";
 import { createTaskBackendImpl, _createTaskInternalBackendImpl, createTaskImpl, createTaskWithReservedIdImpl, _createTaskInternalImpl, _resolveSameAgentDuplicateIntakeImpl } from "./task-store/task-creation.js";
-import { getTaskImpl, listCompletedTasksImpl, listTasksImpl, searchTasksImpl, listTasksModifiedSinceImpl, getTaskVerificationRequestAsyncImpl, listTaskRecommendationsImpl, findTaskByProposalClaimIdImpl, listTasksBySourceLineageImpl, type ListTasksOptions } from "./task-store/reads.js";
+import { getTaskImpl, listCompletedTasksImpl, listCurrentTasksPageImpl, listTasksImpl, searchTasksImpl, listTasksModifiedSinceImpl, getTaskVerificationRequestAsyncImpl, listTaskRecommendationsImpl, findTaskByProposalClaimIdImpl, listTasksBySourceLineageImpl, type ListTasksOptions, type TaskListPage } from "./task-store/reads.js";
 import { drainArchivedTasksIntoDone, inspectArchivedTaskHistory, type ArchivedTaskHistoryInspection, type ArchivedTaskReintegrationResult } from "./task-store/archive-reintegration.js";
 import { supplementTaskHistoryFromEvidence, type SupplementTaskHistoryResult } from "./task-store/async/async-archive-lineage.js";
 import type { TaskColumnSortMode } from "./tasks/task-priority.js";
@@ -1720,6 +1720,9 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   }
   async listTasks(options?: ListTasksOptions): Promise<Task[]> {
     return listTasksImpl(this, options);
+  }
+  async listCurrentTasksPage(options?: { limit?: number; cursor?: string; query?: string }): Promise<TaskListPage> {
+    return listCurrentTasksPageImpl(this, options);
   }
   async listCompletedTasks(options?: { limit?: number; offset?: number; slim?: boolean; sort?: TaskColumnSortMode }): Promise<{ tasks: Task[]; total: number; hasMore: boolean }> {
     return listCompletedTasksImpl(this, options);

@@ -21,6 +21,8 @@ import { hasPendingAutomaticRecovery } from "../utils/taskRecovery";
 import { resolveRetryStageCopy } from "../utils/taskRetryCopy";
 import type { ToastType } from "../hooks/useToast";
 import { useViewportMode } from "../hooks/useViewportMode";
+import { useVirtualizedList } from "../hooks/useVirtualizedList";
+import { useAutoPaginationSentinel } from "../hooks/useAutoPaginationSentinel";
 import { applyLocalTaskPatch, mergeTaskSnapshot } from "../hooks/useTasks";
 import { getScopedItem, removeScopedItem, setScopedItem } from "../utils/projectStorage";
 import { ALL_WORKFLOWS_BOARD_VIEW_ID } from "../utils/boardWorkflowSelection";
@@ -95,30 +97,12 @@ const DEFAULT_LIST_COLUMNS = ["title"] as const;
 type ListColumn = typeof ALL_LIST_COLUMNS[number];
 
 /*
-FNXC:ListViewWindowing 2026-07-26-11:20:
-Mobile browsers (iOS Safari tabs, iOS installed PWAs, Chrome Android) reclaim a backgrounded tab whose
-resident set is large, which the operator sees as a white-splash "reload" on return. ListView used to
-render EVERY grouped task row/card at once, so a project with thousands of tasks produced a DOM large
-enough to be a primary contributor to that reclaim. No virtualization library exists in this repo and
-none may be added, so List reuses the board's manual paging affordance (Column.tsx
-VISIBLE_TASKS_INITIAL / VISIBLE_TASKS_INCREMENT) with the same "Load more" button styling and copy.
+FNXC:ListViewWindowing 2026-09-07-17:38:
+Mobile browsers can reclaim a backgrounded tab when thousands of grouped task rows remain mounted. ListView therefore feeds the complete filtered, sorted and expanded task sequence into the shared variable-height virtualizer and mounts at most its fixed row cap in both table and card modes.
 
-Invariants this window must not break:
-- Filtering (search/column/stale/hide-done/workflow) runs over the FULL task set in `groupedTasks`;
-  the window is applied AFTER, per section, so a match beyond the window is still reachable via
-  "Load more" instead of being filtered out of existence.
-- Grouping is preserved: the window is per column section, never across the flattened list, so every
-  section keeps its own header, count (which reports the FULL group size), and collapse state.
-- Selection is id-based (`kb-dashboard-selected-tasks` / `kb-dashboard-list-selected-task` in
-  projectStorage), so a selected task outside the window stays selected. The window is additionally
-  widened to cover the persisted single selection so the highlighted row remains visible after a
-  remount rather than silently vanishing from the rendered list.
-- Bulk select-all is scoped to the RENDERED window, not the filtered set. See the
-  FNXC:ListViewSelectAll block on `selectAllTaskIds`; this invariant was missing from the original
-  windowing change and the "Select all visible tasks" label was false until it was added.
+Filtering and section counts still describe the full data set, while collapse state controls membership in the virtual sequence. Selection remains ID-based outside the window; opening a persisted selection scrolls that key into view. Bulk select-all intentionally targets only the currently rendered window so destructive actions never include invisible rows.
 */
-const LIST_SECTION_VISIBLE_INITIAL = 50;
-const LIST_SECTION_VISIBLE_INCREMENT = 25;
+const LIST_MAX_RENDERED_TASKS = 60;
 
 function getNodeStatusLabel(status: NodeInfo["status"], t: TFunction<"app">): string {
   if (status === "online") return t("listView.nodeStatusOnline", "Online");
@@ -315,6 +299,10 @@ interface ListViewProps {
   */
   /** External search query from header search (defaults to "") */
   searchQuery?: string;
+  /** Shared current-task page state; search and ordinary list scopes use the same fenced cursor owner. */
+  currentTasksHasMore?: boolean;
+  currentTasksLoadingMore?: boolean;
+  onLoadMoreCurrentTasks?: () => Promise<void>;
   /** Timestamp (ms) when task data was last confirmed fresh from the server. */
   lastFetchTimeMs?: number;
   prAuthAvailable?: boolean;
@@ -416,6 +404,9 @@ export function ListView({
   projectId,
   projectName: _projectName,
   searchQuery = "",
+  currentTasksHasMore = false,
+  currentTasksLoadingMore = false,
+  onLoadMoreCurrentTasks,
   lastFetchTimeMs,
   prAuthAvailable,
   autoMerge,
@@ -1246,59 +1237,54 @@ export function ListView({
     return Object.values(groupedTasks).reduce((sum, group) => sum + group.length, 0);
   }, [groupedTasks]);
 
+  const listScrollRef = useRef<HTMLDivElement | null>(null);
+  const virtualTaskKeys = useMemo(() => listColumns.flatMap((columnDef) => {
+    const column = columnDef.id;
+    if (selectedColumn && column !== selectedColumn) return [];
+    if (hideDoneTasks && columnDef.flags.complete && !selectedColumn) return [];
+    if (collapsedSections.has(column)) return [];
+    const group = groupedTasks[column] ?? [];
+    if (searchQuery && group.length === 0) return [];
+    return group.map((task) => task.id);
+  }), [collapsedSections, groupedTasks, hideDoneTasks, listColumns, searchQuery, selectedColumn]);
+  const virtualList = useVirtualizedList({
+    collectionKey: `${projectId ?? "default"}:${selectedWorkflowId}:${selectedColumn ?? "all"}:${searchQuery}:${sortField ?? "default"}:${sortDirection}:${useSinglePaneList ? "cards" : "table"}`,
+    keys: virtualTaskKeys,
+    scrollRef: listScrollRef,
+    initialAlign: "start",
+    maxRenderedRows: LIST_MAX_RENDERED_TASKS,
+  });
+  const visibleVirtualTaskIds = useMemo(() => new Set(virtualList.visibleKeys), [virtualList.visibleKeys]);
   /*
-  FNXC:ListViewWindowing 2026-07-26-11:24:
-  Per-section reveal counters, keyed by column id. Absent entries mean "still at the initial window".
-  Every change to what the FULL set contains or how it is ordered (search text, column filter,
-  hide-done, stale filters, sort, workflow selection, project) resets the counters so a fresh result
-  set starts from one screen of rows again — otherwise a previously-expanded section would keep an
-  arbitrarily large DOM alive across filter changes, which is exactly the resident-set growth that
-  gets the backgrounded tab reclaimed.
+  FNXC:TaskSearchPagination 2026-09-07-18:20:
+  ListView owns the same automatic current-task continuation as Board. Its sentinel is rooted in the real list scroller, remains active for server-side search, and is disabled while the kept-alive view is hidden so navigation cannot drain pages in the background.
   */
-  const [sectionVisibleCounts, setSectionVisibleCounts] = useState<Record<string, number>>({});
+  const autoPagination = useAutoPaginationSentinel({
+    rootRef: listScrollRef,
+    hasMore: currentTasksHasMore,
+    loading: currentTasksLoadingMore,
+    onLoadMore: onLoadMoreCurrentTasks ?? (() => undefined),
+    direction: "end",
+    enabled: active,
+  });
 
-  useEffect(() => {
-    setSectionVisibleCounts({});
-  }, [
-    projectId,
-    searchQuery,
-    selectedColumn,
-    hideDoneTasks,
-    staleOnlyFilter,
-    stalePausedReviewOnlyFilter,
-    sortField,
-    sortDirection,
-    selectedWorkflowId,
-  ]);
-
-  /**
-   * FNXC:ListViewWindowing 2026-07-26-11:28:
-   * Slice each already-filtered, already-sorted section down to its visible window. `hiddenCount`
-   * drives the shared "Load more" affordance; a section at or under its window renders unchanged with
-   * no button shell. The window is stretched to include the persisted single-selection index so the
-   * selected row is never hidden by paging.
-   */
+  /*
+  FNXC:ListViewWindowing 2026-09-07-17:38:
+  List table and card modes retain the full filtered/grouped data model but mount only the shared variable-height virtual window. Top and bottom spacers preserve scroll extent, measured rows refine estimates, and the constant row cap prevents a complete 1,000-task traversal from accumulating DOM nodes.
+  */
   const listSectionWindows = useMemo(() => {
     const windows: Record<string, { tasks: Task[]; hiddenCount: number }> = {};
     for (const [columnId, group] of Object.entries(groupedTasks)) {
-      const stored = sectionVisibleCounts[columnId] ?? LIST_SECTION_VISIBLE_INITIAL;
-      const selectedIndex = selectedTaskId ? group.findIndex((task) => task.id === selectedTaskId) : -1;
-      const effective = Math.max(stored, selectedIndex >= 0 ? selectedIndex + 1 : 0);
-      if (group.length <= effective) {
-        windows[columnId] = { tasks: group, hiddenCount: 0 };
-        continue;
-      }
-      windows[columnId] = { tasks: group.slice(0, effective), hiddenCount: group.length - effective };
+      windows[columnId] = { tasks: group.filter((task) => visibleVirtualTaskIds.has(task.id)), hiddenCount: 0 };
     }
     return windows;
-  }, [groupedTasks, sectionVisibleCounts, selectedTaskId]);
+  }, [groupedTasks, visibleVirtualTaskIds]);
 
-  const handleLoadMoreSection = useCallback((columnId: ColumnId, currentVisibleCount: number) => {
-    setSectionVisibleCounts((previous) => ({
-      ...previous,
-      [columnId]: currentVisibleCount + LIST_SECTION_VISIBLE_INCREMENT,
-    }));
-  }, []);
+  useLayoutEffect(() => {
+    if (selectedTaskId && virtualTaskKeys.includes(selectedTaskId) && !visibleVirtualTaskIds.has(selectedTaskId)) {
+      virtualList.scrollToKey(selectedTaskId, "center");
+    }
+  }, [selectedTaskId, virtualList.scrollToKey, virtualTaskKeys, visibleVirtualTaskIds]);
 
   /*
   FNXC:ListViewSelectAll 2026-07-26-14:05:
@@ -2652,7 +2638,7 @@ export function ListView({
         </>
       )}
 
-      <div className="list-table-container">
+      <div className="list-table-container" ref={listScrollRef} onScroll={virtualList.onScroll}>
         <div className={useSinglePaneList ? "" : "list-split-layout"} data-testid={useSinglePaneList ? undefined : "list-split-layout"} ref={setSplitLayoutRef}>
           <div
             className={useSinglePaneList ? "" : "list-split-sidebar"}
@@ -2731,6 +2717,7 @@ export function ListView({
           </div>
         ) : useSinglePaneList ? (
           <div className="list-cards">
+            <div aria-hidden="true" className="list-virtual-spacer" style={{ height: virtualList.topSpacerHeight }} />
             {listColumns.map((columnDef) => {
               const column = columnDef.id;
               if (selectedColumn && column !== selectedColumn) return null;
@@ -2743,7 +2730,6 @@ export function ListView({
               // FNXC:ListViewWindowing 2026-07-26-11:32: header count stays the FULL group size; only the rendered slice is windowed.
               const sectionWindow = listSectionWindows[column] ?? { tasks: columnTasks, hiddenCount: 0 };
               const windowedTasks = sectionWindow.tasks;
-              const hiddenTaskCount = sectionWindow.hiddenCount;
 
               const isCollapsed = collapsedSections.has(column);
 
@@ -2842,6 +2828,7 @@ export function ListView({
                           return (
                             <div
                               key={task.id}
+                              ref={virtualList.measureRow(task.id)}
                               className={`list-card${isAgentActive ? " agent-active" : ""}${isSelectionMode ? " list-card--selectable" : ""}`}
                               onClick={() => handleRowClick(task)}
                               onContextMenu={(event) => handleListContextMenu(event, task)}
@@ -2956,25 +2943,12 @@ export function ListView({
                           );
                         })
                       )}
-                      {hiddenTaskCount > 0 && (
-                        <div className="list-section-load-more">
-                          <button
-                            type="button"
-                            className="btn btn-secondary btn-sm"
-                            onClick={() => handleLoadMoreSection(column, windowedTasks.length)}
-                          >
-                            {t("column.loadMore", "Load {{count}} more ({{remaining}} remaining)", {
-                              count: Math.min(LIST_SECTION_VISIBLE_INCREMENT, hiddenTaskCount),
-                              remaining: hiddenTaskCount,
-                            })}
-                          </button>
-                        </div>
-                      )}
                     </>
                   )}
                 </Fragment>
               );
             })}
+            <div aria-hidden="true" className="list-virtual-spacer" style={{ height: virtualList.bottomSpacerHeight }} />
           </div>
         ) : (
           <table className="list-table">
@@ -3022,6 +2996,9 @@ export function ListView({
               </tr>
             </thead>
             <tbody>
+              <tr aria-hidden="true" className="list-virtual-spacer-row">
+                <td colSpan={visibleColumns.size + (bulkEditEnabled ? 1 : 0)} style={{ height: virtualList.topSpacerHeight }} />
+              </tr>
               {listColumns.map((columnDef) => {
                 const column = columnDef.id;
                 // When column filter is active, only show the selected column
@@ -3039,7 +3016,6 @@ export function ListView({
                 // FNXC:ListViewWindowing 2026-07-26-11:34: header count stays the FULL group size; only the rendered slice is windowed.
                 const sectionWindow = listSectionWindows[column] ?? { tasks: columnTasks, hiddenCount: 0 };
                 const windowedTasks = sectionWindow.tasks;
-                const hiddenTaskCount = sectionWindow.hiddenCount;
 
                 const isCollapsed = collapsedSections.has(column);
 
@@ -3122,6 +3098,7 @@ export function ListView({
                             return (
                               <tr
                                 key={task.id}
+                                ref={virtualList.measureRow(task.id)}
                                 className={`list-row${isFailed ? " failed" : ""}${isPaused ? " paused" : ""}${isAgentActive ? " agent-active" : ""}${selectedTaskId === task.id ? " list-row--selected" : ""}`}
                                 onClick={() => handleRowClick(task)}
                                 onContextMenu={(event) => handleListContextMenu(event, task)}
@@ -3265,30 +3242,22 @@ export function ListView({
                             );
                           })
                         )}
-                        {hiddenTaskCount > 0 && (
-                          <tr className="list-section-load-more-row">
-                            <td colSpan={visibleColumns.size + (bulkEditEnabled ? 1 : 0)} className="list-section-load-more">
-                              <button
-                                type="button"
-                                className="btn btn-secondary btn-sm"
-                                onClick={() => handleLoadMoreSection(column, windowedTasks.length)}
-                              >
-                                {t("column.loadMore", "Load {{count}} more ({{remaining}} remaining)", {
-                                  count: Math.min(LIST_SECTION_VISIBLE_INCREMENT, hiddenTaskCount),
-                                  remaining: hiddenTaskCount,
-                                })}
-                              </button>
-                            </td>
-                          </tr>
-                        )}
                       </>
                     )}
                   </Fragment>
                 );
               })}
+              <tr aria-hidden="true" className="list-virtual-spacer-row">
+                <td colSpan={visibleColumns.size + (bulkEditEnabled ? 1 : 0)} style={{ height: virtualList.bottomSpacerHeight }} />
+              </tr>
             </tbody>
           </table>
         )}
+          {currentTasksHasMore ? (
+            <div ref={autoPagination.sentinelRef} role="status" aria-live="polite" data-testid="list-auto-pagination-sentinel">
+              {currentTasksLoadingMore ? t("column.loadMoreCompletedLoading", "Loading…") : null}
+            </div>
+          ) : null}
           </div>
           {!useSinglePaneList && (
             <>

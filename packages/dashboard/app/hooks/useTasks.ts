@@ -614,6 +614,11 @@ export function useTasks(options?: UseTasksOptions) {
   FNXC:DonePagination 2026-09-04-10:36:
   Done-page requests have a project-generation fence and a dedicated accumulator. Generic board refreshes replace the current lanes plus the newest Done page while preserving pages the operator explicitly loaded.
   */
+  const currentPageCursorRef = useRef<string | null>(null);
+  const currentPageLoadingRef = useRef(false);
+  const [currentTasksTotal, setCurrentTasksTotal] = useState(0);
+  const [currentTasksHasMore, setCurrentTasksHasMore] = useState(false);
+  const [currentTasksLoadingMore, setCurrentTasksLoadingMore] = useState(false);
   const completedRequestGenerationRef = useRef(0);
   const completedTasksRef = useRef<Task[]>([]);
   const completedOffsetRef = useRef(0);
@@ -778,12 +783,13 @@ export function useTasks(options?: UseTasksOptions) {
     const requestCompletedSortMode = completedSortModeRef.current;
     const query = options?.searchQueryOverride ?? searchQueryRef.current;
     try {
-      const [fetchedTasks, completedPage] = await Promise.all([
-        api.fetchTasks(undefined, undefined, requestProjectId, query, !query),
+      const [currentPageOrSearch, completedPage] = await Promise.all([
+        api.fetchTaskPage(requestProjectId, { limit: 100, query: query || undefined }),
         query ? Promise.resolve(undefined) : api.fetchCompletedTasks(requestProjectId, 50, 0, requestCompletedSortMode),
       ]);
-      // Reject if project changed (compare against the projectId at request time) or version is stale
-      if (fetchVersionRef.current !== requestVersion || projectId !== requestProjectId) {
+      const fetchedTasks = currentPageOrSearch.tasks;
+      // Reject if the project/search scope changed or a newer request superseded this response.
+      if (fetchVersionRef.current !== requestVersion || projectId !== requestProjectId || (searchQueryRef.current ?? "") !== (query ?? "")) {
         return;
       }
       const fetchedAt = Date.now();
@@ -847,6 +853,9 @@ export function useTasks(options?: UseTasksOptions) {
         ? [...reconciledFetchedTasks, ...completedCarryOver]
         : reconciledFetchedTasks;
       const tasksForCache = nextTasks;
+      currentPageCursorRef.current = currentPageOrSearch.nextCursor;
+      setCurrentTasksTotal(currentPageOrSearch.total);
+      setCurrentTasksHasMore(currentPageOrSearch.hasMore);
       if (completedPage) {
         const nextById = new Map(nextTasks.map((task) => [task.id, task]));
         const nextCompleted = [
@@ -883,8 +892,8 @@ export function useTasks(options?: UseTasksOptions) {
       lastConfirmedProjectIdRef.current = requestProjectId;
       lastConfirmedSearchQueryRef.current = query;
     } catch (error) {
-      // Reject if project changed or version is stale
-      if (fetchVersionRef.current !== requestVersion || projectId !== requestProjectId) {
+      // Reject failures from a superseded project/search scope too; they cannot invalidate the active page.
+      if (fetchVersionRef.current !== requestVersion || projectId !== requestProjectId || (searchQueryRef.current ?? "") !== (query ?? "")) {
         return;
       }
       setLastRefreshErrorAt(Date.now());
@@ -997,6 +1006,43 @@ export function useTasks(options?: UseTasksOptions) {
       return next;
     });
   }, []);
+
+  /*
+  FNXC:TaskListPagination 2026-09-07-16:03:
+  Current-lane pages share one project-scoped cursor across Board columns. Any column sentinel may request continuation, but the hook serializes the request, rejects stale project/search responses, and merges by task ID so concurrent SSE updates remain authoritative.
+  */
+  const loadMoreCurrentTasks = useCallback(async () => {
+    const cursor = currentPageCursorRef.current;
+    if (currentPageLoadingRef.current || !currentTasksHasMore || !cursor) return;
+    currentPageLoadingRef.current = true;
+    setCurrentTasksLoadingMore(true);
+    const requestVersion = fetchVersionRef.current;
+    const requestProjectId = projectId;
+    const requestQuery = searchQueryRef.current;
+    try {
+      const page = await api.fetchTaskPage(requestProjectId, { limit: 100, cursor, query: requestQuery || undefined });
+      if (fetchVersionRef.current !== requestVersion || projectId !== requestProjectId || searchQueryRef.current !== requestQuery) return;
+      const completedIds = new Set(completedTasksRef.current.map((task) => task.id));
+      const byId = new Map(tasksRef.current.map((task) => [task.id, task]));
+      for (const incoming of page.tasks.map(normalizeNonBoardTask)) {
+        const current = byId.get(incoming.id);
+        byId.set(incoming.id, current ? mergeIncomingTask(current, incoming, { fullSnapshot: true }) : incoming);
+      }
+      const currentRows = [...byId.values()].filter((task) => !completedIds.has(task.id));
+      const completedRows = completedTasksRef.current.map((task) => byId.get(task.id) ?? task);
+      const next = [...currentRows, ...completedRows];
+      tasksRef.current = next;
+      setTasks(next);
+      currentPageCursorRef.current = page.nextCursor;
+      setCurrentTasksTotal(page.total);
+      setCurrentTasksHasMore(page.hasMore);
+    } finally {
+      if (fetchVersionRef.current === requestVersion && projectId === requestProjectId) {
+        currentPageLoadingRef.current = false;
+        setCurrentTasksLoadingMore(false);
+      }
+    }
+  }, [currentTasksHasMore, projectId]);
 
   /** Fetch the next bounded Done page. No-op when every completed task is already loaded. */
   const loadMoreCompletedTasks = useCallback(async () => {
@@ -1772,5 +1818,5 @@ export function useTasks(options?: UseTasksOptions) {
     advanceFreshnessClockForLiveUpdate();
   }, [advanceFreshnessClockForLiveUpdate]);
 
-  return { tasks, isStale, lastRefreshErrorAt, createTask, moveTask, pauseTask, unpauseTask, deleteTask, mergeTask, retryTask, bypassReview, resetTask, duplicateTask, updateTask, revertTask, loadMoreCompletedTasks, completedSortMode, changeCompletedSortMode, completedTotal, completedHasMore, completedLoadingMore, refreshTasks, ingestCreatedTasks, lastFetchTimeMs: lastFetchTimeMs.current };
+  return { tasks, isStale, lastRefreshErrorAt, createTask, moveTask, pauseTask, unpauseTask, deleteTask, mergeTask, retryTask, bypassReview, resetTask, duplicateTask, updateTask, revertTask, loadMoreCurrentTasks, currentTasksTotal, currentTasksHasMore, currentTasksLoadingMore, loadMoreCompletedTasks, completedSortMode, changeCompletedSortMode, completedTotal, completedHasMore, completedLoadingMore, refreshTasks, ingestCreatedTasks, lastFetchTimeMs: lastFetchTimeMs.current };
 }

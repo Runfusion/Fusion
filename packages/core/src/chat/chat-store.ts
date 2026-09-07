@@ -16,6 +16,7 @@ import * as schema from "../postgres/schema/index.js";
 import * as asyncChatStore from "../async-stores/async-chat-store.js";
 import type {
   ChatSession,
+  ChatSessionPage,
   ChatTag,
   ChatTagCreateInput,
   ChatTagUpdateInput,
@@ -155,7 +156,26 @@ export class ChatStore extends EventEmitter<ChatStoreEvents> {
     agentId?: string;
     status?: ChatSessionStatus;
   }): Promise<ChatSession[]> {
-    return asyncChatStore.listChatSessions(this.asyncLayer.db, options);
+    return asyncChatStore.listChatSessions(this.asyncLayer.db, {
+      ...options,
+      projectId: options?.projectId ?? this.asyncLayer.projectId,
+    });
+  }
+
+  async listSessionsPage(options: {
+    projectId?: string;
+    agentId?: string;
+    status?: ChatSessionStatus;
+    q?: string;
+    tagId?: string;
+    includeTaskPlanner?: boolean;
+    limit?: number;
+    cursor?: string;
+  } = {}): Promise<ChatSessionPage> {
+    return asyncChatStore.listChatSessionsPage(this.asyncLayer.db, {
+      ...options,
+      projectId: options.projectId ?? this.asyncLayer.projectId,
+    });
   }
 
   /**

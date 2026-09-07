@@ -166,7 +166,7 @@ describe("useChat", () => {
     const { result } = renderHook(() => useChat("proj-123"));
 
     await waitFor(() => {
-      expect(mockFetchChatSessions).toHaveBeenCalledWith("proj-123", "active");
+      expect(mockFetchChatSessions).toHaveBeenCalledWith("proj-123", "active", { limit: 50 });
     });
 
     await waitFor(() => {
@@ -175,6 +175,58 @@ describe("useChat", () => {
 
     expect(result.current.sessions[0]?.id).toBe("session-001");
     expect(result.current.sessions[1]?.id).toBe("session-002");
+  });
+
+  it("resets tag pagination and rejects delayed A → B → A first pages", async () => {
+    const resolvers = new Map<string, Array<(value: { sessions: ChatSession[]; hasMore: boolean; nextCursor: string | null }) => void>>();
+    mockFetchChatSessions.mockImplementation((_projectId, _status, options) => {
+      const scope = options?.tagId ?? "all";
+      return new Promise((resolve) => {
+        const pending = resolvers.get(scope) ?? [];
+        pending.push(resolve);
+        resolvers.set(scope, pending);
+      });
+    });
+
+    const { result } = renderHook(() => useChat("proj-tags"));
+    await waitFor(() => expect(resolvers.get("all")).toHaveLength(1));
+    await act(async () => resolvers.get("all")?.shift()?.({ sessions: [], hasMore: false, nextCursor: null }));
+
+    act(() => result.current.setSelectedTagId("tag-a"));
+    await waitFor(() => expect(resolvers.get("tag-a")).toHaveLength(1));
+    act(() => result.current.setSelectedTagId("tag-b"));
+    await waitFor(() => expect(resolvers.get("tag-b")).toHaveLength(1));
+    act(() => result.current.setSelectedTagId("tag-a"));
+    await waitFor(() => expect(resolvers.get("tag-a")).toHaveLength(2));
+
+    await act(async () => resolvers.get("tag-a")?.pop()?.({
+      sessions: [makeSession({ id: "session-a-current" })],
+      hasMore: true,
+      nextCursor: "a-current-cursor",
+    }));
+    await act(async () => resolvers.get("tag-a")?.shift()?.({
+      sessions: [makeSession({ id: "session-a-stale" })],
+      hasMore: false,
+      nextCursor: null,
+    }));
+    await act(async () => resolvers.get("tag-b")?.shift()?.({
+      sessions: [makeSession({ id: "session-b-stale" })],
+      hasMore: false,
+      nextCursor: null,
+    }));
+
+    expect(result.current.sessions.map((session) => session.id)).toEqual(["session-a-current"]);
+    expect(result.current.hasMoreSessions).toBe(true);
+    expect(mockFetchChatSessions).toHaveBeenCalledWith("proj-tags", "active", { limit: 50, tagId: "tag-a" });
+
+    void result.current.loadMoreSessions("active");
+    await waitFor(() => expect(resolvers.get("tag-a")).toHaveLength(1));
+    expect(mockFetchChatSessions).toHaveBeenLastCalledWith("proj-tags", "active", {
+      limit: 50,
+      cursor: "a-current-cursor",
+      tagId: "tag-a",
+    });
+    await act(async () => resolvers.get("tag-a")?.shift()?.({ sessions: [], hasMore: false, nextCursor: null }));
   });
 
   it("hydrates sessions from cache synchronously and skips initial loading state", async () => {
@@ -208,7 +260,7 @@ describe("useChat", () => {
     });
 
     await waitFor(() => {
-      expect(mockFetchChatSessions).toHaveBeenCalledWith(projectId, "active");
+      expect(mockFetchChatSessions).toHaveBeenCalledWith(projectId, "active", { limit: 50 });
     });
   });
 
@@ -388,13 +440,13 @@ describe("useChat", () => {
     });
 
     await waitFor(() => {
-      expect(mockFetchChatSessions).toHaveBeenCalledWith("p1", "active");
+      expect(mockFetchChatSessions).toHaveBeenCalledWith("p1", "active", { limit: 50 });
     });
 
     rerender({ projectId: "p2" });
 
     await waitFor(() => {
-      expect(mockFetchChatSessions).toHaveBeenCalledWith("p2", "active");
+      expect(mockFetchChatSessions).toHaveBeenCalledWith("p2", "active", { limit: 50 });
     });
     expect(mockFetchChatSessions).toHaveBeenCalledTimes(2);
   });
@@ -967,14 +1019,14 @@ describe("useChat", () => {
     const { result } = renderHook(() => useChat("proj-archive"));
 
     await waitFor(() => {
-      expect(mockFetchChatSessions).toHaveBeenCalledWith("proj-archive", "active");
+      expect(mockFetchChatSessions).toHaveBeenCalledWith("proj-archive", "active", { limit: 50 });
       expect(result.current.sessions.map((session) => session.id)).toEqual(["session-active"]);
     });
 
     await act(async () => {
       await result.current.refreshArchivedSessions();
     });
-    expect(mockFetchChatSessions).toHaveBeenCalledWith("proj-archive", "archived");
+    expect(mockFetchChatSessions).toHaveBeenCalledWith("proj-archive", "archived", { limit: 50 });
     expect(result.current.archivedSessions.map((session) => session.id)).toEqual(["session-archived"]);
 
     await act(async () => {
@@ -3865,7 +3917,7 @@ describe("useChat", () => {
     const { result } = renderHook(() => useChat("proj-123"));
 
     await waitFor(() => {
-      expect(mockFetchChatSessions).toHaveBeenCalledWith("proj-123", "active");
+      expect(mockFetchChatSessions).toHaveBeenCalledWith("proj-123", "active", { limit: 50 });
     });
 
     expect(() => {

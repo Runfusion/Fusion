@@ -29,7 +29,7 @@
  *   PostgreSQL integration tests consume. They program against the stable
  *   `AsyncDataLayer` interface (U4), not the underlying driver.
  */
-import { and, Column, desc, eq, inArray, is, isNull, notInArray, sql, type SQL } from "drizzle-orm";
+import { and, Column, desc, eq, gt, inArray, is, isNull, notInArray, or, sql, type SQL } from "drizzle-orm";
 import type { PgColumn } from "drizzle-orm/pg-core";
 import * as schema from "../../postgres/schema/index.js";
 import type { AsyncDataLayer, DbTransaction } from "../../postgres/data-layer.js";
@@ -444,6 +444,8 @@ export interface ReadLiveTaskRowsOptions {
   excludeColumns?: readonly string[];
   limit?: number;
   offset?: number;
+  afterCreatedAt?: string;
+  afterId?: string;
   sort?: "created-asc" | "completion-desc" | TaskColumnSortMode;
 }
 
@@ -485,18 +487,26 @@ export async function readLiveTaskRows(
         : options?.excludeColumns?.length
           ? notInArray(schema.project.tasks.column, [...options.excludeColumns])
           : undefined;
-  const liveFilter = options?.includeDeleted
-    ? and(projectScope, columnScope)
-    : and(ACTIVE_TASK_FILTER, projectScope, columnScope);
-  const paginate = options?.limit !== undefined || (options?.offset ?? 0) > 0;
   // Mirrors the JS comparator: createdAt ASC, then the numeric suffix of the
   // task id ("FN-12" → 12; no trailing digits → 0). substring() returns NULL
   // (→ 0) instead of throwing on ids without a numeric suffix.
+  const numericTaskSuffix = sql`COALESCE(substring(${schema.project.tasks.id} from '-([0-9]+)$')::numeric, 0)`;
+  const cursorSuffix = options?.afterId ? Number(options.afterId.match(/-([0-9]+)$/)?.[1] ?? 0) : 0;
+  const cursorScope = options?.afterCreatedAt && options.afterId
+    ? or(
+        gt(schema.project.tasks.createdAt, options.afterCreatedAt),
+        and(eq(schema.project.tasks.createdAt, options.afterCreatedAt), gt(numericTaskSuffix, cursorSuffix)),
+        and(eq(schema.project.tasks.createdAt, options.afterCreatedAt), eq(numericTaskSuffix, cursorSuffix), gt(schema.project.tasks.id, options.afterId)),
+      )
+    : undefined;
+  const liveFilter = options?.includeDeleted
+    ? and(projectScope, columnScope, cursorScope)
+    : and(ACTIVE_TASK_FILTER, projectScope, columnScope, cursorScope);
+  const paginate = options?.limit !== undefined || (options?.offset ?? 0) > 0;
   /*
   FNXC:DonePagination 2026-09-04-10:36:
   Completed-task pages are selected by the latest terminal-lane entry before LIMIT/OFFSET. The deterministic id tie-break prevents gaps or duplicates while operators walk a large Done history.
   */
-  const numericTaskSuffix = sql`COALESCE(substring(${schema.project.tasks.id} from '-([0-9]+)$')::numeric, 0)`;
   const createdAtIdOrder = options?.sort === "task-id-desc"
     ? [desc(numericTaskSuffix), desc(schema.project.tasks.id)]
     : options?.sort === "completion-desc" || options?.sort === "completion-date-desc"

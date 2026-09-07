@@ -6,6 +6,7 @@ import { useTaskRecommendations } from "../hooks/useTaskRecommendations";
 import type { ToastType } from "../hooks/useToast";
 import { LoadingSpinner } from "./LoadingSpinner";
 import { ViewHeader } from "./ViewHeader";
+import { useAutoPaginationSentinel } from "../hooks/useAutoPaginationSentinel";
 
 export interface RecommendationsViewProps {
   projectId?: string;
@@ -31,6 +32,8 @@ export function RecommendationsView({
   const { t } = useTranslation("app");
   const recommendations = useTaskRecommendations(projectId);
   const seenProjectRef = useRef<{ projectId: string | undefined } | null>(null);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const pagination = useAutoPaginationSentinel({ rootRef: bodyRef, hasMore: recommendations.hasMore && !recommendations.truncated, loading: recommendations.loadingMore, onLoadMore: recommendations.loadMore, direction: "end" });
 
   useEffect(() => {
     if (
@@ -58,7 +61,7 @@ export function RecommendationsView({
         )}
       />
 
-      <div className="recommendations-view__body">
+      <div className="recommendations-view__body" ref={bodyRef}>
         {recommendations.loading && recommendations.items.length === 0 ? (
           <div className="recommendations-view__state" data-testid="recommendations-loading">
             <LoadingSpinner label={t("recommendations.loading", "Loading recommendations…")} />
@@ -138,16 +141,9 @@ export function RecommendationsView({
             {t("recommendations.truncated", "Showing the first 20 pages. Refresh to see the latest recommendations.")}
           </p>
         ) : recommendations.hasMore ? (
-          <button
-            className="btn recommendations-view__load-more"
-            type="button"
-            disabled={recommendations.loadingMore}
-            onClick={() => void recommendations.loadMore()}
-          >
-            {recommendations.loadingMore
-              ? t("recommendations.loadingMore", "Loading more…")
-              : t("recommendations.loadMore", "Load more")}
-          </button>
+          <div ref={pagination.sentinelRef} className="recommendations-view__load-more" role="status" aria-live="polite" data-testid="recommendations-auto-pagination-sentinel">
+            {recommendations.loadingMore ? t("recommendations.loadingMore", "Loading more…") : null}
+          </div>
         ) : null}
 
         {recommendations.error && !recommendations.loading ? (

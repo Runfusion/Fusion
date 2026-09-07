@@ -83,8 +83,9 @@ describe("RecommendationsView", () => {
     mockUseTaskRecommendations.mockReturnValue(recommendationState({ hasMore: true, totalRowCount: 2 }));
     render(<RecommendationsView projectId="proj-a" />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+    fireEvent.scroll(screen.getByTestId("recommendations-auto-pagination-sentinel").parentElement!);
     expect(loadMore).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument();
   });
 
   it("treats an undefined project as a signallable project identity", () => {

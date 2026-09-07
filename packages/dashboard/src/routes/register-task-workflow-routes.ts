@@ -1525,6 +1525,26 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
     }
   });
 
+  router.get("/tasks/page", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const limitValue = req.query.limit;
+      const limit = limitValue === undefined ? 100 : Number(limitValue);
+      if (!Number.isInteger(limit) || limit < 1 || limit > 200) throw badRequest("limit must be an integer between 1 and 200");
+      const cursor = typeof req.query.cursor === "string" && req.query.cursor ? req.query.cursor : undefined;
+      const query = typeof req.query.q === "string" && req.query.q.trim() ? req.query.q.trim() : undefined;
+      try {
+        res.json(await scopedStore.listCurrentTasksPage({ limit, cursor, ...(query ? { query } : {}) }));
+      } catch (error) {
+        if (error instanceof TypeError && error.message === "Invalid task list cursor") throw badRequest(error.message);
+        throw error;
+      }
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err);
+    }
+  });
+
   // Multi-lane board metadata (U9, R16). Additive sibling to GET /tasks — the
   // task list payload stays byte-identical. Flag-OFF returns
   // { flagEnabled: false } and the client renders the legacy single-lane board.

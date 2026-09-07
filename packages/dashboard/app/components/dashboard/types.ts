@@ -229,6 +229,10 @@ export interface MainContentProps {
       allowResurrection?: boolean;
     },
   ) => Promise<Task>;
+  loadMoreCurrentTasks: () => Promise<void>;
+  currentTasksTotal: number;
+  currentTasksHasMore: boolean;
+  currentTasksLoadingMore: boolean;
   loadMoreCompletedTasks: () => Promise<void>;
   completedTotal: number;
   completedHasMore: boolean;

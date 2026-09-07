@@ -108,4 +108,51 @@ pgDescribe("TaskStore completed-task pagination", () => {
       low.id,
     ]);
   });
+
+  it("keeps full-text search pages bounded and rejects a cursor from another query", async () => {
+    const store = h.store();
+    const rows = Array.from({ length: 21 }, (_, index) => {
+      const id = `FN-${51000 + index}`;
+      const timestamp = "2026-09-07T01:00:00.000Z";
+      return buildTaskInsertValues({
+        id, description: `searchable incident ${index}`, column: "todo", dependencies: [], steps: [], currentStep: 0, log: [],
+        createdAt: timestamp, updatedAt: timestamp, columnMovedAt: timestamp,
+      }, { lineageId: `lineage-${id}` }, h.layer().projectId);
+    });
+    await h.layer().db.insert(schema.project.tasks).values(rows as never);
+
+    const first = await store.listCurrentTasksPage({ limit: 10, query: "searchable" });
+    const second = await store.listCurrentTasksPage({ limit: 10, query: "searchable", cursor: first.nextCursor! });
+    const third = await store.listCurrentTasksPage({ limit: 10, query: "searchable", cursor: second.nextCursor! });
+
+    expect(first.total).toBe(21);
+    expect([...first.tasks, ...second.tasks, ...third.tasks]).toHaveLength(21);
+    expect(new Set([...first.tasks, ...second.tasks, ...third.tasks].map((task) => task.id)).size).toBe(21);
+    await expect(store.listCurrentTasksPage({ limit: 10, query: "different", cursor: first.nextCursor! }))
+      .rejects.toThrow("Invalid task list cursor");
+  });
+
+  it("continues current-task pages by an exclusive created-at and id cursor", async () => {
+    const store = h.store();
+    const rows = Array.from({ length: 205 }, (_, index) => {
+      const id = `FN-${50000 + index}`;
+      const timestamp = "2026-09-07T00:00:00.000Z";
+      return buildTaskInsertValues({
+        id, description: `current ${index}`, column: "todo", dependencies: [], steps: [], currentStep: 0, log: [],
+        createdAt: timestamp, updatedAt: timestamp, columnMovedAt: timestamp,
+      }, { lineageId: `lineage-${id}` }, h.layer().projectId);
+    });
+    await h.layer().db.insert(schema.project.tasks).values(rows as never);
+
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await store.listCurrentTasksPage({ limit: 50, cursor });
+      expect(page.total).toBe(205);
+      seen.push(...page.tasks.map((task) => task.id));
+      cursor = page.nextCursor ?? undefined;
+    } while (cursor);
+    expect(seen).toHaveLength(205);
+    expect(new Set(seen).size).toBe(205);
+  });
 });

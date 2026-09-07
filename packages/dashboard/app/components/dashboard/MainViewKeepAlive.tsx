@@ -67,6 +67,10 @@ function renderBoardSubtree(props: MainContentProps, active: boolean) {
     revertTask,
     modalManager,
     deleteTask,
+    loadMoreCurrentTasks,
+    currentTasksTotal,
+    currentTasksHasMore,
+    currentTasksLoadingMore,
     loadMoreCompletedTasks,
     completedTotal,
     completedHasMore,
@@ -126,6 +130,10 @@ function renderBoardSubtree(props: MainContentProps, active: boolean) {
         onRevertTask={revertTask}
         onReviseTask={(task) => modalManager.openNewTaskWithDescription(task.description)}
         onDeleteTask={deleteTask}
+        onLoadMoreCurrentTasks={loadMoreCurrentTasks}
+        currentTasksTotal={currentTasksTotal}
+        currentTasksHasMore={currentTasksHasMore}
+        currentTasksLoadingMore={currentTasksLoadingMore}
         onLoadMoreCompletedTasks={loadMoreCompletedTasks}
         completedTotal={completedTotal}
         completedHasMore={completedHasMore}
@@ -183,6 +191,9 @@ function renderListSubtree(props: MainContentProps, active: boolean) {
     handleToggleFavorite,
     handleToggleModelFavorite,
     searchQuery,
+    loadMoreCurrentTasks,
+    currentTasksHasMore,
+    currentTasksLoadingMore,
     lastFetchTimeMs,
     prAuthAvailable,
     autoMerge,
@@ -225,6 +236,9 @@ function renderListSubtree(props: MainContentProps, active: boolean) {
         onToggleFavorite={handleToggleFavorite}
         onToggleModelFavorite={handleToggleModelFavorite}
         searchQuery={searchQuery}
+        onLoadMoreCurrentTasks={loadMoreCurrentTasks}
+        currentTasksHasMore={currentTasksHasMore}
+        currentTasksLoadingMore={currentTasksLoadingMore}
         lastFetchTimeMs={lastFetchTimeMs}
         prAuthAvailable={prAuthAvailable}
         autoMerge={autoMerge}

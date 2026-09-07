@@ -30,6 +30,8 @@ import {
 import { FN_AGENT_ID, TASK_PLANNER_CHAT_AGENT_ID_PREFIX, useChat, type ChatMessageInfo, type ChatSessionInfo } from "../hooks/useChat";
 import { useChatUnread } from "../hooks/useChatUnread";
 import { useVirtualizedChatTranscript } from "../hooks/useVirtualizedChatTranscript";
+import { useVirtualizedList } from "../hooks/useVirtualizedList";
+import { useAutoPaginationSentinel } from "../hooks/useAutoPaginationSentinel";
 import { useComposerDictation } from "../hooks/useComposerDictation";
 import { useViewportMode } from "./Header";
 import { isTabletTouchViewport } from "../hooks/useViewportMode";
@@ -491,6 +493,10 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     forceSendPendingMessage,
     loadMoreMessages,
     hasMoreMessages,
+    loadMoreSessions,
+    hasMoreSessions,
+    hasMoreArchivedSessions,
+    sessionsLoadingMore,
     searchQuery,
     setSearchQuery,
     filteredSessions,
@@ -3247,8 +3253,26 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
   The session list is direct-chat only; the canonical ViewHeader carries New Chat and docked-list actions without a stale Rooms scope control.
   */
   const visibleSidebarSessions = showArchivedSessions ? archivedSessions : filteredSessions;
-  const pinnedFilteredSessions = visibleSidebarSessions.filter((session) => session.pinnedAt != null);
-  const unpinnedFilteredSessions = visibleSidebarSessions.filter((session) => session.pinnedAt == null);
+  const sessionListRef = useRef<HTMLDivElement | null>(null);
+  const virtualSessionList = useVirtualizedList({
+    collectionKey: `${projectId ?? "default"}:${showArchivedSessions ? "archived" : "active"}:${selectedTagId ?? "all"}:${searchQuery}`,
+    keys: visibleSidebarSessions.map((session) => session.id),
+    scrollRef: sessionListRef,
+    estimateHeight: 76,
+    maxRenderedRows: 40,
+    initialAlign: "start",
+  });
+  const visibleSessionIds = new Set(virtualSessionList.visibleKeys);
+  const windowedSidebarSessions = visibleSidebarSessions.filter((session) => visibleSessionIds.has(session.id));
+  const pinnedFilteredSessions = windowedSidebarSessions.filter((session) => session.pinnedAt != null);
+  const unpinnedFilteredSessions = windowedSidebarSessions.filter((session) => session.pinnedAt == null);
+  const sessionPagination = useAutoPaginationSentinel({
+    rootRef: sessionListRef,
+    hasMore: showArchivedSessions ? hasMoreArchivedSessions : hasMoreSessions,
+    loading: sessionsLoadingMore,
+    onLoadMore: () => loadMoreSessions(showArchivedSessions ? "archived" : "active"),
+    direction: "end",
+  });
   const contextMenuSession = contextMenu
     ? filteredSessions.find((session) => session.id === contextMenu.sessionId) ?? (activeSession?.id === contextMenu.sessionId ? activeSession : undefined)
     : undefined;
@@ -3419,13 +3443,14 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
               </div>
             </div>
             {/* Session list section */}
-            <div className="chat-session-list chat-sidebar-list">
+            <div className="chat-session-list chat-sidebar-list" ref={sessionListRef} onScroll={virtualSessionList.onScroll}>
               {sessionsLoading ? (
                 <div className="chat-empty-state chat-empty-state--padded">{t("chat.loadingConversations", "Loading...")}</div>
               ) : ((showArchivedSessions ? archivedSessions : filteredSessions).length === 0) ? (
                 <div className="chat-empty-state chat-empty-state--padded">{t("chat.noConversationsYet", "No conversations yet")}</div>
               ) : (
                 <>
+                  {virtualSessionList.topSpacerHeight > 0 ? <div aria-hidden="true" style={{ height: virtualSessionList.topSpacerHeight }} /> : null}
                   {/*
                   FNXC:ChatPinned 2026-07-19-00:00:
                   Direct conversation pins must be two explicit sections on every session-list surface.
@@ -3517,6 +3542,12 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
                       })}
                     </section>
                   ))}
+                  {virtualSessionList.bottomSpacerHeight > 0 ? <div aria-hidden="true" style={{ height: virtualSessionList.bottomSpacerHeight }} /> : null}
+                  {(showArchivedSessions ? hasMoreArchivedSessions : hasMoreSessions) ? (
+                    <div ref={sessionPagination.sentinelRef} role="status" aria-live="polite" data-testid="chat-session-auto-pagination-sentinel">
+                      {sessionsLoadingMore ? t("chat.loadingConversations", "Loading...") : null}
+                    </div>
+                  ) : null}
                 </>
               )}
             </div>

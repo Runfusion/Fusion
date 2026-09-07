@@ -608,7 +608,7 @@ function AppInner() {
       ?.columns.find((column) => column.id === task.column)?.flags;
   }, [footerBoardWorkflows, isRemote]);
 
-  const { tasks, isStale, createTask, moveTask, pauseTask, unpauseTask, deleteTask, mergeTask, retryTask, bypassReview, resetTask, updateTask, duplicateTask, revertTask, loadMoreCompletedTasks, completedSortMode, changeCompletedSortMode, completedTotal, completedHasMore, completedLoadingMore, ingestCreatedTasks, lastFetchTimeMs } = useTasks(
+  const { tasks, isStale, createTask, moveTask, pauseTask, unpauseTask, deleteTask, mergeTask, retryTask, bypassReview, resetTask, updateTask, duplicateTask, revertTask, loadMoreCurrentTasks, currentTasksTotal, currentTasksHasMore, currentTasksLoadingMore, loadMoreCompletedTasks, completedSortMode, changeCompletedSortMode, completedTotal, completedHasMore, completedLoadingMore, ingestCreatedTasks, lastFetchTimeMs } = useTasks(
     {
       ...(currentProject ? { projectId: currentProject.id } : {}),
       searchQuery: searchQuery || undefined,
@@ -1870,6 +1870,10 @@ function AppInner() {
     retryTask,
     revertTask,
     deleteTask,
+    loadMoreCurrentTasks,
+    currentTasksTotal,
+    currentTasksHasMore,
+    currentTasksLoadingMore,
     loadMoreCompletedTasks,
     completedTotal,
     completedHasMore,

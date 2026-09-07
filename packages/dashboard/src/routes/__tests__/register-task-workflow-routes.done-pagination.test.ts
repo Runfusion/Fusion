@@ -101,3 +101,33 @@ describe("GET /tasks/done pagination", () => {
     expect((await request(app, "POST", "/api/tasks/archive-all-done")).status).toBe(404);
   });
 });
+
+describe("GET /tasks/page pagination", () => {
+  it("returns bounded page metadata and forwards the exclusive cursor", async () => {
+    const listCurrentTasksPage = vi.fn(async () => ({ tasks: [], total: 1_000, hasMore: true, nextCursor: "next" }));
+    const response = await request(buildApp({ listCurrentTasksPage } as unknown as TaskStore), "GET", "/api/tasks/page?limit=75&cursor=opaque");
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ tasks: [], total: 1_000, hasMore: true, nextCursor: "next" });
+    expect(listCurrentTasksPage).toHaveBeenCalledWith({ limit: 75, cursor: "opaque" });
+  });
+
+  it("forwards a trimmed search scope to the same bounded page reader", async () => {
+    const listCurrentTasksPage = vi.fn(async () => ({ tasks: [], total: 0, hasMore: false, nextCursor: null }));
+    const response = await request(buildApp({ listCurrentTasksPage } as unknown as TaskStore), "GET", "/api/tasks/page?limit=25&q=%20incident%20");
+    expect(response.status).toBe(200);
+    expect(listCurrentTasksPage).toHaveBeenCalledWith({ limit: 25, query: "incident" });
+  });
+
+  it.each(["limit=0", "limit=201", "limit=nope", "limit=1.5"])("rejects invalid input before reading the store: %s", async (query) => {
+    const listCurrentTasksPage = vi.fn();
+    const response = await request(buildApp({ listCurrentTasksPage } as unknown as TaskStore), "GET", `/api/tasks/page?${query}`);
+    expect(response.status).toBe(400);
+    expect(listCurrentTasksPage).not.toHaveBeenCalled();
+  });
+
+  it("maps a malformed cursor to 400", async () => {
+    const listCurrentTasksPage = vi.fn(async () => { throw new TypeError("Invalid task list cursor"); });
+    const response = await request(buildApp({ listCurrentTasksPage } as unknown as TaskStore), "GET", "/api/tasks/page?cursor=bad");
+    expect(response.status).toBe(400);
+  });
+});

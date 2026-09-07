@@ -30,6 +30,22 @@ export interface DeleteTaskOptions {
   allowResurrection?: boolean;
 }
 
+export interface TaskListPageResponse {
+  tasks: Task[];
+  total: number;
+  hasMore: boolean;
+  nextCursor: string | null;
+}
+
+export function fetchTaskPage(projectId?: string, options?: { limit?: number; cursor?: string; query?: string }): Promise<TaskListPageResponse> {
+  const search = new URLSearchParams();
+  if (options?.limit !== undefined) search.set("limit", String(options.limit));
+  if (options?.cursor) search.set("cursor", options.cursor);
+  if (options?.query) search.set("q", options.query);
+  const suffix = search.size > 0 ? `?${search.toString()}` : "";
+  return api<TaskListPageResponse>(withProjectId(`/tasks/page${suffix}`, projectId));
+}
+
 export function fetchTasks(
   limit?: number,
   offset?: number,

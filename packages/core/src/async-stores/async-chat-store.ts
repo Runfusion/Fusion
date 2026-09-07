@@ -17,7 +17,7 @@
  *   consume.
  */
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, exists, gt, ilike, inArray, isNull, lt, lte, ne, or as orFn, sql as drizzleSql } from "drizzle-orm";
+import { and, asc, desc, eq, exists, gt, ilike, inArray, isNotNull, isNull, lt, lte, ne, notLike, or as orFn, sql as drizzleSql, type SQL } from "drizzle-orm";
 import * as schema from "../postgres/schema/index.js";
 import { projectScopeFor, type AsyncDataLayer, type DbTransaction } from "../postgres/data-layer.js";
 import { sanitizeTextValue, sanitizeJsonbValue } from "../postgres/nul-sanitize.js";
@@ -31,6 +31,8 @@ import type {
   ChatRoomMessage,
   ChatRoomStatus,
   ChatSession,
+  ChatSessionCursor,
+  ChatSessionPage,
   ChatSessionStatus,
   ChatTag,
   ChatTagCreateInput,
@@ -207,9 +209,97 @@ export async function listChatSessions(
   const query = handle
     .select()
     .from(schema.project.chatSessions)
-    .orderBy(desc(schema.project.chatSessions.updatedAt));
+    .orderBy(desc(schema.project.chatSessions.updatedAt), desc(schema.project.chatSessions.id));
   const rows = conditions.length > 0 ? await query.where(and(...conditions)) : await query;
   return attachTagsToSessions(handle, rows.map(rowToSession));
+}
+
+export function encodeChatSessionCursor(cursor: ChatSessionCursor): string {
+  return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
+}
+
+export function decodeChatSessionCursor(value: string): ChatSessionCursor {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
+  } catch {
+    throw new TypeError("Invalid chat session cursor");
+  }
+  const cursor = parsed as Partial<ChatSessionCursor> | null;
+  if (!cursor || (cursor.pinnedAt !== null && typeof cursor.pinnedAt !== "string") || typeof cursor.updatedAt !== "string" || typeof cursor.id !== "string" || !cursor.id || Number.isNaN(Date.parse(cursor.updatedAt)) || (cursor.pinnedAt !== null && Number.isNaN(Date.parse(cursor.pinnedAt)))) {
+    throw new TypeError("Invalid chat session cursor");
+  }
+  return cursor as ChatSessionCursor;
+}
+
+/*
+FNXC:ChatSessionPagination 2026-09-07-16:03:
+Session lists filter before LIMIT, order pins and recency with an ID tie-breaker, and enrich tags only for the returned page. The opaque tuple cursor is exclusive, so equal timestamps and concurrent inserts cannot duplicate or skip the older continuation.
+*/
+export async function listChatSessionsPage(
+  handle: QueryHandle,
+  options: { projectId?: string; agentId?: string; status?: ChatSessionStatus; q?: string; tagId?: string; includeTaskPlanner?: boolean; limit?: number; cursor?: string } = {},
+): Promise<ChatSessionPage> {
+  const sessions = schema.project.chatSessions;
+  const messages = schema.project.chatMessages;
+  const sessionTags = schema.project.chatSessionTags;
+  const limit = Math.min(200, Math.max(1, Math.trunc(options.limit ?? 50) || 50));
+  const cursor = options.cursor ? decodeChatSessionCursor(options.cursor) : undefined;
+  const conditions: SQL[] = [];
+  if (options.projectId) conditions.push(eq(sessions.ownerProjectId, options.projectId));
+  if (options.agentId) conditions.push(eq(sessions.agentId, options.agentId));
+  if (options.status) conditions.push(eq(sessions.status, options.status));
+  if (options.includeTaskPlanner === false) conditions.push(notLike(sessions.agentId, "task-planner:%"));
+  else if (options.includeTaskPlanner === true) conditions.push(orFn(
+    notLike(sessions.agentId, "task-planner:%"),
+    exists(handle.select({ one: drizzleSql`1` }).from(messages).where(and(eq(messages.sessionId, sessions.id), eq(messages.projectId, sessions.projectId)))),
+  )!);
+  if (options.q?.trim()) {
+    const pattern = `%${options.q.trim()}%`;
+    conditions.push(orFn(
+      ilike(sessions.title, pattern),
+      ilike(sessions.agentId, pattern),
+      exists(handle.select({ one: drizzleSql`1` }).from(messages).where(and(eq(messages.sessionId, sessions.id), eq(messages.projectId, sessions.projectId), ilike(messages.content, pattern)))),
+    )!);
+  }
+  if (options.tagId) {
+    conditions.push(exists(handle.select({ one: drizzleSql`1` }).from(sessionTags).where(and(eq(sessionTags.sessionId, sessions.id), eq(sessionTags.projectId, sessions.projectId), eq(sessionTags.tagId, options.tagId)))));
+  }
+  if (cursor) {
+    const olderUpdatedAt = orFn(
+      lt(sessions.updatedAt, cursor.updatedAt),
+      and(eq(sessions.updatedAt, cursor.updatedAt), lt(sessions.id, cursor.id)),
+    );
+    const olderUnpinned = and(isNull(sessions.pinnedAt), olderUpdatedAt)!;
+    if (cursor.pinnedAt === null) {
+      conditions.push(olderUnpinned);
+    } else {
+      const olderPinnedAt = orFn(
+        lt(sessions.pinnedAt, cursor.pinnedAt),
+        and(eq(sessions.pinnedAt, cursor.pinnedAt), olderUpdatedAt),
+      );
+      conditions.push(orFn(and(isNotNull(sessions.pinnedAt), olderPinnedAt), isNull(sessions.pinnedAt))!);
+    }
+  }
+  const where = conditions.length > 0 ? and(...conditions) : undefined;
+  const totalConditions = conditions.slice(0, cursor ? -1 : undefined);
+  const totalWhere = totalConditions.length > 0 ? and(...totalConditions) : undefined;
+  const rowsQuery = handle.select().from(sessions).orderBy(drizzleSql`${sessions.pinnedAt} DESC NULLS LAST`, desc(sessions.updatedAt), desc(sessions.id)).limit(limit + 1);
+  const countQuery = handle.select({ count: drizzleSql<number>`count(*)::int` }).from(sessions);
+  const [rows, countRows] = await Promise.all([
+    where ? rowsQuery.where(where) : rowsQuery,
+    totalWhere ? countQuery.where(totalWhere) : countQuery,
+  ]);
+  const hasMore = rows.length > limit;
+  const pageRows = rows.slice(0, limit);
+  const pageSessions = await attachTagsToSessions(handle, pageRows.map(rowToSession));
+  const last = pageSessions.at(-1);
+  return {
+    sessions: pageSessions,
+    total: countRows[0]?.count ?? 0,
+    hasMore,
+    nextCursor: hasMore && last ? encodeChatSessionCursor({ pinnedAt: last.pinnedAt, updatedAt: last.updatedAt, id: last.id }) : null,
+  };
 }
 
 /**

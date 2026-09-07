@@ -1366,8 +1366,9 @@ describe("TaskDetailModal Raw Logs agent loading", () => {
     expect(screen.getByText("raw executor output")).toBeInTheDocument();
     expect(screen.getByText("raw reviewer output")).toBeInTheDocument();
 
-    await user.click(screen.getByTestId("agent-log-load-more-button"));
+    fireEvent.scroll(screen.getByTestId("agent-log-viewer").querySelector(".agent-log-viewer-scroll")!);
     expect(loadMore).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId("agent-log-load-more-button")).not.toBeInTheDocument();
 
     mockUseAgentLogs.mockImplementation(() => ({ entries: [], loading: false, clear: vi.fn(), loadMore: vi.fn(async () => {}), hasMore: false, total: null, loadingMore: false }));
   });

@@ -117,6 +117,19 @@ export type ChatSessionSummary = ChatSession;
  * The server enriches sessions with lastMessagePreview and lastMessageAt
  * by fetching the most recent message for each session.
  */
+export interface ChatSessionCursor {
+  pinnedAt: string | null;
+  updatedAt: string;
+  id: string;
+}
+
+export interface ChatSessionPage {
+  sessions: ChatSession[];
+  total: number;
+  hasMore: boolean;
+  nextCursor: string | null;
+}
+
 export type EnrichedChatSession = ChatSession & {
   /** Preview of the last message in the session (truncated to 100 chars) */
   lastMessagePreview?: string;

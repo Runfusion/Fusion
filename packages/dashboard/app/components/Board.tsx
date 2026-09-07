@@ -67,6 +67,10 @@ interface BoardProps {
     removeLineageReferences?: boolean;
     githubIssueAction?: GithubIssueAction;
   }) => Promise<Task>;
+  onLoadMoreCurrentTasks?: () => Promise<void>;
+  currentTasksTotal?: number;
+  currentTasksHasMore?: boolean;
+  currentTasksLoadingMore?: boolean;
   onLoadMoreCompletedTasks?: () => Promise<void>;
   completedTotal?: number;
   completedHasMore?: boolean;
@@ -159,7 +163,7 @@ function BoardWorkflowSkeleton({ empty = false, t }: { empty?: boolean; t: TFunc
   );
 }
 
-export function Board({ tasks, projectId, maxConcurrent, maxWorktrees, showWorktreeGrouping, onMoveTask, onPauseTask, onUnpauseTask, onResetTask, onDuplicateTask, onMergeTask, onOpenDetail, onOpenRefine, onOpenGroupModal, addToast, onQuickCreate, onNewTask, autoMerge, mergeStrategy = "direct", onToggleAutoMerge, planAutoApproveEnabled, onTogglePlanAutoApprove, globalPaused, onUpdateTask, onRetryTask, onOpenChatWithPrefill, onRevertTask, onReviseTask, onDeleteTask, onLoadMoreCompletedTasks, completedTotal, completedHasMore, completedLoadingMore, completedSortMode = "completion-date-desc", onCompletedSortModeChange, searchQuery = "", availableModels, onPlanningMode, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, onOpenMission, staleHighFanoutBlockerAgeThresholdMs, lastFetchTimeMs, prAuthAvailable, onOpenWorkflowEditor, onCreateWorkflow, workflowControlsInHeader = false, active = true }: BoardProps) {
+export function Board({ tasks, projectId, maxConcurrent, maxWorktrees, showWorktreeGrouping, onMoveTask, onPauseTask, onUnpauseTask, onResetTask, onDuplicateTask, onMergeTask, onOpenDetail, onOpenRefine, onOpenGroupModal, addToast, onQuickCreate, onNewTask, autoMerge, mergeStrategy = "direct", onToggleAutoMerge, planAutoApproveEnabled, onTogglePlanAutoApprove, globalPaused, onUpdateTask, onRetryTask, onOpenChatWithPrefill, onRevertTask, onReviseTask, onDeleteTask, onLoadMoreCurrentTasks, currentTasksTotal, currentTasksHasMore, currentTasksLoadingMore, onLoadMoreCompletedTasks, completedTotal, completedHasMore, completedLoadingMore, completedSortMode = "completion-date-desc", onCompletedSortModeChange, searchQuery = "", availableModels, onPlanningMode, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, onOpenMission, staleHighFanoutBlockerAgeThresholdMs, lastFetchTimeMs, prAuthAvailable, onOpenWorkflowEditor, onCreateWorkflow, workflowControlsInHeader = false, active = true }: BoardProps) {
   const { t } = useTranslation("app");
   /*
   FNXC:TaskColumnSorting 2026-08-18-21:24:
@@ -237,7 +241,10 @@ export function Board({ tasks, projectId, maxConcurrent, maxWorktrees, showWorkt
     if (typeof document === "undefined") return null;
     return document.getElementById("header-workflow-slot");
   });
-  // Normalized search-active signal: trimmed and non-empty
+  /*
+  FNXC:TaskSearchPagination 2026-09-07-18:20:
+  Search results are a server-paginated task collection, not a finite client-side filter. Every searched lane therefore receives the shared current-page cursor and automatic loading callback, including completion lanes; the separate completion-history pager applies only outside search.
+  */
   const isSearchActive = searchQuery.trim() !== "";
   useEffect(() => {
     if (!active || !workflowControlsInHeader || typeof document === "undefined") {
@@ -984,7 +991,11 @@ export function Board({ tasks, projectId, maxConcurrent, maxWorktrees, showWorkt
                   {...(isCreateColumn && aggregateQuickCreateTarget ? { workflowId: aggregateQuickCreateTarget.workflowId, workflowOptions, defaultWorkflowId: boardWorkflows?.defaultWorkflowId ?? null, onQuickCreate: handleAggregateWorkflowQuickCreate, ...(!mobileFullTaskModalHidden ? { onNewTask: handleAggregateWorkflowNewTask } : {}) } : {})}
                   {...(columnDef.flags.mergeBlocker || columnDef.flags.humanReview ? { onToggleAutoMerge: handleToggleAutoMerge } : {})}
                   {...{ sortMode: laneSortMode, onSortModeChange: laneSortModeChange, doneSortMode: laneSortMode, onDoneSortModeChange: laneSortModeChange }}
-                  {...(columnDef.flags.complete && !isSearchActive ? { totalTaskCount: completedTotal, serverHasMore: completedHasMore, serverLoadingMore: completedLoadingMore, onLoadMoreServer: onLoadMoreCompletedTasks } : {})}
+                  {...(isSearchActive
+                    ? { totalTaskCount: currentTasksTotal, serverHasMore: currentTasksHasMore, serverLoadingMore: currentTasksLoadingMore, onLoadMoreServer: onLoadMoreCurrentTasks }
+                    : columnDef.flags.complete
+                      ? { totalTaskCount: completedTotal, serverHasMore: completedHasMore, serverLoadingMore: completedLoadingMore, onLoadMoreServer: onLoadMoreCompletedTasks }
+                      : { totalTaskCount: currentTasksTotal, serverHasMore: currentTasksHasMore, serverLoadingMore: currentTasksLoadingMore, onLoadMoreServer: onLoadMoreCurrentTasks })}
                 />
               );
             })}
@@ -1064,7 +1075,11 @@ export function Board({ tasks, projectId, maxConcurrent, maxWorktrees, showWorkt
                 {...(isCreateColumn ? { workflowOptions, defaultWorkflowId: selectedWorkflow.id, onQuickCreate: handleWorkflowQuickCreate, ...(!mobileFullTaskModalHidden ? { onNewTask: handleSelectedWorkflowNewTask } : {}) } : {})}
                 {...(columnDef.flags.mergeBlocker || columnDef.flags.humanReview ? { onToggleAutoMerge: handleToggleAutoMerge } : {})}
                 {...{ sortMode: laneSortMode, onSortModeChange: laneSortModeChange, doneSortMode: laneSortMode, onDoneSortModeChange: laneSortModeChange }}
-                {...(columnDef.flags.complete && !isSearchActive ? { totalTaskCount: completedTotal, serverHasMore: completedHasMore, serverLoadingMore: completedLoadingMore, onLoadMoreServer: onLoadMoreCompletedTasks } : {})}
+                {...(isSearchActive
+                  ? { totalTaskCount: currentTasksTotal, serverHasMore: currentTasksHasMore, serverLoadingMore: currentTasksLoadingMore, onLoadMoreServer: onLoadMoreCurrentTasks }
+                  : columnDef.flags.complete
+                    ? { totalTaskCount: completedTotal, serverHasMore: completedHasMore, serverLoadingMore: completedLoadingMore, onLoadMoreServer: onLoadMoreCompletedTasks }
+                    : { totalTaskCount: currentTasksTotal, serverHasMore: currentTasksHasMore, serverLoadingMore: currentTasksLoadingMore, onLoadMoreServer: onLoadMoreCurrentTasks })}
               />
             );
           })}

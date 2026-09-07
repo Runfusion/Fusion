@@ -1,4 +1,6 @@
 import { memo, useMemo, useState, useCallback, useEffect, useRef } from "react";
+import { useAutoPaginationSentinel } from "../hooks/useAutoPaginationSentinel";
+import { useVirtualizedList } from "../hooks/useVirtualizedList";
 import { useTranslation } from "react-i18next";
 import { useFlashOnIncrease } from "../hooks/useFlashOnIncrease";
 import { useConfirm } from "../hooks/useConfirm";
@@ -21,10 +23,6 @@ import type { TaskContextMenuColumnMetadata } from "./TaskContextMenu";
 import { MoreVertical } from "lucide-react";
 import type { BoardWorkflowDefinition, ModelInfo, BoardWorkflowColumnFlags, RevertTaskOptions, RevertTaskResult } from "../api";
 import type { BlockerFanoutEntry } from "../hooks/useBlockerFanout";
-
-const PAGINATED_COLUMN_THRESHOLD = 100;
-const VISIBLE_TASKS_INITIAL = 50;
-const VISIBLE_TASKS_INCREMENT = 25;
 
 /** Shape of a structured transition rejection carried in a 409's `details`. */
 interface TransitionRejectionDetail {
@@ -246,7 +244,6 @@ function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeG
     staleMovePrecondition: t("board.rejection.staleMovePrecondition", "This card already moved on. Refresh to see where it is now."),
   }), [t]);
   void rejectionCopy;
-  const [visibleTaskCount, setVisibleTaskCount] = useState(VISIBLE_TASKS_INITIAL);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isReplanning, setIsReplanning] = useState(false);
   const [isPausingAll, setIsPausingAll] = useState(false);
@@ -355,53 +352,13 @@ function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeG
     [tasks, columnFlags],
   );
   /*
-  FNXC:BoardColumnWindowing 2026-07-26-11:48:
-  Search used to disable pagination entirely (`!isSearchActive`) so every match rendered at once. That
-  escape hatch is unbounded — a broad query over a large project mounts an unlimited number of
-  ~4000-line TaskCards, and a resident set that large is a primary reason mobile browsers reclaim the
-  backgrounded tab (the operator sees a white-splash reload on return). It is also unnecessary: the
-  `tasks` handed to this column are ALREADY search-filtered upstream, so paginating them still shows
-  matches — just an increment at a time behind the same "Load more" button. Worktree grouping remains
-  the only bypass because it renders the bounded WIP/processing lane.
-  */
-  const shouldPaginate = !showWorktreeGroups && tasks.length > PAGINATED_COLUMN_THRESHOLD;
-
-  useEffect(() => {
-    setVisibleTaskCount((current) => {
-      if (showWorktreeGroups || tasks.length <= PAGINATED_COLUMN_THRESHOLD) {
-        return VISIBLE_TASKS_INITIAL;
-      }
-
-      return Math.min(Math.max(current, VISIBLE_TASKS_INITIAL), tasks.length);
-    });
-  }, [showWorktreeGroups, tasks.length]);
-
-  /*
-  FNXC:BoardColumnWindowing 2026-07-26-14:20:
-  Correction of a false claim: the block above previously stated "the window resets whenever the search
-  term toggles", but the reset effect keyed on `isSearchActive`, a BOOLEAN. Editing a query from one
-  broad term to another keeps that boolean true, so a window expanded to hundreds of cards by repeated
-  "Load more" survived into an entirely new result set — reinstating the unbounded DOM this change
-  removed, via an ordinary search refinement.
-
-  Column is not given the query text (Board/Lane pass only `isSearchActive`), and the query string is
-  not the real invariant anyway: what must stay bounded is the RESULT SET. So the reset keys on a cheap
-  identity signature of the incoming filtered `tasks` while search is active — length plus the first
-  and last id. Refining a query changes at least one of those, collapsing the window back to one
-  screenful; a re-render or poll that yields the same result set produces the same string and does NOT
-  disturb the operator's expanded window (an effect keyed on the array itself would fire every poll).
-  A query edit that yields a byte-identical result set intentionally keeps its window: the DOM size is
-  unchanged, so there is nothing to bound.
+  FNXC:BoardColumnWindowing 2026-09-07-16:03:
+  Every ordinary Board lane mounts only its measured viewport window, including search results. The result signature resets geometry when a different search collection arrives; worktree grouping remains exempt because its provider is already bounded by execution capacity.
   */
   const searchResultSignature = useMemo(() => {
     if (!isSearchActive || tasks.length === 0) return "";
     return `${tasks.length}:${tasks[0]?.id ?? ""}:${tasks[tasks.length - 1]?.id ?? ""}`;
   }, [isSearchActive, tasks]);
-
-  // Entering/leaving search, or landing on a different search result set, collapses back to one window.
-  useEffect(() => {
-    setVisibleTaskCount(VISIBLE_TASKS_INITIAL);
-  }, [isSearchActive, searchResultSignature]);
 
   /*
   FNXC:WorkflowResolvedColumns 2026-07-30-20:10 (PR #2772 review — my own inert conversion):
@@ -442,12 +399,30 @@ function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeG
     // react-hooks/exhaustive-deps rule, so nothing catches that but reading it.
   }, [showWorktreeGroups, tasks, allTasks, maxWorktrees, holdTaskIds, dependencyColumnFlags]);
 
-  const visibleTasks = useMemo(() => {
-    if (!shouldPaginate) return tasks;
-    return tasks.slice(0, visibleTaskCount);
-  }, [shouldPaginate, tasks, visibleTaskCount]);
-
-  const hiddenTaskCount = Math.max(0, tasks.length - visibleTasks.length);
+  const columnBodyRef = useRef<HTMLDivElement | null>(null);
+  const taskById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
+  const virtualList = useVirtualizedList({
+    collectionKey: `${projectId ?? "default"}:${column}:${searchResultSignature}`,
+    keys: showWorktreeGroups ? [] : tasks.map((task) => task.id),
+    scrollRef: columnBodyRef,
+    estimateHeight: 320,
+    maxRenderedRows: 40,
+    initialAlign: "start",
+  });
+  const visibleTasks = showWorktreeGroups
+    ? tasks
+    : virtualList.visibleKeys.flatMap((id) => {
+        const task = taskById.get(id);
+        return task ? [task] : [];
+      });
+  const autoPagination = useAutoPaginationSentinel({
+    rootRef: columnBodyRef,
+    hasMore: Boolean(serverHasMore),
+    loading: Boolean(serverLoadingMore),
+    onLoadMore: onLoadMoreServer ?? (() => undefined),
+    direction: "end",
+    enabled: !showWorktreeGroups,
+  });
   /*
   FNXC:WorkflowResolvedColumns 2026-07-30-19:45 (Phase B — third attempt, this time with the
   fixtures migrated instead of the arm defended):
@@ -487,21 +462,6 @@ function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeG
     },
     [column, onQuickCreate, workflowId, workflowMode],
   );
-
-  const handleLoadMore = useCallback(() => {
-    setVisibleTaskCount((current) => Math.min(current + VISIBLE_TASKS_INCREMENT, tasks.length));
-  }, [tasks.length]);
-
-  const [isLoadingMoreServer, setIsLoadingMoreServer] = useState(false);
-  const handleLoadMoreServer = useCallback(async () => {
-    if (!onLoadMoreServer || isLoadingMoreServer) return;
-    setIsLoadingMoreServer(true);
-    try {
-      await onLoadMoreServer();
-    } finally {
-      setIsLoadingMoreServer(false);
-    }
-  }, [onLoadMoreServer, isLoadingMoreServer]);
 
   /*
   FNXC:BoardColumnMenu 2026-08-27-12:01:
@@ -751,7 +711,7 @@ function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeG
       {resolvedColumnDescription && (
         <p className="column-desc">{resolvedColumnDescription}</p>
       )}
-      <div className="column-body">
+      <div className="column-body" ref={columnBodyRef} onScroll={virtualList.onScroll}>
           {canCreateInColumn && (
             <QuickEntryBox 
               onCreate={handleQuickCreate}
@@ -830,7 +790,9 @@ function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeG
             <div className="empty-column">{t("column.noTasks", "No tasks")}</div>
           ) : (
             <>
+              {virtualList.topSpacerHeight > 0 ? <div aria-hidden="true" style={{ height: virtualList.topSpacerHeight }} /> : null}
               {visibleTasks.map((task) => (
+                <div key={task.id} ref={virtualList.measureRow(task.id)} data-virtual-task-row={task.id}>
                 <TaskCard
                   key={task.id}
                   task={task}
@@ -867,29 +829,14 @@ function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeG
                   mergeStrategy={mergeStrategy}
                   nearDuplicateCanonicalInactive={resolveNearDuplicateCanonicalInactive(task)}
                 />
+                </div>
               ))}
-              {shouldPaginate && hiddenTaskCount > 0 && (
-                <button
-                  type="button"
-                  className="btn btn-secondary btn-sm"
-                  onClick={handleLoadMore}
-                >
-                  {t("column.loadMore", "Load {{count}} more ({{remaining}} remaining)", { count: Math.min(VISIBLE_TASKS_INCREMENT, hiddenTaskCount), remaining: hiddenTaskCount })}
-                </button>
-              )}
-              {/* The server button appears only after every loaded card is visible, avoiding two competing pagination controls. */}
-              {serverHasMore && hiddenTaskCount === 0 && (
-                <button
-                  type="button"
-                  className="btn btn-secondary btn-sm"
-                  onClick={handleLoadMoreServer}
-                  disabled={serverLoadingMore || isLoadingMoreServer}
-                >
-                  {(serverLoadingMore || isLoadingMoreServer)
-                    ? t("column.loadMoreCompletedLoading", "Loading\u2026")
-                    : t("column.loadMoreCompleted", "Show more")}
-                </button>
-              )}
+              {virtualList.bottomSpacerHeight > 0 ? <div aria-hidden="true" style={{ height: virtualList.bottomSpacerHeight }} /> : null}
+              {serverHasMore ? (
+                <div ref={autoPagination.sentinelRef} role="status" aria-live="polite" data-testid="column-auto-pagination-sentinel">
+                  {serverLoadingMore ? t("column.loadMoreCompletedLoading", "Loading…") : null}
+                </div>
+              ) : null}
             </>
           )}
           <PluginSlot slotId="board-column-footer" projectId={projectId} />

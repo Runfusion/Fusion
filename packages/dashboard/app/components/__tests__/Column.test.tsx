@@ -167,9 +167,10 @@ describe("Column count-flash", () => {
     );
 
     expect(screen.getByLabelText("1,284 tasks")).toHaveTextContent("1,284");
-    expect(taskCardRenderSpy).toHaveBeenCalledTimes(50);
-    await userEvent.click(screen.getByRole("button", { name: "Show more" }));
-    expect(onLoadMore).toHaveBeenCalledOnce();
+    expect(taskCardRenderSpy.mock.calls.length).toBeLessThanOrEqual(40);
+    expect(screen.queryByRole("button", { name: /Show more|Load .*more/i })).toBeNull();
+    fireEvent.scroll(screen.getByTestId("column-auto-pagination-sentinel").parentElement!);
+    await waitFor(() => expect(onLoadMore).toHaveBeenCalledOnce());
   });
 
   it("shows accurate executing/total for WIP (unpaused active over card total)", () => {
@@ -514,136 +515,27 @@ describe("Column memoization", () => {
 
 });
 
-describe("Column pagination", () => {
-  it("shows only the initial page for large non-in-progress columns", () => {
-    const tasks = Array.from({ length: 110 }, (_, index) => makeTask(`KB-${String(index + 1).padStart(3, "0")}`));
-    render(<Column {...defaultProps} column="todo" tasks={tasks} />);
-
-    expect(screen.getAllByTestId(/task-/)).toHaveLength(50);
-    expect(screen.getByRole("button", { name: /Load 25 more/i })).toBeTruthy();
+describe("Column automatic pagination and virtualization", () => {
+  it.each([false, true])("keeps a 1,000-task result bounded without manual pagination (search=%s)", (isSearchActive) => {
+    const tasks = Array.from({ length: 1_000 }, (_, index) => makeTask(`KB-${String(index + 1).padStart(4, "0")}`));
+    render(<Column {...defaultProps} column="todo" tasks={tasks} isSearchActive={isSearchActive} />);
+    expect(screen.getAllByTestId(/task-/).length).toBeLessThanOrEqual(40);
+    expect(screen.queryByRole("button", { name: /Load .*more|Show more/i })).toBeNull();
   });
 
-  it("loads more tasks on demand", async () => {
-    const tasks = Array.from({ length: 110 }, (_, index) => makeTask(`KB-${String(index + 1).padStart(3, "0")}`));
-    render(<Column {...defaultProps} column="todo" tasks={tasks} />);
-
-    await userEvent.click(screen.getByRole("button", { name: /Load 25 more/i }));
-
-    expect(screen.getAllByTestId(/task-/)).toHaveLength(75);
+  it.each([false, true])("loads the next server page automatically from the column scroller (search=%s)", async (isSearchActive) => {
+    const onLoadMoreServer = vi.fn().mockResolvedValue(undefined);
+    render(<Column {...defaultProps} column="todo" tasks={[makeTask("KB-001")]} isSearchActive={isSearchActive} serverHasMore onLoadMoreServer={onLoadMoreServer} />);
+    const sentinel = screen.getByTestId("column-auto-pagination-sentinel");
+    fireEvent.scroll(sentinel.parentElement!);
+    await waitFor(() => expect(onLoadMoreServer).toHaveBeenCalledOnce());
+    expect(screen.queryByRole("button", { name: /Load .*more|Show more/i })).toBeNull();
   });
 
-  it("preserves pagination across task array updates", async () => {
-    const tasks = Array.from({ length: 110 }, (_, index) => makeTask(`KB-${String(index + 1).padStart(3, "0")}`));
-    const { rerender } = render(<Column {...defaultProps} column="todo" tasks={tasks} />);
-
-    await userEvent.click(screen.getByRole("button", { name: /Load 25 more/i }));
-    expect(screen.getAllByTestId(/task-/)).toHaveLength(75);
-
-    rerender(<Column {...defaultProps} column="todo" tasks={[...tasks]} />);
-
-    expect(screen.getAllByTestId(/task-/)).toHaveLength(75);
-  });
-
-  it("clamps visible tasks when a paginated list shrinks", async () => {
-    const tasks = Array.from({ length: 110 }, (_, index) => makeTask(`KB-${String(index + 1).padStart(3, "0")}`));
-    const { rerender } = render(<Column {...defaultProps} column="todo" tasks={tasks} />);
-
-    await userEvent.click(screen.getByRole("button", { name: /Load 25 more/i }));
-    expect(screen.getAllByTestId(/task-/)).toHaveLength(75);
-
-    rerender(<Column {...defaultProps} column="todo" tasks={tasks.slice(0, 60)} />);
-
-    expect(screen.getAllByTestId(/task-/)).toHaveLength(60);
-  });
-
-
-
-  it("does not paginate at the threshold boundary", () => {
-    const tasks = Array.from({ length: 100 }, (_, index) => makeTask(`KB-${String(index + 1).padStart(3, "0")}`));
-    render(<Column {...defaultProps} column="todo" tasks={tasks} />);
-
-    expect(screen.queryByRole("button", { name: /Load 25 more/i })).toBeNull();
-  });
-
-  it("does not paginate grouped in-progress columns", () => {
-    const tasks = Array.from({ length: 110 }, (_, index) => ({ ...makeTask(`KB-${String(index + 1).padStart(3, "0")}`), column: "in-progress" as ColumnType }));
+  it("keeps capacity-bounded worktree groups exempt from the card virtualizer", () => {
+    const tasks = Array.from({ length: 10 }, (_, index) => ({ ...makeTask(`KB-${index}`), column: "in-progress" as ColumnType }));
     render(<Column {...defaultProps} column="in-progress" showWorktreeGrouping tasks={tasks} />);
-
-    expect(screen.queryByRole("button", { name: /Load 25 more/i })).toBeNull();
-  });
-
-  /*
-  FNXC:BoardColumnWindowing 2026-07-26-12:30:
-  These two cases previously pinned the OLD contract (search disables pagination, render every match).
-  That escape hatch was unbounded and is deliberately gone: `tasks` arrives already search-filtered, so
-  paginating search results still shows matches while keeping the mounted TaskCard count bounded — the
-  resident set is what makes mobile browsers discard the backgrounded tab.
-  */
-  it("paginates even when isSearchActive is true", () => {
-    const tasks = Array.from({ length: 110 }, (_, index) => makeTask(`KB-${String(index + 1).padStart(3, "0")}`));
-    render(<Column {...defaultProps} column="todo" tasks={tasks} isSearchActive={true} />);
-
-    expect(screen.getAllByTestId(/task-/)).toHaveLength(50);
-    expect(screen.getByRole("button", { name: /Load 25 more/i })).toBeTruthy();
-  });
-
-  it("collapses the window back to one screenful when isSearchActive changes back to false", () => {
-    const tasks = Array.from({ length: 110 }, (_, index) => makeTask(`KB-${String(index + 1).padStart(3, "0")}`));
-    const { rerender } = render(<Column {...defaultProps} column="todo" tasks={tasks} isSearchActive={true} />);
-
-    expect(screen.getAllByTestId(/task-/)).toHaveLength(50);
-
-    // Search cleared — the result set changed, so the window resets to the initial page.
-    rerender(<Column {...defaultProps} column="todo" tasks={tasks} isSearchActive={false} />);
-
-    expect(screen.getAllByTestId(/task-/)).toHaveLength(50);
-    expect(screen.getByRole("button", { name: /Load 25 more/i })).toBeTruthy();
-  });
-
-  /*
-  FNXC:BoardColumnWindowing 2026-07-26-14:24:
-  The reset used to key on the `isSearchActive` boolean, so refining one broad query into another kept
-  the boolean true and carried an expanded window (up to hundreds of mounted TaskCards) into a brand-new
-  result set. These cases pin the corrected contract: a DIFFERENT search result set collapses back to
-  one screenful, while an unchanged one keeps the operator's expanded window (nothing to bound).
-  */
-  it("collapses an expanded window when the search result set changes while search stays active", () => {
-    const tasks = Array.from({ length: 110 }, (_, index) => makeTask(`KB-${String(index + 1).padStart(3, "0")}`));
-    const { rerender } = render(<Column {...defaultProps} column="todo" tasks={tasks} isSearchActive={true} />);
-
-    fireEvent.click(screen.getByRole("button", { name: /Load 25 more/i }));
-    fireEvent.click(screen.getByRole("button", { name: /Load 25 more/i }));
-    expect(screen.getAllByTestId(/task-/)).toHaveLength(100);
-
-    // Operator edits the query from one broad term to another: isSearchActive is STILL true, but the
-    // result set is entirely different.
-    const nextTasks = Array.from({ length: 130 }, (_, index) => makeTask(`FN-${String(index + 1).padStart(3, "0")}`));
-    rerender(<Column {...defaultProps} column="todo" tasks={nextTasks} isSearchActive={true} />);
-
-    expect(screen.getAllByTestId(/task-/)).toHaveLength(50);
-  });
-
-  it("keeps the expanded window across a re-render that yields the same search result set", () => {
-    const tasks = Array.from({ length: 110 }, (_, index) => makeTask(`KB-${String(index + 1).padStart(3, "0")}`));
-    const { rerender } = render(<Column {...defaultProps} column="todo" tasks={tasks} isSearchActive={true} />);
-
-    fireEvent.click(screen.getByRole("button", { name: /Load 25 more/i }));
-    expect(screen.getAllByTestId(/task-/)).toHaveLength(75);
-
-    // A poll hands back an equal-but-not-identical array; the window must not be yanked from under the
-    // operator.
-    rerender(<Column {...defaultProps} column="todo" tasks={[...tasks]} isSearchActive={true} />);
-
-    expect(screen.getAllByTestId(/task-/)).toHaveLength(75);
-  });
-
-  it("preserves non-search pagination behavior when isSearchActive is not provided", () => {
-    const tasks = Array.from({ length: 110 }, (_, index) => makeTask(`KB-${String(index + 1).padStart(3, "0")}`));
-    render(<Column {...defaultProps} column="todo" tasks={tasks} />);
-
-    // Default (undefined isSearchActive) should still paginate
-    expect(screen.getAllByTestId(/task-/)).toHaveLength(50);
-    expect(screen.getByRole("button", { name: /Load 25 more/i })).toBeTruthy();
+    expect(screen.queryByTestId("column-auto-pagination-sentinel")).toBeNull();
   });
 });
 

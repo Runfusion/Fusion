@@ -34,6 +34,7 @@ export type {
 
 export {
   fetchTasks,
+  fetchTaskPage,
   fetchCompletedTasks,
   fetchTaskRecommendations,
   fetchTaskDetail,
