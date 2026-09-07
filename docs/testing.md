@@ -1085,6 +1085,12 @@ pnpm --filter @fusion/dashboard exec vitest run app/components/__tests__/Workspa
 
 The parity invariant is that a mono-repository task and a workspace task changing one scoped repository have identical review, completion, and landing outcomes. The acquired clean peer must be displayed as **No changes — not reviewed**, must not get a blocking verdict, and must not become a partial-land target.
 
+### Forced stuck-resume race regressions
+
+Test both deterministic FIFO orderings whenever executor ownership or stuck recovery changes. In the invalidation-first ordering, suspend the old attempt after it selects cleanup but before it enters the mutation section, reserve forced invalidation, synchronously signal abort, acquire a real successor through `TaskExecutor`, then release the old unwind; no old store writer, task move, task-keyed cleanup, Git cleanup, or lifecycle event may run. In the mutation-first ordering, suspend an asynchronous writer or destructive `StepSessionExecutor.cleanup()` after section entry and prove invalidation plus real successor acquisition remain unpublished until it settles, with no overlap between attempts. Exercise both step-session and single-session production paths, and assert that the successor's active-session registration and persisted checkout identity survive the late unwind.
+
+The symptom fixture retains completed and in-progress steps plus workflow node, branch, worktree, and current column. It must assert those values survive and that logs contain neither an unattributed WIP→Hold move nor a parent-moved abort. The `check:move-target-literals` AST ratchet also records production engine `moveTask` calls lacking explicit `moveSource`; its baseline may decrease but no new omission is accepted, while operator routes and comments remain outside that engine-only population.
+
 ### Branch-writer validation regressions
 
 When task-branch validation changes, test production acquisition and task creation callers in addition to the validation boundary. Keep a source census of direct and computed branch patches, and exercise single-repository assignment persistence failure plus workspace suppression so a caller cannot silently omit provenance.

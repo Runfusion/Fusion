@@ -60,6 +60,7 @@ export abstract class TaskExecutorSessionFacades extends TaskExecutorWorktreePur
   clearPhantomExecutorBinding(taskId: string, options: { preserveWorktrees?: boolean; externallyBlocked?: boolean } = {}): boolean {
     return impl.clearPhantomExecutorBindingImpl(bags.buildClearPhantomExecutorBindingDeps(this), taskId, options);
   }
+  protected prepareAbortInFlightTaskWork(...args: FacadeRestArgs<typeof impl.prepareAbortInFlightTaskWorkImpl>): ReturnType<typeof impl.prepareAbortInFlightTaskWorkImpl> { return impl.prepareAbortInFlightTaskWorkImpl(bags.buildAwaitAbortInFlightTaskWorkDeps(this), ...args); }
   async awaitAbortInFlightTaskWork(...args: FacadeRestArgs<typeof impl.awaitAbortInFlightTaskWorkImpl>): ReturnType<typeof impl.awaitAbortInFlightTaskWorkImpl> { return impl.awaitAbortInFlightTaskWorkImpl(bags.buildAwaitAbortInFlightTaskWorkDeps(this), ...args); }
   async abortAllInFlight(reason: string): Promise<void> { return impl.abortAllInFlightImpl(bags.buildAbortAllInFlightDeps(this), reason); }
   abortAllSessionBash(): void { impl.abortAllSessionBashImpl({ ...facadeFields(this, ["activeSessions", "childSessions", "activeStepExecutors"]) }); }

@@ -78,6 +78,10 @@ describe("workflow lifecycle direction", () => {
       moveSource: "engine",
       lifecycleReason: "code-review-revise-remediation",
     }))?.messageKey).toBe("transition.rejected.forbiddenLifecyclePath");
+    expect(evaluateLifecycleDirectionPostcondition(policyInput({ countsTowardWip: true }, { hold: true }, {
+      moveSource: "engine",
+      lifecycleReason: "stuck-session-timeout",
+    }))?.messageKey).toBe("transition.rejected.forbiddenLifecyclePath");
     expect(evaluateLifecycleDirectionPostcondition(policyInput({ mergeBlocker: true }, { countsTowardWip: true }, {
       moveSource: "engine",
     }))?.messageKey).toBe("transition.rejected.unsanctionedLifecycleMove");
