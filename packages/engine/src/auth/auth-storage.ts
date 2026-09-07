@@ -49,6 +49,7 @@ export interface FusionAuthStorage {
   withProviderInstanceLoginLock?<T>(providerId: string, operation: () => Promise<T>): Promise<T>;
   modify(provider: string, fn: (current: StoredCredential | undefined) => Promise<StoredCredential | undefined>): Promise<StoredCredential | undefined>;
   setModelRuntime(modelRuntime: ModelRuntime): void;
+  getModelRuntime?(): ModelRuntime | undefined;
 }
 
 /*
@@ -283,6 +284,7 @@ class FusionFileAuthStorage implements FusionAuthStorage {
   }
   getOAuthProviders(): Array<{ id: string; name: string }> { return [{ id: "anthropic", name: "Anthropic" }, { id: "openai-codex", name: "OpenAI Codex" }, { id: "github-copilot", name: "GitHub Copilot" }]; }
   setModelRuntime(modelRuntime: ModelRuntime): void { this.modelRuntime = modelRuntime; }
+  getModelRuntime(): ModelRuntime | undefined { return this.modelRuntime; }
   async login(provider: string, callbacks: unknown): Promise<void> {
     if (!this.modelRuntime) throw new Error("OAuth login requires a ModelRuntime-backed Fusion auth storage");
     /*
@@ -632,14 +634,37 @@ async function refreshAnthropicOAuthCredential(credential: StoredCredential): Pr
   }
 }
 
-async function refreshOAuthCredential(providerId: string, credential: StoredCredential): Promise<StoredCredential | undefined> {
-  if (!shouldRefreshOAuthCredential(credential)) {
-    return credential;
+async function refreshOAuthCredential(
+  providerId: string,
+  credential: StoredCredential,
+  modelRuntime: ModelRuntime | undefined,
+  readPersistedCredential: () => StoredCredential | undefined,
+): Promise<StoredCredential | undefined> {
+  if (!shouldRefreshOAuthCredential(credential)) return credential;
+  if (getOAuthResolutionProviderId(providerId) === ANTHROPIC_PROVIDER_ID) {
+    return refreshAnthropicOAuthCredential(credential);
   }
-  if (getOAuthResolutionProviderId(providerId) !== ANTHROPIC_PROVIDER_ID) {
-    return undefined;
-  }
-  return refreshAnthropicOAuthCredential(credential);
+  if (!modelRuntime) return undefined;
+
+  /*
+  FNXC:ProviderAuth 2026-09-07-05:09:
+  Non-Anthropic OAuth renewal delegates to pi's ModelRuntime.getAuth because pi owns each
+  provider's refresh protocol and persists its rotated credential through Fusion's credential
+  store. The refresh lock here is deliberately distinct from the auth-file lock used by that
+  write-back, avoiding lock reentrancy while retaining cross-process single-flight protection.
+  Anthropic keeps its bespoke path because its aliases share a dedicated rotating-token flow.
+  */
+  await modelRuntime.getAuth(getOAuthResolutionProviderId(providerId));
+  const previousExpires = credential.expires;
+  const persisted = readPersistedCredential();
+  return persisted?.type === "oauth"
+    && typeof previousExpires === "number"
+    && Number.isFinite(previousExpires)
+    && typeof persisted.expires === "number"
+    && Number.isFinite(persisted.expires)
+    && persisted.expires > previousExpires
+    ? persisted
+    : undefined;
 }
 
 function resolveStoredCredentialApiKey(providerId: string, credential: StoredCredential | undefined): string | undefined {
@@ -895,9 +920,17 @@ export function createFusionAuthStorage(): FusionAuthStorage {
         return refreshCandidate;
       }
 
-      const refreshed = await refreshOAuthCredential(storageProvider, refreshCandidate);
+      const refreshed = await refreshOAuthCredential(
+        storageProvider,
+        refreshCandidate,
+        primary.getModelRuntime(),
+        () => {
+          primary.reload();
+          return selectPersistedRefreshCredential();
+        },
+      );
       if (!refreshed) {
-        return initialPersistedCredential;
+        return undefined;
       }
 
       primary.reload();
@@ -1066,7 +1099,7 @@ export function createFusionAuthStorage(): FusionAuthStorage {
       return resolveStoredCredentialApiKey(storageProvider, refreshedCredential);
     }
 
-    return resolveStoredCredentialApiKey(storageProvider, credential);
+    return refreshWasNeeded ? undefined : resolveStoredCredentialApiKey(storageProvider, credential);
   };
 
   const resolveAnthropicRuntimeApiKey = async (): Promise<string | undefined> => {
@@ -1319,7 +1352,15 @@ export function createFusionAuthStorage(): FusionAuthStorage {
           if (instance) {
             const credential = target.getInstance(instance);
             if (!credential) return undefined;
-            const refreshed = await refreshOAuthCredential(instance.providerId, credential);
+            const refreshed = await refreshOAuthCredential(
+              instance.providerId,
+              credential,
+              target.getModelRuntime?.(),
+              () => {
+                target.reload();
+                return target.getInstance(instance);
+              },
+            );
             if (refreshed && refreshed !== credential) await target.setInstance(instance, refreshed);
             return resolveStoredCredentialApiKey(provider, refreshed ?? credential);
           }
@@ -1357,8 +1398,12 @@ export function createFusionAuthStorage(): FusionAuthStorage {
             return resolveRefreshableCredentialApiKey(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID, subscriptionCredential);
           }
 
-          // 1. Primary Fusion auth
-          const primaryKey = await target.getApiKey(provider);
+          // 1. Primary Fusion auth. Route OAuth through the refresh-aware seam before
+          // exposing an access token, while preserving api_key resolution unchanged.
+          const primaryKey = await resolveRefreshableCredentialApiKey(
+            provider,
+            target.get(provider),
+          );
           if (primaryKey) return primaryKey;
 
           // 2. Supplemental auth.json credentials (.pi + .codex)

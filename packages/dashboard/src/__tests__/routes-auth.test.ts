@@ -1344,6 +1344,95 @@ describe("GET /auth/status", () => {
     expect(geminiOauth).toMatchObject({ authenticated: false, expired: false });
   });
 
+  it.each(["openai-codex", "github-copilot"])("refreshes a renewable %s credential through the real Fusion storage seam before projecting status and its default instance", async (providerId) => {
+    const previousHome = process.env.HOME;
+    const homeDir = mkdtempSync(join(tmpdir(), "fusion-auth-status-refresh-"));
+    const now = Date.now();
+    const renewedExpires = now + 60_000;
+
+    try {
+      process.env.HOME = homeDir;
+      const storage = createFusionAuthStorage();
+      await storage.set(providerId, {
+        type: "oauth",
+        access: "expired-access-token",
+        refresh: "refresh-material",
+        expires: now - 1_000,
+      } as never);
+      const getAuth = vi.fn(async (runtimeProviderId: string) => {
+        await storage.modify(runtimeProviderId, async (credential) => ({
+          ...credential,
+          expires: renewedExpires,
+        }));
+      });
+      storage.setModelRuntime({ getAuth } as never);
+
+      const realApp = express();
+      realApp.use(express.json());
+      realApp.use("/api", createApiRoutes(store, { authStorage: storage }));
+      const res = await GET(realApp, "/api/auth/status");
+
+      expect(res.status).toBe(200);
+      const provider = res.body.providers.find((item: any) => item.id === providerId);
+      expect(provider).toMatchObject({ authenticated: true, expired: false });
+      expect(provider.loginError).toBeUndefined();
+      expect(provider.instances).toEqual([
+        expect.objectContaining({
+          instanceId: "default",
+          isDefault: true,
+          authenticated: true,
+          expired: false,
+        }),
+      ]);
+      expect(getAuth).toHaveBeenCalledWith(providerId);
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      rmSync(homeDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each(["openai-codex", "github-copilot"])("keeps an unrenewable %s credential expired in both provider and default-instance status", async (providerId) => {
+    const previousHome = process.env.HOME;
+    const homeDir = mkdtempSync(join(tmpdir(), "fusion-auth-status-unrenewable-"));
+    const now = Date.now();
+
+    try {
+      process.env.HOME = homeDir;
+      const storage = createFusionAuthStorage();
+      await storage.set(providerId, {
+        type: "oauth",
+        access: "expired-access-token",
+        expires: now - 1_000,
+      } as never);
+      const getAuth = vi.fn();
+      storage.setModelRuntime({ getAuth } as never);
+
+      const realApp = express();
+      realApp.use(express.json());
+      realApp.use("/api", createApiRoutes(store, { authStorage: storage }));
+      const res = await GET(realApp, "/api/auth/status");
+
+      expect(res.status).toBe(200);
+      const provider = res.body.providers.find((item: any) => item.id === providerId);
+      expect(provider).toMatchObject({ authenticated: false, expired: true });
+      expect(provider.loginError).toBe("This OAuth session expired and could not be refreshed. Re-login to restore model access.");
+      expect(provider.instances).toEqual([
+        expect.objectContaining({
+          instanceId: "default",
+          isDefault: true,
+          authenticated: false,
+          expired: true,
+        }),
+      ]);
+      expect(getAuth).not.toHaveBeenCalled();
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      rmSync(homeDir, { recursive: true, force: true });
+    }
+  });
+
   it("attempts async refresh for expired oauth before reporting status", async () => {
     const now = Date.now();
     let refreshed = false;
