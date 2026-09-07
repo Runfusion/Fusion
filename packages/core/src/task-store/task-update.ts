@@ -254,6 +254,11 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       } else if (updates.externalBlock !== undefined) {
         task.externalBlock = updates.externalBlock;
       }
+      if (updates.planningFailure === null) {
+        task.planningFailure = undefined;
+      } else if (updates.planningFailure !== undefined) {
+        task.planningFailure = updates.planningFailure;
+      }
       // New dependencies re-seed hold-lane tasks and exhausted Plan Review cap parks.
       let movedToTriage = false;
       let respecifyFromColumn: string | undefined;

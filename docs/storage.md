@@ -863,3 +863,5 @@ Recommendation proposal claims use the indexed `findTaskByProposalClaimId` read 
 ### External-block task metadata
 
 Project task rows persist `external_block` as nullable JSONB. A non-null value records the obstacle origin, code, raw message, source, timestamp, and exact resume coordinates. Legacy/null rows hydrate as `externalBlock: undefined`; lifecycle reset clears the column.
+
+Project task rows also persist `planning_failure` as nullable JSONB engine-owned planning retry evidence. It is never validated against workflow `fields`; legacy/null rows hydrate as `planningFailure: undefined`, and lifecycle reset clears the column.

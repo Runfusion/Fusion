@@ -7,7 +7,6 @@ import {
   resolveTaskListFormatter,
   readAttachmentContents,
   computeUserCommentFingerprint,
-  PLANNING_SPEC_LOCK_UNAVAILABLE_FAILURE_KEY,
 } from "../triage.js";
 import {
   AgentSemaphore,
@@ -4081,7 +4080,7 @@ describe("taskCreate tool model inheritance", () => {
         await processor.specifyTask({ ...liveTask });
         expect(liveTask).toMatchObject({ status: "needs-replan", recoveryRetryCount: 1 });
         const initialSourceHash = sourceHashFor(readFileSync(promptPath, "utf8"));
-        expect(liveTask.customFields?.[PLANNING_SPEC_LOCK_UNAVAILABLE_FAILURE_KEY]).toMatchObject({
+        expect(liveTask.planningFailure?.specLockUnavailable).toMatchObject({
           sourceHash: initialSourceHash, reason: "section-duplicate", sections: ["mission"], attempt: 1,
         });
 
@@ -4093,15 +4092,15 @@ describe("taskCreate tool model inheritance", () => {
           recoveryRetryCount: null,
           nextRecoveryAt: null,
         });
-        expect(liveTask.customFields?.[PLANNING_SPEC_LOCK_UNAVAILABLE_FAILURE_KEY]).toBeUndefined();
+        expect(liveTask.planningFailure?.specLockUnavailable).toBeUndefined();
 
         Object.assign(liveTask, {
           status: "needs-replan",
           error: null,
           recoveryRetryCount: 1,
           nextRecoveryAt: null,
-          customFields: {
-            [PLANNING_SPEC_LOCK_UNAVAILABLE_FAILURE_KEY]: {
+          planningFailure: {
+            specLockUnavailable: {
               sourceHash: initialSourceHash, reason: "section-duplicate", sections: ["mission"], at: new Date().toISOString(), attempt: 1,
             },
           },
@@ -4112,12 +4111,12 @@ describe("taskCreate tool model inheritance", () => {
         const changedSourceHash = sourceHashFor(readFileSync(promptPath, "utf8"));
         expect(changedSourceHash).not.toBe(initialSourceHash);
         expect(liveTask).toMatchObject({ status: "needs-replan", recoveryRetryCount: 2 });
-        expect(liveTask.customFields?.[PLANNING_SPEC_LOCK_UNAVAILABLE_FAILURE_KEY]).toMatchObject({ sourceHash: changedSourceHash });
+        expect(liveTask.planningFailure?.specLockUnavailable).toMatchObject({ sourceHash: changedSourceHash });
 
         lockFailure = false;
         Object.assign(liveTask, { status: "needs-replan", recoveryRetryCount: null, nextRecoveryAt: null });
         await processor.specifyTask({ ...liveTask });
-        expect(liveTask.customFields?.[PLANNING_SPEC_LOCK_UNAVAILABLE_FAILURE_KEY]).toBeUndefined();
+        expect(liveTask.planningFailure?.specLockUnavailable).toBeUndefined();
         expect(store.lockCurrentPlanWhilePlanningLocked).toHaveBeenCalledTimes(4);
       } finally {
         await cleanupTriageFixtureRoot(root);

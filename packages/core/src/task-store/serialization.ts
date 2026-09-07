@@ -81,6 +81,7 @@ export function rowToTask(row: TaskRow): Task {
     paused: row.paused ? true : undefined,
     pausedReason: row.pausedReason || undefined,
     externalBlock: fromJson<Task["externalBlock"]>(row.externalBlock) ?? undefined,
+    planningFailure: fromJson<Task["planningFailure"]>(row.planningFailure) ?? undefined,
     wedgeNotification: fromJson<Task["wedgeNotification"]>(row.wedgeNotification) ?? undefined,
     userPaused: row.userPaused ? true : undefined,
     baseBranch: row.baseBranch || undefined,

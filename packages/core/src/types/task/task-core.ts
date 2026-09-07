@@ -44,6 +44,12 @@ import type {
   WorkflowTransitionNotificationMarker,
 } from "./task-log.js";
 
+/** Engine-owned planning retry evidence. */
+export type TaskPlanningFailureState = {
+  specLockUnavailable?: { sourceHash: string; reason: string; sections: string[]; at: string; attempt: number | null };
+  lifecycleLockTransport?: { message: string; at: string; attempt: number | null };
+};
+
 export interface MergeDetails {
   commitSha?: string;
   /**
@@ -881,6 +887,12 @@ export interface Task {
    * overlap waits retain their separate queue state.
    */
   externalBlock?: TaskExternalBlock;
+  /**
+   * FNXC:TriagePlanningState 2026-09-07-19:49:
+   * FN-9273 keeps engine planning retry evidence outside workflow-validated customFields.
+   * Workflows reject planning.* fields, which previously discarded the retry-hold update.
+   */
+  planningFailure?: TaskPlanningFailureState;
   /**
    * FNXC:TaskActivity 2026-07-28-12:00:
    * Dashboard-only signal from a fresh planner agent-log SSE entry. It is never
