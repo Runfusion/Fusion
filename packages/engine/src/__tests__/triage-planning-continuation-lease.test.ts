@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Agent, Settings, Task, TaskDetail, TaskStore, WorkflowWorkItem } from "@fusion/core";
+import { BUILTIN_CODING_WORKFLOW_IR } from "@fusion/core";
+import type { Agent, Settings, Task, TaskDetail, TaskStore, WorkflowIrV2, WorkflowWorkItem } from "@fusion/core";
 
 import { isPlanningContinuationDispatchClaim } from "../agents/planning-execution-liveness.js";
 import {
   createPlanningContinuationDispatcher,
   releaseFileScopeWaitingContinuations,
+  InProcessRuntime,
   planningContinuationTerminalColumns,
 } from "../runtimes/in-process-runtime.js";
 import { PLANNING_CONTINUATION_LEASE_MS, TriageProcessor } from "../triage.js";
@@ -192,6 +194,51 @@ function harness() {
       workItem = next;
     },
   };
+}
+
+function multipleCompleteWorkflow(): WorkflowIrV2 {
+  const ir = structuredClone(BUILTIN_CODING_WORKFLOW_IR) as WorkflowIrV2;
+  ir.columns = [
+    ...ir.columns.map((column) => column.id === "done" ? { ...column, traits: [] } : column),
+    { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+    { id: "released", name: "Released", traits: [{ trait: "complete" }] },
+  ];
+  return ir;
+}
+
+function continuationDrainHarness() {
+  const h = harness();
+  const runnable = runnablePlanningContinuation(h.current.id);
+  h.replaceWorkItem(runnable);
+  const ir = multipleCompleteWorkflow();
+  vi.mocked(h.store.getTaskWorkflowSelectionAsync).mockResolvedValue({ workflowId: "WF-COMPLETE", stepIds: [] });
+  vi.mocked(h.store.getWorkflowDefinition).mockResolvedValue({
+    id: "WF-COMPLETE",
+    name: ir.name,
+    description: "Multiple completion lanes",
+    kind: "workflow",
+    ir,
+    layout: {},
+    createdAt: new Date(NOW).toISOString(),
+    updatedAt: new Date(NOW).toISOString(),
+  });
+  Object.assign(h.store, {
+    getRootDir: vi.fn(() => "fn-299-project"),
+    listDueWorkflowWorkItems: vi.fn(async () => [runnable]),
+  });
+  const execute = vi.fn().mockResolvedValue(undefined);
+  /*
+  FNXC:PlanningContinuationDispatch 2026-09-07-21:47:
+  Run the production drain adapter without starting a runtime. Real task-scoped IR resolution must
+  protect every Complete lane, including a fresh workflow definition read under the lifecycle lock.
+  */
+  const runtime = Object.assign(Object.create(InProcessRuntime.prototype), {
+    status: "active",
+    workflowContinuationDrainActive: false,
+    taskStore: h.store,
+    executor: { execute },
+  }) as { drainWorkflowContinuations(): Promise<void> };
+  return { ...h, ir, runnable, execute, runtime, get workItem() { return h.workItem; } };
 }
 
 async function waitForCall(mock: ReturnType<typeof vi.fn>): Promise<void> {
@@ -547,9 +594,103 @@ describe("triage planning continuation lease", () => {
     expect(h.workItem).toEqual(runnable);
   });
 
-  it("does not treat built-in Done as terminal when the resolved workflow does not", () => {
-    expect([...planningContinuationTerminalColumns({ complete: "shipped" })]).toEqual(["shipped"]);
+  it("includes every Complete lane without adding a nonterminal Done lane", () => {
+    expect([...planningContinuationTerminalColumns(multipleCompleteWorkflow())]).toEqual(["shipped", "released"]);
     expect([...planningContinuationTerminalColumns(undefined)]).toEqual(["done"]);
+  });
+
+  it.each(["shipped", "released"])("cancels an orphan in the resolved %s Complete lane", async (column) => {
+    const h = continuationDrainHarness();
+    h.current.column = column;
+    const before = structuredClone(h.current);
+
+    await h.runtime.drainWorkflowContinuations();
+
+    expect(h.store.getTaskWorkflowSelectionAsync).toHaveBeenCalledWith(h.current.id);
+    expect(h.store.getWorkflowDefinition).toHaveBeenCalledWith("WF-COMPLETE");
+    expect(h.execute).not.toHaveBeenCalled();
+    expect(h.transitions).toHaveBeenCalledExactlyOnceWith(h.runnable.id, "cancelled", expect.objectContaining({
+      blockedReason: "task-terminal",
+    }));
+    expect(h.workItem?.state).toBe("cancelled");
+    expect(h.current).toEqual(before);
+    expect(h.store.updateTask).not.toHaveBeenCalled();
+    expect(h.store.moveTask).not.toHaveBeenCalled();
+    expect(h.replace).not.toHaveBeenCalled();
+  });
+
+  it.each(["shipped", "released"])("re-resolves %s under the lock without task or claim mutation", async (column) => {
+    const h = continuationDrainHarness();
+    h.current.column = column;
+    const before = structuredClone(h.current);
+    const definition = vi.mocked(h.store.getWorkflowDefinition).getMockImplementation()!;
+    let locked = false;
+    const definitionReadLocks: boolean[] = [];
+    h.lifecycleLock.mockImplementation(async (_taskId, callback) => {
+      locked = true;
+      try { return await callback(); } finally { locked = false; }
+    });
+    vi.mocked(h.store.getWorkflowDefinition).mockImplementation(async (...args) => {
+      definitionReadLocks.push(locked);
+      const resolved = await definition(...args);
+      return locked ? resolved : {
+        ...resolved!,
+        ir: { ...h.ir, columns: h.ir.columns.filter((lane) => lane.id !== column) },
+      };
+    });
+
+    await h.runtime.drainWorkflowContinuations();
+
+    expect(h.lifecycleLock).toHaveBeenCalledExactlyOnceWith(h.current.id, expect.any(Function));
+    expect(h.store.getTaskWorkflowSelectionAsync).toHaveBeenCalledTimes(3);
+    expect(h.store.getWorkflowDefinition).toHaveBeenCalledTimes(3);
+    expect(h.store.getTask).toHaveBeenCalledTimes(2);
+    expect(definitionReadLocks).toEqual([false, false, true]);
+    expect(h.execute).not.toHaveBeenCalled();
+    expect(h.transitions).not.toHaveBeenCalled();
+    expect(h.replace).not.toHaveBeenCalled();
+    expect(h.store.updateTask).not.toHaveBeenCalled();
+    expect(h.store.moveTask).not.toHaveBeenCalled();
+    expect(h.store.logEntry).not.toHaveBeenCalled();
+    expect(h.current).toEqual(before);
+    expect(h.workItem).toEqual(h.runnable);
+  });
+
+  it("dispatches a nonterminal Done lane using the resolved workflow", async () => {
+    const h = continuationDrainHarness();
+    h.current.column = "done";
+
+    await h.runtime.drainWorkflowContinuations();
+
+    expect(h.store.getTaskWorkflowSelectionAsync).toHaveBeenCalledTimes(3);
+    expect(h.store.getWorkflowDefinition).toHaveBeenCalledTimes(3);
+    expect(h.execute).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ id: h.current.id, column: "done" }));
+    expect(h.transitions).toHaveBeenCalledExactlyOnceWith(h.runnable.id, "running", expect.objectContaining({
+      expectedState: "runnable",
+      expectedLeaseOwner: null,
+    }));
+    expect(isPlanningContinuationDispatchClaim(h.workItem!)).toBe(true);
+  });
+
+  it("keeps Done terminal when the dispatcher has no resolver", async () => {
+    const h = harness();
+    h.current.column = "done";
+    const before = structuredClone(h.current);
+    const runnable = runnablePlanningContinuation(h.current.id);
+    h.replaceWorkItem(runnable);
+    const execute = vi.fn().mockResolvedValue(undefined);
+    const dispatch = createPlanningContinuationDispatcher({ store: h.store, projectId: "fn-299-project", execute });
+
+    await expect(dispatch(h.current, runnable)).resolves.toBe(true);
+
+    expect(h.lifecycleLock).toHaveBeenCalledOnce();
+    expect(execute).not.toHaveBeenCalled();
+    expect(h.transitions).not.toHaveBeenCalled();
+    expect(h.replace).not.toHaveBeenCalled();
+    expect(h.store.updateTask).not.toHaveBeenCalled();
+    expect(h.store.moveTask).not.toHaveBeenCalled();
+    expect(h.current).toEqual(before);
+    expect(h.workItem).toEqual(runnable);
   });
 
   it("does not mutate task state when dispatch-claim inspection fails before planner ownership", async () => {
