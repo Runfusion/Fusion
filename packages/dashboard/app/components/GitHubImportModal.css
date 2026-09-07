@@ -1909,3 +1909,42 @@ lives here) and design tokens for spacing/color so the bar matches the modal's o
   padding: var(--space-xs) var(--space-xs) 0;
   text-align: center;
 }
+
+/*
+FNXC:GitHubImport 2026-09-07-05:08:
+The phone import screen must use its available width: wrapped provider and type-tab groups previously
+left a wide right gap, while the embedded header and body retained their desktop 24px inset. Keep this
+block at the end of the file so it wins the later embedded base rules without changing desktop or tablet geometry.
+*/
+@media (max-width: 640px) {
+  .github-import-controls > * {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .github-import-provider {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+    min-width: 0;
+  }
+
+  .github-import-tabs {
+    flex-wrap: wrap;
+    min-width: 0;
+  }
+
+  .github-import-provider .github-import-tab,
+  .github-import-tabs .github-import-tab {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+
+  .github-import-modal__embedded-header {
+    padding: var(--space-lg) var(--space-md);
+  }
+
+  .github-import-modal--embedded .github-import-modal__body {
+    padding: var(--space-md);
+  }
+}
