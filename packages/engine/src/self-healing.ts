@@ -421,6 +421,8 @@ export interface SelfHealingOptions {
   localNodeId?: string;
   /** Optional callback to release TaskExecutor in-memory worktree ownership for a task. */
   releaseExecutorWorktreeOwnership?: (taskId: string) => void;
+  /** Request scheduling only after completion fan-out durably clears at least one overlap lease. */
+  onOverlapBlockersReleased?: () => void | Promise<void>;
   /**
    * FN-6782: read-only snapshot of the executor's in-memory worktree holders
    * ({ taskId, worktreePath }), so the leaked-slot reaper can cross-check each
@@ -5379,15 +5381,77 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           && await hasActiveFileScopeOverlapBlocker(dependent, blockerId, blocker);
         return { dependent, blockerId, hasActiveBlocker };
       };
+      const transitionDependencyQueueEpisode = async (
+        dependentId: string,
+        observedOverlapBlockerId: string | null,
+        resolvedOverlapBlockerId: string | null,
+        unresolvedDependencies: readonly string[],
+        action: string,
+      ): Promise<{ task: Task; overlapCleared: boolean }> => {
+        const nextDependency = unresolvedDependencies[0]!;
+        const signature = `dependency:${[...new Set(unresolvedDependencies)].sort().join(",")}`;
+        let overlapCleared = false;
+        if (typeof this.store.updateTaskAtomic === "function") {
+          const task = await this.store.updateTaskAtomic(dependentId, (live) => {
+            if (live.deletedAt != null) return null;
+            /*
+            FNXC:OverlapScheduling 2026-09-07-14:48:
+            Dependency queue publication and overlap identity arbitration must share the task's atomic
+            mutation. If a scheduler installs a different holder after the fresh read, retain that live
+            identity and queued state; a later classifier may clear it, but completion fan-out must not.
+            */
+            const overlapChanged = live.overlapBlockedBy !== observedOverlapBlockerId;
+            const overlapBlockedBy = overlapChanged ? (live.overlapBlockedBy ?? null) : resolvedOverlapBlockerId;
+            overlapCleared = Boolean(live.overlapBlockedBy && !overlapBlockedBy);
+            const appended = !(
+              live.status === "queued"
+              && (live.blockedBy ?? null) === nextDependency
+              && (live.overlapBlockedBy ?? null) === overlapBlockedBy
+              && (live.queuedLogEpisodeSignature ?? null) === signature
+            );
+            return {
+              status: "queued",
+              blockedBy: nextDependency,
+              overlapBlockedBy,
+              queuedLogEpisodeSignature: signature,
+              ...(appended
+                ? { log: [...(live.log ?? []), { timestamp: new Date().toISOString(), action }] }
+                : {}),
+            };
+          });
+          return { task, overlapCleared };
+        }
+        // Compatibility only for structural extension stores; production TaskStore always supplies atomic mutation.
+        const transition = await this.store.transitionQueuedEpisode(dependentId, {
+          signature,
+          blockedBy: nextDependency,
+          overlapBlockedBy: resolvedOverlapBlockerId,
+          action,
+        });
+        return {
+          task: transition.task,
+          overlapCleared: Boolean(observedOverlapBlockerId && !transition.task.overlapBlockedBy),
+        };
+      };
       const updateDependentWithOverlapClear = async (
         dependentId: string,
         observedBlockerId: string | null | undefined,
         basePatch: TaskUpdatePatch,
       ): Promise<boolean> => {
         let overlapCleared = false;
-        const buildPatch = (live: Task): TaskUpdatePatch => {
+        const buildPatch = (live: Task): TaskUpdatePatch | null => {
+          if (live.deletedAt != null) return null;
           const overlapPatch = overlapBlockerClearPatch(live, observedBlockerId);
           if (Object.keys(overlapPatch).length > 0) overlapCleared = true;
+          const blockerChanged = typeof observedBlockerId === "string"
+            && observedBlockerId.trim().length > 0
+            && live.overlapBlockedBy != null
+            && live.overlapBlockedBy !== observedBlockerId;
+          if (blockerChanged && Object.hasOwn(basePatch, "status")) {
+            const safeBasePatch = { ...basePatch };
+            delete safeBasePatch.status;
+            return { ...safeBasePatch, ...overlapPatch };
+          }
           return { ...basePatch, ...overlapPatch };
         };
         if (typeof this.store.updateTaskAtomic === "function") {
@@ -5397,7 +5461,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         // Compatibility only for structural test/extension stores; production TaskStore is atomic.
         const live = await this.store.getTask(dependentId).catch(() => null);
         if (!live) return false;
-        await this.store.updateTask(dependentId, buildPatch(live));
+        const patch = buildPatch(live);
+        if (patch) await this.store.updateTask(dependentId, patch);
         return overlapCleared;
       };
       /*
@@ -5449,6 +5514,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         (t) => t.blockedBy === taskId || t.overlapBlockedBy === taskId,
       );
       const todoTaskIds = new Set(todoTasks.map((t) => t.id));
+      let overlapReleaseCommitted = false;
       for (const dependent of dependents) {
         try {
           /*
@@ -5504,13 +5570,14 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             */
             if (unresolvedDeps.length > 0) {
               const nextBlocker = unresolvedDeps[0]!;
-              const normalizedUnresolvedDeps = [...new Set(unresolvedDeps)].sort();
-              await this.store.transitionQueuedEpisode(dependent.id, {
-                signature: `dependency:${normalizedUnresolvedDeps.join(",")}`,
-                blockedBy: nextBlocker,
+              const transition = await transitionDependencyQueueEpisode(
+                dependent.id,
+                freshOverlap.blockerId,
                 overlapBlockedBy,
-                action: `Auto-recovered (FN-4523): cleared stale blockedBy — blocker ${taskId} is done; now blocked by ${nextBlocker}`,
-              });
+                unresolvedDeps,
+                `Auto-recovered (FN-4523): cleared stale blockedBy — blocker ${taskId} is done; now blocked by ${nextBlocker}`,
+              );
+              overlapReleaseCommitted ||= transition.overlapCleared;
             } else if (hasActiveOverlapBlocker) {
               await this.store.transitionQueuedEpisode(dependent.id, {
                 signature: `file-scope:${overlapBlockedBy}`,
@@ -5519,22 +5586,24 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
                 action: `Auto-recovered (FN-4523): preserved queued status — still blocked by file scope overlap with ${overlapBlockedBy}`,
               });
             } else {
-              await updateDependentWithOverlapClear(
+              const overlapCleared = await updateDependentWithOverlapClear(
                 dependent.id,
                 freshOverlap.blockerId,
                 { blockedBy: null, ...clearBlockedStatusOnly(freshOverlap.dependent) },
               );
+              overlapReleaseCommitted ||= overlapCleared;
               await this.store.logEntry(
                 dependent.id,
                 `Auto-recovered (FN-4523): cleared stale blockedBy — blocker ${taskId} is done`,
               );
             }
           } else {
-            await updateDependentWithOverlapClear(
+            const overlapCleared = await updateDependentWithOverlapClear(
               dependent.id,
               hasActiveOverlapBlocker ? null : freshOverlap.blockerId,
               { blockedBy: null },
             );
+            overlapReleaseCommitted ||= overlapCleared;
             await this.store.logEntry(
               dependent.id,
               `Auto-recovered (FN-4523): cleared stale blockedBy — blocker ${taskId} is done`,
@@ -5544,6 +5613,21 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         } catch (err: unknown) {
           const errorMessage = err instanceof Error ? err.message : String(err);
           log.error(`${prefix} failed blockedBy fan-out for ${dependent.id}: ${errorMessage}`);
+        }
+      }
+
+      /*
+      FNXC:OverlapScheduling 2026-09-07-14:23:
+      Completion fan-out must publish every dependent mutation before requesting scheduler work.
+      Invoke this once, after the dependent loop and outside store mutation callbacks, so duplicate
+      fan-outs coalesce downstream and a failed/no-op CAS cannot advertise an uncommitted release.
+      */
+      if (overlapReleaseCommitted) {
+        try {
+          await this.options.onOverlapBlockersReleased?.();
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          log.warn(`${prefix} post-overlap-release scheduling wake failed: ${message}`);
         }
       }
 
