@@ -1,5 +1,5 @@
 ---
-"@runfusion/fusion": major
+"@runfusion/fusion": patch
 ---
 
 summary: Remove task archiving; completed history now remains in the paginated Done column.
