@@ -10,6 +10,7 @@ const severityAuditLog = createLogger("core-async-mission-store");
  * events; reusable SQL and row mapping live in async-mission-store-queries.ts.
  */
 import { EventEmitter } from "node:events";
+import { ValidatorRunOwnershipLostError, type GeneratedFixFeatureOptions } from "../missions/mission-types.js";
 import { and, desc, eq, inArray, notInArray, sql } from "drizzle-orm";
 import * as schema from "../postgres/schema/index.js";
 import type { AsyncDataLayer } from "../postgres/data-layer.js";
@@ -2150,31 +2151,83 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
     result: "passed" | "failed" | "blocked" | "error",
     summary?: string,
     blockedReason?: string,
-  ): Promise<MissionValidatorRun> {
+    effects?: import("../missions/mission-types.js").ValidatorRunCompletionEffects,
+  ): Promise<import("../missions/mission-types.js").ValidatorRunCompletion> {
     const run = await getValidatorRun(this.db, runId);
     if (!run) throw new Error(`Validator run ${runId} not found`);
-    if (run.status !== "running") throw new Error(`Validator run ${runId} is not in 'running' status`);
+    if (run.status !== "running") {
+      if (effects) return { ...run, completionApplied: false };
+      throw new Error(`Validator run ${runId} is not in 'running' status`);
+    }
     const now = new Date().toISOString();
     const loopState: FeatureLoopState = result === "passed" ? "passed" : result === "failed" ? "needs_fix" : result === "blocked" ? "blocked" : "validating";
     const updatedRun: MissionValidatorRun = { ...run, status: result, summary, blockedReason, completedAt: now, updatedAt: now };
+    let statusEvent: MissionEvent | undefined;
+    const milestoneIds = new Set(effects ? [run.milestoneId] : []);
+    for (const verdict of effects?.assertions ?? []) {
+      const assertion = await getContractAssertion(this.db, verdict.assertionId);
+      if (assertion) milestoneIds.add(assertion.milestoneId);
+    }
+    const validationRollups: MilestoneValidationRollup[] = [];
+    const changedAssertions: MissionContractAssertion[] = [];
     /*
     FNXC:MissionValidation 2026-08-11-05:26:
     A validator run becomes historical when a newer admission replaces feature.lastValidatorRunId. Complete the historical run, but only the current owner may project loop state or trigger passed-run reconciliation.
     */
     const completion = await this.layer.transactionImmediate(async (tx) => {
+      // FNXC:MissionValidation 2026-09-07-04:46: Serialize verdicts with assertion repairs before taking the feature lock; their milestone projection commits with the owning terminal transition.
+      // Linked feature evidence can belong to other milestones. Lock all of
+      // their assertion sets in one stable order before taking the feature lock.
+      for (const milestoneId of [...milestoneIds].sort()) await this.lockMilestoneAssertions(tx, milestoneId);
       await tx.select().from(schema.project.missionFeatures).where(and(
         eq(schema.project.missionFeatures.projectId, missionProjectId()),
         eq(schema.project.missionFeatures.id, run.featureId),
       )).for("update");
       const feature = await getFeature(tx, run.featureId);
       if (!feature) throw new Error(`Feature ${run.featureId} not found`);
+      if (effects && (effects.featureId !== run.featureId
+        || (effects.triggerType && effects.triggerType !== run.triggerType)
+        || feature.lastValidatorRunId !== run.id || feature.validatorAttemptCount !== run.validatorAttempt
+        || feature.loopState !== "validating")) return { won: false, ownsFeature: false, feature };
       const winner = await transitionRunningValidatorRun(tx, updatedRun);
       if (!winner) return { won: false, ownsFeature: false, feature };
       const ownsFeature = feature.lastValidatorRunId === run.id;
-      if (ownsFeature) await updateFeature(tx, { ...feature, loopState, lastValidatorStatus: result, updatedAt: now });
+      if (ownsFeature) {
+        if (effects) {
+          const linked = new Set((await listAssertionsForFeature(tx, feature.id)).map((assertion) => assertion.id));
+          for (const verdict of effects.assertions ?? []) {
+            if (!linked.has(verdict.assertionId)) throw new Error(`Assertion ${verdict.assertionId} is not linked to feature ${feature.id}`);
+            const assertion = await getContractAssertion(tx, verdict.assertionId);
+            if (!assertion) throw new Error(`Assertion ${verdict.assertionId} not found`);
+            if (!milestoneIds.has(assertion.milestoneId)) throw new Error(`Assertion ${verdict.assertionId} changed milestone during validator completion`);
+            const updatedAssertion = { ...assertion, status: verdict.status, updatedAt: now };
+            await updateContractAssertion(tx, updatedAssertion);
+            changedAssertions.push(updatedAssertion);
+          }
+          const failures = effects.failures ?? [];
+          if (failures.some((failure) => failure.featureId !== feature.id || !linked.has(failure.assertionId))) throw new Error("Validator failures do not belong to the current feature");
+          if (failures.length) await insertValidatorFailures(tx, failures.map((failure) => ({ ...failure, id: this.generateId("VF"), runId, createdAt: now })));
+        }
+        const status = effects && result === "passed" ? "done" : feature.status;
+        await updateFeature(tx, { ...feature, status, loopState, lastValidatorStatus: result, updatedAt: now });
+        if (status !== feature.status) statusEvent = await this.recordFeatureStatusChange(tx, feature, status, { type: "system", id: "mission-store", source: "validator-completion" });
+      }
+      if (ownsFeature) {
+        for (const milestoneId of [...milestoneIds].sort()) {
+          const rollup = await this.getMilestoneValidationRollup(milestoneId, tx);
+          await updateMilestoneValidationState(tx, milestoneId, rollup.state);
+          validationRollups.push(rollup);
+        }
+      }
       return { won: true, ownsFeature, feature };
     });
-    if (!completion.won) return (await getValidatorRun(this.db, runId)) ?? updatedRun;
+    if (!completion.won) {
+      const current = (await getValidatorRun(this.db, runId)) ?? run;
+      return effects ? { ...current, completionApplied: false } : current;
+    }
+    for (const rollup of validationRollups) this.emit("milestone:validation:updated", { milestoneId: rollup.milestoneId, state: rollup.state, rollup });
+    for (const assertion of changedAssertions) this.emit("assertion:updated", assertion);
+    if (statusEvent) this.emit("mission:event", statusEvent);
     if (completion.ownsFeature) {
       const updatedFeature = await getFeature(this.db, completion.feature.id);
       if (updatedFeature) this.emit("feature:updated", updatedFeature);
@@ -2183,7 +2236,7 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
     const durationMs = Math.max(0, Date.parse(now) - Date.parse(run.startedAt));
     this.emit("validator-run:completed", updatedRun, result, durationMs);
     if (result === "passed" && completion.ownsFeature) await this.reconcileSupersededGeneratedFixFeatures(completion.feature.sliceId);
-    return updatedRun;
+    return effects ? { ...updatedRun, completionApplied: completion.ownsFeature } : updatedRun;
   }
 
   async recordValidatorFailures(
@@ -2275,14 +2328,38 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
    * A generated fix is never a new budget owner. Resolve its parent chain while
    * the caller transaction is open; missing or cyclic evidence fails closed.
    */
-  private async resolveFixRoot(handle: QueryHandle, feature: MissionFeature): Promise<MissionFeature> {
+  private async lockGeneratedFixLineage(tx: QueryHandle): Promise<void> {
+    // Remediation admission walks child -> ancestors; reconciliation locks a set.
+    // Serialize those transactions before any feature-row lock to avoid inversion.
+    // Project-wide scope also covers generated chains that cross slice boundaries.
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(
+      CONCAT('mission-generated-fixes:', COALESCE(NULLIF(current_setting('fusion.project_id', true), ''), '__legacy_unscoped__')),
+      0
+    ))`);
+  }
+
+  /**
+   * A generated fix is never a new budget owner. Resolve its parent chain while
+   * the caller transaction is open; missing or cyclic evidence fails closed.
+   */
+  private async resolveFixRoot(handle: QueryHandle, feature: MissionFeature, owningRunId?: string): Promise<MissionFeature> {
     const seen = new Set<string>();
     let current = feature;
     while (current.generatedFromFeatureId) {
       if (seen.has(current.id)) throw new Error("MISSION_LINEAGE_UNRESOLVED: cyclic generated-fix lineage");
       seen.add(current.id);
+      if (owningRunId) {
+        // The caller already holds the child lock. Walk upward, retaining each
+        // ancestor lock so a pass cannot race descendant remediation admission.
+        await handle.select({ id: schema.project.missionFeatures.id }).from(schema.project.missionFeatures)
+          .where(and(eq(schema.project.missionFeatures.projectId, missionProjectId()), eq(schema.project.missionFeatures.id, current.generatedFromFeatureId)))
+          .for("update");
+      }
       const parent = await getFeature(handle, current.generatedFromFeatureId);
       if (!parent) throw new Error("MISSION_LINEAGE_UNRESOLVED: missing generated-fix ancestor");
+      if (owningRunId && (parent.loopState === "passed" || parent.lastValidatorStatus === "passed")) {
+        throw new ValidatorRunOwnershipLostError(owningRunId);
+      }
       current = parent;
     }
     if (seen.has(current.id)) throw new Error("MISSION_LINEAGE_UNRESOLVED: cyclic generated-fix lineage");
@@ -2302,6 +2379,7 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
     failureReason?: string,
     title?: string,
     diagnostics?: ValidationDiagnostics,
+    options: GeneratedFixFeatureOptions = {},
   ): Promise<MissionFeature> {
     const run = await getValidatorRun(this.db, runId);
     if (!run) throw new Error(`Validator run ${runId} not found`);
@@ -2320,6 +2398,7 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
       | { kind: "exhausted" }
       | { kind: "stopped"; reason: string }
     > => {
+      await this.lockGeneratedFixLineage(tx);
       const locked = await tx
         .select({ id: schema.project.missionFeatures.id })
         .from(schema.project.missionFeatures)
@@ -2331,7 +2410,7 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
       if (locked.length === 0) throw new Error(`Feature ${sourceFeatureId} not found`);
       const source = await getFeature(tx, sourceFeatureId);
       if (!source) throw new Error(`Feature ${sourceFeatureId} not found`);
-      const root = await this.resolveFixRoot(tx, source);
+      const root = await this.resolveFixRoot(tx, source, options.requireCurrentRun ? runId : undefined);
       // Lock the canonical owner, not the generated child that happened to fail.
       const rootLocked = await tx.select({ id: schema.project.missionFeatures.id }).from(schema.project.missionFeatures)
         .where(and(
@@ -2341,6 +2420,15 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
       if (rootLocked.length !== 1) throw new Error("MISSION_LINEAGE_UNRESOLVED: canonical root disappeared");
       const lockedRoot = await getFeature(tx, root.id);
       if (!lockedRoot) throw new Error("MISSION_LINEAGE_UNRESOLVED: canonical root disappeared");
+      // FNXC:MissionValidation 2026-09-07-04:46: A failed-run continuation must recheck ownership under both locks before even reusing a fix or spending its root's retry budget.
+      if (options.requireCurrentRun) {
+        const currentRun = await getValidatorRun(tx, runId);
+        if (currentRun?.status !== "failed" || source.lastValidatorRunId !== runId
+          || source.validatorAttemptCount !== currentRun.validatorAttempt || source.lastValidatorStatus !== "failed"
+          || source.loopState === "passed" || lockedRoot.loopState === "passed" || lockedRoot.lastValidatorStatus === "passed") {
+          throw new ValidatorRunOwnershipLostError(runId);
+        }
+      }
       const durableStop = await this.getRootStop(tx, root.id);
       if (durableStop) return { kind: "stopped", reason: durableStop.reason };
       if (lockedRoot.loopState === "blocked") {
@@ -2459,6 +2547,7 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
     if (repairIds.size > 0) {
       const now = new Date().toISOString();
       const repaired = await this.layer.transactionImmediate(async (tx) => {
+        await this.lockGeneratedFixLineage(tx);
         const locked = await tx.select({ id: schema.project.missionFeatures.id })
           .from(schema.project.missionFeatures)
           .where(inArray(schema.project.missionFeatures.id, [...repairIds]))
@@ -2525,6 +2614,7 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
       Superseded generated fixes are one reconciliation set. Update their terminal status in one statement instead of routing every ID through updateFeature/getFeature/cascade reads; emit the same per-feature observable events after persistence.
       */
       const { events, updatedFeatures } = await this.layer.transactionImmediate(async (tx) => {
+        await this.lockGeneratedFixLineage(tx);
         /*
         FNXC:MissionStatusWrites 2026-08-10-13:21:
         The bulk reconciliation must lock and re-read its candidates inside this transaction.
@@ -3274,6 +3364,13 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
   publish snapshots in reverse order; the lock makes the committed current rollup
   the only state emitted to dashboard refresh consumers.
   */
+  private async lockMilestoneAssertions(tx: QueryHandle, milestoneId: string): Promise<void> {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(
+      CONCAT('mission-validation:', COALESCE(NULLIF(current_setting('fusion.project_id', true), ''), '__legacy_unscoped__'), ':', CAST(${milestoneId} AS text)),
+      0
+    ))`);
+  }
+
   private async mutateMilestoneAssertions<T>(
     milestoneId: string,
     mutation: (tx: QueryHandle) => Promise<T>,
@@ -3281,10 +3378,7 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
     let result!: T;
     let rollup!: MilestoneValidationRollup;
     await this.layer.transactionImmediate(async (tx) => {
-      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(
-        CONCAT('mission-validation:', COALESCE(NULLIF(current_setting('fusion.project_id', true), ''), '__legacy_unscoped__'), ':', CAST(${milestoneId} AS text)),
-        0
-      ))`);
+      await this.lockMilestoneAssertions(tx, milestoneId);
       result = await mutation(tx);
       rollup = await this.getMilestoneValidationRollup(milestoneId, tx);
       await updateMilestoneValidationState(tx, milestoneId, rollup.state);
