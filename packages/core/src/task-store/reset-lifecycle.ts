@@ -78,6 +78,7 @@ export function buildResetTask(
     userPaused: false,
     pausedReason: undefined,
     externalBlock: undefined,
+    planningFailure: undefined,
     pausedByAgentId: undefined,
     checkedOutBy: undefined,
     checkedOutAt: undefined,
@@ -166,7 +167,7 @@ export function assertResetTask(
   if (
     task.worktree != null || task.branch != null || task.sessionFile != null
     || task.checkedOutBy != null || task.workflowIrPin != null || task.workflowStepResults?.length
-    || task.review != null || task.reviewState != null || task.awaitingApprovalReason != null || task.externalBlock != null
+    || task.review != null || task.reviewState != null || task.awaitingApprovalReason != null || task.externalBlock != null || task.planningFailure != null
     || Object.keys(task.workspaceWorktrees ?? {}).length > 0
   ) {
     throw new Error("Reset publication returned stale execution or review state");
