@@ -9502,13 +9502,13 @@
     "widgetDefault": "Padrão"
   },
   "workflowSwitcher": {
-    "countsAria": "{{todoLabel}}: {{todo}}, {{inProgressLabel}}: {{inProgress}}, {{doneLabel}}: {{done}}{{mergingSuffix}}",
-    "done": "Concluído",
-    "inProgress": "Em andamento",
+    "countsAria": "{{planLabel}}: {{plan}}, {{progressLabel}}: {{progress}}, {{reviewLabel}}: {{review}}{{mergingSuffix}}",
+    "plan": "Planejamento",
+    "progress": "Progresso",
     "label": "Fluxo de trabalho",
     "merging": "Em merge",
     "mergingTitle": "{{count}} tarefa{{plural}} em merge",
-    "todo": "A fazer",
+    "review": "Revisão",
     "triggerAria": "Selecionar fluxo de trabalho. Fluxo de trabalho atual: {{name}}",
     "editWorkflow": "Editar fluxo de trabalho",
     "newWorkflow": "Novo fluxo de trabalho"

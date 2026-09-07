@@ -9491,13 +9491,13 @@
     "widgetDefault": ""
   },
   "workflowSwitcher": {
-    "countsAria": "{{todoLabel}}: {{todo}}, {{inProgressLabel}}: {{inProgress}}, {{doneLabel}}: {{done}}{{mergingSuffix}}",
-    "done": "Done",
-    "inProgress": "In Progress",
+    "countsAria": "{{planLabel}}: {{plan}}, {{progressLabel}}: {{progress}}, {{reviewLabel}}: {{review}}{{mergingSuffix}}",
+    "plan": "계획",
+    "progress": "진행",
     "label": "Workflow",
     "merging": "",
     "mergingTitle": "",
-    "todo": "Todo",
+    "review": "검토",
     "triggerAria": "Select workflow. Current workflow: {{name}}",
     "editWorkflow": "Edit workflow",
     "newWorkflow": "New workflow"

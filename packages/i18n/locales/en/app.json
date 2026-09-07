@@ -9580,13 +9580,13 @@
     "widgetDefault": "Default"
   },
   "workflowSwitcher": {
-    "countsAria": "{{todoLabel}}: {{todo}}, {{inProgressLabel}}: {{inProgress}}, {{doneLabel}}: {{done}}{{mergingSuffix}}",
-    "done": "Done",
-    "inProgress": "In Progress",
+    "countsAria": "{{planLabel}}: {{plan}}, {{progressLabel}}: {{progress}}, {{reviewLabel}}: {{review}}{{mergingSuffix}}",
+    "plan": "Plan",
+    "progress": "Progress",
     "label": "Workflow",
     "merging": "Merging",
     "mergingTitle": "{{count}} merging task{{plural}}",
-    "todo": "Todo",
+    "review": "Review",
     "triggerAria": "Select workflow. Current workflow: {{name}}",
     "editWorkflow": "Edit workflow",
     "newWorkflow": "New workflow"

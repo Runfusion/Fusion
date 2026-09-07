@@ -9733,15 +9733,15 @@ export default interface Resources {
       "widgetDefault": "Default"
     },
     "workflowSwitcher": {
-      "countsAria": "{{todoLabel}}: {{todo}}, {{inProgressLabel}}: {{inProgress}}, {{doneLabel}}: {{done}}{{mergingSuffix}}",
-      "done": "Done",
+      "countsAria": "{{planLabel}}: {{plan}}, {{progressLabel}}: {{progress}}, {{reviewLabel}}: {{review}}{{mergingSuffix}}",
       "editWorkflow": "Edit workflow",
-      "inProgress": "In Progress",
       "label": "Workflow",
       "merging": "Merging",
       "mergingTitle": "{{count}} merging task{{plural}}",
       "newWorkflow": "New workflow",
-      "todo": "Todo",
+      "plan": "Plan",
+      "progress": "Progress",
+      "review": "Review",
       "triggerAria": "Select workflow. Current workflow: {{name}}"
     },
     "workflows": {
