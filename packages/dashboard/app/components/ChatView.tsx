@@ -62,6 +62,10 @@ import { formatTokenCount } from "../utils/estimateChatTokens";
 import { resolveChatContextUsage } from "../utils/chatContextUsage";
 import { copyTextToClipboard } from "../utils/copyToClipboard";
 import { buildChatQuotePrefill } from "../utils/chatQuotePrefill";
+import {
+  clearPersistedChatOpenSession,
+  getPersistedChatOpenSession,
+} from "../utils/projectStorage";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { ViewHeader } from "./ViewHeader";
@@ -617,6 +621,9 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
 
   FNXC:ChatWindows 2026-08-27-09:09:
   FN-193 makes useChat expose initialDirectSession on the first committed render. Seed detail and previous detail state from that same requested session so a dedicated pop-out paints its thread without pushing a phantom navigation-history entry.
+
+  FNXC:ChatNavigation 2026-09-07-21:35:
+  FN-313 restaure le détail ordinaire seulement après que useChat a validé la session sauvegardée dans la liste du projet. Cette ouverture automatique ne pousse aucune entrée de navigation; Back efface la préférence pour représenter explicitement la liste, tandis qu’un hôte `persistChatPreferences={false}` reste entièrement local.
   */
   const [detailOpen, setDetailOpen] = useState(() => Boolean(initialDirectSession));
   /*
@@ -1248,7 +1255,17 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     }
 
     logScrollDebug(isThreadChanged ? "thread-change" : finishedLoading ? "finished-loading" : firstMessagesArrived ? "first-messages" : "mount");
-    anchorToBottom(messagesContainer, { force: true });
+    /*
+    FNXC:ChatScrollAnchor 2026-09-07-22:17:
+    Une nouvelle incarnation de fil reprend la propriété du viewport avant sa première écriture afin de ne jamais hériter du désengagement du fil précédent. Les frames suivantes et l’arrivée différée des messages respectent toutefois immédiatement tout nouveau défilement manuel effectué dans ce fil.
+    */
+    const shouldTakeViewportOwnership = previousState === null || isThreadChanged;
+    if (shouldTakeViewportOwnership) {
+      scrollRestoreSnapshotRef.current = null;
+      isUserScrollingRef.current = false;
+      setIsUserScrolling(false);
+    }
+    anchorToBottom(messagesContainer, { force: shouldTakeViewportOwnership });
     {
       directThreadDeferredAnchorTimeoutRef.current = window.setTimeout(() => {
         directThreadDeferredAnchorTimeoutRef.current = null;
@@ -2554,7 +2571,10 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     setConversationSearchOpen(false);
     setConversationSearchQuery("");
     setConversationSearchIndex(0);
-  }, []);
+    if (persistChatPreferences) {
+      clearPersistedChatOpenSession(projectId);
+    }
+  }, [persistChatPreferences, projectId]);
 
   const handleVisibleDetailBack = useCallback(() => {
     handleBack();
@@ -2645,6 +2665,20 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
 
     inputRef.current?.focus();
   }, [activeSession?.id, findActive, hasDetailSelection, initialDirectSessionNonce, suppressComposerFocus]);
+
+  useEffect(() => {
+    if (
+      initialDirectSession
+      || !persistChatPreferences
+      || !activeSession
+      || detailOpen
+      || getPersistedChatOpenSession(projectId) !== activeSession.id
+    ) {
+      return;
+    }
+    suppressAutomaticDetailNavRef.current = true;
+    setDetailOpen(true);
+  }, [activeSession, detailOpen, initialDirectSession, persistChatPreferences, projectId]);
 
   useEffect(() => {
     if (initialDirectSessionNonce === previousInitialDirectSessionNonceRef.current) return;

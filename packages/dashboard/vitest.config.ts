@@ -256,6 +256,7 @@ const qualityAppChatOnlyTests = [
   "app/components/__tests__/ChatView.mobile.test.tsx",
   "app/components/__tests__/ChatView.mobile-render.test.tsx",
   "app/components/__tests__/ChatView.new-chat-default.test.tsx",
+  "app/components/__tests__/ChatView.open-at-latest.test.tsx",
   "app/components/__tests__/ChatView.sessions-rooms.test.tsx",
   "app/components/__tests__/ChatView.swipe-back.test.tsx",
   "app/components/__tests__/overflowViewRegistry.chat.test.tsx",

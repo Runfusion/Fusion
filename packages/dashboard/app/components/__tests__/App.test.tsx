@@ -693,6 +693,7 @@ import { AUTH_TOKEN_RECOVERY_REQUIRED_EVENT } from "../../auth";
 import { fetchAuthStatus, fetchSettings, fetchGlobalSettings, fetchTaskDetail, fetchUnreadCount, updateSettings, runScript, fetchScripts, fetchModels, fetchPluginDashboardViews, fetchDashboardHealth, fetchBoardWorkflows } from "../../api";
 import { __resetShellHostContextForTests } from "../../shell-host";
 import { __test_clearDashboardViewsCache } from "../../hooks/usePluginDashboardViews";
+import * as pluginViewRegistry from "../../plugins/pluginViewRegistry";
 import * as apiNodeModule from "../../hooks/useRemoteNodeData";
 import { DEFAULT_BOARD_WORKFLOWS } from "./boardWorkflows.test-helpers";
 
@@ -2692,6 +2693,25 @@ describe("App view switching", () => {
     localStorage.removeItem("kb-dashboard-view-mode");
   });
 
+  it("normalizes an unavailable persisted plugin view to Board for the current project", async () => {
+    const registrationSpy = vi.spyOn(pluginViewRegistry, "isPluginViewRegistered").mockReturnValue(false);
+    localStorage.setItem("kb-dashboard-view-mode", "project");
+    localStorage.setItem(taskViewStorageKey(), "plugin:fusion-plugin-dependency-graph:graph");
+    (fetchPluginDashboardViews as ReturnType<typeof vi.fn>).mockResolvedValueOnce([]);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("sidebar-nav-board").className).toContain("active");
+      expect(localStorage.getItem(taskViewStorageKey())).toBe("board");
+    });
+    expect(screen.queryByTestId("dependency-graph")).toBeNull();
+
+    registrationSpy.mockRestore();
+    localStorage.removeItem(taskViewStorageKey());
+    localStorage.removeItem("kb-dashboard-view-mode");
+  });
+
   it("renders plugin-hosted dashboard view from persisted task view id", async () => {
     localStorage.setItem("kb-dashboard-view-mode", "project");
     localStorage.setItem(taskViewStorageKey(), "plugin:fusion-plugin-dependency-graph:graph");
@@ -3069,30 +3089,32 @@ describe("App view switching", () => {
     localStorage.removeItem(taskViewStorageKey());
   });
 
-  it("project switch rehydrates each project's own scoped task-view", async () => {
+  it("project switch renders and restores each project's own scoped main view", async () => {
     const projectA = { id: "proj_a", name: "Project A", path: "/a", status: "active" as const, isolationMode: "in-process" as const, createdAt: "", updatedAt: "" };
     const projectB = { id: "proj_b", name: "Project B", path: "/b", status: "active" as const, isolationMode: "in-process" as const, createdAt: "", updatedAt: "" };
 
-    // Set different views for each project
-    localStorage.setItem("kb:proj_a:kb-dashboard-task-view", "insights");
-    localStorage.setItem("kb:proj_b:kb-dashboard-task-view", "agents");
-
+    localStorage.setItem("kb:proj_a:kb-dashboard-task-view", "chat");
+    localStorage.setItem("kb:proj_b:kb-dashboard-task-view", "insights");
     mockProjectsState.projects = [projectA, projectB];
     mockCurrentProjectState.currentProject = projectA;
 
-    render(<App />);
+    const view = render(<App />);
+    await waitFor(() => expect(screen.getByTestId("fb-probe-chat")).toBeTruthy());
+    expect(screen.getByTestId("sidebar-nav-chat").className).toContain("active");
+    expect(localStorage.getItem("kb:proj_a:kb-dashboard-task-view")).toBe("chat");
 
-    // Wait for project A's insights view to load
-    await waitFor(() => {
-      expect(document.querySelector(".insights-view")).toBeTruthy();
-    });
-
-    // Verify the sidebar Insights entry is active
+    mockCurrentProjectState.currentProject = projectB;
+    view.rerender(<App />);
+    await waitFor(() => expect(document.querySelector(".insights-view")).toBeTruthy());
     expect(screen.getByTestId("sidebar-nav-insights").className).toContain("active");
+    expect(localStorage.getItem("kb:proj_b:kb-dashboard-task-view")).toBe("insights");
 
-    // Cleanup
-    localStorage.removeItem("kb:proj_a:kb-dashboard-task-view");
-    localStorage.removeItem("kb:proj_b:kb-dashboard-task-view");
+    mockCurrentProjectState.currentProject = projectA;
+    view.rerender(<App />);
+    await waitFor(() => expect(screen.getByTestId("fb-probe-chat")).toBeTruthy());
+    expect(screen.getByTestId("sidebar-nav-chat").className).toContain("active");
+    expect(localStorage.getItem("kb:proj_a:kb-dashboard-task-view")).toBe("chat");
+    expect(localStorage.getItem("kb:proj_b:kb-dashboard-task-view")).toBe("insights");
   });
 
   it("keeps insights view button visible after graduation from experimental flags", async () => {

@@ -23,11 +23,14 @@ import {
 } from "../api";
 import { subscribeSse } from "../sse-bus";
 import { createResyncRetryRunner } from "./resyncRetry";
-import { getScopedItem, setScopedItem, removeScopedItem } from "../utils/projectStorage";
+import {
+  clearPersistedChatOpenSession,
+  getPersistedChatOpenSession,
+  setPersistedChatOpenSession,
+} from "../utils/projectStorage";
 import { recordResumeEvent } from "../utils/resumeInstrumentation";
 import type { Agent, ChatInFlightGenerationState, ChatMessage, ChatTag } from "@fusion/core";
 
-const ACTIVE_SESSION_STORAGE_KEY = "kb-chat-active-session";
 /**
  * FNXC:Chat-ModelSwitch 2026-07-12-00:00:
  * Model-loop direct sessions store this sentinel agent id so the UI and hook share one target-mode check instead of duplicating the literal in each composer surface.
@@ -722,7 +725,7 @@ export function useChat(
       return;
     }
 
-    const savedSessionId = getScopedItem(ACTIVE_SESSION_STORAGE_KEY, projectId);
+    const savedSessionId = getPersistedChatOpenSession(projectId);
     if (!savedSessionId) {
       hasRestoredActiveSessionRef.current = true;
       return;
@@ -735,6 +738,8 @@ export function useChat(
       return;
     }
 
+    // A removed or archived saved session represents no restorable detail and must not retry forever.
+    clearPersistedChatOpenSession(projectId);
     hasRestoredActiveSessionRef.current = true;
   }, [initialSession, persistActiveSession, sessionsLoading, sessions, projectId]);
 
@@ -1214,12 +1219,12 @@ export function useChat(
         setMessages([]);
       }
 
-      // Ordinary Chat hosts retain the project-scoped selection; secondary windows do not.
+      // Ordinary Chat hosts retain the project-scoped open detail; secondary windows do not.
       if (persistActiveSession) {
         if (id) {
-          setScopedItem(ACTIVE_SESSION_STORAGE_KEY, id, projectId);
+          setPersistedChatOpenSession(id, projectId);
         } else {
-          removeScopedItem(ACTIVE_SESSION_STORAGE_KEY, projectId);
+          clearPersistedChatOpenSession(projectId);
         }
       }
     },
