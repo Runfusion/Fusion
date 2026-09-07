@@ -2,6 +2,46 @@
 
 User-facing release notes aggregated across all packages. This file is auto-synced from each `packages/*/CHANGELOG.md` by `scripts/release.mjs` — do not edit by hand.
 
+## 0.78.0-beta.4
+
+### Highlights
+
+- Task archiving is gone — completed work now lives in the paginated Done column
+- Enter makes new lines in mobile chat composers, with a global submit-on-Enter setting
+- Long Direct and Planner Chat threads stay responsive with full history preserved
+- Plan Review no longer runs before planning finishes, so approvals stay exclusive
+- Chat composers stay editable right after you stop a response
+
+### Breaking
+
+- Task archiving is removed. Completed history now stays in the paginated Done column; the archive and unarchive commands, task tools, routes, settings, and the Archived workflow role are gone.
+
+### New
+
+- Enter now inserts a new line in mobile conversation composers, controlled by a global submit-on-Enter setting with `auto`, `always`, and `never`. On `auto`, touch devices treat plain Enter as a newline while pointer devices still send. Shift+Enter never sends, and Cmd/Ctrl+Enter always sends.
+- The inbox adds dedicated recommendation navigation plus new-item badges for recommendations and artifacts, with unread counts split by category.
+- Task detail moves metadata into Details and quick controls into the footer Actions menu, replacing the inline action row and the Priority/Oversight popovers.
+- Quick scripts can be renamed and described across every terminal launcher, with existing commands and script references kept intact on rename.
+
+### Fixed
+
+- Chat composers stay editable immediately after you stop a response instead of locking up mid-reconciliation.
+- Plan Review no longer starts before planning finishes, and its outcome stays exclusive through planner-aware liveness, continuation leases, and fail-closed routing.
+- Chat keeps your reading position while sending and only follows streaming replies when you are pinned to the bottom.
+- Legacy archives returning to Done restore their complete task history and metrics, with a dry-run/apply repair tool for auditing the fix.
+- Favorite stars work again in chat model selectors, and mobile Brain menus stay overlaid on the viewport.
+- OAuth re-login status stays consistent after an automatic token renewal, so the dashboard banner clears promptly.
+- Headings inside a task description no longer block plan approval; spec lock failures now explain what to fix.
+- The GitHub import screen uses the full phone width for its top controls and insets.
+
+### Performance
+
+- Long Direct and Planner Chat conversations stay responsive using bounded transcript windows and strict history cursors, with no history dropped.
+
+### Internal
+
+- One Coding (Ideas) workflow remains, and Coding is now Coding (Auto). Legacy selections are canonicalized on read and write, so the board and scheduler share one Ideas identity. No migration ships and older Fusion binaries keep database access.
+
 ## 0.78.0-beta.3
 
 ### Highlights
