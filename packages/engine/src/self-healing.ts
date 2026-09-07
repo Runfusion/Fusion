@@ -8606,11 +8606,17 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
               localNodeLeaseIdentity,
             ).kind === "adopt";
           };
+          /*
+          FNXC:OrphanedPendingSteps 2026-09-07-05:09:
+          FN-9270 proved a persistence failure can leave a pending row without any restart. This
+          sweep observes only missing session and lease evidence, so its diagnostic must state that
+          fact rather than inventing a crash while retaining FN-8492's failed-row contract.
+          */
           const { results, orphanedCount } = resolveOrphanedPendingStepResults<WorkflowStepResult>(
             fresh.workflowStepResults,
             (result) => isSessionLive(task.id) || hasLiveReviewLease(result),
             {
-              output: "Step session did not survive an engine restart or crash; marked failed by self-healing (FN-8492).",
+              output: "Pending step result had no live session or lease; marked failed by self-healing (FN-8492).", 
               completedAt: new Date().toISOString(),
             },
           );

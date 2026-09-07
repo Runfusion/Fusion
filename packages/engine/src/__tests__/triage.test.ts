@@ -1,12 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { Agent, TaskStore, Task, TaskDetail, Settings } from "@fusion/core";
-import { applyOriginalDescription, builtinSeamPrompt, buildBootstrapPrompt, computePlanApprovalFingerprint, deriveFallbackTaskTitle, MAX_TASK_LIST_TEXT_CHARS, renderTriagePolicyPlaceholders, resolveAgentPrompt } from "@fusion/core";
+import { applyOriginalDescription, builtinSeamPrompt, buildBootstrapPrompt, computePlanApprovalFingerprint, createCurrentPlanEvidence, deriveFallbackTaskTitle, MAX_TASK_LIST_TEXT_CHARS, renderTriagePolicyPlaceholders, resolveAgentPrompt, UnavailablePlanLockError } from "@fusion/core";
 import {
   TriageProcessor,
   buildSpecificationPrompt,
   resolveTaskListFormatter,
   readAttachmentContents,
   computeUserCommentFingerprint,
+  PLANNING_SPEC_LOCK_UNAVAILABLE_FAILURE_KEY,
 } from "../triage.js";
 import {
   AgentSemaphore,
@@ -4024,6 +4025,103 @@ describe("taskCreate tool model inheritance", () => {
       const { promptWithFallback } = await import("../pi.js");
       (promptWithFallback as ReturnType<typeof vi.fn>).mockReset();
       (promptWithFallback as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    });
+
+    it("records deterministic spec-lock evidence across real planner finalization attempts", async () => {
+      const task = createTriageTask({ id: "FN-SPEC-LOCK-RETRY" });
+      const root = await createTriageFixtureRoot("fusion-triage-spec-lock-retry-");
+      const promptPath = join(root, ".fusion", "tasks", task.id, "PROMPT.md");
+      await mkdir(join(root, ".fusion", "tasks", task.id), { recursive: true });
+      const liveTask = { ...task, attachments: [], comments: [] } as Task;
+      const initialPrompt = "## Mission\n\nPlanner-authored initial plan\n";
+      const changedPrompt = "## Mission\n\nPlanner-authored changed plan\n";
+      const replanInputPrompt = "## Mission\n\nPlanner-authored replan input\n";
+      const successfulPrompt = "## Mission\n\nPlanner-authored successful plan\n";
+      const sourceHashFor = (prompt: string) => createCurrentPlanEvidence({
+        version: 1,
+        sourceRevision: 1,
+        capturedAt: "2026-09-07T00:00:00.000Z",
+        prompt,
+      }).sourceHash;
+      let plannerCalls = 0;
+      let lockFailure = true;
+      const updateTask = vi.fn(async (_id: string, patch: Partial<Task>) => {
+        Object.assign(liveTask, patch);
+        return liveTask;
+      });
+      const store = createMockStore({
+        getTask: vi.fn(async () => liveTask),
+        updateTask,
+        isBackendMode: vi.fn(() => true),
+        captureCurrentPlanEvidenceWhilePlanningLocked: vi.fn(async () => undefined),
+        lockCurrentPlanWhilePlanningLocked: vi.fn(async () => {
+          if (!lockFailure) return;
+          const lockedPrompt = readFileSync(promptPath, "utf8");
+          throw new UnavailablePlanLockError("section-duplicate", ["mission"], sourceHashFor(lockedPrompt));
+        }),
+        reconcileSpecDriftWhilePlanningLocked: vi.fn(async () => undefined),
+      });
+      mockCreateFnAgent.mockResolvedValue({
+        session: { prompt: vi.fn(), dispose: vi.fn(), sessionManager: {}, navigateTree: vi.fn() },
+      });
+      const { promptWithFallback } = await import("../pi.js");
+      (promptWithFallback as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+        plannerCalls += 1;
+        const plannerPrompt = plannerCalls <= 2
+          ? initialPrompt
+          : plannerCalls === 3
+            ? changedPrompt
+            : successfulPrompt;
+        await writeFile(promptPath, plannerPrompt, "utf8");
+      });
+
+      try {
+        const processor = new TriageProcessor(store, root, { pollIntervalMs: 100_000 });
+
+        await processor.specifyTask({ ...liveTask });
+        expect(liveTask).toMatchObject({ status: "needs-replan", recoveryRetryCount: 1 });
+        const initialSourceHash = sourceHashFor(readFileSync(promptPath, "utf8"));
+        expect(liveTask.customFields?.[PLANNING_SPEC_LOCK_UNAVAILABLE_FAILURE_KEY]).toMatchObject({
+          sourceHash: initialSourceHash, reason: "section-duplicate", sections: ["mission"], attempt: 1,
+        });
+
+        await processor.specifyTask({ ...liveTask });
+        expect(sourceHashFor(readFileSync(promptPath, "utf8"))).toBe(initialSourceHash);
+        expect(liveTask).toMatchObject({
+          status: "failed",
+          error: "PLANNING_FAILED_SPEC_LOCK_UNAVAILABLE: section-duplicate (mission)",
+          recoveryRetryCount: null,
+          nextRecoveryAt: null,
+        });
+        expect(liveTask.customFields?.[PLANNING_SPEC_LOCK_UNAVAILABLE_FAILURE_KEY]).toBeUndefined();
+
+        Object.assign(liveTask, {
+          status: "needs-replan",
+          error: null,
+          recoveryRetryCount: 1,
+          nextRecoveryAt: null,
+          customFields: {
+            [PLANNING_SPEC_LOCK_UNAVAILABLE_FAILURE_KEY]: {
+              sourceHash: initialSourceHash, reason: "section-duplicate", sections: ["mission"], at: new Date().toISOString(), attempt: 1,
+            },
+          },
+        });
+        await writeFile(promptPath, replanInputPrompt, "utf8");
+        expect(readFileSync(promptPath, "utf8")).toBe(replanInputPrompt);
+        await processor.specifyTask({ ...liveTask });
+        const changedSourceHash = sourceHashFor(readFileSync(promptPath, "utf8"));
+        expect(changedSourceHash).not.toBe(initialSourceHash);
+        expect(liveTask).toMatchObject({ status: "needs-replan", recoveryRetryCount: 2 });
+        expect(liveTask.customFields?.[PLANNING_SPEC_LOCK_UNAVAILABLE_FAILURE_KEY]).toMatchObject({ sourceHash: changedSourceHash });
+
+        lockFailure = false;
+        Object.assign(liveTask, { status: "needs-replan", recoveryRetryCount: null, nextRecoveryAt: null });
+        await processor.specifyTask({ ...liveTask });
+        expect(liveTask.customFields?.[PLANNING_SPEC_LOCK_UNAVAILABLE_FAILURE_KEY]).toBeUndefined();
+        expect(store.lockCurrentPlanWhilePlanningLocked).toHaveBeenCalledTimes(4);
+      } finally {
+        await cleanupTriageFixtureRoot(root);
+      }
     });
 
     it("requeues triage with backoff when the agent exits without writing PROMPT.md", async () => {

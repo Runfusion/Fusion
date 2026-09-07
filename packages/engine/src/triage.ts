@@ -63,6 +63,7 @@ import {
   parsePlanningPlanMd,
   matchStepHeadings,
   loadWorkspaceConfig,
+  isUnavailablePlanLockError,
   type NearDuplicateCandidate,
 } from "@fusion/core";
 
@@ -87,6 +88,19 @@ const LEGACY_PLANNER_WAKE_COLUMNS = new Set(["todo", "triage"]);
 const LEGACY_PLANNER_COLUMNS = new Set([...LEGACY_PLANNER_WAKE_COLUMNS, "in-progress"]);
 
 const PLANNING_LIFECYCLE_LOCK_TRANSPORT_FAILURE_KEY = "planning.lifecycleLockTransportFailure";
+export const PLANNING_SPEC_LOCK_UNAVAILABLE_FAILURE_KEY = "planning.specLockUnavailableFailure";
+
+type PlanningSpecLockUnavailableFailure = { sourceHash: string; reason: string; sections: string[]; at: string; attempt: number | null };
+
+function getPlanningSpecLockUnavailableFailure(task: Task): PlanningSpecLockUnavailableFailure | null {
+  const candidate = task.customFields?.[PLANNING_SPEC_LOCK_UNAVAILABLE_FAILURE_KEY];
+  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return null;
+  const marker = candidate as Partial<PlanningSpecLockUnavailableFailure>;
+  return typeof marker.sourceHash === "string" && typeof marker.reason === "string" && typeof marker.at === "string" && Array.isArray(marker.sections)
+    && marker.sections.every((section) => typeof section === "string")
+    ? { sourceHash: marker.sourceHash, reason: marker.reason, sections: marker.sections, at: marker.at, attempt: typeof marker.attempt === "number" ? marker.attempt : null }
+    : null;
+}
 
 type PlanningLifecycleLockTransportFailure = { message: string; at: string; attempt: number | null };
 
@@ -4046,6 +4060,56 @@ export class TriageProcessor {
           await this.backfillBlankTitleAfterTerminalTriageFailure(task);
           this.options.onSpecifyError?.(task, err instanceof Error ? err : new Error(errorMessage));
           return;
+        } else if (isUnavailablePlanLockError(err)) {
+          /*
+          FNXC:SpecLock 2026-09-07-05:09:
+          Parser failures are deterministic for a given source hash. Retrying that identical prompt
+          burns the planning budget without changing its structural verdict; retain the hash so a
+          changed prompt gets one ordinary recovery attempt while the repeat parks immediately.
+          */
+          const prior = getPlanningSpecLockUnavailableFailure(task);
+          const sections = err.unavailableSections.join(", ") || "unknown section";
+          const failureMessage = `PLANNING_FAILED_SPEC_LOCK_UNAVAILABLE: ${err.reason} (${sections})`;
+          if (prior?.sourceHash === err.sourceHash) {
+            await this.store.logEntry(task.id, `${failureMessage}; identical prompt parse verdict repeated. Operator description headings are not the cause.`).catch(() => undefined);
+            await this.updatePlanningStateIfStillCurrent(task, (live) => {
+              const customFields = { ...(live.customFields ?? {}) };
+              delete customFields[PLANNING_SPEC_LOCK_UNAVAILABLE_FAILURE_KEY];
+              return { status: "failed", error: failureMessage, recoveryRetryCount: null, nextRecoveryAt: null, customFields };
+            });
+            await this.backfillBlankTitleAfterTerminalTriageFailure(task);
+            return;
+          }
+          const decision = computeRecoveryDecision({ recoveryRetryCount: task.recoveryRetryCount, nextRecoveryAt: task.nextRecoveryAt });
+          const retryMessage = `${failureMessage}; recording deterministic parser evidence and retrying once for changed prompt text. Operator description headings are not the cause.`;
+          await this.store.logEntry(task.id, retryMessage).catch(() => undefined);
+          if (decision.shouldRetry) {
+            const retryHoldStatus = await this.resolvePlanningRetryHoldStatus(task);
+            await this.updatePlanningStateIfStillCurrent(task, (live) => ({
+              customFields: {
+                ...(live.customFields ?? {}),
+                [PLANNING_SPEC_LOCK_UNAVAILABLE_FAILURE_KEY]: {
+                  sourceHash: err.sourceHash,
+                  reason: err.reason,
+                  sections: err.unavailableSections,
+                  at: new Date().toISOString(),
+                  attempt: decision.nextState.recoveryRetryCount,
+                },
+              },
+              status: retryHoldStatus,
+              error: null,
+              recoveryRetryCount: decision.nextState.recoveryRetryCount,
+              nextRecoveryAt: decision.nextState.nextRecoveryAt,
+            }));
+            return;
+          }
+          await this.updatePlanningStateIfStillCurrent(task, (live) => {
+            const customFields = { ...(live.customFields ?? {}) };
+            delete customFields[PLANNING_SPEC_LOCK_UNAVAILABLE_FAILURE_KEY];
+            return { status: "failed", error: failureMessage, recoveryRetryCount: null, nextRecoveryAt: null, customFields };
+          });
+          await this.backfillBlankTitleAfterTerminalTriageFailure(task);
+          return;
         } else if (isPlanningLifecycleLockTransportError(err)) {
           /*
           FNXC:PlanningDependencyReseed 2026-08-09-21:53:
@@ -5579,6 +5643,7 @@ export class TriageProcessor {
     await this.updatePlanningStateIfStillCurrent(task, (live) => {
       const customFields = { ...(live.customFields ?? {}) };
       delete customFields[PLANNING_LIFECYCLE_LOCK_TRANSPORT_FAILURE_KEY];
+      delete customFields[PLANNING_SPEC_LOCK_UNAVAILABLE_FAILURE_KEY];
       return { customFields };
     });
 
