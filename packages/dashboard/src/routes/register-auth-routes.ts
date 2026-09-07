@@ -961,6 +961,12 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
       Status remains the full provider envelope: a targeted instance only re-points its named
       provider. A missing well-formed target is safely unauthenticated, never default fallback.
       */
+      /*
+      FNXC:ProviderAuth 2026-09-07-05:09:
+      Provider status refreshes before this instance projection. Read instances only after that
+      recheck so the default row reflects the same persisted OAuth expiry used by its provider
+      envelope; a renewable session must not appear connected in one surface and expired in another.
+      */
       const instanceProviders = providers.map((provider) => {
         if (syntheticCliProviderIds.has(provider.id)) return provider;
         const target = requestedProvider === provider.id ? requestedInstance : undefined;

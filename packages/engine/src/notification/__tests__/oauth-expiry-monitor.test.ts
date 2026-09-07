@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { OAuthAlertStateStore } from "../oauth-alert-state.js";
 import { OAuthExpiryMonitor, type AuthStorageLike } from "../oauth-expiry-monitor.js";
+import { createFusionAuthStorage } from "../../auth/auth-storage.js";
 
 const tempDirs: string[] = [];
 
@@ -144,39 +145,52 @@ describe("OAuthExpiryMonitor", () => {
   });
 
   /*
-  FNXC:ProviderAuth 2026-07-11-18:00:
-  Regression coverage for FN-7821: GitHub Copilot's stored OAuth access token is intentionally short-lived and can look expired on an OAuthExpiryMonitor interval tick even though getApiKey() can silently refresh it. The monitor must attempt that refresh and re-check before dispatching so ntfy and OAuthReloginBanner do not disagree.
+  FNXC:ProviderAuth 2026-09-07-05:37:
+  The monitor must exercise the same Fusion auth-storage proxy and pi runtime write-back as
+  /auth/status. A mocked getApiKey can hide a broken ModelRuntime.getAuth delegation and let a
+  renewable Codex session notify even though Settings later reports it connected.
   */
-  it("does not fire for github-copilot when getApiKey refreshes the expired credential", async () => {
-    vi.useFakeTimers();
+  it("does not fire for renewable openai-codex credentials through the real Fusion storage seam", async () => {
+    const previousHome = process.env.HOME;
+    const homeDir = mkdtempSync(join(tmpdir(), "oauth-expiry-monitor-refresh-"));
     const now = Date.now();
-    let credential: TestCredential | undefined = { type: "oauth", expires: now - 1_000 };
-    const getApiKey = vi.fn(async () => {
-      credential = { type: "oauth", expires: now + 60_000 };
-      return "opaque-github-copilot-access-token";
-    });
-    const dispatch = vi.fn(async () => undefined);
-    const authStorage: AuthStorageLike = {
-      reload: vi.fn(),
-      getOAuthProviders: () => [{ id: "github-copilot", name: "GitHub Copilot" }],
-      get: (providerId: string) => providerId === "github-copilot" ? credential : undefined,
-      getApiKey,
-    };
+    const renewedExpires = now + 60_000;
 
-    const monitor = new OAuthExpiryMonitor({
-      authStorage,
-      notificationService: { dispatch } as any,
-      intervalMs: 100,
-      clock: () => now,
-      alertState: new OAuthAlertStateStore({ statePath: createStatePath(), clock: () => now }),
-    });
+    try {
+      process.env.HOME = homeDir;
+      const authStorage = createFusionAuthStorage();
+      await authStorage.set("openai-codex", {
+        type: "oauth",
+        access: "expired-access-token",
+        refresh: "refresh-material",
+        expires: now - 1_000,
+      } as never);
+      const getAuth = vi.fn(async (providerId: string) => {
+        await authStorage.modify(providerId, async (credential) => ({
+          ...credential,
+          expires: renewedExpires,
+        }));
+      });
+      authStorage.setModelRuntime({ getAuth } as never);
+      const dispatch = vi.fn(async () => undefined);
+      const monitor = new OAuthExpiryMonitor({
+        authStorage,
+        notificationService: { dispatch } as any,
+        intervalMs: 60_000,
+        clock: () => now,
+        alertState: new OAuthAlertStateStore({ statePath: createStatePath(), clock: () => now }),
+      });
 
-    await monitor.start();
-    await vi.runOnlyPendingTimersAsync();
+      await monitor.start();
 
-    expect(getApiKey).toHaveBeenCalledWith("github-copilot");
-    expect(dispatch).not.toHaveBeenCalled();
-    monitor.stop();
+      expect(getAuth).toHaveBeenCalledWith("openai-codex");
+      expect(dispatch).not.toHaveBeenCalled();
+      monitor.stop();
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      rmSync(homeDir, { force: true, recursive: true });
+    }
   });
 
   it("still fires exactly once for github-copilot when refresh throws and never logs token material in metadata", async () => {
@@ -223,29 +237,48 @@ describe("OAuthExpiryMonitor", () => {
     monitor.stop();
   });
 
-  it("still fires for openai-codex when refresh leaves the credential expired", async () => {
-    vi.useFakeTimers();
+  it("still fires exactly once for unrenewable openai-codex credentials through the real Fusion storage seam", async () => {
+    const previousHome = process.env.HOME;
+    const homeDir = mkdtempSync(join(tmpdir(), "oauth-expiry-monitor-unrenewable-"));
     const now = Date.now();
-    const authStorage = createAuthStorage({ type: "oauth", expires: now - 1_000 });
-    const getApiKey = vi.fn(async () => "opaque-openai-codex-access-token");
-    authStorage.getApiKey = getApiKey;
-    const dispatch = vi.fn(async () => undefined);
 
-    const monitor = new OAuthExpiryMonitor({
-      authStorage,
-      notificationService: { dispatch } as any,
-      intervalMs: 100,
-      clock: () => now,
-      alertState: new OAuthAlertStateStore({ statePath: createStatePath(), clock: () => now }),
-    });
+    try {
+      process.env.HOME = homeDir;
+      const authStorage = createFusionAuthStorage();
+      await authStorage.set("openai-codex", {
+        type: "oauth",
+        access: "expired-access-token",
+        expires: now - 1_000,
+      } as never);
+      const getAuth = vi.fn();
+      authStorage.setModelRuntime({ getAuth } as never);
+      const dispatch = vi.fn(async () => undefined);
+      const monitor = new OAuthExpiryMonitor({
+        authStorage,
+        notificationService: { dispatch } as any,
+        intervalMs: 60_000,
+        clock: () => now,
+        alertState: new OAuthAlertStateStore({ statePath: createStatePath(), clock: () => now }),
+      });
 
-    await monitor.start();
-    await vi.runOnlyPendingTimersAsync();
+      await monitor.start();
 
-    expect(getApiKey).toHaveBeenCalledWith("openai-codex");
-    expect(dispatch).toHaveBeenCalledTimes(1);
-    expect(JSON.stringify(dispatch.mock.calls)).not.toContain("opaque-openai-codex-access-token");
-    monitor.stop();
+      expect(getAuth).not.toHaveBeenCalled();
+      expect(dispatch).toHaveBeenCalledTimes(1);
+      expect(dispatch).toHaveBeenCalledWith(
+        "oauth-token-expired",
+        expect.objectContaining({
+          metadata: expect.objectContaining({
+            notificationDedupeKey: `oauth-token-expired:openai-codex:${now - 1_000}`,
+          }),
+        }),
+      );
+      monitor.stop();
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      rmSync(homeDir, { force: true, recursive: true });
+    }
   });
 
   /*

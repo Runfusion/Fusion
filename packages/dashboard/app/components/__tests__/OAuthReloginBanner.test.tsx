@@ -36,6 +36,7 @@ describe("OAuthReloginBanner", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     window.localStorage.clear();
   });
 
@@ -101,6 +102,104 @@ describe("OAuthReloginBanner", () => {
 
     expect(await screen.findByRole("status")).toHaveTextContent("OpenAI Codex");
     expect(screen.getByRole("status")).not.toHaveTextContent("Anthropic Subscription");
+  });
+
+  it("clears the stale Codex banner on its status poll at desktop and mobile widths", async () => {
+    vi.useFakeTimers();
+    const setViewportWidth = (width: number) => Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
+    const expiredCodex = {
+      providers: [{ id: "openai-codex", name: "OpenAI Codex", type: "oauth" as const, authenticated: false, expired: true }],
+      ghCli: { available: false, authenticated: false },
+    };
+    const renewedCodex = {
+      providers: [{ id: "openai-codex", name: "OpenAI Codex", type: "oauth" as const, authenticated: true, expired: false }],
+      ghCli: { available: false, authenticated: false },
+    };
+    setViewportWidth(1024);
+    mockFetchAuthStatus.mockResolvedValueOnce(expiredCodex).mockResolvedValueOnce(renewedCodex);
+    const desktop = render(<OAuthReloginBanner onReLogin={vi.fn()} pollIntervalMs={1_000} />);
+    await act(flushPromises);
+    expect(screen.getByRole("status")).toHaveTextContent("OpenAI Codex");
+
+    await act(async () => {
+      vi.advanceTimersByTime(1_000);
+      await flushPromises();
+    });
+    expect(screen.queryByRole("status")).toBeNull();
+    desktop.unmount();
+
+    setViewportWidth(375);
+    mockFetchAuthStatus.mockResolvedValueOnce(expiredCodex).mockResolvedValueOnce(renewedCodex);
+    render(<OAuthReloginBanner onReLogin={vi.fn()} pollIntervalMs={1_000} />);
+    await act(flushPromises);
+    expect(screen.getByRole("status")).toHaveTextContent("OpenAI Codex");
+
+    await act(async () => {
+      vi.advanceTimersByTime(1_000);
+      await flushPromises();
+    });
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(mockFetchAuthStatus).toHaveBeenCalledTimes(4);
+  });
+
+  it("clears the stale Codex banner when the tab becomes visible", async () => {
+    mockFetchAuthStatus
+      .mockResolvedValueOnce({
+        providers: [{ id: "openai-codex", name: "OpenAI Codex", type: "oauth", authenticated: false, expired: true }],
+        ghCli: { available: false, authenticated: false },
+      })
+      .mockResolvedValueOnce({
+        providers: [{ id: "openai-codex", name: "OpenAI Codex", type: "oauth", authenticated: true, expired: false }],
+        ghCli: { available: false, authenticated: false },
+      });
+    const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+    render(<OAuthReloginBanner onReLogin={vi.fn()} pollIntervalMs={60_000} />);
+    expect(await screen.findByRole("status")).toHaveTextContent("OpenAI Codex");
+
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+      await flushPromises();
+    });
+    await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
+    expect(mockFetchAuthStatus).toHaveBeenCalledTimes(2);
+    visibility.mockRestore();
+  });
+
+  it("clears the stale Codex banner when the tab regains focus", async () => {
+    mockFetchAuthStatus
+      .mockResolvedValueOnce({
+        providers: [{ id: "openai-codex", name: "OpenAI Codex", type: "oauth", authenticated: false, expired: true }],
+        ghCli: { available: false, authenticated: false },
+      })
+      .mockResolvedValueOnce({
+        providers: [{ id: "openai-codex", name: "OpenAI Codex", type: "oauth", authenticated: true, expired: false }],
+        ghCli: { available: false, authenticated: false },
+      });
+    render(<OAuthReloginBanner onReLogin={vi.fn()} pollIntervalMs={60_000} />);
+    expect(await screen.findByRole("status")).toHaveTextContent("OpenAI Codex");
+
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+      await flushPromises();
+    });
+    await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
+    expect(mockFetchAuthStatus).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not refetch stale banner status while the tab is hidden", async () => {
+    mockFetchAuthStatus.mockResolvedValue({
+      providers: [{ id: "openai-codex", name: "OpenAI Codex", type: "oauth", authenticated: false, expired: true }],
+      ghCli: { available: false, authenticated: false },
+    });
+    const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    render(<OAuthReloginBanner onReLogin={vi.fn()} pollIntervalMs={60_000} />);
+    expect(await screen.findByRole("status")).toHaveTextContent("OpenAI Codex");
+
+    document.dispatchEvent(new Event("visibilitychange"));
+    window.dispatchEvent(new Event("focus"));
+    await flushPromises();
+    expect(mockFetchAuthStatus).toHaveBeenCalledTimes(1);
+    visibility.mockRestore();
   });
 
   it("clears the banner when OAuth success is dispatched for the status provider id", async () => {
