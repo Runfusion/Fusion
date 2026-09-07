@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Task, WorkflowStepResult } from "@fusion/core";
+import { getTaskMergeBlocker, UnavailablePlanLockError, type Task, type WorkflowStepResult } from "@fusion/core";
 import {
   attemptStillPresent,
   discardWorkflowStepLease,
@@ -195,6 +195,45 @@ describe("persistWorkflowStepResult abort and reset fence", () => {
     expect(reconcileSpecDriftWhilePlanningLocked).not.toHaveBeenCalled();
     expect(store.recordAgentActivity).not.toHaveBeenCalled();
     expect(task.workflowStepResults).toEqual([pending("plan-review", "attempt-a")]);
+  });
+
+  it("persists a failed Plan Review when the spec lock is deterministically unavailable", async () => {
+    const task = { id: "FN-249", workflowStepResults: [pending("plan-review", "attempt-a")] } as Task;
+    const { store, updateTask } = createStore(task, "direct");
+    const logEntry = vi.fn(async () => undefined);
+    Object.assign(store, {
+      isBackendMode: vi.fn(() => true),
+      logEntry,
+      withPlanningLifecycleLock: vi.fn(async (_id: string, callback: () => Promise<void>) => callback()),
+      lockCurrentPlanWhilePlanningLocked: vi.fn(async () => {
+        throw new UnavailablePlanLockError("section-duplicate", ["non-goals"], "source-hash");
+      }),
+      reconcileSpecDriftWhilePlanningLocked: vi.fn(async () => undefined),
+    });
+
+    await expect(persistWorkflowStepResultWithOutcome(
+      { store, getRunContextFor: () => undefined, readTaskArtifact: async () => "# Plan\n" } as never,
+      task.id,
+      { ...result(), workflowStepId: "plan-review", workflowStepName: "Plan Review", verdict: "APPROVE" },
+      { requireAttemptStartedAt: "attempt-a" },
+    )).resolves.toEqual({ scopeCurrent: true, persisted: true });
+
+    expect(updateTask).toHaveBeenCalledOnce();
+    expect(task.approvedPlanFingerprint).toBeUndefined();
+    expect(task.workflowStepResults).toEqual([expect.objectContaining({
+      workflowStepId: "plan-review", status: "failed", verdict: undefined,
+      output: expect.stringContaining("section-duplicate (non-goals)"),
+    })]);
+    expect(logEntry).toHaveBeenCalledWith(task.id, expect.stringContaining("section-duplicate (non-goals)"), undefined, undefined);
+    expect(getTaskMergeBlocker({
+      ...task,
+      column: "in-review",
+      paused: false,
+      status: null,
+      steps: [],
+    }, { requiredPreMergeStepIds: new Set(["plan-review"]) })).toBe(
+      "task has enabled pre-merge workflow steps without a current approval (gate 'plan-review')",
+    );
   });
 
   it("refuses an accepted Plan Review when Reset publishes between its fresh read and fenced write", async () => {

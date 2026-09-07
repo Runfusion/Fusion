@@ -1,12 +1,39 @@
 import { describe, expect, it } from "vitest";
 import { evaluateSpecDrift, hasPriorLockDivergence, isCurrentSpecDriftReport } from "../../planner/drift-report.js";
-import { canonicalizePlan, createCurrentPlanEvidence, diffSpecLocks, isSpecLockActive } from "../../planner/spec-lock.js";
+import { canonicalizePlan, createCurrentPlanEvidence, diffSpecLocks, isSpecLockActive, isUnavailablePlanLockError, UnavailablePlanLockError } from "../../planner/spec-lock.js";
+import { applyOriginalDescription } from "../../tasks/original-description-policy.js";
 
 const prompt = `# Task\n\n## Mission\n\nBuild a safe widget.\n\n## File Scope\n\n- src/widget.ts\n\n## Steps\n\n1. Build widget\n\n## Completion Criteria\n\n- [ ] Widget works\n\n## Do NOT\n\n- Change API\n\n## Dependencies\n\n- FN-1\n`;
 const evidence = (text = prompt, version = 1) => createCurrentPlanEvidence({ version, sourceRevision: version, capturedAt: "2026-08-09T07:06:00.000Z", prompt: text });
 const lock = (current = evidence()) => ({ version: 1, acceptedAt: "2026-08-09T07:06:00.000Z", approvalFingerprint: "approved", currentPlanVersion: current.version, currentPlanHash: current.plan.contentHash!, plan: current.plan });
 
 describe("spec lock canonicalization", () => {
+  it.each([
+    "Mission", "File Scope", "Steps", "Completion Criteria", "Acceptance Criteria", "Do NOT", "Non-goals", "Dependencies", "Mission Lineage", "Parent-child Lineage",
+  ])("ignores embedded operator heading %s without changing the planner hash", (heading) => {
+    const control = applyOriginalDescription(prompt, "Operator context without structural collisions.");
+    const embedded = applyOriginalDescription(prompt, `## ${heading}\n\nOperator-owned prose.`);
+    expect(canonicalizePlan(embedded)).toMatchObject({ status: "available", contentHash: canonicalizePlan(control).contentHash });
+  });
+
+  it("uses the bounded generated end marker when operator prose contains a literal marker", () => {
+    const control = applyOriginalDescription(prompt, "Operator context.");
+    const embedded = applyOriginalDescription(prompt, "Literal <!-- fusion-original-description:end --> remains operator prose.\n\n## Do NOT\n\nDo not alter compatibility.");
+    expect(canonicalizePlan(embedded)).toMatchObject({ status: "available", contentHash: canonicalizePlan(control).contentHash });
+  });
+
+  it("keeps planner-authored duplicate sections unavailable", () => {
+    expect(canonicalizePlan(`${prompt}\n## Do NOT\n\nDuplicate`)).toMatchObject({ status: "unavailable", reason: "section-duplicate" });
+  });
+
+  it("identifies unavailable locks without changing the established error message", () => {
+    const error = new UnavailablePlanLockError("section-duplicate", ["mission", "non-goals"], "source-hash");
+    expect(error.message).toBe("Cannot lock an unavailable plan: section-duplicate");
+    expect(isUnavailablePlanLockError(error)).toBe(true);
+    expect(isUnavailablePlanLockError(new Error(error.message))).toBe(false);
+    expect(error.unavailableSections).toEqual(["mission", "non-goals"]);
+  });
+
   it("normalizes Mission whitespace but preserves a structural Mission rewrite", () => {
     expect(canonicalizePlan(prompt).sections.mission.hash).toBe(canonicalizePlan(prompt.replace("Build a safe widget.", " Build   a safe widget. ")).sections.mission.hash);
     expect(canonicalizePlan(prompt).sections.mission.hash).toBe(canonicalizePlan(prompt.replace("Build a safe widget.", "Build a\n\n safe\twidget.")).sections.mission.hash);

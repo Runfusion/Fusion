@@ -1,10 +1,30 @@
 import { createHash } from "node:crypto";
+import { stripGeneratedOriginalDescription } from "../tasks/original-description-region.js";
 
 export const SPEC_LOCK_PARSER_VERSION = 1;
 
 export type SpecLockSection = "mission" | "file-scope" | "steps" | "acceptance-criteria" | "non-goals" | "dependencies" | "lineage";
 export type SpecParseReason = "mission-missing" | "mission-empty" | "mission-duplicate" | "section-missing" | "section-duplicate";
 export type SpecParseStatus = "available" | "unavailable";
+
+/** Prefix for durable gate diagnostics when the spec parser cannot produce lockable evidence. */
+export const PLAN_LOCK_UNAVAILABLE_DIAGNOSTIC = "Plan approved but spec lock unavailable:";
+
+/** A deterministic parser rejection carrying enough evidence for lifecycle recovery. */
+export class UnavailablePlanLockError extends Error {
+  constructor(
+    public readonly reason: SpecParseReason | "unknown",
+    public readonly unavailableSections: SpecLockSection[],
+    public readonly sourceHash: string,
+  ) {
+    super(`Cannot lock an unavailable plan: ${reason}`);
+    this.name = "UnavailablePlanLockError";
+  }
+}
+
+export function isUnavailablePlanLockError(value: unknown): value is UnavailablePlanLockError {
+  return value instanceof UnavailablePlanLockError;
+}
 
 export interface CanonicalPlanSection {
   status: SpecParseStatus;
@@ -90,7 +110,14 @@ const normalizedSection = (key: SpecLockSection, value: string): string => {
  * hashed, never interpreted, so whitespace is cosmetic while a narrative rewrite is observable.
  */
 export function canonicalizePlan(prompt: string, bindings?: PlanEvidenceBindings): CanonicalPlan {
-  const normalized = prompt.replace(/\r\n?/g, "\n");
+  /*
+  FNXC:SpecLock 2026-09-07-05:09:
+  Operator prose is free text and may contain structural-looking H2 headings. Scan only the
+  planner-authored prompt after removing the marker-bounded description so user prose cannot make
+  a plan structurally unlockable. Unmarked legacy descriptions remain intentionally unstripped,
+  matching approval fingerprints; their deterministic failures are handled by lifecycle recovery.
+  */
+  const normalized = stripGeneratedOriginalDescription(prompt.replace(/\r\n?/g, "\n"));
   const headings = [...normalized.matchAll(/^##\s+(.+?)\s*$/gmi)].map((match) => ({ name: match[1].trim().toLowerCase(), start: match.index!, end: match.index! + match[0].length }));
   const result = {} as Record<SpecLockSection, CanonicalPlanSection>;
   for (const definition of sections) {

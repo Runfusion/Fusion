@@ -109,6 +109,8 @@ describe("FN-8492: reconcile orphaned pending step results", () => {
     expect(recovered?.workflowStepResults?.[0]?.status).toBe("passed");
     expect(recovered?.workflowStepResults?.[1]?.status).toBe("failed");
     expect(recovered?.workflowStepResults?.[1]?.completedAt).toBeTruthy();
+    expect(recovered?.workflowStepResults?.[1]?.output).toBe("Pending step result had no live session or lease; marked failed by self-healing (FN-8492).");
+    expect(recovered?.workflowStepResults?.[1]?.output).not.toMatch(/restart|crash/i);
     expect(recordRunAuditEventMock).toHaveBeenCalledTimes(1);
     expect(recordRunAuditEventMock).toHaveBeenCalledWith(expect.objectContaining({
       type: "task:reconcile-orphaned-pending-step-results",
