@@ -22,6 +22,7 @@ import type {
 import {
   AsyncCentralClaimStore,
   ChatStore,
+  columnsWithFlag,
   isEphemeralAgent,
   isPlanReviewSatisfied,
   isTaskBlockedOnApproval,
@@ -674,10 +675,15 @@ export async function releaseFileScopeWaitingContinuations(
   return released;
 }
 
+/**
+ * FNXC:PlanningContinuationDispatch 2026-09-07-21:47:
+ * Every Complete-trait lane is terminal, not only the first lifecycle completion target. A resolved
+ * workflow owns its full lane vocabulary; only an absent IR falls back to the built-in Done id.
+ */
 export function planningContinuationTerminalColumns(
-  lifecycle: { complete?: string } | undefined,
+  ir: WorkflowIr | undefined,
 ): ReadonlySet<string> {
-  return new Set([lifecycle?.complete ?? "done"]);
+  return new Set(ir ? columnsWithFlag(ir, "complete") : ["done"]);
 }
 
 async function dispatchPlanningContinuationIfCurrent(input: {
@@ -3060,8 +3066,8 @@ export class InProcessRuntime
       getPlanningTaskIds: () => this.triageProcessor?.getPlanningTaskIds() ?? new Set<string>(),
     });
     const resolveTerminalColumns = async (taskId: string): Promise<ReadonlySet<string>> => {
-      const lifecycle = await resolveTaskLifecycleColumns(this.taskStore, taskId);
-      return planningContinuationTerminalColumns(lifecycle);
+      const ir = await resolveWorkflowIrForTask(this.taskStore, taskId);
+      return planningContinuationTerminalColumns(ir);
     };
     try {
       await drainDuePlanningContinuations({
