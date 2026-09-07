@@ -617,6 +617,44 @@ export class MissionExecutionLoop extends EventEmitter {
   }
 
   /**
+   * FNXC:MissionValidation 2026-09-07-03:43:
+   * Manual routes already own atomic admission. Execute that exact current run
+   * through the shared judge, behavioral verification, and completion pipeline;
+   * never re-admit it or substitute a status-only pass. Duplicate deliveries are
+   * inert, and pipeline setup failures terminalize a still-readable current run.
+   */
+  async executeManualValidatorRun(admitted: Pick<MissionValidatorRun, "id" | "featureId">): Promise<void> {
+    if (this.activeManualRuns.has(admitted.id)) return;
+    this.activeManualRuns.add(admitted.id);
+    try {
+      const current = await this.getCurrentManualValidation(admitted);
+      if (!current) return;
+      try {
+        if (!this.running) throw new Error("Mission execution loop is not running");
+        if (this.activeValidations.has(current.feature.id)) throw new Error("Feature validation is already owned by this process; retry manual validation");
+        await this.runFeatureValidation(current.feature, undefined, current.run);
+      } catch (error) {
+        if (await this.getCurrentManualValidation(admitted)) {
+          await this.handleValidationError(admitted.featureId, admitted.id, error instanceof Error ? error.message : String(error));
+        }
+      }
+    } finally {
+      this.activeManualRuns.delete(admitted.id);
+    }
+  }
+
+  private activeManualRuns = new Set<string>();
+
+  private async getCurrentManualValidation(admitted: Pick<MissionValidatorRun, "id" | "featureId">): Promise<{ feature: MissionFeature; run: MissionValidatorRun } | undefined> {
+    const run = await this.missionStore.getValidatorRun(admitted.id);
+    if (!run || run.featureId !== admitted.featureId || run.triggerType !== "manual" || run.status !== "running") return;
+    const feature = await this.missionStore.getFeature(admitted.featureId);
+    if (!feature || feature.lastValidatorRunId !== run.id || feature.loopState !== "validating"
+      || feature.validatorAttemptCount !== run.validatorAttempt) return;
+    return { feature, run };
+  }
+
+  /**
    * Run assertion validation for a feature and apply the outcome.
    *
    * Shared by processTaskOutcome (task-triggered) and recoverActiveMissions
@@ -628,6 +666,7 @@ export class MissionExecutionLoop extends EventEmitter {
   private async runFeatureValidation(
     feature: MissionFeature,
     preparedMemo?: PreparedValidationMemoization,
+    admittedRun?: MissionValidatorRun,
   ): Promise<void> {
     /*
     FNXC:MissionValidation 2026-08-01-17:14:
@@ -660,6 +699,7 @@ export class MissionExecutionLoop extends EventEmitter {
           await memoToDispose.checkout.dispose().catch((error) => loopLog.warn(`Error disposing unused validation checkout for ${feature.id}:`, error));
           memoToDispose = undefined;
         }
+        if (admittedRun) throw new Error("Manual validation has no linked assertions");
         await this.handleValidationPass(feature.id, undefined, "No assertions linked to feature");
         await this.runMilestoneValidationIfReady(feature);
         return;
@@ -669,7 +709,7 @@ export class MissionExecutionLoop extends EventEmitter {
 
       // The asynchronous store owns cross-process admission; legacy synchronous
       // stores retain the existing fail-open path.
-      const memo = memoToDispose ?? await this.prepareValidationMemoization(feature, assertions);
+      const memo = admittedRun ? undefined : memoToDispose ?? await this.prepareValidationMemoization(feature, assertions);
       memoToDispose = memo;
       const disposeUnusedMemo = async () => {
         if (memoToDispose) {
@@ -679,7 +719,9 @@ export class MissionExecutionLoop extends EventEmitter {
       };
       const admissionStore = this.missionStore as typeof this.missionStore & { admitValidatorRun?: (featureId: string, input: { inputFingerprint: string; taskId?: string; reusePass: boolean; failureBudget: number }) => Promise<{ outcome: "start" | "running" | "reuse-pass" | "budget-exhausted"; run?: MissionValidatorRun }> };
       let run: MissionValidatorRun;
-      if (memo && admissionStore.admitValidatorRun) {
+      if (admittedRun) {
+        run = admittedRun;
+      } else if (memo && admissionStore.admitValidatorRun) {
         const admission = await admissionStore.admitValidatorRun(feature.id, { inputFingerprint: memo.fingerprint, taskId: feature.taskId, reusePass: !memo.hasBehavioralAssertions, failureBudget: VALIDATION_FAILURE_BUDGET_PER_FINGERPRINT });
         if (admission.outcome === "running" || admission.outcome === "budget-exhausted") {
           await disposeUnusedMemo();
@@ -708,6 +750,8 @@ export class MissionExecutionLoop extends EventEmitter {
       // runValidation takes sole ownership of a started run's checkout.
       memoToDispose = undefined;
       const { result, inspection } = await this.runValidation(feature, assertions, run, "feature", memo);
+
+      if (admittedRun && !(await this.getCurrentManualValidation(admittedRun))) return;
 
       // A fail is not durable evidence until its inspection root is trusted.
       // Do this before mutating assertion state: a pre-merge or stale checkout

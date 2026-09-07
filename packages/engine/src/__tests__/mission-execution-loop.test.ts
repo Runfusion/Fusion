@@ -564,6 +564,99 @@ describe("MissionExecutionLoop", () => {
     vi.restoreAllMocks();
   });
 
+  describe("executeManualValidatorRun", () => {
+    function admitManualRun() {
+      const feature = createMockFeature({ loopState: "validating", lastValidatorRunId: "VR-001", validatorAttemptCount: 1 });
+      missionStore._setFeature(feature);
+      missionStore._setAssertionsForFeature(feature.id, makeAssertions(1));
+      const run = missionStore.startValidatorRun(feature.id);
+      run.triggerType = "manual";
+      missionStore.startValidatorRun.mockClear();
+      mockSessionHolder.session.state.messages = makeMockSession(JSON.stringify({ status: "pass", assertions: [{ assertionId: "CA-1", passed: true }], summary: "Verified contract" })).state.messages;
+      loop = new MissionExecutionLoop({ taskStore: taskStore as any, missionStore: missionStore as any, rootDir: "/tmp" });
+      loop.start();
+      return { feature, run };
+    }
+
+    it.each(["duplicate", "completed", "foreign-feature", "automatic", "superseded"])("does not execute a %s delivery twice or outside its admission fence", async (kind) => {
+      const { feature, run } = admitManualRun();
+      if (kind === "duplicate") {
+        await Promise.all([loop.executeManualValidatorRun(run), loop.executeManualValidatorRun(run)]);
+        expect(createResolvedAgentSession).toHaveBeenCalledOnce();
+        expect(missionStore.completeValidatorRun).toHaveBeenCalledOnce();
+        await loop.executeManualValidatorRun(run);
+        expect(createResolvedAgentSession).toHaveBeenCalledOnce();
+        return;
+      }
+      if (kind === "completed") run.status = "passed";
+      if (kind === "automatic") run.triggerType = "task_completion";
+      if (kind === "superseded") missionStore.updateFeature(feature.id, { lastValidatorRunId: "VR-NEW" });
+      await loop.executeManualValidatorRun({ id: run.id, featureId: kind === "foreign-feature" ? "F-OTHER" : feature.id });
+      expect(createResolvedAgentSession).not.toHaveBeenCalled();
+      expect(missionStore.completeValidatorRun).not.toHaveBeenCalled();
+    });
+
+    it.each(["assertion-lookup", "session-setup", "stopped", "empty-assertions"])("terminalizes %s failures on the admitted row without creating a fix", async (failure) => {
+      const { run } = admitManualRun();
+      if (failure === "assertion-lookup") missionStore.listAssertionsForFeature.mockImplementationOnce(() => { throw new Error("lookup unavailable"); });
+      if (failure === "session-setup") vi.mocked(createResolvedAgentSession).mockRejectedValueOnce(new Error("session unavailable"));
+      if (failure === "stopped") loop.stop();
+      if (failure === "empty-assertions") {
+        missionStore.listAssertionsForFeature.mockReturnValue([]);
+        missionStore.ensureFeatureAssertionLinked.mockReturnValue([]);
+      }
+      await loop.executeManualValidatorRun(run);
+      expect(missionStore.getValidatorRun(run.id)).toMatchObject({ status: "error" });
+      expect(missionStore.getFeature(run.featureId)).toMatchObject({ lastValidatorStatus: "error" });
+      expect(missionStore.startValidatorRun).not.toHaveBeenCalled();
+      expect(missionStore.createGeneratedFixFeature).not.toHaveBeenCalled();
+    });
+
+    it("fences a replaced run before assertion and feature bookkeeping", async () => {
+      const { feature, run } = admitManualRun();
+      const updateContractAssertion = vi.fn();
+      Object.assign(missionStore, { updateContractAssertion });
+      vi.mocked(createResolvedAgentSession).mockImplementationOnce(async () => {
+        missionStore.updateFeature(feature.id, { lastValidatorRunId: "VR-NEW" });
+        return { session: mockSessionHolder.session as any, sessionFile: undefined, runtimeId: "test-runtime", wasConfigured: true };
+      });
+      await loop.executeManualValidatorRun(run);
+      expect(updateContractAssertion).not.toHaveBeenCalled();
+      expect(missionStore.completeValidatorRun).not.toHaveBeenCalled();
+      expect(mockSessionHolder.session.dispose).toHaveBeenCalledOnce();
+    });
+
+    it("does not accept the judge's behavioral pass without genuine verification", async () => {
+      const { feature, run } = admitManualRun();
+      missionStore._setAssertionsForFeature(feature.id, makeAssertions(1).map((assertion) => ({ ...assertion, type: "behavioral" })));
+      await loop.executeManualValidatorRun(run);
+      expect(createResolvedAgentSession).toHaveBeenCalledOnce();
+      expect(missionStore.getValidatorRun(run.id)?.status).not.toBe("passed");
+      expect(missionStore.getFeature(feature.id)?.lastValidatorStatus).not.toBe("passed");
+    });
+
+    it("executes the admitted run through the judge and shared completion without readmission", async () => {
+      const feature = createMockFeature({ loopState: "validating", lastValidatorRunId: "VR-001", validatorAttemptCount: 1 });
+      missionStore._setFeature(feature);
+      missionStore._setAssertionsForFeature(feature.id, makeAssertions(1));
+      const run = missionStore.startValidatorRun(feature.id);
+      run.triggerType = "manual";
+      missionStore.startValidatorRun.mockClear();
+      mockSessionHolder.session.state.messages = makeMockSession(JSON.stringify({ status: "pass", assertions: [{ assertionId: "CA-1", passed: true }], summary: "Verified contract" })).state.messages;
+      loop = new MissionExecutionLoop({ taskStore: taskStore as any, missionStore: missionStore as any, rootDir: "/tmp" });
+      loop.start();
+
+      await loop.executeManualValidatorRun(run);
+
+      expect(createResolvedAgentSession).toHaveBeenCalledOnce();
+      expect(missionStore.startValidatorRun).not.toHaveBeenCalled();
+      expect(missionStore.completeValidatorRun).toHaveBeenCalledWith(run.id, "passed", "Verified contract");
+      expect(missionStore.getFeature(feature.id)).toMatchObject({ loopState: "passed", lastValidatorStatus: "passed" });
+      expect(mockSessionHolder.session.dispose).toHaveBeenCalledOnce();
+      expectNoValidationBoardTaskMutation(taskStore);
+    });
+  });
+
   // ── Lifecycle ────────────────────────────────────────────────────────────
 
   describe("start/stop", () => {

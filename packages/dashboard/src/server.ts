@@ -331,6 +331,7 @@ export interface ServerOptions {
   missionExecutionLoop?: {
     recoverActiveMissions(): Promise<{ recoveredCount: number }>;
     isRunning(): boolean;
+    executeManualValidatorRun?(run: { id: string; featureId: string }): Promise<void>;
   };
   /** Optional HeartbeatMonitor for triggering agent execution runs */
   heartbeatMonitor?: {
