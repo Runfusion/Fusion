@@ -672,6 +672,26 @@ describe("triage planning continuation lease", () => {
     expect(isPlanningContinuationDispatchClaim(h.workItem!)).toBe(true);
   });
 
+  it("keeps Done terminal when the resolved workflow has no Complete traits", async () => {
+    const h = continuationDrainHarness();
+    h.current.column = "done";
+    h.ir.columns = h.ir.columns.filter((column) => column.id !== "shipped" && column.id !== "released");
+    const before = structuredClone(h.current);
+
+    await h.runtime.drainWorkflowContinuations();
+
+    expect([...planningContinuationTerminalColumns(h.ir)]).toEqual(["done"]);
+    expect(h.store.getWorkflowDefinition).toHaveBeenCalledWith("WF-COMPLETE");
+    expect(h.execute).not.toHaveBeenCalled();
+    expect(h.transitions).toHaveBeenCalledExactlyOnceWith(h.runnable.id, "cancelled", expect.objectContaining({
+      blockedReason: "task-terminal",
+    }));
+    expect(h.current).toEqual(before);
+    expect(h.store.updateTask).not.toHaveBeenCalled();
+    expect(h.store.moveTask).not.toHaveBeenCalled();
+    expect(h.replace).not.toHaveBeenCalled();
+  });
+
   it("keeps Done terminal when the dispatcher has no resolver", async () => {
     const h = harness();
     h.current.column = "done";

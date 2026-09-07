@@ -676,14 +676,15 @@ export async function releaseFileScopeWaitingContinuations(
 }
 
 /**
- * FNXC:PlanningContinuationDispatch 2026-09-07-21:47:
- * Every Complete-trait lane is terminal, not only the first lifecycle completion target. A resolved
- * workflow owns its full lane vocabulary; only an absent IR falls back to the built-in Done id.
+ * FNXC:PlanningContinuationDispatch 2026-09-07-21:59:
+ * Every Complete-trait lane is terminal, not only the first lifecycle completion target. Use the
+ * built-in Done fallback when the IR is absent or declares no Complete lanes, never alongside a nonempty resolved set.
  */
 export function planningContinuationTerminalColumns(
   ir: WorkflowIr | undefined,
 ): ReadonlySet<string> {
-  return new Set(ir ? columnsWithFlag(ir, "complete") : ["done"]);
+  const completeColumns = ir ? columnsWithFlag(ir, "complete") : [];
+  return new Set(completeColumns.length > 0 ? completeColumns : ["done"]);
 }
 
 async function dispatchPlanningContinuationIfCurrent(input: {
