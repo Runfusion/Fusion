@@ -22,7 +22,7 @@ import {getInReviewStalledSignal, type InReviewStalledContext} from "../tasks/in
 import {getStalePausedReviewSignal, type StalePausedReviewContext} from "../tasks/stale-paused-review.js";
 import {getStalePausedTodoSignal} from "../tasks/stale-paused-todo.js";
 import {resolveLifecycleColumns, resolveReviewColumns} from "../workflows/workflow-lifecycle-traits.js";
-import {prefetchWorkflowSelections, resolveWorkflowIrForTask, type WorkflowSelectionCache, type WorkflowSelectionReadTally} from "../workflows/workflow-ir-resolver.js";
+import {prefetchWorkflowIrs, prefetchWorkflowSelections, resolveWorkflowIrForTask, type WorkflowDefinitionReadTally, type WorkflowSelectionCache, type WorkflowSelectionReadTally} from "../workflows/workflow-ir-resolver.js";
 import type {WorkflowIr} from "../workflows/workflow-ir-types.js";
 
 import {getTaskAgeStalenessSignal, type TaskAgeStalenessThresholds} from "../tasks/task-age-staleness.js";
@@ -193,10 +193,11 @@ async function resolveReviewColumnsForTask(
   taskId: string,
   cache?: Map<string, WorkflowIr>,
   selectionCache?: WorkflowSelectionCache,
+  definitionReadTally?: WorkflowDefinitionReadTally,
 ): Promise<ReadonlySet<string>> {
   const columns = new Set<string>(["in-review"]);
   try {
-    const ir = await resolveWorkflowIrForTask(store, taskId, cache, selectionCache);
+    const ir = await resolveWorkflowIrForTask(store, taskId, cache, selectionCache, definitionReadTally);
     if (ir) for (const id of resolveReviewColumns(ir)) columns.add(id);
   } catch { /* degraded: the legacy id above still answers */ }
   return columns;
@@ -347,6 +348,10 @@ export interface ListTasksOptions {
   /** Select the SQL page by creation or latest completion-lane entry. */
   sort?: "created-asc" | "completion-desc" | TaskColumnSortMode;
   startupMemo?: boolean;
+  /** Caller-owned per-pass workflow IR cache; shared only within one read pass. */
+  irCache?: Map<string, WorkflowIr>;
+  /** Observed definition reads issued during this list pass (zero for warm/builtin IRs). */
+  definitionReadTally?: WorkflowDefinitionReadTally;
   /** Forensic-only: include soft-deleted rows. */
   includeDeleted?: boolean;
   /*
@@ -465,7 +470,7 @@ export async function listTasksImpl(store: TaskStore, options?: ListTasksOptions
     design (U1's `resolveTaskLifecycleColumns` takes the cache for exactly this),
     so reads scale with the number of WORKFLOWS, not the number of cards.
     */
-    const listPassIrCache = new Map<string, WorkflowIr>();
+    const listPassIrCache = options?.irCache ?? new Map<string, WorkflowIr>();
     /* FNXC:WorkflowScheduling 2026-09-05-23:12: List hydration prefetches once per pass; getTaskImpl remains individual because one row has no N+1. The tally reports store-internal reads to callers without changing badge fallback semantics. */
     const listPassSelectionCache = options?.selectionCache ?? new Map<string, import("../workflows/workflow-ir-resolver.js").WorkflowSelection | undefined>();
     const listSelectionReads = await prefetchWorkflowSelections(store, filteredRows.map((row) => String(row.id)), listPassSelectionCache);
@@ -473,6 +478,7 @@ export async function listTasksImpl(store: TaskStore, options?: ListTasksOptions
       options.selectionReadTally.batched += listSelectionReads.batched;
       options.selectionReadTally.singles += listSelectionReads.singles;
     }
+    await prefetchWorkflowIrs(store, filteredRows.map((row) => String(row.id)), listPassIrCache, listPassSelectionCache, options?.definitionReadTally);
     /*
      * FNXC:SqliteFinalRemoval 2026-06-26-10:30:
      * Compute staleness thresholds once for the whole list pass, mirroring
@@ -499,7 +505,7 @@ export async function listTasksImpl(store: TaskStore, options?: ListTasksOptions
       main's FNXC:WorkflowLifecycle 2026-07-01-23:27 behavior, which the
       PostgreSQL cutover's store split predated.
       */
-      const reviewColumnsForRow = await resolveReviewColumnsForTask(store, task.id, listPassIrCache, listPassSelectionCache);
+      const reviewColumnsForRow = await resolveReviewColumnsForTask(store, task.id, listPassIrCache, listPassSelectionCache, options?.definitionReadTally);
       const hasFreshAgentLogActivity = hasFreshAgentLogActivitySinceTaskUpdate(store, task, now, reviewColumnsForRow);
       const executingTaskIds = hasFreshAgentLogActivity ? new Set<string>([task.id]) : undefined;
       task.inReviewStall = isMergeQueued ? undefined : getInReviewStallReason(task, {
@@ -968,6 +974,7 @@ const searchPassIrCache = new Map<string, WorkflowIr>();
 /* FNXC:WorkflowScheduling 2026-09-05-23:12: Search hydration has the same per-row selection N+1 as board lists; prefetch retains the default workflow for cached absent selections. */
 const searchPassSelectionCache = new Map<string, import("../workflows/workflow-ir-resolver.js").WorkflowSelection | undefined>();
 await prefetchWorkflowSelections(store, pgRows.map((row) => String(row.id)), searchPassSelectionCache);
+await prefetchWorkflowIrs(store, pgRows.map((row) => String(row.id)), searchPassIrCache, searchPassSelectionCache);
   return Promise.all(pgRows.map(async (pgRow) => {
   const task = store.rowToTask(store.pgRowToTaskRow(pgRow));
   const isMergeQueued = mergeQueuedTaskIds.has(task.id);

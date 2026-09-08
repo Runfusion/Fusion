@@ -63,6 +63,7 @@ import {
   type WorkflowIrColumn,
   type WorkflowSelectionCache,
   type WorkflowSelectionReadTally,
+  type WorkflowDefinitionReadTally,
   type WorkflowIrResolverStore,
 } from "@fusion/core";
 import { createHash } from "node:crypto";
@@ -733,9 +734,16 @@ export async function runHoldReleaseSweep(
     because both a successful batch and degraded individual reads populate the same cache.
     */
     const selectionReadTally: WorkflowSelectionReadTally = { batched: 0, singles: 0 };
-    const allTasks = await store.listTasks({ includeArchived: false, selectionCache, selectionReadTally });
+    const definitionReadTally: WorkflowDefinitionReadTally = { definitions: 0 };
+    /*
+    FNXC:WorkflowScheduling 2026-09-08-04:11:
+    List hydration uses the raw store and its observed-read tally; evaluation uses the counting proxy.
+    Each definition read uses exactly one accounting mechanism, since cache growth is not read evidence.
+    */
+    const allTasks = await store.listTasks({ includeArchived: false, selectionCache, selectionReadTally, irCache, definitionReadTally });
     counters.batchSelections += selectionReadTally.batched;
     counters.selections += selectionReadTally.singles;
+    counters.definitions += definitionReadTally.definitions;
     if (expired()) return logPreambleTruncation(allTasks.length);
 
 

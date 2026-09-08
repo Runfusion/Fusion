@@ -115,3 +115,16 @@ cache entries, so size growth cannot truthfully distinguish them.
 
 **Rule:** every new multi-row task hydration pass prefetches selections once before per-row workflow
 resolution. Single-row `getTask` remains deliberately unbatched because it has no N+1.
+
+## Workflow IR coalescing and observed-read accounting (FN-9274)
+
+A caller-owned IR cache is sufficient only when concurrent misses coalesce. `inflightIrReads` mirrors
+`inflightSelectionReads`: a `WeakMap` keyed by the pass cache stores pending promises by effective
+workflow key, so concurrent rows join one definition read and parse. The weak key keeps this strictly
+pass-scoped; missing or throwing definitions still do not enter the result cache and remain retryable.
+
+When a cache is shared across passes, report reads with an observed-read tally incremented exactly at
+the `getWorkflowDefinition` call site. Do not derive it from distinct ids, cache entries, or prefetch
+attempts: those report nonexistent reads for built-ins, absent selections, and warm caches while hiding
+retryable fallback reads. Each read has one accounting mechanism only: a counting proxy or an
+observed-read tally, never both.
