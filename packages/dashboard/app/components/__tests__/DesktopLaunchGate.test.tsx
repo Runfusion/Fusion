@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 // t() returns the provided fallback so we assert on stable English text.
@@ -134,6 +134,85 @@ describe("DesktopLaunchGate — local handoff", () => {
     migrationDone = true;
     await waitFor(() => expect(location.replace).toHaveBeenCalledTimes(1));
     expect(location.replace.mock.calls[0][0]).toMatch(/^http:\/\/127\.0\.0\.1:50123\//);
+  });
+
+  it("renders a copyable structured failure panel for local runtime errors", async () => {
+    stubLocation("file:///C:/app/index.html");
+    const failure = {
+      phase: "create-store" as const, attempts: 1, name: "Error", message: "boom", stack: "Error: boom\n at start",
+      logPath: "/tmp/.fusion/logs/desktop-startup.log", platform: "linux", nodeVersion: "22", occurredAt: "2026-09-08T00:00:00.000Z",
+    };
+    const errorState = { ...localReadyState, localRuntime: { source: "embedded-local", state: "error", error: "boom", startupFailure: failure } };
+    stubShell(errorState);
+
+    render(<DesktopLaunchGate><div>app</div></DesktopLaunchGate>);
+
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Startup phase: create-store"));
+    expect(screen.getByText("Show technical details")).toBeTruthy();
+    expect(screen.getByText(/desktop-startup\.log/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Copy details" })).toBeTruthy();
+  });
+
+  it("keeps structured diagnostics after remembered-local startup rejects", async () => {
+    stubLocation("file:///C:/app/index.html");
+    const failure = {
+      phase: "create-store" as const, attempts: 1, name: "Error", message: "boom", stack: "Error: boom",
+      platform: "linux", nodeVersion: "22", occurredAt: "2026-09-08T00:00:00.000Z",
+    };
+    const stopped = { ...localReadyState, localRuntime: { source: "none", state: "stopped" } };
+    const failed = { ...localReadyState, localRuntime: { source: "embedded-local", state: "error", error: "boom", startupFailure: failure } };
+    let attempted = false;
+    const shell = {
+      getState: vi.fn(async () => (attempted ? failed : stopped)),
+      setDesktopMode: vi.fn(async () => { attempted = true; throw new Error("boom"); }),
+      onResetDesktopModeRequest: vi.fn(() => () => undefined),
+      resetDesktopMode: vi.fn(async () => undefined),
+    };
+    (window as unknown as { fusionShell: unknown }).fusionShell = shell;
+
+    render(<DesktopLaunchGate><div>app</div></DesktopLaunchGate>);
+
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Startup phase: create-store"));
+    expect(screen.getByText("Show technical details")).toBeTruthy();
+  });
+
+  it("keeps structured diagnostics after a chooser local selection rejects", async () => {
+    stubLocation("file:///C:/app/index.html");
+    const failure = {
+      phase: "server-listen" as const, attempts: 1, name: "Error", message: "port unavailable", stack: "Error: port unavailable",
+      platform: "linux", nodeVersion: "22", occurredAt: "2026-09-08T00:00:00.000Z",
+    };
+    const chooser = { ...localReadyState, desktopMode: null, desktopModeState: { isFirstRun: true, desktopMode: null }, localRuntime: { source: "none", state: "stopped" } };
+    const failed = { ...localReadyState, localRuntime: { source: "embedded-local", state: "error", error: "port unavailable", startupFailure: failure } };
+    let attempted = false;
+    const shell = {
+      getState: vi.fn(async () => (attempted ? failed : chooser)),
+      setDesktopMode: vi.fn(async () => { attempted = true; throw new Error("port unavailable"); }),
+      onResetDesktopModeRequest: vi.fn(() => () => undefined),
+      resetDesktopMode: vi.fn(async () => undefined),
+    };
+    (window as unknown as { fusionShell: unknown }).fusionShell = shell;
+
+    render(<DesktopLaunchGate><div>app</div></DesktopLaunchGate>);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Run Fusion Locally" })).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Run Fusion Locally" }));
+
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Startup phase: server-listen"));
+    expect(screen.getByText("Show technical details")).toBeTruthy();
+  });
+
+  it("offers selectable details when clipboard access is unavailable", async () => {
+    stubLocation("file:///C:/app/index.html");
+    const failure = {
+      phase: "create-store" as const, attempts: 1, name: "Error", message: "boom", stack: "Error: boom",
+      platform: "linux", nodeVersion: "22", occurredAt: "2026-09-08T00:00:00.000Z",
+    };
+    stubShell({ ...localReadyState, localRuntime: { source: "embedded-local", state: "error", error: "boom", startupFailure: failure } });
+
+    render(<DesktopLaunchGate><div>app</div></DesktopLaunchGate>);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Copy details" })).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Copy details" }));
+    await waitFor(() => expect((screen.getByLabelText("Startup details") as HTMLTextAreaElement).value).toContain("Error: boom"));
   });
 
   it("starts the runtime when it is not running, then navigates to its origin", async () => {

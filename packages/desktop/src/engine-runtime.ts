@@ -17,5 +17,10 @@ export async function resolveDesktopRuntimePrimaryProject(
   centralCore: CentralCore,
 ): Promise<RegisteredProject | null> {
   const projects = await centralCore.listProjects();
-  return projects.length > 0 ? projects[0]! : null;
+  /*
+  FNXC:DesktopStartupDiagnostics 2026-09-08-19:44:
+  Issue #3589 showed a paused persisted project aborting the entire local dashboard boot. A paused
+  project is intentionally ineligible for an engine, so select an active project or start dashboard-only.
+  */
+  return projects.find((project) => project.status !== "paused") ?? null;
 }

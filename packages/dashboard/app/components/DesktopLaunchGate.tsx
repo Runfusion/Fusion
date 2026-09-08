@@ -3,13 +3,47 @@ import { useTranslation } from "react-i18next";
 import type { ShellConnectionState } from "../types/native-shell";
 import "./DesktopLaunchGate.css";
 
+type StartupFailure = NonNullable<NonNullable<ShellConnectionState["localRuntime"]>["startupFailure"]>;
 type Phase =
   | { kind: "loading" }
   | { kind: "chooser"; state: ShellConnectionState }
   | { kind: "starting-local"; message: string; detail?: string }
-  | { kind: "local-error"; message: string }
+  | { kind: "local-error"; message: string; startupFailure?: StartupFailure }
   | { kind: "ready"; serverBaseUrl?: string }
   | { kind: "bypass" };
+
+type StartupError = Error & { startupFailure?: StartupFailure };
+function startupError(message: string, failure?: StartupFailure): StartupError {
+  return Object.assign(new Error(message || "Local runtime failed to start"), { startupFailure: failure });
+}
+function errorMessage(error: unknown): string {
+  return error instanceof Error && error.message ? error.message : String(error ?? "Local runtime failed to start");
+}
+
+async function getStartupFailure(
+  shell: NonNullable<ReturnType<typeof getFusionShell>>,
+  error: unknown,
+): Promise<StartupFailure | undefined> {
+  const fromError = (error as StartupError).startupFailure;
+  if (fromError) return fromError;
+  // FNXC:DesktopStartupDiagnostics 2026-09-08-20:01: startLocal rejects with the original error,
+  // while its structured failure is published on the live shell status. Re-read that status so both
+  // remembered-local recovery and chooser failures retain the supportable diagnostic report.
+  const runtime = await shell.getState().catch(() => undefined);
+  return runtime?.localRuntime?.startupFailure;
+}
+
+async function localErrorPhase(
+  shell: NonNullable<ReturnType<typeof getFusionShell>>,
+  error: unknown,
+): Promise<Extract<Phase, { kind: "local-error" }>> {
+  const startupFailure = await getStartupFailure(shell, error);
+  return {
+    kind: "local-error",
+    message: startupFailure?.message ?? errorMessage(error),
+    startupFailure,
+  };
+}
 
 function getFusionShell() {
   if (typeof window === "undefined") return null;
@@ -49,17 +83,19 @@ async function waitForLocalRuntime(
   const timeoutMs = options.timeoutMs ?? 30_000;
   let deadline = Date.now() + timeoutMs;
   let lastMigrationLabel: string | null = null;
+  let lastRuntime: ShellConnectionState["localRuntime"];
   // The runtime is started by main when setDesktopMode("local") fires; just
   // poll shell:getState until localRuntime reports running.
   while (Date.now() < deadline) {
     const state = await shell.getState();
     const rt = state.localRuntime;
+    lastRuntime = rt;
     if (rt?.state === "running" && (rt.baseUrl || rt.port)) {
       const baseUrl = rt.baseUrl ?? `http://127.0.0.1:${rt.port}`;
       return { baseUrl };
     }
     if (rt?.state === "error") {
-      throw new Error(rt.error ?? "Local runtime failed to start");
+      throw startupError(rt.error ?? "Local runtime failed to start", rt.startupFailure);
     }
     const migrationLabel = rt?.migration?.active ? rt.migration.label ?? null : null;
     if (migrationLabel && migrationLabel !== lastMigrationLabel) {
@@ -69,7 +105,48 @@ async function waitForLocalRuntime(
     }
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
-  throw new Error("Local runtime did not become ready in time");
+  throw startupError("Local runtime did not become ready in time", lastRuntime?.startupFailure);
+}
+
+function StartupFailureDetails({ failure, t }: { failure: StartupFailure; t: (key: string, defaultValue: string) => string }) {
+  const [copied, setCopied] = useState(false);
+  const [copyFallback, setCopyFallback] = useState(false);
+  const report = [
+    t("desktop.couldNotStart", "Couldn't start local Fusion"),
+    `${t("desktop.startupPhase", "Startup phase")}: ${failure.phase}`,
+    `${t("desktop.startupAttempts", "Attempts")}: ${failure.attempts}`,
+    `${t("desktop.startupMessage", "Message")}: ${failure.message}`,
+    failure.stack ? `${t("desktop.startupStack", "Stack")}:\n${failure.stack}` : "",
+    failure.logPath ? `${t("desktop.startupLog", "Startup log")}: ${failure.logPath}` : "",
+    failure.logUnavailableReason ? t("desktop.startupLogUnavailable", "The startup log could not be written.") : "",
+    `${t("desktop.startupPlatform", "Platform")}: ${failure.platform} / Node ${failure.nodeVersion}`,
+  ].filter(Boolean).join("\n");
+  const clipboard = (navigator as Navigator & { clipboard?: Clipboard }).clipboard;
+  const copy = async () => {
+    try {
+      if (typeof clipboard?.writeText !== "function") throw new Error("Clipboard unavailable");
+      await clipboard.writeText(report);
+      setCopied(true);
+      setCopyFallback(false);
+    } catch {
+      setCopyFallback(true);
+    }
+  };
+  return (
+    <section className="desktop-launch-gate__diagnostics">
+      <p>{t("desktop.startupPhase", "Startup phase")}: <strong>{failure.phase}</strong> · {t("desktop.startupAttempts", "Attempts")}: {failure.attempts}</p>
+      {failure.stack ? <details><summary>{t("desktop.showStartupDetails", "Show technical details")}</summary><pre>{failure.stack}</pre></details> : null}
+      {failure.logPath ? <p className="desktop-launch-gate__log-path">{t("desktop.startupLog", "Startup log")}: {failure.logPath}</p> : null}
+      {failure.logUnavailableReason ? <p>{t("desktop.startupLogUnavailable", "The startup log could not be written.")}</p> : null}
+      <button type="button" className="btn" onClick={() => void copy()}>{copied ? t("desktop.detailsCopied", "Details copied") : t("desktop.copyStartupDetails", "Copy details")}</button>
+      {copyFallback ? (
+        <div className="desktop-launch-gate__copy-fallback">
+          <p>{t("desktop.copyStartupDetailsUnavailable", "Clipboard access is unavailable. Select and copy these details manually.")}</p>
+          <textarea readOnly aria-label={t("desktop.startupDetailsText", "Startup details")} value={report} />
+        </div>
+      ) : null}
+    </section>
+  );
 }
 
 function navigateToLocalRuntimeOrigin(baseUrl: string): void {
@@ -158,10 +235,7 @@ export function DesktopLaunchGate({ children }: PropsWithChildren) {
               await shell.setDesktopMode("local");
             } catch (startError) {
               if (cancelled) return;
-              setPhase({
-                kind: "local-error",
-                message: startError instanceof Error ? startError.message : String(startError),
-              });
+              setPhase(await localErrorPhase(shell, startError));
               return;
             }
             if (cancelled) return;
@@ -185,10 +259,7 @@ export function DesktopLaunchGate({ children }: PropsWithChildren) {
         setPhase({ kind: "ready" });
       } catch (error) {
         if (cancelled) return;
-        setPhase({
-          kind: "local-error",
-          message: error instanceof Error ? error.message : String(error),
-        });
+        setPhase(await localErrorPhase(shell, error));
       }
     })();
 
@@ -236,14 +307,11 @@ export function DesktopLaunchGate({ children }: PropsWithChildren) {
       <div className="desktop-launch-gate" role="alert">
         <div className="desktop-launch-gate__panel">
           <h2>{t("desktop.couldNotStart", "Couldn't start local Fusion")}</h2>
-          <p>{phase.message}</p>
-          <button
-            type="button"
-            className="btn"
-            onClick={() => {
-              window.location.reload();
-            }}
-          >
+          <p>{phase.message || t("desktop.localStartupUnknown", "Local startup failed without an error message.")}</p>
+          {phase.startupFailure ? (
+            <StartupFailureDetails failure={phase.startupFailure} t={t} />
+          ) : null}
+          <button type="button" className="btn" onClick={() => window.location.reload()}>
             {t("desktop.retry", "Retry")}
           </button>
         </div>
@@ -281,10 +349,7 @@ export function DesktopLaunchGate({ children }: PropsWithChildren) {
             // redirect; reload to flush bootstrap state.
             window.location.reload();
           } catch (error) {
-            setPhase({
-              kind: "local-error",
-              message: error instanceof Error ? error.message : String(error),
-            });
+            setPhase(await localErrorPhase(shell, error));
           }
         }}
       />

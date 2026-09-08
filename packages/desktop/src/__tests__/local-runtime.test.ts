@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import type { Server } from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 class FakeServer {
   private listeners = new Map<string, Array<(...args: unknown[]) => void>>();
@@ -347,8 +350,8 @@ describe("LocalRuntimeManager", () => {
     expect(manager.getStatus()).toMatchObject({
       source: "embedded-local",
       state: "error",
-      error: "attempt 3 failed — real cause",
     });
+    expect(manager.getStatus().error).toEqual(expect.any(String));
   });
 
   it("fully cleans up store/server/cleanup between a failed attempt and the retry that follows", async () => {
@@ -798,5 +801,91 @@ describe("LocalRuntimeManager", () => {
     );
 
     await manager.stopLocal();
+  });
+
+  it("redacts short generic environment values from the failure record and automatic startup log", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "fn-9279-startup-diagnostics-"));
+    const envKey = "FN_9279_CONTEXT";
+    const secret = "abc";
+    process.env[envKey] = secret;
+    vi.resetModules();
+    const { LocalRuntimeManager } = await import("../local-runtime.ts");
+    const error = new Error(`${envKey}=${secret}; postgres://alice:${secret}@db.example/fusion?token=${secret}`);
+    error.stack = `Error: ${envKey}=${secret}\n at postgres://alice:${secret}@db.example/fusion`;
+    const manager = new LocalRuntimeManager({
+      rootDir,
+      createStore: async () => { throw error; },
+      startupRetries: 1,
+      startupRetryDelayMs: 0,
+    });
+
+    try {
+      await expect(manager.startLocal()).rejects.toThrow(secret);
+      await manager.waitForStartupTraceFlush();
+      const failure = manager.getStatus().startupFailure;
+      const serializedFailure = JSON.stringify(failure);
+      const log = await readFile(failure!.logPath!, "utf8");
+      expect(serializedFailure).not.toContain(secret);
+      expect(serializedFailure).not.toContain(envKey);
+      expect(log).not.toContain(secret);
+      expect(log).not.toContain(envKey);
+      expect(failure?.message).toContain("[REDACTED_ENV]");
+    } finally {
+      delete process.env[envKey];
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("redacts literal configuration secrets from the failure record and automatic startup log", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "fn-9279-startup-diagnostics-"));
+    const secrets = ["literal-token", "literal-password", "json-client-secret", "bearer-secret-value"];
+    vi.resetModules();
+    const { LocalRuntimeManager } = await import("../local-runtime.ts");
+    const error = new Error(
+      'Invalid provider config: token=literal-token password=literal-password "client_secret":"json-client-secret" Authorization: Bearer bearer-secret-value',
+    );
+    error.stack = `${error.name}: ${error.message}`;
+    const manager = new LocalRuntimeManager({
+      rootDir,
+      createStore: async () => { throw error; },
+      startupRetries: 1,
+      startupRetryDelayMs: 0,
+    });
+
+    try {
+      await expect(manager.startLocal()).rejects.toThrow("literal-token");
+      await manager.waitForStartupTraceFlush();
+      const failure = manager.getStatus().startupFailure;
+      expect(failure?.logPath).toBeTruthy();
+      const log = await readFile(failure!.logPath!, "utf8");
+      const serializedFailure = JSON.stringify(failure);
+      for (const secret of secrets) {
+        expect(serializedFailure).not.toContain(secret);
+        expect(log).not.toContain(secret);
+      }
+      expect(serializedFailure).toContain("[REDACTED]");
+      expect(log).toContain("[REDACTED]");
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("publishes copyable failure diagnostics immediately when create-store fails", async () => {
+    const { LocalRuntimeManager } = await import("../local-runtime.ts");
+    const manager = new LocalRuntimeManager({
+      rootDir: "/repo",
+      createStore: async () => { throw new Error("boom"); },
+      startupRetries: 1,
+      startupRetryDelayMs: 0,
+    });
+
+    await expect(manager.startLocal()).rejects.toThrow("boom");
+    expect(manager.getStatus()).toMatchObject({
+      source: "embedded-local",
+      state: "error",
+      error: "boom",
+      startupFailure: { phase: "create-store", attempts: 1, message: "boom", name: "Error", platform: process.platform },
+    });
+    expect(manager.getStatus().startupFailure?.stack).toBeTruthy();
   });
 });

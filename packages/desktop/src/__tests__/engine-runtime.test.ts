@@ -22,8 +22,8 @@ describe("resolveDesktopRuntimePrimaryProject", () => {
     expect(registerCalled).toBe(false);
   });
 
-  it("returns the first existing project as primary without registering", async () => {
-    const projects = [{ id: "proj_1" }, { id: "proj_2" }];
+  it("skips a paused project so local dashboard startup is not blocked", async () => {
+    const projects = [{ id: "proj_paused", status: "paused" }, { id: "proj_active", status: "active" }];
     let registerCalled = false;
     const central = {
       listProjects: async () => projects,
@@ -34,7 +34,7 @@ describe("resolveDesktopRuntimePrimaryProject", () => {
     } as unknown as import("@fusion/core").CentralCore;
 
     const result = await resolveDesktopRuntimePrimaryProject(central);
-    expect(result?.id).toBe("proj_1");
+    expect(result?.id).toBe("proj_active");
     expect(registerCalled).toBe(false);
   });
 });

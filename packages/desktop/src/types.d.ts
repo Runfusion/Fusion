@@ -94,6 +94,19 @@ export interface ShellConnectionState {
     port?: number;
     baseUrl?: string;
     error?: string;
+    startupFailure?: {
+      phase: "create-store" | "store-init" | "store-watch" | "create-dashboard-server" | "server-listen" | "resolve-port";
+      attempts: number;
+      name: string;
+      message: string;
+      stack?: string;
+      logPath?: string;
+      logUnavailableReason?: "write-failed" | "disabled";
+      platform: string;
+      appVersion?: string;
+      nodeVersion: string;
+      occurredAt: string;
+    };
   };
 }
 
