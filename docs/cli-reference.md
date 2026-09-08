@@ -1354,7 +1354,9 @@ before mutation if a caller disables the pre-restore capture, because that captu
 the rollback source. If bookkeeping restore fails, Fusion rolls every committed group
 back from the retained stem. Selecting a `fusion-central-pg-*` dump is the explicit
 central-only operation and leaves bookkeeping untouched. Legacy two-member stems remain
-restorable and report bookkeeping as unavailable.
+restorable and report bookkeeping as unavailable; Fusion then rewinds
+`public.fusion_schema_migrations` from the earliest missing CREATE-TABLE sentinel
+and replays pending migrations so an older dump cannot skip later schema upgrades.
 
 Native backup commands do not provide cross-process locking or cluster-wide
 quiescence. Before list, create, cleanup, or especially restore, quiesce other
