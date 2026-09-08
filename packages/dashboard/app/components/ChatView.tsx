@@ -717,6 +717,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
   const isUserScrollingRef = useRef(false);
   const lastAnchoredThreadStateRef = useRef<{ threadId: string; loaded: boolean; hasMessages: boolean } | null>(null);
   const directThreadDeferredAnchorTimeoutRef = useRef<number | null>(null);
+  const directThreadAnchorGenerationRef = useRef(0);
   const lastMessageCountRef = useRef(0);
   const lastThreadIdRef = useRef<string | null>(null);
   const scrollRestoreSnapshotRef = useRef<{
@@ -1051,28 +1052,36 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     if (!messagesContainer) return;
 
     captureScrollSnapshot(true);
+    if (isUserScrollingRef.current) {
+      directThreadAnchorGenerationRef.current += 1;
+      virtualTranscript.cancelPendingScrollToBottom();
+    }
     scheduleTopClippedMessageUpdate();
-  }, [captureScrollSnapshot, scheduleTopClippedMessageUpdate]);
+  }, [captureScrollSnapshot, scheduleTopClippedMessageUpdate, virtualTranscript.cancelPendingScrollToBottom]);
 
+  /*
+  FNXC:ChatScrollAnchor 2026-09-07-23:09:
+  ChatView commande la fin uniquement par le virtualiseur afin que la fenêtre de lignes et le viewport DOM changent ensemble. La commande est répétée pendant les mesures de montage, mais sa génération clôt les callbacks d’un ancien fil et le premier scroll manuel détaché clôt immédiatement toutes les écritures restantes de l’incarnation courante.
+  */
   const anchorToBottom = useCallback((container: HTMLElement, options?: { force?: boolean }) => {
     if (!container.isConnected) return;
     if (!options?.force && isUserScrollingRef.current) {
       return;
     }
 
+    const generation = ++directThreadAnchorGenerationRef.current;
     let frame = 0;
     let stableFrames = 0;
     let lastScrollHeight = -1;
     const maxFrames = 6;
 
     const writeBottom = () => {
-      if (!container.isConnected) return;
-      // A forced thread-opening write may run once, but every settle frame must yield to a later manual scroll.
-      if (isUserScrollingRef.current && (!options?.force || frame > 0)) {
+      if (!container.isConnected || generation !== directThreadAnchorGenerationRef.current) return;
+      if (isUserScrollingRef.current && frame > 0) {
         return;
       }
 
-      container.scrollTop = container.scrollHeight;
+      virtualTranscript.scrollToBottom();
       if (container.scrollHeight === lastScrollHeight) {
         stableFrames += 1;
       } else {
@@ -1091,7 +1100,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     };
 
     writeBottom();
-  }, []);
+  }, [virtualTranscript.scrollToBottom]);
 
   const activeThreadMessages = messages;
   const conversationSearchMatches = useMemo(() => {
@@ -1229,6 +1238,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
 
     const threadId = activeSession?.id ?? null;
     if (!threadId) {
+      directThreadAnchorGenerationRef.current += 1;
       lastAnchoredThreadStateRef.current = null;
       return;
     }

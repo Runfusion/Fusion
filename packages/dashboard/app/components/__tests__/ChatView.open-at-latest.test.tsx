@@ -71,6 +71,7 @@ FN-313 traite chaque ouverture de fil comme une nouvelle propriété du viewport
 const chatHostCases = [
   ["provider desktop", "desktop", activeSessionFixture, {}],
   ["provider mobile", "mobile", activeSessionFixture, {}],
+  ["provider detached", "desktop", activeSessionFixture, { floating: true }],
   ["CLI floating", "desktop", { ...activeSessionFixture, cliExecutorAdapterId: "claude" }, { floating: true }],
   ["CLI dock", "desktop", { ...activeSessionFixture, cliExecutorAdapterId: "claude" }, { compactLayout: true }],
 ] as const;
@@ -187,6 +188,32 @@ describe("ChatView opens conversations at the latest message", () => {
     );
 
     await act(async () => { await new Promise((resolve) => window.setTimeout(resolve, 30)); });
+    expect(geometry.scrollTop).toBe(120);
+  });
+
+  it("yields queued opening frames to the first manual scroll", async () => {
+    const queuedFrames: FrameRequestCallback[] = [];
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      queuedFrames.push(callback);
+      return queuedFrames.length;
+    });
+    setupMockChat({
+      activeSession: activeSessionFixture,
+      messages: [oldMessage, latestMessage],
+      messagesLoading: false,
+    });
+    await renderWithAct(
+      <ChatView projectId="project" addToast={vi.fn()} initialDirectSession={activeSessionFixture} persistChatPreferences={false} />,
+    );
+    const transcript = document.querySelector<HTMLElement>(".chat-messages")!;
+    const geometry = installTranscriptGeometry(transcript, 1_600);
+    geometry.setScrollTop(120);
+    act(() => fireEvent.scroll(transcript));
+
+    act(() => {
+      for (const callback of queuedFrames.splice(0)) callback(0);
+    });
+
     expect(geometry.scrollTop).toBe(120);
   });
 

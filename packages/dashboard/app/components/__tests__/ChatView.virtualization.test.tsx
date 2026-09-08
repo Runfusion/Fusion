@@ -2,6 +2,7 @@ import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { ChatView } from "../ChatView";
+import { setPersistedChatOpenSession } from "../../utils/projectStorage";
 import {
   activeSessionFixture,
   defaultChatState,
@@ -94,6 +95,71 @@ const messages = Array.from({ length: 1_000 }, (_, index) => ({
   createdAt: new Date(Date.UTC(2026, 0, 1, 0, 0, index)).toISOString(),
 }));
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((settle) => { resolve = settle; });
+  return { promise, resolve };
+}
+
+function makeSessionMessages(sessionId: string, prefix: string, count = 200) {
+  return Array.from({ length: count }, (_, index) => ({
+    id: `${prefix}-${String(index).padStart(3, "0")}`,
+    sessionId,
+    role: index % 2 ? "assistant" as const : "user" as const,
+    content: `${prefix} message ${index}`,
+    thinkingOutput: null,
+    metadata: null,
+    createdAt: new Date(Date.UTC(2026, 8, 7, 20, 0, index)).toISOString(),
+  }));
+}
+
+function installOpeningGeometry(transcript: HTMLElement, latestMessageId: string, initialScrollHeight: number) {
+  let scrollTop = 0;
+  let scrollHeight = initialScrollHeight;
+  Object.defineProperties(transcript, {
+    clientHeight: { configurable: true, value: 320 },
+    scrollHeight: { configurable: true, get: () => scrollHeight },
+    scrollTop: {
+      configurable: true,
+      get: () => scrollTop,
+      set: (value: number) => {
+        // Model the browser mount clamp: the DOM cannot reach the tail before the terminal virtual window exists.
+        if (document.querySelector(`[data-message-id="${latestMessageId}"]`)) scrollTop = value;
+      },
+    },
+  });
+  return {
+    get scrollTop() { return scrollTop; },
+    setManualScrollTop(value: number) { scrollTop = value; },
+    setScrollHeight(value: number) { scrollHeight = value; },
+  };
+}
+
+function installTrackedResizeObserver() {
+  const observers: Array<{ callback: ResizeObserverCallback; targets: Set<Element> }> = [];
+  class TrackedResizeObserver {
+    readonly entry: { callback: ResizeObserverCallback; targets: Set<Element> };
+    constructor(callback: ResizeObserverCallback) {
+      this.entry = { callback, targets: new Set() };
+      observers.push(this.entry);
+    }
+    observe = (target: Element) => { this.entry.targets.add(target); };
+    unobserve = (target: Element) => { this.entry.targets.delete(target); };
+    disconnect = () => { this.entry.targets.clear(); };
+  }
+  vi.stubGlobal("ResizeObserver", TrackedResizeObserver);
+  return (target: Element, blockSize?: number) => {
+    for (const observer of observers) {
+      if (!observer.targets.has(target)) continue;
+      observer.callback([{
+        target,
+        borderBoxSize: blockSize === undefined ? undefined : [{ blockSize }],
+        contentRect: { height: blockSize ?? 0 },
+      } as unknown as ResizeObserverEntry], {} as ResizeObserver);
+    }
+  };
+}
+
 function installPagedDirectChat(session = activeSessionFixture) {
   const cursors: string[] = [];
   mockUseChat.mockImplementation(() => {
@@ -180,6 +246,140 @@ FNXC:ChatTranscriptVirtualization 2026-09-06-14:31:
 The shared Direct Chat pane is exercised through its production history sentinel, one strict 50-row page at a time, before DOM bounds are asserted across provider, CLI, desktop, mobile, floating, and dock hosts. Search, scroll, and text/thinking/tool-call stream growth navigate or extend virtual keys after pagination instead of relying on an injected complete array; pinned readers follow the synthetic tail while detached readers retain their position.
 */
 describe("ChatView transcript virtualization", () => {
+  /*
+  FNXC:ChatScrollAnchor 2026-09-07-23:34:
+  La preuve de restauration doit traverser le vrai useChat et ses requêtes différées: les hôtes ordinaires restaurent la préférence projet, tandis que les hôtes secondaires restaurent leur session explicite. Chaque chemin sélectionne ensuite un autre fil par l’interface, afin que la fenêtre virtualisée terminale, le viewport et l’abandon au premier scroll manuel soient vérifiés comme un seul contrat de production.
+  */
+  it.each([
+    ["provider desktop", "desktop", false, false, false],
+    ["provider mobile", "mobile", false, false, false],
+    ["provider detached", "desktop", true, false, true],
+    ["CLI floating", "desktop", true, false, true],
+    ["CLI dock", "desktop", false, true, true],
+  ] as const)("restaure puis sélectionne un long fil à sa fin réelle dans l’hôte %s", async (_name, viewport, floating, compactLayout, cli) => {
+    mockViewportMode(viewport);
+    mockUseChat.mockImplementation(actualUseChatModule.useChat);
+    setupMockRooms();
+
+    const restoredSession = {
+      ...activeSessionFixture,
+      id: `restored-${cli ? "cli" : "provider"}`,
+      title: "Conversation restaurée",
+      ...(cli ? { cliExecutorAdapterId: "claude" } : {}),
+    };
+    const selectedSession = {
+      ...restoredSession,
+      id: `selected-${cli ? "cli" : "provider"}`,
+      title: "Conversation sélectionnée",
+    };
+    const restoredMessages = makeSessionMessages(restoredSession.id, "restored");
+    const selectedMessages = makeSessionMessages(selectedSession.id, "selected");
+    const restoredRequest = deferred<{ messages: typeof restoredMessages }>();
+    const selectedRequest = deferred<{ messages: typeof selectedMessages }>();
+    const fireTranscriptResize = installTrackedResizeObserver();
+    const queuedFrames: FrameRequestCallback[] = [];
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      queuedFrames.push(callback);
+      return queuedFrames.length;
+    });
+
+    apiMocks.fetchChatSessions.mockResolvedValue({ sessions: [restoredSession, selectedSession] });
+    apiMocks.fetchChatSession.mockImplementation(async (sessionId: string) => ({
+      session: { ...(sessionId === restoredSession.id ? restoredSession : selectedSession), isGenerating: false },
+    }));
+    apiMocks.fetchChatMessages.mockImplementation((sessionId: string) => {
+      if (sessionId === restoredSession.id) return restoredRequest.promise;
+      if (sessionId === selectedSession.id) return selectedRequest.promise;
+      throw new Error(`Unexpected session ${sessionId}`);
+    });
+
+    const usesExplicitRestoration = floating || compactLayout;
+    if (!usesExplicitRestoration) setPersistedChatOpenSession(restoredSession.id, "project");
+    await renderWithAct(
+      <ChatView
+        projectId="project"
+        addToast={vi.fn()}
+        floating={floating}
+        compactLayout={compactLayout}
+        initialDirectSession={usesExplicitRestoration ? restoredSession : undefined}
+        persistChatPreferences={!usesExplicitRestoration}
+      />,
+    );
+
+    await waitFor(() => expect(apiMocks.fetchChatMessages).toHaveBeenCalledWith(
+      restoredSession.id,
+      expect.objectContaining({ limit: 50, order: "desc" }),
+      "project",
+    ));
+    const restoredTranscript = await waitFor(() => {
+      const element = document.querySelector<HTMLElement>(".chat-messages");
+      expect(element).not.toBeNull();
+      return element!;
+    });
+    const restoredLatestId = restoredMessages.at(-1)!.id;
+    const restoredGeometry = installOpeningGeometry(restoredTranscript, restoredLatestId, restoredMessages.length * 112);
+    await act(async () => { restoredRequest.resolve({ messages: [...restoredMessages].reverse() }); });
+    await waitFor(() => expect(document.querySelector(`[data-message-id="${restoredLatestId}"]`)).toBeInTheDocument());
+    act(() => {
+      let frame = queuedFrames.shift();
+      while (frame) {
+        frame(0);
+        frame = queuedFrames.shift();
+      }
+    });
+    await waitFor(() => expect(restoredGeometry.scrollTop + restoredTranscript.clientHeight).toBeGreaterThanOrEqual(restoredTranscript.scrollHeight));
+    expect(document.querySelectorAll(".chat-message").length).toBeLessThanOrEqual(60);
+
+    const backButton = screen.queryByTestId("chat-back-btn");
+    if (backButton) fireEvent.click(backButton);
+    fireEvent.click(await screen.findByTestId(`chat-session-${selectedSession.id}`));
+    await waitFor(() => expect(apiMocks.fetchChatMessages).toHaveBeenCalledWith(
+      selectedSession.id,
+      expect.objectContaining({ limit: 50, order: "desc" }),
+      "project",
+    ));
+    const selectedTranscript = await waitFor(() => {
+      const element = document.querySelector<HTMLElement>(".chat-messages");
+      expect(element).not.toBeNull();
+      return element!;
+    });
+    const selectedLatestId = selectedMessages.at(-1)!.id;
+    const selectedGeometry = installOpeningGeometry(selectedTranscript, selectedLatestId, selectedMessages.length * 112);
+    await act(async () => { selectedRequest.resolve({ messages: [...selectedMessages].reverse() }); });
+    await waitFor(() => expect(document.querySelector(`[data-message-id="${selectedLatestId}"]`)).toBeInTheDocument());
+    act(() => {
+      let frame = queuedFrames.shift();
+      while (frame) {
+        frame(0);
+        frame = queuedFrames.shift();
+      }
+    });
+    await waitFor(() => expect(selectedGeometry.scrollTop + selectedTranscript.clientHeight).toBeGreaterThanOrEqual(selectedTranscript.scrollHeight));
+
+    const selectedLatestRow = document.querySelector(`[data-message-id="${selectedLatestId}"]`)?.closest(".chat-transcript-row");
+    expect(selectedLatestRow).not.toBeNull();
+    selectedGeometry.setScrollHeight((selectedMessages.length * 112) + 488);
+    act(() => fireTranscriptResize(selectedLatestRow!, 600));
+    await waitFor(() => expect(document.querySelector(`[data-message-id="${selectedLatestId}"]`)).toBeInTheDocument());
+    await waitFor(() => expect(selectedGeometry.scrollTop + selectedTranscript.clientHeight).toBeGreaterThanOrEqual(selectedTranscript.scrollHeight));
+
+    selectedGeometry.setManualScrollTop(120);
+    act(() => fireEvent.scroll(selectedTranscript));
+    selectedGeometry.setScrollHeight((selectedMessages.length * 112) + 588);
+    act(() => {
+      const latestRowAfterDetach = document.querySelector(`[data-message-id="${selectedLatestId}"]`)?.closest(".chat-transcript-row");
+      expect(latestRowAfterDetach).not.toBeNull();
+      fireTranscriptResize(latestRowAfterDetach!, 700);
+      fireTranscriptResize(selectedTranscript);
+      let frame = queuedFrames.shift();
+      while (frame) {
+        frame(0);
+        frame = queuedFrames.shift();
+      }
+    });
+    expect(selectedGeometry.scrollTop).toBe(120);
+  });
+
   it.each([
     ["provider desktop", "desktop", activeSessionFixture, {}],
     ["provider mobile", "mobile", activeSessionFixture, {}],
@@ -216,8 +416,10 @@ describe("ChatView transcript virtualization", () => {
       return { messages: messages.slice(Math.max(0, end - 50), end).reverse() };
     });
     setupMockRooms();
-    await renderWithAct(<ChatView projectId="project" addToast={vi.fn()} initialDirectSession={activeSessionFixture} />);
+    setPersistedChatOpenSession(activeSessionFixture.id, "project");
+    await renderWithAct(<ChatView projectId="project" addToast={vi.fn()} />);
     await waitFor(() => expect(apiMocks.fetchChatMessages).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText("Rich markdown message 999")).toBeInTheDocument();
 
     for (let page = 1; page < 20; page += 1) {
       const observer = [...observedIntersections].reverse().find((entry) =>
@@ -365,18 +567,35 @@ describe("ChatView transcript virtualization", () => {
     }
   });
 
-  it("mounts an off-window search result after recovering the paginated history", async () => {
+  it("keeps an off-window search result centered through a late row measurement", async () => {
     mockViewportMode("desktop");
     setupMockRooms();
+    const fireTranscriptResize = installTrackedResizeObserver();
     const cursors = installPagedDirectChat();
     await renderWithAct(<ChatView projectId="project" addToast={vi.fn()} initialDirectSession={activeSessionFixture} />);
     for (let page = 1; page < 20; page += 1) await loadNextDirectPage(cursors, page);
 
+    const transcript = document.querySelector<HTMLElement>(".chat-messages")!;
+    Object.defineProperties(transcript, {
+      clientHeight: { configurable: true, value: 400 },
+      scrollHeight: { configurable: true, value: 112_000 },
+      scrollTop: { configurable: true, writable: true, value: 111_600 },
+    });
     const findEvent = new KeyboardEvent("keydown", { key: "f", ctrlKey: true, bubbles: true, cancelable: true });
-    document.querySelector(".chat-messages")!.dispatchEvent(findEvent);
+    transcript.dispatchEvent(findEvent);
     const search = await screen.findByTestId("chat-conversation-search-input");
     fireEvent.change(search, { target: { value: "Rich markdown message 10" } });
-    expect(await screen.findByText("Rich markdown message 10", { exact: false })).toBeInTheDocument();
+    const resultMessage = await screen.findByText("Rich markdown message 10", { exact: false });
+    await waitFor(() => expect(transcript.scrollTop).toBeLessThan(2_000));
+    const centeredScrollTop = transcript.scrollTop;
+    expect(centeredScrollTop).toBeGreaterThan(0);
+
+    const resultRow = resultMessage.closest(".chat-transcript-row");
+    expect(resultRow).not.toBeNull();
+    act(() => fireTranscriptResize(resultRow!, 212));
+
+    expect(transcript.scrollTop).toBe(centeredScrollTop);
+    expect(transcript.scrollTop + transcript.clientHeight).toBeLessThan(transcript.scrollHeight);
     expect(document.querySelectorAll(".chat-message").length).toBeLessThanOrEqual(60);
   });
 });

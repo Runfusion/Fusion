@@ -30,6 +30,7 @@ export interface VirtualizedList extends VirtualListRange {
   measureRow: (key: string) => RefCallback<HTMLElement>;
   scrollToKey: (key: string, align?: "start" | "center" | "end") => void;
   scrollToBottom: () => void;
+  cancelPendingScrollToBottom: () => void;
   captureAnchor: () => VirtualListAnchor | null;
   restoreAnchor: (anchor: VirtualListAnchor) => void;
 }
@@ -112,6 +113,9 @@ export function useVirtualizedList(options: VirtualListOptions): VirtualizedList
   const elementKeysRef = useRef(new WeakMap<Element, string>());
   const elementsByKeyRef = useRef(new Map<string, Element>());
   const generationRef = useRef(0);
+  const totalHeightRef = useRef(0);
+  const collectionKeyRef = useRef(collectionKey);
+  const pendingBottomAlignmentRef = useRef<string | null | undefined>(undefined);
   const previousRef = useRef<{ collectionKey: string | null; keys: readonly string[]; totalHeight: number }>({ collectionKey, keys: [], totalHeight: 0 });
   const [geometry, setGeometry] = useState({ scrollTop: initialAlign === "start" ? 0 : Number.POSITIVE_INFINITY, viewportHeight: DEFAULT_LIST_VIEWPORT_HEIGHT, revision: 0 });
 
@@ -124,6 +128,8 @@ export function useVirtualizedList(options: VirtualListOptions): VirtualizedList
     overscanViewports,
     maxRenderedRows,
   }), [estimateHeight, geometry, keys, maxRenderedRows, overscanViewports]);
+  totalHeightRef.current = range.totalHeight;
+  collectionKeyRef.current = collectionKey;
 
   const readGeometry = useCallback(() => {
     const container = scrollRef.current;
@@ -143,6 +149,7 @@ export function useVirtualizedList(options: VirtualListOptions): VirtualizedList
       observerRef.current?.disconnect();
       observerRef.current = null;
       measurementsRef.current.clear();
+      if (pendingBottomAlignmentRef.current !== collectionKey) pendingBottomAlignmentRef.current = undefined;
       previousRef.current = { collectionKey, keys: [...keys], totalHeight: 0 };
       const scrollTop = initialAlign === "start" ? 0 : Number.POSITIVE_INFINITY;
       setGeometry({ scrollTop, viewportHeight: container?.clientHeight || DEFAULT_LIST_VIEWPORT_HEIGHT, revision: 0 });
@@ -208,7 +215,12 @@ export function useVirtualizedList(options: VirtualListOptions): VirtualizedList
     return { index, offset, height: measurementsRef.current.get(key) ?? estimateHeight };
   }, [estimateHeight, keys]);
 
+  /*
+  FNXC:ListVirtualization 2026-09-07-23:53:
+  Une navigation explicite vers une ligne remplace immédiatement l’alignement terminal d’ouverture, avant même de résoudre la cible. Une recherche ou une action de remontée reste ainsi autoritaire pendant les mesures tardives au lieu d’être ramenée en fin de liste par une ancienne commande.
+  */
   const scrollToKey = useCallback((key: string, align: "start" | "center" | "end" = "start") => {
+    pendingBottomAlignmentRef.current = undefined;
     const container = scrollRef.current;
     const target = offsetForKey(key);
     if (!container || !target) return;
@@ -218,12 +230,34 @@ export function useVirtualizedList(options: VirtualListOptions): VirtualizedList
     readGeometry();
   }, [offsetForKey, readGeometry, scrollRef]);
 
+  /*
+  FNXC:ListVirtualization 2026-09-07-23:44:
+  Une commande d’alignement en fin publie d’abord la géométrie terminale du virtualiseur, puis reste propriétaire de cet alignement pendant les révisions de mesure. Lire immédiatement scrollTop après l’écriture est incorrect pendant le montage, et libérer la commande après le premier layout laisse une ligne mesurée tardivement agrandir la liste sous le viewport; l’annulateur, une navigation explicite ou un changement de collection clôt cette propriété.
+  */
   const scrollToBottom = useCallback(() => {
     const container = scrollRef.current;
     if (!container) return;
+    const target = Math.max(container.scrollHeight, totalHeightRef.current);
+    pendingBottomAlignmentRef.current = collectionKeyRef.current;
+    setGeometry((current) => ({
+      ...current,
+      scrollTop: Number.POSITIVE_INFINITY,
+      viewportHeight: container.clientHeight || DEFAULT_LIST_VIEWPORT_HEIGHT,
+    }));
+    container.scrollTop = target;
+  }, [scrollRef]);
+
+  const cancelPendingScrollToBottom = useCallback(() => {
+    pendingBottomAlignmentRef.current = undefined;
+  }, []);
+
+  useLayoutEffect(() => {
+    const requestedCollectionKey = pendingBottomAlignmentRef.current;
+    if (requestedCollectionKey === undefined || requestedCollectionKey !== collectionKey) return;
+    const container = scrollRef.current;
+    if (!container) return;
     container.scrollTop = Math.max(container.scrollHeight, range.totalHeight);
-    readGeometry();
-  }, [range.totalHeight, readGeometry, scrollRef]);
+  }, [collectionKey, geometry.scrollTop, range.totalHeight, scrollRef]);
 
   const captureAnchor = useCallback((): VirtualListAnchor | null => {
     const first = keys[range.startIndex];
@@ -245,6 +279,7 @@ export function useVirtualizedList(options: VirtualListOptions): VirtualizedList
     measureRow,
     scrollToKey,
     scrollToBottom,
+    cancelPendingScrollToBottom,
     captureAnchor,
     restoreAnchor,
   };
