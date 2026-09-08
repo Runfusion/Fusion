@@ -658,7 +658,9 @@ export class PluginLoader extends EventEmitter<{
       } finally {
         try {
           await rm(reloadedPath, { force: true });
-        } catch {}
+        } catch {
+          // Best-effort cleanup: a failed scratch removal should not fail a successful plugin import.
+        }
       }
     } else {
       mod = await import(moduleUrl);

@@ -104,7 +104,9 @@ export function VoiceInputSection({ form, setForm }: SectionBaseProps) {
   };
   const performRuntimeRecheck = async () => {
     setRecheckingRuntime(true);
-    try { await api("/voice/runtime/recheck", { method: "POST" }); } catch {} finally {
+    try { await api("/voice/runtime/recheck", { method: "POST" }); } catch {
+      // Recheck failures are reflected by the refreshed voice runtime status below.
+    } finally {
       await loadStatus();
       if (mounted.current) setRecheckingRuntime(false);
     }
