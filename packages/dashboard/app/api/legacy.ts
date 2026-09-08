@@ -52,6 +52,7 @@ export {
 } from "./tasks/tasks.js";
 import type {
   DeleteTaskOptions,
+  CompletedTaskPageResponse,
   TaskRecommendationsResponse,
   TaskRuntimeFallbackResponse,
   TaskPromptResponse,
@@ -70,6 +71,7 @@ import type {
 } from "./tasks/tasks.js";
 export type {
   DeleteTaskOptions,
+  CompletedTaskPageResponse,
   TaskRecommendationsResponse,
   TaskRuntimeFallbackResponse,
   TaskPromptResponse,

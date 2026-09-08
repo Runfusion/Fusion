@@ -129,7 +129,7 @@ function hasFreshAgentLogActivitySinceTaskUpdate(
 }
 
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
-import {countLiveTasks, readTaskRow, readLiveTaskRows, readTaskRowByProposalClaimId, readTaskRowsBySourceLineage} from "./async/async-persistence.js";
+import {countLiveTasks, readCompletedTaskPage, readTaskRow, readLiveTaskRows, readTaskRowByProposalClaimId, readTaskRowsBySourceLineage} from "./async/async-persistence.js";
 import {buildTsqueryFragment, liveSearchPredicate, searchTasksTsvector, searchTasksLike} from "./async/async-search.js";
 import {
   listArchivedTasks as listArchivedTaskEntries,
@@ -730,44 +730,72 @@ export async function listCurrentTasksPageImpl(store: TaskStore, options: { limi
   };
 }
 
+export interface CompletedTaskCounts {
+  byColumn: Record<string, number>;
+  byWorkflow: Record<string, Record<string, number>>;
+}
+
+export interface CompletedTaskPage {
+  tasks: Task[];
+  total: number;
+  hasMore: boolean;
+  nextCursor: string | null;
+  counts: CompletedTaskCounts;
+}
+
+type CompletedCursorPayload = {
+  v: 1;
+  projectId: string;
+  sort: TaskColumnSortMode;
+  completionAt?: string;
+  numericSuffix: string;
+  id: string;
+};
+
+function decodeCompletedCursor(cursor: string, projectId: string, sort: TaskColumnSortMode): CompletedCursorPayload {
+  try {
+    const parsed = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as Partial<CompletedCursorPayload>;
+    if (parsed.v !== 1 || parsed.projectId !== projectId || parsed.sort !== sort || typeof parsed.id !== "string"
+      || typeof parsed.numericSuffix !== "string" || !/^\d+$/.test(parsed.numericSuffix)
+      || (sort === "completion-date-desc" && (typeof parsed.completionAt !== "string" || Number.isNaN(Date.parse(parsed.completionAt))))) {
+      throw new Error("mismatch");
+    }
+    return parsed as CompletedCursorPayload;
+  } catch {
+    throw new TypeError("Invalid completed-task cursor");
+  }
+}
+
 /**
- * Return one bounded page from every workflow column carrying the `complete`
- * trait, along with an exact project-scoped total.
+ * Return a stable keyset page from every workflow completion lane, together with exact scoped counts.
  *
- * FNXC:DonePagination 2026-09-04-10:36:
- * Done is the only visible task-history lane after archive removal. Resolve all
- * configured completion columns, select the newest 50 rows in SQL, and count
- * all matching live rows separately so the header remains exact while the DOM
- * and network payload stay bounded.
- *
- * FNXC:DonePagination 2026-09-04-19:28:
- * Apply the requested completion-date or task-id order before LIMIT/OFFSET. Every page in one
- * browser sort session therefore shares the same deterministic SQL order and textual id tie-break.
+ * FNXC:DoneKeysetPagination 2026-09-08-22:25:
+ * The opaque continuation binds project, sort mode, and the final total-order key. Clients must replay only this server cursor: deriving an offset from deduplicated or SSE-mutated rows can skip permanent history entries.
  */
 export async function listCompletedTasksImpl(
   store: TaskStore,
-  options?: { limit?: number; offset?: number; slim?: boolean; sort?: TaskColumnSortMode },
-): Promise<{ tasks: Task[]; total: number; hasMore: boolean }> {
+  options?: { limit?: number; cursor?: string; slim?: boolean; sort?: TaskColumnSortMode },
+): Promise<CompletedTaskPage> {
   const rawLimit = options?.limit ?? 50;
   const limit = Math.min(500, Math.max(1, Math.trunc(rawLimit) || 50));
-  const offset = Math.max(0, Math.trunc(options?.offset ?? 0) || 0);
+  const sort = options?.sort ?? "completion-date-desc";
   const completeColumns = [...await resolveProjectColumnsForRoles(store, ["complete"])] as ColumnId[];
   const layer = store.asyncLayer;
   if (!layer) throw new Error("Completed-task pagination requires the async task backend");
-
-  const [total, tasks] = await Promise.all([
-    countLiveTasks(layer, { columns: completeColumns }),
-    store.listTasks({
-      columns: completeColumns,
-      includeArchived: false,
-      limit,
-      offset,
-      slim: options?.slim ?? true,
-      sort: options?.sort ?? "completion-date-desc",
-      startupMemo: false,
-    }),
-  ]);
-  return { tasks, total, hasMore: offset + tasks.length < total };
+  const projectId = layer.projectId ?? "";
+  const cursor = options?.cursor ? decodeCompletedCursor(options.cursor, projectId, sort) : undefined;
+  const defaultWorkflowId = (await store.getDefaultWorkflowId()) ?? "builtin:coding";
+  const result = await readCompletedTaskPage(layer, { columns: completeColumns, limit, sort, cursor, defaultWorkflowId });
+  const hasMore = result.rows.length > limit;
+  const pageRows = result.rows.slice(0, limit);
+  const tasks = pageRows.map((row) => store.rowToTask(store.pgRowToTaskRow(row)));
+  const last = tasks.at(-1);
+  const completionAt = last ? (last.columnMovedAt ?? last.updatedAt ?? last.createdAt) : undefined;
+  const numericSuffix = last?.id.match(/-([0-9]+)$/)?.[1] ?? "0";
+  const nextCursor = hasMore && last
+    ? Buffer.from(JSON.stringify({ v: 1, projectId, sort, ...(sort === "completion-date-desc" ? { completionAt } : {}), numericSuffix, id: last.id } satisfies CompletedCursorPayload), "utf8").toString("base64url")
+    : null;
+  return { tasks, total: result.total, hasMore, nextCursor, counts: result.counts };
 }
 
 export async function listTasksModifiedSinceImpl(store: TaskStore, since: string, limit?: number, opts?: { includeArchived?: boolean },): Promise<{ tasks: Task[]; hasMore: boolean }> {

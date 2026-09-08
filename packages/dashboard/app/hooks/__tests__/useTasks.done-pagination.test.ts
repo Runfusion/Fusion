@@ -4,6 +4,14 @@ import type { Task } from "@fusion/core";
 import * as api from "../../api";
 import { useTasks } from "../useTasks";
 
+const { sseHandlers } = vi.hoisted(() => ({ sseHandlers: {} as Record<string, (event: MessageEvent) => void> }));
+vi.mock("../../sse-bus", () => ({
+  subscribeSse: (_url: string, options: { events: Record<string, (event: MessageEvent) => void> }) => {
+    Object.assign(sseHandlers, options.events);
+    return () => undefined;
+  },
+}));
+
 vi.mock("../../api", async (importOriginal) => {
   const { createDashboardApiMock } = await import("../../test/mockApi");
   const fetchTasks = vi.fn();
@@ -20,150 +28,292 @@ vi.mock("../../api", async (importOriginal) => {
 const fetchTasks = vi.mocked(api.fetchTasks);
 const fetchCompletedTasks = vi.mocked(api.fetchCompletedTasks);
 
+function task(id: string, column = "done"): Task {
+  return { id, description: id, column, dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z", columnMovedAt: "2026-01-01T00:00:00.000Z" } as Task;
+}
+
+function response(
+  tasks: Task[],
+  total: number,
+  nextCursor: string | null,
+  counts = { byColumn: { done: total }, byWorkflow: { "builtin:coding": { done: total } } },
+) {
+  return { tasks, total, hasMore: nextCursor !== null, nextCursor, counts };
+}
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((settle) => { resolve = settle; });
   return { promise, resolve };
 }
 
-function task(id: string, column: string): Task {
-  return {
-    id,
-    description: id,
-    column,
-    dependencies: [],
-    steps: [],
-    currentStep: 0,
-    log: [],
-    createdAt: "2026-01-01T00:00:00.000Z",
-    updatedAt: "2026-01-01T00:00:00.000Z",
-    columnMovedAt: "2026-01-01T00:00:00.000Z",
-  } as Task;
-}
-
-describe("useTasks Done pagination", () => {
+describe("useTasks Done keyset pagination", () => {
   beforeEach(() => {
     localStorage.clear();
+    for (const key of Object.keys(sseHandlers)) delete sseHandlers[key];
     fetchTasks.mockReset().mockResolvedValue([task("FN-CURRENT", "todo")]);
-    fetchCompletedTasks.mockReset().mockResolvedValue({ tasks: [], total: 0, hasMore: false });
+    fetchCompletedTasks.mockReset().mockResolvedValue(response([], 0, null));
   });
 
-  it("loads 50 Done tasks initially while exposing the exact server total", async () => {
-    const completed = Array.from({ length: 50 }, (_, index) => task(`FN-DONE-${index}`, "done"));
-    fetchCompletedTasks.mockResolvedValueOnce({ tasks: completed, total: 1_284, hasMore: true });
-
-    const { result } = renderHook(() => useTasks({ projectId: "project-a", sseEnabled: false }));
-
-    await waitFor(() => expect(result.current.tasks).toHaveLength(51));
-    expect(fetchTasks).toHaveBeenCalledWith(undefined, undefined, "project-a", undefined, true);
-    expect(fetchCompletedTasks).toHaveBeenCalledWith("project-a", 50, 0, "completion-date-desc");
-    expect(result.current.completedTotal).toBe(1_284);
-    expect(result.current.completedHasMore).toBe(true);
-  });
-
-  it("loads every page when completed history exceeds 202 rows", async () => {
-    const completed = Array.from({ length: 205 }, (_, index) => task(`FN-DONE-${205 - index}`, "done"));
+  it("loads all 205 rows using only server continuations while deduplicating boundaries", async () => {
+    const completed = Array.from({ length: 205 }, (_, index) => task(`FN-DONE-${205 - index}`));
     for (let offset = 0; offset < completed.length; offset += 50) {
-      const page = completed.slice(offset, offset + 50);
-      fetchCompletedTasks.mockResolvedValueOnce({
-        tasks: page,
-        total: completed.length,
-        hasMore: offset + page.length < completed.length,
-      });
+      const rows = completed.slice(offset, offset + 50);
+      if (offset === 50) rows.unshift(completed[49]!);
+      const next = offset + 50 < completed.length ? `cursor-${offset + 50}` : null;
+      fetchCompletedTasks.mockResolvedValueOnce(response(rows, 205, next));
     }
-
-    const { result } = renderHook(() => useTasks({ projectId: "project-a", sseEnabled: false }));
-    await waitFor(() => expect(result.current.completedTotal).toBe(205));
-    while (result.current.completedHasMore) {
-      await act(async () => result.current.loadMoreCompletedTasks());
-    }
-
-    const doneIds = result.current.tasks.filter((candidate) => candidate.column === "done").map((candidate) => candidate.id);
-    expect(doneIds).toHaveLength(205);
-    expect(new Set(doneIds).size).toBe(205);
-    expect(fetchCompletedTasks).toHaveBeenCalledTimes(5);
-    expect(fetchCompletedTasks).toHaveBeenLastCalledWith("project-a", 50, 200, "completion-date-desc");
-  });
-
-  it("deduplicates later pages and advances from the number of unique loaded Done rows", async () => {
-    const firstPage = [task("FN-DONE-3", "done"), task("FN-DONE-2", "done")];
-    fetchCompletedTasks
-      .mockResolvedValueOnce({ tasks: firstPage, total: 3, hasMore: true })
-      .mockResolvedValueOnce({ tasks: [task("FN-DONE-2", "done"), task("FN-DONE-1", "done")], total: 3, hasMore: false });
-
     const { result } = renderHook(() => useTasks({ projectId: "project-a", sseEnabled: false }));
     await waitFor(() => expect(result.current.completedHasMore).toBe(true));
+    while (result.current.completedHasMore) await act(() => result.current.loadMoreCompletedTasks());
 
-    await act(async () => result.current.loadMoreCompletedTasks());
+    const ids = result.current.tasks.filter((candidate) => candidate.column === "done").map((candidate) => candidate.id);
+    expect(ids).toHaveLength(205);
+    expect(new Set(ids).size).toBe(205);
+    expect(result.current.completedCounts.byColumn.done).toBe(205);
+    expect(fetchCompletedTasks).toHaveBeenNthCalledWith(1, "project-a", 50, undefined, "completion-date-desc");
+    expect(fetchCompletedTasks).toHaveBeenLastCalledWith("project-a", 50, "cursor-200", "completion-date-desc");
+  });
 
-    expect(fetchCompletedTasks).toHaveBeenLastCalledWith("project-a", 50, 2, "completion-date-desc");
-    expect(result.current.tasks.filter((candidate) => candidate.column === "done").map((candidate) => candidate.id).sort())
-      .toEqual(["FN-DONE-1", "FN-DONE-2", "FN-DONE-3"]);
+  it("reconciles aggregate and selected-workflow counts for every live Complete transition", async () => {
+    const workflowByTaskId: Record<string, string> = { "FN-A": "wf-a", "FN-B": "wf-b" };
+    fetchCompletedTasks.mockResolvedValueOnce(response(
+      [task("FN-A", "complete-a")],
+      1,
+      null,
+      { byColumn: { "complete-a": 1 }, byWorkflow: { "wf-a": { "complete-a": 1 } } },
+    ));
+    const { result } = renderHook(() => useTasks({
+      projectId: "project-a",
+      sseEnabled: true,
+      resolveColumnFlags: (candidate) => ({ complete: candidate.column.startsWith("complete-") }),
+      resolveWorkflowId: (candidate) => workflowByTaskId[candidate.id] ?? "wf-default",
+    }));
+    await waitFor(() => expect(result.current.completedCounts.byColumn["complete-a"]).toBe(1));
+
+    await act(async () => {
+      sseHandlers["task:created"]?.(new MessageEvent("task:created", {
+        data: JSON.stringify({ ...task("FN-B", "complete-b"), projectId: "project-a" }),
+      }));
+    });
+    expect(result.current.completedCounts.byColumn).toMatchObject({ "complete-a": 1, "complete-b": 1 });
+    expect(result.current.completedCounts.byWorkflow).toMatchObject({
+      "wf-a": { "complete-a": 1 },
+      "wf-b": { "complete-b": 1 },
+    });
+
+    await act(async () => {
+      sseHandlers["task:moved"]?.(new MessageEvent("task:moved", {
+        data: JSON.stringify({ task: task("FN-A", "complete-b"), from: "complete-a", to: "complete-b", projectId: "project-a" }),
+      }));
+    });
+    expect(result.current.completedCounts.byColumn).toMatchObject({ "complete-a": 0, "complete-b": 2 });
+    expect(result.current.completedCounts.byWorkflow).toMatchObject({
+      "wf-a": { "complete-a": 0, "complete-b": 1 },
+      "wf-b": { "complete-b": 1 },
+    });
+
+    await act(async () => {
+      sseHandlers["task:moved"]?.(new MessageEvent("task:moved", {
+        data: JSON.stringify({ task: task("FN-B", "todo"), from: "complete-b", to: "todo", projectId: "project-a" }),
+      }));
+    });
+    expect(result.current.completedCounts.byColumn["complete-b"]).toBe(1);
+    expect(result.current.completedCounts.byWorkflow["wf-b"]?.["complete-b"]).toBe(0);
+
+    await act(async () => {
+      sseHandlers["task:deleted"]?.(new MessageEvent("task:deleted", {
+        data: JSON.stringify({ ...task("FN-A", "complete-b"), projectId: "project-a" }),
+      }));
+    });
+    expect(result.current.completedTotal).toBe(0);
+    expect(result.current.completedCounts.byColumn).toMatchObject({ "complete-a": 0, "complete-b": 0 });
+    expect(result.current.completedCounts.byWorkflow["wf-a"]).toMatchObject({ "complete-a": 0, "complete-b": 0 });
+  });
+
+  it("does not increment exact server counts for an updated Done row outside loaded pages", async () => {
+    fetchCompletedTasks.mockResolvedValueOnce(response([task("FN-HEAD")], 2, "tail-cursor"));
+    const { result } = renderHook(() => useTasks({
+      projectId: "project-a",
+      sseEnabled: true,
+      resolveWorkflowId: () => "builtin:coding",
+    }));
+    await waitFor(() => expect(result.current.completedTotal).toBe(2));
+
+    await act(async () => {
+      sseHandlers["task:updated"]?.(new MessageEvent("task:updated", {
+        data: JSON.stringify({ ...task("FN-UNLOADED"), projectId: "project-a" }),
+      }));
+    });
+
+    expect(result.current.tasks.some((candidate) => candidate.id === "FN-UNLOADED")).toBe(true);
+    expect(result.current.completedTotal).toBe(2);
+    expect(result.current.completedCounts.byColumn.done).toBe(2);
+    expect(result.current.completedCounts.byWorkflow["builtin:coding"]?.done).toBe(2);
+  });
+
+  it("does not change Done membership or counts for a stale rejected update", async () => {
+    const current = {
+      ...task("FN-CURRENT-DONE"),
+      updatedAt: "2026-02-01T00:00:00.000Z",
+      columnMovedAt: "2026-02-01T00:00:00.000Z",
+    };
+    fetchCompletedTasks.mockResolvedValueOnce(response([current], 1, null));
+    const { result } = renderHook(() => useTasks({
+      projectId: "project-a",
+      sseEnabled: true,
+      resolveWorkflowId: () => "builtin:coding",
+    }));
+    await waitFor(() => expect(result.current.completedTotal).toBe(1));
+
+    await act(async () => {
+      sseHandlers["task:updated"]?.(new MessageEvent("task:updated", {
+        data: JSON.stringify({ ...task("FN-CURRENT-DONE", "todo"), projectId: "project-a" }),
+      }));
+    });
+
+    expect(result.current.tasks.find((candidate) => candidate.id === "FN-CURRENT-DONE")?.column).toBe("done");
+    expect(result.current.completedTotal).toBe(1);
+    expect(result.current.completedCounts.byColumn.done).toBe(1);
+    expect(result.current.completedCounts.byWorkflow["builtin:coding"]?.done).toBe(1);
+  });
+
+  it("does not derive continuation from the deduplicated row count", async () => {
+    fetchCompletedTasks
+      .mockResolvedValueOnce(response([task("FN-3"), task("FN-2")], 3, "opaque-boundary"))
+      .mockResolvedValueOnce(response([task("FN-2"), task("FN-1")], 3, null));
+    const { result } = renderHook(() => useTasks({ projectId: "project-a", sseEnabled: false }));
+    await waitFor(() => expect(result.current.completedHasMore).toBe(true));
+    await act(() => result.current.loadMoreCompletedTasks());
+    expect(fetchCompletedTasks).toHaveBeenLastCalledWith("project-a", 50, "opaque-boundary", "completion-date-desc");
+    expect(result.current.tasks.filter((candidate) => candidate.column === "done")).toHaveLength(3);
+  });
+
+  it("keeps the same cursor eligible after a transient continuation error", async () => {
+    fetchCompletedTasks
+      .mockResolvedValueOnce(response([task("FN-2")], 2, "retry-cursor"))
+      .mockRejectedValueOnce(new Error("temporary"))
+      .mockResolvedValueOnce(response([task("FN-1")], 2, null));
+    const { result } = renderHook(() => useTasks({ projectId: "project-a", sseEnabled: false }));
+    await waitFor(() => expect(result.current.completedHasMore).toBe(true));
+    await expect(act(() => result.current.loadMoreCompletedTasks())).rejects.toThrow("temporary");
+    expect(result.current.completedLoadingMore).toBe(false);
+    await act(() => result.current.loadMoreCompletedTasks());
+    expect(fetchCompletedTasks).toHaveBeenNthCalledWith(3, "project-a", 50, "retry-cursor", "completion-date-desc");
     expect(result.current.completedHasMore).toBe(false);
   });
 
-  it("fences an older Show-more response when the sort changes", async () => {
-    const olderPage = deferred<{ tasks: Task[]; total: number; hasMore: boolean }>();
+  it("does not resurrect a task moved out of Done while a page is in flight", async () => {
+    const late = deferred<ReturnType<typeof response>>();
     fetchCompletedTasks
-      .mockResolvedValueOnce({ tasks: [task("FN-OLD-2", "done")], total: 2, hasMore: true })
-      .mockReturnValueOnce(olderPage.promise)
-      .mockResolvedValueOnce({ tasks: [task("FN-NEW-100", "done")], total: 1, hasMore: false });
-
-    const { result } = renderHook(() => useTasks({ projectId: "project-a", sseEnabled: false }));
+      .mockResolvedValueOnce(response([task("FN-2")], 2, "late-cursor"))
+      .mockReturnValueOnce(late.promise);
+    const { result } = renderHook(() => useTasks({
+      projectId: "project-a",
+      sseEnabled: true,
+      resolveWorkflowId: () => "builtin:coding",
+    }));
     await waitFor(() => expect(result.current.completedHasMore).toBe(true));
-
-    let olderLoad!: Promise<void>;
+    let load!: Promise<void>;
+    await act(async () => { load = result.current.loadMoreCompletedTasks(); await Promise.resolve(); });
     await act(async () => {
-      olderLoad = result.current.loadMoreCompletedTasks();
-      await Promise.resolve();
+      sseHandlers["task:moved"]?.(new MessageEvent("task:moved", { data: JSON.stringify({ task: task("FN-1", "todo"), from: "done", to: "todo", projectId: "project-a" }) }));
     });
-    expect(result.current.completedLoadingMore).toBe(true);
-
-    await act(async () => result.current.changeCompletedSortMode("task-id-desc"));
-    expect(result.current.completedLoadingMore).toBe(false);
-    expect(result.current.tasks.some((candidate) => candidate.id === "FN-NEW-100")).toBe(true);
-
-    await act(async () => {
-      olderPage.resolve({ tasks: [task("FN-OLD-1", "done")], total: 2, hasMore: false });
-      await olderLoad;
-    });
-
-    expect(result.current.tasks.filter((candidate) => candidate.column === "done").map((candidate) => candidate.id))
-      .toEqual(["FN-NEW-100"]);
-    expect(result.current.completedLoadingMore).toBe(false);
+    late.resolve(response([task("FN-1")], 2, null));
+    await act(() => load);
+    expect(result.current.tasks.find((candidate) => candidate.id === "FN-1")?.column).toBe("todo");
+    expect(result.current.tasks.filter((candidate) => candidate.column === "done").map((candidate) => candidate.id)).toEqual(["FN-2"]);
+    expect(result.current.completedTotal).toBe(1);
+    expect(result.current.completedCounts.byColumn.done).toBe(1);
+    expect(result.current.completedCounts.byWorkflow["builtin:coding"]?.done).toBe(1);
   });
 
-  it("reloads page zero and keeps later pages in the selected server order", async () => {
+  it("fences a late Done page as soon as search changes", async () => {
+    const late = deferred<ReturnType<typeof response>>();
     fetchCompletedTasks
-      .mockResolvedValueOnce({
-        tasks: [task("FN-DONE-OLD-2", "done"), task("FN-DONE-OLD-1", "done")],
-        total: 4,
-        hasMore: true,
-      })
-      .mockResolvedValueOnce({
-        tasks: [task("FN-DONE-100", "done"), task("FN-DONE-99", "done")],
-        total: 3,
-        hasMore: true,
-      })
-      .mockResolvedValueOnce({
-        tasks: [task("FN-DONE-98", "done")],
-        total: 3,
-        hasMore: false,
-      });
+      .mockResolvedValueOnce(response([task("FN-HEAD")], 2, "old-cursor"))
+      .mockReturnValueOnce(late.promise);
+    const { result, rerender } = renderHook(
+      ({ searchQuery }: { searchQuery?: string }) => useTasks({ projectId: "project-a", searchQuery, sseEnabled: false }),
+      { initialProps: { searchQuery: undefined } },
+    );
+    await waitFor(() => expect(result.current.completedHasMore).toBe(true));
+    let oldLoad!: Promise<void>;
+    await act(async () => { oldLoad = result.current.loadMoreCompletedTasks(); await Promise.resolve(); });
 
+    rerender({ searchQuery: "needle" });
+    late.resolve(response([task("FN-STALE")], 2, null));
+    await act(() => oldLoad);
+
+    expect(result.current.tasks.some((candidate) => candidate.id === "FN-STALE")).toBe(false);
+    expect(result.current.completedHasMore).toBe(true);
+  });
+
+  it("fences a late Done page across a search A → B → A incarnation cycle", async () => {
+    const late = deferred<ReturnType<typeof response>>();
+    fetchCompletedTasks
+      .mockResolvedValueOnce(response([task("FN-HEAD")], 2, "old-cursor"))
+      .mockReturnValueOnce(late.promise);
+    const { result, rerender } = renderHook(
+      ({ searchQuery }: { searchQuery?: string }) => useTasks({ projectId: "project-a", searchQuery, sseEnabled: false }),
+      { initialProps: { searchQuery: undefined } },
+    );
+    await waitFor(() => expect(result.current.completedHasMore).toBe(true));
+    let oldLoad!: Promise<void>;
+    await act(async () => { oldLoad = result.current.loadMoreCompletedTasks(); await Promise.resolve(); });
+
+    rerender({ searchQuery: "needle" });
+    rerender({ searchQuery: undefined });
+    late.resolve(response([task("FN-STALE")], 2, null));
+    await act(() => oldLoad);
+
+    expect(result.current.tasks.some((candidate) => candidate.id === "FN-STALE")).toBe(false);
+    expect(result.current.completedHasMore).toBe(true);
+  });
+
+  it("fences a late Done page when refresh starts a new page-zero session", async () => {
+    const late = deferred<ReturnType<typeof response>>();
+    fetchCompletedTasks
+      .mockResolvedValueOnce(response([task("FN-OLD-HEAD")], 2, "old-cursor"))
+      .mockReturnValueOnce(late.promise)
+      .mockResolvedValueOnce(response([task("FN-NEW-HEAD")], 2, "new-cursor"))
+      .mockResolvedValueOnce(response([task("FN-NEW-TAIL")], 2, null));
     const { result } = renderHook(() => useTasks({ projectId: "project-a", sseEnabled: false }));
-    await waitFor(() => expect(result.current.tasks.some((candidate) => candidate.id === "FN-DONE-OLD-2")).toBe(true));
+    await waitFor(() => expect(result.current.completedHasMore).toBe(true));
+    let oldLoad!: Promise<void>;
+    await act(async () => { oldLoad = result.current.loadMoreCompletedTasks(); await Promise.resolve(); });
 
-    await act(async () => result.current.changeCompletedSortMode("task-id-desc"));
+    await act(() => result.current.refreshTasks({ resetCompletedPages: true }));
+    late.resolve(response([task("FN-STALE-TAIL")], 2, null));
+    await act(() => oldLoad);
+    await act(() => result.current.loadMoreCompletedTasks());
 
-    expect(fetchCompletedTasks).toHaveBeenNthCalledWith(2, "project-a", 50, 0, "task-id-desc");
-    expect(result.current.completedSortMode).toBe("task-id-desc");
-    expect(result.current.tasks.some((candidate) => candidate.id.startsWith("FN-DONE-OLD"))).toBe(false);
+    expect(fetchCompletedTasks).toHaveBeenNthCalledWith(3, "project-a", 50, undefined, "completion-date-desc");
+    expect(fetchCompletedTasks).toHaveBeenLastCalledWith("project-a", 50, "new-cursor", "completion-date-desc");
+    expect(result.current.tasks.some((candidate) => candidate.id === "FN-STALE-TAIL")).toBe(false);
+    expect(result.current.tasks.filter((candidate) => candidate.column === "done").map((candidate) => candidate.id)).toEqual([
+      "FN-NEW-HEAD",
+      "FN-NEW-TAIL",
+    ]);
+  });
 
-    await act(async () => result.current.loadMoreCompletedTasks());
-
-    expect(fetchCompletedTasks).toHaveBeenLastCalledWith("project-a", 50, 2, "task-id-desc");
-    expect(result.current.tasks.filter((candidate) => candidate.column === "done").map((candidate) => candidate.id))
-      .toEqual(["FN-DONE-100", "FN-DONE-99", "FN-DONE-98"]);
+  it("fences a late page after changing sort and restarts at page zero", async () => {
+    const late = deferred<ReturnType<typeof response>>();
+    fetchCompletedTasks
+      .mockResolvedValueOnce(response([task("FN-OLD-2")], 2, "old-cursor"))
+      .mockReturnValueOnce(late.promise)
+      .mockResolvedValueOnce(response([task("FN-NEW-100")], 2, "new-cursor"))
+      .mockResolvedValueOnce(response([task("FN-NEW-99")], 2, null));
+    const { result } = renderHook(() => useTasks({ projectId: "project-a", sseEnabled: false }));
+    await waitFor(() => expect(result.current.completedHasMore).toBe(true));
+    let oldLoad!: Promise<void>;
+    await act(async () => { oldLoad = result.current.loadMoreCompletedTasks(); await Promise.resolve(); });
+    await act(() => result.current.changeCompletedSortMode("task-id-desc"));
+    late.resolve(response([task("FN-OLD-1")], 2, null));
+    await act(() => oldLoad);
+    await act(() => result.current.loadMoreCompletedTasks());
+    expect(fetchCompletedTasks).toHaveBeenNthCalledWith(3, "project-a", 50, undefined, "task-id-desc");
+    expect(fetchCompletedTasks).toHaveBeenLastCalledWith("project-a", 50, "new-cursor", "task-id-desc");
+    expect(result.current.tasks.filter((candidate) => candidate.column === "done").map((candidate) => candidate.id)).toEqual(["FN-NEW-100", "FN-NEW-99"]);
   });
 });

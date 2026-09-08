@@ -63,19 +63,30 @@ export function fetchTasks(
   return api<Task[]>(`/tasks${suffix}`);
 }
 
-/** One bounded, newest-first page from the workflow-defined completion lanes. */
+export interface CompletedTaskPageResponse {
+  tasks: Task[];
+  total: number;
+  hasMore: boolean;
+  nextCursor?: string | null;
+  counts?: {
+    byColumn: Record<string, number>;
+    byWorkflow: Record<string, Record<string, number>>;
+  };
+}
+
+/** One bounded keyset page from the workflow-defined completion lanes. */
 export function fetchCompletedTasks(
   projectId?: string,
   limit?: number,
-  offset?: number,
+  cursor?: string,
   sortMode?: TaskColumnSortMode,
-): Promise<{ tasks: Task[]; total: number; hasMore: boolean }> {
+): Promise<CompletedTaskPageResponse> {
   const search = new URLSearchParams();
   if (limit !== undefined) search.set("limit", String(limit));
-  if (offset !== undefined) search.set("offset", String(offset));
+  if (cursor !== undefined) search.set("cursor", cursor);
   if (sortMode !== undefined) search.set("sort", sortMode);
   const suffix = search.size > 0 ? `?${search.toString()}` : "";
-  return api<{ tasks: Task[]; total: number; hasMore: boolean }>(withProjectId(`/tasks/done${suffix}`, projectId));
+  return api<CompletedTaskPageResponse>(withProjectId(`/tasks/done${suffix}`, projectId));
 }
 
 /** Row-paginated recommendation aggregate returned by the Insights triage route. */

@@ -435,6 +435,89 @@ export async function readTaskRowInTransaction(
  *   column/columns and excludeColumn/excludeColumns filter by board column in SQL;
  *   limit/offset paginate in SQL.
  */
+export interface CompletedTaskCursorKey {
+  completionAt?: string;
+  numericSuffix: string;
+  id: string;
+}
+
+export interface CompletedTaskReadResult {
+  rows: Record<string, unknown>[];
+  total: number;
+  counts: {
+    byColumn: Record<string, number>;
+    byWorkflow: Record<string, Record<string, number>>;
+  };
+}
+
+/*
+FNXC:DoneKeysetPagination 2026-09-08-22:25:
+Done history uses one read-only repeatable-read transaction for page membership and exact display counts. The continuation predicate and ORDER BY share the same total key, while workflow-selection joins retain project identity so equal task ids in another project cannot affect counts.
+*/
+export async function readCompletedTaskPage(
+  layer: AsyncDataLayer,
+  input: {
+    columns: readonly string[];
+    limit: number;
+    sort: TaskColumnSortMode;
+    cursor?: CompletedTaskCursorKey;
+    defaultWorkflowId: string;
+  },
+): Promise<CompletedTaskReadResult> {
+  if (input.columns.length === 0) {
+    return { rows: [], total: 0, counts: { byColumn: {}, byWorkflow: {} } };
+  }
+  return layer.transaction(async (tx) => {
+    const numericSuffix = sql`COALESCE(substring(${schema.project.tasks.id} from '-([0-9]+)$')::numeric, 0)`;
+    const completionAt = sql`COALESCE(${schema.project.tasks.columnMovedAt}, ${schema.project.tasks.updatedAt}, ${schema.project.tasks.createdAt})`;
+    const cursorSuffix = input.cursor?.numericSuffix ?? "0";
+    const cursorPredicate = !input.cursor
+      ? undefined
+      : input.sort === "task-id-desc"
+        ? sql`(${numericSuffix}, ${schema.project.tasks.id}) < (${cursorSuffix}::numeric, ${input.cursor.id})`
+        : sql`(${completionAt}, ${numericSuffix}, ${schema.project.tasks.id}) < (${input.cursor.completionAt!}, ${cursorSuffix}::numeric, ${input.cursor.id})`;
+    const where = and(
+      ACTIVE_TASK_FILTER,
+      taskProjectScope(layer),
+      inArray(schema.project.tasks.column, [...input.columns]),
+      cursorPredicate,
+    );
+    const order = input.sort === "task-id-desc"
+      ? [desc(numericSuffix), desc(schema.project.tasks.id)]
+      : [desc(completionAt), desc(numericSuffix), desc(schema.project.tasks.id)];
+    const rows = await tx.select(TASK_SLIM_PROJECTION)
+      .from(schema.project.tasks)
+      .where(where)
+      .orderBy(...order)
+      .limit(input.limit + 1);
+
+    const effectiveWorkflow = sql<string>`COALESCE(NULLIF(${schema.project.taskWorkflowSelection.workflowId}, ''), ${input.defaultWorkflowId})`;
+    const grouped = await tx.select({
+      column: schema.project.tasks.column,
+      workflowId: effectiveWorkflow,
+      count: sql<number>`count(*)::int`,
+    })
+      .from(schema.project.tasks)
+      .leftJoin(schema.project.taskWorkflowSelection, and(
+        eq(schema.project.taskWorkflowSelection.projectId, schema.project.tasks.projectId),
+        eq(schema.project.taskWorkflowSelection.taskId, schema.project.tasks.id),
+      ))
+      .where(and(ACTIVE_TASK_FILTER, taskProjectScope(layer), inArray(schema.project.tasks.column, [...input.columns])))
+      .groupBy(schema.project.tasks.column, schema.project.taskWorkflowSelection.workflowId);
+
+    const counts: CompletedTaskReadResult["counts"] = { byColumn: {}, byWorkflow: {} };
+    let total = 0;
+    for (const group of grouped) {
+      const count = Number(group.count);
+      total += count;
+      counts.byColumn[group.column] = (counts.byColumn[group.column] ?? 0) + count;
+      const workflowCounts = counts.byWorkflow[group.workflowId] ??= {};
+      workflowCounts[group.column] = (workflowCounts[group.column] ?? 0) + count;
+    }
+    return { rows: rows as unknown as Record<string, unknown>[], total, counts };
+  }, { isolationLevel: "repeatable read", accessMode: "read only" });
+}
+
 export interface ReadLiveTaskRowsOptions {
   excludeLog?: boolean;
   includeDeleted?: boolean;

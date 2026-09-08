@@ -60,17 +60,17 @@ describe("GET /tasks/done pagination", () => {
 
     expect(response.status).toBe(200);
     expect(response.body).toEqual({ tasks: [], total: 1_284, hasMore: true });
-    expect(listCompletedTasks).toHaveBeenCalledWith({ limit: undefined, offset: undefined, slim: true, sort: undefined });
+    expect(listCompletedTasks).toHaveBeenCalledWith({ limit: undefined, cursor: undefined, slim: true, sort: undefined });
   });
 
   it("forwards pagination and rejects invalid values before reading the store", async () => {
     const listCompletedTasks = vi.fn(async () => ({ tasks: [], total: 0, hasMore: false }));
     const app = buildApp({ listCompletedTasks } as unknown as TaskStore);
 
-    expect((await request(app, "GET", "/api/tasks/done?limit=50&offset=100")).status).toBe(200);
-    expect(listCompletedTasks).toHaveBeenCalledWith({ limit: 50, offset: 100, slim: true, sort: undefined });
+    expect((await request(app, "GET", "/api/tasks/done?limit=50&cursor=opaque")).status).toBe(200);
+    expect(listCompletedTasks).toHaveBeenCalledWith({ limit: 50, cursor: "opaque", slim: true, sort: undefined });
     expect((await request(app, "GET", "/api/tasks/done?limit=0")).status).toBe(400);
-    expect((await request(app, "GET", "/api/tasks/done?offset=-1")).status).toBe(400);
+    expect((await request(app, "GET", "/api/tasks/done?limit=-1")).status).toBe(400);
     expect(listCompletedTasks).toHaveBeenCalledTimes(1);
   });
 
@@ -81,12 +81,19 @@ describe("GET /tasks/done pagination", () => {
     expect((await request(app, "GET", "/api/tasks/done?sort=task-id-desc")).status).toBe(200);
     expect(listCompletedTasks).toHaveBeenCalledWith({
       limit: undefined,
-      offset: undefined,
+      cursor: undefined,
       slim: true,
       sort: "task-id-desc",
     });
     expect((await request(app, "GET", "/api/tasks/done?sort=oldest")).status).toBe(400);
     expect(listCompletedTasks).toHaveBeenCalledTimes(1);
+  });
+
+  it("maps a malformed or scope-mismatched opaque cursor to 400", async () => {
+    const listCompletedTasks = vi.fn(async () => { throw new TypeError("Invalid completed-task cursor"); });
+    const response = await request(buildApp({ listCompletedTasks } as unknown as TaskStore), "GET", "/api/tasks/done?cursor=bad");
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({ error: "Invalid completed-task cursor" });
   });
 
   it("does not expose removed archive endpoints", async () => {

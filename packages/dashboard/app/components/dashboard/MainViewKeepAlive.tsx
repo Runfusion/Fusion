@@ -72,7 +72,7 @@ function renderBoardSubtree(props: MainContentProps, active: boolean) {
     currentTasksHasMore,
     currentTasksLoadingMore,
     loadMoreCompletedTasks,
-    completedTotal,
+    completedCounts,
     completedHasMore,
     completedLoadingMore,
     completedSortMode,
@@ -135,7 +135,7 @@ function renderBoardSubtree(props: MainContentProps, active: boolean) {
         currentTasksHasMore={currentTasksHasMore}
         currentTasksLoadingMore={currentTasksLoadingMore}
         onLoadMoreCompletedTasks={loadMoreCompletedTasks}
-        completedTotal={completedTotal}
+        completedCounts={completedCounts}
         completedHasMore={completedHasMore}
         completedLoadingMore={completedLoadingMore}
         completedSortMode={completedSortMode}

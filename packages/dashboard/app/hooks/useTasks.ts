@@ -528,6 +528,8 @@ export interface UseTasksOptions {
   back to the legacy id pair, which is the behaviour that shipped.
   */
   resolveColumnFlags?: (task: Task) => ColumnRoleFlags | undefined;
+  /** Resolves the task's selected workflow, including the project-default fallback. */
+  resolveWorkflowId?: (task: Task) => string | undefined;
   /** 
    * When provided, fetches tasks only for this project.
    * SSE events from other project contexts are ignored.
@@ -552,6 +554,8 @@ export function useTasks(options?: UseTasksOptions) {
   const resolveColumnFlags = options?.resolveColumnFlags;
   const resolveColumnFlagsRef = useRef(resolveColumnFlags);
   resolveColumnFlagsRef.current = resolveColumnFlags;
+  const resolveWorkflowIdRef = useRef(options?.resolveWorkflowId);
+  resolveWorkflowIdRef.current = options?.resolveWorkflowId;
   const searchQuery = options?.searchQuery;
   const sseEnabled = options?.sseEnabled ?? true;
   /*
@@ -613,6 +617,12 @@ export function useTasks(options?: UseTasksOptions) {
   /*
   FNXC:DonePagination 2026-09-04-10:36:
   Done-page requests have a project-generation fence and a dedicated accumulator. Generic board refreshes replace the current lanes plus the newest Done page while preserving pages the operator explicitly loaded.
+
+  FNXC:DonePagination 2026-09-08-23:00:
+  A continuation belongs to the complete project, sort, search, and refresh incarnation. Every authoritative refresh invalidates an in-flight Done continuation before starting page zero, so an older page cannot append cards or replace the new session cursor after search or refresh changes.
+
+  FNXC:DonePagination 2026-09-08-23:00:
+  SSE membership changes must update the aggregate physical-column count and the selected-workflow count together, including moves between two Complete columns. The workflow resolver applies the same explicit-selection/default fallback as Board; display counters never alter the captured server cursor.
   */
   const currentPageCursorRef = useRef<string | null>(null);
   const currentPageLoadingRef = useRef(false);
@@ -621,11 +631,13 @@ export function useTasks(options?: UseTasksOptions) {
   const [currentTasksLoadingMore, setCurrentTasksLoadingMore] = useState(false);
   const completedRequestGenerationRef = useRef(0);
   const completedTasksRef = useRef<Task[]>([]);
-  const completedOffsetRef = useRef(0);
+  const completedNextCursorRef = useRef<string | null>(null);
   const completedLoadingMoreRef = useRef(false);
   const completedSortModeRef = useRef<TaskColumnSortMode>("completion-date-desc");
   const [completedSortMode, setCompletedSortMode] = useState<TaskColumnSortMode>("completion-date-desc");
   const [completedTotal, setCompletedTotal] = useState(0);
+  const completedTotalRef = useRef(0);
+  const [completedCounts, setCompletedCounts] = useState<NonNullable<api.CompletedTaskPageResponse["counts"]>>({ byColumn: {}, byWorkflow: {} });
   const [completedHasMore, setCompletedHasMore] = useState(false);
   const [completedLoadingMore, setCompletedLoadingMore] = useState(false);
   const mergeIncomingTask = (current: Task, incoming: Task, mergeOptions?: TaskSnapshotMergeOptions): Task =>
@@ -696,6 +708,8 @@ export function useTasks(options?: UseTasksOptions) {
   const contextVersionAtLastVisibilityRef = useRef(projectContextVersionRef.current);
   const droppedStaleEventsRef = useRef(0);
   const searchQueryRef = useRef(searchQuery);
+  const searchIncarnationRef = useRef(0);
+  const renderedSearchQueryRef = useRef(searchQuery);
   const refreshTasksRef = useRef<typeof refreshTasks>(null!);
   const prevSseEnabledRef = useRef(sseEnabled);
   // Coordinates the earlier re-entry effect with the project-change fetch effect below.
@@ -754,6 +768,15 @@ export function useTasks(options?: UseTasksOptions) {
   const previousProjectIdRef = useRef<string | undefined>(projectId);
   tasksRef.current = tasks;
   searchQueryRef.current = searchQuery;
+  if (renderedSearchQueryRef.current !== searchQuery) {
+    /*
+    FNXC:DonePagination 2026-09-08-23:16:
+    Search identity is an incarnation, not only a string value. Increment synchronously on every rendered scope change so A → B → A cannot admit an A continuation started before B while the debounced page-zero refresh is still pending.
+    */
+    renderedSearchQueryRef.current = searchQuery;
+    searchIncarnationRef.current++;
+    completedRequestGenerationRef.current++;
+  }
 
   // Detect project changes and invalidate SSE context.
   // Keep previous tasks visible while the new project's fetch is in flight
@@ -778,6 +801,9 @@ export function useTasks(options?: UseTasksOptions) {
 
   const refreshTasks = useCallback(async (options?: { clearOnError?: boolean; searchQueryOverride?: string; resetCompletedPages?: boolean }) => {
     const requestVersion = ++fetchVersionRef.current;
+    completedRequestGenerationRef.current++;
+    completedLoadingMoreRef.current = false;
+    setCompletedLoadingMore(false);
     const requestLiveMutationVersion = liveMutationVersionRef.current;
     const requestProjectId = projectId; // Capture the projectId for this request
     const requestCompletedSortMode = completedSortModeRef.current;
@@ -785,7 +811,7 @@ export function useTasks(options?: UseTasksOptions) {
     try {
       const [currentPageOrSearch, completedPage] = await Promise.all([
         api.fetchTaskPage(requestProjectId, { limit: 100, query: query || undefined }),
-        query ? Promise.resolve(undefined) : api.fetchCompletedTasks(requestProjectId, 50, 0, requestCompletedSortMode),
+        query ? Promise.resolve(undefined) : api.fetchCompletedTasks(requestProjectId, 50, undefined, requestCompletedSortMode),
       ]);
       const fetchedTasks = currentPageOrSearch.tasks;
       // Reject if the project/search scope changed or a newer request superseded this response.
@@ -863,9 +889,15 @@ export function useTasks(options?: UseTasksOptions) {
           ...completedCarryOver,
         ];
         completedTasksRef.current = nextCompleted;
-        completedOffsetRef.current = nextCompleted.length;
-        setCompletedTotal(completedPage.total);
-        setCompletedHasMore(nextCompleted.length < completedPage.total);
+        completedNextCursorRef.current = completedPage.nextCursor ?? null;
+        if (liveMutationVersionRef.current === requestLiveMutationVersion) {
+          completedTotalRef.current = completedPage.total;
+          setCompletedTotal(completedPage.total);
+          setCompletedCounts(completedPage.counts ?? { byColumn: {}, byWorkflow: {} });
+          setCompletedHasMore(completedPage.hasMore);
+        } else {
+          setCompletedHasMore(completedPage.hasMore || nextCompleted.length < completedTotalRef.current);
+        }
       }
       const retainedTaskIds = new Set(nextTasks.map((task) => task.id));
       for (const taskId of releaseGateProvenanceRef.current.keys()) {
@@ -983,22 +1015,40 @@ export function useTasks(options?: UseTasksOptions) {
     }
   }, [sseEnabled]);
 
-  const completedRequestIsCurrent = useCallback((generation: number, requestProjectId: string | undefined) => (
-    completedRequestGenerationRef.current === generation && projectId === requestProjectId
+  const completedRequestIsCurrent = useCallback((request: {
+    generation: number;
+    fetchVersion: number;
+    projectId: string | undefined;
+    query: string | undefined;
+    searchIncarnation: number;
+    sort: TaskColumnSortMode;
+  }) => (
+    completedRequestGenerationRef.current === request.generation
+    && fetchVersionRef.current === request.fetchVersion
+    && projectId === request.projectId
+    && searchIncarnationRef.current === request.searchIncarnation
+    && searchQueryRef.current === request.query
+    && completedSortModeRef.current === request.sort
   ), [projectId]);
 
-  const mergeCompletedPage = useCallback((page: Task[]) => {
+  const mergeCompletedPage = useCallback((page: Task[], requestLiveMutationVersion: number) => {
     const normalizedPage = page.map(normalizeNonBoardTask);
     const knownIds = new Set(completedTasksRef.current.map((task) => task.id));
     const pageIds = new Set<string>();
-    const additions = normalizedPage.filter((task) => {
-      if (knownIds.has(task.id) || pageIds.has(task.id)) return false;
+    const additions = normalizedPage.flatMap((task) => {
+      if (knownIds.has(task.id) || pageIds.has(task.id)) return [];
       pageIds.add(task.id);
-      return true;
+      const liveMutation = liveTaskMutationsRef.current.get(task.id);
+      if (liveMutation && liveMutation.version > requestLiveMutationVersion) {
+        if (liveMutation.deleted || !liveMutation.task) return [];
+        const liveIsCompleted = liveMutation.task.column === "done"
+          || resolveColumnFlagsRef.current?.(liveMutation.task)?.complete === true;
+        return liveIsCompleted ? [liveMutation.task] : [];
+      }
+      return [task];
     });
     if (additions.length === 0) return;
     completedTasksRef.current = [...completedTasksRef.current, ...additions];
-    completedOffsetRef.current = completedTasksRef.current.length;
     setTasks((previous) => {
       const existingIds = new Set(previous.map((task) => task.id));
       const next = [...previous, ...additions.filter((task) => !existingIds.has(task.id))];
@@ -1046,19 +1096,34 @@ export function useTasks(options?: UseTasksOptions) {
 
   /** Fetch the next bounded Done page. No-op when every completed task is already loaded. */
   const loadMoreCompletedTasks = useCallback(async () => {
-    if (completedLoadingMoreRef.current || !completedHasMore) return;
+    const cursor = completedNextCursorRef.current;
+    if (completedLoadingMoreRef.current || !completedHasMore || !cursor) return;
     completedLoadingMoreRef.current = true;
     setCompletedLoadingMore(true);
-    const requestGeneration = completedRequestGenerationRef.current;
-    const requestProjectId = projectId;
+    const request = {
+      generation: completedRequestGenerationRef.current,
+      fetchVersion: fetchVersionRef.current,
+      projectId,
+      query: searchQueryRef.current,
+      searchIncarnation: searchIncarnationRef.current,
+      sort: completedSortModeRef.current,
+    };
+    const requestLiveMutationVersion = liveMutationVersionRef.current;
     try {
-      const page = await api.fetchCompletedTasks(projectId, 50, completedOffsetRef.current, completedSortModeRef.current);
-      if (!completedRequestIsCurrent(requestGeneration, requestProjectId)) return;
-      mergeCompletedPage(page.tasks);
-      setCompletedTotal(page.total);
-      setCompletedHasMore(completedTasksRef.current.length < page.total && page.hasMore);
+      const page = await api.fetchCompletedTasks(projectId, 50, cursor, request.sort);
+      if (!completedRequestIsCurrent(request)) return;
+      mergeCompletedPage(page.tasks, requestLiveMutationVersion);
+      completedNextCursorRef.current = page.nextCursor ?? null;
+      if (liveMutationVersionRef.current === requestLiveMutationVersion) {
+        completedTotalRef.current = page.total;
+        setCompletedTotal(page.total);
+        setCompletedCounts(page.counts ?? { byColumn: {}, byWorkflow: {} });
+        setCompletedHasMore(page.hasMore);
+      } else {
+        setCompletedHasMore(page.hasMore || completedTasksRef.current.length < completedTotalRef.current);
+      }
     } finally {
-      if (completedRequestIsCurrent(requestGeneration, requestProjectId)) {
+      if (completedRequestIsCurrent(request)) {
         completedLoadingMoreRef.current = false;
         setCompletedLoadingMore(false);
       }
@@ -1077,7 +1142,7 @@ export function useTasks(options?: UseTasksOptions) {
     setCompletedSortMode(mode);
     completedRequestGenerationRef.current++;
     completedTasksRef.current = [];
-    completedOffsetRef.current = 0;
+    completedNextCursorRef.current = null;
     completedLoadingMoreRef.current = false;
     setCompletedLoadingMore(false);
     setCompletedHasMore(false);
@@ -1149,10 +1214,12 @@ export function useTasks(options?: UseTasksOptions) {
     void refreshTasks({ clearOnError: true });
     projectChangeRefreshPendingRef.current = false;
     completedRequestGenerationRef.current++;
-    completedOffsetRef.current = 0;
+    completedNextCursorRef.current = null;
     completedLoadingMoreRef.current = false;
     completedTasksRef.current = [];
+    completedTotalRef.current = 0;
     setCompletedTotal(0);
+    setCompletedCounts({ byColumn: {}, byWorkflow: {} });
     setCompletedHasMore(false);
     setCompletedLoadingMore(false);
 
@@ -1265,7 +1332,17 @@ export function useTasks(options?: UseTasksOptions) {
     const isCompletedTask = (task: Task, column: ColumnId = task.column): boolean => (
       resolveColumnFlagsRef.current?.({ ...task, column })?.complete === true || column === "done"
     );
-    const syncCompletedMembership = (task: Task, previouslyCompleted: boolean, currentlyCompleted: boolean) => {
+    const syncCompletedMembership = (
+      task: Task,
+      previousTask: Task | undefined,
+      previousColumn: ColumnId | undefined,
+      currentColumn: ColumnId | undefined,
+      options?: { countUnknownEntry?: boolean },
+    ) => {
+      const previouslyCompleted = previousTask !== undefined && previousColumn !== undefined
+        ? isCompletedTask(previousTask, previousColumn)
+        : false;
+      const currentlyCompleted = currentColumn !== undefined && isCompletedTask(task, currentColumn);
       const currentIndex = completedTasksRef.current.findIndex((candidate) => candidate.id === task.id);
       if (currentlyCompleted) {
         completedTasksRef.current = currentIndex === -1
@@ -1274,11 +1351,34 @@ export function useTasks(options?: UseTasksOptions) {
       } else if (currentIndex !== -1) {
         completedTasksRef.current = completedTasksRef.current.filter((candidate) => candidate.id !== task.id);
       }
-      completedOffsetRef.current = completedTasksRef.current.length;
-      const delta = Number(currentlyCompleted) - Number(previouslyCompleted);
+
+      const previousWorkflowId = previousTask ? resolveWorkflowIdRef.current?.(previousTask) : undefined;
+      const currentWorkflowId = currentlyCompleted ? resolveWorkflowIdRef.current?.(task) : undefined;
+      setCompletedCounts((current) => {
+        const byColumn = { ...current.byColumn };
+        const byWorkflow = { ...current.byWorkflow };
+        const adjust = (column: ColumnId | undefined, workflowId: string | undefined, delta: number) => {
+          if (!column) return;
+          byColumn[column] = Math.max(0, (byColumn[column] ?? 0) + delta);
+          if (!workflowId) return;
+          const workflowCounts = { ...(byWorkflow[workflowId] ?? {}) };
+          workflowCounts[column] = Math.max(0, (workflowCounts[column] ?? 0) + delta);
+          byWorkflow[workflowId] = workflowCounts;
+        };
+        if (previouslyCompleted) adjust(previousColumn, previousWorkflowId, -1);
+        if (currentlyCompleted && (previousTask !== undefined || options?.countUnknownEntry !== false)) {
+          adjust(currentColumn, currentWorkflowId, 1);
+        }
+        return { byColumn, byWorkflow };
+      });
+
+      const countedCurrentMembership = currentlyCompleted
+        && (previousTask !== undefined || options?.countUnknownEntry !== false);
+      const delta = Number(countedCurrentMembership) - Number(previouslyCompleted);
       if (delta !== 0) {
         setCompletedTotal((current) => {
           const next = Math.max(0, current + delta);
+          completedTotalRef.current = next;
           setCompletedHasMore(completedTasksRef.current.length < next);
           return next;
         });
@@ -1299,12 +1399,12 @@ export function useTasks(options?: UseTasksOptions) {
       }
       const existingCreatedTask = tasksRef.current.find((candidate) => candidate.id === task.id);
       if (isSoftDeleted(task)) {
-        if (existingCreatedTask) syncCompletedMembership(task, isCompletedTask(existingCreatedTask), false);
+        if (existingCreatedTask) syncCompletedMembership(task, existingCreatedTask, existingCreatedTask.column, undefined);
         applyLiveTasks((prev) => prev.filter((candidate) => candidate.id !== task.id));
         pushTrace("useTasks", "soft-deleted-task-suppressed", { event: "task:created", id: task.id });
         return;
       }
-      syncCompletedMembership(task, existingCreatedTask ? isCompletedTask(existingCreatedTask) : false, isCompletedTask(task));
+      syncCompletedMembership(task, existingCreatedTask, existingCreatedTask?.column, task.column);
       applyLiveTasks((prev) => {
         const existingIndex = prev.findIndex((candidate) => candidate.id === task.id);
         if (existingIndex === -1) {
@@ -1340,7 +1440,7 @@ export function useTasks(options?: UseTasksOptions) {
       const normalizedTask = normalizeTask(stripTransientReleaseGate(task));
       if (isSoftDeleted(normalizedTask)) {
         recordLiveMutation(normalizedTask, true);
-        syncCompletedMembership(normalizedTask, isCompletedTask(normalizedTask, from), false);
+        syncCompletedMembership(normalizedTask, tasksRef.current.find((candidate) => candidate.id === normalizedTask.id) ?? normalizedTask, from, undefined);
         applyLiveTasks((prev) => prev.filter((candidate) => candidate.id !== normalizedTask.id));
         pushTrace("useTasks", "soft-deleted-task-suppressed", { event: "task:moved", id: normalizedTask.id });
         return;
@@ -1350,7 +1450,7 @@ export function useTasks(options?: UseTasksOptions) {
       const nextColumn: ColumnId = typeof to === "string" && to ? to : normalizedTask.column;
       const movedTask = { ...normalizedTask, column: nextColumn };
       recordLiveMutation(movedTask, false);
-      syncCompletedMembership(movedTask, isCompletedTask(normalizedTask, from), isCompletedTask(movedTask, nextColumn));
+      syncCompletedMembership(movedTask, tasksRef.current.find((candidate) => candidate.id === movedTask.id) ?? normalizedTask, from, nextColumn);
       applyLiveTasks((prev) => {
         const existingIndex = prev.findIndex((t) => t.id === movedTask.id);
         if (existingIndex === -1) {
@@ -1384,25 +1484,35 @@ export function useTasks(options?: UseTasksOptions) {
       if (!payload) return;
       const incoming = normalizeTask(stripTransientReleaseGate(payload));
       const previousUpdatedTask = tasksRef.current.find((candidate) => candidate.id === incoming.id);
-      recordLiveMutation(incoming, isSoftDeleted(incoming));
       if (isSoftDeleted(incoming)) {
+        recordLiveMutation(incoming, true);
         // FN-5135: treat deletedAt-bearing task:updated payloads as delete-equivalent.
-        if (previousUpdatedTask) syncCompletedMembership(incoming, isCompletedTask(previousUpdatedTask), false);
+        if (previousUpdatedTask) syncCompletedMembership(incoming, previousUpdatedTask, previousUpdatedTask.column, undefined);
         applyLiveTasks((prev) => prev.filter((candidate) => candidate.id !== incoming.id));
         pushTrace("useTasks", "soft-deleted-task-suppressed", { event: "task:updated", id: incoming.id });
         return;
       }
-      syncCompletedMembership(incoming, previousUpdatedTask ? isCompletedTask(previousUpdatedTask) : false, isCompletedTask(incoming));
+      const authoritativeTask = previousUpdatedTask
+        ? mergeIncomingTask(previousUpdatedTask, incoming, { authoritativeLifecycle: true })
+        : incoming;
+      if (authoritativeTask === previousUpdatedTask) return;
+      /*
+      FNXC:DonePagination 2026-09-08-23:16:
+      Server counts already include unloaded Done rows, so a task:updated event may expose such a row without adding another membership delta. For loaded rows, derive the delta only after snapshot freshness accepts the event; a stale payload must change neither the card nor its exact server-backed counts.
+      */
+      recordLiveMutation(authoritativeTask, false);
+      syncCompletedMembership(
+        authoritativeTask,
+        previousUpdatedTask,
+        previousUpdatedTask?.column,
+        authoritativeTask.column,
+        { countUnknownEntry: false },
+      );
       applyLiveTasks((prev) => {
-        const existingIndex = prev.findIndex((t) => t.id === incoming.id);
-        if (existingIndex === -1) {
-          return [...prev, incoming];
-        }
-        const current = prev[existingIndex]!;
-        const merged = mergeIncomingTask(current, incoming, { authoritativeLifecycle: true });
-        if (merged === current) return prev;
+        const existingIndex = prev.findIndex((task) => task.id === authoritativeTask.id);
+        if (existingIndex === -1) return [...prev, authoritativeTask];
         const next = [...prev];
-        next[existingIndex] = merged;
+        next[existingIndex] = authoritativeTask;
         return next;
       });
       advanceFreshnessClockForLiveUpdate();
@@ -1422,7 +1532,7 @@ export function useTasks(options?: UseTasksOptions) {
       const task = normalizeTask(stripTransientReleaseGate(payload));
       const previousDeletedTask = tasksRef.current.find((candidate) => candidate.id === task.id);
       recordLiveMutation(task, true);
-      syncCompletedMembership(task, previousDeletedTask ? isCompletedTask(previousDeletedTask) : isCompletedTask(task), false);
+      syncCompletedMembership(task, previousDeletedTask ?? task, previousDeletedTask?.column ?? task.column, undefined);
       applyLiveTasks((prev) => prev.filter((t) => t.id !== task.id));
     };
 
@@ -1448,7 +1558,7 @@ export function useTasks(options?: UseTasksOptions) {
       const mergedTask = { ...normalizedTask, column: "done" as Column };
       const previousMergedTask = tasksRef.current.find((candidate) => candidate.id === mergedTask.id);
       recordLiveMutation(mergedTask, false);
-      syncCompletedMembership(mergedTask, previousMergedTask ? isCompletedTask(previousMergedTask) : false, true);
+      syncCompletedMembership(mergedTask, previousMergedTask, previousMergedTask?.column, mergedTask.column);
       applyLiveTasks((prev) => {
         const existingIndex = prev.findIndex((t) => t.id === mergedTask.id);
         if (existingIndex === -1) {
@@ -1818,5 +1928,5 @@ export function useTasks(options?: UseTasksOptions) {
     advanceFreshnessClockForLiveUpdate();
   }, [advanceFreshnessClockForLiveUpdate]);
 
-  return { tasks, isStale, lastRefreshErrorAt, createTask, moveTask, pauseTask, unpauseTask, deleteTask, mergeTask, retryTask, bypassReview, resetTask, duplicateTask, updateTask, revertTask, loadMoreCurrentTasks, currentTasksTotal, currentTasksHasMore, currentTasksLoadingMore, loadMoreCompletedTasks, completedSortMode, changeCompletedSortMode, completedTotal, completedHasMore, completedLoadingMore, refreshTasks, ingestCreatedTasks, lastFetchTimeMs: lastFetchTimeMs.current };
+  return { tasks, isStale, lastRefreshErrorAt, createTask, moveTask, pauseTask, unpauseTask, deleteTask, mergeTask, retryTask, bypassReview, resetTask, duplicateTask, updateTask, revertTask, loadMoreCurrentTasks, currentTasksTotal, currentTasksHasMore, currentTasksLoadingMore, loadMoreCompletedTasks, completedSortMode, changeCompletedSortMode, completedTotal, completedCounts, completedHasMore, completedLoadingMore, refreshTasks, ingestCreatedTasks, lastFetchTimeMs: lastFetchTimeMs.current };
 }

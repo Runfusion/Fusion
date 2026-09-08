@@ -72,7 +72,10 @@ interface BoardProps {
   currentTasksHasMore?: boolean;
   currentTasksLoadingMore?: boolean;
   onLoadMoreCompletedTasks?: () => Promise<void>;
-  completedTotal?: number;
+  completedCounts?: {
+    byColumn: Record<string, number>;
+    byWorkflow: Record<string, Record<string, number>>;
+  };
   completedHasMore?: boolean;
   completedLoadingMore?: boolean;
   completedSortMode?: TaskColumnSortMode;
@@ -163,7 +166,7 @@ function BoardWorkflowSkeleton({ empty = false, t }: { empty?: boolean; t: TFunc
   );
 }
 
-export function Board({ tasks, projectId, maxConcurrent, maxWorktrees, showWorktreeGrouping, onMoveTask, onPauseTask, onUnpauseTask, onResetTask, onDuplicateTask, onMergeTask, onOpenDetail, onOpenRefine, onOpenGroupModal, addToast, onQuickCreate, onNewTask, autoMerge, mergeStrategy = "direct", onToggleAutoMerge, planAutoApproveEnabled, onTogglePlanAutoApprove, globalPaused, onUpdateTask, onRetryTask, onOpenChatWithPrefill, onRevertTask, onReviseTask, onDeleteTask, onLoadMoreCurrentTasks, currentTasksTotal, currentTasksHasMore, currentTasksLoadingMore, onLoadMoreCompletedTasks, completedTotal, completedHasMore, completedLoadingMore, completedSortMode = "completion-date-desc", onCompletedSortModeChange, searchQuery = "", availableModels, onPlanningMode, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, onOpenMission, staleHighFanoutBlockerAgeThresholdMs, lastFetchTimeMs, prAuthAvailable, onOpenWorkflowEditor, onCreateWorkflow, workflowControlsInHeader = false, active = true }: BoardProps) {
+export function Board({ tasks, projectId, maxConcurrent, maxWorktrees, showWorktreeGrouping, onMoveTask, onPauseTask, onUnpauseTask, onResetTask, onDuplicateTask, onMergeTask, onOpenDetail, onOpenRefine, onOpenGroupModal, addToast, onQuickCreate, onNewTask, autoMerge, mergeStrategy = "direct", onToggleAutoMerge, planAutoApproveEnabled, onTogglePlanAutoApprove, globalPaused, onUpdateTask, onRetryTask, onOpenChatWithPrefill, onRevertTask, onReviseTask, onDeleteTask, onLoadMoreCurrentTasks, currentTasksTotal, currentTasksHasMore, currentTasksLoadingMore, onLoadMoreCompletedTasks, completedCounts, completedHasMore, completedLoadingMore, completedSortMode = "completion-date-desc", onCompletedSortModeChange, searchQuery = "", availableModels, onPlanningMode, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, onOpenMission, staleHighFanoutBlockerAgeThresholdMs, lastFetchTimeMs, prAuthAvailable, onOpenWorkflowEditor, onCreateWorkflow, workflowControlsInHeader = false, active = true }: BoardProps) {
   const { t } = useTranslation("app");
   /*
   FNXC:TaskColumnSorting 2026-08-18-21:24:
@@ -994,7 +997,7 @@ export function Board({ tasks, projectId, maxConcurrent, maxWorktrees, showWorkt
                   {...(isSearchActive
                     ? { totalTaskCount: currentTasksTotal, serverHasMore: currentTasksHasMore, serverLoadingMore: currentTasksLoadingMore, onLoadMoreServer: onLoadMoreCurrentTasks }
                     : columnDef.flags.complete
-                      ? { totalTaskCount: completedTotal, serverHasMore: completedHasMore, serverLoadingMore: completedLoadingMore, onLoadMoreServer: onLoadMoreCompletedTasks }
+                      ? { totalTaskCount: completedCounts?.byColumn[columnDef.id] ?? 0, serverHasMore: completedHasMore, serverLoadingMore: completedLoadingMore, onLoadMoreServer: onLoadMoreCompletedTasks }
                       : { totalTaskCount: currentTasksTotal, serverHasMore: currentTasksHasMore, serverLoadingMore: currentTasksLoadingMore, onLoadMoreServer: onLoadMoreCurrentTasks })}
                 />
               );
@@ -1078,7 +1081,7 @@ export function Board({ tasks, projectId, maxConcurrent, maxWorktrees, showWorkt
                 {...(isSearchActive
                   ? { totalTaskCount: currentTasksTotal, serverHasMore: currentTasksHasMore, serverLoadingMore: currentTasksLoadingMore, onLoadMoreServer: onLoadMoreCurrentTasks }
                   : columnDef.flags.complete
-                    ? { totalTaskCount: completedTotal, serverHasMore: completedHasMore, serverLoadingMore: completedLoadingMore, onLoadMoreServer: onLoadMoreCompletedTasks }
+                    ? { totalTaskCount: completedCounts?.byWorkflow[selectedWorkflow.id]?.[columnDef.id] ?? 0, serverHasMore: completedHasMore, serverLoadingMore: completedLoadingMore, onLoadMoreServer: onLoadMoreCompletedTasks }
                     : { totalTaskCount: currentTasksTotal, serverHasMore: currentTasksHasMore, serverLoadingMore: currentTasksLoadingMore, onLoadMoreServer: onLoadMoreCurrentTasks })}
               />
             );

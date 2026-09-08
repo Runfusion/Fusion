@@ -1,5 +1,5 @@
 import { beforeAll, beforeEach, afterEach, afterAll, expect, it } from "vitest";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import * as schema from "../../postgres/schema/index.js";
 import { buildTaskInsertValues } from "../../task-store/async/async-persistence.js";
 import {
@@ -33,8 +33,8 @@ pgDescribe("TaskStore completed-task pagination", () => {
       .set({ columnMovedAt })
       .where(eq(schema.project.tasks.id, id!))));
 
-    const pageOne = await store.listCompletedTasks({ limit: 2, offset: 0, slim: true });
-    const pageTwo = await store.listCompletedTasks({ limit: 2, offset: 2, slim: true });
+    const pageOne = await store.listCompletedTasks({ limit: 2, slim: true });
+    const pageTwo = await store.listCompletedTasks({ limit: 2, cursor: pageOne.nextCursor!, slim: true });
 
     expect(pageOne.total).toBe(3);
     expect(pageOne.hasMore).toBe(true);
@@ -73,18 +73,36 @@ pgDescribe("TaskStore completed-task pagination", () => {
 
     for (const sort of ["completion-date-desc", "task-id-desc"] as const) {
       const seen: string[] = [];
-      for (let offset = 0; ; offset += 50) {
-        const page = await store.listCompletedTasks({ limit: 50, offset, sort });
+      let cursor: string | undefined;
+      do {
+        const page = await store.listCompletedTasks({ limit: 50, cursor, sort });
         seen.push(...page.tasks.map((task) => task.id));
         expect(page.total).toBe(205);
-        if (!page.hasMore) break;
-      }
+        expect(page.counts.byColumn.done).toBe(205);
+        cursor = page.nextCursor ?? undefined;
+      } while (cursor);
       expect(seen).toHaveLength(205);
       expect(new Set(seen).size).toBe(205);
     }
   });
 
-  it("orders every task-id page in SQL before applying offsets", async () => {
+  it("keeps a newer live insertion out of an existing continuation and includes it after refresh", async () => {
+    const store = h.store();
+    const older = await store.createTask({ description: "older", column: "done" });
+    const oldest = await store.createTask({ description: "oldest", column: "done" });
+    await h.layer().db.update(schema.project.tasks).set({ columnMovedAt: "2026-09-01T00:00:00.000Z" }).where(eq(schema.project.tasks.id, older.id));
+    await h.layer().db.update(schema.project.tasks).set({ columnMovedAt: "2026-08-01T00:00:00.000Z" }).where(eq(schema.project.tasks.id, oldest.id));
+    const first = await store.listCompletedTasks({ limit: 1 });
+    const newest = await store.createTask({ description: "newest live", column: "done" });
+    await h.layer().db.update(schema.project.tasks).set({ columnMovedAt: "2026-10-01T00:00:00.000Z" }).where(eq(schema.project.tasks.id, newest.id));
+
+    const continuation = await store.listCompletedTasks({ limit: 10, cursor: first.nextCursor! });
+    expect(continuation.tasks.map((task) => task.id)).toContain(oldest.id);
+    expect(continuation.tasks.map((task) => task.id)).not.toContain(newest.id);
+    expect((await store.listCompletedTasks({ limit: 10 })).tasks.map((task) => task.id)).toContain(newest.id);
+  });
+
+  it("orders every task-id page in SQL before applying keysets", async () => {
     const store = h.store();
     const high = await store.createTaskWithReservedId(
       { description: "high id", column: "done" },
@@ -99,14 +117,45 @@ pgDescribe("TaskStore completed-task pagination", () => {
       { taskId: "FN-29511", applyDefaultWorkflowSteps: false },
     );
 
-    const pageOne = await store.listCompletedTasks({ limit: 2, offset: 0, sort: "task-id-desc" });
-    const pageTwo = await store.listCompletedTasks({ limit: 2, offset: 2, sort: "task-id-desc" });
+    const pageOne = await store.listCompletedTasks({ limit: 2, sort: "task-id-desc" });
+    const pageTwo = await store.listCompletedTasks({ limit: 2, cursor: pageOne.nextCursor!, sort: "task-id-desc" });
 
     expect([...pageOne.tasks, ...pageTwo.tasks].map((task) => task.id)).toEqual([
       high.id,
       middle.id,
       low.id,
     ]);
+    await expect(store.listCompletedTasks({ cursor: "not-a-cursor", sort: "task-id-desc" }))
+      .rejects.toThrow("Invalid completed-task cursor");
+    await expect(store.listCompletedTasks({ cursor: pageOne.nextCursor!, sort: "completion-date-desc" }))
+      .rejects.toThrow("Invalid completed-task cursor");
+    const foreignPayload = JSON.parse(Buffer.from(pageOne.nextCursor!, "base64url").toString("utf8"));
+    foreignPayload.projectId = "another-project";
+    const foreignCursor = Buffer.from(JSON.stringify(foreignPayload), "utf8").toString("base64url");
+    await expect(store.listCompletedTasks({ cursor: foreignCursor, sort: "task-id-desc" }))
+      .rejects.toThrow("Invalid completed-task cursor");
+  });
+
+  it("reports exact column and workflow counts with absent selections on the effective default", async () => {
+    const store = h.store();
+    const inherited = await store.createTask({ description: "default workflow", column: "done" });
+    const selected = await store.createTask({ description: "selected workflow", column: "done" });
+    const [selectedRow] = await h.layer().db.select({ projectId: schema.project.tasks.projectId }).from(schema.project.tasks)
+      .where(eq(schema.project.tasks.id, selected.id));
+    await h.layer().db.delete(schema.project.taskWorkflowSelection)
+      .where(eq(schema.project.taskWorkflowSelection.taskId, inherited.id));
+    await h.layer().db.update(schema.project.taskWorkflowSelection)
+      .set({ workflowId: "WF-OTHER", updatedAt: "2026-09-08T00:00:00.000Z" })
+      .where(and(
+        eq(schema.project.taskWorkflowSelection.projectId, selectedRow!.projectId),
+        eq(schema.project.taskWorkflowSelection.taskId, selected.id),
+      ));
+
+    const page = await store.listCompletedTasks();
+    expect(page.counts.byColumn.done).toBe(2);
+    expect(page.counts.byWorkflow["builtin:coding"]?.done).toBe(1);
+    expect(page.counts.byWorkflow["WF-OTHER"]?.done).toBe(1);
+    expect(page.tasks.map((task) => task.id)).toEqual(expect.arrayContaining([inherited.id, selected.id]));
   });
 
   it("keeps full-text search pages bounded and rejects a cursor from another query", async () => {

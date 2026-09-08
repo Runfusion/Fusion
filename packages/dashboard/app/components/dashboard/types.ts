@@ -234,7 +234,10 @@ export interface MainContentProps {
   currentTasksHasMore: boolean;
   currentTasksLoadingMore: boolean;
   loadMoreCompletedTasks: () => Promise<void>;
-  completedTotal: number;
+  completedCounts: {
+    byColumn: Record<string, number>;
+    byWorkflow: Record<string, Record<string, number>>;
+  };
   completedHasMore: boolean;
   completedLoadingMore: boolean;
   completedSortMode: TaskColumnSortMode;

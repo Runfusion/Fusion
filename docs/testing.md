@@ -139,6 +139,9 @@ Agents running verification through `fn_run_verification` are bounded by default
 
 When changing a dynamic dashboard list, update `listSurfaceInventory.ts` and keep a targeted production-reachability test named by that inventory entry. Manual “Load more” controls are reserved for explicit error retry actions; ordinary continuation must be driven by an edge sentinel and a single-flight loader.
 
+<!-- FNXC:DoneKeysetPagination 2026-09-08-22:25: FN-318 makes the completion history a server-keyset collection. -->
+Done-history tests must replay only the opaque `nextCursor` returned by `/api/tasks/done`, verify exact per-column and per-workflow counts independently of loaded rows, and accumulate rendered IDs while scrolling because the virtualized DOM intentionally never contains the full history at once.
+
 ## Dashboard source-read fixtures
 
 Dashboard app tests that inspect CSS or TypeScript source must use `packages/dashboard/app/test/cssFixture.ts` helpers such as `readAppFile()` and `loadComponentCss()`. Never read a bare relative path or construct a source path from `process.cwd()`; root-anchored Vitest launches otherwise fail at import time. `scripts/check-no-cwd-relative-dashboard-test-reads.mjs` enforces this convention in the full-suite pretest hook and merge gate.
