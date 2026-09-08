@@ -136,7 +136,8 @@ Thinking panes split titled reasoning traces with captured bodies into independe
 
 <!-- FNXC:ChatScrollAnchorDocs 2026-09-06-07:42: FN-302 preserves the reader’s viewport on send and makes manual scrolling the immediate authority over automatic bottom following. -->
 <!-- FNXC:ChatScrollAnchorDocs 2026-09-07-21:35: FN-313 opens and restores every conversation at its newest rendered message, including transcripts that arrive after the detail pane mounts. -->
-Opening or restoring a conversation places its newest message in view as soon as the transcript renders. When a conversation is already at its latest message, Chat follows new messages and every in-progress response update at the bottom. Sending while reading earlier messages preserves that exact reading position instead. Scrolling upward manually stops automatic following immediately; return to the bottom threshold or choose **Latest** to resume it.
+<!-- FNXC:ChatScrollAnchorDocs 2026-09-08-20:49: FN-316 keeps the conversation list’s start alignment and manual position independent from the selected transcript’s latest-message alignment. -->
+The conversation list opens at its beginning and keeps its own scroll position while entering or leaving a thread. Opening or restoring a conversation places only that thread’s newest message in view as soon as the transcript renders. When a conversation is already at its latest message, Chat follows new messages and every in-progress response update at the bottom. Sending while reading earlier messages preserves that exact reading position instead. Scrolling upward manually stops automatic following immediately; return to the bottom threshold or choose **Latest** to resume it.
 
 ### Chat Find
 

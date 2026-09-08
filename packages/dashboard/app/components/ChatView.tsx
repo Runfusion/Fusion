@@ -3298,6 +3298,10 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
   */
   const visibleSidebarSessions = showArchivedSessions ? archivedSessions : filteredSessions;
   const sessionListRef = useRef<HTMLDivElement | null>(null);
+  /*
+  FNXC:ChatScrollAnchor 2026-09-08-20:49:
+  La liste directe et le transcript possèdent deux politiques de défilement indépendantes : chaque collection active, archivée, recherchée ou filtrée commence en tête, tandis que seul le fil ouvert s’aligne sur son dernier message. L’ouverture ou la fermeture d’un fil ne doit donc jamais transmettre la commande terminale du transcript à la liste ni réinitialiser une position manuelle de celle-ci.
+  */
   const virtualSessionList = useVirtualizedList({
     collectionKey: `${projectId ?? "default"}:${showArchivedSessions ? "archived" : "active"}:${selectedTagId ?? "all"}:${searchQuery}`,
     keys: visibleSidebarSessions.map((session) => session.id),
@@ -3305,6 +3309,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     estimateHeight: 76,
     maxRenderedRows: 40,
     initialAlign: "start",
+    preservePrependAnchor: false,
   });
   const visibleSessionIds = new Set(virtualSessionList.visibleKeys);
   const windowedSidebarSessions = visibleSidebarSessions.filter((session) => visibleSessionIds.has(session.id));
