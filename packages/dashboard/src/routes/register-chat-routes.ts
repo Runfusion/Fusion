@@ -100,10 +100,14 @@ function backfillEventType(role: string): string {
   return role === "user" ? "user_message" : role === "assistant" ? "assistant_message" : "tool_use";
 }
 
+function stripNulBytes(content: string): string {
+  return content.split("\u0000").join("");
+}
+
 function backfillEventKey(eventType: string, createdAt: string | undefined, content: string): string {
   const parsed = createdAt !== undefined ? Date.parse(createdAt) : Number.NaN;
   const t = Number.isFinite(parsed) ? String(parsed) : (createdAt ?? "");
-  return [eventType, t, content.replace(/\u0000/g, "")].join("\u0001");
+  return [eventType, t, stripNulBytes(content)].join("\u0001");
 }
 
 export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): void {
@@ -1280,7 +1284,7 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
           event_type: backfillEventType(message.role),
           agent_name: agentName,
           created_at: message.createdAt || new Date().toISOString(),
-          content: (message.content ?? "").replace(/\u0000/g, ""),
+          content: stripNulBytes(message.content ?? ""),
         };
         const toolName = typeof metadata.tool_name === "string"
           ? metadata.tool_name
