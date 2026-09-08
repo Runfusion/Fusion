@@ -2109,7 +2109,20 @@
     "runLocalButton": "Ejecutar Fusion localmente",
     "settingUpRemote": "Configurando conexión remota…",
     "starting": "Iniciando…",
-    "startingLocalRuntime": "Iniciando el runtime local de Fusion…"
+    "startingLocalRuntime": "Iniciando el runtime local de Fusion…",
+    "copyStartupDetails": "",
+    "detailsCopied": "",
+    "localStartupUnknown": "",
+    "showStartupDetails": "",
+    "startupAttempts": "",
+    "startupLog": "",
+    "startupLogUnavailable": "",
+    "startupMessage": "",
+    "startupPhase": "",
+    "startupPlatform": "",
+    "startupStack": "",
+    "copyStartupDetailsUnavailable": "",
+    "startupDetailsText": ""
   },
   "devserver": {
     "allSeverities": "Todas las severidades",

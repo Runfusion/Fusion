@@ -2109,7 +2109,20 @@
     "runLocalButton": "本機執行 Fusion",
     "settingUpRemote": "正在設定遠端連接…",
     "starting": "正在啟動…",
-    "startingLocalRuntime": "正在啟動本機 Fusion 執行時…"
+    "startingLocalRuntime": "正在啟動本機 Fusion 執行時…",
+    "copyStartupDetails": "",
+    "detailsCopied": "",
+    "localStartupUnknown": "",
+    "showStartupDetails": "",
+    "startupAttempts": "",
+    "startupLog": "",
+    "startupLogUnavailable": "",
+    "startupMessage": "",
+    "startupPhase": "",
+    "startupPlatform": "",
+    "startupStack": "",
+    "copyStartupDetailsUnavailable": "",
+    "startupDetailsText": ""
   },
   "devserver": {
     "allSeverities": "所有嚴重程度",

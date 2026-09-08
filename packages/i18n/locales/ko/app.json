@@ -2109,7 +2109,20 @@
     "runLocalButton": "로컬에서 Fusion 실행",
     "settingUpRemote": "원격 연결 설정 중…",
     "starting": "시작 중…",
-    "startingLocalRuntime": "로컬 Fusion 런타임 시작 중…"
+    "startingLocalRuntime": "로컬 Fusion 런타임 시작 중…",
+    "copyStartupDetails": "",
+    "detailsCopied": "",
+    "localStartupUnknown": "",
+    "showStartupDetails": "",
+    "startupAttempts": "",
+    "startupLog": "",
+    "startupLogUnavailable": "",
+    "startupMessage": "",
+    "startupPhase": "",
+    "startupPlatform": "",
+    "startupStack": "",
+    "copyStartupDetailsUnavailable": "",
+    "startupDetailsText": ""
   },
   "devserver": {
     "allSeverities": "모든 심각도",
