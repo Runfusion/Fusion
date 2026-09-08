@@ -6079,14 +6079,38 @@ describe("SelfHealingManager", () => {
       const result = await managerWithRecovery.recoverReviewTasksWithFailedPreMergeSteps();
 
       expect(result).toBe(1);
-      expect(store.updateTask).toHaveBeenCalledWith("FN-1572", { postReviewFixCount: 1 });
+      expect(store.updateTask).not.toHaveBeenCalledWith("FN-1572", expect.objectContaining({ postReviewFixCount: expect.any(Number) }));
       expect(recoverFn).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-1572" }));
-      expect(store.logEntry).toHaveBeenCalledWith(
+      expect(store.logEntry).not.toHaveBeenCalledWith(
         "FN-1572",
         expect.stringContaining("Auto-reviving in-review task"),
-        expect.stringContaining("Workflow revision key: ws-004"),
+        expect.anything(),
       );
 
+      managerWithRecovery.stop();
+    });
+
+    it("does not charge repeated sterile detailed recovery probes", async () => {
+      const recoverFn = vi.fn().mockResolvedValue(false);
+      const detailed = vi.fn().mockResolvedValue({ kind: "skipped" as const });
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        recoverFailedPreMergeStep: recoverFn,
+        recoverFailedPreMergeStepDetailed: detailed,
+      });
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ maxPostReviewFixes: 2 });
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([{ ...baseTask }]);
+
+      await expect(managerWithRecovery.recoverReviewTasksWithFailedPreMergeSteps()).resolves.toBe(0);
+      await expect(managerWithRecovery.recoverReviewTasksWithFailedPreMergeSteps()).resolves.toBe(0);
+
+      expect(detailed).toHaveBeenCalledTimes(2);
+      expect(store.updateTask).not.toHaveBeenCalledWith("FN-1572", expect.objectContaining({ postReviewFixCount: expect.any(Number) }));
+      expect(store.logEntry).not.toHaveBeenCalledWith(
+        "FN-1572",
+        expect.stringContaining("Auto-reviving in-review task"),
+        expect.anything(),
+      );
       managerWithRecovery.stop();
     });
 
@@ -6147,7 +6171,7 @@ describe("SelfHealingManager", () => {
       }]);
 
       await expect(managerWithRecovery.recoverReviewTasksWithFailedPreMergeSteps()).resolves.toBe(1);
-      expect(store.logEntry).toHaveBeenLastCalledWith("FN-1572", expect.stringContaining("attempt 100/unbounded"), expect.stringContaining("Workflow revision key: ws-004"));
+      expect(store.logEntry).not.toHaveBeenCalledWith("FN-1572", expect.stringContaining("attempt 100/unbounded"), expect.anything());
       expect(recoverFn).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-1572" }));
 
       managerWithRecovery.stop();
@@ -6199,7 +6223,7 @@ describe("SelfHealingManager", () => {
       ]);
 
       await expect(managerWithRecovery.recoverReviewTasksWithFailedPreMergeSteps()).resolves.toBe(1);
-      expect(store.logEntry).toHaveBeenLastCalledWith("FN-1572", expect.stringContaining("attempt 2/2"), expect.stringContaining("Workflow revision key: code-review"));
+      expect(store.logEntry).not.toHaveBeenCalledWith("FN-1572", expect.stringContaining("attempt 2/2"), expect.anything());
       expect(recoverFn).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-1572" }));
 
       managerWithRecovery.stop();
@@ -6246,11 +6270,11 @@ describe("SelfHealingManager", () => {
        */
       await expect(managerWithRecovery.recoverReviewTasksWithFailedPreMergeSteps()).resolves.toBe(1);
 
-      expect(store.updateTask).toHaveBeenCalledWith("FN-1572", { postReviewFixCount: 51 });
-      expect(store.logEntry).toHaveBeenCalledWith(
+      expect(store.updateTask).not.toHaveBeenCalledWith("FN-1572", expect.objectContaining({ postReviewFixCount: expect.any(Number) }));
+      expect(store.logEntry).not.toHaveBeenCalledWith(
         "FN-1572",
-        expect.stringContaining("Auto-reviving in-review task with failed pre-merge workflow step (attempt 51/3)"),
-        expect.stringContaining("Workflow revision key: code-review"),
+        expect.stringContaining("Auto-reviving in-review task with failed pre-merge workflow step"),
+        expect.anything(),
       );
       expect(recoverFn).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-1572", status: "failed" }));
 
@@ -6371,8 +6395,8 @@ describe("SelfHealingManager", () => {
 
       await expect(managerWithRecovery.recoverReviewTasksWithFailedPreMergeSteps()).resolves.toBe(1);
 
-      expect(store.updateTask).toHaveBeenCalledWith("FN-1572", { postReviewFixCount: 2 });
-      expect(store.logEntry).toHaveBeenLastCalledWith("FN-1572", expect.stringContaining("attempt 1/1"), expect.stringContaining("Workflow revision key: code-review"));
+      expect(store.updateTask).not.toHaveBeenCalledWith("FN-1572", expect.objectContaining({ postReviewFixCount: expect.any(Number) }));
+      expect(store.logEntry).not.toHaveBeenCalledWith("FN-1572", expect.stringContaining("attempt 1/1"), expect.anything());
       expect(recoverFn).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-1572" }));
 
       managerWithRecovery.stop();
@@ -6390,7 +6414,7 @@ describe("SelfHealingManager", () => {
       (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([{ ...baseTask, postReviewFixCount: 0 }]);
 
       await expect(managerWithRecovery.recoverReviewTasksWithFailedPreMergeSteps()).resolves.toBe(1);
-      expect(store.logEntry).toHaveBeenCalledWith("FN-1572", expect.stringContaining("attempt 1/1"), expect.stringContaining("Workflow revision key: ws-004"));
+      expect(store.logEntry).not.toHaveBeenCalledWith("FN-1572", expect.stringContaining("attempt 1/1"), expect.anything());
       expect(recoverFn).toHaveBeenCalledOnce();
 
       managerWithRecovery.stop();

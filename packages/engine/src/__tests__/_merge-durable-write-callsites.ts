@@ -281,6 +281,7 @@ const STORE_METHOD_CLASSIFICATION: Record<string, Omit<SurfaceClassification, "m
   seedWorkspaceCodeReviewContinuationIfIdle: { kind: "writer", reason: "persists or mutates TaskStore state" },
   updateStep: { kind: "writer", reason: "persists or mutates TaskStore state" },
   updateTaskRepositoryScope: { kind: "writer", reason: "persists or mutates TaskStore state" },
+  publishReviewRemediationFenced: { kind: "writer", reason: "atomically publishes remediation work and its paired revision charge" },
   publishWorkspaceCodeReviewEvidence: { kind: "writer", reason: "persists or mutates TaskStore state" },
   updateWorkspaceReviewState: { kind: "writer", reason: "persists or mutates TaskStore state" },
   updateTaskAtomic: { kind: "writer", reason: "persists or mutates TaskStore state" },

@@ -59,6 +59,15 @@ function harness(workflowId = "builtin:coding-ideas-v2") {
       { name: "Add the retry guard", status: "done" },
       { name: "Testing & Verification", status: "done" },
     ] as TaskStep[],
+    workflowStepResults: ["verification", "code-review"].map((workflowStepId) => ({
+      workflowStepId,
+      workflowStepName: workflowStepId === "verification" ? "Verification (test)" : "Code Review",
+      phase: "pre-merge" as const,
+      status: "failed" as const,
+      ...(workflowStepId === "code-review" ? { verdict: "REVISE" as const } : {}),
+      startedAt: "2026-09-08T02:24:00.000Z",
+      completedAt: "2026-09-08T02:24:01.000Z",
+    })),
   } as Task;
 
   const store = {
@@ -151,7 +160,15 @@ describe("fix steps appear on the card when a gate fails", () => {
       { store: store as never, readTaskArtifact: async () => task.prompt, sendTaskBackForFix },
       task,
       { stepName: "Verification (test)", feedback: FAILING_OUTPUT, phase: "pre-merge", status: "failed", nodeId: "verification" },
-      { worktreePath: "/tmp/live-checkout" },
+      {
+        worktreePath: "/tmp/live-checkout",
+        attemptClaim: {
+          revisionKey: "verification",
+          stepName: "Verification (test)",
+          status: "failed",
+          maxRevisions: "unbounded",
+        },
+      },
     );
 
     expect(sendTaskBackForFix).toHaveBeenCalledTimes(1);

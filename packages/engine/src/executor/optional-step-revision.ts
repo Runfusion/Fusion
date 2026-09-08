@@ -2,14 +2,56 @@
  * FNXC:CodeOrganization 2026-08-03-07:45:
  * Optional step revision attempt accounting peeled from executor.ts.
  */
-import type { Task, WorkflowReviewKind } from "@fusion/core";
+import type { Task, WorkflowReviewKind, WorkflowStepResult } from "@fusion/core";
 import { isOpenWorkflowReviewFinding } from "@fusion/core";
+import { createHash } from "node:crypto";
 import {
   collectPlanReviewFeedbackHistory,
   countPlanReviewRevisionAttempts,
 } from "../plan-review-feedback-history.js";
 
 export const OPTIONAL_STEP_REVISION_KEY_MARKER = "Workflow revision key:";
+export const REVIEW_REMEDIATION_EPISODE_MARKER = "Review remediation episode:";
+
+/*
+FNXC:ReviewRemediationBudget 2026-09-08-01:46:
+Every failed gate occurrence needs a deterministic identity, including script and Browser Verification
+results that have no content-review fingerprint. Exclude only remediation-claim bookkeeping, which is
+expected to change while an owner holds the same failed occurrence; all execution/result evidence stays
+in the digest so a replacement round cannot publish or resume stale work.
+*/
+export function reviewRemediationEpisodeIdentity(result: WorkflowStepResult): string {
+  const identity = {
+    workflowStepId: result.workflowStepId,
+    workflowStepName: result.workflowStepName,
+    phase: result.phase,
+    source: result.source,
+    status: result.status,
+    verdictRequired: result.verdictRequired,
+    reviewKind: result.reviewKind,
+    output: result.output,
+    findings: result.findings,
+    repositoryReviewOutcomes: result.repositoryReviewOutcomes,
+    repositoryScopeRevision: result.repositoryScopeRevision,
+    notRunReason: result.notRunReason,
+    reviewInputFingerprint: result.reviewInputFingerprint,
+    reviewedCommitSha: result.reviewedCommitSha,
+    verdict: result.verdict,
+    notes: result.notes,
+    startedAt: result.startedAt,
+    completedAt: result.completedAt,
+  };
+  return createHash("sha256").update(JSON.stringify(identity)).digest("hex");
+}
+
+export function hasReviewRemediationAttemptForEpisode(
+  task: Pick<Task, "log">,
+  episodeIdentity: string,
+): boolean {
+  return (task.log ?? []).some((entry) =>
+    (entry.outcome ?? "").split(/\r?\n/).some((line) => line.trim() === `${REVIEW_REMEDIATION_EPISODE_MARKER} ${episodeIdentity}`),
+  );
+}
 
 export function normalizeOptionalStepRevisionKey(value: string | undefined): string {
   return (value ?? "").trim().toLowerCase();
@@ -64,8 +106,8 @@ export function countOptionalStepRevisionAttempts(task: Pick<Task, "log">, key: 
   }).length;
 }
 
-export function optionalStepRevisionLogOutcome(details: string, key: string): string {
-  return `${details}\n${OPTIONAL_STEP_REVISION_KEY_MARKER} ${key}`;
+export function optionalStepRevisionLogOutcome(details: string, key: string, episodeIdentity?: string): string {
+  return `${details}\n${OPTIONAL_STEP_REVISION_KEY_MARKER} ${key}${episodeIdentity ? `\n${REVIEW_REMEDIATION_EPISODE_MARKER} ${episodeIdentity}` : ""}`;
 }
 
 /*

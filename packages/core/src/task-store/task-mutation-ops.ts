@@ -401,6 +401,17 @@ export type WorkflowStepResultsFencedUpdateResult =
     reason: "refused" | "no-op" | "unavailable" | "task-missing" | "task-deleted";
   };
 
+export type ReviewRemediationPublicationPatch = Partial<Pick<
+  Task,
+  "steps" | "currentStep" | "prompt" | "log" | "postReviewFixCount"
+>>;
+
+export type ReviewRemediationPublicationCompute = (
+  current: Task,
+) => ReviewRemediationPublicationPatch | null;
+
+export type ReviewRemediationPublicationResult = WorkflowStepResultsFencedUpdateResult;
+
 /*
 FNXC:WorkflowStepResults 2026-08-29-02:04:
 FN-249 makes durable graph step-result writes contend with resetTaskPublicationImpl's exact
@@ -454,6 +465,72 @@ export async function updateWorkflowStepResultsFencedImpl(
       }
       if (Object.prototype.hasOwnProperty.call(patch, "reviewConvergenceEscalationCount")) {
         values.reviewConvergenceEscalationCount = patch.reviewConvergenceEscalationCount ?? null;
+      }
+
+      const [updatedRow] = await tx.update(schema.project.tasks).set(values).where(and(
+        eq(schema.project.tasks.id, id),
+        taskProjectScope(layer),
+        isNull(schema.project.tasks.deletedAt),
+      )).returning();
+      if (!updatedRow) return { applied: false, reason: "task-missing" };
+      return { applied: true, task: store.rowToTask(store.pgRowToTaskRow(updatedRow)) };
+    });
+
+    if (outcome.applied) {
+      await store.writeTaskJsonFile(store.taskDir(id), outcome.task);
+      if (store.isWatching) store.taskCache.set(id, { ...outcome.task });
+      store.emitTaskLifecycleEventSafely("task:updated", [outcome.task]);
+    }
+    return outcome;
+  });
+}
+
+/*
+FNXC:ReviewRemediationBudget 2026-09-08-01:02:
+Executable review-remediation work and its budget charge are one project-scoped durable fact. This
+field-bounded writer serializes every producer on the task advisory transaction lock, computes from
+the live row without nested store work, and commits steps, placement, prompt, append-only log, and
+aggregate count together. A refusal or rollback publishes none of those fields.
+*/
+export async function publishReviewRemediationFencedImpl(
+  store: TaskStore,
+  id: string,
+  compute: ReviewRemediationPublicationCompute,
+): Promise<ReviewRemediationPublicationResult> {
+  const layer = store.asyncLayer;
+  if (!layer) return { applied: false, reason: "unavailable" };
+
+  return store.withTaskLock(id, async () => {
+    const outcome = await layer.transactionImmediate(async (tx): Promise<ReviewRemediationPublicationResult> => {
+      await acquireTaskAdvisoryXactLock(tx, layer.projectId, id);
+      const row = await readTaskRowInTransaction(tx, id, { includeDeleted: true }, layer.projectId);
+      if (!row) return { applied: false, reason: "task-missing" };
+      if (row.deletedAt) return { applied: false, reason: "task-deleted" };
+
+      const current = store.rowToTask(store.pgRowToTaskRow(row));
+      const patch = compute(current);
+      if (patch === null) return { applied: false, reason: "refused" };
+      if (Object.keys(patch).length === 0) return { applied: false, reason: "no-op" };
+
+      const values: {
+        steps?: Task["steps"];
+        currentStep?: number;
+        prompt?: string;
+        log?: Task["log"];
+        postReviewFixCount?: number;
+        updatedAt: string;
+      } = { updatedAt: new Date().toISOString() };
+      if (Object.prototype.hasOwnProperty.call(patch, "steps")) values.steps = patch.steps ?? [];
+      if (Object.prototype.hasOwnProperty.call(patch, "currentStep")) values.currentStep = patch.currentStep ?? 0;
+      if (Object.prototype.hasOwnProperty.call(patch, "prompt")) values.prompt = patch.prompt ?? "";
+      if (Object.prototype.hasOwnProperty.call(patch, "log")) {
+        const log = [...(patch.log ?? [])];
+        const entryLimit = getTaskActivityLogEntryLimit();
+        if (log.length > entryLimit) log.splice(0, log.length - entryLimit);
+        values.log = log;
+      }
+      if (Object.prototype.hasOwnProperty.call(patch, "postReviewFixCount")) {
+        values.postReviewFixCount = patch.postReviewFixCount ?? 0;
       }
 
       const [updatedRow] = await tx.update(schema.project.tasks).set(values).where(and(

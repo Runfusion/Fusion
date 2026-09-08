@@ -9,7 +9,11 @@ vi.mock("../executor/review-convergence-ladder.js", () => ({
   routeReviewConvergenceLadder: routeReviewConvergenceLadderMock,
 }));
 
-import { appendReviewRemediationSteps } from "../executor/append-review-remediation-steps.js";
+import {
+  appendReviewRemediationSteps,
+  appendReviewRemediationStepsWithResolvedAccounting,
+} from "../executor/append-review-remediation-steps.js";
+import { bounceVerificationFailure } from "../executor/bounce-verification-failure.js";
 import { requestPreMergeOptionalStepFix } from "../executor/request-pre-merge-optional-step-fix.js";
 
 function exhaustedCodeReviewTask() {
@@ -209,6 +213,80 @@ function reviseInfo(findings: WorkflowReviewFinding[] = namedFindings()) {
 }
 
 describe("bounded Code Review named remediation", () => {
+  it.each([
+    ["review arbitration", undefined],
+    ["live verification bounce", { worktreePath: "/tmp/fn-288-named" }],
+  ])("refuses the unaccounted %s producer before changing durable state", async (_producer, options) => {
+    const harness = namedRemediationHarness();
+    const before = structuredClone(harness.current());
+
+    await expect(appendReviewRemediationSteps({
+      store: harness.store as any,
+      readTaskArtifact: vi.fn(async () => harness.current().prompt),
+      sendTaskBackForFix: harness.sendTaskBackForFix,
+    }, harness.current(), reviseInfo(), options)).resolves.toBe("not-applicable");
+
+    expect(harness.current()).toEqual(before);
+    expect(harness.store.updateTaskAtomic).not.toHaveBeenCalled();
+    expect(harness.store.updateTask).not.toHaveBeenCalled();
+    expect(harness.store.logEntry).not.toHaveBeenCalled();
+    expect(harness.sendTaskBackForFix).not.toHaveBeenCalled();
+  });
+
+  it("resolves accounting for the production arbitration call shape before publishing work", async () => {
+    const harness = namedRemediationHarness();
+
+    await expect(appendReviewRemediationStepsWithResolvedAccounting({
+      store: harness.store as any,
+      readTaskArtifact: vi.fn(async () => harness.current().prompt),
+      sendTaskBackForFix: harness.sendTaskBackForFix,
+    }, harness.current(), reviseInfo(), { resolveAttemptClaim: true })).resolves.toBe("appended");
+
+    expect(harness.current().steps.filter((step) => step.status === "pending" && step.remediation)).toHaveLength(2);
+    expect(harness.current().log).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        action: "Review gate Code Review requested named remediation (attempt 1/3)",
+        outcome: expect.stringContaining("Workflow revision key: code-review"),
+      }),
+    ]));
+    expect(harness.current().postReviewFixCount).toBe(1);
+    expect(harness.sendTaskBackForFix).toHaveBeenCalledOnce();
+  });
+
+  it("pairs production live-verification remediation with its resolved budget charge", async () => {
+    const harness = namedRemediationHarness();
+    const clearCompletedTaskWatchdog = vi.fn();
+
+    await expect(bounceVerificationFailure({
+      store: harness.store,
+      appendReviewRemediationSteps: (task, info, options) => appendReviewRemediationStepsWithResolvedAccounting({
+        store: harness.store as any,
+        readTaskArtifact: vi.fn(async () => harness.current().prompt),
+        sendTaskBackForFix: harness.sendTaskBackForFix,
+      }, task, info, options),
+      sendTaskBackForFix: harness.sendTaskBackForFix,
+      clearCompletedTaskWatchdog,
+    }, {
+      task: harness.current(),
+      worktreePath: "/tmp/fn-288-named",
+      failedType: "test",
+      feedback: "packages/engine/src/review-a.ts: deterministic failure",
+      reason: "Deterministic verification failed",
+      stepReopenPolicy: "none",
+    })).resolves.toBe("named-remediation");
+
+    expect(harness.current().steps.filter((step) => step.status === "pending" && step.remediation)).toHaveLength(1);
+    expect(harness.current().log).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        action: expect.stringMatching(/^Review gate Verification requested named remediation \(attempt 1\/\d+\)$/),
+        outcome: expect.stringContaining("Workflow revision key: verification"),
+      }),
+    ]));
+    expect(harness.current().postReviewFixCount).toBe(1);
+    expect(harness.sendTaskBackForFix).toHaveBeenCalledOnce();
+    expect(clearCompletedTaskWatchdog).not.toHaveBeenCalled();
+  });
+
   it("routes an exhausted default budget to convergence without appending another wave", async () => {
     routeReviewConvergenceLadderMock.mockClear();
     const task = exhaustedCodeReviewTask();
@@ -265,6 +343,109 @@ describe("bounded Code Review named remediation", () => {
         outcome: expect.stringContaining("Workflow revision key: code-review"),
       }),
     ]));
+    expect(harness.current().postReviewFixCount).toBe(1);
+  });
+
+  it("does not charge an exhausted producer or refund its append-only ledger", async () => {
+    const exhausted = namedRemediationTask({
+      postReviewFixCount: 3,
+      log: [1, 2, 3].map((attempt) => ({
+        action: `Review gate Code Review requested named remediation (attempt ${attempt}/3)`,
+        outcome: "Workflow revision key: code-review",
+        timestamp: `2026-09-03T05:4${attempt}:00.000Z`,
+      })),
+    });
+    const harness = namedRemediationHarness(exhausted);
+    const priorLog = structuredClone(harness.current().log);
+
+    await expect(harness.append(harness.current(), reviseInfo(), 3)).resolves.toBe("budget-exhausted");
+
+    expect(harness.current().steps.some((step) => step.status === "pending")).toBe(false);
+    expect(harness.current().postReviewFixCount).toBe(3);
+    expect(harness.current().log).toEqual(priorLog);
+    expect(harness.current().log.some((entry) => entry.outcome?.includes("Workflow revision ledger reset:"))).toBe(false);
+    expect(harness.sendTaskBackForFix).not.toHaveBeenCalled();
+  });
+
+  it("keeps one paired charge when scheduling fails after commit and retry sees duplicate work", async () => {
+    const initial = namedRemediationTask({ postReviewFixCount: 0 });
+    let live = initial;
+    const sendTaskBackForFix = vi.fn()
+      .mockRejectedValueOnce(new Error("injected post-commit scheduling failure"))
+      .mockResolvedValue(undefined);
+    const store = {
+      getTask: vi.fn(async () => live),
+      updateTaskAtomic: vi.fn(async (_id: string, compute: (current: Task) => Partial<Task> | null) => {
+        const patch = compute(live);
+        if (patch) live = { ...live, ...patch } as Task;
+        return live;
+      }),
+      publishReviewRemediationFenced: vi.fn(async (_id: string, compute: (current: Task) => Partial<Task> | null) => {
+        const patch = compute(live);
+        if (!patch) return { applied: false as const, reason: "refused" as const };
+        live = { ...live, ...patch } as Task;
+        return { applied: true as const, task: live };
+      }),
+      logEntry: vi.fn(async () => undefined),
+    };
+    const append = () => appendReviewRemediationSteps({
+      store: store as any,
+      readTaskArtifact: vi.fn(async () => live.prompt),
+      sendTaskBackForFix,
+    }, live, reviseInfo(), {
+      attemptClaim: { revisionKey: "code-review", stepName: "Code Review", status: "failed", maxRevisions: 3 },
+    });
+
+    await expect(append()).rejects.toThrow("injected post-commit scheduling failure");
+    await expect(append()).resolves.toBe("appended");
+
+    expect(sendTaskBackForFix).toHaveBeenCalledTimes(2);
+    expect(live.steps.filter((step) => step.status === "pending" && step.remediation)).toHaveLength(2);
+    expect(live.log.filter((entry) => entry.action.includes("named remediation"))).toHaveLength(1);
+    expect(live.postReviewFixCount).toBe(1);
+  });
+
+  it.each([
+    ["pause", (task: Task) => ({ ...task, paused: true })],
+    ["user pause", (task: Task) => ({ ...task, userPaused: true })],
+    ["manual-review hold", (task: Task) => ({ ...task, autoMerge: false })],
+    ["lane replacement", (task: Task) => ({ ...task, column: "in-progress" })],
+    ["failed-round replacement", (task: Task) => ({
+      ...task,
+      workflowStepResults: task.workflowStepResults?.map((result) => ({
+        ...result,
+        output: "A newer verification result replaced the reviewed occurrence.",
+        completedAt: "2026-09-03T05:41:00.000Z",
+      })),
+    })],
+  ])("refuses publication when %s wins before the fenced compute", async (_case, mutateLive) => {
+    const initial = namedRemediationTask();
+    let live = initial;
+    const store = {
+      getTask: vi.fn(async () => live),
+      publishReviewRemediationFenced: vi.fn(async (_id: string, compute: (current: Task) => Partial<Task> | null) => {
+        live = mutateLive(live) as Task;
+        const patch = compute(live);
+        if (!patch) return { applied: false as const, reason: "refused" as const };
+        live = { ...live, ...patch } as Task;
+        return { applied: true as const, task: live };
+      }),
+      logEntry: vi.fn(async () => undefined),
+    };
+    const sendTaskBackForFix = vi.fn(async () => undefined);
+
+    await expect(appendReviewRemediationSteps({
+      store: store as any,
+      readTaskArtifact: vi.fn(async () => initial.prompt),
+      sendTaskBackForFix,
+    }, initial, reviseInfo(), {
+      attemptClaim: { revisionKey: "code-review", stepName: "Code Review", status: "failed", maxRevisions: 3 },
+    })).resolves.toBe("superseded-review");
+
+    expect(live.steps.some((step) => step.status === "pending")).toBe(false);
+    expect(live.postReviewFixCount).toBeUndefined();
+    expect(live.log).toEqual([]);
+    expect(sendTaskBackForFix).not.toHaveBeenCalled();
   });
 
   it("creates the deterministic fallback Fix step when the reviewer supplies no usable finding", async () => {
@@ -350,6 +531,106 @@ describe("bounded Code Review named remediation", () => {
       expect.objectContaining({ kind: "repeat-unchanged" }),
     );
     expect(unchangedDeps.appendReviewRemediationSteps).not.toHaveBeenCalled();
+  });
+
+  it("charges live Verification remediation atomically and leaves exhausted refusal unchanged", async () => {
+    const verificationResult = {
+      workflowStepId: "verification",
+      workflowStepName: "Browser Verification",
+      phase: "pre-merge" as const,
+      status: "failed" as const,
+      output: "FAIL packages/engine/src/retry.ts:42 expected 3 retries, received 1",
+      startedAt: "2026-09-03T05:40:00.000Z",
+      completedAt: "2026-09-03T05:40:01.000Z",
+    };
+    const verificationInfo = {
+      phase: "pre-merge" as const,
+      status: "failed" as const,
+      workflowAction: "deterministic-verification",
+      nodeId: "verification",
+      stepName: "Browser Verification",
+      feedback: verificationResult.output,
+      maxRevisions: 1,
+    };
+    const task = namedRemediationTask({
+      id: "FN-315-VERIFICATION",
+      modifiedFiles: ["packages/engine/src/retry.ts"],
+      steps: [{ name: "Implement", status: "done" }, { name: "Testing & Verification", status: "done" }],
+      workflowStepResults: [verificationResult],
+      postReviewFixCount: 0,
+    });
+    const harness = namedRemediationHarness(task);
+    const requestDeps = {
+      store: harness.store,
+      getRunContextFor: () => undefined,
+      recoverMissingRequiredArtifacts: vi.fn(async () => {}),
+      parkPlanReviewReplanCapExhausted: vi.fn(async () => {}),
+      clearPausedAborted: vi.fn(),
+      readTaskArtifact: vi.fn(async () => harness.current().prompt),
+      appendReviewRemediationSteps: (live: Task, info: typeof verificationInfo, options: any) =>
+        appendReviewRemediationSteps({
+          store: harness.store as any,
+          readTaskArtifact: vi.fn(async () => harness.current().prompt),
+          sendTaskBackForFix: harness.sendTaskBackForFix,
+        }, live, info, options),
+      workflowLifecycleMovesInFlight: new Set<string>(),
+      sendTaskBackForFix: harness.sendTaskBackForFix,
+    };
+
+    await expect(requestPreMergeOptionalStepFix(
+      requestDeps as any,
+      task.id,
+      task,
+      verificationInfo,
+    )).resolves.toBe(true);
+
+    expect(harness.current().steps.filter((step) => step.status === "pending" && step.remediation)).toHaveLength(1);
+    expect(harness.current().postReviewFixCount).toBe(1);
+    expect(harness.current().log).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        action: "Review gate Verification requested named remediation (attempt 1/1)",
+        outcome: expect.stringContaining("Workflow revision key: verification"),
+      }),
+    ]));
+
+    const exhausted = namedRemediationTask({
+      id: "FN-315-VERIFICATION-EXHAUSTED",
+      modifiedFiles: ["packages/engine/src/retry.ts"],
+      steps: [{ name: "Implement", status: "done" }, { name: "Testing & Verification", status: "done" }],
+      workflowStepResults: [verificationResult],
+      postReviewFixCount: 1,
+      log: [{
+        action: "Review gate Verification requested named remediation (attempt 1/1)",
+        outcome: "Workflow revision key: verification",
+        timestamp: "2026-09-03T05:39:00.000Z",
+      }],
+    });
+    const exhaustedHarness = namedRemediationHarness(exhausted);
+    const exhaustedLog = structuredClone(exhaustedHarness.current().log);
+    const exhaustedDeps = {
+      ...requestDeps,
+      store: exhaustedHarness.store,
+      readTaskArtifact: vi.fn(async () => exhaustedHarness.current().prompt),
+      appendReviewRemediationSteps: (live: Task, info: typeof verificationInfo, options: any) =>
+        appendReviewRemediationSteps({
+          store: exhaustedHarness.store as any,
+          readTaskArtifact: vi.fn(async () => exhaustedHarness.current().prompt),
+          sendTaskBackForFix: exhaustedHarness.sendTaskBackForFix,
+        }, live, info, options),
+      sendTaskBackForFix: exhaustedHarness.sendTaskBackForFix,
+    };
+
+    await expect(requestPreMergeOptionalStepFix(
+      exhaustedDeps as any,
+      exhausted.id,
+      exhausted,
+      verificationInfo,
+    )).resolves.toBe(false);
+
+    expect(exhaustedHarness.current().steps.some((step) => step.status === "pending")).toBe(false);
+    expect(exhaustedHarness.current().postReviewFixCount).toBe(1);
+    expect(exhaustedHarness.current().log).toEqual(exhaustedLog);
+    expect(exhaustedHarness.sendTaskBackForFix).not.toHaveBeenCalled();
   });
 
   it("resolves the workflow WIP lane instead of assuming the legacy column id", async () => {

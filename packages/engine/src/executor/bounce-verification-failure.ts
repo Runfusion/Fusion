@@ -33,12 +33,17 @@
  * bounce again.
  *
  * It returns a non-blocking release when it cannot derive work (unchanged normalized verification
- * evidence, out-of-scope-only evidence, or no actionable findings). Remediation waves are unbounded.
- * A follow-up `sendTaskBackForFix` would create the empty executor bounce this contract forbids, so
- * released outcomes stop here without lifecycle mutation.
+ * evidence, out-of-scope-only evidence, or no actionable findings). A follow-up `sendTaskBackForFix`
+ * would create the empty executor bounce this contract forbids, so released outcomes stop here
+ * without lifecycle mutation.
+ *
+ * FNXC:ReviewRemediationBudget 2026-09-08-02:24:
+ * Final deterministic verification explicitly requests an accounting claim from the executor
+ * adapter. The adapter resolves the workflow/project ceiling and synthetic verification episode;
+ * the strict producer then publishes the named work, keyed attempt, and aggregate charge together.
  */
 import type { StepReopenPolicy, Task, TaskStore, WorkflowReviewFinding } from "@fusion/core";
-import type { AppendReviewRemediationOutcome } from "./append-review-remediation-steps.js";
+import type { AppendReviewRemediationOptions, AppendReviewRemediationOutcome } from "./append-review-remediation-steps.js";
 
 /** What actually happened to the card, so callers and tests observe an outcome rather than a spy. */
 export type VerificationBounceOutcome =
@@ -60,7 +65,7 @@ export type BounceVerificationFailureDeps = {
       status: "failed";
       nodeId: string;
     },
-    options?: { worktreePath?: string },
+    options?: AppendReviewRemediationOptions,
   ) => Promise<AppendReviewRemediationOutcome>;
   sendTaskBackForFix: (
     task: Task,
@@ -117,7 +122,7 @@ export async function bounceVerificationFailure(
       status: "failed",
       nodeId: "verification",
     },
-    { worktreePath },
+    { worktreePath, resolveAttemptClaim: true },
   );
   if (remediationOutcome === "appended") return "named-remediation";
   deps.clearCompletedTaskWatchdog(task.id);

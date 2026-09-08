@@ -247,8 +247,11 @@ export {
 import {
   optionalStepRevisionKey,
   countOptionalStepRevisionAttempts,
-  optionalStepRevisionLogOutcome,
 } from "./healing/self-healing-optional-step-revision.js";
+import {
+  hasReviewRemediationAttemptForEpisode,
+  reviewRemediationEpisodeIdentity,
+} from "./executor/optional-step-revision.js";
 
 import type {
   RecoverFailedPreMergeStepOutcome,
@@ -10056,12 +10059,16 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
        * FNXC:WorkflowRevisionBudget 2026-06-30-23:03:
        * The in-review sweep stays slim for board-scale filtering, but slim TaskStore rows intentionally omit `log`. Hydrate the full task before counting revision markers so offline recovery enforces Code Review and Plan Review caps against production data instead of treating every task as attempt zero.
        */
-      const revisionBudgetByTask = new Map<string, { unbounded: boolean; max: number; label: string; key: string; stepName?: string; attempts: number }>();
+      const revisionBudgetByTask = new Map<string, { unbounded: boolean; max: number; label: string; key: string; stepName?: string; attempts: number; resumesCommittedRemediation: boolean }>();
+      const hydratedRevisionTaskById = new Map<string, Task>();
       const irCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
-      const loadRevisionAttemptSource = async (task: Task): Promise<Pick<Task, "log">> => {
+      const loadRevisionAttemptSource = async (task: Task): Promise<Pick<Task, "log" | "steps" | "workflowStepResults">> => {
         try {
           const fullTask = await this.store.getTask(task.id);
-          if (fullTask?.id === task.id && Array.isArray(fullTask.log)) return fullTask;
+          if (fullTask?.id === task.id && Array.isArray(fullTask.log)) {
+            hydratedRevisionTaskById.set(task.id, fullTask);
+            return fullTask;
+          }
         } catch {
           // Keep recovery fail-soft; older stores/tests can still provide log entries on the list row.
         }
@@ -10092,19 +10099,25 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         const budget = resolveOptionalStepRevisionBudget(maxRevisions, fallback);
         const key = optionalStepRevisionKey(target?.workflowStepId, target?.workflowStepName);
         const revisionAttemptSource = await loadRevisionAttemptSource(task);
+        const fullTarget = latestFailedPreMergeStep(revisionAttemptSource) ?? target;
         revisionBudgetByTask.set(task.id, {
           ...budget,
           key,
           stepName: target?.workflowStepName,
           attempts: countOptionalStepRevisionAttempts(revisionAttemptSource, key, target?.workflowStepName),
+          resumesCommittedRemediation: Boolean(
+            fullTarget
+            && hasReviewRemediationAttemptForEpisode(revisionAttemptSource, reviewRemediationEpisodeIdentity(fullTarget))
+            && (revisionAttemptSource.steps ?? []).some((step) => step.status === "pending"),
+          ),
           label: budget.unbounded ? "unbounded" : String(budget.max),
         });
       }
-      const revisionBudgetFor = (taskId: string): { unbounded: boolean; max: number; label: string; key: string; stepName?: string; attempts: number } => {
+      const revisionBudgetFor = (taskId: string): { unbounded: boolean; max: number; label: string; key: string; stepName?: string; attempts: number; resumesCommittedRemediation: boolean } => {
         const budget = revisionBudgetByTask.get(taskId);
         if (budget) return budget;
         const fallbackBudget = resolveOptionalStepRevisionBudget(undefined, 3);
-        return { ...fallbackBudget, key: "pre-merge-optional-step", attempts: 0, label: fallbackBudget.unbounded ? "unbounded" : String(fallbackBudget.max) };
+        return { ...fallbackBudget, key: "pre-merge-optional-step", attempts: 0, resumesCommittedRemediation: false, label: fallbackBudget.unbounded ? "unbounded" : String(fallbackBudget.max) };
       };
 
       const candidates = tasks.filter((task) => {
@@ -10137,7 +10150,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         // FNXC:ReviewConvergence 2026-08-22-06:05: exhausted failures must reach the
         // shared ladder in recoverFailedPreMergeWorkflowStep; filtering them here recreates
         // the terminal human-only park FN-149 removes.
-        if (!budget.unbounded && budget.attempts >= budget.max && (task.reviewConvergenceStage ?? 0) >= 3) return false;
+        if (!budget.resumesCommittedRemediation
+          && !budget.unbounded && budget.attempts >= budget.max && (task.reviewConvergenceStage ?? 0) >= 3) return false;
 
         // Must have a failed pre-merge result and either its singular checkout or the acquired
         // workspace repository checkout selected by structured review evidence.
@@ -10166,7 +10180,15 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         const blocker = getTaskMergeBlocker(task, {
           reviewColumns: reviewLanesByTask.get(task.id) ?? new Set(["in-review"]),
         });
-        if (!parkedRemediationFailure && blocker !== "task has failed pre-merge workflow steps") return false;
+        /*
+        FNXC:ReviewRemediationBudget 2026-09-08-01:46:
+        An atomically committed pending repair changes the ordinary blocker from failed-review to
+        incomplete-work before its post-commit handoff necessarily finishes. Its exact episode marker
+        is the durable recovery admission that lets this sweep resume scheduling without another charge.
+        */
+        if (!parkedRemediationFailure
+          && !budget.resumesCommittedRemediation
+          && blocker !== "task has failed pre-merge workflow steps") return false;
 
         return true;
       });
@@ -10208,17 +10230,16 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         Consequence accepted deliberately: an unproducible round is now narrated on every sweep
         instead of once. Repetitive, never fatal -- the opposite trade to the one that broke.
         */
-        const admittedTask = task;
+        const admittedTask = hydratedRevisionTaskById.get(task.id) ?? task;
         const budget = revisionBudgetFor(task.id);
-        const nextCount = budget.attempts + 1;
-        const totalFixCount = (admittedTask.postReviewFixCount ?? 0) + 1;
         try {
-          await this.store.updateTask(task.id, { postReviewFixCount: totalFixCount });
-          await this.store.logEntry(
-            task.id,
-            `Auto-reviving in-review task with failed pre-merge workflow step (attempt ${nextCount}/${budget.label})`,
-            optionalStepRevisionLogOutcome(`Step: ${budget.stepName ?? budget.key}`, budget.key),
-          );
+          /*
+          FNXC:ReviewRemediationBudget 2026-09-08-01:02:
+          Self-healing is only a recovery trigger. The named or trailing producer re-reads the live
+          ledger and commits executable work with its keyed attempt and aggregate increment under the
+          PostgreSQL task fence; sterile, convergence-only, exhausted, and superseded probes charge
+          nothing here and cannot refund prior append-only history.
+          */
           /*
           FNXC:LifecycleContainment 2026-08-30-13:36:
           The claim must travel WITH the work it admitted. The claim-scoped recovery addresses the
@@ -10234,7 +10255,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           const detailedRecoverFn = this.options.recoverFailedPreMergeStepDetailed;
           const outcome: RecoverFailedPreMergeStepOutcome = detailedRecoverFn
             ? await detailedRecoverFn(admittedTask, {})
-            : (await recoverFn(admittedTask)) ? { kind: "scheduled" } : { kind: "skipped" };
+            : (await recoverFn(admittedTask)) ? { kind: "scheduled", producer: "named" } : { kind: "skipped" };
 
           if (outcome.kind === "superseded") {
             log.log(`Revival of ${task.id} was superseded by a newer review result — leaving the newer round untouched`);
@@ -10263,10 +10284,12 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             continue;
           }
           if (outcome.kind === "scheduled") {
-            log.log(`Revived ${task.id}: sent back for fix (${nextCount}/${budget.label})`);
+            log.log(`Revived ${task.id}: ${outcome.producer} remediation committed within the ${budget.label} revision budget`);
             recovered++;
+          } else if (outcome.kind === "convergence") {
+            log.log(`Revival of ${task.id} advanced through review convergence without consuming remediation budget`);
           } else {
-            log.warn(`Revival of ${task.id} was skipped by executor — budget already consumed`);
+            log.warn(`Revival of ${task.id} was skipped by executor — no remediation budget was consumed`);
           }
         } catch (err: unknown) {
           const errorMessage = err instanceof Error ? err.message : String(err);

@@ -70,6 +70,12 @@ function createRecoveryHarness(workflowId: "builtin:coding-ideas-v2" | "builtin:
       Object.assign(row, patch);
       return row;
     }),
+    updateTaskAtomic: vi.fn(async (_id: string, compute: (current: Task) => Partial<Task> | null) => {
+      calls.push("updateTaskAtomic");
+      const patch = compute(row);
+      if (patch) Object.assign(row, patch);
+      return row;
+    }),
     appendRemediationSteps: vi.fn(async (_id: string, steps: readonly TaskStep[], options: { wave?: number }) => {
       calls.push("appendRemediationSteps");
       const appended = steps.map((step) => ({ ...step, status: "pending" as const }));
@@ -111,12 +117,16 @@ function createRecoveryHarness(workflowId: "builtin:coding-ideas-v2" | "builtin:
       scheduleWorkflowRerun,
       maxWorkflowStepRetries: 3,
     } as never, ...args);
-  const append = (task: Task, info: Parameters<typeof appendReviewRemediationSteps>[2][1]) =>
-    appendReviewRemediationSteps(
-      { store: store as never, readTaskArtifact: vi.fn(async () => "## File Scope\n- `packages/engine/src/self-healing.ts`\n"), sendTaskBackForFix: sendBack },
-      task,
-      info,
-    );
+  const append = (
+    task: Task,
+    info: Parameters<typeof appendReviewRemediationSteps>[2],
+    options?: Parameters<typeof appendReviewRemediationSteps>[3],
+  ) => appendReviewRemediationSteps(
+    { store: store as never, readTaskArtifact: vi.fn(async () => "## File Scope\n- `packages/engine/src/self-healing.ts`\n"), sendTaskBackForFix: sendBack },
+    task,
+    info,
+    options,
+  );
   return { row, calls, store, append, sendBack, waitForBounce: async () => bounce };
 }
 
@@ -167,7 +177,7 @@ describe("FN-267 review remediation precedes review-to-WIP movement", () => {
         remediation: expect.objectContaining({ gate: "Code Review", findingId: "critical-self-healing-orphan" }),
       }),
     ]));
-    expect(harness.calls.indexOf("appendRemediationSteps")).toBeLessThan(harness.calls.indexOf("moveTask"));
+    expect(harness.calls.indexOf("updateTaskAtomic")).toBeLessThan(harness.calls.indexOf("moveTask"));
     expect(harness.store.logEntry).not.toHaveBeenCalledWith(
       harness.row.id,
       "Workflow rerun refused — no pending remediation work",
@@ -201,7 +211,7 @@ describe("FN-267 review remediation precedes review-to-WIP movement", () => {
         }),
       }),
     ]));
-    expect(harness.calls.indexOf("appendRemediationSteps")).toBeLessThan(harness.calls.indexOf("moveTask"));
+    expect(harness.calls.indexOf("updateTaskAtomic")).toBeLessThan(harness.calls.indexOf("moveTask"));
   });
 
   /*
@@ -240,7 +250,7 @@ describe("FN-267 review remediation precedes review-to-WIP movement", () => {
       }),
     ]));
     // ...and it was durable BEFORE the move, which is what the bounce guard requires.
-    expect(harness.calls.indexOf("appendRemediationSteps")).toBeLessThan(harness.calls.indexOf("moveTask"));
+    expect(harness.calls.indexOf("updateTaskAtomic")).toBeLessThan(harness.calls.indexOf("moveTask"));
     expect(outcome).toBe("bounced");
     expect(harness.row.column).toBe("in-progress");
   });
