@@ -122,7 +122,8 @@ export function canonicalizePlan(prompt: string, bindings?: PlanEvidenceBindings
   const result = {} as Record<SpecLockSection, CanonicalPlanSection>;
   for (const definition of sections) {
     const matches = headings.filter((heading) => definition.headings.includes(heading.name));
-    if (matches.length > 1) {
+    const duplicatedAlias = matches.find((heading, index) => matches.some((candidate, candidateIndex) => candidateIndex < index && candidate.name === heading.name));
+    if (duplicatedAlias) {
       result[definition.key] = { status: "unavailable", reason: definition.key === "mission" ? "mission-duplicate" : "section-duplicate", canonical: "" };
       continue;
     }
@@ -132,9 +133,22 @@ export function canonicalizePlan(prompt: string, bindings?: PlanEvidenceBindings
         : { status: "available", canonical: "" };
       continue;
     }
-    const heading = matches[0];
-    const next = headings.find((candidate) => candidate.start > heading.start);
-    const canonical = normalizedSection(definition.key, normalized.slice(heading.end, next?.start).replace(/^\n+|\n+$/g, ""));
+    /*
+    FNXC:SpecLock 2026-09-08-23:34:
+    Planner prompts can contain both the canonical heading and a legacy alias for the same lock
+    section (for example `## Non-Goals` plus `## Do NOT`). Distinct aliases describe one
+    structural section, so combine their bodies instead of making the approved plan unlockable;
+    repeating the exact same H2 remains a duplicate because that is still an ambiguous boundary.
+    */
+    const body = matches
+      .sort((left, right) => left.start - right.start)
+      .map((heading) => {
+        const next = headings.find((candidate) => candidate.start > heading.start);
+        return normalized.slice(heading.end, next?.start).replace(/^\n+|\n+$/g, "");
+      })
+      .filter(Boolean)
+      .join("\n");
+    const canonical = normalizedSection(definition.key, body);
     if (definition.required && !canonical) {
       result[definition.key] = { status: "unavailable", reason: definition.key === "mission" ? "mission-empty" : "section-missing", canonical: "" };
     } else {
