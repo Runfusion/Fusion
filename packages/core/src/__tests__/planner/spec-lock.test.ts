@@ -26,6 +26,21 @@ describe("spec lock canonicalization", () => {
     expect(canonicalizePlan(`${prompt}\n## Do NOT\n\nDuplicate`)).toMatchObject({ status: "unavailable", reason: "section-duplicate" });
   });
 
+  it("combines distinct aliases for the same planner-authored section", () => {
+    const withAliases = `${prompt}\n## Non-Goals\n\n- Preserve compatibility`;
+    expect(canonicalizePlan(withAliases)).toMatchObject({
+      status: "available",
+      sections: {
+        "non-goals": expect.objectContaining({ canonical: "Change API\nPreserve compatibility" }),
+      },
+    });
+  });
+
+  it("keeps repeated exact aliases unavailable", () => {
+    const withRepeatedAlias = `${prompt}\n## Non-Goals\n\n- Preserve compatibility\n\n## Non-Goals\n\n- Duplicate`;
+    expect(canonicalizePlan(withRepeatedAlias)).toMatchObject({ status: "unavailable", reason: "section-duplicate" });
+  });
+
   it("identifies unavailable locks without changing the established error message", () => {
     const error = new UnavailablePlanLockError("section-duplicate", ["mission", "non-goals"], "source-hash");
     expect(error.message).toBe("Cannot lock an unavailable plan: section-duplicate");
