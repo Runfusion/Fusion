@@ -20,7 +20,7 @@ jobs:
         run: pnpm --filter @fusion/dashboard build
 
       - name: Upload dashboard dist artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: dashboard-dist-client
           path: packages/dashboard/dist/client
@@ -93,7 +93,7 @@ jobs:
 
       - name: Upload iOS artifact
         if: steps.ios-check.outputs.exists == 'true'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: fusion-ios-ipa
           path: ${{ runner.temp }}/ios-artifacts/fusion-ios.ipa
@@ -156,7 +156,7 @@ jobs:
 
       - name: Upload Android artifact
         if: steps.android-check.outputs.exists == 'true'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: fusion-android-apk
           path: packages/mobile/android/app/build/outputs/apk/debug/*.apk
