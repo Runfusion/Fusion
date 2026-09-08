@@ -26,7 +26,7 @@ import type {
   Mission,
   ValidationDiagnostics,
 } from "@fusion/core";
-import { MissionRemediationStoppedError, normalizeMissionAssertionType, normalizeValidationDiagnostics, renderValidationFailureDescription,
+import { MissionRemediationStoppedError, ValidatorRunOwnershipLostError, normalizeMissionAssertionType, normalizeValidationDiagnostics, renderValidationFailureDescription,
   resolveTaskLifecycleColumns, resolveWorkflowIrForTask, columnsWithFlag,
 } from "@fusion/core";
 import { GitCheckoutMaterializer, type CheckoutMaterializer, type DisposableCheckout, type VerificationOutcome } from "./mission-verification.js";
@@ -617,6 +617,63 @@ export class MissionExecutionLoop extends EventEmitter {
   }
 
   /**
+   * FNXC:MissionValidation 2026-09-07-03:43:
+   * Manual routes already own atomic admission. Execute that exact current run
+   * through the shared judge, behavioral verification, and completion pipeline;
+   * never re-admit it or substitute a status-only pass. Duplicate deliveries are
+   * inert, and pipeline setup failures terminalize a still-readable current run.
+   */
+  async executeManualValidatorRun(admitted: Pick<MissionValidatorRun, "id" | "featureId">): Promise<void> {
+    if (this.activeManualRuns.has(admitted.id)) return;
+    this.activeManualRuns.add(admitted.id);
+    try {
+      try {
+        /* FNXC:MissionValidation 2026-09-07-04:33:
+         * A manual admission may beat an automatic owner's database admission.
+         * Join its release without polling, then reload ownership before claiming.
+         * Recheck local ownership after every asynchronous database lookup.
+         */
+        for (;;) {
+          const current = await this.getCurrentManualValidation(admitted);
+          if (!current) return;
+          if (!this.running) throw new Error("Mission execution loop is not running");
+          const owner = this.validationOwners.get(current.feature.id);
+          if (owner) {
+            await owner;
+            continue;
+          }
+          await this.runFeatureValidation(current.feature, undefined, current.run);
+          break;
+        }
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        // Recovery uses the immutable admission, not the lookup that just failed.
+        // The terminal CAS itself checks ownership and rejects foreign/stale runs.
+        const terminalize = () => this.completeValidatorRunIfStillRunning(
+          admitted.featureId, admitted.id, "error", reason,
+          { featureId: admitted.featureId, triggerType: "manual" },
+        );
+        const applied = await terminalize().catch(() => terminalize());
+        if (applied) await this.notifyValidationError(admitted.featureId, admitted.id, reason);
+      }
+    } finally {
+      this.activeManualRuns.delete(admitted.id);
+    }
+  }
+
+  private activeManualRuns = new Set<string>();
+  private validationOwners = new Map<string, Promise<void>>();
+
+  private async getCurrentManualValidation(admitted: Pick<MissionValidatorRun, "id" | "featureId">): Promise<{ feature: MissionFeature; run: MissionValidatorRun } | undefined> {
+    const run = await this.missionStore.getValidatorRun(admitted.id);
+    if (!run || run.featureId !== admitted.featureId || run.triggerType !== "manual" || run.status !== "running") return;
+    const feature = await this.missionStore.getFeature(admitted.featureId);
+    if (!feature || feature.lastValidatorRunId !== run.id || feature.loopState !== "validating"
+      || feature.validatorAttemptCount !== run.validatorAttempt) return;
+    return { feature, run };
+  }
+
+  /**
    * Run assertion validation for a feature and apply the outcome.
    *
    * Shared by processTaskOutcome (task-triggered) and recoverActiveMissions
@@ -628,6 +685,7 @@ export class MissionExecutionLoop extends EventEmitter {
   private async runFeatureValidation(
     feature: MissionFeature,
     preparedMemo?: PreparedValidationMemoization,
+    admittedRun?: MissionValidatorRun,
   ): Promise<void> {
     /*
     FNXC:MissionValidation 2026-08-01-17:14:
@@ -641,6 +699,9 @@ export class MissionExecutionLoop extends EventEmitter {
     completion events must share one validator run, including the lazy-link path.
     */
     this.activeValidations.add(feature.id);
+    let releaseOwner!: () => void;
+    const owner = new Promise<void>((resolve) => { releaseOwner = resolve; });
+    this.validationOwners.set(feature.id, owner);
     let memoToDispose = preparedMemo;
 
     try {
@@ -660,8 +721,11 @@ export class MissionExecutionLoop extends EventEmitter {
           await memoToDispose.checkout.dispose().catch((error) => loopLog.warn(`Error disposing unused validation checkout for ${feature.id}:`, error));
           memoToDispose = undefined;
         }
-        await this.handleValidationPass(feature.id, undefined, "No assertions linked to feature");
-        await this.runMilestoneValidationIfReady(feature);
+        if (admittedRun) throw new Error("Manual validation has no linked assertions");
+        const emptyRun = await this.missionStore.startValidatorRun(feature.id, "task_completion", feature.taskId);
+        if (await this.handleValidationPass(feature.id, emptyRun.id, "No assertions linked to feature")) {
+          await this.runMilestoneValidationIfReady(feature);
+        }
         return;
       }
 
@@ -669,7 +733,7 @@ export class MissionExecutionLoop extends EventEmitter {
 
       // The asynchronous store owns cross-process admission; legacy synchronous
       // stores retain the existing fail-open path.
-      const memo = memoToDispose ?? await this.prepareValidationMemoization(feature, assertions);
+      const memo = admittedRun ? undefined : memoToDispose ?? await this.prepareValidationMemoization(feature, assertions);
       memoToDispose = memo;
       const disposeUnusedMemo = async () => {
         if (memoToDispose) {
@@ -679,7 +743,9 @@ export class MissionExecutionLoop extends EventEmitter {
       };
       const admissionStore = this.missionStore as typeof this.missionStore & { admitValidatorRun?: (featureId: string, input: { inputFingerprint: string; taskId?: string; reusePass: boolean; failureBudget: number }) => Promise<{ outcome: "start" | "running" | "reuse-pass" | "budget-exhausted"; run?: MissionValidatorRun }> };
       let run: MissionValidatorRun;
-      if (memo && admissionStore.admitValidatorRun) {
+      if (admittedRun) {
+        run = admittedRun;
+      } else if (memo && admissionStore.admitValidatorRun) {
         const admission = await admissionStore.admitValidatorRun(feature.id, { inputFingerprint: memo.fingerprint, taskId: feature.taskId, reusePass: !memo.hasBehavioralAssertions, failureBudget: VALIDATION_FAILURE_BUDGET_PER_FINGERPRINT });
         if (admission.outcome === "running" || admission.outcome === "budget-exhausted") {
           await disposeUnusedMemo();
@@ -687,7 +753,9 @@ export class MissionExecutionLoop extends EventEmitter {
         }
         if (admission.outcome === "reuse-pass") {
           await disposeUnusedMemo();
-          await this.handleValidationPass(feature.id, admission.run?.id, "Reused content-addressed validator pass");
+          // Admission has already applied the cached pass under its feature lock.
+          // Do not try to complete the historical terminal row a second time.
+          await this.notifyValidationPass(feature.id, admission.run?.id, "Reused content-addressed validator pass");
           await this.runMilestoneValidationIfReady(feature);
           return;
         }
@@ -709,6 +777,7 @@ export class MissionExecutionLoop extends EventEmitter {
       memoToDispose = undefined;
       const { result, inspection } = await this.runValidation(feature, assertions, run, "feature", memo);
 
+
       // A fail is not durable evidence until its inspection root is trusted.
       // Do this before mutating assertion state: a pre-merge or stale checkout
       // must leave linked assertions pending for a later, trustworthy validator.
@@ -718,25 +787,21 @@ export class MissionExecutionLoop extends EventEmitter {
       const deferredFail = result.status === "fail"
         && (Boolean(premergeColumn) || inspection.workspaceStale || Boolean(inspection.inspectionUnavailableReason));
 
-      // Persist only authoritative results from a trusted inspection. The rollup
-      // readiness gate consumes these statuses instead of model summary prose.
-      const updateAssertion = (this.missionStore as unknown as {
-        updateContractAssertion?: (id: string, updates: { status: "passed" | "blocked" | "failed" }) => unknown;
-      }).updateContractAssertion;
-      if (!deferredFail && typeof updateAssertion === "function") {
-        for (const assertion of assertions) {
+      // FNXC:MissionValidation 2026-09-07-04:33: Verdicts travel into the
+      // terminal CAS, never through a preflight read followed by separate writes.
+      const effects: import("@fusion/core").ValidatorRunCompletionEffects = {
+        featureId: feature.id,
+        assertions: deferredFail ? [] : assertions.flatMap((assertion) => {
           const verdict = result.assertions.find((entry) => entry.assertionId === assertion.id);
-          if (!verdict) continue;
-          await updateAssertion.call(this.missionStore, assertion.id, {
-            status: verdict.passed ? "passed" : verdict.verdict === "blocked" ? "blocked" : "failed",
-          });
-        }
-      }
+          return verdict ? [{ assertionId: assertion.id, status: verdict.passed ? "passed" : verdict.verdict === "blocked" ? "blocked" : "failed" }] : [];
+        }),
+      };
 
       // Handle the result
       if (result.status === "pass") {
-        await this.handleValidationPass(feature.id, run.id, result.summary);
-        await this.runMilestoneValidationIfReady(feature);
+        if (await this.handleValidationPass(feature.id, run.id, result.summary, effects)) {
+          await this.runMilestoneValidationIfReady(feature);
+        }
       } else if (result.status === "fail") {
         // A "fail" verdict is only trustworthy once the linked task's code has
         // actually landed in its workflow Complete column. If the task is still mid-pipeline
@@ -750,6 +815,7 @@ export class MissionExecutionLoop extends EventEmitter {
             feature.id,
             run.id,
             `linked task ${feature.taskId} is still "${premergeColumn}" (code not merged yet) — validation deferred`,
+            effects,
           );
         } else if (inspection.workspaceStale || inspection.inspectionUnavailableReason) {
           // FNXC:MissionValidation 2026-07-16-14:00:
@@ -760,9 +826,9 @@ export class MissionExecutionLoop extends EventEmitter {
           const reason = inspection.workspaceStale
             ? `validation workspace predates the merged code for ${feature.taskId} — validation deferred`
             : `validation could not prove the inspected workspace contains merged code (${inspection.inspectionUnavailableReason}) — validation deferred`;
-          await this.handleValidationInconclusive(feature.id, run.id, reason);
+          await this.handleValidationInconclusive(feature.id, run.id, reason, effects);
         } else {
-          await this.handleValidationFail(feature.id, run.id, result);
+          await this.handleValidationFail(feature.id, run.id, result, effects);
         }
       } else if (result.status === "inconclusive") {
         // R21 — "verification could not run" is distinct from "behavior observed
@@ -770,17 +836,21 @@ export class MissionExecutionLoop extends EventEmitter {
         // isolation setup failure, rejected proof) routes to a blocked/needs-
         // attention outcome that spawns NO Fix Feature, and is tracked with a
         // distinguishable infra-failure event so it is separable from real fails.
-        await this.handleValidationInconclusive(feature.id, run.id, result.blockedReason ?? result.summary);
+        await this.handleValidationInconclusive(feature.id, run.id, result.blockedReason ?? result.summary, effects);
       } else if (result.status === "blocked") {
-        await this.handleValidationBlocked(feature.id, run.id, result.blockedReason ?? result.summary);
+        await this.handleValidationBlocked(feature.id, run.id, result.blockedReason ?? result.summary, effects);
       } else if (result.status === "error") {
-        await this.handleValidationError(feature.id, run.id, result.summary);
+        await this.handleValidationError(feature.id, run.id, result.summary, effects);
       }
     } finally {
       if (memoToDispose) {
         await memoToDispose.checkout.dispose().catch((error) => loopLog.warn(`Error disposing abandoned validation checkout for ${feature.id}:`, error));
       }
-      this.activeValidations.delete(feature.id);
+      if (this.validationOwners.get(feature.id) === owner) {
+        this.activeValidations.delete(feature.id);
+        this.validationOwners.delete(feature.id);
+      }
+      releaseOwner();
     }
   }
 
@@ -1858,27 +1928,15 @@ ${taskContext ? `\n\nImplementation context:\n${taskContext}` : ""}`;
   }
 
   private async completeValidatorRunIfStillRunning(
+    featureId: string,
     runId: string | undefined,
     status: "passed" | "failed" | "blocked" | "error",
     summaryOrReason?: string,
+    effects: import("@fusion/core").ValidatorRunCompletionEffects = { featureId },
   ): Promise<boolean> {
-    if (!runId) {
-      return false;
-    }
-
-    if (typeof this.missionStore.getValidatorRun !== "function") {
-      await this.missionStore.completeValidatorRun(runId, status, summaryOrReason);
-      return true;
-    }
-
-    const run = await this.missionStore.getValidatorRun(runId);
-    if (!run || run.status !== "running") {
-      loopLog.warn(`Validator run ${runId} is no longer running; skipping ${status} completion.`);
-      return false;
-    }
-
-    await this.missionStore.completeValidatorRun(runId, status, summaryOrReason);
-    return true;
+    if (!runId) return false;
+    const completion = await this.missionStore.completeValidatorRun(runId, status, summaryOrReason, undefined, effects);
+    return completion.completionApplied === true;
   }
 
   /**
@@ -1887,16 +1945,16 @@ ${taskContext ? `\n\nImplementation context:\n${taskContext}` : ""}`;
   private async handleValidationPass(
     featureId: string,
     runId: string | undefined,
-    summary: string,
-  ): Promise<void> {
+    summary?: string,
+    effects?: import("@fusion/core").ValidatorRunCompletionEffects,
+  ): Promise<boolean> {
+    if (!(await this.completeValidatorRunIfStillRunning(featureId, runId, "passed", summary, effects))) return false;
+    await this.notifyValidationPass(featureId, runId, summary);
+    return true;
+  }
+
+  private async notifyValidationPass(featureId: string, runId: string | undefined, summary?: string): Promise<void> {
     try {
-      await this.completeValidatorRunIfStillRunning(runId, "passed", summary);
-
-      const feature = await this.missionStore.getFeature(featureId);
-      if (feature && feature.status !== "done") {
-        await this.missionStore.updateFeatureStatus(featureId, "done");
-      }
-
       loopLog.log(`Feature ${featureId} passed validation`);
 
       // Notify autopilot if configured
@@ -1917,31 +1975,24 @@ ${taskContext ? `\n\nImplementation context:\n${taskContext}` : ""}`;
     featureId: string,
     runId: string | undefined,
     result: ValidationResult,
+    effects?: import("@fusion/core").ValidatorRunCompletionEffects,
   ): Promise<void> {
     // Tracks how autopilot should be notified. A retry-budget-exhausted feature
     // transitions to blocked, so autopilot must be told "blocked" (not "failed")
     // to stay in sync with the validator-run state.
     let terminalStatus: "failed" | "blocked" = "failed";
+    const failures = result.assertions
+      .filter((a) => !a.passed)
+      .map((a) => ({
+        featureId,
+        assertionId: a.assertionId,
+        message: a.message || "Assertion failed",
+        expected: a.expected,
+        actual: a.actual,
+      }));
+    if (!(await this.completeValidatorRunIfStillRunning(featureId, runId, "failed", result.summary, { ...effects, featureId, failures }))) return;
+
     try {
-      // Record the failures
-      const failures = result.assertions
-        .filter((a) => !a.passed)
-        .map((a) => ({
-          featureId,
-          assertionId: a.assertionId,
-          message: a.message || "Assertion failed",
-          expected: a.expected,
-          actual: a.actual,
-        }));
-
-      const canCompleteRun = runId ? (await this.missionStore.getValidatorRun(runId))?.status === "running" : false;
-
-      if (runId && failures.length > 0 && canCompleteRun) {
-        await this.missionStore.recordValidatorFailures(runId, failures);
-      }
-
-      await this.completeValidatorRunIfStillRunning(runId, "failed", result.summary);
-
       loopLog.log(`Feature ${featureId} failed validation with ${failures.length} failures`);
 
       // FNXC:MissionValidationDiagnostics 2026-07-23-12:00: The normalized verdict—not an LLM summary—drives every persisted failure surface.
@@ -1997,6 +2048,7 @@ ${taskContext ? `\n\nImplementation context:\n${taskContext}` : ""}`;
           failureReason,
           undefined,
           diagnostics,
+          { requireCurrentRun: true },
         );
         loopLog.log(`Created fix feature ${fixFeature.id} for ${featureId}`);
 
@@ -2056,6 +2108,10 @@ ${taskContext ? `\n\nImplementation context:\n${taskContext}` : ""}`;
           });
         } catch (fixErr) {
         const message = fixErr instanceof Error ? fixErr.message : String(fixErr);
+        if (fixErr instanceof ValidatorRunOwnershipLostError) {
+          loopLog.log(`Validator run ${runId} lost ownership before remediation admission; skipping fix creation`);
+          return;
+        }
         if (fixErr instanceof MissionRemediationStoppedError) {
           /*
           FNXC:MissionLineageBudget 2026-07-22-15:15:
@@ -2140,9 +2196,10 @@ ${taskContext ? `\n\nImplementation context:\n${taskContext}` : ""}`;
     featureId: string,
     runId: string | undefined,
     reason: string | undefined,
+    effects?: import("@fusion/core").ValidatorRunCompletionEffects,
   ): Promise<void> {
+    if (!(await this.completeValidatorRunIfStillRunning(featureId, runId, "blocked", reason, effects))) return;
     try {
-      await this.completeValidatorRunIfStillRunning(runId, "blocked", reason);
       loopLog.warn(`Feature ${featureId} verification inconclusive: ${reason ?? "no reason provided"}`);
 
       // R16/R21 — durable, distinguishable infra-failure event. The `outcome`
@@ -2175,9 +2232,10 @@ ${taskContext ? `\n\nImplementation context:\n${taskContext}` : ""}`;
     featureId: string,
     runId: string | undefined,
     blockedReason: string | undefined,
+    effects?: import("@fusion/core").ValidatorRunCompletionEffects,
   ): Promise<void> {
+    if (!(await this.completeValidatorRunIfStillRunning(featureId, runId, "blocked", blockedReason, effects))) return;
     try {
-      await this.completeValidatorRunIfStillRunning(runId, "blocked", blockedReason);
       loopLog.log(`Feature ${featureId} blocked: ${blockedReason}`);
       await this.logFeatureErrorEvent(featureId, "validation_blocked", `Validation blocked for feature ${featureId}: ${blockedReason ?? "no reason provided"}`, {
         runId,
@@ -2202,9 +2260,14 @@ ${taskContext ? `\n\nImplementation context:\n${taskContext}` : ""}`;
     featureId: string,
     runId: string | undefined,
     error: string,
+    effects?: import("@fusion/core").ValidatorRunCompletionEffects,
   ): Promise<void> {
+    if (!(await this.completeValidatorRunIfStillRunning(featureId, runId, "error", error, effects))) return;
+    await this.notifyValidationError(featureId, runId, error);
+  }
+
+  private async notifyValidationError(featureId: string, runId: string | undefined, error: string): Promise<void> {
     try {
-      await this.completeValidatorRunIfStillRunning(runId, "error", error);
       loopLog.error(`Feature ${featureId} validation error: ${error}`);
       await this.logFeatureErrorEvent(featureId, "validation_error", `Validation error for feature ${featureId}: ${error}`, {
         runId,

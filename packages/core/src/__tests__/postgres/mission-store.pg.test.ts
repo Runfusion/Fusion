@@ -23,6 +23,7 @@ import { readFile } from "node:fs/promises";
 import type { DbTransaction } from "../../postgres/data-layer.js";
 import type { TaskCreateInput } from "../../types/task/task-core.js";
 import type { MissionEvent, FeatureUnlinkedPayload } from "../../missions/mission-types.js";
+import { ValidatorRunOwnershipLostError } from "../../missions/mission-types.js";
 
 import {
   pgDescribe,
@@ -1591,6 +1592,125 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
     );
   });
 
+  it("atomically applies validator effects only for the winning current running owner", async () => {
+    const m = missions();
+    const mission = await m.createMission({ title: "Completion effects" });
+    const milestone = await m.addMilestone(mission.id, { title: "MS" });
+    const slice = await m.addSlice(milestone.id, { title: "SL" });
+    const feature = await m.addFeature(slice.id, { title: "F", acceptanceCriteria: "observable result" });
+    const [assertion] = await m.ensureFeatureAssertionLinked(feature.id);
+    for (const milestoneAssertion of (await m.listContractAssertions(milestone.id)).filter((a) => a.scope === "milestone")) {
+      await m.updateContractAssertion(milestoneAssertion.id, { status: "passed" });
+    }
+    const old = await m.startValidatorRun(feature.id, "manual");
+    const current = await m.startValidatorRun(feature.id, "scheduled");
+    const effects = { featureId: feature.id, assertions: [{ assertionId: assertion!.id, status: "passed" as const }] };
+    const stale = await m.completeValidatorRun(old.id, "passed", "old pass", undefined, effects);
+    expect(stale.completionApplied).toBe(false);
+    expect((await m.getFeature(feature.id))?.status).not.toBe("done");
+    expect((await m.listAssertionsForFeature(feature.id))[0]?.status).toBe("pending");
+    const winner = await m.completeValidatorRun(current.id, "passed", "current pass", undefined, effects);
+    expect(winner.completionApplied).toBe(true);
+    expect((await m.getMilestone(milestone.id))?.validationState).toBe("passed");
+    expect((await m.getSlice(slice.id))?.status).toBe("complete");
+    expect(await m.getFeature(feature.id)).toMatchObject({ status: "done", loopState: "passed", lastValidatorRunId: current.id });
+    expect((await m.listAssertionsForFeature(feature.id))[0]?.status).toBe("passed");
+    const duplicate = await m.completeValidatorRun(current.id, "failed", "late fail", undefined, {
+      featureId: feature.id, assertions: [{ assertionId: assertion!.id, status: "failed" }],
+      failures: [{ featureId: feature.id, assertionId: assertion!.id, message: "late" }],
+    });
+    expect(duplicate.completionApplied).toBe(false);
+    expect((await m.listAssertionsForFeature(feature.id))[0]?.status).toBe("passed");
+    expect(await m.getFailuresForRun(current.id)).toEqual([]);
+  });
+
+  it.each(["reaper", "replacement"])("discards all effects when %s wins before the completion lock", async (winner) => {
+    const m = missions();
+    const competing = new AsyncMissionStore(h.layer(), h.store());
+    const mission = await m.createMission({ title: "Completion race" });
+    const milestone = await m.addMilestone(mission.id, { title: "MS" });
+    const slice = await m.addSlice(milestone.id, { title: "SL" });
+    const feature = await m.addFeature(slice.id, { title: "F" });
+    const [assertion] = await m.ensureFeatureAssertionLinked(feature.id);
+    const run = await m.startValidatorRun(feature.id, "manual");
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const original = h.layer().transactionImmediate.bind(h.layer());
+    const gate = vi.spyOn(h.layer(), "transactionImmediate").mockImplementationOnce(async (fn) => {
+      entered.resolve();
+      await release.promise;
+      return original(fn);
+    });
+    const emitted = vi.spyOn(m, "emit").mockClear();
+    const pending = m.completeValidatorRun(run.id, "failed", "late verdict", undefined, {
+      featureId: feature.id, triggerType: "manual",
+      assertions: [{ assertionId: assertion!.id, status: "failed" }],
+      failures: [{ featureId: feature.id, assertionId: assertion!.id, message: "late failure" }],
+    });
+    let expectedFeature;
+    let expectedRun;
+    try {
+      await entered.promise;
+      gate.mockRestore();
+      if (winner === "reaper") await competing.reapValidatorRun(run.id, "reaper won");
+      else await competing.startValidatorRun(feature.id, "scheduled");
+      expectedFeature = await competing.getFeature(feature.id);
+      expectedRun = await competing.getValidatorRun(run.id);
+    } finally {
+      gate.mockRestore();
+      release.resolve();
+    }
+    expect(await pending).toMatchObject({ ...expectedRun, completionApplied: false });
+    expect(await m.getFeature(feature.id)).toEqual(expectedFeature);
+    expect((await m.listAssertionsForFeature(feature.id))[0]?.status).toBe("pending");
+    expect(await m.getFailuresForRun(run.id)).toEqual([]);
+    expect(emitted).not.toHaveBeenCalled();
+  });
+
+  it("rolls back every validator effect and event when a later assertion is invalid", async () => {
+    const m = missions();
+    const mission = await m.createMission({ title: "Rollback" });
+    const milestone = await m.addMilestone(mission.id, { title: "MS" });
+    const slice = await m.addSlice(milestone.id, { title: "SL" });
+    const feature = await m.addFeature(slice.id, { title: "F" });
+    const [assertion] = await m.ensureFeatureAssertionLinked(feature.id);
+    const run = await m.startValidatorRun(feature.id, "manual");
+    const beforeFeature = await m.getFeature(feature.id);
+    const beforeMilestone = await m.getMilestone(milestone.id);
+    const emitted = vi.spyOn(m, "emit").mockClear();
+    await expect(m.completeValidatorRun(run.id, "passed", "invalid", undefined, {
+      featureId: feature.id,
+      assertions: [{ assertionId: assertion!.id, status: "passed" }, { assertionId: "CA-NOT-LINKED", status: "passed" }],
+      failures: [{ featureId: feature.id, assertionId: assertion!.id, message: "must roll back" }],
+    })).rejects.toThrow("not linked");
+    expect(await m.getValidatorRun(run.id)).toEqual(run);
+    expect(await m.getFeature(feature.id)).toEqual(beforeFeature);
+    expect(await m.getMilestone(milestone.id)).toEqual(beforeMilestone);
+    expect((await m.listAssertionsForFeature(feature.id))[0]?.status).toBe("pending");
+    expect(await m.getFailuresForRun(run.id)).toEqual([]);
+    expect(emitted).not.toHaveBeenCalled();
+  });
+
+  it("atomically refreshes every milestone owning accepted linked assertions", async () => {
+    const m = missions();
+    const mission = await m.createMission({ title: "Cross-milestone verdicts" });
+    const first = await m.addMilestone(mission.id, { title: "Source" });
+    const second = await m.addMilestone(mission.id, { title: "Shared contract" });
+    const slice = await m.addSlice(first.id, { title: "SL" });
+    const feature = await m.addFeature(slice.id, { title: "F" });
+    const [own] = await m.ensureFeatureAssertionLinked(feature.id);
+    const shared = await m.addContractAssertion(second.id, { title: "Shared", assertion: "Shared observable", status: "pending" });
+    await m.linkFeatureToAssertion(feature.id, shared.id);
+    const run = await m.startValidatorRun(feature.id, "manual");
+    const result = await m.completeValidatorRun(run.id, "passed", "verified", undefined, {
+      featureId: feature.id,
+      assertions: [{ assertionId: own!.id, status: "passed" }, { assertionId: shared.id, status: "passed" }],
+    });
+    expect(result.completionApplied).toBe(true);
+    expect((await m.getMilestone(first.id))?.validationState).toBe("passed");
+    expect((await m.getMilestone(second.id))?.validationState).toBe("passed");
+  });
+
   it("allows exactly one terminal validator transition when completion races the stale reaper", async () => {
     const primary = missions();
     const competing = new AsyncMissionStore(h.layer(), h.store());
@@ -1622,6 +1742,157 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
       expect(persistedFeature?.loopState).toBe("needs_fix");
       expect(persistedFeature?.lastValidatorStatus).toBe("error");
     }
+  });
+
+  it("fences stale generated fixes after replacement without minting lineage or consuming budget", async () => {
+    const m = missions();
+    const mission = await m.createMission({ title: "Stale fix" });
+    const milestone = await m.addMilestone(mission.id, { title: "MS" });
+    const slice = await m.addSlice(milestone.id, { title: "SL" });
+    const feature = await m.addFeature(slice.id, { title: "F" });
+    const old = await m.startValidatorRun(feature.id, "manual");
+    await m.completeValidatorRun(old.id, "failed");
+    const current = await m.startValidatorRun(feature.id, "manual");
+    await expect(m.createGeneratedFixFeature(feature.id, old.id, [], "stale", undefined, undefined, { requireCurrentRun: true }))
+      .rejects.toMatchObject({ code: "VALIDATOR_RUN_OWNERSHIP_LOST" });
+    expect(await m.listFeatures(slice.id)).toHaveLength(1);
+    expect(await m.getFeature(feature.id)).toMatchObject({ implementationAttemptCount: 0, lastValidatorRunId: current.id, loopState: "validating" });
+    expect(await m.findGeneratedFixFeature(feature.id, old.id)).toBeUndefined();
+  });
+
+  it("rejects a delayed failed-child continuation after a newer root pass", async () => {
+    const m = missions();
+    const mission = await m.createMission({ title: "Superseded remediation" });
+    const milestone = await m.addMilestone(mission.id, { title: "MS" });
+    const slice = await m.addSlice(milestone.id, { title: "SL" });
+    const root = await m.addFeature(slice.id, { title: "Root" });
+    const initialRun = await m.startManualValidatorRun(root.id);
+    await m.completeValidatorRun(initialRun.run.id, "failed", "first failure");
+    const child = await m.createGeneratedFixFeature(root.id, initialRun.run.id, [], "repair");
+    await m.transitionLoopState(child.id, "implementing");
+    const childRun = await m.startValidatorRun(child.id, "scheduled");
+    await m.completeValidatorRun(childRun.id, "failed", "child failure");
+    const passedRun = await m.startValidatorRun(root.id, "scheduled");
+    await m.completeValidatorRun(passedRun.id, "passed", "root is correct now");
+    expect(await m.getFeature(child.id)).toMatchObject({ status: "done", loopState: "passed", lastValidatorRunId: childRun.id, lastValidatorStatus: "failed" });
+    const rootBefore = await m.getFeature(root.id);
+    const featuresBefore = await m.listFeatures(slice.id);
+    await expect(m.createGeneratedFixFeature(child.id, childRun.id, [], "late repair", undefined, undefined, { requireCurrentRun: true }))
+      .rejects.toBeInstanceOf(ValidatorRunOwnershipLostError);
+    expect(await m.getFeature(root.id)).toEqual(rootBefore);
+    expect(await m.listFeatures(slice.id)).toEqual(featuresBefore);
+  });
+
+  it("rejects delayed remediation while an intermediate ancestor pass awaits reconciliation", async () => {
+    const m = missions();
+    const competing = new AsyncMissionStore(h.layer(), h.store());
+    const mission = await m.createMission({ title: "Intermediate supersession" });
+    const milestone = await m.addMilestone(mission.id, { title: "MS" });
+    const slice = await m.addSlice(milestone.id, { title: "SL" });
+    const root = await m.addFeature(slice.id, { title: "Root" });
+    const failedRun = async (featureId: string) => {
+      const admission = await m.startManualValidatorRun(featureId);
+      await m.completeValidatorRun(admission.run.id, "failed", "repair");
+      return admission.run;
+    };
+    const rootRun = await failedRun(root.id);
+    const ancestor = await m.createGeneratedFixFeature(root.id, rootRun.id, [], "repair");
+    const ancestorRun = await failedRun(ancestor.id);
+    const child = await m.createGeneratedFixFeature(ancestor.id, ancestorRun.id, [], "repair");
+    const childRun = await failedRun(child.id);
+    const pass = await m.startManualValidatorRun(ancestor.id);
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const reconcile = m.reconcileSupersededGeneratedFixFeatures.bind(m);
+    const gate = vi.spyOn(m, "reconcileSupersededGeneratedFixFeatures").mockImplementationOnce(async (sliceId) => {
+      entered.resolve();
+      await release.promise;
+      return reconcile(sliceId);
+    });
+    const pending = m.completeValidatorRun(pass.run.id, "passed", "ancestor verified");
+    try {
+      await entered.promise;
+      expect((await competing.getFeature(child.id))?.loopState).toBe("needs_fix");
+      const beforeRoot = await competing.getFeature(root.id);
+      await expect(competing.createGeneratedFixFeature(child.id, childRun.id, [], "late", undefined, undefined, { requireCurrentRun: true }))
+        .rejects.toBeInstanceOf(ValidatorRunOwnershipLostError);
+      expect(await competing.getFeature(root.id)).toEqual(beforeRoot);
+      expect(await competing.findGeneratedFixFeature(child.id, childRun.id)).toBeUndefined();
+    } finally {
+      release.resolve();
+      await pending;
+      gate.mockRestore();
+    }
+  });
+
+  it("serializes delayed remediation before reconciliation can invert ancestor row locks", async () => {
+    const m = missions();
+    const competing = new AsyncMissionStore(h.layer(), h.store());
+    const mission = await m.createMission({ title: "Lineage lock order" });
+    const milestone = await m.addMilestone(mission.id, { title: "MS" });
+    const slice = await m.addSlice(milestone.id, { title: "SL" });
+    const root = await m.addFeature(slice.id, { title: "Root" });
+    const fail = async (featureId: string) => {
+      const { run } = await m.startManualValidatorRun(featureId);
+      await m.completeValidatorRun(run.id, "failed");
+      return run;
+    };
+    const rootRun = await fail(root.id);
+    const ancestor = await m.createGeneratedFixFeature(root.id, rootRun.id, [], "repair");
+    const ancestorRun = await fail(ancestor.id);
+    const child = await m.createGeneratedFixFeature(ancestor.id, ancestorRun.id, [], "repair");
+    const childRun = await fail(child.id);
+    const { run: pass } = await m.startManualValidatorRun(ancestor.id);
+    const deferReconcile = vi.spyOn(m, "reconcileSupersededGeneratedFixFeatures").mockResolvedValueOnce({
+      supersededCount: 0, featureIds: [], repairedCount: 0, repairedFeatureIds: [],
+    });
+    await m.completeValidatorRun(pass.id, "passed");
+    deferReconcile.mockRestore();
+
+    const transaction = h.layer().transactionImmediate.bind(h.layer());
+    type Tx = Parameters<Parameters<typeof transaction>[0]>[0];
+    const locking = competing as unknown as { lockGeneratedFixLineage(tx: Tx): Promise<void> };
+    const lockLineage = locking.lockGeneratedFixLineage.bind(locking);
+    const entered = Promise.withResolvers<number>();
+    const release = Promise.withResolvers<void>();
+    const gate = vi.spyOn(locking, "lockGeneratedFixLineage").mockImplementationOnce(async (tx) => {
+      await lockLineage(tx);
+      // Force the permitted ancestor-first order of reconciliation's bulk row lock.
+      await tx.select({ id: schema.project.missionFeatures.id }).from(schema.project.missionFeatures)
+        .where(eq(schema.project.missionFeatures.id, ancestor.id)).for("update");
+      const rows = await tx.execute(sql`SELECT pg_backend_pid() AS pid`) as unknown as Array<{ pid: number }>;
+      entered.resolve(rows[0]!.pid);
+      await release.promise;
+      // A regression must fail promptly, not hang the suite waiting for a deadlock.
+      await tx.execute(sql`SET LOCAL lock_timeout = '500ms'`);
+    });
+    const reconciled = competing.reconcileSupersededGeneratedFixFeatures(slice.id).then(
+      (value) => ({ ok: true, value }), (error: unknown) => ({ ok: false, error }),
+    );
+    let admission: Promise<unknown> | undefined;
+    try {
+      const holderPid = await entered.promise;
+      admission = m.createGeneratedFixFeature(child.id, childRun.id, [], "late", undefined, undefined, { requireCurrentRun: true })
+        .then((value) => value, (error: unknown) => error);
+      const deadline = Date.now() + 5_000;
+      let blocked = false;
+      while (!blocked && Date.now() < deadline) {
+        const rows = await h.adminDb().execute(sql`SELECT EXISTS (
+          SELECT 1 FROM pg_stat_activity activity WHERE ${holderPid} = ANY(pg_blocking_pids(activity.pid))
+        ) AS blocked`) as unknown as Array<{ blocked: boolean }>;
+        blocked = rows[0]?.blocked === true;
+        if (!blocked) await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(blocked).toBe(true);
+    } finally {
+      release.resolve();
+      gate.mockRestore();
+    }
+    const [reconciliationResult, admissionResult] = await Promise.all([reconciled, admission]);
+    expect(reconciliationResult).toMatchObject({ ok: true });
+    expect(admissionResult).toBeInstanceOf(ValidatorRunOwnershipLostError);
+    expect(await m.findGeneratedFixFeature(child.id, childRun.id)).toBeUndefined();
+    expect((await m.getFeature(root.id))?.implementationAttemptCount).toBe(2);
   });
 
   it("creates one generated fix and consumes one retry under concurrent stores", async () => {
