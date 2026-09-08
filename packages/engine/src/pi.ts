@@ -89,7 +89,7 @@ import {
 import { resolvePermanentAgentToolDecision } from "./agents/permanent-agent-gating.js";
 import type { SystemPromptLayers } from "./execution/prompt-layers.js";
 import { READONLY_ALLOWLIST, filterCustomToolsForReadonly, isReadonlyAllowed } from "./workflows/workflow-step-tool-policy.js";
-import { createStreamingDeltaNormalizer } from "./execution/streaming-delta.js";
+import { createAssistantStreamCapture } from "./execution/assistant-text-capture.js";
 import { isModelAuthTierIncompatibilityError, isProviderModelNotFoundError, isUnsupportedMessageRoleError } from "./errors/transient-error-detector.js";
 import { logMcpForwardingSkipped, runtimeSupportsMcp } from "./mcp/mcp-runtime-support.js";
 import { connectMcpSessionTools, type McpClientFactory, type McpSessionToolset } from "./mcp/mcp-session-tools.js";
@@ -1080,6 +1080,7 @@ export interface AgentOptions {
   builtinToolsAllowlist?: BuiltinWebToolName[];
   onText?: (delta: string) => void;
   onThinking?: (delta: string) => void;
+  onTextBlockBoundary?: () => void;
   onToolStart?: (name: string, args?: Record<string, unknown>) => void;
   onToolEnd?: (name: string, isError: boolean, result?: unknown) => void;
   /** Default model provider (e.g. "anthropic"). Used with `defaultModelId` to select a specific model. */
@@ -3299,20 +3300,10 @@ export async function createPiAgentSessionRaw(options: AgentOptions): Promise<Ag
       sessionManager as unknown as SessionManagerLike,
     );
     (targetSession as any).__fusionMemoryAppendAvailable = options.customTools?.some((tool) => tool.name === FN_MEMORY_APPEND_TOOL_NAME) === true;
-    const deltaNormalizer = createStreamingDeltaNormalizer();
+    /* FNXC:AssistantTextCapture 2026-09-08-14:13: Providers can deliver whole blocks without deltas; shared per-block offsets flush every event shape exactly once. */
+    const capture = createAssistantStreamCapture({ onText: options.onText, onThinking: options.onThinking, onTextBlockBoundary: options.onTextBlockBoundary });
     targetSession.subscribe((event) => {
-      if (event.type === "message_update") {
-        const msgEvent = event.assistantMessageEvent;
-        if (msgEvent.type === "text_delta") {
-          // Repair dropped sentence-boundary spaces at the shared engine delta chokepoint,
-          // including tool-call cross-message boundaries (see streaming-delta.ts).
-          options.onText?.(deltaNormalizer.normalize(msgEvent.partial, msgEvent.contentIndex, msgEvent.delta, "text"));
-        } else if (msgEvent.type === "thinking_delta") {
-          // Repair dropped sentence-boundary spaces at the shared engine delta chokepoint,
-          // including tool-call cross-message boundaries (see streaming-delta.ts).
-          options.onThinking?.(deltaNormalizer.normalize(msgEvent.partial, msgEvent.contentIndex, msgEvent.delta, "thinking"));
-        }
-      }
+      capture.handleAgentEvent(event);
       if (event.type === "tool_execution_start") {
         options.onToolStart?.(event.toolName, event.args as Record<string, unknown> | undefined);
       }
@@ -3727,20 +3718,10 @@ export async function createPiAgentSessionRaw(options: AgentOptions): Promise<Ag
   );
 
   // Wire up event listeners
-  const deltaNormalizer = createStreamingDeltaNormalizer();
+  /* FNXC:AssistantTextCapture 2026-09-08-14:13: Providers can deliver whole blocks without deltas; shared per-block offsets flush every event shape exactly once. */
+  const capture = createAssistantStreamCapture({ onText: options.onText, onThinking: options.onThinking, onTextBlockBoundary: options.onTextBlockBoundary });
   promptableSession.subscribe((event) => {
-    if (event.type === "message_update") {
-      const msgEvent = event.assistantMessageEvent;
-      if (msgEvent.type === "text_delta") {
-        // Repair dropped sentence-boundary spaces at the shared engine delta chokepoint,
-        // including tool-call cross-message boundaries (see streaming-delta.ts).
-        options.onText?.(deltaNormalizer.normalize(msgEvent.partial, msgEvent.contentIndex, msgEvent.delta, "text"));
-      } else if (msgEvent.type === "thinking_delta") {
-        // Repair dropped sentence-boundary spaces at the shared engine delta chokepoint,
-        // including tool-call cross-message boundaries (see streaming-delta.ts).
-        options.onThinking?.(deltaNormalizer.normalize(msgEvent.partial, msgEvent.contentIndex, msgEvent.delta, "thinking"));
-      }
-    }
+    capture.handleAgentEvent(event);
     if (event.type === "tool_execution_start") {
       options.onToolStart?.(event.toolName, event.args as Record<string, unknown> | undefined);
     }

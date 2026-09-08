@@ -3246,6 +3246,13 @@ export class ChatManager {
           }, broadcastOptions);
           persistInFlightSnapshot();
         },
+        onTextBlockBoundary: () => {
+          if (accumulatedText && !accumulatedText.endsWith("\n")) {
+            accumulatedText += "\n\n";
+            lastStreamEventId = chatStreamManager.broadcast(sessionId, { type: "text", data: "\n\n" }, broadcastOptions);
+            persistInFlightSnapshot();
+          }
+        },
         onToolStart: (name: string, args?: Record<string, unknown>) => {
           const pendingForTool = pendingToolStarts.get(name) ?? [];
           pendingForTool.push({ toolName: name, args });
@@ -3385,8 +3392,24 @@ export class ChatManager {
         }
       }
 
-      // Use accumulated text from streaming (most reliable) with extraction fallback
-      const finalResponseText = accumulatedText || responseText;
+      const lastUserIndex = agentMessages.map((message) => message.role).lastIndexOf("user");
+      const turnMessages = lastUserIndex >= 0 ? agentMessages.slice(lastUserIndex + 1) : agentMessages;
+      const authoritativeText = turnMessages
+        .filter((message) => message.role === "assistant")
+        .map((message) => typeof message.content === "string"
+          ? message.content
+          : Array.isArray(message.content)
+            ? message.content.filter((part): part is { type: "text"; text: string } => part.type === "text" && typeof part.text === "string").map((part) => part.text).join("")
+            : "")
+        .filter(Boolean)
+        .join("\n\n");
+      /*
+       FNXC:AssistantTextCapture 2026-09-08-14:13:
+       FN-9277 reconciles a complete turn because the former last-assistant fallback silently saved only a final trailer when earlier blocks had no deltas.
+       */
+      const finalResponseText = authoritativeText.trim().length > accumulatedText.trim().length
+        ? authoritativeText
+        : accumulatedText || responseText;
 
       // Persist assistant message
       const assistantMetadata: Record<string, unknown> = {};
