@@ -39,7 +39,7 @@ import {
   check,
   index,
 } from "drizzle-orm/pg-core";
-import { sql } from "drizzle-orm";
+import { desc, sql } from "drizzle-orm";
 import { PROJECT_SCHEMA, bytea, tsvector } from "./_shared.js";
 
 /**
@@ -2316,6 +2316,7 @@ export const chatMessages = projectSchema.table("chat_messages", {
   primaryKey({ columns: [t.projectId, t.id] }),
   index("idxChatMessagesSessionId").on(t.sessionId),
   index("idxChatMessagesCreatedAt").on(t.createdAt),
+  index("idxChatMessagesSessionCreatedAtId").on(t.sessionId, desc(t.createdAt), desc(t.id)),
 ]);
 
 /*

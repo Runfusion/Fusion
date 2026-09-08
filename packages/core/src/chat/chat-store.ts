@@ -22,6 +22,7 @@ import type {
   ChatTagUpdateInput,
   ChatSessionStatus,
   ChatMessage,
+  ChatSessionLastMessage,
   ChatAttachment,
   ChatMessageCreateInput,
   ChatSessionCreateInput,
@@ -450,13 +451,13 @@ export class ChatStore extends EventEmitter<ChatStoreEvents> {
   }
 
   /**
-   * Get the latest message for each session in the provided list.
-   * Uses a single SQL query with GROUP BY and MAX to efficiently fetch last messages.
+   * Get the latest projected preview message for each requested session.
+   * Uses a per-session lateral LIMIT 1 lookup instead of a whole-history GROUP BY scan.
    *
-   * @param sessionIds - Array of session IDs to fetch last messages for
-   * @returns Map of sessionId -> latest ChatMessage for that session
+   * @param sessionIds - Array of session IDs to fetch last-message previews for
+   * @returns Map of sessionId -> SQL-truncated latest-message projection
    */
-  async getLastMessageForSessions(sessionIds: string[]): Promise<Map<string, ChatMessage>> {
+  async getLastMessageForSessions(sessionIds: string[]): Promise<Map<string, ChatSessionLastMessage>> {
     return asyncChatStore.getLastMessageForSessions(this.asyncLayer.db, sessionIds, this.asyncLayer.projectId);
   }
 

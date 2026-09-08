@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { SCHEMA_BASELINE_VERSION } from "../postgres/schema-applier.js";
+import { SCHEMA_BASELINE_VERSION, TASK_PLANNING_FAILURE_VERSION } from "../postgres/schema-applier.js";
 import { TASK_COLUMN_DESCRIPTOR_BY_COLUMN, type TaskRow } from "../task-store/persistence.js";
 import { rowToTask } from "../task-store/serialization.js";
 import type { Task } from "../types.js";
@@ -31,7 +31,8 @@ describe("planning failure persistence", () => {
     expect(rowToTask(rowFixture(null)).planningFailure).toBeUndefined();
   });
 
-  it("registers migration 0072 as the schema baseline", () => {
-    expect(SCHEMA_BASELINE_VERSION).toBe("0072");
+  it("keeps migration 0072's immutable identity while later baselines advance", () => {
+    expect(TASK_PLANNING_FAILURE_VERSION).toBe("0072");
+    expect(Number(SCHEMA_BASELINE_VERSION)).toBeGreaterThanOrEqual(72);
   });
 });

@@ -31,6 +31,7 @@ import type {
   ChatRoomMessage,
   ChatRoomStatus,
   ChatSession,
+  ChatSessionLastMessage,
   ChatSessionCursor,
   ChatSessionPage,
   ChatSessionStatus,
@@ -540,33 +541,52 @@ export async function getChatMessages(
   return rows.map(rowToMessage);
 }
 
-/**
- * FNXC:ChatStore 2026-06-24-09:15:
- * Get the latest message for each session in the provided list.
- */
+/*
+FNXC:ChatSidebarPerf 2026-09-08-04:48:
+The sidebar is the hottest chat read path and only consumes a ~100-character preview of one row per
+session. DISTINCT ON would still scan and sort every listed message without index skip-scan; this
+lateral LIMIT 1 query instead takes one descending recency-index lookup per session. Its rows examined
+and returned are O(sessions), while preserving the shared created_at/id total-order tie-break.
+*/
+export function buildLastMessageForSessionsSql(
+  handle: QueryHandle,
+  sessionIds: string[],
+  projectId?: string,
+): SQL {
+  const scope = chatMessageProjectConditions(handle, projectId);
+  const scopePredicate = scope.length > 0 ? drizzleSql` AND ${drizzleSql.join(scope, drizzleSql` AND `)}` : drizzleSql.empty();
+  const sessionValues = drizzleSql.join(sessionIds.map((id) => drizzleSql`(${id})`), drizzleSql`, `);
+  return drizzleSql`
+    SELECT last_msg.id AS "id", last_msg.session_id AS "sessionId", last_msg.role AS "role",
+      last_msg.created_at AS "createdAt", left(last_msg.content, 101) AS "content"
+    FROM (VALUES ${sessionValues}) AS s(session_id)
+    CROSS JOIN LATERAL (
+      SELECT id, session_id, role, created_at, content
+      FROM project.chat_messages
+      WHERE chat_messages.session_id = s.session_id${scopePredicate}
+      ORDER BY chat_messages.created_at DESC, chat_messages.id DESC
+      LIMIT 1
+    ) AS last_msg
+  `;
+}
+
 export async function getLastMessageForSessions(
   handle: QueryHandle,
   sessionIds: string[],
   projectId?: string,
-): Promise<Map<string, ChatMessage>> {
+): Promise<Map<string, ChatSessionLastMessage>> {
   if (sessionIds.length === 0) return new Map();
-  const rows = await handle
-    .select()
-    .from(schema.project.chatMessages)
-    .where(and(
-      inArray(schema.project.chatMessages.sessionId, sessionIds),
-      ...chatMessageProjectConditions(handle, projectId),
-    ))
-    .orderBy(
-      desc(schema.project.chatMessages.createdAt),
-      desc(schema.project.chatMessages.id),
-    );
-  const result = new Map<string, ChatMessage>();
+  const rows = await handle.execute(buildLastMessageForSessionsSql(handle, [...new Set(sessionIds)], projectId)) as unknown as Array<Record<string, unknown>>;
+  const result = new Map<string, ChatSessionLastMessage>();
   for (const row of rows) {
-    const msg = rowToMessage(row);
-    if (!result.has(msg.sessionId)) {
-      result.set(msg.sessionId, msg);
-    }
+    const message: ChatSessionLastMessage = {
+      id: row.id as string,
+      sessionId: row.sessionId as string,
+      role: row.role as ChatMessageRole,
+      createdAt: row.createdAt as string,
+      content: row.content as string,
+    };
+    result.set(message.sessionId, message);
   }
   return result;
 }
@@ -1032,14 +1052,36 @@ export async function deleteChatMessage(
   return true;
 }
 
-/**
- * FNXC:ChatSearch 2026-07-07-00:00:
- * Postgres counterpart of the sync ChatStore.searchSessionsByMessageContent (FN-7631 Chat
- * sidebar content search). Parameterized ILIKE with `%`/`_`/`\` escaped so literal wildcards
- * in the user's search text match literally (SQLite LIKE is ASCII case-insensitive, so ILIKE
- * preserves those semantics). One row per session: the most recent matching message wins,
- * tiebroken by id since Postgres has no rowid; preview truncated to ~100 chars.
- */
+/*
+FNXC:ChatSidebarPerf 2026-09-08-04:48:
+Content search shared the full-row transfer defect, so it now returns one projected row per matching
+session through the same lateral shape. Wildcard escaping and project scope are unchanged. ILIKE is not
+index-assisted: each subquery can walk its session history to the newest match, while returned bytes and
+materialized rows remain bounded by scoped sessions.
+*/
+export function buildSearchChatSessionsByMessageContentSql(
+  handle: QueryHandle,
+  escapedQuery: string,
+  sessionIds: string[],
+  projectId?: string,
+): SQL {
+  const scope = chatMessageProjectConditions(handle, projectId);
+  const scopePredicate = scope.length > 0 ? drizzleSql` AND ${drizzleSql.join(scope, drizzleSql` AND `)}` : drizzleSql.empty();
+  const sessionValues = drizzleSql.join(sessionIds.map((id) => drizzleSql`(${id})`), drizzleSql`, `);
+  return drizzleSql`
+    SELECT matching_msg.session_id AS "sessionId", left(matching_msg.content, 101) AS "content"
+    FROM (VALUES ${sessionValues}) AS s(session_id)
+    CROSS JOIN LATERAL (
+      SELECT session_id, content
+      FROM project.chat_messages
+      WHERE chat_messages.session_id = s.session_id
+        AND chat_messages.content ILIKE ${`%${escapedQuery}%`} ESCAPE '\\'${scopePredicate}
+      ORDER BY chat_messages.created_at DESC, chat_messages.id DESC
+      LIMIT 1
+    ) AS matching_msg
+  `;
+}
+
 export async function searchChatSessionsByMessageContent(
   handle: QueryHandle,
   query: string,
@@ -1049,24 +1091,11 @@ export async function searchChatSessionsByMessageContent(
   const trimmed = query.trim();
   if (!trimmed || sessionIds.length === 0) return new Map();
   const escaped = trimmed.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
-  const rows = await handle
-    .select()
-    .from(schema.project.chatMessages)
-    .where(and(
-      inArray(schema.project.chatMessages.sessionId, sessionIds),
-      ilike(schema.project.chatMessages.content, `%${escaped}%`),
-      ...chatMessageProjectConditions(handle, projectId),
-    ))
-    .orderBy(
-      desc(schema.project.chatMessages.createdAt),
-      desc(schema.project.chatMessages.id),
-    );
+  const rows = await handle.execute(buildSearchChatSessionsByMessageContentSql(handle, escaped, [...new Set(sessionIds)], projectId)) as unknown as Array<Record<string, unknown>>;
   const result = new Map<string, string>();
   for (const row of rows) {
-    const message = rowToMessage(row);
-    if (result.has(message.sessionId)) continue;
-    const content = message.content || "";
-    result.set(message.sessionId, content.length > 100 ? content.slice(0, 100) + "…" : content);
+    const content = (row.content as string) || "";
+    result.set(row.sessionId as string, content.length > 100 ? content.slice(0, 100) + "…" : content);
   }
   return result;
 }

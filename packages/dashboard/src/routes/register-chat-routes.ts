@@ -548,6 +548,11 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
             return page.sessions;
           })();
 
+      /*
+      FNXC:ChatSidebarPerf 2026-09-08-04:48:
+      Store previews arrive SQL-truncated to at most 101 characters, preserving this route's
+      existing exact >100-character ellipsis boundary without changing response fields.
+      */
       // Enrich sessions with last message preview
       if (sessions.length > 0) {
         const sessionIds = sessions.map((s) => s.id);

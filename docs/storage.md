@@ -547,7 +547,7 @@ The `tasks.cumulativeActiveMs` and `tasks.executionCompletedAt` columns are the 
 | `messages` *(migration-created)* | Inter-agent/user message mailbox storage with an `archived` flag; archived mail is retained for restore but excluded from default mailbox reads and unread counts. |
 | `agentRatings` *(migration-created)* | Agent performance ratings (1-5), optional reviewer metadata, and run/task attribution. |
 | `chat_sessions` *(migration-created)* | Chat session metadata (agent/project/model/status/title timestamps). |
-| `chat_messages` *(migration-created)* | Chat message history per session (`role`, `content`, thinking output, metadata). |
+| `chat_messages` *(migration-created)* | Chat message history per session (`role`, `content`, thinking output, metadata). The `(session_id, created_at DESC, id DESC)` recency index serves sidebar previews as one index-backed `LIMIT 1` lookup per session. Content search likewise returns one projected preview row per matching session; its `ILIKE` filter is not index-assisted, so each session walk remains bounded by that session's messages. |
 | `chat_rooms` *(migration-created)* | Room metadata (`name`, `slug`, `description`, `projectId`, `createdBy`, status and timestamps). |
 | `chat_room_members` *(migration-created)* | Room membership map with composite PK `(roomId, agentId)` and role (`owner`/`member`). |
 | `chat_room_messages` *(migration-created)* | Room message history with `senderAgentId`, JSON `mentions`, attachments/metadata blobs, ordered by `createdAt`. |
