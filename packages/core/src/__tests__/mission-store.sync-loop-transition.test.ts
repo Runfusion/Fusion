@@ -11,6 +11,35 @@ import { MissionStore } from "../missions/mission-store.js";
 import type { MissionFeature } from "../missions/mission-types.js";
 
 describe("MissionStore synchronous loop transitions", () => {
+  it.each(["terminal", "replacement", "attempt", "loop", "trigger"])("rejects %s ownership loss without applying synchronous effects", (loss) => {
+    const db = {
+      transaction: (callback: () => unknown) => callback(),
+      transactionImmediate: (callback: () => unknown) => callback(),
+      prepare: vi.fn().mockReturnValue({ get: vi.fn().mockReturnValue(undefined), run: vi.fn().mockReturnValue({ changes: 1 }) }),
+      bumpLastModified: vi.fn(),
+    } as unknown as Database;
+    const store = new MissionStore("/tmp/fusion-mission-store-test", db);
+    const run = {
+      id: "VR-OLD", featureId: "F-OWNER", milestoneId: "MS-1", sliceId: "SL-1",
+      status: loss === "terminal" ? "error" : "running", triggerType: loss === "trigger" ? "scheduled" : "manual",
+      implementationAttempt: 0, validatorAttempt: 1,
+      startedAt: "2026-08-10T00:00:00.000Z", createdAt: "2026-08-10T00:00:00.000Z", updatedAt: "2026-08-10T00:00:00.000Z",
+    } as const;
+    vi.spyOn(store, "getValidatorRun").mockReturnValue(run);
+    vi.spyOn(store, "getFeature").mockReturnValue({
+      id: run.featureId, sliceId: run.sliceId, title: "Owner", status: "in-progress",
+      loopState: loss === "loop" ? "implementing" : "validating", lastValidatorRunId: loss === "replacement" ? "VR-NEW" : run.id,
+      validatorAttemptCount: loss === "attempt" ? 2 : 1,
+      createdAt: run.createdAt, updatedAt: run.updatedAt,
+    });
+    const emit = vi.spyOn(store, "emit");
+    vi.mocked(db.prepare).mockClear();
+    expect(store.completeValidatorRun(run.id, "passed", undefined, undefined, {
+      featureId: run.featureId, triggerType: "manual", assertions: [{ assertionId: "CA-1", status: "passed" }],
+    })).toMatchObject({ completionApplied: false });
+    expect(db.prepare).not.toHaveBeenCalled();
+    expect(emit).not.toHaveBeenCalled();
+  });
   it("allows startup recovery to move an interrupted validation back to implementing", () => {
     const db = {
       prepare: vi.fn().mockReturnValue({ get: vi.fn().mockReturnValue(undefined) }),

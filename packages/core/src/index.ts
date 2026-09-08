@@ -2083,6 +2083,9 @@ export type {
   FeatureLinkedPayload,
   FixFeatureCreatedPayload,
   // Validator run types
+  ValidatorRunCompletionEffects,
+  ValidatorRunCompletion,
+  GeneratedFixFeatureOptions,
   MissionValidatorRun,
   MissionAssertionFailureRecord,
   MissionFixFeatureLineage,
@@ -2105,6 +2108,7 @@ export type {
 } from "./missions/mission-types.js";
 export { normalizeMissionBlockerReason, createMissionBlockerDescriptor, isMissionBlockerDescriptor, sortMissionBlockerDescriptors, dedupeMissionBlockerDescriptors } from "./missions/mission-blockers.js";
 export { MissionStore } from "./missions/mission-store.js";
+export { ValidatorRunOwnershipLostError } from "./missions/mission-types.js";
 export type { MissionStoreEvents, MissionSummary } from "./missions/mission-store.js";
 export { AsyncMissionStore, MissionRemediationStoppedError, MissionResumeConflictError, MissionBlockedClearConflictError, RepairGroundTruthStaleError, RepairNotEligibleError, RepairValidatorRunInFlightError, RepairAssertionsMissingError, TerminalTaskReconciliationError } from "./async-stores/async-mission-store.js";
 export type { TerminalTaskReconciliationErrorCode } from "./async-stores/async-mission-store.js";

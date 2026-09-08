@@ -713,6 +713,33 @@ export interface ValidatorRunAdmissionInput {
  * A validator run represents a single execution of the validation phase
  * for a feature within the mission execution loop.
  */
+/* FNXC:MissionValidation 2026-09-07-04:33:
+ * Engine effects are accepted only with the current feature owner and a winning
+ * running-to-terminal transition in the same transaction. The returned token is
+ * invocation-local, never persisted or reconstructed from a terminal run.
+ */
+export interface ValidatorRunCompletionEffects {
+  featureId: string;
+  triggerType?: "manual";
+  assertions?: Array<{ assertionId: string; status: "passed" | "failed" | "blocked" }>;
+  failures?: Array<{ featureId: string; assertionId: string; message?: string; expected?: string; actual?: string }>;
+}
+
+export type ValidatorRunCompletion = MissionValidatorRun & { completionApplied?: boolean };
+
+export interface GeneratedFixFeatureOptions {
+  /** Engine continuations must still own the failed run; historical/manual callers may omit this fence. */
+  requireCurrentRun?: boolean;
+}
+
+export class ValidatorRunOwnershipLostError extends Error {
+  readonly code = "VALIDATOR_RUN_OWNERSHIP_LOST";
+  constructor(runId: string) {
+    super(`Validator run ${runId} no longer owns the feature's failed validation`);
+    this.name = "ValidatorRunOwnershipLostError";
+  }
+}
+
 export interface MissionValidatorRun {
   /** Unique identifier (e.g., "VR-XXXXXXXX-XXXX") */
   id: string;
