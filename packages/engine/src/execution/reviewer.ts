@@ -22,6 +22,7 @@ import {
   matchStepHeadings,
 } from "@fusion/core";
 import { recordRetry } from "../errors/retry-burned-logger.js";
+import { createAssistantStreamCapture } from "./assistant-text-capture.js";
 import { mergeEffectiveSettings } from "../project/effective-settings.js";
 import { describeModel, formatModelMarkerDetails, promptWithFallback } from "../pi.js";
 import { isContextLimitError } from "../errors/context-limit-detector.js";
@@ -627,10 +628,10 @@ export async function reviewStep(
     activeSessions.add(session);
     options.onSessionCreated?.(session);
     if (typeof session.subscribe === "function") {
+      /* FNXC:AssistantTextCapture 2026-09-08-14:13: Review verdicts may arrive only in terminal text events, so shared offsets capture each block once. */
+      const capture = createAssistantStreamCapture({ onText: (delta) => { reviewText += delta; } });
       session.subscribe((event) => {
-        if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
-          reviewText += event.assistantMessageEvent.delta;
-        }
+        capture.handleAgentEvent(event);
       });
     } else {
       streamReviewTextFromOnText = true;

@@ -1391,6 +1391,100 @@ describe("ChatManager.sendMessage", () => {
   });
 
 
+  it("reconciles a streamed trailer with all assistant messages in the current turn", async () => {
+    const events: Array<{ type: string; data: unknown }> = [];
+    const unsubscribe = chatStreamManager.subscribe("chat-001", (event) => events.push(event));
+    mockChatStore.addMessage.mockImplementation((sessionId, input) => ({
+      id: input.role === "user" ? "msg-user" : "msg-assistant",
+      sessionId,
+      role: input.role,
+      content: input.content,
+      thinkingOutput: null,
+      metadata: null,
+      attachments: undefined,
+      createdAt: "2026-01-01T00:00:00.000Z",
+    }));
+    __setCreateFnAgent(async (options: any) => ({
+      session: {
+        prompt: vi.fn().mockImplementation(async () => options.onText?.("Waiting for your choice above.")),
+        dispose: vi.fn(),
+        state: { messages: [
+          { role: "user", content: "Check the results" },
+          { role: "assistant", content: "Lost answer paragraph with the complete results." },
+          { role: "assistant", content: "Waiting for your choice above." },
+        ] },
+      },
+    }));
+
+    await createChatManager().sendMessage("chat-001", "Check the results");
+    unsubscribe();
+
+    const persisted = mockChatStore.addMessage.mock.calls.at(-1)?.[1];
+    expect(persisted.content).toBe("Lost answer paragraph with the complete results.\n\nWaiting for your choice above.");
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "done",
+      data: expect.objectContaining({ message: expect.objectContaining({ content: persisted.content }) }),
+    }));
+  });
+
+  it("keeps complete streaming output without duplicating authoritative turn text", async () => {
+    __setCreateFnAgent(async (options: any) => ({
+      session: {
+        prompt: vi.fn().mockImplementation(async () => options.onText?.("Complete streamed answer.")),
+        dispose: vi.fn(),
+        state: { messages: [
+          { role: "user", content: "Question" },
+          { role: "assistant", content: "Complete streamed answer." },
+        ] },
+      },
+    }));
+
+    await createChatManager().sendMessage("chat-001", "Question");
+
+    expect(mockChatStore.addMessage.mock.calls.at(-1)?.[1].content).toBe("Complete streamed answer.");
+  });
+
+  it("excludes assistant messages from prior turns during reconciliation", async () => {
+    __setCreateFnAgent(async (options: any) => ({
+      session: {
+        prompt: vi.fn().mockImplementation(async () => options.onText?.("Current answer.")),
+        dispose: vi.fn(),
+        state: { messages: [
+          { role: "assistant", content: "Prior turn must not be persisted." },
+          { role: "user", content: "Current question" },
+          { role: "assistant", content: "Current answer." },
+        ] },
+      },
+    }));
+
+    await createChatManager().sendMessage("chat-001", "Current question");
+
+    expect(mockChatStore.addMessage.mock.calls.at(-1)?.[1].content).toBe("Current answer.");
+  });
+
+  it("separates streamed text blocks exactly once through the boundary callback", async () => {
+    const events: Array<{ type: string; data: unknown }> = [];
+    const unsubscribe = chatStreamManager.subscribe("chat-001", (event) => events.push(event));
+    __setCreateFnAgent(async (options: any) => ({
+      session: {
+        prompt: vi.fn().mockImplementation(async () => {
+          options.onText?.("First block.");
+          options.onTextBlockBoundary?.();
+          options.onTextBlockBoundary?.();
+          options.onText?.("Second block.");
+        }),
+        dispose: vi.fn(),
+        state: { messages: [] },
+      },
+    }));
+
+    await createChatManager().sendMessage("chat-001", "Question");
+    unsubscribe();
+
+    expect(mockChatStore.addMessage.mock.calls.at(-1)?.[1].content).toBe("First block.\n\nSecond block.");
+    expect(events.filter((event) => event.type === "text" && event.data === "\n\n")).toHaveLength(1);
+  });
+
   it("broadcasts tool_start and tool_end SSE events when agent calls tools", async () => {
     const events: Array<{ type: string; data: unknown }> = [];
     const unsubscribe = chatStreamManager.subscribe("chat-001", (event) => {
@@ -2987,7 +3081,7 @@ describe("ChatManager.sendMessage", () => {
     const assistantCall = mockChatStore.addMessage.mock.calls.find(
       (call) => call[1].role === "assistant"
     );
-    expect(assistantCall?.[1].content).toBe("Accumulated text");
+    expect(assistantCall?.[1].content).toBe("State messages text");
   });
 
   it("falls back to state.messages when accumulated text is empty", async () => {
