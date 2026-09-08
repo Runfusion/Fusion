@@ -17,8 +17,19 @@ function calls(name: string): ts.CallExpression[] {
 }
 
 describe("multi-row reads selection-cache threading", () => {
-  it("prefetches before each list, incremental, and search hydration pass", () => {
+  it("prefetches selections before each list, incremental, and search hydration pass", () => {
     expect(calls("prefetchWorkflowSelections")).toHaveLength(3);
+  });
+
+  it("prefetches workflow IRs for concurrent list and search hydration only", () => {
+    expect(calls("prefetchWorkflowIrs")).toHaveLength(2);
+  });
+
+  it("threads the list definition tally through prefetch and row resolution", () => {
+    const listCall = calls("prefetchWorkflowIrs").find((call) => call.arguments.some((argument) => argument.getText(sourceFile).includes("options?.definitionReadTally")));
+    expect(listCall).toBeDefined();
+    const rowCalls = calls("resolveReviewColumnsForTask");
+    expect(rowCalls.some((call) => call.arguments.some((argument) => argument.getText(sourceFile).includes("options?.definitionReadTally")))).toBe(true);
   });
 
   it("passes selection caches to every multi-row workflow resolver", () => {

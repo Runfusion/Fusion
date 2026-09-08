@@ -164,7 +164,7 @@ import { deleteTaskImpl, archiveTaskImpl, type DeleteTaskIfResult } from "./task
 import type { TaskDeleteAuditContext } from "./task-delete-attribution.js";
 import { updateSettingsImpl, updateGlobalSettingsImpl } from "./task-store/settings-ops.js";
 import { createTaskBackendImpl, _createTaskInternalBackendImpl, createTaskImpl, createTaskWithReservedIdImpl, _createTaskInternalImpl, _maybeAutoArchiveSameAgentDuplicateImpl } from "./task-store/task-creation.js";
-import { getTaskImpl, listTasksImpl, searchTasksImpl, listTasksModifiedSinceImpl, getTaskVerificationRequestAsyncImpl, listTaskRecommendationsImpl, findTaskByProposalClaimIdImpl, listTasksBySourceLineageImpl } from "./task-store/reads.js";
+import { getTaskImpl, listTasksImpl, searchTasksImpl, listTasksModifiedSinceImpl, getTaskVerificationRequestAsyncImpl, listTaskRecommendationsImpl, findTaskByProposalClaimIdImpl, listTasksBySourceLineageImpl, type ListTasksOptions } from "./task-store/reads.js";
 import { updateTaskUnlockedImpl } from "./task-store/task-update.js";
 import { __setTaskActivityLogLimitsForTesting } from "./task-store/comments.js";
 import { columnsWithFlag, declaresAnyLifecycleTrait, resolveLifecycleColumns, resolveReviewColumns, type LifecycleColumns } from "./workflows/workflow-lifecycle-traits.js";
@@ -1723,7 +1723,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   async listTasksBySourceLineage(input: { sourceAgentId?: string | null; sourceParentTaskId?: string | null }): Promise<Task[]> {
     return listTasksBySourceLineageImpl(this, input);
   }
-  async listTasks(options?: { limit?: number; offset?: number; /** When false, exclude tasks in the `archived` column. Default: true (backward compatible). */ includeArchived?: boolean; /** When true, omit heavy fields (log, comments, steps, workflowStepResults, steeringComments) * from each row to make list responses cheap for board-style consumers. Detail fields default * to empty arrays in the returned Task objects; use `getTask(id)` to load full data. */ slim?: boolean; /** Restrict to a single column (e.g. 'in-review' for the auto-merge sweep). * Widened to {@link ColumnId} (#1403) so custom-column filters are accepted. */ column?: ColumnId; /** Opt-in startup-only memo for repeated slim reads during boot choreography. */ startupMemo?: boolean; /** Forensic read: surface soft-deleted tasks (deletedAt IS NOT NULL). * VAL-DATA-006 — only admin/forensic surfaces should set this. */ includeDeleted?: boolean; selectionCache?: WorkflowSelectionCache; selectionReadTally?: WorkflowSelectionReadTally; }): Promise<Task[]> {
+  async listTasks(options?: ListTasksOptions): Promise<Task[]> {
     return listTasksImpl(this, options);
   }
 

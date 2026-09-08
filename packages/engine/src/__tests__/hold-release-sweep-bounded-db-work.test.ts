@@ -70,18 +70,20 @@ describe("hold-release bounded database work", () => {
     const tasks = [task("H-1")];
     const store = storeWith(tasks);
     const warn = vi.spyOn(schedulerLog, "warn").mockImplementation(() => {});
-    (store.listTasks as ReturnType<typeof vi.fn>).mockImplementation(async (options?: { selectionCache?: Map<string, unknown>; selectionReadTally?: { batched: number; singles: number } }) => {
+    (store.listTasks as ReturnType<typeof vi.fn>).mockImplementation(async (options?: { selectionCache?: Map<string, unknown>; selectionReadTally?: { batched: number; singles: number }; irCache?: Map<string, WorkflowIr>; definitionReadTally?: { definitions: number } }) => {
       options?.selectionCache?.set("H-1", { workflowId: "custom:wf-a", stepIds: [] });
+      options?.irCache?.set("custom:wf-a\u0000project-a", ir);
       if (options?.selectionReadTally) Object.assign(options.selectionReadTally, { batched: 1, singles: 0 });
+      if (options?.definitionReadTally) options.definitionReadTally.definitions += 1;
       return tasks;
     });
 
     let clockCalls = 0;
     await runHoldReleaseSweep(store, { now: () => 1_000_000 + (clockCalls++ > 0 ? 3_000 : 0) });
 
-    expect(store.listTasks).toHaveBeenCalledWith(expect.objectContaining({ includeArchived: false, selectionCache: expect.any(Map), selectionReadTally: { batched: 1, singles: 0 } }));
+    expect(store.listTasks).toHaveBeenCalledWith(expect.objectContaining({ includeArchived: false, selectionCache: expect.any(Map), selectionReadTally: { batched: 1, singles: 0 }, irCache: expect.any(Map), definitionReadTally: { definitions: 1 } }));
     expect(store.getTaskWorkflowSelectionsAsync).not.toHaveBeenCalled();
-    expect(warn.mock.calls.map(([line]) => String(line))).toContainEqual(expect.stringContaining("batchSelections=1, selections=0"));
+    expect(warn.mock.calls.map(([line]) => String(line))).toContainEqual(expect.stringContaining("batchSelections=1, selections=0, definitions=1"));
   });
 
   it("reports degraded per-row list hydration reads without claiming a batch in the slow-sweep warning", async () => {
