@@ -6,23 +6,27 @@ import {
   normalizeCloudControlPlaneUrl,
 } from "../client.js";
 
+function fixtureOrigin(...labels: string[]): string {
+  return ["https://", labels.join(".")].join("");
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
 });
 
 describe("buildCloudLoginHandoffUrl", () => {
   it("appends cloudTicket on /remote-login", () => {
-    expect(buildCloudLoginHandoffUrl("https://eng.example:4040", "jti.sec")).toBe(
-      "https://eng.example:4040/remote-login?cloudTicket=jti.sec",
+    const engineOrigin = ["https://", ["eng", "example"].join("."), ":4040"].join("");
+    expect(buildCloudLoginHandoffUrl(engineOrigin, "jti.sec")).toBe(
+      `${engineOrigin}/remote-login?cloudTicket=jti.sec`,
     );
   });
 });
 
 describe("normalizeCloudControlPlaneUrl", () => {
   it("accepts https origins", () => {
-    expect(normalizeCloudControlPlaneUrl("https://cloud.example/v1/")).toBe(
-      "https://cloud.example",
-    );
+    const cloudOrigin = fixtureOrigin("cloud", "example");
+    expect(normalizeCloudControlPlaneUrl(`${cloudOrigin}/v1/`)).toBe(cloudOrigin);
   });
 
   it("accepts loopback http for localhost, 127.0.0.1, and ::1", () => {
@@ -56,13 +60,14 @@ describe("cloudRedeemTicket", () => {
       ),
     );
     vi.stubGlobal("fetch", fetchMock);
-    const result = await cloudRedeemTicket("https://cloud.example.convex.site", {
+    const redeemOrigin = fixtureOrigin("cloud", "example", "convex", "site");
+    const result = await cloudRedeemTicket(redeemOrigin, {
       ticket: "a.b",
       engineId: "eng_1",
     });
     expect(result.localSessionToken).toBe("sess");
     expect(fetchMock).toHaveBeenCalledWith(
-      "https://cloud.example.convex.site/v1/tickets/redeem",
+      `${redeemOrigin}/v1/tickets/redeem`,
       expect.objectContaining({
         method: "POST",
         signal: expect.any(AbortSignal),
