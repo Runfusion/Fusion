@@ -2739,6 +2739,7 @@ export type {
   EnrichedChatSession,
   ChatMention,
   ChatAttachment,
+  ChatSessionLastMessage,
   ChatMessage,
   ChatMessageCreateInput,
   ChatSessionCreateInput,
