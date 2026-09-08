@@ -110,14 +110,37 @@ export function useVirtualizedList(options: VirtualListOptions): VirtualizedList
   } = options;
   const measurementsRef = useRef(new Map<string, number>());
   const observerRef = useRef<ResizeObserver | null>(null);
-  const elementKeysRef = useRef(new WeakMap<Element, string>());
+  const observerGenerationRef = useRef(-1);
+  const elementKeysRef = useRef(new WeakMap<Element, { key: string; generation: number }>());
   const elementsByKeyRef = useRef(new Map<string, Element>());
+  const rowCallbacksRef = useRef(new Map<string, RefCallback<HTMLElement>>());
+  const pendingMeasurementsRef = useRef(new Map<string, number>());
+  const measurementFlushRef = useRef<{ queued: boolean; token: number }>({ queued: false, token: 0 });
+  const mountedRef = useRef(true);
   const generationRef = useRef(0);
   const totalHeightRef = useRef(0);
   const collectionKeyRef = useRef(collectionKey);
   const pendingBottomAlignmentRef = useRef<string | null | undefined>(undefined);
   const previousRef = useRef<{ collectionKey: string | null; keys: readonly string[]; totalHeight: number }>({ collectionKey, keys: [], totalHeight: 0 });
   const [geometry, setGeometry] = useState({ scrollTop: initialAlign === "start" ? 0 : Number.POSITIVE_INFINITY, viewportHeight: DEFAULT_LIST_VIEWPORT_HEIGHT, revision: 0 });
+
+  /*
+  FNXC:ListVirtualization 2026-09-08-20:54:
+  Row callback refs stay stable for a collection so React does not detach and reattach every visible row after each geometry render. Measurements publish through one generation-fenced microtask batch; unchanged heights are no-ops, and a collection switch or unmount invalidates queued work before it can update another list.
+
+  FNXC:ListVirtualization 2026-09-08-21:16:
+  React StrictMode replays layout effects without remounting row elements. Effect setup must therefore restore the live observer and remeasure registered elements, while cleanup cancels queued publication and observer-instance checks reject callbacks from the disconnected replay instance.
+  */
+  if (collectionKeyRef.current !== collectionKey) {
+    collectionKeyRef.current = collectionKey;
+    generationRef.current += 1;
+    measurementsRef.current.clear();
+    elementsByKeyRef.current.clear();
+    elementKeysRef.current = new WeakMap();
+    rowCallbacksRef.current.clear();
+    pendingMeasurementsRef.current.clear();
+    measurementFlushRef.current = { queued: false, token: measurementFlushRef.current.token + 1 };
+  }
 
   const range = useMemo(() => calculateVirtualListRange({
     keys,
@@ -129,26 +152,26 @@ export function useVirtualizedList(options: VirtualListOptions): VirtualizedList
     maxRenderedRows,
   }), [estimateHeight, geometry, keys, maxRenderedRows, overscanViewports]);
   totalHeightRef.current = range.totalHeight;
-  collectionKeyRef.current = collectionKey;
 
   const readGeometry = useCallback(() => {
     const container = scrollRef.current;
     if (!container) return;
-    setGeometry((current) => ({
-      ...current,
-      scrollTop: container.scrollTop,
-      viewportHeight: container.clientHeight || DEFAULT_LIST_VIEWPORT_HEIGHT,
-    }));
+    const scrollTop = container.scrollTop;
+    const viewportHeight = container.clientHeight || DEFAULT_LIST_VIEWPORT_HEIGHT;
+    setGeometry((current) => current.scrollTop === scrollTop && current.viewportHeight === viewportHeight
+      ? current
+      : { ...current, scrollTop, viewportHeight });
   }, [scrollRef]);
 
   useLayoutEffect(() => {
     const previous = previousRef.current;
     const container = scrollRef.current;
     if (previous.collectionKey !== collectionKey) {
-      generationRef.current += 1;
-      observerRef.current?.disconnect();
-      observerRef.current = null;
-      measurementsRef.current.clear();
+      if (observerGenerationRef.current !== generationRef.current) {
+        observerRef.current?.disconnect();
+        observerRef.current = null;
+        observerGenerationRef.current = -1;
+      }
       if (pendingBottomAlignmentRef.current !== collectionKey) pendingBottomAlignmentRef.current = undefined;
       previousRef.current = { collectionKey, keys: [...keys], totalHeight: 0 };
       const scrollTop = initialAlign === "start" ? 0 : Number.POSITIVE_INFINITY;
@@ -167,45 +190,89 @@ export function useVirtualizedList(options: VirtualListOptions): VirtualizedList
     previousRef.current = { collectionKey, keys: [...keys], totalHeight: range.totalHeight };
   }, [estimateHeight, geometry.scrollTop, initialAlign, keys, preservePrependAnchor, range.totalHeight, scrollRef, collectionKey]);
 
-  useLayoutEffect(() => () => {
-    generationRef.current += 1;
-    observerRef.current?.disconnect();
-    observerRef.current = null;
+  const publishMeasurement = useCallback((key: string, height: number, generation: number) => {
+    if (generation !== generationRef.current || height <= 0 || measurementsRef.current.get(key) === height) return;
+    pendingMeasurementsRef.current.set(key, height);
+    if (measurementFlushRef.current.queued) return;
+    const token = measurementFlushRef.current.token;
+    measurementFlushRef.current.queued = true;
+    queueMicrotask(() => {
+      if (!mountedRef.current || generation !== generationRef.current || token !== measurementFlushRef.current.token) return;
+      measurementFlushRef.current.queued = false;
+      let changed = false;
+      for (const [pendingKey, pendingHeight] of pendingMeasurementsRef.current) {
+        if (measurementsRef.current.get(pendingKey) === pendingHeight) continue;
+        measurementsRef.current.set(pendingKey, pendingHeight);
+        changed = true;
+      }
+      pendingMeasurementsRef.current.clear();
+      if (changed) setGeometry((current) => ({ ...current, revision: current.revision + 1 }));
+    });
   }, []);
 
-  const measureRow = useCallback((key: string): RefCallback<HTMLElement> => (element) => {
-    if (!element) {
+  const ensureObserver = useCallback((generation: number): ResizeObserver | null => {
+    if (!mountedRef.current || typeof ResizeObserver === "undefined") return null;
+    if (observerRef.current && observerGenerationRef.current === generation) return observerRef.current;
+    observerRef.current?.disconnect();
+    const observer = new ResizeObserver((entries) => {
+      if (!mountedRef.current || observerRef.current !== observer) return;
+      for (const entry of entries) {
+        const registration = elementKeysRef.current.get(entry.target);
+        if (!registration || registration.generation !== generationRef.current) continue;
+        const height = entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height;
+        publishMeasurement(registration.key, height, registration.generation);
+      }
+    });
+    observerRef.current = observer;
+    observerGenerationRef.current = generation;
+    return observer;
+  }, [publishMeasurement]);
+
+  const measureRow = useCallback((key: string): RefCallback<HTMLElement> => {
+    const existingCallback = rowCallbacksRef.current.get(key);
+    if (existingCallback) return existingCallback;
+    const registrationGeneration = generationRef.current;
+    const callback: RefCallback<HTMLElement> = (element) => {
+      if (!mountedRef.current || registrationGeneration !== generationRef.current) return;
       const previous = elementsByKeyRef.current.get(key);
+      if (!element) {
+        if (previous) observerRef.current?.unobserve(previous);
+        elementsByKeyRef.current.delete(key);
+        return;
+      }
+      if (previous === element) return;
       if (previous) observerRef.current?.unobserve(previous);
-      elementsByKeyRef.current.delete(key);
-      return;
-    }
-    const generation = generationRef.current;
-    elementsByKeyRef.current.set(key, element);
-    elementKeysRef.current.set(element, key);
-    const commitHeight = (height: number) => {
-      if (generation !== generationRef.current || height <= 0 || measurementsRef.current.get(key) === height) return;
-      measurementsRef.current.set(key, height);
-      setGeometry((current) => ({ ...current, revision: current.revision + 1 }));
+      elementsByKeyRef.current.set(key, element);
+      elementKeysRef.current.set(element, { key, generation: registrationGeneration });
+      publishMeasurement(key, element.getBoundingClientRect().height, registrationGeneration);
+      ensureObserver(registrationGeneration)?.observe(element);
     };
-    commitHeight(element.getBoundingClientRect().height);
-    if (typeof ResizeObserver === "undefined") return;
-    if (!observerRef.current) {
-      observerRef.current = new ResizeObserver((entries) => {
-        if (generation !== generationRef.current) return;
-        for (const entry of entries) {
-          const entryKey = elementKeysRef.current.get(entry.target);
-          if (!entryKey) continue;
-          const height = entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height;
-          if (height > 0 && measurementsRef.current.get(entryKey) !== height) {
-            measurementsRef.current.set(entryKey, height);
-            setGeometry((current) => ({ ...current, revision: current.revision + 1 }));
-          }
-        }
-      });
+    rowCallbacksRef.current.set(key, callback);
+    return callback;
+  }, [ensureObserver, publishMeasurement]);
+
+  /*
+  FNXC:ListVirtualization 2026-09-08-21:16:
+  React StrictMode replays layout effects without replaying mounted row refs. Each setup therefore restores the live fence, remeasures registered elements, and creates a fresh observer; cleanup cancels queued writes and disconnects the prior observer without discarding the registrations needed by the replay.
+  */
+  useLayoutEffect(() => {
+    mountedRef.current = true;
+    const generation = generationRef.current;
+    const observer = ensureObserver(generation);
+    for (const [key, element] of elementsByKeyRef.current) {
+      elementKeysRef.current.set(element, { key, generation });
+      publishMeasurement(key, element.getBoundingClientRect().height, generation);
+      observer?.observe(element);
     }
-    observerRef.current.observe(element);
-  }, []);
+    return () => {
+      mountedRef.current = false;
+      pendingMeasurementsRef.current.clear();
+      measurementFlushRef.current = { queued: false, token: measurementFlushRef.current.token + 1 };
+      observerRef.current?.disconnect();
+      observerRef.current = null;
+      observerGenerationRef.current = -1;
+    };
+  }, [ensureObserver, publishMeasurement]);
 
   const offsetForKey = useCallback((key: string) => {
     const index = keys.indexOf(key);

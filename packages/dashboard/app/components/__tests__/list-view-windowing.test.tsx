@@ -140,6 +140,35 @@ function renderedTaskIds(): string[] {
     .filter((id) => id.startsWith("FN-"));
 }
 
+function installVariableRowMeasurements() {
+  const callbacks: ResizeObserverCallback[] = [];
+  const observed = new Set<Element>();
+  class Observer {
+    constructor(callback: ResizeObserverCallback) { callbacks.push(callback); }
+    observe(element: Element) { observed.add(element); }
+    unobserve(element: Element) { observed.delete(element); }
+    disconnect() { observed.clear(); }
+  }
+  vi.stubGlobal("ResizeObserver", Observer);
+  const geometry = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function variableTaskHeight() {
+    const id = this.getAttribute("data-id") ?? "";
+    const index = Number(id.split("-").at(-1) ?? 0);
+    return { height: 84 + (index % 4) * 28 } as DOMRect;
+  });
+  return {
+    async deliver() {
+      await act(async () => {
+        for (const callback of callbacks) callback(Array.from(observed, (target, index) => ({ target, borderBoxSize: [{ blockSize: 84 + (index % 4) * 28 }], contentRect: { height: 84 + (index % 4) * 28 } }) as unknown as ResizeObserverEntry), {} as ResizeObserver);
+        await Promise.resolve();
+      });
+    },
+    restore() {
+      geometry.mockRestore();
+      vi.unstubAllGlobals();
+    },
+  };
+}
+
 function PaginatedSearchList({ onPage }: { onPage: () => void }) {
   const [loadedCount, setLoadedCount] = useState(100);
   return (
@@ -171,7 +200,8 @@ beforeEach(() => {
 });
 
 describe("ListView render windowing", () => {
-  it("keeps the table DOM bounded while traversing a 1,000-task section", async () => {
+  it("keeps the table DOM bounded while traversing a variable-height 1,000-task section", async () => {
+    const measurements = installVariableRowMeasurements();
     await renderList();
     const root = document.querySelector<HTMLElement>(".list-table-container")!;
     Object.defineProperties(root, {
@@ -180,6 +210,7 @@ describe("ListView render windowing", () => {
       scrollTop: { configurable: true, writable: true, value: 0 },
     });
 
+    await measurements.deliver();
     expect(renderedTaskIds().length).toBeLessThanOrEqual(MAX_RENDERED_TASKS);
     expect(screen.getByText(String(TOTAL_TASKS))).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Load .*more|Show more/i })).toBeNull();
@@ -188,14 +219,17 @@ describe("ListView render windowing", () => {
       root.scrollTop = root.scrollHeight - root.clientHeight;
       fireEvent.scroll(root);
     });
+    await measurements.deliver();
     expect(renderedTaskIds().length).toBeLessThanOrEqual(MAX_RENDERED_TASKS);
     expect(renderedTaskIds()).toContain("FN-1000");
+    measurements.restore();
   });
 
-  it("keeps the mobile card DOM bounded after a complete traversal", async () => {
+  it("keeps the mobile card DOM bounded after a variable-height traversal", async () => {
     const previousWidth = window.innerWidth;
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 600 });
     window.dispatchEvent(new Event("resize"));
+    const measurements = installVariableRowMeasurements();
     try {
       await renderList();
       const root = document.querySelector<HTMLElement>(".list-table-container")!;
@@ -204,13 +238,16 @@ describe("ListView render windowing", () => {
         scrollHeight: { configurable: true, value: TOTAL_TASKS * 112 },
         scrollTop: { configurable: true, writable: true, value: 0 },
       });
+      await measurements.deliver();
       act(() => {
         root.scrollTop = root.scrollHeight - root.clientHeight;
         fireEvent.scroll(root);
       });
+      await measurements.deliver();
       expect(document.querySelectorAll(".list-card").length).toBeLessThanOrEqual(MAX_RENDERED_TASKS);
       expect(renderedTaskIds()).toContain("FN-1000");
     } finally {
+      measurements.restore();
       Object.defineProperty(window, "innerWidth", { configurable: true, value: previousWidth });
       window.dispatchEvent(new Event("resize"));
     }
@@ -249,7 +286,8 @@ describe("ListView render windowing", () => {
     expect(screen.queryByRole("button", { name: /Load \d+ more/i })).toBeNull();
   });
 
-  it("keeps a selected task outside the window selected and visible", async () => {
+  it("converges a measured persisted selection outside the first window", async () => {
+    const measurements = installVariableRowMeasurements();
     localStorage.setItem(scopedKey("kb-dashboard-list-selected-task", PROJECT_ID), FAR_TASK_ID);
     localStorage.setItem(
       scopedKey("kb-dashboard-selected-tasks", PROJECT_ID),
@@ -257,6 +295,7 @@ describe("ListView render windowing", () => {
     );
 
     await renderList();
+    await measurements.deliver();
 
     // Selection state is id-based and untouched by the window.
     expect(
@@ -266,6 +305,7 @@ describe("ListView render windowing", () => {
 
     // ...and the window is widened so the persisted single selection is still rendered.
     expect(renderedTaskIds()).toContain(FAR_TASK_ID);
+    measurements.restore();
   });
 });
 

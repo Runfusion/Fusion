@@ -2,7 +2,7 @@ import React from "react";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Column } from "../Column";
 import type { Task, Column as ColumnType } from "@fusion/core";
@@ -146,31 +146,88 @@ describe("Column count-flash", () => {
     expect(badge.className).not.toContain("count-flash");
   });
 
-  it("shows the exact Done total while rendering a bounded page and loading more", async () => {
-    const tasks = Array.from({ length: 50 }, (_, index) => ({
-      ...makeTask(`FN-DONE-${index}`),
-      column: "done" as ColumnType,
-    }));
-    const onLoadMore = vi.fn().mockResolvedValue(undefined);
+  it.each([1_200, 600])("keeps measured Done pagination bounded and crash-free at %ipx", async (viewportWidth) => {
+    const previousWidth = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: viewportWidth });
+    const resizeCallbacks: ResizeObserverCallback[] = [];
+    const observedRows = new Set<Element>();
+    class Observer {
+      constructor(callback: ResizeObserverCallback) { resizeCallbacks.push(callback); }
+      observe(element: Element) { observedRows.add(element); }
+      unobserve(element: Element) { observedRows.delete(element); }
+      disconnect() { observedRows.clear(); }
+    }
+    vi.stubGlobal("ResizeObserver", Observer);
+    const rowGeometry = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function measuredRow() {
+      const id = this.getAttribute("data-virtual-task-row") ?? "";
+      const index = Number(id.split("-").at(-1) ?? 0);
+      return { height: 280 + (index % 3) * 40 } as DOMRect;
+    });
+    let releasePage!: () => void;
+    const page = new Promise<void>((resolve) => { releasePage = resolve; });
+    const onLoadMore = vi.fn();
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-    render(
-      <Column
-        {...defaultProps}
-        column={"done" as ColumnType}
-        columnName="Done"
-        columnFlags={{ complete: true }}
-        tasks={tasks}
-        totalTaskCount={1_284}
-        serverHasMore
-        onLoadMoreServer={onLoadMore}
-      />,
-    );
+    function DoneHarness() {
+      const [tasks, setTasks] = React.useState(() => Array.from({ length: 50 }, (_, index) => ({
+        ...makeTask(`FN-DONE-${index}`),
+        column: "done" as ColumnType,
+      })));
+      const [loading, setLoading] = React.useState(false);
+      const [hasMore, setHasMore] = React.useState(true);
+      const loadMore = React.useCallback(async () => {
+        onLoadMore();
+        setLoading(true);
+        await page;
+        setTasks(Array.from({ length: 75 }, (_, index) => ({
+          ...makeTask(`FN-DONE-${index}`),
+          column: "done" as ColumnType,
+        })));
+        setHasMore(false);
+        setLoading(false);
+      }, []);
+      return <Column {...defaultProps} column={"done" as ColumnType} columnName="Done" columnFlags={{ complete: true }} tasks={tasks} totalTaskCount={1_284} serverHasMore={hasMore} serverLoadingMore={loading} onLoadMoreServer={loadMore} />;
+    }
 
-    expect(screen.getByLabelText("1,284 tasks")).toHaveTextContent("1,284");
-    expect(taskCardRenderSpy.mock.calls.length).toBeLessThanOrEqual(40);
-    expect(screen.queryByRole("button", { name: /Show more|Load .*more/i })).toBeNull();
-    fireEvent.scroll(screen.getByTestId("column-auto-pagination-sentinel").parentElement!);
-    await waitFor(() => expect(onLoadMore).toHaveBeenCalledOnce());
+    try {
+      render(<DoneHarness />);
+      const root = document.querySelector<HTMLElement>(".column-body")!;
+      Object.defineProperties(root, {
+        clientHeight: { configurable: true, value: 640 },
+        scrollHeight: { configurable: true, value: 24_000 },
+        scrollTop: { configurable: true, writable: true, value: 23_500 },
+      });
+      await act(async () => {
+        for (const callback of resizeCallbacks) callback(Array.from(observedRows, (target, index) => ({ target, borderBoxSize: [{ blockSize: 280 + (index % 3) * 40 }], contentRect: { height: 280 + (index % 3) * 40 } }) as unknown as ResizeObserverEntry), {} as ResizeObserver);
+        await Promise.resolve();
+      });
+
+      expect(screen.getByLabelText("1,284 tasks")).toHaveTextContent("1,284");
+      expect(document.querySelectorAll("[data-virtual-task-row]").length).toBeLessThanOrEqual(40);
+      expect(screen.queryByRole("button", { name: /Show more|Load .*more/i })).toBeNull();
+      fireEvent.scroll(root);
+      fireEvent.scroll(root);
+      await waitFor(() => expect(onLoadMore).toHaveBeenCalledOnce());
+
+      await act(async () => {
+        releasePage();
+        await page;
+      });
+      await waitFor(() => expect(screen.queryByTestId("column-auto-pagination-sentinel")).toBeNull());
+      act(() => {
+        root.scrollTop = 24_000;
+        fireEvent.scroll(root);
+      });
+      await waitFor(() => expect(screen.getByTestId("task-FN-DONE-74")).toBeTruthy());
+      expect(document.querySelectorAll("[data-virtual-task-row]").length).toBeLessThanOrEqual(40);
+      expect(onLoadMore).toHaveBeenCalledOnce();
+      expect(consoleError.mock.calls.flat().join(" ")).not.toMatch(/Maximum update depth|Minified React error #185|ErrorBoundary/i);
+    } finally {
+      rowGeometry.mockRestore();
+      consoleError.mockRestore();
+      vi.unstubAllGlobals();
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: previousWidth });
+    }
   });
 
   it("shows accurate executing/total for WIP (unpaused active over card total)", () => {

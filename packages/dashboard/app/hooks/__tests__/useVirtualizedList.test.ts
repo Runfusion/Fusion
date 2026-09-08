@@ -1,8 +1,26 @@
-import { act, renderHook } from "@testing-library/react";
+import { act, render, renderHook } from "@testing-library/react";
+import { createElement, StrictMode, useRef } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { calculateVirtualListRange, useVirtualizedList } from "../useVirtualizedList";
 
 const keys = (count: number, prefix = "row") => Array.from({ length: count }, (_, index) => `${prefix}-${index}`);
+
+function StrictModeVirtualListHarness() {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const virtualList = useVirtualizedList({
+    collectionKey: "strict-mode",
+    keys: ["strict-row"],
+    scrollRef,
+    estimateHeight: 100,
+    initialAlign: "start",
+  });
+  return createElement(
+    "div",
+    { ref: scrollRef },
+    createElement("div", { "data-testid": "strict-row", ref: virtualList.measureRow("strict-row") }),
+    createElement("output", { "data-testid": "strict-total" }, String(virtualList.totalHeight)),
+  );
+}
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -46,7 +64,7 @@ describe("useVirtualizedList", () => {
     expect(result.current.visibleKeys).toContain("row-99");
   });
 
-  it("retains terminal alignment through late measurements and yields to explicit navigation", () => {
+  it("retains terminal alignment through late measurements and yields to explicit navigation", async () => {
     let resizeCallback: ResizeObserverCallback | undefined;
     class Observer {
       constructor(callback: ResizeObserverCallback) { resizeCallback = callback; }
@@ -80,22 +98,28 @@ describe("useVirtualizedList", () => {
     expect(container.scrollTop).toBe(1_000);
 
     scrollHeight = 1_400;
-    act(() => resizeCallback?.([{
-      target: lastRow,
-      borderBoxSize: [{ blockSize: 500 }],
-      contentRect: { height: 500 },
-    } as unknown as ResizeObserverEntry], {} as ResizeObserver));
+    await act(async () => {
+      resizeCallback?.([{
+        target: lastRow,
+        borderBoxSize: [{ blockSize: 500 }],
+        contentRect: { height: 500 },
+      } as unknown as ResizeObserverEntry], {} as ResizeObserver);
+      await Promise.resolve();
+    });
     expect(result.current.visibleKeys).toContain("row-9");
     expect(container.scrollTop).toBe(1_400);
 
     act(() => result.current.scrollToKey("row-2", "center"));
     expect(container.scrollTop).toBe(150);
     scrollHeight = 1_500;
-    act(() => resizeCallback?.([{
-      target: lastRow,
-      borderBoxSize: [{ blockSize: 600 }],
-      contentRect: { height: 600 },
-    } as unknown as ResizeObserverEntry], {} as ResizeObserver));
+    await act(async () => {
+      resizeCallback?.([{
+        target: lastRow,
+        borderBoxSize: [{ blockSize: 600 }],
+        contentRect: { height: 600 },
+      } as unknown as ResizeObserverEntry], {} as ResizeObserver);
+      await Promise.resolve();
+    });
     expect(container.scrollTop).toBe(150);
 
     act(() => result.current.scrollToBottom());
@@ -103,11 +127,14 @@ describe("useVirtualizedList", () => {
     container.scrollTop = 200;
     act(() => result.current.onScroll());
     scrollHeight = 1_600;
-    act(() => resizeCallback?.([{
-      target: lastRow,
-      borderBoxSize: [{ blockSize: 700 }],
-      contentRect: { height: 700 },
-    } as unknown as ResizeObserverEntry], {} as ResizeObserver));
+    await act(async () => {
+      resizeCallback?.([{
+        target: lastRow,
+        borderBoxSize: [{ blockSize: 700 }],
+        contentRect: { height: 700 },
+      } as unknown as ResizeObserverEntry], {} as ResizeObserver);
+      await Promise.resolve();
+    });
     expect(container.scrollTop).toBe(200);
   });
 
@@ -126,6 +153,99 @@ describe("useVirtualizedList", () => {
     expect(result.current.totalHeight).toBe(50);
     rerender({ collectionKey: "A", rows: initial });
     expect(result.current.totalHeight).toBe(5_000);
+  });
+
+  it("keeps non-zero row registrations stable across a measured 60-row rerender", async () => {
+    let resizeCallback: ResizeObserverCallback | undefined;
+    class Observer {
+      constructor(callback: ResizeObserverCallback) { resizeCallback = callback; }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    vi.stubGlobal("ResizeObserver", Observer);
+
+    const container = document.createElement("div");
+    Object.defineProperties(container, {
+      clientHeight: { configurable: true, value: 640 },
+      scrollHeight: { configurable: true, value: 7_200 },
+      scrollTop: { configurable: true, writable: true, value: 0 },
+    });
+    const rows = keys(60);
+    const ref = { current: container };
+    let renderCount = 0;
+    const { result, rerender } = renderHook(() => {
+      renderCount += 1;
+      return useVirtualizedList({ collectionKey: "done", keys: rows, scrollRef: ref, estimateHeight: 100 });
+    });
+    const elements = new Map<string, HTMLElement>();
+    const registrations = new Map(rows.map((key, index) => {
+      const registration = result.current.measureRow(key);
+      const element = document.createElement("div");
+      elements.set(key, element);
+      vi.spyOn(element, "getBoundingClientRect").mockReturnValue({ height: 80 + (index % 3) * 20 } as DOMRect);
+      act(() => registration(element));
+      return [key, registration] as const;
+    }));
+
+    await act(async () => { await Promise.resolve(); });
+    const rendersAfterMeasurement = renderCount;
+    rerender();
+
+    for (const key of rows) expect(result.current.measureRow(key)).toBe(registrations.get(key));
+    expect(renderCount - rendersAfterMeasurement).toBe(1);
+    expect(result.current.totalHeight).toBe(6_000);
+
+    const beforeUnchangedObserverBatch = renderCount;
+    act(() => resizeCallback?.(rows.map((key, index) => ({
+      target: elements.get(key)!,
+      borderBoxSize: [{ blockSize: 80 + (index % 3) * 20 }],
+      contentRect: { height: 80 + (index % 3) * 20 },
+    })) as unknown as ResizeObserverEntry[], {} as ResizeObserver));
+    expect(renderCount).toBe(beforeUnchangedObserverBatch);
+  });
+
+  it("restores measured geometry and observation after StrictMode effect replay", async () => {
+    const callbacks: ResizeObserverCallback[] = [];
+    const observers: Array<{ observe: ReturnType<typeof vi.fn>; disconnect: ReturnType<typeof vi.fn> }> = [];
+    class Observer {
+      observe = vi.fn();
+      unobserve = vi.fn();
+      disconnect = vi.fn();
+      constructor(callback: ResizeObserverCallback) {
+        callbacks.push(callback);
+        observers.push(this);
+      }
+    }
+    vi.stubGlobal("ResizeObserver", Observer);
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function measuredRect() {
+      return { height: this.dataset.testid === "strict-row" ? 180 : 0 } as DOMRect;
+    });
+
+    const view = render(createElement(StrictMode, null, createElement(StrictModeVirtualListHarness)));
+    await act(async () => { await Promise.resolve(); });
+
+    expect(callbacks).toHaveLength(2);
+    expect(observers[0]?.disconnect).toHaveBeenCalledOnce();
+    expect(observers[1]?.observe).toHaveBeenCalledWith(view.getByTestId("strict-row"));
+    expect(view.getByTestId("strict-total")).toHaveTextContent("180");
+
+    const resizedEntry = {
+      target: view.getByTestId("strict-row"),
+      borderBoxSize: [{ blockSize: 240 }],
+      contentRect: { height: 240 },
+    } as unknown as ResizeObserverEntry;
+    await act(async () => {
+      callbacks[0]?.([resizedEntry], observers[0] as unknown as ResizeObserver);
+      await Promise.resolve();
+    });
+    expect(view.getByTestId("strict-total")).toHaveTextContent("180");
+
+    await act(async () => {
+      callbacks[1]?.([resizedEntry], observers[1] as unknown as ResizeObserver);
+      await Promise.resolve();
+    });
+    expect(view.getByTestId("strict-total")).toHaveTextContent("240");
   });
 
   it("disconnects ResizeObserver on collection change and unmount", () => {

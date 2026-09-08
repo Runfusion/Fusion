@@ -103,14 +103,17 @@ describe("useVirtualizedChatTranscript", () => {
     expect(disconnect).toHaveBeenCalledTimes(1);
   });
 
-  it("uses deterministic measurement fallback without ResizeObserver", () => {
+  it("uses deterministic measurement fallback without ResizeObserver", async () => {
     vi.stubGlobal("ResizeObserver", undefined);
     const container = document.createElement("div");
     const row = document.createElement("div");
     vi.spyOn(row, "getBoundingClientRect").mockReturnValue({ height: 240 } as DOMRect);
     const ref = { current: container };
     const { result } = renderHook(() => useVirtualizedChatTranscript({ transcriptKey: "fallback", keys: ["row"], scrollRef: ref }));
-    act(() => result.current.measureRow("row")(row));
+    await act(async () => {
+      result.current.measureRow("row")(row);
+      await Promise.resolve();
+    });
     expect(result.current.totalHeight).toBe(240);
   });
 });

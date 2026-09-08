@@ -6,8 +6,13 @@ import { useTasks } from "../useTasks";
 
 vi.mock("../../api", async (importOriginal) => {
   const { createDashboardApiMock } = await import("../../test/mockApi");
+  const fetchTasks = vi.fn();
   return createDashboardApiMock(() => importOriginal<typeof import("../../api")>(), {
-    fetchTasks: vi.fn(),
+    fetchTasks,
+    fetchTaskPage: vi.fn(async (projectId?: string, options?: { query?: string }) => {
+      const tasks = await fetchTasks(undefined, undefined, projectId, options?.query, options?.query ? false : true);
+      return { tasks, total: tasks.length, hasMore: false, nextCursor: null };
+    }),
     fetchCompletedTasks: vi.fn(),
   });
 });
