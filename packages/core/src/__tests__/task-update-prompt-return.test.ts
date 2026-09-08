@@ -1,0 +1,314 @@
+/*
+FNXC:PromptReadBack 2026-09-04-05:12:
+STAS-103 pins the prompt-return contract of updateTaskUnlockedImpl: an explicit prompt
+update writes PROMPT.md to disk and must return a task whose prompt equals the persisted
+content. The PG tasks row has no prompt column (rowToTask never hydrates it), so without
+the assignment after a successful file write the returned prompt stays undefined and the
+prompt-write tool's authoritative read-back check rejects every write. A failed PROMPT.md
+write must not leave that assignment on the in-memory task or commit specPlanPrompt
+evidence in the preceding row transaction.
+*/
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { Task } from "../types.js";
+import type { TaskStore } from "../store.js";
+import { updateTaskUnlockedImpl } from "../task-store/task-update.js";
+
+const { persistPromptFile } = vi.hoisted(() => {
+  const persistPromptFile = vi.fn();
+  return { persistPromptFile };
+});
+
+vi.mock("../task-store/prompt-file.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../task-store/prompt-file.js")>();
+  persistPromptFile.mockImplementation((promptPath: string, content: string) =>
+    actual.writePromptFileAtomic(promptPath, content),
+  );
+  return {
+    ...actual,
+    writePromptFileAtomic: persistPromptFile,
+  };
+});
+
+const prompt = (body: string, symbols?: string[]) =>
+  `# Task\n\n## Mission\n\n${body}\n\n## File Scope\n\n- packages/core/src/store.ts\n\n## Steps\n\n1. Verify prompt return\n\n## Completion Criteria\n\n- [ ] updateTask returns the prompt\n\n## Do NOT\n\n- Drop the prompt\n\n## Dependencies\n\n- None\n${symbols?.length ? `\n## Declared Symbols\n\n${symbols.map((symbol) => `- \`${symbol}\``).join("\n")}\n` : ""}`;
+
+const tempDirs: string[] = [];
+afterEach(() => {
+  persistPromptFile.mockClear();
+  for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
+
+// Same Proxy-fake-store pattern as task-update-awaiting-approval-reason.test.ts, except
+// taskDir points at a fresh temp dir so PROMPT.md file I/O is real: unlisted store methods
+// answer with async no-ops; only the return values the assertions depend on are stubbed.
+function harness(task: Partial<Task>, options: { isWatching?: boolean } = {}) {
+  const taskDir = mkdtempSync(join(tmpdir(), "stas-103-prompt-return-"));
+  tempDirs.push(taskDir);
+  const row = {
+    id: "FN-1", column: "todo", dependencies: [], steps: [], log: [], status: null,
+    title: "t", description: "d", createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString(),
+    ...task,
+  } as unknown as Task;
+  const taskCache = new Map<string, Task>();
+  const store = {
+    taskDir: () => taskDir,
+    readTaskJson: async () => row,
+    writeTaskJson: vi.fn(async () => undefined),
+    atomicWriteTaskJson: vi.fn(async () => undefined),
+    atomicWriteTaskJsonWithAudit: vi.fn(async () => undefined),
+    syncAgentTaskLinkOnReassignment: vi.fn(async () => undefined),
+    logEntry: vi.fn(async () => undefined),
+    getSettings: vi.fn(async () => ({})),
+    assertNoDependencyCycle: vi.fn(async () => undefined),
+    getTaskWorkflowSelection: () => undefined,
+    getTaskWorkflowSelectionAsync: async () => undefined,
+    getWorkflowDefinition: async () => undefined,
+    emit: vi.fn(),
+    isWatching: options.isWatching ?? false,
+    taskCache,
+  } as Record<string, unknown>;
+  const proxied = new Proxy(store, {
+    get(target, prop: string) {
+      if (prop in target) return target[prop];
+      return async () => undefined;
+    },
+  }) as unknown as TaskStore;
+  return { store: proxied, row, taskDir, taskCache };
+}
+
+describe("updateTask returns the persisted prompt", () => {
+  it("returns a task whose prompt equals the content it wrote to PROMPT.md", async () => {
+    // Pre-fix this failed: the row has no prompt column, so the returned prompt was undefined.
+    const { store, taskDir } = harness({});
+    const content = prompt("STAS-103 core contract");
+
+    const updated = await updateTaskUnlockedImpl(store, "FN-1", { prompt: content } as never);
+
+    expect(updated.prompt).toBe(content);
+    const onDisk = await readFile(join(taskDir, "PROMPT.md"));
+    expect(onDisk.equals(Buffer.from(content))).toBe(true);
+  });
+
+  it("returns an empty-string prompt and writes an empty PROMPT.md", async () => {
+    const { store, taskDir } = harness({});
+
+    const updated = await updateTaskUnlockedImpl(store, "FN-1", { prompt: "" } as never);
+
+    expect(updated.prompt).toBe("");
+    const bytes = await readFile(join(taskDir, "PROMPT.md"));
+    expect(bytes.length).toBe(0);
+  });
+
+  it("leaves prompt undefined on a non-prompt update when the row has no prompt", async () => {
+    const { store } = harness({});
+
+    const updated = await updateTaskUnlockedImpl(store, "FN-1", { title: "renamed" } as never);
+
+    expect(updated.title).toBe("renamed");
+    expect(updated.prompt).toBeUndefined();
+  });
+
+  it("leaves a stored prompt untouched on a title-only update", async () => {
+    const { store, taskDir } = harness({ prompt: prompt("original spec") });
+    writeFileSync(join(taskDir, "PROMPT.md"), prompt("original spec"));
+
+    const updated = await updateTaskUnlockedImpl(store, "FN-1", { title: "renamed" } as never);
+
+    expect(updated.prompt).toBe(prompt("original spec"));
+  });
+
+  it("carries the persisted prompt into the watcher task cache copy", async () => {
+    const { store, taskCache } = harness({}, { isWatching: true });
+    const content = prompt("cache contract");
+
+    await updateTaskUnlockedImpl(store, "FN-1", { prompt: content } as never);
+
+    expect(taskCache.get("FN-1")?.prompt).toBe(content);
+  });
+
+  it("overwrites an existing PROMPT.md and returns the new content", async () => {
+    const { store, taskDir } = harness({});
+    writeFileSync(join(taskDir, "PROMPT.md"), prompt("previous spec"));
+    const next = prompt("rewritten spec");
+
+    const updated = await updateTaskUnlockedImpl(store, "FN-1", { prompt: next } as never);
+
+    expect(updated.prompt).toBe(next);
+    expect(await readFile(join(taskDir, "PROMPT.md"), "utf-8")).toBe(next);
+  });
+
+  it("does not expose an unwritten prompt when PROMPT.md persistence fails", async () => {
+    /*
+    FNXC:PromptReadBack 2026-09-04-05:12:
+    If writePromptFileAtomic throws after the task-row commit, in-memory metadata and
+    the watcher cache must still omit the requested revision so fallback hydration cannot
+    surface a prompt the authoritative file never persisted. The row transaction must also
+    omit specPlanPrompt so current-plan evidence cannot commit the unwritten revision.
+    */
+    const { store, row, taskDir, taskCache } = harness({}, { isWatching: true });
+    const content = prompt("must not leak");
+    persistPromptFile.mockRejectedValueOnce(
+      new Error("EIO: simulated PROMPT.md write failure"),
+    );
+
+    await expect(
+      updateTaskUnlockedImpl(store, "FN-1", { prompt: content } as never),
+    ).rejects.toThrow(/EIO: simulated PROMPT.md write failure/);
+
+    expect(row.prompt).toBeUndefined();
+    expect(taskCache.get("FN-1")).toBeUndefined();
+    expect(existsSync(join(taskDir, "PROMPT.md"))).toBe(false);
+    const auditCalls = vi.mocked(store.atomicWriteTaskJsonWithAudit).mock.calls;
+    expect(auditCalls.length).toBeGreaterThan(0);
+    expect(auditCalls.every((call) => call[4] === undefined)).toBe(true);
+  });
+
+  it("does not persist prompt-derived declaredSymbols when PROMPT.md persistence fails", async () => {
+    /*
+    FNXC:PromptReadBack 2026-09-04-05:45:
+    Hydrating declaredSymbols from the incoming prompt before the file write would commit
+    those symbols in the row transaction. A later PROMPT.md failure would leave symbol
+    resolution observing the unwritten revision.
+    */
+    const { store, row } = harness({ declaredSymbols: ["pkg/old.ts#a"] });
+    const content = prompt("must not leak symbols", ["pkg/new.ts#Foo"]);
+    persistPromptFile.mockRejectedValueOnce(
+      new Error("EIO: simulated PROMPT.md write failure"),
+    );
+
+    await expect(
+      updateTaskUnlockedImpl(store, "FN-1", { prompt: content } as never),
+    ).rejects.toThrow(/EIO: simulated PROMPT.md write failure/);
+
+    expect(row.declaredSymbols).toEqual(["pkg/old.ts#a"]);
+    const writtenTasks = vi.mocked(store.atomicWriteTaskJsonWithAudit).mock.calls.map((call) => call[1] as { declaredSymbols?: string[] });
+    expect(writtenTasks.every((written) => JSON.stringify(written.declaredSymbols) === JSON.stringify(["pkg/old.ts#a"]))).toBe(true);
+  });
+
+  it("persists prompt-derived declaredSymbols only after PROMPT.md write succeeds", async () => {
+    const { store, row } = harness({ declaredSymbols: ["pkg/old.ts#a"] });
+    const content = prompt("symbols after file", ["pkg/new.ts#Foo"]);
+    const persistedSymbols: Array<string[] | undefined> = [];
+    vi.mocked(store.atomicWriteTaskJsonWithAudit).mockImplementation(async (_dir, task) => {
+      persistedSymbols.push([...((task as { declaredSymbols?: string[] }).declaredSymbols ?? [])]);
+    });
+
+    const updated = await updateTaskUnlockedImpl(store, "FN-1", { prompt: content } as never);
+
+    expect(updated.declaredSymbols).toEqual(["pkg/new.ts#foo"]);
+    expect(row.declaredSymbols).toEqual(["pkg/new.ts#foo"]);
+    expect(persistedSymbols[0]).toEqual(["pkg/old.ts#a"]);
+    expect(persistedSymbols.some((symbols) => JSON.stringify(symbols) === JSON.stringify(["pkg/new.ts#foo"]))).toBe(true);
+  });
+
+  it("retries declaredSymbols persist after PROMPT.md write so file and symbols stay aligned", async () => {
+    /*
+    FNXC:PromptReadBack 2026-09-04-07:51:
+    A follow-up row write that fails after PROMPT.md is durable must not reject updateTask while
+    the file has the new prompt and the row keeps previous declaredSymbols. Retry the symbols
+    persist so a later read observes metadata that matches the durable file.
+    */
+    const { store, row, taskDir } = harness({ declaredSymbols: ["pkg/old.ts#a"] });
+    writeFileSync(join(taskDir, "PROMPT.md"), prompt("previous spec", ["pkg/old.ts#a"]));
+    const content = prompt("symbols persist retry", ["pkg/new.ts#Foo"]);
+    const persistedSymbols: Array<string[] | undefined> = [];
+    let failedOnce = false;
+    vi.mocked(store.atomicWriteTaskJsonWithAudit).mockImplementation(async (_dir, task) => {
+      const symbols = [...((task as { declaredSymbols?: string[] }).declaredSymbols ?? [])];
+      persistedSymbols.push(symbols);
+      if (!failedOnce && JSON.stringify(symbols) === JSON.stringify(["pkg/new.ts#foo"])) {
+        failedOnce = true;
+        throw new Error("simulated declaredSymbols persist failure");
+      }
+    });
+
+    const updated = await updateTaskUnlockedImpl(store, "FN-1", { prompt: content } as never);
+
+    expect(updated.prompt).toBe(content);
+    expect(updated.declaredSymbols).toEqual(["pkg/new.ts#foo"]);
+    expect(row.declaredSymbols).toEqual(["pkg/new.ts#foo"]);
+    expect(await readFile(join(taskDir, "PROMPT.md"), "utf-8")).toBe(content);
+    expect(failedOnce).toBe(true);
+    expect(persistedSymbols.filter((symbols) => JSON.stringify(symbols) === JSON.stringify(["pkg/new.ts#foo"])).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("forward-repairs declaredSymbols when persist retries and PROMPT.md restore both fail", async () => {
+    /*
+    FNXC:PromptReadBack 2026-09-04-08:08:
+    After three deferred row writes fail, a restore/unlink failure must not leave the new prompt
+    on disk with previous declaredSymbols. One more atomicWrite of the in-memory new symbols
+    aligns the durable row with the durable file so updateTask can succeed.
+    */
+    const { store, row, taskDir } = harness({ declaredSymbols: ["pkg/old.ts#a"] });
+    writeFileSync(join(taskDir, "PROMPT.md"), prompt("previous spec", ["pkg/old.ts#a"]));
+    const content = prompt("symbols forward repair", ["pkg/new.ts#Foo"]);
+    const writeActual = persistPromptFile.getMockImplementation()!;
+    let promptWrites = 0;
+    persistPromptFile.mockImplementation(async (promptPath: string, next: string) => {
+      promptWrites += 1;
+      if (promptWrites > 1) throw new Error("simulated PROMPT.md restore failure");
+      return writeActual(promptPath, next);
+    });
+    let newSymbolWrites = 0;
+    vi.mocked(store.atomicWriteTaskJsonWithAudit).mockImplementation(async (_dir, task) => {
+      const symbols = [...((task as { declaredSymbols?: string[] }).declaredSymbols ?? [])];
+      if (JSON.stringify(symbols) === JSON.stringify(["pkg/new.ts#foo"])) {
+        newSymbolWrites += 1;
+        if (newSymbolWrites <= 3) throw new Error("simulated declaredSymbols persist failure");
+      }
+    });
+
+    try {
+      const updated = await updateTaskUnlockedImpl(store, "FN-1", { prompt: content } as never);
+
+      expect(updated.prompt).toBe(content);
+      expect(updated.declaredSymbols).toEqual(["pkg/new.ts#foo"]);
+      expect(row.declaredSymbols).toEqual(["pkg/new.ts#foo"]);
+      expect(await readFile(join(taskDir, "PROMPT.md"), "utf-8")).toBe(content);
+      expect(promptWrites).toBeGreaterThan(1);
+      expect(newSymbolWrites).toBe(4);
+    } finally {
+      persistPromptFile.mockImplementation(writeActual);
+    }
+  });
+
+  it("rejects with persist and restore/forward failures when both rollback and forward persist fail", async () => {
+    /*
+    FNXC:PromptReadBack 2026-09-04-08:08:
+    If restore cannot put the previous PROMPT.md back and the forward declaredSymbols write also
+    fails, updateTask must reject with persist, restore, and forward messages rather than swallow
+    the split.
+    */
+    const { store, taskDir } = harness({ declaredSymbols: ["pkg/old.ts#a"] });
+    writeFileSync(join(taskDir, "PROMPT.md"), prompt("previous spec", ["pkg/old.ts#a"]));
+    const content = prompt("symbols dual failure", ["pkg/new.ts#Foo"]);
+    const writeActual = persistPromptFile.getMockImplementation()!;
+    let promptWrites = 0;
+    persistPromptFile.mockImplementation(async (promptPath: string, next: string) => {
+      promptWrites += 1;
+      if (promptWrites > 1) throw new Error("simulated PROMPT.md restore failure");
+      return writeActual(promptPath, next);
+    });
+    vi.mocked(store.atomicWriteTaskJsonWithAudit).mockImplementation(async (_dir, task) => {
+      const symbols = [...((task as { declaredSymbols?: string[] }).declaredSymbols ?? [])];
+      if (JSON.stringify(symbols) === JSON.stringify(["pkg/new.ts#foo"])) {
+        throw new Error("simulated declaredSymbols persist failure");
+      }
+    });
+
+    try {
+      await expect(
+        updateTaskUnlockedImpl(store, "FN-1", { prompt: content } as never),
+      ).rejects.toThrow(
+        /declaredSymbols persist failed after PROMPT.md write \(simulated declaredSymbols persist failure\).*PROMPT.md restore failed \(simulated PROMPT.md restore failure\).*forward declaredSymbols persist failed \(simulated declaredSymbols persist failure\)/,
+      );
+      expect(await readFile(join(taskDir, "PROMPT.md"), "utf-8")).toBe(content);
+    } finally {
+      persistPromptFile.mockImplementation(writeActual);
+    }
+  });
+});
