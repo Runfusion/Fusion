@@ -17093,7 +17093,16 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           removed++;
         } catch (err: unknown) {
           const errorMessage = err instanceof Error ? err.message : String(err);
-          log.warn(`Failed to remove idle worktree ${worktreePath} during cap enforcement: ${errorMessage} — non-fatal`);
+          /*
+          FNXC:WorktreeCleanup 2026-09-08-06:13:
+          A preservation refusal is a deliberate policy outcome, not a removal failure. Logging it at
+          WARN on every maintenance tick turned permanently protected worktrees into a repeating bug.
+          */
+          if (errorMessage.startsWith(`preserving ${worktreePath}:`)) {
+            log.debug(`[self-healing] cap-enforcement preserved ${worktreePath}: ${errorMessage}`);
+          } else {
+            log.warn(`Failed to remove idle worktree ${worktreePath} during cap enforcement: ${errorMessage} — non-fatal`);
+          }
           // Individual failure is non-fatal
         }
       }
