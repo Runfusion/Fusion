@@ -12,6 +12,7 @@ export const DASHBOARD_VIEW_IDS = [
   "missions",
   "chat",
   "documents",
+  "notes",
   "research",
   "evals",
   "ideation",
@@ -65,6 +66,8 @@ export const DASHBOARD_VIEWS: readonly DashboardViewMetadata[] = [
   { id: "missions", label: "Missions", labelKey: "nav.missions" },
   { id: "chat", label: "Chat", labelKey: "nav.chat" },
   { id: "documents", label: "Artifacts", labelKey: "nav.documents" },
+  /* FNXC:ProjectNotes 2026-09-09-17:08: Notes is one canonical project-scoped destination shared by metadata, deep links, desktop navigation, and mobile customization. */
+  { id: "notes", label: "Notes", labelKey: "nav.notes" },
   { id: "research", label: "Research", labelKey: "header.researchView" },
   { id: "evals", label: "Evals", labelKey: "header.evalsView" },
   /*

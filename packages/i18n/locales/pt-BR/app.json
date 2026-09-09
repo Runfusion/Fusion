@@ -4252,7 +4252,8 @@
     "recommendations": "",
     "recommendationsUnreadAriaLabel_one": "",
     "recommendationsUnreadAriaLabel_other": "",
-    "recommendationsUnreadDotAriaLabel": ""
+    "recommendationsUnreadDotAriaLabel": "",
+    "notes": "Notas"
   },
   "newTaskModal": {
     "addDependencies": "Adicionar dependências",
@@ -9853,5 +9854,28 @@
     "title": "",
     "truncated": "",
     "viewTask": ""
+  },
+  "notes": {
+    "new": "New note",
+    "search": "Search notes",
+    "list": "Notes list",
+    "empty": "No notes yet",
+    "noResults": "No notes found",
+    "createFirst": "Create your first note",
+    "select": "Select a note or create a new one",
+    "title": "Note title",
+    "unsaved": "Unsaved changes",
+    "savedState": "Saved",
+    "saving": "Saving…",
+    "saved": "Note saved",
+    "deleted": "Note deleted",
+    "discardTitle": "Discard changes?",
+    "discardMessage": "Your unsaved draft will be lost.",
+    "discard": "Discard",
+    "deleteTitle": "Delete note?",
+    "deleteMessage": "This action cannot be undone.",
+    "conflict": "This note changed elsewhere. Your draft is preserved.",
+    "reload": "Reload server version",
+    "overwrite": "Overwrite with my draft"
   }
 }

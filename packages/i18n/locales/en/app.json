@@ -4250,7 +4250,8 @@
     "terminal": "Terminal",
     "todos": "Todos",
     "usage": "Usage",
-    "workflows": "Workflows"
+    "workflows": "Workflows",
+    "notes": "Notes"
   },
   "newTaskModal": {
     "addDependencies": "Add dependencies",
@@ -9851,5 +9852,28 @@
     "lines": "lines",
     "showLess": "Show less",
     "showMore": "Show more ({{count}} {{lineLabel}})"
+  },
+  "notes": {
+    "new": "New note",
+    "search": "Search notes",
+    "list": "Notes list",
+    "empty": "No notes yet",
+    "noResults": "No notes found",
+    "createFirst": "Create your first note",
+    "select": "Select a note or create a new one",
+    "title": "Note title",
+    "unsaved": "Unsaved changes",
+    "savedState": "Saved",
+    "saving": "Saving…",
+    "saved": "Note saved",
+    "deleted": "Note deleted",
+    "discardTitle": "Discard changes?",
+    "discardMessage": "Your unsaved draft will be lost.",
+    "discard": "Discard",
+    "deleteTitle": "Delete note?",
+    "deleteMessage": "This action cannot be undone.",
+    "conflict": "This note changed elsewhere. Your draft is preserved.",
+    "reload": "Reload server version",
+    "overwrite": "Overwrite with my draft"
   }
 }

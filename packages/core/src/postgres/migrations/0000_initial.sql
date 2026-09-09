@@ -963,6 +963,23 @@ CREATE TABLE IF NOT EXISTS project.goals (
   created_at text NOT NULL,
   updated_at text NOT NULL
 );
+
+-- FNXC:ProjectNotes 2026-09-09-17:08: Fresh installs include project-scoped note storage with optimistic revision fencing.
+CREATE TABLE IF NOT EXISTS project.notes (
+  project_id text NOT NULL DEFAULT current_setting('fusion.project_id', true),
+  id text NOT NULL,
+  title text NOT NULL,
+  content text NOT NULL DEFAULT '',
+  revision integer NOT NULL DEFAULT 1,
+  created_at text NOT NULL,
+  updated_at text NOT NULL,
+  PRIMARY KEY (project_id, id),
+  CONSTRAINT notes_title_length CHECK (char_length(title) BETWEEN 1 AND 200),
+  CONSTRAINT notes_content_length CHECK (octet_length(content) <= 1048576),
+  CONSTRAINT notes_revision_positive CHECK (revision >= 1)
+);
+CREATE INDEX IF NOT EXISTS "idxNotesProjectUpdatedAt" ON project.notes (project_id, updated_at DESC);
+ALTER TABLE project.notes ENABLE ROW LEVEL SECURITY;
 CREATE INDEX IF NOT EXISTS "idxGoalsStatus" ON project.goals(status);
 
 CREATE TABLE IF NOT EXISTS project.mission_goals (

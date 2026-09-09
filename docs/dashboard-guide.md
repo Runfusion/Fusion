@@ -2457,7 +2457,7 @@ The MCP sections reuse Settings form/card primitives and include mobile layouts 
 
 ### Lazy-Loaded Heavy Views
 
-These 20 views are lazy-loaded via `React.lazy()` with `<Suspense fallback={null}>`. `prefetchLazyViews()` warms App-level chunks once on mount via `requestIdleCallback`; AppModals lazy modal imports (`SettingsModal`, `WorkflowNodeEditor`, `SetupWizardModal`) are part of the same inventory. **Do not make these eager.** The user-facing **Artifacts** section is still implemented by the `DocumentsView` component name.
+These 21 views are lazy-loaded via `React.lazy()` with `<Suspense fallback={null}>`. `prefetchLazyViews()` warms App-level chunks once on mount via `requestIdleCallback`; AppModals lazy modal imports (`SettingsModal`, `WorkflowNodeEditor`, `SetupWizardModal`) are part of the same inventory. **Do not make these eager.** The user-facing **Artifacts** section is still implemented by the `DocumentsView` component name.
 
 - `AgentsView`
 - `ChatView`
@@ -2466,6 +2466,7 @@ These 20 views are lazy-loaded via `React.lazy()` with `<Suspense fallback={null
 - `SecretsView`
 - `InsightsView`
 - `DocumentsView`
+- `NotesView`
 - `SkillsView`
 - `ResearchView`
 - `CommandCenter`
@@ -2741,3 +2742,9 @@ An externally blocked task uses a Blocked cover on board cards and the same noti
 ### Desktop local-startup diagnostics
 
 When the desktop shell cannot start its embedded local Fusion runtime, its failure panel shows the startup phase and attempt count, expandable technical details, and a control to copy a support-ready report. It also shows the per-launch log location when available. Fusion writes this log best-effort, off the startup path, to `<runtime root>/.fusion/logs/desktop-startup.log`; the runtime root honors `FUSION_HOME`, and the previous launch is rotated to `desktop-startup.prev.log`. If the host cannot write that location, the panel says so instead of showing a dead path. `FUSION_STARTUP_TRACE` remains available as an operator-selected synchronous trace sink.
+
+### Notes
+
+La destination **Notes** est disponible dans la barre latérale sur ordinateur et tablette, et dans **More** sur mobile (ou directement dans le footer lorsqu’elle y est promue depuis les réglages). Chaque projet possède sa propre liste persistante de notes; la recherche porte sur les titres et le contenu, et les titres identiques restent autorisés.
+
+Une note accepte du texte libre et du Markdown, notamment des commandes et des journaux. Les changements restent marqués comme non enregistrés jusqu’à l’action **Save** (ou Ctrl/Cmd+S); une suppression ou l’abandon d’un brouillon demande confirmation. En cas d’erreur réseau ou de conflit de révision, le brouillon local est conservé et l’utilisateur choisit explicitement de recharger la version serveur ou de la remplacer.

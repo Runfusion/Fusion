@@ -24,6 +24,7 @@ import {
   Search,
   Settings,
   Sparkles,
+  StickyNote,
   Target,
   Workflow,
   Zap,
@@ -435,6 +436,15 @@ export function LeftSidebarNav({
       dot: view !== "documents" && artifactUnreadCount > 0 ? "online" : undefined,
       dotLabel: t("nav.artifactsUnreadDotAriaLabel", "New artifacts"),
       onSelect: () => onChangeView("documents"),
+    },
+    {
+      id: "notes",
+      label: t("nav.notes", getDashboardViewLabel("notes")),
+      view: "notes",
+      isActive: view === "notes",
+      icon: StickyNote,
+      testId: "sidebar-nav-notes",
+      onSelect: () => onChangeView("notes"),
     },
     ...(experimentalFeatures?.goalsView
       ? [{ id: "goals", label: t("header.goalsView", getDashboardViewLabel("goalsView")), view: "goalsView" as TaskView, isActive: view === "goalsView", icon: Target, testId: "sidebar-nav-goals", onSelect: () => onChangeView("goalsView") }]

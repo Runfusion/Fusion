@@ -140,6 +140,7 @@ export const TASK_DETAIL_FLOATING_GEOMETRY_KEY = "floating-window:task-detail";
 
 const AgentsView = lazy(() => import("./components/AgentsView").then((m) => ({ default: m.AgentsView })));
 const DocumentsView = lazy(() => import("./components/DocumentsView").then((m) => ({ default: m.DocumentsView })));
+const NotesView = lazy(() => import("./components/NotesView").then((m) => ({ default: m.NotesView })));
 const InsightsView = lazy(() => import("./components/InsightsView").then((m) => ({ default: m.InsightsView })));
 const ResearchView = lazy(() => import("./components/ResearchView").then((m) => ({ default: m.ResearchView })));
 const EvalsView = lazy(() => import("./components/EvalsView").then((m) => ({ default: m.EvalsView })));
@@ -184,6 +185,7 @@ function prefetchLazyViews() {
   idle(() => {
     void import("./components/AgentsView");
     void import("./components/DocumentsView");
+    void import("./components/NotesView");
     void import("./components/InsightsView");
     void import("./components/ResearchView");
     void import("./components/EvalsView");
@@ -1923,6 +1925,7 @@ function AppInner() {
     CommandCenter,
     DevServerView,
     DocumentsView,
+    NotesView,
     EvalsView,
     GoalsView,
     PatchnodeView,
