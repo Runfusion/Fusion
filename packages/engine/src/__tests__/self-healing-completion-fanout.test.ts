@@ -196,7 +196,49 @@ describe("self-healing completion fan-out", () => {
       overlapBlockedBy: null,
     });
     expect(onOverlapBlockersReleased).toHaveBeenCalledTimes(1);
+    expect(onOverlapBlockersReleased).toHaveBeenCalledWith([{ taskId: dependent.id, blockerId: blocker.id }]);
     expect(releasedStates).toEqual([{ status: null, overlapBlockedBy: null }]);
+  });
+
+  it("runtime composition releases the matching continuation before publishing both wakes", async () => {
+    const blocker = makeTask("FN-B", { column: "done" });
+    const dependent = makeTask("FN-DEPENDENT", {
+      column: "todo",
+      status: "queued",
+      overlapBlockedBy: blocker.id,
+    });
+    const store = createStore([blocker, dependent], { groupOverlappingFiles: true });
+    (store as any).parseFileScopeFromPrompt = vi.fn(async () => ["packages/core/src/store.ts"]);
+    let item = {
+      id: "wi-plan-review",
+      taskId: dependent.id,
+      kind: "task",
+      state: "held",
+      leaseOwner: null,
+      blockedReason: `file-scope:${blocker.id}`,
+    };
+    (store as any).listWorkflowWorkItemsForTask = vi.fn(async () => [item]);
+    (store as any).transitionWorkflowWorkItem = vi.fn(async (_id: string, state: string, patch: Record<string, unknown>) => {
+      if (item.state === patch.expectedState && item.leaseOwner === patch.expectedLeaseOwner) {
+        item = { ...item, ...patch, state } as typeof item;
+      }
+      return item;
+    });
+    const order: string[] = [];
+    const scheduler = { requestImmediateSchedule: vi.fn(() => { order.push("scheduler"); }) };
+    const kick = vi.fn(() => { order.push("continuation"); });
+    const mgr = createRuntimeSelfHealingManager(store, scheduler as Pick<Scheduler, "requestImmediateSchedule">, {
+      rootDir: "/repo",
+    }, { kick });
+
+    await mgr.reconcileCompletedTask(blocker.id);
+
+    expect(item).toMatchObject({ state: "runnable", leaseOwner: null, blockedReason: null });
+    expect((store as any).transitionWorkflowWorkItem).toHaveBeenCalledWith(item.id, "runnable", expect.objectContaining({
+      expectedState: "held",
+      expectedLeaseOwner: null,
+    }));
+    expect(order).toEqual(["continuation", "scheduler"]);
   });
 
   it("runs the runtime-composed scheduler follow-up after the real terminal event races ahead of CAS", async () => {

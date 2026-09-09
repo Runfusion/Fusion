@@ -411,6 +411,11 @@ the unattended background pass.
 */
 const PRE_EXECUTION_WORKTREE_MAX_IDLE_MS = 30 * 24 * 60 * 60 * 1000;
 
+export interface OverlapBlockerRelease {
+  taskId: string;
+  blockerId: string;
+}
+
 export interface SelfHealingOptions {
   /** Project root directory (parent of .worktrees/) */
   rootDir: string;
@@ -424,8 +429,8 @@ export interface SelfHealingOptions {
   localNodeId?: string;
   /** Optional callback to release TaskExecutor in-memory worktree ownership for a task. */
   releaseExecutorWorktreeOwnership?: (taskId: string) => void;
-  /** Request scheduling only after completion fan-out durably clears at least one overlap lease. */
-  onOverlapBlockersReleased?: () => void | Promise<void>;
+  /** Release exact dependent waits only after completion fan-out durably clears their overlap lease. */
+  onOverlapBlockersReleased?: (releases: readonly OverlapBlockerRelease[]) => void | Promise<void>;
   /**
    * FN-6782: read-only snapshot of the executor's in-memory worktree holders
    * ({ taskId, worktreePath }), so the leaked-slot reaper can cross-check each
@@ -5517,7 +5522,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         (t) => t.blockedBy === taskId || t.overlapBlockedBy === taskId,
       );
       const todoTaskIds = new Set(todoTasks.map((t) => t.id));
-      let overlapReleaseCommitted = false;
+      const committedOverlapReleases = new Map<string, OverlapBlockerRelease>();
+      const recordOverlapRelease = (dependentId: string, blockerId: string | null | undefined, committed: boolean): void => {
+        if (committed && blockerId) committedOverlapReleases.set(dependentId, { taskId: dependentId, blockerId });
+      };
       for (const dependent of dependents) {
         try {
           /*
@@ -5580,7 +5588,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
                 unresolvedDeps,
                 `Auto-recovered (FN-4523): cleared stale blockedBy — blocker ${taskId} is done; now blocked by ${nextBlocker}`,
               );
-              overlapReleaseCommitted ||= transition.overlapCleared;
+              recordOverlapRelease(dependent.id, freshOverlap.blockerId, transition.overlapCleared);
             } else if (hasActiveOverlapBlocker) {
               await this.store.transitionQueuedEpisode(dependent.id, {
                 signature: `file-scope:${overlapBlockedBy}`,
@@ -5594,7 +5602,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
                 freshOverlap.blockerId,
                 { blockedBy: null, ...clearBlockedStatusOnly(freshOverlap.dependent) },
               );
-              overlapReleaseCommitted ||= overlapCleared;
+              recordOverlapRelease(dependent.id, freshOverlap.blockerId, overlapCleared);
               await this.store.logEntry(
                 dependent.id,
                 `Auto-recovered (FN-4523): cleared stale blockedBy — blocker ${taskId} is done`,
@@ -5606,7 +5614,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
               hasActiveOverlapBlocker ? null : freshOverlap.blockerId,
               { blockedBy: null },
             );
-            overlapReleaseCommitted ||= overlapCleared;
+            recordOverlapRelease(dependent.id, freshOverlap.blockerId, overlapCleared);
             await this.store.logEntry(
               dependent.id,
               `Auto-recovered (FN-4523): cleared stale blockedBy — blocker ${taskId} is done`,
@@ -5620,14 +5628,14 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       }
 
       /*
-      FNXC:OverlapScheduling 2026-09-07-14:23:
-      Completion fan-out must publish every dependent mutation before requesting scheduler work.
-      Invoke this once, after the dependent loop and outside store mutation callbacks, so duplicate
-      fan-outs coalesce downstream and a failed/no-op CAS cannot advertise an uncommitted release.
+      FNXC:OverlapScheduling 2026-09-09-22:33:
+      Completion fan-out must publish every dependent mutation before releasing continuation waits.
+      Carry only exact dependent/blocker identities whose clear committed, and invoke once outside store
+      callbacks so duplicate terminal events and replacement-holder CAS losses advertise no release.
       */
-      if (overlapReleaseCommitted) {
+      if (committedOverlapReleases.size > 0) {
         try {
-          await this.options.onOverlapBlockersReleased?.();
+          await this.options.onOverlapBlockersReleased?.([...committedOverlapReleases.values()]);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           log.warn(`${prefix} post-overlap-release scheduling wake failed: ${message}`);

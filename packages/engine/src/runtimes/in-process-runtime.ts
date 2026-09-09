@@ -60,6 +60,7 @@ import {
   SelfHealingManager,
   VALIDATOR_RUN_STALE_MAX_AGE_MS,
   type SelfHealingOptions,
+  type OverlapBlockerRelease,
 } from "../self-healing.js";
 import { RestartRecoveryCoordinator } from "../healing/restart-recovery-coordinator.js";
 import { MeshLeaseManager } from "../project/mesh-lease-manager.js";
@@ -589,6 +590,90 @@ export async function drainDuePlanningContinuations(
 const planningContinuationRuns = new Set<string>();
 const planningContinuationCapacityReasons = new Map<string, string>();
 
+export const FILE_SCOPE_CONTINUATION_WAIT_PREFIX = "file-scope:";
+
+function fileScopeContinuationWaitReason(blockerId: string): string {
+  return `${FILE_SCOPE_CONTINUATION_WAIT_PREFIX}${blockerId}`;
+}
+
+/*
+FNXC:PlanningContinuationDispatch 2026-09-09-22:33:
+Outer file-scope admission can return before the graph consumes the drain's running claim. Settlement
+must relinquish only that exact owner: retain a durable held wait while the blocker is current, or make
+the row due immediately when completion already won the race. This prevents a fabricated dead lease
+without allowing an old dispatch callback to overwrite a successor or terminal graph transition.
+*/
+export async function settlePlanningContinuationDispatch(input: {
+  store: TaskStore;
+  taskId: string;
+  itemId: string;
+  leaseOwner: string;
+  kick?: () => void;
+}): Promise<"waiting" | "runnable" | "unchanged"> {
+  if (typeof input.store.transitionWorkflowWorkItem !== "function") return "unchanged";
+  const task = await input.store.getTask(input.taskId).catch(() => null);
+  if (!task || task.deletedAt) return "unchanged";
+  const blockerId = task.overlapBlockedBy?.trim();
+  const dependencyId = task.blockedBy?.trim();
+  const waitingReason = task.status === "queued"
+    ? blockerId
+      ? fileScopeContinuationWaitReason(blockerId)
+      : dependencyId
+        ? `dependency:${dependencyId}`
+        : null
+    : null;
+  const waiting = waitingReason !== null;
+  const targetState: WorkflowWorkItemState = waiting ? "held" : "runnable";
+  const transitioned = await input.store.transitionWorkflowWorkItem(input.itemId, targetState, {
+    expectedState: "running",
+    expectedLeaseOwner: input.leaseOwner,
+    leaseOwner: null,
+    leaseExpiresAt: null,
+    retryAfter: null,
+    lastError: null,
+    blockedReason: waitingReason,
+  }).catch(() => null);
+  if (!transitioned
+    || transitioned.state !== targetState
+    || transitioned.leaseOwner !== null
+    || (waiting && transitioned.blockedReason !== waitingReason)) {
+    return "unchanged";
+  }
+  if (!waiting) input.kick?.();
+  return waiting ? "waiting" : "runnable";
+}
+
+/** Release only explicit file-scope waits whose task-level blocker clear has already committed. */
+export async function releaseFileScopeWaitingContinuations(
+  store: TaskStore,
+  releases: readonly OverlapBlockerRelease[],
+): Promise<string[]> {
+  if (typeof store.listWorkflowWorkItemsForTask !== "function"
+    || typeof store.transitionWorkflowWorkItem !== "function") return [];
+  const released: string[] = [];
+  for (const release of releases) {
+    const task = await store.getTask(release.taskId).catch(() => null);
+    if (!task || task.deletedAt || task.overlapBlockedBy != null || task.blockedBy != null) continue;
+    const items = await store.listWorkflowWorkItemsForTask(release.taskId, { kinds: ["task"] }).catch(() => []);
+    for (const item of items) {
+      if (item.state !== "held"
+        || item.leaseOwner !== null
+        || item.blockedReason !== fileScopeContinuationWaitReason(release.blockerId)) continue;
+      const transitioned = await store.transitionWorkflowWorkItem(item.id, "runnable", {
+        expectedState: "held",
+        expectedLeaseOwner: null,
+        leaseOwner: null,
+        leaseExpiresAt: null,
+        retryAfter: null,
+        lastError: null,
+        blockedReason: null,
+      }).catch(() => null);
+      if (transitioned?.state === "runnable" && transitioned.leaseOwner === null) released.push(item.id);
+    }
+  }
+  return released;
+}
+
 async function dispatchPlanningContinuationIfCurrent(input: {
   store: TaskStore;
   task: Task;
@@ -656,6 +741,7 @@ export async function admitPlanningContinuation(input: {
   item: WorkflowWorkItem;
   isPlannerLive?: (taskId: string) => boolean;
   dispatch: () => Promise<void>;
+  onDispatchSettled?: () => void;
 }): Promise<boolean> {
   const runKey = `${input.projectId}:${input.task.id}`;
   // A task owns one top-level slot regardless of how many durable continuation
@@ -687,7 +773,11 @@ export async function admitPlanningContinuation(input: {
       task: input.task,
       item: input.item,
       isPlannerLive: input.isPlannerLive,
-      dispatch: () => { void input.dispatch().catch(() => {}); },
+      dispatch: () => {
+        void input.dispatch()
+          .then(() => input.onDispatchSettled?.())
+          .catch(() => {});
+      },
     });
     return true;
   }
@@ -746,12 +836,17 @@ export async function admitPlanningContinuation(input: {
               planningContinuationRuns.delete(runKey);
               throw error;
             }
-            void run
-              .finally(() => {
+            void run.then(
+              () => {
                 planningContinuationRuns.delete(runKey);
                 projectAdmissionCoordinator.releaseReservation(input.task.id);
-              })
-              .catch(() => {});
+                input.onDispatchSettled?.();
+              },
+              () => {
+                planningContinuationRuns.delete(runKey);
+                projectAdmissionCoordinator.releaseReservation(input.task.id);
+              },
+            ).catch(() => {});
           },
         });
         if (!dispatched) plannerOrContinuationSuperseded = true;
@@ -793,20 +888,40 @@ export function createPlanningContinuationDispatcher(input: {
   projectId: string;
   execute: (task: Task) => Promise<void>;
   isPlannerLive?: (taskId: string) => boolean;
+  kick?: () => void;
   onError?: (task: Task, item: WorkflowWorkItem, error: unknown) => void;
 }): (task: Task, item: WorkflowWorkItem) => Promise<boolean> {
-  return (task, item) => admitPlanningContinuation({
-    store: input.store,
-    projectId: input.projectId,
-    task,
-    item,
-    isPlannerLive: input.isPlannerLive,
-    dispatch: async () => {
-      await input.execute(task).catch((error) => {
-        input.onError?.(task, item, error);
-      });
-    },
-  });
+  return (task, item) => {
+    let kickAfterOwnershipRelease = false;
+    return admitPlanningContinuation({
+      store: input.store,
+      projectId: input.projectId,
+      task,
+      item,
+      isPlannerLive: input.isPlannerLive,
+      dispatch: async () => {
+        const leaseOwner = planningContinuationDispatchLeaseOwner(item);
+        await input.execute(task).catch((error) => {
+          input.onError?.(task, item, error);
+        });
+        kickAfterOwnershipRelease = await settlePlanningContinuationDispatch({
+          store: input.store,
+          taskId: task.id,
+          itemId: item.id,
+          leaseOwner,
+        }) === "runnable";
+      },
+      /*
+      FNXC:PlanningContinuationDispatch 2026-09-09-23:09:
+      A completion that wins before dispatch settlement makes the exact work item runnable, but its
+      wake must follow removal of the task-keyed run and capacity reservation. Otherwise the real
+      drain mistakes the event-driven retry for a duplicate and waits for the periodic timer.
+      */
+      onDispatchSettled: () => {
+        if (kickAfterOwnershipRelease) input.kick?.();
+      },
+    });
+  };
 }
 
 /**
@@ -963,10 +1078,15 @@ export function createRuntimeSelfHealingManager(
   store: TaskStore,
   scheduler: Pick<Scheduler, "requestImmediateSchedule">,
   options: Omit<SelfHealingOptions, "onOverlapBlockersReleased">,
+  continuations?: { kick: () => void },
 ): SelfHealingManager {
   return new SelfHealingManager(store, {
     ...options,
-    onOverlapBlockersReleased: () => scheduler.requestImmediateSchedule(),
+    onOverlapBlockersReleased: async (releases) => {
+      await releaseFileScopeWaitingContinuations(store, releases);
+      continuations?.kick();
+      scheduler.requestImmediateSchedule();
+    },
   });
 }
 
@@ -1041,6 +1161,8 @@ export class InProcessRuntime
   private workflowContinuationTimer?: ReturnType<typeof setInterval>;
   private workflowContinuationDrainActive = false;
   private workflowContinuationDrainSince = 0;
+  private workflowContinuationDrainPending = false;
+  private workflowContinuationDrainGeneration = 0;
   /*
   FNXC:PlanReviewApproval 2026-08-04-00:26:
   Track the event edge and the durable approval marker. The marker covers engine restarts and
@@ -2047,6 +2169,8 @@ export class InProcessRuntime
           });
           return !!run;
         },
+      }, {
+        kick: () => this.kickWorkflowContinuationProcessor(),
       });
       /*
       FNXC:PauseGatedMaintenance 2026-08-13-03:08 (RUFU-076):
@@ -2872,6 +2996,11 @@ export class InProcessRuntime
    * A single runtime drain owns selection at a time. Concurrent wakeups collapse
    * behind this guard and the recurring processor supplies the next bounded pass.
    *
+   * FNXC:WorkflowScheduling 2026-09-09-23:18:
+   * A wake published while a drain is unwinding must remain pending and start one
+   * follow-up pass after ownership clears. Dropping that edge makes a continuation
+   * returned to runnable during dispatch settlement wait for the periodic timer.
+   *
    * The pass itself lives in `drainDuePlanningContinuations` (see its header for
    * the FN-8470/FN-8471 orphan rationale and the deferral); this method is the
    * runtime-lifecycle wrapper — re-entry guard, active-status check, and the
@@ -2880,13 +3009,16 @@ export class InProcessRuntime
   private async drainWorkflowContinuations(): Promise<void> {
     if (this.status !== "active") return;
     if (this.workflowContinuationDrainActive) {
-      /* FNXC:PumpWatchdog 2026-08-01-02:00: one hung pass leaves the guard closed forever and every later tick/wake drops SILENTLY (the triage-poll death, 00769fad7c/e51ebff381). Past the threshold, warn with the stuck duration and force the guard open; the hung pass's own finally re-clearing it later is harmless. */
+      this.workflowContinuationDrainPending = true;
+      /* FNXC:PumpWatchdog 2026-08-01-02:00: one hung pass leaves the guard closed forever and every later tick/wake drops SILENTLY (the triage-poll death, 00769fad7c/e51ebff381). Past the threshold, warn with the stuck duration and force the guard open; a generation fence prevents the superseded pass's finally from clearing its successor. */
       const stuckMs = this.workflowContinuationDrainSince > 0 ? Date.now() - this.workflowContinuationDrainSince : 0;
       if (stuckMs < 300_000) return;
       runtimeLog.warn(`continuation-drain watchdog: previous drain still marked in-flight after ${Math.round(stuckMs / 1000)}s — forcing the guard open`);
     }
     this.workflowContinuationDrainActive = true;
+    this.workflowContinuationDrainPending = false;
     this.workflowContinuationDrainSince = Date.now();
+    const drainGeneration = ++this.workflowContinuationDrainGeneration;
     /*
     FNXC:EnginePause 2026-08-01-00:20:
     A pause-suspended run persists a runnable continuation (same mechanism as capacity). Without
@@ -2939,6 +3071,7 @@ export class InProcessRuntime
           projectId: this.taskStore.getRootDir(),
           execute: (task) => this.executor.execute(task),
           isPlannerLive,
+          kick: () => this.kickWorkflowContinuationProcessor(),
           onError: (_task, item, error) => {
             runtimeLog.error(`Workflow continuation ${item.id} failed:`, error);
           },
@@ -2947,7 +3080,14 @@ export class InProcessRuntime
         warn: (message) => runtimeLog.warn(message),
       });
     } finally {
-      this.workflowContinuationDrainActive = false;
+      if (this.workflowContinuationDrainGeneration === drainGeneration) {
+        this.workflowContinuationDrainActive = false;
+        this.workflowContinuationDrainSince = 0;
+        if (this.workflowContinuationDrainPending) {
+          this.workflowContinuationDrainPending = false;
+          this.kickWorkflowContinuationProcessor();
+        }
+      }
     }
   }
 

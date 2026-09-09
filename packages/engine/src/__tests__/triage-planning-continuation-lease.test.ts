@@ -2,7 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Agent, Settings, Task, TaskDetail, TaskStore, WorkflowWorkItem } from "@fusion/core";
 
 import { isPlanningContinuationDispatchClaim } from "../agents/planning-execution-liveness.js";
-import { createPlanningContinuationDispatcher } from "../runtimes/in-process-runtime.js";
+import {
+  createPlanningContinuationDispatcher,
+  releaseFileScopeWaitingContinuations,
+} from "../runtimes/in-process-runtime.js";
 import { PLANNING_CONTINUATION_LEASE_MS, TriageProcessor } from "../triage.js";
 
 const { mockCreateResolvedAgentSession, mockPromptWithFallback } = vi.hoisted(() => ({
@@ -395,6 +398,123 @@ describe("triage planning continuation lease", () => {
 
     finishExecution();
     await Promise.resolve();
+  });
+
+  it("parks the exact dispatch claim without a lease when outer file-scope admission returns", async () => {
+    const h = harness();
+    const runnable = runnablePlanningContinuation(h.current.id);
+    h.replaceWorkItem(runnable);
+    const kick = vi.fn();
+    const dispatch = createPlanningContinuationDispatcher({
+      store: h.store,
+      projectId: "fn-329-project",
+      execute: vi.fn(async () => {
+        Object.assign(h.current, { status: "queued", overlapBlockedBy: "FN-HOLDER" });
+      }),
+      isPlannerLive: () => false,
+      kick,
+    });
+
+    await expect(dispatch(h.current, runnable)).resolves.toBe(true);
+    await vi.waitFor(() => expect(h.workItem).toMatchObject({
+      state: "held",
+      leaseOwner: null,
+      leaseExpiresAt: null,
+      blockedReason: "file-scope:FN-HOLDER",
+    }));
+    expect(kick).not.toHaveBeenCalled();
+    expect(h.transitions).toHaveBeenLastCalledWith(runnable.id, "held", expect.objectContaining({
+      expectedState: "running",
+      expectedLeaseOwner: expect.stringMatching(/^planning-continuation-dispatch:/),
+    }));
+  });
+
+  it("re-enters the real admission path after ownership cleanup when completion wins before settlement", async () => {
+    const h = harness();
+    const runnable = runnablePlanningContinuation(h.current.id);
+    h.replaceWorkItem(runnable);
+    const execute = vi.fn(async () => {
+      if (execute.mock.calls.length === 1) {
+        Object.assign(h.current, { status: null, overlapBlockedBy: null });
+        return;
+      }
+      h.replaceWorkItem({ ...h.workItem!, state: "succeeded", leaseOwner: null });
+    });
+    let dispatch!: ReturnType<typeof createPlanningContinuationDispatcher>;
+    const kick = vi.fn(() => {
+      const due = h.workItem;
+      if (due) void dispatch(h.current, due);
+    });
+    dispatch = createPlanningContinuationDispatcher({
+      store: h.store,
+      projectId: "fn-329-project",
+      execute,
+      isPlannerLive: () => false,
+      kick,
+    });
+
+    await expect(dispatch(h.current, runnable)).resolves.toBe(true);
+    await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(2));
+    expect(kick).toHaveBeenCalledOnce();
+    expect(h.workItem).toMatchObject({ state: "succeeded", leaseOwner: null });
+    expect(h.transitions).toHaveBeenCalledWith(runnable.id, "running", expect.objectContaining({
+      expectedState: "runnable",
+      expectedLeaseOwner: null,
+    }));
+  });
+
+  it("releases only the matching lease-free file-scope wait", async () => {
+    const h = harness();
+    h.replaceWorkItem({
+      ...runnablePlanningContinuation(h.current.id),
+      state: "held",
+      blockedReason: "file-scope:FN-HOLDER",
+    });
+    Object.assign(h.current, { status: null, overlapBlockedBy: null });
+
+    await expect(releaseFileScopeWaitingContinuations(h.store, [{
+      taskId: h.current.id,
+      blockerId: "FN-OTHER",
+    }])).resolves.toEqual([]);
+    expect(h.workItem).toMatchObject({ state: "held", blockedReason: "file-scope:FN-HOLDER" });
+
+    Object.assign(h.current, { blockedBy: "FN-DEPENDENCY" });
+    await expect(releaseFileScopeWaitingContinuations(h.store, [{
+      taskId: h.current.id,
+      blockerId: "FN-HOLDER",
+    }])).resolves.toEqual([]);
+    expect(h.workItem).toMatchObject({ state: "held", blockedReason: "file-scope:FN-HOLDER" });
+
+    Object.assign(h.current, { blockedBy: null });
+    await expect(releaseFileScopeWaitingContinuations(h.store, [{
+      taskId: h.current.id,
+      blockerId: "FN-HOLDER",
+    }])).resolves.toEqual(["wi-dispatch"]);
+    expect(h.workItem).toMatchObject({ state: "runnable", blockedReason: null, leaseOwner: null });
+  });
+
+  it("does not overwrite a terminalized row or same-state successor owner during settlement", async () => {
+    const h = harness();
+    const runnable = runnablePlanningContinuation(h.current.id);
+    h.replaceWorkItem(runnable);
+    let finish!: () => void;
+    const dispatch = createPlanningContinuationDispatcher({
+      store: h.store,
+      projectId: "fn-329-project",
+      execute: vi.fn(() => new Promise<void>((resolve) => { finish = resolve; })),
+      isPlannerLive: () => false,
+    });
+
+    await expect(dispatch(h.current, runnable)).resolves.toBe(true);
+    h.replaceWorkItem({ ...h.workItem!, state: "running", leaseOwner: "planning-continuation-dispatch:successor:1" });
+    Object.assign(h.current, { status: "queued", overlapBlockedBy: "FN-HOLDER" });
+    finish();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(h.workItem).toMatchObject({ state: "running", leaseOwner: "planning-continuation-dispatch:successor:1" });
+
+    h.replaceWorkItem({ ...h.workItem!, state: "succeeded", leaseOwner: null });
+    expect(h.workItem).toMatchObject({ state: "succeeded", leaseOwner: null });
   });
 
   it("does not mutate task state when dispatch-claim inspection fails before planner ownership", async () => {
