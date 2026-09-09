@@ -1,0 +1,25 @@
+/*
+FNXC:AITransparency 2026-09-04-04:44:
+Disclosure captions must use dashboard spacing and type tokens so they stay on the shared scale.
+Raw rem/px values drifted from compact captions and failed the component token contract.
+*/
+.ai-disclosure {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  gap: var(--space-xs);
+  flex-wrap: wrap;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-tight);
+}
+
+.ai-disclosure--compact {
+  font-size: var(--font-size-2xs);
+  gap: var(--space-3xs);
+}
+
+.ai-disclosure__attribution {
+  overflow-wrap: anywhere;
+  color: var(--text-muted);
+}

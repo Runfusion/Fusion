@@ -47,6 +47,7 @@ describe("TaskRecommendationsTab", () => {
     createTaskFromRecommendation.mockResolvedValue({ task: { id: "FN-8830" }, parent });
     render(<TaskRecommendationsTab task={task} projectId="project-a" onTaskReconciled={onTaskReconciled} />);
 
+    expect(screen.getByRole("note")).toHaveAttribute("data-ai-disclosure", "ai-assisted-analysis");
     const button = screen.getByRole("button", { name: "Create task" });
     fireEvent.click(button);
     expect(button).toBeDisabled();

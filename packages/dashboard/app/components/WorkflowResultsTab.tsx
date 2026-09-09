@@ -18,6 +18,7 @@ import { approveTaskWorkflowCli, fetchBoardWorkflows, fetchWorkflow, fetchWorkfl
 import { WorkflowSelector } from "./WorkflowSelector";
 import { phaseBadge } from "./workflow-phase-badge";
 import { useAgentLogs } from "../hooks/useAgentLogs";
+import { AiDisclosure } from "./AiDisclosure";
 import { ProviderIcon } from "./ProviderIcon";
 import { irToFlow } from "./workflow-flow-mapping";
 import { workflowNodeTypes } from "./nodes/WorkflowNodeTypes";
@@ -307,6 +308,8 @@ function LiveAgentLogOutput({
     return () => observer.disconnect();
   }, [followTail, stepEntries.length]);
 
+  const hasGeneratedOutput = stepEntries.some((entry) => entry.type === "text" || entry.type === "thinking");
+
   if (stepEntries.length === 0) {
     return (
       <div className="workflow-live-log" data-testid={`workflow-live-log-${stepId}`}>
@@ -323,6 +326,7 @@ function LiveAgentLogOutput({
       onScroll={handleScroll}
     >
       <div ref={contentRef}>
+        {hasGeneratedOutput ? <AiDisclosure kind="generated-output" compact testId={`workflow-live-ai-disclosure-${stepId}`} /> : null}
         {stepEntries.map((entry, i) => {
           if (entry.type === "tool") {
             return (
@@ -891,6 +895,7 @@ export function WorkflowResultsTab({
         {advisoryFailures.length > 0 && (
           <div className="workflow-polish-notes" data-testid="workflow-polish-notes">
             <h4>{t("app:workflow.polishNotes", "Polish notes")}</h4>
+            <AiDisclosure kind="ai-assisted-analysis" compact />
             <p>{t("app:workflow.advisoryExplanation", "Advisory workflow steps flagged non-blocking improvements:")}</p>
             <ul>
               {advisoryFailures.map((result, index) => (
@@ -968,6 +973,7 @@ export function WorkflowResultsTab({
                 />
               ) : result.output && !outputDuplicatesVisibleNotes ? (
                 <div className="workflow-result-output-section">
+                  <AiDisclosure kind="generated-output" compact testId={`workflow-result-ai-disclosure-${result.workflowStepId}`} />
                   <div className="workflow-result-output-header">
                     <span className="workflow-result-output-label">{t("app:workflow.output", "Output:")} </span>
                     <button
@@ -1379,6 +1385,17 @@ export function WorkflowResultsTab({
                 </div>
               </div>
               <div className="workflow-output-modal-body">
+                {/*
+                FNXC:AITransparency 2026-09-04-04:44:
+                The expanded modal is an aria-modal surface that re-renders result.output. Inline
+                disclosure on the collapsed row is not visible while the modal is open, so the same
+                generated-output note must appear here before the output body.
+                */}
+                <AiDisclosure
+                  kind="generated-output"
+                  compact
+                  testId={`workflow-output-modal-ai-disclosure-${result.workflowStepId}`}
+                />
                 <div
                   className={`workflow-result-output workflow-result-output--expanded${renderMode === "markdown" ? " workflow-result-output--markdown" : ""}`}
                   data-testid="workflow-output-modal-content"

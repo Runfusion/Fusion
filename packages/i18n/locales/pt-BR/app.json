@@ -1,4 +1,10 @@
 {
+  "aiDisclosure": {
+    "interaction": "Interação com IA",
+    "generatedOutput": "Gerado por IA",
+    "assistedAnalysis": "Análise assistida por IA",
+    "translation": "Tradução por IA"
+  },
   "actions": {
     "add": "Adicionar",
     "apply": "Aplicar",

@@ -2634,6 +2634,15 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
   );
   const activeModelTag = formatModelTag(activeResolvedModel?.provider, activeResolvedModel?.modelId);
   const activeModelProvider = activeResolvedModel?.provider ?? null;
+  const activeModelId = activeResolvedModel?.modelId ?? null;
+  /*
+  FNXC:AITransparency 2026-09-04-04:44:
+  Session model fields identify the current Direct Chat counterpart (avatar/tag). Persisted
+  assistant disclosures read per-message metadata in StandardChatMessageItem so a later model
+  change cannot relabel historic output.
+  */
+  const persistedModelProvider = activeSession?.modelProvider && activeSession.modelId ? activeSession.modelProvider : null;
+  const persistedModelId = activeSession?.modelProvider && activeSession.modelId ? activeSession.modelId : null;
   const hasThreadInView = Boolean(activeSession || isStreaming || messages.length > 0);
   const hasDetailSelection = detailOpen && hasThreadInView;
   // ── CLI-backed chat mount (U12) ──────────────────────────────────────────

@@ -8,6 +8,7 @@ import {
   cancelAgentGeneration,
 } from "../api";
 
+import { AiDisclosure } from "./AiDisclosure";
 import { FloatingWindow } from "./FloatingWindow";
 interface AgentGenerationModalProps {
   isOpen: boolean;
@@ -176,6 +177,7 @@ export function AgentGenerationModal({
             &times;
           </button>
         </div>
+        <AiDisclosure kind="ai-interaction" />
 
         {/* Body */}
         <div className="agent-dialog-body">

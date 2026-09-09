@@ -9,6 +9,7 @@ import type { ChatMessageInfo, FailureInfo, ToolCallInfo } from "../hooks/chatTy
 import { linkifyFilePaths, linkifyReactChildren } from "../utils/filePathLinkify";
 import { parseQuestionToolCall } from "../utils/parseQuestionToolCall";
 import { ChatQuestionResponse } from "./ChatQuestionResponse";
+import { AiDisclosure, readStoredAiAttribution } from "./AiDisclosure";
 import { ProviderIcon } from "./ProviderIcon";
 import { NativeStructurePreview } from "./NativeStructurePreview";
 import { openNativeStructure } from "./nativeStructureNavigation";
@@ -35,6 +36,12 @@ export interface StandardChatMessageItemProps {
   showAssistantModelTag: boolean;
   activeModelTag: string | null;
   activeModelProvider: string | null;
+  /**
+   * FNXC:AITransparency 2026-09-04-05:38:
+   * Callers still pass the live session model id for API symmetry with streaming. Persisted rows
+   * must not bind it — disclosure reads stored message metadata instead.
+   */
+  activeModelId?: string | null;
   activeSessionId: string | null;
   /** The owning dashboard project keeps voice availability isolated in multi-project views. */
   projectId?: string;
@@ -83,6 +90,7 @@ export interface StandardStreamingMessageProps {
   showAssistantModelTag: boolean;
   activeModelTag: string | null;
   activeModelProvider: string | null;
+  activeModelId?: string | null;
   copyAction?: ReactNode;
   onQuestionSubmit?: (answerText: string, structured: Record<string, unknown>) => void;
   toolCallRenderer?: (toolCall: ToolCallInfo, index: number) => ReactNode | undefined;
@@ -768,10 +776,18 @@ export const StandardChatMessageItem = memo(function StandardChatMessageItem({
   const showQuoteAction = Boolean(onQuoteMessage) && !failureInfo && message.content.trim().length > 0;
   const hasAssistantFooterRow = isAssistantMessage && !failureInfo && Boolean(message.thinkingOutput || copyAction || onScrollToTop || showQuoteAction);
   const hasVisibleAssistantFooterContent = Boolean(message.thinkingOutput || copyAction || showQuoteAction || (onScrollToTop && isTopClipped));
+  const storedAttribution = readStoredAiAttribution(message.metadata);
   const messageTime = <div className="chat-message-time">{formatRelativeTime(message.createdAt, t)}</div>;
   return (
     <div className={`chat-message chat-message--${message.role}${failureInfo ? " chat-message--failure" : ""}${isEditing ? " chat-message--editing" : ""}${isSearchMatch ? " chat-message--search-match" : ""}${isSearchActive ? " chat-message--search-active" : ""}`} data-testid={`chat-message-${message.id}`} data-message-id={message.id}>
       {showAssistantIdentity && <div className="chat-message-avatar">{activeModelProvider ? <ProviderIcon provider={activeModelProvider} size="sm" /> : <Bot size={14} />}<span>{agentName}</span>{showAssistantModelTag && activeModelTag && <span className="chat-model-tag">{activeModelTag}</span>}</div>}
+      {/*
+      FNXC:AITransparency 2026-09-04-04:44:
+      Persisted assistant rows disclose only the provider/model stamped on that message. The active
+      session selection is for identity/avatars; using it here would relabel historic Direct Chat and
+      Task Planner Chat output after a model change. Missing metadata stays provider-agnostic.
+      */}
+      {isAssistantMessage && !failureInfo ? <AiDisclosure kind="generated-output" provider={storedAttribution.provider} modelId={storedAttribution.modelId} compact testId={`chat-ai-disclosure-${message.id}`} /> : null}
       {isEditing ? (
         <StandardChatMessageEditComposer
           value={editedText}
@@ -811,11 +827,12 @@ export const StandardChatMessageItem = memo(function StandardChatMessageItem({
   );
 });
 
-export function StandardStreamingMessage({ streamingText, streamingThinking = "", streamingToolCalls = [], forcePlain, agentName, hideAssistantIdentity, showAssistantModelTag, activeModelTag, activeModelProvider, copyAction, onQuestionSubmit, toolCallRenderer, isSearchMatch = false, isSearchActive = false }: StandardStreamingMessageProps) {
+export function StandardStreamingMessage({ streamingText, streamingThinking = "", streamingToolCalls = [], forcePlain, agentName, hideAssistantIdentity, showAssistantModelTag, activeModelTag, activeModelProvider, activeModelId, copyAction, onQuestionSubmit, toolCallRenderer, isSearchMatch = false, isSearchActive = false }: StandardStreamingMessageProps) {
   const { t } = useTranslation("app");
   return (
     <div className={`chat-message chat-message--assistant chat-message--streaming${isSearchMatch ? " chat-message--search-match" : ""}${isSearchActive ? " chat-message--search-active" : ""}`} data-testid="chat-message-__streaming__" data-message-id="__streaming__">
       {!hideAssistantIdentity && <div className="chat-message-avatar">{activeModelProvider ? <ProviderIcon provider={activeModelProvider} size="sm" /> : <Bot size={14} />}<span>{agentName}</span>{showAssistantModelTag && activeModelTag && <span className="chat-model-tag">{activeModelTag}</span>}</div>}
+      <AiDisclosure kind="ai-interaction" provider={activeModelProvider} modelId={activeModelId} compact testId="chat-ai-disclosure-streaming" />
       {streamingText ? renderStandardAssistantContent(streamingText, forcePlain) : <div className="chat-message-content chat-message-content--waiting">{streamingThinking ? t("chat.thinkingStatus", "Thinking…") : t("chat.workingStatus", "Working…")}</div>}
       {copyAction}
       {renderStandardToolCalls(streamingToolCalls, t, { isAwaitingAnswer: true, onQuestionSubmit, toolCallRenderer })}

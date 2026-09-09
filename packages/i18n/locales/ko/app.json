@@ -1,4 +1,10 @@
 {
+  "aiDisclosure": {
+    "interaction": "AI 상호작용",
+    "generatedOutput": "AI 생성",
+    "assistedAnalysis": "AI 지원 분석",
+    "translation": "AI 번역"
+  },
   "actions": {
     "add": "추가",
     "apply": "적용",

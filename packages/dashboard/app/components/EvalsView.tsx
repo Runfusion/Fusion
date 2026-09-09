@@ -4,6 +4,7 @@ import { ExternalLink, RefreshCw, Settings, Target } from "lucide-react";
 import { fetchSettings } from "../api";
 import { useEvals } from "../hooks/useEvals";
 import type { SectionId } from "./SettingsModal";
+import { AiDisclosure } from "./AiDisclosure";
 import { LoadingSpinner } from "./LoadingSpinner";
 import { ViewHeader } from "./ViewHeader";
 import "./EvalsView.css";
@@ -114,6 +115,7 @@ export function EvalsView({ projectId, onOpenSettings, onOpenTaskDetail }: Evals
           <>
             <h3 className="evals-detail-title">{selectedSummary?.taskTitle ?? selectedEval.taskTitle}</h3>
             <p className="evals-result-meta">{selectedEval.taskId} · {selectedEval.runId}</p>
+            <AiDisclosure kind="ai-assisted-analysis" compact />
             <p className="evals-score">{t("evals.overallScore", "Overall score: {{score}}", { score: selectedEval.overallScore ?? t("evals.naPlaceholder", "n/a") })}</p>
             <ul className="evals-categories">
               {selectedEval.categoryScores.map((score) => (
