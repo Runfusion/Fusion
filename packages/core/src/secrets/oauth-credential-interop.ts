@@ -105,6 +105,38 @@ export function isSameStoredCredentialMaterial(
   return left.key === right.key && left.access === right.access && left.refresh === right.refresh;
 }
 
+export const STORED_CREDENTIAL_MATERIAL_AND_IDENTITY_FIELDS = [
+  "type",
+  "key",
+  "access",
+  "refresh",
+  "expires",
+  "scopes",
+  "accountId",
+  "accountFingerprint",
+] as const;
+
+/*
+FNXC:ProviderAuth 2026-09-09-14:01:
+A login replaces credential material and account identity wholesale, but preserves operator-owned row
+metadata such as labels. This prevents re-login from restoring stale secrets or identity onto a newly
+authorized account.
+*/
+export function mergeStoredCredentialPreservingMetadata(
+  existing: StoredAuthCredential | undefined,
+  next: StoredAuthCredential,
+): StoredAuthCredential {
+  if (!existing) {
+    return next;
+  }
+
+  const metadata = { ...existing };
+  for (const field of STORED_CREDENTIAL_MATERIAL_AND_IDENTITY_FIELDS) {
+    delete metadata[field];
+  }
+  return { ...metadata, ...next };
+}
+
 export function computeStoredCredentialAccountFingerprint(
   credential: StoredAuthCredential | undefined,
 ): string | undefined {

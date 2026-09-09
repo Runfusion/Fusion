@@ -7,6 +7,7 @@ import {
   computeStoredCredentialAccountFingerprint,
   extractClaudeCliStoredCredential,
   isSameStoredCredentialMaterial,
+  mergeStoredCredentialPreservingMetadata,
   extractCodexCliStoredCredential,
   getClaudeCodeCredentialPaths,
   readStoredCredentialsFromAuthFile,
@@ -26,6 +27,57 @@ function createJwt(payload: Record<string, unknown>): string {
 }
 
 describe("oauth credential interop", () => {
+  describe("mergeStoredCredentialPreservingMetadata", () => {
+    it("returns the minted credential unchanged for a first login", () => {
+      const next = { type: "oauth", access: "new-access", refresh: "new-refresh", expires: 2_000 };
+
+      expect(mergeStoredCredentialPreservingMetadata(undefined, next)).toBe(next);
+    });
+
+    it("preserves metadata while replacing all credential material and identity", () => {
+      const existing = {
+        type: "oauth",
+        access: "old-access",
+        refresh: "old-refresh",
+        expires: 1_000,
+        scopes: ["old-scope"],
+        accountId: "old-account",
+        accountFingerprint: "old-fingerprint",
+        label: "Work",
+        customMetadata: "retained",
+      };
+      const next = { type: "oauth", access: "new-access", refresh: "new-refresh", expires: 2_000, scopes: ["new-scope"] };
+
+      expect(mergeStoredCredentialPreservingMetadata(existing, next)).toEqual({
+        ...next,
+        label: "Work",
+        customMetadata: "retained",
+      });
+    });
+
+    it("does not retain an API key or stale identity for an OAuth login", () => {
+      const merged = mergeStoredCredentialPreservingMetadata(
+        { type: "api_key", key: "old-key", accountId: "old-account", accountFingerprint: "old-fingerprint", label: "Work" },
+        { type: "oauth", access: "new-access", refresh: "new-refresh", expires: 2_000 },
+      );
+
+      expect(merged).toEqual({ type: "oauth", access: "new-access", refresh: "new-refresh", expires: 2_000, label: "Work" });
+      expect(merged).not.toHaveProperty("key");
+      expect(merged).not.toHaveProperty("accountId");
+      expect(merged).not.toHaveProperty("accountFingerprint");
+    });
+
+    it("does not add undefined metadata properties absent from both rows", () => {
+      const merged = mergeStoredCredentialPreservingMetadata(
+        { type: "oauth", access: "old-access", refresh: "old-refresh" },
+        { type: "oauth", access: "new-access", refresh: "new-refresh", expires: 2_000 },
+      );
+
+      expect(merged).not.toHaveProperty("label");
+      expect(merged).not.toHaveProperty("accountId");
+    });
+  });
+
   it("extracts Codex CLI OAuth credentials from auth.json token payload", () => {
     const expiresAtSeconds = Math.floor(Date.now() / 1000) + 3600;
     const accessToken = createJwt({
