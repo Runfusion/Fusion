@@ -41,6 +41,20 @@ vi.mock("../pi.js", () => {
   };
 });
 
+/*
+FNXC:PlanningContinuationLease 2026-09-09-18:32:
+Lease tests must not spawn the unrelated host-capability probe under fake timers. A pending probe
+leaves the first planner live and prevents later cases from reaching their real lifecycle lock.
+Keep prompt formatting real while stubbing only command discovery.
+*/
+vi.mock("../environment/environment-capabilities.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../environment/environment-capabilities.js")>();
+  return {
+    ...actual,
+    probeEnvironmentCapabilities: vi.fn().mockResolvedValue({ capabilities: [], degraded: true }),
+  };
+});
+
 const NOW = new Date("2026-09-06T00:29:00.000Z").getTime();
 
 function task(): Task {
