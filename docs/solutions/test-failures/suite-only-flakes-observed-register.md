@@ -227,7 +227,7 @@ Quarantine was not available as an alternative. Core PostgreSQL files cannot be 
 
 ### 14. Merge-node paused-abort retry sequence
 
-- **Status:** Quarantined 2026-08-29 after a second sequence-only sighting — rescue owner FN-9283 (mission M-MTU4YAJI-0001-PAJK), deletion-ratchet deadline 2026-09-12 (quarantinedAt + 14d).
+- **Status:** Rescued 2026-09-09 after a root-cause repair; the original quarantine began 2026-08-29. Rescue owner FN-9283 (mission M-MTU4YAJI-0001-PAJK); original deletion-ratchet deadline 2026-09-12 (quarantinedAt + 14d).
 - **File:** `packages/engine/src/__tests__/reliability-interactions/merge-node-paused-abort-retryable.test.ts`
 - **Exact test:** `merge-node paused-abort retry classification (FN-6735) > re-enqueues benign paused merge graph failure at node %s without operator-action failure` (parameterized `it.each`; the observed case was `%s` = `merge`, plus 12 sibling sequence failures).
 - **Observed tree/SHA:** first sighting `f3e1e7d1f`; second sighting during FN-249 verification after `2ab621ac6`.
@@ -240,7 +240,15 @@ Quarantine was not available as an alternative. Core PostgreSQL files cannot be 
 | second file as `engine-reliability` | **13 failed / 44 passed** with the same recovery-write misses |
 | second selected exact subject alone | passed (exit 0) |
 
-The failure remains sequence-only evidence, not an attribution to FN-249: its changed user-cancellation path is not enabled by this fixture, and the selected pre-existing engine-abort subject passes in isolation. Per the mandatory deletion ratchet, the second sighting is quarantined in `scripts/lib/test-quarantine.json` and the matching `engine-reliability` exclude; no timeout, retry, or assertion was changed. Rescue requires a root-cause fix that proves the file's recovery coverage is stable.
+The historical runs established sequence-only evidence, not attribution to FN-249. On `a8b29f77fa`, running the entire file reproduced 13 failures: 12 assertions still expected automatic review-to-WIP movement forbidden by the current lifecycle contract, and one stale manual-hold recovery was blocked by the earlier durable merger-park guard. The rescue keeps review failures in place, retains positive already-WIP resume/worktree coverage, and lets only fully classified benign manual holds reach the existing recovery branch.
+
+The expanded full-file negative control failed all 16 stale-hold cases across eight merge aliases and default/renamed review lanes, while 304 pause/cancel/blocker and lifecycle cases passed. With the production ordering fix, all 320 cases passed. The adjacent `lifecycle-containment-resume`, `executor-user-cancel-terminal-graph-exit`, and `review-empty-content-terminal` files passed all 38 tests. These results prove a regression-catching root fix, not a timeout/retry or stabilization-only rescue; they do not retroactively identify every historical failure. The ledger and `engine-reliability` exclusion are removed together.
+
+Reproduce the full-file gate with a disposable `HOME` and `TMPDIR` (the shared test teardown cleans its temporary root):
+
+```sh
+pnpm --filter @fusion/engine exec vitest run --project engine-reliability src/__tests__/reliability-interactions/merge-node-paused-abort-retryable.test.ts
+```
 
 
 ### Common shape and investigated result

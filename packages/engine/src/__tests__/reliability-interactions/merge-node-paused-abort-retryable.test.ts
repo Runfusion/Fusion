@@ -3,9 +3,38 @@ import "../executor-test-helpers.js";
 import { TaskExecutor } from "../../executor.js";
 import { runWorkflowMergeAttemptNode } from "../../workflows/workflow-merge-nodes.js";
 import { createMockStore, resetExecutorMocks } from "../executor-test-helpers.js";
-import type { TaskDetail } from "@fusion/core";
+import type { TaskDetail, WorkflowIr } from "@fusion/core";
 
 const now = "2026-06-19T00:00:00.000Z";
+const mergeNodes = [
+  "merge", "requestMerge", "merge-gate", "merge-attempt",
+  "manual-merge-hold", "merge-manual-hold", "retry-backoff", "merge-retry",
+] as const;
+const mergeReviewSurfaces = ["in-review", "approval-desk"].flatMap((column) =>
+  mergeNodes.map((nodeId) => ({ column, nodeId })),
+);
+
+function stalePauseAbortError(nodeId: string, column = "in-review"): string {
+  return `Workflow graph failure surfaced after paused engine abort during pause/resume in '${column}' at node '${nodeId}' — operator action required; retry or explicitly unpause/resume after inspecting the task`;
+}
+
+function configureRenamedLanes(store: ReturnType<typeof createMockStore>): void {
+  const ir: WorkflowIr = {
+    version: "v2",
+    name: "Renamed lifecycle lanes",
+    columns: [
+      { id: "planning-desk", name: "Planning", traits: [{ trait: "hold" }] },
+      { id: "implementation-desk", name: "Implementation", traits: [{ trait: "wip" }] },
+      { id: "approval-desk", name: "Approval", traits: [{ trait: "merge" }, { trait: "merge-blocker" }, { trait: "human-review" }] },
+      { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+    ],
+    nodes: [{ id: "start", kind: "start" }, { id: "end", kind: "end" }],
+    edges: [{ from: "start", to: "end" }],
+  };
+  store.getTaskWorkflowSelectionAsync.mockResolvedValue({ workflowId: "WF-rescue", stepIds: [] });
+  store.getTaskWorkflowSelection.mockReturnValue({ workflowId: "WF-rescue", stepIds: [] });
+  store.getWorkflowDefinition = vi.fn(async () => ({ id: "WF-rescue", name: ir.name, ir }));
+}
 
 function makeInReviewTask(overrides: Partial<TaskDetail> = {}): TaskDetail {
   return {
@@ -49,6 +78,9 @@ function makeHarness(taskOverrides: Partial<TaskDetail> = {}, settingsOverrides:
     worktreeInitCommand: undefined,
     ...settingsOverrides,
   });
+  if (["approval-desk", "implementation-desk", "planning-desk", "shipped"].includes(task.column)) {
+    configureRenamedLanes(store);
+  }
   const executor = new TaskExecutor(store, "/tmp/test", {});
   const mergeRequester = vi.fn(async () => ({
     task,
@@ -284,17 +316,65 @@ describe("merge-node paused-abort retry classification (FN-6735)", () => {
     expect(logText(store)).toContain("manual merge hold with auto-merge off");
   });
 
-  it("clears stale already-parked autoMerge:false merge-node pause-abort failures in place", async () => {
-    const staleError = "Workflow graph failure surfaced after paused engine abort during pause/resume in 'in-review' at node 'merge-manual-hold' — operator action required; retry or explicitly unpause/resume after inspecting the task";
-    const { store, task, executor, mergeRequester } = makeHarness({ autoMerge: undefined, paused: false, status: "failed", error: staleError }, { autoMerge: false });
+  /*
+  FNXC:ManualMergeHoldRescue 2026-09-09-09:13:
+  Stale pause-abort errors are not durable merger blockers. Recover only the matching merge-node
+  signature on an unpaused, human-gated review row, across aliases and workflow-renamed lanes.
+  The same rows with real pause/cancel/blocker evidence must remain untouched.
+  */
+  it.each(mergeReviewSurfaces)("clears a stale manual hold at $nodeId in $column in place", async ({ nodeId, column }) => {
+    const { store, task, executor, mergeRequester } = makeHarness({
+      column, autoMerge: undefined, paused: false, status: "failed", error: stalePauseAbortError(nodeId, column),
+    }, { autoMerge: false });
+    (executor as any).addActiveWorktree(task.id, task.worktree);
 
-    await invokeGraphFailure(executor, task, "merge-manual-hold", "merge-finalize-blocked");
+    await invokeGraphFailure(executor, task, nodeId, "merge-finalize-blocked");
 
     expect(mergeRequester).not.toHaveBeenCalled();
-    expect(store.updateTask).toHaveBeenCalledWith(task.id, { status: null, error: null }, undefined);
+    expect(store.updateTask).toHaveBeenCalledExactlyOnceWith(task.id, { status: null, error: null }, undefined);
+    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(await store.getTask(task.id)).toMatchObject({ column, status: null, error: null, steps: task.steps, worktree: task.worktree });
+    expect((executor as any).activeWorktrees.has(task.id)).toBe(false);
+    expect((executor as any).pausedAborted.has(task.id)).toBe(false);
     expect(logText(store)).toContain("Auto-recovered: cleared stale auto-merge-off manual merge hold pause-abort failure — failure notification suppressed");
-    expect(logText(store)).not.toContain("Workflow graph failure surfaced after paused engine abort during pause/resume");
+    expect(logText(store)).not.toContain("honoring park, not retrying or resuming merge");
   });
+
+  const recoveryFences: Array<{ name: string; overrides?: Partial<TaskDetail>; value?: string; provenance?: string; cancel?: boolean; clearAbort?: boolean }> = [
+    { name: "live system pause", overrides: { paused: true, pausedReason: "system-pause-park" } },
+    { name: "explicit user pause", overrides: { userPaused: true } },
+    { name: "global pause", provenance: "global-pause" },
+    { name: "operator cancellation", cancel: true },
+    { name: "absent abort marker", clearAbort: true },
+    { name: "merge conflict", value: "merge-conflict" },
+    { name: "contamination", value: "foreign-only-contamination" },
+    { name: "retry exhaustion", value: "merge-retry-exhausted" },
+    { name: "unproven merge boundary", value: "merge-boundary-unproven" },
+    { name: "real failure", overrides: { error: "real failure before graph unwind" } },
+    { name: "durable dependency blocker", overrides: { error: "BLOCKED: dependency unavailable" } },
+    { name: "empty review park", overrides: { error: "NO REVIEWABLE CONTENT: no task diff" } },
+    { name: "auto merge enabled", overrides: { autoMerge: true } },
+    { name: "different stale node", overrides: { error: stalePauseAbortError("parse") } },
+  ];
+  it.each(mergeReviewSurfaces.flatMap((surface) => recoveryFences.map((fence) => ({ ...surface, ...fence }))))(
+    "preserves $name at $nodeId in $column instead of clearing a manual hold",
+    async ({ nodeId, column, overrides, value, provenance, cancel, clearAbort }) => {
+      const { store, task, executor, mergeRequester } = makeHarness({
+        column, autoMerge: undefined, paused: false, status: "failed", error: stalePauseAbortError(nodeId, column), ...overrides,
+      }, { autoMerge: false });
+      if (provenance) (executor as any).markPausedAborted(task.id, provenance);
+      if (cancel) (executor as any).userCanceledTaskIds.add(task.id);
+      if (clearAbort) (executor as any).clearPausedAborted(task.id);
+
+      await invokeGraphFailure(executor, task, nodeId, value ?? "merge-finalize-blocked");
+
+      expect(mergeRequester).not.toHaveBeenCalled();
+      expect(store.updateTask).not.toHaveBeenCalled();
+      expect(store.moveTask).not.toHaveBeenCalled();
+      expect(await store.getTask(task.id)).toMatchObject({ column, status: task.status, error: task.error });
+      expect(logText(store)).not.toContain("Auto-recovered: cleared stale");
+    },
+  );
 
   it("preserves global and explicit user pause terminal behavior", async () => {
     const globalHarness = makeHarness();
@@ -371,7 +451,7 @@ describe("merge-node paused-abort retry classification (FN-6735)", () => {
     expect((executor as any).activeWorktrees.has(task.id)).toBe(false);
   });
 
-  it.each(["merge-attempt", "merge"] as const)("routes primitive-produced implementation-incomplete resumable failure at node %s without requesting merge", async (nodeId) => {
+  it.each(["merge-attempt", "merge"] as const)("contains primitive-produced implementation-incomplete review failure at node %s without requesting merge", async (nodeId) => {
     const worktreePath = "/tmp/fusion-fn-9166-resumable";
     const { store, task, executor, mergeRequester } = makeHarness({
       steps: [
@@ -391,9 +471,10 @@ describe("merge-node paused-abort retry classification (FN-6735)", () => {
     await invokeGraphFailure(executor, task, nodeId, value);
 
     expect(mergeRequester).not.toHaveBeenCalled();
-    expect(store.moveTask).toHaveBeenCalledWith(task.id, "in-progress", expect.objectContaining({ preserveProgress: true }));
-    expect(logText(store)).toContain(`Workflow graph failed at node '${nodeId}' (implementation-incomplete) with incomplete steps — resuming execution in 'in-progress'`);
-    expect((executor as any).getActiveWorktreePaths(task.id)).toEqual([worktreePath]);
+    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(logText(store)).toContain("automatic recovery cannot move 'in-review' backward");
+    expect(await store.getTask(task.id)).toMatchObject({ column: "in-review", status: "failed", steps: task.steps, worktree: worktreePath });
+    expect((executor as any).activeWorktrees.has(task.id)).toBe(false);
   });
 
   it.each(implementationIncompleteMergeNodes)("fails implementation-incomplete no-proof merge pause abort at node %s without requesting no-op merge", async (nodeId) => {
@@ -451,8 +532,16 @@ describe("merge-node paused-abort retry classification (FN-6735)", () => {
     expect(messages).not.toContain("routed to bounded auto-merge retry after benign pause/resume abort");
   });
 
-  it.each(implementationIncompleteMergeNodes)("requeues resumable implementation-incomplete parsed steps at node %s without requesting merge", async (nodeId) => {
+  /*
+  FNXC:LifecycleContainment 2026-09-09-09:13:
+  Automatic merge recovery never grants review-to-WIP authority. Incomplete review work stays
+  failed in review; the same pending work already in WIP resumes in place, including renamed lanes.
+  */
+  it.each(["in-review", "approval-desk", "in-progress", "implementation-desk"].flatMap((column) =>
+    mergeNodes.map((nodeId) => ({ column, nodeId })),
+  ))("contains implementation-incomplete parsed steps at $nodeId in $column without requesting merge", async ({ nodeId, column }) => {
     const { store, task, executor, mergeRequester } = makeHarness({
+      column,
       steps: [
         { name: "Preflight", status: "done" },
         { name: "Implement", status: "pending" },
@@ -468,15 +557,20 @@ describe("merge-node paused-abort retry classification (FN-6735)", () => {
     await invokeGraphFailure(executor, task, nodeId, "implementation-incomplete");
 
     expect(mergeRequester).not.toHaveBeenCalled();
-    expect(store.updateTask).toHaveBeenCalledWith(task.id, { status: null, error: null }, undefined);
-    expect(store.moveTask).toHaveBeenCalledWith(task.id, "in-progress", expect.objectContaining({
-      preserveProgress: true,
-      moveSource: "engine",
-      recoveryRehome: true,
-    }));
-    expect(store.moveTask).not.toHaveBeenCalledWith(task.id, "done", expect.anything());
+    expect(store.moveTask).not.toHaveBeenCalled();
     const messages = logText(store);
-    expect(messages).toContain(`Workflow graph failed at node '${nodeId}' (implementation-incomplete) with incomplete steps — resuming execution in 'in-progress'`);
+    if (column === "in-progress" || column === "implementation-desk") {
+      expect(store.updateTask).toHaveBeenCalledWith(task.id, { status: null, error: null }, undefined);
+      expect(await store.getTask(task.id)).toMatchObject({ column, status: null, error: null, steps: task.steps });
+      expect(messages).toContain(`with incomplete work — resuming in place in '${column}'`);
+    } else {
+      expect(store.updateTask).toHaveBeenCalledWith(task.id, {
+        status: "failed",
+        error: expect.stringContaining("implementation incomplete with no executable proof to resume"),
+      }, undefined);
+      expect(await store.getTask(task.id)).toMatchObject({ column, status: "failed", steps: task.steps });
+      expect(messages).toContain(`automatic recovery cannot move '${column}' backward`);
+    }
     expect(messages).not.toContain("routed to bounded auto-merge retry after benign pause/resume abort");
   });
 
@@ -519,9 +613,10 @@ describe("merge-node paused-abort retry classification (FN-6735)", () => {
     expect((executor as any).activeWorktrees.has(task.id)).toBe(false);
   });
 
-  it("requeues system-paused implementation-incomplete incomplete steps and keeps active worktree tracking", async () => {
+  it("resumes system-paused implementation-incomplete WIP steps in place and keeps active worktree tracking", async () => {
     const worktreePath = "/tmp/fusion-fn-1165-resumable-wt";
     const { store, task, executor, mergeRequester } = makeHarness({
+      column: "in-progress",
       steps: [
         { name: "Preflight", status: "done" },
         { name: "Implement", status: "pending" },
@@ -540,28 +635,26 @@ describe("merge-node paused-abort retry classification (FN-6735)", () => {
     await invokeGraphFailure(executor, task, "merge", "implementation-incomplete");
 
     expect(mergeRequester).not.toHaveBeenCalled();
-    // System pause park must be cleared so the requeued todo row is dispatchable.
+    // FNXC:LifecycleContainment 2026-09-09-09:13: Clear system pause without moving the WIP row.
     expect(store.updateTask).toHaveBeenCalledWith(
       task.id,
       expect.objectContaining({ paused: false, pausedReason: null }),
       undefined,
     );
-    expect(store.moveTask).toHaveBeenCalledWith(task.id, "in-progress", expect.objectContaining({
-      preserveProgress: true,
-      moveSource: "engine",
-      recoveryRehome: true,
-    }));
+    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(await store.getTask(task.id)).toMatchObject({ column: "in-progress", status: null, error: null, paused: false, steps: task.steps });
     const messages = logText(store);
-    expect(messages).toContain("Workflow graph failed at node 'merge' (implementation-incomplete) with incomplete steps — resuming execution in 'in-progress'");
+    expect(messages).toContain("with incomplete work — resuming in place in 'in-progress'");
     expect(messages).not.toContain("operator action required");
     // Resumable path keeps active registration so the preserved worktree stays counted.
     expect((executor as any).activeWorktrees.has(task.id)).toBe(true);
     expect((executor as any).getActiveWorktreePaths(task.id)).toEqual([worktreePath]);
   });
 
-  it("keeps active worktree tracking on non-paused resumable implementation-incomplete requeue", async () => {
+  it("keeps active worktree tracking on non-paused implementation-incomplete WIP resume", async () => {
     const worktreePath = "/tmp/fusion-fn-1165-unpaused-resumable-wt";
     const { store, task, executor, mergeRequester } = makeHarness({
+      column: "in-progress",
       steps: [
         { name: "Preflight", status: "done" },
         { name: "Implement", status: "pending" },
@@ -578,7 +671,8 @@ describe("merge-node paused-abort retry classification (FN-6735)", () => {
     await invokeGraphFailure(executor, task, "merge-gate", "implementation-incomplete");
 
     expect(mergeRequester).not.toHaveBeenCalled();
-    expect(store.moveTask).toHaveBeenCalledWith(task.id, "in-progress", expect.objectContaining({ preserveProgress: true }));
+    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(await store.getTask(task.id)).toMatchObject({ column: "in-progress", status: null, error: null, steps: task.steps, worktree: worktreePath });
     expect((executor as any).activeWorktrees.has(task.id)).toBe(true);
     expect((executor as any).getActiveWorktreePaths(task.id)).toEqual([worktreePath]);
   });
