@@ -13,7 +13,6 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join, relative } from "node:path";
 import {
   getLegacyWorkflowStepSnapshotImpl,
-  isTaskArchivedImpl,
   isTaskIdPresentInArchivedTasksTableImpl,
 } from "../../task-store/task-id-integrity.js";
 import { getMergeRequestRecordImpl, refreshDatabaseHealthImpl } from "../../task-store/task-store-helpers.js";
@@ -197,13 +196,6 @@ describe("incomplete PG sync-reader stubs (shipped helpers)", () => {
 
   it("isTaskIdPresentInArchivedTasksTableImpl returns false under backend mode without opening SQLite", () => {
     expect(isTaskIdPresentInArchivedTasksTableImpl(backendModeStore(), "FN-9999")).toBe(false);
-  });
-
-  it("isTaskArchivedImpl uses taskCache under backend mode without opening SQLite", () => {
-    expect(isTaskArchivedImpl(backendModeStore(), "FN-9999")).toBe(false);
-    const store = backendModeStore();
-    store.taskCache.set("FN-ARCH", { id: "FN-ARCH", column: "archived" } as never);
-    expect(isTaskArchivedImpl(store, "FN-ARCH")).toBe(true);
   });
 
   it("getMergeRequestRecordImpl returns null under backend mode (sync callers must use Async sibling)", () => {

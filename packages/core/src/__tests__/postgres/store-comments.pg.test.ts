@@ -167,11 +167,11 @@ pgTest("TaskStore addComment steering + refinement (PostgreSQL)", () => {
   */
   it("routes a user comment refinement from Coding (Ideas) to Planning", async () => {
     const store = h.store();
-    await store.updateSettings({ refinementTaskWorkflowId: "builtin:coding-ideas" } as never);
+    await store.updateSettings({ refinementTaskWorkflowId: "builtin:coding-ideas-v2" } as never);
     const source = await store.createTask({
       title: "Ideas comment source",
       description: "Completed Coding (Ideas) work",
-      workflowId: "builtin:coding-ideas",
+      workflowId: "builtin:coding-ideas-v2",
       column: "done",
     } as never);
     const before = await store.listTasks({ slim: true } as never);
@@ -187,7 +187,7 @@ pgTest("TaskStore addComment steering + refinement (PostgreSQL)", () => {
     expect(child.column).toBe("todo");
     expect(child.column).not.toBe("ideas");
     expect(child.dependencies).toEqual([source.id]);
-    expect(await store.getTaskWorkflowSelectionAsync(child.id)).toMatchObject({ workflowId: "builtin:coding-ideas" });
+    expect(await store.getTaskWorkflowSelectionAsync(child.id)).toMatchObject({ workflowId: "builtin:coding-ideas-v2" });
     expect(prompt).toBe(buildRefinementSeedPrompt(child.title ?? child.id, child.description));
 
     const beforeAgentComment = (await store.listTasks({ slim: true } as never)).length;
@@ -332,7 +332,7 @@ pgTest("TaskStore addSteeringComment (PostgreSQL)", () => {
   outer caller gate as `column === "todo" || column === "triage"` on the grounds that it "covers BOTH
   vocabularies".
 
-  It covers both LEGACY vocabularies. It does not cover a RENAMED one. `builtin:coding-ideas` places
+  It covers both LEGACY vocabularies. It does not cover a RENAMED one. `builtin:coding-ideas-v2` places
   its intake in `ideas`, which matches neither literal, so an operator comment on an Ideas card
   awaiting spec approval still invalidates nothing: the approval stands and the task proceeds on the
   spec the operator was correcting. Same defect as the reported one, one workflow over.
@@ -344,7 +344,7 @@ pgTest("TaskStore addSteeringComment (PostgreSQL)", () => {
     const store = h.store();
     const task = await store.createTask({
       description: "ideas awaiting approval",
-      workflowId: "builtin:coding-ideas",
+      workflowId: "builtin:coding-ideas-v2",
     });
     expect(task.column, "Ideas' intake role is `ideas` — matching neither legacy literal").toBe("ideas");
     await store.updateTask(task.id, { status: "awaiting-approval" });

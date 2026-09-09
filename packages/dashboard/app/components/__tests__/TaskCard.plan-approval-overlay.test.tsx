@@ -15,7 +15,7 @@ vi.mock("../../hooks/useBadgeWebSocket", () => ({ useBadgeWebSocket: () => ({ ba
 vi.mock("../../hooks/useBatchBadgeFetch", () => ({ getFreshBatchData: vi.fn(() => null) }));
 vi.mock("../../hooks/useConfirm", () => ({ useConfirm: () => ({ confirm: vi.fn(), confirmWithChoice: vi.fn() }) }));
 
-import { TaskCard } from "../TaskCard";
+import { PlanApprovalNotice, TaskCard } from "../TaskCard";
 import { readAppFile } from "../../test/cssFixture";
 
 function task(overrides: Partial<Task> = {}): Task {
@@ -89,9 +89,62 @@ describe("TaskCard plan approval overlay", () => {
     expect(screen.getByTestId("plan-approval-card-FN-212")).toHaveTextContent("Plan Review did not converge");
   });
 
-  it("disables Approve when no prompt is available", () => {
-    renderCard(task({ prompt: undefined }));
-    expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
+  it("approves a slim board row without a prompt", async () => {
+    approvePlan.mockResolvedValue(task({ status: undefined, column: "todo" }));
+    const addToast = renderCard(task({ prompt: undefined, column: "todo", awaitingApprovalReason: null }));
+    const approve = screen.getByRole("button", { name: "Approve" });
+
+    expect(approve).toBeEnabled();
+    fireEvent.click(approve);
+
+    await waitFor(() => expect(approvePlan).toHaveBeenCalledWith("FN-212", "project-1"));
+    expect(addToast).toHaveBeenCalledWith(expect.any(String), "success");
+  });
+
+  it("approves a slim list row without a prompt", async () => {
+    approvePlan.mockResolvedValue(task({ status: undefined, column: "todo" }));
+    const addToast = vi.fn();
+    render(<PlanApprovalNotice task={task({ prompt: undefined, column: "todo", awaitingApprovalReason: null })} variant="list" projectId="project-1" addToast={addToast} isPlanningLane />);
+    const approve = screen.getByRole("button", { name: "Approve" });
+
+    expect(approve).toBeEnabled();
+    fireEvent.click(approve);
+
+    await waitFor(() => expect(approvePlan).toHaveBeenCalledWith("FN-212", "project-1"));
+    expect(addToast).toHaveBeenCalledWith(expect.any(String), "success");
+  });
+
+  it("approves when the full-task prompt is empty", async () => {
+    approvePlan.mockResolvedValue(task({ status: undefined, column: "todo" }));
+    const addToast = renderCard(task({ prompt: "", column: "todo", awaitingApprovalReason: null }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+
+    await waitFor(() => expect(approvePlan).toHaveBeenCalledWith("FN-212", "project-1"));
+    expect(addToast).toHaveBeenCalledWith(expect.any(String), "success");
+  });
+
+  it("returns a slim-row approval control to enabled after a server refusal", async () => {
+    const message = "Cannot approve plan: PROMPT.md must be readable to create the immutable spec lock";
+    approvePlan.mockRejectedValue(new Error(message));
+    const addToast = renderCard(task({ prompt: undefined, column: "todo", awaitingApprovalReason: null }));
+    const approve = screen.getByRole("button", { name: "Approve" });
+
+    fireEvent.click(approve);
+
+    await waitFor(() => expect(addToast).toHaveBeenCalledWith(expect.stringContaining(message), "error"));
+    expect(screen.getByRole("button", { name: "Approve" })).toBeEnabled();
+  });
+
+  it("approves a replan-cap slim row while retaining its distinct headline", async () => {
+    approvePlan.mockResolvedValue(task({ status: undefined, column: "todo" }));
+    const addToast = renderCard(task({ prompt: undefined, column: "todo", awaitingApprovalReason: "plan-review-replan-cap" }));
+
+    expect(screen.getByTestId("plan-approval-card-FN-212")).toHaveTextContent("Plan Review did not converge");
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+
+    await waitFor(() => expect(approvePlan).toHaveBeenCalledWith("FN-212", "project-1"));
+    expect(addToast).toHaveBeenCalledWith(expect.any(String), "success");
   });
 
   it("lets the external Blocked overlay win", () => {

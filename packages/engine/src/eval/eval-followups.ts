@@ -12,18 +12,13 @@ import type { resolveWorkflowIrForTask } from "@fusion/core";
 
 /*
 FNXC:Evals 2026-07-26-00:00:
-Eval follow-ups are a real product feature, but they used to borrow the shared automated-recovery follow-up engine (`createAutomatedFollowup` in verification-followup-dedup.ts) purely for its dedup pass. That engine was deleted along with the recovery follow-up cards it existed to file, so the one dedup rule this feature actually needs is inlined here: never create a second card for the same `suggestionId` under the same parent while one is still open. Closed columns (done/archived) are excluded so a re-run after the follow-up is finished can legitimately file a fresh card.
+Eval follow-ups inline one dedup rule: never create a second card for the same `suggestionId` under the same parent while one is still open. Workflow Complete columns are excluded so a later evaluation can legitimately file a fresh follow-up.
 */
 /*
 FNXC:WorkflowResolvedColumns 2026-07-30-19:10 (the dedup blocked new follow-ups forever on a renamed board):
-The comment above states the intent exactly — "closed columns (done/archived) are excluded so a re-run
-after the follow-up is finished can legitimately file a fresh card". Keyed on the literal pair, a finished
-follow-up in a RENAMED complete lane still read as OPEN, so the dedup matched it forever and the fresh card
-was never filed. The feature silently stopped working on any board that renamed its terminals.
-
-Resolved per candidate through the shared `resolveTerminalColumnsFor`, which unions the task's real
-terminals with the legacy pair — see its note: a missing custom workflow silently yields the BUILT-IN IR,
-so the union is what keeps a renamed board's own terminal recognised.
+A finished follow-up in a renamed Complete lane must not read as open and suppress future work.
+Resolve each candidate through `resolveTerminalColumnsFor`; degraded metadata uses the built-in `done`
+fallback.
 */
 const GENERIC_TITLE_PATTERNS = [/^follow\s*-?up$/i, /^todo$/i, /^fix\s+issue$/i, /^improve\s+task$/i, /^investigate$/i];
 

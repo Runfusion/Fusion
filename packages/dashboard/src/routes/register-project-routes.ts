@@ -965,7 +965,7 @@ export const registerProjectRoutes: ApiRouteRegistrar = (ctx) => {
             t.id,
             lanes === undefined
               ? isTerminalColumnRole(undefined, t.column)
-              : t.column === lanes.complete || t.column === lanes.archived,
+              : t.column === lanes.complete,
           );
         }
         const activeTaskCount = tasks.filter((t) => !terminalByTaskId.get(t.id)).length;
@@ -985,9 +985,7 @@ export const registerProjectRoutes: ApiRouteRegistrar = (ctx) => {
         than per task: this iterates every task in the project and a per-task resolve would make a
         health read scale with board size.
 
-        `complete` and `archived` both count as landed. The legacy pair remains the fallback when the
-        IR cannot be read or resolves empty (v1-upgraded workflows carry `traits: []`, so empty means
-        UNEXPRESSED rather than absent).
+        Every Complete column counts as landed. Done remains the fallback when the IR cannot be read or resolves empty, as v1-upgraded workflows carry no traits.
         */
         const healthIrCache = new Map<string, WorkflowIr>();
         let totalTasksCompleted = 0;
@@ -995,10 +993,10 @@ export const registerProjectRoutes: ApiRouteRegistrar = (ctx) => {
           let landed: Set<string>;
           try {
             const ir = await resolveWorkflowIrForTask(projectStore, t.id, healthIrCache);
-            const lanes = [...columnsWithFlag(ir, "complete"), ...columnsWithFlag(ir, "archived")];
-            landed = new Set(lanes.length > 0 ? lanes : ["done", "archived"]);
+            const lanes = columnsWithFlag(ir, "complete");
+            landed = new Set(lanes.length > 0 ? lanes : ["done"]);
           } catch {
-            landed = new Set(["done", "archived"]);
+            landed = new Set(["done"]);
           }
           if (landed.has(t.column)) totalTasksCompleted += 1;
         }

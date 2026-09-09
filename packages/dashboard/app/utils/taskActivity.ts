@@ -1,6 +1,6 @@
 import type { Task } from "@fusion/core";
 import { enrichRunningAgentTaskShapeFromFlags, isRunningAgentTask } from "../../../core/src/agents/live-agent-count";
-import { isArchivedColumnRole, isCompleteColumnRole } from "./columnRoles";
+import { isCompleteColumnRole } from "./columnRoles";
 
 /** The shared status vocabulary for active task phases and lock/model policy. */
 export const ACTIVE_STATUSES = new Set([
@@ -34,7 +34,7 @@ export interface TaskAgentActivityOptions {
   Widened with the review/merge roles because the positive arm now delegates to the shared
   live-agent predicate, which resolves merge statuses through mergeOrchestration/mergeBlocker.
   */
-  columnFlags?: { intake?: boolean; hold?: boolean; complete?: boolean; archived?: boolean; countsTowardWip?: boolean; mergeOrchestration?: boolean; mergeBlocker?: boolean };
+  columnFlags?: { intake?: boolean; hold?: boolean; complete?: boolean; countsTowardWip?: boolean; mergeOrchestration?: boolean; mergeBlocker?: boolean };
 }
 
 /*
@@ -53,7 +53,7 @@ project admission, so card glow (and the header counts derived from it) is a str
 slot-holding population. The suppression gates above it only ever subtract (queued/stuck/paused/failed
 cards can still hold a slot briefly but must not glow), preserving the "never more" direction.
 
-Stuck-killed and both terminal columns are never active, even when stale execution status or workflow-step data remains on the task.
+Stuck-killed and Complete columns are never active, even when stale execution status or workflow-step data remains on the task.
 
 Model-resolution and routing locks intentionally import only ACTIVE_STATUSES and retain their status-or-in-progress policy; using this rendering predicate there would change lock behavior during status-null workflow steps.
 */
@@ -75,7 +75,6 @@ export function isTaskAgentActive(
     status === "awaiting-approval" ||
     status === "awaiting-user-input" ||
     isCompleteColumnRole(options.columnFlags, task.column) ||
-    isArchivedColumnRole(options.columnFlags, task.column) ||
     status === "done"
   ) {
     return false;

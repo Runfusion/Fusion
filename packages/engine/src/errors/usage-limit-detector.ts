@@ -275,13 +275,10 @@ export class UsageLimitPauser {
     /*
     DELIBERATE-LITERAL — a cheap SUPERSET prefilter, kept literal on purpose (#2672 review).
 
-    Its only job is to avoid resolving the whole board. Keeping literals is safe in the direction
-    that matters: a renamed board declares no `done`/`archived` id, so nothing is wrongly EXCLUDED
-    and every plausible card is still resolved. Converting it would reintroduce exactly the
-    whole-board resolution that review removed.
+    Its only job is to avoid resolving the whole board. Keeping the Done literal is safe because a renamed board declares no Done id, so every plausible card is still resolved.
     */
     const laneCandidates = tasks.filter((task) =>
-      task.paused !== true && task.column !== "done" && task.column !== "archived");
+      task.paused !== true && task.column !== "done");
     await Promise.all(laneCandidates.map(async (task) => {
       const columns = await resolveTaskLifecycleColumns(this.store, task.id, irCache).catch(() => undefined);
       activeLanesByTask.set(task.id, columns ? { wip: columns.wip, review: columns.review } : undefined);
@@ -323,7 +320,6 @@ export class UsageLimitPauser {
     */
     const affectedTasks = tasks.filter((task) =>
       task.column !== "done"
-      && task.column !== "archived"
       && task.paused !== true
       && providerId !== "unknown"
       && this.taskUsesProvider(

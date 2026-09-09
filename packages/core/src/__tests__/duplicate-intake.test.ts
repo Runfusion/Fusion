@@ -40,10 +40,10 @@ describe("findSameAgentDuplicates", () => {
     expect(matches).toEqual([]);
   });
 
-  it("filters archived candidates via duplicate matcher defaults", () => {
+  it("filters completed candidates via duplicate matcher defaults", () => {
     const matches = findSameAgentDuplicates(
       { title: "Fix typecheck", description: "typecheck error" },
-      [{ id: "FN-1", title: "Fix typecheck", description: "typecheck error", column: "archived", createdAt: nowMs - 60 * 1000, sourceAgentId: "agent-x" }],
+      [{ id: "FN-1", title: "Fix typecheck", description: "typecheck error", column: "done", createdAt: nowMs - 60 * 1000, sourceAgentId: "agent-x" }],
       { nowMs, sourceAgentId: "agent-x" },
     );
     expect(matches).toEqual([]);
@@ -292,7 +292,7 @@ describe("flagSameAgentDuplicate (FN-7658)", () => {
     expect(recordActivity).toHaveBeenCalledTimes(1);
     const activity = recordActivity.mock.calls[0]?.[0];
     expect(activity).toMatchObject({
-      type: "task:auto-archived-duplicate",
+      type: "task:near-duplicate-flagged",
       taskId: "FN-2",
       metadata: { siblingTaskIds: ["FN-1"], scores: { "FN-1": 0.9 }, source: "same-agent-flagged" },
     });

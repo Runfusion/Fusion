@@ -62,9 +62,9 @@ describe("reconcileMissionFeatureState", () => {
     await expect(reconcileMissionFeatureState(taskStore, { id: "FN-1", column: "in-progress" } as never, { id: "F-1", status: "defined" } as never)).resolves.toMatchObject({ kind: "update", status: "in-progress" });
   });
 
-  it("keeps archived and failed task outcomes as idempotent non-completion", async () => {
+  it("keeps unclassified and failed task outcomes as idempotent non-completion", async () => {
     const taskStore = { getTask: async () => undefined } as never;
-    await expect(reconcileMissionFeatureState(taskStore, { id: "FN-1", column: "archived" } as never, { id: "F-1", status: "in-progress" } as never)).resolves.toEqual({ kind: "noop", alignment: "unavailable" });
+    await expect(reconcileMissionFeatureState(taskStore, { id: "FN-1", column: "unexpected" } as never, { id: "F-1", status: "in-progress" } as never)).resolves.toEqual({ kind: "noop", alignment: "unavailable" });
     await expect(reconcileMissionFeatureState(taskStore, { id: "FN-1", column: "todo", status: "failed", error: "BLOCKED" } as never, { id: "F-1", status: "triaged" } as never)).resolves.toMatchObject({ kind: "failure" });
   });
 });

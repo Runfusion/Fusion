@@ -33,6 +33,7 @@ function createMockTaskStore(overrides: Partial<TaskStore> = {}): TaskStore {
     findRecentTasksByContentFingerprint: vi.fn().mockResolvedValue([]),
     updateTask: vi.fn(),
     moveTask: vi.fn(),
+    deleteTask: vi.fn().mockImplementation(async (id: string) => ({ id, deletedAt: new Date().toISOString() })),
     createTask: vi.fn().mockResolvedValue({
       id: "FN-001",
       description: "",
@@ -626,7 +627,7 @@ describe("createDelegateTaskTool", () => {
       getMission: vi.fn().mockResolvedValue({ id: "M-001", status: "active" }),
       claimDefinedFeatureTaskInTransaction: vi.fn().mockResolvedValue({ id: "F-001", taskId: "FN-001", status: "triaged" }),
       claimDefinedFeatureTask: vi.fn().mockResolvedValue({ id: "F-001", taskId: "FN-001", status: "triaged" }),
-      archiveDefinedFeatureBootstrapDuplicate: vi.fn().mockResolvedValue(undefined),
+      deleteDefinedFeatureBootstrapDuplicate: vi.fn().mockResolvedValue(undefined),
     };
     const store = createMockTaskStore({
       getMissionStore: vi.fn().mockReturnValue(missionStore),
@@ -654,7 +655,7 @@ describe("createDelegateTaskTool", () => {
       getMission: vi.fn().mockResolvedValue({ id: "M-001", status: "active" }),
       claimDefinedFeatureTaskInTransaction: vi.fn().mockResolvedValue({ id: "F-001", taskId: "FN-new", status: "triaged" }),
       claimDefinedFeatureTask: vi.fn(),
-      archiveDefinedFeatureBootstrapDuplicate: vi.fn().mockResolvedValue(undefined),
+      deleteDefinedFeatureBootstrapDuplicate: vi.fn().mockResolvedValue(undefined),
     };
     const created = { id: "FN-new", description: "Bootstrap feature", dependencies: [], column: "triage" as const, steps: [], currentStep: 0, log: [], createdAt: "2026-01-02T00:00:00.000Z", updatedAt: "2026-01-02T00:00:00.000Z" } as Task;
     const older = { ...created, id: "FN-old", createdAt: "2026-01-01T00:00:00.000Z" };
@@ -675,9 +676,9 @@ describe("createDelegateTaskTool", () => {
     expect(result).not.toMatchObject({ isError: true });
     expect((result.details as { taskId: string }).taskId).toBe("FN-new");
     expect(missionStore.claimDefinedFeatureTaskInTransaction).toHaveBeenCalledOnce();
-    /* FNXC:MissionAdmission 2026-07-23-19:00: a task that atomically claimed feature.taskId must never be archived by post-create duplicate reconciliation. */
+    /* FNXC:MissionAdmission 2026-07-23-19:00: a task that atomically claimed feature.taskId must never be deleted by post-create duplicate reconciliation. */
     expect(store.findRecentTasksByContentFingerprint).toHaveBeenCalledTimes(2);
-    expect(missionStore.archiveDefinedFeatureBootstrapDuplicate).toHaveBeenCalledWith({
+    expect(missionStore.deleteDefinedFeatureBootstrapDuplicate).toHaveBeenCalledWith({
       featureId: "F-001", taskId: "FN-new", duplicateTaskId: "FN-old",
     });
     expect(store.moveTask).not.toHaveBeenCalledWith("FN-new", "archived");
@@ -691,7 +692,7 @@ describe("createDelegateTaskTool", () => {
       getMission: vi.fn().mockResolvedValue({ id: "M-001", status: "active" }),
       claimDefinedFeatureTaskInTransaction: vi.fn().mockRejectedValue(new Error("Feature F-001 is already linked to task FN-OTHER")),
       claimDefinedFeatureTask: vi.fn(),
-      archiveDefinedFeatureBootstrapDuplicate: vi.fn().mockResolvedValue(undefined),
+      deleteDefinedFeatureBootstrapDuplicate: vi.fn().mockResolvedValue(undefined),
     };
     const store = createMockTaskStore({
       getMissionStore: vi.fn().mockReturnValue(missionStore),
@@ -730,60 +731,6 @@ describe("createDelegateTaskTool", () => {
     expect(validate).toHaveBeenCalledWith(canonical);
     expect(store.createTask).not.toHaveBeenCalled();
   });
-
-  /*
-  FNXC:WorkflowResolvedColumns 2026-07-30-10:35 (batch-engine tail):
-  DIFFERENTIAL over the archive lane's id. The invariant below was asserted only against the legacy
-  `archived` id, so it passed for a guard comparing `task.column === "archived"`.
-
-  NOT the query-filter class, which is why this one is load-bearing: the preflight's own query passes
-  `includeArchived: true`, so this predicate is the ONLY archived guard on the path. On a renamed archive
-  lane the archived sibling became the bootstrap canonical and `claimDefinedFeatureTask` then rejects the
-  non-live row — so a valid first task fails to be created at all.
-
-  The renamed IR is built HERE rather than in `_workflow-vocabulary-fixture.ts`: that shared fixture
-  declares no `archived`-trait column, and widening it would change the subject of every suite already
-  built on it.
-
-  REVERT CHECK, measured: with `task.column === "archived"` restored, the RENAMED case fails — `validate`
-  is called with the archived sibling and `createTask` is never called. The DEFAULT case passes both ways.
-  */
-  for (const [label, archivedColumn] of [["DEFAULT", "archived"], ["RENAMED", "boxed"]] as const) {
-    it(`does not select an archived same-agent task as a defined-feature bootstrap canonical (${label} archive lane: ${archivedColumn})`, async () => {
-      const archived = {
-        id: "FN-archived", title: "Bootstrap feature", description: "Bootstrap the hand-authored feature",
-        sourceAgentId: "agent-001", dependencies: [], column: archivedColumn, steps: [], currentStep: 0,
-        log: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
-      } as Task;
-      const base = lifecycleIr(RENAMED_VOCAB, "agent-tools-archive");
-      const ir = { ...base, columns: [...base.columns, { id: "boxed", name: "Boxed", traits: [{ trait: "archived" as const }] }] };
-      const store = createMockTaskStore({
-        listTasks: vi.fn().mockResolvedValue([archived]),
-        ...(label === "RENAMED"
-          ? {
-              getTaskWorkflowSelectionAsync: (async () => ({ workflowId: "agent-tools-archive", stepIds: [] })) as never,
-              getTaskWorkflowSelection: (() => ({ workflowId: "agent-tools-archive", stepIds: [] })) as never,
-              getWorkflowDefinition: (async (id: string) => (id === "agent-tools-archive" ? { ir } : undefined)) as never,
-            }
-          : {}),
-      });
-      const validate = vi.fn().mockResolvedValue(undefined);
-
-      const result = await createAgentTask(store, {
-        title: "Bootstrap feature",
-        description: "Bootstrap the hand-authored feature",
-        source: { sourceType: "api", sourceAgentId: "agent-001" },
-        preflightSameAgentDuplicate: true,
-        validateDuplicateCanonical: validate,
-      } as TaskCreateInput & { preflightSameAgentDuplicate: boolean; validateDuplicateCanonical: (task: Task) => Promise<void> });
-
-      /* FNXC:MissionAdmission 2026-07-23-21:10: archived tasks are not live bootstrap canonicals and must not block a valid first task. */
-      expect(result.wasDuplicate).toBe(false);
-      expect(validate).not.toHaveBeenCalled();
-      expect(store.createTask).toHaveBeenCalledOnce();
-    });
-  }
-
   for (const [label, completeColumn] of [["DEFAULT", "done"], ["RENAMED", RENAMED_VOCAB.complete]] as const) {
     it(`does not select a completed same-agent task as a defined-feature bootstrap canonical (${label} complete lane: ${completeColumn})`, async () => {
       const completed = {
@@ -910,7 +857,7 @@ describe("createDelegateTaskTool", () => {
     expect(result.task).toBe(moved);
     expect(taskStore.updateTask).toHaveBeenCalledWith("FN-old", { assignedAgentId: "agent-002" });
     expect(taskStore.moveTask).toHaveBeenCalledWith("FN-old", "todo");
-    /* FNXC:MissionAdmission 2026-07-23-17:20: post-create archival reconciliation must validate its returned canonical before duplicate success. */
+    /* FNXC:MissionAdmission 2026-07-23-17:20: post-create duplicate reconciliation must validate its returned canonical before duplicate success. */
     expect(validateDuplicateCanonical).toHaveBeenCalledWith(moved);
   });
 

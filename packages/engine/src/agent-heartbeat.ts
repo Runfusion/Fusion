@@ -705,9 +705,9 @@ async function getHeartbeatMemorySettings(taskStore: TaskStore): Promise<Setting
  */
 /**
  * FNXC:WorkflowLifecycleColumns 2026-08-01-07:20 (fleet — heartbeat terminal checks):
- * Is this task finished — resting in its OWN board's complete or archived lane?
+ * Is this task finished — resting in its own board's Complete lane?
  *
- * Both heartbeat call sites asked with `column === "done" || "archived"`. Neither is cosmetic:
+ * Both heartbeat call sites once used hardcoded terminal ids. Neither is cosmetic:
  *
  *   - the linked-task check clears an agent's assignment once its card is finished. Keyed on the
  *     literals, an agent on a renamed board stayed bound to a completed card indefinitely, so every
@@ -716,7 +716,7 @@ async function getHeartbeatMemorySettings(taskStore: TaskStore): Promise<Setting
  *     A card resting in a renamed complete lane read as non-terminal, so an acquisition failure
  *     could stamp `status: "failed"` and an error onto work that was already done.
  *
- * Fail-soft to the legacy pair: an unresolvable workflow keeps exactly today's answer rather than
+ * Fail-soft to Done: an unresolvable workflow keeps the built-in answer rather than
  * treating every card as unfinished, which is the expensive direction here (the second site WRITES).
  */
 export async function isTaskInTerminalLane(
@@ -728,8 +728,8 @@ export async function isTaskInTerminalLane(
   /* DELIBERATE-LITERAL — the no-metadata fallback. Deleting it makes an unresolvable workflow read
      as NEVER terminal, which is the direction that writes: the second call site would then run its
      failure bookkeeping against finished work. Strictly worse than the legacy answer. */
-  if (!columns) return task.column === "done" || task.column === "archived";
-  return task.column === columns.complete || task.column === columns.archived;
+  if (!columns) return task.column === "done";
+  return task.column === columns.complete;
 }
 
 export class HeartbeatMonitor {
@@ -1929,7 +1929,6 @@ export class HeartbeatMonitor {
     if (this.taskStore && cascadeToTasks) {
       const pausedTasks = await this.taskStore.getTasksByAssignedAgent(agentId, {
         pausedOnly: true,
-        excludeArchived: true,
       });
       const toUnpause = pausedTasks.filter((task) => task.pausedByAgentId === agentId && !task.userPaused);
       const results = await Promise.allSettled(toUnpause.map((task) => this.taskStore!.pauseTask(task.id, false)));
@@ -3336,25 +3335,21 @@ export class HeartbeatMonitor {
           let multiAssignWakeDeltaLines: string[] = [];
           if (!isAgentEphemeral && this.taskStore && typeof this.taskStore.getTasksByAssignedAgent === "function") {
             try {
-              const assignedOpen = await this.taskStore.getTasksByAssignedAgent(agentId, { excludeArchived: true });
+              const assignedOpen = await this.taskStore.getTasksByAssignedAgent(agentId);
               /*
               FNXC:WorkflowLifecycleColumns 2026-07-30-13:40:
               Pass the resolved lane flags so the ranking's terminal filter is not the literal pair.
 
-              `rankAssignedTasksForWakeDelta` gained `flagsByColumnId` and this, its only production
-              caller, passed nothing — so the conversion was inert here. Auditing it also surfaced the
-              larger defect one level down in `getTasksByAssignedAgent`, whose `excludeArchived`
-              filtered on the literal id and therefore returned archived cards as open assigned work.
-              Both halves are needed: the store read stops handing back archived rows, and this stops
-              the ranking counting a finished card as open.
+              `rankAssignedTasksForWakeDelta` uses `flagsByColumnId` to keep workflow Complete rows out
+              of open assignment inventory. `getTasksByAssignedAgent` already reads the live task set,
+              so soft-deleted and historical-sentinel rows never enter this ranking.
               */
-              const wakeLaneFlags = new Map<string, { complete?: boolean; archived?: boolean }>();
+              const wakeLaneFlags = new Map<string, { complete?: boolean }>();
               const wakeIrCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
               for (const assignedTask of assignedOpen) {
                 const ir = await resolveWorkflowIrForTask(this.taskStore, assignedTask.id, wakeIrCache).catch(() => undefined);
                 if (!ir) continue;
                 for (const id of columnsWithFlag(ir, "complete")) wakeLaneFlags.set(id, { ...wakeLaneFlags.get(id), complete: true });
-                for (const id of columnsWithFlag(ir, "archived")) wakeLaneFlags.set(id, { ...wakeLaneFlags.get(id), archived: true });
               }
               const ranked = rankAssignedTasksForWakeDelta(assignedOpen, {
                 agentId,

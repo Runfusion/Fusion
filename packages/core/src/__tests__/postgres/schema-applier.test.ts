@@ -114,6 +114,8 @@ import {
   TASK_EXTERNAL_BLOCK_VERSION,
   TASK_REQUIRE_PLAN_APPROVAL_VERSION,
   PATCHNODE_ENTRIES_VERSION,
+  TASK_PLANNING_FAILURE_VERSION,
+  CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION,
   WORKSPACE_WORKTREE_DIR_SEGMENT_VERSION,
   WORKSPACE_WORKTREE_DIR_SEGMENT_UNIQUE_VERSION,
 } from "../../postgres/schema-applier.js";
@@ -169,10 +171,13 @@ describe("schema-applier: immutable migration identities", () => {
     expect(TASK_EXTERNAL_BLOCK_VERSION).toBe("0069");
     expect(TASK_REQUIRE_PLAN_APPROVAL_VERSION).toBe("0070");
     expect(PATCHNODE_ENTRIES_VERSION).toBe("0071");
-    expect(WORKSPACE_WORKTREE_DIR_SEGMENT_VERSION).toBe("0072");
-    expect(WORKSPACE_WORKTREE_DIR_SEGMENT_UNIQUE_VERSION).toBe("0073");
+    expect(TASK_PLANNING_FAILURE_VERSION).toBe("0072");
+    expect(CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION).toBe("0073");
+    /* FNXC:WorkspaceWorktree 2026-09-09-16:30: renumbered 0072->0074 / 0073->0075 because origin/main released 0072/0073 while this branch was open. */
+    expect(WORKSPACE_WORKTREE_DIR_SEGMENT_VERSION).toBe("0074");
+    expect(WORKSPACE_WORKTREE_DIR_SEGMENT_UNIQUE_VERSION).toBe("0075");
     expect(Number(SCHEMA_BASELINE_VERSION)).toBeGreaterThanOrEqual(Number(WORKSPACE_WORKTREE_DIR_SEGMENT_UNIQUE_VERSION));
-    expect(SCHEMA_BASELINE_VERSION).toBe("0073");
+    expect(SCHEMA_BASELINE_VERSION).toBe("0075");
   });
 
   it("keeps monitor and approval isolation assigned to version 0003", () => {
@@ -932,6 +937,26 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     `)) as unknown as Array<{ column_name: string }>;
     expect(columns).toEqual([{ column_name: "session_advisor_enabled" }]);
     expect(await getAppliedMigrations(ctx.db)).toContain(SESSION_ADVISOR_ENABLED_SCHEMA_VERSION);
+  });
+
+  it("repairs the mixed-case chat-message recency index and stays idempotent", async () => {
+    ctx = await setupFreshDb();
+    await applySchemaBaseline(ctx.db, { pluginHooks: [] });
+    const before = await ctx.db.execute(sql`
+      SELECT indexname FROM pg_indexes
+      WHERE schemaname = 'project' AND tablename = 'chat_messages'
+        AND indexname = 'idxChatMessagesSessionCreatedAtId'
+    `);
+    expect(before).toHaveLength(1);
+    await ctx.db.execute(sql.raw('DROP INDEX project."idxChatMessagesSessionCreatedAtId"'));
+    expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(true);
+    const restored = await ctx.db.execute(sql`
+      SELECT indexname FROM pg_indexes
+      WHERE schemaname = 'project' AND tablename = 'chat_messages'
+        AND indexname = 'idxChatMessagesSessionCreatedAtId'
+    `);
+    expect(restored).toHaveLength(1);
+    expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
   });
 
   it("repairs a recorded 0070 migration when require_plan_approval is missing", async () => {
@@ -1895,6 +1920,9 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_STEP_REPORTS_VERSION,
       TASK_EXTERNAL_BLOCK_VERSION,
       TASK_REQUIRE_PLAN_APPROVAL_VERSION,
+      PATCHNODE_ENTRIES_VERSION,
+      TASK_PLANNING_FAILURE_VERSION,
+      CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION,
     ]);
     expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
   });
@@ -1991,6 +2019,9 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_STEP_REPORTS_VERSION,
       TASK_EXTERNAL_BLOCK_VERSION,
       TASK_REQUIRE_PLAN_APPROVAL_VERSION,
+      PATCHNODE_ENTRIES_VERSION,
+      TASK_PLANNING_FAILURE_VERSION,
+      CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION,
     ]);
   });
 
@@ -2220,6 +2251,9 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_STEP_REPORTS_VERSION,
       TASK_EXTERNAL_BLOCK_VERSION,
       TASK_REQUIRE_PLAN_APPROVAL_VERSION,
+      PATCHNODE_ENTRIES_VERSION,
+      TASK_PLANNING_FAILURE_VERSION,
+      CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION,
     ]);
   });
 
@@ -2330,6 +2364,9 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_STEP_REPORTS_VERSION,
       TASK_EXTERNAL_BLOCK_VERSION,
       TASK_REQUIRE_PLAN_APPROVAL_VERSION,
+      PATCHNODE_ENTRIES_VERSION,
+      TASK_PLANNING_FAILURE_VERSION,
+      CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION,
     ]);
   });
 
@@ -2440,6 +2477,9 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_STEP_REPORTS_VERSION,
       TASK_EXTERNAL_BLOCK_VERSION,
       TASK_REQUIRE_PLAN_APPROVAL_VERSION,
+      PATCHNODE_ENTRIES_VERSION,
+      TASK_PLANNING_FAILURE_VERSION,
+      CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION,
     ]);
   });
 });

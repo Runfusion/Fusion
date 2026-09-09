@@ -5,6 +5,11 @@
       "file": "packages/engine/src/__tests__/reliability-interactions/merge-node-paused-abort-retryable.test.ts",
       "reason": "SECOND sighting of the sequence-only reliability failure recorded in docs/solutions/test-failures/suite-only-flakes-observed-register.md entry 14. FN-249's selected engine-reliability file run failed 13 sibling recovery assertions after prior cases, while the exact benign merge-abort subject passed immediately in isolation. The user-cancellation path is not enabled by this fixture; no timeout, retry, or assertion was changed. Quarantined under AGENTS.md's mandatory deletion ratchet until a root-cause repair proves the file's recovery coverage can be rescued.",
       "quarantinedAt": "2026-08-29"
+    },
+    {
+      "file": "packages/engine/src/__tests__/spec-drift-reconciler.test.ts",
+      "reason": "SECOND sighting of the timer-driven exponential-backoff failure recorded in docs/solutions/test-failures/suite-only-flakes-observed-register.md. FN-9272's selected engine test command observed three persistence attempts after the second 1-second fake-timer advance, while the test expects two; this parser-only change does not touch the reconciler. Quarantined under AGENTS.md's mandatory deletion ratchet without weakening the timing assertion.",
+      "quarantinedAt": "2026-09-09"
     }
   ]
 }

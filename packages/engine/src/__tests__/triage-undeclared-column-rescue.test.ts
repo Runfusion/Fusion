@@ -53,7 +53,6 @@ function mergedDefaultIr(): WorkflowIr {
       { id: "in-progress", name: "in-progress", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
       { id: "in-review", name: "in-review", traits: [{ trait: "review" }] },
       { id: "done", name: "done", traits: [{ trait: "complete" }] },
-      { id: "archived", name: "archived", traits: [{ trait: "archived" }] },
     ],
   } as unknown as WorkflowIr;
 }

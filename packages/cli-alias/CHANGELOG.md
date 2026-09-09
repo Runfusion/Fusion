@@ -1,5 +1,77 @@
 # runfusion.ai
 
+## 0.78.0-beta.4
+
+### Patch Changes
+
+- Updated dependencies [0190f23]
+- Updated dependencies [094f313]
+- Updated dependencies [20262e7]
+- Updated dependencies [1c7260e]
+- Updated dependencies [0e466ad]
+- Updated dependencies [a9db52e]
+- Updated dependencies [33b2a89]
+- Updated dependencies [dd808ed]
+- Updated dependencies [5257eec]
+- Updated dependencies [540b0b6]
+- Updated dependencies [b064573]
+- Updated dependencies [9d198f0]
+- Updated dependencies [75c32ee]
+- Updated dependencies [1f52dc0]
+- Updated dependencies [d3204c1]
+  - @runfusion/fusion@0.78.0-beta.4
+
+## 0.78.0-beta.3
+
+### Patch Changes
+
+- Updated dependencies [a8d1e93]
+- Updated dependencies [075ef85]
+- Updated dependencies [5f717b4]
+- Updated dependencies [6b909aa]
+- Updated dependencies [c57562e]
+- Updated dependencies [d9986ec]
+- Updated dependencies [8d1f1f7]
+- Updated dependencies [48fefd0]
+- Updated dependencies [12d270b]
+- Updated dependencies [839ae75]
+- Updated dependencies [86f99ad]
+- Updated dependencies [8b3b974]
+- Updated dependencies [84e4243]
+- Updated dependencies [6a019f6]
+- Updated dependencies [9584eb6]
+- Updated dependencies [1ae91da]
+- Updated dependencies [d11d360]
+- Updated dependencies [f19209c]
+- Updated dependencies [de93935]
+  - @runfusion/fusion@0.78.0-beta.3
+
+## 0.78.0-beta.2
+
+### Patch Changes
+
+- Updated dependencies [4ad7628]
+- Updated dependencies [4ad7628]
+- Updated dependencies [d18d8c7]
+- Updated dependencies [4be72ba]
+- Updated dependencies [f8a22f8]
+- Updated dependencies [5f6363a]
+- Updated dependencies [2a80367]
+- Updated dependencies [8803ecf]
+- Updated dependencies [b7ee7a6]
+- Updated dependencies [6165976]
+- Updated dependencies [a5bf400]
+- Updated dependencies [2adc171]
+- Updated dependencies [47afb86]
+- Updated dependencies [b275efd]
+- Updated dependencies [57f79c4]
+- Updated dependencies [404f3f2]
+- Updated dependencies [c494971]
+- Updated dependencies [001d26b]
+- Updated dependencies [ad135ac]
+- Updated dependencies [11e4dbc]
+  - @runfusion/fusion@0.78.0-beta.2
+
 ## 0.78.0-beta.1
 
 ### Patch Changes

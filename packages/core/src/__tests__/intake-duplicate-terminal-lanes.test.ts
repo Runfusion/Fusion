@@ -5,18 +5,13 @@ THE INVARIANT: the intake duplicate guard never reuses a FINISHED sibling as the
 
 THE FIFTH AND LAST inert conversion from the #2787 audit — and the one with the worst blast radius.
 `findSameAgentDuplicates` gained `columnFlagsByColumnId` and no caller passed it. On the two
-agent-tools paths the cost of a bad match is a bad suggestion. On THIS path a match either
-auto-archives the newly created task or, on the tombstoned branch, **soft-deletes it and removes its
-directory**. So on a renamed board a new task could be archived or deleted as a duplicate of work
-that had already finished.
+agent-tools paths the cost of a bad match is a bad suggestion. On THIS path a match soft-deletes the
+newly created duplicate and removes its directory. So on a renamed board a new task could be deleted
+as a duplicate of work that had already finished.
 
 Four of the five audited conversions turned out to have their real defect in the CALLER rather than
 in the parameter; this is the fifth, and it holds. The generalisation stands: an optional parameter
 no production caller fills is a marker pointing at an unexamined caller.
-
-SECOND FIX IN THE SAME FUNCTION: the auto-archive branch mirrored the result into the in-memory row
-with `task.column = "archived"`. On a renamed board that returned an object claiming a column its
-workflow does not declare — the same shape as the `"triage"` write fixed earlier in this program.
 
 WHAT THE BEHAVIOURAL CASES DO AND DO NOT COVER, measured rather than assumed. They drive
 `findSameAgentDuplicates` directly, so removing the WIRING in `task-creation.ts` leaves them green —
@@ -64,7 +59,7 @@ const run = (cands: ReturnType<typeof sibling>[], flags?: ReadonlyMap<string, Co
 
 describe("intake dedup excludes finished siblings on a renamed board", () => {
   it("does not match a sibling in a RENAMED complete lane", async () => {
-    // Pre-fix this matched, and the intake path then archived or soft-deleted the NEW task.
+    // Pre-fix this matched, and the intake path then soft-deleted the NEW task.
     const matches = run([sibling("FN-DONE", "shipped")], new Map([["shipped", COMPLETE_FLAGS]]));
 
     expect(matches.map((m) => m.id)).toEqual([]);
@@ -94,12 +89,6 @@ describe("the intake path actually forwards the resolved flags", () => {
 
     expect(source).toContain("columnFlagsByColumnId: await resolveIntakeDuplicateColumnFlags(store, allCandidates)");
     expect(source).toContain("resolveTaskLifecycleColumns(store, candidate.id, irCache)");
-  });
-
-  it("mirrors the auto-archive into the row using the resolved archived lane", () => {
-    const source = readFileSync(new URL("../task-store/task-creation.ts", import.meta.url), "utf8");
-
-    expect(source).toContain('task.column = archivedLane ?? "archived";');
   });
 });
 

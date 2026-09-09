@@ -1,1 +1,29 @@
-{"byFile":{}}
+{
+  "byFile": {},
+  "missingProvenanceByFile": {
+    "packages/engine/src/agent-heartbeat.ts": 3,
+    "packages/engine/src/agent-tools.ts": 2,
+    "packages/engine/src/execution/lifecycle-move.ts": 1,
+    "packages/engine/src/executor/bootstrap-misbinding-recovery.ts": 1,
+    "packages/engine/src/executor/create-authoritative-workflow-primitives.ts": 1,
+    "packages/engine/src/executor/create-task-done-tool.ts": 3,
+    "packages/engine/src/executor/dep-abort-cleanup.ts": 1,
+    "packages/engine/src/executor/non-continuable-session.ts": 1,
+    "packages/engine/src/executor/plan-review-no-op.ts": 1,
+    "packages/engine/src/executor/recover-completed-task.ts": 1,
+    "packages/engine/src/executor/route-reset-parse-pin-mismatch.ts": 1,
+    "packages/engine/src/executor/run-implementation.ts": 9,
+    "packages/engine/src/executor/task-done-refusal-handler.ts": 1,
+    "packages/engine/src/executor/workflow-merge-boundary.ts": 1,
+    "packages/engine/src/executor/workflow-rerun-bounce.ts": 1,
+    "packages/engine/src/merge/auto-merge-finalization.ts": 1,
+    "packages/engine/src/merge/pr-comment-handler.ts": 1,
+    "packages/engine/src/merger.ts": 2,
+    "packages/engine/src/missions/mission-autopilot.ts": 1,
+    "packages/engine/src/project-engine.ts": 2,
+    "packages/engine/src/project/mesh-lease-manager.ts": 1,
+    "packages/engine/src/runtimes/in-process-runtime.ts": 1,
+    "packages/engine/src/self-healing.ts": 1,
+    "packages/engine/src/workflows/workflow-column-boundary.ts": 1
+  }
+}

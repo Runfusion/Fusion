@@ -1,6 +1,6 @@
 import { isWorkspaceTask, type Task } from "@fusion/core";
 import { getPathBasename } from "./pathDisplay";
-import { isArchivedColumnRole, isCompleteColumnRole, isHoldColumnRole, isReviewColumnRole } from "./columnRoles";
+import { isCompleteColumnRole, isHoldColumnRole, isReviewColumnRole } from "./columnRoles";
 
 export interface WorktreeGroupData {
   /** Stable identity; display labels collide for separate worktree paths. */
@@ -119,9 +119,8 @@ export function groupByWorktree(
   hold column is renamed the filter matched NOTHING, so the worktree view showed no upcoming
   work at all and read as idle — a whole panel silently empty, with nothing failing.
 
-  Dependency satisfaction below still names terminal ids. That is a separate question from
-  the hold role and is left alone deliberately: it needs `complete`/`mergeBlocker`/`archived`
-  traits for the DEPENDENCY's column, which is another lookup and another unit of work.
+  Dependency satisfaction below is a separate per-dependency question: completion and review
+  roles come from the dependency's own workflow flags.
   */
   // Find queued hold-lane tasks: cards in the hold column with all deps satisfied.
   const taskById = new Map(allTasks.map((t) => [t.id, t]));
@@ -134,10 +133,8 @@ export function groupByWorktree(
       const dep = taskById.get(depId);
       if (!dep) return false;
       const depFlags = dependencyColumnFlags?.get(dep.id);
-      /* Satisfied = the dependency rests in its OWN board's terminal pair, or its review lane —
-         the same union the scheduler's legacy rule uses, preserved exactly. */
+      /* Satisfied = the dependency rests in its OWN board's completion or review lane. */
       return isCompleteColumnRole(depFlags, dep.column)
-        || isArchivedColumnRole(depFlags, dep.column)
         || isReviewColumnRole(depFlags, dep.column);
     }),
   );

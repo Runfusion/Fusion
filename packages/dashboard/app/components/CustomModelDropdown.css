@@ -73,8 +73,11 @@ The model combobox is portaled outside Agent Settings but remains part of its ru
   border: var(--btn-border-width) solid var(--border);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
-  /* Must sit above floating dashboard panels and the shared floating-window stack (10100+). */
-  z-index: 11000;
+  /*
+  FNXC:ModelDropdown 2026-09-06-21:48:
+  A body-portaled model list can be opened from the body-portaled Brain panel inside floating Chat and Task Detail hosts. Follow the live shared floating-stack ceiling and stay one layer above the Brain panel so host focus raises cannot cover either interactive surface.
+  */
+  z-index: calc(var(--fusion-max-z) + 3);
   max-height: calc(var(--space-2xl) * 10);
   display: flex;
   flex-direction: column;

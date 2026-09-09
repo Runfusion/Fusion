@@ -14,8 +14,7 @@ const lanes = {
   wip: "implementation",
   review: "review",
   complete: "done",
-  archived: "archived",
-  terminal: ["done", "archived"],
+  terminal: ["done"],
 };
 
 describe("lifecycle move legibility", () => {

@@ -151,8 +151,12 @@ describe.skipIf(!SHOULD_RUN_BUILD_EXE)("build-exe-cross: --all builds all platfo
       "node-pty-umbrella",
       "index.js",
     );
-    const module = await import(pathToFileURL(entry).href);
-    expect(typeof module.spawn).toBe("function");
+    const stagedImport = await import(pathToFileURL(entry).href) as {
+      spawn?: unknown;
+      default?: { spawn?: unknown };
+    };
+    const module = typeof stagedImport.spawn === "function" ? stagedImport : stagedImport.default;
+    expect(typeof module?.spawn).toBe("function");
   });
 
   it("stages runtime native assets for current platform", () => {

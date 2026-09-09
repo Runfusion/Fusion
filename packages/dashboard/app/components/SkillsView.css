@@ -20,6 +20,55 @@ Skills mounts as a flex child of the flex-row .project-content. A flex item with
 }
 
 /*
+FNXC:SkillsSnippetsLayout 2026-09-04-00:42:
+The tab bar is pinned between ViewHeader and the scroll owners so constrained heights cannot collapse it beneath panel content. It follows MemoryView's visual pattern but uses relative typography and token-derived touch sizing instead of copying that view's hard-coded pixel values.
+*/
+.skills-view-tabs {
+  display: flex;
+  flex-direction: row;
+  flex-shrink: 0;
+  gap: var(--space-xs);
+  padding: 0 var(--space-xl);
+  border-bottom: calc(var(--space-xs) / 4) solid var(--border);
+}
+
+.skills-view-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-sm) var(--space-md);
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  border-bottom: calc(var(--space-xs) / 2) solid transparent;
+  cursor: pointer;
+  font-size: 0.9em;
+  white-space: nowrap;
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.skills-view-tab:hover {
+  color: var(--text);
+  background: var(--card-hover);
+}
+
+.skills-view-tab:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.skills-view-tab--active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+  font-weight: 500;
+}
+
+.skills-view-tab-count {
+  color: var(--text-muted);
+  font-size: 0.85em;
+}
+
+/*
 FNXC:Skills 2026-06-23-01:45:
 Master/detail body below the shared ViewHeader. Holds BOTH always-rendered panes.
 - NARROW default: single column. The list (.skills-view__list) fills the body; the detail (.skills-view__detail) is hidden until a skill is selected, then it covers the stack (BACK returns to the list).
@@ -32,6 +81,18 @@ Master/detail body below the shared ViewHeader. Holds BOTH always-rendered panes
   min-height: 0;
   min-width: 0;
   overflow: hidden;
+}
+
+/*
+FNXC:SkillsSnippetsLayout 2026-09-04-00:42:
+Each inactive tab panel needs an author-level hidden override because the skills panel's authored flex display otherwise outranks the user-agent `[hidden]` rule. Keep the selectors separate so both panel contracts remain independently testable.
+*/
+.skills-view-body[hidden] {
+  display: none;
+}
+
+.skills-view-snippets-panel[hidden] {
+  display: none;
 }
 
 /* FNXC:Skills 2026-06-23-01:45: NARROW default — master list fills the body as the single panel. */
@@ -144,6 +205,12 @@ The search controls at the top of the Skills list need breathing room below the 
   padding: var(--space-lg) var(--space-lg) var(--space-lg);
 }
 
+.skills-view-section-description {
+  margin: 0 0 var(--space-md);
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
 .skills-view-section {
   margin-bottom: var(--space-xl);
 }
@@ -160,9 +227,39 @@ The search controls at the top of the Skills list need breathing room below the 
 }
 
 /*
-FNXC:ChatSnippets 2026-09-03-15:56:
-Snippet controls live above the unchanged execution-skill sections. Token-only cards and a narrow breakpoint keep the editor, prompt preview, and touch actions reachable without changing the master/detail behavior for skill documents.
+FNXC:SkillsSnippetsLayout 2026-09-04-00:42:
+The Snippets tab owns its scrolling and readable measure independently from the skills master/detail panes. At a wide 900px container the form and saved list split into two columns; narrower containers and mobile retain one column without viewport measurement.
 */
+.skills-view-snippets-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-lg);
+}
+
+.skills-view-snippets {
+  max-width: calc(var(--space-2xl) * 40);
+  margin: 0 auto;
+}
+
+.skills-view-snippets__layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-lg);
+  align-items: start;
+}
+
+.skills-view-snippets__collection {
+  min-width: 0;
+}
+
+@container skills-view (min-width: 900px) {
+  .skills-view-snippets__layout {
+    grid-template-columns: minmax(0, calc(var(--space-2xl) * 12)) minmax(0, 1fr);
+    gap: var(--space-xl);
+  }
+}
+
 .skills-view-snippets__heading {
   justify-content: space-between;
 }
@@ -189,7 +286,7 @@ Snippet controls live above the unchanged execution-skill sections. Token-only c
   flex-direction: column;
   gap: var(--space-md);
   padding: var(--space-md);
-  margin-bottom: var(--space-md);
+  margin-bottom: 0;
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -251,8 +348,14 @@ Snippet controls live above the unchanged execution-skill sections. Token-only c
   gap: var(--space-md);
   padding: var(--space-md);
   background: var(--card);
-  border: 1px solid var(--border);
+  border: calc(var(--space-xs) / 4) solid var(--border);
   border-radius: var(--radius-md);
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.skills-view-snippets__item:hover {
+  background: var(--card-hover);
+  border-color: var(--text-muted);
 }
 
 .skills-view-snippets__item-content {
@@ -284,6 +387,10 @@ Snippet controls live above the unchanged execution-skill sections. Token-only c
 .skills-view-snippets__error,
 .skills-view-snippets__empty {
   margin-bottom: var(--space-md);
+}
+
+.skills-view-snippets__empty p {
+  margin: 0;
 }
 
 /* Discovered skills list */
@@ -708,6 +815,26 @@ FNXC:Skills 2026-06-26-13:38: FN-7072 reduces skill detail/metadata font size in
 }
 
 @media (max-width: 768px) {
+  .skills-view-tabs {
+    padding-inline: var(--space-md);
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+  }
+
+  .skills-view-tab {
+    flex: 0 0 auto;
+    min-height: calc(var(--space-lg) + var(--space-md) + var(--space-xs));
+    padding: var(--space-sm);
+  }
+
+  .skills-view-snippets-panel {
+    padding: var(--space-md);
+  }
+
+  .skills-view-snippets__layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .skills-view-snippets__form-actions {
     flex-wrap: wrap;
   }

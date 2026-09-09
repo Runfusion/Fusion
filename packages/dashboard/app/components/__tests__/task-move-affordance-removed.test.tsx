@@ -131,7 +131,7 @@ describe("FN-198 dashboard task relocation removal", () => {
     await act(async () => {
       fireEvent.click(screen.getByTestId("card-start-FN-198"));
     });
-    expect(onMoveTask).toHaveBeenLastCalledWith("FN-198", "implementation");
+    expect(onMoveTask).toHaveBeenLastCalledWith("FN-198", "implementation", { expectedColumn: "ideas" });
   });
 
   it("removes List row destination choices opened by a context click", async () => {
@@ -347,7 +347,7 @@ describe("FN-198 dashboard task relocation removal", () => {
     expect(onMoveTask).not.toHaveBeenCalled();
   });
 
-  it.each(["todo", "in-progress", "in-review", "done", "archived"] as const)("offers no move item on card or List rows in %s", async (column) => {
+  it.each(["todo", "in-progress", "in-review", "done"] as const)("offers no move item on card or List rows in %s", async (column) => {
     const onMoveTask = moveSpy();
     const id = `FN-198-${column}`;
     const current = task({ id, column: column as Column });
@@ -356,8 +356,6 @@ describe("FN-198 dashboard task relocation removal", () => {
         task={current}
         onMoveTask={onMoveTask}
         onDeleteTask={noopDelete}
-        onArchiveTask={async () => current}
-        onUnarchiveTask={async () => current}
         onOpenDetail={noop}
         addToast={noop}
       />,
@@ -377,7 +375,6 @@ describe("FN-198 dashboard task relocation removal", () => {
           { id: "in-progress", name: "In Progress", flags: { countsTowardWip: true } },
           { id: "in-review", name: "In Review", flags: { mergeBlocker: true } },
           { id: "done", name: "Done", flags: { complete: true } },
-          { id: "archived", name: "Archived", flags: { archived: true } },
         ],
       }],
       taskWorkflowIds: { [id]: "builtin:coding" },
@@ -388,8 +385,6 @@ describe("FN-198 dashboard task relocation removal", () => {
         tasks={[current]}
         onMoveTask={onMoveTask}
         onDeleteTask={async () => current}
-        onArchiveTask={async () => current}
-        onUnarchiveTask={async () => current}
         onMergeTask={async () => ({ merged: false })}
         onOpenDetail={noop}
         addToast={noop}

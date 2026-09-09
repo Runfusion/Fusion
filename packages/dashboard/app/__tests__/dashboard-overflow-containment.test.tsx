@@ -135,7 +135,7 @@ function assertInViewport(element: Element, viewport: BreakpointCase, label: str
 }
 
 function BoardFixture({ populated }: { populated: boolean }) {
-  const columns = populated ? ["Triage", "Todo", "In Progress", "In Review", "Done", "Archived"] : ["Empty"];
+  const columns = populated ? ["Triage", "Todo", "In Progress", "In Review", "Done"] : ["Empty"];
   return (
     <main data-testid="board-surface" className="board-shell">
       <section className="board" data-testid={populated ? "board-populated" : "board-empty"}>

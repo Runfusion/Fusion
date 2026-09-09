@@ -72,7 +72,7 @@ export function deriveExecutorState(
  * FNXC:ExecutorStatusBar 2026-07-21-19:00:
  * Do not require task.sessionFile for Running — it is not on board/listTasks rows.
  */
-export type ExecutorColumnFlags = Pick<TraitFlags, "complete" | "archived" | "intake" | "hold" | "countsTowardWip" | "mergeOrchestration" | "mergeBlocker">;
+export type ExecutorColumnFlags = Pick<TraitFlags, "complete" | "intake" | "hold" | "countsTowardWip" | "mergeOrchestration" | "mergeBlocker">;
 
 /*
 FNXC:StuckTagRemoval 2026-08-17-22:30: Operator removed stuck-task tagging from the dashboard; engine recovery sweeps still consume taskStuckTimeoutMs server-side.

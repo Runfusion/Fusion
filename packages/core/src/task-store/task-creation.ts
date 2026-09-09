@@ -24,7 +24,7 @@ import {resolveTitleSummarizerSettingsModel} from "../ai/model-resolution.js";
 import {resolveEffectiveSettingsById} from "../workflows/workflow-settings-resolver.js";
 import {getErrorMessage} from "../process/error-message.js";
 import {generateTaskLineageId} from "../tasks/task-lineage.js";
-import {archiveAsSameAgentDuplicate, findSameAgentDuplicates, flagSameAgentDuplicate, type SameAgentDuplicateCandidate} from "../duplicates/duplicate-intake.js";
+import {findSameAgentDuplicates, flagSameAgentDuplicate, type SameAgentDuplicateCandidate} from "../duplicates/duplicate-intake.js";
 import {buildBootstrapPrompt} from "../mesh/mesh-task-replication.js";
 import {resolveWorkflowIrById, resolveWorkflowIrForTask} from "../workflows/workflow-ir-resolver.js";
 import {resolveTaskLifecycleColumns, toTaskMoveLanes} from "../workflows/workflow-lifecycle-traits.js";
@@ -1017,8 +1017,8 @@ export async function _createTaskInternalBackendImpl(store: TaskStore, input: Ta
     to the bootstrap caller, which preserves the claimed canonical atomically.
     */
     if (!(input as CreateTaskWithAfterInsert).skipSameAgentDuplicateIntake) {
-      // Auto-archive dedup (best-effort, same as SQLite path but using async reads).
-      await store._maybeAutoArchiveSameAgentDuplicateBackend(task, input);
+      // Same-agent duplicate marking is best-effort and uses async project-scoped reads.
+      await store._resolveSameAgentDuplicateIntakeBackend(task, input);
     }
 
     if (!options?.deferTaskCreatedEvent) {
@@ -1435,7 +1435,7 @@ export async function _createTaskInternalImpl(store: TaskStore, input: TaskCreat
     await mkdir(dir, { recursive: true });
     await writePromptFileAtomic(join(dir, "PROMPT.md"), prompt);
 
-    await store._maybeAutoArchiveSameAgentDuplicate(task, input);
+    await store._resolveSameAgentDuplicateIntake(task, input);
 
     store.emitTaskLifecycleEventSafely("task:created", [task]);
     if (options?.invokeTaskCreatedHook !== false) {
@@ -1447,10 +1447,9 @@ export async function _createTaskInternalImpl(store: TaskStore, input: TaskCreat
 /*
 FNXC:SameAgentDuplicateIntake 2026-07-19-16:24:
 FN-8401 requires PostgreSQL backendMode to use the FN-7658 flag-in-place policy,
-not its former delete-on-match cleanup. One resolver reads tombstones through
-listTasks(includeDeleted, includeArchived), so FN-5233 sticky near-duplicate blocking
-includes soft-deletes whose delete lifecycle puts them in `archived` on both
-persistence backends without a synchronous SQLite dependency.
+not its former delete-on-match cleanup. One resolver reads tombstones through internal
+historical options, so sticky near-duplicate blocking includes soft-deletes without a
+synchronous SQLite dependency.
 */
 /*
 FNXC:WorkflowLifecycleColumns 2026-07-31-14:20:
@@ -1458,10 +1457,8 @@ Column trait flags for the intake duplicate guard, resolved from the candidates'
 
 WHY THIS PATH MATTERS MORE THAN THE OTHER TWO. `findSameAgentDuplicates` gained
 `columnFlagsByColumnId` so a FINISHED sibling cannot be reused as the canonical for new work, and no
-caller passed it. On the agent-tools paths the cost is a bad suggestion. Here it is DESTRUCTIVE: a
-match either auto-archives the newly created task or, on the tombstoned branch, soft-deletes it and
-removes its directory. So on a renamed board a new task could be archived or deleted as a duplicate
-of work that had already finished.
+caller passed it. A completed sibling must not become the canonical for new work. The current policy
+keeps the new task visible and records near-duplicate metadata; it never deletes or archives the card.
 
 Resolution is scoped to the columns the candidate set actually occupies — a handful of distinct ids,
 not one read per card — and shares one IR cache.
@@ -1469,8 +1466,8 @@ not one read per card — and shares one IR cache.
 async function resolveIntakeDuplicateColumnFlags(
   store: TaskStore,
   candidates: ReadonlyArray<{ id: string; column: string }>,
-): Promise<ReadonlyMap<string, { complete?: boolean; archived?: boolean }>> {
-  const byColumn = new Map<string, { complete?: boolean; archived?: boolean }>();
+): Promise<ReadonlyMap<string, { complete?: boolean }>> {
+  const byColumn = new Map<string, { complete?: boolean }>();
   const irCache = new Map<string, WorkflowIr>();
   const seenColumns = new Set<string>();
   for (const candidate of candidates) {
@@ -1479,7 +1476,6 @@ async function resolveIntakeDuplicateColumnFlags(
     const lanes = await resolveTaskLifecycleColumns(store, candidate.id, irCache).catch(() => undefined);
     if (!lanes) continue;
     if (lanes.complete !== undefined) byColumn.set(lanes.complete, { ...byColumn.get(lanes.complete), complete: true });
-    if (lanes.archived !== undefined) byColumn.set(lanes.archived, { ...byColumn.get(lanes.archived), archived: true });
   }
   return byColumn;
 }
@@ -1548,28 +1544,14 @@ export async function resolveSameAgentDuplicateIntake(store: TaskStore, task: Ta
     const siblingTaskIds = matches.filter((match) => !match.tombstoned).map((match) => match.id);
     if (siblingTaskIds.length === 0) return;
     const scores = Object.fromEntries(matches.filter((match) => !match.tombstoned).map((match) => [match.id, match.score]));
-    if (settings.autoArchiveDuplicateTasksEnabled === true) {
-      await archiveAsSameAgentDuplicate(store, task.id, siblingTaskIds, scores);
-      /*
-      FNXC:WorkflowLifecycleColumns 2026-07-31-14:20:
-      Mirror the archive into the in-memory row using the board's OWN archived lane. Writing the
-      literal here made the returned object disagree with what the archive actually did on a renamed
-      board — the caller then saw a task claiming a column its workflow does not declare, the same
-      shape as the `"triage"` write fixed earlier in this program.
-      */
-      const archivedLane = (await resolveTaskLifecycleColumns(store, task.id).catch(() => undefined))?.archived;
-      /* DELIBERATE-LITERAL — the unresolvable-workflow default, reviewed 2026-07-31-14:20. */
-      task.column = archivedLane ?? "archived";
-    } else {
-      const appliedPatch = await flagSameAgentDuplicate(store, task.id, siblingTaskIds, scores);
-      if (appliedPatch) task.sourceMetadata = { ...(task.sourceMetadata ?? {}), ...appliedPatch };
-    }
+    const appliedPatch = await flagSameAgentDuplicate(store, task.id, siblingTaskIds, scores);
+    if (appliedPatch) task.sourceMetadata = { ...(task.sourceMetadata ?? {}), ...appliedPatch };
   } catch (error) {
     if (error instanceof TombstonedTaskResurrectionError) throw error;
     storeLog.warn(`FN-4892 same-agent duplicate intake failed open for ${task.id}: ${getErrorMessage(error)}`);
   }
 }
 
-export async function _maybeAutoArchiveSameAgentDuplicateImpl(store: TaskStore, task: Task, input: TaskCreateInput): Promise<void> {
+export async function _resolveSameAgentDuplicateIntakeImpl(store: TaskStore, task: Task, input: TaskCreateInput): Promise<void> {
   return resolveSameAgentDuplicateIntake(store, task, input);
 }

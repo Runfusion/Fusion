@@ -78,7 +78,7 @@ export function getRevertOfId(
  * Reverse lookup: given the full loaded `tasks` list and a source task id, find the
  * most recently created OPEN undo task that points back at it via `revertOf`. This
  * mirrors `TaskStore.findOpenRevertTaskForSource` (packages/core/src/store.ts)
- * client-side: `done`/`archived`/soft-deleted undo tasks are intentionally excluded
+ * client-side: Complete and soft-deleted undo tasks are intentionally excluded
  * so a completed or discarded undo attempt never renders as an active "Undo task"
  * link (no stale/leftover affordance). When multiple open undo tasks exist (should
  * not normally happen given the route's own dedup guard, but the UI must stay
@@ -86,8 +86,7 @@ export function getRevertOfId(
  */
 /*
 FNXC:WorkflowResolvedColumns 2026-07-30-11:30 (batch-dashboard-app):
-`columnFlags` is a per-task lookup supplied by the caller; omitted -> the legacy pair, i.e. today's
-behaviour. This searches for an OPEN undo task, so a finished one must be skipped. Keyed on the
+`columnFlags` is a per-task lookup supplied by the caller; omitted -> the legacy `done` fallback. This searches for an OPEN undo task, so a finished one must be skipped. Keyed on the
 literals, a renamed board never skipped anything: a completed undo task counted as still open, and
 the UI offered to resume work that had already landed.
 */

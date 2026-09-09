@@ -9,6 +9,8 @@ import {
 import { cleanupMergeStateForReverification } from "../executor/cleanup-merge-state.js";
 import { reopenLastStepForRevision } from "../executor/reopen-last-step-for-revision.js";
 import { sendTaskBackForFix } from "../executor/send-task-back-for-fix.js";
+import { countOptionalStepRevisionAttempts } from "../executor/optional-step-revision.js";
+import { reviewInputSignature } from "../executor/request-pre-merge-optional-step-fix.js";
 
 function task(steps: Task["steps"]): Task {
   return {
@@ -141,6 +143,180 @@ describe("FN-180 step reopen single authority", () => {
     expect(live.steps).toHaveLength(1);
     expect(live.currentStep).toBe(0);
     expect(reopenActions(live)).toEqual([]);
+  });
+
+  it("atomically charges only a newly appended trailing replay", async () => {
+    const live = task([{ name: "Implementation", status: "done" }]);
+    const failed = {
+      workflowStepId: "browser-verification",
+      workflowStepName: "Browser Verification",
+      phase: "pre-merge" as const,
+      status: "failed" as const,
+      output: "failed",
+      startedAt: "2026-09-08T00:00:00.000Z",
+    };
+    live.workflowStepResults = [failed];
+    live.postReviewFixCount = 0;
+    const store = {
+      publishReviewRemediationFenced: vi.fn(async (_id: string, mutate: (current: Task) => Partial<Task> | null) => {
+        const patch = mutate(live);
+        if (!patch) return { applied: false as const, reason: "refused" as const };
+        Object.assign(live, patch);
+        return { applied: true as const, task: live };
+      }),
+    };
+    const accounting = {
+      revisionKey: "browser-verification",
+      stepName: "Browser Verification",
+      status: "failed",
+      maxRevisions: 1 as const,
+      expectedWorkflowStepId: "browser-verification",
+      expectedReviewSignature: reviewInputSignature(failed) ?? "",
+    };
+
+    await expect(reopenLastStepForRevision(store as never, live.id, live, accounting)).resolves.toMatchObject({ kind: "appended" });
+    expect(live.steps.filter((step) => step.status === "pending")).toHaveLength(1);
+    expect(countOptionalStepRevisionAttempts(live, accounting.revisionKey, accounting.stepName)).toBe(1);
+    expect(live.postReviewFixCount).toBe(1);
+
+    await expect(reopenLastStepForRevision(store as never, live.id, live, accounting)).resolves.toEqual({ kind: "already-committed" });
+    expect(live.steps.filter((step) => step.status === "pending")).toHaveLength(1);
+    expect(countOptionalStepRevisionAttempts(live, accounting.revisionKey, accounting.stepName)).toBe(1);
+    expect(live.postReviewFixCount).toBe(1);
+    expect(live.log?.some((entry) => entry.outcome?.includes("Workflow revision ledger reset:"))).toBe(false);
+  });
+
+  it("does not charge duplicate pending replay work with remaining budget", async () => {
+    const live = task([
+      { name: "Implementation", status: "done" },
+      { name: "Implementation", status: "pending" },
+    ]);
+    const failed = { workflowStepId: "browser-verification", status: "failed" as const, output: "failed" };
+    live.workflowStepResults = [failed];
+    live.postReviewFixCount = 4;
+    const store = {
+      publishReviewRemediationFenced: vi.fn(async (_id: string, mutate: (current: Task) => Partial<Task> | null) => {
+        const patch = mutate(live);
+        if (!patch) return { applied: false as const, reason: "refused" as const };
+        Object.assign(live, patch);
+        return { applied: true as const, task: live };
+      }),
+    };
+
+    await expect(reopenLastStepForRevision(store as never, live.id, live, {
+      revisionKey: "browser-verification",
+      stepName: "Browser Verification",
+      status: "failed",
+      maxRevisions: 5,
+      expectedWorkflowStepId: "browser-verification",
+      expectedReviewSignature: reviewInputSignature(failed) ?? "",
+    })).resolves.toEqual({ kind: "duplicate-no-new-work" });
+    expect(countOptionalStepRevisionAttempts(live, "browser-verification", "Browser Verification")).toBe(0);
+    expect(live.postReviewFixCount).toBe(4);
+  });
+
+  it("keeps a trailing replay paired when scheduling fails after commit", async () => {
+    const live = task([{ name: "Implementation", status: "done" }]);
+    const failed = { workflowStepId: "browser-verification", workflowStepName: "Browser Verification", status: "failed" as const, output: "failed" };
+    live.workflowStepResults = [failed];
+    live.postReviewFixCount = 0;
+    const store = {
+      getTask: vi.fn(async () => live),
+      getSettings: vi.fn(async () => ({})),
+      addTaskComment: vi.fn(async () => undefined),
+      logEntry: vi.fn(async () => undefined),
+      updateTask: vi.fn(async (_id: string, patch: Partial<Task>) => { Object.assign(live, patch); return live; }),
+      publishReviewRemediationFenced: vi.fn(async (_id: string, mutate: (current: Task) => Partial<Task> | null) => {
+        const patch = mutate(live);
+        if (!patch) return { applied: false as const, reason: "refused" as const };
+        Object.assign(live, patch);
+        return { applied: true as const, task: live };
+      }),
+    };
+    const scheduleWorkflowRerun = vi.fn()
+      .mockImplementationOnce(() => { throw new Error("injected scheduling failure"); })
+      .mockImplementation(() => undefined);
+    const deps = {
+      store: store as never,
+      clearCompletedTaskWatchdog: vi.fn(),
+      injectWorkflowStepFailureInstructions: vi.fn(async () => undefined),
+      reopenLastStepForRevision: (taskId: string, current: Task, accounting?: any) =>
+        accounting
+          ? reopenLastStepForRevision(store as never, taskId, current, accounting)
+          : reopenLastStepForRevision(store as never, taskId, current),
+      scheduleWorkflowRerun,
+      maxWorkflowStepRetries: 3,
+    };
+    const accounting = {
+      revisionKey: "browser-verification",
+      stepName: "Browser Verification",
+      status: "failed",
+      maxRevisions: 3,
+      expectedWorkflowStepId: "browser-verification",
+      expectedReviewSignature: reviewInputSignature(failed) ?? "",
+    };
+    const invoke = () => sendTaskBackForFix(
+      deps, live, live.worktree!, "failed", "Browser Verification", "review failed",
+      true, false, { attempt: 1, max: 3 }, undefined, undefined, "reopen-trailing", accounting,
+    );
+
+    await expect(invoke()).rejects.toThrow("injected scheduling failure");
+    await expect(invoke()).resolves.toEqual({ kind: "scheduled", remediationCommitted: true });
+
+    expect(live.steps.filter((step) => step.status === "pending")).toHaveLength(1);
+    expect(countOptionalStepRevisionAttempts(live, accounting.revisionKey, accounting.stepName)).toBe(1);
+    expect(live.postReviewFixCount).toBe(1);
+    expect(scheduleWorkflowRerun).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ["pause", (current: Task) => ({ ...current, paused: true })],
+    ["user pause", (current: Task) => ({ ...current, userPaused: true })],
+    ["manual-review hold", (current: Task) => ({ ...current, autoMerge: false })],
+    ["lane replacement", (current: Task) => ({ ...current, column: "todo" })],
+    ["failed-round replacement", (current: Task) => ({
+      ...current,
+      workflowStepResults: current.workflowStepResults?.map((result) => ({
+        ...result,
+        output: "new failed occurrence",
+        completedAt: "2026-09-08T00:01:00.000Z",
+      })),
+    })],
+  ])("refuses a trailing replay when %s wins before fenced publication", async (_case, mutateLive) => {
+    let live = task([{ name: "Implementation", status: "done" }]);
+    live.column = "in-review";
+    const failed = {
+      workflowStepId: "browser-verification",
+      workflowStepName: "Browser Verification",
+      status: "failed" as const,
+      output: "failed",
+      completedAt: "2026-09-08T00:00:00.000Z",
+    };
+    live.workflowStepResults = [failed];
+    const initial = live;
+    const store = {
+      publishReviewRemediationFenced: vi.fn(async (_id: string, mutate: (current: Task) => Partial<Task> | null) => {
+        live = mutateLive(live) as Task;
+        const patch = mutate(live);
+        if (!patch) return { applied: false as const, reason: "refused" as const };
+        live = { ...live, ...patch } as Task;
+        return { applied: true as const, task: live };
+      }),
+    };
+
+    await expect(reopenLastStepForRevision(store as never, initial.id, initial, {
+      revisionKey: "browser-verification",
+      stepName: "Browser Verification",
+      status: "failed",
+      maxRevisions: 3,
+      expectedWorkflowStepId: "browser-verification",
+      expectedReviewSignature: reviewInputSignature(failed),
+      expectedColumn: "in-review",
+    })).resolves.toEqual({ kind: "superseded" });
+
+    expect(live.steps.some((step) => step.status === "pending")).toBe(false);
+    expect(live.postReviewFixCount).toBeUndefined();
+    expect(live.log).toEqual([]);
   });
 
   it("uses the editor-authored IR policy instead of a workflow id", () => {

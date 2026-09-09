@@ -87,13 +87,16 @@ touches no data; it must advance in the same change that ships a new migration f
 /*
 FNXC:WorkspaceWorktree 2026-09-04-04:42:
 origin/main released 0068-0071 after this branch minted the workspace directory-segment column as 0067, so the pin column is 0072, the unique claim is 0073, and the binary ceiling advances with them.
+FNXC:WorkspaceWorktree 2026-09-09-16:30:
+origin/main then released 0072 (task planning failure) and 0073 (chat-message recency index) while this branch was open, so the pin column is renumbered 0072->0074 and the unique claim 0073->0075; the binary ceiling advances with them.
 */
-export const SCHEMA_BASELINE_VERSION = "0073";
+/* FNXC:ChatSidebarPerf 2026-09-08-04:48: baseline marker includes the chat-message recency index required for index-backed sidebar previews. */
+export const SCHEMA_BASELINE_VERSION = "0075";
 /** FNXC:SymbolLock 2026-07-20-10:00: upgrades need durable task declarations before admission resolves symbols. */
 export const TASK_DECLARED_SYMBOLS_VERSION = "0028";
 const INITIAL_SCHEMA_VERSION = "0000";
-const AUTOMATION_ISOLATION_SCHEMA_VERSION = "0001";
-const ANALYTICS_ISOLATION_SCHEMA_VERSION = "0002";
+export const AUTOMATION_ISOLATION_SCHEMA_VERSION = "0001";
+export const ANALYTICS_ISOLATION_SCHEMA_VERSION = "0002";
 /**
  * FNXC:PostgresMigrationIdentity 2026-07-14-01:41:
  * Each migration keeps an immutable bookkeeping identity even as SCHEMA_BASELINE_VERSION advances to newer migrations. Upgrade checks and inserts must use this dedicated 0003 identifier so a later latest-version marker cannot make an unrecorded monitor/approval migration look applied.
@@ -267,16 +270,22 @@ export const TASK_EXTERNAL_BLOCK_VERSION = "0069";
 export const TASK_REQUIRE_PLAN_APPROVAL_VERSION = "0070";
 /** FNXC:PatchnodeLedger 2026-08-28-12:16: upgraded projects need the durable delivery ledger before any completion transaction runs. */
 export const PATCHNODE_ENTRIES_VERSION = "0071";
+/** FNXC:TriagePlanningState 2026-09-07-19:49: upgraded projects require durable validator-free planning retry evidence. */
+export const TASK_PLANNING_FAILURE_VERSION = "0072";
+/** FNXC:ChatSidebarPerf 2026-09-08-04:48: upgrades need the descending per-session recency index before sidebar lateral lookups run. */
+export const CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION = "0073";
 
 /** FNXC:MemoryFocus 2026-08-13-15:57: explicit registration prevents the per-conversation memory-focus migration from being skipped. Renumbered to 0060 (FN-9037 took 0059), then 0061, then 0065 (2026-08-20) when the upstream FN-066..FN-094 batch claimed 0061-0064. */
 export const CHAT_SESSION_MEMORY_FOCUS_VERSION = "0066";
 
 /** FNXC:WorkspaceWorktree 2026-08-24-06:10: R15's pinned workspace task directory segment needs its column on upgraded projects before any acquisition reads the pin. Explicit registration is required — migrations are never auto-discovered. */
 /* FNXC:WorkspaceWorktree 2026-09-04-04:42: renumbered 0067->0072 because origin/main released 0067-0071 while this branch was open. */
-export const WORKSPACE_WORKTREE_DIR_SEGMENT_VERSION = "0072";
+/* FNXC:WorkspaceWorktree 2026-09-09-16:30: renumbered 0072->0074 because origin/main released 0072 (task planning failure) and 0073 (chat-message recency index) while this branch was open. */
+export const WORKSPACE_WORKTREE_DIR_SEGMENT_VERSION = "0074";
 /** FNXC:WorkspaceWorktree 2026-08-25-08:12: the segment is a CLAIM — this partial unique index is what makes a concurrent duplicate mint fail instead of persisting two write-once pins on one directory. */
 /* FNXC:WorkspaceWorktree 2026-09-04-04:42: renumbered 0068->0073 to follow the 0072 column migration. */
-export const WORKSPACE_WORKTREE_DIR_SEGMENT_UNIQUE_VERSION = "0073";
+/* FNXC:WorkspaceWorktree 2026-09-09-16:30: renumbered 0073->0075 to follow the 0074 column migration. */
+export const WORKSPACE_WORKTREE_DIR_SEGMENT_UNIQUE_VERSION = "0075";
 
 /** SECURITY DEFINER helper that only inserts LEGACY_ADOPTION_DRAINED_MARKER. */
 export const LEGACY_ADOPTION_DRAINED_MARKER_FUNCTION = "fusion_mark_legacy_adoption_drained";
@@ -540,8 +549,10 @@ const TASK_STEP_REPORTS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0068_fn_208_task_
 const TASK_EXTERNAL_BLOCK_MIGRATION_PATH = join(MIGRATIONS_DIR, "0069_fn_209_task_external_block.sql");
 const TASK_REQUIRE_PLAN_APPROVAL_MIGRATION_PATH = join(MIGRATIONS_DIR, "0070_fn_212_task_require_plan_approval.sql");
 const PATCHNODE_ENTRIES_MIGRATION_PATH = join(MIGRATIONS_DIR, "0071_fn_227_patchnode_entries.sql");
-const WORKSPACE_WORKTREE_DIR_SEGMENT_MIGRATION_PATH = join(MIGRATIONS_DIR, "0072_workspace_worktree_dir_segment.sql");
-const WORKSPACE_WORKTREE_DIR_SEGMENT_UNIQUE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0073_workspace_worktree_dir_segment_unique.sql");
+const TASK_PLANNING_FAILURE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0072_fn_9273_task_planning_failure.sql");
+const CHAT_MESSAGES_SESSION_RECENCY_INDEX_MIGRATION_PATH = join(MIGRATIONS_DIR, "0073_fn_9275_chat_messages_session_recency_index.sql");
+const WORKSPACE_WORKTREE_DIR_SEGMENT_MIGRATION_PATH = join(MIGRATIONS_DIR, "0074_workspace_worktree_dir_segment.sql");
+const WORKSPACE_WORKTREE_DIR_SEGMENT_UNIQUE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0075_workspace_worktree_dir_segment_unique.sql");
 
 /**
  * Ensure the migration bookkeeping table exists. Lives in the public schema so
@@ -685,6 +696,8 @@ export async function applySchemaBaseline(
     const patchnodeEntriesAlreadyApplied = applied.includes(PATCHNODE_ENTRIES_VERSION);
     const workspaceWorktreeDirSegmentAlreadyApplied = applied.includes(WORKSPACE_WORKTREE_DIR_SEGMENT_VERSION);
     const workspaceWorktreeDirSegmentUniqueAlreadyApplied = applied.includes(WORKSPACE_WORKTREE_DIR_SEGMENT_UNIQUE_VERSION);
+    const taskPlanningFailureAlreadyApplied = applied.includes(TASK_PLANNING_FAILURE_VERSION);
+    const chatMessagesSessionRecencyIndexAlreadyApplied = applied.includes(CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION);
     assertBinaryNotOlderThanDatabase(applied);
     let schemaChanged = false;
 
@@ -1539,6 +1552,38 @@ export async function applySchemaBaseline(
       await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${TASK_EXTERNAL_BLOCK_VERSION}) ON CONFLICT (version) DO NOTHING`);
       schemaChanged = true;
     }
+    const taskPlanningFailureColumnState = (await tx.execute(sql`
+      SELECT
+        to_regclass('project.tasks') IS NOT NULL AS tasks_exists,
+        EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'project' AND table_name = 'tasks' AND column_name = 'planning_failure'
+        ) AS planning_failure_exists
+    `)) as unknown as Array<{ tasks_exists: boolean; planning_failure_exists: boolean }>;
+    const taskPlanningFailureColumnMissing = taskPlanningFailureColumnState[0]?.tasks_exists
+      && !taskPlanningFailureColumnState[0]?.planning_failure_exists;
+    if (!taskPlanningFailureAlreadyApplied || taskPlanningFailureColumnMissing) {
+      const migrationSql = await readFile(TASK_PLANNING_FAILURE_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${TASK_PLANNING_FAILURE_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    /*
+    FNXC:ChatSidebarPerf 2026-09-08-04:48:
+    This mixed-case index was created quoted. The probe must retain quotes inside the
+    regclass literal, or PostgreSQL folds the name and re-applies this migration on every open.
+    */
+    const chatMessagesSessionRecencyIndexState = ((await tx.execute(sql`
+      SELECT to_regclass('project.chat_messages') IS NOT NULL AS table_exists,
+        to_regclass('project."idxChatMessagesSessionCreatedAtId"') IS NULL AS missing
+    `)) as unknown as Array<{ table_exists: boolean; missing: boolean }>)[0];
+    if (chatMessagesSessionRecencyIndexState?.table_exists
+      && (!chatMessagesSessionRecencyIndexAlreadyApplied || chatMessagesSessionRecencyIndexState.missing)) {
+      const migrationSql = await readFile(CHAT_MESSAGES_SESSION_RECENCY_INDEX_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
     const taskRequirePlanApprovalColumnState = (await tx.execute(sql`
       SELECT
         to_regclass('project.tasks') IS NOT NULL AS tasks_exists,
@@ -1567,7 +1612,7 @@ export async function applySchemaBaseline(
       await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${PATCHNODE_ENTRIES_VERSION}) ON CONFLICT (version) DO NOTHING`);
       schemaChanged = true;
     }
-    /* FNXC:WorkspaceWorktree 2026-08-23-19:52: register 0072 explicitly so an upgraded project gets the pinned workspace task-directory column before acquisition writes it. */
+    /* FNXC:WorkspaceWorktree 2026-08-23-19:52: register 0074 explicitly so an upgraded project gets the pinned workspace task-directory column before acquisition writes it. */
     if (!workspaceWorktreeDirSegmentAlreadyApplied) {
       const migrationSql = await readFile(WORKSPACE_WORKTREE_DIR_SEGMENT_MIGRATION_PATH, "utf8");
       await tx.execute(sql.raw(migrationSql));
@@ -1576,10 +1621,10 @@ export async function applySchemaBaseline(
     }
 
     /*
-    FNXC:WorkspaceWorktree 2026-08-25-08:12: register 0073 explicitly; without the unique claim two tasks can persist the same write-once segment and contend for one directory permanently.
+    FNXC:WorkspaceWorktree 2026-08-25-08:12: register 0075 explicitly; without the unique claim two tasks can persist the same write-once segment and contend for one directory permanently.
     FNXC:WorkspaceWorktree 2026-09-04-05:15:
     The claim is live-only (`deleted_at IS NULL`). A tombstone from archive still holds a non-null
-    segment, and `CREATE UNIQUE INDEX IF NOT EXISTS` would leave a pre-live-only 0073 index in
+    segment, and `CREATE UNIQUE INDEX IF NOT EXISTS` would leave a pre-live-only 0075 index in
     place, so replay when the index is missing or its definition does not mention deleted_at.
     */
     const workspaceWorktreeDirSegmentUniqueIndexState = (await tx.execute(sql`

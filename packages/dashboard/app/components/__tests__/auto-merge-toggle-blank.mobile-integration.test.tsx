@@ -58,7 +58,6 @@ vi.mock("../../api", async (importOriginal) => {
             { id: "in-progress", name: "In Progress", flags: { countsTowardWip: true } },
             { id: "in-review", name: "In Review", flags: { mergeBlocker: true, humanReview: true } },
             { id: "done", name: "Done", flags: { complete: true } },
-            { id: "archived", name: "Archived", flags: { archived: true } },
           ],
         },
       ],

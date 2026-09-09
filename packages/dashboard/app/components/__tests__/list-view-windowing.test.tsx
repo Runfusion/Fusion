@@ -1,5 +1,6 @@
+import { useState } from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, act } from "@testing-library/react";
+import { render, screen, fireEvent, act, waitFor } from "@testing-library/react";
 import { ListView } from "../ListView";
 import type { MergeResult, Task } from "@fusion/core";
 import { scopedKey } from "../../utils/projectStorage";
@@ -46,7 +47,6 @@ vi.mock("../../api", () => ({
           { id: "in-progress", name: "In Progress", flags: { countsTowardWip: true } },
           { id: "in-review", name: "In Review", flags: { mergeBlocker: true, humanReview: true } },
           { id: "done", name: "Done", flags: { complete: true } },
-          { id: "archived", name: "Archived", flags: { archived: true } },
         ],
       },
     ],
@@ -83,9 +83,8 @@ vi.mock("../../hooks/useConfirm", () => ({
 }));
 
 const PROJECT_ID = "proj-windowing";
-const TOTAL_TASKS = 200;
-const INITIAL_WINDOW = 50;
-const INCREMENT = 25;
+const TOTAL_TASKS = 1_000;
+const MAX_RENDERED_TASKS = 60;
 
 function makeTask(index: number): Task {
   const id = `FN-${String(index).padStart(3, "0")}`;
@@ -141,6 +140,57 @@ function renderedTaskIds(): string[] {
     .filter((id) => id.startsWith("FN-"));
 }
 
+function installVariableRowMeasurements() {
+  const callbacks: ResizeObserverCallback[] = [];
+  const observed = new Set<Element>();
+  class Observer {
+    constructor(callback: ResizeObserverCallback) { callbacks.push(callback); }
+    observe(element: Element) { observed.add(element); }
+    unobserve(element: Element) { observed.delete(element); }
+    disconnect() { observed.clear(); }
+  }
+  vi.stubGlobal("ResizeObserver", Observer);
+  const geometry = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function variableTaskHeight() {
+    const id = this.getAttribute("data-id") ?? "";
+    const index = Number(id.split("-").at(-1) ?? 0);
+    return { height: 84 + (index % 4) * 28 } as DOMRect;
+  });
+  return {
+    async deliver() {
+      await act(async () => {
+        for (const callback of callbacks) callback(Array.from(observed, (target, index) => ({ target, borderBoxSize: [{ blockSize: 84 + (index % 4) * 28 }], contentRect: { height: 84 + (index % 4) * 28 } }) as unknown as ResizeObserverEntry), {} as ResizeObserver);
+        await Promise.resolve();
+      });
+    },
+    restore() {
+      geometry.mockRestore();
+      vi.unstubAllGlobals();
+    },
+  };
+}
+
+function PaginatedSearchList({ onPage }: { onPage: () => void }) {
+  const [loadedCount, setLoadedCount] = useState(100);
+  return (
+    <ListView
+      tasks={TASKS.slice(0, loadedCount)}
+      onMoveTask={vi.fn(async () => TASKS[0])}
+      onDeleteTask={vi.fn(async () => TASKS[0])}
+      onMergeTask={vi.fn(async () => ({ merged: false }) as unknown as MergeResult)}
+      onOpenDetail={vi.fn()}
+      addToast={vi.fn()}
+      projectId={PROJECT_ID}
+      searchQuery="FN"
+      currentTasksHasMore={loadedCount < 300}
+      currentTasksLoadingMore={false}
+      onLoadMoreCurrentTasks={async () => {
+        onPage();
+        setLoadedCount((current) => Math.min(current + 100, 300));
+      }}
+    />
+  );
+}
+
 beforeEach(() => {
   localStorage.clear();
   confirmMocks.confirm.mockReset();
@@ -150,27 +200,90 @@ beforeEach(() => {
 });
 
 describe("ListView render windowing", () => {
-  it("renders only the initial window of a large section, not every task", async () => {
+  it("keeps the table DOM bounded while traversing a variable-height 1,000-task section", async () => {
+    const measurements = installVariableRowMeasurements();
     await renderList();
+    const root = document.querySelector<HTMLElement>(".list-table-container")!;
+    Object.defineProperties(root, {
+      clientHeight: { configurable: true, value: 640 },
+      scrollHeight: { configurable: true, value: TOTAL_TASKS * 112 },
+      scrollTop: { configurable: true, writable: true, value: 0 },
+    });
 
-    expect(renderedTaskIds()).toHaveLength(INITIAL_WINDOW);
-    // The section header still reports the FULL group size — grouping is preserved.
+    await measurements.deliver();
+    expect(renderedTaskIds().length).toBeLessThanOrEqual(MAX_RENDERED_TASKS);
     expect(screen.getByText(String(TOTAL_TASKS))).toBeTruthy();
-    expect(screen.getByRole("button", { name: /Load 25 more/i })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Load .*more|Show more/i })).toBeNull();
+
+    act(() => {
+      root.scrollTop = root.scrollHeight - root.clientHeight;
+      fireEvent.scroll(root);
+    });
+    await measurements.deliver();
+    expect(renderedTaskIds().length).toBeLessThanOrEqual(MAX_RENDERED_TASKS);
+    expect(renderedTaskIds()).toContain("FN-1000");
+    measurements.restore();
   });
 
-  it("reveals the next increment when Load more is clicked", async () => {
-    await renderList();
+  it("keeps the mobile card DOM bounded after a variable-height traversal", async () => {
+    const previousWidth = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 600 });
+    window.dispatchEvent(new Event("resize"));
+    const measurements = installVariableRowMeasurements();
+    try {
+      await renderList();
+      const root = document.querySelector<HTMLElement>(".list-table-container")!;
+      Object.defineProperties(root, {
+        clientHeight: { configurable: true, value: 640 },
+        scrollHeight: { configurable: true, value: TOTAL_TASKS * 112 },
+        scrollTop: { configurable: true, writable: true, value: 0 },
+      });
+      await measurements.deliver();
+      act(() => {
+        root.scrollTop = root.scrollHeight - root.clientHeight;
+        fireEvent.scroll(root);
+      });
+      await measurements.deliver();
+      expect(document.querySelectorAll(".list-card").length).toBeLessThanOrEqual(MAX_RENDERED_TASKS);
+      expect(renderedTaskIds()).toContain("FN-1000");
+    } finally {
+      measurements.restore();
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: previousWidth });
+      window.dispatchEvent(new Event("resize"));
+    }
+  });
 
-    act(() => {
-      fireEvent.click(screen.getByRole("button", { name: /Load 25 more/i }));
-    });
-    expect(renderedTaskIds()).toHaveLength(INITIAL_WINDOW + INCREMENT);
+  it("automatically traverses multiple server search pages from the production list scroller", async () => {
+    const onPage = vi.fn();
+    render(<PaginatedSearchList onPage={onPage} />);
+    await act(async () => { await Promise.resolve(); });
 
-    act(() => {
-      fireEvent.click(screen.getByRole("button", { name: /Load 25 more/i }));
+    const root = document.querySelector<HTMLElement>(".list-table-container")!;
+    Object.defineProperties(root, {
+      clientHeight: { configurable: true, value: 640 },
+      scrollHeight: { configurable: true, value: 300 * 112 },
+      scrollTop: { configurable: true, writable: true, value: 300 * 112 - 640 },
     });
-    expect(renderedTaskIds()).toHaveLength(INITIAL_WINDOW + INCREMENT * 2);
+
+    fireEvent.scroll(root);
+    await waitFor(() => expect(onPage).toHaveBeenCalledTimes(1));
+    await act(async () => { await Promise.resolve(); });
+    fireEvent.scroll(root);
+    await waitFor(() => expect(onPage).toHaveBeenCalledTimes(2));
+
+    expect(document.querySelector(".list-section-count")).toHaveTextContent("300");
+    expect(renderedTaskIds()).toContain("FN-300");
+    expect(renderedTaskIds().length).toBeLessThanOrEqual(MAX_RENDERED_TASKS);
+    expect(screen.queryByRole("button", { name: /Load .*more|Show more/i })).toBeNull();
+  });
+
+  it("retains list rows and delegates an explicit pagination retry", async () => {
+    const onRetryCurrentTasks = vi.fn().mockResolvedValue(undefined);
+    await renderList({ currentTasksPaginationError: "request-failed", onRetryCurrentTasks });
+    expect(renderedTaskIds().length).toBeGreaterThan(0);
+    expect(screen.getByText("Older tasks could not be loaded.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(onRetryCurrentTasks).toHaveBeenCalledOnce());
   });
 
   it("filters against the full set, so a match beyond the window is still found", async () => {
@@ -182,7 +295,8 @@ describe("ListView render windowing", () => {
     expect(screen.queryByRole("button", { name: /Load \d+ more/i })).toBeNull();
   });
 
-  it("keeps a selected task outside the window selected and visible", async () => {
+  it("converges a measured persisted selection outside the first window", async () => {
+    const measurements = installVariableRowMeasurements();
     localStorage.setItem(scopedKey("kb-dashboard-list-selected-task", PROJECT_ID), FAR_TASK_ID);
     localStorage.setItem(
       scopedKey("kb-dashboard-selected-tasks", PROJECT_ID),
@@ -190,6 +304,7 @@ describe("ListView render windowing", () => {
     );
 
     await renderList();
+    await measurements.deliver();
 
     // Selection state is id-based and untouched by the window.
     expect(
@@ -199,6 +314,7 @@ describe("ListView render windowing", () => {
 
     // ...and the window is widened so the persisted single selection is still rendered.
     expect(renderedTaskIds()).toContain(FAR_TASK_ID);
+    measurements.restore();
   });
 });
 
@@ -227,7 +343,8 @@ describe("ListView select-all under render windowing", () => {
     enterBulkEdit();
 
     const rendered = renderedTaskIds();
-    expect(rendered).toHaveLength(INITIAL_WINDOW);
+    expect(rendered.length).toBeGreaterThan(0);
+    expect(rendered.length).toBeLessThanOrEqual(MAX_RENDERED_TASKS);
 
     selectAll();
 
@@ -235,8 +352,8 @@ describe("ListView select-all under render windowing", () => {
       localStorage.getItem(scopedKey("kb-dashboard-selected-tasks", PROJECT_ID)) ?? "[]",
     );
     expect(persisted.sort()).toEqual([...rendered].sort());
-    expect(persisted).toHaveLength(INITIAL_WINDOW);
-    expect(screen.getAllByText(`${INITIAL_WINDOW} selected`).length).toBeGreaterThan(0);
+    expect(persisted).toHaveLength(rendered.length);
+    expect(screen.getAllByText(`${rendered.length} selected`).length).toBeGreaterThan(0);
   });
 
   it("confirms a bulk delete against the rendered rows only", async () => {
@@ -250,24 +367,34 @@ describe("ListView select-all under render windowing", () => {
 
     expect(confirmMocks.confirm).toHaveBeenCalledTimes(1);
     const { message } = confirmMocks.confirm.mock.calls[0][0] as { message: string };
-    expect(message).toContain(String(INITIAL_WINDOW));
+    expect(message).toContain(String(renderedTaskIds().length));
     expect(message).not.toContain(String(TOTAL_TASKS));
   });
 
-  it("grows the select-all target as the window is expanded", async () => {
+  it("selects only the current virtual window after scrolling", async () => {
     await renderList();
     enterBulkEdit();
-
-    act(() => {
-      fireEvent.click(screen.getByRole("button", { name: /Load 25 more/i }));
+    const initialIds = renderedTaskIds();
+    const root = document.querySelector<HTMLElement>(".list-table-container")!;
+    Object.defineProperties(root, {
+      clientHeight: { configurable: true, value: 640 },
+      scrollHeight: { configurable: true, value: TOTAL_TASKS * 112 },
+      scrollTop: { configurable: true, writable: true, value: 0 },
     });
+    act(() => {
+      root.scrollTop = 50_000;
+      fireEvent.scroll(root);
+    });
+    const scrolledIds = renderedTaskIds();
+    expect(scrolledIds).not.toEqual(initialIds);
     selectAll();
 
     const persisted: string[] = JSON.parse(
       localStorage.getItem(scopedKey("kb-dashboard-selected-tasks", PROJECT_ID)) ?? "[]",
     );
-    expect(persisted).toHaveLength(INITIAL_WINDOW + INCREMENT);
-    expect(persisted.sort()).toEqual([...renderedTaskIds()].sort());
+    expect(persisted).toHaveLength(scrolledIds.length);
+    expect(persisted.length).toBeLessThanOrEqual(MAX_RENDERED_TASKS);
+    expect(persisted.sort()).toEqual([...scrolledIds].sort());
   });
 
   it("reports checked, not indeterminate, once the rendered window is fully selected", async () => {

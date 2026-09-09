@@ -16,7 +16,7 @@ describe("positive pre-merge approval gate", () => {
   it("rejects a passed Code Review that has no reviewer verdict", () => {
     const task = { ...base, workflowStepResults: [{ workflowStepId: "code-review", workflowStepName: "Code", status: "passed" as const, reviewKind: "code" as const, reviewInputFingerprint: "a" }] };
     expect(getTaskMergeBlocker(task, { requiredPreMergeStepIds: required, mergeContent: { kind: "singular", diff: { state: "fingerprint", fingerprint: "a" } } }))
-      .toBe("task has enabled pre-merge workflow steps without a current approval");
+      .toBe("task has enabled pre-merge workflow steps without a current approval (gate 'code-review')");
   });
 
   it("requires an approving current diff fingerprint", () => {
@@ -82,7 +82,7 @@ describe("positive pre-merge approval gate", () => {
     const recoverable = { ...base, workflowStepResults: [downgraded] };
     for (const manual of [false, true]) {
       expect(getTaskMergeBlocker(recoverable, { manual, requiredPreMergeStepIds: required, mergeContent }))
-        .toBe("task has enabled pre-merge workflow steps without a current approval");
+        .toBe("task has enabled pre-merge workflow steps without a current approval (gate 'code-review')");
     }
     expect(getTaskMergeBlocker(recoverable)).toBe("task has failed pre-merge workflow steps");
 

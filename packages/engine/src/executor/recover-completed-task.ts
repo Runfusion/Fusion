@@ -290,7 +290,7 @@ export async function recoverCompletedTask(
       /*
       FNXC:WorkflowLifecycleColumns 2026-07-30-09:30: the two-hop is needed whenever the
       card sits in a DISTINCT intake lane, because role adjacency gives intake only
-      hold/archived — never wip. Post-U11 the default lineage merges the two roles onto one
+      hold — never wip. Post-U11 the default lineage merges intake and hold onto one
       column, so `hold === intake` and the hop correctly collapses to the single move below;
       a board that still separates them (pre-U11, or a custom lineage) keeps the re-home.
       */

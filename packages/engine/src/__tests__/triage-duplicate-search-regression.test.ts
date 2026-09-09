@@ -53,16 +53,16 @@ describe("FN-4815 triage duplicate-search regression", () => {
     expect(TRIAGE_POLICY_PROMPT).toContain("Duplicate check");
     expect(TRIAGE_POLICY_PROMPT).toContain("fn_task_search");
     expect(TRIAGE_POLICY_PROMPT).toContain("includeDone: false");
-    expect(TRIAGE_POLICY_PROMPT).toContain("includeArchived: false");
-    expect(/Duplicate check[\s\S]{0,700}(done|archived)/i.test(TRIAGE_POLICY_PROMPT)).toBe(true);
+    expect(TRIAGE_POLICY_PROMPT).not.toContain("includeArchived");
+    expect(/Duplicate check[\s\S]{0,700}(done|completed)/i.test(TRIAGE_POLICY_PROMPT)).toBe(true);
   });
 
   it("fast prompt guidance keeps duplicate-search instructions", () => {
     expect(FAST_PLANNING_PROMPT).toContain("Duplicate check");
     expect(FAST_PLANNING_PROMPT).toContain("fn_task_search");
     expect(FAST_PLANNING_PROMPT).toContain("includeDone: false");
-    expect(FAST_PLANNING_PROMPT).toContain("includeArchived: false");
-    expect(/Duplicate check[\s\S]{0,700}(done|archived)/i.test(FAST_PLANNING_PROMPT)).toBe(true);
+    expect(FAST_PLANNING_PROMPT).not.toContain("includeArchived");
+    expect(/Duplicate check[\s\S]{0,700}(done|completed)/i.test(FAST_PLANNING_PROMPT)).toBe(true);
   });
 
   it("end-to-end duplicate discovery excludes done matches by default", async () => {
@@ -112,13 +112,12 @@ describe("FN-4815 triage duplicate-search regression", () => {
     const result = await taskSearchTool.execute("call-4734", {
       query,
       includeDone: true,
-      includeArchived: true,
     });
     const output = result.content[0].text;
 
     expect(store.searchTasks).toHaveBeenCalledWith(query, {
       slim: true,
-      includeArchived: true,
+      includeArchived: false,
       limit: 20,
     });
     expect(output).toContain("FN-4726 (done):");

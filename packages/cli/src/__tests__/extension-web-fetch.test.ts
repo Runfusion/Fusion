@@ -14,7 +14,6 @@ vi.mock("@fusion/dashboard", () => ({
 }));
 
 vi.mock("@fusion/engine", () => ({
-  installBaselineArchiveWorktreeDisposer: vi.fn(),
   ...workflowAuthoringEngineMock,
   // FNXC:ToolPermissionGates 2026-07-26-14:55: extension.ts now imports the agent action gate; mock completeness gate requires these names.
   evaluateAgentActionGate: vi.fn(() => ({ disposition: "allow", category: "exempt", toolName: "", operation: "", summary: "", resourceType: "other", approvalDedupeKey: "", metadata: {} })),

@@ -70,7 +70,7 @@ describe("GitHubTrackingReconciler", () => {
     mockGetIssue.mockResolvedValue({ state: "open" });
     const olderUntracked = Array.from({ length: RECONCILE_SCAN_LIMIT }, (_, i) => ({
       id: `FN-old-${String(i + 1).padStart(4, "0")}`,
-      column: "archived",
+      column: "todo",
       createdAt: `2026-01-01T00:00:00.${String(i).padStart(3, "0")}Z`,
       updatedAt: `2026-01-01T00:00:00.${String(i).padStart(3, "0")}Z`,
     }));
@@ -101,26 +101,9 @@ describe("GitHubTrackingReconciler", () => {
 
     const result = await new GitHubTrackingReconciler().reconcile(store);
 
-    expect((store.listTasks as any)).toHaveBeenCalledWith({ slim: true, includeArchived: true });
+    expect((store.listTasks as any)).toHaveBeenCalledWith({ slim: true, includeArchived: false });
     expect(mockSetIssueState).toHaveBeenCalledWith("o", "r", 1, "closed", "completed");
     expect(result.closed).toBe(1);
-  });
-
-  it("closes open issues for archived tracked tasks using completion heuristic", async () => {
-    mockResolveGithubTrackingAuth.mockReturnValue({ ok: true, auth: { mode: "token", token: "ghp_test" } });
-    mockGetIssue.mockResolvedValue({ state: "open" });
-    const store = createStore({
-      listTasks: [
-        { id: "FN-1", column: "archived", executionCompletedAt: "2026-01-01T00:00:00.000Z", githubTracking: { enabled: true, issue: { owner: "o", repo: "r", number: 1 } } },
-        { id: "FN-2", column: "archived", githubTracking: { enabled: true, issue: { owner: "o", repo: "r", number: 2 } } },
-      ],
-    });
-
-    const result = await new GitHubTrackingReconciler().reconcile(store);
-
-    expect(mockSetIssueState).toHaveBeenCalledWith("o", "r", 1, "closed", "completed");
-    expect(mockSetIssueState).toHaveBeenCalledWith("o", "r", 2, "closed", "not_planned");
-    expect(result).toMatchObject({ scanned: 2, closed: 2, skipped: 0, errors: 0 });
   });
 
   it("skips closed issues and invalid tracking tasks", async () => {
@@ -191,27 +174,24 @@ describe("GitHubTrackingReconciler", () => {
   describe("reconcileSourceIssues", () => {
     const sourceSettings = { githubCloseSourceIssueOnDone: true, githubAuthMode: "token", githubAuthToken: "ghp_test" };
 
-    it("scans done and archived GitHub source issues including archived tasks", async () => {
+    it("scans completed GitHub source issues and ignores non-complete tasks", async () => {
       mockResolveGithubTrackingAuth.mockReturnValue({ ok: true, auth: { mode: "token", token: "ghp_test" } });
       mockGetIssue.mockResolvedValue({ state: "open" });
       const store = createStore({
         settings: sourceSettings,
         listTasks: [
           { id: "FN-1", column: "done", sourceIssue: { provider: "github", repository: "o/r", issueNumber: 1 } },
-          { id: "FN-2", column: "archived", executionCompletedAt: "2026-01-01T00:00:00.000Z", sourceIssue: { provider: "github", repository: "o/r", issueNumber: 2 } },
-          { id: "FN-3", column: "archived", sourceIssue: { provider: "github", repository: "o/r", issueNumber: 3 } },
-          { id: "FN-4", column: "todo", sourceIssue: { provider: "github", repository: "o/r", issueNumber: 4 } },
-          { id: "FN-5", column: "archived", sourceIssue: { provider: "jira", repository: "o/r", issueNumber: 5 } },
+          { id: "FN-2", column: "todo", sourceIssue: { provider: "github", repository: "o/r", issueNumber: 2 } },
+          { id: "FN-3", column: "done", sourceIssue: { provider: "jira", repository: "o/r", issueNumber: 3 } },
         ],
       });
 
       const result = await new GitHubTrackingReconciler().reconcileSourceIssues(store);
 
-      expect((store.listTasks as any)).toHaveBeenCalledWith({ slim: false, includeArchived: true });
+      expect((store.listTasks as any)).toHaveBeenCalledWith({ slim: false, includeArchived: false });
       expect(mockSetIssueState).toHaveBeenCalledWith("o", "r", 1, "closed", "completed");
-      expect(mockSetIssueState).toHaveBeenCalledWith("o", "r", 2, "closed", "completed");
-      expect(mockSetIssueState).toHaveBeenCalledWith("o", "r", 3, "closed", "not_planned");
-      expect(result).toMatchObject({ scanned: 3, closed: 3, skipped: 0, errors: 0 });
+      expect(mockSetIssueState).toHaveBeenCalledTimes(1);
+      expect(result).toMatchObject({ scanned: 1, closed: 1, skipped: 0, errors: 0 });
     });
 
     it("persists the current close time after closing an open source issue", async () => {
@@ -289,7 +269,7 @@ describe("GitHubTrackingReconciler", () => {
     it("skips source issue reconciliation when close-on-done is disabled", async () => {
       const store = createStore({
         settings: { githubCloseSourceIssueOnDone: false, githubAuthMode: "token", githubAuthToken: "ghp_test" },
-        listTasks: [{ id: "FN-1", column: "archived", sourceIssue: { provider: "github", repository: "o/r", issueNumber: 1 } }],
+        listTasks: [{ id: "FN-1", column: "done", sourceIssue: { provider: "github", repository: "o/r", issueNumber: 1 } }],
       });
 
       const result = await new GitHubTrackingReconciler().reconcileSourceIssues(store);
@@ -300,13 +280,13 @@ describe("GitHubTrackingReconciler", () => {
     });
   });
 
-  describe("reconcileDeletedAndArchived", () => {
+  describe("reconcileDeletedTasks", () => {
     it("closes with not_planned for soft-deleted tasks", async () => {
       mockResolveGithubTrackingAuth.mockReturnValue({ ok: true, auth: { mode: "token", token: "ghp_test" } });
       mockGetIssue.mockResolvedValue({ state: "open" });
       const store = createStore({ reconcileCandidates: [{ id: "FN-1", deletedAt: "2026-01-01T00:00:00.000Z", githubTracking: { enabled: true, issue: { owner: "o", repo: "r", number: 1 } } }] });
 
-      const result = await new GitHubTrackingReconciler().reconcileDeletedAndArchived(store, { offset: 0, limit: 10 });
+      const result = await new GitHubTrackingReconciler().reconcileDeletedTasks(store, { offset: 0, limit: 10 });
 
       expect(mockSetIssueState).toHaveBeenCalledWith("o", "r", 1, "closed", "not_planned");
       expect(result.closed).toBe(1);
@@ -318,11 +298,11 @@ describe("GitHubTrackingReconciler", () => {
       mockResolveGithubTrackingAuth.mockReturnValue({ ok: true, auth: { mode: "token", token: "ghp_test" } });
       mockGetIssue.mockResolvedValue({ state: "closed" });
       const store = createStore({
-        reconcileCandidates: [{ id: "FN-5", column: "archived", githubTracking: { enabled: true, issue: { owner: "o", repo: "r", number: 5 } } }],
+        reconcileCandidates: [{ id: "FN-5", deletedAt: "2026-01-01T00:00:00.000Z", githubTracking: { enabled: true, issue: { owner: "o", repo: "r", number: 5 } } }],
         reconcileHasMore: true,
       });
 
-      const result = await new GitHubTrackingReconciler().reconcileDeletedAndArchived(store, { offset: 200, limit: 200 });
+      const result = await new GitHubTrackingReconciler().reconcileDeletedTasks(store, { offset: 200, limit: 200 });
       expect(result.hasMore).toBe(true);
       expect(result.skipped).toBe(1);
     });
@@ -331,7 +311,7 @@ describe("GitHubTrackingReconciler", () => {
   /*
   FNXC:GithubTrackingReconcile 2026-07-16-15:40:
   Regression coverage for the reconcile backstop going fully dark. The bug: a throw in the
-  deleted/archived pass aborted the whole sweep (shared try/catch, silent swallow), so the
+  deleted-task pass aborted the whole sweep (shared try/catch, silent swallow), so the
   done-task tracking pass — which closes linked GitHub issues on Done — never ran on any sweep,
   and imported/linked issues stayed open forever. Invariant asserted below: each pass is isolated,
   so a throw in ANY one pass never prevents the others from running.
@@ -345,10 +325,10 @@ describe("GitHubTrackingReconciler", () => {
       warnSpy.mockRestore();
     });
 
-    it("runs done-task + source-issue passes even when the deleted/archived pass throws", async () => {
+    it("runs done-task + source-issue passes even when the deleted-task pass throws", async () => {
       const reconciler = new GitHubTrackingReconciler();
-      const deletedArchived = vi
-        .spyOn(reconciler, "reconcileDeletedAndArchived")
+      const deletedTasks = vi
+        .spyOn(reconciler, "reconcileDeletedTasks")
         .mockRejectedValue(new Error("listTasksForGithubTrackingReconcile exploded"));
       const reconcile = vi
         .spyOn(reconciler, "reconcile")
@@ -361,17 +341,17 @@ describe("GitHubTrackingReconciler", () => {
       const { nextOffset } = await reconciler.runSweep(store, { offset: 0 });
 
       // The critical invariant: the two closing passes still ran despite pass 1 throwing.
-      expect(deletedArchived).toHaveBeenCalledTimes(1);
+      expect(deletedTasks).toHaveBeenCalledTimes(1);
       expect(reconcile).toHaveBeenCalledTimes(1);
       expect(reconcileSource).toHaveBeenCalledTimes(1);
-      // A failed deleted/archived pass resets the paging offset (retry from 0 next sweep).
+      // A failed deleted-task pass resets the paging offset (retry from 0 next sweep).
       expect(nextOffset).toBe(0);
       expect(warnSpy).toHaveBeenCalled();
     });
 
     it("runs the source-issue pass even when the done-task pass throws, and advances paging", async () => {
       const reconciler = new GitHubTrackingReconciler();
-      vi.spyOn(reconciler, "reconcileDeletedAndArchived").mockResolvedValue({ scanned: 0, closed: 0, skipped: 0, errors: 0, hasMore: true });
+      vi.spyOn(reconciler, "reconcileDeletedTasks").mockResolvedValue({ scanned: 0, closed: 0, skipped: 0, errors: 0, hasMore: true });
       const reconcile = vi.spyOn(reconciler, "reconcile").mockRejectedValue(new Error("done-task pass boom"));
       const reconcileSource = vi
         .spyOn(reconciler, "reconcileSourceIssues")
@@ -382,20 +362,15 @@ describe("GitHubTrackingReconciler", () => {
 
       expect(reconcile).toHaveBeenCalledTimes(1);
       expect(reconcileSource).toHaveBeenCalledTimes(1);
-      // deleted/archived reported hasMore, so paging advances by the scan limit.
+      // The deleted-task pass reported hasMore, so paging advances by the scan limit.
       expect(nextOffset).toBe(200 + RECONCILE_SCAN_LIMIT);
     });
   });
 
   /*
   FNXC:WorkflowResolvedColumns 2026-07-31-05:30 (fleet phase — the SYNC-FILTER class, converted):
-  Before this, every `.filter((task) => task.column === "done" || task.column === "archived")` in the
-  reconciler matched NOTHING on a board whose terminal lanes are renamed. The pass then reported
-  `scanned: 0, closed: 0` — a clean-looking run that closed no GitHub issues at all.
-
-  REVERT CHECK, measured (both run): restoring the id comparisons makes "closes issues on a RENAMED
-  complete lane" fail with `expected 0 to be 1` and no `setIssueState` call, and makes the archived
-  heuristic case fail the same way. The default-vocabulary cases above pass either way.
+  Before this, a literal `task.column === "done"` filter matched nothing on a board whose complete
+  lane was renamed. The pass then reported a clean-looking run that closed no GitHub issues at all.
   */
   const RENAMED_IR = {
     version: "v2",
@@ -408,7 +383,6 @@ describe("GitHubTrackingReconciler", () => {
       { id: "building", name: "Building", traits: [{ trait: "wip" }] },
       { id: "checking", name: "Checking", traits: [{ trait: "merge-blocker" }] },
       { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
-      { id: "attic", name: "Attic", traits: [{ trait: "archived" }] },
     ],
   };
 
@@ -428,22 +402,4 @@ describe("GitHubTrackingReconciler", () => {
     expect(result.closed).toBe(1);
   });
 
-  it("applies the archived done-heuristic on a RENAMED archived lane", async () => {
-    mockResolveGithubTrackingAuth.mockReturnValue({ ok: true, auth: { mode: "token", token: "ghp_test" } });
-    mockGetIssue.mockResolvedValue({ state: "open" });
-    const store = createStore({
-      workflowIr: RENAMED_IR,
-      listTasks: [
-        { id: "FN-10", column: "attic", executionCompletedAt: "2026-01-01T00:00:00.000Z", githubTracking: { enabled: true, issue: { owner: "o", repo: "r", number: 10 } } },
-        { id: "FN-11", column: "attic", githubTracking: { enabled: true, issue: { owner: "o", repo: "r", number: 11 } } },
-      ],
-    });
-
-    const result = await new GitHubTrackingReconciler().reconcile(store);
-
-    // Completed-before-archive closes as `completed`; never-executed closes as `not_planned`.
-    expect(mockSetIssueState).toHaveBeenCalledWith("o", "r", 10, "closed", "completed");
-    expect(mockSetIssueState).toHaveBeenCalledWith("o", "r", 11, "closed", "not_planned");
-    expect(result.closed).toBe(2);
-  });
 });

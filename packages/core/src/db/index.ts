@@ -3,7 +3,6 @@
  * Domain barrel for core/db.
  */
 export * from "./archive-db.js";
-export * from "./archive-worktree-disposer.js";
 export * from "./db.js";
 export * from "./db-helpers.js";
 export * from "./legacy-adoption.js";

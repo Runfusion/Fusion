@@ -2,13 +2,13 @@
 FNXC:WorkflowResolvedColumns 2026-07-30-09:40 (batch-engine tail — the agent tools listed FINISHED cards as active):
 DIFFERENTIAL: one task set, one pair of tools, two column VOCABULARIES.
 
-`fn_task_list` describes itself as "list active tasks that aren't done or archived" and `fn_task_search`
+`fn_task_list` describes itself as listing active tasks and `fn_task_search`
 offers `includeDone: false`. Both filtered with `task.column !== "done"`. On a board whose complete lane is
 renamed, a finished card came back as ACTIVE — to an AGENT, which then reasons and acts on it as
 outstanding work. Nothing throws; the agent is simply told the wrong thing.
 
-`includeArchived: false` was always enforced by the QUERY, so it survived a rename. "done" was only ever a
-TypeScript predicate, which is why exactly this half broke.
+Historical cold rows were already excluded by the QUERY. `done` was only ever a TypeScript predicate,
+which is why exactly this half broke.
 
 WHY A NEW FILE: no existing suite exercised `createTaskListTool` or `createTaskSearchTool` at all, so the
 "304/304 green" the conversion originally cited was not evidence about the conversion. Per

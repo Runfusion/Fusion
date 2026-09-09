@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  isArchivedColumnRole,
   isCompleteColumnRole,
   isHoldColumnRole,
   isIntakeColumnRole,
@@ -32,12 +31,11 @@ describe("column-role predicates — flags decide when present", () => {
     expect(isWipColumnRole(F({ countsTowardWip: true }), "Building")).toBe(true);
     expect(isReviewColumnRole(F({ mergeBlocker: true }), "Checking")).toBe(true);
     expect(isCompleteColumnRole(F({ complete: true }), "Shipped")).toBe(true);
-    expect(isArchivedColumnRole(F({ archived: true }), "Attic")).toBe(true);
   });
 
   it("a legacy id with the WRONG traits answers no — the id must not win over resolved flags", () => {
     // The conversion's whole claim: once flags resolve, the id is not consulted.
-    expect(isCompleteColumnRole(F({ archived: true }), "done")).toBe(false);
+    expect(isCompleteColumnRole(F({ hold: true }), "done")).toBe(false);
     expect(isWipColumnRole(F({ hold: true }), "in-progress")).toBe(false);
     expect(isIntakeColumnRole(F({ hold: true }), "triage")).toBe(false);
     expect(isReviewColumnRole(F({ complete: true }), "in-review")).toBe(false);
@@ -55,16 +53,8 @@ describe("column-role predicates — flags decide when present", () => {
     expect(isReviewColumnRole(F({}), "x")).toBe(false);
   });
 
-  /*
-  The distinction #2685 established, asserted rather than only documented: an archived card is
-  finished but NOT completed, so a throughput surface counting `complete` must not see it.
-  */
-  it("complete EXCLUDES archived, while terminal includes both", () => {
-    expect(isCompleteColumnRole(F({ archived: true }), "x")).toBe(false);
-    expect(isArchivedColumnRole(F({ complete: true }), "x")).toBe(false);
-
+  it("terminal and complete are the same successful lifecycle role", () => {
     expect(isTerminalColumnRole(F({ complete: true }), "x")).toBe(true);
-    expect(isTerminalColumnRole(F({ archived: true }), "x")).toBe(true);
     expect(isTerminalColumnRole(F({ countsTowardWip: true }), "x")).toBe(false);
   });
 
@@ -83,7 +73,6 @@ describe("column-role predicates — degraded fallback when flags are absent", (
     expect(isWipColumnRole(undefined, "in-progress")).toBe(true);
     expect(isReviewColumnRole(undefined, "in-review")).toBe(true);
     expect(isCompleteColumnRole(undefined, "done")).toBe(true);
-    expect(isArchivedColumnRole(undefined, "archived")).toBe(true);
   });
 
   it("pre-implementation falls back to BOTH planning ids, merged and pre-merge", () => {
@@ -94,9 +83,9 @@ describe("column-role predicates — degraded fallback when flags are absent", (
     expect(isPreImplementationColumnRole(undefined, "in-progress")).toBe(false);
   });
 
-  it("terminal falls back to done OR archived", () => {
+  it("terminal falls back to Done only", () => {
     expect(isTerminalColumnRole(undefined, "done")).toBe(true);
-    expect(isTerminalColumnRole(undefined, "archived")).toBe(true);
+    expect(isTerminalColumnRole(undefined, "archived")).toBe(false);
     expect(isTerminalColumnRole(undefined, "in-review")).toBe(false);
   });
 

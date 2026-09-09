@@ -171,19 +171,19 @@ describe("task_document_write tool", () => {
     expect(getText(result)).toContain("database temporarily unavailable");
   });
 
-  it("returns archived read-only details when document writes are blocked", async () => {
+  it("returns deleted-or-historical read-only details when document writes are blocked", async () => {
     const { store, upsertTaskDocument } = createMockStore();
-    upsertTaskDocument.mockRejectedValue(new Error("Task FN-007 is archived — documents are read-only"));
+    upsertTaskDocument.mockRejectedValue(new Error("Task FN-007 is deleted or historical — documents are read-only"));
 
     const tool = createTaskDocumentWriteTool(store, TASK_ID);
-    const result = await runTool(tool, "call-archived", {
+    const result = await runTool(tool, "call-historical", {
       key: "research",
       content: "Notes",
       author: "agent",
     });
 
     expect(getText(result)).toContain("ERROR: Failed to save document");
-    expect(getText(result)).toContain("archived");
+    expect(getText(result)).toContain("deleted or historical");
   });
 });
 
@@ -194,7 +194,9 @@ describe("task_prompt_write tool", () => {
   });
 
   it("reports success only after the authoritative store reads back the exact prompt", async () => {
-    const updateTask = vi.fn().mockResolvedValue({});
+    // The read-back compares against updateTask's returned task: the fixed store contract
+    // (STAS-103) carries the persisted prompt on that return, so the mock must too.
+    const updateTask = vi.fn().mockResolvedValue({ id: TASK_ID, prompt: "# Verified plan" });
     const getTask = vi.fn().mockResolvedValue({ id: TASK_ID, prompt: "# Verified plan" });
     const store = { updateTask, getTask } as unknown as TaskStore;
 
@@ -340,7 +342,7 @@ describe("task_prompt_write tool", () => {
     expect(getText(result)).toContain("could not be verified");
   });
 
-  it("confirms a workspace prompt after atomically publishing its validated repository scope", async () => {
+  it("keeps workspace membership out of the plan-only prompt update", async () => {
     const content = "## Repository Scope\n- `packages/engine`\n\n# Workspace plan";
     const updateTask = vi.fn().mockResolvedValue({ id: TASK_ID });
     const getTask = vi.fn().mockResolvedValue({ id: TASK_ID, prompt: content });
@@ -349,10 +351,7 @@ describe("task_prompt_write tool", () => {
 
     const result = await runTool(createTaskPromptWriteTool(store, TASK_ID), "call-workspace", { content });
 
-    expect(updateTask).toHaveBeenCalledWith(TASK_ID, expect.objectContaining({
-      prompt: content,
-      repositoryScope: expect.objectContaining({ repositories: ["packages/engine"], state: "confirmed" }),
-    }), undefined);
+    expect(updateTask).toHaveBeenCalledWith(TASK_ID, { prompt: content }, undefined);
     expect(getText(result)).toBe(`Updated PROMPT.md for ${TASK_ID}.`);
   });
 

@@ -12,9 +12,9 @@ export interface AgentTaskLinkExecutionProof {
 
 /*
 FNXC:WorkflowLifecycleColumns 2026-07-27-22:55 (Phase B / U5):
-The roles at which an agent's task link is CLEARED: terminal (`complete`,
-`archived`) plus parked (`hold`, `intake`). Legacy default = the ids the builtin
-coding workflow gives those four roles, used when the workflow cannot be
+The roles at which an agent's task link is CLEARED: terminal (`complete`) plus
+parked (`hold`, `intake`). Legacy default = the ids the builtin coding workflow
+gives those roles, used when the workflow cannot be
 resolved — the conservative choice, since it preserves today's behavior exactly
 rather than guessing a role for an unknown column.
 */
@@ -26,9 +26,9 @@ cannot resolve a workflow.
 */
 export const LEGACY_PARKED_COLUMNS: readonly string[] = ["todo", "triage"];
 
-/* Terminal (`complete`, `archived`) plus parked. Derived from the parked list
-   rather than restated so the two legacy sets cannot drift apart. */
-const LEGACY_CLEAR_COLUMNS: readonly string[] = ["done", "archived", ...LEGACY_PARKED_COLUMNS];
+/* Complete plus parked. Derived from the parked list rather than restated so the
+   two legacy sets cannot drift apart. */
+const LEGACY_CLEAR_COLUMNS: readonly string[] = ["done", ...LEGACY_PARKED_COLUMNS];
 
 interface LinkSyncColumnRoles {
   /** Columns whose arrival clears the link (terminal + parked). */
@@ -60,8 +60,8 @@ async function resolveLinkSyncColumnRoles(
   FNXC:WorkflowResolvedColumns 2026-07-30-15:40 (the arity trap, sixth site):
   MEMBERSHIP, not first-per-role. These two sets are consumed by `roles.parked.includes(to)` and
   `roles.clear.includes(to)` — membership tests — but were built from `resolveTaskLifecycleColumns`,
-  which returns the FIRST column carrying each trait. A workflow declaring two hold lanes, or an
-  archive lane plus a second terminal one, had link hygiene applied to only one of them.
+  which returns the FIRST column carrying each trait. A workflow declaring two hold or Complete
+  lanes had link hygiene applied to only one of them.
 
   `resolveLifecycleColumns` answers "which column is THE hold lane?"; a membership test asks "is this
   column ANY hold lane". Nothing in the types distinguishes them, which is why this program has now hit
@@ -71,10 +71,10 @@ async function resolveLinkSyncColumnRoles(
   if (!ir) return LEGACY_COLUMN_ROLES;
 
   const parked = [...new Set([...columnsWithFlag(ir, "hold"), ...columnsWithFlag(ir, "intake")])];
-  const terminal = [...new Set([...columnsWithFlag(ir, "complete"), ...columnsWithFlag(ir, "archived")])];
+  const terminal = [...new Set(columnsWithFlag(ir, "complete"))];
   const clear = [...terminal, ...parked];
 
-  // A v2 workflow declaring none of the four roles yields an empty clear set,
+  // A v2 workflow declaring none of the clearing roles yields an empty clear set,
   // which would silently disable link hygiene entirely. Prefer the legacy sets.
   if (clear.length === 0) return LEGACY_COLUMN_ROLES;
   return { clear, parked };

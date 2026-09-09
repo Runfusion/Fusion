@@ -35,7 +35,19 @@ function harness(options: {
     prompt: PROMPT,
     modifiedFiles: ["repo-a/src/x.ts"],
     steps: [{ name: "Implement", status: "done" }] as TaskStep[],
-    ...(options.workspace === false ? { worktree: "/tmp/singular" } : {
+    ...(options.workspace === false ? {
+      worktree: "/tmp/singular",
+      workflowStepResults: [{
+        workflowStepId: "code-review",
+        workflowStepName: "Code Review",
+        phase: "pre-merge",
+        status: "failed",
+        verdict: "REVISE",
+        findings,
+        startedAt: "2026-09-08T02:24:00.000Z",
+        completedAt: "2026-09-08T02:24:01.000Z",
+      }],
+    } : {
       repositoryScope: { state: "confirmed", revision: 1, repositories: ["repo-a", "repo-b"] },
       workspaceWorktrees: {
         "repo-a": { worktreePath: options.workspaceWorktreePath ?? "/tmp/repo-a", baseCommitSha: "a" },
@@ -196,25 +208,33 @@ describe("workspace named Code Review remediation routing", () => {
     expect(store.logEntry).toHaveBeenCalledWith("FN-201", "Workspace review remediation superseded by repository scope change");
   });
 
-  it("releases a finding-less revise without inventing work", async () => {
+  it("turns a finding-less Code Review revise into structural remediation", async () => {
     const { task, store, deps, sendTaskBackForFix } = harness({ findings: [] });
 
     const scheduled = await requestPreMergeOptionalStepFix(deps as never, task.id, task, reviseInfo([]));
 
-    expect(scheduled).toBe(false);
-    expect(sendTaskBackForFix).not.toHaveBeenCalled();
-    expect(store.logEntry).toHaveBeenCalledWith("FN-201", "Review remediation released as non-blocking", "review-remediation-no-actionable-findings");
+    expect(scheduled).toBe(true);
+    expect(task.steps).toContainEqual(expect.objectContaining({
+      status: "pending",
+      remediation: expect.objectContaining({ findingId: "missing-code-review-fix-steps" }),
+    }));
+    expect(sendTaskBackForFix).toHaveBeenCalledOnce();
+    expect(store.logEntry).not.toHaveBeenCalledWith("FN-201", "Review remediation released as non-blocking", expect.anything());
   });
 
-  it("releases qualified findings outside the confirmed workspace repository scope", async () => {
+  it("turns findings outside confirmed workspace scope into structural Code Review remediation", async () => {
     const findings = [{ id: "repo-c:finding-1", title: "Outside", body: "Fix outside scope.", filePath: "repo-c/src/outside.ts", severity: "critical" as const }];
     const { task, store, deps, sendTaskBackForFix } = harness({ findings });
 
     const scheduled = await requestPreMergeOptionalStepFix(deps as never, task.id, task, reviseInfo(findings));
 
-    expect(scheduled).toBe(false);
-    expect(sendTaskBackForFix).not.toHaveBeenCalled();
-    expect(store.logEntry).toHaveBeenCalledWith("FN-201", "Review remediation released as non-blocking", "review-remediation-upstream-out-of-scope:repo-c/src/outside.ts");
+    expect(scheduled).toBe(true);
+    expect(task.steps).toContainEqual(expect.objectContaining({
+      status: "pending",
+      remediation: expect.objectContaining({ findingId: "missing-code-review-fix-steps" }),
+    }));
+    expect(sendTaskBackForFix).toHaveBeenCalledOnce();
+    expect(store.logEntry).not.toHaveBeenCalledWith("FN-201", "Review remediation released as non-blocking", expect.anything());
   });
 
   it("releases when the failed repository has no acquired workspace worktree", async () => {

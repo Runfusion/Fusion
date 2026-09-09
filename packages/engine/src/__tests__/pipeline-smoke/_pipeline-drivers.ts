@@ -531,7 +531,7 @@ export const PIPELINE_SCENARIO_DRIVERS = {
   }),
 
   s19Arrange: driver("clone a built-in workflow with renamed column ids", async (context) => {
-    const source = context.workflowId === "builtin:coding" ? "builtin:coding" : "builtin:coding-ideas";
+    const source = context.workflowId === "builtin:coding" ? "builtin:coding" : "builtin:coding-ideas-v2";
     const renamed = await context.harness.createRenamedWorkflow(source);
     context.workflowId = renamed.workflowId;
     await arrangeTask(context, `S19-${source}`);

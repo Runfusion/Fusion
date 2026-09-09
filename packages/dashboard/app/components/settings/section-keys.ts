@@ -133,9 +133,6 @@ export const PROJECT_SECTION_KEYS: Readonly<Record<string, readonly string[]>> =
     "worktrunk",
   ],
   scheduling: [
-    "archiveAgentLogMode",
-    "autoArchiveDoneAfterMs",
-    "autoArchiveDoneTasksEnabled",
     "engineerBacklogAutoClaim",
     "executorToolFailureRetryCount",
     "executorToolFailureRetryBackoffMs",

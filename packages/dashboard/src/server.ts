@@ -2,7 +2,6 @@ import { createLogger } from "@fusion/core";
 
 const severityAuditLog = createLogger("dashboard-server");
 import express, { type Router } from "express";
-import { archivedColumnsForTask } from "./task-lifecycle-lanes.js";
 import { randomUUID } from "node:crypto";
 import { join, dirname } from "node:path";
 import { existsSync, readFileSync, statSync } from "node:fs";
@@ -22,7 +21,6 @@ import type {
 } from "@fusion/core";
 import {
   AgentStore,
-  bulkDeleteStashChatSessions,
   ChatStore,
   cloudRedeemTicket,
   loadCloudLinkState,
@@ -73,7 +71,7 @@ import {
   setAiSessionStore as setMilestoneSliceAiSessionStore,
   rehydrateFromStore as rehydrateMilestoneSliceSessions,
 } from "./milestone-slice-interview.js";
-import { ChatManager, TASK_PLANNER_CHAT_AGENT_ID_PREFIX } from "./chat.js";
+import { ChatManager } from "./chat.js";
 import { CliChatSessionRunner } from "./cli-chat.js";
 import { stopAllDevServers } from "./dev-server-routes.js";
 import type { SkillsAdapter } from "./skills-adapter.js";
@@ -333,6 +331,7 @@ export interface ServerOptions {
   missionExecutionLoop?: {
     recoverActiveMissions(): Promise<{ recoveredCount: number }>;
     isRunning(): boolean;
+    executeManualValidatorRun?(run: { id: string; featureId: string }): Promise<void>;
   };
   /** Optional HeartbeatMonitor for triggering agent execution runs */
   heartbeatMonitor?: {
@@ -1212,82 +1211,6 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
   // FNXC:PostgresSatelliteCutover 2026-07-14-17:30: Dashboard chat persistence is PostgreSQL-only and shares the scoped project layer.
   const chatLayer = requireAsyncLayer(store, "Dashboard ChatStore");
   const chatStore = options?.chatStore ?? new ChatStore(chatLayer);
-  store.on("task:moved", (data: { task: Task; from: string; to: string }) => {
-    /*
-    FNXC:WorkflowResolvedColumns 2026-07-30-04:05 (batch-core):
-    Planner-chat retention is cut off by ARCHIVAL, resolved from the task's own workflow. Keyed on the
-    literal, a board that renamed its archived lane never reached the delete, so task-planner chat
-    sessions were retained forever — the retention cutoff this listener exists to enforce simply never
-    fired, and nothing surfaced that.
-
-    The handler stays synchronous and the resolution is awaited inside the existing fire-and-forget
-    chain rather than by making the listener `async`. `task:moved` has synchronous subscribers whose
-    ordering relative to the emitter is load-bearing elsewhere in this codebase, and this listener
-    only deletes chat rows — there is no reason to make it the one that introduces a microtask
-    boundary into that emit.
-    */
-    void (async () => {
-      const archivedLanes = await archivedColumnsForTask(store, data.task.id).catch(() => undefined);
-      if (!(archivedLanes ?? new Set(["archived"])).has(data.to)) return;
-    /*
-    FNXC:TaskDetailPlannerChatRetention 2026-06-30-18:45:
-    Task-detail planner chats are retained after done when a user interacted, but task archival is the retention cutoff. Delete exact task-planner sessions on archive so normal chats and other tasks' planner chats remain intact while chat:session:deleted events clear dashboard caches.
-    */
-      const plannerAgentId = `${TASK_PLANNER_CHAT_AGENT_ID_PREFIX}${data.task.id}`;
-      try {
-        /*
-        FNXC:RUFU125BulkArchiveSync 2026-08-19-06:07:
-        RUFU-125: snapshot the doomed local session ids BEFORE the local bulk delete —
-        no projectId (mirrors the RUFU-121 per-session route guard, which also omits it)
-        so the Stash sync targets exactly the rows the archive is about to drop. The read
-        is fail-open: a listSessions failure degrades to an empty list and must never
-        prevent the local delete below.
-        */
-        const doomed = await chatStore.listSessions({ agentId: plannerAgentId }).catch(() => []);
-        const deletedCount = await chatStore.deleteSessionsForAgentId(plannerAgentId);
-        if (deletedCount === 0 || doomed.length === 0) return;
-        /*
-        FNXC:RUFU125BulkArchiveSync 2026-08-19-06:07:
-        RUFU-125: the bulk local delete above bypasses the per-session DELETE route RUFU-121
-        hooks, so soft-delete the matching Stash rows in a SEPARATE fire-and-forget IIFE —
-        a Stash stall can never delay local archival bookkeeping. Mirrors the RUFU-121 route
-        sync (skip-guards, url fallback, never-throws): a skip is debug-logged with its
-        reason, and a partial window match (matched < doomed.length) is debug-logged as a
-        window miss with matched/total + truncated (the bounded lookback's documented
-        residual — rows older than 10 × 200 recent rows remain in Stash).
-        */
-        void (async () => {
-          try {
-            const summary = await bulkDeleteStashChatSessions(store, doomed.map((s) => s.id));
-            if (summary.skipped) {
-              severityAuditLog.debug(
-                `[RUFU-125] stash bulk sync skipped on archive task=${data.task.id} reason=${summary.skipReason}`,
-              );
-              return;
-            }
-            if (summary.result.matched < doomed.length) {
-              const r = summary.result;
-              severityAuditLog.debug(
-                `[RUFU-125] stash bulk sync window miss task=${data.task.id} matched=${r.matched}/${doomed.length} deleted=${r.deleted} truncated=${r.truncated} pagesScanned=${r.pagesScanned}`,
-              );
-            }
-          } catch (err: unknown) {
-            // bulkDeleteStashChatSessions never throws by core contract; this is the
-            // never-reject safety net for any future regression.
-            severityAuditLog.warn(
-              `[RUFU-125] stash bulk sync failed task=${data.task.id} (best-effort, non-blocking): ${err instanceof Error ? err.message : String(err)}`,
-            );
-          }
-        })();
-      } catch (err: unknown) {
-        // Unexpected failure in the archival chain (e.g. the local delete throwing —
-        // previously an unhandled rejection): warn, never reject the task:moved chain.
-        severityAuditLog.warn(
-          `[RUFU-125] archive chat cleanup failed task=${data.task.id} (non-blocking): ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-    })();
-  });
   options?.engine?.attachChatStore?.(chatStore);
   if (typeof options?.engineManager?.getAllEngines === "function") {
     for (const engine of options.engineManager.getAllEngines().values()) {
@@ -3055,14 +2978,6 @@ export function setupBadgeWebSocket(
 
     const onTaskUpdated = (task: Task) => {
       const cacheKey = `${scopeKey}:${task.id}`;
-      // FNXC:BadgeSnapshotEviction 2026-07-10-15:00: evict (not re-cache) when a
-      // task is archived off the live board, and skip the publish so peers don't
-      // re-cache it. An unarchive re-emits task:updated with a live column and
-      // re-primes the entry. See isBadgeEligibleTask.
-      if (!isBadgeEligibleTask(task)) {
-        badgeSnapshots.delete(cacheKey);
-        return;
-      }
       const previousSnapshot = badgeSnapshots.get(cacheKey);
       const nextSnapshot: BadgeSnapshot = {
         prInfo: task.prInfo ?? null,
@@ -3098,13 +3013,6 @@ export function setupBadgeWebSocket(
 
     const onTaskCreated = (task: Task) => {
       const cacheKey = `${scopeKey}:${task.id}`;
-      // FNXC:BadgeSnapshotEviction 2026-07-10-15:00: an already-archived task
-      // (e.g. restored/imported into the archive) must not seed the live-board
-      // badge cache — same eligibility rule as the update listener.
-      if (!isBadgeEligibleTask(task)) {
-        badgeSnapshots.delete(cacheKey);
-        return;
-      }
       badgeSnapshots.set(cacheKey, {
         prInfo: task.prInfo ?? null,
         issueInfo: task.issueInfo ?? null,
@@ -3264,43 +3172,6 @@ export function setupBadgeWebSocket(
     dashboardApp.badgeWsManager = null;
     dashboardApp.__fnWebSocketsAttached = false;
   });
-}
-
-/*
-FNXC:BadgeSnapshotEviction 2026-07-10-15:00:
-The in-memory badge-snapshot cache is keyed by task id and only ever removed a task
-on hard-delete, so archived tasks accumulated for the daemon's whole lifetime — a slow
-memory leak on long-running servers with task churn. Badge snapshots are only needed for
-tasks visible on the live board; archived tasks leave it. This predicate is the single
-eligibility rule used by both the create and update listeners (and mirrored by the
-startup prime's `includeArchived:false`). Exported for unit coverage of the invariant.
-*/
-/*
-FNXC:WorkflowResolvedColumns 2026-07-30-04:20 DELIBERATE-LITERAL: sync predicate behind a sync listener.
-
-NOT OVERLOOKED. On a renamed board this is genuinely wrong — an archived card stays badge-eligible, so
-its snapshot is never evicted and the cache grows for the daemon's lifetime. That is the exact memory
-leak this predicate was added to fix (FNXC:BadgeSnapshotEviction above), reappearing under a different
-column name. It is real backlog, deliberately left counted rather than marked away.
-
-WHAT BLOCKS IT, measured rather than assumed. Resolving the archived role is async, and both callers
-are SYNCHRONOUS `task:updated` / `task:created` listeners whose next statement is documented as
-"Update local cache immediately" — the snapshot is written, compared, and published in the same tick.
-Awaiting here introduces a microtask boundary into that path, so a second event for the same task can
-interleave between the eligibility check and the cache write and publish a stale snapshot.
-
-WHY NOT AN OPTIONAL `archivedColumns` PARAMETER. Because nothing could fill it: the callers are the
-sync listeners. An optional parameter that only tests supply is the inert-injection shape — the
-predicate would read as converted, its test would pass by injecting the value, and production would
-keep the literal. #2780 caught exactly that twice in this program.
-
-WHAT WOULD ACTUALLY UNBLOCK IT: give the badge-snapshot scope a resolved-archived-lane cache populated
-when a project's workflow is loaded, so the predicate stays sync and reads a map instead of a literal.
-That is a lifecycle change to the snapshot scope, not a rename, so it is stated here rather than
-quietly skipped.
-*/
-export function isBadgeEligibleTask(task: Pick<Task, "column">): boolean {
-  return task.column !== "archived";
 }
 
 /** Compare two badge snapshots for equality */

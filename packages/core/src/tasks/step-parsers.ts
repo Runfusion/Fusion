@@ -25,8 +25,9 @@ import type { TaskStep } from "../types.js";
 // ── Parser contract ──────────────────────────────────────────────────────────
 
 /**
- * A parsed step as produced by a parser. `dependsOn` is 0-indexed (same
- * convention as the headings `(depends: …)` annotation).
+ * A parsed step as produced by a parser. `dependsOn` is a 0-indexed document
+ * index; heading annotations name literal `### Step N` numbers and are rebased
+ * only for fully-1-based legacy documents.
  *
  * FNXC:WorkflowSteps 2026-06-29-17:55:
  * Parser output must preserve array presence: omitted `dependsOn` means legacy previous-step fallback, while explicit `dependsOn: []` means an independent parallel root.
@@ -169,42 +170,72 @@ export class StepParserRegistry {
  * first colon, trimmed).
  *
  * The annotation `### Step N (depends: 1,2): Title` is parsed explicitly (the
- * legacy regex breaks on the colon inside `depends:`): depends values are
- * 1-indexed step numbers in the document and are stored as 0-indexed indices on
- * `dependsOn` (deduped, sorted, dropping values <= 0). An empty `(depends:)`
- * annotation is preserved as `dependsOn: []` so planners can explicitly mark a
- * non-first step as independent; an absent annotation remains implicit previous-step
- * dependency.
+ * legacy regex breaks on the colon inside `depends:`): values name literal
+ * `### Step N` headings and are rebased to 0-indexed document indices only for
+ * an unambiguous fully-1-based legacy document. An empty `(depends:)` annotation
+ * is preserved as `dependsOn: []` so planners can explicitly mark a non-first
+ * step as independent; an absent annotation remains implicit previous-step dependency.
  *
  * Malformed `(depends: …)` annotations fall back deterministically: the heading
  * is treated as `### Step N:` with the name starting after the FIRST colon
  * following the closing paren (if present), else after the first colon — and no
  * `dependsOn` is recorded.
  */
-export function parseStepHeadings(content: string): TaskStep[] {
-  const steps: TaskStep[] = [];
-  // Legacy matcher — UNCHANGED from the original implementation, so unannotated
-  // headings (and every legacy edge case, including `[^:]*` spanning newlines)
-  // parse byte-identically. The full match (`m[0]`) is re-inspected only to layer
-  // the `(depends: …)` annotation on top.
-  const stepRegex = /^###\s+Step\s+\d+[^:]*:\s*(.+)$/gm;
-  // Well-formed annotation form: `### Step N (depends: …): name`.
-  const annotatedRegex = /^###\s+Step\s+\d+\s*\(depends:\s*([^)]*)\)\s*:\s*([^\n]+)$/;
+export interface StepHeadingMatch {
+  headingNumber: number;
+  index: number;
+  headingLineEnd: number;
+  match: string;
+}
 
+/*
+FNXC:WorkflowSteps 2026-09-05-22:06:
+Every consumer deciding whether text is a step heading must use this matcher. A private stricter
+matcher hid documented `(depends: …)` headings, causing false contiguity failures and empty step bodies.
+*/
+export function matchStepHeadings(content: string): StepHeadingMatch[] {
+  const stepRegex = /^###\s+Step\s+\d+[^:]*:\s*(.+)$/gm;
+  const matches: StepHeadingMatch[] = [];
   let match: RegExpExecArray | null;
   while ((match = stepRegex.exec(content)) !== null) {
-    const full = match[0];
+    const heading = /^###\s+Step\s+(\d+)/.exec(match[0]);
+    if (!heading) continue;
+    const index = match.index;
+    const newline = content.indexOf("\n", index);
+    matches.push({
+      headingNumber: Number(heading[1]),
+      index,
+      headingLineEnd: newline === -1 ? content.length : newline,
+      match: match[0],
+    });
+  }
+  return matches;
+}
+
+export function parseStepHeadings(content: string): TaskStep[] {
+  const steps: TaskStep[] = [];
+  // Well-formed annotation form: `### Step N (depends: …): name`.
+  const annotatedRegex = /^###\s+Step\s+\d+\s*\(depends:\s*([^)]*)\)\s*:\s*([^\n]+)$/;
+  const matches = matchStepHeadings(content).map((entry) => ({
+    full: entry.match,
+    name: /^###\s+Step\s+\d+[^:]*:\s*(.+)$/m.exec(entry.match)?.[1] ?? "",
+    headingNumber: entry.headingNumber,
+  }));
+  let match: RegExpExecArray | null;
+  const offset = resolveAuthoredStepHeadingOffset(matches.map((entry) => entry.headingNumber));
+
+  for (const { full, name: legacyName } of matches) {
 
     // No annotation present → byte-identical legacy behavior.
     if (!full.includes("(depends:")) {
-      steps.push({ name: match[1].trim(), status: "pending" });
+      steps.push({ name: legacyName.trim(), status: "pending" });
       continue;
     }
 
     // 1) Well-formed depends annotation.
     const annotated = annotatedRegex.exec(full);
     if (annotated) {
-      const parsed = parseDependsList(annotated[1]);
+      const parsed = parseDependsList(annotated[1], offset);
       const name = annotated[2].trim();
       if (parsed !== null) {
         /*
@@ -254,9 +285,29 @@ function extractStepsSection(content: string): string | undefined {
   return nextSection ? rest.slice(0, nextSection.index) : rest;
 }
 
-/** Parse a `depends:` value list (1-indexed step numbers) into 0-indexed,
- *  deduped, sorted indices. Returns null if any token is not a positive integer. */
-function parseDependsList(raw: string): number[] | null {
+/*
+FNXC:WorkflowStepControl 2026-09-04-01:38:
+PROMPT.md is model-authored, but its heading numbers are execution indices. A fully 1-based run
+previously produced a phantom step at steps.length, so only that unambiguous legacy sequence rebases.
+
+FNXC:WorkflowSteps 2026-09-04-02:57:
+Headings, file scopes, and dependency annotations must share one authored-heading offset rule so
+canonical 0-based plans and preserved fully-1-based legacy plans cannot drift between packages.
+*/
+export function resolveAuthoredStepHeadingOffset(headingNumbers: readonly number[]): 0 | 1 {
+  const sorted = [...headingNumbers].sort((a, b) => a - b);
+  return sorted.length > 0 && sorted.every((heading, index) => heading === index + 1) ? 1 : 0;
+}
+
+/*
+FNXC:WorkflowSteps 2026-09-04-02:57:
+The retired 1-indexed dependency convention contradicted fn_task_update, file-scope parsing, and
+triage's 0-based heading validator, making `(depends: 0)` unrepresentable. Rebase only fully-1-based
+legacy prompts so their existing annotations retain their prior meaning.
+*/
+/** Parse literal heading numbers into rebased 0-indexed, deduped, sorted indices.
+ *  Returns null for malformed or negative-rebased values. */
+function parseDependsList(raw: string, offset: 0 | 1): number[] | null {
   const trimmed = raw.trim();
   if (trimmed === "") return [];
   const tokens = trimmed.split(",").map((t) => t.trim());
@@ -264,8 +315,9 @@ function parseDependsList(raw: string): number[] | null {
   for (const token of tokens) {
     if (!/^\d+$/.test(token)) return null;
     const n = Number(token);
-    if (!Number.isInteger(n) || n < 1) return null;
-    out.add(n - 1);
+    const index = n - offset;
+    if (!Number.isInteger(n) || index < 0) return null;
+    out.add(index);
   }
   return [...out].sort((a, b) => a - b);
 }
@@ -274,9 +326,8 @@ function parseDependsList(raw: string): number[] | null {
 
 /**
  * Parse a JSON document: an array of `{ name: string, depends?: number[] }`.
- * `depends` values are 1-indexed step numbers in the document (same convention
- * as the headings annotation), converted to 0-indexed `dependsOn` (deduped,
- * sorted). Omitted `depends` means implicit previous-step dependency; explicit
+ * `depends` values are 0-indexed document indices (deduped, sorted). Omitted
+ * `depends` means implicit previous-step dependency; explicit
  * `depends: []` is preserved as no dependencies. Throws a descriptive error on
  * any malformed input (not JSON, not an array, missing/blank name, bad depends).
  */
@@ -312,17 +363,17 @@ export function parseJsonSteps(content: string): StepParseResult {
     if (obj.depends !== undefined) {
       if (!Array.isArray(obj.depends)) {
         throw new Error(
-          `json-steps: step at index ${i} 'depends' must be an array of positive integers`,
+          `json-steps: step at index ${i} 'depends' must be an array of 0-based document indices`,
         );
       }
       const out = new Set<number>();
       for (const raw of obj.depends) {
-        if (typeof raw !== "number" || !Number.isInteger(raw) || raw < 1) {
+        if (typeof raw !== "number" || !Number.isInteger(raw) || raw < 0) {
           throw new Error(
-            `json-steps: step at index ${i} 'depends' must contain only positive integers (1-indexed step numbers); got ${JSON.stringify(raw)}`,
+            `json-steps: step at index ${i} 'depends' must contain only 0-based document indices; got ${JSON.stringify(raw)}`,
           );
         }
-        out.add(raw - 1);
+        out.add(raw);
       }
       const dependsOn = [...out].sort((a, b) => a - b);
       step.dependsOn = dependsOn;

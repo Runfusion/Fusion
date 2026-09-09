@@ -77,9 +77,6 @@ const mockUseTasks = vi.fn(() => ({
   retryTask: vi.fn(),
   updateTask: vi.fn(),
   duplicateTask: vi.fn(),
-  archiveTask: vi.fn(),
-  unarchiveTask: vi.fn(),
-  archiveAllDone: vi.fn(),
   refreshTasks: vi.fn(),
 }));
 /*
@@ -396,9 +393,6 @@ describe("Task detail mobile swipe-back", () => {
       retryTask: vi.fn(),
       updateTask: vi.fn(),
       duplicateTask: vi.fn(),
-      archiveTask: vi.fn(),
-      unarchiveTask: vi.fn(),
-      archiveAllDone: vi.fn(),
       refreshTasks: vi.fn(),
     }));
     mockUseViewportMode.mockReturnValue("mobile");
@@ -429,9 +423,6 @@ describe("Task detail mobile swipe-back", () => {
       retryTask: vi.fn(),
       updateTask: vi.fn(),
       duplicateTask: vi.fn(),
-      archiveTask: vi.fn(),
-      unarchiveTask: vi.fn(),
-      archiveAllDone: vi.fn(),
       refreshTasks: vi.fn(),
     }));
 
@@ -464,9 +455,6 @@ describe("Task detail mobile swipe-back", () => {
       retryTask: vi.fn(),
       updateTask: vi.fn(),
       duplicateTask: vi.fn(),
-      archiveTask: vi.fn(),
-      unarchiveTask: vi.fn(),
-      archiveAllDone: vi.fn(),
       refreshTasks: vi.fn(),
     }));
 
@@ -503,9 +491,6 @@ describe("Task detail mobile swipe-back", () => {
       retryTask: vi.fn(),
       updateTask: vi.fn(),
       duplicateTask: vi.fn(),
-      archiveTask: vi.fn(),
-      unarchiveTask: vi.fn(),
-      archiveAllDone: vi.fn(),
       refreshTasks: vi.fn(),
     }));
 
@@ -535,9 +520,6 @@ describe("Task detail mobile swipe-back", () => {
       retryTask: vi.fn(),
       updateTask: vi.fn(),
       duplicateTask: vi.fn(),
-      archiveTask: vi.fn(),
-      unarchiveTask: vi.fn(),
-      archiveAllDone: vi.fn(),
       refreshTasks: vi.fn(),
     }));
     localStorage.setItem("kb-dashboard-view-mode", "project");
@@ -574,9 +556,6 @@ describe("Task detail mobile swipe-back", () => {
       retryTask: vi.fn(),
       updateTask: vi.fn(),
       duplicateTask: vi.fn(),
-      archiveTask: vi.fn(),
-      unarchiveTask: vi.fn(),
-      archiveAllDone: vi.fn(),
       refreshTasks: vi.fn(),
     }));
 
@@ -604,8 +583,6 @@ describe("Task detail mobile swipe-back", () => {
       tasks: [task],
       createTask: mockCreateTask,
       moveTask: vi.fn(), deleteTask: vi.fn(), mergeTask: vi.fn(), retryTask: vi.fn(),
-      updateTask: vi.fn(), duplicateTask: vi.fn(), archiveTask: vi.fn(), unarchiveTask: vi.fn(),
-      archiveAllDone: vi.fn(), refreshTasks: vi.fn(),
     }));
     localStorage.setItem("kb-dashboard-view-mode", "project");
     localStorage.setItem(scopedKey("kb-dashboard-task-view", DEFAULT_PROJECT_ID), "list");
@@ -645,9 +622,6 @@ describe("Task detail mobile swipe-back", () => {
       retryTask: vi.fn(),
       updateTask: vi.fn(),
       duplicateTask: vi.fn(),
-      archiveTask: vi.fn(),
-      unarchiveTask: vi.fn(),
-      archiveAllDone: vi.fn(),
       refreshTasks: vi.fn(),
     }));
     localStorage.setItem("kb-dashboard-view-mode", "project");
@@ -673,9 +647,6 @@ describe("Task detail mobile swipe-back", () => {
       retryTask: vi.fn(),
       updateTask: vi.fn(),
       duplicateTask: vi.fn(),
-      archiveTask: vi.fn(),
-      unarchiveTask: vi.fn(),
-      archiveAllDone: vi.fn(),
       refreshTasks: vi.fn(),
     }));
     localStorage.setItem("kb-dashboard-view-mode", "project");
@@ -708,9 +679,6 @@ describe("Task detail mobile swipe-back", () => {
       retryTask: vi.fn(),
       updateTask: vi.fn(),
       duplicateTask: vi.fn(),
-      archiveTask: vi.fn(),
-      unarchiveTask: vi.fn(),
-      archiveAllDone: vi.fn(),
       refreshTasks: vi.fn(),
     }));
     localStorage.setItem("kb-dashboard-view-mode", "project");
@@ -761,9 +729,6 @@ describe("Task detail mobile swipe-back", () => {
       retryTask: vi.fn(),
       updateTask: vi.fn(),
       duplicateTask: vi.fn(),
-      archiveTask: vi.fn(),
-      unarchiveTask: vi.fn(),
-      archiveAllDone: vi.fn(),
       refreshTasks: vi.fn(),
     }));
     localStorage.setItem("kb-dashboard-view-mode", "project");
@@ -800,9 +765,6 @@ describe("Task detail mobile swipe-back", () => {
       retryTask: vi.fn(),
       updateTask: vi.fn(),
       duplicateTask: vi.fn(),
-      archiveTask: vi.fn(),
-      unarchiveTask: vi.fn(),
-      archiveAllDone: vi.fn(),
       refreshTasks: vi.fn(),
     }));
     localStorage.setItem("kb-dashboard-view-mode", "project");
@@ -846,9 +808,6 @@ describe("Task detail mobile swipe-back", () => {
       retryTask: vi.fn(),
       updateTask: vi.fn(),
       duplicateTask: vi.fn(),
-      archiveTask: vi.fn(),
-      unarchiveTask: vi.fn(),
-      archiveAllDone: vi.fn(),
       refreshTasks: vi.fn(),
     }));
     localStorage.setItem("kb-dashboard-view-mode", "project");
@@ -885,9 +844,6 @@ describe("Task detail mobile swipe-back", () => {
       retryTask: vi.fn(),
       updateTask: vi.fn(),
       duplicateTask: vi.fn(),
-      archiveTask: vi.fn(),
-      unarchiveTask: vi.fn(),
-      archiveAllDone: vi.fn(),
       refreshTasks: vi.fn(),
     }));
     localStorage.setItem("kb-dashboard-view-mode", "project");
@@ -927,9 +883,6 @@ describe("Task detail mobile swipe-back", () => {
         retryTask: vi.fn(),
         updateTask: vi.fn(),
         duplicateTask: vi.fn(),
-        archiveTask: vi.fn(),
-        unarchiveTask: vi.fn(),
-        archiveAllDone: vi.fn(),
         refreshTasks: vi.fn(),
       }));
 
@@ -959,9 +912,6 @@ describe("Task detail mobile swipe-back", () => {
         retryTask: vi.fn(),
         updateTask: vi.fn(),
         duplicateTask: vi.fn(),
-        archiveTask: vi.fn(),
-        unarchiveTask: vi.fn(),
-        archiveAllDone: vi.fn(),
         refreshTasks: vi.fn(),
       }));
       localStorage.setItem("kb-dashboard-view-mode", "project");
@@ -993,9 +943,6 @@ describe("Task detail mobile swipe-back", () => {
         retryTask: vi.fn(),
         updateTask: vi.fn(),
         duplicateTask: vi.fn(),
-        archiveTask: vi.fn(),
-        unarchiveTask: vi.fn(),
-        archiveAllDone: vi.fn(),
         refreshTasks: vi.fn(),
       }));
       localStorage.setItem("kb-dashboard-view-mode", "project");

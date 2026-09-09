@@ -58,6 +58,10 @@ import {
 import { buildTaskPlannerChatContext, TASK_PLANNER_CHAT_CONTEXT_PROMPT_GUIDANCE } from "./task-planner-chat-context.js";
 import { formatTaskPlannerChatMetrics } from "./task-planner-chat-metrics.js";
 import { emitWorkflowSseEvent, type WorkflowSseEventType } from "./sse.js";
+import {
+  buildConversationReferenceContext,
+  createChatConversationTools,
+} from "./chat-conversation-references.js";
 
 import {
   createFnAgent as engineCreateFnAgent,
@@ -77,7 +81,7 @@ import {
   createTaskListTool,
   createTaskShowTool,
   createTaskSearchTool,
-  createPatchnodeReadTool,
+  createHistoryReadTool,
   createListAgentsTool,
   createDelegateTaskTool,
   createTaskAssignTool,
@@ -91,8 +95,6 @@ import {
   resolveMcpServersForStore,
   resolveExecutorThinkingLevel,
   wrapToolsWithActionGate,
-  createTaskArchiveTool,
-  createTaskUnarchiveTool,
   createTaskDeleteTool,
   createTaskRetryTool,
   createTaskPauseTool,
@@ -520,6 +522,9 @@ export interface ChatFusionToolsetOptions {
   until operators opt in; enabled sessions still scope fn_memory_search at the backend.
   */
   focus?: string;
+  chatStore?: ChatStore;
+  currentChatSessionId?: string;
+  currentProjectId?: string | null;
 }
 
 const CHAT_MISSION_READ_TOOL_NAMES = new Set(["fn_mission_list", "fn_mission_show"]);
@@ -676,8 +681,30 @@ function createTaskVerificationTools(taskStore: TaskStore, actionGateContext?: A
 }
 
 export async function createChatFusionToolset(options: ChatFusionToolsetOptions): Promise<ChatCustomTool[]> {
-  const { taskStore, agentStore, rootDir, agentId, missionMutationGated = false, actionGateContext, focus } = options;
+  const {
+    taskStore,
+    agentStore,
+    rootDir,
+    agentId,
+    missionMutationGated = false,
+    actionGateContext,
+    focus,
+    chatStore,
+    currentChatSessionId,
+    currentProjectId,
+  } = options;
   const tools: ChatCustomTool[] = [];
+
+  /*
+  FNXC:ChatConversationReferences 2026-09-04-09:58:
+  Cross-conversation read tools require a current Direct chat identity and its store. Room responders and explicitly mentioned-agent responders deliberately omit both, matching the existing Direct-only file-reference context path.
+  */
+  if (chatStore && currentChatSessionId) {
+    tools.push(...createChatConversationTools(chatStore, {
+      currentSessionId: currentChatSessionId,
+      projectId: currentProjectId ?? null,
+    }));
+  }
 
   if (taskStore) {
     const settings = await taskStore.getSettings?.();
@@ -685,7 +712,7 @@ export async function createChatFusionToolset(options: ChatFusionToolsetOptions)
       createTaskListTool(taskStore),
       createTaskShowTool(taskStore),
       createTaskSearchTool(taskStore),
-      createPatchnodeReadTool(taskStore),
+      createHistoryReadTool(taskStore),
       ...createTaskVerificationTools(taskStore, options.actionGateContext),
       createTaskCreateTool(taskStore, { sourceType: "api" }, { rootDir }),
     );
@@ -704,8 +731,6 @@ export async function createChatFusionToolset(options: ChatFusionToolsetOptions)
     */
     if (actionGateContext) {
       tools.push(
-        createTaskArchiveTool(taskStore),
-        createTaskUnarchiveTool(taskStore),
         createTaskDeleteTool(taskStore),
         createTaskRetryTool(taskStore),
         createTaskPauseTool(taskStore),
@@ -839,8 +864,8 @@ function createTaskPlannerRefinementTool(taskStore: TaskStore, taskId: string) {
         const sourceTask = await taskStore.getTask(taskId);
         /*
         FNXC:WorkflowResolvedColumns 2026-07-30-05:05 (batch-core):
-        Refinement is for FINISHED work — complete only, not the landed set: an archived task is off
-        the board and is not a refinement source. Paired with the tool-registration guard in
+        Refinement is for workflow Complete work only. Deleted tasks are absent from the live task
+        model and are not refinement sources. Paired with the tool-registration guard in
         `createSession`; if only one of the two resolved, the tool would either be offered and then
         refuse, or be withheld from tasks it would have accepted. Both move together.
         */
@@ -2981,8 +3006,17 @@ export class ChatManager {
         }
       }
 
-      // Resolve #file references in the current message before sending to AI
-      const resolvedContent = await resolveFileReferences(parsedSkillCommands.strippedContent, this.rootDir);
+      // Resolve bounded #file and #chat references in the current message before sending to AI.
+      const fileResolvedContent = await resolveFileReferences(parsedSkillCommands.strippedContent, this.rootDir);
+      const conversationReferenceContext = await buildConversationReferenceContext({
+        chatStore: this.chatStore,
+        content: parsedSkillCommands.strippedContent,
+        currentSessionId: sessionId,
+        currentProjectId: session.projectId ?? null,
+      });
+      const resolvedContent = conversationReferenceContext
+        ? `${fileResolvedContent}\n\n${conversationReferenceContext}`
+        : fileResolvedContent;
 
       const attachmentSummary = attachments && attachments.length > 0
         ? `[User attached: ${attachments
@@ -3150,6 +3184,9 @@ export class ChatManager {
         value is inert and both direct and room chat recall remain whole-project.
         */
         focus: session?.memoryFocus ?? undefined,
+        chatStore: this.chatStore,
+        currentChatSessionId: sessionId,
+        currentProjectId: session?.projectId ?? null,
       });
       const customTools = dedupeChatTools([
         createAskQuestionTool(),
@@ -3208,6 +3245,13 @@ export class ChatManager {
             data: delta,
           }, broadcastOptions);
           persistInFlightSnapshot();
+        },
+        onTextBlockBoundary: () => {
+          if (accumulatedText && !accumulatedText.endsWith("\n")) {
+            accumulatedText += "\n\n";
+            lastStreamEventId = chatStreamManager.broadcast(sessionId, { type: "text", data: "\n\n" }, broadcastOptions);
+            persistInFlightSnapshot();
+          }
         },
         onToolStart: (name: string, args?: Record<string, unknown>) => {
           const pendingForTool = pendingToolStarts.get(name) ?? [];
@@ -3348,8 +3392,24 @@ export class ChatManager {
         }
       }
 
-      // Use accumulated text from streaming (most reliable) with extraction fallback
-      const finalResponseText = accumulatedText || responseText;
+      const lastUserIndex = agentMessages.map((message) => message.role).lastIndexOf("user");
+      const turnMessages = lastUserIndex >= 0 ? agentMessages.slice(lastUserIndex + 1) : agentMessages;
+      const authoritativeText = turnMessages
+        .filter((message) => message.role === "assistant")
+        .map((message) => typeof message.content === "string"
+          ? message.content
+          : Array.isArray(message.content)
+            ? message.content.filter((part): part is { type: "text"; text: string } => part.type === "text" && typeof part.text === "string").map((part) => part.text).join("")
+            : "")
+        .filter(Boolean)
+        .join("\n\n");
+      /*
+       FNXC:AssistantTextCapture 2026-09-08-14:13:
+       FN-9277 reconciles a complete turn because the former last-assistant fallback silently saved only a final trailer when earlier blocks had no deltas.
+       */
+      const finalResponseText = authoritativeText.trim().length > accumulatedText.trim().length
+        ? authoritativeText
+        : accumulatedText || responseText;
 
       // Persist assistant message
       const assistantMetadata: Record<string, unknown> = {};

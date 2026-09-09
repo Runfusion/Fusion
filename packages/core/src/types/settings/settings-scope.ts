@@ -45,7 +45,7 @@ import type { UpdateChannel } from "../../i18n/app-version.js";
 import type { ModelPricing } from "../../ai/model-pricing.js";
 import type { SecretScope } from "../../secrets/secrets-store.js";
 // Structural deps still defined in types.ts — import type-only (cycle is type-only).
-import type { AgentPromptsConfig, ArchiveAgentLogMode, TaskTokenBudget } from "../../types.js";
+import type { AgentPromptsConfig, TaskTokenBudget } from "../../types.js";
 
 // ── Settings Scope Types ────────────────────────────────────────────────
 //
@@ -363,6 +363,11 @@ export interface GlobalSettings {
    * This global-only operator keyboard preference defaults to true to preserve Enter-submits behavior. When disabled, Enter inserts a newline and Cmd/Ctrl+Enter submits; shared projects must never change an operator's keyboard behavior.
    */
   quickAddSubmitOnEnter?: boolean;
+  /**
+   * FNXC:ChatComposer 2026-09-06-01:54:
+   * Cette préférence clavier reste globale uniquement afin qu’un projet partagé ne puisse jamais imposer le comportement d’un opérateur. Le mode `auto` insère un saut de ligne lorsque le pointeur primaire est tactile et envoie sinon ; le pointeur, plutôt que la largeur, préserve l’envoi par Entrée dans une fenêtre de bureau étroite pilotée à la souris. Le réglage gouverne uniquement Entrée sans Cmd/Ctrl ni Shift, après les branches d’autocomplétion, la garde Shift et, dans TaskChatTab, la garde de composition IME ; Cmd/Ctrl+Enter sans Shift ne le consulte jamais.
+   */
+  chatSubmitOnEnter?: "auto" | "always" | "never";
   /**
    * FNXC:ChatSnippets 2026-09-03-15:56:
    * Reusable dashboard-chat prompts are a global operator preference because direct and task chats span projects. They use the existing global settings transport and need neither project persistence nor a dedicated route.
@@ -1721,21 +1726,27 @@ export interface ProjectSettings {
    * remain published surface to avoid a breaking @runfusion/fusion type change.
    */
   /**
-   * @deprecated Inert under master-plan U0; consumed only by soft-deprecated
-   * aiMergeTask. Retained as published surface. Legacy full opt-out switch.
-   * Default: true.
+   * FNXC:MergerUnification 2026-09-09-07:46:
+   * Master-plan U0 retains these published settings without letting their
+   * legacy semantics imply a live merge safeguard. Their sole consumer is the
+   * soft-deprecated aiMergeTask call site in merger.ts; runAiMerge reads none.
+   */
+  /**
+   * @deprecated Inert under master-plan U0. Legacy aiMergeTask treated only
+   * `=== false` as disabled after the worktrunk-deferred short-circuit; it was
+   * the sole opt-out from the any-divergence safety fallback. Default: true.
    */
   prerebaseAutoEnabled?: boolean;
   /**
-   * @deprecated Inert under master-plan U0; consumed only by soft-deprecated
-   * aiMergeTask. Retained as published surface. Legacy hot-file trigger list.
+   * @deprecated Inert under master-plan U0. Legacy aiMergeTask compared exact
+   * hot-file paths from the base commit to the resolved integration ref tip.
    * Default: curated project hot-file list.
    */
   prerebaseHotFiles?: string[];
   /**
-   * @deprecated Inert under master-plan U0; consumed only by soft-deprecated
-   * aiMergeTask. Retained as published surface. Legacy divergence trigger.
-   * Default: 50.
+   * @deprecated Inert under master-plan U0. Legacy aiMergeTask checked this
+   * positive threshold after hot files, with an absent value falling back to 1;
+   * zero did not suppress the any-divergence safety fallback. Default: 50.
    */
   prerebaseDivergenceThreshold?: number;
   /** Strategy used when a merge conflict can't be resolved by AI. See
@@ -2045,35 +2056,12 @@ export interface ProjectSettings {
   /** Interval in milliseconds for periodic maintenance (worktree pruning, WAL checkpoint,
    *  orphan cleanup). 0 disables. Default: 900000 (15 min). */
   maintenanceIntervalMs?: number;
-  /** When true, periodic maintenance archives done tasks after the configured age. Default: true. */
-  autoArchiveDoneTasksEnabled?: boolean;
-  /** Age in milliseconds after a task enters done before auto-archive. Default: 172800000 (48h). */
-  autoArchiveDoneAfterMs?: number;
-  /** Retention in integer days before done tasks are auto-archived.
-   *  0 disables this days-based override. When > 0, takes precedence over autoArchiveDoneAfterMs. */
-  doneAutoArchiveDays?: number;
-  /**
-   * FNXC:DuplicateIntake 2026-07-07-00:00 (FN-7658):
-   * Operators do not want same-agent duplicate tasks silently archived on
-   * creation (FN-4892 intake heuristic) — they want visibility and a chance
-   * to decide. When `true`, `_maybeAutoArchiveSameAgentDuplicate` archives the
-   * later task as before. When `false` (the default), the heuristic still
-   * detects the duplicate but flags it in place via the existing near-duplicate
-   * marker (`nearDuplicateOf`/`nearDuplicateScore`) instead of moving it to
-   * `archived`, so the dashboard's yellow "Duplicate" chip with Keep/Archive
-   * actions surfaces it for a human decision. Default: false. */
-  autoArchiveDuplicateTasksEnabled?: boolean;
   /**
    * FNXC:DuplicateIntake 2026-07-16-13:00:
    * Issue #2225 requires triage marker duplicates to stay visible by default: `prompt`
    * blocks for Keep/Delete, `keep` replans, and `delete` restores legacy deletion.
    */
   triageDuplicateResolution?: "prompt" | "keep" | "delete";
-  /** How much agent log content to preserve when a task is moved to cold archive storage.
-   *  - "compact": deterministic summary plus a small recent-entry snapshot (default)
-   *  - "full": copy the full agent.log into archive.db
-   *  - "none": do not copy agent.log content */
-  archiveAgentLogMode?: ArchiveAgentLogMode;
   /** When true, automatically poll and update PR status badges for tasks linked to GitHub PRs.
    *  Default: false. */
   autoUpdatePrStatus?: boolean;
@@ -2318,6 +2306,9 @@ export interface ProjectSettings {
   /** Named scripts that can be referenced by setupScript or other automation.
    *  A map of script name to shell command. */
   scripts?: Record<string, string>;
+  /** Optional display metadata keyed by the same stable script name. Legacy
+   *  settings omit this map and continue to execute through `scripts`. */
+  scriptMetadata?: Record<string, { description?: string }>;
   /** Reference to a named script in the scripts map that runs before task execution.
    *  Used for pre-task setup like environment preparation. */
   setupScript?: string;
@@ -2542,7 +2533,7 @@ export interface ProjectSettings {
   /** ISO timestamp after the one-time post-migration system inbox message was durably inserted. */
   postgresMigrationInboxMessageSentAt?: string;
   /** Number of days to retain per-task agent-log JSONL files for soft-deleted
-   *  and archived tasks. Only affects tasks that are no longer active. Entries
+   *  and historical-sentinel tasks. Only affects tasks that are no longer active. Entries
    *  older than this window are removed from the JSONL file during periodic
    *  maintenance. Default: 0 (disabled). Set to a positive integer (e.g. 90)
    *  to enable pruning. */

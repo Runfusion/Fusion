@@ -237,7 +237,7 @@ pgTest("createTask intake-column wiring (Coding (Ideas))", () => {
     const store = h.store();
     const task = await store.createTask({
       description: "ideas workflow task",
-      workflowId: "builtin:coding-ideas",
+      workflowId: "builtin:coding-ideas-v2",
     });
     expect(task.column).toBe("ideas");
   });
@@ -313,7 +313,7 @@ pgTest("createTask intake-column wiring (Coding (Ideas))", () => {
 
   it("lands a Coding (Ideas) task in ideas even when enabledWorkflowSteps is supplied", async () => {
     const store = h.store();
-    await store.setDefaultWorkflowId("builtin:coding-ideas");
+    await store.setDefaultWorkflowId("builtin:coding-ideas-v2");
     const task = await store.createTask({
       description: "ideas task created with explicit optional-group toggles",
       enabledWorkflowSteps: [],
@@ -323,7 +323,7 @@ pgTest("createTask intake-column wiring (Coding (Ideas))", () => {
 
   it("writes a bootstrap PROMPT.md for that same create (so triage can still discover it)", async () => {
     const store = h.store();
-    await store.setDefaultWorkflowId("builtin:coding-ideas");
+    await store.setDefaultWorkflowId("builtin:coding-ideas-v2");
     const task = await store.createTask({
       description: "ideas task created with explicit optional-group toggles",
       enabledWorkflowSteps: [],
@@ -334,7 +334,7 @@ pgTest("createTask intake-column wiring (Coding (Ideas))", () => {
 
   it("lands a Coding (Ideas) task in ideas when it is the project default workflow", async () => {
     const store = h.store();
-    await store.setDefaultWorkflowId("builtin:coding-ideas");
+    await store.setDefaultWorkflowId("builtin:coding-ideas-v2");
     const task = await store.createTask({ description: "default ideas task" });
     expect(task.column).toBe("ideas");
   });
@@ -348,7 +348,7 @@ pgTest("createTask intake-column wiring (Coding (Ideas))", () => {
   */
   it("lands a task explicitly selecting builtin:coding in ITS intake column, even when the project default is coding-ideas", async () => {
     const store = h.store();
-    await store.setDefaultWorkflowId("builtin:coding-ideas");
+    await store.setDefaultWorkflowId("builtin:coding-ideas-v2");
     const task = await store.createTask({
       description: "explicit default coding workflow task",
       workflowId: "builtin:coding",
@@ -360,7 +360,7 @@ pgTest("createTask intake-column wiring (Coding (Ideas))", () => {
 
   it("does not throw and falls back to triage when workflowId is explicitly null (\"No workflow\")", async () => {
     const store = h.store();
-    await store.setDefaultWorkflowId("builtin:coding-ideas");
+    await store.setDefaultWorkflowId("builtin:coding-ideas-v2");
     const task = await store.createTask({
       description: "explicit no-workflow task",
       workflowId: null,
@@ -372,7 +372,7 @@ pgTest("createTask intake-column wiring (Coding (Ideas))", () => {
     const store = h.store();
     const task: Task = await store.createTask({
       description: "ideas bootstrap prompt task",
-      workflowId: "builtin:coding-ideas",
+      workflowId: "builtin:coding-ideas-v2",
     });
     const prompt = await readFile(
       join(h.rootDir(), ".fusion", "tasks", task.id, "PROMPT.md"),
@@ -402,7 +402,7 @@ pgTest("createTask intake-column wiring (Coding (Ideas))", () => {
     const store = h.store();
     const task = await store.createTask({
       description: "quick add start task",
-      workflowId: "builtin:coding-ideas",
+      workflowId: "builtin:coding-ideas-v2",
       column: "todo",
     });
     expect(task.column).toBe("todo");
@@ -457,7 +457,7 @@ pgTest("createTask intake-column wiring (Coding (Ideas))", () => {
     const store = h.store();
     const task = await store.createTask({
       description: "direct ideas create past planning",
-      workflowId: "builtin:coding-ideas",
+      workflowId: "builtin:coding-ideas-v2",
       column: "in-review",
     });
     expect(task.column).toBe("in-review");
@@ -471,7 +471,7 @@ pgTest("createTask intake-column wiring (Coding (Ideas))", () => {
     const store = h.store();
     const task = await store.createTask({
       description: "ideas quick-add start",
-      workflowId: "builtin:coding-ideas",
+      workflowId: "builtin:coding-ideas-v2",
       column: "todo",
     });
     expect(task.column).toBe("todo");
@@ -502,7 +502,7 @@ pgTest("createTask intake-column wiring (Coding (Ideas))", () => {
     // invalidates the cached workflow signature, causing a stale preflight).
     const task = await store.createTask({
       description: "ideas lifecycle promotion task",
-      workflowId: "builtin:coding-ideas",
+      workflowId: "builtin:coding-ideas-v2",
     });
     expect(task.column).toBe("ideas");
 

@@ -48,13 +48,11 @@ FN-6873 pins `column === "todo"` as the candidate gate after FN-6872 appeared in
 export interface AutoClaimLifecycleRoles {
   hold?: string;
   complete?: string;
-  archived?: string;
 }
 
 const LEGACY_AUTO_CLAIM_ROLES: Required<AutoClaimLifecycleRoles> = {
   hold: "todo",
   complete: "done",
-  archived: "archived",
 };
 
 const rolesFor = (
@@ -65,7 +63,6 @@ const rolesFor = (
   return {
     hold: resolved?.hold ?? LEGACY_AUTO_CLAIM_ROLES.hold,
     complete: resolved?.complete ?? LEGACY_AUTO_CLAIM_ROLES.complete,
-    archived: resolved?.archived ?? LEGACY_AUTO_CLAIM_ROLES.archived,
   };
 };
 
@@ -77,8 +74,7 @@ const rolesFor = (
  *   renamed workflow's candidate set was permanently EMPTY — agents were never
  *   offered its work, with no error anywhere to say so.
  *
- *   `dependency?.column === "done" || "archived"` is dependency SATISFACTION, and it
- *   is the more dangerous half: a dependency that finished in a renamed complete
+ *   Dependency completion is the more dangerous half: a dependency that finished in a renamed Complete
  *   column was not recognised as done, so the dependent stayed blocked forever.
  *
  * Roles are resolved PER TASK, not once per pass, because a dependency may sit on a
@@ -100,7 +96,7 @@ export function isRunnableAutoClaimCandidate(
       if (!dependency) return false;
       // The DEPENDENCY's own roles, which need not be the claimant's.
       const depRoles = rolesFor(dependencyId, rolesByTask);
-      return dependency.column === depRoles.complete || dependency.column === depRoles.archived;
+      return dependency.column === depRoles.complete;
     });
 }
 
@@ -114,7 +110,7 @@ export async function resolveAutoClaimLifecycleRoles(
   for (const task of tasks) {
     const resolved = await resolveTaskLifecycleColumns(taskStore, task.id, irCache);
     if (resolved) {
-      roles.set(task.id, { hold: resolved.hold, complete: resolved.complete, archived: resolved.archived });
+      roles.set(task.id, { hold: resolved.hold, complete: resolved.complete });
     }
   }
   return roles;

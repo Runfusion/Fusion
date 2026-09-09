@@ -85,14 +85,9 @@ export async function recordBranchGroupMemberLandedImpl(store: TaskStore,
 }
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-08-02-17:45 (fleet — the SAME "satisfied" answer as #2720):
-A DEPENDENCY IS SATISFIED IN ITS OWN BOARD'S TERMINAL PAIR (complete or archived), unioned with the legacy
-ids. This is the third place that question is asked, and it now gives the same answer as the store's
-`blockedBy` computation (#2720) and the merge blocker — three surfaces, one rule, which is the whole reason
-I refused to settle it inside a vocabulary sweep the first two times it came up.
-
-Injected: this helper takes a pre-loaded map of dependency rows (it is used inside batch passes), so the
-caller resolves lanes once for the batch rather than once per dependency.
+FNXC:WorkflowLifecycleColumns 2026-08-02-17:45:
+A dependency is satisfied only in its own workflow Complete column. This helper accepts the caller's
+pre-resolved columns for batch use and falls back to built-in `done` when workflow metadata is absent.
 */
 export function areAllDependenciesDoneImpl(
   store: TaskStore,
@@ -100,15 +95,15 @@ export function areAllDependenciesDoneImpl(
   tasksById: Map<string, Task>,
   satisfiedColumns?: ReadonlySet<string>,
 ): boolean {
-    const satisfied = satisfiedColumns ?? LEGACY_SATISFIED_COLUMNS;
+    const satisfied = satisfiedColumns ?? BUILTIN_SATISFIED_COLUMNS;
     return dependencies.every((dependencyId) => {
       const dependency = tasksById.get(dependencyId);
       return dependency !== undefined && satisfied.has(dependency.column);
     });
 }
 
-/** The satisfied ids from before workflows owned the vocabulary. */
-const LEGACY_SATISFIED_COLUMNS: ReadonlySet<string> = new Set(["done", "archived"]);
+/** Built-in Complete fallback for callers without workflow metadata. */
+const BUILTIN_SATISFIED_COLUMNS: ReadonlySet<string> = new Set(["done"]);
 
 export function resolveWorkflowBypassGuardsImpl(store: TaskStore,
     moveSource: NonNullable<MoveTaskOptions["moveSource"]>,

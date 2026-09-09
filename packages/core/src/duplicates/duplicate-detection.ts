@@ -29,9 +29,8 @@ export interface ContentFingerprintInput {
 
 const DEFAULT_THRESHOLD = 0.45;
 const DEFAULT_LIMIT = 5;
-/* DELIBERATE-LITERAL — the default for a caller that does not supply resolved terminal columns,
-   reviewed 2026-07-31-04:20. Callers that CAN resolve should pass `excludeColumns`; this pair is the
-   degraded mode, not the rule. */
+/* Degraded built-in Complete fallback plus the historical persistence sentinel. Workflow-aware
+   callers pass resolved Complete columns; `archived` here is never a live workflow role. */
 const DEFAULT_EXCLUDE_COLUMNS: readonly string[] = ["done", "archived"];
 export const STOPWORDS = new Set([
   "a",

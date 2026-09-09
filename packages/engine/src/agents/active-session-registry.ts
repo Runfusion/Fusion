@@ -33,7 +33,18 @@ running in, and escalated the resulting failure to `branch-conflict-unrecoverabl
 healthy card `paused` with no operator action. A planner holding a worktree is a live session and
 must be as visible as an executor or merger.
 */
-export type ActiveSessionKind = "executor" | "planning" | "step-session" | "workflow-step" | "step-session-parallel" | "ai-merge" | "workspace-repo-acquire" | "workspace-repo-land";
+/*
+FNXC:TaskDeletionWorktrees 2026-09-07-12:44:
+Deletion cleanup reserves each canonical target exclusively in the shared registry while Git removes it.
+Unlike ordinary same-task session refreshes, neither a same-task session nor another cleanup may replace
+this reservation, and cleanup cannot replace a session that won the race first.
+
+FNXC:TaskDeletionWorktrees 2026-09-07-13:06:
+An exclusive deletion claim has an opaque release token. Session teardown and stale-entry reconcilers may
+still call the legacy path-only release after losing acquisition, but that call cannot clear the cleanup
+claim while destructive Git work is in flight; only the cleanup owner holding the token can release it.
+*/
+export type ActiveSessionKind = "executor" | "planning" | "step-session" | "workflow-step" | "step-session-parallel" | "ai-merge" | "workspace-repo-acquire" | "workspace-repo-land" | "task-deletion-cleanup";
 
 export interface ActiveSessionRegistration {
   taskId: string;
@@ -45,9 +56,14 @@ export interface ActiveSessionRecord extends ActiveSessionRegistration {
   registeredAt: number;
 }
 
+export interface ActiveSessionPathLease {
+  readonly path: string;
+  readonly releaseToken: symbol;
+}
+
 export interface ReconcileStaleSelfOwnedResult {
   reconciled: boolean;
-  reason: "no-entry" | "foreign-task" | "reconciled";
+  reason: "no-entry" | "foreign-task" | "exclusive-reservation" | "reconciled";
 }
 
 export type LiveBindingProbe = (worktreePath: string, taskId: string) => boolean;
@@ -59,6 +75,7 @@ export type SelfOwnedReconcileOutcome =
   | { action: "live-binding-refuses"; ownerTaskId: string }
   | { action: "process-active-refuses"; ownerTaskId: string }
   | { action: "too-recent-refuses"; ownerTaskId: string; ageMs: number; minIdleMs: number }
+  | { action: "exclusive-reservation-refuses"; ownerTaskId: string }
   | { action: "reconciled" };
 
 /**
@@ -89,8 +106,20 @@ export class ActiveSessionPathHeldByForeignTaskError extends Error {
   }
 }
 
+export class ActiveSessionPathHeldError extends Error {
+  constructor(
+    public readonly path: string,
+    public readonly holder: ActiveSessionRecord,
+    public readonly requesting: ActiveSessionRegistration,
+  ) {
+    super(`active-session path ${path} is held by ${holder.kind} (${holder.ownerKey})`);
+    this.name = "ActiveSessionPathHeldError";
+  }
+}
+
 export class ActiveSessionRegistry {
   private readonly records = new Map<string, ActiveSessionRecord>();
+  private readonly exclusiveReleaseTokens = new Map<string, symbol>();
 
   /*
   FNXC:Workspace 2026-06-22-04:10 (Phase C review A2 — taskId-aware lease across kinds):
@@ -110,14 +139,35 @@ export class ActiveSessionRegistry {
     if (existing && existing.taskId !== registration.taskId) {
       throw new ActiveSessionPathHeldByForeignTaskError(worktreePath, existing.taskId, registration.taskId);
     }
+    if (existing?.kind === "task-deletion-cleanup") {
+      throw new ActiveSessionPathHeldError(worktreePath, existing, registration);
+    }
     this.records.set(worktreePath, {
       ...registration,
       registeredAt: Date.now(),
     });
   }
 
-  unregisterPath(worktreePath: string): void {
-    this.records.delete(worktreePath);
+  /** FNXC:TaskDeletionWorktrees 2026-09-07-13:06: Claim a path exclusively and return its only valid release proof. */
+  registerPathExclusive(worktreePath: string, registration: ActiveSessionRegistration): ActiveSessionPathLease {
+    const existing = this.records.get(worktreePath);
+    if (existing) throw new ActiveSessionPathHeldError(worktreePath, existing, registration);
+    const releaseToken = Symbol("active-session-exclusive-release");
+    this.records.set(worktreePath, {
+      ...registration,
+      registeredAt: Date.now(),
+    });
+    this.exclusiveReleaseTokens.set(worktreePath, releaseToken);
+    return { path: worktreePath, releaseToken };
+  }
+
+  unregisterPath(worktreePath: string, lease?: ActiveSessionPathLease): boolean {
+    const requiredToken = this.exclusiveReleaseTokens.get(worktreePath);
+    if (requiredToken !== undefined && (lease?.path !== worktreePath || lease.releaseToken !== requiredToken)) {
+      return false;
+    }
+    this.exclusiveReleaseTokens.delete(worktreePath);
+    return this.records.delete(worktreePath);
   }
 
   lookupByPath(worktreePath: string): ActiveSessionRecord | null {
@@ -168,12 +218,15 @@ export class ActiveSessionRegistry {
       return { reconciled: false, reason: "foreign-task" };
     }
 
-    this.unregisterPath(worktreePath);
+    if (!this.unregisterPath(worktreePath)) {
+      return { reconciled: false, reason: "exclusive-reservation" };
+    }
     return { reconciled: true, reason: "reconciled" };
   }
 
   clear(): void {
     this.records.clear();
+    this.exclusiveReleaseTokens.clear();
   }
 }
 
@@ -293,46 +346,142 @@ export function reconcileSelfOwnedActiveSessionForRemoval(
     }
   }
 
-  registry.unregisterPath(worktreePath);
+  if (!registry.unregisterPath(worktreePath)) {
+    return { action: "exclusive-reservation-refuses", ownerTaskId: requestingTaskId };
+  }
   return { action: "reconciled" };
 }
 
 export const activeSessionRegistry = new ActiveSessionRegistry();
 
-/**
- * FN-4811 follow-up: process-wide "executing" lock for `TaskExecutor.execute()`.
- *
- * Per-instance `executing: Set<string>` is insufficient when there can be more than
- * one TaskExecutor instance in the same Node process (e.g., multi-project setups,
- * engine restarts that race with old instance teardown, hybrid-executor path).
- * Production failure shape: two execute() invocations for the same task ID both
- * generated runIds (y2nb + 9gde for FN-4809), both reached "Executor detected stale
- * merge state" (executor.ts:2661), both attempted worktree creation — producing
- * duplicate "Worktree created at /..." log entries within the same second
- * (FN-4809, FN-4814, FN-4781, FN-4804, FN-4811).
- *
- * This module-level Set is shared across all TaskExecutor instances in the process,
- * providing a process-wide claim. Values are taskId strings; presence means
- * "someone is actively executing this task". Callers MUST claim synchronously
- * via `tryClaim()` and MUST release on every exit path.
- */
-const executingTasks = new Set<string>();
+/** Opaque proof that one concrete implementation attempt owns a task. */
+export interface ExecutingTaskLease {
+  readonly taskId: string;
+  readonly token: symbol;
+}
+
+export type ExecutingTaskCriticalResult<T> =
+  | { executed: true; value: T }
+  | { executed: false };
+
+/*
+FNXC:StuckSessionOwnership 2026-09-07-16:11:
+FN-312 requires process-wide execution ownership to distinguish successive attempts for the same task. Every persistent or task-keyed cleanup performed during unwind must validate its opaque lease inside the same per-task FIFO critical section that remains held until the asynchronous operation settles. Forced stuck recovery invalidates through that FIFO before dispatching a successor, so an old check cannot race a later store mutation and an old finally cannot release the successor.
+
+The critical section is deliberately non-reentrant. Its callback may await TaskStore APIs, but code holding a TaskStore transaction or advisory lock must never call back into this lock; the single order is execution critical section, then store API.
+
+FNXC:StuckSessionOwnership 2026-09-07-17:15:
+Forced replacement reserves its FIFO position before issuing synchronous interruption signals. This lets an already-entered owner finish safely while preventing any successor claim from publishing before abort settlement, task-keyed cleanup, and invalidation complete.
+*/
+const executingTaskOwners = new Map<string, ExecutingTaskLease>();
+const executingTaskCriticalTails = new Map<string, Promise<void>>();
+
+async function inExecutingTaskCriticalSection<T>(
+  taskId: string,
+  callback: () => Promise<T> | T,
+  afterReservation?: () => void,
+): Promise<T> {
+  const previous = executingTaskCriticalTails.get(taskId) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => { release = resolve; });
+  const tail = previous.then(() => current);
+  executingTaskCriticalTails.set(taskId, tail);
+  let reservationError: unknown;
+  try {
+    afterReservation?.();
+  } catch (error) {
+    reservationError = error;
+  }
+  await previous;
+  try {
+    if (reservationError !== undefined) throw reservationError;
+    return await callback();
+  } finally {
+    release();
+    if (executingTaskCriticalTails.get(taskId) === tail) {
+      executingTaskCriticalTails.delete(taskId);
+    }
+  }
+}
 
 export const executingTaskLock = {
   has(taskId: string): boolean {
-    return executingTasks.has(taskId);
+    return executingTaskOwners.has(taskId);
   },
-  /** Synchronously claim the lock. Returns true if claimed, false if already held. */
+  /** Claim ownership synchronously and return the attempt-specific proof. */
+  claim(taskId: string): ExecutingTaskLease | null {
+    if (executingTaskOwners.has(taskId)) return null;
+    const lease = { taskId, token: Symbol(`executing-task:${taskId}`) };
+    executingTaskOwners.set(taskId, lease);
+    return lease;
+  },
+  /** Legacy boolean claim for bounded external repair owners. New execution paths use `claim`. */
   tryClaim(taskId: string): boolean {
-    if (executingTasks.has(taskId)) return false;
-    executingTasks.add(taskId);
-    return true;
+    return this.claim(taskId) !== null;
   },
-  release(taskId: string): void {
-    executingTasks.delete(taskId);
+  owns(lease: ExecutingTaskLease): boolean {
+    return executingTaskOwners.get(lease.taskId)?.token === lease.token;
   },
-  /** Test-only: clear all entries. */
+  async runIfOwner<T>(lease: ExecutingTaskLease, callback: () => Promise<T> | T): Promise<ExecutingTaskCriticalResult<T>> {
+    return inExecutingTaskCriticalSection(lease.taskId, async () => {
+      if (!this.owns(lease)) return { executed: false };
+      return { executed: true, value: await callback() };
+    });
+  },
+  async invalidate<T>(lease: ExecutingTaskLease, callback?: () => Promise<T> | T): Promise<ExecutingTaskCriticalResult<T | undefined>> {
+    return inExecutingTaskCriticalSection(lease.taskId, async () => {
+      if (!this.owns(lease)) return { executed: false };
+      try {
+        const value = await callback?.();
+        return { executed: true, value };
+      } finally {
+        executingTaskOwners.delete(lease.taskId);
+      }
+    });
+  },
+  /** Reserve invalidation before synchronously interrupting work, then settle it inside that reservation. */
+  async invalidateWithSignal<S, T>(
+    lease: ExecutingTaskLease,
+    signal: () => S,
+    callback: (signalResult: S) => Promise<T> | T,
+  ): Promise<ExecutingTaskCriticalResult<T>> {
+    /*
+    FNXC:StuckSessionOwnership 2026-09-07-18:08:
+    A stuck timer retains the lease captured when it was armed. Ownership must be checked synchronously
+    before reserving the FIFO and signaling abort, because a gracefully unwound attempt may already have
+    installed its successor. The check and reservation share one JavaScript turn, so no successor can
+    interleave; the queued check below remains the authority after earlier critical work settles.
+    */
+    if (!this.owns(lease)) return { executed: false };
+    let signalResult!: S;
+    return inExecutingTaskCriticalSection(lease.taskId, async () => {
+      if (!this.owns(lease)) return { executed: false };
+      /*
+      FNXC:StuckSessionOwnership 2026-09-07-17:45:
+      Once forced invalidation owns its FIFO turn, callback failure must not resurrect the attempt.
+      Publication therefore occurs in finally; callers keep user-control reads fail-closed and may
+      decline successor dispatch, but a failed auxiliary write can never strand the stale lease.
+      */
+      try {
+        const value = await callback(signalResult);
+        return { executed: true, value };
+      } finally {
+        executingTaskOwners.delete(lease.taskId);
+      }
+    }, () => {
+      signalResult = signal();
+    });
+  },
+  release(taskId: string, lease?: ExecutingTaskLease): void {
+    if (lease && !this.owns(lease)) return;
+    executingTaskOwners.delete(taskId);
+  },
+  currentLease(taskId: string): ExecutingTaskLease | null {
+    return executingTaskOwners.get(taskId) ?? null;
+  },
+  /** Test-only: clear all entries and FIFO state. */
   _clearForTest(): void {
-    executingTasks.clear();
+    executingTaskOwners.clear();
+    executingTaskCriticalTails.clear();
   },
 };

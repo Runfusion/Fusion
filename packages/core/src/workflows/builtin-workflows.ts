@@ -1,5 +1,4 @@
 import { BUILTIN_CODING_WORKFLOW_IR } from "./builtin-coding-workflow-ir.js";
-import { BUILTIN_CODING_IDEAS_WORKFLOW_IR } from "./builtin-coding-ideas-workflow-ir.js";
 import { BUILTIN_CODING_IDEAS_V2_WORKFLOW_IR } from "./builtin-coding-ideas-v2-workflow-ir.js";
 import { BUILTIN_BRAINSTORMING_WORKFLOW_IR } from "./builtin-brainstorming-workflow-ir.js";
 import { BUILTIN_LEAD_GENERATION_WORKFLOW_IR } from "./builtin-lead-generation-workflow-ir.js";
@@ -19,7 +18,7 @@ import {
   codeReviewRemediationNode,
   planReplanNode,
 } from "./builtin-workflow-remediation-nodes.js";
-import { DEPRECATED_BUILTIN_WORKFLOW_IDS } from "../types.js";
+import { DEPRECATED_BUILTIN_WORKFLOW_IDS, RETIRED_BUILTIN_WORKFLOW_SUCCESSORS } from "../types.js";
 import type { WorkflowDefinition } from "./workflow-definition-types.js";
 import type { WorkflowIr, WorkflowIrColumn, WorkflowIrNode } from "./workflow-ir-types.js";
 import { parseWorkflowIr } from "./workflow-ir.js";
@@ -29,6 +28,11 @@ export const BUILTIN_WORKFLOW_ID_PREFIX = "builtin:";
 
 export function isBuiltinWorkflowId(id: string): boolean {
   return id.startsWith(BUILTIN_WORKFLOW_ID_PREFIX);
+}
+
+/** Resolve a retired built-in identity to the catalog definition that succeeds it. */
+export function resolveRetiredBuiltinWorkflowId(id: string): string {
+  return RETIRED_BUILTIN_WORKFLOW_SUCCESSORS.get(id) ?? id;
 }
 
 const PLUGIN_GATED_BUILTIN_WORKFLOWS: ReadonlyMap<string, string> = new Map([
@@ -78,6 +82,10 @@ export function defaultEnabledBuiltinWorkflowIds(): string[] {
   return toggleEligibleBuiltinWorkflowIds().filter((id) => !isBuiltinWorkflowPluginGated(id));
 }
 
+/*
+FNXC:WorkflowSuccession 2026-09-06-02:15:
+Persisted activation lists remain operator-owned and may carry a retired id. Resolve succession only for catalog membership while retaining the raw duplicate guard, so an old+successor pair remains valid but a literal duplicate is still rejected.
+*/
 /** Validate the shape and catalog membership of a persisted enablement list. */
 export function validateEnabledBuiltinWorkflowIds(value: unknown): asserts value is string[] | null | undefined {
   if (value === undefined || value === null) return;
@@ -89,7 +97,7 @@ export function validateEnabledBuiltinWorkflowIds(value: unknown): asserts value
   }
   const seen = new Set<string>();
   for (const rawId of value) {
-    if (typeof rawId !== "string" || !isBuiltinWorkflowToggleEligible(rawId)) {
+    if (typeof rawId !== "string" || !isBuiltinWorkflowToggleEligible(resolveRetiredBuiltinWorkflowId(rawId))) {
       throw new Error(`enabledBuiltinWorkflowIds contains an unknown, deprecated, fragment, or invalid workflow id: ${String(rawId)}`);
     }
     if (seen.has(rawId)) {
@@ -103,7 +111,7 @@ export function validateEnabledBuiltinWorkflowIds(value: unknown): asserts value
 export function effectiveEnabledBuiltinWorkflowIds(enabledIds?: readonly string[]): string[] {
   const configured = enabledIds === undefined
     ? new Set(defaultEnabledBuiltinWorkflowIds())
-    : new Set(enabledIds);
+    : new Set(enabledIds.map(resolveRetiredBuiltinWorkflowId));
   return toggleEligibleBuiltinWorkflowIds().filter((id) => configured.has(id));
 }
 
@@ -117,8 +125,13 @@ export function resolveEffectiveDefaultWorkflowId(
   configuredWorkflowId?: string | null,
   enabledIds?: readonly string[],
 ): string {
+  /*
+  FNXC:WorkflowSuccession 2026-09-06-02:15:
+  Canonicalize the configured default once before both return branches, so a persisted retired id resolves to its enabled successor rather than escaping as an absent catalog identity.
+  */
   const enabled = effectiveEnabledBuiltinWorkflowIds(enabledIds);
-  const configured = configuredWorkflowId?.trim();
+  const requested = configuredWorkflowId?.trim();
+  const configured = requested ? resolveRetiredBuiltinWorkflowId(requested) : requested;
   if (configured && !isBuiltinWorkflowId(configured)) return configured;
   if (configured && enabled.includes(configured)) return configured;
   return enabled[0] ?? defaultEnabledBuiltinWorkflowIds()[0] ?? DEFAULT_WORKFLOW_ID;
@@ -214,10 +227,15 @@ function ceManualPrReviewOptionalGroupNode(column: string): WorkflowIrNode {
   };
 }
 
+/*
+FNXC:WorkflowSuccession 2026-09-06-02:15:
+Catalog filtering compares canonical identities on both sides. A project whose stored activation list names only a retired id must still be offered its successor, while the retired entry itself stays absent from the catalog.
+*/
 export function isBuiltinWorkflowEnabled(id: string, enabledIds?: readonly string[]): boolean {
   if (!isBuiltinWorkflowId(id)) return true;
   if (!enabledIds) return true;
-  return enabledIds.includes(id);
+  const canonicalId = resolveRetiredBuiltinWorkflowId(id);
+  return enabledIds.some((enabledId) => resolveRetiredBuiltinWorkflowId(enabledId) === canonicalId);
 }
 
 // Stable timestamp so built-ins round-trip deterministically.
@@ -517,49 +535,10 @@ function withPostMergeVerificationNode(nodes: BuiltinSpec["nodes"]): BuiltinSpec
 export const BUILTIN_WORKFLOWS: WorkflowDefinition[] = [
   {
     id: "builtin:coding",
-    name: "Coding",
+    name: "Coding (Auto)",
     description: "Default coding pipeline: plan steps, execute them one at a time, then run the optional final code review and merge.",
     kind: "workflow",
     ir: BUILTIN_STEPWISE_FINAL_REVIEW_CODING_WORKFLOW_IR,
-    layout: {
-      start: { x: 60, y: 160 },
-      plan: { x: 230, y: 160 },
-      "plan-review": { x: 400, y: 160 },
-      "plan-replan": { x: 400, y: 320 },
-      "plan-review-no-op": { x: 570, y: 320 },
-      parse: { x: 570, y: 160 },
-      steps: { x: 740, y: 160 },
-      /* U8: the pending-review park is an exit, not a stage — placed off the main line. */
-      "review-pending-handoff": { x: 740, y: 320 },
-      "browser-verification": { x: 910, y: 160 },
-      "browser-verification-remediation": { x: 910, y: 320 },
-      "code-review": { x: 1080, y: 160 },
-      "code-review-remediation": { x: 1080, y: 320 },
-      "completion-summary": { x: 1250, y: 160 },
-      "merge-gate": { x: 1420, y: 160 },
-      "branch-group-member-integration": { x: 1590, y: 80 },
-      "branch-group-promotion": { x: 1760, y: 80 },
-      "merge-attempt": { x: 1930, y: 160 },
-      "merge-retry": { x: 2100, y: 80 },
-      "recovery-router": { x: 2100, y: 240 },
-      "merge-manual-hold": { x: 1590, y: 240 },
-      "post-merge-verification": { x: 2270, y: 160 },
-      end: { x: 2440, y: 160 },
-    },
-    createdAt: BUILTIN_TS,
-    updatedAt: BUILTIN_TS,
-  },
-  /*
-   * FNXC:CodingIdeasWorkflow 2026-07-04-09:40:
-   * The Coding (Ideas) variant adds a manual "Ideas" intake in front of the default stepwise pipeline. New cards land in "ideas" (autoTriage off) and are not planned until an operator promotes them into the merged "todo" planner column; from there the graph is identical to the default Coding workflow.
-   */
-  {
-    id: "builtin:coding-ideas",
-    name: "Coding (Ideas)",
-    description:
-      "Capture-first coding pipeline: park ideas in a manual intake, then plan, execute per step, run the optional final code review, and merge.",
-    kind: "workflow",
-    ir: BUILTIN_CODING_IDEAS_WORKFLOW_IR,
     layout: {
       start: { x: 60, y: 160 },
       plan: { x: 230, y: 160 },
@@ -601,7 +580,7 @@ export const BUILTIN_WORKFLOWS: WorkflowDefinition[] = [
    */
   {
     id: "builtin:coding-ideas-v2",
-    name: "Coding (Ideas) V2",
+    name: "Coding (Ideas)",
     description:
       "Capture-first coding pipeline with a read-only review lane: park ideas in a manual intake, plan, implement and test per step, then review, document, and merge.",
     kind: "workflow",
@@ -1005,8 +984,12 @@ export const BUILTIN_WORKFLOWS: WorkflowDefinition[] = [
 
 const BUILTIN_BY_ID = new Map(BUILTIN_WORKFLOWS.map((wf) => [wf.id, wf]));
 
+/*
+FNXC:WorkflowSuccession 2026-09-06-02:15:
+Direct reads accept retired built-in ids but return the successor definition unchanged, including its canonical id. No synthetic catalog entry is created, so compatibility cannot make the retired workflow offered again.
+*/
 export function getBuiltinWorkflow(id: string): WorkflowDefinition | undefined {
-  return BUILTIN_BY_ID.get(id);
+  return BUILTIN_BY_ID.get(resolveRetiredBuiltinWorkflowId(id));
 }
 
 /** The operator-facing default workflow id used when a task has no

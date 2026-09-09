@@ -1,7 +1,7 @@
 import type { TraitFlags } from "./trait-types.js";
 
 /** A task's trait-derived position in the forward lifecycle. */
-export type LifecycleRole = "intake" | "hold" | "wip" | "review" | "complete" | "archived";
+export type LifecycleRole = "intake" | "hold" | "wip" | "review" | "complete";
 
 /** The only lifecycle ordering used for automatic-move containment. */
 export const LIFECYCLE_ROLE_RANK: Readonly<Record<LifecycleRole, number>> = Object.freeze({
@@ -10,7 +10,6 @@ export const LIFECYCLE_ROLE_RANK: Readonly<Record<LifecycleRole, number>> = Obje
   wip: 2,
   review: 3,
   complete: 4,
-  archived: 5,
 });
 
 export type LifecycleDirection = "forward" | "backward" | "lateral" | "unknown";
@@ -19,9 +18,9 @@ export type LifecycleDirection = "forward" | "backward" | "lateral" | "unknown";
 FNXC:LifecycleContainment 2026-08-28-11:02:
 Only a revision may move a card backward. Plan Review REVISE is the sole WIP-to-hold path; Code
 Review, verification, or merge-fix REVISE may return review to WIP only with pending remediation.
-Forward advancement from review through completion is explicitly permitted; F3 contains only the
-rank-skipping review-to-archive departure, while F1 and F2 contain backward departures. Cleanup,
-timeout, dependency, contamination, branch, capacity, merge failure, and graph retry paths repair in
+Forward advancement from review through completion is explicitly permitted. FN-295 removes the archive
+lifecycle role and its former F3 path; F4 protects only completed work from automatic
+backward movement. Cleanup, timeout, dependency, contamination, branch, capacity, merge failure, and graph retry paths repair in
 their current lifecycle role. Graph node-column routing therefore has no blanket backward authority.
 Roles come from each column's own trait flags so renamed and duplicate WIP/review lanes obey the same
 rule.
@@ -31,7 +30,6 @@ rule.
  * when a custom column intentionally carries several lifecycle traits.
  */
 export function classifyLifecycleRole(flags: TraitFlags): LifecycleRole | undefined {
-  if (flags.archived === true) return "archived";
   if (flags.complete === true) return "complete";
   if (flags.mergeOrchestration === true || flags.mergeBlocker === true || flags.humanReview === true) {
     return "review";
@@ -55,7 +53,7 @@ export function classifyLifecycleDirection(
 }
 
 export interface ForbiddenLifecyclePath {
-  rule: "F1" | "F2" | "F3" | "F4" | "F5";
+  rule: "F1" | "F2" | "F4" | "F5";
   detail: string;
 }
 
@@ -80,12 +78,8 @@ export function evaluateForbiddenLifecyclePath(
   if (from === "wip" && to === "hold" && reason !== "plan-review-revise-replan") {
     return { rule: "F5", detail: "A WIP card may return to planning only for Plan Review REVISE" };
   }
-  /* DELIBERATE-LITERAL: LifecycleRole values are policy roles, not column ids — same as F4 below. */
-  if (from === "review" && to === "archived") {
-    return { rule: "F3", detail: "A review-lane card may not skip completion and move directly to archive" };
-  }
   /* DELIBERATE-LITERAL: LifecycleRole values are policy roles, not column ids. */
-  if ((from === "complete" || from === "archived") && direction === "backward") {
+  if (from === "complete" && direction === "backward") {
     return { rule: "F4", detail: "A terminal-lane card may not move backward automatically" };
   }
   return null;

@@ -55,7 +55,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
 
       - name: Setup Node and install dependencies
         uses: ./.github/actions/setup-node-pnpm
@@ -155,7 +155,7 @@ jobs:
           fi
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: ${{ matrix.binary }}
           path: |
@@ -176,7 +176,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
 
       - name: Setup Node and install dependencies
         uses: ./.github/actions/setup-node-pnpm
@@ -227,7 +227,7 @@ jobs:
           }
 
       - name: Upload desktop Windows artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: fusion-desktop-windows
           path: |
@@ -244,7 +244,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
 
       - name: Setup Node and install dependencies
         uses: ./.github/actions/setup-node-pnpm
@@ -331,7 +331,7 @@ jobs:
           done
 
       - name: Upload desktop macOS artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: fusion-desktop-macos
           path: |
@@ -350,7 +350,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
 
       - name: Setup Node and install dependencies
         uses: ./.github/actions/setup-node-pnpm
@@ -422,7 +422,7 @@ jobs:
           done
 
       - name: Upload desktop Linux artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.1
         with:
           # Single glob set covers both linux-x64 and linux-arm64 artifact filenames.
           name: fusion-desktop-linux
@@ -466,7 +466,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
 
       - name: Setup Node and install dependencies
         uses: ./.github/actions/setup-node-pnpm
@@ -474,7 +474,7 @@ jobs:
       # FNXC:MobileAndroidBuild 2026-06-28-00:00:
       # Capacitor 7 @capacitor/android compiles its Android library with JavaVersion.VERSION_21; release APK/AAB Gradle builds must provision JDK 21 because JDK 17 fails with `invalid source release: 21`.
       - name: Setup Java 21
-        uses: actions/setup-java@v5.7.0
+        uses: actions/setup-java@v6.0.0
         with:
           distribution: temurin
           java-version: "21"
@@ -581,7 +581,7 @@ jobs:
           done
 
       - name: Upload Android artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: fusion-android-apk
           path: |
@@ -612,7 +612,7 @@ jobs:
       # binaries on v0.47.0 even though every bun build leg succeeded. Sparse-checkout
       # only CHANGELOG.md to keep the job lean; no submodules or full history needed.
       - name: Checkout CHANGELOG for release notes
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
         with:
           sparse-checkout: CHANGELOG.md
           sparse-checkout-cone-mode: false

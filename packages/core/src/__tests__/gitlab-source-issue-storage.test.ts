@@ -42,7 +42,10 @@ FNXC:GitLabStorage 2026-07-02-00:00:
 GitLab imports share the generic sourceIssue columns with GitHub, but provider rows must stay isolated. These tests preserve GitLab project/group/MR identity, self-managed URLs, IID-vs-global-id fields, and optional close timestamps without rewriting GitHub metadata.
 */
 pgTest("TaskStore GitLab source issue storage", () => {
-  const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({ prefix: "fusion_gitlab_source" });
+  const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
+    prefix: "fusion_gitlab_source",
+    projectId: "project-gitlab-source-storage",
+  });
 
   beforeAll(h.beforeAll);
   afterAll(h.afterAll);
@@ -92,8 +95,11 @@ pgTest("TaskStore GitLab source issue storage", () => {
     expect((await store.getTask(task.id)).sourceIssue).toBeUndefined();
   });
 
-  it("persists GitLab source metadata across disk-backed reopen, done, reopen, archive, and restore flows", async () => {
-    const harness = await createTaskStoreForTest({ prefix: "fusion_gitlab_source_disk" });
+  it("persists GitLab source metadata across disk-backed reopen in Complete", async () => {
+    const harness = await createTaskStoreForTest({
+      prefix: "fusion_gitlab_source_disk",
+      projectId: "project-gitlab-source-reopen",
+    });
     try {
       const first = harness.store;
       const created = await first.createTask({ description: "Disk GitLab", sourceIssue: groupIssue });
@@ -109,14 +115,9 @@ pgTest("TaskStore GitLab source issue storage", () => {
       const second = new TaskStore(harness.rootDir, undefined, { asyncLayer: harness.layer });
       await second.init();
       const reopened = (await second.listTasks()).find((task) => task.description === "Disk GitLab");
+      expect(reopened?.column).toBe("done");
       expect(reopened?.sourceIssue).toEqual(groupIssue);
 
-      await second.moveTask(reopened!.id, "todo");
-      expect((await second.getTask(reopened!.id)).sourceIssue).toEqual(groupIssue);
-
-      await second.archiveTask(reopened!.id, false);
-      const restored = await second.unarchiveTask(reopened!.id);
-      expect(restored.sourceIssue).toEqual(groupIssue);
     } finally {
       await harness.teardown();
     }

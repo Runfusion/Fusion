@@ -322,6 +322,16 @@ describe("settings defaults invariants", () => {
     });
   });
 
+  describe("chatSubmitOnEnter default", () => {
+    it("defaults chat Enter submission to automatic and global-scoped only", () => {
+      expect(DEFAULT_GLOBAL_SETTINGS.chatSubmitOnEnter).toBe("auto");
+      expect(GLOBAL_SETTINGS_KEYS).toContain("chatSubmitOnEnter");
+      expect("chatSubmitOnEnter" in DEFAULT_PROJECT_SETTINGS).toBe(false);
+      expect(PROJECT_SETTINGS_KEYS).not.toContain("chatSubmitOnEnter");
+      expect(isGlobalOnlySettingsKey("chatSubmitOnEnter")).toBe(true);
+    });
+  });
+
   describe("mergeIntegrationWorktree default", () => {
     it("defaults project settings to reuse-task-worktree", () => {
       expect(DEFAULT_PROJECT_SETTINGS.mergeIntegrationWorktree).toBe("reuse-task-worktree");

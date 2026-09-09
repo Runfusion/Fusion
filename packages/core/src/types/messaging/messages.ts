@@ -9,6 +9,7 @@
 
 import type { TaskPriority } from "../board/board.js";
 import type { NativeStructureRef } from "../../types.js";
+import type { DashboardInboxCategory } from "../../messaging/inbox-categories.js";
 
 export type ParticipantType = "agent" | "user" | "system";
 
@@ -186,6 +187,8 @@ export interface MessageCreateInput {
 
 /** Filter options for querying messages */
 export interface MessageFilter {
+  /** Filter dashboard inbox notices by their canonical destination. */
+  category?: DashboardInboxCategory;
   /** Filter by message type */
   type?: MessageType;
   /** Filter by read status */

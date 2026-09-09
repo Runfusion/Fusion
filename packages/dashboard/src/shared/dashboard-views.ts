@@ -19,6 +19,7 @@ export const DASHBOARD_VIEW_IDS = [
   "planning",
   "skills",
   "mailbox",
+  "recommendations",
   "insights",
   "memory",
   "command-center",
@@ -55,11 +56,8 @@ export const DASHBOARD_VIEWS: readonly DashboardViewMetadata[] = [
   { id: "board", label: "Board", labelKey: "nav.board" },
   { id: "list", label: "List", labelKey: "nav.list" },
   /*
-  FNXC:PatchnoteNaming 2026-08-30-01:40:
-  Operators call the delivery history Patchnote. Keep the stable `patchnode` identifier and translation key unchanged because routes, storage, and integrations depend on them.
-
-  FNXC:PatchnoteNaming 2026-08-30-06:36:
-  Operators now call the delivery history History. The stable `patchnode` identifier and translation key remain unchanged for routes, storage, persisted mobile-nav preferences, and integrations.
+  FNXC:HistoryNaming 2026-09-04-09:35:
+  Operators call this destination History, and chat exposes it as `fn_history_read`. The `patchnode` view id, `nav.patchnode` key, `GET /api/patchnode` route, `project.patchnode_entries` table, and persisted mobile-navigation preferences intentionally remain unchanged.
   */
   { id: "patchnode", label: "History", labelKey: "nav.patchnode" },
   { id: "graph", label: "Graph" },
@@ -87,6 +85,7 @@ export const DASHBOARD_VIEWS: readonly DashboardViewMetadata[] = [
   */
   { id: "skills", label: "Skills & Snippets", labelKey: "header.skillsView" },
   { id: "mailbox", label: "Mailbox", labelKey: "nav.mailbox" },
+  { id: "recommendations", label: "Recommendations", labelKey: "nav.recommendations" },
   { id: "insights", label: "Insights", labelKey: "header.insightsView" },
   { id: "memory", label: "Memory", labelKey: "header.memoryView" },
   { id: "command-center", label: "Dashboard", labelKey: "nav.commandCenter" },

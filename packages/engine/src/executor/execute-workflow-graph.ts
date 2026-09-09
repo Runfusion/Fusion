@@ -21,6 +21,8 @@ import {
   ACTIVE_WORKFLOW_WORK_ITEM_STATES,
   computePlanApprovalFingerprint,
   isPlanReviewSatisfied,
+  isUnavailablePlanLockError,
+  PLAN_LOCK_UNAVAILABLE_DIAGNOSTIC,
   PLAN_REVIEW_GROUP_ID,
   getBuiltinWorkflow,
   resolveColumnAgentBinding,
@@ -418,6 +420,7 @@ export async function persistWorkflowStepResultWithOutcome(
     let fenceRefused = false;
     let activityResult = result;
     let activityResults: CoreWorkflowStepResult[] | undefined;
+    let unavailablePlanLockDiagnostic: string | undefined;
 
     const compute = (current: Task, options?: { requireScopeRevision?: number }): WorkflowStepResultPatch | null => {
       if (fence.signal?.aborted) {
@@ -435,12 +438,13 @@ export async function persistWorkflowStepResultWithOutcome(
         scopeSuperseded = true;
         return null;
       }
-      const unprovenApproval = resolveUnprovenReviewApproval(result, {
+      const resultForPersistence = unavailablePlanLockDiagnostic ? activityResult : result;
+      const unprovenApproval = resolveUnprovenReviewApproval(resultForPersistence, {
         workspace: current.workspaceWorktrees !== undefined,
       });
       const built = buildWorkflowStepResultPatch(
         current,
-        unprovenApproval?.downgraded ?? result,
+        unprovenApproval?.downgraded ?? resultForPersistence,
         isPlanReviewResult,
       );
       activityResult = built.resultToPersist;
@@ -463,16 +467,29 @@ export async function persistWorkflowStepResultWithOutcome(
           fenceRefused = true;
           return;
         }
-        await deps.store.lockCurrentPlanWhilePlanningLocked(taskId, fingerprint, prompt);
+        try {
+          await deps.store.lockCurrentPlanWhilePlanningLocked(taskId, fingerprint, prompt);
+        } catch (error) {
+          if (!isUnavailablePlanLockError(error)) throw error;
+          unavailablePlanLockDiagnostic = `${PLAN_LOCK_UNAVAILABLE_DIAGNOSTIC} ${error.reason} (${error.unavailableSections.join(", ") || "unknown section"}).`;
+          activityResult = {
+            ...result,
+            status: "failed",
+            verdict: undefined,
+            output: unavailablePlanLockDiagnostic,
+            notes: unavailablePlanLockDiagnostic,
+          };
+        }
         const written = await writeWorkflowStepResultPatch(deps, taskId, (current) => {
           const patch = compute(current);
-          return patch === null ? null : { ...patch, approvedPlanFingerprint: fingerprint };
+          if (patch === null) return null;
+          return unavailablePlanLockDiagnostic ? patch : { ...patch, approvedPlanFingerprint: fingerprint };
         });
         if (!written.applied) {
           fenceRefused = true;
           return;
         }
-        await deps.store.reconcileSpecDriftWhilePlanningLocked(written.task!);
+        if (!unavailablePlanLockDiagnostic) await deps.store.reconcileSpecDriftWhilePlanningLocked(written.task!);
       });
     } else {
       const written = await writeWorkflowStepResultPatch(
@@ -493,10 +510,16 @@ export async function persistWorkflowStepResultWithOutcome(
       && persistedResult.status === "failed"
       && result.reviewInputFingerprint === undefined
       && persistedResult.verdict === undefined;
-    if (approvalDowngraded) {
+    if (approvalDowngraded || unavailablePlanLockDiagnostic) {
+      /*
+      FNXC:SpecLock 2026-09-07-05:09:
+      A lock rejection previously escaped this writer, leaving the review pending until orphan
+      recovery falsely described it as a crash. Persist a failed, merge-blocking row and timeline
+      entry immediately so operators see the deterministic parser cause.
+      */
       await deps.store.logEntry(
         taskId,
-        `[pre-merge] ${result.workflowStepName} approval invalidated: ${persistedResult.notes ?? persistedResult.output ?? "review input proof missing"}`,
+        `[pre-merge] ${result.workflowStepName} approval invalidated: ${unavailablePlanLockDiagnostic ?? persistedResult.notes ?? persistedResult.output ?? "review input proof missing"}`,
         undefined,
         deps.getRunContextFor(taskId),
       ).catch(() => undefined);

@@ -30,7 +30,7 @@ The list is DERIVED, not written down: a sweep counts as converted when its own 
 `resolveProjectColumnsForRoles`. Written down, this test would be wrong on every branch that converts a
 different sweep, and stale the moment one lands — the maintenance burden is what turns a ratchet off.
 */
-const LIFECYCLE_IDS = ["todo", "in-progress", "in-review", "done", "archived", "triage"];
+const LIFECYCLE_IDS = ["todo", "in-progress", "in-review", "done", "triage"];
 
 /**
  * Strips comments before scanning.

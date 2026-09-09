@@ -54,9 +54,6 @@ pgDescribe("credential-instance task persistence (PostgreSQL)", () => {
     await store.updateTask(created.id, updatedFields as never);
     expect(await store.getTask(created.id)).toMatchObject(updatedFields);
 
-    await store.archiveTask(created.id, { cleanup: false } as never);
-    const restored = await store.unarchiveTask(created.id);
-    expect(restored).toMatchObject(updatedFields);
   });
 
   it("keeps absent task fields absent after a database read", async () => {

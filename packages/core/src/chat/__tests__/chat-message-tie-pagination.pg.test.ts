@@ -123,6 +123,50 @@ pgDescribe("async chat store message pagination tie ordering (RUFU-146 / PRRT_kw
     expect(descRead.map((m) => m.id)).toEqual(["msg-tie-m", "msg-tie-c", "msg-tie-a"]);
   });
 
+  it("strict tuple pagination preserves 125 rows across a tie larger than one page", async () => {
+    const session = await makeSession(ctx);
+    const tie = "2026-09-06T12:00:00.000Z";
+    const inserted: string[] = [];
+    for (let index = 0; index < 125; index += 1) {
+      const id = `msg-cursor-${String(index).padStart(3, "0")}`;
+      inserted.push(id);
+      const createdAt = index < 10
+        ? "2026-09-06T11:59:59.000Z"
+        : index < 115 ? tie : "2026-09-06T12:00:01.000Z";
+      await insertMessage(ctx, session.id, id, createdAt);
+    }
+
+    const seen: string[] = [];
+    let before: string | undefined;
+    let beforeId: string | undefined;
+    for (;;) {
+      const page = await getChatMessages(ctx.layer.db, session.id, {
+        limit: 50,
+        order: "desc",
+        ...(before && beforeId ? { before, beforeId } : {}),
+      });
+      seen.push(...page.map((message) => message.id));
+      if (page.length < 50) break;
+      before = page.at(-1)?.createdAt;
+      beforeId = page.at(-1)?.id;
+    }
+
+    expect(seen).toHaveLength(125);
+    expect(new Set(seen).size).toBe(125);
+    expect([...seen].sort()).toEqual([...inserted].sort());
+    expect(seen).toEqual([...inserted].sort().reverse());
+  });
+
+  it("retains the inclusive legacy before-only boundary", async () => {
+    const session = await makeSession(ctx);
+    const tie = "2026-09-06T12:00:00.000Z";
+    await insertMessage(ctx, session.id, "legacy-a", tie);
+    await insertMessage(ctx, session.id, "legacy-b", tie);
+
+    const page = await getChatMessages(ctx.layer.db, session.id, { before: tie, order: "desc" });
+    expect(page.map((message) => message.id)).toEqual(["legacy-b", "legacy-a"]);
+  });
+
   it("backfill-style offset pagination across tied boundaries loses and duplicates nothing, and is stable", async () => {
     const session = await makeSession(ctx);
     // 11 messages; 9 share one createdAt straddling BOTH page boundaries of

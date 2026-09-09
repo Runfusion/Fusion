@@ -86,13 +86,10 @@ import {
   buildBootstrapPrompt,
   resolveResetDescription,
   writePromptFileAtomic,
-  resolveColumnFlags,
   PLAN_REVIEW_GROUP_ID,
   buildPreservedPlanRespecifyPatch,
   TransitionRejectionError,
-  ArchivedTaskDocumentPublicationRejectedError,
   TaskDocumentPreconditionFailedError,
-  validateArchivedTaskDocumentAddition,
   validateTaskDocumentPreconditions,
   getPlannerInterventionTimeline,
   isBuiltinWorkflowId,
@@ -107,7 +104,6 @@ import {
 } from "@fusion/core";
 import { GitHubClient } from "../github.js";
 import { resolveArtifactMediaPath } from "../artifact-media.js";
-import { archivedColumnsForTask } from "../task-lifecycle-lanes.js";
 import { githubRateLimiter } from "../github-poll.js";
 import { createTrackingIssueForTask } from "../github-tracking-hook.js";
 import { parseGitHubBadgeUrl } from "./register-git-github.js";
@@ -159,7 +155,6 @@ import { restartTaskStage } from "./task-restart-stage.js";
 import { resumeExternallyBlockedTask } from "./task-external-block-resume.js";
 import type { ApiRoutesContext } from "./types.js";
 import { deriveAutoTaskBranch, derivePerTaskBranch, getBranchSelectionMode, resolveBranchSelection } from "./branch-selection.js";
-import { isDaemonAuthActive } from "../auth-middleware.js";
 
 /**
  * FNXC:TaskMessageValidation 2026-08-29-08:48:
@@ -181,7 +176,6 @@ changes the count), so a correctly-converted guard with an inline legacy arm sta
 permanently and the number stops distinguishing real debt from documented degraded answers.
 */
 const LEGACY_WIP_LANES: ReadonlySet<string> = new Set(["in-progress"]);
-const LEGACY_ARCHIVE_LANES: ReadonlySet<string> = new Set(["archived"]);
 
 
 const REVIEW_BLOCK_RE = /##\s+(Code|Plan)\s+Review:[\s\S]*?(?=\n##\s+(?:Code|Plan)\s+Review:|$)/gi;
@@ -329,8 +323,8 @@ function resolveMoveOrderIndices(
     if (fromIndex >= 0 && toIndex >= 0) return { fromIndex, toIndex };
   }
   return {
-    fromIndex: COLUMNS.indexOf(fromColumn as Column),
-    toIndex: COLUMNS.indexOf(toColumn as Column),
+    fromIndex: COLUMNS.indexOf(fromColumn as (typeof COLUMNS)[number]),
+    toIndex: COLUMNS.indexOf(toColumn as (typeof COLUMNS)[number]),
   };
 }
 
@@ -397,9 +391,7 @@ async function resolveReviewColumnsForTask(store: TaskStore, taskId: string): Pr
 
 /*
 FNXC:WorkflowResolvedColumns 2026-07-31-05:00 (PR #2713 review — greptile P1):
-MEMBERSHIP, not "the first one". A workflow may declare MORE THAN ONE column carrying `complete` or
-`archived`, and `columnsWithFlag(...)[0]` picks one of them — so a task sitting in the second valid
-terminal column failed the revert guard with a 409.
+MEMBERSHIP, not "the first one". A workflow may declare more than one Complete column, and `columnsWithFlag(...)[0]` picks only one — so a task sitting in the second valid completion column failed the Revert guard.
 
 The single-id shape is right for the file's older resolvers, which answer "where should this card
 GO" (a move target must be one column). It is wrong here, because these answer "is this card ALREADY
@@ -413,11 +405,9 @@ async function resolveTerminalColumnsForTask(store: TaskStore, taskId: string): 
   try {
     const ir = await resolveWorkflowIrForTask(store, taskId);
     const complete = columnsWithFlag(ir, "complete");
-    const archived = columnsWithFlag(ir, "archived");
-    const all = [...complete, ...archived];
-    return all.length > 0 ? new Set(all) : new Set(["done", "archived"]);
+    return new Set(complete.length > 0 ? complete : ["done"]);
   } catch {
-    return new Set(["done", "archived"]);
+    return new Set(["done"]);
   }
 }
 
@@ -1350,7 +1340,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       const limit = typeof req.query.limit === "string" ? Number.parseInt(req.query.limit, 10) : undefined;
       const offset = typeof req.query.offset === "string" ? Number.parseInt(req.query.offset, 10) : undefined;
       const q = typeof req.query.q === "string" ? req.query.q.trim() : undefined;
-      const includeArchived = req.query.includeArchived === "1" || req.query.includeArchived === "true";
+      const excludeDone = req.query.excludeDone === "1" || req.query.excludeDone === "true";
       // FNXC:TaskStoreForensicRead 2026-06-26-15:30:
       // VAL-CROSS-003 / VAL-DATA-006 — Forensic read surface. When
       // includeDeleted=true is passed, soft-deleted tasks (deletedAt IS NOT
@@ -1374,13 +1364,20 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
 
       let tasks;
       if (q && q.length > 0) {
-        tasks = await scopedStore.searchTasks(q, { limit, offset, slim: true, includeArchived });
+        tasks = await scopedStore.searchTasks(q, { limit, offset, slim: true, includeArchived: false });
       } else {
-        // Board-view list: omit the heavy agent log payload and exclude
-        // archived tasks unless explicitly requested. Full task detail still loads via
+        // Board-view list omits the heavy agent log payload and never reads historical archive snapshots. Full task detail still loads via
         // GET /api/tasks/:id. Without this, every dashboard load shipped tens of MB of agent logs.
         // includeDeleted propagates to the store forensic read path (VAL-DATA-006).
-        const listOptions = { limit, offset, slim: true, includeArchived, ...(includeDeleted ? { includeDeleted } : {}), ...(column ? { column } : {}) };
+        let excludeColumns: string[] | undefined;
+        if (excludeDone && !column) {
+          try {
+            excludeColumns = [...await resolveProjectColumnsForRoles(scopedStore, ["complete"])];
+          } catch {
+            excludeColumns = ["done"];
+          }
+        }
+        const listOptions = { limit, offset, slim: true, includeArchived: false, ...(includeDeleted ? { includeDeleted } : {}), ...(column ? { column } : {}), ...(excludeColumns ? { excludeColumns } : {}) };
         tasks = await scopedStore.listTasks(listOptions);
       }
 
@@ -1528,6 +1525,26 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
     }
   });
 
+  router.get("/tasks/page", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const limitValue = req.query.limit;
+      const limit = limitValue === undefined ? 100 : Number(limitValue);
+      if (!Number.isInteger(limit) || limit < 1 || limit > 200) throw badRequest("limit must be an integer between 1 and 200");
+      const cursor = typeof req.query.cursor === "string" && req.query.cursor ? req.query.cursor : undefined;
+      const query = typeof req.query.q === "string" && req.query.q.trim() ? req.query.q.trim() : undefined;
+      try {
+        res.json(await scopedStore.listCurrentTasksPage({ limit, cursor, ...(query ? { query } : {}) }));
+      } catch (error) {
+        if (error instanceof TypeError && error.message === "Invalid task list cursor") throw badRequest(error.message);
+        throw error;
+      }
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err);
+    }
+  });
+
   // Multi-lane board metadata (U9, R16). Additive sibling to GET /tasks — the
   // task list payload stays byte-identical. Flag-OFF returns
   // { flagEnabled: false } and the client renders the legacy single-lane board.
@@ -1539,9 +1556,25 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       // literal `true`. `buildBoardWorkflowsPayload` still emits `flagEnabled: true`
       // for shipped clients that branch on it.
       const settings = await scopedStore.getSettingsFast();
-      // Resolve over the same (non-archived) board list the client renders.
-      const tasks = await scopedStore.listTasks({ slim: true, includeArchived: false });
-      const taskIds = tasks.map((t) => t.id);
+      // Mirror the board's bounded data shape: all current work plus only the newest Done page.
+      let completeColumns: string[];
+      try {
+        completeColumns = [...await resolveProjectColumnsForRoles(scopedStore, ["complete"])];
+      } catch {
+        completeColumns = ["done"];
+      }
+      const requestedTaskIds = typeof req.query.taskIds === "string"
+        ? req.query.taskIds.split(",").map((id) => id.trim()).filter(Boolean).slice(0, 2_000)
+        : [];
+      const [currentTasks, completedPage] = await Promise.all([
+        scopedStore.listTasks({ slim: true, includeArchived: false, excludeColumns: completeColumns }),
+        scopedStore.listCompletedTasks({ limit: 50, slim: true }),
+      ]);
+      const taskIds = [...new Set([
+        ...currentTasks.map((task) => task.id),
+        ...completedPage.tasks.map((task) => task.id),
+        ...requestedTaskIds,
+      ])];
       const payload = await buildBoardWorkflowsPayload(scopedStore, taskIds, settings);
       res.json(payload);
     } catch (err: unknown) {
@@ -1552,40 +1585,35 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
     }
   });
 
-  /**
-   * FNXC:ArchivePagination 2026-07-08-00:00:
-   * Dedicated paged read for the Archived board column: newest-first by default
-   * (`archivedAt DESC`) or numeric task-id order, always selected in SQL before
-   * LIMIT/OFFSET so a large archive is never loaded into memory in one pass.
-   * The narrow query contract is validated here before the project-scoped store call.
-   */
-  router.get("/tasks/archived", async (req, res) => {
+
+  /*
+  FNXC:DonePagination 2026-09-04-10:36:
+  Done is an unbounded history but the board is not. Keep this literal route before `/tasks/:id`, return a newest-first SQL page of at least 50 by default, and report the exact project total independently of the loaded card count.
+  */
+  router.get("/tasks/done", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const limit = typeof req.query.limit === "string" ? Number.parseInt(req.query.limit, 10) : undefined;
-      const offset = typeof req.query.offset === "string" ? Number.parseInt(req.query.offset, 10) : undefined;
-      const rawSort = req.query.sort;
-      if (rawSort !== undefined && (Array.isArray(rawSort) || typeof rawSort !== "string")) {
-        throw badRequest("sort must be one of: completion-date-desc, task-id-desc");
-      }
-      const sortMode: TaskColumnSortMode = rawSort === undefined ? "completion-date-desc" : rawSort as TaskColumnSortMode;
-      if (sortMode !== "completion-date-desc" && sortMode !== "task-id-desc") {
-        throw badRequest("sort must be one of: completion-date-desc, task-id-desc");
-      }
-
-      if (limit !== undefined && (!Number.isFinite(limit) || limit <= 0)) {
+      const rawLimit = req.query.limit;
+      if (rawLimit !== undefined && (typeof rawLimit !== "string" || rawLimit.trim() === "" || !Number.isInteger(Number(rawLimit)) || Number(rawLimit) <= 0)) {
         throw badRequest("limit must be a positive integer");
       }
-      if (offset !== undefined && (!Number.isFinite(offset) || offset < 0)) {
-        throw badRequest("offset must be a non-negative integer");
+      const sort = req.query.sort;
+      if (sort !== undefined && sort !== "completion-date-desc" && sort !== "task-id-desc") {
+        throw badRequest("sort must be completion-date-desc or task-id-desc");
       }
-
-      const { tasks, total, hasMore } = await scopedStore.listArchivedTasks({ limit, offset, slim: true, sort: sortMode });
-
-      res.json({ tasks, total, hasMore });
+      if (req.query.cursor !== undefined && typeof req.query.cursor !== "string") {
+        throw badRequest("cursor must be an opaque string");
+      }
+      res.json(await scopedStore.listCompletedTasks({
+        limit: rawLimit === undefined ? undefined : Number(rawLimit),
+        cursor: req.query.cursor,
+        slim: true,
+        sort: sort as TaskColumnSortMode | undefined,
+      }));
     } catch (err: unknown) {
-      if (err instanceof ApiError) {
-        throw err;
+      if (err instanceof ApiError) throw err;
+      if (err instanceof TypeError && err.message === "Invalid completed-task cursor") {
+        throw badRequest(err.message);
       }
       rethrowAsApiError(err);
     }
@@ -1667,8 +1695,6 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
     res: Response,
     trusted?: {
       proposalClaimId?: string;
-      /** A recommendation child auto-archived by a late deterministic conflict. */
-      recoverArchivedProposalTask?: Task;
       onCreated?: (task: Task) => Promise<unknown>;
       responseForCreated?: (task: Task, result: unknown) => unknown;
     },
@@ -1967,7 +1993,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           FNXC:TaskRecommendations 2026-08-12-00:58:
           Reuse is reserved for a named proposal claim on both the trusted request and canonical.
           Comparing absent ids made every ordinary deterministic duplicate return 200 and skipped
-          the duplicate-blocker classification that preserves legitimate done or archived creates.
+          the duplicate-blocker classification that preserves legitimate completed-work creates.
           */
           const trustedCreateResult = await trusted?.onCreated?.(deterministicGuard.existing);
           res.status(200).json(trusted?.responseForCreated?.(deterministicGuard.existing, trustedCreateResult) ?? deterministicGuard.existing);
@@ -2097,25 +2123,6 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
             && !canonical.deletedAt
             && await classifyDuplicateBlocker(canonical)
           ) {
-            try {
-              // The intake guard runs before createTask, so there is no new task row yet.
-              // Record against the canonical target to leave a traceable audit breadcrumb.
-              await scopedStore.recordActivity({
-                type: "task:auto-archived-duplicate",
-                taskId: canonical.id,
-                taskTitle: canonical.title ?? "",
-                details: `Rejected explicit duplicate-marker intake redirect to ${canonical.id}`,
-                metadata: {
-                  canonicalTaskId: canonical.id,
-                  source: "explicit-marker-intake",
-                },
-              });
-            } catch (activityError) {
-              runtimeLogger.warn("Explicit duplicate-marker intake activity recording failed; proceeding with conflict response", {
-                canonicalTaskId: canonical.id,
-                error: activityError instanceof Error ? activityError.message : String(activityError),
-              });
-            }
             throw conflict("duplicate_candidates", {
               matches: [{
                 id: canonical.id,
@@ -2198,36 +2205,6 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         ...(trusted?.proposalClaimId ? { proposalClaimId: trusted.proposalClaimId } : {}),
       };
 
-      /*
-      FNXC:TaskRecommendations 2026-08-08-08:34:
-      A late deterministic conflict archives the just-created recommendation child but retains its
-      immutable proposal claim. Re-run every normal intake guard before restoring that child: an
-      unchanged canonical still produces the standard duplicate conflict, while an inactive
-      canonical lets the original claimed child return to its workflow-resolved intake lane.
-      */
-      if (trusted?.recoverArchivedProposalTask) {
-        /*
-        FNXC:TaskRecommendations 2026-08-08-08:44:
-        A deterministic-duplicate archive is a lane move, not an operator archive, so it has no
-        pre-archive history for generic restore to replay. Re-home its recovered child to that
-        child's workflow intake explicitly; otherwise custom workflows can restore it to a legacy
-        fallback or complete lane instead of the normal guarded-intake destination.
-
-        FNXC:TaskRecommendations 2026-08-09-06:06:
-        Never call the cold-storage unarchive path here. Deterministic reconciliation keeps the row in
-        active storage and may move it to a custom archived-trait lane; re-home that live row directly
-        through the explicit recovery bypass because archive-to-intake is intentionally non-adjacent.
-        */
-        const archivedTask = trusted.recoverArchivedProposalTask;
-        const intakeColumn = await resolveIntakeColumnForTask(scopedStore, archivedTask.id);
-        const recoveredTask = archivedTask.column === intakeColumn
-          ? archivedTask
-          : await scopedStore.moveTask(archivedTask.id, intakeColumn, { recoveryRehome: true });
-        const trustedCreateResult = await trusted.onCreated?.(recoveredTask);
-        res.status(200).json(trusted.responseForCreated?.(recoveredTask, trustedCreateResult) ?? recoveredTask);
-        return;
-      }
-
       const task = await scopedStore.createTask(
         createInput,
         { onSummarize, settings: { autoSummarizeTitles: settings.autoSummarizeTitles } },
@@ -2263,10 +2240,10 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         logger: runtimeLogger,
         onDuplicate: async (canonical) =>
           await classifyDuplicateBlocker(canonical)
-            ? "archive-created"
+            ? "remove-created"
             : "keep-created",
       });
-        if (deterministicReconcile.outcome === "archived") {
+        if (deterministicReconcile.outcome === "removed") {
           /*
           FNXC:TaskRecommendations 2026-08-08-08:26:
           A recommendation child that loses the post-create deterministic race cannot be presented
@@ -2425,20 +2402,8 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           throw conflict("Recommendation link is malformed");
         }
         const linked = await scopedStore.getTask(recommendation.createdTaskId).catch(() => null);
-        const linkedArchiveColumns = linked
-          ? await archivedColumnsForTask(scopedStore, linked.id)
-          : new Set<string>();
-        /*
-        FNXC:TaskRecommendations 2026-08-08-06:34:
-        A prior link is reusable only while its child remains in a live task lane. Archived and
-        soft-deleted children are historical records, not an actionable Created result; conflict
-        rather than silently resurrecting or linking a second child.
-
-        FNXC:TaskRecommendations 2026-08-09-03:30:
-        Archive unavailability uses archivedColumnsForTask (workflow archived trait), not a
-        legacy `"archived"` column literal — custom archive-lane boards keep the same rule.
-        */
-        if (!linked || linked.deletedAt || linkedArchiveColumns.has(linked.column)) {
+        /* A prior link is reusable only while its child remains live; never resurrect a soft-delete. */
+        if (!linked || linked.deletedAt) {
           throw conflict("Recommendation link points to an unavailable task");
         }
         return res.status(200).json({ task: linked, parent });
@@ -2452,23 +2417,8 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       only to return a conflict; they are never relinked or exposed as live recommendation tasks.
       */
       const existing = await scopedStore.findTaskByProposalClaimId(proposalClaimId, { includeDeleted: true });
-      const existingArchiveColumns = existing
-        ? await archivedColumnsForTask(scopedStore, existing.id)
-        : new Set<string>();
-      /*
-      FNXC:TaskRecommendations 2026-08-08-08:44:
-      Deterministic reconciliation moves a child to its workflow's archived trait, which may be
-      named anything but `archived`. Detect that trait before retry recovery so a custom-workflow
-      child reaches the explicit intake re-home rather than being stranded as an unavailable claim.
-      */
-      const recoverArchivedProposalTask = existing
-        && !existing.deletedAt
-        && existingArchiveColumns.has(existing.column)
-        && typeof existing.sourceMetadata?.deterministicDuplicateOf === "string"
-        ? existing
-        : undefined;
-      if (existing && !recoverArchivedProposalTask) {
-        if (existing.deletedAt || existingArchiveColumns.has(existing.column)) throw conflict("Recommendation task is unavailable");
+      if (existing) {
+        if (existing.deletedAt) throw conflict("Recommendation task is unavailable");
         const repairedParent = await repairLink(existing);
         return res.status(200).json({ task: existing, parent: repairedParent });
       }
@@ -2486,7 +2436,6 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       try {
         await createTaskThroughGuardedIntake(req, res, {
           proposalClaimId,
-          recoverArchivedProposalTask,
           onCreated: repairLink,
           responseForCreated: (child, linkedParent) => ({ task: child, parent: linkedParent as Task }),
         });
@@ -2523,7 +2472,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       const declaresColumns = Array.isArray((moveTargetIr as { columns?: unknown[] } | undefined)?.columns);
       const columnIsValid = moveTargetIr && declaresColumns
         ? workflowHasColumn(moveTargetIr, column)
-        : COLUMNS.includes(column as Column);
+        : COLUMNS.includes(column as (typeof COLUMNS)[number]);
       if (!columnIsValid) {
         const allowed = moveTargetIr && declaresColumns
           ? ((moveTargetIr as unknown as { columns: Array<{ id: string }> }).columns.map((c) => c.id))
@@ -2753,11 +2702,11 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
 
   /*
   FNXC:TaskRevert 2026-07-04-00:00 (FN-7524 mode contract; FN-7547 workspace dispatch; FN-7548 granularity contract):
-  POST /tasks/:id/revert — intelligent git-revert for Done/Archived tasks (FN-7523), with an
+  POST /tasks/:id/revert — intelligent git-revert for workflow Complete tasks (FN-7523), with an
   AI-undo fallback (FN-7524, foundation for FN-7501), workspace (multi-repo) task support
   (FN-7547), and per-sha revert-commit granularity (FN-7548). Guard rails (enforced here AND in
   the engine service):
-    - only done/archived tasks are revertable (400/409 otherwise);
+    - only completed tasks are revertable (400/409 otherwise);
     - autoMerge-off is a needsHuman result, not a forced write, and NEVER triggers the AI fallback
       (leave that for a human / sibling FN-7525 to decide);
     - the source task's column/status is NEVER mutated as a side effect of a revert (git OR AI path).
@@ -2799,7 +2748,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       }
       const terminalColumns = await resolveTerminalColumnsForTask(scopedStore, task.id);
       if (!terminalColumns.has(task.column)) {
-        throw conflict(`Task ${task.id} is in column "${task.column}"; only done/archived tasks can be reverted`);
+        throw conflict(`Task ${task.id} is in column "${task.column}"; only completed tasks can be reverted`);
       }
 
       const requestedMode = (req.body as { mode?: unknown } | undefined)?.mode;
@@ -4006,7 +3955,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
             listTasks?: (options?: { includeArchived?: boolean; slim?: boolean }) => Promise<Task[]>;
           }).listTasks;
           if (typeof listTasks === "function") {
-            const otherOwners = await listTasks.call(scopedStore, { includeArchived: true, slim: true });
+            const otherOwners = await listTasks.call(scopedStore, { includeArchived: false, slim: true });
             for (const candidate of otherOwners) {
               if (candidate.id === task.id) continue;
               const candidatePaths = [candidate.worktree, ...Object.values(candidate.workspaceWorktrees ?? {}).map((entry) => entry.worktreePath)]
@@ -4309,83 +4258,6 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
     }
   });
 
-  // Archive task (any live column → archived)
-  router.post("/tasks/:id/archive", async (req, res) => {
-    try {
-      const { store: scopedStore } = await getProjectContext(req);
-      const removeLineageReferences = req.query.removeLineageReferences === "1"
-        || req.query.removeLineageReferences === "true";
-      const task = await scopedStore.archiveTask(req.params.id, {
-        cleanup: true,
-        removeLineageReferences,
-      });
-      res.json(task);
-    } catch (err: unknown) {
-      if (err instanceof ApiError) {
-        throw err;
-      }
-      const isTaskHasLineageChildrenError =
-        err instanceof Error
-        && err.name === "TaskHasLineageChildrenError"
-        && Array.isArray((err as { childIds?: unknown }).childIds);
-
-      if (isTaskHasLineageChildrenError) {
-        const childIds = (err as unknown as { childIds: string[] }).childIds;
-        throw new ApiError(409, err instanceof Error ? err.message : "Task has lineage children", {
-          code: "TASK_HAS_LINEAGE_CHILDREN",
-          taskId: req.params.id,
-          lineageChildIds: childIds,
-        });
-      }
-
-      const message = err instanceof Error ? err.message : String(err);
-      const status = message.includes("must be in") || message.includes("already archived") ? 400 : 500;
-      throw new ApiError(status, message);
-    }
-  });
-
-  // Unarchive task (archived → restored column)
-  router.post("/tasks/:id/unarchive", async (req, res) => {
-    try {
-      const { store: scopedStore } = await getProjectContext(req);
-      const task = await scopedStore.unarchiveTask(req.params.id);
-      res.json(task);
-    } catch (err: unknown) {
-      if (err instanceof ApiError) {
-        throw err;
-      }
-      const status = (err instanceof Error ? err.message : String(err)).includes("must be in") ? 400 : 500;
-      throw new ApiError(status, err instanceof Error ? err.message : String(err));
-    }
-  });
-
-  // Archive all done tasks
-  router.post("/tasks/archive-all-done", async (req, res) => {
-    try {
-      /*
-      FNXC:ArchiveConfirmGate 2026-07-26-16:30:
-      Bulk archive sweeps every done task in one call, yet had no confirmation while the
-      single-task reset (a comparable board-wide-impact mutation) already requires
-      `{ confirm: true }`. An agent or stray script hitting this route could silently
-      empty the Done column. Require the same explicit `{ confirm: true }` body; the
-      dashboard's "Archive all done" button sends it after its user-facing confirm.
-      */
-      const { confirm: confirmed } = (req.body ?? {}) as { confirm?: boolean };
-      if (confirmed !== true) {
-        throw badRequest(
-          "This operation archives every done task. Pass { \"confirm\": true } in the request body to proceed.",
-        );
-      }
-      const { store: scopedStore } = await getProjectContext(req);
-      const archived = await scopedStore.archiveAllDone();
-      res.json({ archived });
-    } catch (err: unknown) {
-      if (err instanceof ApiError) {
-        throw err;
-      }
-      rethrowAsApiError(err);
-    }
-  });
 
   /**
    * POST /api/tasks/batch-update-models
@@ -5760,71 +5632,6 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
     }
   });
 
-  /**
-   * FNXC:ArchivedTaskDocumentPublication 2026-07-20-15:36:
-   * Archived corrections are an operator-only daemon API, not an ordinary editor or agent write. The server-level bearer middleware authenticates requests when daemon auth is active; this route additionally fails closed when Fusion was launched with `--no-auth` or without a daemon token. Only the additive contract is accepted, and conflict details expose hashes/revisions but never document, reason, or credential bytes.
-   */
-  router.post("/tasks/:id/documents/:key/archived-publications", async (req, res) => {
-    if (!isDaemonAuthActive(options)) {
-      throw new ApiError(403, "Archived document publication requires active daemon bearer authentication");
-    }
-    try {
-      if (!DOCUMENT_KEY_REGEX.test(req.params.key)) {
-        throw badRequest("Invalid document key. Must be 1-64 alphanumeric characters, hyphens, or underscores.");
-      }
-      const body = req.body as Record<string, unknown> | undefined;
-      if (!body || typeof body !== "object" || Array.isArray(body)) {
-        throw badRequest("request body must be an object");
-      }
-      const allowedFields = new Set(["appendContent", "expectedRevision", "expectedContentHash", "author", "reason"]);
-      const unknownFields = Object.keys(body).filter((field) => !allowedFields.has(field));
-      if (unknownFields.length > 0) {
-        throw badRequest(`Unknown archived publication field: ${unknownFields[0]}`);
-      }
-      if (typeof body.appendContent === "string" && body.appendContent.length > 100000) {
-        throw badRequest("appendContent must be between 1 and 100000 characters");
-      }
-      if (typeof body.author === "string" && body.author.length > 200) {
-        throw badRequest("author must be at most 200 characters");
-      }
-      if (typeof body.reason === "string" && body.reason.length > 2000) {
-        throw badRequest("reason must be at most 2000 characters");
-      }
-      const publication = {
-        appendContent: body.appendContent,
-        expectedRevision: body.expectedRevision,
-        expectedContentHash: body.expectedContentHash,
-        author: body.author,
-        reason: body.reason,
-      };
-      try {
-        validateArchivedTaskDocumentAddition(publication);
-      } catch (error) {
-        throw badRequest(error instanceof Error ? error.message : String(error));
-      }
-      const { store: scopedStore } = await getProjectContext(req);
-      const result = await scopedStore.publishArchivedTaskDocumentAddition(req.params.id, {
-        key: req.params.key,
-        appendContent: publication.appendContent,
-        expectedRevision: publication.expectedRevision,
-        expectedContentHash: publication.expectedContentHash,
-        author: publication.author.trim(),
-        reason: publication.reason.trim(),
-      });
-      res.status(201).json(result);
-    } catch (err: unknown) {
-      if (err instanceof ApiError) throw err;
-      if (err instanceof TaskDocumentPreconditionFailedError) {
-        throw new ApiError(409, err.message, { ...err.toDetails() });
-      }
-      if (err instanceof ArchivedTaskDocumentPublicationRejectedError) {
-        const status = err.reason === "parent-not-found" || err.reason === "document-not-found" ? 404 : 409;
-        throw new ApiError(status, err.message, { ...err.toDetails() });
-      }
-      throw new ApiError(500, "Archived document publication failed");
-    }
-  });
-
   // DELETE /tasks/:id/documents/:key — Delete a document and all its revisions
   router.delete("/tasks/:id/documents/:key", async (req, res) => {
     try {
@@ -6293,30 +6100,11 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
 
       // Get current task state
       const task = await scopedStore.getTask(req.params.id);
-
       const workflowIr = await resolveWorkflowIrForTask(scopedStore, task.id);
-      const currentColumn = "columns" in workflowIr
-        ? workflowIr.columns.find((column) => column.id === task.column)
-        : undefined;
-      /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-04:00 (fleet: register-task-workflow-routes.ts):
-      FLAGS-FIRST, id only as the fallback. This ORed the legacy id with the resolved trait
-      unconditionally, so a column merely NAMED `archived` counted as archived even when its own
-      workflow says otherwise — the same inversion pattern found in TaskContextMenu and
-      isPreExecutionHoldColumn. When the column resolves, its traits are the answer; the id is only
-      for when it does not resolve at all.
-      */
-      const isArchived = currentColumn != null
-        ? resolveColumnFlags(currentColumn).archived === true
-        : LEGACY_ARCHIVE_LANES.has(task.column);
       /*
       FNXC:TaskRecoveryVocabulary 2026-08-28-01:30:
       The retained specification-rebuild route supports bulk and execution-mode replanning, but its operator-facing errors must use plan-rebuild terminology rather than the removed recovery-action vocabulary.
       */
-      if (isArchived) {
-        throw badRequest("Plan rebuild is not available for archived tasks; unarchive first.");
-      }
-
       /*
       FNXC:WorkflowReplan 2026-07-16-12:00:
       Specification rebuild must park work in a planner lane belonging to the task's own workflow:
@@ -6324,7 +6112,6 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       with neither. The legacy fallback is intentionally recovery-rehomed: plain moves reject
       an undeclared triage target as unknown-column (and reject non-adjacent sources), which
       previously stranded no-triage workflows before their needs-replan status was written.
-      Archived cards are rejected above rather than resurrected into a planner lane.
       */
       const replanColumn = workflowHasColumn(workflowIr, "triage")
         ? "triage"
@@ -7462,7 +7249,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       The manual Address PR feedback route must seed only Fusion-authored instructions plus PR identity. PR review text is untrusted and stays data fetched by ce-resolve-pr-feedback, so this lifecycle trigger cannot execute reviewer-provided directives while waking the assigned agent.
 
       FNXC:TaskReview 2026-06-28-16:39:
-      The route response and dashboard toasts say an AI session started. Reject unsupported columns before writing steering/log entries so todo, done, and archived tasks cannot report success while no session is scheduled.
+      The route response and dashboard toasts say an AI session started. Reject unsupported columns before writing steering/log entries so non-execution lanes cannot report success while no session is scheduled.
       */
       const prLabel = `PR #${prInfo.number}`;
       const steeringText = [

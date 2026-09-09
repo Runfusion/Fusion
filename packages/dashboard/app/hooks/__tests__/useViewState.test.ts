@@ -137,7 +137,7 @@ describe("useViewState", () => {
     await waitFor(() => {
       expect(result.current.taskView).toBe("command-center");
     });
-    expect(localStorage.getItem("kb-dashboard-task-view")).toBe("command-center");
+    expect(localStorage.getItem("kb-dashboard-task-view")).toBe("reliability");
   });
 
   it("migrates legacy reliability URL param to Command Center", async () => {
@@ -150,7 +150,7 @@ describe("useViewState", () => {
       await waitFor(() => {
         expect(result.current.taskView).toBe("command-center");
       });
-      expect(localStorage.getItem("kb-dashboard-task-view")).toBe("command-center");
+      expect(localStorage.getItem("kb-dashboard-task-view")).toBeNull();
     } finally {
       window.history.replaceState({}, "", originalUrl || "/");
     }
@@ -164,7 +164,7 @@ describe("useViewState", () => {
     await waitFor(() => {
       expect(result.current.taskView).toBe("board");
     });
-    expect(localStorage.getItem("kb-dashboard-task-view")).toBe("board");
+    expect(localStorage.getItem("kb-dashboard-task-view")).toBe("stash-recovery");
   });
 
   it("migrates retired stash recovery URL param to board", async () => {
@@ -178,7 +178,7 @@ describe("useViewState", () => {
       await waitFor(() => {
         expect(result.current.taskView).toBe("board");
       });
-      expect(localStorage.getItem("kb-dashboard-task-view")).toBe("board");
+      expect(localStorage.getItem("kb-dashboard-task-view")).toBe("list");
     } finally {
       window.history.replaceState({}, "", originalUrl || "/");
     }
@@ -227,14 +227,15 @@ describe("useViewState", () => {
     expect(localStorage.getItem("kb-dashboard-view-mode")).toBe("project");
   });
 
-  it("persists taskView changes to localStorage", async () => {
-    const { result } = renderHook(() => useViewState(createOptions()));
+  it("persists taskView changes only under the resolved project key", async () => {
+    const { result } = renderHook(() => useViewState(createOptions({ currentProject: PROJECT })));
 
     await act(async () => {
       result.current.setTaskView("list");
     });
 
-    expect(localStorage.getItem("kb-dashboard-task-view")).toBe("list");
+    expect(localStorage.getItem("kb:proj_123:kb-dashboard-task-view")).toBe("list");
+    expect(localStorage.getItem("kb-dashboard-task-view")).toBeNull();
   });
 
   it("handleChangeTaskView updates taskView state", async () => {
@@ -519,7 +520,8 @@ describe("useViewState", () => {
     window.history.replaceState({}, "", originalSearch ? `?${originalSearch.replace(/^\?/, "")}` : "/");
   });
 
-  it("restores and persists plugin task views using the canonical composite key", async () => {
+  it("restores and persists registered plugin task views using the canonical composite key", async () => {
+    vi.spyOn(pluginViewRegistry, "isPluginViewRegistered").mockReturnValue(true);
     localStorage.setItem("kb:proj_123:kb-dashboard-task-view", "plugin:fusion-plugin-dependency-graph:graph");
 
     const { result } = renderHook(() =>
@@ -539,6 +541,23 @@ describe("useViewState", () => {
     });
 
     expect(localStorage.getItem("kb:proj_123:kb-dashboard-task-view")).toBe("plugin:fusion-plugin-dependency-graph:graph");
+  });
+
+  it("normalizes a persisted but unavailable plugin view to board in the current project", async () => {
+    localStorage.setItem("kb:proj_123:kb-dashboard-task-view", "plugin:fusion-plugin-dependency-graph:graph");
+
+    const { result } = renderHook(() =>
+      useViewState(
+        createOptions({
+          currentProject: PROJECT,
+        }),
+      ),
+    );
+
+    await waitFor(() => {
+      expect(result.current.taskView).toBe("board");
+      expect(localStorage.getItem("kb:proj_123:kb-dashboard-task-view")).toBe("board");
+    });
   });
 
   it("rejects invalid plugin view IDs and falls back to board", async () => {
@@ -643,29 +662,52 @@ describe("useViewState", () => {
     });
   });
 
-  // FNXC:ViewState FN-7649: Switching projects (rerender with a new currentProject) must not land on Settings when the newly selected project's scoped persisted view is settings; it resolves to board. Mirrors the existing command-center project-switch coverage above.
-  it("lands on board when switching to a project whose persisted scoped taskView is settings", async () => {
+  it.each(["settings", "command-center"] as const)(
+    "restores %s only on an explicit project return while keeping fresh-boot guards",
+    async (returnView) => {
+      const projectA: ProjectInfo = { ...PROJECT, id: "proj_a", name: "Project A" };
+      const projectB: ProjectInfo = { ...PROJECT, id: "proj_b", name: "Project B" };
+
+      localStorage.setItem("kb:proj_a:kb-dashboard-task-view", returnView);
+      localStorage.setItem("kb:proj_b:kb-dashboard-task-view", "chat");
+
+      const { result, rerender } = renderHook(
+        ({ project }) => useViewState(createOptions({ currentProject: project })),
+        { initialProps: { project: projectB } },
+      );
+
+      await waitFor(() => expect(result.current.taskView).toBe("chat"));
+      expect(localStorage.getItem("kb:proj_b:kb-dashboard-task-view")).toBe("chat");
+
+      rerender({ project: projectA });
+      await waitFor(() => expect(result.current.taskView).toBe(returnView));
+      expect(localStorage.getItem("kb:proj_a:kb-dashboard-task-view")).toBe(returnView);
+
+      rerender({ project: projectB });
+      await waitFor(() => expect(result.current.taskView).toBe("chat"));
+      expect(localStorage.getItem("kb:proj_b:kb-dashboard-task-view")).toBe("chat");
+    },
+  );
+
+  it("restores chat for A after A → B → A without reading B's view", async () => {
     const projectA: ProjectInfo = { ...PROJECT, id: "proj_a", name: "Project A" };
     const projectB: ProjectInfo = { ...PROJECT, id: "proj_b", name: "Project B" };
-
-    localStorage.setItem("kb:proj_a:kb-dashboard-task-view", "list");
-    localStorage.setItem("kb:proj_b:kb-dashboard-task-view", "settings");
+    localStorage.setItem("kb:proj_a:kb-dashboard-task-view", "chat");
+    localStorage.setItem("kb:proj_b:kb-dashboard-task-view", "agents");
 
     const { result, rerender } = renderHook(
       ({ project }) => useViewState(createOptions({ currentProject: project })),
       { initialProps: { project: projectA } },
     );
+    await waitFor(() => expect(result.current.taskView).toBe("chat"));
 
-    await waitFor(() => {
-      expect(result.current.taskView).toBe("list");
-    });
-
-    // Switch to project B, whose persisted view is settings - must land on board, not settings.
     rerender({ project: projectB });
+    await waitFor(() => expect(result.current.taskView).toBe("agents"));
 
-    await waitFor(() => {
-      expect(result.current.taskView).toBe("board");
-    });
+    rerender({ project: projectA });
+    await waitFor(() => expect(result.current.taskView).toBe("chat"));
+    expect(localStorage.getItem("kb:proj_a:kb-dashboard-task-view")).toBe("chat");
+    expect(localStorage.getItem("kb:proj_b:kb-dashboard-task-view")).toBe("agents");
   });
 
   it("no cross-project bleed when switching projects", async () => {
@@ -725,6 +767,7 @@ describe("useViewState", () => {
     });
 
     expect(result.current.taskView).toBe("insights");
+    expect(localStorage.getItem("kb-dashboard-task-view")).toBeNull();
     expect(sessionStorage.getItem("kb-dashboard-task-view-session")).toBeNull();
     expect(sessionStorage.length).toBe(0);
   });

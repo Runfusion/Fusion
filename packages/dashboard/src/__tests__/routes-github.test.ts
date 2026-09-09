@@ -248,8 +248,6 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
     replaceActiveTaskWorkflowContinuation: vi.fn(async (input: Record<string, unknown>) => ({ ...input, id: "mock-plan-review-continuation" })),
     deleteTask: vi.fn(),
     mergeTask: vi.fn(),
-    archiveTask: vi.fn(),
-    unarchiveTask: vi.fn(),
     getSettings: vi.fn().mockResolvedValue({}),
     getSettingsFast: vi.fn().mockResolvedValue({}),
     updateSettings: vi.fn(),
@@ -2573,29 +2571,6 @@ describe("POST /tasks/:id/spec/rebuild", () => {
     expect(res.status).toBe(200);
     expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo", { moveSource: "user", recoveryRehome: true });
     expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "needs-replan" });
-  });
-
-  it("rejects legacy and semantic archived tasks before rebuilding", async () => {
-    const tempRoot = mkdtempSync(join(tmpdir(), "kb-spec-rebuild-archived-"));
-    const taskDir = join(tempRoot, ".fusion", "tasks", "FN-001");
-    mkdirSync(taskDir, { recursive: true });
-    writeFileSync(join(taskDir, "PROMPT.md"), "# retained spec\n");
-    const archivedTask = { ...FAKE_TASK_DETAIL, column: "cold-storage" as any };
-    selectWorkflow([{ id: "cold-storage", traits: [{ trait: "archived" }] }]);
-    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(archivedTask);
-    (store.getRootDir as ReturnType<typeof vi.fn>).mockReturnValue(tempRoot);
-
-    try {
-      const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/spec/rebuild");
-
-      expect(res.status).toBe(400);
-      expect(res.body.error).toContain("not available for archived tasks");
-      expect(store.moveTask).not.toHaveBeenCalled();
-      expect(store.updateTask).not.toHaveBeenCalled();
-      expect(existsSync(join(taskDir, "PROMPT.md"))).toBe(true);
-    } finally {
-      rmSync(tempRoot, { recursive: true, force: true });
-    }
   });
 
   it("returns 404 when task not found", async () => {

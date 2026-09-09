@@ -9,7 +9,7 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<AgentCapability, AgentPermission[]
   executor: ["tasks:execute", "agents:view", "messages:read", "messages:send"],
   reviewer: ["tasks:review", "agents:view", "messages:read", "messages:send"],
   merger: ["tasks:merge", "agents:view", "messages:read"],
-  scheduler: ["tasks:assign", "tasks:create", "tasks:archive", "agents:view", "automations:manage", "missions:manage", "messages:read"],
+  scheduler: ["tasks:assign", "tasks:create", "agents:view", "automations:manage", "missions:manage", "messages:read"],
   engineer: ["tasks:execute", "tasks:review", "agents:view", "messages:read", "messages:send"],
   custom: [],
 };

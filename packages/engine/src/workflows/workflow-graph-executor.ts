@@ -1425,7 +1425,14 @@ export class WorkflowGraphExecutor {
             node.id === PLAN_REVIEW_GROUP_ID
             && stepStatus === "failed"
             && (
-              isRequiredArtifactReadFailedValue(verdictRaw)
+              /*
+              FNXC:PlanReviewOutputExclusivity 2026-09-06-01:01:
+              A verdict-required response without a verdict is failed evidence, never approval and
+              never a plan defect. Hold it before route selection so malformed reviewer output can
+              neither reach execution nor fabricate a REVISE-driven planning cycle.
+              */
+              (verdictRequired && !verdict && !notRunReason)
+              || isRequiredArtifactReadFailedValue(verdictRaw)
               || isNonPlanDefectPlanReviewFailure({
                 verdict,
                 errorMessage: stepOutput ?? stepNotes,
@@ -1525,6 +1532,15 @@ export class WorkflowGraphExecutor {
           }
           const scheduled = await this.deps.requestPreMergeOptionalStepFix?.(task.id, failureContext);
           if (!scheduled) {
+            /*
+            FNXC:PlanReviewOutputExclusivity 2026-09-06-01:01:
+            An integrated Plan Review remediation decline must stop before execution and retain its
+            exact terminal value in graph context. The workflow-action branch returns before the
+            generic node recorder, so without this explicit projection the card stops correctly but
+            downstream recovery cannot distinguish the refusal from an unclassified graph failure.
+            */
+            context[`node:${node.id}:outcome`] = "failure";
+            context[`node:${node.id}:value`] = "remediation-not-scheduled";
             return { outcome: "failure", value: "remediation-not-scheduled" };
           }
           /*

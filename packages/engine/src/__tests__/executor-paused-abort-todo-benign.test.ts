@@ -187,11 +187,6 @@ describe("pause-abort benign requeue-to-todo (FN-6782)", () => {
       expect.objectContaining({ graphResumeRetryCount: 1 }),
       expect.anything(),
     );
-    expect(store.updateTask).toHaveBeenCalledWith(
-      task.id,
-      expect.objectContaining({ status: "failed" }),
-      undefined,
-    );
     expect(executeSpy).not.toHaveBeenCalled();
   });
 
@@ -943,14 +938,12 @@ describe("pause-abort benign requeue-to-todo (FN-6782)", () => {
   executor session on the in-progress → in-review move, the AI merge lands, the
   task advances to done — and the aborted graph run's teardown then reached the
   operator-action sink and logged "operator action required" on a task that
-  finished perfectly. A pause-abort observed in a terminal SUCCESS column must
-  be benign across BOTH terminal columns (done and archived): no alarming log,
-  no failed park, marker cleared, worktree slot released.
+  finished perfectly. A pause-abort observed in the completion column must be
+  benign: no alarming log, no failed park, marker cleared, worktree slot released.
   */
   describe("terminal-success columns are benign (post-merge hard-cancel false alarm)", () => {
     it.each([
       { column: "done" as const },
-      { column: "archived" as const },
     ])("classifies a hard-cancel pause abort on a '$column' task as benign", async ({ column }) => {
       const { store, task, executor } = makeHarness({ column });
       (executor as any).addActiveWorktree(task.id, task.worktree);

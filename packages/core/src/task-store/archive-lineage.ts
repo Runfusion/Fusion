@@ -2,9 +2,8 @@
  * Archive / lineage responsibility area.
  *
  * FNXC:TaskStoreDecompose 2026-06-24-00:00:
- * Responsibility boundary for task archiving and lineage integrity. The logic
- * currently lives in the TaskStore class body (archiveTask, restoreFromArchive,
- * lineage-integrity gates, removeLineageReferences) and archive-db.ts.
+ * Responsibility boundary for historical archive reintegration and lineage integrity. The retained
+ * logic covers cold-snapshot restoration, lineage-integrity gates, and removeLineageReferences.
  * This module documents the boundary; U14 will migrate these call sites.
  *
  * Lineage-integrity invariants (VAL-DATA-010/011/012):

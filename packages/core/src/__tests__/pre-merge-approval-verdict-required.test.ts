@@ -40,7 +40,7 @@ describe("mandatory authored pre-merge review verdicts", () => {
     expect(approvals([row])).toEqual([{ workflowStepId: "custom-review", state: "not-approved" }]);
     expect(getTaskMergeBlocker(mergeTask([row]), {
       requiredPreMergeStepIds: new Set(["custom-review"]),
-    })).toBe("task has enabled pre-merge workflow steps without a current approval");
+    })).toBe("task has enabled pre-merge workflow steps without a current approval (gate 'custom-review')");
   });
 
   it("refuses a legacy review-kind result without a verdict", () => {

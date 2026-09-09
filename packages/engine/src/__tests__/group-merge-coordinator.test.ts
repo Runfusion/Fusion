@@ -5,7 +5,6 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { describe, expect, it, afterEach, beforeEach, vi } from "vitest";
-import { type TaskStore } from "@fusion/core";
 
 const createResolvedAgentSessionMock = vi.hoisted(() => vi.fn());
 vi.mock("../agents/agent-session-helpers.js", async (importOriginal) => ({
@@ -16,7 +15,6 @@ vi.mock("../pi.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../pi.js")>()),
   promptWithFallback: vi.fn(async (session: { prompt: (prompt: string) => Promise<void> }, prompt: string) => session.prompt(prompt)),
 }));
-import { createTaskStoreForTest, pgDescribe, type PgTestHarness } from "../../../core/src/__test-utils__/pg-test-harness.js";
 import {
   evaluateBranchGroupCompletion,
   evaluateBranchGroupPromotion,
@@ -144,16 +142,14 @@ describe("evaluateBranchGroupCompletion", () => {
 
   /*
    * FNXC:BranchGroupCompletion 2026-07-04-00:00:
-   * FN-7534: an archived member that never landed onto the group branch must still count
-   * as pending — it must NOT silently drop out of the membership set (see
-   * TaskStore.listTasksByBranchGroup, which now scans with includeArchived: true so this
-   * shape of member reaches the coordinator at all).
+   * A completed member that never landed onto the group branch must still count as pending;
+   * completion alone does not fabricate branch-integration evidence.
    */
-  it("does NOT count an archived member that never landed onto the group branch (FN-7534)", () => {
+  it("does NOT count a completed member that never landed onto the group branch (FN-7534)", () => {
     const result = evaluateBranchGroupCompletion({
       members: [
         landed("FN-A"),
-        { id: "FN-B", column: "archived" as const } as any,
+        { id: "FN-B", column: "done" as const } as any,
       ] as any,
       group,
     });
@@ -163,13 +159,13 @@ describe("evaluateBranchGroupCompletion", () => {
     expect(result.pendingMemberIds).toEqual(["FN-B"]);
   });
 
-  it("still counts an archived member as landed once its mergeDetails snapshot is preserved (FN-7534)", () => {
+  it("counts a completed member as landed once its mergeDetails snapshot is preserved (FN-7534)", () => {
     const result = evaluateBranchGroupCompletion({
       members: [
         landed("FN-A"),
         {
           id: "FN-B",
-          column: "archived" as const,
+          column: "done" as const,
           mergeDetails: {
             mergeConfirmed: true,
             mergeTargetSource: "branch-group-integration",
@@ -402,114 +398,6 @@ describe("promoteBranchGroup", () => {
   });
 });
 
-/*
- * FNXC:BranchGroupCompletion 2026-07-04-00:00:
- * FN-7534: the completion gate is a first-class regression target, not just the display
- * serializers (FN-5893). These tests wire a REAL TaskStore (not a hand-rolled fixture) so
- * `promoteBranchGroup` exercises the actual `listTasksByBranchGroup` membership scan that
- * previously silently dropped an archived-but-unlanded member from `total`.
- */
-/*
-FNXC:PgMigrationQuarantine 2026-07-18-01:50:
-FN-8258 exercises archived shared-branch members through the PostgreSQL TaskStore, including
-awaited branch-group writes, instead of the removed SQLite constructor path.
-*/
-pgDescribe("promoteBranchGroup with a real TaskStore (FN-7534 archived-member regression)", () => {
-  let rootDir: string;
-  let harness: PgTestHarness;
-  let store: TaskStore;
-
-  beforeEach(async () => {
-    rootDir = makeRepo();
-    harness = await createTaskStoreForTest({ prefix: "fusion_branch_group_archive" });
-    store = harness.store;
-  });
-
-  afterEach(async () => {
-    await harness?.teardown();
-  });
-
-  it("returns reason: incomplete when an archived member never landed onto the group branch", async () => {
-    const group = await store.createBranchGroup({
-      sourceType: "planning",
-      sourceId: "PS-archived-gate",
-      branchName: "fusion/groups/archived-gate",
-      autoMerge: true,
-    });
-
-    const landedTask = await store.createTask({ description: "landed member" });
-    await store.setTaskBranchGroup(landedTask.id, group.id);
-    await store.updateTask(landedTask.id, {
-      mergeDetails: {
-        mergeConfirmed: true,
-        mergeTargetSource: "branch-group-integration",
-        mergeTargetBranch: group.branchName,
-      } as any,
-    });
-
-    const abandonedTask = await store.createTask({ description: "unlanded member, later archived" });
-    await store.setTaskBranchGroup(abandonedTask.id, group.id);
-    await store.archiveTask(abandonedTask.id);
-
-    const result = await promoteBranchGroup({
-      rootDir,
-      groupId: group.id,
-      settings: { autoMerge: true, globalPause: false, enginePaused: false, mergeStrategy: "direct", baseBranch: "main" },
-      store,
-    });
-
-    expect(result.reason).toBe("incomplete");
-    expect(result.promoted).toBe(false);
-  });
-
-  it("still promotes when the only archived member had already landed before archival", async () => {
-    const group = await store.createBranchGroup({
-      sourceType: "planning",
-      sourceId: "PS-archived-landed-gate",
-      branchName: "fusion/groups/archived-landed-gate",
-      autoMerge: true,
-    });
-    execSync(`git checkout -b ${group.branchName}`, { cwd: rootDir });
-    execSync("echo promoted > group.txt", { cwd: rootDir, shell: "/bin/bash" });
-    execSync("git add group.txt && git commit -m group", { cwd: rootDir, shell: "/bin/bash" });
-    execSync("git checkout main", { cwd: rootDir });
-
-    const task = await store.createTask({ description: "landed then archived" });
-    await store.setTaskBranchGroup(task.id, group.id);
-    await store.updateTask(task.id, {
-      mergeDetails: {
-        mergeConfirmed: true,
-        mergeTargetSource: "branch-group-integration",
-        mergeTargetBranch: group.branchName,
-      } as any,
-    });
-    await store.moveTask(task.id, "todo");
-    await store.moveTask(task.id, "in-progress");
-    await store.moveTask(task.id, "done");
-    await store.archiveTask(task.id);
-
-    // The completion invariant includes archived members and their persisted landing proof.
-    expect(await store.listTasksByBranchGroup(group.id)).toEqual([
-      expect.objectContaining({
-        id: task.id,
-        mergeDetails: expect.objectContaining({
-          mergeConfirmed: true,
-          mergeTargetBranch: group.branchName,
-        }),
-      }),
-    ]);
-
-    const result = await promoteBranchGroup({
-      rootDir,
-      groupId: group.id,
-      settings: { autoMerge: true, globalPause: false, enginePaused: false, mergeStrategy: "direct", baseBranch: "main" },
-      store,
-    });
-
-    expect(result.reason).toBe("promoted");
-    expect(result.promoted).toBe(true);
-  });
-});
 
 describe("promoteBranchGroup PR creation (U5)", () => {
   function makeGroup(overrides?: Partial<any>): any {

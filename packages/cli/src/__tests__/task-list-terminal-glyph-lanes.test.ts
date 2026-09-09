@@ -28,9 +28,7 @@ import { describe, expect, it, vi } from "vitest";
 import { buildTaskListBoardLines, type BoardLineTask } from "../commands/task.js";
 
 const RENAMED_COMPLETE = "shipped";
-const RENAMED_ARCHIVE = "vaulted";
-
-function ir(complete: string, archived: string) {
+function ir(complete: string) {
   return {
     version: "v2",
     id: "custom:renamed-cli-board",
@@ -40,16 +38,15 @@ function ir(complete: string, archived: string) {
       { id: "todo", label: "Hold", traits: [{ trait: "hold", config: { release: "capacity" } }] },
       { id: "building", label: "Wip", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
       { id: complete, label: "Complete", traits: [{ trait: "complete" }] },
-      { id: archived, label: "Archived", traits: [{ trait: "archived" }] },
     ],
   };
 }
 
 /** A store that can answer differently from the legacy floor — i.e. one with workflow definitions. */
-function storeWith(complete: string, archived: string) {
+function storeWith(complete: string) {
   return {
-    listWorkflowDefinitions: vi.fn(async () => [{ ir: ir(complete, archived) }]),
-    getWorkflowDefinition: vi.fn(async () => ({ ir: ir(complete, archived) })),
+    listWorkflowDefinitions: vi.fn(async () => [{ ir: ir(complete) }]),
+    getWorkflowDefinition: vi.fn(async () => ({ ir: ir(complete) })),
   } as unknown as Parameters<typeof buildTaskListBoardLines>[0];
 }
 
@@ -69,24 +66,16 @@ function glyphFor(lines: string[], label: string): string | undefined {
 
 describe("buildTaskListBoardLines terminal glyph", () => {
   it("default vocabulary: a finished lane renders the terminal glyph", async () => {
-    const lines = await buildTaskListBoardLines(storeWith("done", "archived"), [card("KB-1", "done")]);
+    const lines = await buildTaskListBoardLines(storeWith("done"), [card("KB-1", "done")]);
     expect(glyphFor(lines, "Done")).toBe("○");
   });
 
   it("renamed vocabulary: the RENAMED complete lane renders the terminal glyph", async () => {
     const lines = await buildTaskListBoardLines(
-      storeWith(RENAMED_COMPLETE, RENAMED_ARCHIVE),
+      storeWith(RENAMED_COMPLETE),
       [card("KB-1", RENAMED_COMPLETE)],
     );
     expect(glyphFor(lines, RENAMED_COMPLETE)).toBe("○");
-  });
-
-  it("renamed vocabulary: the RENAMED archive lane renders the terminal glyph", async () => {
-    const lines = await buildTaskListBoardLines(
-      storeWith(RENAMED_COMPLETE, RENAMED_ARCHIVE),
-      [card("KB-1", RENAMED_ARCHIVE)],
-    );
-    expect(glyphFor(lines, RENAMED_ARCHIVE)).toBe("○");
   });
 
   it("an ACTIVE lane keeps the active glyph under both vocabularies", async () => {
@@ -95,20 +84,20 @@ describe("buildTaskListBoardLines terminal glyph", () => {
     turn a wrong-glyph bug into a board where nothing looks in flight, which is worse.
     */
     const renamed = await buildTaskListBoardLines(
-      storeWith(RENAMED_COMPLETE, RENAMED_ARCHIVE),
+      storeWith(RENAMED_COMPLETE),
       [card("KB-1", "building")],
     );
     expect(glyphFor(renamed, "building")).toBe("●");
 
-    const legacy = await buildTaskListBoardLines(storeWith("done", "archived"), [card("KB-2", "in-progress")]);
+    const legacy = await buildTaskListBoardLines(storeWith("done"), [card("KB-2", "in-progress")]);
     expect(glyphFor(legacy, "In Progress")).toBe("●");
   });
 
-  it("renders every card whatever its lane, and falls back to the legacy pair when the board cannot be read", async () => {
+  it("renders every card whatever its lane, and falls back to Done when the board cannot be read", async () => {
     /*
     Two contracts the surrounding code documents. Cards come from the TASKS, not from a resolved IR,
     so a card must never depend on resolution succeeding to be VISIBLE; and a failed resolve degrades
-    to the legacy terminal ids rather than failing the command.
+    to the legacy completion id rather than failing the command.
     */
     const unreadable = {
       listWorkflowDefinitions: vi.fn(async () => {

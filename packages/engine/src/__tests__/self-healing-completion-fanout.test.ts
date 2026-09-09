@@ -37,9 +37,11 @@ const { logger } = vi.hoisted(() => ({
   */
   logger: { log: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
-vi.mock("../logger.js", () => ({ createLogger: vi.fn(() => logger) }));
+vi.mock("../logger.js", () => ({ createLogger: vi.fn(() => logger), schedulerLog: logger, runtimeLog: logger }));
 
+import { Scheduler } from "../scheduler.js";
 import { SelfHealingManager } from "../self-healing.js";
+import { createRuntimeSelfHealingManager } from "../runtimes/in-process-runtime.js";
 
 function makeTask(id: string, overrides: Partial<Task> = {}): Task {
   return {
@@ -64,6 +66,10 @@ function createStore(tasks: Task[], settings?: Partial<Settings>): TaskStore & E
   Object.assign(cfg, settings ?? {});
   return Object.assign(emitter, {
     getSettings: vi.fn(async () => cfg),
+    updateSettings: vi.fn(async () => cfg),
+    getRootDir: vi.fn(() => "/repo"),
+    getTasksDir: vi.fn(() => "/repo/.fusion/tasks"),
+    recordRunAuditEvent: vi.fn(async () => undefined),
     listTasks: vi.fn(async (opts?: { column?: Task["column"]; includeArchived?: boolean }) => {
       const all = [...map.values()];
       if (!opts?.column) return all;
@@ -74,6 +80,12 @@ function createStore(tasks: Task[], settings?: Partial<Settings>): TaskStore & E
       const task = map.get(id)!;
       map.set(id, { ...task, ...patch } as Task);
       return map.get(id);
+    }),
+    updateTaskAtomic: vi.fn(async (id: string, buildPatch: (live: Task) => Partial<Task> | null) => {
+      const live = map.get(id)!;
+      const patch = buildPatch(live);
+      if (patch) map.set(id, { ...live, ...patch } as Task);
+      return map.get(id)!;
     }),
     transitionQueuedEpisode: vi.fn(async (id: string, transition: { signature: string; blockedBy: string | null; overlapBlockedBy: string | null; action: string }) => {
       const task = map.get(id)!;
@@ -160,6 +172,169 @@ describe("self-healing completion fan-out", () => {
     );
   });
 
+  it("requests scheduling only after a stale overlap blocker is durably cleared", async () => {
+    const blocker = makeTask("FN-B", { column: "done" });
+    const dependent = makeTask("FN-DEPENDENT", {
+      column: "todo",
+      status: "queued",
+      overlapBlockedBy: blocker.id,
+    });
+    const store = createStore([blocker, dependent], { groupOverlappingFiles: true });
+    (store as any).parseFileScopeFromPrompt = vi.fn(async () => ["packages/core/src/store.ts"]);
+    const releasedStates: Array<Pick<Task, "status" | "overlapBlockedBy">> = [];
+    const onOverlapBlockersReleased = vi.fn(async () => {
+      const live = await store.getTask(dependent.id);
+      releasedStates.push({ status: live?.status, overlapBlockedBy: live?.overlapBlockedBy });
+    });
+    const mgr = new SelfHealingManager(store, { rootDir: "/repo", onOverlapBlockersReleased });
+
+    await mgr.reconcileCompletedTask(blocker.id);
+    await mgr.reconcileCompletedTask(blocker.id);
+
+    expect(await store.getTask(dependent.id)).toMatchObject({
+      status: null,
+      overlapBlockedBy: null,
+    });
+    expect(onOverlapBlockersReleased).toHaveBeenCalledTimes(1);
+    expect(releasedStates).toEqual([{ status: null, overlapBlockedBy: null }]);
+  });
+
+  it("runs the runtime-composed scheduler follow-up after the real terminal event races ahead of CAS", async () => {
+    const blocker = makeTask("FN-B", { column: "in-review" });
+    const dependent = makeTask("FN-DEPENDENT", {
+      column: "todo",
+      status: "queued",
+      overlapBlockedBy: blocker.id,
+    });
+    const store = createStore([blocker, dependent], { groupOverlappingFiles: true, pollIntervalMs: 60_000 });
+    (store as any).parseFileScopeFromPrompt = vi.fn(async () => ["packages/core/src/store.ts"]);
+    const scheduler = new Scheduler(store);
+    const wakeSpy = vi.spyOn(scheduler, "requestImmediateSchedule");
+    const releaseFirstPass = (() => {
+      let resolve!: () => void;
+      const promise = new Promise<void>((done) => { resolve = done; });
+      return { promise, resolve };
+    })();
+    const releaseOverlapCas = (() => {
+      let resolve!: () => void;
+      const promise = new Promise<void>((done) => { resolve = done; });
+      return { promise, resolve };
+    })();
+    const overlapCasEntered = (() => {
+      let resolve!: () => void;
+      const promise = new Promise<void>((done) => { resolve = done; });
+      return { promise, resolve };
+    })();
+    const baseAtomic = (store as any).updateTaskAtomic;
+    (store as any).updateTaskAtomic = vi.fn(async (id: string, buildPatch: (live: Task) => Partial<Task> | null) => {
+      if (id === dependent.id) {
+        overlapCasEntered.resolve();
+        await releaseOverlapCas.promise;
+      }
+      return baseAtomic(id, buildPatch);
+    });
+    let passCount = 0;
+    let released = false;
+    (scheduler as unknown as { running: boolean }).running = true;
+    (scheduler as unknown as { runHoldReleaseSweepPass: () => Promise<void> }).runHoldReleaseSweepPass = vi.fn(async () => {
+      passCount++;
+      if (passCount === 1) await releaseFirstPass.promise;
+      const live = await store.getTask(dependent.id);
+      if (!live?.overlapBlockedBy && live?.status == null) released = true;
+    });
+    const mgr = createRuntimeSelfHealingManager(store, scheduler, {
+      rootDir: "/repo",
+    });
+    mgr.start();
+
+    const firstSchedule = scheduler.schedule();
+    await vi.waitFor(() => expect(passCount).toBe(1));
+    await store.moveTask(blocker.id, "done");
+    await overlapCasEntered.promise;
+    await vi.waitFor(() => expect(wakeSpy).toHaveBeenCalledTimes(1));
+    expect(await store.getTask(dependent.id)).toMatchObject({ status: "queued", overlapBlockedBy: blocker.id });
+
+    releaseOverlapCas.resolve();
+    await vi.waitFor(async () => {
+      expect(await store.getTask(dependent.id)).toMatchObject({ status: null, overlapBlockedBy: null });
+      expect(wakeSpy).toHaveBeenCalledTimes(2);
+    });
+    expect(passCount).toBe(1);
+
+    releaseFirstPass.resolve();
+    await firstSchedule;
+    await vi.waitFor(() => expect(passCount).toBe(2));
+
+    expect(released).toBe(true);
+    mgr.stop();
+    scheduler.stop();
+  });
+
+  it("does not clear queued state or wake when another holder replaces the inspected blocker during CAS", async () => {
+    const completed = makeTask("FN-COMPLETED", { column: "done" });
+    const replacement = makeTask("FN-REPLACEMENT", { column: "in-progress" });
+    const dependent = makeTask("FN-DEPENDENT", {
+      column: "todo",
+      status: "queued",
+      overlapBlockedBy: completed.id,
+    });
+    const store = createStore([completed, replacement, dependent], { groupOverlappingFiles: true });
+    (store as any).parseFileScopeFromPrompt = vi.fn(async () => ["packages/core/src/store.ts"]);
+    (store as any).updateTaskAtomic = vi.fn(async (id: string, buildPatch: (live: Task) => Partial<Task> | null) => {
+      await store.updateTask(id, { overlapBlockedBy: replacement.id });
+      const live = await store.getTask(id);
+      const patch = live ? buildPatch(live) : null;
+      return patch ? store.updateTask(id, patch) : live;
+    });
+    const onOverlapBlockersReleased = vi.fn();
+    const mgr = new SelfHealingManager(store, { rootDir: "/repo", onOverlapBlockersReleased });
+
+    await mgr.reconcileCompletedTask(completed.id);
+
+    expect(await store.getTask(dependent.id)).toMatchObject({
+      status: "queued",
+      overlapBlockedBy: replacement.id,
+    });
+    expect(onOverlapBlockersReleased).not.toHaveBeenCalled();
+  });
+
+  it("preserves a replacement overlap holder when an unmet dependency is queued during the atomic transition", async () => {
+    const completed = makeTask("FN-COMPLETED", { column: "done" });
+    const unmet = makeTask("FN-UNMET", { column: "todo" });
+    const replacement = makeTask("FN-REPLACEMENT", { column: "in-progress" });
+    const dependent = makeTask("FN-DEPENDENT", {
+      column: "todo",
+      status: "queued",
+      blockedBy: completed.id,
+      overlapBlockedBy: completed.id,
+      dependencies: [completed.id, unmet.id],
+    });
+    const store = createStore([completed, unmet, replacement, dependent], { groupOverlappingFiles: true });
+    (store as any).parseFileScopeFromPrompt = vi.fn(async () => ["packages/core/src/store.ts"]);
+    const baseAtomic = (store as any).updateTaskAtomic;
+    let replacementInstalled = false;
+    (store as any).updateTaskAtomic = vi.fn(async (id: string, buildPatch: (live: Task) => Partial<Task> | null) => {
+      if (!replacementInstalled) {
+        replacementInstalled = true;
+        await store.updateTask(id, { overlapBlockedBy: replacement.id });
+      }
+      return baseAtomic(id, buildPatch);
+    });
+    const onOverlapBlockersReleased = vi.fn();
+    const mgr = new SelfHealingManager(store, { rootDir: "/repo", onOverlapBlockersReleased });
+
+    await mgr.reconcileCompletedTask(completed.id);
+
+    expect(await store.getTask(dependent.id)).toMatchObject({
+      status: "queued",
+      blockedBy: unmet.id,
+      overlapBlockedBy: replacement.id,
+      queuedLogEpisodeSignature: `dependency:${unmet.id}`,
+    });
+    expect(onOverlapBlockersReleased).not.toHaveBeenCalled();
+    expect((store as any).transitionQueuedEpisode).not.toHaveBeenCalled();
+  });
+
   it("preserves an overlap block held by a failed review task with a worktree", async () => {
     const completed = makeTask("FN-COMPLETED", { column: "done" });
     const overlapHolder = makeTask("FN-OVERLAP", {
@@ -173,9 +348,10 @@ describe("self-healing completion fan-out", () => {
       blockedBy: completed.id,
       overlapBlockedBy: overlapHolder.id,
     });
-    const store = createStore([completed, overlapHolder, dependent]);
+    const store = createStore([completed, overlapHolder, dependent], { groupOverlappingFiles: true });
     (store as any).parseFileScopeFromPrompt = vi.fn(async () => ["packages/core/src/store.ts"]);
-    const mgr = new SelfHealingManager(store, { rootDir: "/repo" });
+    const onOverlapBlockersReleased = vi.fn();
+    const mgr = new SelfHealingManager(store, { rootDir: "/repo", onOverlapBlockersReleased });
 
     await mgr.reconcileCompletedTask(completed.id);
 
@@ -188,6 +364,7 @@ describe("self-healing completion fan-out", () => {
       dependent.id,
       expect.objectContaining({ signature: `file-scope:${overlapHolder.id}` }),
     );
+    expect(onOverlapBlockersReleased).not.toHaveBeenCalled();
   });
 
   it("uses the holder workflow rather than a project-wide terminal column union", async () => {
@@ -204,7 +381,7 @@ describe("self-healing completion fan-out", () => {
       blockedBy: completed.id,
       overlapBlockedBy: overlapHolder.id,
     });
-    const store = createStore([completed, overlapHolder, dependent]);
+    const store = createStore([completed, overlapHolder, dependent], { groupOverlappingFiles: true });
     (store as any).parseFileScopeFromPrompt = vi.fn(async () => ["packages/core/src/store.ts"]);
     configureTaskWorkflowSelections(
       store,
@@ -334,10 +511,12 @@ describe("self-healing completion fan-out", () => {
     const blocker = makeTask("FN-B", { column: "done" });
     const dependent = makeTask("FN-D", { blockedBy: "FN-B", column: "todo" });
     const store = createStore([blocker, dependent], { globalPause: true });
-    const mgr = new SelfHealingManager(store, { rootDir: "/repo" });
+    const onOverlapBlockersReleased = vi.fn();
+    const mgr = new SelfHealingManager(store, { rootDir: "/repo", onOverlapBlockersReleased });
     const out = await mgr.reconcileCompletedTask("FN-B");
     expect(out).toEqual({ blockedByCleared: 0, worktreeRemoved: false, branchRemoved: false });
     expect((store as any).updateTask).not.toHaveBeenCalled();
+    expect(onOverlapBlockersReleased).not.toHaveBeenCalled();
   });
 
   it("recoverAlreadyMergedReviewTasks calls reconcile with worktreeHint", async () => {
@@ -358,7 +537,6 @@ describe("self-healing completion fan-out", () => {
 
     mgr.start();
     store.emit("task:moved", { task: t, from: "in-review", to: "done", source: "user" });
-    store.emit("task:moved", { task: t, from: "done", to: "archived", source: "engine" });
     store.emit("task:moved", { task: t, from: "in-review", to: "todo", source: "user" });
     /*
     FNXC:WorkflowResolvedColumns 2026-07-31-23:40:
@@ -366,9 +544,10 @@ describe("self-healing completion fan-out", () => {
     number of awaits inside a FIRE-AND-FORGET path. The listener does not await the fan-out and never
     did, so how many microtasks it takes is not the contract — "it ran, twice, for the right
     transitions" is. Resolving the lanes adds an await, so the drain is now written against the
-    invariant instead of against the old await count.
+    invariant instead of against the old await count. Only entry into Complete triggers fan-out;
+    historical sentinel movement is no longer a lifecycle event.
     */
-    await vi.waitFor(() => { expect(spy).toHaveBeenCalledTimes(2); });
+    await vi.waitFor(() => { expect(spy).toHaveBeenCalledOnce(); });
     expect(spy).toHaveBeenNthCalledWith(1, "FN-L", { worktreeHint: undefined });
 
     mgr.stop();
@@ -376,7 +555,7 @@ describe("self-healing completion fan-out", () => {
     /* The negative keeps a real drain: an unwired listener must stay silent after several ticks,
        not merely after one. */
     await new Promise((resolve) => setTimeout(resolve, 10));
-    expect(spy).toHaveBeenCalledTimes(2);
+    expect(spy).toHaveBeenCalledOnce();
   });
 
   it("clears task.worktree and matching task.branch after successful removal", async () => {
@@ -418,7 +597,6 @@ describe("the task:moved fan-out resolves the board's own lanes", () => {
       { id: "building", name: "Building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
       { id: "checking", name: "Checking", traits: [{ trait: "merge" }] },
       { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
-      { id: "filed", name: "Filed", traits: [{ trait: "archived" }] },
     ],
   };
 
@@ -462,10 +640,7 @@ describe("the task:moved fan-out resolves the board's own lanes", () => {
 
     await mgr.reconcileCompletedTask("FN-BLOCKER");
 
-    expect(store.updateTask).toHaveBeenCalledWith(
-      "FN-DEP",
-      expect.objectContaining({ blockedBy: null }),
-    );
+    expect(await store.getTask("FN-DEP")).toMatchObject({ blockedBy: null });
     mgr.stop();
   });
 

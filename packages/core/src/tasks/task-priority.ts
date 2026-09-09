@@ -1,5 +1,5 @@
 import { isActiveMergeStatus } from "../merge/active-merge-status.js";
-import { isArchivedColumnRole, isCompleteColumnRole, isHoldColumnRole, isReviewColumnRole, type ColumnRoleTraitFlags } from "../column-roles.js";
+import { isCompleteColumnRole, isHoldColumnRole, isReviewColumnRole, type ColumnRoleTraitFlags } from "../column-roles.js";
 import { computeBlockerFanoutMap } from "./blocker-fanout.js";
 import { DEFAULT_TASK_PRIORITY, TASK_PRIORITIES } from "../types.js";
 import type { ProjectSettings, Task, TaskPriority } from "../types.js";
@@ -116,12 +116,11 @@ disagreed for any column a custom workflow adds: dependency counting treated a
 (wrong), so the blocker's unblock weight silently scored 0. Both halves now read
 the single terminal set.
 */
-const DEFAULT_TERMINAL_COLUMNS: ReadonlySet<string> = new Set(["done", "archived"]);
+const DEFAULT_TERMINAL_COLUMNS: ReadonlySet<string> = new Set(["done"]);
 
 export interface BuildUnblockWeightMapOptions {
   maxAutoMergeRetries?: ProjectSettings["maxAutoMergeRetries"];
-  /** The workflow's terminal columns (complete + archived). Defaults to the
-   *  built-in `{done, archived}` so existing callers are unchanged (R11). */
+  /** The workflow's Complete columns. Defaults to the built-in `{done}`. */
   terminalColumns?: ReadonlySet<string>;
   /** The workflow's review lane, forwarded to the fan-out's staleness classification.
    *  Defaults to the built-in `{in-review}` so existing callers are unchanged. */
@@ -244,7 +243,7 @@ export type DoneColumnSortMode = TaskColumnSortMode;
 export interface DisplayColumnSortOptions {
   /** Resolved column traits; omitted only while retaining legacy-id compatibility. */
   columnFlags?: ColumnRoleTraitFlags;
-  /** Generic Board-local ordering for any visible non-archived column. */
+  /** Generic Board-local ordering for any visible workflow column. */
   sortMode?: TaskColumnSortMode;
   /** Compatibility alias used by existing Done-column callers. */
   doneSortMode?: DoneColumnSortMode;
@@ -255,12 +254,12 @@ FNXC:TaskColumnSorting 2026-08-18-21:24:
 Core owns the sole task-display sorter so every Board lane shares one comparator. An explicitly
 selected mode deliberately wins over lifecycle priority, merge, and hold FIFO semantics; when no
 mode is selected those role-specific defaults remain unchanged. Arrival is the durable column move
-timestamp with legacy updatedAt/createdAt fallbacks, and archived rows keep server/page order.
+timestamp with legacy updatedAt/createdAt fallbacks. Complete rows use newest-first ordering by default.
 */
 /**
  * Return a sorted display copy for a workflow column without mutating its input.
- * Archived columns preserve the server/page order. Explicit arrival or task-ID mode applies to
- * every other role; omitted mode retains hold priority/FIFO and review active-merge ordering.
+ * Explicit arrival or task-ID mode applies to every role; omitted mode retains Complete newest-first,
+ * hold priority/FIFO, and review active-merge ordering.
  */
 export function sortTasksForDisplayColumn<T extends TaskColumnSortable>(
   tasks: readonly T[],
@@ -269,10 +268,6 @@ export function sortTasksForDisplayColumn<T extends TaskColumnSortable>(
 ): T[] {
   const { columnFlags, sortMode, doneSortMode } = displayColumnOptions;
   const selectedSortMode = sortMode ?? doneSortMode;
-
-  if (isArchivedColumnRole(columnFlags, column)) {
-    return [...tasks];
-  }
 
   if (selectedSortMode !== undefined) {
     return [...tasks].sort((a, b) => {

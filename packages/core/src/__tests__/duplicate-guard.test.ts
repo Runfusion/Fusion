@@ -80,6 +80,13 @@ function makeStore(seed: Task[] = []): { tasks: Task[]; store: TaskStore } {
       task.column = column;
       return task;
     }),
+    deleteTask: vi.fn().mockImplementation(async (id: string) => {
+      const task = tasks.find((item) => item.id === id);
+      if (!task) return null;
+      task.column = "archived";
+      task.deletedAt = new Date().toISOString();
+      return task;
+    }),
     recordActivity: vi.fn().mockResolvedValue(undefined),
   } as unknown as TaskStore;
 
@@ -344,7 +351,7 @@ describe("reconcileDeterministicDuplicate", () => {
     expect(store.moveTask).not.toHaveBeenCalled();
   });
 
-  it("archives late-race loser and records activity metadata", async () => {
+  it("soft-deletes a late-race loser without emitting retired archive events", async () => {
     const canonicalTs = new Date(Date.now() - 2_000).toISOString();
     const createdTs = new Date().toISOString();
     const canonical = mkTask({ id: "FN-1", title: INPUT.title, description: INPUT.description, column: "todo", createdAt: canonicalTs, updatedAt: canonicalTs, source: { sourceType: "api", sourceMetadata: { contentFingerprint: "fp" } } });
@@ -353,73 +360,24 @@ describe("reconcileDeterministicDuplicate", () => {
     vi.spyOn(store, "findRecentTasksByContentFingerprint").mockResolvedValueOnce([canonical, created]);
 
     const result = await reconcileDeterministicDuplicate(store, { createdTask: created, fingerprint: "fp" });
-    expect(result).toEqual({ outcome: "archived", canonical });
+    expect(result).toEqual({ outcome: "removed", canonical });
     expect(store.updateTask).toHaveBeenCalledWith("FN-2", {
       sourceMetadataPatch: {
         contentFingerprint: "fp",
         deterministicDuplicateOf: "FN-1",
       },
     });
-    expect(store.moveTask).toHaveBeenCalledWith("FN-2", "archived");
-    expect(store.recordActivity).toHaveBeenCalledWith(expect.objectContaining({
-      type: "task:auto-archived-deterministic-duplicate",
-      metadata: { canonicalTaskId: "FN-1", contentFingerprint: "fp" },
-    }));
+    expect(store.deleteTask).toHaveBeenCalledWith("FN-2", { allowResurrection: false });
+    expect(store.recordActivity).not.toHaveBeenCalled();
   });
-
-  /*
-  FNXC:WorkflowResolvedColumns 2026-07-30-19:45 (census-invisible moveTask destinations):
-  DIFFERENTIAL over the archive lane's id. The case above asserts `moveTask("FN-2", "archived")` — the
-  LEGACY id, which is exactly what the hardcoded destination passed, so it was green before this
-  conversion and would stay green for a broken one.
-
-  The destination of a `moveTask` is a call ARGUMENT, so the lifecycle-column census (an AST scan for
-  comparisons) never pointed at it. Since U12 hoisted the `workflowHasColumn` rejection out of its dead
-  flag-gated branch, a board that does not declare `archived` REJECTS this move instead of silently
-  landing the card there — so the duplicate is never archived and keeps sitting on the operator's board
-  as live work, already stamped `deterministicDuplicateOf`.
-
-  REVERT CHECK, measured: with the literal `"archived"` restored, this fails — `moveTask` is called with
-  `"archived"` on a board whose archive lane is `boxed`.
-  */
-  it("archives a deterministic duplicate into the workflow's OWN archive lane", async () => {
+  it("fails open when soft-delete throws", async () => {
     const canonicalTs = new Date(Date.now() - 2_000).toISOString();
     const createdTs = new Date().toISOString();
     const canonical = mkTask({ id: "FN-1", title: INPUT.title, description: INPUT.description, column: "todo", createdAt: canonicalTs, updatedAt: canonicalTs, source: { sourceType: "api", sourceMetadata: { contentFingerprint: "fp" } } });
     const created = mkTask({ id: "FN-2", title: INPUT.title, description: INPUT.description, column: "todo", createdAt: createdTs, updatedAt: createdTs, source: { sourceType: "api", sourceMetadata: { contentFingerprint: "fp" } } });
     const { store } = makeStore([canonical, created]);
     vi.spyOn(store, "findRecentTasksByContentFingerprint").mockResolvedValueOnce([canonical, created]);
-    /* A workflow whose archive lane is NOT the legacy id. Everything else is irrelevant to this path. */
-    const ir = {
-      version: "v2", id: "dup-lifecycle", name: "dup",
-      columns: [
-        { id: "todo", name: "Todo", traits: [{ trait: "intake" }, { trait: "hold", config: { release: "capacity" } }] },
-        { id: "boxed", name: "Boxed", traits: [{ trait: "archived" }] },
-      ],
-      nodes: [{ id: "start", kind: "start", column: "todo" }],
-      edges: [],
-    };
-    Object.assign(store, {
-      getTaskWorkflowSelectionAsync: vi.fn(async () => ({ workflowId: "dup-lifecycle", stepIds: [] })),
-      getTaskWorkflowSelection: vi.fn(() => ({ workflowId: "dup-lifecycle", stepIds: [] })),
-      getWorkflowDefinition: vi.fn(async (id: string) => (id === "dup-lifecycle" ? { ir } : undefined)),
-    });
-
-    const result = await reconcileDeterministicDuplicate(store, { createdTask: created, fingerprint: "fp" });
-
-    expect(result).toEqual({ outcome: "archived", canonical });
-    expect(store.moveTask).toHaveBeenCalledWith("FN-2", "boxed");
-    expect(store.moveTask).not.toHaveBeenCalledWith("FN-2", "archived");
-  });
-
-  it("fails open when archive move throws", async () => {
-    const canonicalTs = new Date(Date.now() - 2_000).toISOString();
-    const createdTs = new Date().toISOString();
-    const canonical = mkTask({ id: "FN-1", title: INPUT.title, description: INPUT.description, column: "todo", createdAt: canonicalTs, updatedAt: canonicalTs, source: { sourceType: "api", sourceMetadata: { contentFingerprint: "fp" } } });
-    const created = mkTask({ id: "FN-2", title: INPUT.title, description: INPUT.description, column: "todo", createdAt: createdTs, updatedAt: createdTs, source: { sourceType: "api", sourceMetadata: { contentFingerprint: "fp" } } });
-    const { store } = makeStore([canonical, created]);
-    vi.spyOn(store, "findRecentTasksByContentFingerprint").mockResolvedValueOnce([canonical, created]);
-    vi.spyOn(store, "moveTask").mockRejectedValueOnce(new Error("archive failed"));
+    vi.spyOn(store, "deleteTask").mockRejectedValueOnce(new Error("delete failed"));
 
     const warn = vi.fn();
     const result = await reconcileDeterministicDuplicate(store, { createdTask: created, fingerprint: "fp", logger: { warn } });

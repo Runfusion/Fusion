@@ -17,7 +17,7 @@
  *   consume.
  */
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, exists, gt, ilike, inArray, isNull, lte, ne, or as orFn, sql as drizzleSql } from "drizzle-orm";
+import { and, asc, desc, eq, exists, gt, ilike, inArray, isNotNull, isNull, lt, lte, ne, notLike, or as orFn, sql as drizzleSql, type SQL } from "drizzle-orm";
 import * as schema from "../postgres/schema/index.js";
 import { projectScopeFor, type AsyncDataLayer, type DbTransaction } from "../postgres/data-layer.js";
 import { sanitizeTextValue, sanitizeJsonbValue } from "../postgres/nul-sanitize.js";
@@ -31,6 +31,9 @@ import type {
   ChatRoomMessage,
   ChatRoomStatus,
   ChatSession,
+  ChatSessionLastMessage,
+  ChatSessionCursor,
+  ChatSessionPage,
   ChatSessionStatus,
   ChatTag,
   ChatTagCreateInput,
@@ -207,9 +210,97 @@ export async function listChatSessions(
   const query = handle
     .select()
     .from(schema.project.chatSessions)
-    .orderBy(desc(schema.project.chatSessions.updatedAt));
+    .orderBy(desc(schema.project.chatSessions.updatedAt), desc(schema.project.chatSessions.id));
   const rows = conditions.length > 0 ? await query.where(and(...conditions)) : await query;
   return attachTagsToSessions(handle, rows.map(rowToSession));
+}
+
+export function encodeChatSessionCursor(cursor: ChatSessionCursor): string {
+  return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
+}
+
+export function decodeChatSessionCursor(value: string): ChatSessionCursor {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
+  } catch {
+    throw new TypeError("Invalid chat session cursor");
+  }
+  const cursor = parsed as Partial<ChatSessionCursor> | null;
+  if (!cursor || (cursor.pinnedAt !== null && typeof cursor.pinnedAt !== "string") || typeof cursor.updatedAt !== "string" || typeof cursor.id !== "string" || !cursor.id || Number.isNaN(Date.parse(cursor.updatedAt)) || (cursor.pinnedAt !== null && Number.isNaN(Date.parse(cursor.pinnedAt)))) {
+    throw new TypeError("Invalid chat session cursor");
+  }
+  return cursor as ChatSessionCursor;
+}
+
+/*
+FNXC:ChatSessionPagination 2026-09-07-16:03:
+Session lists filter before LIMIT, order pins and recency with an ID tie-breaker, and enrich tags only for the returned page. The opaque tuple cursor is exclusive, so equal timestamps and concurrent inserts cannot duplicate or skip the older continuation.
+*/
+export async function listChatSessionsPage(
+  handle: QueryHandle,
+  options: { projectId?: string; agentId?: string; status?: ChatSessionStatus; q?: string; tagId?: string; includeTaskPlanner?: boolean; limit?: number; cursor?: string } = {},
+): Promise<ChatSessionPage> {
+  const sessions = schema.project.chatSessions;
+  const messages = schema.project.chatMessages;
+  const sessionTags = schema.project.chatSessionTags;
+  const limit = Math.min(200, Math.max(1, Math.trunc(options.limit ?? 50) || 50));
+  const cursor = options.cursor ? decodeChatSessionCursor(options.cursor) : undefined;
+  const conditions: SQL[] = [];
+  if (options.projectId) conditions.push(eq(sessions.ownerProjectId, options.projectId));
+  if (options.agentId) conditions.push(eq(sessions.agentId, options.agentId));
+  if (options.status) conditions.push(eq(sessions.status, options.status));
+  if (options.includeTaskPlanner === false) conditions.push(notLike(sessions.agentId, "task-planner:%"));
+  else if (options.includeTaskPlanner === true) conditions.push(orFn(
+    notLike(sessions.agentId, "task-planner:%"),
+    exists(handle.select({ one: drizzleSql`1` }).from(messages).where(and(eq(messages.sessionId, sessions.id), eq(messages.projectId, sessions.projectId)))),
+  )!);
+  if (options.q?.trim()) {
+    const pattern = `%${options.q.trim()}%`;
+    conditions.push(orFn(
+      ilike(sessions.title, pattern),
+      ilike(sessions.agentId, pattern),
+      exists(handle.select({ one: drizzleSql`1` }).from(messages).where(and(eq(messages.sessionId, sessions.id), eq(messages.projectId, sessions.projectId), ilike(messages.content, pattern)))),
+    )!);
+  }
+  if (options.tagId) {
+    conditions.push(exists(handle.select({ one: drizzleSql`1` }).from(sessionTags).where(and(eq(sessionTags.sessionId, sessions.id), eq(sessionTags.projectId, sessions.projectId), eq(sessionTags.tagId, options.tagId)))));
+  }
+  if (cursor) {
+    const olderUpdatedAt = orFn(
+      lt(sessions.updatedAt, cursor.updatedAt),
+      and(eq(sessions.updatedAt, cursor.updatedAt), lt(sessions.id, cursor.id)),
+    );
+    const olderUnpinned = and(isNull(sessions.pinnedAt), olderUpdatedAt)!;
+    if (cursor.pinnedAt === null) {
+      conditions.push(olderUnpinned);
+    } else {
+      const olderPinnedAt = orFn(
+        lt(sessions.pinnedAt, cursor.pinnedAt),
+        and(eq(sessions.pinnedAt, cursor.pinnedAt), olderUpdatedAt),
+      );
+      conditions.push(orFn(and(isNotNull(sessions.pinnedAt), olderPinnedAt), isNull(sessions.pinnedAt))!);
+    }
+  }
+  const where = conditions.length > 0 ? and(...conditions) : undefined;
+  const totalConditions = conditions.slice(0, cursor ? -1 : undefined);
+  const totalWhere = totalConditions.length > 0 ? and(...totalConditions) : undefined;
+  const rowsQuery = handle.select().from(sessions).orderBy(drizzleSql`${sessions.pinnedAt} DESC NULLS LAST`, desc(sessions.updatedAt), desc(sessions.id)).limit(limit + 1);
+  const countQuery = handle.select({ count: drizzleSql<number>`count(*)::int` }).from(sessions);
+  const [rows, countRows] = await Promise.all([
+    where ? rowsQuery.where(where) : rowsQuery,
+    totalWhere ? countQuery.where(totalWhere) : countQuery,
+  ]);
+  const hasMore = rows.length > limit;
+  const pageRows = rows.slice(0, limit);
+  const pageSessions = await attachTagsToSessions(handle, pageRows.map(rowToSession));
+  const last = pageSessions.at(-1);
+  return {
+    sessions: pageSessions,
+    total: countRows[0]?.count ?? 0,
+    hasMore,
+    nextCursor: hasMore && last ? encodeChatSessionCursor({ pinnedAt: last.pinnedAt, updatedAt: last.updatedAt, id: last.id }) : null,
+  };
 }
 
 /**
@@ -396,14 +487,26 @@ export async function getChatMessage(
 export async function getChatMessages(
   handle: QueryHandle,
   sessionId: string,
-  filter?: { limit?: number; offset?: number; before?: string; order?: "asc" | "desc" },
+  filter?: { limit?: number; offset?: number; before?: string; beforeId?: string; order?: "asc" | "desc" },
   projectId?: string,
 ): Promise<ChatMessage[]> {
   const conditions = [
     eq(schema.project.chatMessages.sessionId, sessionId),
     ...chatMessageProjectConditions(handle, projectId),
   ];
-  if (filter?.before) {
+  if (filter?.before && filter.beforeId) {
+    /*
+    FNXC:ChatMessagePagination 2026-09-06-13:40:
+    Direct and Planner Chat page newest-to-oldest. Their strict tuple cursor must match the total descending order so a page boundary inside a same-timestamp burst neither repeats nor skips rows; date-only callers retain the historical inclusive predicate.
+    */
+    conditions.push(orFn(
+      lt(schema.project.chatMessages.createdAt, filter.before),
+      and(
+        eq(schema.project.chatMessages.createdAt, filter.before),
+        lt(schema.project.chatMessages.id, filter.beforeId),
+      ),
+    )!);
+  } else if (filter?.before) {
     conditions.push(lte(schema.project.chatMessages.createdAt, filter.before));
   }
   const limit = filter?.limit ?? 100;
@@ -438,33 +541,52 @@ export async function getChatMessages(
   return rows.map(rowToMessage);
 }
 
-/**
- * FNXC:ChatStore 2026-06-24-09:15:
- * Get the latest message for each session in the provided list.
- */
+/*
+FNXC:ChatSidebarPerf 2026-09-08-04:48:
+The sidebar is the hottest chat read path and only consumes a ~100-character preview of one row per
+session. DISTINCT ON would still scan and sort every listed message without index skip-scan; this
+lateral LIMIT 1 query instead takes one descending recency-index lookup per session. Its rows examined
+and returned are O(sessions), while preserving the shared created_at/id total-order tie-break.
+*/
+export function buildLastMessageForSessionsSql(
+  handle: QueryHandle,
+  sessionIds: string[],
+  projectId?: string,
+): SQL {
+  const scope = chatMessageProjectConditions(handle, projectId);
+  const scopePredicate = scope.length > 0 ? drizzleSql` AND ${drizzleSql.join(scope, drizzleSql` AND `)}` : drizzleSql.empty();
+  const sessionValues = drizzleSql.join(sessionIds.map((id) => drizzleSql`(${id})`), drizzleSql`, `);
+  return drizzleSql`
+    SELECT last_msg.id AS "id", last_msg.session_id AS "sessionId", last_msg.role AS "role",
+      last_msg.created_at AS "createdAt", left(last_msg.content, 101) AS "content"
+    FROM (VALUES ${sessionValues}) AS s(session_id)
+    CROSS JOIN LATERAL (
+      SELECT id, session_id, role, created_at, content
+      FROM project.chat_messages
+      WHERE chat_messages.session_id = s.session_id${scopePredicate}
+      ORDER BY chat_messages.created_at DESC, chat_messages.id DESC
+      LIMIT 1
+    ) AS last_msg
+  `;
+}
+
 export async function getLastMessageForSessions(
   handle: QueryHandle,
   sessionIds: string[],
   projectId?: string,
-): Promise<Map<string, ChatMessage>> {
+): Promise<Map<string, ChatSessionLastMessage>> {
   if (sessionIds.length === 0) return new Map();
-  const rows = await handle
-    .select()
-    .from(schema.project.chatMessages)
-    .where(and(
-      inArray(schema.project.chatMessages.sessionId, sessionIds),
-      ...chatMessageProjectConditions(handle, projectId),
-    ))
-    .orderBy(
-      desc(schema.project.chatMessages.createdAt),
-      desc(schema.project.chatMessages.id),
-    );
-  const result = new Map<string, ChatMessage>();
+  const rows = await handle.execute(buildLastMessageForSessionsSql(handle, [...new Set(sessionIds)], projectId)) as unknown as Array<Record<string, unknown>>;
+  const result = new Map<string, ChatSessionLastMessage>();
   for (const row of rows) {
-    const msg = rowToMessage(row);
-    if (!result.has(msg.sessionId)) {
-      result.set(msg.sessionId, msg);
-    }
+    const message: ChatSessionLastMessage = {
+      id: row.id as string,
+      sessionId: row.sessionId as string,
+      role: row.role as ChatMessageRole,
+      createdAt: row.createdAt as string,
+      content: row.content as string,
+    };
+    result.set(message.sessionId, message);
   }
   return result;
 }
@@ -930,14 +1052,36 @@ export async function deleteChatMessage(
   return true;
 }
 
-/**
- * FNXC:ChatSearch 2026-07-07-00:00:
- * Postgres counterpart of the sync ChatStore.searchSessionsByMessageContent (FN-7631 Chat
- * sidebar content search). Parameterized ILIKE with `%`/`_`/`\` escaped so literal wildcards
- * in the user's search text match literally (SQLite LIKE is ASCII case-insensitive, so ILIKE
- * preserves those semantics). One row per session: the most recent matching message wins,
- * tiebroken by id since Postgres has no rowid; preview truncated to ~100 chars.
- */
+/*
+FNXC:ChatSidebarPerf 2026-09-08-04:48:
+Content search shared the full-row transfer defect, so it now returns one projected row per matching
+session through the same lateral shape. Wildcard escaping and project scope are unchanged. ILIKE is not
+index-assisted: each subquery can walk its session history to the newest match, while returned bytes and
+materialized rows remain bounded by scoped sessions.
+*/
+export function buildSearchChatSessionsByMessageContentSql(
+  handle: QueryHandle,
+  escapedQuery: string,
+  sessionIds: string[],
+  projectId?: string,
+): SQL {
+  const scope = chatMessageProjectConditions(handle, projectId);
+  const scopePredicate = scope.length > 0 ? drizzleSql` AND ${drizzleSql.join(scope, drizzleSql` AND `)}` : drizzleSql.empty();
+  const sessionValues = drizzleSql.join(sessionIds.map((id) => drizzleSql`(${id})`), drizzleSql`, `);
+  return drizzleSql`
+    SELECT matching_msg.session_id AS "sessionId", left(matching_msg.content, 101) AS "content"
+    FROM (VALUES ${sessionValues}) AS s(session_id)
+    CROSS JOIN LATERAL (
+      SELECT session_id, content
+      FROM project.chat_messages
+      WHERE chat_messages.session_id = s.session_id
+        AND chat_messages.content ILIKE ${`%${escapedQuery}%`} ESCAPE '\\'${scopePredicate}
+      ORDER BY chat_messages.created_at DESC, chat_messages.id DESC
+      LIMIT 1
+    ) AS matching_msg
+  `;
+}
+
 export async function searchChatSessionsByMessageContent(
   handle: QueryHandle,
   query: string,
@@ -947,24 +1091,11 @@ export async function searchChatSessionsByMessageContent(
   const trimmed = query.trim();
   if (!trimmed || sessionIds.length === 0) return new Map();
   const escaped = trimmed.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
-  const rows = await handle
-    .select()
-    .from(schema.project.chatMessages)
-    .where(and(
-      inArray(schema.project.chatMessages.sessionId, sessionIds),
-      ilike(schema.project.chatMessages.content, `%${escaped}%`),
-      ...chatMessageProjectConditions(handle, projectId),
-    ))
-    .orderBy(
-      desc(schema.project.chatMessages.createdAt),
-      desc(schema.project.chatMessages.id),
-    );
+  const rows = await handle.execute(buildSearchChatSessionsByMessageContentSql(handle, escaped, [...new Set(sessionIds)], projectId)) as unknown as Array<Record<string, unknown>>;
   const result = new Map<string, string>();
   for (const row of rows) {
-    const message = rowToMessage(row);
-    if (result.has(message.sessionId)) continue;
-    const content = message.content || "";
-    result.set(message.sessionId, content.length > 100 ? content.slice(0, 100) + "…" : content);
+    const content = (row.content as string) || "";
+    result.set(row.sessionId as string, content.length > 100 ? content.slice(0, 100) + "…" : content);
   }
   return result;
 }

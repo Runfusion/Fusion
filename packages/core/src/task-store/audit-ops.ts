@@ -21,7 +21,7 @@ import {__setTaskActivityLogLimitsForTesting, truncateTaskLogOutcome, getTaskAct
 import {readTaskRow, updateTaskColumns} from "../task-store/async/async-persistence.js";
 import { getLiveTaskColumn } from "./async/async-comments-attachments.js";
 import { acquireTaskAdvisoryXactLock } from "./task-advisory-lock.js";
-import { resolveArchivedLanes } from "../project-lane-vocabulary.js";
+import { ARCHIVED_SENTINEL_LANES } from "../project-lane-vocabulary.js";
 import * as schema from "../postgres/schema/index.js";
 
 export async function runPluginColumnTransitionHooksImpl(store: TaskStore, taskId: string, workflowIr: WorkflowIr, fromColumn: string, toColumn: string,): Promise<void> {
@@ -203,7 +203,7 @@ export async function transitionQueuedEpisodeImpl(
       isNull(schema.project.tasks.deletedAt),
     ));
     const current = rows[0];
-    if (!current) throw new Error(`Task ${id} not found or archived while queuing`);
+    if (!current) throw new Error(`Task ${id} not found or deleted while queuing`);
 
     const appended = !(
       current.status === "queued"
@@ -270,7 +270,7 @@ export async function checkAndRecordUnplannedExecutionBlockImpl(
         isNull(schema.project.tasks.deletedAt),
       ));
     const task = rows[0];
-    if (!task) throw new Error(`Task ${id} not found or archived while recording unplanned dispatch refusal`);
+    if (!task) throw new Error(`Task ${id} not found or deleted while recording unplanned dispatch refusal`);
     const log = Array.isArray(task.log) ? [...task.log as TaskLogEntry[]] : [];
     log.push(entry);
     const limit = getTaskActivityLogEntryLimit();
@@ -298,27 +298,13 @@ export async function logEntryImpl(store: TaskStore, id: string, action: string,
       if (runContext) {
         {
           const layer = store.asyncLayer!;
-          const state = await getLiveTaskColumn(layer.db, id, layer.projectId, await resolveArchivedLanes(store));
+          const state = await getLiveTaskColumn(layer.db, id, layer.projectId, ARCHIVED_SENTINEL_LANES);
           /*
-          FNXC:WorkflowLifecycleColumns 2026-07-30-21:20 DELIBERATE-LITERAL (audited — SENTINEL, do NOT convert):
-
-          MARKED 2026-07-31: the reasoning below was written and the MARKER was not, so the census kept
-          counting this line as owed work. A comment that explains why a site is correct does not reach
-          the instrument — only the marker string does — so the audit was invisible to the one reader
-          that acts on it, and the next person down the backlog would have re-derived it.
-          `getLiveTaskColumn` MANUFACTURES the string "archived" for an archived-or-soft-deleted
-          parent; it does not return the board's archived lane. So this compares against that
-          function's return vocabulary, not against a column id, and converting it to
-          `isArchivedColumnRole` would keep passing on the built-in board and start FAILING on a
-          renamed one — a soft-deleted task's log would become writable.
-
-          The convertible site is `getLiveTaskColumn`'s own `row.column === "archived"` test, and it
-          is deferred with its cost stated: that helper takes a `db` handle with no task, no workflow
-          and no lane vocabulary, so resolving there threads a lane set through a low-level query on a
-          hot path. The same distinction governs the eight downstream comparisons in
-          `async-comments-attachments.ts`, which are sentinels for the same reason.
+          FNXC:TaskArchiveRemoval 2026-09-04-18:25 DELIBERATE-LITERAL:
+          `getLiveTaskColumn` returns `archived` only as the stable deleted/historical sentinel. It is
+          not a workflow role, and logs remain read-only for that sentinel.
           */
-          if (state === "archived") throw new Error(`Task ${id} is archived — logging is read-only`);
+          if (state === "archived") throw new Error(`Task ${id} is deleted or historical — logging is read-only`);
           if (state === null) throw new Error(`Task ${id} not found`);
         }
 
@@ -368,65 +354,18 @@ export async function logEntryImpl(store: TaskStore, id: string, action: string,
         throw new Error(`Task ${id} not found`);
       }
       /*
-      FNXC:WorkflowLifecycleColumns 2026-07-30-21:20 (audited — REAL, deferred with the cost stated):
-      Unlike the sentinel above, this reads the task ROW, so `pgRow.column` is a real board lane and a
-      renamed archived column is not recognised — a card the board shows as archived keeps accepting
-      log writes. `deletedAt` covers the soft-delete half, which is why the gap is narrow rather than
-      absent, and why it has stayed invisible: the common path is soft-delete.
-
-      Not converted here because the fix is the same one `getLiveTaskColumn` needs — a resolved
-      archived-lane set threaded into a low-level, project-scoped read — and doing it in one of the
-      two places would leave the pair disagreeing about what "archived" means. Recorded so the census
-      keeps pointing at it with the reason attached.
-
-      FNXC:WorkflowResolvedColumns 2026-07-31-23:25 (THE STATED BLOCKER IS STALE, AND THE REAL ONE IS
-      BIGGER — I converted this, measured, and backed it out):
-      The note above is out of date on its own terms: `getLiveTaskColumn` now TAKES a resolved
-      `archivedColumns` set and both callers already pass `await resolveArchivedLanes(store)` — the
-      sentinel path twenty lines up in this same function is one of them. So the pair it worries about
-      is already half-converted, and this arm is the half that is out of step.
-
-      The REAL blocker is one neither note named. `archived-column-gate-parity.test.ts` failed my
-      conversion and is right: this gate has THREE encodings — TypeScript comparisons, Drizzle
-      `eq`/`ne` predicates, and raw SQL templates — and converting only the TypeScript arm makes them
-      DIVERGE. This gate would call the row archived while the SQL side still returns it as live: a
-      log write rejected by its gate while its parent is listed as live. Every builtin workflow names
-      the column `archived`, so all three agree by accident on every board we ship and nothing else
-      can see the split.
-
-      Unblocking means converting all three encodings together — the SQL sides need the resolved id as
-      a query-build value, including inside `for update` transactions that receive no store today — or
-      declaring `archived` a non-renameable system column. That parity test lays out both options and
-      owns the inventory that has to move in the same commit.
-
-      Behaviour here is otherwise now covered by `log-entry-archived-lane-gate.test.ts`, which had no
-      test at all before and which records the renamed case as a deliberate, explained omission.
+      FNXC:TaskArchiveRemoval 2026-09-04-18:25 DELIBERATE-LITERAL:
+      Log mutation rejects the fixed historical sentinel and soft-deleted rows. Archive is not a
+      workflow role; keeping the property comparison in the fallback preserves SQL/TypeScript parity
+      for migration-era data.
       */
-      /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-23:59 (converted — the parity gate's objection is met,
-      not worked around):
-      A LANE question: "is this row in the board's archive lane, so logging is read-only?" Against the
-      literal, a card the operator filed away on a renamed board kept ACCEPTING log writes — new
-      activity accruing on closed work. `deletedAt` covers the soft-delete half, which is why the gap
-      is narrow and why it stayed invisible: the common path is soft-delete.
-
-      I converted this once before and REVERTED it, because the parity gate failed. The gate was
-      right, and the reason was subtler than "one encoding moved": my version hoisted the comparison
-      onto a local (`pgRowColumn === "archived"`), and that gate's TS scan keys on the PROPERTY being
-      named `column`. Dropping the `.column` access dropped the TS count while SQL and raw held, which
-      it reads as divergence.
-
-      So the fallback keeps `pgRow.column === "archived"` VERBATIM. The resolved path is added in
-      front of it, no encoding's count moves, and an unwired or degraded caller behaves exactly as
-      before — the same additive shape as the six Drizzle LANE sites.
-      */
-      const archivedLanes = await resolveArchivedLanes(store);
-      const rowIsArchivedLane = archivedLanes
-        ? archivedLanes.has(String(pgRow.column ?? ""))
-        /* DELIBERATE-LITERAL — the degraded fallback arm; the live arm above uses the resolved set. */
+      const historicalSentinels = ARCHIVED_SENTINEL_LANES;
+      const rowIsHistoricalSentinel = historicalSentinels
+        ? historicalSentinels.has(String(pgRow.column ?? ""))
+        /* DELIBERATE-LITERAL — migration fallback for callers without sentinel metadata. */
         : pgRow.column === "archived";
-      if (rowIsArchivedLane || pgRow.deletedAt != null) {
-        throw new Error(`Task ${id} is archived — logging is read-only`);
+      if (rowIsHistoricalSentinel || pgRow.deletedAt != null) {
+        throw new Error(`Task ${id} is deleted or historical — logging is read-only`);
       }
       // PG jsonb columns arrive already-parsed; convert to the TaskLogEntry[] shape.
       const existingLog = Array.isArray(pgRow.log) ? (pgRow.log as TaskLogEntry[]) : [];

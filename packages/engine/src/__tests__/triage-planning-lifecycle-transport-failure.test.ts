@@ -21,8 +21,6 @@ vi.mock("../pi.js", async (importOriginal) => {
 
 import { TriageProcessor } from "../triage.js";
 
-const TRANSPORT_MARKER = "planning.lifecycleLockTransportFailure";
-
 function createTask(overrides: Partial<Task> = {}): Task {
   return {
     id: "FN-8911",
@@ -49,6 +47,7 @@ function createPersistedStore(initialTask: Task): { store: TaskStore; task: () =
   };
   const store = {
     getTask: vi.fn(async () => ({ ...persisted, attachments: [], comments: [] })),
+    isBackendMode: vi.fn(() => true),
     getSettings: vi.fn(async () => ({
       maxConcurrent: 2,
       maxWorktrees: 4,
@@ -59,14 +58,20 @@ function createPersistedStore(initialTask: Task): { store: TaskStore; task: () =
     getTaskWorkflowSelection: vi.fn(() => undefined),
     getTaskWorkflowSelectionAsync: vi.fn(async () => undefined),
     updateTask: vi.fn(update),
+    updateTaskUnlocked: vi.fn(update),
     updateTaskAtomic: vi.fn(async (_id: string, patcher: (live: Task) => Partial<Task> | null) => {
       const patch = patcher(persisted);
       if (patch) await update(_id, patch);
       return persisted;
     }),
-    withPlanningLifecycleLock: vi.fn(async () => {
+    withPlanningLifecycleLock: vi.fn(async (_id: string, operation: () => Promise<unknown>) => operation()),
+    withTaskLock: vi.fn(async (_id: string, operation: () => Promise<unknown>) => operation()),
+    readTaskForMove: vi.fn(async () => persisted),
+    lockCurrentPlanWhilePlanningLocked: vi.fn(async () => {
       throw new PlanningLifecycleLockTransportError("direct PostgreSQL session endpoint is unavailable");
     }),
+    reconcileSpecDriftWhilePlanningLocked: vi.fn(async () => undefined),
+    captureCurrentPlanEvidenceWhilePlanningLocked: vi.fn(async () => undefined),
     logEntry: vi.fn(async (_id: string, message: string) => { logs.push(message); }),
     appendAgentLog: vi.fn(async () => undefined),
     getAgentLogs: vi.fn(async () => []),
@@ -114,13 +119,11 @@ describe("triage planning lifecycle lock transport failures (FN-8911)", () => {
 
     expect(fixture.task().error).toBeNull();
     expect(fixture.task().recoveryRetryCount).toBe(1);
-    expect(fixture.task().customFields).toMatchObject({
-      unrelated: "preserve-me",
-      [TRANSPORT_MARKER]: {
-        message: "direct PostgreSQL session endpoint is unavailable",
-        attempt: 1,
-        at: expect.any(String),
-      },
+    expect(fixture.task().customFields).toEqual({ unrelated: "preserve-me" });
+    expect(fixture.task().planningFailure?.lifecycleLockTransport).toMatchObject({
+      message: "direct PostgreSQL session endpoint is unavailable",
+      attempt: 1,
+      at: expect.any(String),
     });
     expect(fixture.logs.join("\n")).toContain("Planning lifecycle lock transport failure");
 
@@ -141,7 +144,7 @@ describe("triage planning lifecycle lock transport failures (FN-8911)", () => {
     expect(fixture.task().status).toBe("failed");
     expect(fixture.task().error).toContain("Planning lifecycle lock transport failure recorded at");
     expect(fixture.task().error).not.toContain("did not update the authoritative PROMPT.md");
-    expect(fixture.task().customFields?.[TRANSPORT_MARKER]).toBeUndefined();
+    expect(fixture.task().planningFailure?.lifecycleLockTransport).toBeUndefined();
   });
 
   it("keeps the ordinary unchanged-PROMPT verdict when no persisted transport marker exists", async () => {
@@ -151,6 +154,7 @@ describe("triage planning lifecycle lock transport failures (FN-8911)", () => {
     await writeFile(promptPath, "# Existing plan\n", "utf8");
 
     mockPromptWithFallback.mockResolvedValue(undefined);
+    (fixture.store.lockCurrentPlanWhilePlanningLocked as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     await new TriageProcessor(fixture.store, root).specifyTask(fixture.task());
 
     expect(fixture.logs.join("\n")).toContain("Planner did not update the authoritative PROMPT.md");

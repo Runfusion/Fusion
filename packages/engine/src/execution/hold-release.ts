@@ -62,6 +62,8 @@ import {
   type WorkflowIrV2,
   type WorkflowIrColumn,
   type WorkflowSelectionCache,
+  type WorkflowSelectionReadTally,
+  type WorkflowDefinitionReadTally,
   type WorkflowIrResolverStore,
 } from "@fusion/core";
 import { createHash } from "node:crypto";
@@ -69,7 +71,7 @@ import { readFile } from "node:fs/promises";
 import { schedulerLog } from "../logger.js";
 import { emitBoundedRunAudit } from "../util/emit-bounded-run-audit.js";
 import { getPromptPath } from "./spec-staleness.js";
-import { activeSessionRegistry, executingTaskLock } from "../agents/active-session-registry.js";
+import { isTaskPlanningOrExecutionLive } from "../agents/planning-execution-liveness.js";
 import { evaluateStrandedHoldContinuation } from "../plan-review-continuation.js";
 
 // FNXC:StrandedHoldContinuation 2026-07-26-14:15:
@@ -332,7 +334,13 @@ export async function evaluateCapacityHoldReadiness(
       try { promptContent = await readFile(getPromptPath(tasksDir, task.id), "utf8"); } catch { /* missing prompt is a quiet non-candidate */ }
       const settings = await store.getSettings();
       const continuations = await store.listWorkflowWorkItemsForTask(task.id);
-      const live = activeSessionRegistry.pathsForTask(task.id).some((path) => activeSessionRegistry.isPathActive(path)) || executingTaskLock.has(task.id) || deps.isTaskActive?.(task.id) === true;
+      /*
+      FNXC:PlanningExecutionLiveness 2026-09-06-00:29:
+      This shared liveness classification only suppresses a stranded-continuation warning; it does not
+      widen or release the execution gate. Including the planner here keeps diagnostics aligned with the
+      self-healing decisions without turning an in-flight plan into a release candidate.
+      */
+      const live = isTaskPlanningOrExecutionLive(task.id, { isTaskActive: deps.isTaskActive });
       const stranded = evaluateStrandedHoldContinuation({
         task,
         columnFlags: resolveColumnFlags(column),
@@ -454,13 +462,13 @@ yet, so grep `DELIBERATE-LITERAL` to enumerate the sites it must admit.
 */
 /** Legacy completion signal: dependency's column is a terminal/handoff column. */
 function legacyDependencySatisfied(dep: Task): boolean {
-  return dep.column === "done" || dep.column === "in-review" || dep.column === "archived";
+  return dep.column === "done" || dep.column === "in-review";
 }
 
 /**
  * KTD-5 dependency satisfaction: the dependency task's current column has the
  * `complete` trait flag in ITS resolved workflow. Dual-accept (FN-5719): the
- * legacy completion signal (done/in-review/archived column, or an accepted
+ * legacy completion signal (done/in-review column, or an accepted
  * completion-handoff marker) is also honored; when the two disagree an
  * audit-diff event is logged.
  */
@@ -719,7 +727,23 @@ export async function runHoldReleaseSweep(
     const settings = await store.getSettings();
     if (expired()) return logPreambleTruncation(0);
     counters.tasks += 1;
-    const allTasks = await store.listTasks({ includeArchived: false });
+    /*
+    FNXC:WorkflowScheduling 2026-09-05-23:12:
+    listTasks used to hide N individual selection reads behind one list call, making this diagnostic
+    claim selections=0. Its reported tally is folded in directly: cache-size growth is not evidence,
+    because both a successful batch and degraded individual reads populate the same cache.
+    */
+    const selectionReadTally: WorkflowSelectionReadTally = { batched: 0, singles: 0 };
+    const definitionReadTally: WorkflowDefinitionReadTally = { definitions: 0 };
+    /*
+    FNXC:WorkflowScheduling 2026-09-08-04:11:
+    List hydration uses the raw store and its observed-read tally; evaluation uses the counting proxy.
+    Each definition read uses exactly one accounting mechanism, since cache growth is not read evidence.
+    */
+    const allTasks = await store.listTasks({ includeArchived: false, selectionCache, selectionReadTally, irCache, definitionReadTally });
+    counters.batchSelections += selectionReadTally.batched;
+    counters.selections += selectionReadTally.singles;
+    counters.definitions += definitionReadTally.definitions;
     if (expired()) return logPreambleTruncation(allTasks.length);
 
 

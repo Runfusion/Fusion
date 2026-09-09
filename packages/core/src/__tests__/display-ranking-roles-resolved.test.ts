@@ -42,7 +42,6 @@ import type { ColumnRoleTraitFlags } from "../column-roles.js";
 const HOLD_FLAGS = { hold: true } as unknown as ColumnRoleTraitFlags;
 const COMPLETE_FLAGS = { complete: true } as unknown as ColumnRoleTraitFlags;
 const REVIEW_FLAGS = { mergeBlocker: true } as unknown as ColumnRoleTraitFlags;
-const ARCHIVED_FLAGS = { archived: true } as unknown as ColumnRoleTraitFlags;
 
 const at = (iso: string) => ({ columnMovedAt: iso, updatedAt: iso, createdAt: iso });
 
@@ -94,21 +93,10 @@ describe("rankAssignedTasksForWakeDelta excludes each card's own terminal column
   const assigned = (id: string, column: string) => ({ id, column, title: `${id} title`, dependencies: [] });
 
   it("excludes a card in a RENAMED complete lane from open assigned work", () => {
-    // Pre-fix: `shipped` is not "done"/"archived", so a coordinator was asked to unblock shipped work.
+    // Pre-fix: `shipped` is not `done`, so a coordinator was asked to unblock shipped work.
     const result = rankAssignedTasksForWakeDelta(
       [assigned("FN-OPEN", "building"), assigned("FN-DONE", "shipped")] as never[],
       { agentId: "AG-1", flagsByColumnId: new Map([["shipped", COMPLETE_FLAGS]]) },
-    );
-
-    expect(result.totalOpen).toBe(1);
-    expect(result.ranked.map((r) => r.task.id)).toEqual(["FN-OPEN"]);
-  });
-
-  it("excludes a RENAMED archived lane too — the union, not just complete", () => {
-    // isTerminalColumnRole is complete OR archived; dropping the archived half is the easy mistake.
-    const result = rankAssignedTasksForWakeDelta(
-      [assigned("FN-OPEN", "building"), assigned("FN-VAULTED", "vault")] as never[],
-      { agentId: "AG-1", flagsByColumnId: new Map([["vault", ARCHIVED_FLAGS]]) },
     );
 
     expect(result.totalOpen).toBe(1);

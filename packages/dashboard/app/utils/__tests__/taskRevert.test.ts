@@ -34,9 +34,9 @@ describe("partitionRevertedTasks", () => {
 FNXC:WorkflowResolvedColumns 2026-07-31-23:30:
 THE UNDO-TASK LOOKUP CLASSIFIED A NEIGHBOUR'S COLUMN BY ID.
 
-`findOpenUndoTaskForSource` skips candidates that are finished, so a done/archived prior undo attempt
-never renders as an active "Undo task" link. Keyed on `done`/`archived`, a board that renames those
-lanes matched neither: a FINISHED undo task kept rendering as an open one, which is the stale
+`findOpenUndoTaskForSource` skips candidates that are finished, so a prior undo attempt in Complete
+never renders as an active "Undo task" link. Keyed only on `done`, a board that renames Complete
+matched nothing: a FINISHED undo task kept rendering as an open one, which is the stale
 affordance the function's own header says it exists to prevent.
 
 The flags are PER-CANDIDATE, keyed by task id. That is what makes this correct and what two earlier

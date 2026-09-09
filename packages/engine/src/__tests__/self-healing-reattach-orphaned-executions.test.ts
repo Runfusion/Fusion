@@ -182,13 +182,12 @@ describe("FN-6336: reattach orphaned assigned in-progress executions", () => {
     manager.stop();
   });
 
-  it("only considers in-progress tasks and ignores review, done, todo, triage, and archived tasks", async () => {
+  it("only considers in-progress tasks and ignores review, done, todo, and triage tasks", async () => {
     const tasks = [
       makeTask({ id: "FN-review", column: "in-review" }),
       makeTask({ id: "FN-done", column: "done" }),
       makeTask({ id: "FN-todo", column: "todo" }),
       makeTask({ id: "FN-triage", column: "triage" }),
-      makeTask({ id: "FN-archived", column: "archived" }),
     ] as Task[];
     const { manager, resumeAssignedTaskForAgent } = buildManager({ tasks });
 
@@ -201,7 +200,7 @@ describe("FN-6336: reattach orphaned assigned in-progress executions", () => {
   it("is registered after agent and stale-run recovery in startup and periodic self-healing loops", () => {
     const source = readFileSync("src/self-healing.ts", "utf8");
     const startup = source.slice(source.indexOf("async runStartupRecovery"), source.indexOf("  stop(): void"));
-    const periodicStart = source.lastIndexOf("recover-ghost-review");
+    const periodicStart = source.lastIndexOf('{ name: "finalize-orphaned-planning-segments"');
     const periodicEnd = source.indexOf("reconcile-task-worktree-metadata", periodicStart);
     const periodic = source.slice(periodicStart, periodicEnd);
 
