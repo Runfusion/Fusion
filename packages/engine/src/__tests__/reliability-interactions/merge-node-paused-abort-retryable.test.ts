@@ -340,6 +340,32 @@ describe("merge-node paused-abort retry classification (FN-6735)", () => {
     expect(logText(store)).not.toContain("honoring park, not retrying or resuming merge");
   });
 
+  it.each(mergeReviewSurfaces)("honors the durable park when manual-hold classification rejects at $nodeId in $column", async ({ nodeId, column }) => {
+    const { store, task, executor, mergeRequester } = makeHarness({
+      column, autoMerge: undefined, paused: false, status: "failed", error: stalePauseAbortError(nodeId, column),
+    }, { autoMerge: false });
+    (executor as any).addActiveWorktree(task.id, task.worktree);
+    const sharedGroupLookup = vi.spyOn(executor as any, "isLiveSharedBranchGroupMember")
+      .mockRejectedValue(new Error("shared branch-group lookup unavailable"));
+    const persistTokenUsage = vi.spyOn(executor as any, "persistTokenUsage").mockResolvedValue(undefined);
+    const parkedTask = structuredClone(task);
+
+    await invokeGraphFailure(executor, task, nodeId, "merge-finalize-blocked");
+
+    expect(sharedGroupLookup).toHaveBeenCalledExactlyOnceWith(task);
+    expect(mergeRequester).not.toHaveBeenCalled();
+    expect(store.updateTask).not.toHaveBeenCalled();
+    expect(store.updateTaskAtomic).not.toHaveBeenCalled();
+    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(await store.getTask(task.id)).toEqual(parkedTask);
+    expect((executor as any).activeWorktrees.has(task.id)).toBe(false);
+    expect((executor as any).pausedAborted.has(task.id)).toBe(false);
+    expect((executor as any).pausedAbortProvenance.has(task.id)).toBe(false);
+    expect(persistTokenUsage).toHaveBeenCalledExactlyOnceWith(task.id);
+    expect(logText(store)).toContain("honoring park, not retrying or resuming merge");
+    expect(logText(store)).not.toContain("Auto-recovered: cleared stale");
+  });
+
   const recoveryFences: Array<{ name: string; overrides?: Partial<TaskDetail>; value?: string; provenance?: string; cancel?: boolean; clearAbort?: boolean }> = [
     { name: "live system pause", overrides: { paused: true, pausedReason: "system-pause-park" } },
     { name: "explicit user pause", overrides: { userPaused: true } },

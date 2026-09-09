@@ -293,6 +293,10 @@ export async function handleGraphFailure(
       A recognized stale pause-abort failure is not a durable merger refusal. Let only the existing
       human-hold classifier's fully qualified review rows reach its in-place recovery below;
       cancellation, live pauses, terminal merge failures, and real blockers still honor the park.
+
+      FNXC:ManualMergeHoldRescue 2026-09-09-18:06:
+      Classifier read failures must fail closed to the durable park, not escape to the outer catch
+      before tracking cleanup and usage persistence. Catch only classification, never durable writes.
       */
       const recoverableManualHold = live.error != null
         && live.status === "failed"
@@ -300,7 +304,7 @@ export async function handleGraphFailure(
         && !deps.userCanceledTaskIds.has(task.id)
         && await deps.isBenignManualMergeHoldPauseAbort(
           live, result, deps.pausedAbortProvenance.get(task.id), deps.pausedAborted.has(task.id), resumeLanesMemo,
-        );
+        ).catch(() => false);
       if (
         live.error != null &&
         !recoverableManualHold &&
