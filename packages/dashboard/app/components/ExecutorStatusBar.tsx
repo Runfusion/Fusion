@@ -88,6 +88,8 @@ interface ExecutorStatusBarProps {
   onOpenScripts?: () => void;
   /** Runs a configured script in the terminal from the footer launcher dropdown. */
   onRunScript?: (name: string, command: string) => void;
+  /** Alpha makes the mobile navigation a floating overlay rather than the footer's base. */
+  alphaUpdatesEnabled?: boolean;
   /** Quick Chat launcher placement from Settings. */
   quickChatButtonMode?: "floating" | "footer" | "off";
   /** Toggles the visibility of the complete floating chat set. */
@@ -148,7 +150,7 @@ function getStateDisplay(state: ExecutorState, t: TFunction<"app">): { label: st
  * - Executor state badge (idle/running/paused/stopped)
  * - Last activity timestamp
  */
-export function ExecutorStatusBar({ tasks, projectId, columnFlagsByTaskId: suppliedColumnFlagsByTaskId, staleHighFanoutBlockerAgeThresholdMs, currentProjectPath, onOpenProjectDirectory, keyboardOpen, hideWhenKeyboardOpen, onToggleTerminal, onOpenScripts, onRunScript, quickChatButtonMode = "off", onToggleQuickChat, quickChatToggleAction }: ExecutorStatusBarProps) {
+export function ExecutorStatusBar({ tasks, projectId, columnFlagsByTaskId: suppliedColumnFlagsByTaskId, staleHighFanoutBlockerAgeThresholdMs, currentProjectPath, onOpenProjectDirectory, keyboardOpen, hideWhenKeyboardOpen, onToggleTerminal, onOpenScripts, onRunScript, alphaUpdatesEnabled = false, quickChatButtonMode = "off", onToggleQuickChat, quickChatToggleAction }: ExecutorStatusBarProps) {
   const { t } = useTranslation("app");
   const viewportMode = useViewportMode();
   const isMobile = viewportMode === "mobile";
@@ -269,7 +271,7 @@ export function ExecutorStatusBar({ tasks, projectId, columnFlagsByTaskId: suppl
   loading, or connecting footer otherwise retains the nav-height reservation and
   floats above the keyboard.
   */
-  const baseClassName = `executor-status-bar${isMobile ? " executor-status-bar--mobile" : ""}${keyboardOpen ? " executor-status-bar--keyboard-open" : ""}`;
+  const baseClassName = `executor-status-bar${isMobile ? " executor-status-bar--mobile" : ""}${isMobile && alphaUpdatesEnabled ? " executor-status-bar--alpha-nav" : ""}${keyboardOpen ? " executor-status-bar--keyboard-open" : ""}`;
 
   if (error) {
     if (isLikelyTabSuspensionError(error)) {

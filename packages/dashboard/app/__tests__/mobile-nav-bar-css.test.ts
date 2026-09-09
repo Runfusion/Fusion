@@ -71,42 +71,45 @@ describe("mobile-nav-bar.css", () => {
     );
   });
 
-  it("defines bottom sheet animation", () => {
+  it("keeps bottom-sheet animation for standard mode and gives Alpha a bounded popover", () => {
     expect(cssContent).toContain("@keyframes mobile-more-sheet-in");
+    const popoverBlock = extractRuleBlock(cssContent, ".alpha-mobile-navigation-popover");
+    expect(popoverBlock).toContain("top: calc(var(--header-height)");
+    expect(popoverBlock).toContain("max-height: calc(100dvh");
+    expect(popoverBlock).toContain("overflow-y: auto");
+    expect(popoverBlock).not.toContain("animation:");
+    expect(popoverBlock).not.toContain("bottom:");
   });
 
   it("uses safe-area inset for bottom spacing", () => {
     expect(cssContent).toContain("env(safe-area-inset-bottom");
   });
 
-  it("keeps the Alpha pill, executor footer, and content reservation geometrically disjoint", () => {
+  it("keeps the Alpha pill overlaid above the sole reserved status footer", () => {
     const alphaBlock = extractRuleBlock(cssContent, ".mobile-nav-bar--alpha");
     const alphaWithFooterBlock = extractRuleBlock(cssContent, ".mobile-nav-bar--alpha.mobile-nav-bar--with-footer");
+    const viewportAlphaWithFooterSelector = 'html[data-viewport-mode="mobile"] .mobile-nav-bar--alpha.mobile-nav-bar--with-footer';
+    const viewportAlphaWithFooterBlock = extractRuleBlock(cssContent, viewportAlphaWithFooterSelector);
+    const genericViewportFooterSelector = 'html[data-viewport-mode="mobile"] .mobile-nav-bar--with-footer';
+    const alphaContentBlock = extractRuleBlock(cssContent, ".project-content--with-footer.project-content--with-alpha-nav");
     expect(alphaBlock).toContain("--mobile-nav-floating-gap: var(--space-sm)");
-    expect(alphaBlock).toContain("var(--mobile-nav-floating-gap)");
+    expect(alphaWithFooterBlock).toContain("var(--executor-footer-height)");
     expect(alphaWithFooterBlock).toContain("var(--mobile-nav-floating-gap)");
+    expect(viewportAlphaWithFooterBlock).toContain("var(--executor-footer-height)");
+    expect(viewportAlphaWithFooterBlock).toContain("var(--mobile-nav-floating-gap)");
+    expect(cssContent.lastIndexOf(viewportAlphaWithFooterSelector)).toBeGreaterThan(cssContent.lastIndexOf(genericViewportFooterSelector));
+    expect(alphaContentBlock).toContain("padding-bottom: var(--executor-footer-height)");
+    expect(alphaContentBlock).not.toContain("var(--mobile-nav-height)");
 
-    const pillBorderBoxHeight = 54;
-    const floatingGap = 8;
-    const safeArea = 34;
-    const standaloneGap = 8;
-    const icbBottomOffset = 52;
-    const executorFooterHeight = 36;
     const publishedNavHeight = computePublishedMobileNavHeight({
-      navOffsetHeight: pillBorderBoxHeight,
+      navOffsetHeight: 54,
       paddingBottom: 4,
       tabHeights: [44, 44, 44, 44, 44],
-      floatingGap,
+      floatingGap: 8,
     });
+    expect(publishedNavHeight).toBe(62);
 
-    const pillBottom = icbBottomOffset + safeArea + standaloneGap + floatingGap;
-    const pillTop = pillBottom + pillBorderBoxHeight;
-    const executorBottom = icbBottomOffset + safeArea + standaloneGap + publishedNavHeight;
-    const reservedContentBottom = executorBottom + executorFooterHeight;
-
-    expect(publishedNavHeight).toBe(pillBorderBoxHeight + floatingGap);
-    expect(executorBottom).toBe(pillTop);
-    expect(reservedContentBottom).toBe(pillTop + executorFooterHeight);
+    expect(cssContent).toMatch(/\.executor-status-bar\.executor-status-bar--alpha-nav\s*\{[^}]*bottom:\s*var\(--icb-bottom-offset/);
   });
 
   it("tab bar keeps symmetric tokenized side spacing while preserving ICB compensation", () => {

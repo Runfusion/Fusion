@@ -274,6 +274,12 @@ FN-8007 defines both desktop pseudo-thumbs locally with the marker's shared size
     overflow: auto;
   }
 
+  /* FNXC:AlphaUpdates 2026-09-09-22:14: This is local collision avoidance, not layout reservation: the footer popover clears the overlaid Alpha pill even though project content reserves only the footer. */
+  .executor-status-bar--alpha-nav .engine-control-menu__popover,
+  .executor-status-bar--alpha-nav .engine-control-menu > .engine-control-menu__popover.card {
+    --engine-control-mobile-bottom-stack: calc(var(--executor-footer-height) + var(--mobile-nav-height) + var(--mobile-nav-floating-gap) + var(--icb-bottom-offset, 0px));
+  }
+
   .engine-control-menu__header {
     justify-content: flex-end;
   }

@@ -161,8 +161,8 @@ Wrap every tab icon in the same token-sized icon slot and keep unread/pending do
 }
 
 /*
-FNXC:AlphaUpdates 2026-09-09-19:33:
-The Alpha mobile navigation is a floating five-icon pill. Its tokenized floating gap is included in the runtime-published mobile stack height so ExecutorStatusBar ends exactly at the pill's top edge and project content reserves the complete visible stack; safe-area, standalone, and ICB offsets remain shared terms added by each consumer.
+FNXC:AlphaUpdates 2026-09-09-22:40:
+The Alpha five-icon pill is an overlay, never a second footer. With a status footer it floats above that footer with a token gap; without one it clears the device safe area. The viewport-qualified footer rule must outrank the generic mobile footer selector so the cascade cannot place the pill beneath the status footer. Its measured height remains published only for collision-avoidance consumers and never drives project-content reservation.
 */
 .mobile-nav-bar--alpha {
   --mobile-nav-floating-gap: var(--space-sm);
@@ -178,8 +178,18 @@ The Alpha mobile navigation is a floating five-icon pill. Its tokenized floating
   backdrop-filter: blur(var(--space-md));
 }
 
-.mobile-nav-bar--alpha.mobile-nav-bar--with-footer {
-  bottom: calc(var(--icb-bottom-offset, 0px) + max(env(safe-area-inset-bottom, 0px), var(--space-md)) + var(--standalone-bottom-gap) + var(--mobile-nav-floating-gap));
+.mobile-nav-bar--alpha.mobile-nav-bar--with-footer,
+html[data-viewport-mode="mobile"] .mobile-nav-bar--alpha.mobile-nav-bar--with-footer {
+  bottom: calc(var(--icb-bottom-offset, 0px) + var(--executor-footer-height) + var(--mobile-nav-floating-gap));
+}
+
+/* Alpha is intentionally absent from the reserved bottom-stack selectors above. */
+.project-content--with-alpha-nav:not(.project-content--with-footer) {
+  padding-bottom: 0;
+}
+
+.project-content--with-footer.project-content--with-alpha-nav {
+  padding-bottom: var(--executor-footer-height);
 }
 
 .mobile-nav-bar--alpha .mobile-nav-tab {
@@ -245,7 +255,33 @@ The Alpha mobile navigation is a floating five-icon pill. Its tokenized floating
   border-radius: var(--radius-md);
 }
 
-/* === Mobile More Sheet (Bottom Drawer) === */
+/* === Alpha header popover / standard Mobile More Sheet === */
+
+/*
+FNXC:AlphaUpdates 2026-09-09-22:14:
+Alpha renders the canonical destination registry as a compact header-anchored menu with viewport and safe-area bounds. It deliberately shares item styling with the standard drawer but owns no backdrop, grab handle, drag transform, or bottom-sheet animation.
+*/
+.alpha-mobile-navigation-popover {
+  position: fixed;
+  top: calc(var(--header-height) + env(safe-area-inset-top, 0px) + var(--space-xs));
+  right: calc(var(--icb-right-offset, 0px) + var(--space-md));
+  z-index: 91;
+  width: min(calc(var(--space-2xl) * 8), calc(100vw - (var(--space-md) * 2) - var(--icb-right-offset, 0px)));
+  max-height: calc(100dvh - var(--header-height) - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - (var(--space-md) * 2));
+  overflow-y: auto;
+  padding-block: var(--space-sm);
+  background: var(--surface);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  overscroll-behavior: contain;
+}
+
+.alpha-mobile-navigation-popover .mobile-more-item:focus-visible,
+.alpha-mobile-navigation-popover .mobile-more-split-toggle:focus-visible {
+  outline: none;
+  box-shadow: inset var(--focus-ring);
+}
 
 .mobile-more-sheet-backdrop {
   position: fixed;

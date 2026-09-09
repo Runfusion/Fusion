@@ -1008,6 +1008,8 @@ describe("Alpha Updates production wiring", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Close" }));
 
     await waitFor(() => expect(screen.getByTestId("alpha-mobile-menu-trigger")).toBeInTheDocument());
+    expect(screen.getByTestId("dashboard-project-shell").querySelector(".project-content")).toHaveClass("project-content--with-alpha-nav");
+    expect(screen.getByTestId("dashboard-project-shell").querySelector(".project-content")).not.toHaveClass("project-content--with-mobile-nav");
     expect(screen.queryByTestId("mobile-nav-tab-more")).toBeNull();
     expect(Array.from(document.querySelectorAll<HTMLElement>(".mobile-nav-bar > .mobile-nav-tab")).map((tab) => tab.dataset.testid)).toEqual([
       "mobile-nav-tab-command-center",
@@ -1018,7 +1020,13 @@ describe("Alpha Updates production wiring", () => {
     ]);
 
     vi.mocked(fetchSettings).mockResolvedValue(legacySettings);
-    fireEvent.click(screen.getByTestId("alpha-mobile-menu-trigger"));
+    const alphaTrigger = screen.getByTestId("alpha-mobile-menu-trigger");
+    expect(alphaTrigger).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(alphaTrigger);
+    expect(alphaTrigger).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("menu", { name: "Navigate" })).toHaveClass("alpha-mobile-navigation-popover");
+    expect(document.querySelector(".mobile-more-sheet-backdrop")).toBeNull();
+    expect(document.querySelector(".mobile-more-sheet-handle")).toBeNull();
     fireEvent.click(screen.getByTestId("mobile-more-item-settings"));
     fireEvent.click(await screen.findByRole("button", { name: "Close" }));
 

@@ -3,6 +3,7 @@ import { resolve } from "path";
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { Header } from "../Header";
 import { MobileNavBar } from "../MobileNavBar";
 import { MOBILE_NAV_SELECTABLE_ITEMS } from "../../../../core/src/board/mobile-nav-primary-items";
@@ -48,20 +49,22 @@ function getRenderedMobileTabs(container: HTMLElement): HTMLElement[] {
 }
 
 function AlphaMobileShellHarness() {
-  const [menuToggleRequest, setMenuToggleRequest] = useState(0);
+  const [menuOpen, setMenuOpen] = useState(false);
   return (
     <>
       <Header
         view="board"
         mobileNavEnabled
         alphaUpdatesEnabled
-        onOpenAlphaMenu={() => setMenuToggleRequest((request) => request + 1)}
+        alphaMenuOpen={menuOpen}
+        onOpenAlphaMenu={() => setMenuOpen((open) => !open)}
         onOpenUsage={() => undefined}
       />
       <MobileNavBar
         {...createDefaultProps()}
         alphaUpdatesEnabled
-        alphaMenuOpenRequest={menuToggleRequest}
+        alphaMenuOpen={menuOpen}
+        onAlphaMenuOpenChange={setMenuOpen}
       />
     </>
   );
@@ -167,7 +170,7 @@ describe("MobileNavBar", () => {
       <MobileNavBar
         {...createDefaultProps()}
         alphaUpdatesEnabled
-        alphaMenuOpenRequest={0}
+        alphaMenuOpen={false}
         mobileNavPrimaryItems={["patchnode", "tasks", "tasks"]}
       />,
     );
@@ -187,27 +190,73 @@ describe("MobileNavBar", () => {
       <MobileNavBar
         {...createDefaultProps()}
         alphaUpdatesEnabled
-        alphaMenuOpenRequest={1}
+        alphaMenuOpen
         mobileNavPrimaryItems={["patchnode", "tasks", "tasks"]}
       />,
     );
     expect(screen.getByTestId("mobile-more-item-list")).toHaveTextContent("List");
+    expect(screen.getByRole("menu", { name: "Navigate" })).toHaveClass("alpha-mobile-navigation-popover");
+    expect(container.querySelector(".mobile-more-sheet-backdrop")).toBeNull();
+    expect(container.querySelector(".mobile-more-sheet-handle")).toBeNull();
     expect(screen.queryByTestId("mobile-more-item-patchnode")).toBeNull();
     expect(screen.queryByTestId("mobile-more-item-tasks")).toBeNull();
     expect(screen.getAllByTestId("mobile-more-item-agents")).toHaveLength(1);
   });
 
-  it("toggles the shared Alpha menu through two successive header hamburger clicks", () => {
+  it("toggles the shared Alpha menu through two successive real header hamburger clicks", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
     render(<AlphaMobileShellHarness />);
 
     const hamburger = screen.getByTestId("alpha-mobile-menu-trigger");
-    fireEvent.click(hamburger);
+    expect(hamburger).toHaveAttribute("aria-expanded", "false");
+    expect(hamburger).toHaveAttribute("aria-controls", "alpha-mobile-navigation-popover");
+    await user.click(hamburger);
+    expect(hamburger).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByTestId("mobile-more-item-list")).toBeInTheDocument();
     expect(screen.getByTestId("mobile-more-item-usage")).toBeInTheDocument();
     expect(screen.queryByTestId("mobile-header-usage-btn")).toBeNull();
 
-    fireEvent.click(hamburger);
+    await user.click(hamburger);
+    expect(hamburger).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByTestId("mobile-more-item-list")).toBeNull();
+  });
+
+  it("closes the Alpha popover on Escape and outside pointer interaction", () => {
+    render(<AlphaMobileShellHarness />);
+    const hamburger = screen.getByTestId("alpha-mobile-menu-trigger");
+
+    fireEvent.click(hamburger);
+    expect(screen.getByRole("menu", { name: "Navigate" })).toBeInTheDocument();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("menu", { name: "Navigate" })).toBeNull();
+
+    fireEvent.click(hamburger);
+    fireEvent.pointerDown(document.body);
+    expect(screen.queryByRole("menu", { name: "Navigate" })).toBeNull();
+  });
+
+  it.each([
+    ["agents", "mobile-more-item-agents"],
+    ["missions", "mobile-more-item-missions"],
+  ] as const)("closes the Alpha popover exactly once when navigating to %s", (view, testId) => {
+    const props = createDefaultProps();
+    const onAlphaMenuOpenChange = vi.fn();
+    render(
+      <MobileNavBar
+        {...props}
+        alphaUpdatesEnabled
+        alphaMenuOpen
+        onAlphaMenuOpenChange={onAlphaMenuOpenChange}
+      />,
+    );
+    onAlphaMenuOpenChange.mockClear();
+
+    fireEvent.click(screen.getByTestId(testId));
+
+    expect(props.onChangeView).toHaveBeenCalledTimes(1);
+    expect(props.onChangeView).toHaveBeenCalledWith(view);
+    expect(onAlphaMenuOpenChange).toHaveBeenCalledTimes(1);
+    expect(onAlphaMenuOpenChange).toHaveBeenCalledWith(false);
   });
 
   it("renders eight top-level tab buttons including dedicated List and keeps skills in More when showSkillsTab is true", () => {

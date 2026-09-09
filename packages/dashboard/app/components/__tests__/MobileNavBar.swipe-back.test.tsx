@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchScripts } from "../../api";
 import { NavigationHistoryProvider, useNavigationHistory, type UseNavigationHistoryResult } from "../../hooks/useNavigationHistory";
@@ -48,6 +48,11 @@ const createDefaultProps = () => ({
   projectId: "proj_1",
 });
 
+function AlphaMenuHarness(props: ReturnType<typeof createDefaultProps>) {
+  const [open, setOpen] = useState(true);
+  return <MobileNavBar {...props} alphaUpdatesEnabled alphaMenuOpen={open} onAlphaMenuOpenChange={setOpen} />;
+}
+
 function dispatchPopState(navIndex: number) {
   act(() => {
     window.dispatchEvent(new PopStateEvent("popstate", { state: { navIndex } }));
@@ -83,6 +88,23 @@ describe("MobileNavBar More sheet navigation history", () => {
     );
     return { ...rendered, props };
   }
+
+  it("dismisses the Alpha popover on browser Back without rendering drawer chrome or navigating", async () => {
+    const props = createDefaultProps();
+    const { container } = render(
+      <HistoryHarness onReady={(history) => { navigationHistory = history; }}>
+        <AlphaMenuHarness {...props} />
+      </HistoryHarness>,
+    );
+    await waitFor(() => expect(screen.getByRole("menu", { name: "Navigate" })).toHaveClass("alpha-mobile-navigation-popover"));
+    expect(container.querySelector(".mobile-more-sheet")).toBeNull();
+    expect(container.querySelector(".mobile-more-sheet-backdrop")).toBeNull();
+
+    dispatchPopState(0);
+
+    await waitFor(() => expect(container.querySelector(".alpha-mobile-navigation-popover")).toBeNull());
+    expect(props.onChangeView).not.toHaveBeenCalled();
+  });
 
   it("dismisses the More sheet on browser Back without navigating away", async () => {
     const { container } = renderWithHistory();

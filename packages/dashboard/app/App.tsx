@@ -997,7 +997,7 @@ function AppInner() {
     togglePlanAutoApprove,
     refresh: refreshAppSettings,
   } = useAppSettings(currentProject?.id);
-  const [alphaMenuOpenRequest, setAlphaMenuOpenRequest] = useState(0);
+  const [alphaMenuOpen, setAlphaMenuOpen] = useState(false);
 
   const taskPopupsVisibleOnCurrentView = useCallback((originTaskView?: TaskView) => isTaskPopupVisibleForView({
     taskPopupsBoardListOnly,
@@ -1066,6 +1066,13 @@ function AppInner() {
   const rightDockEnabled = true;
   const executorFooterVisible = viewMode === "project" && !!currentProject;
   const mobileNavVisible = viewMode === "project" && !!currentProject;
+  /*
+  FNXC:AlphaUpdates 2026-09-09-22:14:
+  App owns the Alpha popover's accessible open state so the Header trigger and MobileNavBar surface cannot drift. Any shell boundary that removes either endpoint closes the transient menu; the legacy More drawer remains MobileNavBar-owned.
+  */
+  useEffect(() => {
+    setAlphaMenuOpen(false);
+  }, [alphaUpdatesEnabled, currentProject?.id, isMobile, mobileKeyboardOpen, modalManager.anyModalOpen, viewMode]);
   const rightDockActive = rightDockEnabled && !isMobile && executorFooterVisible;
   const sidebarActive = leftSidebarNavEnabled && !isMobile && executorFooterVisible;
   const agentOnboardingEnabled = experimentalFeatures.agentOnboarding === true;
@@ -2047,7 +2054,8 @@ function AppInner() {
         projectId={currentProject?.id}
         mobileNavEnabled={isMobile}
         alphaUpdatesEnabled={alphaUpdatesEnabled}
-        onOpenAlphaMenu={() => setAlphaMenuOpenRequest((request) => request + 1)}
+        alphaMenuOpen={alphaMenuOpen}
+        onOpenAlphaMenu={() => setAlphaMenuOpen((open) => !open)}
         leftSidebarNavActive={sidebarActive}
         rightDockAvailable={rightDockActive}
         rightDockOpen={rightDock.open}
@@ -2119,7 +2127,7 @@ function AppInner() {
           />
         )}
         <div
-          className={`project-content${executorFooterVisible && (!isMobile || !mobileKeyboardOpen) ? " project-content--with-footer" : ""}${isMobile && mobileNavVisible && !mobileKeyboardOpen ? " project-content--with-mobile-nav" : ""}`}
+          className={`project-content${executorFooterVisible && (!isMobile || !mobileKeyboardOpen) ? " project-content--with-footer" : ""}${isMobile && mobileNavVisible && !mobileKeyboardOpen && !alphaUpdatesEnabled ? " project-content--with-mobile-nav" : ""}${isMobile && mobileNavVisible && !mobileKeyboardOpen && alphaUpdatesEnabled ? " project-content--with-alpha-nav" : ""}`}
         >
           <MainContent {...mainContentProps} />
           {/*
@@ -2181,6 +2189,7 @@ function AppInner() {
           quickChatButtonMode={quickChatButtonMode}
           onToggleQuickChat={toggleChatVisibility}
           quickChatToggleAction={chatVisibilityToggleAction}
+          alphaUpdatesEnabled={alphaUpdatesEnabled}
           onOpenScripts={openScriptsWithNav}
           onRunScript={runScriptWithNav}
         />
@@ -2194,7 +2203,8 @@ function AppInner() {
         keyboardOpen={mobileNavKeyboardOpen}
         mobileNavPrimaryItems={mobileNavPrimaryItems}
         alphaUpdatesEnabled={alphaUpdatesEnabled}
-        alphaMenuOpenRequest={alphaMenuOpenRequest}
+        alphaMenuOpen={alphaMenuOpen}
+        onAlphaMenuOpenChange={setAlphaMenuOpen}
         onOpenSettings={openSettingsWithNav}
         onOpenActivityLog={openActivityLogWithNav}
         onOpenMailbox={() => handleTaskViewChange("mailbox")}

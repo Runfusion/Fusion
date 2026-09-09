@@ -116,6 +116,12 @@ non-notched devices, so this is a no-op there. Pair with viewport-fit=cover (ind
   min-width: 0;
 }
 
+/* FNXC:AlphaUpdates 2026-09-09-22:14: The sole Alpha hamburger reflects the App-owned popover state with existing control tokens; the menu surface itself remains owned by MobileNavBar's canonical destination registry. */
+.alpha-mobile-menu-trigger[aria-expanded="true"] {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
 .header-workflow-slot {
   display: inline-flex;
   align-items: center;

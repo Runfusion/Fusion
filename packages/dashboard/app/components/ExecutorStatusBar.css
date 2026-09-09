@@ -444,6 +444,14 @@ Elevating the fixed footer above `--mobile-nav-height` is only correct when the 
 
   /* Keyboard-open override: ignore ICB offset so the keyboard can cover the
      footer instead of displacing it upward by keyboard height. */
+  /*
+  FNXC:AlphaUpdates 2026-09-09-22:14:
+  Alpha leaves ExecutorStatusBar as the sole fixed footer at the viewport edge. The floating pill positions itself above this footer; the standard mobile drawer/tab shell still elevates the footer above its reserved nav bar.
+  */
+  .executor-status-bar.executor-status-bar--alpha-nav {
+    bottom: var(--icb-bottom-offset, 0px);
+  }
+
   .executor-status-bar.executor-status-bar--keyboard-open {
     bottom: 0;
   }
@@ -471,6 +479,10 @@ html[data-viewport-mode="mobile"] .executor-status-bar {
   height: calc(var(--space-lg) * 2 + var(--space-xs));
   overflow: hidden;
   bottom: calc(var(--icb-bottom-offset, 0px) + var(--mobile-nav-height) + max(env(safe-area-inset-bottom, 0px), 12px) + var(--standalone-bottom-gap));
+}
+
+html[data-viewport-mode="mobile"] .executor-status-bar.executor-status-bar--alpha-nav {
+  bottom: var(--icb-bottom-offset, 0px);
 }
 
 html[data-viewport-mode="mobile"] .executor-status-bar.executor-status-bar--keyboard-open {

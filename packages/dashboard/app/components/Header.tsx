@@ -99,7 +99,9 @@ export interface HeaderProps {
   mobileNavEnabled?: boolean;
   /** Enables the Alpha shell variants without changing legacy navigation. */
   alphaUpdatesEnabled?: boolean;
-  /** Opens the canonical MobileNavBar overflow sheet from the Alpha hamburger. */
+  /** Whether the App-owned Alpha navigation popover is open. */
+  alphaMenuOpen?: boolean;
+  /** Toggles the canonical MobileNavBar popover from the Alpha hamburger. */
   onOpenAlphaMenu?: () => void;
   /** When true on non-mobile screens, persistent left sidebar owns primary view navigation. */
   leftSidebarNavActive?: boolean;
@@ -162,6 +164,7 @@ export function Header({
   shellHost = { kind: "browser" },
   mobileNavEnabled,
   alphaUpdatesEnabled = false,
+  alphaMenuOpen = false,
   onOpenAlphaMenu,
   leftSidebarNavActive = false,
   rightDockAvailable = false,
@@ -1076,7 +1079,7 @@ export function Header({
           </button>
         )}
 
-        {/* FNXC:AlphaUpdates 2026-09-09-18:24: Mobile Alpha moves the canonical overflow trigger into the header while legacy mobile retains its established header/footer ownership. */}
+        {/* FNXC:AlphaUpdates 2026-09-09-22:14: Mobile Alpha exposes the App-owned popover state from its sole hamburger trigger; legacy mobile retains its independent footer More drawer. */}
         {isMobile && alphaUpdatesEnabled && mobileNavEnabled && (
           <button
             className="btn-icon alpha-mobile-menu-trigger"
@@ -1085,6 +1088,8 @@ export function Header({
             title={t("nav.openMenu", "Open navigation menu")}
             aria-label={t("nav.openMenu", "Open navigation menu")}
             aria-haspopup="menu"
+            aria-expanded={alphaMenuOpen}
+            aria-controls="alpha-mobile-navigation-popover"
             data-testid="alpha-mobile-menu-trigger"
           >
             <Menu size={16} />

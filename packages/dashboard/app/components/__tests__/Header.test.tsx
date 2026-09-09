@@ -93,11 +93,17 @@ describe("Header", () => {
     expect(screen.queryByRole("button", { name: "Clear search" })).toBeNull();
   });
 
-  it("renders the Alpha hamburger only in the mobile shell", () => {
+  it("renders the accessible Alpha hamburger only in the mobile shell", () => {
     const onOpenAlphaMenu = vi.fn();
-    renderHeader({ mobileNavEnabled: true, alphaUpdatesEnabled: true, onOpenAlphaMenu }, "mobile");
-    fireEvent.click(screen.getByTestId("alpha-mobile-menu-trigger"));
+    const { rerender } = renderHeader({ mobileNavEnabled: true, alphaUpdatesEnabled: true, alphaMenuOpen: false, onOpenAlphaMenu }, "mobile");
+    const trigger = screen.getByTestId("alpha-mobile-menu-trigger");
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(trigger).toHaveAttribute("aria-controls", "alpha-mobile-navigation-popover");
+    fireEvent.click(trigger);
     expect(onOpenAlphaMenu).toHaveBeenCalledOnce();
+
+    rerender(<Header onOpenSettings={noop} onOpenGitHubImport={noop} mobileNavEnabled alphaUpdatesEnabled alphaMenuOpen onOpenAlphaMenu={onOpenAlphaMenu} />);
+    expect(screen.getByTestId("alpha-mobile-menu-trigger")).toHaveAttribute("aria-expanded", "true");
   });
 
   it.each(["desktop", "tablet"] as const)("does not render the Alpha hamburger on %s", (tier) => {

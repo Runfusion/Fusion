@@ -305,7 +305,9 @@ Use the desktop/tablet right dock this way:
 
 Content views such as Mailbox, Research, Insights, **Skills & Snippets**, Memory, Evals, Goals, **Workflows**, **Import Tasks**, and **Automations** live in the left sidebar (or compact mobile navigation) rather than the right dock. On desktop/tablet, GitHub import lives under **Import Tasks**; mobile keeps compact GitHub import entries in the More surfaces.
 
-On mobile viewports, the Right Dock never renders. Standard mode keeps the existing compact Header actions and bottom `MobileNavBar`. With global **Alpha Updates** enabled, the wordmark is reduced to its logo, a header hamburger opens every available destination outside the primary set, and a floating icon-only pill provides Dashboard, Board, Planning, Chat, and Mailbox. On desktop Board and List, Alpha Updates keeps search inline in the header; tablet and mobile search retain their existing interaction.
+On mobile viewports, the Right Dock never renders. Standard mode keeps the existing compact Header actions and reserved bottom `MobileNavBar`; its **More** action continues to open the bottom drawer with backdrop, grab handle, swipe-down dismissal, and Back/Escape handling. With global **Alpha Updates** enabled, the wordmark is reduced to its logo and the header hamburger opens a compact, scrollable navigation popover below the header. That popover reuses the same destination registry, badges, feature gates, plugin views, and Scripts submenu, but it has no bottom-drawer shell or drag gesture.
+
+The Alpha icon-only pill provides Dashboard, Board, Planning, Chat, and Mailbox as a floating overlay on every supported project view. It never contributes to global content padding: the fixed executor status bar containing Waiting, Running, capacity, and Blocked is the only reserved mobile footer and stays at the viewport bottom, while the pill floats immediately above it with tokenized spacing. All Projects, full-screen modals, and the software keyboard retain their existing exclusions. On desktop Board and List, Alpha Updates keeps search inline in the header; tablet and mobile search retain their existing interaction.
 
 ## Task-detail Chat
 
