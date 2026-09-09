@@ -153,8 +153,9 @@ describe("useTaskDiffStats", () => {
       { initialProps: { taskId: "FN-100" } },
     );
 
-    // Rerender with a different taskId before the first fetch resolves
+    // Rerender with a different taskId before the first fetch resolves. No stale A state reaches B's render.
     rerender({ taskId: "FN-200" });
+    expect(result.current.stats).toBeNull();
 
     // Resolve the first (now cancelled) request
     resolveFirst!({
@@ -600,6 +601,41 @@ describe("useTaskDiffStats", () => {
 
       await waitFor(() => expect(result.current.stats).toEqual({ filesChanged: 3, additions: 10, deletions: 2 }));
       expect(result.current.loading).toBe(false);
+      expect(mockFetchTaskDiff).toHaveBeenCalledTimes(2);
+    });
+
+    it("does not expose cached stats after the active task snapshot changes without step changes", async () => {
+      mockFetchTaskDiff
+        .mockResolvedValueOnce({
+          files: [],
+          stats: { filesChanged: 1, additions: 5, deletions: 1 },
+        })
+        .mockResolvedValueOnce({
+          files: [],
+          stats: { filesChanged: 3, additions: 10, deletions: 2 },
+        });
+
+      const { result, rerender } = renderHook(
+        ({ snapshotVersion }) => useTaskDiffStats(
+          "FN-SNAPSHOT",
+          "in-progress",
+          undefined,
+          "project-a",
+          {
+            worktree: "/repo/.worktrees/fn-snapshot",
+            stepVersion: "unchanged-steps",
+            snapshotVersion,
+          },
+        ),
+        { initialProps: { snapshotVersion: "updated-1:[src/a.ts]" } },
+      );
+
+      await waitFor(() => expect(result.current.stats).toEqual({ filesChanged: 1, additions: 5, deletions: 1 }));
+
+      rerender({ snapshotVersion: "updated-2:[src/a.ts,src/b.ts,src/c.ts]" });
+      expect(result.current.stats).toBeNull();
+
+      await waitFor(() => expect(result.current.stats).toEqual({ filesChanged: 3, additions: 10, deletions: 2 }));
       expect(mockFetchTaskDiff).toHaveBeenCalledTimes(2);
     });
 

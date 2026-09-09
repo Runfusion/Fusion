@@ -208,6 +208,40 @@ describe("SettingsModal", () => {
     localStorage.setItem("fusion:settings:show-advanced", "true");
   });
 
+  it("persists Alpha Updates on and off without rewriting mobile navigation preferences", async () => {
+    const mobileNavPrimaryItems = ["settings", "planning"];
+    const settingsWithoutAlpha = {
+      ...defaultSettings,
+      mobileNavPrimaryItems,
+      experimentalFeatures: { leftSidebarNav: true },
+    };
+    mockFetchSettings.mockResolvedValue(settingsWithoutAlpha);
+    mockFetchSettingsByScope.mockResolvedValue({ global: defaultSettings, project: settingsWithoutAlpha });
+    mockUpdateGlobalSettings.mockImplementation(async (settings) => settings);
+
+    renderModal({ initialSection: "experimental" });
+    await waitForSettingsModalReady();
+
+    const alphaToggle = screen.getByRole("checkbox", { name: "Alpha Updates" });
+    expect(alphaToggle).not.toBeChecked();
+
+    vi.useFakeTimers();
+    fireEvent.click(alphaToggle);
+    await flushSettingsAutoSave();
+    expect(mockUpdateGlobalSettings).toHaveBeenLastCalledWith(expect.objectContaining({
+      experimentalFeatures: expect.objectContaining({ alphaUpdates: true }),
+    }));
+    expect(mockUpdateSettings.mock.calls.every(([patch]) => !("mobileNavPrimaryItems" in patch))).toBe(true);
+
+    fireEvent.click(alphaToggle);
+    await flushSettingsAutoSave();
+    expect(mockUpdateGlobalSettings).toHaveBeenLastCalledWith(expect.objectContaining({
+      experimentalFeatures: expect.objectContaining({ alphaUpdates: false }),
+    }));
+    expect(mockUpdateSettings.mock.calls.every(([patch]) => !("mobileNavPrimaryItems" in patch))).toBe(true);
+    vi.useRealTimers();
+  });
+
   /*
   FNXC:SettingsModalTests 2026-08-17-00:20:
   Scheduling-tab tests open `initialSection: "scheduling"` instead of remounting Authentication

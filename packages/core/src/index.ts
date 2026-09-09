@@ -2115,6 +2115,19 @@ export type { Goal, GoalCreateInput, GoalListFilter, GoalStatus, GoalUpdateInput
 export { GoalStore } from "./goals/goal-store.js";
 export type { GoalStoreEvents } from "./goals/goal-store.js";
 export { AsyncGoalStore } from "./async-stores/async-goal-store.js";
+export { AsyncNoteStore } from "./async-stores/async-note-store.js";
+export {
+  NOTE_CONTENT_MAX_LENGTH,
+  NOTE_TITLE_MAX_LENGTH,
+  NoteNotFoundError,
+  NoteRevisionConflictError,
+} from "./notes/note-types.js";
+export type {
+  ProjectNote,
+  ProjectNoteSummary,
+  ProjectNoteCreateInput,
+  ProjectNoteUpdateInput,
+} from "./notes/note-types.js";
 export type {
   GoalCitation,
   GoalCitationSurface,
@@ -2528,7 +2541,7 @@ export type {
   ResearchCancellationState,
 } from "./research/research-types.js";
 
-export { isExperimentalFeatureEnabled, GRAPH_NATIVE_POST_MERGE_FLAG, CHAT_FOCUS_FLAG } from "./config/experimental-features.js";
+export { isExperimentalFeatureEnabled, GRAPH_NATIVE_POST_MERGE_FLAG, CHAT_FOCUS_FLAG, ALPHA_UPDATES_FLAG } from "./config/experimental-features.js";
 export {
   DEFAULT_MOBILE_NAV_PRIMARY_ITEMS,
   MAX_MOBILE_NAV_PRIMARY_ITEMS,

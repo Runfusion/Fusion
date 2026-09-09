@@ -32,6 +32,8 @@ interface UseTaskDiffStatsOptions {
   worktree?: string;
   /** Version identifier that changes when steps update. Forces cache invalidation when changed. */
   stepVersion?: number | string;
+  /** Authoritative active-task snapshot version, including task metadata that can change without step updates. */
+  snapshotVersion?: number | string;
   /**
    * Done-task merge enrichment signature (e.g. landedFiles length + filesChanged).
    * For done cards this invalidates cache/refetches when mergeDetails enrichment lands,
@@ -114,6 +116,7 @@ export function useTaskDiffStats(
   const enabled = options.enabled ?? true;
   const worktree = options.worktree;
   const stepVersion = options.stepVersion;
+  const snapshotVersion = options.snapshotVersion;
   const pollIntervalMs = options.pollIntervalMs;
   const mergeSignature = options.mergeSignature;
   const columnFlags = options.columnFlags;
@@ -132,27 +135,35 @@ export function useTaskDiffStats(
   const shouldFetchDoneTask = isCompleteColumnRole(columnFlags, column);
   const shouldFetchActiveTask = isWipColumnRole(columnFlags, column)
     || isReviewColumnRole(columnFlags, column);
-  const [stats, setStats] = useState<DiffStats | null>(null);
-  const [loading, setLoading] = useState(false);
+  const activeWorktree = shouldFetchActiveTask ? worktree : undefined;
+  const stepVersionStr = stepVersion !== undefined ? String(stepVersion) : undefined;
+  const snapshotVersionStr = snapshotVersion !== undefined ? String(snapshotVersion) : undefined;
+  const mergeSignatureStr = mergeSignature !== undefined ? String(mergeSignature) : undefined;
+  const mode: "done" | "active" = shouldFetchDoneTask ? "done" : "active";
+  /*
+  FNXC:TaskCardLayout 2026-09-09-16:03:
+  Active diff cache identity includes both execution progress and the authoritative task snapshot. A new `updatedAt` or persisted `modifiedFiles` set must never synchronously repaint stats cached for an older snapshot whose steps and worktree happen to be unchanged.
+  */
+  const cacheVersion = mode === "done"
+    ? mergeSignatureStr
+    : JSON.stringify([stepVersionStr ?? null, snapshotVersionStr ?? null]);
+  const requestKey = getCacheKey(taskId, projectId, activeWorktree, cacheVersion, mode);
+  const synchronouslyCachedStats = enabled && taskId && (shouldFetchDoneTask || shouldFetchActiveTask)
+    ? getCachedStats(taskId, projectId, activeWorktree, cacheVersion, mode)
+    : null;
+  const [state, setState] = useState<{ key: string; stats: DiffStats | null; loading: boolean }>(() => ({
+    key: requestKey,
+    stats: synchronouslyCachedStats,
+    loading: false,
+  }));
 
   useEffect(() => {
     // Disabled state: return stable empty state without fetching
-    if (!enabled) {
-      setStats(null);
-      setLoading(false);
+    if (!enabled || !taskId || (!shouldFetchDoneTask && !shouldFetchActiveTask)) {
+      setState({ key: requestKey, stats: null, loading: false });
       return;
     }
 
-    if (!taskId || (!shouldFetchDoneTask && !shouldFetchActiveTask)) {
-      setStats(null);
-      setLoading(false);
-      return;
-    }
-
-    const activeWorktree = shouldFetchActiveTask ? worktree : undefined;
-    const stepVersionStr = stepVersion !== undefined ? String(stepVersion) : undefined;
-    const mergeSignatureStr = mergeSignature !== undefined ? String(mergeSignature) : undefined;
-    const mode: "done" | "active" = shouldFetchDoneTask ? "done" : "active";
     let cancelled = false;
 
     async function load(forceRefresh = false) {
@@ -165,22 +176,20 @@ export function useTaskDiffStats(
         classifies it as a column guard because the receiver is compared to the string `done`, which is
         a classifier limitation, not a site to convert.
         */
-        const cacheVersion = mode === "done" ? mergeSignatureStr : stepVersionStr;
         const cached = getCachedStats(taskId, projectId, activeWorktree, cacheVersion, mode);
         if (cached) {
           if (!cancelled) {
-            setStats(cached);
-            setLoading(false);
+            setState({ key: requestKey, stats: cached, loading: false });
           }
           return;
         }
       }
 
-      setLoading(true);
+      setState({ key: requestKey, stats: null, loading: true });
       try {
         const data = await fetchTaskDiff(taskId, activeWorktree, projectId);
         if (!cancelled) {
-          setStats(data.stats);
+          setState({ key: requestKey, stats: data.stats, loading: false });
           // Store in cache
           /*
         FNXC:WorkflowResolvedColumns 2026-07-30-03:30 DELIBERATE-LITERAL:
@@ -189,16 +198,11 @@ export function useTaskDiffStats(
         classifies it as a column guard because the receiver is compared to the string `done`, which is
         a classifier limitation, not a site to convert.
         */
-        const cacheVersion = mode === "done" ? mergeSignatureStr : stepVersionStr;
           setCachedStats(taskId, projectId, activeWorktree, cacheVersion, mode, data.stats);
         }
       } catch {
         if (!cancelled) {
-          setStats(null);
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
+          setState({ key: requestKey, stats: null, loading: false });
         }
       }
     }
@@ -221,7 +225,10 @@ export function useTaskDiffStats(
         clearInterval(timer);
       }
     };
-  }, [taskId, column, commitSha, projectId, enabled, worktree, stepVersion, mergeSignature, pollIntervalMs, shouldFetchDoneTask, shouldFetchActiveTask]);
+  }, [taskId, column, commitSha, projectId, enabled, worktree, stepVersion, snapshotVersion, mergeSignature, pollIntervalMs, shouldFetchDoneTask, shouldFetchActiveTask, requestKey, activeWorktree, cacheVersion, mode]);
 
-  return { stats, loading };
+  if (state.key !== requestKey) {
+    return { stats: synchronouslyCachedStats, loading: false };
+  }
+  return { stats: state.stats, loading: state.loading };
 }

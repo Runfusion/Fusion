@@ -115,35 +115,78 @@ function createDeferred<T>() {
   return { promise, resolve, reject };
 }
 
-describe("TaskDetailModal reset dialog", () => {
-  it("edits and submits the original description without consulting confirmation settings", async () => {
-    const onResetTask = vi.fn(async () => makeTask());
-    const addToast = vi.fn();
-    render(
-      <TaskDetailModal
-        task={makeTask({ id: "FN-001", column: "in-progress" as any, description: "Original detail request" })}
-        onClose={noop}
-        onDeleteTask={noopDelete}
-        onMergeTask={noopMerge}
-        onOpenDetail={noopOpenDetail}
-        onResetTask={onResetTask}
-        addToast={addToast}
-      />,
-    );
+function ResettableTaskDetailHarness({
+  initialTask,
+  requestReset,
+  onClose,
+}: {
+  initialTask: Task;
+  requestReset: () => Promise<Task>;
+  onClose: () => void;
+}) {
+  const [task, setTask] = React.useState(initialTask);
+  return (
+    <TaskDetailModal
+      initialTab="details"
+      task={task}
+      onClose={onClose}
+      onDeleteTask={noopDelete}
+      onMergeTask={noopMerge}
+      onOpenDetail={noopOpenDetail}
+      onResetTask={async () => {
+        const confirmed = await requestReset();
+        setTask(confirmed);
+        return confirmed;
+      }}
+      addToast={noop}
+    />
+  );
+}
 
+describe("TaskDetailModal reset dialog", () => {
+  it("replaces the populated detail snapshot before closing after confirmed Reset", async () => {
+    const initialTask = makeTask({
+      id: "FN-001",
+      column: "in-progress" as any,
+      description: "Original detail request",
+      status: "executing",
+      error: "old detail failure",
+      steps: [{ id: "old-step", title: "Old detail work", status: "done" } as Task["steps"][number]],
+      workflowStepResults: [{ stepId: "code-review", status: "failed" } as Task["workflowStepResults"][number]],
+    });
+    const { status: _status, error: _error, ...confirmedJson } = makeTask({
+      id: "FN-001",
+      column: "todo" as any,
+      description: "Corrected detail request",
+      steps: [],
+      workflowStepResults: [],
+      updatedAt: "2026-09-09T12:01:00.000Z",
+      columnMovedAt: "2026-09-09T12:01:00.000Z",
+    });
+    const deferred = createDeferred<Task>();
+    const requestReset = vi.fn(() => deferred.promise);
+    const onClose = vi.fn();
+    render(<ResettableTaskDetailHarness initialTask={initialTask} requestReset={requestReset} onClose={onClose} />);
+
+    expect(screen.getByTestId("task-detail-status-badge")).toHaveTextContent(/executing/i);
     fireEvent.click(screen.getByRole("button", { name: "Actions" }));
     fireEvent.click(await screen.findByRole("menuitem", { name: "Reset" }));
-    expect(await screen.findByTestId("task-reset-dialog")).toBeInTheDocument();
-    expect(mockConfirm).not.toHaveBeenCalled();
     expect(screen.getByTestId("task-reset-description")).toHaveValue("Original detail request");
     fireEvent.change(screen.getByTestId("task-reset-description"), { target: { value: "Corrected detail request" } });
     fireEvent.click(screen.getByTestId("task-reset-submit"));
+    expect(screen.getByTestId("task-reset-submit")).toHaveTextContent("Resetting…");
+    expect(onClose).not.toHaveBeenCalled();
 
-    await waitFor(() => expect(onResetTask).toHaveBeenCalledWith(
-      "FN-001",
-      { description: "Corrected detail request" },
-    ));
-    expect(addToast).toHaveBeenCalledWith("Reset FN-001 — fresh run will be allocated", "success");
+    await act(async () => {
+      deferred.resolve(confirmedJson as Task);
+      await deferred.promise;
+    });
+
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+    expect(document.querySelector(".detail-column-badge")).toHaveTextContent("Todo");
+    expect(screen.queryByTestId("task-detail-status-badge")).not.toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent("old detail failure");
+    expect(document.body).not.toHaveTextContent("undefined");
   });
 
   it("keeps the detail Reset call arity unchanged when the description is untouched", async () => {

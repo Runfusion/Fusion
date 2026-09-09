@@ -94,7 +94,7 @@ origin/main has since released 0072 (planning failure) and 0073 (chat recency); 
 to 0074 for the same reason.
 */
 /* FNXC:ChatSidebarPerf 2026-09-08-04:48: baseline marker includes the chat-message recency index required for index-backed sidebar previews. */
-export const SCHEMA_BASELINE_VERSION = "0074";
+export const SCHEMA_BASELINE_VERSION = "0075";
 /** FNXC:SymbolLock 2026-07-20-10:00: upgrades need durable task declarations before admission resolves symbols. */
 export const TASK_DECLARED_SYMBOLS_VERSION = "0028";
 const INITIAL_SCHEMA_VERSION = "0000";
@@ -277,6 +277,8 @@ export const PATCHNODE_ENTRIES_VERSION = "0071";
 export const TASK_PLANNING_FAILURE_VERSION = "0072";
 /** FNXC:ChatSidebarPerf 2026-09-08-04:48: upgrades need the descending per-session recency index before sidebar lateral lookups run. */
 export const CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION = "0073";
+/** FNXC:ProjectNotes 2026-09-09-17:08: upgraded projects require revision-fenced personal notes before the API is served. */
+export const PROJECT_NOTES_VERSION = "0074";
 
 /** FNXC:MemoryFocus 2026-08-13-15:57: explicit registration prevents the per-conversation memory-focus migration from being skipped. Renumbered to 0060 (FN-9037 took 0059), then 0061, then 0065 (2026-08-20) when the upstream FN-066..FN-094 batch claimed 0061-0064. */
 export const CHAT_SESSION_MEMORY_FOCUS_VERSION = "0066";
@@ -291,7 +293,7 @@ export const CHAT_SESSION_MEMORY_FOCUS_VERSION = "0066";
  * FNXC:Identity 2026-08-23-22:39: main shipped 0061-0065 after this slice, so identity is 0066.
  * FNXC:Identity 2026-08-24-00:03: main then shipped 0066 (chat session memory-focus). Identity is unreleased, so it is 0067.
  */
-export const IDENTITY_ACTORS_VERSION = "0074";
+export const IDENTITY_ACTORS_VERSION = "0075";
 
 /** SECURITY DEFINER helper that only inserts LEGACY_ADOPTION_DRAINED_MARKER. */
 export const LEGACY_ADOPTION_DRAINED_MARKER_FUNCTION = "fusion_mark_legacy_adoption_drained";
@@ -540,7 +542,8 @@ const TASK_REQUIRE_PLAN_APPROVAL_MIGRATION_PATH = join(MIGRATIONS_DIR, "0070_fn_
 const PATCHNODE_ENTRIES_MIGRATION_PATH = join(MIGRATIONS_DIR, "0071_fn_227_patchnode_entries.sql");
 const TASK_PLANNING_FAILURE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0072_fn_9273_task_planning_failure.sql");
 const CHAT_MESSAGES_SESSION_RECENCY_INDEX_MIGRATION_PATH = join(MIGRATIONS_DIR, "0073_fn_9275_chat_messages_session_recency_index.sql");
-const IDENTITY_ACTORS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0074_fn_identity_actors.sql");
+const PROJECT_NOTES_MIGRATION_PATH = join(MIGRATIONS_DIR, "0074_fn_323_project_notes.sql");
+const IDENTITY_ACTORS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0075_fn_identity_actors.sql");
 
 /**
  * Ensure the migration bookkeeping table exists. Lives in the public schema so
@@ -684,6 +687,7 @@ export async function applySchemaBaseline(
     const patchnodeEntriesAlreadyApplied = applied.includes(PATCHNODE_ENTRIES_VERSION);
     const taskPlanningFailureAlreadyApplied = applied.includes(TASK_PLANNING_FAILURE_VERSION);
     const chatMessagesSessionRecencyIndexAlreadyApplied = applied.includes(CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION);
+    const projectNotesAlreadyApplied = applied.includes(PROJECT_NOTES_VERSION);
     const identityActorsAlreadyApplied = applied.includes(IDENTITY_ACTORS_VERSION);
     assertBinaryNotOlderThanDatabase(applied);
     let schemaChanged = false;
@@ -1568,6 +1572,15 @@ export async function applySchemaBaseline(
       const migrationSql = await readFile(CHAT_MESSAGES_SESSION_RECENCY_INDEX_MIGRATION_PATH, "utf8");
       await tx.execute(sql.raw(migrationSql));
       await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    const projectNotesMissing = ((await tx.execute(sql`
+      SELECT to_regclass('project.notes') IS NULL AS missing
+    `)) as unknown as Array<{ missing: boolean }>)[0]?.missing ?? true;
+    if (!projectNotesAlreadyApplied || projectNotesMissing) {
+      const migrationSql = await readFile(PROJECT_NOTES_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${PROJECT_NOTES_VERSION}) ON CONFLICT (version) DO NOTHING`);
       schemaChanged = true;
     }
     const taskRequirePlanApprovalColumnState = (await tx.execute(sql`

@@ -54,6 +54,7 @@ import type { ChatSessionInfo } from "../../hooks/useChat";
 import { CommandCenter } from "../command-center/CommandCenter";
 import { DevServerView } from "../DevServerView";
 import { DocumentsView } from "../DocumentsView";
+import { NotesView } from "../NotesView";
 import { EvalsView } from "../EvalsView";
 import { GitHubImportModal } from "../GitHubImportModal";
 import { GoalsView } from "../GoalsView";
@@ -278,6 +279,7 @@ export interface MainContentProps {
   CommandCenter: LazyExoticComponent<typeof CommandCenter>;
   DevServerView: LazyExoticComponent<typeof DevServerView>;
   DocumentsView: LazyExoticComponent<typeof DocumentsView>;
+  NotesView: LazyExoticComponent<typeof NotesView>;
   EvalsView: LazyExoticComponent<typeof EvalsView>;
   GoalsView: LazyExoticComponent<typeof GoalsView>;
   PatchnodeView: LazyExoticComponent<typeof PatchnodeView>;

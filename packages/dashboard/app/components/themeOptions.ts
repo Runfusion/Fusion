@@ -54,6 +54,8 @@ export const COLOR_THEMES: { value: ColorTheme; label: string; className: string
   { value: "terminal", label: "Terminal", className: "theme-swatch-terminal" },
   { value: "glass", label: "Glass", className: "theme-swatch-glass" },
   { value: "glass-silver", label: "Glass Silver", className: "theme-swatch-glass-silver" },
+  // FNXC:LiquidGlassTheme 2026-09-09-15:50: Both Settings and Command Center discover Liquid Glass through this shared metadata entry, preserving one selectable affordance and the canonical persisted order.
+  { value: "liquid-glass", label: "Liquid Glass", className: "theme-swatch-liquid-glass" },
   { value: "horizon", label: "Horizon", className: "theme-swatch-horizon" },
   { value: "vitesse", label: "Vitesse", className: "theme-swatch-vitesse" },
   { value: "outrun", label: "Outrun", className: "theme-swatch-outrun" },

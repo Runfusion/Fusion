@@ -168,6 +168,7 @@ export function MainContent(props: MainContentProps) {
   CommandCenter,
   DevServerView,
   DocumentsView,
+  NotesView,
   EvalsView,
   GoalsView,
   PatchnodeView,
@@ -628,6 +629,16 @@ export function MainContent(props: MainContentProps) {
             agentOnboardingEnabled={agentOnboardingEnabled}
             focusAgent={agentAnchor}
           />
+        </Suspense>
+      </PageErrorBoundary>
+    );
+  }
+
+  if (taskView === "notes") {
+    return (
+      <PageErrorBoundary>
+        <Suspense fallback={null}>
+          <NotesView projectId={currentProject?.id} addToast={addToast} />
         </Suspense>
       </PageErrorBoundary>
     );

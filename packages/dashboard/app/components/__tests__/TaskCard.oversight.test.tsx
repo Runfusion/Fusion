@@ -377,17 +377,19 @@ describe("TaskCard workflow-effective oversight level (FN-7516 code-review fix)"
     expect(badge.className).toContain("card-oversight-badge--steer");
   });
 
-  it("renders the workflow's effective non-default level (observe) when no per-task override is set", async () => {
+  it("does not add a workflow-effective badge after the initial unversioned resolution", async () => {
     vi.mocked(fetchWorkflowSettingValues).mockResolvedValueOnce({
       stored: { plannerOversightLevel: "observe" },
       effective: { plannerOversightLevel: "observe" },
       orphaned: [],
     });
 
-    renderCard({ column: "todo" }, { workflowBadge: { workflowId: "wf-configured-observe", workflowName: "Configured Observe" } });
+    const { container } = renderCard({ column: "todo" }, { workflowBadge: { workflowId: "wf-configured-observe", workflowName: "Configured Observe" } });
+    const initialMetaBadges = container.querySelector(".card-meta-badges");
 
-    const badge = await screen.findByTestId("card-oversight-badge");
-    expect(badge.className).toContain("card-oversight-badge--observe");
+    await waitFor(() => expect(fetchWorkflowSettingValues).toHaveBeenCalledWith("wf-configured-observe", undefined));
+    expect(screen.queryByTestId("card-oversight-badge")).toBeNull();
+    expect(container.querySelector(".card-meta-badges")).toBe(initialMetaBadges);
   });
 
   it("renders no badge when the workflow's effective level explicitly resolves to autonomous (equals the inherited default) (FN-7539)", async () => {
@@ -541,15 +543,16 @@ describe("TaskCard selected-workflow oversight identity (FN-8251)", () => {
     ["aggregate observe", "observe", { workflowBadge: { workflowId: "aggregate-observe", workflowName: "Aggregate observe" } }],
     ["aggregate steer", "steer", { workflowBadge: { workflowId: "aggregate-steer", workflowName: "Aggregate steer" } }],
     ["selected workflow steer", "steer", { planningWorkflowId: "selected-steer" }],
-  ] as const)("renders the eye only after positively resolved active %s oversight", async (_surface, level, props) => {
-    vi.mocked(fetchWorkflowSettingValues).mockResolvedValueOnce({
-      stored: { plannerOversightLevel: level },
-      effective: { plannerOversightLevel: level },
-      orphaned: [],
-    });
+  ] as const)("adds the eye only after a revisioned active %s oversight event", async (_surface, level, props) => {
+    const workflowId = "workflowBadge" in props ? props.workflowBadge.workflowId : props.planningWorkflowId;
+    vi.mocked(fetchWorkflowSettingValues)
+      .mockResolvedValueOnce({ stored: { plannerOversightLevel: level }, effective: { plannerOversightLevel: level }, orphaned: [] })
+      .mockResolvedValueOnce({ stored: { plannerOversightLevel: level }, effective: { plannerOversightLevel: level }, orphaned: [] });
     renderCard(staleSnapshot("in-progress"), props);
 
+    await waitFor(() => expect(fetchWorkflowSettingValues).toHaveBeenCalledTimes(1));
     expect(screen.queryByTestId("planner-overseer-state-badge")).toBeNull();
+    act(() => notifyWorkflowSettingValuesUpdated(workflowId, undefined));
     expect(await screen.findByTestId("planner-overseer-state-badge")).toBeTruthy();
   });
 
@@ -567,7 +570,7 @@ describe("TaskCard selected-workflow oversight identity (FN-8251)", () => {
     rerender(<TaskCard task={task} onOpenDetail={noop} addToast={noop} planningWorkflowId="second-workflow" />);
 
     await waitFor(() => expect(fetchWorkflowSettingValues).toHaveBeenCalledWith("second-workflow", undefined));
-    expect(await screen.findByTestId("planner-overseer-state-badge")).toBeTruthy();
+    expect(screen.queryByTestId("planner-overseer-state-badge")).toBeNull();
   });
 
   it.each([
@@ -583,7 +586,8 @@ describe("TaskCard selected-workflow oversight identity (FN-8251)", () => {
     const task = makeTask(staleSnapshot("in-progress"));
     const firstRender = render(<TaskCard task={task} onOpenDetail={noop} addToast={noop} {...props} />);
 
-    expect(await screen.findByTestId("planner-overseer-state-badge")).toBeTruthy();
+    await waitFor(() => expect(fetchWorkflowSettingValues).toHaveBeenCalledTimes(1));
+    expect(screen.queryByTestId("planner-overseer-state-badge")).toBeNull();
     firstRender.unmount();
 
     const { container } = render(<TaskCard task={task} onOpenDetail={noop} addToast={noop} {...props} />);
@@ -601,24 +605,19 @@ describe("TaskCard selected-workflow oversight identity (FN-8251)", () => {
     ["selected mobile", 375, "mounted-selected-mobile", { planningWorkflowId: "mounted-selected-mobile" }],
     ["aggregate desktop", 1280, "mounted-aggregate-desktop", { workflowBadge: { workflowId: "mounted-aggregate-desktop", workflowName: "Aggregate" } }],
     ["aggregate mobile", 375, "mounted-aggregate-mobile", { workflowBadge: { workflowId: "mounted-aggregate-mobile", workflowName: "Aggregate" } }],
-  ] as const)("hides a mounted %s card immediately when oversight is turned off", async (_surface, width, workflowId, props) => {
+  ] as const)("updates a mounted %s card only after a revisioned oversight event", async (_surface, width, workflowId, props) => {
     Object.defineProperty(window, "innerWidth", { value: width, configurable: true });
     vi.mocked(fetchWorkflowSettingValues)
       .mockResolvedValueOnce({ stored: { plannerOversightLevel: "steer" }, effective: { plannerOversightLevel: "steer" }, orphaned: [] })
-      .mockResolvedValueOnce({ stored: { plannerOversightLevel: "off" }, effective: { plannerOversightLevel: "off" }, orphaned: [] });
-    const { container } = renderCard(staleSnapshot("in-progress"), { ...props, projectId: "project-cache-fix" });
+      .mockResolvedValueOnce({ stored: { plannerOversightLevel: "steer" }, effective: { plannerOversightLevel: "steer" }, orphaned: [] });
+    renderCard(staleSnapshot("in-progress"), { ...props, projectId: "project-cache-fix" });
 
-    expect(await screen.findByTestId("planner-overseer-state-badge")).toBeTruthy();
+    await waitFor(() => expect(fetchWorkflowSettingValues).toHaveBeenCalledTimes(1));
+    expect(screen.queryByTestId("planner-overseer-state-badge")).toBeNull();
     act(() => notifyWorkflowSettingValuesUpdated(workflowId, "project-cache-fix"));
 
-    expect(screen.queryByTestId("planner-overseer-state-badge")).toBeNull();
-    expectHeaderBadgesFreeOfOverseerEye();
-    expect(container.querySelector(".card-planner-overseer-state[title][aria-label]")).toBeNull();
+    expect(await screen.findByTestId("planner-overseer-state-badge")).toBeTruthy();
     await waitFor(() => expect(fetchWorkflowSettingValues).toHaveBeenCalledTimes(2));
-    await waitFor(() => {
-      expect(screen.queryByTestId("planner-overseer-state-badge")).toBeNull();
-      expectHeaderBadgesFreeOfOverseerEye();
-    });
   });
 
   it("ignores an older active fetch that resolves after the newer off revision", async () => {
@@ -654,7 +653,8 @@ describe("TaskCard selected-workflow oversight identity (FN-8251)", () => {
       <TaskCard task={task} onOpenDetail={noop} addToast={noop} planningWorkflowId="active-workflow" />,
     );
 
-    expect(await screen.findByTestId("planner-overseer-state-badge")).toBeTruthy();
+    await waitFor(() => expect(fetchWorkflowSettingValues).toHaveBeenCalledWith("active-workflow", undefined));
+    expect(screen.queryByTestId("planner-overseer-state-badge")).toBeNull();
     rerender(<TaskCard task={task} onOpenDetail={noop} addToast={noop} planningWorkflowId="off-workflow" />);
 
     // FNXC:PlannerOversight 2026-07-17-15:50: A useEffect reset is too late:

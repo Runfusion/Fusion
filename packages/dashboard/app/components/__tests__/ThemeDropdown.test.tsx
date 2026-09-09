@@ -7,7 +7,7 @@ import { readAppFile } from "../../test/cssFixture";
 
 // FNXC:Theme 2026-07-16-14:30: FN-8146 pins the historical Settings-grid set, including restored shadcn-mono, so a removal from COLOR_THEMES cannot make the all-themes checks pass circularly.
 // FNXC:DashboardTheming 2026-08-23-01:51: Iceberg must remain after Velvet so the Command Center theme trigger proves the shared persisted registry and global swatch contract render together.
-const EXPECTED_THEME_IDS = ['default', 'ocean', 'forest', 'sunset', 'zen', 'berry', 'high-contrast', 'industrial', 'monochrome', 'slate', 'ash', 'air', 'graphite', 'silver', 'solarized', 'factory', 'factory-mono', 'ayu', 'one-dark', 'nord', 'dracula', 'gruvbox', 'tokyo-night', 'catppuccin-mocha', 'github-dark', 'everforest', 'rose-pine', 'kanagawa', 'night-owl', 'palenight', 'monokai-pro', 'slime', 'brutalist', 'neon-city', 'parchment', 'medieval', 'terminal', 'glass', 'glass-silver', 'horizon', 'vitesse', 'outrun', 'snazzy', 'porple', 'espresso', 'mars', 'poimandres', 'ember', 'rust', 'copper', 'foundry', 'carbon', 'sandstone', 'lagoon', 'frost', 'lavender', 'neon-bloom', 'sepia', 'cobalt', 'clay', 'moss', 'aurora', 'calm', 'dawn', 'sage', 'midnight', 'velvet', 'iceberg', 'flexoki', 'cozy-cartoon', 'factory-dark', 'factory-light', 'shadcn', 'shadcn-ember', 'shadcn-custom', 'shadcn-blue', 'shadcn-green', 'shadcn-red', 'shadcn-purple', 'shadcn-pink', 'shadcn-orange', 'shadcn-yellow', 'shadcn-mono', 'shadcn-mono-red', 'shadcn-mono-blue', 'shadcn-mono-green', 'shadcn-mono-purple', 'shadcn-mono-pink', 'shadcn-mono-orange', 'shadcn-mono-yellow', 'shadcn-black', 'shadcn-gray', 'shadcn-gray-blue'] as const;
+const EXPECTED_THEME_IDS = ['default', 'ocean', 'forest', 'sunset', 'zen', 'berry', 'high-contrast', 'industrial', 'monochrome', 'slate', 'ash', 'air', 'graphite', 'silver', 'solarized', 'factory', 'factory-mono', 'ayu', 'one-dark', 'nord', 'dracula', 'gruvbox', 'tokyo-night', 'catppuccin-mocha', 'github-dark', 'everforest', 'rose-pine', 'kanagawa', 'night-owl', 'palenight', 'monokai-pro', 'slime', 'brutalist', 'neon-city', 'parchment', 'medieval', 'terminal', 'glass', 'glass-silver', 'liquid-glass', 'horizon', 'vitesse', 'outrun', 'snazzy', 'porple', 'espresso', 'mars', 'poimandres', 'ember', 'rust', 'copper', 'foundry', 'carbon', 'sandstone', 'lagoon', 'frost', 'lavender', 'neon-bloom', 'sepia', 'cobalt', 'clay', 'moss', 'aurora', 'calm', 'dawn', 'sage', 'midnight', 'velvet', 'iceberg', 'flexoki', 'cozy-cartoon', 'factory-dark', 'factory-light', 'shadcn', 'shadcn-ember', 'shadcn-custom', 'shadcn-blue', 'shadcn-green', 'shadcn-red', 'shadcn-purple', 'shadcn-pink', 'shadcn-orange', 'shadcn-yellow', 'shadcn-mono', 'shadcn-mono-red', 'shadcn-mono-blue', 'shadcn-mono-green', 'shadcn-mono-purple', 'shadcn-mono-pink', 'shadcn-mono-orange', 'shadcn-mono-yellow', 'shadcn-black', 'shadcn-gray', 'shadcn-gray-blue'] as const;
 
 function renderedThemeIds(listbox: HTMLElement) {
   return within(listbox).getAllByRole("option").map((option) => {
@@ -73,6 +73,23 @@ describe("ThemeDropdown", () => {
     const defaultOptions = screen.getAllByRole("option").filter((option) => option.textContent?.includes("(Default)"));
     expect(defaultOptions).toHaveLength(1);
     expect(defaultOptions[0]).toHaveTextContent("Shadcn Ember (Default)");
+  });
+
+  it("filters and selects Liquid Glass by keyboard with a non-empty swatch", () => {
+    const onColorThemeChange = vi.fn();
+    render(<ThemeDropdown colorTheme="glass-silver" onColorThemeChange={onColorThemeChange} />);
+
+    const trigger = screen.getByRole("button", { name: /glass silver/i });
+    fireEvent.click(trigger);
+    const filter = screen.getByRole("searchbox", { name: /filter color themes/i });
+    fireEvent.change(filter, { target: { value: "Liquid Glass" } });
+    const option = screen.getByRole("option", { name: "Liquid Glass" });
+    expect(option.querySelector(".theme-swatch-liquid-glass")).toBeTruthy();
+    expect(option.querySelectorAll(".theme-option-swatch-sample")).toHaveLength(4);
+    fireEvent.keyDown(option, { key: "Enter" });
+
+    expect(onColorThemeChange).toHaveBeenCalledWith("liquid-glass");
+    expect(screen.queryByRole("listbox")).toBeNull();
   });
 
   it("renders Glass Silver as a non-empty compact dropdown option", () => {

@@ -1,13 +1,10 @@
 // @vitest-environment node
 
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
-import path from "node:path";
-
-const repoRoot = path.resolve(__dirname, "../../../../");
+import { readAppFile } from "../../app/test/cssFixture";
 
 function readDashboardGuide(): string {
-  return readFileSync(path.join(repoRoot, "docs/dashboard-guide.md"), "utf8");
+  return readAppFile("../../../docs/dashboard-guide.md");
 }
 
 function getSectionBody(doc: string, heading: string): string {
@@ -52,5 +49,15 @@ describe("dashboard guide coverage for lazy-loaded views", () => {
 
     expect(pluginBody).toContain("Settings → Plugins → Fusion Plugins");
     expect(piBody).toContain("Settings → Plugins → Pi Extensions");
+  });
+
+  it("documents the selectable Liquid Glass web contract without claiming native parity", () => {
+    const guide = readDashboardGuide();
+
+    expect(guide).toContain("94 color themes");
+    expect(guide).toContain("Liquid Glass is an independent preset");
+    expect(guide).toContain("Board columns and cards deliberately remain more opaque");
+    expect(guide).toContain("reduced-motion, reduced-transparency, increased-contrast, and forced-color");
+    expect(guide).toContain("Apple’s publicly documented material principles for web-applicable interfaces");
   });
 });

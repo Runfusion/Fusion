@@ -1,0 +1,34 @@
+/* FNXC:ProjectNotes 2026-09-09-17:08: Notes use the shared view header and editor, with a two-pane desktop layout and a single-pane mobile drill-in so every touch target remains labeled and reachable. */
+.notes-view { display: flex; flex-direction: column; block-size: 100%; min-block-size: 0; }
+.notes-layout { display: grid; grid-template-columns: minmax(14rem, 22rem) minmax(0, 1fr); gap: var(--space-lg); padding: 0 var(--space-lg) var(--space-lg); min-block-size: 0; flex: 1; }
+.notes-list, .notes-detail { min-block-size: 0; border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface); overflow: hidden; }
+.notes-list { display: flex; flex-direction: column; }
+.notes-search { display: flex; align-items: center; gap: var(--space-sm); padding: var(--space-md); border-block-end: 1px solid var(--color-border); }
+.notes-search .input { flex: 1; min-inline-size: 0; }
+.notes-search svg, .notes-detail-toolbar svg, .notes-view .view-header svg { inline-size: var(--icon-size-md); block-size: var(--icon-size-md); }
+.notes-list-items { overflow: auto; }
+.notes-list-item { inline-size: 100%; display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-xs); padding: var(--space-md); border: 0; border-block-end: 1px solid var(--color-border); background: transparent; color: var(--color-text); text-align: start; cursor: pointer; }
+.notes-list-item:hover, .notes-list-item.active { background: var(--color-surface-hover); }
+.notes-list-item time { color: var(--color-text-muted); font-size: var(--font-size-sm); }
+.notes-detail { display: flex; flex-direction: column; }
+.notes-detail-toolbar { display: flex; align-items: center; gap: var(--space-sm); padding: var(--space-md); border-block-end: 1px solid var(--color-border); }
+.notes-title { flex: 1; min-inline-size: 8rem; font-weight: var(--font-weight-semibold); }
+.notes-save-state { color: var(--color-text-muted); font-size: var(--font-size-sm); white-space: nowrap; }
+.notes-editor { flex: 1; min-block-size: 0; overflow: auto; }
+.notes-editor .file-editor { min-block-size: 100%; }
+.notes-state { padding: var(--space-xl); color: var(--color-text-muted); text-align: center; }
+.notes-detail-empty { margin: auto; }
+.notes-conflict, .notes-error { display: flex; align-items: center; gap: var(--space-sm); padding: var(--space-md); background: color-mix(in srgb, var(--color-warning) 12%, transparent); color: var(--color-text); }
+.notes-error { background: color-mix(in srgb, var(--color-error) 12%, transparent); }
+.notes-conflict p { flex: 1; margin: 0; }
+.notes-back { display: none; }
+@media (max-width: 768px) {
+  .notes-layout { display: block; padding: 0; }
+  .notes-list, .notes-detail { block-size: 100%; border: 0; border-radius: 0; }
+  .notes-view--detail .notes-list { display: none; }
+  .notes-view:not(.notes-view--detail) .notes-detail { display: none; }
+  .notes-back { display: inline-flex; }
+  .notes-detail-toolbar { flex-wrap: wrap; }
+  .notes-title { flex-basis: calc(100% - var(--space-3xl)); }
+  .notes-save-state { margin-inline-start: auto; }
+}

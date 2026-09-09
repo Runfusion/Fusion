@@ -57,6 +57,7 @@ vi.mock("lucide-react", () => ({
   ChevronUp: () => null,
   Archive: () => null,
   MoreVertical: () => null,
+  History: () => <span data-testid="history-icon" />,
   AlertTriangle: () => null,
 }));
 
@@ -109,6 +110,25 @@ const defaultProps = {
   onOpenDetail: vi.fn(),
   addToast: vi.fn(),
 };
+
+describe("Column Alpha History", () => {
+  it("opens History from an empty custom complete lane only in Alpha", () => {
+    const onOpenHistory = vi.fn();
+    const { rerender } = render(
+      <Column {...defaultProps} column={"shipped" as ColumnType} workflowMode columnDisplayName="Shipped" columnFlags={{ complete: true }} tasks={[]} onOpenHistory={onOpenHistory} />,
+    );
+    expect(screen.queryByRole("button", { name: "Open History" })).toBeNull();
+
+    rerender(<Column {...defaultProps} column={"shipped" as ColumnType} workflowMode columnDisplayName="Shipped" columnFlags={{ complete: true }} tasks={[]} alphaUpdatesEnabled onOpenHistory={onOpenHistory} />);
+    fireEvent.click(screen.getByRole("button", { name: "Open History" }));
+    expect(onOpenHistory).toHaveBeenCalledOnce();
+  });
+
+  it("does not render History for a non-complete Alpha lane", () => {
+    render(<Column {...defaultProps} tasks={[]} workflowMode columnFlags={{ complete: false }} alphaUpdatesEnabled onOpenHistory={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: "Open History" })).toBeNull();
+  });
+});
 
 describe("Column count-flash", () => {
   it("does not apply count-flash class on initial render", () => {

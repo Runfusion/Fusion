@@ -3283,9 +3283,42 @@ describe("useTasks", () => {
   });
 
   describe("resetTask reconciliation", () => {
-    it("keeps options second, the project id last, and publishes the confirmed reset row", async () => {
-      const before = createMockTask({ id: "FN-1", column: "in-progress" as Column });
-      const confirmed = createMockTask({ ...before, column: "triage" as Column, steps: [], currentStep: 0 });
+    const populatedRun = () => createMockTask({
+      id: "FN-1",
+      description: "Original request",
+      column: "in-progress" as Column,
+      status: "executing",
+      error: "old failure",
+      steps: [{ title: "Old work", description: "stale", status: "done" }],
+      currentStep: 1,
+      workflowStepResults: [{ stepId: "code-review", status: "failed" }],
+      stepReports: [{ stepIndex: 0, summary: "stale report" }],
+      mergeRetries: 2,
+      updatedAt: "2026-09-09T12:00:00.000Z",
+      columnMovedAt: "2026-09-09T12:00:00.000Z",
+    } as Partial<Task>);
+
+    const resetJsonRow = (overrides: Partial<Task> = {}) => ({
+      id: "FN-1",
+      description: "Corrected request",
+      column: "triage" as Column,
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-09-09T12:00:00.000Z",
+      columnMovedAt: "2026-09-09T12:00:00.000Z",
+      paused: false,
+      userPaused: false,
+      workflowStepResults: [],
+      stepReports: [],
+      ...overrides,
+    }) as Task;
+
+    it("publishes an equal-clock JSON reset as the complete local and cached row", async () => {
+      const before = populatedRun();
+      const confirmed = resetJsonRow();
       mockFetchTasks.mockResolvedValueOnce([before]);
       mockResetTask.mockResolvedValue(confirmed);
       const { result } = renderHook(() => useTasks({ projectId: "proj-9", sseEnabled: false }));
@@ -3293,24 +3326,134 @@ describe("useTasks", () => {
       await waitFor(() => expect(result.current.tasks).toEqual([before]));
       mockReadCache.mockReset().mockReturnValue([before]);
 
+      let published: Task | undefined;
       await act(async () => {
-        await result.current.resetTask("FN-1", { description: "corrected" });
-        await result.current.resetTask("FN-1");
+        published = await result.current.resetTask("FN-1", { description: "Corrected request" });
       });
 
-      expect(mockResetTask).toHaveBeenNthCalledWith(
-        1,
+      expect(mockResetTask).toHaveBeenCalledWith(
         "FN-1",
-        { description: "corrected" },
+        { description: "Corrected request" },
         "proj-9",
       );
-      expect(mockResetTask).toHaveBeenNthCalledWith(2, "FN-1", undefined, "proj-9");
+      expect(published).toEqual(confirmed);
       expect(result.current.tasks).toEqual([confirmed]);
+      expect(result.current.tasks[0]).not.toHaveProperty("status");
+      expect(result.current.tasks[0]).not.toHaveProperty("error");
+      expect(result.current.tasks[0]).not.toHaveProperty("mergeRetries");
+      expect(result.current.tasks[0]).toMatchObject({ steps: [], workflowStepResults: [], stepReports: [] });
       expect(mockWriteCache).toHaveBeenCalledWith(
         `${swrCache.SWR_CACHE_KEYS.TASKS_PREFIX}proj-9`,
         [confirmed],
         { maxBytes: 500_000 },
       );
+    });
+
+    it("does not let a fetch started before Reset resurrect the prior run", async () => {
+      const before = populatedRun();
+      const confirmed = resetJsonRow();
+      let resolveRefresh!: (tasks: Task[]) => void;
+      mockReadCache.mockReturnValue([before]);
+      mockFetchTasks.mockImplementationOnce(() => new Promise<Task[]>((resolve) => {
+        resolveRefresh = resolve;
+      }));
+      mockResetTask.mockResolvedValueOnce(confirmed);
+      const { result } = renderHook(() => useTasks({ projectId: "proj-9", sseEnabled: false }));
+
+      expect(result.current.tasks).toEqual([before]);
+      await waitFor(() => expect(mockFetchTasks).toHaveBeenCalledOnce());
+      await act(async () => {
+        await result.current.resetTask("FN-1");
+      });
+      await act(async () => {
+        resolveRefresh([before]);
+        await flushPromises();
+      });
+
+      expect(result.current.tasks).toEqual([confirmed]);
+      expect(result.current.tasks[0]).not.toHaveProperty("error");
+    });
+
+    it("keeps a strictly newer SSE row that arrives while Reset is pending", async () => {
+      const before = populatedRun();
+      const confirmed = resetJsonRow();
+      let resolveReset!: (task: Task) => void;
+      mockFetchTasks.mockResolvedValueOnce([before]);
+      mockResetTask.mockReturnValue(new Promise((resolve) => { resolveReset = resolve; }));
+      const { result } = renderHook(() => useTasks({ projectId: "proj-9" }));
+      await waitFor(() => expect(result.current.tasks).toEqual([before]));
+      await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+
+      let pending!: Promise<Task>;
+      act(() => {
+        pending = result.current.resetTask("FN-1");
+      });
+      const newer = createMockTask({
+        ...confirmed,
+        column: "todo" as Column,
+        status: "planning",
+        updatedAt: "2026-09-09T12:01:00.000Z",
+        columnMovedAt: "2026-09-09T12:01:00.000Z",
+      });
+      act(() => MockEventSource.instances[0]._emit("task:updated", newer));
+      await act(async () => {
+        resolveReset(confirmed);
+        await pending;
+      });
+
+      expect(result.current.tasks[0]).toMatchObject({
+        column: "todo",
+        status: "planning",
+        updatedAt: newer.updatedAt,
+      });
+      expect(result.current.tasks[0]).not.toHaveProperty("error");
+    });
+
+    it("publishes a late Reset only to its originating project after a project switch", async () => {
+      const projectABefore = populatedRun();
+      const projectAConfirmed = resetJsonRow();
+      const projectBTask = createMockTask({
+        id: "FN-1",
+        description: "Project B task with the same local id",
+        column: "in-review" as Column,
+        status: "reviewing",
+        updatedAt: "2026-09-09T12:00:00.000Z",
+      });
+      const cachedByProject = new Map<string, Task[]>([
+        [`${swrCache.SWR_CACHE_KEYS.TASKS_PREFIX}project-a`, [projectABefore]],
+        [`${swrCache.SWR_CACHE_KEYS.TASKS_PREFIX}project-b`, [projectBTask]],
+      ]);
+      mockReadCache.mockImplementation((key) => cachedByProject.get(key) ?? null);
+      mockWriteCache.mockImplementation((key, value) => {
+        cachedByProject.set(key, value as Task[]);
+        return true;
+      });
+      mockFetchTasks.mockImplementation(async (_limit, _offset, requestProjectId) =>
+        requestProjectId === "project-a" ? [projectABefore] : [projectBTask]);
+      let resolveReset!: (task: Task) => void;
+      mockResetTask.mockReturnValueOnce(new Promise((resolve) => { resolveReset = resolve; }));
+
+      const { result, rerender } = renderHook(
+        ({ projectId }: { projectId: string }) => useTasks({ projectId, sseEnabled: false }),
+        { initialProps: { projectId: "project-a" } },
+      );
+      await waitFor(() => expect(result.current.tasks).toEqual([projectABefore]));
+
+      let pendingReset!: Promise<Task>;
+      act(() => {
+        pendingReset = result.current.resetTask("FN-1");
+      });
+      rerender({ projectId: "project-b" });
+      await waitFor(() => expect(result.current.tasks).toEqual([projectBTask]));
+
+      await act(async () => {
+        resolveReset(projectAConfirmed);
+        await pendingReset;
+      });
+
+      expect(result.current.tasks).toEqual([projectBTask]);
+      expect(cachedByProject.get(`${swrCache.SWR_CACHE_KEYS.TASKS_PREFIX}project-a`)).toEqual([projectAConfirmed]);
+      expect(cachedByProject.get(`${swrCache.SWR_CACHE_KEYS.TASKS_PREFIX}project-b`)).toEqual([projectBTask]);
     });
   });
 

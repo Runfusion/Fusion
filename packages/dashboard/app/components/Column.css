@@ -41,3 +41,9 @@ The Done scroller owns one normal-flow virtual-content block. Spacer heights and
   gap: var(--space-sm);
   color: var(--color-error);
 }
+
+/* FNXC:AlphaUpdates 2026-09-09-18:24: The complete-lane History action shares compact header controls and must shrink without colliding with count, sort, or menu actions. */
+.column-history-button {
+  flex: 0 0 auto;
+  margin-inline-start: auto;
+}

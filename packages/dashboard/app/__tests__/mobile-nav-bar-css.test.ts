@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { loadAllAppCss } from "../test/cssFixture";
-import { readFileSync } from "fs";
-import { resolve } from "path";
+import { computePublishedMobileNavHeight } from "../components/MobileNavBar";
 
 function extractRuleBlock(css: string, selector: string): string {
   const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -78,6 +77,36 @@ describe("mobile-nav-bar.css", () => {
 
   it("uses safe-area inset for bottom spacing", () => {
     expect(cssContent).toContain("env(safe-area-inset-bottom");
+  });
+
+  it("keeps the Alpha pill, executor footer, and content reservation geometrically disjoint", () => {
+    const alphaBlock = extractRuleBlock(cssContent, ".mobile-nav-bar--alpha");
+    const alphaWithFooterBlock = extractRuleBlock(cssContent, ".mobile-nav-bar--alpha.mobile-nav-bar--with-footer");
+    expect(alphaBlock).toContain("--mobile-nav-floating-gap: var(--space-sm)");
+    expect(alphaBlock).toContain("var(--mobile-nav-floating-gap)");
+    expect(alphaWithFooterBlock).toContain("var(--mobile-nav-floating-gap)");
+
+    const pillBorderBoxHeight = 54;
+    const floatingGap = 8;
+    const safeArea = 34;
+    const standaloneGap = 8;
+    const icbBottomOffset = 52;
+    const executorFooterHeight = 36;
+    const publishedNavHeight = computePublishedMobileNavHeight({
+      navOffsetHeight: pillBorderBoxHeight,
+      paddingBottom: 4,
+      tabHeights: [44, 44, 44, 44, 44],
+      floatingGap,
+    });
+
+    const pillBottom = icbBottomOffset + safeArea + standaloneGap + floatingGap;
+    const pillTop = pillBottom + pillBorderBoxHeight;
+    const executorBottom = icbBottomOffset + safeArea + standaloneGap + publishedNavHeight;
+    const reservedContentBottom = executorBottom + executorFooterHeight;
+
+    expect(publishedNavHeight).toBe(pillBorderBoxHeight + floatingGap);
+    expect(executorBottom).toBe(pillTop);
+    expect(reservedContentBottom).toBe(pillTop + executorFooterHeight);
   });
 
   it("tab bar keeps symmetric tokenized side spacing while preserving ICB compensation", () => {

@@ -97,6 +97,14 @@ type TaskWithBranchProgress = Task & { branchProgress?: BranchProgressEntry[] };
 
 // ── Mission title caching ───────────────────────────────────────────────────
 
+/*
+FNXC:TaskCardLayout 2026-09-09-16:03:
+Mission and agent identifiers are only unique inside a project. Their first-paint label caches must therefore use the same `(projectId, id)` identity as the authoritative requests, so switching projects can never paint or reuse another project's enrichment.
+*/
+function getTaskCardEntityCacheKey(id: string, projectId?: string): string {
+  return JSON.stringify([projectId ?? null, id]);
+}
+
 const missionTitleCache = new Map<string, string>();
 
 /** @internal Test helper to reset the mission title cache between tests */
@@ -105,12 +113,13 @@ export function __test_clearMissionTitleCache(): void {
 }
 
 async function getMissionTitle(missionId: string, projectId?: string): Promise<string> {
-  const cached = missionTitleCache.get(missionId);
+  const cacheKey = getTaskCardEntityCacheKey(missionId, projectId);
+  const cached = missionTitleCache.get(cacheKey);
   if (cached) return cached;
 
   try {
     const mission = await fetchMission(missionId, projectId);
-    missionTitleCache.set(missionId, mission.title);
+    missionTitleCache.set(cacheKey, mission.title);
     return mission.title;
   } catch {
     return missionId;
@@ -127,23 +136,34 @@ function abbreviateMissionTitle(title: string): string {
 // ── Assigned agent name caching ─────────────────────────────────────────────
 
 const agentNameCache = new Map<string, string>();
+const agentNameInflight = new Map<string, Promise<string>>();
 
 /** @internal Test helper to reset the assigned agent cache between tests */
 export function __test_clearAgentNameCache(): void {
   agentNameCache.clear();
+  agentNameInflight.clear();
 }
 
 async function getAgentName(agentId: string, projectId?: string): Promise<string> {
-  const cached = agentNameCache.get(agentId);
+  const cacheKey = getTaskCardEntityCacheKey(agentId, projectId);
+  const cached = agentNameCache.get(cacheKey);
   if (cached) return cached;
+  const existing = agentNameInflight.get(cacheKey);
+  if (existing) return existing;
 
-  try {
-    const agent = await fetchAgent(agentId, projectId);
-    agentNameCache.set(agentId, agent.name);
-    return agent.name;
-  } catch {
-    return agentId;
-  }
+  const request = (async () => {
+    try {
+      const agent = await fetchAgent(agentId, projectId);
+      agentNameCache.set(cacheKey, agent.name);
+      return agent.name;
+    } catch {
+      return agentId;
+    }
+  })().finally(() => {
+    agentNameInflight.delete(cacheKey);
+  });
+  agentNameInflight.set(cacheKey, request);
+  return request;
 }
 
 // ── Workflow-effective planner-oversight-level caching ─────────────────────
@@ -241,6 +261,59 @@ function abbreviateBadge(text: string, max: number): string {
   return text.slice(0, max - 3) + "...";
 }
 
+export interface TaskCardStructuralProjection {
+  filesChangedCount?: number;
+  hasFilesRegion: boolean;
+  hasMissionRegion: boolean;
+  hasAgentRegion: boolean;
+  hasOversightRegion: boolean;
+}
+
+function countDistinctPaths(paths: readonly string[] | undefined): number | undefined {
+  if (!paths) return undefined;
+  return new Set(paths.filter((path) => path.trim().length > 0)).size;
+}
+
+/**
+ * Projects every asynchronously enriched card region from first-paint data.
+ *
+ * FNXC:TaskCardLayout 2026-09-09-15:21:
+ * A local request, cache read, or viewport observer belongs to the current Task snapshot and must
+ * never create or remove a card region after first paint. Mission and agent requests may replace
+ * their identifier labels, while diff stats may refine a known positive count in place. Only a new
+ * authoritative Task snapshot or a revisioned/timestamped live event may change card structure.
+ */
+export function deriveTaskCardStructuralProjection(
+  task: Task,
+  roles: { isWip: boolean; isReview: boolean; isComplete: boolean },
+): TaskCardStructuralProjection {
+  let filesChangedCount: number | undefined;
+  if (roles.isWip || roles.isReview) {
+    filesChangedCount = countDistinctPaths(task.modifiedFiles);
+  } else if (roles.isComplete) {
+    const landedCount = countDistinctPaths(task.mergeDetails?.landedFiles);
+    const recordedCount = typeof task.mergeDetails?.filesChanged === "number"
+      ? Math.max(0, task.mergeDetails.filesChanged)
+      : undefined;
+    filesChangedCount = task.mergeDetails?.landedFilesAttributionRestricted === true
+      ? landedCount === undefined
+        ? undefined
+        : recordedCount === undefined
+          ? landedCount
+          : Math.min(landedCount, recordedCount)
+      : recordedCount ?? landedCount;
+  }
+
+  const hasTaskOversightOverride = isPlannerOversightLevelValue(task.plannerOversightLevel);
+  return {
+    filesChangedCount,
+    hasFilesRegion: typeof filesChangedCount === "number" && filesChangedCount > 0,
+    hasMissionRegion: Boolean(task.missionId),
+    hasAgentRegion: Boolean(task.assignedAgentId),
+    hasOversightRegion: hasTaskOversightOverride && task.plannerOversightLevel !== "off",
+  };
+}
+
 /*
  * FNXC:PlannerOversight 2026-07-04-00:00:
  * Short card-badge labels + CSS modifier suffixes for each non-"off" effective
@@ -257,6 +330,19 @@ const OVERSIGHT_BADGE_MODIFIER: Record<Exclude<PlannerOversightLevel, "off">, st
   steer: "steer",
   autonomous: "autonomous",
 };
+
+const EMPTY_AGENT_NAME_MAP = new Map<string, { name?: string | null }>();
+
+function haveEqualAgentNames(
+  left: ReadonlyMap<string, { name?: string | null }>,
+  right: ReadonlyMap<string, { name?: string | null }>,
+): boolean {
+  if (left.size !== right.size) return false;
+  for (const [agentId, agent] of left) {
+    if (agent.name !== right.get(agentId)?.name) return false;
+  }
+  return true;
+}
 
 function getResolvedAgentNameFromMap(
   agentId: string | undefined,
@@ -1212,6 +1298,11 @@ function TaskCardComponent({
   const isWipColumn = isWipColumnRole(taskColumnFlags, task.column);
   const isReviewColumn = isReviewColumnRole(taskColumnFlags, task.column);
   const isCompleteColumn = isCompleteColumnRole(taskColumnFlags, task.column);
+  const structuralProjection = deriveTaskCardStructuralProjection(task, {
+    isWip: isWipColumn,
+    isReview: isReviewColumn,
+    isComplete: isCompleteColumn,
+  });
 
   /*
   FNXC:WorkflowResolvedColumns 2026-07-31-03:15:
@@ -1238,8 +1329,8 @@ function TaskCardComponent({
     isWipColumn ||
     (isIntakeColumn && task.steps.some(s => s.status === "done" || s.status === "skipped"))
   );
-  const [missionTitle, setMissionTitle] = useState<string | null>(null);
-  const [agentName, setAgentName] = useState<string | null>(null);
+  const [missionTitleResolution, setMissionTitleResolution] = useState<{ key: string; title: string } | null>(null);
+  const [agentNameResolution, setAgentNameResolution] = useState<{ key: string; name: string } | null>(null);
   const [contextMenuPosition, setContextMenuPosition] = useState<{ x: number; y: number } | null>(null);
   const [isRetrying, setIsRetrying] = useState(false);
   const [isPrCreateOpen, setIsPrCreateOpen] = useState(false);
@@ -1288,6 +1379,29 @@ function TaskCardComponent({
   const [isInViewport, setIsInViewport] = useState(false);
   const { badgeUpdates, subscribeToBadge, unsubscribeFromBadge } = useBadgeWebSocket(projectId);
   const { agentsMap } = useAgentsMapCache(projectId);
+  const observedAgentsMapRef = useRef(agentsMap);
+  const [scopedAgentsMap, setScopedAgentsMap] = useState<{
+    projectId: string | undefined;
+    agentsMap: ReadonlyMap<string, { name?: string | null }>;
+  } | null>(() => projectId === undefined ? { projectId, agentsMap } : null);
+  const isAgentsMapCurrent = scopedAgentsMap !== null && scopedAgentsMap.projectId === projectId;
+  const agentsMapForCurrentProject = scopedAgentsMap !== null && scopedAgentsMap.projectId === projectId
+    ? scopedAgentsMap.agentsMap
+    : EMPTY_AGENT_NAME_MAP;
+  /*
+  FNXC:TaskCardLayout 2026-09-09-16:37:
+  useAgentsMapCache replaces its project-scoped state in an effect, so its first render after a project switch or remount can still expose the prior project's map. TaskCard must ignore that transitional map for both ownership and provenance; only the new map identity published by the hook after its project effect may become the current project's synchronous enrichment source.
+  */
+  useEffect(() => {
+    const previousAgentsMap = observedAgentsMapRef.current;
+    observedAgentsMapRef.current = agentsMap;
+    if (previousAgentsMap === agentsMap) return;
+    setScopedAgentsMap((previous) => previous !== null
+      && previous.projectId === projectId
+      && haveEqualAgentNames(previous.agentsMap, agentsMap)
+      ? previous
+      : { projectId, agentsMap });
+  }, [agentsMap, projectId]);
   const { confirm, confirmWithSelect } = useConfirm();
   const retryWarningThreshold = useRetryWarning();
   const costBadge = useCostBadge();
@@ -1320,55 +1434,52 @@ function TaskCardComponent({
   }, [task.id, task.description]);
 
 
-  // Fetch mission title when missionId is set
+  const missionResolutionKey = task.missionId
+    ? getTaskCardEntityCacheKey(task.missionId, projectId)
+    : undefined;
+  const missionTitle = task.missionId
+    ? missionTitleCache.get(missionResolutionKey!)
+      ?? (missionTitleResolution?.key === missionResolutionKey ? missionTitleResolution?.title ?? null : null)
+    : null;
+
+  // Fetch mission title when missionId is set. The keyed result cannot leak across project A → B → A switches.
   useEffect(() => {
-    if (!task.missionId) {
-      setMissionTitle(null);
-      return;
-    }
+    if (!task.missionId || !missionResolutionKey || missionTitleCache.has(missionResolutionKey)) return;
 
-    // Check cache synchronously first
-    const cached = missionTitleCache.get(task.missionId);
-    if (cached) {
-      setMissionTitle(cached);
-      return;
-    }
-
+    const key = missionResolutionKey;
     let cancelled = false;
     void getMissionTitle(task.missionId, projectId).then((title) => {
-      if (!cancelled) setMissionTitle(title);
+      if (!cancelled) setMissionTitleResolution({ key, title });
     });
     return () => { cancelled = true; };
-  }, [task.missionId, projectId]);
+  }, [task.missionId, missionResolutionKey, projectId]);
 
-  // Fetch assigned agent name when assignedAgentId is set
+  const agentResolutionKey = task.assignedAgentId
+    ? getTaskCardEntityCacheKey(task.assignedAgentId, projectId)
+    : undefined;
+  // Fetch assigned agent name when assignedAgentId is set. Render-time cache reads preserve first-paint labels.
   useEffect(() => {
-    if (!task.assignedAgentId) {
-      setAgentName(null);
-      return;
-    }
+    if (!task.assignedAgentId || !agentResolutionKey || !isAgentsMapCurrent) return;
 
-    const cachedFromMap = getResolvedAgentNameFromMap(task.assignedAgentId, agentsMap);
+    const cachedFromMap = getResolvedAgentNameFromMap(task.assignedAgentId, agentsMapForCurrentProject);
     if (cachedFromMap) {
-      agentNameCache.set(task.assignedAgentId, cachedFromMap);
-      setAgentName(cachedFromMap);
+      agentNameCache.set(agentResolutionKey, cachedFromMap);
+      setAgentNameResolution((previous) => previous?.key === agentResolutionKey && previous.name === cachedFromMap
+        ? previous
+        : { key: agentResolutionKey, name: cachedFromMap });
       return;
     }
 
-    const cached = agentNameCache.get(task.assignedAgentId);
-    if (cached) {
-      setAgentName(cached);
-      return;
-    }
+    const cached = agentNameCache.get(agentResolutionKey);
+    if (cached) return;
 
-    setAgentName(null);
-
+    const key = agentResolutionKey;
     let cancelled = false;
     void getAgentName(task.assignedAgentId, projectId).then((name) => {
-      if (!cancelled) setAgentName(name);
+      if (!cancelled) setAgentNameResolution({ key, name });
     });
     return () => { cancelled = true; };
-  }, [agentsMap, task.assignedAgentId, projectId]);
+  }, [agentsMapForCurrentProject, isAgentsMapCurrent, task.assignedAgentId, agentResolutionKey, projectId]);
 
   /*
    * FNXC:PlannerOversight 2026-07-17-15:50:
@@ -1385,6 +1496,13 @@ function TaskCardComponent({
   const workflowOversightCacheKey = workflowIdForOversight
     ? getWorkflowOversightCacheKey(workflowIdForOversight, projectId)
     : undefined;
+  const initialWorkflowRevisionByKeyRef = useRef(new Map<string, number>());
+  if (workflowIdForOversight && workflowOversightCacheKey && !initialWorkflowRevisionByKeyRef.current.has(workflowOversightCacheKey)) {
+    initialWorkflowRevisionByKeyRef.current.set(
+      workflowOversightCacheKey,
+      getWorkflowSettingValuesRevision(workflowIdForOversight, projectId),
+    );
+  }
   const [workflowOversightState, setWorkflowOversightState] = useState<WorkflowOversightResolution>({ level: undefined, resolved: false });
   useEffect(() => {
     if (!workflowIdForOversight || !workflowOversightCacheKey) {
@@ -1431,6 +1549,12 @@ function TaskCardComponent({
     : { level: undefined, resolved: false };
   const workflowOversightEffectiveLevel = currentWorkflowOversightState.level;
   const workflowOversightResolved = currentWorkflowOversightState.resolved;
+  const workflowOversightHasLiveRevision = Boolean(
+    workflowIdForOversight
+    && workflowOversightCacheKey
+    && getWorkflowSettingValuesRevision(workflowIdForOversight, projectId)
+      > (initialWorkflowRevisionByKeyRef.current.get(workflowOversightCacheKey) ?? 0),
+  );
 
   // Auto-focus and auto-resize description textarea when entering edit mode
   useEffect(() => {
@@ -1821,16 +1945,19 @@ function TaskCardComponent({
   const branchMetadata = useMemo(() => getVisibleTaskCardBranches(task), [task.id, task.branch, task.baseBranch]);
   const hasBranchMetadata = Boolean(branchMetadata.branch || branchMetadata.baseBranch);
   const isAgentCreated = isAgentCreatedTask(task);
-  const sourceAgentName = getSourceAgentName(task, agentsMap);
+  const sourceAgentName = getSourceAgentName(task, agentsMapForCurrentProject);
   const agentCreatedVisibleLabel = sourceAgentName
     ? t("tasks.createdByAgentShort", "by {{name}}", { name: abbreviateBadge(sourceAgentName, 15) })
     : t("tasks.agentLabel", "Agent");
   const agentCreatedTitle = sourceAgentName
     ? t("tasks.createdByAgentNamed", "Created by agent: {{name}}", { name: sourceAgentName })
     : t("tasks.createdByAgent", "Created by agent");
-  const assignedAgentNameFromMap = getResolvedAgentNameFromMap(task.assignedAgentId, agentsMap);
-  const assignedAgentNameFromCache = task.assignedAgentId ? agentNameCache.get(task.assignedAgentId) ?? null : null;
-  const resolvedAssignedAgentName = assignedAgentNameFromMap ?? assignedAgentNameFromCache ?? agentName;
+  const assignedAgentNameFromMap = getResolvedAgentNameFromMap(task.assignedAgentId, agentsMapForCurrentProject);
+  const assignedAgentNameFromCache = agentResolutionKey ? agentNameCache.get(agentResolutionKey) ?? null : null;
+  const assignedAgentNameFromRequest = agentResolutionKey && agentNameResolution?.key === agentResolutionKey
+    ? agentNameResolution.name
+    : null;
+  const resolvedAssignedAgentName = assignedAgentNameFromMap ?? assignedAgentNameFromCache ?? assignedAgentNameFromRequest;
   const assignedAgentBadgeLabel = resolvedAssignedAgentName ?? task.assignedAgentId ?? "";
   const isAgentNameLoading = Boolean(task.assignedAgentId && !resolvedAssignedAgentName);
   const shouldShowCreatedAgentBadge = isAgentCreated && !(
@@ -2104,6 +2231,13 @@ function TaskCardComponent({
     () => task.steps.map((s) => `${s.name}:${s.status}`).join("|"),
     [task.steps],
   );
+  const activeSnapshotVersion = useMemo(
+    () => JSON.stringify([
+      task.updatedAt ?? null,
+      [...new Set(task.modifiedFiles ?? [])].sort(),
+    ]),
+    [task.updatedAt, task.modifiedFiles],
+  );
   const mergeSignature = useMemo(() => {
     if (!isCompleteColumn) {
       return undefined;
@@ -2127,7 +2261,7 @@ function TaskCardComponent({
   }, [task.column, task.mergeDetails?.landedFiles?.length, task.mergeDetails?.filesChanged, isCompleteColumn]);
 
   // Viewport-gated diff stats fetching - only fetch when card is visible
-  const { stats: diffStats, loading: diffLoading } = useTaskDiffStats(
+  const { stats: diffStats } = useTaskDiffStats(
     task.id,
     task.column,
     task.mergeDetails?.commitSha,
@@ -2139,6 +2273,7 @@ function TaskCardComponent({
       columnFlags: taskColumnFlags,
       worktree: task.worktree,
       stepVersion: isActiveColumn ? stepVersion : undefined,
+      snapshotVersion: isActiveColumn ? activeSnapshotVersion : undefined,
       mergeSignature,
       pollIntervalMs: isActiveColumn ? 30_000 : undefined,
     },
@@ -2243,7 +2378,7 @@ function TaskCardComponent({
   );
   const isInheritedDefaultOversightLevel =
     !hasTaskOversightOverride && effectiveOversightLevel === DEFAULT_PLANNER_OVERSIGHT_LEVEL;
-  const showOversightBadge =
+  const showOversightBadge = (structuralProjection.hasOversightRegion || workflowOversightHasLiveRevision) &&
     (hasTaskOversightOverride || workflowOversightResolved) &&
     effectiveOversightLevel !== "off" &&
     !isInheritedDefaultOversightLevel;
@@ -3052,85 +3187,31 @@ function TaskCardComponent({
   const cardClass = `card${queued ? " queued" : ""}${isAgentActive ? " agent-active" : ""}${isFailed ? " failed" : ""}${isPaused ? " paused" : ""}${isExternalBlocked ? " external-blocked" : ""}${isAwaitingApproval ? " awaiting-approval plan-approval-hold" : ""}${isAwaitingInput ? " awaiting-input" : ""}${fileDragOver ? " file-drop-target" : ""}${isEditing ? " card-editing" : ""}${isSaving ? " card-saving" : ""}`;
 
   const filesChangedButton = (() => {
-    if (isWipColumn) {
-      const activeDiffCount = diffStats?.filesChanged;
-      const fallbackCount =
-        activeDiffCount == null
-          ? task.modifiedFiles?.length
-          : undefined;
-      const displayCount = activeDiffCount ?? fallbackCount;
-      if (displayCount == null || displayCount === 0) {
-        return null;
-      }
-
-      return (
-        <button
-          type="button"
-          className="card-session-files"
-          onClick={handleOpenFiles}
-          disabled={!onOpenDetailWithTab}
-        >
-          <Folder size={12} />
-          <span>{t("tasks.filesChanged", "{{count}} file changed", { count: displayCount, defaultValue_one: "{{count}} file changed", defaultValue_other: "{{count}} files changed" })}</span>
-        </button>
-      );
+    if (!structuralProjection.hasFilesRegion || structuralProjection.filesChangedCount === undefined) {
+      return null;
     }
 
-    if (isReviewColumn) {
-      const reviewDiffCount = diffStats?.filesChanged;
-      const fallbackCount =
-        reviewDiffCount == null
-          ? task.modifiedFiles?.length
-          : undefined;
-      const displayCount = reviewDiffCount ?? fallbackCount;
-      if (displayCount == null || displayCount === 0) {
-        return null;
-      }
-
-      return (
-        <button
-          type="button"
-          className="card-session-files"
-          onClick={handleOpenFiles}
-          disabled={!onOpenDetailWithTab}
-        >
-          <Folder size={12} />
-          <span>{t("tasks.filesChanged", "{{count}} file changed", { count: displayCount, defaultValue_one: "{{count}} file changed", defaultValue_other: "{{count}} files changed" })}</span>
-        </button>
-      );
-    }
-
-    if (isCompleteColumn) {
-      // Done cards only display committed diff counts from authoritative lineage
-      // stats or recorded landed files; transient execution-touched files are not shown.
-      let displayCount: number | undefined;
-      if (diffStats) {
-        const landed = task.mergeDetails?.landedFiles;
-        const restricted = task.mergeDetails?.landedFilesAttributionRestricted === true;
-        displayCount = (restricted && Array.isArray(landed))
-          ? Math.min(diffStats.filesChanged, landed.length)
-          : diffStats.filesChanged;
-      } else if (diffLoading) {
-        displayCount = task.mergeDetails?.filesChanged ?? undefined;
+    // A same-snapshot diff may refine a known positive label, but zero/error cannot retract its region.
+    let displayCount = structuralProjection.filesChangedCount;
+    if (diffStats && diffStats.filesChanged > 0) {
+      if (isCompleteColumn && task.mergeDetails?.landedFilesAttributionRestricted === true) {
+        displayCount = Math.min(displayCount, diffStats.filesChanged);
       } else {
-        displayCount = task.mergeDetails?.landedFiles?.length;
-      }
-      if (displayCount != null && displayCount > 0) {
-        return (
-          <button
-            type="button"
-            className="card-session-files"
-            onClick={handleOpenFiles}
-            disabled={!onOpenDetailWithTab}
-          >
-            <Folder size={12} />
-            <span>{t("tasks.filesChanged", "{{count}} file changed", { count: displayCount, defaultValue_one: "{{count}} file changed", defaultValue_other: "{{count}} files changed" })}</span>
-          </button>
-        );
+        displayCount = diffStats.filesChanged;
       }
     }
 
-    return null;
+    return (
+      <button
+        type="button"
+        className="card-session-files"
+        onClick={handleOpenFiles}
+        disabled={!onOpenDetailWithTab}
+      >
+        <Folder size={12} />
+        <span>{t("tasks.filesChanged", "{{count}} file changed", { count: displayCount, defaultValue_one: "{{count}} file changed", defaultValue_other: "{{count}} files changed" })}</span>
+      </button>
+    );
   })();
 
   const chipFarRight = showsTimeIndicator
