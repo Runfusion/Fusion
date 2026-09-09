@@ -654,7 +654,13 @@ export async function handleGraphFailure(
           return;
         }
       }
-      if (genuinePauseAbort && (recoverableManualHold || await deps.isBenignManualMergeHoldPauseAbort(live, result, abortProvenance, pausedAborted, resumeLanesMemo))) {
+      /*
+      FNXC:ManualMergeHoldRescue 2026-09-09-18:59:
+      A stale manual hold admitted past the durable-park guard must reach its recovery even when
+      completion finalization suppresses genuinePauseAbort; it must not fall through to retry routers.
+      Keep the genuine-pause gate for rows not already qualified by the early classifier.
+      */
+      if (recoverableManualHold || (genuinePauseAbort && await deps.isBenignManualMergeHoldPauseAbort(live, result, abortProvenance, pausedAborted, resumeLanesMemo))) {
         /*
         FNXC:WorkflowLifecycle 2026-07-09-14:56:
         FN-7749 / Runfusion#1979: auto-merge-off manual merge hold is terminal-until-human-merged, not an executor failure. Preserve the `in-review` row for Merge & Close, do not invoke merge retry, and clear only stale pause-abort status/error so FN-5147's no-backward-move/no-reenqueue contract stays intact.

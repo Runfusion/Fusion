@@ -11,7 +11,7 @@ const mergeNodes = [
   "manual-merge-hold", "merge-manual-hold", "retry-backoff", "merge-retry",
 ] as const;
 const mergeReviewSurfaces = ["in-review", "approval-desk"].flatMap((column) =>
-  mergeNodes.map((nodeId) => ({ column, nodeId })),
+  mergeNodes.flatMap((nodeId) => [false, true].map((completionFinalized) => ({ column, nodeId, completionFinalized }))),
 );
 
 function stalePauseAbortError(nodeId: string, column = "in-review"): string {
@@ -321,32 +321,52 @@ describe("merge-node paused-abort retry classification (FN-6735)", () => {
   Stale pause-abort errors are not durable merger blockers. Recover only the matching merge-node
   signature on an unpaused, human-gated review row, across aliases and workflow-renamed lanes.
   The same rows with real pause/cancel/blocker evidence must remain untouched.
+
+  FNXC:ManualMergeHoldRescue 2026-09-09-18:59:
+  Completion-finalization suppression must not strand a recognized stale manual hold or route it
+  through generic retries. Exercise the same recovery and durable-park fences with and without it.
   */
-  it.each(mergeReviewSurfaces)("clears a stale manual hold at $nodeId in $column in place", async ({ nodeId, column }) => {
+  it.each(mergeReviewSurfaces)("clears a stale manual hold at $nodeId in $column in place (completionFinalized=$completionFinalized)", async ({ nodeId, column, completionFinalized }) => {
     const { store, task, executor, mergeRequester } = makeHarness({
       column, autoMerge: undefined, paused: false, status: "failed", error: stalePauseAbortError(nodeId, column),
+      mergeRetries: 1, graphResumeRetryCount: 1,
     }, { autoMerge: false });
+    if (completionFinalized) {
+      (executor as any).markCompletionFinalized(task.id);
+      (executor as any).markPausedAborted(task.id, "hard-cancel");
+    }
     (executor as any).addActiveWorktree(task.id, task.worktree);
+    const mergeRetry = vi.spyOn(executor as any, "routeGraphMergeFailureToRetry");
+    const executionResume = vi.spyOn(executor as any, "routeGraphFailureToExecutionResume");
+    const persistTokenUsage = vi.spyOn(executor as any, "persistTokenUsage").mockResolvedValue(undefined);
 
     await invokeGraphFailure(executor, task, nodeId, "merge-finalize-blocked");
 
+    expect(mergeRetry).not.toHaveBeenCalled();
+    expect(executionResume).not.toHaveBeenCalled();
     expect(mergeRequester).not.toHaveBeenCalled();
     expect(store.updateTask).toHaveBeenCalledExactlyOnceWith(task.id, { status: null, error: null }, undefined);
+    expect(store.updateTaskAtomic).not.toHaveBeenCalled();
     expect(store.moveTask).not.toHaveBeenCalled();
-    expect(await store.getTask(task.id)).toMatchObject({ column, status: null, error: null, steps: task.steps, worktree: task.worktree });
+    expect(await store.getTask(task.id)).toMatchObject({ column, status: null, error: null, steps: task.steps, worktree: task.worktree, mergeRetries: 1, graphResumeRetryCount: 1 });
     expect((executor as any).activeWorktrees.has(task.id)).toBe(false);
     expect((executor as any).pausedAborted.has(task.id)).toBe(false);
+    expect((executor as any).pausedAbortProvenance.has(task.id)).toBe(false);
+    expect((executor as any).completionFinalizedTaskIds.has(task.id)).toBe(false);
+    expect(persistTokenUsage).toHaveBeenCalledExactlyOnceWith(task.id);
+    expect(logText(store)).toContain(`genuine=${!completionFinalized}; mergeSeam=false; completionSuppressed=${completionFinalized}`);
     expect(logText(store)).toContain("Auto-recovered: cleared stale auto-merge-off manual merge hold pause-abort failure — failure notification suppressed");
     expect(logText(store)).not.toContain("honoring park, not retrying or resuming merge");
   });
 
-  it.each(mergeReviewSurfaces)("honors the durable park when manual-hold classification rejects at $nodeId in $column", async ({ nodeId, column }) => {
+  it.each(mergeReviewSurfaces)("honors the durable park when manual-hold classification rejects at $nodeId in $column (completionFinalized=$completionFinalized)", async ({ nodeId, column, completionFinalized }) => {
     const { store, task, executor, mergeRequester } = makeHarness({
       column, autoMerge: undefined, paused: false, status: "failed", error: stalePauseAbortError(nodeId, column),
     }, { autoMerge: false });
     (executor as any).addActiveWorktree(task.id, task.worktree);
     const sharedGroupLookup = vi.spyOn(executor as any, "isLiveSharedBranchGroupMember")
       .mockRejectedValue(new Error("shared branch-group lookup unavailable"));
+    if (completionFinalized) (executor as any).completionFinalizedTaskIds.add(task.id);
     const persistTokenUsage = vi.spyOn(executor as any, "persistTokenUsage").mockResolvedValue(undefined);
     const parkedTask = structuredClone(task);
 
@@ -383,14 +403,15 @@ describe("merge-node paused-abort retry classification (FN-6735)", () => {
     { name: "different stale node", overrides: { error: stalePauseAbortError("parse") } },
   ];
   it.each(mergeReviewSurfaces.flatMap((surface) => recoveryFences.map((fence) => ({ ...surface, ...fence }))))(
-    "preserves $name at $nodeId in $column instead of clearing a manual hold",
-    async ({ nodeId, column, overrides, value, provenance, cancel, clearAbort }) => {
+    "preserves $name at $nodeId in $column instead of clearing a manual hold (completionFinalized=$completionFinalized)",
+    async ({ nodeId, column, completionFinalized, overrides, value, provenance, cancel, clearAbort }) => {
       const { store, task, executor, mergeRequester } = makeHarness({
         column, autoMerge: undefined, paused: false, status: "failed", error: stalePauseAbortError(nodeId, column), ...overrides,
       }, { autoMerge: false });
       if (provenance) (executor as any).markPausedAborted(task.id, provenance);
       if (cancel) (executor as any).userCanceledTaskIds.add(task.id);
       if (clearAbort) (executor as any).clearPausedAborted(task.id);
+      if (completionFinalized) (executor as any).completionFinalizedTaskIds.add(task.id);
 
       await invokeGraphFailure(executor, task, nodeId, value ?? "merge-finalize-blocked");
 
