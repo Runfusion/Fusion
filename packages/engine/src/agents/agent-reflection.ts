@@ -14,7 +14,7 @@ import type {
   TaskStore,
 } from "@fusion/core";
 import { createLogger } from "../logger.js";
-import { NOOP_RECALL_CAPTURE_WRITER, resolveProjectDefaultModel, columnsWithFlag, resolveWorkflowIrForTask} from "@fusion/core";
+import { NOOP_RECALL_CAPTURE_WRITER, resolveProjectDefaultModel, columnsWithFlag, resolveWorkflowIrForTask, toRunMutationContext } from "@fusion/core";
 import { createFnAgent, promptWithFallback } from "../pi.js";
 import { resolveMcpServersForStore } from "../mcp/mcp-resolution.js";
 import { createRunAuditor, generateSyntheticRunId, type EngineRunContext, type RunAuditor } from "../util/run-audit.js";
@@ -117,13 +117,13 @@ export class AgentReflectionService {
     trigger: ReflectionTrigger,
     options: { taskId?: string; triggerDetail?: string } = {},
   ): Promise<AgentReflection | null> {
-    const runContext: EngineRunContext = {
+    const runContext: EngineRunContext = toRunMutationContext({
       runId: generateSyntheticRunId("reflection", agentId),
       agentId,
       ...(options.taskId ? { taskId: options.taskId } : {}),
       phase: "reflection",
       source: trigger,
-    };
+    });
     const auditor = createRunAuditor(this.taskStore, runContext);
 
     try {
@@ -229,13 +229,13 @@ export class AgentReflectionService {
     options: { triggerDetail?: string } = {},
   ): Promise<AgentReflection | null> {
     const trigger: ReflectionTrigger = "post-task";
-    const runContext: EngineRunContext = {
+    const runContext: EngineRunContext = toRunMutationContext({
       runId: generateSyntheticRunId("reflection-capture", agentId),
       agentId,
       taskId,
       phase: "reflection",
       source: trigger,
-    };
+    });
     const auditor = createRunAuditor(this.taskStore, runContext);
 
     try {

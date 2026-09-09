@@ -7,7 +7,7 @@
  */
 import type { TaskStore } from "../store.js";
 import { TaskSelfDeleteError } from "./errors.js";
-import type { Task, GithubIssueAction } from "../types.js";
+import type { Task, GithubIssueAction, RunMutationContext } from "../types.js";
 import type { TaskDeleteAuditContext } from "../task-delete-attribution.js";
 
 export async function deleteTaskImpl(
@@ -19,6 +19,7 @@ export async function deleteTaskImpl(
     allowResurrection?: boolean;
     githubIssueAction?: GithubIssueAction;
     auditContext?: TaskDeleteAuditContext;
+    runContext?: RunMutationContext;
   },
 ): Promise<Task> {
   if (options?.auditContext?.taskId === id) {

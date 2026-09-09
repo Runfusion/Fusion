@@ -4,6 +4,7 @@
  */
 
 import type { ColumnId } from "../board/board.js";
+import type { ActorContext } from "../../identity/actor.js";
 
 export type StepStatus = "pending" | "in-progress" | "done" | "skipped";
 
@@ -56,7 +57,25 @@ export interface TaskStep {
   dependsOn?: number[];
 }
 
-/** Correlation metadata linking a task mutation to the agent run that caused it. */
+/**
+ * Correlation metadata linking a task mutation to the agent run that caused it.
+ *
+ * FNXC:Identity 2026-08-09-03:04:
+ * KTD2 — this is the carrier for the acting actor, because it is already persisted into
+ * `TaskLogEntry.runContext`, so who-did-it lands in the same row as which-run-did-it rather than in
+ * a parallel structure that can drift. A store instance cannot carry the actor instead:
+ * packages/cli/src/extension.ts caches ONE TaskStore per project root on `globalThis`, shared across
+ * concurrent agent sessions, so a store-level field would be whichever session wrote it last.
+ * `AsyncLocalStorage` is ambient convenience only — it loses context across raw callbacks,
+ * EventEmitters, and custom thenables, all of which the engine is full of — so the explicit field is
+ * the backstop that turns a lost context into a type error instead of a silent fail-open.
+ *
+ * `actor` is REQUIRED. Making the field required is this unit's job; making the `runContext?`
+ * PARAMETER required across the ~70 mutating store methods is U18's, and the two are split
+ * deliberately so a large mechanical diff does not hide inside a semantic one. Until U18 lands, a
+ * call site that passes no context at all still passes no context — the required field only
+ * constrains the sites that construct one.
+ */
 export interface RunMutationContext {
   /** The heartbeat run ID that initiated this mutation. */
   runId: string;
@@ -64,6 +83,13 @@ export interface RunMutationContext {
   agentId: string;
   /** Optional invocation source of the run (e.g., "on_demand", "timer", "assignment"). */
   source?: string;
+  /**
+   * The AUTHENTICATED actor performing the mutation, and — only for genuinely delegated work — the
+   * actor it is acting for (R5/R28). While `identity.enabled` is off this is the bootstrap actor,
+   * which is what makes a pre-enablement write distinguishable from a post-enablement one in audit
+   * (KTD22: attribution runs unconditionally; only `can()` short-circuits).
+   */
+  actor: ActorContext;
 }
 
 export interface TaskLogEntry {

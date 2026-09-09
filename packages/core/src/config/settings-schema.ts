@@ -155,6 +155,21 @@ type ProjectSettingsSchema = Omit<ProjectSettings, MovedProjectSettingsKey | Non
 /** Default values for global (user-level) settings. */
 export const DEFAULT_GLOBAL_SETTINGS = {
   /*
+  FNXC:Identity 2026-08-09-03:04:
+  The identity/authorization master switch (U5, KTD20/KTD22). DAEMON-GLOBAL, never per-project, and
+  its scope is the enforcement: one daemon serves N projects from a shared database while actors and
+  sessions are global, so a per-project switch would let an actor denied in project A operate freely
+  in project B — where every caller resolves to the bootstrap actor with full authority. Declaring it
+  here (and NOT in DEFAULT_PROJECT_SETTINGS) is what makes `isProjectSettingsKey("identityEnabled")`
+  false, so a project-scoped patch cannot carry it and no project can locally disable enforcement.
+
+  Defaults to false so existing installs behave exactly as they do today until U16 turns it on;
+  `can()` short-circuits to allow while it is off, so only the CHECK is bypassed — attribution still
+  runs. Writing this key is gated on `identity:configure` rather than `settings:update` (KTD20):
+  otherwise anyone who can edit settings could switch authorization off from inside.
+  */
+  identityEnabled: false as boolean,
+  /*
   FNXC:PostgresEmbedded 2026-07-22-23:55:
   Embedded PostgreSQL is shared by all local Fusion projects and processes.
   Deliberately undefined (not 500): getSettings() merges these defaults, so a
