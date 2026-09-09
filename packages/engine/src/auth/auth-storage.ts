@@ -1,9 +1,10 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import lockfile from "proper-lockfile";
 import {
   choosePreferredStoredCredential,
+  isSameStoredCredentialMaterial,
   getClaudeCodeCredentialPaths,
   getCodexCliAuthPath,
   readStoredCredentialsFromAuthFile,
@@ -38,6 +39,7 @@ export interface FusionAuthStorage {
   setInstance(ref: ProviderInstanceRef, credential: StoredCredential): Promise<void>;
   removeInstance(ref: ProviderInstanceRef): Promise<void>;
   getDefaultInstance(providerId: string): ProviderInstanceRef | undefined;
+  resolveInstanceRef?(provider: string): ProviderInstanceRef | undefined;
   setDefaultInstance(ref: ProviderInstanceRef): Promise<void>;
   set(provider: string, credential: StoredCredential): Promise<void>;
   remove(provider: string): Promise<void>;
@@ -143,6 +145,7 @@ the default is observable through every legacy string API; absence returns no fa
 */
 class FusionFileAuthStorage implements FusionAuthStorage {
   private data: AuthFileData = {};
+  private fileStamp: { mtimeMs: number; size: number } | undefined;
   private modelRuntime: ModelRuntime | undefined;
 
   constructor(private readonly authPath: string) { this.reload(); }
@@ -162,17 +165,29 @@ class FusionFileAuthStorage implements FusionAuthStorage {
       return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as AuthFileData : {};
     } catch { return {}; }
   }
+  private readFileStamp(): { mtimeMs: number; size: number } | undefined {
+    try {
+      const stat = statSync(this.authPath);
+      return { mtimeMs: stat.mtimeMs, size: stat.size };
+    } catch { return undefined; }
+  }
+  private revalidate(): void {
+    const stamp = this.readFileStamp();
+    if (!stamp || (this.fileStamp && stamp.mtimeMs === this.fileStamp.mtimeMs && stamp.size === this.fileStamp.size)) return;
+    this.data = this.readCurrent();
+    this.fileStamp = stamp;
+  }
   private async withLock<T>(fn: (current: AuthFileData) => Promise<{ result: T; changed: boolean }>): Promise<T> {
     return enqueueAuthWrite(this.authPath, async () => {
       this.ensureFile(); const release = await lockfile.lock(this.authPath, AUTH_LOCK_OPTIONS);
       try {
         const current = this.readCurrent(); const { result, changed } = await fn(current);
-        if (changed) { writeFileSync(this.authPath, JSON.stringify(current, null, 2), { encoding: "utf-8", mode: 0o600 }); chmodSync(this.authPath, 0o600); this.data = current; }
+        if (changed) { writeFileSync(this.authPath, JSON.stringify(current, null, 2), { encoding: "utf-8", mode: 0o600 }); chmodSync(this.authPath, 0o600); this.data = current; this.fileStamp = this.readFileStamp(); }
         return result;
       } finally { await release(); }
     });
   }
-  reload(): void { this.ensureFile(); this.data = this.readCurrent(); }
+  reload(): void { this.ensureFile(); this.data = this.readCurrent(); this.fileStamp = this.readFileStamp(); }
   private parseReadKey(key: string): ProviderInstanceRef | undefined { return parseProviderInstanceKey(key); }
   private assertRef(ref: ProviderInstanceRef): ProviderInstanceRef {
     // format validates both ids and rejects reserved provider names before any mutator locks.
@@ -207,10 +222,17 @@ class FusionFileAuthStorage implements FusionAuthStorage {
     const candidate = data[formatProviderInstanceKey(ref)];
     return isStoredAuthCredential(candidate) ? candidate : undefined;
   }
-  get(provider: string): StoredCredential | undefined { return this.credential(this.resolveReadTarget(provider, this.data)); }
-  getInstance(ref: ProviderInstanceRef): StoredCredential | undefined { try { return this.credential(this.assertRef(ref)); } catch { return undefined; } }
-  getDefaultInstance(providerId: string): ProviderInstanceRef | undefined { return this.resolveDefaultInstance(providerId, this.data); }
+  /*
+  FNXC:ProviderAuth 2026-09-09-14:02:
+  Sessions can outlive another process changing the default pointer. Revalidation improves their
+  freshness, but read-time writes must remain forbidden so a stale snapshot is non-destructive.
+  */
+  get(provider: string): StoredCredential | undefined { this.revalidate(); return this.credential(this.resolveReadTarget(provider, this.data)); }
+  getInstance(ref: ProviderInstanceRef): StoredCredential | undefined { this.revalidate(); try { return this.credential(this.assertRef(ref)); } catch { return undefined; } }
+  getDefaultInstance(providerId: string): ProviderInstanceRef | undefined { this.revalidate(); return this.resolveDefaultInstance(providerId, this.data); }
+  resolveInstanceRef(provider: string): ProviderInstanceRef | undefined { this.revalidate(); return this.resolveReadTarget(provider, this.data); }
   listInstances(providerId: string): ProviderInstanceRef[] {
+    this.revalidate();
     if (!isValidProviderId(providerId) || isReservedAuthStorageKey(providerId)) return [];
     const refs = Object.keys(this.data).map(parseProviderInstanceKey).filter((ref): ref is ProviderInstanceRef => Boolean(ref) && ref!.providerId === providerId && Boolean(this.credential(ref!, this.data)));
     const defaultRef = this.resolveDefaultInstance(providerId, this.data);
@@ -222,10 +244,10 @@ class FusionFileAuthStorage implements FusionAuthStorage {
       return a.instanceId.localeCompare(b.instanceId);
     });
   }
-  getAll(): Record<string, StoredCredential> { const result: Record<string, StoredCredential> = {}; for (const provider of this.list()) { const credential = this.get(provider); if (credential) result[provider] = credential; } return result; }
-  list(): string[] { return [...new Set(Object.keys(this.data).map(parseProviderInstanceKey).filter((ref): ref is ProviderInstanceRef => Boolean(ref) && Boolean(this.credential(ref!, this.data))).map((ref) => ref.providerId))].sort(); }
-  has(provider: string): boolean { return Boolean(this.get(provider)); }
-  hasAuth(provider: string): boolean { return this.has(provider); }
+  getAll(): Record<string, StoredCredential> { this.revalidate(); const result: Record<string, StoredCredential> = {}; for (const provider of this.list()) { const credential = this.get(provider); if (credential) result[provider] = credential; } return result; }
+  list(): string[] { this.revalidate(); return [...new Set(Object.keys(this.data).map(parseProviderInstanceKey).filter((ref): ref is ProviderInstanceRef => Boolean(ref) && Boolean(this.credential(ref!, this.data))).map((ref) => ref.providerId))].sort(); }
+  has(provider: string): boolean { this.revalidate(); return Boolean(this.get(provider)); }
+  hasAuth(provider: string): boolean { this.revalidate(); return this.has(provider); }
   async set(provider: string, credential: StoredCredential): Promise<void> {
     this.assertRefFromKey(provider);
     await this.withLock(async current => {
@@ -235,6 +257,27 @@ class FusionFileAuthStorage implements FusionAuthStorage {
     });
   }
   async setInstance(ref: ProviderInstanceRef, credential: StoredCredential): Promise<void> { this.assertRef(ref); await this.withLock(async current => { current[formatProviderInstanceKey(ref)] = credential; return { result: undefined, changed: true }; }); }
+  /*
+  FNXC:ProviderAuth 2026-09-09-14:20:
+  OAuth refreshes must compare their submitted material while holding the auth-file lock. A
+  pre-lock comparison leaves a window where another process can save a newer login before the
+  refresh write acquires the lock, so this compare-and-set refuses that stale overwrite.
+  */
+  async setInstanceIfMaterialMatches(
+    ref: ProviderInstanceRef,
+    expected: StoredCredential,
+    credential: StoredCredential,
+  ): Promise<boolean> {
+    this.assertRef(ref);
+    return this.withLock(async current => {
+      const key = formatProviderInstanceKey(ref);
+      if (!isSameStoredCredentialMaterial(this.credential(ref, current), expected)) {
+        return { result: false, changed: false };
+      }
+      current[key] = credential;
+      return { result: true, changed: true };
+    });
+  }
   private async removeRef(ref: ProviderInstanceRef): Promise<void> { await this.withLock(async current => { const key = formatProviderInstanceKey(ref); if (!isStoredAuthCredential(current[key])) return { result: undefined, changed: false }; delete current[key]; const defaults = readDefaultInstanceMap(current); if (defaults[ref.providerId] === ref.instanceId) { const next = { ...defaults }; delete next[ref.providerId]; current.__fusionDefaultInstances = next; } return { result: undefined, changed: true }; }); }
   async remove(provider: string): Promise<void> {
     this.assertRefFromKey(provider);
@@ -838,19 +881,32 @@ export function createFusionAuthStorage(): FusionAuthStorage {
       if (loggedOutProviders.has(provider)) {
         continue;
       }
+      const ref = primary.resolveInstanceRef(provider);
       const current = primary.get(provider) as StoredCredential | undefined;
-      if (!shouldHydrateStoredCredential(current, credential)) {
+      const isNamedTarget = ref && !isDefaultProviderInstance(ref.instanceId);
+      const hasMultipleInstances = primary.listInstances(provider).length > 1;
+      const differsByAccountId = typeof current?.accountId === "string"
+        && typeof credential.accountId === "string"
+        && current.accountId !== credential.accountId;
+      if (hasMultipleInstances || isNamedTarget || differsByAccountId || !shouldHydrateStoredCredential(current, credential)) {
         continue;
       }
       if (credential.type === "oauth") {
         if (typeof credential.expires !== "number" || Date.now() >= credential.expires) {
           continue;
         }
-        await primary.set(provider, credential as StoredCredential);
+        /*
+        FNXC:ProviderAuth 2026-09-09-14:02:
+        CLI hydration may refresh one bare account when identity is unknowable, but never chooses a
+        named/default instance or replaces a provably different account. Resolve its target once.
+        */
+        if (ref) await primary.setInstance(ref, credential as StoredCredential);
+        else await primary.set(provider, credential as StoredCredential);
         continue;
       }
       if (credential.type === "api_key") {
-        await primary.set(provider, credential as StoredCredential);
+        if (ref) await primary.setInstance(ref, credential as StoredCredential);
+        else await primary.set(provider, credential as StoredCredential);
       }
     }
   };
@@ -896,6 +952,7 @@ export function createFusionAuthStorage(): FusionAuthStorage {
     const refreshLockProvider = getOAuthResolutionProviderId(storageProvider);
     const refreshPromise = withOAuthRefreshLock(authPath, refreshLockProvider, async () => {
       primary.reload();
+      const writeRef = primary.resolveInstanceRef(storageProvider);
       const selectPersistedRefreshCredential = (): StoredCredential | undefined => {
         const storedCredential = primary.get(storageProvider) as StoredCredential | undefined;
         if (storedCredential?.type === "oauth" || refreshLockProvider !== ANTHROPIC_PROVIDER_ID) {
@@ -942,7 +999,20 @@ export function createFusionAuthStorage(): FusionAuthStorage {
         return latestPersistedCredential;
       }
 
-      await primary.set(storageProvider, refreshed);
+      /*
+      FNXC:ProviderAuth 2026-09-09-14:02:
+      A refresh belongs only to the concrete row whose material was submitted. A pointer move or
+      replacement during the network request is a successful fenced refusal, never a reason to copy
+      rotated OAuth material into the newly selected account.
+      */
+      if (writeRef) {
+        if (!await primary.setInstanceIfMaterialMatches(writeRef, refreshCandidate, refreshed)) {
+          primary.reload();
+          return selectPersistedRefreshCredential() ?? refreshed;
+        }
+      } else {
+        await primary.set(storageProvider, refreshed);
+      }
       return refreshed;
     })
       .then((refreshed) => {
@@ -1068,6 +1138,7 @@ export function createFusionAuthStorage(): FusionAuthStorage {
     if (!credential) {
       return undefined;
     }
+    const readRef = primary.resolveInstanceRef(storageProvider);
     const refreshWasNeeded = shouldRefreshOAuthCredential(credential);
     const refreshedCredential = await refreshProviderOAuthCredential(storageProvider, credential);
     if (refreshedCredential?.type === "oauth" && refreshedCredential.access) {
@@ -1094,7 +1165,15 @@ export function createFusionAuthStorage(): FusionAuthStorage {
           return resolveStoredCredentialApiKey(storageProvider, latestCredential);
         }
       }
-      await primary.set(storageProvider, refreshedCredential as StoredCredential);
+      /*
+      FNXC:ProviderAuth 2026-09-09-14:02:
+      Credential reads never write. When a refresh did produce new material, persist it only to the
+      row resolved before refresh, never whatever the provider default resolves to at write time.
+      */
+      if (refreshWasNeeded && refreshedCredential !== credential) {
+        if (readRef) await primary.setInstance(readRef, refreshedCredential as StoredCredential);
+        else await primary.set(storageProvider, refreshedCredential as StoredCredential);
+      }
       loggedOutProviders.delete(storageProvider);
       return resolveStoredCredentialApiKey(storageProvider, refreshedCredential);
     }
