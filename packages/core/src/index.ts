@@ -2772,6 +2772,7 @@ export {
   shouldHydrateStoredCredential,
   isSameStoredCredentialMaterial,
   isStoredAuthCredential,
+  mergeStoredCredentialPreservingMetadata,
 } from "./secrets/oauth-credential-interop.js";
 export type { StoredAuthCredential } from "./secrets/oauth-credential-interop.js";
 export {

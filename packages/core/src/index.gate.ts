@@ -2467,6 +2467,7 @@ export { CliSessionStore } from "./cli/cli-session-store.js";
 export type { CliSessionStoreEvents } from "./cli/cli-session-store.js";
 export {
   choosePreferredStoredCredential,
+  mergeStoredCredentialPreservingMetadata,
   extractClaudeCliStoredCredential,
   extractCodexCliStoredCredential,
   getClaudeCodeCredentialPaths,
