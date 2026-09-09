@@ -68,6 +68,15 @@
   font-size: 0.875rem;
 }
 
+.chat-question-response__optional {
+  margin-inline-start: var(--space-xs);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
 .chat-question-response__description,
 .chat-question-response__hint {
   margin: 0;

@@ -39,6 +39,7 @@ export function ChatQuestionResponse({
     () => parsed.questions.every((question) => isQuestionAnswerValid(question, answers[question.id])),
     [answers, parsed.questions],
   );
+  const hasOptionalQuestion = parsed.questions.some((question) => question.optional === true);
 
   useLayoutEffect(() => {
     for (const controller of autosizeControllers.current.values()) {
@@ -85,7 +86,14 @@ export function ChatQuestionResponse({
         {parsed.questions.map((question, questionIndex) => (
           <article className="chat-question-response__question" key={question.id}>
             {question.header && <p className="chat-question-response__question-header">{question.header}</p>}
-            <h4 className="chat-question-response__question-text">{question.question}</h4>
+            <h4 className="chat-question-response__question-text">
+              {question.question}
+              {!answered && question.optional === true && (
+                <span className="chat-question-response__optional" data-testid={`chat-question-response-optional-${question.id}`}>
+                  {t("chat.questionOptionalLabel", "Optional")}
+                </span>
+              )}
+            </h4>
             {question.description && <p className="chat-question-response__description">{question.description}</p>}
 
             {answered ? null : (
@@ -110,7 +118,11 @@ export function ChatQuestionResponse({
         </div>
       ) : (
         <div className="chat-question-response__actions">
-          <p className="chat-question-response__hint">{t("chat.questionSelectHint", "Answer all questions to continue the chat.")}</p>
+          <p className="chat-question-response__hint">
+            {hasOptionalQuestion
+              ? t("chat.questionSelectHintWithOptional", "Answer all required questions to continue the chat.")
+              : t("chat.questionSelectHint", "Answer all questions to continue the chat.")}
+          </p>
           <button
             type="button"
             className="btn btn-primary chat-question-response__submit"
@@ -241,7 +253,15 @@ function QuestionControls({
   );
 }
 
+/*
+ * FNXC:ChatQuestionResponse 2026-09-09-02:42:
+ * Optional questions may be submitted blank; their badge makes that affordance discoverable, and only cards containing one use the relaxed hint.
+ */
 function isQuestionAnswerValid(question: ChatQuestion, value: ChatQuestionAnswerValue | undefined): boolean {
+  if (question.optional === true && isUnanswered(value)) {
+    return true;
+  }
+
   if (question.type === "text") {
     return typeof value === "string" && value.trim().length > 0;
   }
@@ -255,4 +275,10 @@ function isQuestionAnswerValid(question: ChatQuestion, value: ChatQuestionAnswer
   }
 
   return typeof value === "string" && value.trim().length > 0;
+}
+
+function isUnanswered(value: ChatQuestionAnswerValue | undefined): boolean {
+  return value === undefined
+    || (typeof value === "string" && value.trim().length === 0)
+    || (Array.isArray(value) && value.length === 0);
 }
