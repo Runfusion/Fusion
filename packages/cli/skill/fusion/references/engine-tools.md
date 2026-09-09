@@ -18,7 +18,7 @@ This reference documents tools injected by the engine at runtime for specific ag
 
 For cross-task publication, read first and pass both returned values when practical: `{ "task_id": "FX-002", "key": "evidence", "content": "rebased evidence", "expected_revision": 3, "expected_content_hash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" }`. Revision zero is create-if-absent. A stale write is an error result with `TASK_DOCUMENT_PRECONDITION_FAILED` and current revision/hash; re-read and explicitly rebase rather than retrying unchanged. Omitted expectations preserve unconditional compatibility.
 
-Archived publication is deliberately absent from every runtime tool schema: there is no append, `allowArchived`, force, or replacement path in `fn_task_document_write`. Operators use the daemon-bearer-authenticated `POST /api/tasks/:id/documents/:key/archived-publications` API; `--no-auth` fails closed. Agent tools may read a retained archived document only when an explicit key is supplied, while keyless list mode continues to hide archived registries.
+Task archiving and archived-document publication are absent from every runtime tool schema. Agent tools may read a retained historical document only when an explicit key is supplied, while keyless list mode hides soft-deleted and historical parents.
 | `fn_task_prompt_write` | plan/spec review (Plan Review reviewer) | Replace the task's authoritative PROMPT.md with revised plan/spec content during Plan Review/spec repair; routed through TaskStore so PROMPT.md validation and task.json sync stay the single persistence path. Provide the complete final PROMPT.md content; do not implement product code from plan review | `content` (string) |
 | `fn_goal_list` | triage, executor, heartbeat | List goals with concise citation-ready snippets and active-goal warning details | `status?` (`active` \| `archived` \| `all`) |
 | `fn_goal_show` | triage, executor, heartbeat | Show one goal's full detail on demand, including the full description body | `id` (string) |
@@ -37,7 +37,7 @@ Archived publication is deliberately absent from every runtime tool schema: ther
 | `fn_workflow_update` | executor, chat, planning | Update a custom workflow definition's name/description/ir/layout (built-ins cannot be edited; same step-inversion IR constructs as create; editing `fields` orphans rather than destroys existing task values) | `workflow_id` (string), `name?` (string), `description?` (string), `ir?` (object), `layout?` (object), `rehome_to?` (string) |
 | `fn_workflow_delete` | executor, chat, planning | Delete a custom workflow definition (built-ins cannot be deleted); selecting tasks are re-homed to the default workflow's entry column | `workflow_id` (string) |
 <!-- FNXC:SkillSync 2026-06-17-23:05: Engine session-scoped `fn_*` tools registered in `packages/engine` must be mirrored in this reference because `packages/cli/src/__tests__/skill-sync.test.ts` treats the backticked tool names here as the documentation source of truth and fails the CLI + gate suites on drift. -->
-| `fn_ask_question` | chat | Ask the user a structured question that renders as an interactive chat card; after calling it, end the turn and wait for the user's next message | `questions` (array of objects with `question`, optional `header`, optional `description`, optional `type`, optional `options`, optional `multiSelect`) |
+| `fn_ask_question` | chat | Ask the user a structured question that renders as an interactive chat card; after calling it, end the turn and wait for the user's next message | `questions` (array of objects with `question`, optional `header`, optional `description`, optional `type`, optional `options`, optional `multiSelect`, optional `optional`) |
 | `fn_task_promote` | executor | Promote a held task out of a manual-release hold column (defaults to the current task); an unplanned task remains held until planning or plan review completes | `task_id?` (string) |
 | `fn_task_file_scope_add` | executor | Add one or more repo-relative files/globs to this task's declared `## File Scope` when you must edit beyond the initial scope, so edits are not stranded by the scope-aware squash merge (merge-time cross-task overlap blocking remains the backstop) | `files` (string[]) |
 | `fn_trait_list` | executor, chat, planning | List the registered column trait catalog (built-in and plugin traits) | none |
@@ -70,7 +70,7 @@ Archived publication is deliberately absent from every runtime tool schema: ther
 | Tool | Purpose | Parameters |
 |---|---|---|
 | `fn_task_list` | List active tasks during specification (duplicate check, discovery) | none |
-| `fn_task_search` | Keyword search tasks (including done/archived by default) for duplicate detection | `query` (string), `limit?` (number), `includeDone?` (boolean), `includeArchived?` (boolean) |
+| `fn_task_search` | Keyword search over live tasks for duplicate detection | `query` (string), `limit?` (number), `includeDone?` (boolean) |
 | `fn_task_show` | Fetch full task detail including PROMPT.md | `id` (string) |
 | `fn_review_spec` | Spawn spec reviewer and return `APPROVE`/`REVISE`/`RETHINK`/`UNAVAILABLE` | none |
 

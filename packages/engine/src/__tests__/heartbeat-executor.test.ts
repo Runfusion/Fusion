@@ -901,7 +901,6 @@ describe("executeHeartbeat", () => {
 
       expect(getTasksByAssignedAgent).toHaveBeenCalledWith("agent-001", {
         pausedOnly: true,
-        excludeArchived: true,
       });
       expect(pauseTask).toHaveBeenCalledTimes(1);
       expect(pauseTask).toHaveBeenCalledWith("FN-001", false);
@@ -1120,17 +1119,17 @@ describe("executeHeartbeat", () => {
       expect(result.resultJson).toEqual({ reason: "task_not_found", taskId: "FN-MISSING" });
     });
 
-    it("clears archived task assignments and falls back to a no-task heartbeat for identity agents", async () => {
+    it("clears completed task assignments and falls back to a no-task heartbeat for identity agents", async () => {
       const appendAgentLog = vi.fn().mockResolvedValue(undefined);
       mockTaskStore = createMockTaskStore({
         appendAgentLog,
         getTask: vi.fn().mockResolvedValue({
-          id: "FN-ARCHIVED",
-          title: "Archived Task",
-          description: "Archived task description",
-          prompt: "# Archived\n\nTask is archived",
+          id: "FN-COMPLETE",
+          title: "Completed Task",
+          description: "Completed task description",
+          prompt: "# Completed\n\nTask is complete",
           steps: [],
-          column: "archived",
+          column: "done",
           dependencies: [],
           log: [],
           attachments: [],
@@ -1139,7 +1138,7 @@ describe("executeHeartbeat", () => {
         } as unknown as TaskDetail),
       });
       const store = createStoreWithAgentForExec({
-        taskId: "FN-ARCHIVED",
+        taskId: "FN-COMPLETE",
         soul: "Monitor the project and handle ambient work.",
       });
       const mockSession = createMockAgentSession();
@@ -1539,11 +1538,11 @@ describe("executeHeartbeat", () => {
     it.each([
       { name: "executor display", role: "executor" as const, soul: "Re-ratchet line-count baseline specialist", runtimeConfig: undefined, expectedStatus: "auto-claim relevant tasks: enabled" },
       { name: "engineer role fallback", role: "engineer" as const, soul: "Re-ratchet line-count baseline specialist", runtimeConfig: { engineerBacklogAutoClaim: false }, expectedStatus: "auto-claim relevant tasks: enabled (compatible backlog blocked; engineerBacklogAutoClaim disabled)" },
-    ])("drops archived-while-cached candidates from heartbeat prompt and claim path for $name", async (scenario) => {
-      const archivedCachedTask = makeAutoClaimTask({
+    ])("drops completed-while-cached candidates from heartbeat prompt and claim path for $name", async (scenario) => {
+      const completedCachedTask = makeAutoClaimTask({
         id: "FN-6872",
-        title: "Re-ratchet line-count baseline archived cached title",
-        description: "Re-ratchet line-count baseline work that matched this agent before archive",
+        title: "Re-ratchet line-count baseline completed cached title",
+        description: "Re-ratchet line-count baseline work that matched this agent before completion",
         createdAt: "2026-01-01T00:00:00.000Z",
       });
       const siblingCachedTask = makeAutoClaimTask({
@@ -1552,11 +1551,11 @@ describe("executeHeartbeat", () => {
         description: "neutral queue work",
         createdAt: "2026-01-02T00:00:00.000Z",
       });
-      const archivedCanonicalTask = makeAutoClaimTask({
+      const completedCanonicalTask = makeAutoClaimTask({
         id: "FN-6872",
-        title: "Re-ratchet line-count baseline archived canonical title",
-        description: "archived within the snapshot TTL",
-        column: "archived",
+        title: "Re-ratchet line-count baseline completed canonical title",
+        description: "completed within the snapshot TTL",
+        column: "done",
         createdAt: "2026-01-01T00:00:00.000Z",
       });
       const siblingCanonicalTask = makeAutoClaimTask({
@@ -1566,8 +1565,8 @@ describe("executeHeartbeat", () => {
         createdAt: "2026-01-02T00:00:00.000Z",
       });
       const listTasks = vi.fn()
-        .mockResolvedValueOnce([archivedCachedTask, siblingCachedTask])
-        .mockResolvedValue([archivedCanonicalTask, siblingCanonicalTask]);
+        .mockResolvedValueOnce([completedCachedTask, siblingCachedTask])
+        .mockResolvedValue([completedCanonicalTask, siblingCanonicalTask]);
       const store = createStoreWithAgentForExec({
         taskId: undefined,
         role: scenario.role,
@@ -1594,8 +1593,8 @@ describe("executeHeartbeat", () => {
       expect(executionPrompt).toContain(scenario.expectedStatus);
       expect(executionPrompt).toContain("Open Task Candidates (auto-claim scan):");
       expect(executionPrompt).not.toContain("FN-6872");
-      expect(executionPrompt).not.toContain("Re-ratchet line-count baseline archived cached title");
-      expect(executionPrompt).not.toContain("Re-ratchet line-count baseline archived canonical title");
+      expect(executionPrompt).not.toContain("Re-ratchet line-count baseline completed cached title");
+      expect(executionPrompt).not.toContain("Re-ratchet line-count baseline completed canonical title");
       expect(executionPrompt).toContain("- FN-TODO: Canonical neutral queue title");
     });
 
@@ -2034,7 +2033,7 @@ describe("executeHeartbeat", () => {
       expect(executionPrompt).toContain("FN-001");
       expect(executionPrompt).toContain("FN-220");
       expect(executionPrompt).toContain("(bound)");
-      expect(getTasksByAssignedAgent).toHaveBeenCalledWith("agent-001", { excludeArchived: true });
+      expect(getTasksByAssignedAgent).toHaveBeenCalledWith("agent-001");
     });
 
     it("exits checkout_conflict without starting a session when lease is held by another agent", async () => {

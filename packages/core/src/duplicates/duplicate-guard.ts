@@ -3,7 +3,6 @@ import type { TaskStore } from "../store.js";
 import { computeContentFingerprint } from "./duplicate-detection.js";
 import { isNearDuplicateCanonicalInactive } from "./near-duplicate-canonical.js";
 import { resolveNearDuplicateCanonicalFlags } from "./near-duplicate-canonical-flags.js";
-import { resolveArchiveTargetForTask } from "../workflows/workflow-lifecycle-traits.js";
 
 /*
 FNXC:TaskCreationDeduplication 2026-07-26-06:45:
@@ -180,10 +179,10 @@ export async function reconcileDeterministicDuplicate(
     windowMs?: number;
     sourceParentTaskId?: string | null;
     logger?: { warn(msg: string, data?: Record<string, unknown>): void };
-    /** Handle a duplicate without archiving `createdTask` (e.g. claimed feature bootstrap). */
-    onDuplicate?: (canonical: Task) => Promise<"keep-created" | "archive-created">;
+    /** Choose whether a claimed bootstrap duplicate stays visible or is soft-deleted. */
+    onDuplicate?: (canonical: Task) => Promise<"keep-created" | "remove-created">;
   },
-): Promise<{ outcome: "kept" | "archived" | "kept-duplicate"; canonical: Task }> {
+): Promise<{ outcome: "kept" | "removed" | "kept-duplicate"; canonical: Task }> {
   if (!args.fingerprint) {
     return { outcome: "kept", canonical: args.createdTask };
   }
@@ -220,56 +219,14 @@ export async function reconcileDeterministicDuplicate(
       },
     });
     /*
-    FNXC:WorkflowResolvedColumns 2026-07-30-19:45 (#2808 review — coderabbit):
-    COMPENSATED, not merely documented.
-
-    The previous note here described this hazard and shipped it: the row is stamped
-    `deterministicDuplicateOf` BEFORE the move, and `moveTask` rejects a destination the workflow does
-    not declare. A rejection therefore left a task marked as an archived duplicate while still sitting
-    in an active lane — visible on the board, counted as live, and permanently mislabelled. Describing
-    a defect is not resolving it.
-
-    The stamp is rolled back and the original error rethrown, so a failed archive leaves the task
-    exactly as it was found. Compensation rather than reordering because the stamp is deliberately
-    written first — a `task:moved` subscriber reading `deterministicDuplicateOf` would see a different
-    row if the move came first, and this fix should not quietly change that ordering.
-
-    The rollback is best-effort: if it also fails, the original move error still surfaces, because
-    that is the one that explains what went wrong.
+    FNXC:TaskArchiveRemoval 2026-09-04-10:36:
+    A deterministic duplicate is not completed work. With task archiving removed, preserve its
+    reserved identity and duplicate provenance through the ordinary non-resurrectable soft-delete
+    path instead of inventing a terminal lane.
     */
-    try {
-      await store.moveTask(args.createdTask.id, await resolveArchiveTargetForTask(store, args.createdTask.id));
-    } catch (moveError) {
-      try {
-        await store.updateTask(args.createdTask.id, {
-          sourceMetadataPatch: { deterministicDuplicateOf: null },
-        });
-      } catch (rollbackError) {
-        args.logger?.warn("Failed to roll back the deterministic-duplicate stamp after a rejected archive move", {
-          taskId: args.createdTask.id,
-          error: rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
-        });
-      }
-      throw moveError;
-    }
+    await store.deleteTask(args.createdTask.id, { allowResurrection: false });
 
-    try {
-      await store.recordActivity({
-        type: "task:auto-archived-deterministic-duplicate",
-        taskId: args.createdTask.id,
-        taskTitle: args.createdTask.title,
-        details: `Auto-archived as deterministic duplicate of ${olderSibling.id}`,
-        metadata: { canonicalTaskId: olderSibling.id, contentFingerprint: args.fingerprint },
-      });
-    } catch (error) {
-      args.logger?.warn("Failed to record deterministic-duplicate activity", {
-        taskId: args.createdTask.id,
-        canonicalTaskId: olderSibling.id,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-
-    return { outcome: "archived", canonical: olderSibling };
+    return { outcome: "removed", canonical: olderSibling };
   } catch (error) {
     args.logger?.warn("Deterministic duplicate reconciliation failed; keeping created task", {
       taskId: args.createdTask.id,

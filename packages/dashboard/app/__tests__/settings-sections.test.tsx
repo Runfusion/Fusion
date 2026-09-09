@@ -123,9 +123,9 @@ describe("AppearanceSection", () => {
 describe("GeneralSection", () => {
   it("hides deprecated built-ins from the workflow enablement toggles", async () => {
     vi.mocked(fetchWorkflows).mockResolvedValue([
-      { id: "builtin:coding", name: "Coding", kind: "workflow", ir: {} },
+      { id: "builtin:coding", name: "Coding (Auto)", kind: "workflow", ir: {} },
       { id: "builtin:brainstorming", name: "Brainstorming", kind: "workflow", ir: {} },
-      { id: "builtin:coding-ideas", name: "Coding (Ideas)", kind: "workflow", ir: {} },
+      { id: "builtin:coding-ideas-v2", name: "Coding (Ideas)", kind: "workflow", ir: {} },
     ] as never);
 
     render(
@@ -141,13 +141,11 @@ describe("GeneralSection", () => {
       />,
     );
 
-    await waitFor(() => expect(screen.getByLabelText("Coding")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByLabelText("Coding (Auto)")).toBeInTheDocument());
     expect(screen.queryByLabelText("Brainstorming")).not.toBeInTheDocument();
     /*
-    FNXC:SettingsWorkflowToggles 2026-07-23-22:05:
-    PR #2378 restored builtin:coding-ideas (removed from DEPRECATED_BUILTIN_WORKFLOW_IDS),
-    so Coding (Ideas) is a live selectable built-in again and must render a toggle.
-    Brainstorming remains the deprecated built-in that must stay hidden.
+    FNXC:SettingsWorkflowToggles 2026-09-06-02:15:
+    FN-297 removes the duplicate Ideas catalog entry, so Settings renders only the surviving Coding (Ideas) toggle alongside Coding (Auto). Brainstorming remains the deprecated built-in that must stay hidden.
     */
     expect(screen.getByLabelText("Coding (Ideas)")).toBeInTheDocument();
   });

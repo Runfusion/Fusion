@@ -1,6 +1,5 @@
 import { createLogger } from "../process/logger.js";
-import { columnsWithFlag, declaresAnyLifecycleTrait } from "../workflows/workflow-lifecycle-traits.js";
-import { resolveWorkflowIrForTask } from "../workflows/workflow-ir-resolver.js";
+
 
 const severityAuditLog = createLogger("core-async-mission-store");
 /**
@@ -11,6 +10,7 @@ const severityAuditLog = createLogger("core-async-mission-store");
  * events; reusable SQL and row mapping live in async-mission-store-queries.ts.
  */
 import { EventEmitter } from "node:events";
+import { ValidatorRunOwnershipLostError, type GeneratedFixFeatureOptions } from "../missions/mission-types.js";
 import { and, desc, eq, inArray, notInArray, sql } from "drizzle-orm";
 import * as schema from "../postgres/schema/index.js";
 import type { AsyncDataLayer } from "../postgres/data-layer.js";
@@ -59,7 +59,7 @@ import type { Goal } from "../goals/goal-types.js";
 import {
   deriveMilestoneAcceptanceCriteriaFromFeatures,
 } from "../missions/mission-store.js";
-import { resolveProjectColumnsForRoles } from "../project-lane-vocabulary.js";
+import { ARCHIVED_SENTINEL_LANES, resolveProjectColumnsForRoles } from "../project-lane-vocabulary.js";
 import type {
   MissionSummary,
   MissionAssertionBackfillReport,
@@ -207,7 +207,7 @@ export type TerminalTaskReconciliationErrorCode =
   | "FEATURE_NOT_FOUND"
   | "TASK_NOT_FOUND"
   | "TASK_NOT_TERMINAL"
-  | "TASK_ARCHIVE_INVALID"
+  | "TASK_DELIVERY_DELETED"
   | "FEATURE_TASK_CONFLICT"
   | "TASK_FEATURE_CONFLICT";
 
@@ -1267,26 +1267,12 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
   }
 
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-30-12:50 (batch-core):
-  "Is this linked task ARCHIVED?" for the two mission guards below, resolved from the task's own
-  workflow. Keyed on the literal, a renamed board answered NO for every archived card: `deleteFeature`
-  treated an archived task as still live and refused the delete without `force`, and feature bootstrap
-  accepted an archived task as an active target.
-
-  `taskStore` is optional on this class, and a workflow that expresses no trait at all is a v1 upgrade
-  rather than a board without an archive lane — both keep the legacy id, which is the behaviour these
-  guards already had.
+  FNXC:WorkflowResolvedColumns 2026-07-30-12:50:
+  Mission linkage treats only soft-delete/historical sentinels as absent. Live workflow Complete rows
+  remain linked tasks and are not confused with deletion.
   */
-  private async archivedLanesFor(taskId: string): Promise<ReadonlySet<string>> {
-    if (!this.taskStore) return new Set(["archived"]);
-    try {
-      const ir = await resolveWorkflowIrForTask(this.taskStore, taskId);
-      if (!ir || !declaresAnyLifecycleTrait(ir)) return new Set(["archived"]);
-      const archived = columnsWithFlag(ir, "archived");
-      return archived.length > 0 ? new Set(archived) : new Set(["archived"]);
-    } catch {
-      return new Set(["archived"]);
-    }
+  private async historicalSentinelLanesFor(_taskId: string): Promise<ReadonlySet<string>> {
+    return ARCHIVED_SENTINEL_LANES;
   }
 
   async deleteFeature(id: string, force = false): Promise<void> {
@@ -1294,7 +1280,7 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
     if (!feature) throw new Error(`Feature ${id} not found`);
     if (feature.taskId) {
       const linkedTask = await getLiveTaskById(this.db, feature.taskId);
-      const linkedToLiveTask = linkedTask && !(await this.archivedLanesFor(feature.taskId)).has(linkedTask.column);
+      const linkedToLiveTask = linkedTask && !(await this.historicalSentinelLanesFor(feature.taskId)).has(linkedTask.column);
       if (linkedToLiveTask && !force) {
         throw new Error(`Feature ${id} is linked to task ${feature.taskId}; pass force to delete anyway`);
       }
@@ -1327,7 +1313,7 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
 
   /**
    * FNXC:MissionReconciliation 2026-07-20-08:34:
-   * Shipped-delivery repair is a dedicated transaction, not ordinary feature linking. It accepts only a live done row or the supported retained archived tombstone+cold snapshot, preserves conflict guards, leaves loop attempts and mission run controls untouched, and updates only the live task backlink because archived evidence must never be resurrected.
+   * Shipped-delivery repair is a dedicated transaction, not ordinary feature linking. It accepts only a live workflow Complete row, preserves conflict guards, leaves loop attempts and mission run controls untouched, and never turns deleted or historical evidence into delivery proof.
    */
   async reconcileFeatureDoneWithTerminalTask(featureId: string, taskId: string): Promise<MissionFeature> {
     const outcome = await this.layer.transactionImmediate(async (tx) => {
@@ -1358,7 +1344,6 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
       const terminalColumns = this.taskStore
         ? {
             complete: await resolveProjectColumnsForRoles(this.taskStore, ["complete"]).catch(() => undefined),
-            archived: await resolveProjectColumnsForRoles(this.taskStore, ["archived"]).catch(() => undefined),
           }
         : undefined;
       const evidence = await getTerminalTaskEvidence(tx, taskId, terminalColumns);
@@ -1368,21 +1353,21 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
       if (evidence.kind === "nonterminal") {
         throw new TerminalTaskReconciliationError(
           "TASK_NOT_TERMINAL",
-          `Delivery task ${taskId} must be in done or supported archived state, not ${evidence.column}`,
+          `Delivery task ${taskId} must be in a workflow Complete column, not ${evidence.column}`,
         );
       }
       if (evidence.kind === "invalid-deleted") {
         throw new TerminalTaskReconciliationError(
-          "TASK_ARCHIVE_INVALID",
-          `Delivery task ${taskId} is deleted or archived without a valid retained tombstone and archive snapshot`,
+          "TASK_DELIVERY_DELETED",
+          `Delivery task ${taskId} is deleted or historical and cannot prove delivery`,
         );
       }
 
       /*
       FNXC:MissionFeatureClaimRace 2026-08-19-21:24 (RUFU-134 / PR #3491 Greptile P1):
       A live done target is claimable by concurrent link/re-point; hold its row lock before the
-      conflict check so two claimants cannot both observe it as unclaimed. The archived-tombstone
-      arm is soft-deleted and unclaimable by design, so it needs no lock.
+      conflict check so two claimants cannot both observe it as unclaimed. Deleted and historical
+      rows are rejected before this point.
       */
       if (evidence.kind === "done") {
         await lockLiveTaskForClaim(tx, taskId);
@@ -1512,7 +1497,7 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
         sql`${schema.project.tasks.deletedAt} is null`,
       ));
     const task = taskRows[0];
-    if (!task || (await this.archivedLanesFor(input.taskId)).has(task.column)) {
+    if (!task || (await this.historicalSentinelLanesFor(input.taskId)).has(task.column)) {
       throw new Error(`Cannot bootstrap feature ${input.featureId}: task ${input.taskId} is not active in this project`);
     }
     if (task.missionId !== input.missionId || task.sliceId !== input.sliceId) {
@@ -1561,13 +1546,11 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
 
   /**
    * Keep the task that atomically claimed a defined Feature as the sole live
-   * deterministic-duplicate canonical. This compensates for a duplicate that
-   * became visible only after the create preflight, without ever allowing the
-   * generic intake path to archive feature.taskId.
+   * deterministic-duplicate canonical. A late unclaimed duplicate is soft-deleted
+   * atomically so no live task is moved into the removed archive lane.
    */
-  async archiveDefinedFeatureBootstrapDuplicate(input: { featureId: string; taskId: string; duplicateTaskId: string }): Promise<void> {
-    /* Resolved once, outside the transaction: both guards below ask the same question. */
-    const claimedArchivedLanes = await this.archivedLanesFor(input.taskId);
+  async deleteDefinedFeatureBootstrapDuplicate(input: { featureId: string; taskId: string; duplicateTaskId: string }): Promise<void> {
+    const deletedSentinelLanes = await this.historicalSentinelLanesFor(input.taskId);
     /*
     FNXC:MissionAdmission 2026-07-23-21:10:
     Project-agnostic legacy stores remain scoped to their reserved RLS
@@ -1577,9 +1560,9 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
     await this.layer.transactionImmediate(async (tx) => {
       /*
       FNXC:MissionAdmission 2026-07-23-20:00:
-      A late deterministic duplicate must not reverse the first-task claim and
-      archive feature.taskId. Verify that the feature still owns the claimed,
-      project-scoped live task, then archive only the competing live task in
+      A late deterministic duplicate must not reverse the first-task claim or
+      delete feature.taskId. Verify that the feature still owns the claimed,
+      project-scoped live task, then soft-delete only the competing live task in
       this transaction. `defined` remains scheduler-ineligible throughout.
       */
       const feature = await getFeature(tx, input.featureId);
@@ -1592,13 +1575,13 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
           eq(schema.project.tasks.projectId, projectId),
           eq(schema.project.tasks.id, input.taskId),
           sql`${schema.project.tasks.deletedAt} is null`,
-          notInArray(schema.project.tasks.column, [...claimedArchivedLanes]),
+          notInArray(schema.project.tasks.column, [...deletedSentinelLanes]),
         ));
       if (!claimed[0]) throw new Error(`Cannot reconcile defined-feature bootstrap duplicate: claimed task ${input.taskId} is not live`);
       /*
       FNXC:MissionAdmission 2026-07-23-21:10:
       Fingerprint equality does not make work interchangeable across Features.
-      A late sibling already claimed by another Feature remains live; archiving
+      A late sibling already claimed by another Feature remains live; deleting
       it here would corrupt that Feature's canonical task. Keep both tasks and
       let each feature retain its own transactional bootstrap claim.
       */
@@ -1612,30 +1595,20 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
       const duplicateFeature = await getConflictingFeatureByTaskId(tx, input.duplicateTaskId, input.featureId);
       if (duplicateFeature) return;
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-10:10:
-      THE ARCHIVE TARGET IS RESOLVED, not the literal `archived`.
-
-      This writes `tasks.column` DIRECTLY rather than going through `moveTask`, so neither the
-      lifecycle census (which reads comparisons) nor the move-target census (which reads
-      `moveTask` call arguments) could see it. On a board whose archive lane is named anything
-      else, it parked the duplicate in a column that workflow does not declare — a card in a lane
-      the board cannot render.
-
-      `archivedLanesFor` already exists on this class for the guards above and returns the legacy
-      id when the task has no resolvable workflow, so an unconverted board is byte-identical.
-      A board declaring several archive lanes is arbitrated by taking the first; that is the same
-      choice `resolveLifecycleColumns` makes, and multiple archive lanes are not a shape the
-      builtin lineages produce.
+      FNXC:TaskArchiveRemoval 2026-09-04-14:51:
+      Deterministic duplicate cleanup uses the ordinary historical tombstone shape: `deletedAt`
+      and the internal archived sentinel are written together. It never creates a live archive-lane card.
       */
-      const duplicateArchivedLanes = await this.archivedLanesFor(input.duplicateTaskId);
-      const archiveTarget = [...duplicateArchivedLanes][0] ?? "archived";
+      const duplicateDeletedSentinelLanes = await this.historicalSentinelLanesFor(input.duplicateTaskId);
+      const deletedSentinel = [...duplicateDeletedSentinelLanes][0] ?? "archived";
+      const deletedAt = new Date().toISOString();
       await tx.update(schema.project.tasks)
-        .set({ column: archiveTarget, updatedAt: new Date().toISOString() })
+        .set({ column: deletedSentinel, deletedAt, updatedAt: deletedAt })
         .where(and(
           eq(schema.project.tasks.projectId, projectId),
           eq(schema.project.tasks.id, input.duplicateTaskId),
           sql`${schema.project.tasks.deletedAt} is null`,
-          notInArray(schema.project.tasks.column, [...duplicateArchivedLanes]),
+          notInArray(schema.project.tasks.column, [...duplicateDeletedSentinelLanes]),
         ));
     });
   }
@@ -1662,7 +1635,7 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
       const liveTask = await lockLiveTaskForClaim(tx, taskId);
       if (!liveTask) {
         throw new Error(
-          `Cannot link feature ${featureId} to task ${taskId}: task is not on the active board (it may be archived, deleted, or never existed). Only active tasks can be linked to features.`,
+          `Cannot link feature ${featureId} to task ${taskId}: task is not on the active board (it may be deleted, historical, or never existed). Only active tasks can be linked to features.`,
         );
       }
       const conflictingFeature = await getConflictingFeatureByTaskId(tx, taskId, featureId);
@@ -1762,7 +1735,7 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
       const liveTask = await lockLiveTaskForClaim(tx, taskId);
       if (!liveTask) {
         throw new Error(
-          `Cannot re-point feature ${featureId} to task ${taskId}: task is not on the active board (it may be archived, deleted, or never existed). Only active tasks can be linked to features.`,
+          `Cannot re-point feature ${featureId} to task ${taskId}: task is not on the active board (it may be deleted, historical, or never existed). Only active tasks can be linked to features.`,
         );
       }
       const conflictingFeature = await getConflictingFeatureByTaskId(tx, taskId, featureId);
@@ -1829,11 +1802,21 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
         throw new RepairNotEligibleError(featureId, options.action);
       }
       const now = new Date().toISOString();
+      const hasUnvalidatedMarker = options.action === "clear" && feature.lastValidatorStatus === "passed" && !feature.lastValidatorRunId;
+      /*
+      FNXC:MissionValidationRepair 2026-09-05-22:07:
+      The escape hatch clears any unearned marker, but only the task-less generated-fix terminal
+      shape came from #3574 and may be reopened for triage. Never reopen an ordinary done feature.
+      */
+      const appliesUnvalidatedMarker = hasUnvalidatedMarker
+        && Boolean(feature.generatedFromFeatureId || feature.generatedFromRunId)
+        && !feature.taskId
+        && feature.status === "done";
       const priorLoopState = feature.loopState;
       const priorStatus = feature.status;
       let groundTruthMetadata: Record<string, unknown> = {};
 
-      if (options.action === "clear" && feature.status === "blocked") {
+      if (options.action === "clear" && (feature.status === "blocked" || appliesUnvalidatedMarker)) {
         const fence = options.groundTruth;
         if (!fence || fence.featureId !== featureId || fence.taskId !== (feature.taskId ?? null)) {
           throw new RepairGroundTruthStaleError(featureId);
@@ -1845,16 +1828,15 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
           /*
           FNXC:MissionValidationRepair 2026-08-11-02:05:
           This verifier deliberately uses the engine producer's physical absence predicate only:
-          a missing/soft-deleted row or the legacy `archived` column. It must not resolve workflow
-          lanes under the lock; renamed archived lanes become absent only once archived physically.
+          a missing/soft-deleted row or the historical `archived` sentinel. It must not resolve workflow
+          lanes under the lock because live terminality is irrelevant to liveness.
           */
           const rows = await tx.select({ column: schema.project.tasks.column, updatedAt: schema.project.tasks.updatedAt, deletedAt: schema.project.tasks.deletedAt })
             .from(schema.project.tasks).where(and(eq(schema.project.tasks.projectId, missionProjectId()), eq(schema.project.tasks.id, fence.taskId))).for("update");
           const task = rows[0];
           /*
           FNXC:MissionValidationRepair 2026-08-11-03:04 DELIBERATE-LITERAL:
-          The locked verifier must match the producer's physical legacy-row predicate; renamed
-          archive lanes remain live until archival soft-deletes them.
+          The locked verifier must match the producer's physical historical-row predicate.
           */
           const liveness = task && !task.deletedAt && task.column !== "archived" ? "live" : "absent";
           if (fence.taskLiveness === "live") {
@@ -1881,14 +1863,14 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
       let updated: MissionFeature;
       let run: MissionValidatorRun | undefined;
       if (options.action === "clear") {
-        const currentLoop = feature.loopState;
-        const appliesLoop = currentLoop === "blocked" || currentLoop === "needs_fix";
+        const currentLoop = feature.loopState ?? "idle";
+        const appliesLoop = currentLoop === "blocked" || currentLoop === "needs_fix" || appliesUnvalidatedMarker;
         const nextLoop = appliesLoop ? options.resolvedLoopState ?? "idle" : currentLoop;
         if (appliesLoop && !FEATURE_LOOP_REPAIR_TRANSITIONS[currentLoop].includes(nextLoop!)) {
           throw new Error(`Invalid validation repair transition from '${currentLoop}' to '${nextLoop}'`);
         }
-        const appliesStatus = feature.status === "blocked";
-        const nextStatus = appliesStatus ? options.resolvedStatus : feature.status;
+        const appliesStatus = feature.status === "blocked" || appliesUnvalidatedMarker;
+        const nextStatus = appliesUnvalidatedMarker ? "defined" : appliesStatus ? options.resolvedStatus : feature.status;
         if (appliesStatus && (nextStatus !== "in-progress" && nextStatus !== "triaged" && nextStatus !== "defined")) {
           throw new Error("Validation repair requires resolvedStatus of in-progress, triaged, or defined");
         }
@@ -1908,13 +1890,13 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
             || (nextStatus === "defined" && fence.taskLiveness === "absent" && fence.laneRole === "none");
           if (!matchesLane) throw new RepairGroundTruthStaleError(featureId);
         }
-        if (!appliesLoop && !appliesStatus) throw new RepairNotEligibleError(featureId, options.action);
+        if (!appliesLoop && !appliesStatus && !hasUnvalidatedMarker) throw new RepairNotEligibleError(featureId, options.action);
         updated = {
           ...feature,
           loopState: nextLoop,
           status: nextStatus!,
           implementationAttemptCount: 0,
-          ...(feature.lastValidatorStatus === "blocked" || feature.lastValidatorStatus === "failed" ? { lastValidatorStatus: undefined } : {}),
+          ...(feature.lastValidatorStatus === "blocked" || feature.lastValidatorStatus === "failed" || hasUnvalidatedMarker ? { lastValidatorStatus: undefined } : {}),
           updatedAt: now,
         };
         await updateFeature(tx, updated);
@@ -2169,31 +2151,83 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
     result: "passed" | "failed" | "blocked" | "error",
     summary?: string,
     blockedReason?: string,
-  ): Promise<MissionValidatorRun> {
+    effects?: import("../missions/mission-types.js").ValidatorRunCompletionEffects,
+  ): Promise<import("../missions/mission-types.js").ValidatorRunCompletion> {
     const run = await getValidatorRun(this.db, runId);
     if (!run) throw new Error(`Validator run ${runId} not found`);
-    if (run.status !== "running") throw new Error(`Validator run ${runId} is not in 'running' status`);
+    if (run.status !== "running") {
+      if (effects) return { ...run, completionApplied: false };
+      throw new Error(`Validator run ${runId} is not in 'running' status`);
+    }
     const now = new Date().toISOString();
     const loopState: FeatureLoopState = result === "passed" ? "passed" : result === "failed" ? "needs_fix" : result === "blocked" ? "blocked" : "validating";
     const updatedRun: MissionValidatorRun = { ...run, status: result, summary, blockedReason, completedAt: now, updatedAt: now };
+    let statusEvent: MissionEvent | undefined;
+    const milestoneIds = new Set(effects ? [run.milestoneId] : []);
+    for (const verdict of effects?.assertions ?? []) {
+      const assertion = await getContractAssertion(this.db, verdict.assertionId);
+      if (assertion) milestoneIds.add(assertion.milestoneId);
+    }
+    const validationRollups: MilestoneValidationRollup[] = [];
+    const changedAssertions: MissionContractAssertion[] = [];
     /*
     FNXC:MissionValidation 2026-08-11-05:26:
     A validator run becomes historical when a newer admission replaces feature.lastValidatorRunId. Complete the historical run, but only the current owner may project loop state or trigger passed-run reconciliation.
     */
     const completion = await this.layer.transactionImmediate(async (tx) => {
+      // FNXC:MissionValidation 2026-09-07-04:46: Serialize verdicts with assertion repairs before taking the feature lock; their milestone projection commits with the owning terminal transition.
+      // Linked feature evidence can belong to other milestones. Lock all of
+      // their assertion sets in one stable order before taking the feature lock.
+      for (const milestoneId of [...milestoneIds].sort()) await this.lockMilestoneAssertions(tx, milestoneId);
       await tx.select().from(schema.project.missionFeatures).where(and(
         eq(schema.project.missionFeatures.projectId, missionProjectId()),
         eq(schema.project.missionFeatures.id, run.featureId),
       )).for("update");
       const feature = await getFeature(tx, run.featureId);
       if (!feature) throw new Error(`Feature ${run.featureId} not found`);
+      if (effects && (effects.featureId !== run.featureId
+        || (effects.triggerType && effects.triggerType !== run.triggerType)
+        || feature.lastValidatorRunId !== run.id || feature.validatorAttemptCount !== run.validatorAttempt
+        || feature.loopState !== "validating")) return { won: false, ownsFeature: false, feature };
       const winner = await transitionRunningValidatorRun(tx, updatedRun);
       if (!winner) return { won: false, ownsFeature: false, feature };
       const ownsFeature = feature.lastValidatorRunId === run.id;
-      if (ownsFeature) await updateFeature(tx, { ...feature, loopState, lastValidatorStatus: result, updatedAt: now });
+      if (ownsFeature) {
+        if (effects) {
+          const linked = new Set((await listAssertionsForFeature(tx, feature.id)).map((assertion) => assertion.id));
+          for (const verdict of effects.assertions ?? []) {
+            if (!linked.has(verdict.assertionId)) throw new Error(`Assertion ${verdict.assertionId} is not linked to feature ${feature.id}`);
+            const assertion = await getContractAssertion(tx, verdict.assertionId);
+            if (!assertion) throw new Error(`Assertion ${verdict.assertionId} not found`);
+            if (!milestoneIds.has(assertion.milestoneId)) throw new Error(`Assertion ${verdict.assertionId} changed milestone during validator completion`);
+            const updatedAssertion = { ...assertion, status: verdict.status, updatedAt: now };
+            await updateContractAssertion(tx, updatedAssertion);
+            changedAssertions.push(updatedAssertion);
+          }
+          const failures = effects.failures ?? [];
+          if (failures.some((failure) => failure.featureId !== feature.id || !linked.has(failure.assertionId))) throw new Error("Validator failures do not belong to the current feature");
+          if (failures.length) await insertValidatorFailures(tx, failures.map((failure) => ({ ...failure, id: this.generateId("VF"), runId, createdAt: now })));
+        }
+        const status = effects && result === "passed" ? "done" : feature.status;
+        await updateFeature(tx, { ...feature, status, loopState, lastValidatorStatus: result, updatedAt: now });
+        if (status !== feature.status) statusEvent = await this.recordFeatureStatusChange(tx, feature, status, { type: "system", id: "mission-store", source: "validator-completion" });
+      }
+      if (ownsFeature) {
+        for (const milestoneId of [...milestoneIds].sort()) {
+          const rollup = await this.getMilestoneValidationRollup(milestoneId, tx);
+          await updateMilestoneValidationState(tx, milestoneId, rollup.state);
+          validationRollups.push(rollup);
+        }
+      }
       return { won: true, ownsFeature, feature };
     });
-    if (!completion.won) return (await getValidatorRun(this.db, runId)) ?? updatedRun;
+    if (!completion.won) {
+      const current = (await getValidatorRun(this.db, runId)) ?? run;
+      return effects ? { ...current, completionApplied: false } : current;
+    }
+    for (const rollup of validationRollups) this.emit("milestone:validation:updated", { milestoneId: rollup.milestoneId, state: rollup.state, rollup });
+    for (const assertion of changedAssertions) this.emit("assertion:updated", assertion);
+    if (statusEvent) this.emit("mission:event", statusEvent);
     if (completion.ownsFeature) {
       const updatedFeature = await getFeature(this.db, completion.feature.id);
       if (updatedFeature) this.emit("feature:updated", updatedFeature);
@@ -2202,7 +2236,7 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
     const durationMs = Math.max(0, Date.parse(now) - Date.parse(run.startedAt));
     this.emit("validator-run:completed", updatedRun, result, durationMs);
     if (result === "passed" && completion.ownsFeature) await this.reconcileSupersededGeneratedFixFeatures(completion.feature.sliceId);
-    return updatedRun;
+    return effects ? { ...updatedRun, completionApplied: completion.ownsFeature } : updatedRun;
   }
 
   async recordValidatorFailures(
@@ -2294,14 +2328,38 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
    * A generated fix is never a new budget owner. Resolve its parent chain while
    * the caller transaction is open; missing or cyclic evidence fails closed.
    */
-  private async resolveFixRoot(handle: QueryHandle, feature: MissionFeature): Promise<MissionFeature> {
+  private async lockGeneratedFixLineage(tx: QueryHandle): Promise<void> {
+    // Remediation admission walks child -> ancestors; reconciliation locks a set.
+    // Serialize those transactions before any feature-row lock to avoid inversion.
+    // Project-wide scope also covers generated chains that cross slice boundaries.
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(
+      CONCAT('mission-generated-fixes:', COALESCE(NULLIF(current_setting('fusion.project_id', true), ''), '__legacy_unscoped__')),
+      0
+    ))`);
+  }
+
+  /**
+   * A generated fix is never a new budget owner. Resolve its parent chain while
+   * the caller transaction is open; missing or cyclic evidence fails closed.
+   */
+  private async resolveFixRoot(handle: QueryHandle, feature: MissionFeature, owningRunId?: string): Promise<MissionFeature> {
     const seen = new Set<string>();
     let current = feature;
     while (current.generatedFromFeatureId) {
       if (seen.has(current.id)) throw new Error("MISSION_LINEAGE_UNRESOLVED: cyclic generated-fix lineage");
       seen.add(current.id);
+      if (owningRunId) {
+        // The caller already holds the child lock. Walk upward, retaining each
+        // ancestor lock so a pass cannot race descendant remediation admission.
+        await handle.select({ id: schema.project.missionFeatures.id }).from(schema.project.missionFeatures)
+          .where(and(eq(schema.project.missionFeatures.projectId, missionProjectId()), eq(schema.project.missionFeatures.id, current.generatedFromFeatureId)))
+          .for("update");
+      }
       const parent = await getFeature(handle, current.generatedFromFeatureId);
       if (!parent) throw new Error("MISSION_LINEAGE_UNRESOLVED: missing generated-fix ancestor");
+      if (owningRunId && (parent.loopState === "passed" || parent.lastValidatorStatus === "passed")) {
+        throw new ValidatorRunOwnershipLostError(owningRunId);
+      }
       current = parent;
     }
     if (seen.has(current.id)) throw new Error("MISSION_LINEAGE_UNRESOLVED: cyclic generated-fix lineage");
@@ -2321,6 +2379,7 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
     failureReason?: string,
     title?: string,
     diagnostics?: ValidationDiagnostics,
+    options: GeneratedFixFeatureOptions = {},
   ): Promise<MissionFeature> {
     const run = await getValidatorRun(this.db, runId);
     if (!run) throw new Error(`Validator run ${runId} not found`);
@@ -2339,6 +2398,7 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
       | { kind: "exhausted" }
       | { kind: "stopped"; reason: string }
     > => {
+      await this.lockGeneratedFixLineage(tx);
       const locked = await tx
         .select({ id: schema.project.missionFeatures.id })
         .from(schema.project.missionFeatures)
@@ -2350,7 +2410,7 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
       if (locked.length === 0) throw new Error(`Feature ${sourceFeatureId} not found`);
       const source = await getFeature(tx, sourceFeatureId);
       if (!source) throw new Error(`Feature ${sourceFeatureId} not found`);
-      const root = await this.resolveFixRoot(tx, source);
+      const root = await this.resolveFixRoot(tx, source, options.requireCurrentRun ? runId : undefined);
       // Lock the canonical owner, not the generated child that happened to fail.
       const rootLocked = await tx.select({ id: schema.project.missionFeatures.id }).from(schema.project.missionFeatures)
         .where(and(
@@ -2360,6 +2420,15 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
       if (rootLocked.length !== 1) throw new Error("MISSION_LINEAGE_UNRESOLVED: canonical root disappeared");
       const lockedRoot = await getFeature(tx, root.id);
       if (!lockedRoot) throw new Error("MISSION_LINEAGE_UNRESOLVED: canonical root disappeared");
+      // FNXC:MissionValidation 2026-09-07-04:46: A failed-run continuation must recheck ownership under both locks before even reusing a fix or spending its root's retry budget.
+      if (options.requireCurrentRun) {
+        const currentRun = await getValidatorRun(tx, runId);
+        if (currentRun?.status !== "failed" || source.lastValidatorRunId !== runId
+          || source.validatorAttemptCount !== currentRun.validatorAttempt || source.lastValidatorStatus !== "failed"
+          || source.loopState === "passed" || lockedRoot.loopState === "passed" || lockedRoot.lastValidatorStatus === "passed") {
+          throw new ValidatorRunOwnershipLostError(runId);
+        }
+      }
       const durableStop = await this.getRootStop(tx, root.id);
       if (durableStop) return { kind: "stopped", reason: durableStop.reason };
       if (lockedRoot.loopState === "blocked") {
@@ -2438,7 +2507,7 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
     return feature;
   }
 
-  async reconcileSupersededGeneratedFixFeatures(sliceId: string): Promise<{ supersededCount: number; featureIds: string[] }> {
+  async reconcileSupersededGeneratedFixFeatures(sliceId: string): Promise<{ supersededCount: number; featureIds: string[]; repairedCount: number; repairedFeatureIds: string[] }> {
     const features = await listFeatures(this.db, sliceId);
     const byId = new Map(features.map((feature) => [feature.id, feature]));
     let missingSourceIds = [...new Set(features.map((feature) => feature.generatedFromFeatureId).filter((id): id is string => Boolean(id) && !byId.has(id!)))];
@@ -2455,10 +2524,88 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
       const source = byId.get(sourceId);
       return passed(source) || (source ? hasPassedAncestor(source, seen) : false);
     };
+    /*
+    FNXC:Missions 2026-09-05-22:07:
+    A passed marker without a validator run is fabricated state from the former supersede write.
+    Restore only task-less generated fixes without a passed ancestor, so genuine validation evidence remains terminal.
+    */
+    const isFabricatedMarker = (feature: MissionFeature) => Boolean(
+      (feature.generatedFromFeatureId || feature.generatedFromRunId)
+      && feature.lastValidatorStatus === "passed"
+      && !feature.lastValidatorRunId
+      && !feature.taskId
+      && feature.status === "done"
+      && !hasPassedAncestor(feature),
+    );
+    const repairIds = new Set(features.filter(isFabricatedMarker).map((feature) => feature.id));
     const ids: string[] = [];
     for (const feature of features) {
-      if (!feature.generatedFromFeatureId || !(passed(feature) || hasPassedAncestor(feature))) continue;
-      if (feature.status !== "done" || feature.loopState !== "passed" || feature.lastValidatorStatus !== "passed" || feature.taskId) ids.push(feature.id);
+      if (repairIds.has(feature.id) || !feature.generatedFromFeatureId || !(passed(feature) || hasPassedAncestor(feature))) continue;
+      if (feature.status !== "done" || feature.loopState !== "passed" || feature.taskId) ids.push(feature.id);
+    }
+    const repairedFeatureIds: string[] = [];
+    if (repairIds.size > 0) {
+      const now = new Date().toISOString();
+      const repaired = await this.layer.transactionImmediate(async (tx) => {
+        await this.lockGeneratedFixLineage(tx);
+        const locked = await tx.select({ id: schema.project.missionFeatures.id })
+          .from(schema.project.missionFeatures)
+          .where(inArray(schema.project.missionFeatures.id, [...repairIds]))
+          .for("update");
+        const preImages = locked.length > 0 ? await listFeaturesByIds(tx, locked.map((row) => row.id)) : [];
+        /*
+        FNXC:Missions 2026-09-05-22:07:
+        The repair decision must use ancestor evidence read under the same write fence as the
+        restoration. A source can pass after discovery; reopening its generated fix would then
+        let automation triage work that has already become genuinely superseded (issue #3574).
+        */
+        const currentById = new Map(preImages.map((feature) => [feature.id, feature]));
+        let missingAncestorIds = [...new Set(preImages
+          .map((feature) => feature.generatedFromFeatureId)
+          .filter((id): id is string => Boolean(id) && !currentById.has(id!)))];
+        while (missingAncestorIds.length > 0) {
+          const lockedAncestors = await tx.select({ id: schema.project.missionFeatures.id })
+            .from(schema.project.missionFeatures)
+            .where(inArray(schema.project.missionFeatures.id, missingAncestorIds))
+            .for("update");
+          const ancestors = lockedAncestors.length > 0 ? await listFeaturesByIds(tx, lockedAncestors.map((row) => row.id)) : [];
+          for (const ancestor of ancestors) currentById.set(ancestor.id, ancestor);
+          missingAncestorIds = [...new Set(ancestors
+            .map((ancestor) => ancestor.generatedFromFeatureId)
+            .filter((id): id is string => Boolean(id) && !currentById.has(id!)))];
+        }
+        const hasCurrentPassedAncestor = (feature: MissionFeature, seen = new Set<string>()): boolean => {
+          const sourceId = feature.generatedFromFeatureId;
+          if (!sourceId || seen.has(sourceId)) return false;
+          seen.add(sourceId);
+          const source = currentById.get(sourceId);
+          return passed(source) || (source ? hasCurrentPassedAncestor(source, seen) : false);
+        };
+        const changed = preImages.filter((feature) => Boolean(
+          (feature.generatedFromFeatureId || feature.generatedFromRunId)
+          && feature.lastValidatorStatus === "passed"
+          && !feature.lastValidatorRunId
+          && !feature.taskId
+          && feature.status === "done"
+          && !hasCurrentPassedAncestor(feature),
+        ));
+        if (changed.length === 0) return { events: [] as MissionEvent[], features: [] as MissionFeature[] };
+        await tx.update(schema.project.missionFeatures).set({
+          status: "defined", taskId: null, loopState: "idle", lastValidatorStatus: null, updatedAt: now,
+        }).where(inArray(schema.project.missionFeatures.id, changed.map((feature) => feature.id)));
+        let seq = await getMaxEventSeq(tx);
+        const events: MissionEvent[] = [];
+        for (const feature of changed) {
+          const event = await this.recordFeatureStatusChange(tx, feature, "defined", { type: "system", id: "mission-store", source: "superseded-fix-marker-repair" }, undefined, ++seq);
+          if (event) events.push(event);
+        }
+        return { events, features: changed };
+      });
+      for (const event of repaired.events) this.emit("mission:event", event);
+      for (const feature of repaired.features) {
+        this.emit("feature:updated", { ...feature, status: "defined", taskId: undefined, loopState: "idle", lastValidatorStatus: undefined, updatedAt: now });
+        repairedFeatureIds.push(feature.id);
+      }
     }
     if (ids.length > 0) {
       const now = new Date().toISOString();
@@ -2467,6 +2614,7 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
       Superseded generated fixes are one reconciliation set. Update their terminal status in one statement instead of routing every ID through updateFeature/getFeature/cascade reads; emit the same per-feature observable events after persistence.
       */
       const { events, updatedFeatures } = await this.layer.transactionImmediate(async (tx) => {
+        await this.lockGeneratedFixLineage(tx);
         /*
         FNXC:MissionStatusWrites 2026-08-10-13:21:
         The bulk reconciliation must lock and re-read its candidates inside this transaction.
@@ -2479,14 +2627,18 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
           .for("update");
         const lockedIds = locked.map((row) => row.id);
         const preImages = lockedIds.length > 0 ? await listFeaturesByIds(tx, lockedIds) : [];
-        const changed = preImages.filter((feature) => feature.status !== "done" || feature.loopState !== "passed" || feature.lastValidatorStatus !== "passed" || feature.taskId);
+        const changed = preImages.filter((feature) => feature.status !== "done" || feature.loopState !== "passed" || feature.taskId);
         if (changed.length === 0) return { events: [] as MissionEvent[], updatedFeatures: [] as MissionFeature[] };
 
+        /*
+        FNXC:Missions 2026-09-05-22:07:
+        Superseding a generated fix means it is no longer needed; it is not validator evidence.
+        Do not stamp an unearned passed marker because it re-arms this reconciliation trigger (issue #3574).
+        */
         await tx.update(schema.project.missionFeatures).set({
           status: "done",
           taskId: null,
           loopState: "passed",
-          lastValidatorStatus: "passed",
           updatedAt: now,
         }).where(inArray(schema.project.missionFeatures.id, changed.map((feature) => feature.id)));
         // One sequence read preserves contiguous ordering for the bulk statement without
@@ -2503,13 +2655,14 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
       });
       for (const event of events) this.emit("mission:event", event);
       for (const feature of updatedFeatures) {
-        const updated = { ...feature, status: "done" as const, taskId: undefined, loopState: "passed" as const, lastValidatorStatus: "passed" as const, updatedAt: now };
+        const updated = { ...feature, status: "done" as const, taskId: undefined, loopState: "passed" as const, updatedAt: now };
         this.emit("feature:updated", updated);
         if (feature.taskId) await clearTaskMissionLinkage(this.db, feature.taskId);
       }
       if (updatedFeatures.length > 0) await this.recomputeSliceStatus(sliceId);
     }
-    return { supersededCount: ids.length, featureIds: ids };
+    if (repairedFeatureIds.length > 0) await this.recomputeSliceStatus(sliceId);
+    return { supersededCount: ids.length, featureIds: ids, repairedCount: repairedFeatureIds.length, repairedFeatureIds };
   }
 
   async transitionLoopState(featureId: string, newState: FeatureLoopState): Promise<MissionFeature> {
@@ -3211,6 +3364,13 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
   publish snapshots in reverse order; the lock makes the committed current rollup
   the only state emitted to dashboard refresh consumers.
   */
+  private async lockMilestoneAssertions(tx: QueryHandle, milestoneId: string): Promise<void> {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(
+      CONCAT('mission-validation:', COALESCE(NULLIF(current_setting('fusion.project_id', true), ''), '__legacy_unscoped__'), ':', CAST(${milestoneId} AS text)),
+      0
+    ))`);
+  }
+
   private async mutateMilestoneAssertions<T>(
     milestoneId: string,
     mutation: (tx: QueryHandle) => Promise<T>,
@@ -3218,10 +3378,7 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
     let result!: T;
     let rollup!: MilestoneValidationRollup;
     await this.layer.transactionImmediate(async (tx) => {
-      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(
-        CONCAT('mission-validation:', COALESCE(NULLIF(current_setting('fusion.project_id', true), ''), '__legacy_unscoped__'), ':', CAST(${milestoneId} AS text)),
-        0
-      ))`);
+      await this.lockMilestoneAssertions(tx, milestoneId);
       result = await mutation(tx);
       rollup = await this.getMilestoneValidationRollup(milestoneId, tx);
       await updateMilestoneValidationState(tx, milestoneId, rollup.state);

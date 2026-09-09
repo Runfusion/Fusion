@@ -1,9 +1,10 @@
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ChevronDown, Download, Upload } from "lucide-react";
 import "./SettingsSyncLog.css";
 import { linkifyFilePaths } from "../utils/filePathLinkify";
 import { LoadingSpinner } from "./LoadingSpinner";
+import { useVirtualizedList } from "../hooks/useVirtualizedList";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -44,6 +45,7 @@ export function SettingsSyncLog({
   const [isExpanded, setIsExpanded] = useState(false);
   const [directionFilter, setDirectionFilter] = useState<"all" | "push" | "pull">("all");
   const [nodeFilter, setNodeFilter] = useState<string>("all");
+  const listRef = useRef<HTMLDivElement | null>(null);
 
   // Toggle expanded state
   const handleToggle = useCallback(() => {
@@ -82,6 +84,17 @@ export function SettingsSyncLog({
 
     return result;
   }, [entries, directionFilter, nodeFilter, singleNode]);
+
+  const virtualLog = useVirtualizedList({
+    collectionKey: `${_nodeId}:${directionFilter}:${nodeFilter}`,
+    keys: filteredEntries.map((entry) => entry.id),
+    scrollRef: listRef,
+    estimateHeight: 48,
+    maxRenderedRows: 60,
+    initialAlign: "start",
+  });
+  const visibleIds = new Set(virtualLog.visibleKeys);
+  const visibleEntries = filteredEntries.filter((entry) => visibleIds.has(entry.id));
 
   // Format timestamp for display
   const formatTimestamp = useCallback((isoTimestamp: string): string => {
@@ -173,8 +186,9 @@ export function SettingsSyncLog({
           ) : filteredEntries.length === 0 ? (
             <div className="settings-sync-log__empty">{t("syncLog.noHistory", "No sync history available")}</div>
           ) : (
-            <div className="settings-sync-log__list">
-              {filteredEntries.map((entry) => (
+            <div className="settings-sync-log__list" ref={listRef} onScroll={virtualLog.onScroll}>
+              {virtualLog.topSpacerHeight > 0 ? <div aria-hidden="true" style={{ height: virtualLog.topSpacerHeight }} /> : null}
+              {visibleEntries.map((entry) => (
                 <div key={entry.id} className="settings-sync-log__entry">
                   <span className="settings-sync-log__entry-timestamp">
                     {formatTimestamp(entry.timestamp)}
@@ -205,6 +219,7 @@ export function SettingsSyncLog({
                   )}
                 </div>
               ))}
+              {virtualLog.bottomSpacerHeight > 0 ? <div aria-hidden="true" style={{ height: virtualLog.bottomSpacerHeight }} /> : null}
             </div>
           )}
         </>

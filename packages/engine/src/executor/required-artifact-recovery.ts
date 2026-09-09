@@ -19,15 +19,10 @@ export type RequiredArtifactRecoveryDeps = {
 /**
  * FNXC:WorkflowLifecycleColumns 2026-07-30-21:40 (fleet: made ASYNC to own its resolution):
  * This predicate protects a card from artifact-recovery replanning, and three of its conditions are
- * lifecycle columns: the terminal pair, and a review row whose auto-merge is off (a human owns it). As
- * literals they all read false on a renamed board — so a FINISHED card, or a review row a human was
- * holding, could be moved to the replan column and have its status rewritten to needs-replan.
- *
- * ASYNC rather than lane parameters: all four callers already `await store.getTask` immediately before
- * calling this, so there is no new I/O ordering, and a parameter list would put the resolution in four
- * places that must agree. The archived half is why the SYNC planner-lane resolver was not an option — it
- * exposes no archived lane — and widening a shared resolver from inside a call-site sweep is scope creep
- * that makes a conversion unreviewable.
+ * lifecycle columns: Complete, and a review row whose auto-merge is off (a human owns it). As literals
+ * they read false on a renamed board, so finished or human-held work could be moved backward to replan.
+ * Resolution stays async and centralized because every caller already performs a task read before this
+ * check, while a lane parameter would duplicate policy across four call sites.
  */
 export async function isRequiredArtifactRecoveryProtected(
   store: TaskStore,

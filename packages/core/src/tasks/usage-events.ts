@@ -167,8 +167,6 @@ export function categorizeToolName(toolName: string | null | undefined): string 
     name === "fn_task_retry" ||
     name === "fn_task_duplicate" ||
     name === "fn_task_refine" ||
-    name === "fn_task_archive" ||
-    name === "fn_task_unarchive" ||
     name === "fn_task_delete" ||
     name === "fn_task_document_write"
   ) {

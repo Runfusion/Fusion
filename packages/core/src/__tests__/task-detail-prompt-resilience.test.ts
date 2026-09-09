@@ -80,7 +80,6 @@ pgDescribe("getTask PROMPT.md read resilience (task-write-API 500 regression)", 
       // reported failing endpoints and each independently touches PROMPT.md:
       //   PATCH   -> updateTask (title/description PROMPT.md heading sync)
       //   reset   -> moveTask reopen-to-todo (resetPromptCheckboxes) + updateStep
-      //   archive -> archiveTask (readPromptForArchive)
       //   delete  -> deleteTask
       // A read failure in that PROMPT.md work must not brick the DB mutation.
       await expect(store.updateTask(task.id, { title: "renamed with broken PROMPT.md" })).resolves.toBeTruthy();
@@ -107,12 +106,6 @@ pgDescribe("getTask PROMPT.md read resilience (task-write-API 500 regression)", 
       // PROMPT.md genuinely cannot succeed, but the error must name the real
       // cause (PROMPT.md) rather than a misleading "task has 0 steps".
       await expect(store.updateStep(task.id, 0, "in-progress")).rejects.toThrow(/PROMPT\.md/);
-
-      // PG backend archive moves the row to archive cold storage
-      // (archiveParentTaskWithLineageGate), so getTask can no longer find it.
-      // Assert the resolved archiveTask return value instead.
-      const archived = await store.archiveTask(task.id);
-      expect(archived).toBeTruthy();
 
       await expect(store.deleteTask(task.id)).resolves.toBeTruthy();
     } finally {

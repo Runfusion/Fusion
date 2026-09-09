@@ -199,6 +199,72 @@ describe("GitHubImportModal", () => {
   });
 
   /*
+  FNXC:GitHubImport 2026-09-07-05:08:
+  Phone import controls must distribute leftover row width and embedded Import Tasks must use the
+  compact inset. These source-structure assertions protect the required cascade ordering because
+  jsdom does not reliably evaluate mobile media queries.
+  */
+  it("keeps phone import controls wide and embedded insets compact after their base rules", () => {
+    const source = readFileSync(resolve(__dirname, "../GitHubImportModal.css"), "utf8");
+    const phoneStyles = source.slice(source.lastIndexOf("@media (max-width: 640px)"));
+    const baseControls = source.match(/\.github-import-controls > \*\s*\{[^}]*\}/)?.[0] ?? "";
+    const baseEmbeddedHeader = source.match(/\.github-import-modal__embedded-header\s*\{[^}]*\}/)?.[0] ?? "";
+    const baseEmbeddedBody = source.match(/\.github-import-modal--embedded \.github-import-modal__body\s*\{[^}]*\}/)?.[0] ?? "";
+
+    expect(source.lastIndexOf("@media (max-width: 640px)")).toBeGreaterThan(
+      source.indexOf(".github-import-modal--embedded .github-import-modal__body {"),
+    );
+    expect(phoneStyles).toContain(".github-import-controls > * {");
+    expect(phoneStyles).toContain("flex: 1 1 auto;");
+    expect(phoneStyles).toContain(".github-import-provider {");
+    expect(phoneStyles).toContain("display: flex;");
+    expect(phoneStyles).toContain("gap: var(--space-sm);");
+    expect(phoneStyles).toContain(".github-import-tabs {");
+    expect(phoneStyles).toContain("flex-wrap: wrap;");
+    expect(phoneStyles).toContain(".github-import-provider .github-import-tab,");
+    expect(phoneStyles).toContain(".github-import-tabs .github-import-tab {");
+    expect(phoneStyles).toContain("justify-content: center;");
+    expect(phoneStyles).toContain(".github-import-modal__embedded-header {");
+    expect(phoneStyles).toContain("padding: var(--space-lg) var(--space-md);");
+    expect(phoneStyles).toContain(".github-import-modal--embedded .github-import-modal__body {");
+    expect(phoneStyles).toContain("padding: var(--space-md);");
+    expect(phoneStyles).not.toMatch(/padding:\s*[^;]*(?:\d+px|#|rgba\()/);
+    expect(phoneStyles).not.toContain("!important");
+
+    expect(baseControls).toContain("flex: 0 0 auto;");
+    expect(baseEmbeddedHeader).toContain("padding: var(--space-lg) var(--space-xl);");
+    expect(baseEmbeddedBody).toContain("padding: var(--space-lg) var(--space-xl) var(--space-lg);");
+  });
+
+  it("keeps labeled GitHub and GitLab controls available in modal and embedded presentations", async () => {
+    vi.mocked(fetchSettings).mockResolvedValue({ gitlabEnabled: true } as never);
+    for (const presentation of ["modal", "embedded"] as const) {
+      vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
+      const result = render(
+        <GitHubImportModal
+          isOpen
+          onClose={onClose}
+          onImport={onImport}
+          tasks={[]}
+          presentation={presentation}
+        />,
+      );
+
+      expect(await screen.findByRole("group", { name: "Import provider" })).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "GitHub" }));
+      expect(await screen.findByRole("tab", { name: "Issues" })).toBeInTheDocument();
+      expect(screen.getByRole("tab", { name: "Pull Requests" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Load issues from repository" })).toBeInTheDocument();
+      fireEvent.click(await screen.findByRole("button", { name: "GitLab" }));
+      expect(await screen.findByRole("tablist", { name: "GitLab resource type" })).toBeInTheDocument();
+      expect(screen.getByRole("tab", { name: "Project issues" })).toBeInTheDocument();
+      expect(screen.getByRole("tab", { name: "Group issues" })).toBeInTheDocument();
+      expect(screen.getByRole("tab", { name: "Merge requests" })).toBeInTheDocument();
+      result.unmount();
+    }
+  });
+
+  /*
    * FNXC:GitHubImport 2026-07-07-00:00:
    * FN-7657 introduced per-project persistence for the import view (provider/tab/labels/remote/selection) under
    * `kb-dashboard-github-import-state` (unscoped when no projectId is passed, `kb:{projectId}:...` otherwise). Most

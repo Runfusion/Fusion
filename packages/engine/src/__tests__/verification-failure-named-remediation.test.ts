@@ -5,7 +5,7 @@ step succeeds and BEFORE the in-review handoff. When it goes red, the executor m
 work to do. These tests pin which bounce shape each `stepReopenPolicy` gets, because the two are not
 interchangeable and picking the wrong one silently discards the measurement:
 
-  - `reopen-trailing` (builtin:coding, builtin:coding-ideas) reopens the trailing completed step.
+  - `reopen-trailing` is retained by builtin:coding and by the composition-base IR asserted below.
   - `none` (builtin:coding-ideas-v2) forbids reopening, so remediation must ARRIVE as appended steps.
 
 The defect: `none` reached `sendTaskBackForFix` all the same, which reopens nothing under that
@@ -45,6 +45,7 @@ function task(overrides: Partial<Task> = {}): Task {
     worktree: "/tmp/fn-vr-1",
     steps: [{ name: "Implementation", status: "done" }, { name: "Testing & Verification", status: "done" }],
     modifiedFiles: ["packages/engine/src/retry.ts"],
+    updatedAt: "2026-09-08T02:24:00.000Z",
     ...overrides,
   } as Task;
 }
@@ -71,6 +72,11 @@ function realAppenderHarness(live: Task) {
     appendRemediationSteps,
     getTask: vi.fn(async () => live),
     updateTask: vi.fn(async (_id: string, patch: Partial<Task>) => Object.assign(live, patch)),
+    updateTaskAtomic: vi.fn(async (_id: string, compute: (current: Task) => Partial<Task> | null) => {
+      const patch = compute(live);
+      if (patch) Object.assign(live, patch);
+      return live;
+    }),
     logEntry: vi.fn(async () => undefined),
   };
   const sendTaskBackForFix = vi.fn(async () => undefined);
@@ -84,7 +90,17 @@ function realAppenderHarness(live: Task) {
       status: "failed",
       nodeId: "verification",
     },
-    { worktreePath: live.worktree },
+    {
+      worktreePath: live.worktree,
+      attemptClaim: {
+        revisionKey: "verification",
+        stepName: info.stepName ?? "Verification (test)",
+        status: "failed",
+        maxRevisions: "unbounded",
+        expectedReviewEpisodeIdentity: `executor-verification:${verificationEvidenceDigest(info.feedback) ?? "empty"}`,
+        expectedTaskUpdatedAt: live.updatedAt,
+      },
+    },
   );
   return { append, appendRemediationSteps, sendTaskBackForFix, store };
 }
@@ -124,7 +140,7 @@ describe("deterministic verification failure → named remediation", () => {
       would wipe the pointer the remediation is about to run in — the card renders "Unassigned" and
       self-healing can no longer reclaim the worktree. The legacy bounce below always passed it.
       */
-      { worktreePath: "/tmp/fn-vr-1" },
+      { worktreePath: "/tmp/fn-vr-1", resolveAttemptClaim: true },
     );
     // Remediation performs the bounce itself; a second one would double-dispatch the executor.
     expect(deps.sendTaskBackForFix).not.toHaveBeenCalled();
@@ -213,6 +229,11 @@ describe("deterministic verification failure → named remediation", () => {
         Object.assign(live, patch);
         return live;
       }),
+      updateTaskAtomic: vi.fn(async (_id: string, compute: (current: Task) => Partial<Task> | null) => {
+        const patch = compute(live);
+        if (patch) Object.assign(live, patch);
+        return live;
+      }),
       logEntry: vi.fn(async () => undefined),
     };
     const sendTaskBackForFix = vi.fn(async () => undefined);
@@ -230,6 +251,16 @@ describe("deterministic verification failure → named remediation", () => {
         phase: "pre-merge",
         status: "failed",
         nodeId: "verification",
+      },
+      {
+        attemptClaim: {
+          revisionKey: "verification",
+          stepName: "Verification (test)",
+          status: "failed",
+          maxRevisions: "unbounded",
+          expectedReviewEpisodeIdentity: `executor-verification:${verificationEvidenceDigest(FAILING_TEST_OUTPUT)}`,
+          expectedTaskUpdatedAt: live.updatedAt,
+        },
       },
     );
 
@@ -273,13 +304,8 @@ describe("deterministic verification failure → named remediation", () => {
     const real = realAppenderHarness(live);
     const deps = {
       store: real.store,
-      appendReviewRemediationSteps: vi.fn((current: Task, info: Parameters<typeof appendReviewRemediationSteps>[2], options?: { worktreePath?: string }) =>
-        appendReviewRemediationSteps(
-          { store: real.store as never, readTaskArtifact: async () => current.prompt, sendTaskBackForFix: real.sendTaskBackForFix },
-          current,
-          info,
-          options,
-        )),
+      appendReviewRemediationSteps: vi.fn((_current: Task, info: Parameters<typeof appendReviewRemediationSteps>[2]) =>
+        real.append(info)),
       sendTaskBackForFix: vi.fn(async () => undefined),
       clearCompletedTaskWatchdog: vi.fn(),
     };
@@ -347,7 +373,7 @@ describe("deterministic verification failure → named remediation", () => {
     });
     const real = realAppenderHarness(live);
     await expect(real.append({ feedback: current })).resolves.toBe("appended");
-    expect(real.appendRemediationSteps).toHaveBeenCalledTimes(1);
+    expect(real.store.updateTaskAtomic).toHaveBeenCalledTimes(1);
   });
 
   it("appends changed fileless failure text despite the shared fallback candidate", async () => {

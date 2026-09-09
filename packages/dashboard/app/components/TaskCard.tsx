@@ -35,7 +35,6 @@ import { useTaskDiffStats } from "../hooks/useTaskDiffStats";
 import { useAgentsMapCache } from "../hooks/useAgentsMapCache";
 import { useLiveTimeTicker } from "../hooks/useLiveTimeTicker";
 import {
-  isArchivedColumnRole,
   isCompleteColumnRole,
   isFieldEditableColumnRole,
   isPreImplementationColumnRole,
@@ -334,13 +333,12 @@ const ACTIVE_MERGE_STATUSES = new Set(
   [...ACTIVE_STATUSES].filter((status) => ["merging", "merging-pr", "merging-fix", "reviewing", "landing"].includes(status)),
 );
 
-const COLUMN_PROGRESS_COLOR_MAP: Record<Column, string> = {
+const COLUMN_PROGRESS_COLOR_MAP: Partial<Record<Column, string>> = {
   triage: "var(--triage)",
   todo: "var(--todo)",
   "in-progress": "var(--in-progress)",
   "in-review": "var(--in-review)",
   done: "var(--done)",
-  archived: "var(--text-muted)",
 };
 
 const TIME_INDICATOR_COLUMNS = new Set<ColumnId>([
@@ -691,9 +689,13 @@ export function PlanApprovalNotice({
   if (isTaskExternallyBlocked(task) || !awaitingApproval) return null;
 
   const replanCap = isReviewBudgetExhaustedApproval(task);
+  /*
+  FNXC:PlanApproval 2026-09-05-22:04:
+  Board and List rows are slim and never carry prompt, so a client prompt gate makes the enabled primary action silently fail after a reload. The approve-plan endpoint owns status, column, and PROMPT.md validation; its refusal is shown through this notice's error toast.
+  */
   const approve = async (event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
-    if (!task.prompt || isApproving) return;
+    if (isApproving) return;
     setIsApproving(true);
     try {
       const updated = await approvePlan(task.id, projectId);
@@ -723,7 +725,7 @@ export function PlanApprovalNotice({
             : t("tasks.planApproval.copy", "Review the plan before implementation starts.")}
         </span>
         <span className="plan-approval-notice__actions">
-          <button type="button" className="btn btn-primary btn-sm" onClick={(event) => void approve(event)} disabled={!task.prompt || isApproving}>
+          <button type="button" className="btn btn-primary btn-sm" onClick={(event) => void approve(event)} disabled={isApproving}>
             {isApproving ? t("tasks.planApproval.approving", "Approving...") : t("tasks.planApproval.approve", "Approve")}
           </button>
         </span>
@@ -751,15 +753,6 @@ interface TaskCardProps {
     id: string,
     updates: { title?: string; description?: string; dependencies?: string[]; dismissNearDuplicate?: boolean; githubTracking?: { enabled?: boolean } }
   ) => Promise<Task>;
-  onArchiveTask?: (id: string, options?: { removeLineageReferences?: boolean }) => Promise<Task>;
-  onUnarchiveTask?: (id: string) => Promise<Task>;
-  /*
-  FNXC:TaskRevert 2026-07-05-00:00 (FN-7525):
-  Threaded alongside onArchiveTask/onUnarchiveTask; the source task's column
-  is never mutated by the caller as a side effect. Absent when the parent
-  does not support revert (undefined -> no button rendered, mirroring the
-  onArchiveTask guard).
-  */
   onRevertTask?: (id: string, body?: RevertTaskOptions) => Promise<RevertTaskResult>;
   /** Resolution action for a successfully reverted task. */
   onReviseTask?: (task: Task) => void;
@@ -986,8 +979,6 @@ function areTaskCardPropsEqual(previous: TaskCardProps, next: TaskCardProps): bo
     previous.onOpenGroupModal === next.onOpenGroupModal &&
     previous.addToast === next.addToast &&
     previous.onUpdateTask === next.onUpdateTask &&
-    previous.onArchiveTask === next.onArchiveTask &&
-    previous.onUnarchiveTask === next.onUnarchiveTask &&
     previous.onRevertTask === next.onRevertTask &&
     previous.onDeleteTask === next.onDeleteTask &&
     previous.onPauseTask === next.onPauseTask &&
@@ -1133,8 +1124,6 @@ function TaskCardComponent({
   addToast,
   globalPaused,
   onUpdateTask,
-  onArchiveTask,
-  onUnarchiveTask,
   onRevertTask,
   onDeleteTask,
   onReviseTask,
@@ -1223,7 +1212,6 @@ function TaskCardComponent({
   const isWipColumn = isWipColumnRole(taskColumnFlags, task.column);
   const isReviewColumn = isReviewColumnRole(taskColumnFlags, task.column);
   const isCompleteColumn = isCompleteColumnRole(taskColumnFlags, task.column);
-  const isArchivedColumn = isArchivedColumnRole(taskColumnFlags, task.column);
 
   /*
   FNXC:WorkflowResolvedColumns 2026-07-31-03:15:
@@ -1798,7 +1786,6 @@ function TaskCardComponent({
    */
   const showNearDuplicateChip = Boolean(task.sourceMetadata?.nearDuplicateOf)
     && task.sourceMetadata?.nearDuplicateDismissed !== true
-    && !isArchivedColumn
     && !isCompleteColumn
     && nearDuplicateCanonicalInactive !== true;
   /**
@@ -1827,10 +1814,10 @@ function TaskCardComponent({
    * FNXC:TaskRevert 2026-07-16-00:00:
    * FN-8066 makes the source-task revert marker visible only in its completed
    * surfaces. TaskCard serves both board and list views, so this one predicate
-   * preserves the done/archived invariant without adding a view-specific badge.
+   * preserves the Done invariant without adding a view-specific badge.
    */
   const showRevertedChip = isTaskReverted(task.sourceMetadata)
-    && (isCompleteColumn || isArchivedColumn);
+    && isCompleteColumn;
   const branchMetadata = useMemo(() => getVisibleTaskCardBranches(task), [task.id, task.branch, task.baseBranch]);
   const hasBranchMetadata = Boolean(branchMetadata.branch || branchMetadata.baseBranch);
   const isAgentCreated = isAgentCreatedTask(task);
@@ -2059,17 +2046,12 @@ function TaskCardComponent({
 
   const lifecycleDates = useMemo(() => {
     const created = formatCompactLifecycleDate(task.createdAt, locale, new Date(lifecycleNowMs));
-    const completionSource = task.executionCompletedAt
-      ?? (isArchivedColumn ? task.archivedAt : undefined);
-    const completed = (isCompleteColumn || isArchivedColumn)
+    const completionSource = task.executionCompletedAt ?? task.archivedAt;
+    const completed = isCompleteColumn
       ? formatCompactLifecycleDate(completionSource, locale, new Date(lifecycleNowMs))
       : null;
     return { created, completed };
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-08:20:
-  `isCompleteColumn` AND `isArchivedColumn` BELONG IN THIS LIST — both derive from the async
-  `taskColumnFlags` prop, and the completion date is gated on them.
-
   The board resolves workflow traits after first paint, so the first computation runs with the flags
   undefined and the role helpers fall back to the legacy ids. On a renamed board that answers false,
   `completed` is null, and the "Completed <date>" line never renders. When the flags arrive nothing in
@@ -2083,7 +2065,7 @@ function TaskCardComponent({
 
   A default board hides it: `column === "done"` is already true before the flags land.
   */
-  }, [task.createdAt, task.executionCompletedAt, task.archivedAt, task.column, locale, lifecycleNowMs, isCompleteColumn, isArchivedColumn]);
+  }, [task.createdAt, task.executionCompletedAt, task.archivedAt, task.column, locale, lifecycleNowMs, isCompleteColumn]);
 
   const liveBadgeData = badgeUpdates.get(`${projectId ?? "default"}:${task.id}`);
 
@@ -2320,7 +2302,7 @@ function TaskCardComponent({
   */
   const startTargetColumn: ColumnId = useMemo(() => {
     const next = taskMoveColumns?.find(
-      (c) => c.id !== task.column && !c.flags?.intake && !c.flags?.archived && !c.flags?.hiddenFromBoard,
+      (c) => c.id !== task.column && !c.flags?.intake && !c.flags?.hiddenFromBoard,
     );
     return (next?.id ?? "todo") as ColumnId;
   }, [taskMoveColumns, task.column]);
@@ -2424,60 +2406,17 @@ function TaskCardComponent({
     }
   }, [addToast, onUpdateTask, task.id]);
 
-  const handleArchiveClick = useCallback((e: React.MouseEvent<HTMLButtonElement>) => {
-    e.stopPropagation();
-    if (!onArchiveTask) return;
-
-    void onArchiveTask(task.id).then(() => {
-      addToast(t("tasks.archived", "Archived {{taskId}}", { taskId: task.id }), "success");
-    }).catch(async (err) => {
-      const lineageConflict = extractLineageDeleteConflict(err);
-      if (!lineageConflict || lineageConflict.lineageChildIds.length === 0) {
-        addToast(t("tasks.archiveFailed", "Failed to archive {{taskId}}: {{error}}", { taskId: task.id, error: getErrorMessage(err) }), "error");
-        return;
-      }
-
-      const confirmed = await confirm({
-        title: t("tasks.forceDeleteTitle", "Force Delete Task"),
-        message:
-          t("tasks.archiveLineageConflict", "{{taskId}} has lineage children ({{children}}) that reference it as a source parent.\n\nArchive anyway by unlinking these references first?", { taskId: task.id, children: lineageConflict.lineageChildIds.join(", ") }),
-        danger: true,
-      });
-      if (!confirmed) {
-        return;
-      }
-
-      try {
-        await onArchiveTask(task.id, { removeLineageReferences: true });
-        addToast(t("tasks.archivedUnlinked", "Archived {{taskId}} after unlinking lineage references", { taskId: task.id }), "success");
-      } catch (retryErr) {
-        addToast(t("tasks.archiveFailed", "Failed to archive {{taskId}}: {{error}}", { taskId: task.id, error: getErrorMessage(retryErr) }), "error");
-      }
-    });
-  }, [addToast, confirm, onArchiveTask, task.id]);
-
-  const handleUnarchiveClick = useCallback((e: React.MouseEvent<HTMLButtonElement>) => {
-    e.stopPropagation();
-    if (!onUnarchiveTask) return;
-
-    void onUnarchiveTask(task.id).then(() => {
-      addToast(t("tasks.unarchived", "Unarchived {{taskId}}", { taskId: task.id }), "success");
-    }).catch((err) => {
-      addToast(t("tasks.unarchiveFailed", "Failed to unarchive {{taskId}}: {{error}}", { taskId: task.id, error: getErrorMessage(err) }), "error");
-    });
-  }, [addToast, onUnarchiveTask, task.id]);
 
   /*
   FNXC:TaskRevert 2026-07-05-00:00 (FN-7525):
   Revertable guard: a card is only offered a Revert affordance when it sits in
-  done/archived AND it has a landed commit to revert. Absent `mergeDetails` (no
+  Done and it has a landed commit to revert. Absent `mergeDetails` (no
   merge ever recorded, e.g. a no-op/no-commits-expected task) means there is
   nothing to revert — treat it as not-revertable rather than erroring at click
   time. This mirrors the parent FN-7501 issue's "undo a change" framing: only
   tasks that actually changed the tree are revertable.
   */
-  const isRevertable = (isCompleteColumn || isArchivedColumn)
-    && Boolean(task.mergeDetails?.commitSha);
+  const isRevertable = isCompleteColumn && Boolean(task.mergeDetails?.commitSha);
 
   /*
   FNXC:TaskRevert 2026-07-05-00:00 (FN-7525):
@@ -2693,17 +2632,9 @@ function TaskCardComponent({
     }
   }, [addToast, confirm, onDeleteTask, t, task.githubTracking?.enabled, task.githubTracking?.issue, task.id, task.issueInfo?.url, task.sourceIssue, task.sourceMetadata]);
 
-  const handleTaskActionArchive = useCallback(() => {
-    handleArchiveClick({ stopPropagation() {} } as React.MouseEvent<HTMLButtonElement>);
-  }, [handleArchiveClick]);
-
   const handleTaskActionDelete = useCallback(() => {
     void handleDeleteClick({ stopPropagation() {} } as React.MouseEvent<HTMLButtonElement>);
   }, [handleDeleteClick]);
-
-  const handleTaskActionUnarchive = useCallback(() => {
-    handleUnarchiveClick({ stopPropagation() {} } as React.MouseEvent<HTMLButtonElement>);
-  }, [handleUnarchiveClick]);
 
   const handleTaskActionRetry = useCallback(async () => {
     if (!onRetryTask || isRetrying) return;
@@ -2804,7 +2735,7 @@ function TaskCardComponent({
   Board context menus must receive the project merge strategy, not infer pull-request mode from existing PR data, so manual PR projects show Start PR Review before the PR entity is created.
 
   FNXC:BoardCardActions 2026-06-30-12:42:
-  Workflow-column card menus must use the task's workflow column flags and ordered column list instead of legacy column literals. Custom complete or archived lanes are terminal for Reset/Pause, while custom active lanes still expose neighbor move targets.
+  Workflow-column card menus must use the task's workflow column flags and ordered column list instead of legacy column literals. Custom complete lanes are terminal for Reset/Pause, while custom active lanes still expose neighbor move targets.
 
   FNXC:BoardCardActions 2026-06-30-13:02:
   Manual pull-request projects need a distinct Start PR Review callback from direct Merge & Close so context menus open PrCreateModal instead of calling the merge endpoint.
@@ -2856,7 +2787,6 @@ function TaskCardComponent({
     onResetTask,
     effectiveAutoMerge,
     mergeStrategy,
-    handleTaskActionArchive,
     handleTaskActionCheckPrStatus,
     handleTaskActionDelete,
     handleTaskActionEnableGithubTracking,
@@ -2866,7 +2796,6 @@ function TaskCardComponent({
     handleTaskActionReset,
     handleTaskActionRetry,
     handleTaskActionTogglePause,
-    handleTaskActionUnarchive,
     isPaused,
     onDeleteTask,
     onMergeTask,
@@ -2882,24 +2811,17 @@ function TaskCardComponent({
     task.prInfo,
   ]);
   const contextMenuActions = useMemo<TaskMenuItemDescriptor[]>(() => {
-    if (!onDeleteTask && !onArchiveTask && !onUnarchiveTask && !onRevertTask && !onDuplicateTask && !onRetryTask && !onResetTask && !onPauseTask && !onUnpauseTask && !onMergeTask && !onPlanningMode && !onOpenRefine && !onUpdateTask) {
+    if (!onDeleteTask && !onRevertTask && !onDuplicateTask && !onRetryTask && !onResetTask && !onPauseTask && !onUnpauseTask && !onMergeTask && !onPlanningMode && !onOpenRefine && !onUpdateTask) {
       return [];
     }
     const actions: TaskMenuItemDescriptor[] = [...taskActionMenuModel.actions];
-    if (isCompleteColumn && onArchiveTask) {
-      actions.push({ id: "archive", label: t("tasks.archive", "Archive"), onSelect: handleTaskActionArchive });
-    }
-    if (isArchivedColumn && onUnarchiveTask) {
-      actions.push({ id: "unarchive", label: t("tasks.unarchive", "Unarchive"), onSelect: handleTaskActionUnarchive });
-    }
     /*
     FNXC:TaskRevert 2026-07-05-00:00 (FN-7525):
-    Context-menu Revert entry for done/archived, mirroring the archive/unarchive
-    entries above. Disabled (rather than omitted) when the task lacks a landed
+    Context-menu Revert entry for completed work. Disabled (rather than omitted) when the task lacks a landed
     commit to revert, so the menu communicates WHY the affordance is inert
     instead of silently hiding it.
     */
-    if ((isCompleteColumn || isArchivedColumn) && onRevertTask) {
+    if (isCompleteColumn && onRevertTask) {
       actions.push({
         id: "revert",
         label: t("tasks.revert", "Revert"),
@@ -2911,7 +2833,7 @@ function TaskCardComponent({
       actions.push({ id: taskActionMenuModel.reviewAction.id, label: taskActionMenuModel.reviewAction.label, disabled: taskActionMenuModel.reviewAction.disabled, onSelect: taskActionMenuModel.reviewAction.onSelect });
     }
     return actions.filter((action) => "items" in action || action.tone === "note" || action.disabled === true || Boolean(action.onSelect));
-  }, [handleTaskActionArchive, handleTaskActionRevert, handleTaskActionUnarchive, isRevertable, onArchiveTask, onDeleteTask, onDuplicateTask, onMergeTask, onPlanningMode, onOpenRefine, onPauseTask, onResetTask, onRetryTask, onRevertTask, onUnarchiveTask, onUnpauseTask, onUpdateTask, t, task.column, taskActionMenuModel.actions, taskActionMenuModel.reviewAction]);
+  }, [handleTaskActionRevert, isCompleteColumn, isRevertable, onDeleteTask, onDuplicateTask, onMergeTask, onPlanningMode, onOpenRefine, onPauseTask, onResetTask, onRetryTask, onRevertTask, onUnpauseTask, onUpdateTask, taskActionMenuModel.actions, taskActionMenuModel.reviewAction]);
   const hasContextMenuActions = contextMenuActions.length > 0;
 
   const closeContextMenu = useCallback(() => {
@@ -3497,9 +3419,7 @@ function TaskCardComponent({
   const hasHeaderActions = Boolean(isAwaitingInput && onOpenDetailWithTab)
     || Boolean(canEdit)
     || Boolean(isIntakeColumn && onDeleteTask)
-    || Boolean(isCompleteColumn && onArchiveTask)
-    || Boolean(isArchivedColumn && onUnarchiveTask)
-    || Boolean((isCompleteColumn || isArchivedColumn) && onRevertTask && isRevertable)
+    || Boolean(isCompleteColumn && onRevertTask && isRevertable)
     || Boolean(task.size)
     || hasContextMenuActions;
 
@@ -3991,42 +3911,7 @@ function TaskCardComponent({
               <Trash2 size={12} />
             </button>
           )}
-          {isArchivedColumn && onUnarchiveTask && (
-            <button
-              className="card-unarchive-btn"
-              onClick={handleUnarchiveClick}
-              title={t("tasks.unarchiveTask", "Unarchive task")}
-              aria-label={t("tasks.unarchiveTask", "Unarchive task")}
-            >
-              {t("tasks.unarchive", "Unarchive")}
-            </button>
-          )}
           {/*
-          FNXC:TaskRevert 2026-07-05-00:00 (FN-7525):
-          Inline Revert affordance for archived cards (parent FN-7501). Rendered
-          only when the task actually has a landed commit to revert (`isRevertable`)
-          — omitted (not disabled) here to avoid an empty button shell on cards with
-          nothing to revert, matching the "omit inline / disable in menu" split called
-          out in the task spec. Done cards use the FN-7839 actions dropdown above.
-          Reuses `card-archive-btn`'s tokenized styling via a shared class so no new
-          one-off CSS/colors are introduced.
-          */}
-          {isArchivedColumn && onRevertTask && isRevertable && (
-            <button
-              className="card-archive-btn card-revert-btn"
-              onClick={handleRevertClick}
-              title={t("tasks.revertTask", "Revert this task's changes")}
-              aria-label={t("tasks.revertTask", "Revert this task's changes")}
-            >
-              {t("tasks.revert", "Revert")}
-            </button>
-          )}
-          {/*
-          FNXC:BoardCardActions 2026-07-15-00:00 (FN-8035):
-          Done-card Archive and Revert are consolidated into this single three-dot TaskContextMenu;
-          do not add a duplicate inline Actions dropdown. The menu model preserves both handlers and
-          keeps Revert disabled when no landed commit is available.
-
           FNXC:TaskCardMenu 2026-07-10-12:00:
           Visible entry point for the card's action menu (Edit/Delete/Review/New chat/Interventions…)
           — previously right-click/long-press only and therefore undiscoverable. Opens the same

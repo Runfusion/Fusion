@@ -16,7 +16,6 @@ const RENAMED_IR = {
     { id: "backlog", name: "Backlog", traits: [{ trait: "hold" }] },
     { id: "building", name: "Building", traits: [{ trait: "wip" }] },
     { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
-    { id: "attic", name: "Attic", traits: [{ trait: "archived" }] },
   ],
 } as unknown as WorkflowIr;
 
@@ -48,8 +47,7 @@ describe("worktree capacity follows enriched live-task roles", () => {
     }))).toBe(false);
   });
 
-  it("ignores complete and archived cards even with stale live-looking metadata", () => {
+  it("ignores complete cards even with stale live-looking metadata", () => {
     expect(isLive(task("FN-DONE", "shipped", { status: "planning" }))).toBe(false);
-    expect(isLive(task("FN-ARCHIVED", "attic", { sessionFile: "/tmp/stale-session" }))).toBe(false);
   });
 });

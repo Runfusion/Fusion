@@ -55,16 +55,6 @@ function renamedBoardIr(): WorkflowIr {
         traits: [{ trait: "merge" }, { trait: "merge-blocker" }],
       },
       { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
-      /*
-      FOURTH FIXTURE FINDING, and the one that actually matters for reading this file: the
-      ARCHIVED column is not decoration. `resolveRoleColumns` returns undefined unless the
-      workflow declares wip + review + complete + archived + a planning lane, and without
-      it adjacency silently falls back to ORDER-DERIVED neighbours — under which
-      `checking -> queued` is not a legal move at all ("Valid targets: building, shipped").
-      So a renamed board only gets role-level transitions once its role set is complete;
-      an incomplete one is treated as a genuinely custom shape, by design.
-      */
-      { id: "archive", name: "Archive", traits: [{ trait: "archived" }] },
     ],
     nodes: [
       { id: "start", kind: "start", column: "backlog" },
@@ -86,8 +76,6 @@ function renamedBoardIr(): WorkflowIr {
       */
       { id: "merge", kind: "merge-attempt", column: "checking", config: { capability: "task-merge" } },
       { id: "end", kind: "end", column: "shipped" },
-      // No node in the archive column — the builtin coding IR declares its `archived`
-      // column the same way, and adding one only made it an unreachable node.
     ],
     edges: [
       { from: "start", to: "plan" },
@@ -151,18 +139,18 @@ pgDescribe("a renamed board gets the same reopen effects as the default lineage"
     return { store, taskId: task.id };
   }
 
-  it("clears the stale review result when the renamed review lane bounces to the renamed hold lane", async () => {
+  it("clears the stale review result when the renamed review lane bounces to renamed WIP", async () => {
     const { store, taskId } = await seedCardInCheck();
 
-    const moved = await store.moveTask(taskId, "queued", { moveSource: "engine" });
+    const moved = await store.moveTask(taskId, "building", {
+      moveSource: "engine",
+      lifecycleReason: "code-review-revise-remediation",
+    });
 
-    expect(moved.column).toBe("queued");
+    expect(moved.column).toBe("building");
     // The safety assertion: a surviving `passed` result satisfies getTaskMergeBlocker.
     expect(moved.workflowStepResults ?? []).toHaveLength(0);
-    expect(moved.branch ?? null).toBeNull();
-    expect(moved.summary ?? null).toBeNull();
-    expect(moved.status ?? null).toBeNull();
-    expect(moved.error ?? null).toBeNull();
+    expect(moved.branch).toBe("fusion/renamed");
   });
 
   it("parks a user-source bounce into the renamed hold lane", async () => {

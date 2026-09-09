@@ -62,7 +62,7 @@ export interface UseBoardWorkflowsResult {
    *  task missing from `taskWorkflowIds`, since task→workflow assignment emits no workflow SSE).
    *  Resolves when the fetch has SETTLED — it never rejects, since a failed fetch is
    *  non-authoritative — so a caller that must not overlap attempts can await it. */
-  refreshBoardWorkflows: (options?: { forceFresh?: boolean }) => Promise<void>;
+  refreshBoardWorkflows: (options?: { forceFresh?: boolean; taskIds?: readonly string[] }) => Promise<void>;
   /**
    * Raw state setter, exposed so Board can apply optimistic task→workflow assignment.
    * Planning does not use this.
@@ -157,7 +157,7 @@ export function useBoardWorkflows(params: UseBoardWorkflowsParams): UseBoardWork
   promise never rejects — a failed fetch stays non-authoritative — so awaiting it is
   safe for every caller.
   */
-  const refreshBoardWorkflows = useCallback((options?: { forceFresh?: boolean }): Promise<void> => {
+  const refreshBoardWorkflows = useCallback((options?: { forceFresh?: boolean; taskIds?: readonly string[] }): Promise<void> => {
     const seq = ++boardWorkflowsFetchSeqRef.current;
     if (options?.forceFresh) {
       clearBoardWorkflowsCache(projectId);

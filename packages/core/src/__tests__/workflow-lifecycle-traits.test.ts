@@ -21,7 +21,6 @@ describe("columnsWithFlag — builtin:coding trait→columnIds (R8)", () => {
     expect(columnsWithFlag(ir, "intake")).toEqual(["triage"]);
     expect(columnsWithFlag(ir, "mergeOrchestration")).toEqual(["in-review"]);
     expect(columnsWithFlag(ir, "complete")).toEqual(["done"]);
-    expect(columnsWithFlag(ir, "archived")).toEqual(["archived"]);
   });
 
   it("columnHasFlag agrees with the literal columns", () => {
@@ -142,7 +141,6 @@ describe("resolveLifecycleColumns — U1 trait→role resolution", () => {
       wip: "in-progress",
       review: "in-review",
       complete: "done",
-      archived: "archived",
     });
   });
 
@@ -164,7 +162,6 @@ describe("resolveLifecycleColumns — U1 trait→role resolution", () => {
         { id: "writing", name: "Writing", traits: [{ trait: "wip" }] },
         { id: "editorial-review", name: "Editorial review", traits: [{ trait: "merge" }] },
         { id: "published", name: "Published", traits: [{ trait: "complete" }] },
-        { id: "shelved", name: "Shelved", traits: [{ trait: "archived" }] },
       ],
       nodes: [{ id: "start", kind: "start", column: "backlog" }],
       edges: [],
@@ -175,7 +172,6 @@ describe("resolveLifecycleColumns — U1 trait→role resolution", () => {
       wip: "writing",
       review: "editorial-review",
       complete: "published",
-      archived: "shelved",
     });
   });
 
@@ -196,7 +192,7 @@ describe("resolveLifecycleColumns — U1 trait→role resolution", () => {
     // The nearby columns are still resolved — absence is per-role, not per-workflow.
     expect(columns?.intake).toBe("inbox");
     expect(columns?.wip).toBe("doing");
-    expect(columns?.archived).toBeUndefined();
+    expect(columns?.complete).toBe("shipped");
   });
 
   it("returns undefined (not a struct of undefineds) for a v1 / column-less IR", () => {
@@ -242,7 +238,7 @@ describe("resolveTaskLifecycleColumns — U1 store-aware form", () => {
     const { store } = makeStore();
     await expect(resolveTaskLifecycleColumns(store, "T-1")).resolves.toEqual({
       intake: "triage", hold: "todo", wip: "in-progress",
-      review: "in-review", complete: "done", archived: "archived",
+      review: "in-review", complete: "done",
     });
   });
 
@@ -299,7 +295,7 @@ describe("LifecycleColumns arity — one id per role, even when several qualify"
   `multiple-intake-columns`, so that workflow shape is REJECTED by the product. The test would have
   stayed green while documenting something that cannot exist, which is worse than not testing it.
 
-  `complete` genuinely repeats: there is no uniqueness rule for it, nor for `archived`, `hold`,
+  `complete` genuinely repeats: there is no uniqueness rule for it, nor for `hold`,
   `countsTowardWip`, `mergeBlocker` or `humanReview`. Only `intake` is validated unique. That is the
   real boundary, and it means `intake` comparisons are safe by equality while every other role's are
   not — which narrows the call sites at risk rather than widening them.
@@ -450,7 +446,7 @@ describe("a v1-upgraded IR resolves to NO roles — the other meaning of empty",
   const v1Upgraded = {
     version: "v2",
     name: "upgraded",
-    columns: ["todo", "in-progress", "in-review", "done", "archived"].map((id) => ({ id, name: id, traits: [] })),
+    columns: ["todo", "in-progress", "in-review", "done"].map((id) => ({ id, name: id, traits: [] })),
     nodes: [],
     edges: [],
   } as never;
@@ -467,9 +463,7 @@ describe("a v1-upgraded IR resolves to NO roles — the other meaning of empty",
     expect(columnsWithFlag(v1Upgraded, "countsTowardWip")).toEqual([]);
   });
 
-  it("STILL yields the legacy terminal pair, because that resolver keeps its own fallback", () => {
-    /* The contrast that makes the hazard concrete: same IR, and this one is unaffected purely because
-       it never adopted the empty-means-absent reading. */
-    expect(resolveTerminalColumns(v1Upgraded)).toEqual(["done", "archived"]);
+  it("still yields the legacy completion lane because that resolver keeps its own fallback", () => {
+    expect(resolveTerminalColumns(v1Upgraded)).toEqual(["done"]);
   });
 });

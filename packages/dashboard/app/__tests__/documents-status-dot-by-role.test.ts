@@ -1,16 +1,15 @@
 /*
 FNXC:WorkflowLifecycleColumns 2026-07-30-12:25 (Phase C convergence — DocumentsView.tsx):
 
-The task-documents status dot encodes four LIFECYCLE ROLES: complete, archived,
-pre-implementation (waiting), and everything else (working). Only the pre-implementation arm
+The task-documents status dot encodes complete, pre-implementation (waiting), and everything else
+(working). Only the pre-implementation arm
 named columns — and it named the default lineage's two — so on a renamed board a queued card
 showed the "working" dot.
 
 Both halves are pinned here because either alone is misleading: flags must DECIDE when present
 (otherwise the conversion is decoration), and the legacy names must still answer when flags are
-ABSENT (the documents list spans archived and historical tasks whose columns are not on the
-current board, and "not pre-implementation" would be as much a guess as the legacy pair — the
-same no-basis rule as `live-agent-count.ts`).
+ABSENT (the documents list spans historical tasks whose columns may not be on the current board,
+and "not pre-implementation" would be as much a guess as the legacy pair).
 */
 import { describe, expect, it } from "vitest";
 
@@ -19,7 +18,6 @@ import { getTaskColumnStatusDotClass } from "../components/DocumentsView";
 const PENDING = "status-dot status-dot--pending";
 const WORKING = "status-dot status-dot--connecting";
 const DONE = "status-dot status-dot--online";
-const ARCHIVED = "status-dot status-dot--offline";
 
 describe("the documents status dot resolves lifecycle roles when traits are available", () => {
   it("shows the waiting dot for a RENAMED planning column via its traits", () => {
@@ -32,9 +30,7 @@ describe("the documents status dot resolves lifecycle roles when traits are avai
     expect(getTaskColumnStatusDotClass("building", {})).toBe(WORKING);
   });
 
-  it("prefers archived over complete when a column carries both", () => {
-    // Order matters: an archived-and-complete column is archived to an operator scanning dots.
-    expect(getTaskColumnStatusDotClass("shipped", { archived: true, complete: true })).toBe(ARCHIVED);
+  it("shows the completed dot for a renamed complete column", () => {
     expect(getTaskColumnStatusDotClass("shipped", { complete: true })).toBe(DONE);
   });
 
@@ -52,9 +48,8 @@ describe("with no traits the documented legacy names still answer", () => {
     expect(getTaskColumnStatusDotClass("triage")).toBe(PENDING);
   });
 
-  it("keeps done and archived", () => {
+  it("keeps done on the completed dot", () => {
     expect(getTaskColumnStatusDotClass("done")).toBe(DONE);
-    expect(getTaskColumnStatusDotClass("archived")).toBe(ARCHIVED);
   });
 
   it("does NOT invent a role for a renamed column with no traits", () => {

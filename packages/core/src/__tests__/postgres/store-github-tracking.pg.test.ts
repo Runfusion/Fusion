@@ -198,28 +198,6 @@ pgTest("TaskStore github tracking (PostgreSQL)", () => {
     expect(modifiedSince.tasks.find((entry) => entry.id === task.id)?.githubTracking?.issue).toEqual(issue);
   });
 
-  it("preserves githubTracking through archive and restore", async () => {
-    const store = h.store();
-    const task = await store.createTask({ description: "Archive tracking" });
-    await store.updateGithubTracking(task.id, {
-      enabled: true,
-      repoOverride: "octocat/hello-world",
-      issue,
-    });
-
-    await store.moveTask(task.id, "todo");
-    await store.moveTask(task.id, "in-progress");
-    await store.moveTask(task.id, "done");
-    await store.archiveTask(task.id, false);
-    const restored = await store.unarchiveTask(task.id);
-
-    expect(restored.githubTracking).toEqual({
-      enabled: true,
-      repoOverride: "octocat/hello-world",
-      issue,
-    });
-  });
-
   it("emits githubIssueAction metadata on task:deleted", async () => {
     const store = h.store();
     const taskWithExplicitAction = await store.createTask({ description: "Delete tracking metadata explicit" });

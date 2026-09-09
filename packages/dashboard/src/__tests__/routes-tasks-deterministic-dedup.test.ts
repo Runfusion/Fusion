@@ -73,10 +73,11 @@ function buildApp(seed: Task[] = []) {
       };
       return task;
     }),
-    moveTask: vi.fn().mockImplementation(async (id: string, column: Column) => {
+    deleteTask: vi.fn().mockImplementation(async (id: string) => {
       const task = tasks.find((item) => item.id === id);
       if (!task) return null;
-      task.column = column;
+      task.column = "archived";
+      task.deletedAt = new Date().toISOString();
       return task;
     }),
     recordActivity: vi.fn().mockResolvedValue(undefined),
@@ -182,9 +183,9 @@ describe("task deterministic dedup", () => {
     expect(res.status).toBe(409);
   });
 
-  it("allows a direct-user repeat of archived exact work", async () => {
+  it("allows a direct-user repeat of soft-deleted exact work", async () => {
     const { app } = buildApp([
-      mkTask({ id: "FN-1", title: TITLE, description: DESCRIPTION, column: "archived", source: { sourceType: "api", sourceMetadata: { contentFingerprint: FINGERPRINT } } }),
+      mkTask({ id: "FN-1", title: TITLE, description: DESCRIPTION, column: "archived", deletedAt: new Date().toISOString(), source: { sourceType: "api", sourceMetadata: { contentFingerprint: FINGERPRINT } } }),
     ]);
 
     const res = await performRequest(app, "POST", "/api/tasks", JSON.stringify({
@@ -196,9 +197,9 @@ describe("task deterministic dedup", () => {
     expect(res.status).toBe(201);
   });
 
-  it("allows a programmatic repeat of archived exact work", async () => {
+  it("allows a programmatic repeat of soft-deleted exact work", async () => {
     const { app } = buildApp([
-      mkTask({ id: "FN-1", title: TITLE, description: DESCRIPTION, column: "archived", source: { sourceType: "api", sourceMetadata: { contentFingerprint: FINGERPRINT } } }),
+      mkTask({ id: "FN-1", title: TITLE, description: DESCRIPTION, column: "archived", deletedAt: new Date().toISOString(), source: { sourceType: "api", sourceMetadata: { contentFingerprint: FINGERPRINT } } }),
     ]);
 
     const res = await performRequest(app, "POST", "/api/tasks", JSON.stringify({
@@ -276,7 +277,7 @@ describe("task deterministic dedup", () => {
     expect((store.createTask as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1);
   });
 
-  it("reconciles late race by archiving loser and returning canonical", async () => {
+  it("reconciles a late race by deleting the loser and returning the canonical task", async () => {
     const canonicalTs = new Date(Date.now() - 2_000).toISOString();
     const { app, store } = buildApp([
       mkTask({ id: "FN-1", title: TITLE, description: DESCRIPTION, column: "todo", createdAt: canonicalTs, updatedAt: canonicalTs, source: { sourceType: "api", sourceMetadata: { contentFingerprint: FINGERPRINT } } }),
@@ -285,19 +286,16 @@ describe("task deterministic dedup", () => {
     const res = await performRequest(app, "POST", "/api/tasks", JSON.stringify({ title: TITLE, description: DESCRIPTION, acknowledgedDuplicates: ["FN-1"] }), { "content-type": "application/json" });
     expect(res.status).toBe(200);
     expect((res.body as Task).id).toBe("FN-1");
-    expect(store.moveTask).toHaveBeenCalledWith("FN-101", "archived");
-    expect(store.recordActivity).toHaveBeenCalledWith(expect.objectContaining({
-      type: "task:auto-archived-deterministic-duplicate",
-      metadata: { canonicalTaskId: "FN-1", contentFingerprint: FINGERPRINT },
-    }));
+    expect(store.deleteTask).toHaveBeenCalledWith("FN-101", { allowResurrection: false });
+    expect(store.recordActivity).not.toHaveBeenCalled();
   });
 
-  it("fails open when reconciliation archive fails", async () => {
+  it("fails open when reconciliation deletion fails", async () => {
     const canonicalTs = new Date(Date.now() - 2_000).toISOString();
     const { app, store, runtimeLogger } = buildApp([
       mkTask({ id: "FN-1", title: TITLE, description: DESCRIPTION, column: "todo", createdAt: canonicalTs, updatedAt: canonicalTs, source: { sourceType: "api", sourceMetadata: { contentFingerprint: FINGERPRINT } } }),
     ]);
-    (store.moveTask as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("archive failed"));
+    (store.deleteTask as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("delete failed"));
 
     const res = await performRequest(app, "POST", "/api/tasks", JSON.stringify({ title: TITLE, description: DESCRIPTION, acknowledgedDuplicates: ["FN-1"] }), { "content-type": "application/json" });
     expect(res.status).toBe(201);

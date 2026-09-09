@@ -16,6 +16,8 @@ import { getRelativeTimeBucket } from "../utils/relativeTimeAgo";
 import { ToolCallDetails, TOOL_CALL_PREVIEW_MAX_CHARS, TOOL_CALL_PREVIEW_MAX_LINES } from "./ToolCallDetails";
 import { ThinkingTrace } from "./ThinkingTrace";
 import { PreciseTimestamp } from "./PreciseTimestamp";
+import { useVirtualizedList } from "../hooks/useVirtualizedList";
+import { useAutoPaginationSentinel } from "../hooks/useAutoPaginationSentinel";
 
 const MARKDOWN_TOGGLE_STORAGE_KEY = "fn-agent-log-markdown";
 const TOOL_OUTPUT_TOGGLE_STORAGE_KEY = "fn-agent-log-tool-output";
@@ -342,13 +344,13 @@ interface AgentLogViewerProps {
  * - Coalesces consecutive same-agent `text`/`thinking` chunks into continuous groups
  * - Auto-scrolls to keep latest entries visible when streaming
  * - Supports toggling between markdown-formatted and plain-text rendering
- * - "Load More" button to fetch older entries when pagination is enabled
+ * - Automatic edge pagination for older entries when pagination is enabled
  * - Shows "Showing X of Y entries" summary when totalCount is provided
  *
  * @param entries - Array of log entries (in chronological order, oldest first)
  * @param loading - Whether initial load is in progress
  * @param hasMore - Whether more older entries exist beyond the current page
- * @param onLoadMore - Callback to load older entries
+ * @param onLoadMore - Callback invoked automatically near the history edge
  * @param loadingMore - Whether a load more request is in progress
  * @param totalCount - Total number of entries (when known) for summary display
  */
@@ -421,10 +423,29 @@ export function AgentLogViewer({
     [visibleEntries],
   );
 
+  const virtualLog = useVirtualizedList({
+    collectionKey: entries[0]?.taskId ?? "empty-log",
+    keys: chronologicalEntryKeys,
+    scrollRef: containerRef,
+    estimateHeight: 96,
+    maxRenderedRows: 60,
+    initialAlign: "end",
+    preservePrependAnchor: false,
+  });
+  const visibleEntryKeys = new Set(virtualLog.visibleKeys);
+  const windowedRenderEntries = renderEntries.filter((_, index) => visibleEntryKeys.has(chronologicalEntryKeys[index]!));
+  const windowedRenderKeys = chronologicalEntryKeys.filter((key) => visibleEntryKeys.has(key));
   const renderGroups = useMemo(
-    () => buildRenderGroups(renderEntries, chronologicalEntryKeys),
-    [renderEntries, chronologicalEntryKeys],
+    () => buildRenderGroups(windowedRenderEntries, windowedRenderKeys),
+    [windowedRenderEntries, windowedRenderKeys],
   );
+  const logPagination = useAutoPaginationSentinel({
+    rootRef: containerRef,
+    hasMore: Boolean(hasMore && onLoadMore),
+    loading: loadingMore,
+    onLoadMore: onLoadMore ?? (() => undefined),
+    direction: "start",
+  });
   /*
   FNXC:ToolCallDisplay 2026-08-29-04:34:
   A missing-detail explanation is host-opted because this viewer also serves historical and
@@ -702,7 +723,7 @@ export function AgentLogViewer({
       <div
         ref={containerRef}
         className="agent-log-viewer-scroll"
-        onScroll={handleScroll}
+        onScroll={() => { handleScroll(); virtualLog.onScroll(); }}
       >
         {/* Pagination summary */}
         {totalCount !== null && (
@@ -714,25 +735,12 @@ export function AgentLogViewer({
           </div>
         )}
 
-        {hasMore && onLoadMore && (
-          <div className="agent-log-load-more" data-testid="agent-log-load-more">
-            <button
-              className="agent-log-mode-toggle"
-              onClick={onLoadMore}
-              disabled={loadingMore}
-              data-testid="agent-log-load-more-button"
-            >
-              {loadingMore ? (
-                <>
-                  <Loader2 size={14} className="animate-spin" />
-                  {t("agentLog.loadingMore", "Loading…")}
-                </>
-              ) : (
-                t("agentLog.loadMore", "Load More")
-              )}
-            </button>
+        {hasMore && onLoadMore ? (
+          <div ref={logPagination.sentinelRef} className="agent-log-load-more" data-testid="agent-log-auto-pagination-sentinel" role="status" aria-live="polite">
+            {loadingMore ? <><Loader2 size={14} className="animate-spin" />{t("agentLog.loadingMore", "Loading…")}</> : null}
           </div>
-        )}
+        ) : null}
+        {virtualLog.topSpacerHeight > 0 ? <div aria-hidden="true" style={{ height: virtualLog.topSpacerHeight }} /> : null}
 
         {hasMissingToolDetail ? (
           <div className="agent-log-missing-detail-hint" role="note" data-testid="agent-log-missing-detail-hint">
@@ -832,6 +840,7 @@ export function AgentLogViewer({
             </div>
           );
         })}
+        {virtualLog.bottomSpacerHeight > 0 ? <div aria-hidden="true" style={{ height: virtualLog.bottomSpacerHeight }} /> : null}
 
         {!isFollowing && (
           <button

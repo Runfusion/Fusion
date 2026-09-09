@@ -1,6 +1,6 @@
 import { exec, execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { access, readFile, rm, writeFile } from "node:fs/promises";
+import { access, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { basename, isAbsolute, resolve } from "node:path";
 import { promisify } from "node:util";
 import type { Settings } from "@fusion/core";
@@ -247,6 +247,7 @@ async function resolveWorktreeBackendMarkerPath(worktreePath: string): Promise<s
   const { stdout } = await execAsync(`git rev-parse --git-path ${JSON.stringify(WORKTREE_BACKEND_MARKER)}`, {
     cwd: worktreePath,
     encoding: "utf-8",
+    timeout: NATIVE_TIMEOUT_MS,
   });
   const markerPath = stdout.trim();
   return isAbsolute(markerPath) ? markerPath : resolve(worktreePath, markerPath);
@@ -1108,16 +1109,23 @@ export const RemovalReason = {
   TaskReset: "task-reset",
   WorkspaceAcquireRollback: "workspace-acquire-rollback",
   CompletionLandedCleanup: "completion-landed-cleanup",
+  TaskDeletion: "task-deletion",
 } as const;
 
 export type RemovalReason = typeof RemovalReason[keyof typeof RemovalReason];
 
+/*
+FNXC:TaskDeletionWorktrees 2026-09-07-12:00:
+Explicit task deletion may force-discard a proven task-owned checkout, including dirty content, but it
+never inherits executor teardown's authority to remove a currently registered session worktree.
+*/
 const ALLOWED_FORCE_REASONS = new Set<RemovalReason>([
   RemovalReason.HardCancel,
   RemovalReason.ExecutorDispose,
   RemovalReason.ExecutorTransientRetry,
   RemovalReason.ExecutorStuckKilled,
   RemovalReason.WorkspaceAcquireRollback,
+  RemovalReason.TaskDeletion,
 ]);
 
 const DEFENSIVE_REMOVAL_REASONS = new Set<RemovalReason>([
@@ -1178,19 +1186,45 @@ export const REGENERABLE_IGNORED_DIR_NAMES = new Set([
 
 export type WorktreeRemovalContentClassification = "clean" | "regenerable-ignored" | "ignored-only" | "deliverable";
 
-function isRegenerableIgnoredPorcelainEntry(entry: string): boolean {
+/*
+FNXC:WorktreeCleanup 2026-09-08-06:13:
+pnpm build writes .fusion/cache/plugin-build-cache.json, which made built task worktrees permanently
+unreclaimable. Scratch is top-level and child-probed rather than basename-allowlisted because .fusion
+can hold authoritative operator board state and nested .fusion directories are never project scratch.
+*/
+export const FUSION_SCRATCH_REGENERABLE_CHILDREN: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  [".fusion", new Set(["cache"])],
+]);
+
+/** Return true only for a known scratch root whose immediate children are all regenerable. */
+export function isRegenerableScratchDirectory(entryName: string, childNames: readonly string[]): boolean {
+  const allowedChildren = FUSION_SCRATCH_REGENERABLE_CHILDREN.get(entryName);
+  return allowedChildren !== undefined && childNames.every((childName) => allowedChildren.has(childName));
+}
+
+function isTopLevelUnquotedDirectoryEntry(entry: string, entryName: string): boolean {
+  return entry === `!! ${entryName}/`;
+}
+
+function isRegenerableIgnoredPorcelainEntry(entry: string, provenScratchRootEntries?: ReadonlySet<string>): boolean {
   const path = entry.slice(3).replace(/\/$/, "");
   if (!path || path.startsWith('"')) return false;
+  if (provenScratchRootEntries?.has(path) && isTopLevelUnquotedDirectoryEntry(entry, path)) return true;
   const lastSegment = path.split("/").at(-1);
   return lastSegment !== undefined && REGENERABLE_IGNORED_DIR_NAMES.has(lastSegment);
 }
 
 /** Classify porcelain output without allowing ignored entries to mask deliverable content. */
-export function classifyWorktreeRemovalContent(porcelain: string): WorktreeRemovalContentClassification {
+export function classifyWorktreeRemovalContent(
+  porcelain: string,
+  options?: { provenScratchRootEntries?: ReadonlySet<string> },
+): WorktreeRemovalContentClassification {
   const entries = porcelain.split(/\r?\n/).filter((line) => line.trim().length > 0);
   if (entries.length === 0) return "clean";
   if (entries.some((line) => !line.startsWith("!! "))) return "deliverable";
-  return entries.every(isRegenerableIgnoredPorcelainEntry) ? "regenerable-ignored" : "ignored-only";
+  return entries.every((entry) => isRegenerableIgnoredPorcelainEntry(entry, options?.provenScratchRootEntries))
+    ? "regenerable-ignored"
+    : "ignored-only";
 }
 
 interface DefensiveRemovalContentProbe {
@@ -1199,7 +1233,10 @@ interface DefensiveRemovalContentProbe {
 }
 
 /** Fail closed when an automatic sweep cannot prove the checkout is empty of user content. */
-async function assertCleanForDefensiveRemoval(worktreePath: string): Promise<DefensiveRemovalContentProbe> {
+async function assertCleanForDefensiveRemoval(rootDir: string, worktreePath: string): Promise<DefensiveRemovalContentProbe> {
+  if (resolve(worktreePath) === resolve(rootDir)) {
+    throw new Error(`preserving ${worktreePath}: refusing to remove the project root checkout`);
+  }
   // Nothing on disk means nothing to preserve — stale registrations prune normally below.
   if (!existsSync(worktreePath)) {
     return { classification: "clean", entryCount: 0 };
@@ -1215,7 +1252,18 @@ async function assertCleanForDefensiveRemoval(worktreePath: string): Promise<Def
   } catch (error) {
     throw new Error(`preserving ${worktreePath}: status probe failed (${error instanceof Error ? error.message : String(error)})`);
   }
-  const classification = classifyWorktreeRemovalContent(stdout);
+  const provenScratchRootEntries = new Set<string>();
+  const entries = stdout.split(/\r?\n/).filter((line) => line.trim().length > 0);
+  await Promise.all([...FUSION_SCRATCH_REGENERABLE_CHILDREN.keys()].map(async (entryName) => {
+    if (!entries.includes(`!! ${entryName}/`)) return;
+    try {
+      const childNames = await readdir(resolve(worktreePath, entryName));
+      if (isRegenerableScratchDirectory(entryName, childNames)) provenScratchRootEntries.add(entryName);
+    } catch {
+      // An unreadable scratch directory is operator content until proven otherwise.
+    }
+  }));
+  const classification = classifyWorktreeRemovalContent(stdout, { provenScratchRootEntries });
   if (classification === "deliverable") {
     throw new Error(`preserving ${worktreePath}: uncommitted or ignored content present`);
   }
@@ -1270,7 +1318,7 @@ export async function removeWorktree(input: {
   let contentEntryCount = 0;
   if (requiresCleanWorktree) {
     try {
-      const contentProbe = await assertCleanForDefensiveRemoval(input.worktreePath);
+      const contentProbe = await assertCleanForDefensiveRemoval(input.rootDir, input.worktreePath);
       contentClassification = contentProbe.classification;
       contentEntryCount = contentProbe.entryCount;
     } catch (error) {
@@ -1358,7 +1406,12 @@ export async function removeWorktree(input: {
   }
 
   const active = activeSessionRegistry.lookupByPath(input.worktreePath);
-  if (active && input.force !== true) {
+  const ownsDeletionReservation = input.reason === RemovalReason.TaskDeletion
+    && active?.kind === "task-deletion-cleanup"
+    && active.taskId === input.taskId;
+  const mayBypassActiveSession = ownsDeletionReservation
+    || (input.force === true && input.reason !== RemovalReason.TaskDeletion);
+  if (active && !mayBypassActiveSession) {
     await input.audit?.git({
       type: "worktree:removal-refused-active-session",
       target: input.worktreePath,
@@ -1373,7 +1426,7 @@ export async function removeWorktree(input: {
     });
   }
 
-  if (active && input.force === true) {
+  if (active && mayBypassActiveSession && !ownsDeletionReservation) {
     await input.audit?.git({
       type: "worktree:removal-forced-over-active-session",
       target: input.worktreePath,

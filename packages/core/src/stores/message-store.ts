@@ -15,13 +15,14 @@ import { createHash, randomUUID } from "node:crypto";
 import type { Database } from "../db/db.js";
 import { fromJson, toJsonNullable } from "../db/db.js";
 import { createLogger } from "../process/logger.js";
-import { DASHBOARD_USER_ID, normalizeMessageParticipant, validateMessageMetadata, type Message, type MessageCreateInput, type MessageFilter, type MessageType, type Mailbox, type ParticipantType } from "../types.js";
+import { DASHBOARD_USER_ID, normalizeMessageParticipant, validateMessageMetadata, type DashboardInboxCategory, type Message, type MessageCreateInput, type MessageFilter, type MessageType, type Mailbox, type ParticipantType } from "../types.js";
 import type { AsyncDataLayer } from "../postgres/data-layer.js";
 import * as asyncMessageStore from "../async-stores/async-message-store.js";
 import { sanitizeTextValue, sanitizeJsonbValue } from "../postgres/nul-sanitize.js";
 import { emitUsageEvent } from "../task-store/async/async-events.js";
 
 const messageStoreLog = createLogger("message-store");
+const CATEGORY_BACKEND_REQUIRED = "Dashboard inbox categories require the PostgreSQL backend";
 
 // ── Event Types ─────────────────────────────────────────────────────
 
@@ -426,6 +427,9 @@ export class MessageStore extends EventEmitter<MessageStoreEvents> {
     if (this.asyncLayer) {
       return asyncMessageStore.queryMessagesByParticipant(this.asyncLayer.db, "to", ownerId, ownerType, filter);
     }
+    if (filter?.category) {
+      throw new Error(CATEGORY_BACKEND_REQUIRED);
+    }
     return this.queryMessagesByParticipant("to", ownerId, ownerType, filter);
   }
 
@@ -533,9 +537,13 @@ export class MessageStore extends EventEmitter<MessageStoreEvents> {
   async markAllAsRead(
     ownerId: string,
     ownerType: ParticipantType,
+    category?: DashboardInboxCategory,
   ): Promise<number> {
     if (this.asyncLayer) {
-      return asyncMessageStore.markAllMessagesAsRead(this.asyncLayer.db, ownerId, ownerType);
+      return asyncMessageStore.markAllMessagesAsRead(this.asyncLayer.db, ownerId, ownerType, category);
+    }
+    if (category) {
+      throw new Error(CATEGORY_BACKEND_REQUIRED);
     }
     const now = new Date().toISOString();
     const participantIds = this.getParticipantIdsForLookup(ownerId, ownerType);
@@ -556,6 +564,16 @@ export class MessageStore extends EventEmitter<MessageStoreEvents> {
 
     this.db!.bumpLastModified();
     return count;
+  }
+
+  async getDashboardInboxCategoryCounts(
+    ownerId: string,
+    ownerType: ParticipantType,
+  ): Promise<Record<DashboardInboxCategory, number>> {
+    if (!this.asyncLayer) {
+      throw new Error(CATEGORY_BACKEND_REQUIRED);
+    }
+    return asyncMessageStore.getDashboardInboxCategoryCounts(this.asyncLayer.db, ownerId, ownerType);
   }
 
   /** Archive a message without destroying its correspondence history. */

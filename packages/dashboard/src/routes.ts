@@ -1372,11 +1372,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   card kept its agent's "working on" indicator lit — the agent list showed work that had already
   shipped, which is exactly the stale indicator this sanitizer exists to prevent.
   */
-  const TERMINAL_TASK_STATUSES = new Set(["done", "archived"]);
+  /* FNXC:TaskArchiveRemoval 2026-09-04-14:51: Complete is the only live terminal role; the fallback must never classify the historical soft-delete sentinel as a board lane. */
+  const TERMINAL_TASK_STATUSES = new Set(["done"]);
   const UNRESOLVED_AGENT_TASK_COLUMN = "unresolved";
 
   /**
-   * Check if a task status is terminal (done or archived).
+   * Check if a task status is terminal (complete, with Done as the degraded fallback).
    */
   function isTerminalTaskStatus(status: string | undefined, resolvedTerminal?: ReadonlySet<string>): boolean {
     if (status === undefined) return false;
@@ -1385,7 +1386,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
   /**
    * Sanitize agent responses to omit taskId when the linked task is in a terminal state.
-   * This prevents stale "working on" UI indicators for completed/archived tasks.
+   * This prevents stale "working on" UI indicators for completed tasks.
    *
    * @param agents - Array of agents to sanitize
    * @param scopedStore - Task store for looking up linked task status
@@ -1409,7 +1410,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     /*
     FNXC:WorkflowLifecycleColumns 2026-07-31-07:00 (dashboard-server feed):
     Each linked task's OWN terminal lanes, resolved once per unique id with a shared IR cache. A task
-    whose workflow will not resolve is left out of the map and falls back to the literal pair above,
+    whose workflow will not resolve is left out of the map and falls back to Done above,
     which is the pre-existing behaviour rather than a guess.
     */
     const terminalIrCache = new Map<string, never>();
@@ -1417,14 +1418,14 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     for (const taskId of taskIds) {
       /*
       FNXC:WorkflowLifecycleColumns 2026-07-31-09:30 (#2787 review — greptile P1):
-      MEMBERSHIP, not first-per-role — a workflow may declare more than one complete or archived
-      column, and `resolveLifecycleColumns` returns only the FIRST of each. A linked task in the
-      second terminal lane kept its `taskId` and the agent stayed displayed as working on finished
+      MEMBERSHIP, not first-per-role — a workflow may declare more than one Complete column, and
+      `resolveLifecycleColumns` returns only the FIRST. A linked task in the second terminal lane
+      kept its `taskId` and the agent stayed displayed as working on finished
       work, which is the exact symptom this sanitizer exists to remove.
       */
       const ir = await resolveWorkflowIrForTask(scopedStore, taskId, terminalIrCache as never).catch(() => undefined);
       if (!ir) continue;
-      const terminal = [...columnsWithFlag(ir, "complete"), ...columnsWithFlag(ir, "archived")];
+      const terminal = columnsWithFlag(ir, "complete");
       if (terminal.length > 0) terminalByTaskId.set(taskId, new Set(terminal));
     }
 

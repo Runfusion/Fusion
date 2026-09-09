@@ -79,7 +79,7 @@ describe("age staleness follows the caller's active lanes", () => {
 });
 
 describe("blocker staleness follows the caller's lanes", () => {
-  const lanes = { terminal: new Set(["shipped", "filed"]), review: new Set(["signoff"]) };
+  const lanes = { terminal: new Set(["shipped"]), review: new Set(["signoff"]) };
 
   it("treats a blocker in the board's COMPLETE lane as stale", () => {
     // Pre-fix: the blocked card kept waiting on a finished blocker, forever, with no signal.
@@ -102,9 +102,8 @@ describe("blocker staleness follows the caller's lanes", () => {
     expect(isStaleBlockedByBlocker(task({ column: "signoff" }), 3, lanes)).toBe(false);
   });
 
-  it("keeps the LEGACY ids when the caller supplies no lanes", () => {
+  it("keeps the built-in Done id when the caller supplies no lanes", () => {
     expect(isStaleBlockedByBlocker(task({ column: "done" }), 3)).toBe(true);
-    expect(isStaleBlockedByBlocker(task({ column: "archived" }), 3)).toBe(true);
     expect(isStaleBlockedByBlocker(task({ column: "shipped" }), 3)).toBe(false);
   });
 });

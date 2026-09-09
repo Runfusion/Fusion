@@ -3,7 +3,7 @@
 import "./ScriptsModal.css";
 // Embedded (right-dock) activity-log styles were extracted to their own file next to this component.
 import "./ActivityLogModal.css";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { X, History, Trash2, Filter, RefreshCw, CheckCircle, XCircle, ArrowRight, Plus, Settings, AlertCircle, Loader2, Folder } from "lucide-react";
@@ -14,6 +14,7 @@ import type { Task, ProjectInfo } from "@fusion/core";
 import { linkifyFilePaths } from "../utils/filePathLinkify";
 import { getRelativeTimeBucket } from "../utils/relativeTimeAgo";
 import { FloatingWindow } from "./FloatingWindow";
+import { useAutoPaginationSentinel } from "../hooks/useAutoPaginationSentinel";
 
 interface ActivityLogModalProps {
   isOpen: boolean;
@@ -238,6 +239,16 @@ export function ActivityLogModal({
     onProjectFilterChange?.(undefined);
   };
 
+  const activityScrollRef = useRef<HTMLDivElement | null>(null);
+  const activityPagination = useAutoPaginationSentinel({
+    rootRef: activityScrollRef,
+    hasMore,
+    loading: isLoading,
+    onLoadMore: loadMore,
+    direction: "end",
+    enabled: isOpen,
+  });
+
   if (!isOpen) return null;
 
   /*
@@ -371,7 +382,7 @@ export function ActivityLogModal({
           </div>
 
         {/* Content */}
-        <div className="activity-log-content" data-testid="activity-log-content">
+        <div className="activity-log-content" data-testid="activity-log-content" ref={activityScrollRef}>
           {error && (
             <div className="activity-log-error" data-testid="activity-error">
               <AlertCircle size={16} />
@@ -453,15 +464,9 @@ export function ActivityLogModal({
             ))}
           </div>
 
-          {hasMore && !isLoading && (
-            <button
-              className="activity-log-load-more"
-              onClick={loadMore}
-              data-testid="activity-load-more"
-            >
-              {t("activityLog.loadMore", "Load More")}
-            </button>
-          )}
+          {hasMore ? (
+            <div ref={activityPagination.sentinelRef} className="activity-log-load-more" data-testid="activity-auto-pagination-sentinel" role="status" aria-live="polite" />
+          ) : null}
 
           {isLoading && convertedEntries.length > 0 && (
             <div className="activity-log-loading">

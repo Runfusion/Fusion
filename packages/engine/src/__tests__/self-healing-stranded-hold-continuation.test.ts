@@ -17,7 +17,7 @@ vi.mock("../util/run-audit.js", async (importOriginal) => ({
   createRunAuditor: vi.fn(() => ({ database: recordRunAuditEventMock })),
 }));
 
-import { SelfHealingManager } from "../self-healing.js";
+import { SelfHealingManager, type SelfHealingOptions } from "../self-healing.js";
 import { InProcessRuntime } from "../runtimes/in-process-runtime.js";
 import { WorkflowGraphExecutor } from "../workflows/workflow-graph-executor.js";
 import { evaluateStrandedHoldContinuation } from "../plan-review-continuation.js";
@@ -85,6 +85,25 @@ describe("FN-8592 stranded hold continuation recovery", () => {
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, "PROMPT.md"), text);
   }
+
+  it("defers re-seeding while planning owns the card, then recovers after release", async () => {
+    const task = strandedTask();
+    const store = storeFor(task);
+    store.getTasksDir.mockReturnValue(root);
+    await writePrompt(task.id);
+    const planningIds = new Set([task.id]);
+    const manager = new SelfHealingManager(store, {
+      rootDir: root,
+      getPlanningTaskIds: () => planningIds,
+    } as SelfHealingOptions);
+
+    await expect(manager.reconcileStrandedHoldContinuations()).resolves.toBe(0);
+    expect(store.seedStrandedPlanReviewContinuation).not.toHaveBeenCalled();
+
+    planningIds.clear();
+    await expect(manager.reconcileStrandedHoldContinuations()).resolves.toBe(1);
+    expect(store.seedStrandedPlanReviewContinuation).toHaveBeenCalledOnce();
+  });
 
   it("re-seeds a real-spec hold card and records ids-only recovery metadata", async () => {
     const task = strandedTask();

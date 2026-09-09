@@ -41,6 +41,7 @@ fn chat <agent-id> [message…] [--once] [--non-interactive] [--poll-ms <n>] [--
 - `metadata.skills` is an additive forced-reading list, not an allow-list: resolved forced skills are required reading before work begins while every other enabled skill remains available on demand. A forced skill that is disabled by `-` settings or cannot be discovered is diagnosed rather than silently re-enabled or named in the prompt. Heartbeats receive their waking agent's forced skills and all enabled project/plugin skills, but have no `fusion` role fallback.
 - In dashboard model-loop chat (main chat, QuickChat, and room responders), typing `/skill:{name}` ensures that skill is present for the current AI session and strips the slash token from the prompt. Slash and catalog-style names resolve to the matching discovered skill token and remain subject to project enable/disable settings; CLI-agent-backed PTY chat keeps raw terminal input semantics.
 - Dashboard chat and planning sessions with a scoped task store expose `fn_task_document_write`, `fn_task_document_read`, and `fn_task_logs_read`; because neither lane has an ambient task, each tool requires an explicit `task_id`. Document writers may pass `expected_revision` and/or `expected_content_hash` after a read for safe cross-task CAS publication; stale writes return typed conflict state and are never auto-retried. `fn_task_logs_read` previews tool detail per row by default; pass `detail: "full"` to lift that row preview while its whole response remains bounded.
+- Direct dashboard model-loop chat additionally exposes the read-only `fn_chat_conversation_read` and `fn_chat_conversation_search` tools. Both require an explicit `conversation_id` and refuse unknown or cross-project sessions with the same non-disclosing error. Reads return at most 100 messages, truncate each message at 1,500 characters, and cap the response at 12,000 characters; searches return at most 25 matches with 200-character excerpts from a scan of the latest 400 messages. These tools are not registered for Rooms, explicitly mentioned-agent responders, planning, or CLI-agent-backed chat.
 - Dashboard chat and room responders share a safe coordination/productivity toolset across pi and Grok CLI runtimes: board reads, task creation, delegation, agent listing/configuration, web fetch, and goal/memory/research retrieval. Destructive agent-lifecycle tools and memory append remain excluded because chat has no action-gate context.
 - Agent workflow-routing tools follow an intent boundary: agents may select or change a task workflow only when the user explicitly requested that workflow or when the agent created the task. Executors must not call `fn_workflow_select` to reroute the task they are executing unless the task instructions or a user steering comment explicitly asks for the workflow change. Lanes without an ambient task, including dashboard chat/planning and published/pi extension calls outside a task, must pass an explicit `task_id`; task-bound executor paths may default to the current task.
 - Executor, heartbeat, and dashboard chat sessions expose artifact registry tools so agents can publish and inspect multi-type deliverables without relying on the dashboard gallery. Planning sessions intentionally exclude artifact tools until they can thread the existing `MessageStore` dependency.
@@ -294,11 +295,10 @@ These fields are managed by the engine and cannot be directly edited:
 
 ### Stale Task Link Sanitization
 
-The `taskId` field is suppressed in API responses when the linked task is in a terminal state (`done` or `archived`). This prevents stale "working on" UI indicators in the Agents dashboard for agents whose task has already completed.
+The `taskId` field is suppressed in API responses when the linked task reaches its workflow's Complete column or is soft-deleted. This prevents stale "working on" UI indicators for agents whose assignment is no longer active.
 
-**Terminal task statuses:**
-- `done` — Task completed successfully
-- `archived` — Task archived
+**Terminal task state:**
+- Any column carrying the workflow `complete` trait (`done` in the built-in fallback)
 
 **Affected API endpoints:**
 - `GET /api/agents` — `taskId` is omitted from agents with terminal linked tasks

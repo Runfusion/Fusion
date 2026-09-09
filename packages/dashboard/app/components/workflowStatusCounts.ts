@@ -8,20 +8,20 @@ import type { BoardWorkflowColumn, BoardWorkflowsPayload } from "../api";
 import { ALL_WORKFLOWS_BOARD_VIEW_ID } from "../utils/boardWorkflowSelection";
 
 export interface WorkflowStatusCounts {
-  todo: number;
-  inProgress: number;
-  done: number;
+  plan: number;
+  progress: number;
+  review: number;
   merging: number;
 }
 
 const EMPTY_COUNTS = (): WorkflowStatusCounts => ({
-  todo: 0,
-  inProgress: 0,
-  done: 0,
+  plan: 0,
+  progress: 0,
+  review: 0,
   merging: 0,
 });
 
-type WorkflowStatusBucket = keyof WorkflowStatusCounts | "excluded";
+type WorkflowStatusBucket = "plan" | "progress" | "review" | "excluded";
 
 /*
 FNXC:MergeQueue 2026-07-15-10:40:
@@ -29,31 +29,34 @@ AI merge uses reviewing/landing for most of the live merge window; count them wi
 */
 
 /**
- * FNXC:WorkflowSwitcher 2026-06-20-00:09:
- * The board/list workflow dropdown must show compact Todo, In Progress, and Done task counts for every selectable workflow without duplicating logic across render surfaces.
- * Use workflow column flags as the source of truth: archived or board-hidden columns are excluded, complete columns count as Done, active non-intake WIP columns count as In Progress, and all remaining visible work counts as Todo/not-yet-started.
- *
- * FNXC:WorkflowSwitcher 2026-06-21-00:00:
- * Built-in linear workflows synthesize canonical lifecycle columns with empty traits, so their resolved flags cannot identify Done, In Progress, or Archived buckets.
- * Fall back to canonical lifecycle column ids only after flag-based classification fails, keeping trait-bearing workflows authoritative while preventing Done tasks in Quick fix-style lanes from being miscounted.
+ * FNXC:WorkflowSwitcher 2026-09-07-12:17:
+ * The board/list workflow dropdown reports active work as Plan, Progress, and Review. Complete and board-hidden columns contribute to no phase; every merge-orchestration, merge-blocking, or human-review column contributes to Review before WIP is considered, so a multi-trait review lane is counted exactly once.
+ * Canonical column ids are presentation fallbacks only when the whole workflow has no resolved lifecycle traits. Once any trait is resolved, flags are authoritative for every column so a modern workflow can reuse historical ids without being misclassified.
  */
 function classifyWorkflowStatusColumn(
-  column: BoardWorkflowColumn
+  column: BoardWorkflowColumn,
+  useCanonicalFallback: boolean,
 ): WorkflowStatusBucket {
-  if (column.flags.archived || column.flags.hiddenFromBoard) return "excluded";
-  if (column.flags.complete) return "done";
-  if (column.flags.countsTowardWip && !column.flags.intake) return "inProgress";
+  if (column.flags.hiddenFromBoard || column.flags.complete) return "excluded";
+  if (
+    column.flags.mergeOrchestration ||
+    column.flags.mergeBlocker ||
+    column.flags.humanReview
+  ) return "review";
+  if (column.flags.countsTowardWip && !column.flags.intake) return "progress";
 
-  switch (column.id) {
-    case "archived":
-      return "excluded";
-    case "done":
-      return "done";
-    case "in-progress":
-      return "inProgress";
-    default:
-      return "todo";
+  if (useCanonicalFallback) {
+    switch (column.id) {
+      case "done":
+        return "excluded";
+      case "in-review":
+        return "review";
+      case "in-progress":
+        return "progress";
+    }
   }
+
+  return "plan";
 }
 
 export function computeWorkflowStatusCounts(
@@ -71,12 +74,19 @@ export function computeWorkflowStatusCounts(
     string,
     Map<string, BoardWorkflowColumn>
   >();
+  const canonicalFallbackByWorkflowId = new Map<string, boolean>();
 
   for (const workflow of boardWorkflows.workflows) {
     countsByWorkflow.set(workflow.id, EMPTY_COUNTS());
     columnsByWorkflowId.set(
       workflow.id,
       new Map(workflow.columns.map((column) => [column.id, column]))
+    );
+    canonicalFallbackByWorkflowId.set(
+      workflow.id,
+      workflow.columns.every((column) =>
+        Object.values(column.flags).every((flag) => !flag),
+      ),
     );
   }
 
@@ -99,7 +109,10 @@ export function computeWorkflowStatusCounts(
     const column = columnsByWorkflowId.get(workflow.id)?.get(task.column);
     if (!column) continue;
 
-    const bucket = classifyWorkflowStatusColumn(column);
+    const bucket = classifyWorkflowStatusColumn(
+      column,
+      canonicalFallbackByWorkflowId.get(workflow.id) === true,
+    );
     if (bucket === "excluded") continue;
 
     const counts = countsByWorkflow.get(workflow.id) ?? EMPTY_COUNTS();

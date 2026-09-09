@@ -4,12 +4,13 @@ import { loadAllAppCss } from "../../test/cssFixture";
 import { render, screen, fireEvent, waitFor, act, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MailboxView } from "../MailboxView";
+import { useMailboxUnread } from "../../hooks/useMailboxUnread";
 import { NavigationHistoryProvider, useNavigationHistory, type UseNavigationHistoryResult } from "../../hooks/useNavigationHistory";
 import * as apiModule from "../../api";
 import * as viewportModule from "../../hooks/useViewportMode";
 import * as mobileKeyboardModule from "../../hooks/useMobileKeyboard";
 import * as sseBusModule from "../../sse-bus";
-import type { Agent } from "../../api";
+import type { Agent, InboxResponse, UnreadCountResponse } from "../../api";
 import type { Message } from "@fusion/core";
 
 // Mock the API module
@@ -203,6 +204,35 @@ function makeOutboxResponse(messages: Message[]) {
   return { messages, total: messages.length };
 }
 
+function categoryUnreadResponse(message: number, recommendation: number, artifact: number) {
+  return {
+    unreadCount: message + recommendation + artifact,
+    categoryUnreadCounts: { message, recommendation, artifact },
+  };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+function MailboxUnreadHarness({ projectId }: { projectId: string }) {
+  const unread = useMailboxUnread(projectId);
+  return (
+    <>
+      <output data-testid="mailbox-harness-message-count">{unread.mailboxUnreadCount}</output>
+      <output data-testid="mailbox-harness-recommendation-count">{unread.recommendationUnreadCount}</output>
+      <output data-testid="mailbox-harness-artifact-count">{unread.artifactUnreadCount}</output>
+      <MailboxView
+        {...defaultProps}
+        projectId={projectId}
+        onUnreadCountChange={unread.setMailboxUnreadCount}
+      />
+    </>
+  );
+}
+
 function HistoryHarness({ children, historyRef }: { children: ReactNode; historyRef?: { current: UseNavigationHistoryResult | null } }) {
   const history = useNavigationHistory({ enabled: true });
   useEffect(() => {
@@ -281,6 +311,59 @@ describe("MailboxView", () => {
     await waitFor(() => {
       expect(screen.getByTestId("mailbox-unread-badge")).toBeDefined();
     });
+  });
+
+  it("keeps the new project's badges when the prior MailboxView requests resolve late", async () => {
+    const projectAInbox = deferred<InboxResponse>();
+    const projectBInbox = deferred<InboxResponse>();
+    const projectACounts = deferred<UnreadCountResponse>();
+    const projectBCounts = deferred<UnreadCountResponse>();
+    mockFetchInbox.mockImplementation((_options, projectId) => (
+      projectId === "proj-a" ? projectAInbox.promise : projectBInbox.promise
+    ));
+    mockFetchUnreadCount.mockImplementation((projectId) => (
+      projectId === "proj-a" ? projectACounts.promise : projectBCounts.promise
+    ));
+
+    const rendered = render(<MailboxUnreadHarness projectId="proj-a" />);
+    await waitFor(() => {
+      expect(mockFetchInbox).toHaveBeenCalledWith(
+        expect.objectContaining({ category: "message" }),
+        "proj-a",
+      );
+    });
+
+    rendered.rerender(<MailboxUnreadHarness projectId="proj-b" />);
+    await waitFor(() => {
+      expect(mockFetchInbox).toHaveBeenCalledWith(
+        expect.objectContaining({ category: "message" }),
+        "proj-b",
+      );
+    });
+
+    await act(async () => {
+      projectBCounts.resolve(categoryUnreadResponse(4, 5, 5));
+      projectBInbox.resolve({
+        ...makeInboxResponse([], 5),
+        categoryUnreadCounts: { message: 5, recommendation: 5, artifact: 5 },
+      });
+      await Promise.all([projectBCounts.promise, projectBInbox.promise]);
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("mailbox-harness-message-count")).toHaveTextContent("5");
+      expect(screen.getByTestId("mailbox-harness-recommendation-count")).toHaveTextContent("5");
+      expect(screen.getByTestId("mailbox-harness-artifact-count")).toHaveTextContent("5");
+    });
+
+    await act(async () => {
+      projectACounts.resolve(categoryUnreadResponse(1, 1, 1));
+      projectAInbox.resolve(makeInboxResponse([mockMessage], 1));
+      await Promise.all([projectACounts.promise, projectAInbox.promise]);
+    });
+
+    expect(screen.getByTestId("mailbox-harness-message-count")).toHaveTextContent("5");
+    expect(screen.getByTestId("mailbox-harness-recommendation-count")).toHaveTextContent("5");
+    expect(screen.getByTestId("mailbox-harness-artifact-count")).toHaveTextContent("5");
   });
 
   it("preserves composed inbox timestamp buckets", async () => {
@@ -972,7 +1055,7 @@ describe("MailboxView", () => {
     expect(onOpenPlanningSession).toHaveBeenCalledWith("planning-8428");
   });
 
-  it("renders an inline artifact attachment in the single-message detail path", async () => {
+  it("renders an archived artifact attachment in the single-message detail path", async () => {
     const artifactMessage: Message = {
       ...mockMessage,
       metadata: {
@@ -983,12 +1066,16 @@ describe("MailboxView", () => {
         taskId: "FN-1234",
       },
     };
-    mockFetchInbox.mockResolvedValue(makeInboxResponse([artifactMessage], 1));
+    mockFetchInbox.mockImplementation(async (filter) => filter?.archived
+      ? makeInboxResponse([artifactMessage], 0)
+      : makeInboxResponse([], 0));
+    mockFetchOutbox.mockResolvedValue(makeOutboxResponse([]));
+    mockFetchAllAgentMailbox.mockResolvedValue({ messages: [], total: 0, unreadCount: 0 });
     mockFetchConversation.mockResolvedValue([artifactMessage]);
-    mockMarkMessageRead.mockResolvedValue({ ...artifactMessage, read: true });
 
     render(<MailboxView {...defaultProps} projectId="project-a" />);
 
+    fireEvent.click(await screen.findByTestId("mailbox-tab-archived"));
     await waitFor(() => {
       expect(screen.getByTestId("mailbox-item-msg-001")).toBeDefined();
     });
@@ -1004,7 +1091,7 @@ describe("MailboxView", () => {
     });
   });
 
-  it("does not render a View task affordance for artifact messages without task metadata", async () => {
+  it("does not render a View task affordance for archived artifact messages without task metadata", async () => {
     const artifactMessage: Message = {
       ...mockMessage,
       metadata: {
@@ -1013,12 +1100,16 @@ describe("MailboxView", () => {
         title: "Mailbox Screenshot",
       },
     };
-    mockFetchInbox.mockResolvedValue(makeInboxResponse([artifactMessage], 1));
+    mockFetchInbox.mockImplementation(async (filter) => filter?.archived
+      ? makeInboxResponse([artifactMessage], 0)
+      : makeInboxResponse([], 0));
+    mockFetchOutbox.mockResolvedValue(makeOutboxResponse([]));
+    mockFetchAllAgentMailbox.mockResolvedValue({ messages: [], total: 0, unreadCount: 0 });
     mockFetchConversation.mockResolvedValue([artifactMessage]);
-    mockMarkMessageRead.mockResolvedValue({ ...artifactMessage, read: true });
 
     render(<MailboxView {...defaultProps} onOpenTask={vi.fn()} />);
 
+    fireEvent.click(await screen.findByTestId("mailbox-tab-archived"));
     await waitFor(() => {
       expect(screen.getByTestId("mailbox-item-msg-001")).toBeDefined();
     });
@@ -1542,7 +1633,7 @@ describe("MailboxView", () => {
     });
 
     await waitFor(() => {
-      expect(mockMarkAllMessagesRead).toHaveBeenCalledWith(undefined);
+      expect(mockMarkAllMessagesRead).toHaveBeenCalledWith(undefined, { category: "message" });
       expect(onUnreadCountChange).toHaveBeenCalledWith(0);
     });
   });

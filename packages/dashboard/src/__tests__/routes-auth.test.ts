@@ -178,7 +178,7 @@ vi.mock("@fusion/engine", async () => {
   });
 });
 
-import { AgentStore, ArchivedTaskDocumentPublicationRejectedError, Database, MAX_TASK_MESSAGE_LENGTH, RoutineStore, TaskDocumentPreconditionFailedError, isGhAvailable, isGhAuthenticated, probeGitCliStatus } from "@fusion/core";
+import { AgentStore, Database, MAX_TASK_MESSAGE_LENGTH, RoutineStore, TaskDocumentPreconditionFailedError, isGhAvailable, isGhAuthenticated, probeGitCliStatus } from "@fusion/core";
 import { createFnAgent } from "@fusion/engine";
 
 const mockIsGhAvailable = vi.mocked(isGhAvailable);
@@ -208,8 +208,6 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
     updateTask: vi.fn(),
     deleteTask: vi.fn(),
     mergeTask: vi.fn(),
-    archiveTask: vi.fn(),
-    unarchiveTask: vi.fn(),
     getSettings: vi.fn().mockResolvedValue({}),
     getSettingsFast: vi.fn().mockResolvedValue({}),
     updateSettings: vi.fn(),
@@ -230,7 +228,6 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
     getTaskDocumentRevisions: vi.fn().mockResolvedValue([]),
     getAllDocuments: vi.fn().mockResolvedValue([]),
     upsertTaskDocument: vi.fn(),
-    publishArchivedTaskDocumentAddition: vi.fn(),
     deleteTaskDocument: vi.fn().mockResolvedValue(undefined),
     updatePrInfo: vi.fn().mockResolvedValue(undefined),
     updatePrInfoByNumber: vi.fn().mockResolvedValue(undefined),
@@ -1345,6 +1342,95 @@ describe("GET /auth/status", () => {
     expect(githubCopilot).toMatchObject({ authenticated: true, expired: false });
     expect(claude).toMatchObject({ authenticated: false, expired: true });
     expect(geminiOauth).toMatchObject({ authenticated: false, expired: false });
+  });
+
+  it.each(["openai-codex", "github-copilot"])("refreshes a renewable %s credential through the real Fusion storage seam before projecting status and its default instance", async (providerId) => {
+    const previousHome = process.env.HOME;
+    const homeDir = mkdtempSync(join(tmpdir(), "fusion-auth-status-refresh-"));
+    const now = Date.now();
+    const renewedExpires = now + 60_000;
+
+    try {
+      process.env.HOME = homeDir;
+      const storage = createFusionAuthStorage();
+      await storage.set(providerId, {
+        type: "oauth",
+        access: "expired-access-token",
+        refresh: "refresh-material",
+        expires: now - 1_000,
+      } as never);
+      const getAuth = vi.fn(async (runtimeProviderId: string) => {
+        await storage.modify(runtimeProviderId, async (credential) => ({
+          ...credential,
+          expires: renewedExpires,
+        }));
+      });
+      storage.setModelRuntime({ getAuth } as never);
+
+      const realApp = express();
+      realApp.use(express.json());
+      realApp.use("/api", createApiRoutes(store, { authStorage: storage }));
+      const res = await GET(realApp, "/api/auth/status");
+
+      expect(res.status).toBe(200);
+      const provider = res.body.providers.find((item: any) => item.id === providerId);
+      expect(provider).toMatchObject({ authenticated: true, expired: false });
+      expect(provider.loginError).toBeUndefined();
+      expect(provider.instances).toEqual([
+        expect.objectContaining({
+          instanceId: "default",
+          isDefault: true,
+          authenticated: true,
+          expired: false,
+        }),
+      ]);
+      expect(getAuth).toHaveBeenCalledWith(providerId);
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      rmSync(homeDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each(["openai-codex", "github-copilot"])("keeps an unrenewable %s credential expired in both provider and default-instance status", async (providerId) => {
+    const previousHome = process.env.HOME;
+    const homeDir = mkdtempSync(join(tmpdir(), "fusion-auth-status-unrenewable-"));
+    const now = Date.now();
+
+    try {
+      process.env.HOME = homeDir;
+      const storage = createFusionAuthStorage();
+      await storage.set(providerId, {
+        type: "oauth",
+        access: "expired-access-token",
+        expires: now - 1_000,
+      } as never);
+      const getAuth = vi.fn();
+      storage.setModelRuntime({ getAuth } as never);
+
+      const realApp = express();
+      realApp.use(express.json());
+      realApp.use("/api", createApiRoutes(store, { authStorage: storage }));
+      const res = await GET(realApp, "/api/auth/status");
+
+      expect(res.status).toBe(200);
+      const provider = res.body.providers.find((item: any) => item.id === providerId);
+      expect(provider).toMatchObject({ authenticated: false, expired: true });
+      expect(provider.loginError).toBe("This OAuth session expired and could not be refreshed. Re-login to restore model access.");
+      expect(provider.instances).toEqual([
+        expect.objectContaining({
+          instanceId: "default",
+          isDefault: true,
+          authenticated: false,
+          expired: true,
+        }),
+      ]);
+      expect(getAuth).not.toHaveBeenCalled();
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      rmSync(homeDir, { recursive: true, force: true });
+    }
   });
 
   it("attempts async refresh for expired oauth before reporting status", async () => {
@@ -4729,12 +4815,11 @@ describe("Pause/Unpause endpoints", () => {
       });
 
       it("keeps ordinary replacement writes rejected for archived tasks", async () => {
-        (store.upsertTaskDocument as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Task KB-001 is archived — documents are read-only"));
+        (store.upsertTaskDocument as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Task KB-001 is deleted or historical — documents are read-only"));
         const res = await REQUEST(buildApp(), "PUT", "/api/tasks/KB-001/documents/plan", JSON.stringify({
           content: "replacement",
         }), { "Content-Type": "application/json" });
         expect(res.status).toBe(500);
-        expect(store.publishArchivedTaskDocumentAddition).not.toHaveBeenCalled();
       });
 
       it("updates existing document with 200", async () => {
@@ -4814,101 +4899,6 @@ describe("Pause/Unpause endpoints", () => {
       });
     });
 
-    describe("POST /tasks/:id/documents/:key/archived-publications", () => {
-      const hash = `sha256:${"a".repeat(64)}`;
-      const body = {
-        appendContent: "Correction bytes",
-        expectedRevision: 2,
-        expectedContentHash: hash,
-        author: "operator",
-        reason: "Correct retained evidence",
-      };
-      const requestPublication = (app: express.Express, payload: Record<string, unknown> = body, token = OPERATOR_TOKEN) => REQUEST(
-        app,
-        "POST",
-        "/api/tasks/KB-001/documents/docs/archived-publications",
-        JSON.stringify(payload),
-        { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      );
-
-      it("fails closed when daemon authentication is disabled", async () => {
-        const res = await requestPublication(buildPrivilegedApp("no-auth"));
-        expect(res.status).toBe(403);
-        expect(store.publishArchivedTaskDocumentAddition).not.toHaveBeenCalled();
-      });
-
-      it("inherits daemon bearer rejection before invoking the store", async () => {
-        const res = await requestPublication(buildPrivilegedApp(), body, "wrong-token");
-        expect(res.status).toBe(401);
-        expect(store.publishArchivedTaskDocumentAddition).not.toHaveBeenCalled();
-      });
-
-      it("publishes an authenticated additive correction with project-scoped context", async () => {
-        const result = {
-          document: { id: "d1", taskId: "KB-001", key: "docs", content: "base\n\nCorrection bytes", revision: 3, contentHash: `sha256:${"b".repeat(64)}`, author: "operator" },
-          previousRevision: 2,
-          previousContentHash: hash,
-          appendedContentHash: `sha256:${"b".repeat(64)}`,
-        };
-        (store.publishArchivedTaskDocumentAddition as ReturnType<typeof vi.fn>).mockResolvedValue(result);
-        const res = await requestPublication(buildPrivilegedApp());
-        expect(res.status).toBe(201);
-        expect(res.body).toEqual(result);
-        expect(store.publishArchivedTaskDocumentAddition).toHaveBeenCalledWith("KB-001", {
-          key: "docs",
-          ...body,
-        });
-      });
-
-      it.each([
-        [{ ...body, appendContent: "" }, "appendContent must be a non-empty string"],
-        [{ ...body, expectedRevision: 0 }, "expectedRevision must be a positive integer"],
-        [{ ...body, expectedRevision: 1.5 }, "expectedRevision must be a positive integer"],
-        [{ ...body, expectedContentHash: "sha256:ABC" }, "64 lowercase hex"],
-        [{ ...body, author: "" }, "author must be a non-empty string"],
-        [{ ...body, reason: "" }, "reason must be a non-empty string"],
-        [{ ...body, content: "replacement" }, "Unknown archived publication field"],
-        [{ ...body, allowArchived: true }, "Unknown archived publication field"],
-      ])("returns 400 without forwarding malformed publication %#", async (payload, message) => {
-        const res = await requestPublication(buildPrivilegedApp(), payload);
-        expect(res.status).toBe(400);
-        expect(res.body.error).toContain(message);
-        expect(store.publishArchivedTaskDocumentAddition).not.toHaveBeenCalled();
-      });
-
-      it("maps stale CAS to a safe structured 409", async () => {
-        (store.publishArchivedTaskDocumentAddition as ReturnType<typeof vi.fn>).mockRejectedValue(new TaskDocumentPreconditionFailedError({
-          projectId: "project-a",
-          taskId: "KB-001",
-          key: "docs",
-          expectedRevision: 2,
-          expectedContentHash: hash,
-          currentRevision: 3,
-          currentContentHash: `sha256:${"c".repeat(64)}`,
-        }));
-        const res = await requestPublication(buildPrivilegedApp());
-        expect(res.status).toBe(409);
-        expect(res.body.details).toMatchObject({ code: "TASK_DOCUMENT_PRECONDITION_FAILED", currentRevision: 3 });
-        expect(JSON.stringify(res.body)).not.toContain(body.appendContent);
-        expect(JSON.stringify(res.body)).not.toContain(body.reason);
-      });
-
-      it.each([
-        ["parent-not-found", 404],
-        ["document-not-found", 404],
-        ["parent-not-archived", 409],
-        ["archived-state-inconsistent", 409],
-      ] as const)("maps %s to %i", async (reason, status) => {
-        (store.publishArchivedTaskDocumentAddition as ReturnType<typeof vi.fn>).mockRejectedValue(
-          new ArchivedTaskDocumentPublicationRejectedError(reason, "project-a", "KB-001", "docs"),
-        );
-        const res = await requestPublication(buildPrivilegedApp());
-        expect(res.status).toBe(status);
-        expect(res.body.details).toMatchObject({ code: "ARCHIVED_TASK_DOCUMENT_PUBLICATION_REJECTED", reason });
-        expect(JSON.stringify(res.body)).not.toContain(body.appendContent);
-      });
-    });
-
     describe("DELETE /tasks/:id/documents/:key", () => {
       it("returns 204 on success", async () => {
         (store.deleteTaskDocument as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
@@ -4918,10 +4908,9 @@ describe("Pause/Unpause endpoints", () => {
       });
 
       it("keeps ordinary deletes rejected for archived tasks", async () => {
-        (store.deleteTaskDocument as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Task KB-001 is archived — documents are read-only"));
+        (store.deleteTaskDocument as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Task KB-001 is deleted or historical — documents are read-only"));
         const res = await REQUEST(buildApp(), "DELETE", "/api/tasks/KB-001/documents/plan");
         expect(res.status).toBe(500);
-        expect(store.publishArchivedTaskDocumentAddition).not.toHaveBeenCalled();
       });
 
       it("returns 404 when document not found", async () => {

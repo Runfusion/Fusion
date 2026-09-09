@@ -18,7 +18,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import ts from "typescript";
 
-import { countLegacyMoveTargetLiterals, destinationLiterals } from "../check-move-target-literals.mjs";
+import { countLegacyMoveTargetLiterals, countMoveTaskCallsMissingProvenance, destinationLiterals } from "../check-move-target-literals.mjs";
 
 /** Parse `expr` as the second argument of a moveTask call and return the literals the gate sees. */
 function literalsOf(expr) {
@@ -104,6 +104,22 @@ test("counts legacy-literal move destinations in scanner fixtures", () => {
     store.moveTask(id, resolved || "todo");
   `;
   assert.equal(countLegacyMoveTargetLiterals(fixture), 4);
+});
+
+test("counts engine moveTask calls that omit explicit provenance", () => {
+  assert.equal(countMoveTaskCallsMissingProvenance(`
+    store.moveTask(id, target);
+    store.moveTask(id, target, { preserveProgress: true });
+    store.moveTask(id, target, { moveSource: "engine" });
+    store.moveTask(id, target, { moveSource: "user", preserveProgress: true });
+  `), 2);
+});
+
+test("does not classify moveTaskInternal or prose as missing engine provenance", () => {
+  assert.equal(countMoveTaskCallsMissingProvenance(`
+    // store.moveTask(id, target)
+    store.moveTaskInternal(id, target, {}, {});
+  `), 0);
 });
 
 test("counts moveTaskInternal destinations as defense-in-depth", () => {

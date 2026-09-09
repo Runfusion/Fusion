@@ -81,14 +81,13 @@ vi.mock("@fusion/core", () => ({
   hasProjectIdentity: vi.fn(() => false),
   isValidSqliteDatabaseFile: vi.fn(() => false),
   isSqliteLockError: isSqliteLockErrorMock,
-  COLUMNS: ["triage", "todo", "in-progress", "in-review", "done", "archived"],
+  COLUMNS: ["triage", "todo", "in-progress", "in-review", "done"],
   COLUMN_LABELS: {
     triage: "Triage",
     todo: "To Do",
     "in-progress": "In Progress",
     "in-review": "In Review",
     done: "Done",
-    archived: "Archived",
   },
 }));
 

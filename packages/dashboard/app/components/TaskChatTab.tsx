@@ -30,6 +30,7 @@ import { ToolCallDetails } from "./ToolCallDetails";
 import { ThinkingTrace, isInteractiveDisclosureTarget } from "./ThinkingTrace";
 import { parseRuntimeModelMarker } from "./effective-model-resolution";
 import { useChatMessageLayout } from "../context/ChatMessageLayoutContext";
+import { useChatEnterSubmits } from "../context/ChatSubmitOnEnterContext";
 import { getSlashTriggerMatch } from "./chat-commands";
 import { applySnippetToDraft, filterChatSnippets, matchStandaloneSnippetInvocation } from "./chat-snippets";
 import "./TaskChatTab.css";
@@ -703,6 +704,7 @@ function TaskChatUserMessage({ message }: { message: UserChatMessage }) {
 export function TaskChatTab({ task, columnFlags, projectId, active, addToast, onTaskUpdated, onRefinementCreated, expanded = false, onToggleExpanded, effectiveModels }: TaskChatTabProps) {
   const { t } = useTranslation("app");
   const chatMessageLayout = useChatMessageLayout();
+  const enterSubmits = useChatEnterSubmits();
   const { entries, loading, loadMore, hasMore, loadingMore } = useAgentLogs(task.id, active, projectId);
   const [draft, setDraft] = useState("");
   const chatSnippets = useChatSnippets();
@@ -1094,7 +1096,7 @@ export function TaskChatTab({ task, columnFlags, projectId, active, addToast, on
 
   /**
    * FNXC:TaskDetailChat 2026-06-13-19:05:
-   * Task-detail chat follows chat composer keyboard expectations: Enter sends, Shift+Enter keeps textarea newline entry, Cmd/Ctrl+Enter remains supported for existing users, and IME composition Enter is ignored so CJK candidate selection is not submitted mid-composition.
+   * Dans le Chat de tâche, Entrée sans Cmd/Ctrl ni Shift dépend de `chatSubmitOnEnter`. `Shift+Enter`, y compris avec Cmd/Ctrl, reste un saut de ligne ; `Cmd/Ctrl+Enter` sans Shift reste l’accélérateur d’envoi. La garde de composition IME court-circuite cet accélérateur, et le menu de snippets garde la priorité sur Entrée et Cmd/Ctrl+Enter, mais pas sur Shift+Enter puisqu’il exige `!event.shiftKey`.
    */
   const handleKeyDown = useCallback((event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.nativeEvent.isComposing || event.keyCode === 229) return;
@@ -1122,11 +1124,21 @@ export function TaskChatTab({ task, columnFlags, projectId, active, addToast, on
       setShowSnippetMenu(false);
       return;
     }
+    /*
+    FNXC:ChatComposer 2026-09-06-01:54:
+    `Shift+Enter` n'envoie jamais, y compris combiné à `Cmd/Ctrl` : `Cmd/Ctrl+Shift+Enter` n'est pas un envoi. Elle insère un saut de ligne, sauf dans le Chat lorsqu'un menu d'autocomplétion est ouvert — les trois menus du Chat (fichiers/tâches, agents, compétences) la consomment alors sans insérer de saut de ligne. Dans le Chat de tâche et le Chat du planificateur, `Shift+Enter` traverse le menu et insère bien un saut de ligne.
+    `Cmd/Ctrl+Enter` sans `Shift` envoie, indépendamment du réglage `chatSubmitOnEnter` et du type de pointeur.
+    `Entrée` sans `Cmd/Ctrl` ni `Shift` est gouvernée par `chatSubmitOnEnter` ; `Alt` n'est pas un modificateur d'envoi et ne change rien à cette règle.
+    Les règles 2 et 3 s'appliquent lorsqu'aucun menu d'autocomplétion n'est ouvert. Un menu ouvert a la priorité et consomme `Entrée` comme `Cmd/Ctrl+Enter` ; `Échap` ferme le menu et rétablit les règles.
+    Dans le Chat de tâche uniquement, une composition IME en cours (saisie CJK) court-circuite tout, `Cmd/Ctrl+Enter` compris, jusqu'à la validation du candidat.
+    Le bouton d'envoi reste rendu et actif dès que le brouillon n'est pas vide — menu ouvert et composition IME compris. Sur brouillon vide il est désactivé, comme aujourd'hui.
+    */
     if (event.key !== "Enter" || event.shiftKey) return;
+    if (!(event.metaKey || event.ctrlKey) && !enterSubmits) return;
 
     event.preventDefault();
     void handleSubmit();
-  }, [filteredSnippets, handleSnippetSelect, handleSubmit, highlightedSnippetIndex, showSnippetMenu]);
+  }, [enterSubmits, filteredSnippets, handleSnippetSelect, handleSubmit, highlightedSnippetIndex, showSnippetMenu]);
 
   /*
   FNXC:TaskDetailChat 2026-07-01-00:00:
@@ -1274,6 +1286,7 @@ export function TaskChatTab({ task, columnFlags, projectId, active, addToast, on
             placeholder={composerPlaceholder}
             onChange={handleDraftChange}
             onKeyDown={handleKeyDown}
+            enterKeyHint={enterSubmits ? "send" : "enter"}
             disabled={sending}
             aria-label={t("taskChat.messageActiveAgentSession", "Message active agent session")}
             rows={1}

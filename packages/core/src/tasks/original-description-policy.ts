@@ -52,7 +52,13 @@ export const ORIGINAL_DESCRIPTION_END_MARKER = "<!-- fusion-original-description
  * prose; we still bind to a later `## Before → After Transformation` / `## Review Level`
  * when those exist (standard/concise templates). Unknown H2s never end the section.
  */
-const PREFERRED_SECTION_TERMINATORS: RegExp[] = [
+/*
+ * FNXC:SpecLock 2026-09-09-08:09:
+ * FN-9272 makes this policy-owned list the shared definition for both unmarked Original
+ * Description placement and marked-region validation. Keeping one definition ensures the
+ * planner's required What This Delivers successor cannot drift from spec-lock parsing.
+ */
+export const PREFERRED_SECTION_TERMINATORS: readonly RegExp[] = [
   /^##\s+What This Delivers\s*$/im,
   /^##\s+Before\s*→\s*After Transformation\s*$/im,
   /^##\s+Review Level(?:\s*:.*)?\s*$/im,

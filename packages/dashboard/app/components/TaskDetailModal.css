@@ -297,17 +297,17 @@ Summarize-as-title is an in-field affordance, not a separate full-width row: it 
 }
 
 /*
-FNXC:TaskDetailMeta 2026-06-13-17:32:
-The task-detail modal metadata must keep priority, execution mode, provenance, PR context, and timestamps in one horizontal row that wraps as needed instead of stacking each child as a separate line.
+FNXC:TaskDetailMeta 2026-09-05-23:27:
+Task provenance, undo and PR context, timestamps, and workflow identity live together at the top of Details so permanent header chrome stays compact. The section wraps on narrow surfaces and uses the existing muted metadata hierarchy in modal and embedded hosts.
 */
-.detail-meta {
+.detail-section--task-metadata {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: var(--space-sm) var(--space-md);
-  font-size: 12px;
+  margin-top: 0;
   color: var(--text-muted);
-  margin-bottom: var(--space-lg);
+  font-size: var(--font-size-sm);
 }
 
 .detail-provenance {
@@ -389,46 +389,19 @@ The task-detail modal metadata must keep priority, execution mode, provenance, P
     flex-shrink: 0;
   }
 
-  .detail-meta {
-    align-items: center;
-    gap: var(--space-sm);
-  }
-
-  /*
-  FNXC:PlannerOversight 2026-07-04-17:00:
-  FN-7517: the oversight-controls cluster (priority + execution-mode + the
-  Oversight trigger) must wrap without overflowing the mobile modal width
-  rather than forcing horizontal scroll.
-
-  FNXC:PlannerOversight 2026-07-05-00:00:
-  FN-7604: the level-select/nudge/stop/explain controls collapse behind the
-  single `.detail-oversight-menu-trigger` button at EVERY viewport now (no
-  longer a mobile-only branch), so the cluster only ever needs to fit
-  priority + execution-mode + the trigger on one row; `flex-wrap: wrap`
-  remains as a safety fallback so the cluster never forces horizontal scroll
-  if it still overflows at very narrow widths. The `.detail-oversight-menu`
-  positioning (`right: 0`) is already declared once on the base rule above
-  and applies at every width, so no mobile-only override is needed here.
-  */
-  .detail-meta-inline-controls {
-    /*
-    FNXC:QuickAddActionRow 2026-07-20-12:00:
-    FN-8421 keeps the Task Detail action row at the mobile touch floor while
-    the default compact Quick Add alias serves desktop and tablet widths.
-    */
-    --detail-priority-control-min-height: var(--quick-entry-action-row-height-mobile);
-
-    flex-wrap: wrap;
-  }
-
   .detail-provenance {
     align-items: center;
   }
 
   /*
-  FNXC:TaskDetailWorkflow 2026-06-30-07:37:
-  Task details show workflow identity in the Updated timestamp section across desktop and mobile. Keep the canonical badge inline with Created/Updated metadata so header rows, embedded detail hosts, and mobile back-header details do not render duplicate workflow badges or empty mobile-only shells.
+  FNXC:TaskDetailWorkflow 2026-09-05-23:27:
+  Details keeps workflow identity inline with Created/Updated metadata on mobile, without duplicating it in the permanent header or leaving an empty badge shell when workflow resolution is unavailable.
   */
+  .detail-section--task-metadata {
+    align-items: flex-start;
+    gap: var(--space-sm);
+  }
+
   .detail-timestamps {
     display: flex;
     align-items: center;
@@ -445,147 +418,9 @@ The task-detail modal metadata must keep priority, execution mode, provenance, P
   }
 }
 
-.detail-meta-inline-controls {
-  /*
-  FNXC:TaskDetail 2026-06-22-20:00:
-  Priority chip and speed (execution-mode) toggle share one min-height token so they render at identical, equal height. Reduced from the old calc(space-2xl + space-xs) (~too tall) to a compact 30px that stays legible and tappable. Both controls also get trimmed vertical padding to match.
-
-  FNXC:TaskDetail 2026-07-05-00:00:
-  FN-7585 — Priority, Execution-mode, and Oversight (both the desktop chip and
-  the mobile overflow-trigger variant) previously diverged: Priority inherited
-  `.card-priority-badge`'s pill radius with a *transparent* border (so the
-  common `normal` level rendered as borderless text), while Execution-mode and
-  the Oversight mobile trigger are `.btn.btn-sm` pills with `--radius-md` and a
-      visible `--border` color. Add one shared `--detail-control-border-radius`
-  token here so all four controls resolve the same border-radius from a single
-  source; each control below also pins the same `--btn-border-width` width and
-  `--border` color so the cluster reads as one uniform control group. Only the
-  border/radius/size are unified — per-level tint backgrounds (priority
-  low/high/urgent, oversight observe/steer/autonomous/off, execution-mode
-  fast) are untouched.
-  */
-  /*
-  FNXC:QuickAddActionRow 2026-07-20-12:00:
-  FN-8421 completes FN-8287's shared-square contract. Desktop and tablet must
-  alias Quick Add's compact control token, not make every action equally tall
-  with the former space-calc box; the mobile rule above raises the same alias
-  to the touch-floor token.
-  */
-  --detail-priority-control-min-height: var(--quick-entry-action-row-height-desktop);
-  --detail-control-border-radius: var(--radius-md);
-
-  display: flex;
-  align-items: stretch;
-  flex-wrap: nowrap;
-  gap: var(--space-xs);
-}
-
 /*
-FNXC:TaskDetail 2026-07-17-17:30:
-FN-8287 extends the FN-7585/FN-7633 height-pinned pattern into one square-box
-rule for every inline action: the FN-8194/FN-8209 attach, GitHub, and priority
-icons now share the oversight and execution-mode controls' tokenized height,
-width, border, and radius. Pinning both dimensions prevents theme-specific
-space or icon tokens from making this cluster visually uneven.
-*/
-.detail-inline-attach,
-.detail-inline-github-toggle,
-.detail-priority-trigger,
-.detail-oversight-menu-trigger,
-.detail-execution-mode-toggle {
-  height: var(--detail-priority-control-min-height);
-  min-height: var(--detail-priority-control-min-height);
-  width: var(--detail-priority-control-min-height);
-  min-width: var(--detail-priority-control-min-height);
-  box-sizing: border-box;
-  border-width: var(--btn-border-width);
-  border-color: var(--border);
-  border-radius: var(--detail-control-border-radius);
-}
-
-/*
-FNXC:TaskDetailModalResponsive 2026-07-19-12:00:
-FN-8396 requires every inline action icon to resolve to `--icon-size-sm` at
-all desktop, tablet, and mobile widths. The global `.btn-icon > svg` rule
-cannot reach ProviderIcon's wrapped SVG, so keep this descendant rule scoped
-to Task Detail instead of changing global button behavior or adding an
-explicit size prop to the Oversight Eye/EyeOff icons.
-*/
-.detail-meta-inline-controls svg {
-  width: var(--icon-size-sm);
-  height: var(--icon-size-sm);
-  flex-shrink: 0;
-}
-
-/*
-FNXC:QuickAddActionRow 2026-07-17-12:00:
-FN-8209: Task Detail uses the same compact icon-only priority affordance as
-Quick Add. Keep the picker anchored to its trigger so it remains usable when
-the metadata row wraps at mobile widths.
-*/
-.detail-priority-picker {
-  position: relative;
-  display: inline-flex;
-  align-items: stretch;
-}
-
-.detail-priority-picker-dropdown {
-  position: absolute;
-  top: calc(100% + var(--space-xs));
-  right: 0;
-  z-index: 50;
-  display: flex;
-  flex-direction: column;
-  min-width: calc(var(--space-2xl) + var(--space-2xl) + var(--space-md));
-  background: var(--surface);
-  border: var(--btn-border-width) solid var(--border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-md);
-  overflow: hidden;
-}
-
-.detail-priority-picker-heading,
-.detail-priority-picker-option {
-  display: flex;
-  align-items: center;
-  gap: var(--space-xs);
-  padding: var(--space-sm);
-}
-
-.detail-priority-picker-heading {
-  color: var(--text-muted);
-  font-size: var(--font-size-xs);
-}
-
-.detail-priority-picker-option {
-  width: 100%;
-  border: 0;
-  background: transparent;
-  color: var(--text);
-  cursor: pointer;
-  font: inherit;
-  text-align: left;
-}
-
-.detail-priority-picker-option:hover,
-.detail-priority-picker-option.selected {
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
-}
-
-.detail-priority-picker-option:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring-strong);
-}
-
-/*
-FNXC:TaskDetail 2026-07-17-00:00:
-FN-8243 — restore the tokenized `.detail-priority-select:focus-visible` rule
-required by css-hygiene-scan.test.ts's focus-coverage allow-list. The base
-`.detail-priority-select` styling was dropped during the FN-8209 Priority
-select→picker migration, but the hygiene allow-list still expects this
-focus-visible selector. Use `--focus-ring-strong` to match the sibling
-`.detail-oversight-select` / `.detail-priority-picker-option` focus rules;
-no raw colors so the tokenized-focus assertion stays green.
+FNXC:TaskDetail 2026-09-05-23:27:
+The edit-form priority select retains the shared tokenized focus ring after its read-mode picker moved into the footer Actions list. Keep this form control independently keyboard-visible without reviving removed popover selectors.
 */
 .detail-priority-select:focus-visible {
   outline: none;
@@ -593,131 +428,12 @@ no raw colors so the tokenized-focus assertion stays green.
   border-radius: var(--radius-sm);
 }
 
-.detail-priority-picker-option:disabled {
-  cursor: wait;
-}
-
-.detail-execution-mode-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-xs);
-}
-
-.detail-execution-mode-toggle--fast {
-  color: var(--color-warning);
-}
-
-.detail-execution-mode-toggle--saving {
-  opacity: 0.75;
-}
-
-.detail-execution-mode-toggle:disabled {
-  cursor: wait;
-}
-
-/*
-FNXC:PlannerOversight 2026-07-04-17:00:
-FN-7517 task-detail planner-overseer controls (quick level-change select,
-manual nudge / stop / explain buttons, explain panel). Reuses the same
-`.card-oversight-badge--*` status-color modifiers FN-7516's TaskCard badge
-already declares (see TaskCard.css) so oversight-level color stays a single
-semantic source.
-
-FNXC:PlannerOversight 2026-07-05-00:00:
-FN-7604 — the desktop-only `.detail-oversight-chip` wrapper (the inline
-quick-level-change chip rendered outside the overflow menu) was removed along
-with the desktop inline branch it styled; the level select now renders only
-inside `.detail-oversight-menu-item--select` (see below). `.detail-oversight-select`
-itself stays — the dropdown menu item reuses this class for the native
-`<select>` styling.
-*/
-.detail-oversight-select {
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  cursor: pointer;
-  padding: 0;
-  min-height: inherit;
-}
-
-.detail-oversight-select:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring-strong);
-  border-radius: var(--radius-sm);
-}
-
-.detail-oversight-select:disabled {
-  cursor: wait;
-}
-
-.detail-oversight-select option {
-  color: var(--text);
-  background: var(--surface);
-}
-
-.detail-overseer-nudge,
-.detail-overseer-stop,
-.detail-overseer-explain {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-xs);
-  min-height: var(--detail-priority-control-min-height);
-  padding-block: var(--space-xs);
-  box-sizing: border-box;
-}
-
-.detail-overseer-nudge svg,
-.detail-overseer-stop svg,
-.detail-overseer-explain svg {
-  width: 1em;
-  height: 1em;
-}
-
-.detail-overseer-nudge--saving,
-.detail-overseer-stop--saving {
-  opacity: 0.75;
-}
-
-.detail-overseer-nudge:disabled,
-.detail-overseer-stop:disabled,
-.detail-overseer-explain:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
-}
-
-/*
-FNXC:PlannerOversight 2026-07-04-20:30:
-FN-7546 — group label + always-visible disabled-reason helper for the
-Nudge/Stop/Explain cluster, so operators no longer rely on a mouse-hover
-`title` alone to understand what the controls are or why Nudge is inert.
-Both are gated by the same condition as the buttons themselves (never an
-empty shell when oversight is Off/unresolved). Uses the same muted-text /
-small-caption convention as `.detail-overseer-explain-panel__empty` rather
-than a one-off style.
-*/
-.detail-oversight-controls-label {
-  display: inline-flex;
-  align-items: center;
-  min-height: var(--detail-priority-control-min-height);
-  color: var(--text-muted);
-  font-size: var(--font-size-sm, 0.875rem);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.02em;
-}
-
-.detail-oversight-controls-helper {
-  display: inline-flex;
-  align-items: center;
-  flex-basis: 100%;
-  color: var(--text-muted);
-  font-size: var(--font-size-sm, 0.875rem);
-}
-
 .detail-overseer-explain-panel {
-  margin-top: var(--space-xs);
+  flex: 0 0 auto;
+  max-height: min(30vh, calc(var(--space-2xl) * 6));
+  margin: var(--space-xs) var(--space-lg) 0;
   padding: var(--space-sm);
+  overflow-y: auto;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--surface-alt, var(--surface));
@@ -749,140 +465,6 @@ than a one-off style.
 
 .detail-overseer-explain-panel__empty {
   color: var(--text-muted);
-}
-
-/*
-FNXC:PlannerOversight 2026-07-04-19:00:
-FN-7545 — overflow menu for the oversight action controls. It uses its own
-header-anchored popover treatment because FN-198 removes the footer relocation
-menu. The popover opens DOWNWARD (`top: calc(100% + ...)`) from the header
-cluster.
-
-FNXC:PlannerOversight 2026-07-05-00:00:
-FN-7604 — this overflow menu is now the single universal surface at every
-viewport (desktop and mobile); it is no longer mobile-only.
-*/
-/*
-FNXC:TaskDetail 2026-07-05-14:00:
-FN-7618 — Priority (`<label>`) and Execution-mode (`<button>`) are direct
-flex children of `.detail-meta-inline-controls { align-items: stretch }`, so
-they stretch to the shared `--detail-priority-control-min-height` row height.
-FN-7604 wrapped the Oversight trigger in this `position: relative` div
-(required for the popover's absolute positioning), which became the flex
-child instead of the trigger itself — so the trigger only got its own
-intrinsic `min-height` and never stretched to match its taller siblings.
-Make the wrapper an `inline-flex` with `align-items: stretch` so it
-participates in the cluster's stretch on every viewport (desktop and
-mobile); the trigger below fills the wrapper's full height. The popover
-(`.detail-oversight-menu`) stays `position: absolute`, so this does not
-affect its size or anchoring — only the trigger's box height changes.
-*/
-.detail-oversight-menu-dropdown {
-  position: relative;
-  display: inline-flex;
-  align-items: stretch;
-}
-
-.detail-oversight-menu-trigger {
-  /*
-  FNXC:PlannerOversight 2026-07-05-00:00:
-  FN-7604 — this trigger is now the single universal surface at every
-  viewport (the desktop-only `.detail-oversight-chip` it used to swap in for
-  was removed). Its shared square sizing is declared with every inline action
-  above; this stretch fallback only preserves the dropdown wrapper contract.
-  */
-  align-self: stretch;
-}
-
-
-.detail-oversight-menu {
-  position: absolute;
-  top: calc(100% + var(--space-xs));
-  right: 0;
-  z-index: 50;
-  display: flex;
-  flex-direction: column;
-  min-width: calc(var(--space-2xl) + var(--space-2xl) + var(--space-md));
-  max-width: min(calc(100vw - var(--space-lg) * 2), 280px);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-md);
-  overflow: hidden;
-}
-
-.detail-oversight-menu-item {
-  /*
-  FNXC:PlannerOversight 2026-07-04-19:00:
-  FN-7545 — 36px touch-target floor for the collapsed mobile menu items,
-  matching the project's existing `--settings-inline-touch-target` /
-  `--wf-editor-touch-target` calc(space-lg + space-lg + space-xs) formula
-  (SettingsModal.css / WorkflowNodeEditor.css) so tap targets stay comfortable
-  without hardcoding a raw pixel value.
-  */
-  --detail-oversight-menu-item-min-height: calc(var(--space-lg) + var(--space-lg) + var(--space-xs));
-
-  display: flex;
-  align-items: center;
-  gap: var(--space-xs);
-  width: 100%;
-  min-height: var(--detail-oversight-menu-item-min-height);
-  padding: var(--space-sm) var(--space-md);
-  font-size: 13px;
-  font-weight: 400;
-  color: var(--text);
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  text-align: left;
-  box-sizing: border-box;
-  transition: background var(--transition-fast);
-}
-
-label.detail-oversight-menu-item--select {
-  cursor: default;
-  justify-content: space-between;
-}
-
-.detail-oversight-menu-item--select .detail-oversight-select {
-  flex: 1;
-  min-width: 0;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  cursor: pointer;
-}
-
-.detail-oversight-menu-item:hover {
-  background: var(--surface-hover, color-mix(in srgb, var(--text) 6%, transparent));
-}
-
-button.detail-oversight-menu-item:focus {
-  outline: none;
-  background: var(--surface-hover, color-mix(in srgb, var(--text) 6%, transparent));
-}
-
-button.detail-oversight-menu-item:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
-}
-
-button.detail-oversight-menu-item svg {
-  width: 1em;
-  height: 1em;
-}
-
-/*
-FNXC:PlannerOversight 2026-07-04-20:30:
-FN-7546 — the same group label / disabled-reason helper base rules above,
-adapted to the overflow-menu's padded list-item layout so they read as
-ordinary (non-interactive) menu rows rather than floating text.
-*/
-.detail-oversight-menu .detail-oversight-controls-label,
-.detail-oversight-menu .detail-oversight-controls-helper {
-  padding: var(--space-xs) var(--space-md);
-  min-height: 0;
 }
 
 /*
@@ -1523,16 +1105,13 @@ Expanded chat must also cover the task metadata row — priority, execution mode
 FNXC:TaskDetailActivity 2026-06-30-23:55:
 The same expanded-mode chrome collapse now applies to all Activity segments: Live, Feed, and Raw Logs. Keep the legacy `--chat-expanded` class for test and styling compatibility while treating it as Activity-expanded behavior.
 */
-.task-detail-content--chat-expanded .detail-meta {
-  display: none;
-}
-
 .task-detail-content--chat-expanded .detail-tabs {
   /* FNXC:TaskDetailActivity 2026-06-30-23:59: Expanded Activity still needs the top-level Activity tab dropdown because the in-panel view selector was removed. Keep the tab strip visible so Live, Feed, and Raw remain switchable while the footer and metadata chrome stay collapsed. */
   display: flex;
 }
 
-.task-detail-content--chat-expanded .modal-actions {
+.task-detail-content--chat-expanded .modal-actions,
+.task-detail-content--chat-expanded .detail-overseer-explain-panel {
   display: none;
 }
 
@@ -1567,17 +1146,8 @@ The same expanded-mode chrome collapse now applies to all Activity segments: Liv
 }
 
 /*
-FNXC:TaskDetailPlannerChat 2026-06-30-23:58:
-Planner Chat defaults to a focused state, but operator steering says large screens should keep the full task-detail context visible. Desktop therefore uses the same internal-scroll chat body without hiding rows; narrow/mobile layouts collapse nonessential title/provenance/actions so the composer remains reachable while header identity and close/back controls stay available.
-
-FNXC:TaskDetailPlannerChat 2026-06-30-20:06:
-Expanded Planner Chat must still expose task Priority, Execution Mode, and the tab bar on mobile. Hide only lower-priority metadata in the metadata row so inline handlers and tab navigation remain reachable without overlapping the transcript/composer.
-
-FNXC:TaskDetailPlannerChat 2026-07-02-00:04:
-Expanded Planner Chat must keep the task title and workflow badge visible on mobile. The title preserves task identity, and the workflow badge is owned by the timestamps row, so this mode hides lower-priority metadata but not `.detail-heading-row` or `.detail-timestamps`; timestamp labels inside that row can hide so the workflow badge remains compact.
-
-FNXC:TaskDetailPlannerChat 2026-07-02-00:17:
-Planner Chat should not open expanded by default. When the user expands it, the view should behave like Activity expansion: the chat panel takes nearly the whole modal, with only task title and workflow identity left above it for context.
+FNXC:TaskDetailPlannerChat 2026-09-05-23:27:
+Expanded Planner Chat reserves the narrow task-detail surface for the conversation while retaining the title and modal header as task identity. Workflow identity now belongs to Details and is not duplicated in this mode; the relocated footer Explain panel and Actions menu stay hidden with the rest of the non-chat controls.
 */
 .detail-section--planner-chat {
   display: flex;
@@ -1603,8 +1173,7 @@ Planner Chat should not open expanded by default. When the user expands it, the 
 .task-detail-content--planner-chat-expanded .branch-group-card,
 .task-detail-content--planner-chat-expanded .modal-actions,
 .task-detail-content--planner-chat-expanded .detail-tabs,
-.task-detail-content--planner-chat-expanded .detail-meta-inline-controls,
-.task-detail-content--planner-chat-expanded .detail-provenance {
+.task-detail-content--planner-chat-expanded .detail-overseer-explain-panel {
   display: none;
 }
 
@@ -1612,16 +1181,6 @@ Planner Chat should not open expanded by default. When the user expands it, the 
   flex: 0 0 auto;
   justify-content: space-between;
   padding-block: var(--space-sm);
-}
-
-.task-detail-content--planner-chat-expanded .detail-meta {
-  flex: 0 0 auto;
-  margin-bottom: var(--space-sm);
-}
-
-.task-detail-content--planner-chat-expanded .detail-timestamps .detail-timestamp-item,
-.task-detail-content--planner-chat-expanded .detail-timestamps .detail-timestamp-separator {
-  display: none;
 }
 
 
@@ -1739,7 +1298,9 @@ Planner Chat should not open expanded by default. When the user expands it, the 
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-md);
-  overflow: hidden;
+  max-height: calc(100dvh - calc(var(--space-2xl) * 4));
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .detail-actions-menu-item {

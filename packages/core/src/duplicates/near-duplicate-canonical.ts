@@ -24,13 +24,15 @@ export function isActiveNearDuplicateColumn(
   columnFlags?: ColumnRoleTraitFlags,
 ): boolean {
   if (column === null || column === undefined) return true;
+  // Historical pre-reintegration rows are inactive evidence, not a workflow terminal role.
+  if (column === "archived") return false;
   return !isTerminalColumnRole(columnFlags, column);
 }
 
 /**
  * FNXC:NearDuplicateDetection 2026-06-14-12:00:
  * A near-duplicate flag is only actionable while its canonical task exists and remains active.
- * Treat missing, archived, done, and soft-deleted canonicals as inactive so stale persisted flags cannot strand executable work behind a false user-decision block.
+ * Treat missing, completed, and soft-deleted canonicals as inactive so stale persisted flags cannot strand executable work behind a false user-decision block.
  */
 export function isNearDuplicateCanonicalInactive(
   canonical: NearDuplicateCanonicalState | undefined,

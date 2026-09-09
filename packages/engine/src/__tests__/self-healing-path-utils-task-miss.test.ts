@@ -20,16 +20,16 @@ describe("isMissingTaskLookupError", () => {
 });
 
 describe("readLinkedTaskOrUndefined", () => {
-  it("preserves resolved live and archive tasks", async () => {
+  it("preserves resolved active and completed tasks", async () => {
     const live = { id: "FN-1", column: "todo" } as Task;
-    const archived = { id: "FN-2", column: "archived" } as Task;
+    const completed = { id: "FN-2", column: "done" } as Task;
     const getTask = vi.fn()
       .mockResolvedValueOnce(live)
-      .mockResolvedValueOnce(archived);
+      .mockResolvedValueOnce(completed);
     const store = { getTask } as any;
 
     await expect(readLinkedTaskOrUndefined(store, "FN-1")).resolves.toBe(live);
-    await expect(readLinkedTaskOrUndefined(store, "FN-2")).resolves.toBe(archived);
+    await expect(readLinkedTaskOrUndefined(store, "FN-2")).resolves.toBe(completed);
   });
 
   it("normalizes nullable and throwing task misses", async () => {

@@ -12,7 +12,7 @@
 import { TaskStore } from "../store.js";
 import {resolveEntryColumnId, WorkflowSwitchRehomeFailedError, buildSwitchReconciliation} from "../workflows/workflow-reconciliation.js";
 import { pruneAgentLogFiles as pruneAgentLogFileEntries, readAgentLogEntriesByTimeRange } from "../agents/agent-log-file-store.js";
-import { BUILTIN_WORKFLOWS, DEFAULT_WORKFLOW_ID, resolveDefaultWorkflowIr, getBuiltinWorkflow, getRequiredPluginIdForBuiltinWorkflow, isBuiltinWorkflowDeprecated, isBuiltinWorkflowEnabled, isBuiltinWorkflowId, isBuiltinWorkflowPluginGated } from "../workflows/builtin-workflows.js";
+import { BUILTIN_WORKFLOWS, DEFAULT_WORKFLOW_ID, resolveDefaultWorkflowIr, getBuiltinWorkflow, getRequiredPluginIdForBuiltinWorkflow, isBuiltinWorkflowDeprecated, isBuiltinWorkflowEnabled, isBuiltinWorkflowId, isBuiltinWorkflowPluginGated, resolveRetiredBuiltinWorkflowId } from "../workflows/builtin-workflows.js";
 import { CentralCore } from "../central/central-core.js";
 import { type DistributedTaskIdAllocator } from "../tasks/distributed-task-id.js";
 import { ExperimentSessionStore } from "../eval/experiment-session-store.js";
@@ -31,9 +31,7 @@ import {readTaskRow as readTaskRowAsync} from "./async/async-persistence.js";
 import { projectOwnershipPartition, projectScopeFor, taskProjectScope } from "../postgres/data-layer.js";
 import { getInReviewDurationEvents as getInReviewDurationEventsAsync, getTaskMergedTaskIds as getTaskMergedTaskIdsAsync } from "./async/async-audit.js";
 import { readProjectConfig, writeProjectConfig } from "./async/async-settings.js";
-import { compactTaskActivityLog } from "./comments.js";
-import { type TaskRow } from "./persistence.js";
-import { ActivityLogEntry, AgentLogEntry, ArchivedTaskEntry, DEFAULT_SETTINGS, Settings } from "../types.js";
+import { ActivityLogEntry, AgentLogEntry, DEFAULT_SETTINGS, Settings } from "../types.js";
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import * as schema from "../postgres/schema/index.js";
 import { normalizeWorkflowIcon, type WorkflowDefinition, type WorkflowDefinitionInput, type WorkflowNodeLayout } from "../workflows/workflow-definition-types.js";
@@ -101,61 +99,6 @@ export async function readRawProjectSettingsImpl(store: TaskStore): Promise<Reco
     } catch {
       return {};
     }
-}
-
-export function migrateLegacyArchiveEntriesToArchiveDbImpl(store: TaskStore): void {
-    const rows = store.db.prepare("SELECT id, data FROM archivedTasks").all() as Array<{ id: string; data: string }>;
-    if (rows.length === 0) {
-      return;
-    }
-
-    for (const row of rows) {
-      const entry = JSON.parse(row.data) as ArchivedTaskEntry;
-      store._archiveDb?.upsert({
-        ...entry,
-        log: compactTaskActivityLog(entry.log ?? []),
-      });
-    }
-
-    store.db.prepare("DELETE FROM archivedTasks").run();
-    store.db.bumpLastModified();
-}
-
-export async function migrateActiveArchivedTasksToArchiveDbImpl(store: TaskStore): Promise<void> {
-    /*
-    FNXC:WorkflowResolvedColumns 2026-07-30-22:10 DELIBERATE-LITERAL:
-    `'archived'` here is the STATE marker, not a board lane, and must NOT be widened to the resolved
-    archived columns.
-
-    This finds live rows that Fusion's own archive path stamped (`archive-lifecycle-2.ts` and
-    `serialization.ts` both hardcode `column: "archived"`) so they can be migrated into the archive
-    DB. A workflow may also declare an archived-TRAIT lane under any id — `resolveLifecycleColumns`
-    resolves it, and a card can be moved there — but such a card was never archived by Fusion, has no
-    archive-store row, and migrating it would move live work out of the board.
-
-    So the resolved set is the wrong question at this site even though it is the right one for the
-    live-view exclusions that share this literal. See issue #2839 for the split.
-    */
-    const rows = store.db.prepare(`SELECT * FROM tasks WHERE "column" = 'archived'`).all() as unknown as TaskRow[];
-    if (rows.length === 0) {
-      return;
-    }
-
-    const { rm } = await import("node:fs/promises");
-    for (const row of rows) {
-      const task = store.rowToTask(row);
-      const archivedAt = task.columnMovedAt ?? task.updatedAt ?? new Date().toISOString();
-      const entry = await store.taskToArchiveEntry(task, archivedAt);
-      store.archiveDb.upsert(entry);
-      store.purgeTaskWorkflowSelectionRows(task.id);
-      store.db.prepare("DELETE FROM tasks WHERE id = ?").run(task.id);
-      await rm(store.taskDir(task.id), { recursive: true, force: true });
-      if (store.isWatching) {
-        store.taskCache.delete(task.id);
-      }
-    }
-
-    store.db.bumpLastModified();
 }
 
 export function resolvePluginWorkflowStepImpl(store: TaskStore, id: string): import("../types.js").WorkflowStep | undefined {
@@ -341,11 +284,15 @@ export async function getWorkflowDefinitionImpl(store: TaskStore,
   ): Promise<WorkflowDefinition | undefined> {
     const builtin = getBuiltinWorkflow(id);
     if (builtin) {
-      if (isBuiltinWorkflowPluginGated(id)) {
-        const requiredPluginId = getRequiredPluginIdForBuiltinWorkflow(id);
+      /*
+      FNXC:WorkflowSuccession 2026-09-06-02:15:
+      A retired alias resolves the successor's plugin policy and prompt overrides under the successor's canonical key. The requested alias must not create a second configuration namespace.
+      */
+      if (isBuiltinWorkflowPluginGated(builtin.id)) {
+        const requiredPluginId = getRequiredPluginIdForBuiltinWorkflow(builtin.id);
         if (!requiredPluginId || !(await store.isPluginInstalled(requiredPluginId))) return undefined;
       }
-      const ir = await store.applyBuiltInPromptOverridesAsync(id, builtin.ir);
+      const ir = await store.applyBuiltInPromptOverridesAsync(builtin.id, builtin.ir);
       return { ...builtin, ir };
     }
     // FNXC:WorkflowDefinitions 2026-06-27-06:00: PG backend reads the custom row
@@ -507,7 +454,11 @@ export function resolveTaskWorkflowIrSyncImpl(store: TaskStore, taskId: string):
     if (isBuiltinWorkflowId(workflowId)) {
       const builtin = getBuiltinWorkflow(workflowId);
       const ir = builtin?.ir;
-      return store.applyBuiltInPromptOverridesSync(workflowId, ir === undefined ? resolveDefaultWorkflowIr() : typeof ir === "string" ? parseWorkflowIr(ir) : ir);
+      /*
+      FNXC:WorkflowSuccession 2026-09-06-02:15:
+      Sync resolution shares the successor's prompt-override key with async definition reads, preventing a retired request alias from reviving stale configuration.
+      */
+      return store.applyBuiltInPromptOverridesSync(builtin?.id ?? workflowId, ir === undefined ? resolveDefaultWorkflowIr() : typeof ir === "string" ? parseWorkflowIr(ir) : ir);
     }
     try {
       const row = store.db
@@ -556,8 +507,12 @@ export async function getTaskWorkflowSelectionsAsyncImpl(
       eq(schema.project.taskWorkflowSelection.projectId, projectId),
       inArray(schema.project.taskWorkflowSelection.taskId, ids),
     ));
+  /*
+  FNXC:WorkflowSuccession 2026-09-06-02:15:
+  Canonicalize authoritative batch reads instead of migrating stored rows. Scheduler capacity and board readers then share one successor identity while older binaries retain database compatibility.
+  */
   return new Map(rows.map((row) => [row.taskId, {
-    workflowId: row.workflowId,
+    workflowId: resolveRetiredBuiltinWorkflowId(row.workflowId),
     stepIds: Array.isArray(row.stepIds) ? row.stepIds.filter((stepId): stepId is string => typeof stepId === "string") : [],
   }]));
 }
@@ -583,7 +538,11 @@ export async function getTaskWorkflowSelectionAsyncImpl(store: TaskStore, taskId
     let stepIds: string[] = [];
     const parsed = row.stepIds as unknown;
     if (Array.isArray(parsed)) stepIds = parsed.filter((s): s is string => typeof s === "string");
-    return { workflowId: row.workflowId, stepIds };
+    /*
+    FNXC:WorkflowSuccession 2026-09-06-02:15:
+    Canonicalize the authoritative per-task read so legacy rows join the successor's single board lane without a schema migration. A later selection write converges storage naturally.
+    */
+    return { workflowId: resolveRetiredBuiltinWorkflowId(row.workflowId), stepIds };
 }
 
 export async function writeTaskWorkflowSelectionImpl(store: TaskStore, taskId: string, workflowId: string, stepIds: string[]): Promise<void> {
@@ -731,16 +690,22 @@ export async function materializeExplicitWorkflowStepsImpl(store: TaskStore,
     // FNXC:CodingIdeasWorkflow 2026-07-05-19:45: surface the workflow's manual
     // intake column so create paths can land the task there instead of the
     // hard-coded "triage" (main FN-7591 parity; the cutover copies predated it).
-    return { workflowId, stepIds: resolveDefaultOnOptionalGroupIds(def.ir), entryColumnId: resolveEntryColumnId(def.ir) };
+    /* The resolved definition owns the canonical identity persisted by all materialization consumers. */
+    return { workflowId: def.id, stepIds: resolveDefaultOnOptionalGroupIds(def.ir), entryColumnId: resolveEntryColumnId(def.ir) };
 }
 
 export async function selectTaskWorkflowAndReconcileImpl(store: TaskStore,
     taskId: string,
-    workflowId: string,
+    requestedWorkflowId: string,
   ): Promise<{
     enabledWorkflowSteps: string[];
     reconciliation?: { preserved: boolean; fromColumn: string; toColumn: string };
   }> {
+    /*
+    FNXC:WorkflowSuccession 2026-09-06-02:15:
+    Normalize before preflight so definition lookup, capacity pooling, errors, audit metadata, re-homing and the selection writer all use the successor identity. Retired ids stay requestable but are never persisted.
+    */
+    const workflowId = resolveRetiredBuiltinWorkflowId(requestedWorkflowId);
     /*
     FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — PR #2512 review, greptile P1):
     PRE-FLIGHT BEFORE COMMITTING. The ordering, not the message, is the fix.
@@ -933,12 +898,11 @@ export function pruneAgentLogFilesImpl(store: TaskStore, retentionDays: number):
       return { prunedFiles: 0, prunedEntries: 0, freedBytes: 0 };
     }
     /*
-    FNXC:WorkflowResolvedColumns 2026-07-30-22:14 DELIBERATE-LITERAL:
-    STATE marker again, same reasoning as migrateActiveArchivedTasksToArchiveDbImpl above: this prunes
-    agent-log files for rows Fusion archived or soft-deleted. A card in a workflow's archived-TRAIT
-    lane is live work whose logs must survive, so the resolved set would delete data here.
+    FNXC:TaskArchiveRemoval 2026-09-04-18:25 DELIBERATE-LITERAL:
+    The `archived` column value is a historical persistence sentinel, not a workflow role. Agent-log
+    pruning includes that sentinel and soft-deleted rows only; live workflow tasks keep their logs.
     */
-    // Only prune JSONL files for tasks that are no longer active (soft-deleted or archived)
+    // Only prune JSONL files for tasks that are no longer active.
     const inactiveTaskIds = new Set(
       (
         store.db

@@ -26,7 +26,7 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
     withTaskLock: vi.fn(async (_id: string, fn: () => Promise<unknown>) => fn()),
     readTaskForMove: vi.fn(async (id: string) => store.getTask(id)),
     logEntry: vi.fn(),
-    // FNXC:EngineTests 2026-07-17-11:45: flagTriageDuplicate records task:auto-archived-duplicate activity.
+    // FNXC:EngineTests 2026-07-17-11:45: flagTriageDuplicate records near-duplicate activity.
     recordActivity: vi.fn().mockResolvedValue(undefined),
     deleteTask: vi.fn(),
     on: vi.fn(),
@@ -203,7 +203,7 @@ describe("triage finalize duplicate lineage", () => {
     await runRecovery(createTask(), "DUPLICATE: FN-4894\n", store);
 
     expect(store.recordActivity).toHaveBeenCalledWith(expect.objectContaining({
-      type: "task:auto-archived-duplicate",
+      type: "task:near-duplicate-flagged",
       taskId: "FN-001",
     }));
     expect(store.updateTask).toHaveBeenCalledWith(

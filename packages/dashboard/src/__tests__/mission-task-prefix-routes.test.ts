@@ -29,6 +29,7 @@ type MissionRecord = {
 };
 
 function createFixture() {
+  const executionLoop = { isRunning: () => true, recoverActiveMissions: vi.fn(), executeManualValidatorRun: vi.fn(async () => {}) };
   const missions = new Map<string, MissionRecord>();
   let seq = 0;
 
@@ -93,17 +94,18 @@ function createFixture() {
 
   const app = express();
   app.use(express.json());
-  app.use("/api/missions", createMissionRouter(store));
+  app.use("/api/missions", createMissionRouter(store, undefined, undefined, executionLoop));
 
-  return { app, missionStore, missions };
+  return { app, missionStore, missions, executionLoop };
 }
 
 describe("mission taskPrefix routes", () => {
   let app: express.Express;
   let missionStore: ReturnType<typeof createFixture>["missionStore"];
+  let executionLoop: ReturnType<typeof createFixture>["executionLoop"];
 
   beforeEach(() => {
-    ({ app, missionStore } = createFixture());
+    ({ app, missionStore, executionLoop } = createFixture());
   });
 
   /*
@@ -123,6 +125,7 @@ describe("mission taskPrefix routes", () => {
     const response = await request(app, "POST", "/api/missions/features/F-1/repair-validation", JSON.stringify({ action: "re_run" }), { "content-type": "application/json" });
     expect(response.status).toBe(202);
     expect(response.body).toMatchObject({ runId: "VR-1", featureId: "F-1", status: "running" });
+    expect(executionLoop.executeManualValidatorRun).toHaveBeenCalledWith(expect.objectContaining({ id: "VR-1", featureId: "F-1", triggerType: "manual" }));
     expect((missionStore as typeof missionStore & { repairFeatureValidationState: ReturnType<typeof vi.fn> }).repairFeatureValidationState)
       .toHaveBeenCalledWith("F-1", expect.objectContaining({ action: "re_run", actor: expect.objectContaining({ type: "operator" }) }));
   });
@@ -149,6 +152,7 @@ describe("mission taskPrefix routes", () => {
     const lockedRace = await request(app, "POST", "/api/missions/features/F-1/repair-validation", JSON.stringify({ action: "re_run" }), { "content-type": "application/json" });
     expect(lockedRace.status).toBe(409);
     expect(lockedRace.body.error).toContain("not eligible");
+    expect(executionLoop.executeManualValidatorRun).not.toHaveBeenCalled();
   });
 
   it("clears a blocked badge with server-derived targets and rejects ineligible repair", async () => {
@@ -170,6 +174,7 @@ describe("mission taskPrefix routes", () => {
     const rejected = await request(app, "POST", "/api/missions/features/F-1/repair-validation", JSON.stringify({ action: "clear" }), { "content-type": "application/json" });
     expect(rejected.status).toBe(409);
     expect(repairFeatureValidationState).toHaveBeenCalledTimes(1);
+    expect(executionLoop.executeManualValidatorRun).not.toHaveBeenCalled();
   });
 
   it("clears a stored taskPrefix when PATCH sends null", async () => {
@@ -267,7 +272,7 @@ describe("mission taskPrefix routes", () => {
 /*
 FNXC:MissionValidationRepair 2026-08-11-01:46:
 Exercise the real dashboard router, engine fence resolver, and PostgreSQL mission store together.
-Forwarding mocks cannot demonstrate that an archived link clears or that the route's one retry
+Forwarding mocks cannot demonstrate that a deleted link clears or that the route's one retry
 re-resolves a genuine task race before writing.
 */
 pgDescribe("mission validation repair routes", () => {
@@ -283,7 +288,9 @@ pgDescribe("mission validation repair routes", () => {
   function app() {
     const server = express();
     server.use(express.json());
-    server.use("/api/missions", createMissionRouter(h.store()));
+    server.use("/api/missions", createMissionRouter(h.store(), undefined, undefined, {
+      isRunning: () => true, recoverActiveMissions: vi.fn(), executeManualValidatorRun: vi.fn(async () => {}),
+    }));
     return server;
   }
 
@@ -296,10 +303,9 @@ pgDescribe("mission validation repair routes", () => {
     return missionStore.updateFeature(feature.id, { taskId, status: "blocked", loopState: "blocked" });
   }
 
-  it("clears a physically archived link retained in a nonliteral column through the production route", async () => {
-    /* FNXC:MissionValidationRepair 2026-08-11-02:05: Archive preserves the task's prior `done` column in retained storage while marking it deleted, proving the fence does not depend on the literal archived column. */
-    const task = await h.store().createTask({ description: "Archived route delivery", column: "done" });
-    await h.store().archiveTask(task.id, { cleanup: false });
+  it("clears a soft-deleted link through the production route", async () => {
+    const task = await h.store().createTask({ description: "Deleted route delivery", column: "done" });
+    await h.store().deleteTask(task.id);
     const feature = await blockedFeature(task.id);
 
     const response = await request(app(), "POST", `/api/missions/features/${feature.id}/repair-validation`, JSON.stringify({ action: "clear" }), { "content-type": "application/json" });

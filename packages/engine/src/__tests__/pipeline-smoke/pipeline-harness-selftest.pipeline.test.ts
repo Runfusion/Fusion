@@ -119,12 +119,12 @@ describeIfReady("pipeline smoke production composition", () => {
   afterAll(pg.afterAll);
 
   it("uses authoritative executor seams, the shared layer, and live registry paths", async () => {
-    const graphTask = await harness.createPipelineTask("builtin:coding-ideas", { idPrefix: "COMPOSITION" });
+    const graphTask = await harness.createPipelineTask("builtin:coding-ideas-v2", { idPrefix: "COMPOSITION" });
     await harness.runProductionTurn(graphTask.id);
     expect(harness.hasAuthoritativeSeams()).toBe(true);
     expect(harness.store.getAsyncLayer()).toBe(pg.layer());
 
-    const liveTask = await harness.createPipelineTask("builtin:coding-ideas", { idPrefix: "LIVE-PATH" });
+    const liveTask = await harness.createPipelineTask("builtin:coding-ideas-v2", { idPrefix: "LIVE-PATH" });
     await harness.runProductionTurn(liveTask.id);
     const worktree = await harness.requireTaskWorktree(liveTask.id);
     activeSessionRegistry.registerPath(worktree, {

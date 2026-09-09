@@ -815,7 +815,7 @@ export async function reapOrphanWorktrees(
 
 /**
  * Return local `fusion/*` branches not associated with any active task.
- * Branches tied to merger-managed or archived tasks are excluded.
+ * Branches tied to merger-managed or deleted/historical tasks are excluded.
  */
 export async function scanOrphanedBranches(rootDir: string, store: TaskStore): Promise<string[]> {
   let allBranches: string[];
@@ -840,32 +840,28 @@ export async function scanOrphanedBranches(rootDir: string, store: TaskStore): P
   const tasks = await store.listTasks({ slim: true, includeArchived: false });
   /*
   FNXC:WorkflowResolvedColumns 2026-07-31-08:20 (batch-engine — census-invisible membership, #2763 class):
-  A branch is "active" (and so must not be reclaimed) unless the merger owns the card or it is archived.
-  Both tests were hardcoded, so on a renamed board a card in review or complete was NOT recognised as
+  A branch is active unless the merger owns the card. The old hardcoded test missed renamed review or Complete columns, so a card there was not recognised as
   merger-managed and its branch was treated as reclaimable — deleting a branch out from under an in-flight
   merge. One IR cache for the pass; the predicates below stay synchronous.
   */
   const poolIrCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
-  const poolLanes = new Map<string, { managed: Set<string>; archived: Set<string> }>();
+  const poolLanes = new Map<string, Set<string>>();
   for (const task of tasks) {
     if (poolLanes.has(task.id)) continue;
     const managed = new Set<string>(["in-review", "done"]);
-    const archived = new Set<string>(["archived"]);
     try {
       const ir = await resolveWorkflowIrForTask(store, task.id, poolIrCache);
       if (ir) {
         for (const flag of ["mergeOrchestration", "mergeBlocker", "humanReview", "complete"] as const) {
           for (const id of columnsWithFlag(ir, flag)) managed.add(id);
         }
-        for (const id of columnsWithFlag(ir, "archived")) archived.add(id);
       }
     } catch { /* degraded: legacy ids */ }
-    poolLanes.set(task.id, { managed, archived });
+    poolLanes.set(task.id, managed);
   }
   const activeBranches = new Set<string>();
   for (const task of tasks) {
-    if (poolLanes.get(task.id)?.managed.has(task.column) === true) continue;
-    if (poolLanes.get(task.id)?.archived.has(task.column) === true) continue;
+    if (poolLanes.get(task.id)?.has(task.column) === true) continue;
     if (task.branch) activeBranches.add(task.branch);
     // Keep non-pool branch reaping aware of the canonical task branch without importing
     // worktree-names here (that module reaches worktree-paths, which reaches this helper).

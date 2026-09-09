@@ -92,19 +92,17 @@ describe("FN-8356: reconcile stale duplicate-decision pauses", () => {
 
   it("clears the FN-8353-shaped hidden decision for every inactive canonical state and audits each recovery", async () => {
     const done = task("FN-DONE", { column: "done" });
-    const archived = task("FN-ARCHIVED", { column: "archived" });
     const deleted = task("FN-DELETED", { deletedAt: new Date().toISOString() });
     const tasks = [
       stranded("FN-1", done.id), done,
-      stranded("FN-2", archived.id), archived,
-      stranded("FN-3", deleted.id), deleted,
-      stranded("FN-4", "FN-MISSING"),
+      stranded("FN-2", deleted.id), deleted,
+      stranded("FN-3", "FN-MISSING"),
     ];
     const store = storeFor(tasks);
     const manager = new SelfHealingManager(store, { rootDir: "/repo" });
 
-    expect(await manager.reconcileStaleDuplicateDecisionPause()).toBe(4);
-    for (const id of ["FN-1", "FN-2", "FN-3", "FN-4"]) {
+    expect(await manager.reconcileStaleDuplicateDecisionPause()).toBe(3);
+    for (const id of ["FN-1", "FN-2", "FN-3"]) {
       const recovered = await store.getTask(id);
       expect(recovered?.paused).toBe(false);
       expect(recovered?.pausedReason).toBeNull();
@@ -114,7 +112,7 @@ describe("FN-8356: reconcile stale duplicate-decision pauses", () => {
       // TaskCard and NotificationService both key their decision affordance on this predicate.
       expect(recovered?.pausedReason === "duplicate-decision-required").toBe(false);
     }
-    expect(recordRunAuditEventMock).toHaveBeenCalledTimes(4);
+    expect(recordRunAuditEventMock).toHaveBeenCalledTimes(3);
     expect(recordRunAuditEventMock).toHaveBeenCalledWith(expect.objectContaining({
       type: "task:reconcile-stale-duplicate-decision",
       metadata: expect.objectContaining({ priorPausedReason: "duplicate-decision-required" }),

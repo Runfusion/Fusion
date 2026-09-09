@@ -40,7 +40,7 @@ import * as schema from "../postgres/schema/index.js";
 import {diffSettingsForActivity, formatSettingsActivity} from "./settings-activity.js";
 import {LIFECYCLE_ROLE_RANK} from "../workflows/workflow-lifecycle-direction.js";
 
-export async function initImpl(store: TaskStore): Promise<void> {
+export async function initImpl(store: TaskStore, options?: { skipArchiveReintegration?: boolean }): Promise<void> {
     store.closing = false;
     await mkdir(store.tasksDir, { recursive: true });
 
@@ -75,6 +75,20 @@ export async function initImpl(store: TaskStore): Promise<void> {
     async store API (listTasks/updateTask), so it is PG-safe.
     */
     await adoptLegacyTaskRowsOnOpen(store);
+    /*
+    FNXC:TaskArchiveReintegration 2026-09-06-08:00:
+    Legacy status adoption must finish before the cooperative archive drain. Run the same idempotent
+    primitive here as engine maintenance so dashboard-only and CLI hosts expose every eligible
+    completed task before later completion-column consumers run.
+    */
+    try {
+      if (!options?.skipArchiveReintegration) await store.reconcileArchivedTasksIntoDone();
+    } catch (error) {
+      storeLog.warn("Archived task reintegration failed during backend init", {
+        phase: "init:archive-reintegration",
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
     /*
     FNXC:PatchnodeLedger 2026-08-28-12:16:
     Store-open reconciliation is a warn-degraded backlog convenience, not the live durability guarantee. Init runs once per process; completion writers capture in their own transactions, while the TTL-rearmed read path revisits surviving legacy evidence.

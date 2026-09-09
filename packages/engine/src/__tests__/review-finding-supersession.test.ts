@@ -8,7 +8,7 @@ vi.mock("../worktree/review-diff-fingerprint.js", async (importOriginal) => ({
 import { WorkflowGraphExecutor } from "../workflows/workflow-graph-executor.js";
 import { persistWorkflowStepResult } from "../executor/execute-workflow-graph.js";
 import { TaskExecutor } from "../executor.js";
-import { createMockStore, mockedExistsSync, resetExecutorMocks } from "./executor-test-helpers.js";
+import { createMockStore, mockedExistsSync, resetExecutorMocks, setMockSettings } from "./executor-test-helpers.js";
 
 const RAW_REVIEW = JSON.stringify({
   verdict: "REVISE",
@@ -69,9 +69,11 @@ function sink(row, options = {}) {
 
 async function declaredScriptOutcome() {
   const store = createMockStore();
-  store.getTask.mockResolvedValue(task());
-  store.getSettings.mockResolvedValue({ autoMerge: false, experimentalFeatures: { workflowGraphExecutor: true } });
+  const liveTask = task();
+  store.getTask.mockResolvedValue(liveTask);
+  setMockSettings(store, { autoMerge: false, experimentalFeatures: { workflowGraphExecutor: true } });
   const executor = new TaskExecutor(store, "/tmp/test");
+  vi.spyOn(executor as any, "ensureGraphCustomNodeWorktree").mockResolvedValue(liveTask);
   vi.spyOn(executor as any, "executeScriptWorkflowStep").mockResolvedValue({ success: true, output: RAW_REVIEW });
   return (executor as any).runGraphCustomNode(
     { id: "code-script", kind: "script", config: { scriptName: "review", reviewKind: "code" } }, task(), {}, undefined,

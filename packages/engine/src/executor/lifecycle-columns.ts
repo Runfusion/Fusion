@@ -35,17 +35,17 @@ import {
 } from "@fusion/core";
 
 /**
- * The task's terminal column pair, fail-soft to the legacy ids. Mirrors
+ * The task's completion column, fail-soft to the legacy id. Mirrors
  * `resolveReboundColumnFor` below: one IR resolution on a rare guard path, and a
  * resolution failure must keep today's behaviour rather than answer "not terminal".
  */
 /** The terminal ids from before workflows owned the vocabulary. */
-export const LEGACY_TERMINAL_COLUMNS: readonly string[] = ["done", "archived"];
+export const LEGACY_TERMINAL_COLUMNS: readonly string[] = ["done"];
 
 /*
 FNXC:WorkflowResolvedColumns 2026-07-30-19:10 (exported for the follow-up dedup paths):
 EXPORTED rather than copied. `eval-followups.ts` and `pr-comment-handler.ts` each carried their own
-`CLOSED_FOLLOWUP_COLUMNS = new Set(["done", "archived"])` for the same question this answers, and a third
+Closed-followup guards use this resolver for the same question, and a third
 and fourth copy of the union-with-legacy reasoning is exactly the drift this program exists to remove.
 Nothing else about the function changes.
 */
@@ -92,10 +92,7 @@ export async function resolveTerminalColumnsFor(
 /*
 FNXC:WorkflowLifecycleColumns 2026-07-30-15:20 (fleet — executor.ts cluster):
 The workflow's COMPLETE column, for the guards that ask "has this card finished?" and mean
-completion specifically — not the terminal PAIR. `resolveTerminalColumnsFor` above answers
-"done or archived"; these sites deliberately exclude archived, because an archived card is
-finished but not newly-completed, and treating the two alike would fire merge-confirmation
-handling for cards that were archived rather than merged.
+completion specifically. `resolveTerminalColumnsFor` above returns the same workflow completion role for membership guards.
 
 Same shape as the two helpers beside it: resolve from the task's own workflow, fall back to
 the legacy id. `resolveWorkflowIrForTask` does not throw on a missing definition — it returns

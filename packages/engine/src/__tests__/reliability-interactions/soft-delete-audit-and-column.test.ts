@@ -22,7 +22,6 @@ type TestTask = {
 function createEventedSoftDeleteStore(initialTasks: TestTask[] = []) {
   const listeners = new Map<string, ((payload: any) => void)[]>();
   const tasks = initialTasks.map((task) => ({ ...task }));
-  const archivedTasks = new Map<string, TestTask>();
   const auditEvents: Array<Record<string, unknown>> = [];
   let sequence = 1;
 
@@ -35,7 +34,6 @@ function createEventedSoftDeleteStore(initialTasks: TestTask[] = []) {
 
   return {
     auditEvents,
-    archivedTasks,
     emit,
     on: vi.fn((event: string, listener: (payload: any) => void) => {
       const existing = listeners.get(event) ?? [];
@@ -101,14 +99,6 @@ function createEventedSoftDeleteStore(initialTasks: TestTask[] = []) {
       emit("task:deleted", { ...task });
       return { ...task };
     },
-    async archiveTask(id: string) {
-      const index = tasks.findIndex((entry) => entry.id === id);
-      if (index < 0) throw new Error(`Task ${id} not found`);
-      const [task] = tasks.splice(index, 1);
-      archivedTasks.set(task.id, { ...task });
-      emit("task:moved", { task: { ...task }, from: task.column, to: "archived" });
-      return { ...task, column: "archived" };
-    },
   };
 }
 
@@ -156,17 +146,4 @@ describe("reliability interactions: FN-5175 soft-delete audit + archived column"
     expect(store.auditEvents[0]).toMatchObject({ mutationType: "task:deleted", taskId: task.id });
   });
 
-  it("keeps archiveTask semantics unchanged for live done rows while soft-delete audit rows persist", async () => {
-    const store = createEventedSoftDeleteStore();
-    const softDeleted = await store.createTask({ column: "todo", title: "soft delete first" });
-    const doneTask = await store.createTask({ column: "done", title: "archive me" });
-
-    await store.deleteTask(softDeleted.id);
-    await store.archiveTask(doneTask.id);
-
-    expect(store.readTaskFromDb(doneTask.id, { includeDeleted: true })).toBeUndefined();
-    expect(store.archivedTasks.get(doneTask.id)).toMatchObject({ id: doneTask.id, column: "done" });
-    expect(store.auditEvents).toHaveLength(1);
-    expect(store.auditEvents[0]).toMatchObject({ mutationType: "task:deleted", taskId: softDeleted.id });
-  });
 });

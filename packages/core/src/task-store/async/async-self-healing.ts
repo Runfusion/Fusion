@@ -12,8 +12,8 @@
  * `reconcileSoftDeletedColumnDrift`:
  *   FN-5147 invariant — only rows with `deletedAt IS NOT NULL` are eligible, so
  *   live in-review tasks (including autoMerge: false workflows) are never moved.
- *   A soft-deleted task whose column drifted off `archived` is reconciled back
- *   to `archived` with a per-row run-audit event so operators can trace the
+ *   A soft-deleted task whose column drifted off the historical sentinel is
+ *   reconciled back to it with a per-row run-audit event so operators can trace the
  *   reconciliation. The mutation + audit run so the audit trail reflects every
  *   reconciliation; a failure on one row does not abort the remaining rows
  *   (best-effort, matching the sync catch-all that returns `{ reconciled: 0 }`
@@ -32,8 +32,8 @@ import type { AsyncDataLayer } from "../../postgres/data-layer.js";
 
 /**
  * FNXC:SelfHealing 2026-06-24-14:05:
- * A soft-deleted task whose column is not `archived`. The reconciler moves each
- * to `archived` and records an audit event naming the previous column.
+ * A soft-deleted task whose column is not the historical sentinel. The reconciler
+ * restores that sentinel and records an audit event naming the previous column.
  */
 interface SoftDeletedColumnDriftCandidate {
   projectId: string;
@@ -47,7 +47,7 @@ function projectPartition(projectId?: string): string {
 
 /**
  * FNXC:SelfHealing 2026-06-24-14:10:
- * Read the soft-deleted, non-archived task candidates for column-drift
+ * Read soft-deleted tasks whose historical sentinel drifted for column
  * reconciliation. This is the async equivalent of the sync direct-`prepare()`
  * query in `reconcileSoftDeletedColumnDrift`:
  *   `SELECT id, "column" FROM tasks WHERE deletedAt IS NOT NULL AND "column" != 'archived'`
@@ -91,11 +91,11 @@ export type ReconcileAuditFn = (candidate: {
 
 /**
  * FNXC:SelfHealing 2026-06-24-14:15:
- * Reconcile soft-deleted tasks whose column drifted off `archived` back to
- * `archived`, recording a per-row run-audit event. This is the async equivalent
+ * Reconcile soft-deleted tasks whose column drifted off the historical sentinel,
+ * recording a per-row run-audit event. This is the async equivalent
  * of the sync `reconcileSoftDeletedColumnDrift` loop.
  *
- * Each candidate is moved to `archived` by a compare-and-set UPDATE that still
+ * Each candidate is assigned the sentinel by a compare-and-set UPDATE that still
  * observes its soft-delete marker and previous column. The audit callback runs
  * only when that UPDATE returns a row. A failure on one row is logged but does
  * not abort the remaining rows
@@ -124,8 +124,8 @@ export async function reconcileSoftDeletedColumnDriftAsync(
           .set({
             /*
             FNXC:WorkflowResolvedColumns 2026-08-01-23:23 DELIBERATE-LITERAL — STATE MARKER:
-            A soft-deleted row must be reconciled to Fusion's physical archive marker. Resolving the
-            custom workflow archive lane would rewrite valid renamed-lane rows as false drift.
+            A soft-deleted row must be reconciled to Fusion's physical historical sentinel. It is
+            persistence metadata, never a live workflow destination.
             */
             column: "archived",
             updatedAt: now,

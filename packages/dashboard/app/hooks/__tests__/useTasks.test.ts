@@ -26,8 +26,13 @@ import type { Task, Column } from "@fusion/core";
 // Mock the api module
 vi.mock("../../api", async (importOriginal) => {
   const { createDashboardApiMock } = await import("../../test/mockApi");
+  const fetchTasks = vi.fn().mockResolvedValue([]);
   return createDashboardApiMock(() => importOriginal<typeof import("../../api")>(), {
-    fetchTasks: vi.fn().mockResolvedValue([]),
+    fetchTasks,
+    fetchTaskPage: vi.fn(async (projectId?: string, options?: { query?: string }) => {
+      const tasks = await fetchTasks(undefined, undefined, projectId, options?.query, options?.query ? false : true);
+      return { tasks, total: tasks.length, hasMore: false, nextCursor: null };
+    }),
     createTask: vi.fn(),
     moveTask: vi.fn(),
     deleteTask: vi.fn(),
@@ -39,9 +44,7 @@ vi.mock("../../api", async (importOriginal) => {
     resetTask: vi.fn(),
     duplicateTask: vi.fn(),
     updateTask: vi.fn(),
-    archiveTask: vi.fn(),
-    unarchiveTask: vi.fn(),
-    archiveAllDone: vi.fn(),
+    fetchCompletedTasks: vi.fn().mockResolvedValue({ tasks: [], total: 0, hasMore: false }),
   });
 });
 
@@ -51,7 +54,8 @@ async function flushPromises(): Promise<void> {
 }
 
 const mockFetchTasks = vi.mocked(api.fetchTasks);
-const mockFetchArchivedTasks = vi.mocked(api.fetchArchivedTasks);
+const mockFetchTaskPage = vi.mocked(api.fetchTaskPage);
+const mockFetchCompletedTasks = vi.mocked(api.fetchCompletedTasks);
 const mockCreateTask = vi.mocked(api.createTask);
 const mockMoveTask = vi.mocked(api.moveTask);
 const mockDeleteTask = vi.mocked(api.deleteTask);
@@ -62,7 +66,6 @@ const mockUnpauseTask = vi.mocked(api.unpauseTask);
 const mockResetTask = vi.mocked(api.resetTask);
 const mockDuplicateTask = vi.mocked(api.duplicateTask);
 const mockUpdateTask = vi.mocked(api.updateTask);
-const mockArchiveAllDone = vi.mocked(api.archiveAllDone);
 const mockReadCache = vi.spyOn(swrCache, "readCache");
 const mockWriteCache = vi.spyOn(swrCache, "writeCache");
 const mockClearCache = vi.spyOn(swrCache, "clearCache");
@@ -108,7 +111,11 @@ beforeEach(() => {
   MockEventSource.instances = [];
   (globalThis as any).EventSource = MockEventSource;
   mockFetchTasks.mockReset().mockResolvedValue([]);
-  mockFetchArchivedTasks.mockReset().mockResolvedValue({ tasks: [], total: 0, hasMore: false });
+  mockFetchTaskPage.mockReset().mockImplementation(async (projectId?: string, options?: { query?: string }) => {
+    const tasks = await mockFetchTasks(undefined, undefined, projectId, options?.query, options?.query ? false : true);
+    return { tasks, total: tasks.length, hasMore: false, nextCursor: null };
+  });
+  mockFetchCompletedTasks.mockReset().mockResolvedValue({ tasks: [], total: 0, hasMore: false });
   mockMoveTask.mockReset();
   mockDeleteTask.mockReset();
   mockRetryTask.mockReset();
@@ -334,7 +341,7 @@ describe("useTasks", () => {
     renderHook(() => useTasks({ projectId: "proj-1" }));
 
     await waitFor(() => {
-      expect(mockFetchTasks).toHaveBeenLastCalledWith(undefined, undefined, "proj-1", undefined, false);
+      expect(mockFetchTasks).toHaveBeenLastCalledWith(undefined, undefined, "proj-1", undefined, true);
     });
 
     expect(mockClearCache).toHaveBeenCalledTimes(1);
@@ -526,7 +533,7 @@ describe("useTasks", () => {
       });
 
       await waitFor(() => expect(mockFetchTasks).toHaveBeenCalledTimes(2));
-      expect(mockFetchTasks).toHaveBeenLastCalledWith(undefined, undefined, "proj-2", undefined, false);
+      expect(mockFetchTasks).toHaveBeenLastCalledWith(undefined, undefined, "proj-2", undefined, true);
       expect(MockEventSource.instances).toHaveLength(1);
       expect(MockEventSource.instances[0]?.url).toContain("/api/events?projectId=proj-2");
 
@@ -735,6 +742,103 @@ describe("useTasks", () => {
       });
     });
 
+    it("paginates active search results and deduplicates overlapping pages", async () => {
+      const first = createMockTask({ id: "FN-SEARCH-1", title: "match one" });
+      const second = createMockTask({ id: "FN-SEARCH-2", title: "match two" });
+      mockFetchTaskPage
+        .mockResolvedValueOnce({ tasks: [first], total: 2, hasMore: true, nextCursor: "search-next" })
+        .mockResolvedValueOnce({ tasks: [first, second], total: 2, hasMore: false, nextCursor: null });
+
+      const { result } = renderHook(() => useTasks({ searchQuery: "match", sseEnabled: false }));
+      await waitFor(() => expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-SEARCH-1"]));
+
+      await act(async () => result.current.loadMoreCurrentTasks());
+
+      expect(mockFetchTaskPage).toHaveBeenNthCalledWith(1, undefined, { limit: 100, query: "match", signal: expect.any(AbortSignal) });
+      expect(mockFetchTaskPage).toHaveBeenNthCalledWith(2, undefined, { limit: 100, cursor: "search-next", query: "match", signal: expect.any(AbortSignal) });
+      expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-SEARCH-1", "FN-SEARCH-2"]);
+      expect(result.current.currentTasksHasMore).toBe(false);
+    });
+
+    it("keeps previously loaded Done history out of searched pagination", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      const historicDone = createMockTask({ id: "FN-HISTORIC-DONE", title: "unrelated archive", column: "done" });
+      const firstMatch = createMockTask({ id: "FN-SEARCH-1", title: "match one", column: "done" });
+      const secondMatch = createMockTask({ id: "FN-SEARCH-2", title: "match two", column: "done" });
+      mockFetchCompletedTasks.mockResolvedValueOnce({
+        tasks: [historicDone],
+        total: 1,
+        hasMore: false,
+        nextCursor: null,
+        counts: { byColumn: { done: 1 }, byWorkflow: {} },
+      });
+      mockFetchTaskPage
+        .mockResolvedValueOnce({ tasks: [], total: 0, hasMore: false, nextCursor: null })
+        .mockResolvedValueOnce({ tasks: [firstMatch], total: 2, hasMore: true, nextCursor: "search-next" })
+        .mockResolvedValueOnce({ tasks: [secondMatch], total: 2, hasMore: false, nextCursor: null });
+
+      const { result, rerender } = renderHook(
+        ({ searchQuery }: { searchQuery?: string }) => useTasks({ searchQuery, sseEnabled: false }),
+        { initialProps: { searchQuery: undefined } },
+      );
+      await waitFor(() => expect(result.current.tasks.map((task) => task.id)).toContain("FN-HISTORIC-DONE"));
+
+      rerender({ searchQuery: "match" });
+      await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+      await waitFor(() => expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-SEARCH-1"]));
+      await act(() => result.current.loadMoreCurrentTasks());
+
+      expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-SEARCH-1", "FN-SEARCH-2"]);
+      expect(result.current.tasks.some((task) => task.id === "FN-HISTORIC-DONE")).toBe(false);
+    });
+
+    it("rejects a late search page after the search scope changes", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      let resolveLatePage!: (page: Awaited<ReturnType<typeof api.fetchTaskPage>>) => void;
+      mockFetchTaskPage
+        .mockResolvedValueOnce({ tasks: [createMockTask({ id: "FN-A" })], total: 2, hasMore: true, nextCursor: "a-next" })
+        .mockImplementationOnce(() => new Promise((resolve) => { resolveLatePage = resolve; }))
+        .mockResolvedValueOnce({ tasks: [createMockTask({ id: "FN-B" })], total: 1, hasMore: false, nextCursor: null });
+
+      const { result, rerender } = renderHook(
+        ({ searchQuery }) => useTasks({ searchQuery, sseEnabled: false }),
+        { initialProps: { searchQuery: "alpha" } },
+      );
+      await waitFor(() => expect(result.current.tasks[0]?.id).toBe("FN-A"));
+      void result.current.loadMoreCurrentTasks();
+
+      rerender({ searchQuery: "beta" });
+      await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+      await waitFor(() => expect(result.current.tasks[0]?.id).toBe("FN-B"));
+
+      await act(async () => resolveLatePage({ tasks: [createMockTask({ id: "FN-A-LATE" })], total: 2, hasMore: false, nextCursor: null }));
+      expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-B"]);
+    });
+
+    it("rejects a late search page across an A → B → A incarnation cycle before debounce", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      let resolveLatePage!: (page: Awaited<ReturnType<typeof api.fetchTaskPage>>) => void;
+      mockFetchTaskPage
+        .mockResolvedValueOnce({ tasks: [createMockTask({ id: "FN-A" })], total: 2, hasMore: true, nextCursor: "a-next" })
+        .mockImplementationOnce(() => new Promise((resolve) => { resolveLatePage = resolve; }));
+
+      const { result, rerender } = renderHook(
+        ({ searchQuery }) => useTasks({ searchQuery, sseEnabled: false }),
+        { initialProps: { searchQuery: "alpha" } },
+      );
+      await waitFor(() => expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-A"]));
+      let staleLoad!: Promise<void>;
+      await act(async () => { staleLoad = result.current.loadMoreCurrentTasks(); await Promise.resolve(); });
+
+      rerender({ searchQuery: "beta" });
+      rerender({ searchQuery: "alpha" });
+      resolveLatePage({ tasks: [createMockTask({ id: "FN-A-STALE" })], total: 2, hasMore: false, nextCursor: null });
+      await act(() => staleLoad);
+
+      expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-A"]);
+      expect(result.current.currentTasksHasMore).toBe(true);
+    });
+
     it("does not refetch when toggling between already-live task views", async () => {
       const initialTask = createMockTask({ id: "FN-001" });
       mockFetchTasks.mockResolvedValueOnce([initialTask]);
@@ -802,7 +906,7 @@ describe("useTasks", () => {
         });
 
         expect(mockFetchTasks).toHaveBeenCalledTimes(3);
-        expect(mockFetchTasks).toHaveBeenLastCalledWith(undefined, undefined, undefined, undefined, false);
+        expect(mockFetchTasks).toHaveBeenLastCalledWith(undefined, undefined, undefined, undefined, true);
         await waitFor(() => {
           expect(result.current.tasks[0]?.id).toBe("FN-RECONNECTED");
         });
@@ -1830,7 +1934,7 @@ describe("useTasks", () => {
       expect(mockFetchTasks).toHaveBeenCalledTimes(1);
     });
 
-    it("removes every matching task id from populated local state after a successful delete", async () => {
+    it("removes a deduplicated task id from populated local state after a successful delete", async () => {
       const tasks = [
         createMockTask({ id: "FN-DELETE", title: "Duplicate one", column: "todo" as Column }),
         createMockTask({ id: "FN-KEEP", title: "Keep", column: "in-progress" as Column }),
@@ -1841,7 +1945,7 @@ describe("useTasks", () => {
 
       const { result } = renderHook(() => useTasks({ projectId: "proj-1" }));
 
-      await waitFor(() => expect(result.current.tasks).toHaveLength(3));
+      await waitFor(() => expect(result.current.tasks).toHaveLength(2));
 
       await act(async () => {
         await result.current.deleteTask("FN-DELETE");
@@ -1963,313 +2067,22 @@ describe("useTasks", () => {
       expect(result.current.tasks).toEqual([]);
     });
 
-    it("removes archived-loaded tasks without disturbing active rows", async () => {
+    it("removes completed tasks without disturbing active rows", async () => {
       const active = createMockTask({ id: "FN-ACTIVE", column: "todo" as Column });
-      const archived = createMockTask({ id: "FN-ARCHIVED", column: "archived" as Column });
+      const completed = createMockTask({ id: "FN-DONE", column: "done" as Column });
       mockFetchTasks.mockResolvedValueOnce([active]);
-      mockFetchArchivedTasks.mockResolvedValueOnce({ tasks: [archived], total: 1, hasMore: false });
-      mockDeleteTask.mockResolvedValueOnce(archived);
+      mockFetchCompletedTasks.mockResolvedValueOnce({ tasks: [completed], total: 1, hasMore: false });
+      mockDeleteTask.mockResolvedValueOnce(completed);
 
       const { result } = renderHook(() => useTasks({ projectId: "proj-1" }));
 
-      await waitFor(() => expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-ACTIVE"]));
+      await waitFor(() => expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-ACTIVE", "FN-DONE"]));
 
       await act(async () => {
-        await result.current.loadArchivedTasks();
-      });
-
-      expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-ACTIVE", "FN-ARCHIVED"]);
-
-      await act(async () => {
-        await result.current.deleteTask("FN-ARCHIVED");
+        await result.current.deleteTask("FN-DONE");
       });
 
       expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-ACTIVE"]);
-    });
-  });
-
-  /*
-  FNXC:ArchivePagination 2026-07-08-00:00:
-  FN-7659 — the Archived column must load newest-first in server-backed pages
-  of 100, never the whole archive in one pass. These tests assert the
-  dedicated GET /tasks/archived-backed page-1/"Show more" contract: exactly
-  one page-1 request on first expand, exactly one next-page request per
-  loadMoreArchivedTasks() call, correct archivedHasMore transitions, and that
-  the legacy merged fetchTasks(...,includeArchived) path is never invoked by
-  this flow.
-  */
-  describe("archived pagination (FN-7659)", () => {
-    it("loadArchivedTasks fetches exactly one page-1 request and never the whole archive via fetchTasks", async () => {
-      const active = createMockTask({ id: "FN-ACTIVE", column: "todo" as Column });
-      const archivedPage = [
-        createMockTask({ id: "FN-NEW", column: "archived" as Column }),
-        createMockTask({ id: "FN-OLD", column: "archived" as Column }),
-      ];
-      mockFetchTasks.mockResolvedValueOnce([active]);
-      mockFetchArchivedTasks.mockResolvedValueOnce({ tasks: archivedPage, total: 2, hasMore: false });
-
-      const { result } = renderHook(() => useTasks({ projectId: "proj-1" }));
-      await waitFor(() => expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-ACTIVE"]));
-
-      await act(async () => {
-        await result.current.loadArchivedTasks();
-      });
-
-      expect(mockFetchArchivedTasks).toHaveBeenCalledTimes(1);
-      expect(mockFetchArchivedTasks).toHaveBeenCalledWith("proj-1", 100, 0, "completion-date-desc");
-      expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-ACTIVE", "FN-NEW", "FN-OLD"]);
-      expect(result.current.archivedHasMore).toBe(false);
-      // fetchTasks must never be called with includeArchived=true by this flow.
-      for (const call of mockFetchTasks.mock.calls) {
-        expect(call[4]).not.toBe(true);
-      }
-    });
-
-    it("loadArchivedTasks is a no-op on repeated calls (single page-1 fetch across re-expands)", async () => {
-      const archivedPage = [createMockTask({ id: "FN-ARCHIVED-1", column: "archived" as Column })];
-      mockFetchTasks.mockResolvedValueOnce([]);
-      mockFetchArchivedTasks.mockResolvedValueOnce({ tasks: archivedPage, total: 1, hasMore: false });
-
-      const { result } = renderHook(() => useTasks({ projectId: "proj-1" }));
-      await waitFor(() => expect(mockFetchTasks).toHaveBeenCalled());
-
-      await act(async () => {
-        await result.current.loadArchivedTasks();
-      });
-      await act(async () => {
-        await result.current.loadArchivedTasks();
-      });
-
-      expect(mockFetchArchivedTasks).toHaveBeenCalledTimes(1);
-    });
-
-    it("switches Archive order with one replacement page and preserves active rows", async () => {
-      const active = createMockTask({ id: "FN-ACTIVE", column: "todo" as Column });
-      const arrivalPage = [createMockTask({ id: "FN-ARRIVAL", column: "archived" as Column })];
-      const idPage = [createMockTask({ id: "FN-ID", column: "archived" as Column })];
-      mockFetchTasks.mockResolvedValueOnce([active]);
-      mockFetchArchivedTasks
-        .mockResolvedValueOnce({ tasks: arrivalPage, total: 1, hasMore: false })
-        .mockResolvedValueOnce({ tasks: idPage, total: 3, hasMore: true });
-
-      const { result } = renderHook(() => useTasks({ projectId: "proj-1" }));
-      await waitFor(() => expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-ACTIVE"]));
-      await act(async () => { await result.current.loadArchivedTasks(); });
-      await act(async () => { await result.current.changeArchivedSortMode("task-id-desc"); });
-
-      expect(mockFetchArchivedTasks).toHaveBeenNthCalledWith(1, "proj-1", 100, 0, "completion-date-desc");
-      expect(mockFetchArchivedTasks).toHaveBeenNthCalledWith(2, "proj-1", 100, 0, "task-id-desc");
-      expect(result.current.archivedSortMode).toBe("task-id-desc");
-      expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-ACTIVE", "FN-ID"]);
-      expect(result.current.archivedHasMore).toBe(true);
-    });
-
-    it("keeps the committed mode and rows when a replacement page fails", async () => {
-      const arrivalPage = [createMockTask({ id: "FN-ARRIVAL", column: "archived" as Column })];
-      mockFetchTasks.mockResolvedValueOnce([]);
-      mockFetchArchivedTasks
-        .mockResolvedValueOnce({ tasks: arrivalPage, total: 1, hasMore: false })
-        .mockRejectedValueOnce(new Error("temporary archive failure"));
-
-      const { result } = renderHook(() => useTasks({ projectId: "proj-1" }));
-      await waitFor(() => expect(mockFetchTasks).toHaveBeenCalled());
-      await act(async () => { await result.current.loadArchivedTasks(); });
-      await act(async () => { await result.current.changeArchivedSortMode("task-id-desc"); });
-
-      expect(result.current.archivedSortMode).toBe("completion-date-desc");
-      expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-ARRIVAL"]);
-    });
-
-    it("does not let an old first page overwrite a newer Archive mode", async () => {
-      let resolveOld!: (value: { tasks: Task[]; total: number; hasMore: boolean }) => void;
-      const oldPage = new Promise<{ tasks: Task[]; total: number; hasMore: boolean }>((resolve) => { resolveOld = resolve; });
-      const newPage = { tasks: [createMockTask({ id: "FN-ID", column: "archived" as Column })], total: 1, hasMore: false };
-      mockFetchTasks.mockResolvedValueOnce([]);
-      mockFetchArchivedTasks
-        .mockImplementationOnce(() => oldPage)
-        .mockResolvedValueOnce(newPage);
-
-      const { result } = renderHook(() => useTasks({ projectId: "proj-1" }));
-      await waitFor(() => expect(mockFetchTasks).toHaveBeenCalled());
-      const oldLoad = result.current.loadArchivedTasks();
-      await act(async () => { await result.current.changeArchivedSortMode("task-id-desc"); });
-      resolveOld({ tasks: [createMockTask({ id: "FN-OLD", column: "archived" as Column })], total: 1, hasMore: false });
-      await act(async () => { await oldLoad; });
-
-      expect(result.current.archivedSortMode).toBe("task-id-desc");
-      expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-ID"]);
-    });
-
-    it("loadMoreArchivedTasks fetches only the next page and flips archivedHasMore at the boundary", async () => {
-      mockFetchTasks.mockResolvedValueOnce([]);
-      mockFetchArchivedTasks
-        .mockResolvedValueOnce({
-          tasks: [createMockTask({ id: "FN-P1", column: "archived" as Column })],
-          total: 2,
-          hasMore: true,
-        })
-        .mockResolvedValueOnce({
-          tasks: [createMockTask({ id: "FN-P2", column: "archived" as Column })],
-          total: 2,
-          hasMore: false,
-        });
-
-      const { result } = renderHook(() => useTasks({ projectId: "proj-1" }));
-      await waitFor(() => expect(mockFetchTasks).toHaveBeenCalled());
-
-      await act(async () => {
-        await result.current.loadArchivedTasks();
-      });
-      expect(result.current.archivedHasMore).toBe(true);
-      expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-P1"]);
-
-      await act(async () => {
-        await result.current.loadMoreArchivedTasks();
-      });
-
-      expect(mockFetchArchivedTasks).toHaveBeenCalledTimes(2);
-      expect(mockFetchArchivedTasks).toHaveBeenLastCalledWith("proj-1", 100, 1, "completion-date-desc");
-      expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-P1", "FN-P2"]);
-      expect(result.current.archivedHasMore).toBe(false);
-
-      // Calling again once exhausted must not issue another request.
-      await act(async () => {
-        await result.current.loadMoreArchivedTasks();
-      });
-      expect(mockFetchArchivedTasks).toHaveBeenCalledTimes(2);
-    });
-
-    /*
-    FNXC:ArchivePagination 2026-07-08-01:30:
-    Code review (FN-7659) found a generic refresh after expanding the
-    Archived column (SSE reconnect resync, tab-visibility regain, or a
-    search that gets cleared back to "") silently wiped the merged archived
-    rows from `tasks` because `refreshTasks` always fetches with
-    `includeArchived=false` and replaced `tasks` wholesale. These tests
-    assert the fix: archived rows merged in by `loadArchivedTasks` survive
-    each of those refresh paths, and `fetchTasks` is never called with
-    `includeArchived=true` by them (no full-archive fetch reintroduced).
-    */
-    it("keeps merged archived rows after an SSE reconnect resync refresh", async () => {
-      vi.useFakeTimers();
-      const active = createMockTask({ id: "FN-ACTIVE", column: "todo" as Column });
-      const archivedPage = [createMockTask({ id: "FN-ARCHIVED-1", column: "archived" as Column })];
-      mockFetchTasks.mockResolvedValueOnce([active]).mockResolvedValueOnce([active]);
-      mockFetchArchivedTasks.mockResolvedValueOnce({ tasks: archivedPage, total: 1, hasMore: false });
-
-      const { result } = renderHook(() => useTasks({ projectId: "proj-1" }));
-      await act(async () => {
-        await flushPromises();
-      });
-
-      await act(async () => {
-        await result.current.loadArchivedTasks();
-      });
-      expect(result.current.tasks.map((task) => task.id).sort()).toEqual(["FN-ACTIVE", "FN-ARCHIVED-1"]);
-
-      const first = MockEventSource.instances[0];
-      act(() => {
-        first._emit("error");
-      });
-      await act(async () => {
-        vi.advanceTimersByTime(3000);
-        await flushPromises();
-      });
-
-      expect(result.current.tasks.map((task) => task.id).sort()).toEqual(["FN-ACTIVE", "FN-ARCHIVED-1"]);
-      for (const call of mockFetchTasks.mock.calls) {
-        expect(call[4]).not.toBe(true);
-      }
-      expect(mockFetchArchivedTasks).toHaveBeenCalledTimes(1);
-      vi.useRealTimers();
-    });
-
-    it("keeps merged archived rows after a tab-visibility-regain refresh", async () => {
-      const visibilityState = { value: "visible" as VisibilityState };
-      Object.defineProperty(document, "visibilityState", {
-        configurable: true,
-        get: () => visibilityState.value,
-      });
-      const active = createMockTask({ id: "FN-ACTIVE", column: "todo" as Column });
-      const archivedPage = [createMockTask({ id: "FN-ARCHIVED-1", column: "archived" as Column })];
-      mockFetchTasks.mockResolvedValue([active]);
-      mockFetchArchivedTasks.mockResolvedValueOnce({ tasks: archivedPage, total: 1, hasMore: false });
-
-      const { result } = renderHook(() => useTasks({ projectId: "proj-1" }));
-      await act(async () => {
-        await flushPromises();
-      });
-
-      await act(async () => {
-        await result.current.loadArchivedTasks();
-      });
-      expect(result.current.tasks.map((task) => task.id).sort()).toEqual(["FN-ACTIVE", "FN-ARCHIVED-1"]);
-
-      visibilityState.value = "hidden";
-      act(() => {
-        document.dispatchEvent(new Event("visibilitychange"));
-      });
-      visibilityState.value = "visible";
-      await act(async () => {
-        document.dispatchEvent(new Event("visibilitychange"));
-        await flushPromises();
-      });
-
-      expect(result.current.tasks.map((task) => task.id).sort()).toEqual(["FN-ACTIVE", "FN-ARCHIVED-1"]);
-      for (const call of mockFetchTasks.mock.calls) {
-        expect(call[4]).not.toBe(true);
-      }
-    });
-
-    it("restores archived matches via bounded search and keeps them after clearing the query", async () => {
-      vi.useFakeTimers();
-      const active = createMockTask({ id: "FN-ACTIVE", column: "todo" as Column });
-      const archivedPage = [createMockTask({ id: "FN-ARCHIVED-1", column: "archived" as Column, title: "widget" })];
-      const archivedSearchMatch = createMockTask({ id: "FN-ARCHIVED-2", column: "archived" as Column, title: "widget" });
-      mockFetchTasks
-        .mockResolvedValueOnce([active]) // initial mount fetch
-        .mockResolvedValueOnce([active, archivedSearchMatch]) // search fetch (includeArchived=true)
-        .mockResolvedValueOnce([active]); // cleared-query fetch (includeArchived=false)
-      mockFetchArchivedTasks.mockResolvedValueOnce({ tasks: archivedPage, total: 1, hasMore: false });
-
-      const { result, rerender } = renderHook(
-        ({ searchQuery }: { searchQuery: string }) => useTasks({ projectId: "proj-1", searchQuery }),
-        { initialProps: { searchQuery: "" } },
-      );
-      await act(async () => {
-        await flushPromises();
-      });
-
-      await act(async () => {
-        await result.current.loadArchivedTasks();
-      });
-      expect(result.current.tasks.map((task) => task.id).sort()).toEqual(["FN-ACTIVE", "FN-ARCHIVED-1"]);
-
-      rerender({ searchQuery: "widget" });
-      await act(async () => {
-        vi.advanceTimersByTime(300);
-        await flushPromises();
-      });
-
-      // The search-triggered fetch must have requested archived matches directly
-      // (bounded via the server's archiveDb.search), once the column had been expanded.
-      const searchCall = mockFetchTasks.mock.calls[1];
-      expect(searchCall?.[3]).toBe("widget");
-      expect(searchCall?.[4]).toBe(true);
-      expect(result.current.tasks.map((task) => task.id).sort()).toEqual(["FN-ACTIVE", "FN-ARCHIVED-2"]);
-
-      rerender({ searchQuery: "" });
-      await act(async () => {
-        vi.advanceTimersByTime(300);
-        await flushPromises();
-      });
-
-      // Clearing the query falls back to a non-archived fetch, but the previously
-      // merged archived row must be carried forward rather than dropped.
-      const clearedCall = mockFetchTasks.mock.calls[2];
-      expect(clearedCall?.[4]).not.toBe(true);
-      expect(result.current.tasks.map((task) => task.id).sort()).toEqual(["FN-ACTIVE", "FN-ARCHIVED-1"]);
-      vi.useRealTimers();
     });
   });
 
@@ -2582,7 +2395,7 @@ describe("useTasks", () => {
 
       const { result } = renderHook(() => useTasks({ projectId: "proj-1" }));
 
-      await waitFor(() => expect(result.current.tasks).toHaveLength(3));
+      await waitFor(() => expect(result.current.tasks).toHaveLength(2));
 
       let returned: Task | undefined;
       await act(async () => {
@@ -2591,8 +2404,8 @@ describe("useTasks", () => {
 
       expect(mockRetryTask).toHaveBeenCalledWith("FN-RETRY", "proj-1");
       expect(returned).toEqual(expect.objectContaining({ id: "FN-RETRY", column: "todo", status: null, error: null }));
-      expect(result.current.tasks).toEqual([retried, keep, retried]);
-      expect(result.current.tasks.filter((task) => task.id === "FN-RETRY")).toHaveLength(2);
+      expect(result.current.tasks).toEqual([retried, keep]);
+      expect(result.current.tasks.filter((task) => task.id === "FN-RETRY")).toHaveLength(1);
       expect(result.current.tasks.filter((task) => task.id === "FN-RETRY").every((task) => task.status === null && task.error === null)).toBe(true);
       expect(mockFetchTasks).toHaveBeenCalledTimes(1);
     });
@@ -3329,58 +3142,6 @@ describe("useTasks", () => {
     });
   });
 
-  describe("archiveAllDone", () => {
-    it("archives all done tasks and updates local state", async () => {
-      const doneTasks = [
-        createMockTask({ id: "FN-001", column: "done" as Column }),
-        createMockTask({ id: "FN-002", column: "done" as Column }),
-      ];
-      const todoTask = createMockTask({ id: "FN-003", column: "todo" as Column });
-      mockFetchTasks.mockResolvedValueOnce([...doneTasks, todoTask]);
-
-      const archivedTasks = [
-        createMockTask({ id: "FN-001", column: "archived" as Column }),
-        createMockTask({ id: "FN-002", column: "archived" as Column }),
-      ];
-      mockArchiveAllDone.mockResolvedValueOnce(archivedTasks);
-
-      const { result } = renderHook(() => useTasks());
-
-      await waitFor(() => {
-        expect(result.current.tasks).toHaveLength(3);
-      });
-
-      await act(async () => {
-        await result.current.archiveAllDone();
-      });
-
-      expect(mockArchiveAllDone).toHaveBeenCalled();
-      // Done tasks should be archived
-      expect(result.current.tasks.find((t) => t.id === "FN-001")?.column).toBe("archived");
-      expect(result.current.tasks.find((t) => t.id === "FN-002")?.column).toBe("archived");
-      // Todo task should remain unchanged
-      expect(result.current.tasks.find((t) => t.id === "FN-003")?.column).toBe("todo");
-    });
-
-    it("returns empty array when no done tasks exist", async () => {
-      const todoTask = createMockTask({ id: "FN-001", column: "todo" as Column });
-      mockFetchTasks.mockResolvedValueOnce([todoTask]);
-      mockArchiveAllDone.mockResolvedValueOnce([]);
-
-      const { result } = renderHook(() => useTasks());
-
-      await waitFor(() => {
-        expect(result.current.tasks).toHaveLength(1);
-      });
-
-      const archived = await act(async () => {
-        return await result.current.archiveAllDone();
-      });
-
-      expect(archived).toEqual([]);
-      expect(result.current.tasks[0].column).toBe("todo");
-    });
-  });
 
   describe("createTask optimistic insertion", () => {
     it("adds task to state immediately", async () => {
@@ -3813,7 +3574,7 @@ describe("useTasks", () => {
         });
 
         await waitFor(() => expect(result.current.tasks[0]?.column).toBe("in-progress"));
-        expect(mockFetchTasks).toHaveBeenLastCalledWith(undefined, undefined, "resume-project", undefined, false);
+        expect(mockFetchTasks).toHaveBeenLastCalledWith(undefined, undefined, "resume-project", undefined, true);
       });
     });
 
@@ -3888,7 +3649,7 @@ describe("useTasks", () => {
       // Verify we're showing project A tasks
       expect(result.current.tasks.map((t) => t.id)).toEqual(["FN-A1", "FN-A2"]);
       expect(mockFetchTasks).toHaveBeenLastCalledWith(
-        undefined, undefined, "project-a", undefined, false
+        undefined, undefined, "project-a", undefined, true
       );
 
       // Switch to project B without a snapshot; it must not render project A rows.
@@ -3898,7 +3659,7 @@ describe("useTasks", () => {
 
       // Project B fetch should be in flight
       expect(mockFetchTasks).toHaveBeenLastCalledWith(
-        undefined, undefined, "project-b", undefined, false
+        undefined, undefined, "project-b", undefined, true
       );
 
       // A cache miss is intentionally empty rather than cross-project stale-while-revalidate.
@@ -4054,7 +3815,7 @@ describe("useTasks", () => {
         expect(mockFetchTasks).toHaveBeenCalledTimes(1);
       });
       expect(mockFetchTasks).toHaveBeenLastCalledWith(
-        undefined, undefined, "project-a", undefined, false
+        undefined, undefined, "project-a", undefined, true
       );
 
       // Switch to project B
@@ -4067,7 +3828,7 @@ describe("useTasks", () => {
         expect(mockFetchTasks).toHaveBeenCalledTimes(2);
       });
       expect(mockFetchTasks).toHaveBeenLastCalledWith(
-        undefined, undefined, "project-b", undefined, false
+        undefined, undefined, "project-b", undefined, true
       );
 
       // Switch to project C
@@ -4079,7 +3840,7 @@ describe("useTasks", () => {
         expect(mockFetchTasks).toHaveBeenCalledTimes(3);
       });
       expect(mockFetchTasks).toHaveBeenLastCalledWith(
-        undefined, undefined, "project-c", undefined, false
+        undefined, undefined, "project-c", undefined, true
       );
 
       // Switch back to project A
@@ -4091,7 +3852,7 @@ describe("useTasks", () => {
         expect(mockFetchTasks).toHaveBeenCalledTimes(4);
       });
       expect(mockFetchTasks).toHaveBeenLastCalledWith(
-        undefined, undefined, "project-a", undefined, false
+        undefined, undefined, "project-a", undefined, true
       );
     });
 

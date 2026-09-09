@@ -8,7 +8,7 @@ import { isTaskExternallyBlocked } from "../tasks/task-external-block.js";
 export type RunningAgentCountSource = (projectIds: readonly string[]) => Promise<Record<string, number>> | Record<string, number>;
 
 /** Terminal classification supplied by a workflow-IR or board-flags enricher. */
-export type ColumnTerminalKind = "none" | "complete" | "archived";
+export type ColumnTerminalKind = "none" | "complete";
 
 /**
  * The deliberately small, pure shape used by all top-level live-agent counts.
@@ -61,7 +61,6 @@ export interface RunningAgentCounts {
 
 /** Resolve the terminal classification of one column from its workflow IR. */
 export function resolveColumnTerminalKind(columnId: string, ir: WorkflowIr): ColumnTerminalKind {
-  if (columnHasFlag(ir, columnId, "archived")) return "archived";
   if (columnHasFlag(ir, columnId, "complete")) return "complete";
   return "none";
 }
@@ -126,10 +125,10 @@ The fix for a renamed board is at the CALLER — pass flags, or use `enrichRunni
 which takes the IR and resolves every role by trait. Same reasoning as the marker above
 `isLegacyPreImplementationColumn`, which this file already records.
 */
-export function enrichRunningAgentTaskShapeFromFlags<T extends RunningAgentTaskShape>(task: T, flags?: Pick<TraitFlags, "complete" | "archived" | "intake" | "hold" | "countsTowardWip" | "mergeOrchestration" | "mergeBlocker">): T & Required<Pick<RunningAgentTaskShape, "columnTerminalKind" | "columnIsIntakeOrHold" | "columnCountsTowardWip" | "columnIsReviewOrMerge">> {
+export function enrichRunningAgentTaskShapeFromFlags<T extends RunningAgentTaskShape>(task: T, flags?: Pick<TraitFlags, "complete" | "intake" | "hold" | "countsTowardWip" | "mergeOrchestration" | "mergeBlocker">): T & Required<Pick<RunningAgentTaskShape, "columnTerminalKind" | "columnIsIntakeOrHold" | "columnCountsTowardWip" | "columnIsReviewOrMerge">> {
   return {
     ...task,
-    columnTerminalKind: flags?.archived ? "archived" : flags?.complete ? "complete" : "none",
+    columnTerminalKind: flags?.complete ? "complete" : "none",
     columnIsIntakeOrHold: flags ? flags.intake === true || flags.hold === true : isLegacyPreImplementationColumn(task.column),
     columnCountsTowardWip: flags ? flags.countsTowardWip === true : task.column === LEGACY_WIP_COLUMN_ID,
     /*
@@ -163,7 +162,7 @@ guess, and a wrong guess under-reports the queued total. Fix at the CALLER by pa
 */
 function terminalKind(task: RunningAgentTaskShape): ColumnTerminalKind {
   // Legacy literals are intentionally fixture-only degradation when workflow IR is unavailable.
-  return task.columnTerminalKind ?? (task.column === "done" ? "complete" : task.column === "archived" ? "archived" : "none");
+  return task.columnTerminalKind ?? (task.column === "done" ? "complete" : "none");
 }
 
 /**

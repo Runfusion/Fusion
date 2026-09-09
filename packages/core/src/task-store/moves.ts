@@ -24,7 +24,7 @@ import {VALID_TRANSITIONS, COLUMNS} from "../types.js";
 import {serializeWorkflowIr} from "../workflows/workflow-ir.js";
 import {emitWorkflowLifecycleEvent} from "../workflow-events.js";
 import {resolveAllowedColumns, workflowHasColumn} from "../workflows/workflow-transitions.js";
-import {isBuiltinWorkflowId, getBuiltinWorkflow, resolveDefaultWorkflowIr, DEFAULT_WORKFLOW_ID} from "../workflows/builtin-workflows.js";
+import {isBuiltinWorkflowId, getBuiltinWorkflow, resolveDefaultWorkflowIr, resolveRetiredBuiltinWorkflowId, DEFAULT_WORKFLOW_ID} from "../workflows/builtin-workflows.js";
 import {parseWorkflowIr} from "../workflows/workflow-ir.js";
 import {findWorkflowColumn, resolveColumnPluginGates} from "../plugins/plugin-gate-verdict.js";
 import {getTraitRegistry, resolveColumnFlags} from "../workflows/trait-registry.js";
@@ -130,6 +130,9 @@ Mirrors getTaskWorkflowSelectionAsyncImpl's query exactly, including the
 project-id scoping (FNXC:WorkflowModelLanes): shared PostgreSQL deployments reuse
 task ids across projects, so an unscoped read could resolve another project's
 workflow and gate this move against the wrong pool entirely.
+
+FNXC:WorkflowSuccession 2026-09-06-02:54:
+Canonicalize the transaction-local selection before deriving either the IR or pool key. A historical retired identity must use the successor's overrides and capacity budget in the same serialized move snapshot.
 */
 async function readTaskWorkflowSelectionInTransaction(
   tx: DbTransaction,
@@ -146,7 +149,9 @@ async function readTaskWorkflowSelectionInTransaction(
     ))
     .limit(1);
   const workflowId = rows[0]?.workflowId;
-  return typeof workflowId === "string" && workflowId.length > 0 ? workflowId : undefined;
+  return typeof workflowId === "string" && workflowId.length > 0
+    ? resolveRetiredBuiltinWorkflowId(workflowId)
+    : undefined;
 }
 
 
@@ -335,34 +340,13 @@ export async function handoffToReviewImpl(store: TaskStore, taskId: string, opts
       }
 
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-12:30 (fleet — moves.ts cluster):
-      THE ARCHIVE GUARD IS A ROLE QUESTION, resolved from the task's own workflow.
-
-      This refuses a hand-off from an archived card. Against the literal `archived`, a board whose
-      archive lane is renamed never matched, so an archived card could be handed to review — the
-      invariant this error exists to protect, silently unenforced.
-
-      The IR is resolved here rather than 28 lines down where `handoffTarget` already reads it, and
-      that hoist is safe: this function has already awaited `readTaskRowAsync` above, so no new tick
-      boundary is introduced. The later read reuses this one.
-
-      Absent or trait-free IR keeps the legacy id, so an unconverted board is byte-identical.
+      FNXC:WorkflowResolvedColumns 2026-07-31-12:30:
+      Hand-off refuses soft-deleted and historical-sentinel rows. The workflow read is hoisted for
+      the review-target resolution below; no archive role exists in live workflow metadata.
       */
       const handoffIr = await resolveWorkflowIrForTask(store, taskId).catch(() => undefined);
-      const handoffArchivedLanes = handoffIr ? new Set(columnsWithFlag(handoffIr, "archived")) : undefined;
-      /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-17:40:
-      THIS ARM STAYS INLINE, deliberately. Naming it would move the TypeScript tally that
-      `archived-column-gate-parity.test.ts` pins, and that guard's whole argument is that the
-      archived gate's three encodings must move together — the SQL halves still compare the raw
-      string, so converting the TypeScript side alone is the split brain it exists to prevent.
-      Measured: naming it turned that suite red on `TypeScript encoding changed`.
-      */
-      const taskIsArchived = handoffArchivedLanes && handoffArchivedLanes.size > 0
-        ? handoffArchivedLanes.has(task.column)
-        /* DELIBERATE-LITERAL — the degraded fallback arm; the live arm above uses the resolved set. */
-        : task.column === "archived";
-      if (taskIsArchived || task.deletedAt != null) {
+      const taskIsHistorical = task.column === "archived";
+      if (taskIsHistorical || task.deletedAt != null) {
         throw new HandoffInvariantViolationError(
           taskId,
           task.column,

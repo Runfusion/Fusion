@@ -14,15 +14,15 @@ import {TaskStore, storeLog} from "../store.js";
 import {readFile} from "node:fs/promises";
 import {join} from "node:path";
 import {existsSync} from "node:fs";
-import type {ArchivedTaskDocumentAdditionInput, ArchivedTaskDocumentAdditionResult, Task, TaskDocument, TaskDocumentCreateInput, TaskLogEntry, RunMutationContext} from "../types.js";
+import type {Task, TaskDocument, TaskDocumentCreateInput, TaskLogEntry, RunMutationContext} from "../types.js";
 import {validateDocumentKey} from "../types.js";
-import {ArchivedTaskDocumentPublicationRejectedError, validateArchivedTaskDocumentAddition, validateTaskDocumentPreconditions} from "../task-document-concurrency.js";
+import {validateTaskDocumentPreconditions} from "../task-document-concurrency.js";
 import "../builtin-traits.js";
 import {__setTaskActivityLogLimitsForTesting, isBootstrapPromptStub} from "../task-store/comments.js";
-import {getLiveTaskColumn, publishArchivedTaskDocumentAddition as publishArchivedTaskDocumentAdditionAsync, upsertTaskDocument as upsertTaskDocumentAsync} from "../task-store/async/async-comments-attachments.js";
+import {getLiveTaskColumn, upsertTaskDocument as upsertTaskDocumentAsync} from "../task-store/async/async-comments-attachments.js";
 import {resolveWorkflowIrForTask} from "../workflows/workflow-ir-resolver.js";
 import {resolveLifecycleColumns} from "../workflows/workflow-lifecycle-traits.js";
-import { resolveArchivedLanes } from "../project-lane-vocabulary.js";
+import { ARCHIVED_SENTINEL_LANES } from "../project-lane-vocabulary.js";
 
 /*
 FNXC:PostCommentRetriage 2026-07-29-19:30 (U11 lifecycle-column conversion):
@@ -61,7 +61,7 @@ export function resolvePostCommentRetriageDecision(input: {
 export async function addCommentImpl(store: TaskStore, id: string, text: string, author: string = "user", options?: { skipRefinement?: boolean; source?: "user" | "agent" | "github-review" | "github-review-comment"; externalId?: string; reviewState?: "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED"; }, runContext?: RunMutationContext,): Promise<Task> {
     {
       const layer = store.asyncLayer!;
-      const state = await getLiveTaskColumn(layer.db, id, layer.projectId, await resolveArchivedLanes(store));
+      const state = await getLiveTaskColumn(layer.db, id, layer.projectId, ARCHIVED_SENTINEL_LANES);
       /*
       FNXC:LifecycleColumnCensus 2026-07-30-21:10 DELIBERATE-LITERAL: a SENTINEL, not a board lane.
       
@@ -75,7 +75,7 @@ export async function addCommentImpl(store: TaskStore, id: string, text: string,
       archived and soft-deleted into one string. Converting this comparison would therefore keep passing on
       the built-in board and start FAILING on a renamed one — a soft-deleted task would read as not-archived.
       */
-      if (state === "archived") throw new Error(`Task ${id} is archived — comments are read-only`);
+      if (state === "archived") throw new Error(`Task ${id} is deleted or historical — comments are read-only`);
       if (state === null) throw new Error(`Task ${id} not found`);
     }
     // Phase 1: Add comment under lock
@@ -335,79 +335,10 @@ export async function addCommentImpl(store: TaskStore, id: string, text: string,
   }
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-30-23:40:
-Shared by both document paths so the "is this card archived?" answer cannot differ between the write
-guard and the publication guard — one saying yes while the other says no is how a card ends up both
-read-only and un-publishable.
-
-FNXC:WorkflowLifecycleColumns 2026-07-31-04:10:
-The helper that used to live here now lives in `project-lane-vocabulary.ts` and is imported. It grew a
-THIRD caller (`getLiveTaskColumn`, whose sentinel a dozen sites compare against), and three private
-copies of one fact is how the disagreement above happens at scale rather than between two functions.
-The analysis below is unchanged and still governs the shape.
-/*
-FNXC:WorkflowLifecycleColumns 2026-07-31-03:35 (#2886 review — greptile P1, "project-wide lanes
-misclassify tasks"): THE FINDING IS RIGHT AND THE OBVIOUS FIX IS A WORSE TRADE. Measured, not argued.
-
-The union includes a column if ANY enabled workflow calls it archived, so where two workflows reuse an
-id and only one marks it archived, a LIVE card in the other workflow's lane is refused its own
-document writes. That is the flat-set mistake this file should not be making, and both callers have
-`taskId`, so a keyed answer looks available.
-
-I IMPLEMENTED IT AND REVERTED. Switching to `resolveWorkflowIrForTask(store, taskId)` broke
-`archived-document-lanes.pg.test.ts`: a card in a RENAMED archived lane stopped being read-only. The
-reason is the one this program keeps hitting from the other side — the per-task resolver needs the
-task's own workflow SELECTION, and where none is recorded it degrades to the BUILT-IN ir, whose
-archived lane is `archived`. The project union does not need a selection, which is exactly why it
-caught the renamed card.
-
-So the two failure modes are not comparable in size:
-  - union: a live card in a COLLIDING id loses document writes (needs two workflows reusing one id
-    with different traits — a configuration nobody has reported).
-  - per-task: EVERY renamed-lane card with no recorded selection silently becomes writable while
-    archived, which is the defect this guard exists to prevent and has a passing test.
-
-The correct fix is per-task resolution WITH a project-union fallback when the selection is absent —
-narrow when the card can answer, broad when it cannot. That needs the "no selection" case
-distinguished from "selection resolved to the default", i.e. the provenance form, at both call sites.
-Sized here rather than faked, because swapping one defect for a larger one would have looked like
-progress and dropped a guard count.
+FNXC:HistoricalTaskSentinel 2026-09-04-14:51:
+Ordinary document writes reject the historical archived sentinel and soft-deleted parents. The sentinel
+is a migration/read-safety boundary only; no publication or live task-archive path may write through it.
 */
-
-export async function publishArchivedTaskDocumentAdditionImpl(
-  store: TaskStore,
-  taskId: string,
-  input: ArchivedTaskDocumentAdditionInput,
-): Promise<ArchivedTaskDocumentAdditionResult> {
-  try {
-    validateDocumentKey(input.key);
-  } catch {
-    throw new Error(`Invalid document key: "${input.key}". Must be 1-64 alphanumeric characters, hyphens, or underscores.`);
-  }
-  validateArchivedTaskDocumentAddition(input);
-  if (!store.backendMode || !store.asyncLayer) {
-    throw new ArchivedTaskDocumentPublicationRejectedError(
-      "postgres-required",
-      store.asyncLayer?.projectId ?? "__legacy_unscoped__",
-      taskId,
-      input.key,
-    );
-  }
-  /*
-  FNXC:ArchivedTaskDocumentPublication 2026-07-20-15:36:
-  The dedicated facade deliberately returns the atomic PostgreSQL result directly. Unlike ordinary upsert it emits no task event and performs no citation scan, keeping archived parent, workflow, mission, and scheduler state inert.
-  */
-  /*
-  FNXC:WorkflowLifecycleColumns 2026-07-30-23:40:
-  Resolve the board's archived lanes here — this impl holds the store, the async function does not.
-
-  Keyed on the literal, this rejected a legitimate archived-document publication on any board whose
-  archived lane is renamed: `parent-not-archived`, then `archived-state-inconsistent`. A false
-  rejection of valid operator work, and one that reads as a data-integrity error rather than a
-  lifecycle mismatch. Best-effort: an unresolvable workflow keeps the legacy id.
-  */
-  return publishArchivedTaskDocumentAdditionAsync(store.asyncLayer, taskId, input, await resolveArchivedLanes(store));
-}
 
 export async function upsertTaskDocumentImpl(store: TaskStore, taskId: string, input: TaskDocumentCreateInput): Promise<TaskDocument> {
     try {
@@ -425,9 +356,8 @@ export async function upsertTaskDocumentImpl(store: TaskStore, taskId: string, i
     // upsertTaskDocumentAsync. The citation scanning and task:updated emission
     // happen after (best-effort, same as the SQLite path).
         const layer = store.asyncLayer!;
-    /* FNXC:WorkflowLifecycleColumns 2026-07-30-23:40: keyed on the literal, an ARCHIVED card's
-       documents stayed WRITABLE on any board whose archived lane is renamed. */
-    const document = await upsertTaskDocumentAsync(layer, taskId, input, await resolveArchivedLanes(store));
+    /* Historical sentinel rows remain read-only until store-open reintegration repairs them. */
+    const document = await upsertTaskDocumentAsync(layer, taskId, input, ARCHIVED_SENTINEL_LANES);
     const task = await store.getTask(taskId);
     store.emit("task:updated", task);
     try {

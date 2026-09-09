@@ -23,7 +23,7 @@
  *   These helpers are the async target the migrating store and the PostgreSQL
  *   integration tests consume.
  */
-import { and, asc, eq, inArray, lte, or, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import * as schema from "../../postgres/schema/index.js";
 import type { AsyncDataLayer, DbTransaction } from "../../postgres/data-layer.js";
@@ -497,13 +497,42 @@ export async function transitionWorkflowWorkItem(
     if (patch.expectedState !== undefined && fromState !== patch.expectedState) {
       return rowToWorkflowWorkItem(existing);
     }
+    /*
+    FNXC:WorkflowWorkItemLeaseCas 2026-09-06-01:28:
+    Re-reading the owner in this transaction closes the same-state handoff gap: a stale planner may
+    observe `running` after another worker has reclaimed the row, but it no longer renews or
+    terminalizes that worker's lease. A mismatch is the same ordinary no-op as a state CAS loss.
+
+    FNXC:WorkflowWorkItemLeaseCas 2026-09-06-01:52:
+    The preliminary read is diagnostic only: under PostgreSQL READ COMMITTED, another process can
+    replace the lease owner after that SELECT and before this UPDATE. Repeat every requested CAS in
+    the UPDATE predicate itself (including SQL IS NULL owner semantics), and treat zero returned
+    rows as an ordinary lost race. This prevents an old planner renewal from reclaiming a successor's
+    same-state lease even when the competing writer does not participate in our advisory lock.
+    */
+    if (patch.expectedLeaseOwner !== undefined && existing.leaseOwner !== patch.expectedLeaseOwner) {
+      return rowToWorkflowWorkItem(existing);
+    }
     if (isTerminalWorkflowWorkItemState(fromState) && fromState !== state) {
       throw new Error(
         `Workflow work item ${id} is terminal (${fromState}) and cannot transition to ${state}`,
       );
     }
 
-    await tx
+    const updateConditions = [
+      eq(schema.project.workflowWorkItems.id, id),
+      projectScopeFor(schema.project.workflowWorkItems.projectId, layer.projectId),
+    ];
+    if (patch.expectedState !== undefined) {
+      updateConditions.push(eq(schema.project.workflowWorkItems.state, patch.expectedState));
+    }
+    if (patch.expectedLeaseOwner !== undefined) {
+      updateConditions.push(patch.expectedLeaseOwner === null
+        ? isNull(schema.project.workflowWorkItems.leaseOwner)
+        : eq(schema.project.workflowWorkItems.leaseOwner, patch.expectedLeaseOwner));
+    }
+
+    const updatedRows = await tx
       .update(schema.project.workflowWorkItems)
       .set({
         state,
@@ -520,21 +549,23 @@ export async function transitionWorkflowWorkItem(
         nodeInstanceId: patch.nodeInstanceId === undefined ? existing.nodeInstanceId : patch.nodeInstanceId,
         updatedAt: now,
       })
-      .where(and(
-        eq(schema.project.workflowWorkItems.id, id),
-        projectScopeFor(schema.project.workflowWorkItems.projectId, layer.projectId),
-      ));
+      .where(and(...updateConditions))
+      .returning();
 
-    const updatedRows = await tx
-      .select()
-      .from(schema.project.workflowWorkItems)
-      .where(and(
-        eq(schema.project.workflowWorkItems.id, id),
-        projectScopeFor(schema.project.workflowWorkItems.projectId, layer.projectId),
-      ))
-      .limit(1);
-    const updated = updatedRows[0] as WorkflowWorkItemRow | undefined;
-    if (!updated) throw new Error(`Workflow work item ${id} disappeared`);
+    let updated = updatedRows[0] as WorkflowWorkItemRow | undefined;
+    if (!updated) {
+      const currentRows = await tx
+        .select()
+        .from(schema.project.workflowWorkItems)
+        .where(and(
+          eq(schema.project.workflowWorkItems.id, id),
+          projectScopeFor(schema.project.workflowWorkItems.projectId, layer.projectId),
+        ))
+        .limit(1);
+      updated = currentRows[0] as WorkflowWorkItemRow | undefined;
+      if (!updated) throw new Error(`Workflow work item ${id} disappeared`);
+      return rowToWorkflowWorkItem(updated);
+    }
 
     // Run-audit event inside the same transaction.
     await recordRunAuditEventWithinTransaction(tx, {

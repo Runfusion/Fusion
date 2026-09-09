@@ -11,10 +11,10 @@ Help the agent understand how tasks flow through the Fusion board, what happens 
 **Column flow:**
 
 ```
-Triage → Todo → In Progress → In Review → Done → Archived
+Triage → Todo → In Progress → In Review → Done
 ```
 
-Each column transition is driven by the AI engine or user action:
+Each column transition is driven by workflow automation:
 
 **Triage (specification)**
 - Task enters triage when created via `fn_task_create`
@@ -48,14 +48,10 @@ Each column transition is driven by the AI engine or user action:
 - After merge, task moves to **done**
 
 **Done**
-- Work is merged to main branch
-- Task is available for archival via `fn_task_archive`
+- Work is merged to the integration branch and its task history remains in Done
+- Done is server-paginated while its column counter reports the exact total
 - Can be refined with `fn_task_refine` to create follow-up work
-
-**Archived**
-- Removed from active board view
-- Can be restored with `fn_task_unarchive`
-- Can be cleaned up to free disk space (removes task directory, keeps metadata)
+- Tasks that should leave live views use `fn_task_delete`; soft deletion keeps the task ID reserved
 
 **Task statuses (within any column):**
 

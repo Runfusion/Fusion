@@ -1,5 +1,123 @@
 # @runfusion/fusion
 
+## 0.78.0-beta.4
+
+### Minor Changes
+
+- 094f313: summary: Add dedicated recommendation navigation and new-item badges for recommendations and artifacts.
+  category: feature
+  dev: Categorizes inbox rows as message, recommendation, or artifact and exposes categoryUnreadCounts.
+- 1c7260e: summary: Let Enter create new lines in mobile conversation composers, with a global behavior setting.
+  category: feature
+  dev: Adds the global `chatSubmitOnEnter` setting and `ChatSubmitOnEnterContext` across the three conversation composers; `auto` makes plain Enter a newline for a coarse primary pointer and a send action for a fine pointer, while `always` and `never` force that branch. Shift+Enter never sends, including with Cmd/Ctrl held; it inserts a newline except while one of Chat's files/tasks, agents, or skills autocomplete menus is open, whereas it passes through the task Chat and planner Chat menus. Cmd/Ctrl+Enter without Shift ignores the setting and device after the existing guards. An open autocomplete menu consumes both Enter and Cmd/Ctrl+Enter until Escape closes it, and task Chat IME composition takes priority over every Enter path. Plain Enter without Cmd/Ctrl or Shift follows the setting, Alt does not alter it, and Send remains active whenever the draft is not empty.
+- a9db52e: summary: Move task metadata into Details and quick controls into the footer Actions menu.
+  category: feature
+  dev: Removes the inline action row, Priority/Oversight popovers, and level select; keeps action and option testids while retiring container and trigger testids.
+- 5257eec: summary: Add editable quick-script names and descriptions across terminal launchers.
+  category: feature
+  dev: Keeps command storage compatible while atomically updating script references on rename.
+
+### Patch Changes
+
+- 0190f23: summary: Keep chat composers editable immediately after stopping a response.
+  category: fix
+  dev: Queues text at the dispatch fence, clears cancellation before draining, and refuses attachments during reconciliation.
+- 20262e7: summary: One Coding (Ideas) workflow remains (formerly V2); Coding is now Coding (Auto).
+  category: internal
+  dev: Removes `builtin:coding-ideas` from the offered catalog and maps it to `builtin:coding-ideas-v2` across all five catalog-read seams, including `isBuiltinWorkflowEnabled`. Both authoritative selection readers canonicalize persisted legacy rows so the board and scheduler share one Ideas identity and never render homonymous lanes. The four persistence paths (`selectTaskWorkflowImpl`, `selectTaskWorkflowAndReconcileImpl`, `materializeExplicitWorkflowStepsImpl`, and `setDefaultWorkflowIdImpl`) normalize requests before writing, while all three prompt-override/plugin-gating lookups use the successor key. Operator-owned `enabledBuiltinWorkflowIds` values remain unchanged but are understood through the mapping. No migration ships and `SCHEMA_BASELINE_VERSION` remains `0071`, so older Fusion binaries retain database access. Repointed cards adopt the successor's `stepReopenPolicy: "none"` named-remediation behavior; an in-flight card uses the existing one-time IR-drift requeue and resumes on the current graph.
+- 0e466ad: summary: Prevent Plan Review from running before planning finishes and keep its outcome exclusive.
+  category: fix
+  dev: Adds planner-aware liveness, renewable continuation leases, dispatch deferral, and fail-closed Plan Review routing.
+- 33b2a89: summary: Preserve the Chat reading position while sending and follow streaming replies only when pinned to the bottom.
+  category: fix
+  dev: Captures viewport ownership before optimistic sends and fences deferred scroll callbacks after manual scrolling.
+- dd808ed: summary: Restore complete task history and metrics when legacy archives return to Done.
+  category: fix
+  dev: Uses project-scoped, non-destructive archive draining and an auditable dry-run/apply repair tool.
+- 540b0b6: summary: Restore favorite stars in chat model selectors and keep mobile menus overlaid.
+  category: fix
+  dev: Routes chat favorite changes through the shared optimistic settings hook and portals the Brain panel to the viewport.
+- b064573: summary: Keep OAuth re-login status consistent after automatic token renewal.
+  category: fix
+  dev: Routes non-Anthropic OAuth refreshes through pi ModelRuntime and promptly revalidates the dashboard banner.
+- 9d198f0: summary: Use the full phone width for the GitHub import screen's top controls and insets.
+  category: fix
+  dev: GitHubImportModal.css adds a final phone-breakpoint cascade override for embedded import spacing.
+- 75c32ee: summary: Prevent task-description headings from blocking plan approval.
+  category: fix
+  dev: Shares bounded original-description parsing across approval fingerprints and spec locks, with actionable lock failures.
+- 1f52dc0: summary: Keep long Direct and Planner Chat conversations responsive while preserving complete history.
+  category: performance
+  dev: Uses bounded variable-height transcript windows and strict timestamp-plus-ID history cursors.
+- d3204c1: summary: Remove task archiving; completed history now remains in the paginated Done column.
+  category: breaking
+  dev: Removes archive and unarchive commands, task tools, routes, settings, and the Archived workflow role.
+
+## 0.78.0-beta.3
+
+### Minor Changes
+
+- 075ef85: summary: Reference another Direct chat with copied conversation IDs and bounded #id context.
+  category: feature
+  dev: Adds `fn_chat_conversation_read`, `fn_chat_conversation_search`, and the scoped conversation-reference module.
+- 5f717b4: summary: Rename the chat delivery-history tool to fn_history_read.
+  category: feature
+  dev: Renames `fn_patchnode_read` to `fn_history_read`, `createPatchnodeReadTool` to `createHistoryReadTool`, and `patchnodeReadParams` to `historyReadParams`. The `patchnode` view id, `nav.patchnode` and `patchnode.*` keys, `GET /api/patchnode`, `project.patchnode_entries`, and `@fusion/core` types and methods remain unchanged.
+
+### Patch Changes
+
+- a8d1e93: summary: An operator review retry now starts the gate's revision budget fresh instead of inheriting it.
+  category: fix
+  dev: The log-derived attempt ledger honours an append-only reset marker (`optionalStepRevisionResetOutcome`) that the dashboard restart-stage route stamps per discarded gate, so a restarted review is no longer refused for a budget the previous episode spent.
+- 6b909aa: summary: Restore review gates archived by another gate's remediation so blocked cards stay recoverable.
+  category: fix
+  dev: Adds `resolveCollateralArchivedReviewGate` in `@fusion/core` and the `reconcile-collateral-archived-review-gates` self-healing sweep (startup + maintenance), emitting `task:reconcile-collateral-archived-review-gate`. The sweep restores the pre-archive terminal status so the FN-7720 audited bypass can select the gate again; it never fabricates a verdict, and skips operator waivers, the remediation-owning gate, workspace cards, user-paused cards, and live sessions.
+- c57562e: summary: The review bypass now reaches any blocking gate, and merge blockers name the gate at fault.
+  category: fix
+  dev: `bypassFailedPreMergeReviewStep` falls back to a required gate whose result is not an approval (including a remediation-archived row) and erases the archive stamps the approval evaluator vetoes on; the `not-approved` merge blocker string now carries the offending gate id.
+- d9986ec: summary: A review remediation now archives only the gate it is remediating, not every failed gate.
+  category: fix
+  dev: `archiveTerminalWorkflowStepFailures` accepts an optional `workflowStepIds` scope; `clearTerminalStepFailuresForRetry("archive")` scopes it to the latest terminal pre-merge failure. Unscoped calls keep the historical blanket behaviour.
+- 8d1f1f7: summary: A review verdict rescued from a malformed reply can no longer be downgraded to an approval.
+  category: fix
+  dev: `applyReviewSeverityGate` accepts `findingsUnreadable`; the verdict-repair path in `execute-workflow-step.ts` sets it when the repaired parse recovered no findings, so an empty list reads as "unknown" instead of "nothing blocking".
+- 48fefd0: summary: A task being planned is no longer treated as abandoned work and re-dispatched mid-planning.
+  category: fix
+  dev: `reconcileStrandedWorkflowContinuations` now consults `isPlanningLive` alongside the session registry and executing-task lock, so a planner that holds no worktree (post plan-before-worktree) is not read as a dead lease.
+- 12d270b: summary: Restore workflow step activity history for unassigned tasks.
+  category: fix
+  dev: Proves activity-run agents against the roster with a bounded resolver, widens effective step identity, and skips unattributable runs.
+- 839ae75: summary: Keep automatic dependency repair working without archived-history error noise.
+  category: fix
+  dev: Updates reconcileMissingDependencies to exclude archived dependents and contain deletion races.
+- 86f99ad: summary: Preserve annotated plan steps and manual approval during planning retries.
+  category: fix
+  dev: Uses matchStepHeadings and the needs-replan retry hold.
+- 8b3b974: summary: Speed up task lists and hold-release scheduling by batching workflow selection reads.
+  category: performance
+  dev: Adds prefetchWorkflowSelections and listTasks selectionCache/selectionReadTally options.
+- 84e4243: summary: Archive completed refinement chains reliably and report items that remain active.
+  category: fix
+  dev: Bulk archive now returns ArchiveAllDoneResult with archived and skipped route payload arrays.
+- 6a019f6: summary: Preserve new agent-log entries after an interrupted prior write.
+  category: fix
+  dev: `appendAgentLogEntriesSync` separates unterminated tails, and reader corruption warnings are aggregated per read.
+- 9584eb6: summary: Recover stale review approvals that previously left merge cards permanently failed.
+  category: fix
+  dev: Classifies stale-content merge parks and routes their outdated review lane back to current content.
+- 1ae91da: summary: Fix the Approve button on board and list cards doing nothing after a page reload.
+  category: fix
+  dev: Removes the task.prompt gate from PlanApprovalNotice so slim task rows can approve plans.
+- d11d360: summary: Restore operator recovery for archived pre-merge review failures.
+  category: fix
+  dev: Updates getLatestFailedPreMergeReviewStep, evaluateStep audited-waiver handling, and self-healing requiredPreMergeStepIds admission.
+- f19209c: summary: Restore generated fix features so validated defects can become board tasks.
+  category: fix
+  dev: Updates reconcileSupersededGeneratedFixFeatures, the scheduler terminal-state guard, and validation repair eligibility.
+- de93935: summary: Explain why stale recommendation mailbox notices cannot show inline actions.
+  category: fix
+  dev: Adds distinct dashboard copy for missing parent tasks versus replaced recommendation IDs.
+
 ## 0.78.0-beta.2
 
 ### Minor Changes

@@ -33,7 +33,8 @@ import {
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { fetchScripts } from "../api";
-import type { PluginDashboardViewEntry } from "../api";
+import { normalizeScriptCatalog } from "../api/system/workflows";
+import type { PluginDashboardViewEntry, ScriptEntry } from "../api";
 import { useViewportMode } from "./Header";
 import { NavigationHistoryContext } from "../hooks/useNavigationHistory";
 import type { TaskView } from "../hooks/useViewState";
@@ -83,6 +84,8 @@ export interface MobileNavBarProps {
   onOpenActivityLog?: () => void;
   onOpenMailbox?: () => void;
   mailboxUnreadCount?: number;
+  recommendationUnreadCount?: number;
+  artifactUnreadCount?: number;
   mailboxPendingApprovalCount?: number;
   chatHasUnreadResponse?: boolean;
   stashOrphanCount?: number;
@@ -155,6 +158,8 @@ export function MobileNavBar({
   onOpenSettings,
   onOpenActivityLog,
   mailboxUnreadCount = 0,
+  recommendationUnreadCount = 0,
+  artifactUnreadCount = 0,
   mailboxPendingApprovalCount = 0,
   chatHasUnreadResponse = false,
   stashOrphanCount = 0,
@@ -184,7 +189,7 @@ export function MobileNavBar({
   const navigationHistory = useContext(NavigationHistoryContext);
   const [isMoreOpen, setIsMoreOpen] = useState(false);
   const [isScriptsSubmenuOpen, setIsScriptsSubmenuOpen] = useState(false);
-  const [scripts, setScripts] = useState<Record<string, string>>({});
+  const [scripts, setScripts] = useState<ScriptEntry[]>([]);
   const [scriptsLoading, setScriptsLoading] = useState(false);
   const [dragOffset, setDragOffset] = useState(0);
   const [isSheetDragging, setIsSheetDragging] = useState(false);
@@ -200,7 +205,7 @@ export function MobileNavBar({
   const dragOffsetRef = useRef(0);
 
   const scriptEntries = useMemo(
-    () => Object.entries(scripts).sort(([a], [b]) => a.localeCompare(b)),
+    () => [...scripts].sort((a, b) => a.name.localeCompare(b.name)),
     [scripts],
   );
 
@@ -213,10 +218,10 @@ export function MobileNavBar({
 
     fetchScripts(projectId)
       .then((data) => {
-        if (!cancelled) setScripts(data);
+        if (!cancelled) setScripts(normalizeScriptCatalog(data));
       })
       .catch(() => {
-        if (!cancelled) setScripts({});
+        if (!cancelled) setScripts([]);
       })
       .finally(() => {
         if (!cancelled) setScriptsLoading(false);
@@ -440,6 +445,7 @@ export function MobileNavBar({
     indicator?: boolean;
     indicatorLabel?: string;
     badge?: number;
+    badgeLabel?: string;
   }> = {
     "command-center": { icon: <Gauge />, labelKey: "nav.commandCenter", fallback: "Dashboard", moreTestId: "mobile-more-item-command-center", isActive: view === "command-center", isAvailable: true, navigate: () => onChangeView("command-center") },
     /*
@@ -451,6 +457,7 @@ export function MobileNavBar({
     missions: { icon: <Target />, labelKey: "nav.missions", fallback: "Missions", moreTestId: "mobile-more-item-missions", isActive: view === "missions", isAvailable: true, navigate: () => onChangeView("missions") },
     chat: { icon: <MessageSquare />, labelKey: "nav.chat", fallback: "Chat", moreTestId: "mobile-more-item-chat", isActive: view === "chat", isAvailable: true, navigate: () => onChangeView("chat"), indicator: chatHasUnreadResponse && view !== "chat", indicatorLabel: t("nav.chatUnreadAriaLabel", "Unread chat response") },
     mailbox: { icon: <Mail />, labelKey: "nav.mailbox", fallback: "Mailbox", moreTestId: "mobile-more-item-mailbox", isActive: view === "mailbox", isAvailable: true, navigate: () => onChangeView("mailbox"), indicator: mailboxPendingApprovalCount > 0 && view !== "mailbox", indicatorLabel: t("nav.mailboxPendingAriaLabel", "Pending approvals"), badge: mailboxUnreadCount },
+    recommendations: { icon: <Lightbulb />, labelKey: "nav.recommendations", fallback: "Recommendations", moreTestId: "mobile-more-item-recommendations", isActive: view === "recommendations", isAvailable: true, navigate: (surface) => surface === "primary" ? onChangeView("recommendations") : handleMoreAction(() => onChangeView("recommendations")), badge: recommendationUnreadCount, badgeLabel: t("nav.recommendationsUnreadAriaLabel", "{{count}} new recommendations", { count: recommendationUnreadCount }) },
     patchnode: { icon: <History />, labelKey: "nav.patchnode", fallback: "History", moreTestId: "mobile-more-item-patchnode", isActive: view === "patchnode", isAvailable: true, navigate: (surface) => surface === "primary" ? onChangeView("patchnode") : handleMoreAction(() => onChangeView("patchnode")) },
     planning: { icon: <Lightbulb />, labelKey: "nav.planning", fallback: "Planning", moreTestId: "mobile-more-item-planning", isActive: view === "planning", isAvailable: true, navigate: (surface) => surface === "primary" ? planningHandler?.() : handleMoreAction(planningHandler), indicator: planningNeedsInput && view !== "planning", indicatorLabel: t("nav.planningNeedsInputAriaLabel", "Planning needs your input"), badge: activePlanningSessionCount },
     activity: { icon: <Activity />, labelKey: "nav.activityLog", fallback: "Activity Log", moreTestId: "mobile-more-item-activity", isActive: false, isAvailable: true, navigate: (surface) => surface === "primary" ? onOpenActivityLog?.() : handleMoreAction(onOpenActivityLog) },
@@ -461,7 +468,7 @@ export function MobileNavBar({
     "github-import": { icon: <GitHubLogo />, labelKey: "nav.importFromGitHub", fallback: "Import from GitHub", moreTestId: "mobile-more-item-github", isActive: false, isAvailable: true, navigate: (surface) => surface === "primary" ? onOpenGitHubImport?.() : handleMoreAction(onOpenGitHubImport) },
     usage: { icon: <Activity />, labelKey: "nav.usage", fallback: "Usage", moreTestId: "mobile-more-item-usage", isActive: false, isAvailable: true, navigate: (surface) => surface === "primary" ? onOpenUsage?.() : handleMoreAction(onOpenUsage) },
     projects: { icon: <Grid3X3 />, labelKey: "nav.projects", fallback: "Projects", moreTestId: "mobile-more-item-projects", isActive: false, isAvailable: true, navigate: (surface) => surface === "primary" ? onViewAllProjects?.() : handleMoreAction(onViewAllProjects) },
-    documents: { icon: <FileText />, labelKey: "nav.documents", fallback: "Artifacts", moreTestId: "mobile-more-item-documents", isActive: view === "documents", isAvailable: true, navigate: (surface) => surface === "primary" ? onChangeView("documents") : handleMoreAction(() => onChangeView("documents")) },
+    documents: { icon: <FileText />, labelKey: "nav.documents", fallback: "Artifacts", moreTestId: "mobile-more-item-documents", isActive: view === "documents", isAvailable: true, navigate: (surface) => surface === "primary" ? onChangeView("documents") : handleMoreAction(() => onChangeView("documents")), badge: artifactUnreadCount, badgeLabel: t("nav.artifactsUnreadAriaLabel", "{{count}} new artifacts", { count: artifactUnreadCount }) },
     secrets: { icon: <Lock />, labelKey: "nav.secrets", fallback: "Secrets", moreTestId: "mobile-more-item-secrets", isActive: view === "secrets", isAvailable: true, navigate: (surface) => surface === "primary" ? onChangeView("secrets") : handleMoreAction(() => onChangeView("secrets")) },
     settings: { icon: <Settings />, labelKey: "nav.settings", fallback: "Settings", moreTestId: "mobile-more-item-settings", isActive: false, isAvailable: true, navigate: (surface) => surface === "primary" ? onOpenSettings?.() : handleMoreAction(onOpenSettings) },
     skills: { icon: <Zap />, labelKey: "nav.skills", fallback: "Skills & Snippets", moreTestId: "mobile-more-item-skills", isActive: view === "skills", isAvailable: skillsEnabled, navigate: (surface) => surface === "primary" ? onChangeView("skills") : handleMoreAction(() => onChangeView("skills")) },
@@ -483,8 +490,8 @@ export function MobileNavBar({
     const destination = destinationRegistry[item];
     const isPrimary = surface === "primary";
     const label = t(destination.labelKey, destination.fallback);
-    if (isPrimary) return <button key={item} type="button" className={`mobile-nav-tab${destination.isActive ? " mobile-nav-tab--active" : ""}`} data-testid={`mobile-nav-tab-${item}`} role="tab" aria-selected={destination.isActive} onClick={() => destination.navigate("primary")}><span className="mobile-nav-tab-icon-wrapper">{destination.icon}{destination.indicator && <span className="status-dot status-dot--pending mobile-nav-chat-unread-dot" aria-label={destination.indicatorLabel} />}</span><span className="mobile-nav-tab-label">{label}</span>{destination.badge && destination.badge > 0 ? <span className="mobile-nav-tab-badge">{formatCount(destination.badge)}</span> : null}</button>;
-    return <button key={item} type="button" className="mobile-more-item" data-testid={destination.moreTestId} onClick={() => destination.navigate("more")}><span className="mobile-more-item-icon-wrapper">{destination.icon}{destination.indicator && <span className="status-dot status-dot--pending mobile-more-item-icon-dot" aria-label={destination.indicatorLabel} />}</span><span>{label}</span>{destination.badge && destination.badge > 0 ? <span className="mobile-more-item-badge">{formatCount(destination.badge)}</span> : null}</button>;
+    if (isPrimary) return <button key={item} type="button" className={`mobile-nav-tab${destination.isActive ? " mobile-nav-tab--active" : ""}`} data-testid={`mobile-nav-tab-${item}`} role="tab" aria-selected={destination.isActive} onClick={() => destination.navigate("primary")}><span className="mobile-nav-tab-icon-wrapper">{destination.icon}{destination.indicator && <span className="status-dot status-dot--pending mobile-nav-chat-unread-dot" aria-label={destination.indicatorLabel} />}</span><span className="mobile-nav-tab-label">{label}</span>{destination.badge && destination.badge > 0 ? <span className="mobile-nav-tab-badge" aria-label={destination.badgeLabel}>{formatCount(destination.badge)}</span> : null}</button>;
+    return <button key={item} type="button" className="mobile-more-item" data-testid={destination.moreTestId} onClick={() => destination.navigate("more")}><span className="mobile-more-item-icon-wrapper">{destination.icon}{destination.indicator && <span className="status-dot status-dot--pending mobile-more-item-icon-dot" aria-label={destination.indicatorLabel} />}</span><span>{label}</span>{destination.badge && destination.badge > 0 ? <span className="mobile-more-item-badge" aria-label={destination.badgeLabel}>{formatCount(destination.badge)}</span> : null}</button>;
   };
 
   return (
@@ -610,20 +617,25 @@ export function MobileNavBar({
                   </div>
                 ) : scriptEntries.length > 0 ? (
                   <>
-                    {scriptEntries.map(([name, command]) => (
+                    {scriptEntries.map((script) => (
                       <button
-                        key={name}
+                        key={script.name}
                         type="button"
                         className="mobile-more-item mobile-more-subitem"
-                        data-testid={`mobile-more-script-item-${name}`}
+                        data-testid={`mobile-more-script-item-${script.name}`}
                         onClick={() => {
-                          if (onRunScript) onRunScript(name, command);
+                          if (onRunScript) onRunScript(script.name, script.command);
                           dismissMore();
                           setIsScriptsSubmenuOpen(false);
                         }}
                       >
                         <Play />
-                        <span>{name}</span>
+                        <span className="mobile-more-script-info">
+                          <span className="mobile-more-script-name">{script.name}</span>
+                          <span className="mobile-more-script-description" title={script.description ?? script.command}>
+                            {script.description ?? script.command}
+                          </span>
+                        </span>
                       </button>
                     ))}
                     {onOpenScripts && (

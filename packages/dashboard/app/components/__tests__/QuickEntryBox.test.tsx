@@ -5221,7 +5221,7 @@ describe("QuickEntryBox", () => {
   */
   describe("Quick Add Start button", () => {
     const ideasWorkflow = {
-      id: "builtin:coding-ideas",
+      id: "builtin:coding-ideas-v2",
       name: "Coding (Ideas)",
       columns: [
         { id: "ideas", name: "Ideas", flags: { hold: true } },
@@ -5274,16 +5274,16 @@ describe("QuickEntryBox", () => {
 
     /*
     FNXC:QuickAddStart 2026-08-26-19:19:
-    Reported symptom: on a DUPLICATED Ideas workflow ("Coding ideas V2") the composer's Start button
-    created the card but never started it. Start keyed its atomic destination on the literal
-    `builtin:coding-ideas` id, so a copy fell through to a promotion that skipped the Planning hold
+    Reported symptom: on a duplicated Ideas workflow the composer's Start button created the card
+    but never started it. Start keyed its atomic destination on one named built-in id, so a copy
+    fell through to a promotion that skipped the Planning hold
     lane and moved into the WIP lane — a transition the server always rejects. Assert the composer
     surface creates in the duplicate's own Planning lane and issues no move at all.
     */
     it("creates a duplicated Ideas workflow's Start in its own Planning lane", async () => {
       const duplicatedIdeasWorkflow = {
         id: "WF-014",
-        name: "Coding ideas V2",
+        name: "Coding ideas copy",
         columns: [
           { id: "ideas", name: "Ideas", flags: { intake: true, manualIntake: true } },
           { id: "todo", name: "Planning", flags: { hold: true } },
@@ -5371,7 +5371,7 @@ describe("QuickEntryBox", () => {
       await waitFor(() => expect(onCreate).toHaveBeenCalled());
       expect(onMoveTask).not.toHaveBeenCalled();
 
-      rerender(<QuickEntryBox onCreate={onCreate} onMoveTask={onMoveTask} addToast={vi.fn()} workflowId="builtin:coding-ideas" workflowOptions={[{ ...ideasWorkflow, columns: [] }]} />);
+      rerender(<QuickEntryBox onCreate={onCreate} onMoveTask={onMoveTask} addToast={vi.fn()} workflowId="builtin:coding-ideas-v2" workflowOptions={[{ ...ideasWorkflow, columns: [] }]} />);
       fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Malformed" } });
       expect(screen.queryByTestId("quick-entry-save-start")).toBeNull();
     });

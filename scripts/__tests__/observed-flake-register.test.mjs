@@ -97,6 +97,13 @@ FNXC:TestFlakeRegister 2026-09-03-22:23:
 The register now records that evidence owner FN-9146 was archived on 2026-09-03 without a named
 successor, so active records 1 and 2 are unowned pending their next sighting. The pinned status
 texts below track that archived-owner annotation; do not strip it without re-homing the records.
+
+FNXC:TestFlakeRegister 2026-09-09-10:31:
+Entry 14's quarantine reaches its 14-day deletion-ratchet deadline on 2026-09-12, now owned by
+rescue task FN-9283 under mission M-MTU4YAJI-0001-PAJK. The pinned status text below therefore
+carries the deadline and the named rescue owner so the approaching auto-deletion (44 passing
+tests of FN-6735 merge-node paused-abort coverage) cannot pass silently; update both together
+when the rescue resolves.
 */
 test("observed-flake register active count, escalation state, and owners stay synchronized", () => {
   const register = readFileSync(registerPath, "utf8");
@@ -125,7 +132,7 @@ test("observed-flake register active count, escalation state, and owners stay sy
     },
     {
       heading: "14. Merge-node paused-abort retry sequence",
-      status: "Quarantined 2026-08-29 after a second sequence-only sighting.",
+      status: "Quarantined 2026-08-29 after a second sequence-only sighting — rescue owner FN-9283 (mission M-MTU4YAJI-0001-PAJK), deletion-ratchet deadline 2026-09-12 (quarantinedAt + 14d).",
     },
   ]);
 });

@@ -42,6 +42,68 @@ describe("ChatQuestionResponse", () => {
     );
   });
 
+  it("submits after required select is answered with optional text left blank", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    render(<ChatQuestionResponse parsed={{ questions: [
+      { id: "path", type: "single_select", question: "Which path?", options: [{ id: "a", label: "Alpha" }] },
+      { id: "notes", type: "text", question: "Anything else?", optional: true },
+    ] }} onSubmit={onSubmit} />);
+
+    const submit = screen.getByTestId("chat-question-response-submit");
+    expect(submit).toBeDisabled();
+    await user.click(screen.getByTestId("chat-question-response-option-path-a"));
+    expect(submit).toBeEnabled();
+    await user.click(submit);
+    expect(onSubmit).toHaveBeenCalledWith("> Q: Which path?\nAlpha\n\n> Q: Anything else?\n(no answer — optional)", { path: "a" });
+  });
+
+  it("accepts blank optional multi-selects and all-optional cards", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    const { rerender } = render(<ChatQuestionResponse parsed={{ questions: [
+      { id: "many", type: "multi_select", question: "Choose extras", optional: true, options: [{ id: "x", label: "X" }] },
+      { id: "confirm", type: "confirm", question: "Proceed?" },
+    ] }} onSubmit={onSubmit} />);
+
+    expect(screen.getByTestId("chat-question-response-submit")).toBeDisabled();
+    await user.click(screen.getByTestId("chat-question-response-option-confirm-no"));
+    expect(screen.getByTestId("chat-question-response-submit")).toBeEnabled();
+
+    rerender(<ChatQuestionResponse key="all-optional" parsed={{ questions: [{ id: "notes", type: "text", question: "Notes", optional: true }] }} onSubmit={onSubmit} />);
+    const submit = screen.getByTestId("chat-question-response-submit");
+    expect(submit).toBeEnabled();
+    await user.click(submit);
+    expect(onSubmit).toHaveBeenLastCalledWith("> Q: Notes\n(no answer — optional)", {});
+  });
+
+  it("shows optional affordances only on live cards containing optional questions", () => {
+    const optionalParsed: ParsedQuestionToolCall = {
+      questions: [
+        { id: "optional", type: "text", question: "Notes", optional: true },
+        { id: "required", type: "text", question: "Required" },
+      ],
+    };
+    const { rerender } = render(<ChatQuestionResponse parsed={optionalParsed} onSubmit={vi.fn()} />);
+    expect(screen.getByTestId("chat-question-response-optional-optional")).toHaveTextContent("Optional");
+    expect(screen.queryByTestId("chat-question-response-optional-required")).not.toBeInTheDocument();
+    expect(screen.getByText("Answer all required questions to continue the chat.")).toBeInTheDocument();
+
+    rerender(<ChatQuestionResponse parsed={{ questions: [{ id: "required", type: "text", question: "Required" }] }} onSubmit={vi.fn()} />);
+    expect(screen.getByText("Answer all questions to continue the chat.")).toBeInTheDocument();
+
+    rerender(<ChatQuestionResponse parsed={optionalParsed} answered onSubmit={vi.fn()} />);
+    expect(screen.queryByTestId("chat-question-response-optional-optional")).not.toBeInTheDocument();
+  });
+
+  it("keeps optional cards enabled in compact mode but honors disabled", () => {
+    const optionalParsed: ParsedQuestionToolCall = { questions: [{ id: "notes", type: "text", question: "Notes", optional: true }] };
+    const { rerender } = render(<ChatQuestionResponse parsed={optionalParsed} compact onSubmit={vi.fn()} />);
+    expect(screen.getByTestId("chat-question-response-submit")).toBeEnabled();
+    rerender(<ChatQuestionResponse parsed={optionalParsed} disabled onSubmit={vi.fn()} />);
+    expect(screen.getByTestId("chat-question-response-submit")).toBeDisabled();
+  });
+
   it("renders an answered read-only summary without leftover live controls", () => {
     const originalInnerWidth = window.innerWidth;
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });

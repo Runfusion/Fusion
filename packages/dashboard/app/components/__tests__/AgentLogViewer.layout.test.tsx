@@ -118,7 +118,7 @@ describe("AgentLogViewer", () => {
       expect(scrollContainer.querySelector(".agent-log-tool")).toBeTruthy();
     });
 
-    it("renders pagination summary and load-more controls inside the scroll container", () => {
+    it("renders pagination summary and the automatic sentinel inside the scroll container", () => {
       const entries = [makeEntry({ text: "hello" })];
       const { container } = render(
         <AgentLogViewer
@@ -132,7 +132,8 @@ describe("AgentLogViewer", () => {
       const scrollContainer = getScrollContainer(container);
 
       expect(scrollContainer.querySelector("[data-testid='agent-log-summary']")).toBeTruthy();
-      expect(scrollContainer.querySelector("[data-testid='agent-log-load-more']")).toBeTruthy();
+      expect(scrollContainer.querySelector("[data-testid='agent-log-auto-pagination-sentinel']")).toBeTruthy();
+      expect(scrollContainer.querySelector("button[data-testid='agent-log-load-more-button']")).toBeNull();
     });
 
     it("renders the return-to-live button inside the scroll container", () => {
@@ -398,7 +399,7 @@ describe("AgentLogViewer", () => {
   });
 
   describe("pagination placement", () => {
-    it("renders the load-more control above the first log entry", () => {
+    it("renders the history sentinel above the first log entry", () => {
       const entries = [
         makeEntry({ text: "oldest", timestamp: "2026-01-01T00:00:00Z" }),
         makeEntry({ text: "newest", timestamp: "2026-01-01T00:00:01Z" }),
@@ -413,7 +414,7 @@ describe("AgentLogViewer", () => {
         />,
       );
 
-      const loadMore = screen.getByTestId("agent-log-load-more");
+      const loadMore = screen.getByTestId("agent-log-auto-pagination-sentinel");
       const firstRow = container.querySelector(".agent-log-text") as HTMLElement;
       expect(firstRow).toBeTruthy();
 

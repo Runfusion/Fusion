@@ -563,7 +563,7 @@ FN-110 keeps the conversation-local Find row compact across Chat hosts and disti
   padding: var(--space-lg);
   display: flex;
   flex-direction: column;
-  gap: var(--space-md);
+  gap: 0;
   -webkit-overflow-scrolling: touch;
   touch-action: pan-y;
   /* Stop iOS rubber-band scroll from propagating to the parent /
@@ -573,6 +573,19 @@ FN-110 keeps the conversation-local Find row compact across Chat hosts and disti
      transform momentarily exposes the body background as a gray
      box partially covering the messages. */
   overscroll-behavior: contain;
+}
+
+/*
+FNXC:ChatTranscriptVirtualization 2026-09-06-13:40:
+The transcript keeps every loaded message reachable while mounting only a viewport-bounded set of rich Markdown, thinking, tool-call, and attachment subtrees. Structural spacers remain inert and row spacing belongs inside measured rows so virtual offsets stay accurate on desktop, mobile, floating, and docked hosts.
+*/
+.chat-transcript-row {
+  padding-block-end: var(--space-md);
+}
+
+.chat-transcript-spacer {
+  flex: 0 0 auto;
+  pointer-events: none;
 }
 
 .chat-messages > .chat-empty-state {
@@ -1635,8 +1648,8 @@ thinking (reasoning-effort) level can be changed mid-conversation. The root wrap
 position: relative so the popover (mirroring .chat-skill-menu's positioning/z-index) anchors to
 the trigger instead of the whole .chat-input-row.
 
-FNXC:Chat-ModelSwitch 2026-07-12-00:00:
-FN-7908 keeps model/agent retargeting inside the same brain popup. The widened panel uses token-based widths and bounded scroll regions so the CustomModelDropdown trigger and agent list remain usable on desktop and mobile without adding a second composer affordance.
+FNXC:Chat-ModelSwitch 2026-09-06-21:48:
+Model/agent retargeting and favorite stars stay inside the same Brain popup. The fixed body portal uses the live shared floating-stack ceiling so it remains above floating chat and task-detail hosts, while the nested model portal occupies the next layer; both stay viewport-bounded and cannot enlarge the composer or footer on desktop or mobile.
 */
 .chat-thinking-level-root {
   position: relative;
@@ -1657,36 +1670,15 @@ FN-7908 keeps model/agent retargeting inside the same brain popup. The widened p
 }
 
 .chat-thinking-popover {
-  position: absolute;
-  left: 0;
-  bottom: calc(100% + var(--space-xs));
-  width: min(calc(var(--space-xl) * 15), calc(100vw - (var(--space-lg) * 2)));
+  position: fixed;
   max-width: calc(100vw - (var(--space-lg) * 2));
   max-inline-size: calc(100vw - (var(--space-lg) * 2));
-  max-height: min(calc(var(--space-xl) * 24), calc(100vh - (var(--space-xl) * 4)));
   overflow-y: auto;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-lg);
-  z-index: 50;
-}
-
-/*
-FNXC:Chat-ModelSwitch 2026-07-13-00:00:
-FN-7934: The brain popup must fit the containing chat surface, not only the browser viewport. Key the inset layout on .chat-view--narrow because it reflects surface width for floating Chat windows and compact docks; otherwise a narrow floating Chat window on a wide viewport clips the Model / Agent picker on the right.
-*/
-.chat-view--narrow .chat-thinking-level-root {
-  position: static;
-}
-
-.chat-view--narrow .chat-thinking-popover {
-  left: var(--space-md);
-  right: var(--space-md);
-  width: auto;
-  max-width: none;
-  max-inline-size: none;
-  max-height: min(calc(var(--space-xl) * 20), calc(100vh - (var(--space-xl) * 5)));
+  z-index: calc(var(--fusion-max-z) + 2);
 }
 
 .chat-view--narrow .chat-thinking-agent-list,
@@ -2130,22 +2122,9 @@ Thinking-section text uses the defined muted text token across all themes. The m
   }
 
   /*
-  FNXC:Chat-ModelSwitch 2026-07-12-22:38:
-  FN-7916: mobile applies a global max-width clamp to every element, so a popover positioned from the small Brain-button wrapper collapsed into an unreadable strip. Let the chat input area own the mobile containing block and inset the panel with tokenized viewport gutters so the model picker, agent list, and thinking levels stay reachable.
+  FNXC:Chat-ModelSwitch 2026-09-06-21:10:
+  Mobile keeps only the inner model and thinking lists scrollable. The fixed body portal owns its viewport geometry, so no breakpoint may reintroduce a composer-relative containing block.
   */
-  .chat-thinking-level-root {
-    position: static;
-  }
-
-  .chat-thinking-popover {
-    left: var(--space-md);
-    right: var(--space-md);
-    width: auto;
-    max-width: none;
-    max-inline-size: none;
-    max-height: min(calc(var(--space-xl) * 20), calc(100vh - (var(--space-xl) * 5)));
-  }
-
   .chat-thinking-agent-list,
   .chat-thinking-popover-list {
     max-height: calc(var(--space-xl) * 7);

@@ -63,7 +63,6 @@ const planningGuardCases: PlanningGuardCase[] = [
   { label: "in-progress task", task: { column: "in-progress", steps: [] }, stillPlanning: false },
   { label: "in-review task", task: { column: "in-review", steps: [] }, stillPlanning: false },
   { label: "completed task", task: { column: "done", steps: [] }, stillPlanning: false },
-  { label: "archived task", task: { column: "archived", steps: [] }, stillPlanning: false },
 
   // A triage card sits in the planner column by definition — nothing executes out of triage,
   // so steps materialized by its previous planning pass must never read as advancement.
@@ -273,7 +272,7 @@ Updated to the post-merge truth, not loosened: each still pins one exact column.
   });
 
   it("targets todo for Coding (Ideas), which declares no triage column", async () => {
-    const store = storeWithSelection("builtin:coding-ideas");
+    const store = storeWithSelection("builtin:coding-ideas-v2");
     await expect(resolveReplanTargetColumn(store, "FN-1")).resolves.toBe("todo");
   });
 
@@ -342,7 +341,7 @@ Updated to the post-merge truth, not loosened: each still pins one exact column.
 
 describe("moveTaskToReplanColumn", () => {
   it("moves a Coding (Ideas) card to todo, not triage", async () => {
-    const store = storeWithSelection("builtin:coding-ideas");
+    const store = storeWithSelection("builtin:coding-ideas-v2");
     const target = await moveTaskToReplanColumn(store, { id: "FN-1", column: "in-progress" }, "plan-review-revise-replan");
     expect(target).toBe("todo");
     expect(store.moveTask).toHaveBeenCalledWith("FN-1", "todo", expect.objectContaining({
@@ -353,7 +352,7 @@ describe("moveTaskToReplanColumn", () => {
   });
 
   it("skips the move when the card is already in the replan column (plan-in-place)", async () => {
-    const store = storeWithSelection("builtin:coding-ideas");
+    const store = storeWithSelection("builtin:coding-ideas-v2");
     const target = await moveTaskToReplanColumn(store, { id: "FN-1", column: "todo" }, "plan-review-revise-replan");
     expect(target).toBe("todo");
     expect(store.moveTask).not.toHaveBeenCalled();
@@ -382,7 +381,7 @@ describe("replan bounces preserve the task worktree (FN-8603)", () => {
   const REPLAN_BOUNCE_ORIGINS = ["in-progress"] as const;
   const REPLAN_COLUMN_SHAPES = [
     { workflowId: undefined, expected: "todo", label: "default Coding (merged Planning replan column, post-#2515)" },
-    { workflowId: "builtin:coding-ideas", expected: "todo", label: "Coding (Ideas) (plan-in-place todo)" },
+    { workflowId: "builtin:coding-ideas-v2", expected: "todo", label: "Coding (Ideas) (plan-in-place todo)" },
   ] as const;
 
   for (const shape of REPLAN_COLUMN_SHAPES) {
@@ -419,7 +418,7 @@ describe("replan bounces preserve the task worktree (FN-8603)", () => {
   });
 
   it("contains a live review card instead of moving it to Planning", async () => {
-    const store = storeWithSelection("builtin:coding-ideas");
+    const store = storeWithSelection("builtin:coding-ideas-v2");
     const result = await moveTaskToReplanColumn(
       store,
       { id: "FN-207", column: "in-review" },

@@ -39,7 +39,6 @@ const RENAMED_IR = {
     { id: "building", name: "Building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
     { id: "signoff", name: "Sign-off", traits: [{ trait: "merge" }] },
     { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
-    { id: "vault", name: "Vault", traits: [{ trait: "archived" }] },
   ],
 };
 
@@ -54,7 +53,6 @@ const MULTI_LEASE_IR = {
     { id: "signoff-secondary", name: "Sign-off secondary", traits: [{ trait: "merge" }] },
     { id: "shipped-primary", name: "Shipped primary", traits: [{ trait: "complete" }] },
     { id: "shipped-secondary", name: "Shipped secondary", traits: [{ trait: "complete" }] },
-    { id: "vault", name: "Vault", traits: [{ trait: "archived" }] },
   ],
 };
 

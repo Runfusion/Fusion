@@ -5,7 +5,7 @@ import type { TaskStore, WorkflowIr } from "@fusion/core";
 /*
 FNXC:WorkflowLifecycleColumns 2026-08-01-07:20 (fleet — two heartbeat terminal checks):
 
-Both call sites asked "is this task finished?" with `column === "done" || "archived"`, and neither is
+Both call sites asked whether a task is finished, and neither is
 cosmetic:
 
   LINKED-TASK CLEAR. The heartbeat clears an agent's assignment once its card is finished. Keyed on
@@ -31,7 +31,6 @@ const RENAMED_IR = {
     { id: "drafting", label: "Drafting", traits: [{ trait: "hold", config: { release: "capacity" } }] },
     { id: "building", label: "Building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
     { id: "shipped", label: "Shipped", traits: [{ trait: "complete" }] },
-    { id: "filed", label: "Filed", traits: [{ trait: "archived" }] },
   ],
 } as unknown as WorkflowIr;
 
@@ -49,10 +48,6 @@ describe("heartbeat resolves the terminal lanes from the task's own board", () =
     expect(await isTaskInTerminalLane(storeFor(RENAMED_IR), { id: "FN-1", column: "shipped" })).toBe(true);
   });
 
-  it("recognises a RENAMED archived lane as terminal", async () => {
-    expect(await isTaskInTerminalLane(storeFor(RENAMED_IR), { id: "FN-1", column: "filed" })).toBe(true);
-  });
-
   /* The paired negative, and the one that matters most: the writing call site must not fire on it. */
   it("does NOT treat an active lane as terminal", async () => {
     expect(await isTaskInTerminalLane(storeFor(RENAMED_IR), { id: "FN-1", column: "building" })).toBe(false);
@@ -68,12 +63,11 @@ describe("heartbeat resolves the terminal lanes from the task's own board", () =
     expect(await isTaskInTerminalLane(storeFor(RENAMED_IR), { id: "FN-1", column: "done" })).toBe(false);
   });
 
-  /* Degraded mode: an unresolvable workflow keeps exactly the legacy answer, both directions. */
-  it("falls back to the legacy pair when the workflow cannot be resolved", async () => {
+  it("falls back to Done when the workflow cannot be resolved", async () => {
     const store = storeFor(undefined);
 
     expect(await isTaskInTerminalLane(store, { id: "FN-1", column: "done" })).toBe(true);
-    expect(await isTaskInTerminalLane(store, { id: "FN-1", column: "archived" })).toBe(true);
+    expect(await isTaskInTerminalLane(store, { id: "FN-1", column: "archived" })).toBe(false);
     expect(await isTaskInTerminalLane(store, { id: "FN-1", column: "in-progress" })).toBe(false);
   });
 });

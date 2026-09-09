@@ -214,7 +214,7 @@ describe("PoppedOutChatWindows requested-thread arrival", () => {
       pendingSessions.resolve({ sessions: [session("older-session", "Older thread")] });
     });
 
-    expect(screen.getByText("Requested thread")).toBeInTheDocument();
+    expect(screen.getAllByText("Requested thread").length).toBeGreaterThan(0);
     expect(screen.queryByText("Older thread")).toBeInTheDocument();
     expect(navigation.pushNav).not.toHaveBeenCalled();
   });

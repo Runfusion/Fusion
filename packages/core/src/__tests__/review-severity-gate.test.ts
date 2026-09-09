@@ -211,3 +211,26 @@ describe("formatFindingsByPriority", () => {
     expect(formatResolvedFindings([upheld])).toContain("[dispute-upheld]");
   });
 });
+
+/*
+FNXC:ReviewSeverityGate 2026-09-05-22:54:
+FN-295: an empty finding list only licenses a downgrade when the list was actually read.
+*/
+describe("unreadable findings fail closed", () => {
+  it("downgrades a REVISE whose finding list was read and is genuinely non-blocking", () => {
+    expect(applyReviewSeverityGate({ verdict: "REVISE", findings: [], threshold: "high" }))
+      .toMatchObject({ verdict: "APPROVE_WITH_NOTES", downgraded: true });
+  });
+
+  it("never downgrades a REVISE whose finding list could not be read", () => {
+    expect(applyReviewSeverityGate({ verdict: "REVISE", findings: [], threshold: "high", findingsUnreadable: true }))
+      .toMatchObject({ verdict: "REVISE", downgraded: false });
+    expect(applyReviewSeverityGate({ verdict: "REVISE", findings: undefined, threshold: "critical", findingsUnreadable: true }))
+      .toMatchObject({ verdict: "REVISE", downgraded: false });
+  });
+
+  it("leaves a non-REVISE verdict untouched even when findings are unreadable", () => {
+    expect(applyReviewSeverityGate({ verdict: "APPROVE", findings: undefined, threshold: "high", findingsUnreadable: true }))
+      .toMatchObject({ verdict: "APPROVE", downgraded: false });
+  });
+});

@@ -682,18 +682,6 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
         clientSettings.overlapIgnorePaths = sanitizeOverlapIgnorePaths(clientSettings.overlapIgnorePaths);
       }
 
-      if (clientSettings.autoArchiveDoneAfterMs !== undefined) {
-        const ageMs = clientSettings.autoArchiveDoneAfterMs;
-        if (!Number.isInteger(ageMs) || ageMs < 60_000 || ageMs > 10 * 365 * 24 * 60 * 60 * 1000) {
-          throw badRequest("autoArchiveDoneAfterMs must be between 60000 and 315360000000");
-        }
-      }
-      if (clientSettings.doneAutoArchiveDays !== undefined) {
-        const doneAutoArchiveDays = clientSettings.doneAutoArchiveDays;
-        if (!Number.isInteger(doneAutoArchiveDays) || doneAutoArchiveDays < 0 || doneAutoArchiveDays > 3650) {
-          throw badRequest("doneAutoArchiveDays must be an integer between 0 and 3650");
-        }
-      }
       const operationalLogRetentionDays = clientSettings.operationalLogRetentionDays;
       if (operationalLogRetentionDays !== undefined && operationalLogRetentionDays !== null) {
         if (
@@ -703,12 +691,6 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
         ) {
           throw badRequest("operationalLogRetentionDays must be one of: 0, 7, 14, 30, 60, 90");
         }
-      }
-      if (
-        clientSettings.archiveAgentLogMode !== undefined &&
-        !["none", "compact", "full"].includes(clientSettings.archiveAgentLogMode)
-      ) {
-        throw badRequest("archiveAgentLogMode must be one of: none, compact, full");
       }
       if (clientSettings.unavailableNodePolicy !== undefined) {
         const validatedUnavailableNodePolicy = validateUnavailableNodePolicy(clientSettings.unavailableNodePolicy);

@@ -12,25 +12,12 @@ So it is reachable through the REAL public merge entry point with no repository 
 short-circuit returns a `noOp` result rather than throwing. Sixth wrong lane-cost inference in that
 ledger; the rule it keeps violating is still "read what the function touches".
 
-WHAT THIS PROVES, and why the shape matters. The guard resolves the terminal columns PER ROLE:
+WHAT THIS PROVES. The already-finalized guard resolves the task workflow's `complete` column, with
+`done` as the degraded built-in fallback. Task archive is not a second terminal role.
 
-    terminal = [lifecycle.complete ?? "done", lifecycle.archived ?? "archived"]
-
-The first cut replaced the whole legacy PAIR whenever ANY terminal role resolved, so a workflow
-declaring `complete` but no `archived` collapsed to a one-element set and silently lost the archived
-short-circuit — an archived card then fell through to `getTaskMergeBlocker` and threw "must be in
-'in-review'" for a card whose real state was "already done, nothing to do". That is a caught-in-
-review defect (#2471 P1) whose regression test has to exercise BOTH halves independently, because a
-per-set rule passes for whichever role happens to be declared and fails for the other.
-
-The shared fixture declares a `complete` column and NO `archived` column, so it is exactly the
-partially-declared workflow that defect needed — the resolved half and the fallback half are both
-live in one board.
-
-WHAT IS REAL: a PostgreSQL TaskStore, a real persisted renamed workflow, and the real `runAiMerge`
-entry point. Assertions read the returned decision, which is weaker than a persisted row and is
-labelled as such: this proves the renamed board resolves and short-circuits correctly, not that a
-card is moved.
+WHAT IS REAL: a PostgreSQL TaskStore, a persisted renamed workflow, and the real `runAiMerge` entry
+point. Assertions read the returned decision, which proves Complete-role resolution and the clean
+short-circuit rather than a task movement.
 */
 import { beforeAll, beforeEach, afterEach, afterAll, expect, it } from "vitest";
 import "@fusion/core";
@@ -46,7 +33,7 @@ import { RENAMED_VOCAB, lifecycleIr } from "./_workflow-vocabulary-fixture.js";
 /** Never read on the path under test — the short-circuit precedes all git work. */
 const UNUSED_PROJECT_ROOT = "/nonexistent-by-design";
 
-pgDescribe("live already-finalized E2E: terminal roles resolved PER ROLE on a renamed board", () => {
+pgDescribe("live already-finalized E2E: Complete role resolved on a renamed board", () => {
   const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
     prefix: "fusion_already_final_e2e",
   });
@@ -60,8 +47,7 @@ pgDescribe("live already-finalized E2E: terminal roles resolved PER ROLE on a re
     const created = await h.store().createWorkflowDefinition({
       name: `Finalized ${key}`,
       kind: "workflow",
-      /* Declares `complete` (renamed to `shipped`) and NO `archived` column — the
-         partially-declared shape the per-role fallback exists for. */
+      /* Declares `complete` renamed to `shipped`; no archive role exists. */
       ir: lifecycleIr(RENAMED_VOCAB, `custom:final-${key}`, { mergeOrchestration: true }),
     } as never);
     return (created as { id: string }).id;
@@ -91,25 +77,6 @@ pgDescribe("live already-finalized E2E: terminal roles resolved PER ROLE on a re
     expect(result.merged).toBe(false);
   });
 
-  it("STILL treats a card in the legacy `archived` column as finalized — the per-role fallback", async () => {
-    /*
-    The fallback half, and the actual #2471 P1 regression. This workflow declares no `archived`
-    column, so `lifecycle.archived` is undefined and the guard must keep the legacy `archived` id
-    for that role ALONE while using the resolved `shipped` for the other.
-
-    A per-SET rule — replace both legacy ids as soon as any terminal role resolves — yields
-    `["shipped"]` here, this card stops short-circuiting, and it throws "must be in 'in-review'".
-    That is why the two halves are separate cases: one rule passes whichever role is declared and
-    fails the other, so a single case cannot distinguish per-role from per-set.
-    */
-    const wf = await seedWorkflow("archived");
-    await seedTask("FN-AF-2", "archived", wf);
-
-    const result = await runAiMerge(h.store(), UNUSED_PROJECT_ROOT, "FN-AF-2");
-
-    expect(result.noOp).toBe(true);
-    expect(result.reason).toBe("already-finalized");
-  });
 
   it("does NOT treat a card in the renamed REVIEW column as finalized", async () => {
     /* The differential. Without it both cases above would also pass for a guard that reported

@@ -126,7 +126,7 @@ jobs:
       # snapshot automatically — refresh is manual/scheduled only.
       - name: Upload per-shard test timings
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: test-timings-shard-${{ matrix.shard }}
           # Relative outputFile paths mean each package writes its own
@@ -294,7 +294,7 @@ jobs:
 
       - name: Upload pipeline smoke report
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: pipeline-smoke-report
           path: packages/engine/.pipeline-smoke-report.json

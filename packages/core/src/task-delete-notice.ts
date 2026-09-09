@@ -71,7 +71,7 @@ export interface TaskDeleteNoticeMailbox {
 
 /*
 FNXC:TaskDeleteNotice 2026-07-26-16:10:
-Store-scoped registration, mirroring archive-worktree-disposer.ts. A process can host several
+Store-scoped registration keeps one notifier per TaskStore. A process can host several
 projects; a process-global mailbox would post one project's delete into another project's inbox.
 The unregister closure is identity-guarded so a torn-down runtime cannot erase a newer one's
 registration. An unregistered store degrades silently to "no notice" — losing a notice is
@@ -97,7 +97,7 @@ export function getTaskDeleteNoticeMailbox(store: TaskStore): TaskDeleteNoticeMa
 export interface TaskDeleteNoticeSnapshot {
   id: string;
   title?: string;
-  /** The column the task sat in BEFORE the delete moved it to `archived`. */
+  /** The live column the task occupied before soft deletion wrote its historical sentinel. */
   previousColumn?: string;
   previousStatus?: string | null;
 }

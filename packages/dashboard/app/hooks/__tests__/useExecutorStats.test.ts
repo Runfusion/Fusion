@@ -669,7 +669,6 @@ describe("useExecutorStats", () => {
         { ...createMockTask("FN-004", "in-progress"), updatedAt: freshUpdatedAt },
         createMockTask("FN-005", "in-review"),
         { ...createMockTask("FN-006", "done"), status: "running" } as Task,
-        createMockTask("FN-007", "archived"),
         { ...createMockTask("FN-008", "todo"), blockedBy: "FN-006" },
         { ...createMockTask("FN-009", "todo"), dependencies: ["FN-006"] },
         { ...createMockTask("FN-010", "todo"), blockedBy: ["FN-006", "FN-006"] } as unknown as Task,
@@ -700,7 +699,6 @@ describe("useExecutorStats", () => {
         createMockTask("FN-001", "triage"),
         { ...createMockTask("FN-002", "triage"), status: "planning" } as Task,
         createMockTask("FN-003", "done"),
-        createMockTask("FN-004", "archived"),
         { ...createMockTask("FN-005", "custom-column" as Task["column"]) },
         { ...createMockTask("FN-006", "custom-planning" as Task["column"]), status: "planning" } as Task,
       ];

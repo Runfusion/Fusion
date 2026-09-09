@@ -602,7 +602,7 @@ export function computeTopLevelConcurrencyClaimed(params: {
  *
  * FNXC:ConcurrencyAdmission 2026-08-03-12:00:
  * FN-8453 forbids admission from raw task rows whenever workflow IR is available:
- * custom complete/archived columns can retain stale session metadata, so each row
+ * custom Complete columns can retain stale session metadata, so each live row
  * must be trait-enriched before it is allowed to occupy a top-level capacity slot.
  */
 export async function computeTopLevelConcurrencyClaimedFromStore(params: {

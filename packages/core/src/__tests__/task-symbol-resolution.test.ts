@@ -98,7 +98,7 @@ describe("file-task constructor declared symbols", () => {
       atomicCreateTaskJson: async (_dir: string, task: unknown) => { created.push(task); },
       isWatching: false,
       generateSpecifiedPrompt: () => "",
-      _maybeAutoArchiveSameAgentDuplicate: async () => undefined,
+      _resolveSameAgentDuplicateIntake: async () => undefined,
       emitTaskLifecycleEventSafely: () => undefined,
       invokeTaskCreatedHook: async () => undefined,
     } as unknown as TaskStore;
@@ -212,18 +212,4 @@ pgDescribe("TaskStore task symbol declarations", () => {
     }
   });
 
-  it("retains declarations across archive and restore", async () => {
-    const h = await makeHarness();
-    try {
-      const task = await h.store.createTask({
-        description: "archived symbol declaration",
-        declaredSymbols: ["Pkg/File.ts#Foo"],
-      });
-      await h.store.archiveTask(task.id);
-      const restored = await h.store.unarchiveTask(task.id);
-      expect(restored.declaredSymbols).toEqual(["pkg/file.ts#foo"]);
-    } finally {
-      await teardown();
-    }
-  });
 });

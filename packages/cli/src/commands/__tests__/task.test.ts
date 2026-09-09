@@ -126,7 +126,6 @@ vi.mock("@fusion/core", async (importActual) => {
 
 // Mock @fusion/engine
 vi.mock("@fusion/engine", () => ({
-  installBaselineArchiveWorktreeDisposer: vi.fn(),
   aiMergeTask: vi.fn(),
   runAiMerge: vi.fn(),
   landWorkspaceTask: vi.fn(),
@@ -258,10 +257,10 @@ vi.mock("../../project-context.js", () => {
 });
 
 import { createInterface } from "node:readline/promises";
-import { TaskStore, CentralCore, extractIntentSignature, findNearDuplicates, MAX_TASK_MESSAGE_LENGTH, runDeterministicDuplicateGuard, reconcileDeterministicDuplicate, TaskIsLiveError } from "@fusion/core";
+import { TaskStore, CentralCore, extractIntentSignature, findNearDuplicates, MAX_TASK_MESSAGE_LENGTH, runDeterministicDuplicateGuard, reconcileDeterministicDuplicate } from "@fusion/core";
 import { watchFile, unwatchFile, statSync, existsSync, readFileSync } from "node:fs";
 import { exec } from "node:child_process";
-import { runTaskShow, runTaskCreate, runTaskList, runTaskDuplicate, runTaskRefine, runTaskDelete, runTaskRetry, runTaskLogs, runTaskComment, runTaskComments, runTaskPrCreate, runTaskPlan, runTaskMove, runTaskAttach, runTaskPause, runTaskUnpause, runTaskArchive, runTaskUnarchive, runTaskSteer, runTaskSetNode, runTaskClearNode, runTaskImportFromGitHub, runTaskImportGitHubInteractive, runTaskUpdate, runTaskLog, runTaskMerge, type LogsOptions } from "../task.js";
+import { runTaskShow, runTaskCreate, runTaskList, runTaskDuplicate, runTaskRefine, runTaskDelete, runTaskRetry, runTaskLogs, runTaskComment, runTaskComments, runTaskPrCreate, runTaskPlan, runTaskMove, runTaskAttach, runTaskPause, runTaskUnpause, runTaskSteer, runTaskSetNode, runTaskClearNode, runTaskImportFromGitHub, runTaskImportGitHubInteractive, runTaskUpdate, runTaskLog, runTaskMerge, type LogsOptions } from "../task.js";
 import {
   getCurrentRepo,
   isGhAuthenticated,
@@ -1311,87 +1310,6 @@ describe("project-aware task command behavior", () => {
 
     expect(pauseTask).toHaveBeenNthCalledWith(1, "FN-123", true, undefined, { userPaused: true });
     expect(pauseTask).toHaveBeenNthCalledWith(2, "FN-123", false);
-  });
-
-  it("runTaskArchive and runTaskUnarchive use resolved project store", async () => {
-    const archiveTask = vi.fn().mockResolvedValue(makeTask({ id: "FN-123", column: "archived" }));
-    const unarchiveTask = vi.fn().mockResolvedValue(makeTask({ id: "FN-123", column: "done" }));
-
-    vi.mocked(resolveProject).mockResolvedValue({
-      projectId: "proj_test",
-      projectPath: "/test",
-      projectName: "demo-project",
-      isRegistered: true,
-      store: { archiveTask, unarchiveTask } as unknown as TaskStore,
-    });
-
-    await runTaskArchive("FN-123", "demo-project");
-    await runTaskUnarchive("FN-123", "demo-project");
-
-    expect(archiveTask).toHaveBeenCalledWith("FN-123", {liveExecutionGuard: "refuse"});
-    expect(unarchiveTask).toHaveBeenCalledWith("FN-123");
-  });
-
-  it("refuses a live archive before calling the store and exits non-zero", async () => {
-    const getTask = vi.fn().mockResolvedValue(makeTask({ id: "FN-123", column: "in-progress" }));
-    const archiveTask = vi.fn();
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
-      throw new Error(`process.exit:${code}`);
-    }) as (code?: number) => never);
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    vi.mocked(resolveProject).mockResolvedValue({
-      projectId: "proj_test", projectPath: "/test", projectName: "demo-project", isRegistered: true,
-      store: { getTask, archiveTask } as unknown as TaskStore,
-    });
-
-    try {
-      await expect(runTaskArchive("FN-123", "demo-project")).rejects.toThrow("process.exit:1");
-      expect(archiveTask).not.toHaveBeenCalled();
-      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("Refusing to archive live task FN-123"));
-      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("--force"));
-      expect(exitSpy).toHaveBeenCalledWith(1);
-    } finally {
-      errorSpy.mockRestore();
-      exitSpy.mockRestore();
-    }
-  });
-
-  it("allows the human --force archive escape hatch for a live task", async () => {
-    const getTask = vi.fn().mockResolvedValue(makeTask({ id: "FN-123", column: "in-progress" }));
-    const archiveTask = vi.fn().mockResolvedValue(makeTask({ id: "FN-123", column: "archived" }));
-    vi.mocked(resolveProject).mockResolvedValue({
-      projectId: "proj_test", projectPath: "/test", projectName: "demo-project", isRegistered: true,
-      store: { getTask, archiveTask } as unknown as TaskStore,
-    });
-
-    await runTaskArchive("FN-123", "demo-project", { force: true });
-
-    expect(archiveTask).toHaveBeenCalledWith("FN-123", { liveExecutionGuard: "off" });
-  });
-
-  it("formats a raced transactional live refusal without a raw error", async () => {
-    const getTask = vi.fn().mockResolvedValue(makeTask({ id: "FN-123", column: "todo" }));
-    const archiveTask = vi.fn().mockRejectedValue(new TaskIsLiveError("FN-123", ["wip-lane"]));
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
-      throw new Error(`process.exit:${code}`);
-    }) as (code?: number) => never);
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    vi.mocked(resolveProject).mockResolvedValue({
-      projectId: "proj_test", projectPath: "/test", projectName: "demo-project", isRegistered: true,
-      store: { getTask, archiveTask } as unknown as TaskStore,
-    });
-
-    try {
-      await expect(runTaskArchive("FN-123", "demo-project")).rejects.toThrow("process.exit:1");
-      expect(archiveTask).toHaveBeenCalledWith("FN-123", { liveExecutionGuard: "refuse" });
-      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("Refusing to archive live task FN-123"));
-      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("--force"));
-      expect(errorSpy).not.toHaveBeenCalledWith(expect.stringContaining("Task FN-123 is live"));
-      expect(exitSpy).toHaveBeenCalledWith(1);
-    } finally {
-      errorSpy.mockRestore();
-      exitSpy.mockRestore();
-    }
   });
 
   it("runTaskRetry uses resolved project store", async () => {
@@ -3832,7 +3750,7 @@ describe("runTaskPrCreate", () => {
       nodes: [],
       edges: [],
       // Exactly what synthesizeDefaultColumns emits: every column, NO traits.
-      columns: ["todo", "in-progress", "in-review", "done", "archived"].map((id) => ({ id, name: id, traits: [] })),
+      columns: ["todo", "in-progress", "in-review", "done"].map((id) => ({ id, name: id, traits: [] })),
     };
     const selection = { workflowId: "wf-v1-upgraded", stepIds: [] };
     (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({

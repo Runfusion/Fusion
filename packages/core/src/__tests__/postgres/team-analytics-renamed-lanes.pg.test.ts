@@ -164,7 +164,7 @@ pgDescribe("team analytics under a renamed board vocabulary", () => {
   query alone would still report zero.
   */
   const RENAMED_WIP_FLAGS = new Map([
-    ["building", { countsTowardWip: true, humanReview: false, complete: false, archived: false, intake: false, hold: false, mergeBlocker: false }],
+    ["building", { countsTowardWip: true, humanReview: false, complete: false, intake: false, hold: false, mergeBlocker: false }],
   ]);
 
   it("default vocabulary: an in-flight task is counted as in-progress", async () => {

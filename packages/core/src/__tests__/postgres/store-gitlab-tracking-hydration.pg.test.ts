@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
+import { sql } from "drizzle-orm";
 import type { TaskGitLabTrackedItem } from "../../types.js";
 import {
   createSharedPgTaskStoreTestHarness,
@@ -8,13 +9,14 @@ import {
 
 /*
 FNXC:GitLabTracking 2026-07-16-13:00:
-GitLab import provenance must round-trip through every shared TaskStore read path
-and archive/restore. Missing tracking remains undefined, while a populated item
-must retain its full payload so imports can be reconciled after restoration.
+GitLab import provenance must round-trip through every shared TaskStore read path and remain
+available in Complete history. Missing tracking remains undefined, while a populated item retains
+its full payload so imports can be reconciled after completion.
 */
 pgDescribe("TaskStore GitLab tracking hydration (PostgreSQL)", () => {
   const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
     prefix: "fusion_gitlab_tracking_hydration",
+    projectId: "project-gitlab-tracking",
   });
 
   beforeAll(h.beforeAll);
@@ -37,7 +39,7 @@ pgDescribe("TaskStore GitLab tracking hydration (PostgreSQL)", () => {
     createdAt: "2026-07-16T00:00:00.000Z",
   };
 
-  it("round-trips GitLab tracking across every live read and archive restore", async () => {
+  it("round-trips GitLab tracking across every live read and Complete history", async () => {
     const store = h.store();
     const modifiedSince = "1970-01-01T00:00:00.000Z";
     const sourceIssue = {
@@ -71,13 +73,12 @@ pgDescribe("TaskStore GitLab tracking hydration (PostgreSQL)", () => {
     const modified = await store.listTasksModifiedSince(modifiedSince);
     expect(modified.tasks.find((task) => task.id === tracked.id)?.gitlabTracking?.item).toEqual(item);
 
-    await store.moveTask(tracked.id, "todo");
-    await store.moveTask(tracked.id, "in-progress");
-    await store.moveTask(tracked.id, "done");
-    await store.archiveTask(tracked.id, false);
-    const restored = await store.unarchiveTask(tracked.id);
-
-    expect(restored.gitlabTracking?.item).toEqual(item);
+    await h.adminDb().execute(sql`
+      UPDATE project.tasks
+         SET "column" = 'done', column_moved_at = now()
+       WHERE id = ${tracked.id}
+    `);
+    store.taskCache.delete(tracked.id);
     expect((await store.getTask(tracked.id))?.gitlabTracking?.item).toEqual(item);
   });
 });

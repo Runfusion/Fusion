@@ -144,11 +144,6 @@
   color: var(--done);
 }
 
-.file-mention-popup-column-badge--archived {
-  background: var(--status-archived-bg);
-  color: var(--text-muted);
-}
-
 .file-mention-popup-empty {
   padding: var(--space-lg) var(--space-md);
   text-align: center;

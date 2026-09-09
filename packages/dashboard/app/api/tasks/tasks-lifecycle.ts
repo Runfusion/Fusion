@@ -1,6 +1,6 @@
 /**
  * FNXC:CodeOrganization 2026-07-16-12:00:
- * Task lifecycle client API (promote/delete/merge/pause/archive/plan) peeled from legacy.ts.
+ * Task lifecycle client API (promote/delete/merge/pause/plan) peeled from legacy.ts.
  */
 import type {
   Task,
@@ -12,7 +12,7 @@ import type {
 } from "@fusion/core";
 import { api } from "../client/client.js";
 import { withProjectId } from "../client/health.js";
-import type { DeleteTaskOptions, ArchiveTaskOptions } from "./tasks.js";
+import type { DeleteTaskOptions } from "./tasks.js";
 
 /**
  * Manually promote a held card out of its hold column (U9).
@@ -36,7 +36,7 @@ export function promoteTask(id: string, projectId?: string): Promise<Task> {
  * `removeDependencyReferences` allows forced delete by first removing incoming dependency links.
  * `githubIssueAction` controls linked issue behavior (`close`, `delete`, or `leave`) during deletion.
  *
- * Hard removal is handled only by the archive-cleanup pipeline (after archival), not this endpoint.
+ * This endpoint never hard-removes the persisted row or task artifacts.
  */
 export function deleteTask(id: string, projectId?: string, options?: DeleteTaskOptions): Promise<Task> {
   const search = new URLSearchParams();
@@ -252,20 +252,6 @@ export function fetchPlannerInterventionTimeline(id: string, projectId?: string)
   return api<{ entries: PlannerInterventionEntry[] }>(withProjectId(`/tasks/${id}/overseer/interventions`, projectId), { method: "GET" });
 }
 
-export function archiveTask(id: string, projectId?: string, options?: ArchiveTaskOptions): Promise<Task> {
-  const search = new URLSearchParams();
-  if (options?.removeLineageReferences) {
-    search.set("removeLineageReferences", "true");
-  }
-
-  const suffix = search.size > 0 ? `?${search.toString()}` : "";
-  return api<Task>(withProjectId(`/tasks/${id}/archive${suffix}`, projectId), { method: "POST" });
-}
-
-export function unarchiveTask(id: string, projectId?: string): Promise<Task> {
-  return api<Task>(withProjectId(`/tasks/${id}/unarchive`, projectId), { method: "POST" });
-}
-
 /*
 FNXC:TaskRevert 2026-07-05-00:00 (FN-7525):
 Client-side contract for `POST /tasks/:id/revert` (route owned by FN-7523/
@@ -315,22 +301,6 @@ export function revertTask(id: string, projectId?: string, body?: RevertTaskOpti
     method: "POST",
     body: JSON.stringify(body ?? {}),
   });
-}
-
-export function archiveAllDone(projectId?: string): Promise<Task[]> {
-  /*
-  FNXC:ArchiveConfirmGate 2026-07-26-16:30:
-  The bulk archive route now requires an explicit `{ confirm: true }` body (400 without
-  it) so non-UI callers cannot silently sweep the Done column. The UI's own user-facing
-  confirmation happens before this client call; this body is the machine-level ack.
-  */
-  return api<{ archived: Task[] }>(withProjectId("/tasks/archive-all-done", projectId), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ confirm: true }),
-  }).then(
-    (response) => response.archived
-  );
 }
 
 export function approvePlan(id: string, projectId?: string): Promise<Task> {

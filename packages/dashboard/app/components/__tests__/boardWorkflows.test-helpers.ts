@@ -36,7 +36,6 @@ export const DEFAULT_BOARD_WORKFLOWS = {
           flags: { countsTowardWip: true, mergeBlocker: true, mergeOrchestration: true, humanReview: true },
         },
         { id: "done", name: "Done", flags: { complete: true } },
-        { id: "archived", name: "Archived", flags: { archived: true, hiddenFromBoard: true } },
       ],
     },
   ],

@@ -196,7 +196,6 @@ describe("workflow-flow-mapping name preservation", () => {
 const CATALOG: TraitCatalogEntry[] = [
   { id: "intake", name: "Intake", builtin: true, flags: { intake: true } },
   { id: "complete", name: "Complete", builtin: true, flags: { complete: true } },
-  { id: "archived", name: "Archived", builtin: true, flags: { archived: true, hiddenFromBoard: true } },
   { id: "wip", name: "WIP", builtin: true, flags: { countsTowardWip: true } },
   { id: "hold", name: "Hold", builtin: true, flags: { hold: true } },
 ];
@@ -565,12 +564,11 @@ describe("workflow-flow-mapping validation helpers", () => {
       { id: "complete-wip", name: "Complete WIP", traits: [{ trait: "complete" }, { trait: "wip" }] },
       { id: "two-wip", name: "Two WIP", traits: [{ trait: "wip" }, { trait: "wip" }] },
       { id: "done", name: "Done", traits: [{ trait: "complete" }, { trait: "intake" }] },
-      { id: "archive", name: "Archive", traits: [{ trait: "archived" }, { trait: "wip" }] },
     ];
     const clientViolations = validateColumnsClient(columns, CATALOG);
     const serverViolations = validateColumnTraits(columns);
 
-    for (const code of ["complete-with-wip", "two-capacity-traits", "complete-with-intake", "archived-with-wip"] as const) {
+    for (const code of ["complete-with-wip", "two-capacity-traits", "complete-with-intake"] as const) {
       expect(clientViolations.find((v) => v.code === code)?.traitIds.sort()).toEqual(
         serverViolations.find((v) => v.code === code)?.traitIds.sort(),
       );
