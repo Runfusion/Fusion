@@ -69,6 +69,22 @@ function toCachedTaskRow(task: Task): Task {
   return rest as Task;
 }
 
+/*
+FNXC:WorkflowLifecycleColumns 2026-09-09-15:44:
+DELIBERATE-LITERAL: Done-history membership uses task-scoped workflow flags when the board
+supplied a resolver. `done` is only the degraded fallback when no flag resolver is available.
+FN-319's late-page live-mutation path must share this contract with SSE membership; comparing
+`column === "done"` first would keep a resolved non-complete `done` lane in completed history.
+*/
+function isCompletedTaskForMembership(
+  task: Task,
+  column: ColumnId = task.column,
+  resolveColumnFlags?: (task: Task) => ColumnRoleFlags | undefined,
+): boolean {
+  const resolvedFlags = resolveColumnFlags?.({ ...task, column });
+  return resolvedFlags !== undefined ? resolvedFlags.complete === true : column === "done";
+}
+
 /** Persist the board snapshot, shrinking row count until it fits the quota budget. Returns whether anything was written. */
 function writeTaskCacheSnapshot(cacheKey: string, tasks: Task[]): boolean {
   for (const limit of TASK_CACHE_ROW_LIMITS) {
@@ -1133,8 +1149,11 @@ export function useTasks(options?: UseTasksOptions) {
       const liveMutation = liveTaskMutationsRef.current.get(task.id);
       if (liveMutation && liveMutation.version > requestLiveMutationVersion) {
         if (liveMutation.deleted || !liveMutation.task) return [];
-        const liveIsCompleted = liveMutation.task.column === "done"
-          || resolveColumnFlagsRef.current?.(liveMutation.task)?.complete === true;
+        const liveIsCompleted = isCompletedTaskForMembership(
+          liveMutation.task,
+          liveMutation.task.column,
+          resolveColumnFlagsRef.current,
+        );
         return liveIsCompleted ? [liveMutation.task] : [];
       }
       return [task];
@@ -1483,15 +1502,9 @@ export function useTasks(options?: UseTasksOptions) {
       tasksRef.current = nextTasks;
       setTasks(nextTasks);
     };
-    /*
-    FNXC:WorkflowLifecycleColumns 2026-09-06-00:46:
-    DELIBERATE-LITERAL: task-scoped workflow flags are authoritative for live SSE reconciliation.
-    `done` is only the degraded fallback when no flag resolver is available.
-    */
-    const isCompletedTask = (task: Task, column: ColumnId = task.column): boolean => {
-      const resolvedFlags = resolveColumnFlagsRef.current?.({ ...task, column });
-      return resolvedFlags !== undefined ? resolvedFlags.complete === true : column === "done";
-    };
+    const isCompletedTask = (task: Task, column: ColumnId = task.column): boolean => (
+      isCompletedTaskForMembership(task, column, resolveColumnFlagsRef.current)
+    );
     const syncCompletedMembership = (
       task: Task,
       previousTask: Task | undefined,
