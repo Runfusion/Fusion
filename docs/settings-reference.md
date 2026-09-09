@@ -1717,6 +1717,7 @@ The Experimental Features section in Settings shows:
 - Description explaining the purpose of experimental features
 
 Common built-in dashboard/runtime flags include:
+- `alphaUpdates` (global et désactivé par défaut) active le shell de navigation Alpha. Toute fonctionnalité qualifiée d’« Alpha » doit conserver le comportement courant lorsque cette frontière est absente ou fausse, et ne basculer vers sa variante Alpha que lorsqu’elle vaut `true`.
 - `insights`
 - `roadmap`
 - `memoryView`

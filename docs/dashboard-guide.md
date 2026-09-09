@@ -19,7 +19,7 @@ The Fusion dashboard is the main control plane for tasks, agents, missions, sett
 
 ## History View
 
-History is the permanent daily delivery history available from the main navigation. It groups entries by UTC day and includes a search field that matches task IDs, titles, and captured completion summaries. Each delivery is a separate record, so reopening and completing the same task later adds another entry on that later day instead of replacing the first.
+History is the permanent daily delivery history. In standard mode it remains available from the main navigation. With global **Alpha Updates** enabled, its general navigation entries disappear and the History button in every completed workflow-column header opens the same interface, including for empty or custom-named completion columns. It groups entries by UTC day and includes a search field that matches task IDs, titles, and captured completion summaries. Each delivery is a separate record, so reopening and completing the same task later adds another entry on that later day instead of replacing the first.
 
 Fusion writes a completion entry in the same database transaction that moves the task into its completion lane. The recorded title and summary are point-in-time snapshots that remain unchanged through later moves, re-summarisation, or task deletion. A revert adds a distinct **Cancelled** entry paired to the specific delivery it cancels and marks that completion as **Reverted** without changing other deliveries of the same task.
 
@@ -305,7 +305,7 @@ Use the desktop/tablet right dock this way:
 
 Content views such as Artifacts, Research, Insights, **Skills & Snippets**, Memory, Evals, Goals, **Workflows**, **Import Tasks**, and **Automations** live in the left sidebar (or compact mobile navigation) rather than the right dock. On desktop/tablet, GitHub import lives under **Import Tasks**; mobile keeps compact GitHub import entries in the More surfaces.
 
-On mobile viewports, the Right Dock never renders. The compact Header actions and bottom `MobileNavBar` keep their existing mobile behavior even when the experiment is enabled.
+On mobile viewports, the Right Dock never renders. Standard mode keeps the existing compact Header actions and bottom `MobileNavBar`. With global **Alpha Updates** enabled, the wordmark is reduced to its logo, a header hamburger opens every available destination outside the primary set, and a floating icon-only pill provides Dashboard, Board, Planning, Chat, and Mailbox. On desktop Board and List, Alpha Updates keeps search inline in the header; tablet and mobile search retain their existing interaction.
 
 ## Task-detail Chat
 

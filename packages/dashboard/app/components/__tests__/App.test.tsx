@@ -3,6 +3,7 @@ import { render, screen, fireEvent, waitFor, act, within } from "@testing-librar
 import type { NodeConfig, Settings } from "@fusion/core";
 import type { AiSessionSummary, ProjectInfo } from "../../api";
 import { scopedKey } from "../../utils/projectStorage";
+import { ALL_WORKFLOWS_BOARD_VIEW_ID, BOARD_WORKFLOW_SELECTION_STORAGE_KEY } from "../../utils/boardWorkflowSelection";
 import { useFileBrowser } from "../../context/FileBrowserContext";
 
 // No mock needed - tests use localStorage directly
@@ -981,6 +982,71 @@ beforeEach(() => {
   mockIsShortViewport.mockReturnValue(false);
   mockAgentStats.todoTaskCount = 0;
   mockAgentStats.idleNonEphemeralCount = 1;
+});
+
+describe("Alpha Updates production wiring", () => {
+  it("refreshes the mobile shell on and off without losing configured primary items", async () => {
+    mockUseViewportMode.mockReturnValue("mobile");
+    const legacySettings = {
+      ...defaultSettings,
+      mobileNavPrimaryItems: ["settings", "planning"],
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates: false },
+    };
+    const alphaSettings = {
+      ...legacySettings,
+      experimentalFeatures: { ...legacySettings.experimentalFeatures, alphaUpdates: true },
+    };
+    vi.mocked(fetchSettings).mockResolvedValue(legacySettings);
+
+    render(<App />);
+    await waitFor(() => expect(screen.getByTestId("mobile-nav-tab-settings")).toBeInTheDocument());
+    expect(screen.getByTestId("mobile-nav-tab-planning")).toBeInTheDocument();
+    expect(screen.getByTestId("mobile-nav-tab-more")).toBeInTheDocument();
+
+    vi.mocked(fetchSettings).mockResolvedValue(alphaSettings);
+    fireEvent.click(screen.getByTestId("mobile-nav-tab-settings"));
+    fireEvent.click(await screen.findByRole("button", { name: "Close" }));
+
+    await waitFor(() => expect(screen.getByTestId("alpha-mobile-menu-trigger")).toBeInTheDocument());
+    expect(screen.queryByTestId("mobile-nav-tab-more")).toBeNull();
+    expect(Array.from(document.querySelectorAll<HTMLElement>(".mobile-nav-bar > .mobile-nav-tab")).map((tab) => tab.dataset.testid)).toEqual([
+      "mobile-nav-tab-command-center",
+      "mobile-nav-tab-tasks",
+      "mobile-nav-tab-planning",
+      "mobile-nav-tab-chat",
+      "mobile-nav-tab-mailbox",
+    ]);
+
+    vi.mocked(fetchSettings).mockResolvedValue(legacySettings);
+    fireEvent.click(screen.getByTestId("alpha-mobile-menu-trigger"));
+    fireEvent.click(screen.getByTestId("mobile-more-item-settings"));
+    fireEvent.click(await screen.findByRole("button", { name: "Close" }));
+
+    await waitFor(() => expect(screen.getByTestId("mobile-nav-tab-more")).toBeInTheDocument());
+    expect(screen.getByTestId("mobile-nav-tab-settings")).toBeInTheDocument();
+    expect(screen.getByTestId("mobile-nav-tab-planning")).toBeInTheDocument();
+    expect(screen.queryByTestId("alpha-mobile-menu-trigger")).toBeNull();
+  });
+
+  it.each([
+    ["selected", undefined],
+    ["aggregate", ALL_WORKFLOWS_BOARD_VIEW_ID],
+  ] as const)("routes complete-column History through the %s Board production chain", async (_mode, selection) => {
+    vi.mocked(fetchSettings).mockResolvedValue({
+      ...defaultSettings,
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates: true },
+    });
+    if (selection) {
+      localStorage.setItem(scopedKey(BOARD_WORKFLOW_SELECTION_STORAGE_KEY, DEFAULT_PROJECT_ID), selection);
+    }
+
+    render(<App />);
+
+    const historyButton = await screen.findByTestId("column-history-done");
+    expect(screen.queryByTestId("sidebar-nav-patchnode")).toBeNull();
+    fireEvent.click(historyButton);
+    await waitFor(() => expect(localStorage.getItem(taskViewStorageKey())).toBe("patchnode"));
+  });
 });
 
 describe("FN-4250 FileBrowserProvider coverage", () => {

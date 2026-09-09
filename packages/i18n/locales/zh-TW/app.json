@@ -1552,7 +1552,8 @@
     "replannedTasks_one": "Replanned {{count}} task{{plural}}",
     "replannedTasks_other": "Replanned {{count}} task{{plural}}",
     "replanPartialFailure": "Replanned {{replanned}} of {{total}} tasks; {{failed}} failed",
-    "paginationError": "無法載入較早的任務。"
+    "paginationError": "無法載入較早的任務。",
+    "openHistory": "開啟歷史記錄"
   },
   "commandCenter": {
     "activity": {
@@ -3135,7 +3136,8 @@
     "unreadArtifacts_one": "",
     "unreadArtifacts_other": "",
     "unreadRecommendations_one": "",
-    "unreadRecommendations_other": ""
+    "unreadRecommendations_other": "",
+    "clearSearch": "清除搜尋"
   },
   "health": {
     "activeTasks": "活躍任務",
@@ -4242,7 +4244,8 @@
     "recommendationsUnreadAriaLabel_one": "",
     "recommendationsUnreadAriaLabel_other": "",
     "recommendationsUnreadDotAriaLabel": "",
-    "notes": "筆記"
+    "notes": "筆記",
+    "openMenu": "開啟導覽選單"
   },
   "newTaskModal": {
     "addDependencies": "新增相依性",

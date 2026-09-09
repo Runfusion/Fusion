@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { Settings, LayoutGrid, List, Search, X, Activity, MoreHorizontal, Clock, Folder, History, GitBranch, Monitor, Workflow, Bot, Target, Grid3X3, Mail, MessageSquare, Check, Zap, Sparkles, FileText, Brain, Lock, Gauge, Lightbulb, ChevronDown, ChevronRight, PanelRight, Plus, Star } from "lucide-react";
+import { Settings, LayoutGrid, List, Search, X, Activity, MoreHorizontal, Menu, Clock, Folder, History, GitBranch, Monitor, Workflow, Bot, Target, Grid3X3, Mail, MessageSquare, Check, Zap, Sparkles, FileText, Brain, Lock, Gauge, Lightbulb, ChevronDown, ChevronRight, PanelRight, Plus, Star } from "lucide-react";
 import "./Header.css";
 // ProjectSelector styles used by the imported standalone component.
 import "./ProjectSelector.css";
@@ -101,6 +101,10 @@ export interface HeaderProps {
   shellHost?: ShellHostContext;
   /** When true, the mobile bottom nav bar handles primary navigation and header nav controls are hidden. */
   mobileNavEnabled?: boolean;
+  /** Enables the Alpha shell variants without changing legacy navigation. */
+  alphaUpdatesEnabled?: boolean;
+  /** Opens the canonical MobileNavBar overflow sheet from the Alpha hamburger. */
+  onOpenAlphaMenu?: () => void;
   /** When true on non-mobile screens, persistent left sidebar owns primary view navigation. */
   leftSidebarNavActive?: boolean;
   /*
@@ -163,6 +167,8 @@ export function Header({
   projectId,
   shellHost = { kind: "browser" },
   mobileNavEnabled,
+  alphaUpdatesEnabled = false,
+  onOpenAlphaMenu,
   leftSidebarNavActive = false,
   rightDockAvailable = false,
   rightDockOpen = false,
@@ -307,6 +313,7 @@ export function Header({
   const shouldShowMobileSearch = isMobileSearchOpen || searchQuery.length > 0;
 
   const canShowNonMobileSearch = (view === "board" || view === "list") && !isMobile && onSearchChange;
+  const showAlphaDesktopSearch = Boolean(alphaUpdatesEnabled && mode === "desktop" && canShowNonMobileSearch);
   // Non-mobile search: toggled open OR has active query, but not if explicitly closed.
   const shouldShowNonMobileSearch = (isNonMobileSearchOpen || searchQuery.length > 0) && !isNonMobileSearchExplicitlyClosed;
   /*
@@ -468,7 +475,7 @@ export function Header({
               fill="currentColor"
             />
           </svg>
-          <h1 className="logo">{t("appName", "Fusion")}</h1>
+          {!(isMobile && alphaUpdatesEnabled) && <h1 className="logo">{t("appName", "Fusion")}</h1>}
         </div>
 
         {/* Mobile Project Switch - dropdown trigger next to logo when at least one project exists (mobile only) */}
@@ -645,8 +652,8 @@ export function Header({
           </button>
         )}
 
-        {/* Usage button on mobile when mobile bottom nav is active */}
-        {isMobile && hideFullNav && onOpenUsage && (
+        {/* FNXC:AlphaUpdates 2026-09-09-19:11: Alpha gives Usage one canonical mobile home in the shared hamburger menu; the legacy shell retains its direct header shortcut. */}
+        {isMobile && hideFullNav && !alphaUpdatesEnabled && onOpenUsage && (
           <button
             className="btn-icon"
             onClick={(event) => onOpenUsage(event.currentTarget.getBoundingClientRect())}
@@ -669,7 +676,25 @@ export function Header({
          * FNXC:Header 2026-06-21-00:00:
          * Desktop and tablet header search must render after the workflow portal slot so a populated WorkflowSwitcher appears left of the search icon while preserving the mobile search trigger's existing position and behavior.
          */}
-        {canShowNonMobileSearchToggle && (
+        {showAlphaDesktopSearch && (
+          <div className="header-search header-search--alpha-inline" data-testid="alpha-desktop-header-search">
+            <Search size={14} className="header-search-icon" />
+            <input
+              type="text"
+              placeholder={t("header.searchTasks", "Search tasks...")}
+              value={searchQuery}
+              onChange={(event) => onSearchChange?.(event.target.value)}
+              className="header-search-input"
+            />
+            {searchQuery.length > 0 && (
+              <button className="header-search-clear" onClick={() => onSearchChange?.("")} aria-label={t("header.clearSearch", "Clear search")}>
+                <X size={14} />
+              </button>
+            )}
+          </div>
+        )}
+
+        {canShowNonMobileSearchToggle && !showAlphaDesktopSearch && (
           <button
             className="btn-icon"
             onClick={handleNonMobileSearchToggle}
@@ -991,7 +1016,7 @@ export function Header({
                         ) : null}
                       </button>
                     )}
-                    <button
+                    {!alphaUpdatesEnabled && <button
                       className={`view-toggle-overflow-item${view === "patchnode" ? " active" : ""}`}
                       onClick={() => {
                         onChangeView("patchnode");
@@ -1002,7 +1027,7 @@ export function Header({
                     >
                       <History size={14} />
                       <span>{t("nav.patchnode", "History")}</span>
-                    </button>
+                    </button>}
                     {experimentalFeatures?.devServerView && (
                       <button
                         className={`view-toggle-overflow-item${view === "dev-server" || view === "devserver" ? " active" : ""}`}
@@ -1124,6 +1149,21 @@ export function Header({
             data-testid="header-right-dock-toggle"
           >
             <PanelRight size={16} />
+          </button>
+        )}
+
+        {/* FNXC:AlphaUpdates 2026-09-09-18:24: Mobile Alpha moves the canonical overflow trigger into the header while legacy mobile retains its established header/footer ownership. */}
+        {isMobile && alphaUpdatesEnabled && mobileNavEnabled && (
+          <button
+            className="btn-icon alpha-mobile-menu-trigger"
+            type="button"
+            onClick={onOpenAlphaMenu}
+            title={t("nav.openMenu", "Open navigation menu")}
+            aria-label={t("nav.openMenu", "Open navigation menu")}
+            aria-haspopup="menu"
+            data-testid="alpha-mobile-menu-trigger"
+          >
+            <Menu size={16} />
           </button>
         )}
 
@@ -1291,9 +1331,9 @@ export function Header({
     </header>
 
     {/* Desktop/Tablet Search - floating below header, in board or list view */}
-    {canShowNonMobileSearch && shouldShowNonMobileSearch && (
+    {canShowNonMobileSearch && ((shouldShowNonMobileSearch && !showAlphaDesktopSearch) || (showAlphaDesktopSearch && showBoardBranchFilters)) && (
       <div className="header-floating-search">
-        <div className="header-search">
+        {!showAlphaDesktopSearch && <div className="header-search">
           <Search size={14} className="header-search-icon" />
           <input
             autoFocus
@@ -1310,7 +1350,7 @@ export function Header({
           >
             <X size={14} />
           </button>
-        </div>
+        </div>}
         {showBoardBranchFilters && (
           <div className="header-branch-filters" data-testid="header-branch-filters-desktop">
             <label className="header-branch-filter-label">

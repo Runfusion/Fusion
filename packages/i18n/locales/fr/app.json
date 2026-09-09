@@ -1552,7 +1552,8 @@
     "replannedTasks_one": "Replanned {{count}} task{{plural}}",
     "replannedTasks_other": "Replanned {{count}} task{{plural}}",
     "replanPartialFailure": "Replanned {{replanned}} of {{total}} tasks; {{failed}} failed",
-    "paginationError": "Impossible de charger les tâches plus anciennes."
+    "paginationError": "Impossible de charger les tâches plus anciennes.",
+    "openHistory": "Ouvrir l’historique"
   },
   "commandCenter": {
     "activity": {
@@ -3135,7 +3136,8 @@
     "viewProjects": "Voir les projets",
     "viewUsage": "Voir l'utilisation",
     "workflows": "Workflows",
-    "workingBranch": "Branche de travail"
+    "workingBranch": "Branche de travail",
+    "clearSearch": "Effacer la recherche"
   },
   "health": {
     "activeTasks": "Tâches actives",
@@ -4243,7 +4245,8 @@
     "usage": "Utilisation",
     "workflows": "Workflows",
     "patchnode": "",
-    "notes": "Notes"
+    "notes": "Notes",
+    "openMenu": "Ouvrir le menu de navigation"
   },
   "newTaskModal": {
     "addDependencies": "Ajouter des dépendances",

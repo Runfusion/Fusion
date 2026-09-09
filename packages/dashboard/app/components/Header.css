@@ -804,6 +804,13 @@ non-notched devices, so this is a no-op there. Pair with viewport-fit=cover (ind
   transition: border-color var(--transition-fast);
 }
 
+/* FNXC:AlphaUpdates 2026-09-09-18:24: Desktop Alpha keeps Board/List search permanently inline after the workflow slot; tablet, mobile, and flag-off layouts retain the floating search contract. */
+.header-search--alpha-inline {
+  flex: 0 1 calc(var(--space-2xl) * 8);
+  min-width: calc(var(--space-2xl) * 5);
+  max-width: calc(var(--space-2xl) * 10);
+}
+
 .header-search:focus-within {
   border-color: var(--todo);
 }

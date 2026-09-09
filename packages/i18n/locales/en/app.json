@@ -1562,7 +1562,8 @@
     "replannedTasks_one": "Replanned {{count}} task{{plural}}",
     "replannedTasks_other": "Replanned {{count}} task{{plural}}",
     "replanPartialFailure": "Replanned {{replanned}} of {{total}} tasks; {{failed}} failed",
-    "paginationError": "Older tasks could not be loaded."
+    "paginationError": "Older tasks could not be loaded.",
+    "openHistory": "Open History"
   },
   "commandCenter": {
     "activity": {
@@ -3145,7 +3146,8 @@
     "viewProjects": "View Projects",
     "viewUsage": "View usage",
     "workflows": "Workflows",
-    "workingBranch": "Working branch"
+    "workingBranch": "Working branch",
+    "clearSearch": "Clear search"
   },
   "health": {
     "activeTasks": "Active Tasks",
@@ -4251,7 +4253,8 @@
     "todos": "Todos",
     "usage": "Usage",
     "workflows": "Workflows",
-    "notes": "Notes"
+    "notes": "Notes",
+    "openMenu": "Open navigation menu"
   },
   "newTaskModal": {
     "addDependencies": "Add dependencies",

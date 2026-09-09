@@ -1552,7 +1552,8 @@
     "replannedTasks_one": "Replanned {{count}} task{{plural}}",
     "replannedTasks_other": "Replanned {{count}} task{{plural}}",
     "replanPartialFailure": "Replanned {{replanned}} of {{total}} tasks; {{failed}} failed",
-    "paginationError": "No se pudieron cargar las tareas anteriores."
+    "paginationError": "No se pudieron cargar las tareas anteriores.",
+    "openHistory": "Abrir historial"
   },
   "commandCenter": {
     "activity": {
@@ -3135,7 +3136,8 @@
     "unreadArtifacts_one": "",
     "unreadArtifacts_other": "",
     "unreadRecommendations_one": "",
-    "unreadRecommendations_other": ""
+    "unreadRecommendations_other": "",
+    "clearSearch": "Borrar búsqueda"
   },
   "health": {
     "activeTasks": "Tareas activas",
@@ -4243,7 +4245,8 @@
     "recommendationsUnreadAriaLabel_one": "",
     "recommendationsUnreadAriaLabel_other": "",
     "recommendationsUnreadDotAriaLabel": "",
-    "notes": "Notas"
+    "notes": "Notas",
+    "openMenu": "Abrir menú de navegación"
   },
   "newTaskModal": {
     "addDependencies": "Añadir dependencias",

@@ -4,6 +4,8 @@ import {
   type Task,
   type TaskDetail,
   type WorkflowStep,
+  ALPHA_UPDATES_FLAG,
+  isExperimentalFeatureEnabled,
 } from "@fusion/core";
 import { Header, useViewportMode } from "./components/Header";
 import { TaskDetailContent } from "./components/TaskDetailModal";
@@ -1000,6 +1002,7 @@ function AppInner() {
     togglePlanAutoApprove,
     refresh: refreshAppSettings,
   } = useAppSettings(currentProject?.id);
+  const [alphaMenuOpenRequest, setAlphaMenuOpenRequest] = useState(0);
 
   const taskPopupsVisibleOnCurrentView = useCallback((originTaskView?: TaskView) => isTaskPopupVisibleForView({
     taskPopupsBoardListOnly,
@@ -1054,6 +1057,8 @@ function AppInner() {
   const researchEnabled = experimentalFeatures.researchView === true;
   const evalsEnabled = experimentalFeatures.evalsView === true;
   const ideationEnabled = experimentalFeatures.ideationView === true;
+  /* FNXC:AlphaUpdates 2026-09-09-18:24: Resolve the global Alpha boundary once per settings refresh so every shell surface switches together without mutating saved mobile navigation preferences. */
+  const alphaUpdatesEnabled = isExperimentalFeatureEnabled({ experimentalFeatures }, ALPHA_UPDATES_FLAG);
   /*
   FNXC:Navigation 2026-06-19-00:00:
   Experimental left sidebar navigation replaces the Header view shortcuts with a persistent sidebar on non-mobile project screens, while mobile continues to use the bottom navigation bar as the only primary navigation surface.
@@ -2052,6 +2057,8 @@ function AppInner() {
         onViewAllProjects={handleViewAllProjects}
         projectId={currentProject?.id}
         mobileNavEnabled={isMobile}
+        alphaUpdatesEnabled={alphaUpdatesEnabled}
+        onOpenAlphaMenu={() => setAlphaMenuOpenRequest((request) => request + 1)}
         leftSidebarNavActive={sidebarActive}
         rightDockAvailable={rightDockActive}
         rightDockOpen={rightDock.open}
@@ -2121,6 +2128,7 @@ function AppInner() {
             onSelectProject={handleSelectProject}
             onViewAllProjects={handleViewAllProjects}
             footerVisible={executorFooterVisible}
+            alphaUpdatesEnabled={alphaUpdatesEnabled}
           />
         )}
         <div
@@ -2198,6 +2206,8 @@ function AppInner() {
         modalOpen={modalManager.anyModalOpen}
         keyboardOpen={mobileNavKeyboardOpen}
         mobileNavPrimaryItems={mobileNavPrimaryItems}
+        alphaUpdatesEnabled={alphaUpdatesEnabled}
+        alphaMenuOpenRequest={alphaMenuOpenRequest}
         onOpenSettings={openSettingsWithNav}
         onOpenActivityLog={openActivityLogWithNav}
         onOpenMailbox={() => handleTaskViewChange("mailbox")}
