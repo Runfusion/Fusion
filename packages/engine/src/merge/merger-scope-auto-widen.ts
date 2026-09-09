@@ -128,21 +128,19 @@ export async function evaluateScopeAutoWiden(params: EvaluateScopeAutoWidenParam
   NOT the query-filter class: this query passes no `column`, so the predicate is the only lane gate here.
 
   Resolved per OTHER TASK (each may run its own workflow), one IR cache for the pass, unioned with the
-  legacy pair because `resolveWorkflowIrForTask` degrades to the BUILT-IN IR rather than throwing —
+  legacy Done fallback because `resolveWorkflowIrForTask` degrades to the built-in IR rather than throwing —
   without the union a degraded board would treat every finished card as active, which is this bug.
   */
   const irCache = new Map<string, WorkflowIr>();
   const terminalByTaskId = new Map<string, ReadonlySet<string>>();
   for (const other of allTasks) {
-    const columns = new Set<string>(["done", "archived"]);
+    const columns = new Set<string>(["done"]);
     try {
       const ir = await resolveWorkflowIrForTask(store as TaskStore, other.id, irCache);
       if (ir) {
-        for (const flag of ["complete", "archived"] as const) {
-          for (const id of columnsWithFlag(ir, flag)) columns.add(id);
-        }
+        for (const id of columnsWithFlag(ir, "complete")) columns.add(id);
       }
-    } catch { /* degraded: legacy pair only */ }
+    } catch { /* degraded: Done only */ }
     terminalByTaskId.set(other.id, columns);
   }
   const activeOtherTasks = allTasks.filter((other) => (

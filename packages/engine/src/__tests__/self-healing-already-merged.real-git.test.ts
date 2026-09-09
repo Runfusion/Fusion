@@ -71,7 +71,6 @@ function createStore(tasks: TaskMap, settings: Partial<Settings> = {}): TaskStor
       tasks.set(id, { ...current, log: [...log, { timestamp: new Date().toISOString(), action: message }] as any });
     }),
     walCheckpoint: vi.fn(() => ({ busy: 0, log: 0, checkpointed: 0 })),
-    archiveTaskAndCleanup: vi.fn(async () => ({})),
     clearStaleExecutionStartBranchReferences: vi.fn(() => []),
     getTask: vi.fn(async (id: string) => tasks.get(id)),
     updateSettings: vi.fn(async () => mergedSettings),

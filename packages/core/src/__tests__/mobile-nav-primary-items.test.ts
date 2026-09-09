@@ -8,8 +8,8 @@ describe("resolveMobileNavPrimaryItems", () => {
   });
 
   it("accepts newly eligible destinations, preserves order, and routes omitted destinations to More", () => {
-    const resolved = resolveMobileNavPrimaryItems({ mobileNavPrimaryItems: ["git", "planning", "agents"] });
-    expect(resolved.primaryItems).toEqual(["git", "planning", "agents"]);
+    const resolved = resolveMobileNavPrimaryItems({ mobileNavPrimaryItems: ["git", "recommendations", "planning", "agents"] });
+    expect(resolved.primaryItems).toEqual(["git", "recommendations", "planning", "agents"]);
     expect(resolved.omittedItems).not.toContain("git");
     expect(resolved.omittedItems).toContain("settings");
   });

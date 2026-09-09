@@ -4,7 +4,7 @@ import { Scheduler } from "../../scheduler.js";
 import { MissionExecutionLoop } from "../../missions/mission-execution-loop.js";
 
 function makeTaskStore(
-  taskColumn: "done" | "archived" | "in-progress" = "done",
+  taskColumn: "done" | "in-progress" = "done",
   overrides: Record<string, unknown> = {},
 ) {
   const task = {

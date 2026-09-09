@@ -53,3 +53,48 @@ carries the migrator's structured "[3/12] project.tasks — 500/2000 rows" label
   overflow-wrap: anywhere;
   margin: -0.75rem 0 1.25rem;
 }
+
+/* FNXC:DesktopStartupDiagnostics 2026-09-08-19:44: Keep long startup stacks inside the failure card so issue #3589 diagnostics remain usable in narrow desktop windows. */
+.desktop-launch-gate__diagnostics {
+  display: grid;
+  gap: var(--space-2);
+  margin-block: var(--space-3);
+  text-align: start;
+}
+
+.desktop-launch-gate__diagnostics details {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2);
+}
+
+.desktop-launch-gate__diagnostics pre,
+.desktop-launch-gate__log-path {
+  max-height: 16rem;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.desktop-launch-gate__copy-fallback {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.desktop-launch-gate__copy-fallback textarea {
+  min-height: 12rem;
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  resize: vertical;
+}
+
+@media (max-width: 768px) {
+  .desktop-launch-gate__panel { max-height: 100%; overflow: auto; }
+  .desktop-launch-gate__diagnostics pre { max-height: 12rem; }
+}

@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { History, RotateCcw, Search } from "lucide-react";
 import type { PatchnodeDay, PatchnodeEntry } from "@fusion/core";
 import { fetchPatchnode } from "../api";
 import { ViewHeader } from "./ViewHeader";
+import { useAutoPaginationSentinel } from "../hooks/useAutoPaginationSentinel";
 import "./PatchnodeView.css";
 
 export interface PatchnodeViewProps {
@@ -30,6 +31,7 @@ export function PatchnodeView({ projectId, onOpenTaskDetail }: PatchnodeViewProp
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState(false);
   const [retryNonce, setRetryNonce] = useState(0);
+  const contentRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => setDebouncedSearch(search.trim()), 250);
@@ -84,6 +86,8 @@ export function PatchnodeView({ projectId, onOpenTaskDetail }: PatchnodeViewProp
     }
   }, [debouncedSearch, loadedCount, projectId]);
 
+  const pagination = useAutoPaginationSentinel({ rootRef: contentRef, hasMore, loading: loadingMore, onLoadMore: loadMore, direction: "end" });
+
   const today = useMemo(() => utcDayOffset(0), []);
   const yesterday = useMemo(() => utcDayOffset(-1), []);
   const dayLabel = (day: string) => {
@@ -120,7 +124,7 @@ export function PatchnodeView({ projectId, onOpenTaskDetail }: PatchnodeViewProp
           </label>
         )}
       />
-      <div className="patchnode-view__content">
+      <div className="patchnode-view__content" ref={contentRef}>
         {loading ? <p className="patchnode-state">{t("patchnode.loading", "Loading History…")}</p> : null}
         {!loading && error ? (
           <div className="card patchnode-state">
@@ -161,7 +165,7 @@ export function PatchnodeView({ projectId, onOpenTaskDetail }: PatchnodeViewProp
             </div>
           </section>
         )) : null}
-        {!loading && !error && hasMore ? <button className="btn patchnode-load-more" type="button" disabled={loadingMore} onClick={() => void loadMore()}>{loadingMore ? t("patchnode.loadingMore", "Loading…") : t("patchnode.loadMore", "Load more")}</button> : null}
+        {!loading && !error && hasMore ? <div ref={pagination.sentinelRef} className="patchnode-load-more" role="status" aria-live="polite" data-testid="patchnode-auto-pagination-sentinel">{loadingMore ? t("patchnode.loadingMore", "Loading…") : null}</div> : null}
       </div>
     </section>
   );

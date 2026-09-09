@@ -2,12 +2,12 @@
 FNXC:WorkflowLifecycleColumns 2026-07-30-08:25 (live on main):
 
 THE INVARIANT: "is this card already finished?" is answered from the task's own workflow, so a completed
-card is never rebounded out of its complete or archived lane.
+card is never rebounded out of its complete lane.
 
 WHY INERT IS WORSE THAN WRONG HERE. `parkCompletedBlockedTask` opened with a literal
-`task.column === "done" || task.column === "archived"`. On a renamed board neither matches, so the guard
+a literal `task.column === "done"` check. On a renamed board it does not match, so the guard
 did nothing — and the very next block rebounds the card to its planning lane. So a COMPLETED card sitting
-in a renamed complete/archived column was moved BACKWARDS out of it.
+in a renamed complete column was moved BACKWARDS out of it.
 
 THE PAIR IS WHAT MADE IT DANGEROUS, and it is why this survived two PRs. #2644 converted the rebound half
 to resolve its target by role; this terminal half stayed a literal. A role-resolved rebound behind a
@@ -25,14 +25,13 @@ import { TaskExecutor } from "../executor.js";
 import { createMockStore } from "./executor-test-helpers.js";
 import type { WorkflowIr } from "@fusion/core";
 
-/** Standard traits under non-default names: `shipped` is complete, `attic` is archived. */
+/** Standard traits under non-default names: `shipped` is complete. */
 const RENAMED_IR = {
   version: "v2", id: "wf-renamed", name: "renamed", nodes: [], edges: [],
   columns: [
     { id: "queued", name: "Queued", traits: [{ trait: "hold", config: { release: "capacity" } }] },
     { id: "building", name: "Building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
     { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
-    { id: "attic", name: "Attic", traits: [{ trait: "archived" }] },
   ],
 } as unknown as WorkflowIr;
 
@@ -97,7 +96,7 @@ function harness(ir: WorkflowIr | undefined, column: string, gate?: Promise<void
   return { store, moves, park, setStoredColumn };
 }
 
-describe("the terminal guard covers the ARCHIVED role and refuses to guess", () => {
+describe("the terminal guard covers the Complete role and refuses to guess", () => {
   /*
   FNXC:WorkflowLifecycleColumns 2026-07-30-08:40 (reduced after #2568's fix landed on main):
 
@@ -111,12 +110,10 @@ describe("the terminal guard covers the ARCHIVED role and refuses to guess", () 
   cases sit in between: the ARCHIVED role resolved through the executor path, and the refusal to treat an
   unclassifiable column as terminal.
   */
-  it("refuses to park a card in the renamed ARCHIVED column", async () => {
-    // Main's renamed fixture has no archived column, so the archived half of the pair is unexercised end to
-    // end. The roles are resolved independently and can fail independently.
-    const h = harness(RENAMED_IR, "attic");
+  it("refuses to park a card in the renamed Complete column", async () => {
+    const h = harness(RENAMED_IR, "shipped");
 
-    await expect(h.park(completedTaskIn("attic"))).resolves.toBe(false);
+    await expect(h.park(completedTaskIn("shipped"))).resolves.toBe(false);
     expect(h.moves).toEqual([]);
   });
 
@@ -142,7 +139,7 @@ describe("the terminal guard covers the ARCHIVED role and refuses to guess", () 
     /*
     FNXC:WorkflowLifecycleColumns 2026-07-30-09:15 (#2670 review):
     Resolving the workflow is an await, and the card can reach a terminal lane inside that window —
-    a concurrent archive, or the merge path completing. The guard therefore has to judge the card as
+    the merge path completing. The guard therefore has to judge the card as
     it is NOW, not as the caller found it. Every other test here settles immediately and starts in
     the column it asserts on, so none of them can distinguish the re-read from the caller's stale
     copy; this one holds resolution open and moves the STORED card underneath it.
@@ -155,7 +152,7 @@ describe("the terminal guard covers the ARCHIVED role and refuses to guess", () 
     const stale = completedTaskIn("building");
     const parked = h.park(stale);
 
-    h.setStoredColumn("attic");
+    h.setStoredColumn("shipped");
     release();
 
     await expect(parked).resolves.toBe(false);

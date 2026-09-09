@@ -17,13 +17,12 @@ Surfaces (FN-5893):
 - FORK-A: branch-gone + landedSha-unset → parked failed; branch-gone + landedSha-set → skipped as landed.
 - regression: a single-repo (non-workspace) task → reconcilers behave identically.
 */
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import { execSync } from "node:child_process";
 import { existsSync, mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { registerArchiveWorkspaceWorktreeDisposer, type Settings, type Task, type TaskStore, type WorkspaceLandIntent } from "@fusion/core";
-import { createSharedPgTaskStoreTestHarness, pgDescribe, type SharedPgTaskStoreHarness } from "../../../core/src/__test-utils__/pg-test-harness.js";
+import { type Settings, type Task, type TaskStore, type WorkspaceLandIntent } from "@fusion/core";
 import { SelfHealingManager } from "../self-healing.js";
 import { classifyBranchProbeError } from "../self-healing-git-evidence.js";
 import { activeSessionRegistry, executingTaskLock } from "../agents/active-session-registry.js";
@@ -211,102 +210,6 @@ function workspaceTask(workspaceWorktrees: Task["workspaceWorktrees"], extra: Pa
     ...extra,
   } as unknown as Task;
 }
-
-/*
-FNXC:WorkspaceArchiveRestore 2026-08-15-05:55:
-The archive-to-unarchive regression below uses the real PostgreSQL restore transaction and the
-store-scoped archive disposal seam. Booting Executor would add unrelated session lifecycle work;
-the seam is the production boundary that owns removing each sub-repo worktree and branch.
-*/
-const pgDescribeIfGit = hasGit ? pgDescribe : describe.skip;
-
-pgDescribeIfGit("FN-9048 workspace archive restore reaches self-healing cleanly", () => {
-  const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
-    prefix: "fusion_workspace_archive_restore_e2e",
-  });
-  let fx: WorkspaceFixture;
-
-  beforeAll(h.beforeAll);
-  beforeEach(async () => {
-    await h.beforeEach();
-    fx = await createWorkspaceFixture(["repo-a", "repo-b"]);
-  });
-  afterEach(async () => {
-    fx?.cleanup();
-    await h.afterEach();
-  });
-  afterAll(h.afterAll);
-
-  it("archives, disposes, restores, then skips FORK-A after its stale map is reconciled", async () => {
-    const store = h.store();
-    const id = "FN-9048-RESTORE-E2E";
-    const branch = `fusion/${id.toLowerCase()}`;
-    const workspaceWorktrees: NonNullable<Task["workspaceWorktrees"]> = {};
-    for (const repoRel of fx.repos) {
-      const worktreePath = path.join(fx.rootDir, ".worktrees", repoRel);
-      mkdirSync(path.dirname(worktreePath), { recursive: true });
-      fx.git(repoRel, `git worktree add -b ${branch} ${worktreePath} HEAD`);
-      workspaceWorktrees[repoRel] = { worktreePath, branch };
-    }
-    const task = await store.createTaskWithReservedId(
-      { description: "archive workspace restore regression", column: "in-review" },
-      { taskId: id, applyDefaultWorkflowSteps: false },
-    );
-    /* FNXC:RepositoryScope 2026-08-23-23:59: partial-land recovery admits only CONFIRMED repository
-       intent plus qualified modified evidence (see makeWorkspaceTask above). This card is built
-       through the real store, so it must state the same contract or the sweep never considers it. */
-    await store.updateTask(id, {
-      workspaceWorktrees,
-      branch: undefined,
-      repositoryScope: { repositories: [...fx.repos].sort(), state: "confirmed", revision: 1 },
-      /* Recovery is another merge door: default task creation seeds pending implementation steps and
-         `getTaskMergeBlocker` refuses them, so this post-implementation fixture states them done. */
-      steps: [{ name: "Implementation", status: "done" }],
-      modifiedFiles: [...fx.repos].sort().map((repo) => `${repo}/feature.txt`),
-    } as never);
-    const stalePreArchive = (await store.getTask(id))!;
-    const unregister = registerArchiveWorkspaceWorktreeDisposer(store, async (_task, plan) => {
-      for (const entry of plan) {
-        fx.git(entry.repoRel, `git worktree remove --force ${entry.worktreePath}`);
-        fx.git(entry.repoRel, `git branch -D ${entry.branch}`);
-      }
-      return { removed: plan.map((entry) => entry.repoRel), failed: [] };
-    });
-
-    try {
-      await store.archiveTask(id);
-      for (const repoRel of fx.repos) {
-        expect(existsSync(workspaceWorktrees[repoRel]!.worktreePath)).toBe(false);
-        expect(fx.git(repoRel, `git show-ref --verify --quiet refs/heads/${branch}; echo $?`)).toBe("1");
-      }
-
-      /*
-      FNXC:WorkspaceArchiveRestore 2026-08-15-05:55:
-      This captures the exact pre-fix resurrection shape: archive removed both branches, but the
-      soft-deleted row still has the old map and FORK-A proves it is unrecoverable.
-      */
-      const staleStore = createStore([stalePreArchive]);
-      const staleManager = makeManager(staleStore, fx.rootDir);
-      await staleManager.reconcileWorkspacePartialLands();
-      expect(staleStore.updateTask).toHaveBeenCalledWith(id, expect.objectContaining({ status: "failed" }));
-
-      const restored = await store.unarchiveTask(id);
-      expect(restored.workspaceWorktrees).toBeUndefined();
-      const updateTask = vi.spyOn(store, "updateTask");
-      const recordRunAuditEvent = vi.spyOn(store, "recordRunAuditEvent");
-      const manager = makeManager(store, fx.rootDir);
-
-      expect(await manager.reconcileWorkspacePartialLands()).toBe(0);
-      expect(updateTask).not.toHaveBeenCalledWith(id, expect.objectContaining({ status: "failed" }));
-      expect(recordRunAuditEvent).not.toHaveBeenCalledWith(expect.objectContaining({
-        mutationType: "task:reconcile-workspace-partial-land",
-        metadata: expect.objectContaining({ action: "park-failed" }),
-      }));
-    } finally {
-      unregister();
-    }
-  });
-});
 
 describeIfGit("workspace-aware self-healing (Phase D U1)", () => {
   let fx: WorkspaceFixture;
@@ -839,18 +742,17 @@ describeIfGit("workspace-aware self-healing (Phase D U1)", () => {
 
   /*
   FNXC:Workspace 2026-08-15-04:11:
-  The archived-owner symptom failed before FN-9054: `getTask` returned the cold-storage snapshot
-  in `archived`, which the terminal predicate read as live. After the staleness floor, reclaim must
-  free that real sub-repo path so a different workspace task can acquire the next land lease.
+  A completed owner has no live land operation. After the staleness floor, reclaim must free that
+  real sub-repo path so a different workspace task can acquire the next land lease.
   */
-  it("reclaims an archived owner's stale lease and makes the repo re-leasable", async () => {
+  it("reclaims a completed owner's stale lease and makes the repo re-leasable", async () => {
     fx = await createWorkspaceFixture(["repo-a"]);
     const leasePath = fx.repoPath("repo-a");
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-15T00:00:00.000Z"));
     activeSessionRegistry.registerPath(leasePath, { taskId: TASK_ID, kind: "workspace-repo-land", ownerKey: "land" });
 
-    const task = workspaceTask({ "repo-a": { worktreePath: leasePath, branch: BRANCH } }, { column: "archived" });
+    const task = workspaceTask({ "repo-a": { worktreePath: leasePath, branch: BRANCH } }, { column: "done" });
     const store = createStore([task]);
     const manager = makeManager(store, fx.rootDir);
 
@@ -862,40 +764,6 @@ describeIfGit("workspace-aware self-healing (Phase D U1)", () => {
       taskId: "FN-7002", kind: "workspace-repo-land", ownerKey: "next-land",
     })).not.toThrow();
     expect(activeSessionRegistry.lookupByPath(leasePath)?.taskId).toBe("FN-7002");
-  });
-
-  /*
-  FNXC:Workspace 2026-08-15-04:11:
-  Archive terminality follows the archived trait rather than the legacy literal, so a project that
-  renames its archive lane cannot leave a crashed workspace land holder blocking future tasks.
-  */
-  it("reclaims a land lease whose owner rests in a RENAMED archive lane", async () => {
-    fx = await createWorkspaceFixture(["repo-a"]);
-    const leasePath = fx.repoPath("repo-a");
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-08-15T00:00:00.000Z"));
-    activeSessionRegistry.registerPath(leasePath, { taskId: TASK_ID, kind: "workspace-repo-land", ownerKey: "land" });
-
-    const task = workspaceTask({ "repo-a": { worktreePath: leasePath, branch: BRANCH } }, { column: "retained" });
-    const store = createStore([task]);
-    (store as unknown as { listWorkflowDefinitions: unknown }).listWorkflowDefinitions = vi.fn(async () => [{
-      id: "custom:renamed-archive",
-      ir: {
-        version: "v2",
-        id: "custom:renamed-archive",
-        nodes: [],
-        edges: [],
-        columns: [
-          { id: "building", name: "building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
-          { id: "retained", name: "retained", traits: [{ trait: "archived" }] },
-        ],
-      },
-    }]);
-    const manager = makeManager(store, fx.rootDir);
-
-    vi.setSystemTime(new Date("2026-08-15T00:10:00.000Z"));
-    expect(await manager.reclaimPhantomWorkspaceLandLeases()).toBe(1);
-    expect(activeSessionRegistry.isPathActive(leasePath)).toBe(false);
   });
 
   /*
@@ -929,17 +797,17 @@ describeIfGit("workspace-aware self-healing (Phase D U1)", () => {
 
   /*
   FNXC:Workspace 2026-08-15-04:11:
-  Archive terminality does not shorten the existing floor; a newly registered archived snapshot
-  remains protected while a legitimate land operation is still warming.
+  Completion does not shorten the existing floor; a newly registered Done task remains protected
+  while a legitimate land operation is still warming.
   */
-  it("does NOT reclaim a young lease owned by an archived task", async () => {
+  it("does NOT reclaim a young lease owned by a completed task", async () => {
     fx = await createWorkspaceFixture(["repo-a"]);
     const leasePath = fx.repoPath("repo-a");
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-15T00:00:00.000Z"));
     activeSessionRegistry.registerPath(leasePath, { taskId: TASK_ID, kind: "workspace-repo-land", ownerKey: "land" });
 
-    const task = workspaceTask({ "repo-a": { worktreePath: leasePath, branch: BRANCH } }, { column: "archived" });
+    const task = workspaceTask({ "repo-a": { worktreePath: leasePath, branch: BRANCH } }, { column: "done" });
     const manager = makeManager(createStore([task]), fx.rootDir);
 
     vi.setSystemTime(new Date("2026-08-15T00:01:00.000Z"));
@@ -949,17 +817,17 @@ describeIfGit("workspace-aware self-healing (Phase D U1)", () => {
 
   /*
   FNXC:Workspace 2026-08-15-04:11:
-  An archived snapshot cannot override the merge-pending guard: queued land work remains live until
+  A completed row cannot override the merge-pending guard: queued land work remains live until
   its in-memory merge pipeline releases the lease.
   */
-  it("does NOT reclaim an archived owner's lease while it is merge-pending", async () => {
+  it("does NOT reclaim a completed owner's lease while it is merge-pending", async () => {
     fx = await createWorkspaceFixture(["repo-a"]);
     const leasePath = fx.repoPath("repo-a");
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-15T00:00:00.000Z"));
     activeSessionRegistry.registerPath(leasePath, { taskId: TASK_ID, kind: "workspace-repo-land", ownerKey: "land" });
 
-    const task = workspaceTask({ "repo-a": { worktreePath: leasePath, branch: BRANCH } }, { column: "archived" });
+    const task = workspaceTask({ "repo-a": { worktreePath: leasePath, branch: BRANCH } }, { column: "done" });
     const manager = makeManager(createStore([task]), fx.rootDir, { isMergePending: (id: string) => id === TASK_ID });
 
     vi.setSystemTime(new Date("2026-08-15T00:10:00.000Z"));
@@ -969,17 +837,17 @@ describeIfGit("workspace-aware self-healing (Phase D U1)", () => {
 
   /*
   FNXC:Workspace 2026-08-15-04:11:
-  An active executor remains authoritative over row terminality; even a stale archived snapshot
+  An active executor remains authoritative over row terminality; even a stale completed row
   cannot make self-healing yank its workspace land lease.
   */
-  it("does NOT reclaim an archived owner's lease while its task is active", async () => {
+  it("does NOT reclaim a completed owner's lease while its task is active", async () => {
     fx = await createWorkspaceFixture(["repo-a"]);
     const leasePath = fx.repoPath("repo-a");
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-15T00:00:00.000Z"));
     activeSessionRegistry.registerPath(leasePath, { taskId: TASK_ID, kind: "workspace-repo-land", ownerKey: "land" });
 
-    const task = workspaceTask({ "repo-a": { worktreePath: leasePath, branch: BRANCH } }, { column: "archived" });
+    const task = workspaceTask({ "repo-a": { worktreePath: leasePath, branch: BRANCH } }, { column: "done" });
     const manager = makeManager(createStore([task]), fx.rootDir, { isTaskActive: (id: string) => id === TASK_ID });
 
     vi.setSystemTime(new Date("2026-08-15T00:10:00.000Z"));
@@ -1130,18 +998,33 @@ describeIfGit("workspace-aware self-healing (Phase D U1)", () => {
     );
   });
 
+  it("keeps a recently failed workspace worktree until the ordinary terminal floor expires", async () => {
+    fx = await createWorkspaceFixture(["repo-a"]);
+    const worktreePath = path.join(fx.repoPath("repo-a"), ".wt-recent-failed");
+    fx.git("repo-a", `git worktree add -b ${BRANCH} ${worktreePath} HEAD`);
+    const recent = new Date().toISOString();
+    const task = workspaceTask(
+      { "repo-a": { worktreePath, branch: BRANCH, landedSha: fx.git("repo-a", "git rev-parse HEAD").trim() } },
+      { status: "failed", updatedAt: recent, columnMovedAt: recent },
+    );
+
+    expect(await makeManager(createStore([task]), fx.rootDir).reconcileOrphanedWorkspaceWorktrees()).toBe(0);
+    expect(existsSync(worktreePath)).toBe(true);
+    expect(fx.git("repo-a", `git branch --list ${BRANCH}`).trim()).toContain(BRANCH);
+  });
+
   /*
   FNXC:Workspace 2026-08-15-05:33:
-  Failed and soft-deleted workspace rows are destructive candidates only after their one-day floor.
-  These real-git cases lock the worktree/prune/branch policy so terminal cleanup cannot regress into
-  either leaking abandoned repositories or destroying an unlanded failed-task branch.
+  Failed workspace rows remain destructive candidates only after their one-day floor. Explicitly
+  soft-deleted rows are immediately eligible because the operator authorized discarding task-owned
+  checkout content; real-Git cases keep failed-task unlanded branches protected.
   */
   it("tears down a soft-deleted workspace worktree and branch as operator-discarded", async () => {
     fx = await createWorkspaceFixture(["repo-a"]);
     const worktreePath = path.join(fx.repoPath("repo-a"), ".wt-deleted");
     fx.git("repo-a", `git worktree add -b ${BRANCH} ${worktreePath} HEAD`);
-    const old = new Date(Date.now() - 25 * 60 * 60_000).toISOString();
-    const task = workspaceTask({ "repo-a": { worktreePath, branch: BRANCH } }, { deletedAt: old, updatedAt: old, columnMovedAt: old });
+    const deletedAt = new Date().toISOString();
+    const task = workspaceTask({ "repo-a": { worktreePath, branch: BRANCH } }, { deletedAt, updatedAt: deletedAt, columnMovedAt: deletedAt });
     const manager = makeManager(createStore([task]), fx.rootDir);
 
     expect(await manager.reconcileOrphanedWorkspaceWorktrees()).toBe(1);

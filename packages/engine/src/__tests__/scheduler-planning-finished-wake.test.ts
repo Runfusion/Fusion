@@ -2,6 +2,11 @@ import { describe, expect, it, vi } from "vitest";
 import type { TaskStore } from "@fusion/core";
 import { Scheduler } from "../scheduler.js";
 import { flushAsyncHandlers } from "./_flush-async-handlers.js";
+import {
+  createPlanReviewApprovedState,
+  createPlanReviewRevisedState,
+  createSupersededPlanReviewApproval,
+} from "./_plan-review-outcome-states.js";
 
 /*
 FNXC:CodingIdeasWorkflow 2026-07-25-13:10:
@@ -220,6 +225,45 @@ describe("Scheduler wakes on the approval-held -> dispatchable transition", () =
     await flushAsyncHandlers();
 
     expect(schedule).toHaveBeenCalledTimes(1);
+  });
+
+  it("queues an ordinary passed Plan Review without first arming the approval-held disjunct", async () => {
+    const { emit, schedule } = createScheduler();
+    const approved = createPlanReviewApprovedState({ id: "FN-1", approvedPlanFingerprint: undefined });
+
+    emit("task:updated", createTask(approved as unknown as Record<string, unknown>));
+    await flushAsyncHandlers();
+
+    expect(schedule).toHaveBeenCalledTimes(1);
+  });
+
+  it("queues an ordinary passed Plan Review only once across identical updates", async () => {
+    const { emit, schedule } = createScheduler();
+    const approved = createPlanReviewApprovedState({ id: "FN-1", approvedPlanFingerprint: undefined });
+
+    emit("task:updated", createTask(approved as unknown as Record<string, unknown>));
+    emit("task:updated", createTask(approved as unknown as Record<string, unknown>));
+    await flushAsyncHandlers();
+
+    expect(schedule).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not queue a non-satisfying, superseded, replanning, paused, or unproven Plan Review state", async () => {
+    const cases = [
+      createPlanReviewRevisedState({ id: "FN-REVISED", status: null }),
+      createSupersededPlanReviewApproval({ id: "FN-SUPERSEDED" }),
+      createPlanReviewApprovedState({ id: "FN-REPLANNING", status: "needs-replan" }),
+      createPlanReviewApprovedState({ id: "FN-PAUSED", paused: true }),
+      createPlanReviewApprovedState({ id: "FN-USER-PAUSED", userPaused: true }),
+      createPlanReviewApprovedState({ id: "FN-NO-PROOF", workflowStepResults: [] }),
+    ];
+
+    for (const candidate of cases) {
+      const { emit, schedule } = createScheduler();
+      emit("task:updated", createTask(candidate as unknown as Record<string, unknown>));
+      await flushAsyncHandlers();
+      expect(schedule, candidate.id).not.toHaveBeenCalled();
+    }
   });
 
   it("does not wake when approval remains held or clears into a pause/non-hold lane", async () => {

@@ -17,7 +17,7 @@ vi.mock("@fusion/core", async (importOriginal) => {
   return createEngineCoreMock(() => Promise.resolve(original));
 });
 
-/** Hold lane `drafting`, wip `building`, complete `shipped`, archive `filed`. No legacy ids. */
+/** Hold lane `drafting`, WIP `building`, complete `shipped`. No legacy ids. */
 const RENAMED_IR = {
   version: "v2", id: "wf-renamed", name: "renamed", nodes: [], edges: [],
   columns: [
@@ -25,7 +25,6 @@ const RENAMED_IR = {
     { id: "building", name: "Building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
     { id: "reviewing", name: "Reviewing", traits: [{ trait: "merge-blocker" }] },
     { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
-    { id: "filed", name: "Filed", traits: [{ trait: "archived" }] },
   ],
 };
 

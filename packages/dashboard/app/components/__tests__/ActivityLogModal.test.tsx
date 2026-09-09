@@ -150,9 +150,9 @@ describe("ActivityLogModal", () => {
 
     render(<ActivityLogModal isOpen={true} onClose={mockOnClose} tasks={mockTasks} onOpenTaskDetail={mockOnOpenTaskDetail} />);
     await user.type(screen.getByTestId("activity-task-search"), "fn-066");
-    await waitFor(() => expect(screen.getByTestId("activity-load-more")).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId("activity-auto-pagination-sentinel")).toBeTruthy());
 
-    await user.click(screen.getByTestId("activity-load-more"));
+    fireEvent.scroll(screen.getByTestId("activity-log-content"));
     await waitFor(() => expect(screen.getAllByTestId("activity-entry")).toHaveLength(200));
     expect(mockFetchActivityLog).toHaveBeenLastCalledWith(expect.objectContaining({
       taskId: "FN-066",

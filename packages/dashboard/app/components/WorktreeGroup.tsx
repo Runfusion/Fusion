@@ -36,9 +36,6 @@ interface WorktreeGroupProps {
   onResetTask?: (id: string, options?: { description?: string }) => Promise<Task>;
   onDuplicateTask?: (id: string, options?: { workflowId?: string }) => Promise<Task>;
   onMergeTask?: (id: string) => Promise<MergeResult>;
-  onArchiveTask?: (id: string, options?: { removeLineageReferences?: boolean }) => Promise<Task>;
-  onUnarchiveTask?: (id: string) => Promise<Task>;
-  /* FNXC:TaskRevert 2026-07-05-00:00 (FN-7525): threaded alongside onArchiveTask/onUnarchiveTask. */
   onRevertTask?: (id: string, body?: RevertTaskOptions) => Promise<RevertTaskResult>;
   onDeleteTask?: (id: string, options?: {
     removeDependencyReferences?: boolean;
@@ -91,8 +88,6 @@ function WorktreeGroupComponent({
   onResetTask,
     onDuplicateTask,
   onMergeTask,
-  onArchiveTask,
-  onUnarchiveTask,
   onRevertTask,
   onDeleteTask,
   onOpenDetailWithTab,
@@ -164,8 +159,6 @@ function WorktreeGroupComponent({
                   onResetTask={onResetTask}
           onDuplicateTask={onDuplicateTask}
           onMergeTask={onMergeTask}
-          onArchiveTask={onArchiveTask}
-          onUnarchiveTask={onUnarchiveTask}
           onRevertTask={onRevertTask}
           onDeleteTask={onDeleteTask}
           onOpenDetailWithTab={onOpenDetailWithTab}
@@ -203,8 +196,6 @@ function WorktreeGroupComponent({
                   onResetTask={onResetTask}
           onDuplicateTask={onDuplicateTask}
           onMergeTask={onMergeTask}
-          onArchiveTask={onArchiveTask}
-          onUnarchiveTask={onUnarchiveTask}
           onRevertTask={onRevertTask}
           onDeleteTask={onDeleteTask}
           onOpenDetailWithTab={onOpenDetailWithTab}

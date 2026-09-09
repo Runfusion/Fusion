@@ -16,7 +16,6 @@ const twoCompleteBoard = {
     { id: "building", name: "building", traits: [{ trait: "wip" }] },
     { id: "done", name: "done", traits: [{ trait: "complete" }] },
     { id: "released", name: "released", traits: [{ trait: "complete" }] },
-    { id: "archived", name: "archived", traits: [{ trait: "archived" }] },
   ],
   nodes: [], edges: [],
 } as unknown as WorkflowIr;
@@ -38,8 +37,8 @@ describe("the task:moved payload carries the terminal SET, not just the first co
     expect(lanes?.complete).toBe("done");
   });
 
-  it("includes the archived lane in terminal", () => {
-    expect(toTaskMoveLanes(twoCompleteBoard)?.terminal).toContain("archived");
+  it("excludes the historical archived sentinel from terminal routing", () => {
+    expect(toTaskMoveLanes(twoCompleteBoard)?.terminal).not.toContain("archived");
   });
 
   it("omits terminal for an IR with no lifecycle columns rather than inventing one", () => {

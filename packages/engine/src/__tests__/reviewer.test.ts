@@ -113,6 +113,32 @@ describe("reviewStep — model settings threading", () => {
     expect(opts.defaultModelId).toBe("claude-sonnet-4-5");
   });
 
+  it("captures a terminal-only reviewer verdict through the production subscriber", async () => {
+    const terminalVerdict = approvingReview("### Verdict: APPROVE\n### Summary\nTerminal text is complete.");
+    mockedCreateFnAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        subscribe: vi.fn().mockImplementation((callback: (event: unknown) => void) => {
+          callback({
+            type: "message_update",
+            assistantMessageEvent: {
+              type: "text_end",
+              partial: { content: [{ type: "text", text: terminalVerdict }] },
+              contentIndex: 0,
+              content: terminalVerdict,
+            },
+          });
+        }),
+        dispose: vi.fn(),
+      },
+    } as any);
+
+    const result = await reviewStep("/tmp/worktree", "FN-9277", 1, "Terminal verdict", "plan", "# prompt");
+
+    expect(result.verdict).toBe("APPROVE");
+    expect(result.review).toBe(terminalVerdict);
+  });
+
   it("emits resolved durable reviewer session and tool telemetry through the live lane callbacks", async () => {
     mockedCreateFnAgent.mockImplementation(async (options) => {
       options.onToolStart?.("Read", { path: "private-review-input" });

@@ -34,8 +34,6 @@ All skill/extension tool invocations in this catalog use the public `fn_*` names
 | `fn_workflow_step_resume` | Resume a stuck pending workflow step on an in-review or in-progress Fusion task (operator-only, mandatory reason, audit-logged). When a prompt node (like code-review) is dispatched but never receives a verdict callback (Runfusion/Fusion#1946), the step stays in 'pending' status indefinitely. This tool transitions it to 'failed', enabling the existing fn_task_bypass_review escape hatch to clear the merge blocker. Requires a mandatory reason and step ID. |
 | `fn_task_duplicate` | Duplicate an existing task, creating a fresh copy in planning. Copies the title and description but resets all execution state. The AI planning agent will replan the new task. |
 | `fn_task_refine` | Request a refinement of a completed or in-review task. Creates a new follow-up task in planning that references the original task as a dependency. Use this when a done or in-review task needs additional work, improvements, or follow-up changes. |
-| `fn_task_archive` | Archive a task from any live column (move to archived). Archived tasks are preserved for historical reference but moved out of the main board view. If the task is still referenced as a lineage parent by another task, archiving is rejected unless removeLineageReferences:true is passed. |
-| `fn_task_unarchive` | Unarchive an archived task (move from archived → its restore column). Restores to the pre-archive column when available, with active execution columns downgraded to todo. |
 | `fn_task_delete` | Soft-delete a task from active Fusion board views. The task row and artifacts are preserved; optional allowResurrection marks the ID for intentional recreation. If live lineage children or dependents still reference the task, deletion is rejected unless the matching explicit reference-removal option is passed. |
 | `fn_task_import_github` | Import GitHub issues as Fusion tasks. Fetches open issues from a repository and creates tasks in the planning column. Each task includes the issue title and body with a link to the source issue. |
 | `fn_task_import_github_issue` | Import a specific GitHub issue as a Fusion task. Fetches the issue by number and creates a single task in the planning column with the issue title and body. |
@@ -76,7 +74,7 @@ All skill/extension tool invocations in this catalog use the public `fn_*` names
 | `fn_slice_delete` | Delete a slice and its features. Rejects deletion when child features link to live tasks unless force=true. |
 | `fn_milestone_delete` | Delete a milestone and all descendant slices/features. Rejects deletion when child features link to live tasks unless force=true. |
 | `fn_slice_activate` | Activate a pending slice for implementation. Sets status to 'active' and enables task linking for its features. |
-| `fn_feature_link_task` | Link a feature to a fn task for implementation. Updates the feature status to 'triaged' and associates it with the task. If the target task is not on the active board (for example archived, deleted, or never created), the tool returns a clear validation error indicating that only active tasks can be linked. |
+| `fn_feature_link_task` | Link a feature to a fn task for implementation. Updates the feature status to 'triaged' and associates it with the task. If the target task is not on the active board (for example deleted, historical, or never created), the tool returns a clear validation error indicating that only active tasks can be linked. |
 | `fn_feature_repoint_task` | Atomically re-point an already-linked feature's single-valued taskId to a different task. Corrects a feature pinned to the wrong task (for example a shared vision doc) without the status-lossy unlink then link two-step. The target task must be live; same-task re-point is an idempotent no-op. |
 | `fn_feature_unlink_task` | Detach a feature from its linked task entirely, clearing its single-valued taskId and demoting its status to 'defined'. Use before the documented safe duplicate-cleanup and reconcile-done flow. Returns a clear error if the feature is not currently linked to any task. |
 | `fn_feature_set_status` | Set a feature lifecycle status. |
@@ -119,7 +117,6 @@ All skill/extension tool invocations in this catalog use the public `fn_*` names
 - `fn task merge FN-001` — Merge an in-review task
 - `fn task duplicate FN-001` — Duplicate a task
 - `fn task refine FN-001 --feedback "..."` — Create refinement task
-- `fn task archive FN-001` / `fn task unarchive FN-001` — Archive/restore tasks
 - `fn task delete FN-001` — Delete a task
 - `fn task retry FN-001` — Retry a failed task
 - `fn task comment FN-001 "..."` — Add a task comment

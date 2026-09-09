@@ -159,16 +159,17 @@ describe("DevServerLogViewer", () => {
     expect(screen.queryByText("\u001b[32mSuccess\u001b[0m done")).not.toBeInTheDocument();
   });
 
-  it("calls onLoadMore when clicking Load older logs", () => {
+  it("calls onLoadMore automatically near the history edge", () => {
     const { onLoadMore } = renderViewer({
       entries: [createEntry({ id: 1, text: "line" })],
       hasMore: true,
       total: 100,
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Load older logs" }));
+    fireEvent.scroll(screen.getByTestId("devserver-log-content"));
 
     expect(onLoadMore).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("button", { name: "Load older logs" })).not.toBeInTheDocument();
   });
 
   it("toggles fullscreen class", () => {

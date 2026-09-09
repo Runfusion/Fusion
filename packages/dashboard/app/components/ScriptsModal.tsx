@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { getErrorMessage } from "@fusion/core";
 import { fetchScripts, addScript, removeScript, type ScriptEntry } from "../api";
+import { normalizeScriptCatalog } from "../api/system/workflows";
 import type { ToastType } from "../hooks/useToast";
 import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
 import { useModalDismissPreference } from "../hooks/useOverlayDismiss";
@@ -14,6 +15,7 @@ import {
   Trash2,
   Terminal,
   Loader2,
+  Pencil,
 } from "lucide-react";
 
 interface ScriptsModalProps {
@@ -28,17 +30,14 @@ interface ScriptsModalProps {
 interface ScriptFormData {
   name: string;
   command: string;
+  description: string;
 }
 
 const EMPTY_FORM: ScriptFormData = {
   name: "",
   command: "",
+  description: "",
 };
-
-/** Validate script name: alphanumeric, hyphens, underscores only */
-function isValidScriptName(name: string): boolean {
-  return /^[a-zA-Z0-9_-]+$/.test(name);
-}
 
 /** Truncate command for display */
 function truncateCommand(command: string, maxLength: number = 60): string {
@@ -50,7 +49,7 @@ export function ScriptsModal({ isOpen, onClose, addToast, projectId, onRunScript
   const { t } = useTranslation("app");
   const dismissOnOutsidePointerDown = useModalDismissPreference();
   useMobileScrollLock(isOpen);
-  const [scripts, setScripts] = useState<Record<string, string>>({});
+  const [scripts, setScripts] = useState<ScriptEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
   const [isEditing, setIsEditing] = useState<string | null>(null);
@@ -63,7 +62,7 @@ export function ScriptsModal({ isOpen, onClose, addToast, projectId, onRunScript
     try {
       setLoading(true);
       const data = await fetchScripts(projectId);
-      setScripts(data);
+      setScripts(normalizeScriptCatalog(data));
     } catch (err) {
       addToast(getErrorMessage(err) || t("scriptsModal.failedToLoadScripts", "Failed to load scripts"), "error");
     } finally {
@@ -84,10 +83,10 @@ export function ScriptsModal({ isOpen, onClose, addToast, projectId, onRunScript
     setNameError(null);
   }, []);
 
-  const handleEdit = useCallback((name: string, command: string) => {
-    setIsEditing(name);
+  const handleEdit = useCallback((script: ScriptEntry) => {
+    setIsEditing(script.name);
     setIsCreating(false);
-    setForm({ name, command });
+    setForm({ name: script.name, command: script.command, description: script.description ?? "" });
     setNameError(null);
   }, []);
 
@@ -100,11 +99,7 @@ export function ScriptsModal({ isOpen, onClose, addToast, projectId, onRunScript
 
   const handleNameChange = useCallback((name: string) => {
     setForm((prev) => ({ ...prev, name }));
-    if (name && !isValidScriptName(name)) {
-      setNameError(t("scriptsModal.nameErrorMsg", "Name must contain only letters, numbers, hyphens, and underscores (no spaces)"));
-    } else {
-      setNameError(null);
-    }
+    setNameError(name.trim() ? null : t("scriptsModal.scriptNameRequired", "Script name is required"));
   }, [t]);
 
   const handleSave = useCallback(async () => {
@@ -116,11 +111,6 @@ export function ScriptsModal({ isOpen, onClose, addToast, projectId, onRunScript
       return;
     }
 
-    if (!isValidScriptName(trimmedName)) {
-      addToast(t("scriptsModal.nameErrorMsg", "Script name must contain only letters, numbers, hyphens, and underscores (no spaces)"), "error");
-      return;
-    }
-
     if (!trimmedCommand) {
       addToast(t("scriptsModal.scriptCommandRequired", "Script command is required"), "error");
       return;
@@ -128,7 +118,10 @@ export function ScriptsModal({ isOpen, onClose, addToast, projectId, onRunScript
 
     setSaving(true);
     try {
-      await addScript(trimmedName, trimmedCommand, projectId);
+      await addScript(trimmedName, trimmedCommand, projectId, {
+        ...(isEditing ? { originalName: isEditing } : {}),
+        ...(form.description.trim() ? { description: form.description.trim() } : {}),
+      });
       addToast(isEditing ? t("scriptsModal.scriptUpdated", "Script updated") : t("scriptsModal.scriptCreated", "Script created"), "success");
       setIsEditing(null);
       setIsCreating(false);
@@ -171,10 +164,7 @@ export function ScriptsModal({ isOpen, onClose, addToast, projectId, onRunScript
   if (!isOpen) return null;
 
   const isEditingAny = isCreating || isEditing !== null;
-  const scriptEntries: ScriptEntry[] = Object.entries(scripts).map(([name, command]) => ({
-    name,
-    command,
-  }));
+  const scriptEntries = [...scripts].sort((a, b) => a.name.localeCompare(b.name));
 
   return (
     /* FNXC:ModalTouchGeometry 2026-07-26-13:20: Scripts retains its existing overlay-dismiss policy while FloatingWindow supplies the only drag/resize implementation and suspends desktop geometry in sheet viewports. */
@@ -235,7 +225,7 @@ export function ScriptsModal({ isOpen, onClose, addToast, projectId, onRunScript
                   value={form.name}
                   onChange={(e) => handleNameChange(e.target.value)}
                   placeholder={t("scriptsModal.scriptNamePlaceholder", "e.g., build, test, lint")}
-                  disabled={saving || isEditing !== null}
+                  disabled={saving}
                   data-testid="script-name-input"
                   style={{
                     width: "100%",
@@ -254,15 +244,6 @@ export function ScriptsModal({ isOpen, onClose, addToast, projectId, onRunScript
                     {nameError}
                   </div>
                 )}
-                <div
-                  style={{
-                    fontSize: "11px",
-                    color: "var(--text-muted)",
-                    marginTop: "4px",
-                  }}
-                >
-                  {t("scriptsModal.nameHint", "Letters, numbers, hyphens, and underscores only")}
-                </div>
               </div>
 
               <div>
@@ -292,6 +273,22 @@ export function ScriptsModal({ isOpen, onClose, addToast, projectId, onRunScript
                     resize: "vertical",
                     fontFamily: "monospace",
                   }}
+                />
+              </div>
+
+              <div>
+                <label htmlFor="script-description" className="scripts-modal-label">
+                  {t("scriptsModal.description", "Description (optional)")}
+                </label>
+                <textarea
+                  id="script-description"
+                  className="input scripts-modal-description-input"
+                  value={form.description}
+                  onChange={(event) => setForm((prev) => ({ ...prev, description: event.target.value }))}
+                  placeholder={t("scriptsModal.descriptionPlaceholder", "What does this script do?")}
+                  rows={2}
+                  disabled={saving}
+                  data-testid="script-description-input"
                 />
               </div>
 
@@ -410,17 +407,12 @@ export function ScriptsModal({ isOpen, onClose, addToast, projectId, onRunScript
                               {script.name}
                             </span>
                           </div>
-                          <div
-                            style={{
-                              fontSize: "12px",
-                              color: "var(--text-muted)",
-                              fontFamily: "monospace",
-                              overflow: "hidden",
-                              textOverflow: "ellipsis",
-                              whiteSpace: "nowrap",
-                            }}
-                            title={script.command}
-                          >
+                          {script.description && (
+                            <div className="script-card-description" title={script.description}>
+                              {script.description}
+                            </div>
+                          )}
+                          <div className="script-card-command" title={script.command}>
                             {truncateCommand(script.command)}
                           </div>
                         </div>
@@ -452,12 +444,12 @@ export function ScriptsModal({ isOpen, onClose, addToast, projectId, onRunScript
                           </button>
                           <button
                             className="btn-icon"
-                            onClick={() => handleEdit(script.name, script.command)}
+                            onClick={() => handleEdit(script)}
                             title={t("actions.edit", "Edit")}
                             aria-label={t("scriptsModal.editScriptNamed", "Edit {{name}}", { name: script.name })}
                             data-testid={`edit-script-${script.name}`}
                           >
-                            <Plus size={14} style={{ transform: "rotate(45deg)" }} />
+                            <Pencil size={14} aria-hidden="true" />
                           </button>
                           {deleteConfirmName === script.name ? (
                             <div className="script-delete-confirm" style={{ display: "flex", gap: "4px", alignItems: "center" }}>

@@ -108,7 +108,7 @@ describe("task-priority", () => {
     expect(sorted.map((task) => task.id)).toEqual(["FN-1", "FN-2"]);
   });
 
-  it("buildUnblockWeightMap ignores done/archived dependents", () => {
+  it("buildUnblockWeightMap ignores completed dependents", () => {
     const makeTask = (task: Partial<Task> & Pick<Task, "id" | "column" | "createdAt" | "updatedAt" | "description">): Task => ({
       id: task.id,
       description: task.description,
@@ -126,7 +126,6 @@ describe("task-priority", () => {
       makeTask({ id: "FN-1", description: "blocker", column: "todo", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" }),
       makeTask({ id: "FN-2", description: "active dependent", column: "todo", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z", dependencies: ["FN-1"] }),
       makeTask({ id: "FN-3", description: "done dependent", column: "done", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z", dependencies: ["FN-1"] }),
-      makeTask({ id: "FN-4", description: "archived dependent", column: "archived", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z", dependencies: ["FN-1"] }),
     ];
 
     const weights = buildUnblockWeightMap(tasks);
@@ -178,7 +177,7 @@ describe("task-priority", () => {
 FNXC:TaskDisplaySorting 2026-08-03-22:53:
 These cases are the shared contract formerly split between core-only and dashboard-only sorters.
 Every board surface now supplies this API with resolved flags, while missing workflow metadata falls
-back to legacy ids; preserving the input is required because archived server pagination owns its order.
+back to legacy ids. Complete history is newest-first without mutating the server page.
 */
 describe("sortTasksForDisplayColumn shared display contract", () => {
   const task = (id: string, overrides: Partial<Task> = {}) => ({
@@ -192,15 +191,18 @@ describe("sortTasksForDisplayColumn shared display contract", () => {
   });
   const ids = (tasks: readonly { id: string }[]) => tasks.map((entry) => entry.id);
 
-  it("returns a new empty array and preserves archived input order", () => {
+  it("returns a new empty array and sorts Complete history newest-first without mutation", () => {
     const empty: Array<ReturnType<typeof task>> = [];
-    expect(sortTasksForDisplayColumn(empty, "archive", { columnFlags: { archived: true } })).toEqual([]);
-    expect(sortTasksForDisplayColumn(empty, "archive", { columnFlags: { archived: true } })).not.toBe(empty);
+    expect(sortTasksForDisplayColumn(empty, "done", { columnFlags: { complete: true } })).toEqual([]);
+    expect(sortTasksForDisplayColumn(empty, "done", { columnFlags: { complete: true } })).not.toBe(empty);
 
-    const archived = [task("FN-3", { priority: "low" }), task("FN-1", { priority: "urgent" })];
-    const snapshot = [...archived];
-    expect(ids(sortTasksForDisplayColumn(archived, "vault", { columnFlags: { archived: true } }))).toEqual(["FN-3", "FN-1"]);
-    expect(archived).toEqual(snapshot);
+    const completed = [
+      task("FN-3", { priority: "urgent", columnMovedAt: "2026-06-01T00:00:00.000Z" }),
+      task("FN-1", { priority: "low", columnMovedAt: "2026-06-02T00:00:00.000Z" }),
+    ];
+    const snapshot = [...completed];
+    expect(ids(sortTasksForDisplayColumn(completed, "done", { columnFlags: { complete: true } }))).toEqual(["FN-1", "FN-3"]);
+    expect(completed).toEqual(snapshot);
   });
 
   it("uses priority then FIFO for legacy and custom hold columns", () => {

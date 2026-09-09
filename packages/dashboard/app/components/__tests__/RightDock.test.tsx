@@ -179,14 +179,12 @@ describe("RightDock", () => {
     const tasks = [
       { id: "FN-ACTIVE", title: "Active dock task", column: "todo" },
       { id: "FN-DONE", title: "Done dock task", column: "done" },
-      { id: "FN-ARCHIVED", title: "Archived dock task", column: "archived" },
     ];
     const { unmount } = render(<TestRightDock open={true} renderProps={{ ...renderProps, tasks }} />);
     fireEvent.click(screen.getByTestId("right-dock-tab-tasks"));
     expect(screen.getByTestId("dock-task-list")).toBeInTheDocument();
     expect(screen.getByTestId("dock-task-list-row-FN-ACTIVE")).toBeInTheDocument();
     expect(screen.queryByTestId("dock-task-list-row-FN-DONE")).toBeNull();
-    expect(screen.queryByTestId("dock-task-list-row-FN-ARCHIVED")).toBeNull();
     unmount();
 
     window.localStorage.setItem(RIGHT_DOCK_WIDTH_STORAGE_KEY, "900");
@@ -194,7 +192,6 @@ describe("RightDock", () => {
     fireEvent.click(screen.getByTestId("right-dock-tab-tasks"));
     expect(screen.getByTestId("dock-task-list")).toBeInTheDocument();
     expect(screen.getByTestId("dock-task-list-row-FN-ACTIVE")).toBeInTheDocument();
-    expect(screen.queryByTestId("dock-task-list-row-FN-ARCHIVED")).toBeNull();
   });
 
   it("falls back to Files when storage points at a removed right-dock view", () => {
@@ -788,17 +785,16 @@ describe("RightDock", () => {
 
   /*
   FNXC:RightDockTasks 2026-06-28-18:54:
-  The expanded Tasks modal is a registry-rendered DockTaskList surface, not a separate task renderer, so it inherits active-by-default filtering and the archived-never-shown contract while preserving dock row routing.
+  The expanded Tasks modal is a registry-rendered DockTaskList surface, not a separate task renderer, so it inherits active-by-default filtering while preserving dock row routing.
   */
   it("renders the filtered Tasks list in the expanded modal and routes row clicks back to the dock", () => {
     const onOpenTaskInDock = vi.fn();
     const task = { id: "FN-EXPAND", title: "Expanded task", column: "todo" };
     const doneTask = { id: "FN-EXPAND-DONE", title: "Expanded done task", column: "done" };
-    const archivedTask = { id: "FN-EXPAND-ARCHIVED", title: "Expanded archived task", column: "archived" };
     render(
       <RightDockExpandModal
         viewKey="tasks"
-        renderProps={{ ...renderProps, tasks: [task, doneTask, archivedTask], onOpenTaskInDock }}
+        renderProps={{ ...renderProps, tasks: [task, doneTask], onOpenTaskInDock }}
         onClose={vi.fn()}
       />,
     );
@@ -807,11 +803,9 @@ describe("RightDock", () => {
     expect(screen.getByTestId("dock-task-list")).toBeInTheDocument();
     expect(screen.getByTestId("dock-task-list-row-FN-EXPAND")).toBeInTheDocument();
     expect(screen.queryByTestId("dock-task-list-row-FN-EXPAND-DONE")).toBeNull();
-    expect(screen.queryByTestId("dock-task-list-row-FN-EXPAND-ARCHIVED")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Show Done" }));
     expect(screen.getByTestId("dock-task-list-row-FN-EXPAND-DONE")).toBeInTheDocument();
-    expect(screen.queryByTestId("dock-task-list-row-FN-EXPAND-ARCHIVED")).toBeNull();
 
     fireEvent.click(screen.getByTestId("mock-task-card-FN-EXPAND"));
     expect(onOpenTaskInDock).toHaveBeenCalledWith(task);

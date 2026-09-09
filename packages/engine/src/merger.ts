@@ -1993,21 +1993,19 @@ async function sweepAutostashOrphans(
       }
       /*
       FNXC:WorkflowLifecycleColumns 2026-08-02-10:50 (fleet: merger.ts terminal guards):
-      "IS THE SOURCE TASK FINISHED?" from its own workflow, unioned with the legacy pair — a row can outlive
+      "Is the source task finished?" from its own workflow, unioned with the legacy Done fallback — a row can outlive
       the column it is stored in, and this guard decides whether an orphaned stash is still LIVE. Being too
       strict here keeps a stash alive forever (harmless clutter); being too loose discards a stash whose task
       is still running (lost work), so over-inclusion of terminal ids is the safe direction, exactly as in
       `resolveTerminalColumnsFor`.
 
-      With the literal pair, a renamed board answered "not finished" for every completed task, so every
+      With the literal Done check, a renamed board answered "not finished" for every completed task, so every
       orphaned stash stayed classified as live and was never cleaned up.
       */
       const sourceLifecycle = await resolveTaskLifecycleColumns(store, sourceTaskId);
       const sourceTerminal = new Set([
         sourceLifecycle?.complete ?? "done",
-        sourceLifecycle?.archived ?? "archived",
         "done",
-        "archived",
       ]);
       if (!sourceTask || !sourceTerminal.has(sourceTask.column)) {
         live.push(orphan);
@@ -6795,9 +6793,7 @@ export async function aiMergeTask(
   const finalizedLifecycle = await resolveTaskLifecycleColumns(store, taskId);
   const finalizedColumns = new Set([
     finalizedLifecycle?.complete ?? "done",
-    finalizedLifecycle?.archived ?? "archived",
     "done",
-    "archived",
   ]);
   if (finalizedColumns.has(task.column)) {
     const message = `merger: skipping squash for ${taskId} — task already finalized (column=${task.column})`;

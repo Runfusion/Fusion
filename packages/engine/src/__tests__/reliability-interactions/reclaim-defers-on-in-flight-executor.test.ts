@@ -82,7 +82,6 @@ function makeStore(task: Task): TaskStore & EventEmitter & { auditEvents: any[] 
       auditEvents.push(event);
     }),
     walCheckpoint: vi.fn(() => ({ busy: 0, log: 0, checkpointed: 0 })),
-    archiveTaskAndCleanup: vi.fn(async () => ({})),
     mergeTask: vi.fn(async () => undefined),
     getRootDir: vi.fn(() => "/tmp/test"),
     /*

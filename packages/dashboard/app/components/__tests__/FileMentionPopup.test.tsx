@@ -1,12 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { FileMentionPopup } from "../FileMentionPopup";
-import type { FileSearchItem, TaskSearchItem } from "../../hooks/useFileMention";
+import type { ConversationMentionItem, FileSearchItem, TaskSearchItem } from "../../hooks/useFileMention";
 import { loadAllAppCss } from "../../test/cssFixture";
 
 vi.mock("lucide-react", () => ({
   File: () => <span data-testid="file-icon">File</span>,
   Hash: () => <span data-testid="task-icon">Hash</span>,
+  MessageSquare: () => <span data-testid="conversation-icon">Message</span>,
 }));
 
 describe("FileMentionPopup", () => {
@@ -35,9 +36,9 @@ describe("FileMentionPopup", () => {
     expect(screen.getByTestId("file-mention-loading")).toBeInTheDocument();
   });
 
-  it("renders empty state when no tasks or files exist", () => {
+  it("renders empty state when no tasks, conversations, or files exist", () => {
     render(<FileMentionPopup {...defaultProps} />);
-    expect(screen.getByTestId("file-mention-empty")).toHaveTextContent("No tasks or files found");
+    expect(screen.getByTestId("file-mention-empty")).toHaveTextContent("No tasks, conversations, or files found");
   });
 
   it("renders only tasks", () => {
@@ -78,28 +79,76 @@ describe("FileMentionPopup", () => {
     expect(screen.getByTestId("file-mention-item-2")).toHaveClass("file-mention-popup-item--selected");
   });
 
-  it("fires task and file selection callbacks for their rows", () => {
+  it("renders conversations between tasks and files with combined indexes", () => {
     const tasks: TaskSearchItem[] = [
       { id: "FN-5218", title: "Hash entries in chat", column: "todo" },
     ];
+    const conversations: ConversationMentionItem[] = [
+      { id: "chat-1a2b3c4d", title: "Delivery status" },
+    ];
+    const files: FileSearchItem[] = [{ path: "src/index.ts", name: "index.ts" }];
+
+    render(
+      <FileMentionPopup
+        {...defaultProps}
+        tasks={tasks}
+        conversations={conversations}
+        files={files}
+        selectedIndex={1}
+      />,
+    );
+
+    expect(screen.getByText("Conversations")).toBeInTheDocument();
+    expect(screen.getByRole("listbox", { name: "Conversation matches" })).toBeInTheDocument();
+    expect(screen.getByTestId("task-mention-item-0")).toBeInTheDocument();
+    expect(screen.getByTestId("conversation-mention-item-1")).toHaveTextContent("chat-1a2b3c4d");
+    expect(screen.getByTestId("conversation-mention-item-1")).toHaveTextContent("Delivery status");
+    expect(screen.getByTestId("conversation-mention-item-1")).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByTestId("file-mention-item-2")).toBeInTheDocument();
+    expect(screen.getByTestId("conversation-icon")).toBeInTheDocument();
+  });
+
+  it("renders a localized fallback for an untitled conversation", () => {
+    render(
+      <FileMentionPopup
+        {...defaultProps}
+        conversations={[{ id: "chat-1a2b3c4d", title: null }]}
+      />,
+    );
+
+    expect(screen.getByTestId("conversation-mention-item-0")).toHaveTextContent("Untitled conversation");
+  });
+
+  it("fires task, conversation, and file selection callbacks for their rows", () => {
+    const tasks: TaskSearchItem[] = [
+      { id: "FN-5218", title: "Hash entries in chat", column: "todo" },
+    ];
+    const conversations: ConversationMentionItem[] = [
+      { id: "chat-1a2b3c4d", title: "Delivery status" },
+    ];
     const files: FileSearchItem[] = [{ path: "src/index.ts", name: "index.ts" }];
     const onSelectTask = vi.fn();
+    const onSelectConversation = vi.fn();
     const onSelectFile = vi.fn();
 
     render(
       <FileMentionPopup
         {...defaultProps}
         tasks={tasks}
+        conversations={conversations}
         files={files}
         onSelectTask={onSelectTask}
+        onSelectConversation={onSelectConversation}
         onSelectFile={onSelectFile}
       />,
     );
 
     fireEvent.click(screen.getByTestId("task-mention-item-0"));
-    fireEvent.click(screen.getByTestId("file-mention-item-1"));
+    fireEvent.click(screen.getByTestId("conversation-mention-item-1"));
+    fireEvent.click(screen.getByTestId("file-mention-item-2"));
 
     expect(onSelectTask).toHaveBeenCalledWith(tasks[0]);
+    expect(onSelectConversation).toHaveBeenCalledWith(conversations[0]);
     expect(onSelectFile).toHaveBeenCalledWith(files[0]);
   });
 

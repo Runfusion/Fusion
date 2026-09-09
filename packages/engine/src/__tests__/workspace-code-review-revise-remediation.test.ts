@@ -120,7 +120,11 @@ describe("review remediation gate identity", () => {
 
     await expect(requestPreMergeOptionalStepFix(deps as never, task.id, task, info)).resolves.toBe(true);
 
-    expect(appendReviewRemediationSteps).toHaveBeenCalledWith(task, expect.objectContaining({ nodeId: "custom-check" }));
+    expect(appendReviewRemediationSteps).toHaveBeenCalledWith(
+      task,
+      expect.objectContaining({ nodeId: "custom-check" }),
+      expect.objectContaining({ attemptClaim: expect.objectContaining({ revisionKey: "custom-check" }) }),
+    );
   });
 });
 

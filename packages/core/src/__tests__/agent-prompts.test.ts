@@ -27,7 +27,7 @@ describe("resolveAgentPrompt", () => {
     const instruction = buildPlanningDuplicatePolicyInstruction();
 
     expect(instruction).toContain("Only active tasks can be duplicate blockers");
-    expect(instruction).toContain("done or archived");
+    expect(instruction).toContain("workflow Complete column");
     expect(instruction).toContain("write a new plan");
   });
 
@@ -35,7 +35,7 @@ describe("resolveAgentPrompt", () => {
     const instruction = buildPlanningDuplicatePolicyInstruction();
 
     expect(instruction).toContain("Only active tasks can be duplicate blockers");
-    expect(instruction).toContain("done or archived");
+    expect(instruction).toContain("workflow Complete column");
     expect(instruction).toContain("write a new plan");
   });
 

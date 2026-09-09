@@ -87,7 +87,6 @@ function createStore(task: Task, taskSequence?: Task[]) {
     on: emitter.on.bind(emitter),
     off: emitter.off.bind(emitter),
     walCheckpoint: () => ({ busy: 0, log: 0, checkpointed: 0 }),
-    archiveTaskAndCleanup: async () => ({}),
     clearStaleExecutionStartBranchReferences: () => [],
     updateSettings: async () => ({}),
     mergeTask: async () => undefined,
@@ -201,7 +200,7 @@ describe("post-finalize verification failure reliability interactions (real git)
       expect(task.status ?? null).toBeNull();
       expect(task.mergeDetails?.mergeConfirmed).toBe(true);
       expect(comments.some((comment) => comment.includes("Please fix the failing"))).toBe(false);
-      expect(logs.some((entry) => entry.includes("[verification] post-finalize verification failed for already-on-main fast-path; no action"))).toBe(true);
+      expect(logs.some((entry) => entry.includes("post-finalize verification"))).toBe(false);
 
       const manager = new SelfHealingManager(store, { rootDir: dir, getExecutingTaskIds: () => new Set() });
       await expect(manager.recoverStaleMergingStatus()).resolves.toBe(0);

@@ -295,7 +295,7 @@ afterEach(() => {
 describe("TaskCard", () => {
   it("renders creation on all cards and terminal completion from canonical lifecycle timestamps", () => {
     const createdAt = new Date().toISOString();
-    const archivedAt = "2026-07-20T09:00:00.000Z";
+    const executionCompletedAt = "2026-07-20T09:00:00.000Z";
     const { rerender } = render(
       <TaskCard task={makeTask({ createdAt })} onOpenDetail={noop} addToast={noop} />,
     );
@@ -304,7 +304,7 @@ describe("TaskCard", () => {
     expect(screen.queryByText(/Completed/)).not.toBeInTheDocument();
 
     rerender(
-      <TaskCard task={makeTask({ column: "archived", createdAt, archivedAt, columnMovedAt: "2026-07-19T09:00:00.000Z" })} onOpenDetail={noop} addToast={noop} />,
+      <TaskCard task={makeTask({ column: "done", createdAt, executionCompletedAt, columnMovedAt: "2026-07-19T09:00:00.000Z" })} onOpenDetail={noop} addToast={noop} />,
     );
     expect(screen.getByTestId("card-lifecycle-dates")).toHaveTextContent("Completed");
     expect(screen.getByTestId("card-lifecycle-dates").querySelectorAll("time")).toHaveLength(2);
@@ -879,67 +879,10 @@ describe("TaskCard", () => {
     }
   });
 
-  /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-01:35 (fleet phase — evidence for the 39 converted guards):
-  TaskCard asked "is this card terminal / mid-flight / in review?" by comparing `task.column` to a
-  literal THIRTY-NINE times, while `taskColumnFlags` was already threaded in and already consumed by
-  `canEdit` and `isTaskAgentActive`. The failure mode is a card rendering as live work by one question
-  and terminal by the next on the same board.
-
-  These two cases pin the property in BOTH directions, because only one of them can be reached by
-  renaming alone:
-    - traits say mid-flight, column NAMED `done`  -> must NOT offer Archive (the old code did)
-    - traits say complete, column named `shipped` -> MUST offer Archive (the old code did not)
-
-  Archive is the assertion target because `isCompleteColumn` gates it directly and it is a real
-  operator affordance rather than a style detail.
-
-  REVERT CHECK, measured. Restoring `task.column === "done"` on the archive-action guard makes the
-  first case fail (Archive appears on a mid-flight card) and the second fail (Archive missing on the
-  renamed complete lane). Both were run.
-  */
-  it("does not offer Archive on a card whose traits say mid-flight, however its column is spelled", () => {
-    const cleanupGeometry = mockBoardContextMenuGeometry();
-    try {
-      render(
-        <TaskCard
-          task={makeTask({ column: "done" as any })}
-          taskColumnFlags={{ countsTowardWip: true } as any}
-          onOpenDetail={noop}
-          addToast={noop}
-          onArchiveTask={vi.fn()}
-        />,
-      );
-      fireEvent.contextMenu(document.querySelector(".card")!, { clientX: 24, clientY: 28 });
-      expect(screen.queryByRole("menuitem", { name: "Archive" })).not.toBeInTheDocument();
-    } finally {
-      cleanupGeometry();
-    }
-  });
-
-  it("offers Archive on a RENAMED complete column, which the id comparison could not see", () => {
-    const cleanupGeometry = mockBoardContextMenuGeometry();
-    try {
-      render(
-        <TaskCard
-          task={makeTask({ column: "shipped" as any })}
-          taskColumnFlags={{ complete: true } as any}
-          onOpenDetail={noop}
-          addToast={noop}
-          onArchiveTask={vi.fn()}
-        />,
-      );
-      fireEvent.contextMenu(document.querySelector(".card")!, { clientX: 24, clientY: 28 });
-      expect(screen.getByRole("menuitem", { name: "Archive" })).toBeInTheDocument();
-    } finally {
-      cleanupGeometry();
-    }
-  });
-
   it("opens the board card context menu from keyboard as a viewport portal, selects an action, and closes", async () => {
     const cleanupGeometry = mockBoardContextMenuGeometry();
     const onOpenDetail = vi.fn();
-    const onArchiveTask = vi.fn(async () => makeTask({ column: "archived" }));
+    const onOpenRefine = vi.fn();
     try {
       render(
         <div className="column" style={{ overflow: "hidden" }}>
@@ -947,8 +890,8 @@ describe("TaskCard", () => {
             <TaskCard
               task={makeTask({ column: "done", status: "done" as any })}
               onOpenDetail={onOpenDetail}
+              onOpenRefine={onOpenRefine}
               addToast={noop}
-              onArchiveTask={onArchiveTask}
             />
           </div>
         </div>,
@@ -959,10 +902,9 @@ describe("TaskCard", () => {
       fireEvent.keyDown(card, { key: "F10", shiftKey: true });
 
       expectBoardContextMenuPortaled();
-      fireEvent.click(screen.getByRole("menuitem", { name: "Archive" }));
+      fireEvent.click(screen.getByRole("menuitem", { name: "Refine" }));
 
-      await waitFor(() => expect(onArchiveTask).toHaveBeenCalledWith("FN-001"));
-      expect(onArchiveTask).toHaveBeenCalledTimes(1);
+      expect(onOpenRefine).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-001" }));
       expect(screen.queryByRole("menu")).not.toBeInTheDocument();
       expect(onOpenDetail).not.toHaveBeenCalled();
     } finally {
@@ -1643,9 +1585,8 @@ describe("TaskCard", () => {
     });
   });
 
-  it("hides delete button for done tasks while keeping archive in the three-dot menu", async () => {
+  it("hides delete and action-menu shells for a done task without a terminal action", () => {
     const onDeleteTask = vi.fn(async () => makeTask());
-    const onArchiveTask = vi.fn(async () => makeTask({ column: "archived" }));
 
     render(
       <TaskCard
@@ -1653,55 +1594,10 @@ describe("TaskCard", () => {
         onOpenDetail={noop}
         addToast={noop}
         onDeleteTask={onDeleteTask}
-        onArchiveTask={onArchiveTask}
       />,
     );
 
     expect(screen.queryByLabelText("Delete task")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Actions" })).toBeNull();
-    fireEvent.click(screen.getByTestId("card-menu-btn-FN-001"));
-    expect(await screen.findByRole("menuitem", { name: "Archive" })).toBeDefined();
-  });
-
-  it.each(["triage", "todo", "in-progress", "in-review"] as const)(
-    "hides archive action for %s tasks",
-    (column) => {
-      render(
-        <TaskCard
-          task={makeTask({ column })}
-          onOpenDetail={noop}
-          addToast={noop}
-          onArchiveTask={vi.fn(async () => makeTask({ column: "archived" }))}
-        />,
-      );
-
-      expect(screen.queryByLabelText("Archive task")).toBeNull();
-      expect(screen.queryByRole("button", { name: "Actions" })).toBeNull();
-    },
-  );
-
-  it("renders archive action for done tasks inside the three-dot menu", async () => {
-    const onArchiveTask = vi.fn(async () => makeTask({ column: "archived" }));
-
-    render(
-      <TaskCard
-        task={makeTask({ column: "done" })}
-        onOpenDetail={noop}
-        addToast={noop}
-        onArchiveTask={onArchiveTask}
-      />,
-    );
-
-    expect(screen.queryByLabelText("Archive task")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Actions" })).toBeNull();
-    fireEvent.click(screen.getByTestId("card-menu-btn-FN-001"));
-
-    const menu = await screen.findByRole("menu");
-    expect(within(menu).getByRole("menuitem", { name: "Archive" })).toBeDefined();
-
-    fireEvent.click(within(menu).getByRole("menuitem", { name: "Archive" }));
-
-    await waitFor(() => expect(onArchiveTask).toHaveBeenCalledWith("FN-001"));
   });
 
   it("renders no action-menu shell when neither done action is available", () => {
@@ -1718,36 +1614,17 @@ describe("TaskCard", () => {
     expect(screen.queryByTestId("card-menu-btn-FN-001")).toBeNull();
   });
 
-  it("does not render archive action for archived tasks", () => {
-    render(
-      <TaskCard
-        task={makeTask({ column: "archived" })}
-        onOpenDetail={noop}
-        addToast={noop}
-        onArchiveTask={vi.fn(async () => makeTask({ column: "archived" }))}
-        onUnarchiveTask={vi.fn(async () => makeTask({ column: "done" }))}
-      />,
-    );
-
-    expect(screen.queryByLabelText("Archive task")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Actions" })).toBeNull();
-    expect(screen.getByLabelText("Unarchive task")).toBeDefined();
-  });
-
   /*
   FNXC:TaskRevert 2026-07-15-00:00 (FN-8035):
-  Coverage for the Revert affordance across done + archived cards. Done-card
-  actions are available only through the three-dot context menu; archived cards
-  retain their inline row. The no-commit guard remains disabled in the menu.
+  Done-card actions are available through the three-dot context menu. The no-commit guard remains disabled in the menu.
   */
   describe("Revert affordance", () => {
-    it("renders Archive and Revert in the done card three-dot menu when both are available", async () => {
+    it("renders Revert in the done card three-dot menu when available", async () => {
       const { container } = render(
         <TaskCard
           task={makeTask({ column: "done", mergeDetails: { commitSha: "abc123def456" } as any })}
           onOpenDetail={noop}
           addToast={noop}
-          onArchiveTask={vi.fn(async () => makeTask({ column: "archived" }))}
           onRevertTask={vi.fn(async () => ({ mode: "git", clean: true, revertCommitSha: "deadbeef" }) as any)}
         />,
       );
@@ -1756,21 +1633,7 @@ describe("TaskCard", () => {
       expect(container.querySelector(".card-done-actions")).toBeNull();
       fireEvent.click(screen.getByTestId("card-menu-btn-FN-001"));
       const menu = await screen.findByRole("menu");
-      expect(within(menu).getByRole("menuitem", { name: "Archive" })).toBeDefined();
       expect(within(menu).getByRole("menuitem", { name: "Revert" })).toBeDefined();
-    });
-
-    it("renders the inline Revert button for an archived card with a landed commit", () => {
-      render(
-        <TaskCard
-          task={makeTask({ column: "archived", mergeDetails: { commitSha: "abc123def456" } as any })}
-          onOpenDetail={noop}
-          addToast={noop}
-          onRevertTask={vi.fn(async () => ({ mode: "git", clean: true, revertCommitSha: "deadbeef" }) as any)}
-        />,
-      );
-
-      expect(screen.getByLabelText("Revert this task's changes")).toBeDefined();
     });
 
     it("omits the Revert button when onRevertTask is not provided", () => {
@@ -1785,13 +1648,12 @@ describe("TaskCard", () => {
       expect(screen.queryByLabelText("Revert this task's changes")).toBeNull();
     });
 
-    it("renders Archive and disabled Revert in the done three-dot menu without a landed commit", async () => {
+    it("renders disabled Revert in the done three-dot menu without a landed commit", async () => {
       const { container } = render(
         <TaskCard
           task={makeTask({ column: "done", mergeDetails: undefined })}
           onOpenDetail={noop}
           addToast={noop}
-          onArchiveTask={vi.fn(async () => makeTask({ column: "archived" }))}
           onRevertTask={vi.fn(async () => ({ mode: "git", clean: true, revertCommitSha: "deadbeef" }) as any)}
         />,
       );
@@ -1799,11 +1661,10 @@ describe("TaskCard", () => {
       expect(container.querySelector(".card-revert-btn")).toBeNull();
       fireEvent.click(screen.getByTestId("card-menu-btn-FN-001"));
       const menu = await screen.findByRole("menu");
-      expect(within(menu).getByRole("menuitem", { name: "Archive" })).toBeDefined();
       expect(within(menu).getByRole("menuitem", { name: "Revert" })).toBeDisabled();
     });
 
-    it("renders only Revert in the done three-dot menu when archive is unavailable", async () => {
+    it("renders only Revert in the done three-dot menu", async () => {
       render(
         <TaskCard
           task={makeTask({ column: "done", mergeDetails: { commitSha: "abc123def456" } as any })}
@@ -1834,7 +1695,7 @@ describe("TaskCard", () => {
       expect(menuItem).toBeDisabled();
     });
 
-    it("shows the Revert context-menu entry for done and archived cards", () => {
+    it("shows the Revert context-menu entry for done cards", () => {
       render(
         <TaskCard
           task={makeTask({ column: "done", mergeDetails: { commitSha: "abc123def456" } as any })}
@@ -4854,17 +4715,16 @@ describe("TaskCard", () => {
   it("renders the done-card three-dot menu inside card-header-actions", () => {
     const { container } = render(
       <TaskCard
-        task={makeTask({ column: "done", size: "L" })}
+        task={makeTask({ column: "done", size: "L", mergeDetails: { commitSha: "abc123def456" } as any })}
         onOpenDetail={noop}
         addToast={noop}
-        onArchiveTask={async () => makeTask()}
+        onRevertTask={vi.fn(async () => ({ mode: "git", clean: true, revertCommitSha: "deadbeef" }) as any)}
       />,
     );
     const actionsContainer = container.querySelector(".card-header-actions");
     const menuButton = screen.getByTestId("card-menu-btn-FN-001");
 
     expect(actionsContainer).not.toBeNull();
-    expect(container.querySelector(".card-archive-btn")).toBeNull();
     expect(container.querySelector(".card-done-actions")).toBeNull();
     expect(screen.queryByRole("button", { name: "Actions" })).toBeNull();
     expect(actionsContainer?.contains(menuButton)).toBe(true);
@@ -6914,7 +6774,7 @@ describe("TaskCard", () => {
     expect(container.querySelector(".card-time-indicator")).toBeNull();
   });
 
-  it.each(["triage", "todo", "archived"] as const)(
+  it.each(["triage", "todo"] as const)(
     "does not render timer chip for %s cards",
     (column) => {
       const { container } = render(
@@ -7265,19 +7125,8 @@ describe("TaskCard near-duplicate chip", () => {
     expect(screen.getByText("Duplicate of FN-1234")).toBeInTheDocument();
   });
 
-  it("hides duplicate chip in archived and done columns", () => {
-    const { rerender } = render(
-      <TaskCard
-        task={makeTask({ column: "archived", sourceMetadata: { nearDuplicateOf: "FN-1234" } })}
-        onOpenDetail={noop}
-        addToast={noop}
-        onUpdateTask={vi.fn()}
-      />,
-    );
-
-    expect(screen.queryByText("Duplicate of FN-1234")).toBeNull();
-
-    rerender(
+  it("hides duplicate chip in the done column", () => {
+    render(
       <TaskCard
         task={makeTask({ column: "done", sourceMetadata: { nearDuplicateOf: "FN-1234" } })}
         onOpenDetail={noop}
@@ -7420,11 +7269,12 @@ describe("TaskCard undo-of chip", () => {
  * FNXC:TaskRevert 2026-07-16-00:00:
  * FN-8066 regression coverage locks the completed-source invariant at TaskCard,
  * the shared board/list card component: only persisted, non-blank revert markers
- * render the compact chip in done or archived columns, while other provenance
+ * render the compact chip in done, while other provenance
  * chips can coexist in the same footer cluster.
  */
 describe("TaskCard reverted chip", () => {
-  it.each(["done", "archived"] as const)("renders for reverted %s cards", (column) => {
+  it("renders for reverted done cards", () => {
+    const column = "done" as const;
     render(
       <TaskCard
         task={makeTask({ column, sourceMetadata: { revertedAt: "2026-07-16T00:00:00.000Z" } })}
@@ -7457,7 +7307,7 @@ describe("TaskCard reverted chip", () => {
 
     rerender(
       <TaskCard
-        task={makeTask({ column: "archived", sourceMetadata: { revertedAt: "  " } })}
+        task={makeTask({ column: "done", sourceMetadata: { revertedAt: "  " } })}
         onOpenDetail={noop}
         addToast={noop}
       />,
@@ -8187,7 +8037,7 @@ describe("TaskCard custom field badges (U13/KTD-14)", () => {
 
 /*
 FNXC:CodingIdeasWorkflow 2026-07-05-00:00:
-FN-7596 regression-tests the TaskCard "Start" affordance that promotes a Coding (Ideas) manual-intake card. `showStartAction` requires taskColumnFlags.intake and a non-"triage" column; `startTargetColumn` derives the destination from `taskMoveColumns` (first non-intake/non-archived/non-hiddenFromBoard column) rather than a hard-coded "todo" string, per the FNXC comment at its call site.
+FN-7596 regression-tests the TaskCard "Start" affordance that promotes a Coding (Ideas) manual-intake card. `showStartAction` requires taskColumnFlags.intake and a non-"triage" column; `startTargetColumn` derives the destination from `taskMoveColumns` (first non-intake/non-hiddenFromBoard column) rather than a hard-coded "todo" string, per the FNXC comment at its call site.
 */
 describe("TaskCard Start affordance (FN-7596)", () => {
   it("renders the Start button for a manual-intake column with onMoveTask provided", () => {
@@ -8447,6 +8297,7 @@ describe("TaskCard trailing-row layout (FN-8631)", () => {
         status: "executing" as any,
         steps: [{ name: "Implementation", status: "in-progress" }],
       });
+      const restoredOpenChanges = vi.fn();
       const variants = [
         {
           name: "collapsed progress",
@@ -8475,6 +8326,45 @@ describe("TaskCard trailing-row layout (FN-8631)", () => {
           assert: (container: HTMLElement) => {
             expect(container.querySelector(".card-agent-row")).not.toBeNull();
             expect(container.querySelector(".card-workflow-badge-row")).not.toBeNull();
+          },
+        },
+        {
+          name: "restored completed history",
+          renderCard: () => {
+            useTaskDiffStatsMock.mockReturnValue({ stats: { filesChanged: 3, additions: 8, deletions: 2 }, loading: false });
+            return render(
+              <CostBadgeProvider value={{ enabled: true }}>
+                <TaskCard
+                  task={makeTask({
+                    id: `FN-restored-${width}`,
+                    column: "done",
+                    cumulativeActiveMs: 30 * 60_000,
+                    tokenUsage: {
+                      inputTokens: 1_000_000,
+                      outputTokens: 0,
+                      cachedTokens: 0,
+                      cacheWriteTokens: 0,
+                      totalTokens: 1_000_000,
+                      firstUsedAt: "2026-01-01T00:00:00Z",
+                      lastUsedAt: "2026-01-01T00:30:00Z",
+                      modelProvider: "openai",
+                      modelId: "gpt-5-mini",
+                    },
+                    mergeDetails: { commitSha: "restored-sha", filesChanged: 99 },
+                  })}
+                  onOpenDetail={noop}
+                  onOpenDetailWithTab={restoredOpenChanges}
+                  addToast={noop}
+                />
+              </CostBadgeProvider>,
+            );
+          },
+          assert: (container: HTMLElement) => {
+            expect(container.querySelector(".card-time-indicator")).toHaveTextContent("30m");
+            expect(container.querySelector(".card-cost-indicator")).toHaveTextContent("$0.25");
+            const files = screen.getByRole("button", { name: "3 files changed" });
+            fireEvent.click(files);
+            expect(restoredOpenChanges).toHaveBeenCalledWith(expect.objectContaining({ id: `FN-restored-${width}` }), "changes");
           },
         },
       ];

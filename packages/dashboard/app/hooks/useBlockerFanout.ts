@@ -29,7 +29,6 @@ Optional — omitted, core keeps its legacy defaults, so an unconverted caller i
 */
 export interface BlockerFanoutColumnFlags {
   readonly complete?: boolean;
-  readonly archived?: boolean;
   readonly hold?: boolean;
   readonly countsTowardWip?: boolean;
   readonly mergeOrchestration?: boolean;
@@ -74,7 +73,7 @@ function legacyIsHold(column: string): boolean {
 
 /* DELIBERATE-LITERAL — the terminal half of the same unresolved-card fallback. */
 function legacyIsTerminal(column: string): boolean {
-  return column === "done" || column === "archived";
+  return column === "done";
 }
 
 /* DELIBERATE-LITERAL — the escalation half of the same unresolved-card fallback. */
@@ -100,7 +99,7 @@ export function computeBlockerFanoutMap(
           const flags = flagsByTaskId.get(task.id);
           /* A card whose traits did not resolve keeps the legacy answer rather than a fabricated one. */
           if (!flags) return { isHold: legacyIsHold(task.column), isTerminal: legacyIsTerminal(task.column) };
-          return { isHold: flags.hold === true, isTerminal: flags.complete === true || flags.archived === true };
+          return { isHold: flags.hold === true, isTerminal: flags.complete === true };
         },
         escalationClassify: (task: Task) => {
           const flags = flagsByTaskId.get(task.id);

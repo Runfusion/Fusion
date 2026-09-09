@@ -6,6 +6,7 @@ import {
   PRE_MERGE_STEPS_NOT_RUN_BLOCKER,
 } from "../merge/task-merge.js";
 import { isPlanReviewSatisfied } from "../planner/plan-approval.js";
+import { archiveTerminalWorkflowStepFailures } from "../workflows/workflow-step-results.js";
 import type { Task, TaskDetail, WorkflowStepResult } from "../types.js";
 
 function result(
@@ -99,21 +100,25 @@ describe("pre-merge approval for not-run workflow gates", () => {
     }))).toBe(false);
   });
 
-  it("preserves remediation archives and operator bypass semantics", () => {
-    const archived = result("verification", {
+  it("preserves archive history while allowing only an audited operator bypass to satisfy its gate", () => {
+    const archived = archiveTerminalWorkflowStepFailures([result("verification", {
+      status: "failed",
       notRunReason: undefined,
-      remediationArchivedAt: "2026-08-28T00:00:00.000Z",
-    });
+    })], "2026-08-28T00:00:00.000Z")![0]!;
+    const required = new Set(["verification"]);
     expect(approvals([archived], ["verification"])[0]?.state).toBe("not-approved");
+    expect(getTaskMergeBlocker(reviewTask([archived]), { requiredPreMergeStepIds: required }))
+      .toBe("task has enabled pre-merge workflow steps without a current approval (gate 'verification')");
 
-    const bypassed = result("verification", {
-      notRunReason: undefined,
+    const bypassed = {
+      ...archived,
       bypassedBy: "operator",
-      bypassedAt: "2026-08-28T00:00:00.000Z",
+      bypassedAt: "2026-08-28T00:01:00.000Z",
       bypassReason: "Reviewed manually",
-      bypassedFromStatus: "failed",
-    });
+      bypassedFromStatus: "failed" as const,
+    };
     expect(approvals([bypassed], ["verification"])[0]?.state).toBe("approved");
+    expect(getTaskMergeBlocker(reviewTask([bypassed]), { requiredPreMergeStepIds: required })).toBeUndefined();
   });
 
   it("answers from the latest duplicate result", () => {

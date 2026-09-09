@@ -8,7 +8,7 @@ resolves to the same columns the old literals named):
 
   - `columnsWithFlag(ir, flag)` — the trait→columnIds expansion. A sweep resolves
     the workflow IR ONCE, expands each trait it enumerates by (wip / merge-
-    orchestration / complete / archived / hold / intake) to the set of column ids
+    orchestration / complete / hold / intake) to the set of column ids
     that carry it, then filters its task snapshot by that set — no per-task IR
     resolution, no new store API (U6 architecture).
 
@@ -22,7 +22,7 @@ resolves to the same columns the old literals named):
 import type { WorkflowIr, WorkflowIrColumn } from "./workflow-ir-types.js";
 import type { TraitFlags } from "./trait-types.js";
 import { getTraitRegistry } from "./trait-registry.js";
-import { resolveWorkflowIrForTask, type WorkflowIrResolverStore } from "./workflow-ir-resolver.js";
+import { resolveWorkflowIrForTask, type WorkflowIrResolverStore, type WorkflowSelectionCache } from "./workflow-ir-resolver.js";
 
 /** The v2 column list, or [] for a v1/column-less IR. */
 function columnsOf(ir: WorkflowIr): WorkflowIrColumn[] {
@@ -71,7 +71,7 @@ MEASURED on such an IR:
     resolveLifecycleColumns  ->  {}                      (every role undefined)
     resolveReviewColumns     ->  []
     columnsWithFlag(wip)     ->  []
-    resolveTerminalColumns   ->  ["done","archived"]     (its own legacy fallback saves it)
+    resolveTerminalColumns   ->  ["done"]                 (its own legacy fallback saves it)
 
 CONSEQUENCE FOR CONVERTED GUARDS. A consumer that reads "resolved and empty" as "this board declares
 no such lane" is CORRECT for the first case and WRONG for the second — on a v1-upgraded board it
@@ -206,29 +206,13 @@ export function resolveMergeOrchestrationColumn(ir: WorkflowIr): string | undefi
 }
 
 /**
- * The workflow's TERMINAL column pair — where a card rests when there is nothing
- * left to do. Returns `[complete, archived]`.
- *
- * FNXC:WorkflowLifecycleColumns 2026-07-29-13:10:
- * THE FALLBACK IS PER-ROLE, NOT PER-SET, and that distinction is the whole reason
- * this is a shared function instead of two inline expressions.
- *
- * A per-SET fallback — "if the workflow resolved any terminal role, use what it
- * declared" — collapses to a one-element set for a workflow that declares
- * `complete` but no `archived`, silently dropping the archived half of every
- * already-finished check. That is a real P1 (PR #2471 review): an archived card
- * then fell through a merge short circuit and threw "must be in 'in-review'" for
- * a task whose actual state was "already done".
- *
- * Resolving each role against its OWN legacy id keeps both halves for a
- * partially-declared workflow. `merger-ai` learned this the hard way and the
- * logic lived only there; `executor`'s equivalent guard was still the raw
- * `column === "done" || column === "archived"` literal pair and would have
- * re-made the same mistake on conversion. One function, one lesson.
+ * Every terminal-success column resolves through the `complete` trait. The archive lifecycle role
+ * no longer exists; historical `"archived"` handling is isolated to soft-delete sentinels and the
+ * bounded startup reconciliation.
  */
-export function resolveTerminalColumns(ir: WorkflowIr): readonly [string, string] {
+export function resolveTerminalColumns(ir: WorkflowIr): readonly [string] {
   const lifecycle = resolveLifecycleColumns(ir);
-  return [lifecycle?.complete ?? "done", lifecycle?.archived ?? "archived"] as const;
+  return [lifecycle?.complete ?? "done"] as const;
 }
 
 /**
@@ -248,7 +232,6 @@ export interface TaskMoveLanes {
   readonly wip?: string;
   readonly review?: string;
   readonly complete?: string;
-  readonly archived?: string;
   /*
   FNXC:WorkflowResolvedColumns 2026-07-31-11:05 (u12 — a role SET cannot be carried by a role ID):
   Every other field answers "which column IS this role", which is first-match-per-role. `terminal`
@@ -273,9 +256,9 @@ export function toTaskMoveLanes(ir: WorkflowIr | undefined): TaskMoveLanes | und
   if (!l) return undefined;
   /* Read from the trait flags, NOT from `l`: `resolveLifecycleColumns` is first-match-per-role and
      would collapse a second complete-trait column, which is the whole defect this field exists for. */
-  const terminal = [...new Set([...columnsWithFlag(ir, "complete"), ...columnsWithFlag(ir, "archived")])];
+  const terminal = [...new Set(columnsWithFlag(ir, "complete"))];
   return {
-    hold: l.hold, intake: l.intake, wip: l.wip, review: l.review, complete: l.complete, archived: l.archived,
+    hold: l.hold, intake: l.intake, wip: l.wip, review: l.review, complete: l.complete,
     ...(terminal.length > 0 ? { terminal } : {}),
   };
 }
@@ -339,7 +322,6 @@ Trait → role mapping (the trait vocabulary is the source of truth, not these n
   wip      → `countsTowardWip`    occupies an implementation slot
   review   → `mergeOrchestration` the merge/PR orchestration lane
   complete → `complete`           terminal success
-  archived → `archived`           globally archived
 
 CONSERVATIVE-ON-UNRESOLVABLE (deliberate): a v1 / column-less IR resolves to `undefined`
 for the WHOLE struct, not to a struct of undefined roles. The distinction matters — a
@@ -354,7 +336,7 @@ EACH FIELD IS **ONE** COLUMN, EVEN WHEN THE WORKFLOW DECLARES SEVERAL.
 
 Uniqueness is validated for exactly ONE trait. `TraitRegistry.validateColumnTraits` raises
 `multiple-intake-columns` when more than one column carries `intake` — and raises nothing for
-`hold`, `countsTowardWip`, `mergeBlocker`, `humanReview`, `complete` or `archived`. Those may
+`hold`, `countsTowardWip`, `mergeBlocker`, `humanReview` or `complete`. Those may
 legitimately repeat: a workflow can split `mergeBlocker` and `humanReview` across a merge lane and a
 separate sign-off lane, or declare two terminal columns. `columnsWithFlag` returns an array and
 `first()` below picks its head, so this struct names only one of each.
@@ -387,8 +369,6 @@ export interface LifecycleColumns {
   review: string | undefined;
   /** Terminal-success column. */
   complete: string | undefined;
-  /** Globally archived column. */
-  archived: string | undefined;
 }
 
 /** The trait carrying each lifecycle role. Declared once so the roles and the
@@ -399,7 +379,6 @@ const LIFECYCLE_ROLE_FLAGS: Record<keyof LifecycleColumns, keyof TraitFlags> = {
   wip: "countsTowardWip",
   review: "mergeOrchestration",
   complete: "complete",
-  archived: "archived",
 };
 
 /**
@@ -449,7 +428,6 @@ export function resolveLifecycleColumns(ir: WorkflowIr): LifecycleColumns | unde
     wip: first(LIFECYCLE_ROLE_FLAGS.wip),
     review: first(LIFECYCLE_ROLE_FLAGS.review),
     complete: first(LIFECYCLE_ROLE_FLAGS.complete),
-    archived: first(LIFECYCLE_ROLE_FLAGS.archived),
   };
 }
 
@@ -471,9 +449,10 @@ export async function resolveTaskLifecycleColumns(
   store: WorkflowIrResolverStore,
   taskId: string,
   cache?: Map<string, WorkflowIr>,
+  selectionCache?: WorkflowSelectionCache,
 ): Promise<LifecycleColumns | undefined> {
   try {
-    const ir = await resolveWorkflowIrForTask(store, taskId, cache);
+    const ir = await resolveWorkflowIrForTask(store, taskId, cache, selectionCache);
     return resolveLifecycleColumns(ir);
   } catch {
     return undefined;
@@ -570,17 +549,5 @@ export async function resolveWipTargetForTask(store: WorkflowIrResolverStore, ta
     }
   } catch { /* degraded: legacy id */ }
   return "in-progress";
-}
-
-/** The archive lane this task's workflow declares, or the legacy id. See above. */
-export async function resolveArchiveTargetForTask(store: WorkflowIrResolverStore, taskId: string): Promise<string> {
-  try {
-    const ir = await resolveWorkflowIrForTask(store, taskId);
-    if (ir) {
-      const archived = columnsWithFlag(ir, "archived");
-      if (archived.length > 0) return archived[0];
-    }
-  } catch { /* degraded: legacy id */ }
-  return "archived";
 }
 

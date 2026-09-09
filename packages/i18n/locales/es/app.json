@@ -1195,7 +1195,6 @@
     "retrying": "Reintentando…"
   },
   "board": {
-    "archived": "Archivado",
     "done": "Hecho",
     "inProgress": "En progreso",
     "inReview": "En revisión",
@@ -1435,7 +1434,11 @@
     "slashSuggestions": "Sugerencias de barra",
     "loadingSlashSuggestions": "Cargando sugerencias…",
     "snippetSuggestion": "Insertar prompt guardado",
-    "snippetSuggestions": "Sugerencias de fragmentos"
+    "snippetSuggestions": "Sugerencias de fragmentos",
+    "conversationIdCopied": "",
+    "copyConversationId": "",
+    "questionOptionalLabel": "",
+    "questionSelectHintWithOptional": ""
   },
   "chatRooms": {
     "error": {
@@ -1512,21 +1515,9 @@
   "column": {
     "actionsAriaLabel": "Acciones de columna {{columnLabel}}",
     "actionsTitle": "Acciones de columna",
-    "archiveAllDoneAriaLabel": "Archivar todas las tareas completadas",
-    "archiveAllDoneTitle": "Archivar todas las tareas completadas",
-    "archiveAllMessage_one": "",
-    "archiveAllMessage_other": "",
-    "archiveAllTitle": "Archivar todo completado",
-    "archivedTasks_one": "",
-    "archivedTasks_other": "",
     "autoMerge": "Fusión automática",
     "autoMergeDisabled": "Fusión automática desactivada",
     "autoMergeEnabled": "Fusión automática activada",
-    "collapseArchivedLabel": "Contraer tareas archivadas",
-    "collapseArchivedTitle": "Contraer tareas archivadas",
-    "expandArchivedLabel": "Expandir tareas archivadas",
-    "expandArchivedTitle": "Expandir tareas archivadas",
-    "failedToArchive": "Error al archivar tareas",
     "keepProgress": "Preservar progreso",
     "loadMore_one": "",
     "loadMore_other": "",
@@ -1560,7 +1551,8 @@
     "sortTaskIdDescHint": "",
     "replannedTasks_one": "Replanned {{count}} task{{plural}}",
     "replannedTasks_other": "Replanned {{count}} task{{plural}}",
-    "replanPartialFailure": "Replanned {{replanned}} of {{total}} tasks; {{failed}} failed"
+    "replanPartialFailure": "Replanned {{replanned}} of {{total}} tasks; {{failed}} failed",
+    "paginationError": "No se pudieron cargar las tareas anteriores."
   },
   "commandCenter": {
     "activity": {
@@ -2120,7 +2112,20 @@
     "runLocalButton": "Ejecutar Fusion localmente",
     "settingUpRemote": "Configurando conexión remota…",
     "starting": "Iniciando…",
-    "startingLocalRuntime": "Iniciando el runtime local de Fusion…"
+    "startingLocalRuntime": "Iniciando el runtime local de Fusion…",
+    "copyStartupDetails": "",
+    "detailsCopied": "",
+    "localStartupUnknown": "",
+    "showStartupDetails": "",
+    "startupAttempts": "",
+    "startupLog": "",
+    "startupLogUnavailable": "",
+    "startupMessage": "",
+    "startupPhase": "",
+    "startupPlatform": "",
+    "startupStack": "",
+    "copyStartupDetailsUnavailable": "",
+    "startupDetailsText": ""
   },
   "devserver": {
     "allSeverities": "Todas las severidades",
@@ -2574,7 +2579,10 @@
     "fileHeader": "Archivos",
     "fileMatches": "Archivos coincidentes",
     "taskHeader": "Tareas",
-    "taskMatches": "Tareas coincidentes"
+    "taskMatches": "Tareas coincidentes",
+    "conversationHeader": "",
+    "conversationMatches": "",
+    "untitledConversation": ""
   },
   "git": {
     "addComment": "Add comment",
@@ -3123,7 +3131,11 @@
     "viewProjects": "Ver proyectos",
     "viewUsage": "Ver uso",
     "workflows": "Flujos de trabajo",
-    "workingBranch": "Rama de trabajo"
+    "workingBranch": "Rama de trabajo",
+    "unreadArtifacts_one": "",
+    "unreadArtifacts_other": "",
+    "unreadRecommendations_one": "",
+    "unreadRecommendations_other": ""
   },
   "health": {
     "activeTasks": "Tareas activas",
@@ -3336,26 +3348,12 @@
   "listView": {
     "apply": "Aplicar",
     "applying": "Aplicando…",
-    "archiveSelected": "Archivar seleccionadas",
-    "archiveSelectedTitle": "Archivar las tareas seleccionadas que están completadas",
-    "archiveUnavailable": "La acción de archivar no está disponible",
-    "archiveViaButton": "Las tareas solo se pueden archivar mediante el botón de archivar",
-    "bulkArchiveDone_one": "",
-    "bulkArchiveDone_other": "",
-    "bulkArchiveMessage_one": "",
-    "bulkArchiveMessage_other": "",
-    "bulkArchiveNoTasks": "No hay tareas seleccionadas que se puedan archivar (solo tareas completadas)",
-    "bulkArchiveSummary": "{{archived}} archivada(s) · {{skipped}} omitida(s) · {{failed}} fallida(s)",
-    "bulkArchiveTitle": "Archivar tareas seleccionadas",
     "bulkDeleteAll": "Eliminar todo",
-    "bulkDeleteArchiveSummary": "Archivado {{archived}}, eliminado {{deleted}}, fallido {{failed}}",
     "bulkDeleteMessage_one": "",
     "bulkDeleteMessage_other": "",
-    "bulkDeleteNoTasks": "No hay tareas seleccionadas que se puedan eliminar (las tareas archivadas están excluidas)",
     "bulkDeleteSummary_one": "Eliminada {{count}} tarea · {{skipped}} archivadas omitidas · {{failed}} fallidas",
     "bulkDeleteSummary_other": "Eliminadas {{count}} tareas · {{skipped}} archivadas omitidas · {{failed}} fallidas",
     "bulkDeleteTitle": "Eliminar tareas seleccionadas",
-    "bulkDeleteWithDoneMessage": "¿Eliminar {{deletable}} tarea(s), o archivar las {{done}} tarea(s) completada(s) y eliminar el resto?",
     "bulkEdit": "Edición masiva",
     "bulkEditModelsLabel": "Edición masiva de modelos y nodo:",
     "bulkNoChanges": "No hay cambios que aplicar",
@@ -3392,7 +3390,6 @@
     "hideDoneTitle": "Ocultar tareas completadas",
     "keepProgress": "Conservar progreso",
     "lastColumnWarning": "Al menos una columna debe ser visible",
-    "lineageArchiveMessage": "{{taskId}} tiene tareas hijas de linaje ({{children}}) que lo referencian como fuente padre.\n\n¿Archivar de todos modos desvinculando primero estas referencias?",
     "lineageDeleteMessage": "{{taskId}} tiene tareas hijas de linaje ({{children}}) que lo referencian como fuente padre.\n\n¿Eliminar de todos modos desvinculando primero estas referencias?",
     "listControlsLabel": "Controles de lista",
     "newTask": "+ Nueva tarea",
@@ -3444,7 +3441,8 @@
     "workflowLabel": "",
     "statusReplan": "Replanificar",
     "statusWaiting": "",
-    "statusWaitingOn": ""
+    "statusWaitingOn": "",
+    "bulkDeleteSummary": ""
   },
   "mailbox": {
     "agent": "Agente",
@@ -3562,7 +3560,9 @@
     "videoArtifactAria": "",
     "viewTask": "",
     "viewTaskAria": "",
-    "viewTaskLabel": ""
+    "viewTaskLabel": "",
+    "recommendationsUnavailableIdsReason": "",
+    "recommendationsUnavailableTaskReason": ""
   },
   "memory": {
     "auditChecksTitle": "Comprobaciones de auditoría",
@@ -4235,7 +4235,14 @@
     "todos": "Pendientes",
     "usage": "Uso",
     "workflows": "Flujos de trabajo",
-    "patchnode": ""
+    "patchnode": "",
+    "artifactsUnreadAriaLabel_one": "",
+    "artifactsUnreadAriaLabel_other": "",
+    "artifactsUnreadDotAriaLabel": "",
+    "recommendations": "",
+    "recommendationsUnreadAriaLabel_one": "",
+    "recommendationsUnreadAriaLabel_other": "",
+    "recommendationsUnreadDotAriaLabel": ""
   },
   "newTaskModal": {
     "addDependencies": "Añadir dependencias",
@@ -5390,7 +5397,6 @@
     "viewExpanded": "",
     "views": "",
     "resizeExpandedView": "",
-    "archivedCopy": "",
     "doneHiddenCopy": "",
     "emptyCopy": "",
     "hideDone": "",
@@ -5727,13 +5733,13 @@
     "confirmDelete": "Confirmar eliminación",
     "confirmDeleteNamed": "Confirmar eliminación de {{name}}",
     "deleteScriptNamed": "Eliminar {{name}}",
+    "description": "Descripción (opcional)",
+    "descriptionPlaceholder": "¿Qué hace este script?",
     "editScriptNamed": "Editar {{name}}",
     "failedToDelete": "No se pudo eliminar el script",
     "failedToLoadScripts": "Error al cargar los scripts",
     "failedToSave": "No se pudo guardar el script",
     "loadingScripts": "Cargando scripts...",
-    "nameErrorMsg": "El nombre solo puede contener letras, números, guiones y guiones bajos (sin espacios)",
-    "nameHint": "Solo letras, números, guiones y guiones bajos",
     "noScriptsDefined": "Sin scripts definidos",
     "noScriptsYet": "Sin scripts definidos aún.",
     "runScript": "Ejecutar script",
@@ -6234,7 +6240,12 @@
       "noLimitOnAgentToolOutput": "",
       "noLimitOnAgentToolOutputHint": "",
       "quickAddSubmitOnEnter": "",
-      "quickAddSubmitOnEnterHint": ""
+      "quickAddSubmitOnEnterHint": "",
+      "chatSubmitOnEnter": "",
+      "chatSubmitOnEnterHint": "",
+      "chatSubmitOnEnterAuto": "",
+      "chatSubmitOnEnterAlways": "",
+      "chatSubmitOnEnterNever": ""
     },
     "globalModels": {
       "modelOverrides": "",
@@ -6916,10 +6927,6 @@
     },
     "scheduling": {
       "addIgnoredPath": "",
-      "archiveAgentLog": "",
-      "archiveCompletedTasksAfterDays": "",
-      "autoArchiveDuplicateTasks": "",
-      "autoArchiveDuplicateTasksHelp": "",
       "backlogNoTaskAutoClaimIsExecutorOnly": "",
       "browse": "",
       "closeParenPeriod": "",
@@ -6927,7 +6934,6 @@
       "compactSummaryAndRecentEntries": "",
       "completedTasksOlderThanTheThresholdAreMoved": "",
       "docs": "",
-      "doNotArchiveAgentLogs": "",
       "enableAutomaticTaskArchiving": "",
       "enablePlanStalenessEnforcement": "",
       "escalateHighFanOutBlockersOnlyAfterThey": "",
@@ -7856,7 +7862,9 @@
   },
   "taskDetail": {
     "actions": {
-      "menuBtn": "Acciones"
+      "menuBtn": "Acciones",
+      "oversightHeading": "",
+      "priorityHeading": ""
     },
     "agent": {
       "assignBtn": "Asignar agente",
@@ -7926,9 +7934,6 @@
       "actionLeft": "dejada",
       "allowRecreation": "Permitir recreación posterior (desbloqueo de operador)",
       "allowRecreationDesc": "Permite a los agentes recrear este ID de tarea sin --force-resurrect. Deja sin marcar para mantener esta tarea como tombstoned.",
-      "archivedAfterUnlink": "{{id}} archivado tras desvincular referencias de linaje",
-      "archiveInstead": "Archivar en su lugar",
-      "archiveUnlinkPrompt": "¿Archivar igualmente desvinculando estas referencias primero?",
       "ariaLabel": "Eliminar tarea",
       "btn": "Eliminar",
       "closeIssue": "Cerrar issue",
@@ -8087,11 +8092,6 @@
     },
     "nearDuplicate": {
       "actions": "This task continues normally. Archive it if the work is already covered, or clear this flag once you have read it.",
-      "archiveBtn": "Archivar",
-      "archiveConfirm": "Archivar",
-      "archived": "{{id}} archivado",
-      "archiveMessage": "¿Archivar {{id}} como duplicado de {{duplicateOf}}?",
-      "archiveTitle": "Archivar tarea casi duplicada",
       "copy": "Esta tarea parece ser un casi-duplicado de",
       "headline": "Posible duplicado detectado",
       "deleteBtn": "Eliminar",
@@ -8642,12 +8642,6 @@
     "agent": "Agente",
     "agentLabel": "Agente",
     "answerQuestions": "",
-    "archive": "Archivar",
-    "archived": "{{taskId}} archivado",
-    "archivedUnlinked": "{{taskId}} archivado tras desvincular las referencias de linaje",
-    "archiveFailed": "Error al archivar {{taskId}}: {{error}}",
-    "archiveLineageConflict": "{{taskId}} tiene elementos secundarios de linaje ({{children}}) que lo referencian como padre de origen.\n\n¿Archivar de todos modos desvinculando primero estas referencias?",
-    "archiveTask": "Archivar tarea",
     "assignedTo": "Asignado a {{name}}",
     "attach": "Adjuntar",
     "attachCount_one": "",
@@ -8829,10 +8823,6 @@
     "subtask": "Subtarea",
     "subtaskButtonTitle": "Desglosar en subtareas generadas por IA",
     "toggleFastMode": "Activar/desactivar modo de ejecución rápida",
-    "unarchive": "Desarchivar",
-    "unarchived": "{{taskId}} desarchivado",
-    "unarchiveFailed": "Error al desarchivar {{taskId}}: {{error}}",
-    "unarchiveTask": "Desarchivar tarea",
     "updated": "{{taskId}} actualizado",
     "updateFailed": "Error al actualizar {{taskId}}: {{error}}",
     "uploadFailed": "Error al subir: {{files}}",
@@ -9518,13 +9508,13 @@
     "widgetDefault": ""
   },
   "workflowSwitcher": {
-    "countsAria": "{{todoLabel}}: {{todo}}, {{inProgressLabel}}: {{inProgress}}, {{doneLabel}}: {{done}}{{mergingSuffix}}",
-    "done": "Done",
-    "inProgress": "In Progress",
+    "countsAria": "{{planLabel}}: {{plan}}, {{progressLabel}}: {{progress}}, {{reviewLabel}}: {{review}}{{mergingSuffix}}",
+    "plan": "Planificación",
+    "progress": "Progreso",
     "label": "Workflow",
     "merging": "",
     "mergingTitle": "",
-    "todo": "Todo",
+    "review": "Revisión",
     "triggerAria": "Select workflow. Current workflow: {{name}}",
     "editWorkflow": "Edit workflow",
     "newWorkflow": "New workflow"
@@ -9845,5 +9835,23 @@
     "lines": "lines",
     "showLess": "Show less",
     "showMore": "Show more ({{count}} {{lineLabel}})"
+  },
+  "recommendations": {
+    "count": "",
+    "createError": "",
+    "createTask": "",
+    "created": "",
+    "creating": "",
+    "emptyDescription": "",
+    "emptyTitle": "",
+    "loadError": "",
+    "loadMore": "",
+    "loading": "",
+    "loadingMore": "",
+    "retryCreate": "",
+    "source": "",
+    "title": "",
+    "truncated": "",
+    "viewTask": ""
   }
 }

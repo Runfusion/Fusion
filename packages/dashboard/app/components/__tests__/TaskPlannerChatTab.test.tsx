@@ -15,6 +15,9 @@ const originalScrollHeightDescriptor = Object.getOwnPropertyDescriptor(HTMLEleme
 const originalClientHeightDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
 
 const mockModelCatalog = vi.hoisted(() => ({
+  favoriteProviders: [] as string[],
+  favoriteModels: [] as string[],
+  refresh: vi.fn().mockResolvedValue(undefined),
   models: [
     { provider: "anthropic", id: "claude-plan", name: "Claude Plan", reasoning: true, contextWindow: 200000 },
     { provider: "enterprise-provider", id: "very-long-production-model", name: "Enterprise Production Model With A Readable Long Name", reasoning: true, contextWindow: 200000 },
@@ -49,8 +52,22 @@ const { mockEnsureTaskPlannerChatSession, mockFetchTaskPlannerChatSession, mockF
 vi.mock("../../hooks/useModelsCache", () => ({
   useModelsCache: () => ({
     models: mockModelCatalog.models,
-    favoriteProviders: [],
-    favoriteModels: [],
+    favoriteProviders: mockModelCatalog.favoriteProviders,
+    favoriteModels: mockModelCatalog.favoriteModels,
+    refresh: mockModelCatalog.refresh,
+  }),
+}));
+
+vi.mock("../../hooks/useVoiceDictation", () => ({
+  useVoiceDictation: () => ({
+    enabled: true,
+    supported: true,
+    state: "idle",
+    partialText: "",
+    finalText: "",
+    error: undefined,
+    start: vi.fn().mockResolvedValue(undefined),
+    stop: vi.fn().mockResolvedValue(undefined),
   }),
 }));
 
@@ -255,7 +272,7 @@ describe("TaskPlannerChatTab", () => {
       undefined,
     );
     expect(mockEnsureTaskPlannerChatSession).not.toHaveBeenCalled();
-    expect(mockFetchChatMessages).toHaveBeenCalledWith("chat-planner", { order: "asc" }, undefined);
+    expect(mockFetchChatMessages).toHaveBeenCalledWith("chat-planner", { limit: 50, order: "desc" }, undefined);
     const modelBadge = screen.getByTestId("task-planner-chat-model");
     expect(modelBadge).toHaveAccessibleName("anthropic/claude-plan");
     expect(modelBadge).toHaveAttribute("title", "anthropic/claude-plan");
@@ -303,6 +320,37 @@ describe("TaskPlannerChatTab", () => {
       undefined,
       { taskId: "FN-7310" },
     );
+  });
+
+  it("persists model favorites from the task-chat portal and reports rollback failures", async () => {
+    const user = userEvent.setup();
+    const addToast = vi.fn();
+    renderPlannerChat({ addToast });
+
+    await screen.findByTestId("task-planner-chat-empty");
+    await user.click(screen.getByTestId("chat-thinking-btn"));
+    expect(screen.getByTestId("chat-thinking-popover").parentElement).toBe(document.body);
+    expect(document.querySelector(".task-planner-chat-composer")?.contains(screen.getByTestId("chat-thinking-popover"))).toBe(false);
+    await user.click(screen.getByRole("button", { name: "Chat model" }));
+    let portal = await screen.findByTestId("model-combobox-portal");
+    const claudeFavoriteButton = within(portal).getByText("Claude Plan").closest("[role=option]")?.querySelector<HTMLButtonElement>(".model-combobox-option-favorite");
+    expect(claudeFavoriteButton).toBeTruthy();
+    await user.click(claudeFavoriteButton!);
+
+    await waitFor(() => expect(mockUpdateGlobalSettings).toHaveBeenCalledWith({
+      favoriteProviders: [],
+      favoriteModels: ["anthropic/claude-plan"],
+    }));
+    expect(screen.getByTestId("chat-thinking-popover")).toBeInTheDocument();
+    expect(mockUpdateChatSession).not.toHaveBeenCalled();
+
+    mockUpdateGlobalSettings.mockRejectedValueOnce(new Error("write failed"));
+    portal = screen.getByTestId("model-combobox-portal");
+    const enterpriseFavoriteButton = within(portal).getByText("Enterprise Production Model With A Readable Long Name").closest("[role=option]")?.querySelector<HTMLButtonElement>(".model-combobox-option-favorite");
+    expect(enterpriseFavoriteButton).toBeTruthy();
+    await user.click(enterpriseFavoriteButton!);
+    await waitFor(() => expect(addToast).toHaveBeenCalledWith("Failed to update model favorites", "error"));
+    expect(enterpriseFavoriteButton).toHaveTextContent("☆");
   });
 
   it("restores the project default model through the unified popover and closes only after choosing a thinking level", async () => {
@@ -776,7 +824,7 @@ describe("TaskPlannerChatTab", () => {
 
     await Promise.resolve();
     await Promise.resolve();
-    expect(mockFetchChatMessages).not.toHaveBeenCalledWith("chat-old-task", { order: "asc" }, undefined);
+    expect(mockFetchChatMessages).not.toHaveBeenCalledWith("chat-old-task", { limit: 50, order: "desc" }, undefined);
     expect(screen.queryByText("Stale old task answer")).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: /Summarize recent activity/ }));
     expect(mockStreamChatResponse).toHaveBeenCalledWith(
@@ -2032,7 +2080,7 @@ describe("TaskPlannerChatTab", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Planner provider rate limit");
     await waitFor(() => expect(screen.getAllByText("hello after 429")).toHaveLength(1));
-    expect(mockFetchChatMessages).toHaveBeenCalledWith("chat-planner", { order: "asc" }, undefined);
+    expect(mockFetchChatMessages).toHaveBeenCalledWith("chat-planner", { limit: 50, order: "desc" }, undefined);
   });
 
   it("rolls back planner optimistic message for pre-acceptance failures", async () => {
@@ -2575,6 +2623,50 @@ describe("TaskPlannerChatTab", () => {
       expect(JSON.parse(localStorage.getItem("fusion:chat-pending:chat-planner") ?? "null")).toEqual(["First", "Edited duplicate"]);
       expect(screen.getByTestId("task-planner-chat-pending-force-1")).toHaveAccessibleName(/Force send queued message 2/);
       void streamHandlers;
+    });
+
+    it("keeps planner composition active while a force-send cancellation is pending", async () => {
+      const user = userEvent.setup();
+      const streamHandlers: any[] = [];
+      const cancelDeferred = createDeferred<{ success: boolean; interrupted: boolean }>();
+      mockCancelChatResponse.mockReturnValueOnce(cancelDeferred.promise);
+      mockStreamChatResponse.mockImplementation((_sessionId, _content, handlers) => {
+        streamHandlers.push(handlers);
+        return { close: vi.fn(), isConnected: () => true };
+      });
+
+      renderPlannerChat();
+      await screen.findByTestId("task-planner-chat-empty");
+      await user.click(screen.getByRole("button", { name: /Summarize recent activity/ }));
+      await waitFor(() => expect(streamHandlers).toHaveLength(1));
+
+      const input = screen.getByLabelText("Message task chat");
+      await user.type(input, "Force this queued message");
+      await user.keyboard("{Enter}");
+      await waitFor(() => expect(screen.getByTestId("task-planner-chat-pending-force-0")).toBeInTheDocument());
+      await user.click(screen.getByTestId("task-planner-chat-pending-force-0"));
+      await waitFor(() => expect(mockCancelChatResponse).toHaveBeenCalledTimes(1));
+
+      expect(input).not.toBeDisabled();
+      expect(screen.getByRole("button", { name: "Start voice dictation" })).not.toBeDisabled();
+      expect(screen.getByTestId("chat-thinking-btn")).toBeDisabled();
+      expect(screen.getByTestId("task-planner-chat-pending-edit-0")).toBeDisabled();
+      expect(screen.getByTestId("task-planner-chat-pending-force-0")).toBeDisabled();
+      expect(screen.queryByTestId("chat-attach-btn")).not.toBeInTheDocument();
+
+      await user.type(input, "Typed during planner cancellation");
+      expect(input).toHaveValue("Typed during planner cancellation");
+      expect(screen.getByTestId("chat-send-btn")).not.toBeDisabled();
+      await user.keyboard("{Enter}");
+
+      expect(mockStreamChatResponse).toHaveBeenCalledTimes(1);
+      expect(screen.getByText("Typed during planner cancellation")).toBeInTheDocument();
+      expect(input).toHaveValue("");
+
+      cancelDeferred.resolve({ success: true, interrupted: true });
+      await waitFor(() => expect(mockStreamChatResponse).toHaveBeenCalledTimes(2));
+      expect(mockStreamChatResponse.mock.calls[1][1]).toBe("Force this queued message");
+      expect(screen.getByText("Typed during planner cancellation")).toBeInTheDocument();
     });
 
     it("waits for durable cancellation and history reconciliation before force dispatching a non-front entry", async () => {

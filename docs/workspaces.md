@@ -129,15 +129,13 @@ Workspace Git revert is all-or-nothing across member repositories: Fusion classi
 }
 ```
 
-If one member conflicts, Fusion rolls every touched member back to its pre-call state and commits no member revert. The `granularity` field applies only to the single-repository Git path, not workspace tasks. For the complete task revert contract, see [Reverting Done/Archived tasks](./task-management.md#reverting-donearchived-tasks-git-path--ai-undo-fallback).
+If one member conflicts, Fusion rolls every touched member back to its pre-call state and commits no member revert. The `granularity` field applies only to the single-repository Git path, not workspace tasks. For the complete task revert contract, see [Reverting completed tasks](./task-management.md#reverting-completed-tasks-git-path--ai-undo-fallback).
 
 There is an important route/helper distinction when auto-merge is off. `revertWorkspaceTask` refuses the direct integration-branch path, but the task route uses `prepareWorkspaceRevertPrBranches` for a clean classification and opens one PR per repository, returning `mode: "pr"` with the member PR details. Under `auto` mode, a conflicting workspace Git revert can instead create an AI-undo task.
 
-## Archiving and cleanup
+## Completion cleanup
 
-A successful workspace merge cleans up after itself. When every acquired sub-repository lands, finalization removes each recorded member worktree under the same landing proof the single-repository lane uses, then removes the emptied workspace task directory (and emptied intermediate parents for nested repository keys), so a merged, done task leaves no orphan folder under `.fusion/worktrees/<task-id>/`. The gate is conservative in the direction that protects work: a member holding uncommitted or unverifiable content is preserved with its reason written to the task log, and a preserved member keeps the parent directory. A partial land removes nothing, because the retry still needs those checkouts. Cleanup failures are recorded and never turn a proven landing into a merge failure; the periodic sweep converges anything left behind, including tasks that completed before this behavior shipped.
-
-Archiving a workspace task synchronously removes every recorded member worktree. Fusion holds a per-repository reservation through disposal and branch cleanup. A failed removal is quarantined so a later acquisition can reconcile the orphan; successful siblings are released. `archiveTask(..., { cleanup: false })` intentionally retains worktrees, while self-healing remains a backstop. For the task lifecycle details, see [Workspace worktree cleanup on archive](./task-management.md#workspace-worktree-cleanup-on-archive).
+A successful workspace merge cleans up after itself. When every acquired sub-repository lands, finalization removes each recorded member worktree under the same landing proof the single-repository lane uses, then removes the emptied workspace task directory (and emptied intermediate parents for nested repository keys), so a merged, done task leaves no orphan folder under `.fusion/worktrees/<task-id>/`. The gate is conservative in the direction that protects work: a member holding uncommitted or unverifiable content is preserved with its reason written to the task log, and a preserved member keeps the parent directory. A partial land removes nothing, because the retry still needs those checkouts. Cleanup failures are recorded and never turn a proven landing into a merge failure; the periodic sweep converges anything left behind, including tasks that completed before this behavior shipped. Deleting a task uses the same safety-first worktree disposal rules; there is no separate archive lifecycle.
 
 ## Task Reset
 

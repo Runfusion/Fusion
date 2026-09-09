@@ -21,8 +21,10 @@ try/catch whose only correct body is "do nothing".
 These run against real PostgreSQL through the shared harness, so the guard is
 proven where it actually lives: inside the transaction that re-reads the row.
 */
+import { eq, sql } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
 import { createSharedPgTaskStoreTestHarness, pgDescribe, type SharedPgTaskStoreHarness } from "../__test-utils__/pg-test-harness.js";
+import * as schema from "../postgres/schema/index.js";
 
 function continuation(taskId: string) {
   return {
@@ -90,6 +92,101 @@ pgDescribe("workflow work-item transition compare-and-set", () => {
     expect(persisted?.state).toBe("running");
     expect(persisted?.leaseOwner).toBe("other-node");
     expect(persisted?.retryAfter).not.toBe(LATER);
+  });
+
+  it("is a silent NO-OP when the state matches but a successor owns the lease", async () => {
+    const store = h.store();
+    const task = await store.createTask({ description: "lease-owner cas", column: "todo" });
+    const item = await store.upsertWorkflowWorkItem({
+      ...continuation(task.id),
+      state: "running",
+      leaseOwner: "triage:old-attempt",
+      leaseExpiresAt: "2026-07-27T12:00:30.000Z",
+    });
+    await store.transitionWorkflowWorkItem(item.id, "running", {
+      expectedState: "running",
+      expectedLeaseOwner: "triage:old-attempt",
+      leaseOwner: "workflow:new-attempt",
+      leaseExpiresAt: "2026-07-27T12:02:00.000Z",
+    });
+
+    const staleRenewal = await store.transitionWorkflowWorkItem(item.id, "running", {
+      expectedState: "running",
+      expectedLeaseOwner: "triage:old-attempt",
+      leaseOwner: "triage:old-attempt",
+      leaseExpiresAt: LATER,
+    });
+
+    expect(staleRenewal).toMatchObject({
+      state: "running",
+      leaseOwner: "workflow:new-attempt",
+      leaseExpiresAt: "2026-07-27T12:02:00.000Z",
+    });
+  });
+
+  /*
+  FNXC:WorkflowWorkItemLeaseCas 2026-09-06-01:52:
+  A sequential owner replacement does not prove PostgreSQL's statement-time CAS. Hold the successor's
+  uncommitted owner write open so the stale transition reads the old owner and then blocks on UPDATE;
+  once the successor commits, the stale UPDATE must re-check its owner predicate and affect zero rows.
+  */
+  it("atomically loses an owner CAS when the owner changes between SELECT and UPDATE", async () => {
+    const store = h.store();
+    const task = await store.createTask({ description: "lease-owner statement cas", column: "todo" });
+    const item = await store.upsertWorkflowWorkItem({
+      ...continuation(task.id),
+      state: "running",
+      leaseOwner: "triage:old-attempt",
+      leaseExpiresAt: "2026-07-27T12:00:30.000Z",
+    });
+    const successorExpiry = "2026-07-27T12:02:00.000Z";
+    let staleTransition!: ReturnType<typeof store.transitionWorkflowWorkItem>;
+
+    await h.adminDb().transaction(async (tx) => {
+      await tx.update(schema.project.workflowWorkItems)
+        .set({
+          leaseOwner: "workflow:new-attempt",
+          leaseExpiresAt: successorExpiry,
+        })
+        .where(eq(schema.project.workflowWorkItems.id, item.id));
+
+      const holderRows = await tx.execute(sql`SELECT pg_backend_pid() AS pid`) as unknown as Array<{ pid: number }>;
+      const holderPid = holderRows[0]?.pid;
+      expect(holderPid).toBeTypeOf("number");
+
+      staleTransition = store.transitionWorkflowWorkItem(item.id, "running", {
+        expectedState: "running",
+        expectedLeaseOwner: "triage:old-attempt",
+        leaseOwner: "triage:old-attempt",
+        leaseExpiresAt: LATER,
+      });
+
+      const blockProbeDeadline = Date.now() + 5_000;
+      let blockedBySuccessor = false;
+      while (!blockedBySuccessor && Date.now() < blockProbeDeadline) {
+        const blockedRows = await tx.execute(sql`
+          SELECT EXISTS (
+            SELECT 1
+            FROM pg_stat_activity activity
+            WHERE ${holderPid} = ANY(pg_blocking_pids(activity.pid))
+          ) AS blocked
+        `) as unknown as Array<{ blocked: boolean }>;
+        blockedBySuccessor = blockedRows[0]?.blocked === true;
+        if (!blockedBySuccessor) await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(blockedBySuccessor).toBe(true);
+    });
+
+    await expect(staleTransition).resolves.toMatchObject({
+      state: "running",
+      leaseOwner: "workflow:new-attempt",
+      leaseExpiresAt: successorExpiry,
+    });
+    await expect(store.getWorkflowWorkItem(item.id)).resolves.toMatchObject({
+      state: "running",
+      leaseOwner: "workflow:new-attempt",
+      leaseExpiresAt: successorExpiry,
+    });
   });
 
   it("reclaims only a durable principal availability hold after it becomes due", async () => {

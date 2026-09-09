@@ -161,6 +161,39 @@ pgDescribe("TaskStore.bypassFailedPreMergeReviewStep", () => {
     expect(result?.verdict).toBeUndefined();
   });
 
+  /*
+  FNXC:ReviewLaneBypass 2026-09-06-00:47:
+  An archived failure remains an audit carrier. FN-9266 preserves its archive provenance and permits
+  only the audited operator waiver to satisfy the merge gate.
+  */
+  it("bypasses a required gate archived by another gate's remediation", async () => {
+    const archived = failedStep({
+      workflowStepId: "plan-review",
+      workflowStepName: "Plan Review",
+      status: "skipped",
+      reviewKind: "plan",
+      remediationArchivedAt: "2026-09-04T19:28:37.579Z",
+      remediationArchivedFromStatus: "failed",
+    });
+    const approvedCodeReview = failedStep({ status: "passed", verdict: "APPROVE", reviewKind: "code" });
+    await seedInReviewTask("FN-BYP-ARCHIVED", { workflowStepResults: [archived, approvedCodeReview], workflowId: "builtin:coding" });
+
+    const updated = await store().bypassFailedPreMergeReviewStep("FN-BYP-ARCHIVED", {
+      reason: "gate archived as collateral of a code-review remediation",
+      actor: "operator-archived",
+    });
+
+    const result = updated.workflowStepResults?.find((entry) => entry.workflowStepId === "plan-review");
+    expect(result).toMatchObject({
+      status: "skipped",
+      bypassedBy: "operator-archived",
+      bypassedFromStatus: "failed",
+    });
+    expect(result?.verdict).toBeUndefined();
+    expect(result?.remediationArchivedAt).toBe("2026-09-04T19:28:37.579Z");
+    expect(result?.remediationArchivedFromStatus).toBe("failed");
+  });
+
   it("rejects when there is no failed or enabled resultless pre-merge step", async () => {
     await seedInReviewTask("FN-BYP-005", { workflowStepResults: [failedStep({ status: "passed" })] });
     await store().updateTask("FN-BYP-005", { enabledWorkflowSteps: [] });

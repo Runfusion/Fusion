@@ -20,7 +20,7 @@ import {
   terminalizeEmptyReviewContent,
   type EmptyReviewContentGateFence,
 } from "../executor/review-empty-content-close.js";
-import { createMockStore, mockedCreateFnAgent, resetExecutorMocks } from "./executor-test-helpers.js";
+import { createMockStore, mockedCreateFnAgent, resetExecutorMocks, setMockSettings } from "./executor-test-helpers.js";
 
 function task(overrides: Record<string, unknown> = {}) {
   return {
@@ -224,7 +224,7 @@ describe("empty review graph-failure settle", () => {
     });
     const store = createMockStore();
     store.getTask.mockImplementation(async () => row);
-    store.getSettings.mockResolvedValue({ autoMerge: true } as any);
+    setMockSettings(store, { autoMerge: true });
     store.moveTask.mockImplementation(async (_id: string, column: string) => {
       row.column = column;
       row.status = undefined;
@@ -263,7 +263,7 @@ describe("empty review graph-failure settle", () => {
     const row = task({ column: "in-review", status: "failed", error: mergerError });
     const store = createMockStore();
     store.getTask.mockImplementation(async () => row);
-    store.getSettings.mockResolvedValue({ autoMerge: true } as any);
+    setMockSettings(store, { autoMerge: true });
     const executor = new TaskExecutor(store as any, process.cwd());
 
     await (executor as any).handleGraphFailure(row, {
@@ -281,7 +281,7 @@ describe("empty review graph-failure settle", () => {
     const row = task({ column: "in-review", status: "failed", error: "NO REVIEWABLE CONTENT: empty" });
     const store = createMockStore();
     store.getTask.mockImplementation(async () => row);
-    store.getSettings.mockResolvedValue({ autoMerge: true } as any);
+    setMockSettings(store, { autoMerge: true });
     const executor = new TaskExecutor(store as any, process.cwd());
 
     await (executor as any).handleGraphFailure(row, {
@@ -305,6 +305,21 @@ describe("empty review terminal compare-and-set", () => {
     await expect(terminalizeEmptyReviewContent(deps, row.id, emptyFence)).resolves.toBe(false);
     expect(store.logEntry).toHaveBeenCalledTimes(1);
     expect(audit).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not apply the auto-merge hold to mission policy Off", async () => {
+    const { row, store, audit } = closeHarness((current: any) => {
+      current.autoMerge = false;
+      current.autoMergeProvenance = "mission";
+    });
+
+    await expect(terminalizeEmptyReviewContent({
+      store,
+      getRunContextFor: () => ({ agentId: "executor", runId: "run-225" }),
+    } as any, row.id, emptyFence)).resolves.toBe(true);
+
+    expect(row.status).toBe("failed");
+    expect(audit).toHaveBeenCalledOnce();
   });
 
   it.each([

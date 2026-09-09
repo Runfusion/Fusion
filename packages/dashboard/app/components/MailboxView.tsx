@@ -64,6 +64,11 @@ import { getRelativeTimeBucket } from "../utils/relativeTimeAgo";
 type MailboxTab = "inbox" | "outbox" | "archived" | "agents" | "approvals";
 
 /*
+FNXC:InboxCategories 2026-09-06-03:16:
+The active Inbox is reserved for ordinary messages. Recommendation and artifact notices keep their archived detail rendering, but their unread state belongs to the dedicated Recommendations and Artifacts destinations; every active-inbox read and mark-all operation must therefore request the message category explicitly.
+*/
+
+/*
 FNXC:LifecycleColumnCensus 2026-08-13-21:58:
 DELIBERATE-LITERAL — mailbox folder tab, not a board column.
 
@@ -464,10 +469,11 @@ export function MailboxView({
     captureMailboxScroll();
     setIsLoading(true);
     try {
-      const data = await fetchInbox({ limit: 50 }, projectId);
+      const data = await fetchInbox({ limit: 50, category: "message" }, projectId);
       setInbox(data);
-      setUnreadCount(data.unreadCount);
-      onUnreadCountChange?.(data.unreadCount);
+      const messageUnreadCount = data.categoryUnreadCounts?.message ?? data.unreadCount;
+      setUnreadCount(messageUnreadCount);
+      onUnreadCountChange?.(messageUnreadCount);
     } catch {
       // Silently fail — empty state will show
     } finally {
@@ -552,9 +558,10 @@ export function MailboxView({
   const refreshUnreadCount = useCallback(async () => {
     try {
       const data = await fetchUnreadCount(projectId);
-      setUnreadCount(data.unreadCount);
+      const messageUnreadCount = data.categoryUnreadCounts?.message ?? data.unreadCount;
+      setUnreadCount(messageUnreadCount);
       setApprovalPendingCount(data.pendingApprovalCount ?? 0);
-      onUnreadCountChange?.(data.unreadCount);
+      onUnreadCountChange?.(messageUnreadCount);
     } catch {
       // Silently fail
     }
@@ -770,7 +777,7 @@ export function MailboxView({
 
   const handleMarkAllRead = useCallback(async () => {
     try {
-      const result = await markAllMessagesRead(projectId);
+      const result = await markAllMessagesRead(projectId, { category: "message" });
       setUnreadCount(0);
       onUnreadCountChange?.(0);
       setInbox((prev) =>

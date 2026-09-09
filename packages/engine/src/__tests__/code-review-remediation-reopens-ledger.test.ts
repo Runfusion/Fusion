@@ -9,15 +9,9 @@ import { appendReviewRemediationSteps } from "../executor/append-review-remediat
 FNXC:StepLedgerIntegrity 2026-09-01-00:45:
 Guards the branch Code Review ACTUALLY takes.
 
-`appendReviewRemediationSteps` has two paths: an inline atomic transaction when a workspace
-remediation or an `attemptClaim` is present, and `store.appendRemediationSteps` otherwise. The
-step-ledger reopen stamp was first added only to the second, so Code Review -- which always supplies
-`attemptClaim` -- never reached it. The fix was live in production and the symptom was unchanged:
-FN-270 logged "Ignored post-completion in-progress for step 12 (Fix: ...)" with no reopen entry
-before it, because the failing case does not traverse the patched path.
-
-Parameterised over both branches on purpose. A test that pinned only one is what let the gap ship,
-and the invariant belongs to the function, not to whichever path a caller happens to take.
+`appendReviewRemediationSteps` publishes the remediation work, keyed attempt, aggregate charge,
+and step-ledger reopening in one fenced mutation. Code Review previously took a separate inline
+branch whose missing reopen stamp left the new Fix step permanently sealed after completion.
 */
 
 const DONE_MARKER = "Task marked done by agent";
@@ -40,6 +34,15 @@ function completedTask(overrides: Partial<Task> = {}): Task {
     prompt: "# Task FN-270\n\n## File Scope\n- packages/dashboard/app/components/Board.tsx\n",
     worktree: "/tmp/fusion/fn-270",
     postReviewFixCount: 0,
+    workflowStepResults: [{
+      workflowStepId: "code-review",
+      workflowStepName: "Code Review",
+      phase: "pre-merge",
+      status: "failed",
+      verdict: "REVISE",
+      startedAt: "2026-08-31T23:01:30.000Z",
+      completedAt: "2026-08-31T23:02:00.000Z",
+    }],
     log: [
       { timestamp: "2026-08-31T23:00:00.000Z", action: "Step 2 (Testing & Verification) → done" },
       { timestamp: "2026-08-31T23:01:00.000Z", action: DONE_MARKER },
@@ -99,14 +102,13 @@ function makeDeps(initial: Task) {
 }
 
 describe("Code Review remediation reopens the step ledger on the path it takes", () => {
-  it.each([
-    ["claimed (the Code Review path)", { attemptClaim: { revisionKey: "code-review", stepName: "Code Review", status: "failed" as const, maxRevisions: "unbounded" as const } }],
-    ["unclaimed (the plain append path)", {}],
-  ])("clears the completion seal — %s", async (_case, options) => {
+  it("clears the completion seal in the accounted Code Review transaction", async () => {
     const { deps, current } = makeDeps(completedTask());
     expect(evaluateStepLedgerSeal(current().log).sealed).toBe(true);
 
-    const outcome = await appendReviewRemediationSteps(deps, current(), REVISE_INFO as never, options as never);
+    const outcome = await appendReviewRemediationSteps(deps, current(), REVISE_INFO as never, {
+      attemptClaim: { revisionKey: "code-review", stepName: "Code Review", status: "failed", maxRevisions: "unbounded" },
+    } as never);
 
     expect(outcome).toBe("appended");
     expect((current().steps ?? []).some((s) => /^Fix:/i.test(String(s.name ?? "")))).toBe(true);

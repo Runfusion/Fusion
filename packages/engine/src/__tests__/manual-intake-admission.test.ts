@@ -69,7 +69,7 @@ function parkedTask(overrides: Partial<Task> = {}): Task {
 }
 
 /** A store that CAN resolve the workflow — the difference that makes this suite able to fail. */
-function resolvingStore(tasks: Task[], ir: WorkflowIr, workflowId = "builtin:coding-ideas"): TaskStore {
+function resolvingStore(tasks: Task[], ir: WorkflowIr, workflowId = "builtin:coding-ideas-v2"): TaskStore {
   const selection = { workflowId, stepIds: [] as string[] };
   return Object.assign(new EventEmitter(), {
     listTasks: vi.fn().mockResolvedValue(tasks),

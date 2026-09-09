@@ -37,6 +37,7 @@ import {
   planConfirmedMergeChecklistReconciliation,
   PreMergeStepsNotRunError,
   PRE_MERGE_STEPS_NOT_RUN_BLOCKER,
+  isStaleContentApprovalBlocker,
   classifyMergeSweepAdmission,
   classifyWorkflowNodeMergeRegion,
   isActiveMergeStatus,
@@ -1149,7 +1150,7 @@ export class ProjectEngine {
     store.on("task:moved", this.specDriftTaskMutationHandler);
     /*
     FNXC:SpecDrift 2026-08-23-06:25:
-    Startup replay is live-task-only. Archived cards cannot act on drift, and
+    Startup replay is live-task-only. Deleted/historical cards cannot act on drift, and
     replaying them consumes planning-lock sessions during restart; unarchive emits
     task:updated, so a returning card still enters through the subscriptions above.
     */
@@ -2904,7 +2905,7 @@ export class ProjectEngine {
         metadata: { taskId: task.id, nodeId: reroute.nodeId, workflowStepId: reroute.workflowStepId, reason: reroute.reason, source: "merge-gate", missingGateCount: mergeGate.requiredPreMergeStepIds.size },
       });
     }
-    if (blocker === "task has a pre-merge approval recorded against different content" && mergeContent.kind === "singular") {
+    if (isStaleContentApprovalBlocker(blocker) && mergeContent.kind === "singular") {
       const reroute = await rerouteSingularStaleContentToReview(store, task, {
         requiredPreMergeStepIds: mergeGate.requiredPreMergeStepIds,
         mergeContent,
@@ -2914,9 +2915,10 @@ export class ProjectEngine {
         nodeId: undefined,
         workflowStepId: undefined,
       }));
-      if (reroute.rerouted) {
-        await store.logEntry(task.id, `[pre-merge] Code Review re-entry is owned by the workflow graph after stale content evidence was refused.`);
-      }
+      await store.logEntry(
+        task.id,
+        `[pre-merge] Review lane '${reroute.nodeId ?? "unknown"}' approved older content; re-review is owned by the workflow graph (${reroute.reason}).`,
+      );
       const auditKey = `${task.id}:${reroute.reason}`;
       if (!this.staleContentRerouteAuditKeys.has(auditKey)) {
         this.staleContentRerouteAuditKeys.add(auditKey);
@@ -3599,7 +3601,7 @@ export class ProjectEngine {
       }
 
       // Drop retained observations for tasks that have left the in-flight set
-      // (moved to done/archived/failed/etc.) so the ring buffers don't leak.
+      // (moved to Complete/failed/etc.) so the ring buffers don't leak.
       for (const taskId of overseer.getObservedTaskIds()) {
         if (!inFlightIds.has(taskId)) {
           overseer.clear(taskId);

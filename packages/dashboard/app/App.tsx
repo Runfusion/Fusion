@@ -74,6 +74,7 @@ import { ShellProvider } from "./context/ShellContext";
 import { RetryWarningProvider } from "./context/RetryWarningContext";
 import { CostBadgeProvider } from "./context/CostBadgeContext";
 import { ChatMessageLayoutProvider } from "./context/ChatMessageLayoutContext";
+import { ChatSubmitOnEnterProvider } from "./context/ChatSubmitOnEnterContext";
 import { ShellHostProvider, useShellHostContext } from "./context/ShellHostContext";
 import { useShellConnection } from "./hooks/useShellConnection";
 import { useStashOrphanCount } from "./hooks/useStashOrphanCount";
@@ -599,20 +600,26 @@ function AppInner() {
   already follows. They keep the legacy fallback.
   */
   const { boardWorkflows: footerBoardWorkflows } = useBoardWorkflows({ projectId: currentProject?.id });
-  const resolveTaskColumnFlagsForActivity = useCallback((task: Task) => {
+  const resolveTaskWorkflowId = useCallback((task: Task) => {
     if (isRemote || !footerBoardWorkflows) return undefined;
-    const workflowId = footerBoardWorkflows.taskWorkflowIds[task.id] ?? footerBoardWorkflows.defaultWorkflowId;
+    return footerBoardWorkflows.taskWorkflowIds[task.id] ?? footerBoardWorkflows.defaultWorkflowId;
+  }, [footerBoardWorkflows, isRemote]);
+
+  const resolveTaskColumnFlagsForActivity = useCallback((task: Task) => {
+    if (!footerBoardWorkflows) return undefined;
+    const workflowId = resolveTaskWorkflowId(task);
     return footerBoardWorkflows.workflows
       .find((workflow) => workflow.id === workflowId)
       ?.columns.find((column) => column.id === task.column)?.flags;
-  }, [footerBoardWorkflows, isRemote]);
+  }, [footerBoardWorkflows, resolveTaskWorkflowId]);
 
-  const { tasks, isStale, createTask, moveTask, pauseTask, unpauseTask, deleteTask, mergeTask, retryTask, bypassReview, resetTask, updateTask, duplicateTask, archiveTask, unarchiveTask, revertTask, archiveAllDone, loadArchivedTasks, loadMoreArchivedTasks, changeArchivedSortMode, archivedSortMode, archivedHasMore, archivedLoadingMore, ingestCreatedTasks, lastFetchTimeMs } = useTasks(
+  const { tasks, isStale, createTask, moveTask, pauseTask, unpauseTask, deleteTask, mergeTask, retryTask, bypassReview, resetTask, updateTask, duplicateTask, revertTask, loadMoreCurrentTasks, retryCurrentTasksPagination, currentTasksTotal, currentTasksHasMore, currentTasksLoadingMore, currentTasksPaginationError, currentTasksProgressKey, loadMoreCompletedTasks, retryCompletedTasksPagination, completedSortMode, changeCompletedSortMode, completedCounts, completedHasMore, completedLoadingMore, completedPaginationError, completedProgressKey, ingestCreatedTasks, lastFetchTimeMs } = useTasks(
     {
       ...(currentProject ? { projectId: currentProject.id } : {}),
       searchQuery: searchQuery || undefined,
       sseEnabled: taskSseEnabled,
       resolveColumnFlags: resolveTaskColumnFlagsForActivity,
+      resolveWorkflowId: resolveTaskWorkflowId,
     }
   );
   const footerTasks = isRemote && remoteData.tasks.length > 0 ? remoteData.tasks : tasks;
@@ -852,7 +859,14 @@ function AppInner() {
   useMobileViewportRestoreReset(isMobile);
 
   // App-level mailbox/chat unread state (used for header/mobile nav badges)
-  const { mailboxUnreadCount, mailboxPendingApprovalCount, setMailboxUnreadCount } = useMailboxUnread(currentProject?.id);
+  const {
+    mailboxUnreadCount,
+    recommendationUnreadCount,
+    artifactUnreadCount,
+    mailboxPendingApprovalCount,
+    setMailboxUnreadCount,
+    markCategorySeen: onMarkCategorySeen,
+  } = useMailboxUnread(currentProject?.id);
   const { chatHasUnreadResponse } = useChatUnreadBadge(currentProject?.id, { taskView, quickChatOpen });
   const { stashOrphanCount } = useStashOrphanCount(currentProject?.id);
   const [showGitHubStarPrompt, setShowGitHubStarPrompt] = useState(false);
@@ -962,6 +976,7 @@ function AppInner() {
     dashboardKeyboardShortcuts,
     dismissModalsOnOutsideClick,
     quickAddSubmitOnEnter,
+    chatSubmitOnEnter,
     skipConfirmationDialogs,
     maxTotalRetriesBeforeFail,
     prAuthAvailable,
@@ -1675,7 +1690,7 @@ function AppInner() {
 
   // Props for the extracted <MainContent> switch (see components/dashboard/MainContent.tsx).
   // Every value is passed by its App name; the switch renders the same subtrees as before.
-  const rightDock = useRightDockController({ active: rightDockActive, projectId: currentProject?.id, addToast, columnFlagsByTaskId: footerColumnFlagsByTaskId, settingsLoaded, researchReadinessVersion, goalAnchorId, tasks: isRemote && remoteData.tasks.length > 0 ? remoteData.tasks : tasks, workflowSteps, subscribePluginEvents, openDetailTask, openTaskPopup: popOutTaskDetailForCurrentView, onOpenSessionInNewWindow: openSessionInNewWindow, openMobileTasksInPopup, openFileInBrowser, onUpdateTask: updateTask, onDeleteTask: deleteTask, onArchiveTask: archiveTask, onRevertTask: revertTask, onMergeTask: mergeTask, onRetryTask: retryTask, onOpenChatWithPrefill: openChatWithPrefill, onPauseTask: pauseTask, onUnpauseTask: unpauseTask, onBypassReview: bypassReview, onResetTask: resetTask, onDuplicateTask: duplicateTask, onTaskUpdated: (task: Task) => ingestCreatedTasks([task]), openSettings: (section?: string) => openSettingsWithNav(section as SectionId), onOpenUsage: openUsageWithNav, onOpenActivityLog: openActivityLogWithNav, onOpenGitHubImport: openGitHubImportWithNav, onOpenGitManager: openGitManagerWithNav, onOpenSchedules: openSchedulesWithNav, onSendSelectionToTask: modalManager.openNewTaskWithDescription, onCreateTaskFromInsight: handleInsightTaskCreate, onNavigateToMission: handleOpenMission, onTaskCreated: (task: Task) => ingestCreatedTasks([task]), prAuthAvailable, autoMerge, taskDetailChatFirst, visibilityOptions: { experimentalFeatures: { insights: insightsEnabled, memoryView: memoryEnabled, devServerView: devServerEnabled, researchView: researchEnabled, evalsView: evalsEnabled, goalsView: goalsEnabled }, showSkillsTab: skillsEnabled, pluginDashboardViews }, footerVisible: executorFooterVisible });
+  const rightDock = useRightDockController({ active: rightDockActive, projectId: currentProject?.id, addToast, columnFlagsByTaskId: footerColumnFlagsByTaskId, settingsLoaded, researchReadinessVersion, goalAnchorId, tasks: isRemote && remoteData.tasks.length > 0 ? remoteData.tasks : tasks, workflowSteps, subscribePluginEvents, openDetailTask, openTaskPopup: popOutTaskDetailForCurrentView, onOpenSessionInNewWindow: openSessionInNewWindow, openMobileTasksInPopup, openFileInBrowser, onUpdateTask: updateTask, onDeleteTask: deleteTask, onRevertTask: revertTask, onMergeTask: mergeTask, onRetryTask: retryTask, onOpenChatWithPrefill: openChatWithPrefill, onPauseTask: pauseTask, onUnpauseTask: unpauseTask, onBypassReview: bypassReview, onResetTask: resetTask, onDuplicateTask: duplicateTask, onTaskUpdated: (task: Task) => ingestCreatedTasks([task]), openSettings: (section?: string) => openSettingsWithNav(section as SectionId), onOpenUsage: openUsageWithNav, onOpenActivityLog: openActivityLogWithNav, onOpenGitHubImport: openGitHubImportWithNav, onOpenGitManager: openGitManagerWithNav, onOpenSchedules: openSchedulesWithNav, onSendSelectionToTask: modalManager.openNewTaskWithDescription, onCreateTaskFromInsight: handleInsightTaskCreate, onNavigateToMission: handleOpenMission, onTaskCreated: (task: Task) => ingestCreatedTasks([task]), prAuthAvailable, autoMerge, taskDetailChatFirst, visibilityOptions: { experimentalFeatures: { insights: insightsEnabled, memoryView: memoryEnabled, devServerView: devServerEnabled, researchView: researchEnabled, evalsView: evalsEnabled, goalsView: goalsEnabled }, showSkillsTab: skillsEnabled, pluginDashboardViews }, footerVisible: executorFooterVisible });
 
   /*
   FNXC:OpenTasksInRightSidebar 2026-06-28-00:00:
@@ -1808,6 +1823,9 @@ function AppInner() {
     onSendAsReport: handleSendChatMessageAsReport,
     onOpenChatWithPrefill: openChatWithPrefill,
     setMailboxUnreadCount,
+    recommendationUnreadCount,
+    artifactUnreadCount,
+    onMarkCategorySeen,
     setMissionTargetId,
     setMissionResumeSessionId,
     setMilestoneSliceResumeSessionId,
@@ -1856,17 +1874,24 @@ function AppInner() {
     globalPaused,
     updateTask,
     retryTask,
-    archiveTask,
-    unarchiveTask,
     revertTask,
     deleteTask,
-    archiveAllDone,
-    loadArchivedTasks,
-    loadMoreArchivedTasks,
-    changeArchivedSortMode,
-    archivedSortMode,
-    archivedHasMore,
-    archivedLoadingMore,
+    loadMoreCurrentTasks,
+    currentTasksTotal,
+    currentTasksHasMore,
+    currentTasksLoadingMore,
+    currentTasksPaginationError,
+    currentTasksProgressKey,
+    retryCurrentTasksPagination,
+    loadMoreCompletedTasks,
+    completedCounts,
+    completedHasMore,
+    completedLoadingMore,
+    completedPaginationError,
+    completedProgressKey,
+    retryCompletedTasksPagination,
+    completedSortMode,
+    changeCompletedSortMode,
     searchQuery,
     availableModels,
     favoriteProviders,
@@ -1972,6 +1997,7 @@ function AppInner() {
   return (
     <ConfirmDialogProvider skipConfirmations={skipConfirmationDialogs}>
       <ChatMessageLayoutProvider value={chatMessageLayout}>
+      <ChatSubmitOnEnterProvider value={chatSubmitOnEnter}>
       <ModalDismissPreferenceProvider enabled={dismissModalsOnOutsideClick}>
         <QuickAddSubmitOnEnterProvider enabled={quickAddSubmitOnEnter}>
       <NavigationHistoryProvider value={{ pushNav, replaceCurrent, removeNav }}>
@@ -1994,6 +2020,8 @@ function AppInner() {
         onOpenActivityLog={openActivityLogWithNav}
         onOpenMailbox={() => handleTaskViewChange("mailbox")}
         mailboxUnreadCount={mailboxUnreadCount}
+        recommendationUnreadCount={recommendationUnreadCount}
+        artifactUnreadCount={artifactUnreadCount}
         mailboxPendingApprovalCount={mailboxPendingApprovalCount}
         chatHasUnreadResponse={chatHasUnreadResponse}
         stashOrphanCount={stashOrphanCount}
@@ -2067,7 +2095,9 @@ function AppInner() {
             onChangeView={handleTaskViewChange}
             onNewTask={openNewTaskWithNav}
             onOpenSettings={openSettingsWithNav}
-                mailboxUnreadCount={mailboxUnreadCount}
+            mailboxUnreadCount={mailboxUnreadCount}
+            recommendationUnreadCount={recommendationUnreadCount}
+            artifactUnreadCount={artifactUnreadCount}
             mailboxPendingApprovalCount={mailboxPendingApprovalCount}
             chatHasUnreadResponse={chatHasUnreadResponse}
             planningNeedsInput={planningNeedsInput}
@@ -2169,6 +2199,8 @@ function AppInner() {
         onOpenActivityLog={openActivityLogWithNav}
         onOpenMailbox={() => handleTaskViewChange("mailbox")}
         mailboxUnreadCount={mailboxUnreadCount}
+        recommendationUnreadCount={recommendationUnreadCount}
+        artifactUnreadCount={artifactUnreadCount}
         mailboxPendingApprovalCount={mailboxPendingApprovalCount}
         chatHasUnreadResponse={chatHasUnreadResponse}
         stashOrphanCount={stashOrphanCount}
@@ -2386,7 +2418,7 @@ function AppInner() {
         onRefinementCreated={(task) => ingestCreatedTasks([task])}
         onPlanningMode={openPlanningWithInitialPlanWithNav}
         onOpenChatWithPrefill={openChatWithPrefill}
-        taskOperations={{ moveTask, deleteTask, mergeTask, archiveTask, revertTask, retryTask, pauseTask, unpauseTask, bypassReview, resetTask, duplicateTask }}
+        taskOperations={{ moveTask, deleteTask, mergeTask, revertTask, retryTask, pauseTask, unpauseTask, bypassReview, resetTask, duplicateTask }}
         deepLink={{ handleDetailClose }}
         settings={{ prAuthAvailable, autoMerge, openTasksInRightSidebar, openMobileTasksInPopup, taskPopupsBoardListOnly, showCostBadgeOnCards, taskDetailChatFirst, chatMessageLayout, themeMode, colorTheme, dashboardFontScalePct, shadcnCustomColors, resolvedThemeMode, setThemeMode, setColorTheme, setDashboardFontScalePct, setShadcnCustomColors, setQuickChatButtonModeImmediate, setChatMessageLayoutImmediate, setOpenTasksInRightSidebarImmediate, setOpenMobileTasksInPopupImmediate, setTaskPopupsBoardListOnlyImmediate, setShowCostBadgeOnCardsImmediate, setTaskDetailChatFirstImmediate, setMobileNavPrimaryItemsImmediate }}
         onSettingsClose={handleSettingsCloseWithNav}
@@ -2419,6 +2451,7 @@ function AppInner() {
       </NavigationHistoryProvider>
         </QuickAddSubmitOnEnterProvider>
       </ModalDismissPreferenceProvider>
+      </ChatSubmitOnEnterProvider>
       </ChatMessageLayoutProvider>
     </ConfirmDialogProvider>
   );

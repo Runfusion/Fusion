@@ -47,6 +47,7 @@ function makeStore(task: Task, settingsOverrides: Partial<MutableSettings> = {})
 
   return Object.assign(emitter, {
     getSettings: vi.fn(async () => settings),
+    getTask: vi.fn(async () => task),
     listTasks: vi.fn(async ({ column }: { column?: string } = {}) => (column === task.column ? [task] : [])),
     updateTask: vi.fn(async (_id: string, updates: Partial<Task>) => Object.assign(task, updates)),
     moveTask: vi.fn(async (_id: string, column: Task["column"], opts?: Record<string, unknown>) => {
@@ -60,7 +61,6 @@ function makeStore(task: Task, settingsOverrides: Partial<MutableSettings> = {})
     updateSettings: vi.fn(async () => settings),
     clearStaleExecutionStartBranchReferences: vi.fn(() => []),
     walCheckpoint: vi.fn(() => ({ busy: 0, log: 0, checkpointed: 0 })),
-    archiveTaskAndCleanup: vi.fn(async () => ({})),
     mergeTask: vi.fn(async () => undefined),
     getRootDir: vi.fn(() => "/tmp/test"),
   }) as unknown as TaskStore & EventEmitter;
@@ -72,7 +72,7 @@ describe("FN-5704: reclaim self-owned resume limbo escalation", () => {
     vi.spyOn(worktreePoolModule, "isUsableTaskWorktree").mockResolvedValue(true);
   });
 
-  it("escalates frozen in-progress reclaim/resume loops to todo with preserve flags and audit event", async () => {
+  it("escalates frozen in-progress reclaim/resume loops in place with an audit event", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-01-01T02:00:00.000Z"));
     const task = makeTask();
@@ -94,12 +94,8 @@ describe("FN-5704: reclaim self-owned resume limbo escalation", () => {
     expect(task.resumeLimboCount).toBe(1);
     await manager.reclaimSelfOwnedBranchConflicts();
 
-    expect(store.moveTask).toHaveBeenCalledWith(task.id, "todo", expect.objectContaining({
-      moveSource: "engine",
-      preserveWorktree: true,
-      preserveProgress: true,
-      preserveResumeState: true,
-    }));
+    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(task.column).toBe("in-progress");
     expect(task.resumeLimboCount).toBe(0);
     const limboEvent = (store.recordRunAuditEvent as any).mock.calls.find((call: any[]) => call[0].mutationType === "task:resume-limbo-escalated")?.[0];
     expect(limboEvent).toBeTruthy();

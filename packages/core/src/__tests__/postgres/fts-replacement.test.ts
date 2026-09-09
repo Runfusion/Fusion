@@ -367,17 +367,4 @@ pgDescribe("fts-replacement: tsvector/GIN full-text search (PostgreSQL)", () => 
     expect(sanitizeSearchTokens("")).toEqual([]);
     expect(sanitizeSearchTokens("   ")).toEqual([]);
   });
-
-  it("includeArchived=false excludes archived tasks from search", async () => {
-    await insertTask(ctx.layer, "ARCH-001", { title: "archived filter target", column: "archived" });
-    await insertTask(ctx.layer, "LIVE-001", { title: "archived filter target", column: "todo" });
-
-    // Default includeArchived=true: both match.
-    const all = await searchTasksTsvector(ctx.layer.db, "filter");
-    expect(resultIds(all)).toEqual(["ARCH-001", "LIVE-001"]);
-
-    // includeArchived=false: only the live task.
-    const liveOnly = await searchTasksTsvector(ctx.layer.db, "filter", { includeArchived: false });
-    expect(resultIds(liveOnly)).toEqual(["LIVE-001"]);
-  });
 });

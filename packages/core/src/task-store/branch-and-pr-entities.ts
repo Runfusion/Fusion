@@ -22,14 +22,14 @@ import { BranchGroup, BranchGroupCreateInput, ColumnId, MergeRequestRecord, Merg
 import { validateNodeOverrideChange, resolveNodeOverrideLanes} from "../mesh/node-override-guard.js";
 import { WorkflowMovePolicyInput } from "../workflows/workflow-extension-types.js";
 import { resolveWorkflowIrById, isTaskTerminalNodeIdAsync} from "../workflows/workflow-ir-resolver.js";
-import { WorkflowSettingDefinition, WorkflowIr} from "../workflows/workflow-ir-types.js";
+import { WorkflowSettingDefinition } from "../workflows/workflow-ir-types.js";
 import { resolveTaskLifecycleColumns } from "../workflows/workflow-lifecycle-traits.js";
 import { and, asc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { MoveTaskInternalOptions, MoveTaskOptions, storeLog } from "../store.js";
-import { resolveProjectColumnsForRoles } from "../project-lane-vocabulary.js";
+import { ARCHIVED_SENTINEL_LANES, resolveProjectColumnsForRoles } from "../project-lane-vocabulary.js";
 import {writePromptFileAtomic} from "./prompt-file.js";
 
 /*
@@ -77,7 +77,7 @@ member blocks promotion, while an archived member with persisted landing proof p
 The PostgreSQL path must therefore load archived tasks before applying group membership.
 */
 export async function listTasksByBranchGroupImpl(store: TaskStore, groupId: string): Promise<Task[]> {
-    const tasks = await store.listTasks({ includeArchived: true, slim: false });
+    const tasks = await store.listTasks({ includeArchived: false, slim: false });
     // Membership filter (incl. legacy synthetic-groupId fallback) is shared with
     // the dashboard list route via `filterTasksByBranchGroup` so semantics can't
     // drift between the two call sites (Fix #8/#9).
@@ -465,8 +465,7 @@ export async function findRecentTasksByContentFingerprintImpl(store: TaskStore,
     one the operator had already filed away. Additive and legacy-seeded.
     */
     if (!includeArchived) {
-      const fingerprintArchivedLanes = await resolveProjectColumnsForRoles(store, ["archived"])
-        .catch(() => undefined);
+      const fingerprintArchivedLanes = ARCHIVED_SENTINEL_LANES;
       /* The fallback stays a literal `ne(..., "archived")` EXPRESSION, not a string in an array: the
          parity gate counts Drizzle predicates by scanning for exactly that shape, and collapsing it
          into data drops the SQL encoding's count while the TS and raw encodings hold — which is the
@@ -504,8 +503,11 @@ export async function findRecentTasksBySourceParentTaskIdImpl(
     const layer = store.asyncLayer!;
   /* FNXC:WorkflowResolvedColumns 2026-07-31-23:59: LANE — recent LIVE siblings; a finished sibling is
      not a candidate. Additive and legacy-seeded, so an unconverted board is unchanged. */
-  const siblingFinishedLanes = await resolveProjectColumnsForRoles(store, ["complete", "archived"])
+  const resolvedSiblingCompleteLanes = await resolveProjectColumnsForRoles(store, ["complete"])
     .catch(() => undefined);
+  const siblingFinishedLanes = resolvedSiblingCompleteLanes
+    ? new Set([...resolvedSiblingCompleteLanes, ...ARCHIVED_SENTINEL_LANES])
+    : undefined;
   const siblingFinishedExclusions = siblingFinishedLanes && siblingFinishedLanes.size > 0
     ? [...siblingFinishedLanes].map((lane) => ne(schema.project.tasks.column, lane))
     : [ne(schema.project.tasks.column, "archived"), ne(schema.project.tasks.column, "done")];
@@ -535,7 +537,7 @@ export async function clearNearDuplicateReferencesToFailSoftImpl(store: TaskStor
 
 export async function getTasksByAssignedAgentImpl(store: TaskStore,
     agentId: string,
-    options?: { pausedOnly?: boolean; excludeArchived?: boolean },
+    options?: { pausedOnly?: boolean },
   ): Promise<Task[]> {
     /*
      * FNXC:SqliteFinalRemoval 2026-06-25:
@@ -547,31 +549,7 @@ export async function getTasksByAssignedAgentImpl(store: TaskStore,
       if (options?.pausedOnly && !task.paused) return false;
       return true;
     });
-    if (options?.excludeArchived !== true) return assigned;
-    /*
-    FNXC:WorkflowLifecycleColumns 2026-07-31-13:40:
-    `excludeArchived` asks each card's OWN workflow, not the literal id.
-
-    Found by auditing an unwired optional parameter one level up: `rankAssignedTasksForWakeDelta`
-    gained a resolved terminal answer that no caller passed, and reading the caller showed the real
-    gap was HERE — on a renamed board `column === "archived"` matched nothing, so archived cards were
-    returned as open assigned work and the Wake Delta inventory asked a coordinator to unblock or
-    reassign tasks that had already been archived.
-
-    That is the fourth unwired parameter in this sweep whose CALLER held the larger defect.
-
-    Resolution runs only over the rows that already matched `agentId` — a handful — not the whole
-    board, and shares one IR cache. A card whose workflow will not resolve keeps the literal.
-    */
-    const archivedIrCache = new Map<string, WorkflowIr>();
-    const live: Task[] = [];
-    for (const task of assigned) {
-      const lanes = await resolveTaskLifecycleColumns(store, task.id, archivedIrCache).catch(() => undefined);
-      /* DELIBERATE-LITERAL — the unresolvable-workflow default, reviewed 2026-07-31-13:40. */
-      const isArchived = lanes === undefined ? task.column === "archived" : task.column === lanes.archived;
-      if (!isArchived) live.push(task);
-    }
-    return live;
+    return assigned;
 }
 
 export function resolveWorkflowMoveActorImpl(store: TaskStore,
@@ -660,7 +638,7 @@ export async function updateTaskImpl(store: TaskStore,
 
 async function updateTaskWithTaskLockImpl(store: TaskStore,
     id: string,
-    updates: { title?: string; description?: string; priority?: TaskPriority | null; prompt?: string; worktree?: string | null; workspaceWorktrees?: import("../types.js").Task["workspaceWorktrees"]; externalBlock?: import("../types.js").Task["externalBlock"] | null; status?: string | null; dependencies?: string[]; steps?: import("../types.js").TaskStep[]; customFields?: Record<string, unknown>; currentStep?: number; blockedBy?: string | null; overlapBlockedBy?: string | null; assignedAgentId?: string | null; pausedByAgentId?: string | null; pausedReason?: string | null; tokenBudgetSoftAlertedAt?: string | null; worktrunkFallbackAlertedAt?: string | null; worktrunkFailure?: import("../types.js").Task["worktrunkFailure"] | null; tokenBudgetHardAlertedAt?: string | null; tokenBudgetOverride?: import("../types.js").TaskTokenBudgetOverride | null; dispatchStormCount?: number | null; lastDispatchAt?: string | null; assigneeUserId?: string | null; scopeOverride?: boolean | null; scopeOverrideReason?: string | null; scopeAutoWiden?: string[] | null; nodeId?: string | null; effectiveNodeId?: string | null; effectiveNodeSource?: string | null; checkedOutBy?: string | null; checkedOutAt?: string | null; checkoutNodeId?: string | null; checkoutRunId?: string | null; checkoutLeaseRenewedAt?: string | null; checkoutLeaseEpoch?: number | null; paused?: boolean; baseBranch?: string | null; autoMerge?: boolean | null; branch?: string | null; executionStartBranch?: string | null; baseCommitSha?: string | null; size?: "S" | "M" | "L"; reviewLevel?: number; executionMode?: import("../types.js").ExecutionMode | null; mergeRetries?: number; workflowStepRetries?: number; stuckKillCount?: number | null; resumeLimboCount?: number | null; executeRequeueLoopCount?: number | null; graphResumeRetryCount?: number | null; consecutiveToolFailureRetryCount?: number | null; executorEscalationAttempted?: boolean | null; toolFailureDetectorLogCursor?: number | null; toolFailureRetryExhaustedAuditEmitted?: boolean | null; resumeLimboTipSha?: string | null; resumeLimboStepSignature?: string | null; executeRequeueLoopSignature?: string | null; postReviewFixCount?: number | null; planReviewReplanCount?: number | null; recoveryRetryCount?: number | null; sessionContentionHoldCount?: number | null; sessionContentionWaitReason?: string | null; taskDoneRetryCount?: number | null; bulkCompletionRefusalAt?: string | null; workflowIrPin?: string | null; workflowIrPinNodeId?: string | null; workflowIrPinColumnId?: string | null; legacyAdoptedAt?: string | null; worktreeSessionRetryCount?: number | null; completionHandoffLimboRecoveryCount?: number | null; verificationFailureCount?: number | null; mergeConflictBounceCount?: number | null; mergeAuditBounceCount?: number | null; mergeTransientRetryCount?: number | null; branchConflictRecoveryCount?: number | null; reviewerContextRetryCount?: number | null; reviewerFallbackRetryCount?: number | null; nextRecoveryAt?: string | null; enabledWorkflowSteps?: string[]; noCommitsExpected?: boolean | null; modelProvider?: string | null; credentialInstanceId?: string | null; modelId?: string | null; validatorModelProvider?: string | null; validatorCredentialInstanceId?: string | null; validatorModelId?: string | null; planningModelProvider?: string | null; planningCredentialInstanceId?: string | null; planningModelId?: string | null; mergerModelProvider?: string | null; mergerCredentialInstanceId?: string | null; mergerModelId?: string | null; thinkingLevel?: string | null; validatorThinkingLevel?: string | null; planningThinkingLevel?: string | null; mergerThinkingLevel?: string | null; error?: string | null; summary?: string | null; sessionFile?: string | null; firstExecutionAt?: string | null; cumulativeActiveMs?: number | null; executionStartedAt?: string | null; executionCompletedAt?: string | null; review?: import("../types.js").TaskReview | null; reviewState?: import("../types.js").TaskReviewState | null; workflowStepResults?: import("../types.js").WorkflowStepResult[] | null; mergeDetails?: import("../types.js").MergeDetails | null; sourceIssue?: import("../types.js").TaskSourceIssue | null; sourceMetadataPatch?: Record<string, unknown> | null; githubTracking?: import("../types.js").TaskGithubTracking | null; tokenUsage?: import("../types.js").TaskTokenUsage | null; modifiedFiles?: string[] | null; missionId?: string | null; sliceId?: string | null; workflowTransitionNotification?: import("../types.js").WorkflowTransitionNotificationMarker | undefined; sessionAdvisorEnabled?: boolean | null },    runContext?: RunMutationContext,
+    updates: { title?: string; description?: string; priority?: TaskPriority | null; prompt?: string; worktree?: string | null; workspaceWorktrees?: import("../types.js").Task["workspaceWorktrees"]; externalBlock?: import("../types.js").Task["externalBlock"] | null; planningFailure?: import("../types.js").Task["planningFailure"] | null; status?: string | null; dependencies?: string[]; steps?: import("../types.js").TaskStep[]; customFields?: Record<string, unknown>; currentStep?: number; blockedBy?: string | null; overlapBlockedBy?: string | null; assignedAgentId?: string | null; pausedByAgentId?: string | null; pausedReason?: string | null; tokenBudgetSoftAlertedAt?: string | null; worktrunkFallbackAlertedAt?: string | null; worktrunkFailure?: import("../types.js").Task["worktrunkFailure"] | null; tokenBudgetHardAlertedAt?: string | null; tokenBudgetOverride?: import("../types.js").TaskTokenBudgetOverride | null; dispatchStormCount?: number | null; lastDispatchAt?: string | null; assigneeUserId?: string | null; scopeOverride?: boolean | null; scopeOverrideReason?: string | null; scopeAutoWiden?: string[] | null; nodeId?: string | null; effectiveNodeId?: string | null; effectiveNodeSource?: string | null; checkedOutBy?: string | null; checkedOutAt?: string | null; checkoutNodeId?: string | null; checkoutRunId?: string | null; checkoutLeaseRenewedAt?: string | null; checkoutLeaseEpoch?: number | null; paused?: boolean; baseBranch?: string | null; autoMerge?: boolean | null; branch?: string | null; executionStartBranch?: string | null; baseCommitSha?: string | null; size?: "S" | "M" | "L"; reviewLevel?: number; executionMode?: import("../types.js").ExecutionMode | null; mergeRetries?: number; workflowStepRetries?: number; stuckKillCount?: number | null; resumeLimboCount?: number | null; executeRequeueLoopCount?: number | null; graphResumeRetryCount?: number | null; consecutiveToolFailureRetryCount?: number | null; executorEscalationAttempted?: boolean | null; toolFailureDetectorLogCursor?: number | null; toolFailureRetryExhaustedAuditEmitted?: boolean | null; resumeLimboTipSha?: string | null; resumeLimboStepSignature?: string | null; executeRequeueLoopSignature?: string | null; postReviewFixCount?: number | null; planReviewReplanCount?: number | null; recoveryRetryCount?: number | null; sessionContentionHoldCount?: number | null; sessionContentionWaitReason?: string | null; taskDoneRetryCount?: number | null; bulkCompletionRefusalAt?: string | null; workflowIrPin?: string | null; workflowIrPinNodeId?: string | null; workflowIrPinColumnId?: string | null; legacyAdoptedAt?: string | null; worktreeSessionRetryCount?: number | null; completionHandoffLimboRecoveryCount?: number | null; verificationFailureCount?: number | null; mergeConflictBounceCount?: number | null; mergeAuditBounceCount?: number | null; mergeTransientRetryCount?: number | null; branchConflictRecoveryCount?: number | null; reviewerContextRetryCount?: number | null; reviewerFallbackRetryCount?: number | null; nextRecoveryAt?: string | null; enabledWorkflowSteps?: string[]; noCommitsExpected?: boolean | null; modelProvider?: string | null; credentialInstanceId?: string | null; modelId?: string | null; validatorModelProvider?: string | null; validatorCredentialInstanceId?: string | null; validatorModelId?: string | null; planningModelProvider?: string | null; planningCredentialInstanceId?: string | null; planningModelId?: string | null; mergerModelProvider?: string | null; mergerCredentialInstanceId?: string | null; mergerModelId?: string | null; thinkingLevel?: string | null; validatorThinkingLevel?: string | null; planningThinkingLevel?: string | null; mergerThinkingLevel?: string | null; error?: string | null; summary?: string | null; sessionFile?: string | null; firstExecutionAt?: string | null; cumulativeActiveMs?: number | null; executionStartedAt?: string | null; executionCompletedAt?: string | null; review?: import("../types.js").TaskReview | null; reviewState?: import("../types.js").TaskReviewState | null; workflowStepResults?: import("../types.js").WorkflowStepResult[] | null; mergeDetails?: import("../types.js").MergeDetails | null; sourceIssue?: import("../types.js").TaskSourceIssue | null; sourceMetadataPatch?: Record<string, unknown> | null; githubTracking?: import("../types.js").TaskGithubTracking | null; tokenUsage?: import("../types.js").TaskTokenUsage | null; modifiedFiles?: string[] | null; missionId?: string | null; sliceId?: string | null; workflowTransitionNotification?: import("../types.js").WorkflowTransitionNotificationMarker | undefined; sessionAdvisorEnabled?: boolean | null },    runContext?: RunMutationContext,
   ): Promise<Task> {
     /*
     FNXC:StateMachine 2026-07-07-12:00:
@@ -1272,6 +1250,10 @@ export function transitionWorkflowWorkItemSyncImpl(store: TaskStore,
       // FNXC:WorkflowWorkItemCas 2026-07-27-22:10 (U7, PR #2491 review — greptile P1):
       // Mirrors the async path's compare-and-set no-op so the two cannot drift.
       if (patch.expectedState !== undefined && fromState !== patch.expectedState) {
+        return store.rowToWorkflowWorkItem(existing);
+      }
+      // FNXC:WorkflowWorkItemLeaseCas 2026-09-06-01:28: mirror the async owner CAS so a stale same-state lease holder cannot mutate its successor in compatibility stores.
+      if (patch.expectedLeaseOwner !== undefined && existing.leaseOwner !== patch.expectedLeaseOwner) {
         return store.rowToWorkflowWorkItem(existing);
       }
       if (store.isTerminalWorkflowWorkItemState(fromState) && fromState !== state) {

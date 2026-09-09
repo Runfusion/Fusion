@@ -121,19 +121,6 @@ describe("FN-5092: reconcileStaleMergerStatus watchdog", () => {
     expect((await store.getTask("FN-9999"))?.status).toBeNull();
   });
 
-  it("also catches the same leak on archived tasks", async () => {
-    const stranded = makeTask("FN-ARCH", {
-      column: "archived",
-      status: "merging" as Task["status"],
-    });
-    const store = createStore([stranded]);
-    const mgr = new SelfHealingManager(store, { rootDir: "/repo" });
-
-    const cleared = await mgr.reconcileStaleMergerStatus();
-    expect(cleared).toBe(1);
-    expect((await store.getTask("FN-ARCH"))?.status).toBeNull();
-  });
-
   it("does not touch in-review tasks that legitimately have status=\"merging\"", async () => {
     const legit = makeTask("FN-INREVIEW", {
       column: "in-review",
@@ -161,7 +148,7 @@ describe("FN-5092: reconcileStaleMergerStatus watchdog", () => {
     const tasks = [
       makeTask("FN-A", { column: "done", status: "merging" as Task["status"] }),
       makeTask("FN-B", { column: "done", status: "merging-pr" as Task["status"] }),
-      makeTask("FN-C", { column: "archived", status: "merging" as Task["status"] }),
+      makeTask("FN-C", { column: "done", status: "merging" as Task["status"] }),
       makeTask("FN-D", { column: "done", status: undefined }), // healthy
     ];
     const store = createStore(tasks);

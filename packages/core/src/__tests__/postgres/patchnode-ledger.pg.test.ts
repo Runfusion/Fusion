@@ -6,7 +6,6 @@ import { buildPatchnodeEntryId, toPatchnodeOccurrenceKey } from "../../board/pat
 import { applySchemaBaseline } from "../../postgres/schema-applier.js";
 import * as schema from "../../postgres/schema/index.js";
 import { PATCHNODE_RECONCILE_TTL_MS } from "../../store.js";
-import { findArchivedTaskEntry } from "../../task-store/async/async-archive-lineage.js";
 
 pgDescribe("Patchnode ledger (PostgreSQL)", () => {
   const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({ prefix: "fusion_patchnode", projectId: "patchnode-test" });
@@ -64,13 +63,6 @@ pgDescribe("Patchnode ledger (PostgreSQL)", () => {
     await h.adminDb().update(schema.project.tasks).set({ column, columnMovedAt, updatedAt: columnMovedAt }).where(and(
       eq(schema.project.tasks.projectId, h.layer().projectId!),
       eq(schema.project.tasks.id, id),
-    ));
-  };
-
-  const deleteLedgerRows = async (id: string) => {
-    await h.adminDb().delete(schema.project.patchnodeEntries).where(and(
-      eq(schema.project.patchnodeEntries.projectId, h.layer().projectId!),
-      eq(schema.project.patchnodeEntries.taskId, id),
     ));
   };
 
@@ -424,100 +416,6 @@ pgDescribe("Patchnode ledger (PostgreSQL)", () => {
     expect(await ledgerRows(task.id)).toHaveLength(1);
   });
 
-  it("captures a legacy delivery inside archive and ignores summaries outside completion lanes", async () => {
-    const store = h.store();
-    const legacy = await createWithSummary({ title: "Legacy delivery", description: "Legacy delivery", summary: "legacy archive body" });
-    const movedAt = "2026-08-20T09:30:00.000Z";
-    await seedTaskColumn(legacy.id, "done", movedAt);
-
-    await store.archiveTask(legacy.id, { cleanup: false });
-    expect(await ledgerRows(legacy.id)).toMatchObject([{
-      entryId: buildPatchnodeEntryId("completed", legacy.id, toPatchnodeOccurrenceKey(movedAt)),
-      body: "legacy archive body",
-      day: "2026-08-20",
-    }]);
-
-    const control = await createWithSummary({ description: "Review summary only", summary: "not delivered" });
-    await seedTaskColumn(control.id, "in-review", "2026-08-20T10:00:00.000Z");
-    await store.archiveTask(control.id, { cleanup: false });
-    expect(await ledgerRows(control.id)).toEqual([]);
-  });
-
-  it("rolls back archive when legacy delivery capture fails", async () => {
-    const store = h.store();
-    const task = await createWithSummary({ description: "Deferred legacy archive", summary: "preserve me" });
-    await seedTaskColumn(task.id, "done", "2026-08-21T09:30:00.000Z");
-    await installLedgerFailureTrigger(task.id);
-
-    await expect(store.archiveTask(task.id, { cleanup: false })).rejects.toThrow();
-
-    const rows = await h.adminDb().select({ column: schema.project.tasks.column, deletedAt: schema.project.tasks.deletedAt })
-      .from(schema.project.tasks)
-      .where(and(eq(schema.project.tasks.projectId, h.layer().projectId!), eq(schema.project.tasks.id, task.id)));
-    expect(rows).toEqual([{ column: "done", deletedAt: null }]);
-    expect(await findArchivedTaskEntry(h.layer().db, task.id, h.layer().projectId)).toBeUndefined();
-    expect(await ledgerRows(task.id)).toEqual([]);
-  });
-
-  it("captures a legacy archived delivery before cleanup hard-deletes its task row", async () => {
-    const store = h.store();
-    const task = await createWithSummary({ description: "Cleanup backlog", summary: "last surviving summary" });
-    const movedAt = "2026-08-22T08:00:00.000Z";
-    await seedTaskColumn(task.id, "done", movedAt);
-    await store.archiveTask(task.id, { cleanup: false });
-    await deleteLedgerRows(task.id);
-
-    expect(await store.cleanupArchivedTasks()).toContain(task.id);
-    expect(await ledgerRows(task.id)).toMatchObject([{
-      entryId: buildPatchnodeEntryId("completed", task.id, toPatchnodeOccurrenceKey(movedAt)),
-      body: "last surviving summary",
-    }]);
-    expect(await h.adminDb().select().from(schema.project.tasks).where(eq(schema.project.tasks.id, task.id))).toEqual([]);
-    expect(await store.cleanupArchivedTasks()).not.toContain(task.id);
-  });
-
-  it("skips only the archived row whose cleanup capture fails", async () => {
-    const store = h.store();
-    const blocked = await createWithSummary({ description: "Blocked cleanup", summary: "retry later" });
-    const unaffected = await createWithSummary({ description: "Unaffected cleanup", summary: "clean now" });
-    await seedTaskColumn(blocked.id, "done", "2026-08-23T08:00:00.000Z");
-    await seedTaskColumn(unaffected.id, "done", "2026-08-23T09:00:00.000Z");
-    await store.archiveTask(blocked.id, { cleanup: false });
-    await store.archiveTask(unaffected.id, { cleanup: false });
-    await deleteLedgerRows(blocked.id);
-    await deleteLedgerRows(unaffected.id);
-    await installLedgerFailureTrigger(blocked.id);
-
-    const cleaned = await store.cleanupArchivedTasks();
-
-    expect(cleaned).not.toContain(blocked.id);
-    expect(cleaned).toContain(unaffected.id);
-    expect(await h.adminDb().select({ id: schema.project.tasks.id }).from(schema.project.tasks).where(eq(schema.project.tasks.id, blocked.id))).toEqual([{ id: blocked.id }]);
-    expect(await h.adminDb().select({ id: schema.project.tasks.id }).from(schema.project.tasks).where(eq(schema.project.tasks.id, unaffected.id))).toEqual([]);
-    expect(await ledgerRows(blocked.id)).toEqual([]);
-    expect(await ledgerRows(unaffected.id)).toHaveLength(1);
-  });
-
-  it("backfills an archived legacy delivery idempotently", async () => {
-    const store = h.store();
-    const task = await createWithSummary({ description: "Archived backlog", summary: "backfilled body" });
-    const movedAt = "2026-08-24T08:00:00.000Z";
-    await seedTaskColumn(task.id, "done", movedAt);
-    await store.archiveTask(task.id, { cleanup: false });
-    await deleteLedgerRows(task.id);
-
-    const first = await store.reconcilePatchnodeLedger({ force: true });
-    const second = await store.reconcilePatchnodeLedger({ force: true });
-
-    expect(first.archivedBackfilled).toBe(1);
-    expect(second.archivedBackfilled).toBe(0);
-    expect(await ledgerRows(task.id)).toMatchObject([{
-      entryId: buildPatchnodeEntryId("completed", task.id, toPatchnodeOccurrenceKey(movedAt)),
-      body: "backfilled body",
-      day: "2026-08-24",
-    }]);
-  });
-
   it("re-arms feed reconciliation after its TTL", async () => {
     const store = h.store();
     expect((await store.listPatchnodeEntries()).entries).toEqual([]);
@@ -548,8 +446,7 @@ pgDescribe("Patchnode ledger (PostgreSQL)", () => {
       body: "original body",
     }]);
 
-    await store.archiveTask(task.id, { cleanup: false });
-    await store.cleanupArchivedTasks();
+    await store.deleteTask(task.id);
     expect(await ledgerRows(task.id)).toMatchObject([{ entryId: original.entryId, title: "Original title", body: "original body" }]);
   });
 
@@ -572,29 +469,14 @@ pgDescribe("Patchnode ledger (PostgreSQL)", () => {
     expect(rows.map((row) => `${row.day}:${row.body}`).sort()).toEqual(["2026-08-26:first", "2026-08-27:second"]);
   });
 
-  it("does not treat unarchive into the completion lane as a new delivery", async () => {
-    const store = h.store();
-    const task = await createWithSummary({ description: "Restore", summary: "one delivery" });
-    await deliver(task.id);
-    const originalEntryId = (await ledgerRows(task.id))[0]!.entryId;
-    await store.archiveTask(task.id, { cleanup: false });
-
-    const restored = await store.unarchiveTask(task.id);
-
-    expect(restored.column).toBe("done");
-    expect(await ledgerRows(task.id)).toMatchObject([{ entryId: originalEntryId }]);
-  });
-
-  it("survives archive soft-delete and cleanup hard-delete", async () => {
+  it("survives task soft deletion", async () => {
     const store = h.store();
     const task = await createWithSummary({ title: "Permanent", description: "Permanent", summary: "survives" });
     await deliver(task.id);
-    await store.archiveTask(task.id);
+    await store.deleteTask(task.id);
     expect((await store.listPatchnodeEntries({ query: task.id })).entries[0]).toMatchObject({ title: "Permanent", body: "survives" });
-    await store.cleanupArchivedTasks();
     const taskRows = await h.adminDb().select({ id: schema.project.tasks.id }).from(schema.project.tasks).where(eq(schema.project.tasks.id, task.id));
-    expect(taskRows).toEqual([]);
-    expect((await store.listPatchnodeEntries({ query: task.id })).entries).toHaveLength(1);
+    expect(taskRows).toEqual([{ id: task.id }]);
   });
 
   it("has no expiry or size-limiting implementation", async () => {

@@ -1,8 +1,8 @@
 // @vitest-environment node
 
 /*
-FNXC:MissionReconciliation 2026-07-20-08:34:
-The HTTP regression fixture uses the real PostgreSQL archive path because a mocked `column:"archived"` task cannot prove the retained tombstone+cold-snapshot contract. Success must preserve the parked mission and loop state; every expected domain rejection must be a 4xx with no partial feature, task, or rollup mutation.
+FNXC:TaskArchiveRemoval 2026-09-04-18:25:
+Mission reconciliation accepts only a live task in its workflow's Complete column. Soft-deleted and historical rows remain conflict cases, and every expected domain rejection must be a 4xx with no partial feature, task, or rollup mutation.
 */
 
 import { afterEach, beforeEach, expect, it } from "vitest";
@@ -22,7 +22,7 @@ pgDescribe("mission reconcile-done route", () => {
   let app: express.Express;
 
   beforeEach(async () => {
-    harness = await createTaskStoreForTest();
+    harness = await createTaskStoreForTest({ projectId: "project-mission-reconcile-done-route" });
     store = harness.store;
     app = express();
     app.use(express.json());
@@ -50,10 +50,9 @@ pgDescribe("mission reconcile-done route", () => {
     return { missionStore, mission, milestone, slice, feature };
   }
 
-  it("reconciles a normally archived task atomically without mission-loop side effects", async () => {
+  it("reconciles a completed task atomically without mission-loop side effects", async () => {
     const { missionStore, mission, milestone, slice, feature } = await createFeature();
     const task = await store.createTask({ description: "shipped delivery", column: "done" });
-    await store.archiveTask(task.id, { cleanup: false });
     const taskCount = (await store.listTasks()).length;
 
     const response = await post(feature.id, { taskId: task.id });
@@ -63,13 +62,14 @@ pgDescribe("mission reconcile-done route", () => {
     expect(await missionStore.getSlice(slice.id)).toMatchObject({ status: "complete" });
     expect(await missionStore.getMilestone(milestone.id)).toMatchObject({ status: "complete" });
     expect(await missionStore.getMission(mission.id)).toMatchObject({ status: "planning", autopilotEnabled: false, autoAdvance: false });
-    expect(await store.getTask(task.id)).toMatchObject({ column: "archived" });
+    expect(await store.getTask(task.id)).toMatchObject({ column: "done" });
     expect((await store.listTasks()).length).toBe(taskCount);
 
-    expect(await store.getTask(task.id)).toMatchObject({
-      column: "archived",
-      missionId: undefined,
-      sliceId: undefined,
+    const completedTask = await store.getTask(task.id);
+    expect(completedTask).toMatchObject({
+      column: "done",
+      missionId: mission.id,
+      sliceId: slice.id,
     });
 
     const idempotent = await post(feature.id, { taskId: task.id });
@@ -105,11 +105,12 @@ pgDescribe("mission reconcile-done route", () => {
     }
 
     const canonical = await store.createTask({ description: "canonical", column: "done" });
+    const canonicalBefore = await store.getTask(canonical.id);
     await missionStore.linkFeatureToTask(feature.id, active.id);
     const linkedBefore = await missionStore.getFeature(feature.id);
     const mismatch = await post(feature.id, { taskId: canonical.id });
     expect(mismatch.status).toBe(409);
     expect(await missionStore.getFeature(feature.id)).toEqual(linkedBefore);
-    expect(await store.getTask(canonical.id)).toMatchObject({ missionId: undefined, sliceId: undefined });
+    expect(await store.getTask(canonical.id)).toEqual(canonicalBefore);
   });
 });

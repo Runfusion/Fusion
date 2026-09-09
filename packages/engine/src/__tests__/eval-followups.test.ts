@@ -6,9 +6,8 @@ function makeStore(params: {
   openTasks?: Array<Record<string, unknown>>;
   /*
   FNXC:WorkflowResolvedColumns 2026-07-30-19:30:
-  Per-task terminal lanes, so a case can put a prior follow-up in a lane this board calls terminal.
-  Absent, the fake declares no workflow and `resolveTerminalColumnsFor` falls back to the legacy pair —
-  which is why every existing case is unaffected.
+  Per-task complete lanes let a case put a prior follow-up in the completion lane for its workflow.
+  Absent, the fake declares no workflow and completion falls back to Done.
   */
   terminalColumnsByTaskId?: Record<string, string[]>;
   priorDedupeKeys?: string[];
@@ -35,7 +34,6 @@ function makeStore(params: {
           columns: [
             { id: "backlog", name: "Backlog", traits: [{ trait: "hold" }] },
             { id: lanes[0], name: "Complete", traits: [{ trait: "complete" }] },
-            ...(lanes[1] ? [{ id: lanes[1], name: "Archived", traits: [{ trait: "archived" }] }] : []),
           ],
         },
       };
@@ -105,7 +103,7 @@ describe("normalizeEvalFollowUps", () => {
       drafts: [{ title: "Investigate flaky verification command", description: "Investigate flaky verification command causing reruns.", reason: "Failed verification", evidenceRefs: ["workflow-1"] }],
       store: makeStore({
         openTasks: [{ id: "FN-open", column: "building", title: "Investigate flaky verification command", description: "x" }],
-        terminalColumnsByTaskId: { "FN-open": ["shipped", "vault"] },
+        terminalColumnsByTaskId: { "FN-open": ["shipped"] },
       }),
       policyMode: "persist_only",
     });
@@ -123,7 +121,7 @@ describe("normalizeEvalFollowUps", () => {
       drafts: [{ title: "Investigate flaky verification command", description: "Investigate flaky verification command causing reruns.", reason: "Failed verification", evidenceRefs: ["workflow-1"] }],
       store: makeStore({
         openTasks: [{ id: "FN-shipped", column: "shipped", title: "Investigate flaky verification command", description: "x" }],
-        terminalColumnsByTaskId: { "FN-shipped": ["shipped", "vault"] },
+        terminalColumnsByTaskId: { "FN-shipped": ["shipped"] },
       }),
       policyMode: "persist_only",
     });
@@ -222,7 +220,7 @@ describe("normalizeEvalFollowUps", () => {
         sourceParentTaskId: "FN-parent",
         sourceMetadata: { suggestionId: "efs-1" },
       }],
-      terminalColumnsByTaskId: { "FN-finished": ["shipped", "attic"] },
+      terminalColumnsByTaskId: { "FN-finished": ["shipped"] },
     });
 
     const [created] = await materializeEvalFollowUps({

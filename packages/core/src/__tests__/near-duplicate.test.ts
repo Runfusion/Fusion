@@ -76,9 +76,8 @@ describe("near-duplicate canonical activity predicates", () => {
     expect(isActiveNearDuplicateColumn("in-review")).toBe(true);
   });
 
-  it("treats archived, done, soft-deleted, and missing canonicals as inactive", () => {
+  it("treats completed, soft-deleted, and missing canonicals as inactive", () => {
     expect(isNearDuplicateCanonicalInactive(undefined)).toBe(true);
-    expect(isNearDuplicateCanonicalInactive({ column: "archived" })).toBe(true);
     expect(isNearDuplicateCanonicalInactive({ column: "done" })).toBe(true);
     expect(isNearDuplicateCanonicalInactive({ column: "todo", deletedAt: "2026-06-14T00:00:00.000Z" })).toBe(true);
     expect(isNearDuplicateCanonicalInactive({ column: "todo", deletedAt: null })).toBe(false);

@@ -20,8 +20,8 @@ one by taking a different branch. The two structural invariants are:
   1. merge-blocker on complete-bound entry — a card may not enter a `complete`
      column while it carries an unresolved merge blocker (generalized FN-5147 in
      trait terms; the builtin realization is in-review→done with a live blocker).
-  2. terminal → wip re-entry — a card in a `complete`/`archived` column may not be
-     moved into a WIP column. Completed/archived work is not resurrected straight
+  2. terminal → wip re-entry — a card in a `complete` column may not be
+     moved into a WIP column. Completed work is not resurrected straight
      into active capacity; reopens route through a `hold`/`intake` column instead.
 
 Capacity for direct WIP entry (KTD-5) is a pure DECISION here — the caller counts
@@ -85,9 +85,9 @@ export function isWipColumn(flags: TraitFlags): boolean {
   return flags.countsTowardWip === true;
 }
 
-/** A terminal column: success-complete or archived. */
+/** A terminal-success column. */
 export function isTerminalColumn(flags: TraitFlags): boolean {
-  return flags.complete === true || flags.archived === true;
+  return flags.complete === true;
 }
 
 /** A completion (terminal-success) column. */
@@ -131,8 +131,8 @@ export function evaluateMergeBlockerPostcondition(
 }
 
 /**
- * Invariant 2: a card in a `complete`/`archived` column may not be moved into a
- * WIP column (terminal work is not resurrected into active capacity). Returns a
+ * Invariant 2: a card in a `complete` column may not be moved into a WIP column
+ * (terminal work is not resurrected into active capacity). Returns a
  * rejection when `from` is terminal and `to` is WIP; otherwise null.
  */
 export function evaluateTerminalReentryPostcondition(
@@ -144,7 +144,7 @@ export function evaluateTerminalReentryPostcondition(
     "guard-rejected",
     "transition.rejected.terminalReentry",
     false,
-    `Column '${input.from.columnId}' is terminal; a completed/archived card cannot re-enter the WIP column '${input.to.columnId}'`,
+    `Column '${input.from.columnId}' is terminal; a completed card cannot re-enter the WIP column '${input.to.columnId}'`,
   );
 }
 

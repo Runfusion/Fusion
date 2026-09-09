@@ -77,11 +77,25 @@ Planner Chat expansion should use the same in-view floating affordance as Activi
   overflow: auto;
   display: flex;
   flex-direction: column;
-  gap: var(--space-md);
+  gap: 0;
   border: var(--btn-border-width) solid var(--border);
   border-radius: var(--radius-lg);
   padding: var(--space-md);
   background: var(--surface);
+}
+
+/*
+FNXC:ChatTranscriptVirtualization 2026-09-06-13:40:
+Planner Chat mounts only its measured viewport window while strict pagination retains the complete transcript. Measured rows own spacing and inert spacers preserve scroll geometry without creating focusable or named accessibility shells in normal, expanded, or mobile layouts.
+*/
+.task-planner-chat-transcript-row {
+  padding-block-end: var(--space-md);
+}
+
+.task-planner-chat-transcript-spacer,
+.task-planner-chat-history-sentinel {
+  flex: 0 0 auto;
+  pointer-events: none;
 }
 
 .task-planner-chat-state,
@@ -246,17 +260,10 @@ composer ancestor. The chip inherits its control-size token from the composer be
   gap: var(--space-sm);
 }
 
-.task-planner-chat-composer .chat-thinking-level-root {
-  position: static;
-}
-
-.task-planner-chat-composer .chat-thinking-popover {
-  left: var(--space-md);
-  right: var(--space-md);
-  width: auto;
-  max-width: none;
-  max-inline-size: none;
-}
+/*
+FNXC:Chat-ModelSwitch 2026-09-06-21:10:
+Task Chat shares the fixed body-portaled Brain panel with Direct Chat. The composer must not establish alternate panel geometry, ensuring a long mobile model list overlays the footer instead of contributing to this flex row's scroll extent.
+*/
 
 /*
 FNXC:ChatComposer 2026-08-20-19:25:

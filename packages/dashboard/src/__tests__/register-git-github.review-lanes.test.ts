@@ -71,7 +71,7 @@ const V1_UPGRADED_IR = {
   name: "legacy",
   nodes: [],
   edges: [],
-  columns: ["todo", "in-progress", "in-review", "done", "archived"].map((id) => ({ id, name: id, traits: [] })),
+  columns: ["todo", "in-progress", "in-review", "done"].map((id) => ({ id, name: id, traits: [] })),
 };
 
 function storeWith(ir: unknown, workflowId = "wf") {

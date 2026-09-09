@@ -43,14 +43,13 @@ function makeStore(task: Task, settings: Partial<Settings> = {}, events: unknown
       events.push(event);
     }),
     walCheckpoint: vi.fn(() => ({ busy: 0, log: 0, checkpointed: 0 })),
-    archiveTaskAndCleanup: vi.fn(async () => ({})),
     mergeTask: vi.fn(async () => undefined),
     getRootDir: vi.fn(() => ""),
   }) as unknown as TaskStore & EventEmitter;
 }
 
 describe("foreign start-point no-owned-commit interactions (real git)", () => {
-  it("merger no-op gate blocks done and auto-requeues to todo", async () => {
+  it("merger no-op gate blocks completion and contains the task in review", async () => {
     const dir = mkdtempSync(join(tmpdir(), "fn-4656-ri-merge-"));
     try {
       git(dir, "git init -b main");
@@ -91,7 +90,7 @@ describe("foreign start-point no-owned-commit interactions (real git)", () => {
       const result = await aiMergeTask(store, dir, task.id);
 
       expect(result.merged).toBe(false);
-      expect(task.column).toBe("todo");
+      expect(task.column).toBe("in-review");
       expect(events.some((event: any) => event?.mutationType === "task:finalize-unproven-blocked")).toBe(true);
     } finally {
       rmSync(dir, { recursive: true, force: true });

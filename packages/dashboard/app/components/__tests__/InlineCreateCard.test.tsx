@@ -1682,7 +1682,7 @@ describe("InlineCreateCard workflow selection at create time (FN-7591)", () => {
   beforeEach(() => {
     vi.mocked(fetchWorkflows).mockResolvedValue([
       { id: "wf-a", name: "Workflow A" },
-      { id: "builtin:coding-ideas", name: "Coding (Ideas)" },
+      { id: "builtin:coding-ideas-v2", name: "Coding (Ideas)" },
     ]);
   });
 
@@ -1692,13 +1692,13 @@ describe("InlineCreateCard workflow selection at create time (FN-7591)", () => {
 
     fireEvent.change(screen.getByPlaceholderText("What needs to be done?"), { target: { value: "Idea for later" } });
     const select = await screen.findByLabelText("Workflow") as HTMLSelectElement;
-    fireEvent.change(select, { target: { value: "builtin:coding-ideas" } });
+    fireEvent.change(select, { target: { value: "builtin:coding-ideas-v2" } });
 
     fireEvent.click(screen.getByTestId("save-button"));
 
     await waitFor(() => expect(props.onSubmit).toHaveBeenCalled());
     const submitted = vi.mocked(props.onSubmit).mock.calls[0][0];
-    expect(submitted.workflowId).toBe("builtin:coding-ideas");
+    expect(submitted.workflowId).toBe("builtin:coding-ideas-v2");
     expect(submitted.column).toBeUndefined();
   });
 
@@ -1721,7 +1721,7 @@ describe("InlineCreateCard workflow selection at create time (FN-7591)", () => {
 
     fireEvent.change(screen.getByPlaceholderText("What needs to be done?"), { target: { value: "Idea for later" } });
     const select = await screen.findByLabelText("Workflow") as HTMLSelectElement;
-    fireEvent.change(select, { target: { value: "builtin:coding-ideas" } });
+    fireEvent.change(select, { target: { value: "builtin:coding-ideas-v2" } });
 
     fireEvent.click(screen.getByTestId("save-button"));
 

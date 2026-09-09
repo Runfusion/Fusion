@@ -4,7 +4,6 @@ import {
   normalizeCategoryScore,
   resolveScoreBand,
   resolveValidatorSettingsModel,
-  resolveProjectColumnsForRoles,
   EVAL_SCORE_CATEGORIES,
   type DeterministicSignals,
   type EvalScoreCategory,
@@ -73,16 +72,7 @@ export class HybridEvaluatorService {
     settings: Partial<Settings>,
     modelOverride?: EvaluatorModelOverride,
   ): Promise<Omit<EvalTaskResultCreateInput, "taskId" | "taskSnapshot">> {
-    /*
-    FNXC:WorkflowResolvedColumns 2026-07-31-23:55:
-    Resolve the archive lanes here, where an await is legal, and hand them to the sync collector. The
-    store is OPTIONAL on this service, so a store-less evaluator degrades to the legacy `archived`
-    literal — the collector's documented default — rather than failing.
-    */
-    const archivedColumns = this.deps.store
-      ? await resolveProjectColumnsForRoles(this.deps.store, ["archived"]).catch(() => undefined)
-      : undefined;
-    const deterministicSignals = collectDeterministicSignals(task, run, { archivedColumns });
+    const deterministicSignals = collectDeterministicSignals(task, run);
     const model = resolveEvaluatorModel(settings, modelOverride);
     const evidenceBundle = this.deps.store
       ? await (this.deps.collectEvidence ?? collectTaskEvaluationEvidence)({

@@ -69,7 +69,7 @@ The following is the complete top-level registrar map currently imported by `rou
 - `registerSetupActivityRoutes` — the late activity feed, concurrency, and setup split export from `register-setup-activity-routes.ts`.
 - `registerIntegratedDevServerRouter` — domain registrar mounted by `createApiRoutes`.
 - `registerAgentSkillsRoutes` — domain registrar mounted by `createApiRoutes`.
-- `registerPatchnodeRoutes` — project-scoped read-only Patchnode delivery feed.
+- `registerPatchnodeRoutes` — project-scoped read-only History delivery feed.
 - `registerProxyRoutes` — domain registrar mounted by `createApiRoutes`.
 
 `registerFilesTerminalWorkspaceRoutes` is an infrastructure aggregator: it preserves nested `session-diff → file-workspace → terminal` registration order. Its file operation routes stay before generic file wildcards. `registerIntegratedRouters` mounts the missions, ideation, insights, evals, research, experiments, todos, goals, roadmaps, stash-recovery, and branch-group integrated routers; `registerIntegratedDevServerRouter` mounts `/dev-server`.

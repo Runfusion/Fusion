@@ -14,7 +14,7 @@ export const BUDGET_WRITE_GUARD_MS = 1_000;
 export type TerminalFailureAutoRecoveryDecision =
   | { action: "retry"; attempt: number }
   | { action: "notify"; reason: "budget-exhausted" | "auto-recovery-disabled" }
-  | { action: "reset-budget"; reason: "terminal-success" | "archived-or-deleted" | "budget-stale" }
+  | { action: "reset-budget"; reason: "terminal-success" | "deleted-or-historical" | "budget-stale" }
   | { action: "skip"; reason: "not-generic-terminal-failure" | "no-action" | "escalation-already-delivered" | "auto-recovery-disabled-never-withheld" | "recovery-owned" | "paused-or-progressing" };
 
 export interface TerminalFailureAutoRecoveryOptions {
@@ -22,7 +22,7 @@ export interface TerminalFailureAutoRecoveryOptions {
   hasRecoveryOwner: boolean;
   isProgressing: boolean;
   inTerminalSuccessColumn: boolean;
-  isArchivedOrDeleted: boolean;
+  isDeletedOrHistorical: boolean;
   autoRecoveryEnabled: boolean;
   maxAttempts?: number;
   maxBudgetAgeMs?: number;
@@ -85,7 +85,7 @@ export function classifyTerminalFailureAutoRecovery(
 
   if (budget) {
     if (options.inTerminalSuccessColumn) return { action: "reset-budget", reason: "terminal-success" };
-    if (options.isArchivedOrDeleted) return { action: "reset-budget", reason: "archived-or-deleted" };
+    if (options.isDeletedOrHistorical) return { action: "reset-budget", reason: "deleted-or-historical" };
     if (isBudgetStale(task, now, options.maxBudgetAgeMs ?? TERMINAL_FAILURE_BUDGET_MAX_AGE_MS)) {
       return { action: "reset-budget", reason: "budget-stale" };
     }

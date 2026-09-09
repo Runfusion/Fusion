@@ -1366,8 +1366,9 @@ describe("TaskDetailModal Raw Logs agent loading", () => {
     expect(screen.getByText("raw executor output")).toBeInTheDocument();
     expect(screen.getByText("raw reviewer output")).toBeInTheDocument();
 
-    await user.click(screen.getByTestId("agent-log-load-more-button"));
+    fireEvent.scroll(screen.getByTestId("agent-log-viewer").querySelector(".agent-log-viewer-scroll")!);
     expect(loadMore).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId("agent-log-load-more-button")).not.toBeInTheDocument();
 
     mockUseAgentLogs.mockImplementation(() => ({ entries: [], loading: false, clear: vi.fn(), loadMore: vi.fn(async () => {}), hasMore: false, total: null, loadingMore: false }));
   });
@@ -1621,36 +1622,6 @@ describe("TaskDetailModal delete affordance", () => {
     expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 
-  it("archives done task when Archive Instead is chosen", async () => {
-    const user = userEvent.setup();
-    const onArchiveTask = vi.fn(async () => makeTask({ column: "archived" }));
-    const onDeleteTask = vi.fn(async () => makeTask());
-    const onClose = vi.fn();
-    mockConfirmWithChoice.mockResolvedValueOnce("tertiary");
-
-    render(
-      <TaskDetailModal
-        initialTab="details"
-        task={makeTask({ column: "done" })}
-        onClose={onClose}
-        onDeleteTask={onDeleteTask}
-        onArchiveTask={onArchiveTask}
-        onMergeTask={noopMerge}
-        onOpenDetail={noopOpenDetail}
-        addToast={noop}
-      />,
-    );
-
-    await user.click(screen.getByRole("button", { name: "Actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Delete" }));
-
-    await waitFor(() => {
-      expect(mockConfirmWithChoice).toHaveBeenCalledWith(expect.objectContaining({ tertiaryLabel: "Archive Instead" }));
-      expect(onArchiveTask).toHaveBeenCalledWith("FN-099");
-      expect(onDeleteTask).not.toHaveBeenCalled();
-      expect(onClose).toHaveBeenCalled();
-    });
-  });
 });
 
 describe("TaskDetailModal in-review stall diagnostics", () => {

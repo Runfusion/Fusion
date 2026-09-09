@@ -7,14 +7,10 @@
 
 export type DisposeStoreLifecycleDisposersDeps = {
   clearTaskMoveDisposer: () => void;
-  clearArchiveWorktreeDisposer: () => void;
-  clearArchiveWorkspaceWorktreeDisposer: () => void;
 };
 
 export function disposeStoreLifecycleDisposers(
   deps: DisposeStoreLifecycleDisposersDeps,
 ): void {
   deps.clearTaskMoveDisposer();
-  deps.clearArchiveWorktreeDisposer();
-  deps.clearArchiveWorkspaceWorktreeDisposer();
 }

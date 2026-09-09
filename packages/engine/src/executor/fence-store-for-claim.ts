@@ -29,6 +29,7 @@ const FENCED_WRITERS = new Set([
   "logEntry",
   "updateTask",
   "updateTaskAtomic",
+  "publishReviewRemediationFenced",
   "moveTask",
   "addTaskComment",
   "appendRemediationSteps",

@@ -244,13 +244,25 @@ export function toSnapshot(result: WorkflowStepResult): WorkflowStepResult {
  * its clean-slate contract. A skipped carrier is non-blocking but hands a single-level snapshot to
  * the next upsert; this blanket helper is intentionally incapable of writing arbitration metadata.
  */
+/*
+FNXC:ReviewRemediation 2026-09-05-22:31:
+FN-295: `workflowStepIds` scopes the archive to the gate whose remediation is actually running. The
+blanket form contradicted its own call sites — "archive ITS failed review result" — and archived every
+terminal failure on the card, including a stale row from an unrelated gate. An archived carrier is an
+unconditional merge veto (`evaluatePreMergeApprovals`) that no reseed, reroute, or operator bypass can
+select, so one gate's remediation could permanently wedge a card on another gate's row. Omitting the
+scope preserves the historical blanket behaviour for callers that genuinely mean "all".
+*/
 export function archiveTerminalWorkflowStepFailures(
   results: WorkflowStepResult[] | undefined,
   archivedAt: string = new Date().toISOString(),
+  options: { workflowStepIds?: ReadonlySet<string> } = {},
 ): WorkflowStepResult[] | undefined {
-  if (!results?.some(isTerminalFailure)) return results;
+  const inScope = (result: WorkflowStepResult): boolean =>
+    isTerminalFailure(result) && (!options.workflowStepIds || options.workflowStepIds.has(result.workflowStepId));
+  if (!results?.some(inScope)) return results;
   return results.map((result) => {
-    if (!isTerminalFailure(result)) return result;
+    if (!inScope(result)) return result;
     const snapshot = toSnapshot(result);
     const priorAttempts = [snapshot, ...(result.priorAttempts ?? [])].slice(0, MAX_WORKFLOW_STEP_PRIOR_ATTEMPTS);
     const {

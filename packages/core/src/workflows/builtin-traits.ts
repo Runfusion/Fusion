@@ -1,5 +1,5 @@
 /**
- * The 14 built-in traits (U2, R7) from the Trait Vocabulary table. Behavior for
+ * The 13 built-in traits (U2, R7) from the Trait Vocabulary table. Behavior for
  * each trait lands in later units; here we ship the definitions (flags + config
  * schema + hook descriptors) and register them into the shared trait registry.
  *
@@ -14,11 +14,10 @@
 import type { TraitDefinition } from "./trait-types.js";
 import { TraitRegistry, getTraitRegistry } from "./trait-registry.js";
 
-/** The ids of the 14 built-in traits, in vocabulary-table order. */
+/** The ids of the 13 built-in traits, in vocabulary-table order. */
 export const BUILTIN_TRAIT_IDS = [
   "intake",
   "complete",
-  "archived",
   "merge-blocker",
   "wip",
   "hold",
@@ -52,13 +51,6 @@ export const BUILTIN_TRAIT_DEFINITIONS: TraitDefinition[] = [
     description: "Terminal success; satisfies dependencies. Restricted flag.",
     builtin: true,
     flags: { complete: true },
-  },
-  {
-    id: "archived",
-    name: "Archived",
-    description: "Hidden from board; global semantics. Restricted flag.",
-    builtin: true,
-    flags: { archived: true, hiddenFromBoard: true },
   },
   {
     id: "merge-blocker",

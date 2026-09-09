@@ -3,6 +3,7 @@ import { taskHasManualOpenPullRequest } from "../tasks/task-helpers.js";
 import type { BranchGroup, Settings, Task, WorkflowStepResult } from "../types.js";
 import type { MergeContentDescriptor } from "./merge-content-descriptor.js";
 import { evaluatePreMergeApprovals } from "./pre-merge-approval.js";
+import { isArchivedRemediationCarrier } from "../workflows/workflow-step-results.js";
 
 export interface LandedMemberReviewAdvisory {
   taskId: string;
@@ -377,6 +378,15 @@ terminal park.
 export const PRE_MERGE_STEPS_NOT_RUN_BLOCKER =
   "task has enabled pre-merge workflow steps that never ran";
 
+/*
+FNXC:PreMergeApproval 2026-09-06-00:11:
+Four production sites and three merge doors classify this blocker after it is wrapped in their
+own error text. Keeping the wording as a named contract prevents an editorial change from silently
+disabling stale-content recovery at every door.
+*/
+export const STALE_CONTENT_APPROVAL_BLOCKER =
+  "task has a pre-merge approval recorded against different content";
+
 /**
  * Thrown by merge doors when the ONLY thing standing between a card and merge is an
  * enabled pre-merge gate that has not run yet. Callers must treat it as "retry after the
@@ -396,6 +406,11 @@ export class PreMergeStepsNotRunError extends Error {
 /** True when a `getTaskMergeBlocker` reason is the deferrable unrun-gate reason. */
 export function isPreMergeStepsNotRunBlocker(blocker: string | undefined): boolean {
   return blocker === PRE_MERGE_STEPS_NOT_RUN_BLOCKER;
+}
+
+/** True when a merge door or terminal park reports an approval against superseded content. */
+export function isStaleContentApprovalBlocker(blocker: string | undefined | null): boolean {
+  return typeof blocker === "string" && blocker.trim().endsWith(STALE_CONTENT_APPROVAL_BLOCKER);
 }
 
 export const TASK_DONE_BYPASS_BLOCKER_MESSAGE =
@@ -493,8 +508,16 @@ export function getTaskMergeBlocker(
   */
   const approval = evaluatePreMergeApprovals(task, options).find((candidate) => candidate.state !== "approved");
   if (approval?.state === "missing") return PRE_MERGE_STEPS_NOT_RUN_BLOCKER;
-  if (approval?.state === "not-approved") return "task has enabled pre-merge workflow steps without a current approval";
-  if (approval?.state === "stale-content") return "task has a pre-merge approval recorded against different content";
+  /*
+  FNXC:PreMergeApproval 2026-09-05-23:08:
+  FN-295: name the gate. The bare sentence sent an operator hunting through three review lanes for the
+  one row without an approval, and the wrong guess cost three full review re-runs. The gate id is the
+  single fact needed to act; every other approval blocker already implies its own remedy.
+  */
+  if (approval?.state === "not-approved") {
+    return `task has enabled pre-merge workflow steps without a current approval (gate '${approval.workflowStepId}')`;
+  }
+  if (approval?.state === "stale-content") return STALE_CONTENT_APPROVAL_BLOCKER;
   if (approval?.state === "unprovable-content") return "task has no provable approval for the content being merged";
 
   // Only pre-merge workflow step failures block merge.
@@ -529,25 +552,28 @@ export function getTaskMergeBlocker(
   return undefined;
 }
 
-/**
- * Returns the most-recently-completed `status:"failed"` pre-merge workflow
- * step result on a task, or `undefined` when none exists. Mirrors the sort
- * (most-recent `completedAt`/`startedAt` first) used by self-healing's
- * `latestFailedPreMergeStep` (packages/engine/src/self-healing.ts) so the
- * bypass primitive and the recovery sweep select the identical step
- * (FN-7720). Post-merge failed steps are excluded — they do not block merge
- * and are out of scope for the bypass.
- */
+/*
+FNXC:ReviewLaneBypass 2026-09-06-00:47:
+An archived remediation carrier preserves a failed review for history but used to erase the only
+status the audited operator bypass could select. Select that carrier without changing archive writers;
+a live failure remains preferred and automatic remediation continues to select only live failures.
+*/
 export function getLatestFailedPreMergeReviewStep(
   task: Pick<Task, "workflowStepResults">,
 ): WorkflowStepResult | undefined {
-  return (task.workflowStepResults ?? [])
-    .filter((result) => (result.phase || "pre-merge") === "pre-merge" && result.status === "failed")
-    .sort((a, b) => {
-      const aTs = Date.parse(a.completedAt || a.startedAt || "");
-      const bTs = Date.parse(b.completedAt || b.startedAt || "");
-      return (Number.isFinite(bTs) ? bTs : 0) - (Number.isFinite(aTs) ? aTs : 0);
-    })[0];
+  const results = task.workflowStepResults ?? [];
+  const recentFirst = (a: WorkflowStepResult, b: WorkflowStepResult) => {
+    const aTs = Date.parse(a.completedAt || a.startedAt || "");
+    const bTs = Date.parse(b.completedAt || b.startedAt || "");
+    return (Number.isFinite(bTs) ? bTs : 0) - (Number.isFinite(aTs) ? aTs : 0);
+  };
+  const isPreMerge = (result: WorkflowStepResult) => (result.phase || "pre-merge") === "pre-merge";
+  return results.filter((result) => isPreMerge(result) && result.status === "failed").sort(recentFirst)[0]
+    ?? results.filter((result) => isPreMerge(result)
+      && isArchivedRemediationCarrier(result)
+      && (result.remediationArchivedFromStatus === "failed" || result.remediationArchivedFromStatus === "advisory_failure")
+      && !result.bypassedBy
+      && !result.supersededAt).sort(recentFirst)[0];
 }
 
 /*
@@ -722,7 +748,8 @@ export interface TaskCompletionBlockerOptions {
   /**
    * Resolves a task reference so completion gating can distinguish live blockers
    * from stale `blockedBy` markers. Missing tasks and blockers already in
-   * `done`/`archived` are treated as non-blocking.
+   * their workflow's Complete column are treated as non-blocking; historical-sentinel
+   * rows are absent from ordinary live resolution.
    */
   resolveTask?: (taskId: string) => Promise<Pick<Task, "id" | "column"> | null | undefined>;
   /*
@@ -751,7 +778,7 @@ nothing retries — the card simply never becomes eligible, which is the failure
 program keeps finding.
 
 They are SEPARATE because the two gates genuinely differ: a hard `blockedBy` marker clears only on
-terminal (complete/archived), while a declared dependency also clears once it reaches REVIEW — the
+terminal (complete), while a declared dependency also clears once it reaches REVIEW — the
 work is done even though the merge has not landed. Collapsing them would either strand every
 dependent behind an unmerged dependency or release blocked cards too early.
 */
@@ -761,7 +788,7 @@ function isDependencyTerminal(
 ): boolean {
   const columns = options.satisfactionColumnsByTaskId?.get(dependency.id);
   /* DELIBERATE-LITERAL — the unconverted-caller default, reviewed 2026-07-31-00:20. */
-  if (!columns) return dependency.column === "done" || dependency.column === "archived";
+  if (!columns) return dependency.column === "done";
   return columns.terminal.has(dependency.column);
 }
 
@@ -772,7 +799,7 @@ function isDependencySatisfied(
   const columns = options.satisfactionColumnsByTaskId?.get(dependency.id);
   /* DELIBERATE-LITERAL — the same documented default, reviewed 2026-07-31-00:20. */
   if (!columns) {
-    return dependency.column === "done" || dependency.column === "in-review" || dependency.column === "archived";
+    return dependency.column === "done" || dependency.column === "in-review";
   }
   return columns.terminal.has(dependency.column) || columns.review.has(dependency.column);
 }

@@ -1,10 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { isPlanReviewSatisfied, isTaskAwaitingPlanning } from "@fusion/core";
 import type { Settings, Task, TaskDetail, TaskStore } from "@fusion/core";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { TriageProcessor } from "../triage.js";
+import {
+  EXCLUDED_REVISION_LOG_PREVIEW,
+  producePlanReviewRevisedState,
+  PLAN_REVIEW_NOTES,
+  PLAN_REVIEW_OUTPUT,
+  REJECTED_PLAN_DRAFT,
+} from "./_plan-review-outcome-states.js";
 
 /*
  * Bug A (part 1): when re-planning and no explicit user/AI-comment feedback exists,
@@ -207,6 +215,61 @@ describe("triage replan feedback falls back to Plan Review REVISE output", () =>
     expect(capturedPrompt).toContain("Converge — do not rewrite from scratch");
     expect(capturedPrompt).toContain("PLAN-REVIEW-REVISE-MARKER");
     expect(capturedPrompt).not.toContain("Re-specify this task");
+  });
+
+  it.each([
+    { label: "notes with a rejected draft", feedbackField: "notes" as const, expectedFeedback: PLAN_REVIEW_NOTES, writeDraft: true },
+    { label: "output fallback with a rejected draft", feedbackField: "output" as const, expectedFeedback: PLAN_REVIEW_OUTPUT, writeDraft: true },
+    { label: "notes without a rejected draft", feedbackField: "notes" as const, expectedFeedback: PLAN_REVIEW_NOTES, writeDraft: false },
+  ])("continues the real REVISE output chain from $label", async ({ feedbackField, expectedFeedback, writeDraft }) => {
+    const produced = await producePlanReviewRevisedState({
+      id: `FN-299-${feedbackField}-${writeDraft ? "DRAFT" : "NO-DRAFT"}`,
+      feedbackField,
+    });
+    const revised = produced.task;
+    if (!writeDraft) revised.prompt = undefined;
+    expect(produced.updates).toEqual(expect.arrayContaining([
+      expect.objectContaining({ status: "needs-replan", error: null }),
+    ]));
+    expect(produced.logs.map((entry) => entry.message)).toEqual(expect.arrayContaining([
+      "AI spec revision requested",
+      expect.stringContaining("Plan Review requested a plan revision"),
+    ]));
+    rootDir = await createRoot(revised.id);
+    if (writeDraft) {
+      await writeFile(join(rootDir, ".fusion", "tasks", revised.id, "PROMPT.md"), REJECTED_PLAN_DRAFT, "utf-8");
+    }
+    const harness = createMutableStore(revised);
+    const processor = new TriageProcessor(harness.store, rootDir);
+    let capturedPrompt: string | undefined;
+    mockPromptWithFallback.mockImplementationOnce(async (_session: unknown, agentPrompt: string) => {
+      capturedPrompt = agentPrompt;
+      processor.markStuckAborted(revised.id);
+    });
+
+    expect(isTaskAwaitingPlanning(revised, REJECTED_PLAN_DRAFT)).toBe(true);
+    expect(isTaskAwaitingPlanning({ ...revised, status: null }, REJECTED_PLAN_DRAFT)).toBe(false);
+    const executionQueueArmed = !revised.status
+      && !revised.paused
+      && !revised.userPaused
+      && (Boolean(revised.approvedPlanFingerprint)
+        || revised.workflowStepResults?.some(isPlanReviewSatisfied) === true);
+    expect(executionQueueArmed).toBe(false);
+
+    await processor.specifyTask(harness.currentTask);
+
+    expect(capturedPrompt).toContain(expectedFeedback);
+    expect(capturedPrompt).not.toContain(EXCLUDED_REVISION_LOG_PREVIEW);
+    if (writeDraft) {
+      expect(capturedPrompt).toContain("## Cumulative Revision Decision Ledger");
+      expect(capturedPrompt).toContain("### PR1");
+      expect(capturedPrompt).toContain("## Revision Instructions");
+      expect(capturedPrompt).toContain("## Existing Specification");
+      expect(capturedPrompt).toContain("Preserve this rejected draft while revising it surgically.");
+    } else {
+      expect(capturedPrompt).toContain("Re-specify this task");
+      expect(capturedPrompt).not.toContain("## Existing Specification");
+    }
   });
 
   it("prefers an explicit AI spec revision comment over the workflowStepResults fallback", async () => {

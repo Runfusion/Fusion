@@ -1,7 +1,6 @@
 /**
  * FNXC:IncompletePgPorts 2026-07-26-20:50:
- * End-to-end PostgreSQL coverage for incomplete-port fixes: archive ID
- * reservation, isTaskArchivedAsync, orphaned task.json reconcile, health
+ * End-to-end PostgreSQL coverage for incomplete-port fixes: historical ID reservation, orphaned task.json reconciliation, health
  * snapshot refresh, settingsSyncCache, and prompt-override async load.
  */
 import { it, expect, beforeAll, beforeEach, afterEach, afterAll } from "vitest";
@@ -16,7 +15,7 @@ import * as schema from "../../postgres/schema/index.js";
 
 const pgTest = pgDescribe;
 
-pgTest("incomplete PG ports (archive, reconcile, health, settings)", () => {
+pgTest("incomplete PG ports (reconcile, health, settings)", () => {
   const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
     prefix: "fusion_incomplete_pg_ports",
   });
@@ -45,14 +44,6 @@ pgTest("incomplete PG ports (archive, reconcile, health, settings)", () => {
     });
     expect(await store.taskIdExistsAnywhere(task.id)).toBe(true);
     expect(await store.isTaskIdPresentInArchivedTasksTableAsync(task.id)).toBe(true);
-  });
-
-  it("isTaskArchivedAsync is true after archiveTask", async () => {
-    const store = h.store();
-    const task = await store.createTask({ description: "to-archive" });
-    await store.archiveTask(task.id);
-    expect(await store.isTaskArchivedAsync(task.id)).toBe(true);
-    expect(await store.isTaskArchivedAsync("FN-MISSING-ARCHIVE")).toBe(false);
   });
 
   it("reconcileOrphanedTaskDirs re-imports a task.json missing from PostgreSQL", async () => {

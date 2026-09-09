@@ -67,8 +67,8 @@ const RAW_BUILTIN_CODING_IDEAS_V2_WORKFLOW_IR: WorkflowIr = (() => {
   document `docs`, so the review pass silently overwrote the executor's.
   Repository documentation survives as implementation work: the executor updates a doc its own change
   made wrong, inside the step that made it, so Code Review sees it in the diff.
-  The strip is scoped to THIS workflow's copy of the prompt; `builtin:coding` and
-  `builtin:coding-ideas` keep the shared template untouched.
+  The strip is scoped to THIS workflow's copy of the prompt; `builtin:coding` keeps the
+  shared template untouched, while the inherited Ideas IR remains a composition base only.
   */
   const plan = ir.nodes.find((node) => node.id === "plan");
   if (!plan?.config) throw new Error("coding-ideas-v2 requires the inherited planning node");
@@ -101,8 +101,8 @@ const RAW_BUILTIN_CODING_IDEAS_V2_WORKFLOW_IR: WorkflowIr = (() => {
   PINNED to the step list it first expanded. A step appended afterwards never receives an instance,
   so it stays `pending` forever — measured on S05, where the card advanced to review with
   `steps=["done","pending"]` and the merge boundary refused with `merge-boundary-unproven`.
-  Reopening trailing steps re-runs instances the foreach already owns, which is why the inherited
-  Coding (Ideas) rework converges. Named remediation stays unavailable to foreach-executed workflows
+  Reopening trailing steps re-runs instances the foreach already owns, which is why the former
+  standalone Ideas graph converged. Named remediation stays unavailable to foreach-executed workflows
   until the foreach can re-expand; builtin:review-gated-coding pairs them too and never reached a
   merge to expose it.
   The planner is still constrained — that is the SEAM PROMPT's job, not this flag, which only audits.

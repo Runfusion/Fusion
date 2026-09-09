@@ -2,9 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { Task, TaskPriority } from "@fusion/core";
 import { fetchTasks } from "../api";
-import { useBoardWorkflows } from "../hooks/useBoardWorkflows";
 import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
-import { isArchivedColumnRole } from "../utils/columnRoles";
 import type { ResearchRunDetail } from "../research-types";
 import "./ResearchTaskActionModal.css";
 
@@ -32,33 +30,6 @@ export function ResearchTaskActionModal({ open, mode, run, finding, projectId, o
   const [loadingTasks, setLoadingTasks] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-11:40 (u12 — CONVERTED, and the earlier cost estimate was wrong):
-  The note this replaces said converting the filter below needed prop threading through three
-  components (MainContent -> ResearchView -> here) because `ListView.tsx:756` builds `columnFlagsById`
-  locally. That was wrong about WHERE the data lives: `listColumns` derives from `useBoardWorkflows`,
-  a hook already called from App, Board and HeaderWorkflowSwitcherSlot. ListView only looked like the
-  owner because it happens to build the map inline.
-
-  So the real cost is this file, and nothing else. The modal already takes `projectId`, and
-  ResearchView renders it ONLY when a finding is open (`open` is hardcoded true beside a
-  `if (!finding) return null`), so the hook cannot fetch for a closed modal.
-
-  Union across workflows keyed by column id, first declaration wins — the same convention
-  `ListView.tsx` uses for its cross-workflow map, so the two cannot disagree about a shared id.
-  */
-  const { boardWorkflows } = useBoardWorkflows({ projectId });
-  const isArchivedColumn = useMemo(() => {
-    const flagsById = new Map<string, { archived?: boolean }>();
-    for (const workflow of boardWorkflows?.workflows ?? []) {
-      for (const column of workflow.columns) {
-        if (!flagsById.has(column.id)) flagsById.set(column.id, column.flags);
-      }
-    }
-    /* `isArchivedColumnRole` fail-softs to the legacy id when a column has no flags, which is the
-       pre-resolution answer — so an unresolved workflow behaves exactly as this filter did before. */
-    return (column: string): boolean => isArchivedColumnRole(flagsById.get(column), column);
-  }, [boardWorkflows]);
 
   const preview = useMemo(() => {
     const firstSentence = (finding.content ?? "").split(/(?<=[.!?])\s+/)[0] ?? "";
@@ -67,11 +38,10 @@ export function ResearchTaskActionModal({ open, mode, run, finding, projectId, o
 
   /*
   FNXC:ResearchTaskModal 2026-08-01-00:41 (an operator's typed title was wiped when board workflows resolved):
-  These two jobs were one effect, and its dependency list carried `isArchivedColumn` for the fetch's
-  sake. `isArchivedColumn` is a `useMemo` over `boardWorkflows` from `useBoardWorkflows()`, so its
-  identity changes every time that hook resolves or revalidates — and each change re-ran the whole
-  effect, calling `setTitle`/`setDescription`/`setPriority`/`setTaskId` over whatever the operator had
-  already typed. Opening the modal and typing before the workflows settled silently reverted the form
+  These two jobs were one effect, and its dependency list carried workflow-derived terminal-column
+  metadata for the fetch's sake. That metadata changes whenever board workflows resolve or revalidate,
+  and each change re-ran the whole effect, calling `setTitle`/`setDescription`/`setPriority`/`setTaskId`
+  over whatever the operator had already typed. Opening the modal and typing before the workflows settled silently reverted the form
   to its defaults.
 
   Split so the reset depends only on what the reset is derived from, and the fetch keeps the
@@ -94,7 +64,7 @@ export function ResearchTaskActionModal({ open, mode, run, finding, projectId, o
     FNXC:ResearchTaskPicker 2026-08-01-00:30 (#3286 review — "ignore results from superseded task
     requests"): LAST REQUEST WINS, AND THE STALE LIST IS NOT SELECTABLE MEANWHILE.
 
-    `projectId` / `isArchivedColumn` changing starts a second fetch while the first is in flight. With
+    A `projectId` change starts a second fetch while the first is in flight. With
     no guard the slower one resolves last and repopulates the picker from the OLD project — and because
     the previous rows stayed listed while loading, an operator could attach a finding to a task from a
     project they had already switched away from. Wrong-row attachment, not a cosmetic flicker.
@@ -106,24 +76,9 @@ export function ResearchTaskActionModal({ open, mode, run, finding, projectId, o
     setTasks([]);
     setLoadingTasks(true);
     void fetchTasks(50, 0, projectId)
-      /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-11:45 (u12 — the history, kept short because it is CONVERTED now):
-      This guard was sized twice and declined twice, each time on a cost that turned out to be wrong.
-      Recorded because both wrong answers are instructive, not to relitigate them:
-
-      1. "Needs a data-fetch change" — reasoning about `columnFlagsByTaskId`, a per-TASK map built
-         from board-resident rows. Correct that such a map cannot help (archived rows are exactly
-         what a board map omits), but this guard asks a per-COLUMN question, so it never needed one.
-      2. "Needs prop threading, MainContent -> ResearchView -> here" — correct that the answer is
-         column-keyed, wrong about where it lives. `ListView` builds `columnFlagsById` inline, which
-         made it look like the owner; the data is `useBoardWorkflows`, callable from here directly.
-
-      The guard was real either way: on a renamed board `archived` matched nothing, so filed-away
-      tasks stayed in this picker and an operator could attach findings to work they had archived.
-      */
       .then((rows) => {
         if (superseded) return;
-        setTasks(rows.filter((task) => !isArchivedColumn(task.column)));
+        setTasks(rows);
       })
       .finally(() => {
         if (!superseded) setLoadingTasks(false);
@@ -131,7 +86,7 @@ export function ResearchTaskActionModal({ open, mode, run, finding, projectId, o
     return () => {
       superseded = true;
     };
-  }, [open, mode, projectId, isArchivedColumn]);
+  }, [open, mode, projectId]);
 
   /*
   FNXC:ResearchEnrich 2026-08-01-02:35:

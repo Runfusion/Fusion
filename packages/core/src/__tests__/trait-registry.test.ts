@@ -23,7 +23,6 @@ function seeded(): TraitRegistry {
   const r = new TraitRegistry();
   r.register(builtin("intake", { flags: { intake: true } }));
   r.register(builtin("complete", { flags: { complete: true } }));
-  r.register(builtin("archived", { flags: { archived: true, hiddenFromBoard: true } }));
   r.register(builtin("wip", { flags: { countsTowardWip: true } }));
   r.register(builtin("wip2", { flags: { countsTowardWip: true } }));
   r.register(builtin("merge-blocker", { flags: { mergeBlocker: true }, hooks: { guard: true } }));
@@ -63,17 +62,6 @@ describe("TraitRegistry — registration", () => {
     let caught: TraitRegistrationError | undefined;
     try {
       r.register(plugin("my-plugin:done", { flags: { complete: true } }));
-    } catch (err) {
-      caught = err as TraitRegistrationError;
-    }
-    expect(caught?.reason).toBe("restricted-flag");
-  });
-
-  it("rejects a non-builtin declaring the restricted `archived` flag", () => {
-    const r = new TraitRegistry();
-    let caught: TraitRegistrationError | undefined;
-    try {
-      r.register(plugin("my-plugin:arch", { flags: { archived: true } }));
     } catch (err) {
       caught = err as TraitRegistrationError;
     }
@@ -141,12 +129,6 @@ describe("TraitRegistry — composition validator", () => {
     expect(v.find((x) => x.code === "complete-with-intake")?.severity).toBe("error");
   });
 
-  it("rejects archived + countsTowardWip", () => {
-    const r = seeded();
-    const v = r.validateColumnTraits([col("c", ["archived", "wip"])]);
-    expect(v.find((x) => x.code === "archived-with-wip")?.severity).toBe("error");
-  });
-
   it("rejects more than one intake column per workflow", () => {
     const r = seeded();
     const v = r.validateColumnTraits([col("a", ["intake"]), col("b", ["intake"])]);
@@ -172,19 +154,18 @@ describe("TraitRegistry — composition validator", () => {
     expect(v.some((x) => x.code === "complete-with-wip" && x.severity === "error")).toBe(true);
   });
 
-  it("unknown trait is a save-blocking error in save mode", () => {
+  it("rejects the removed archived trait as unknown in save mode", () => {
     const r = seeded();
-    const v = r.validateColumnTraits([col("c", ["totally-unknown"])], "save");
+    const v = r.validateColumnTraits([col("c", ["archived"])], "save");
     const hit = v.find((x) => x.code === "unknown-trait");
-    expect(hit?.severity).toBe("error");
+    expect(hit).toMatchObject({ severity: "error", traitIds: ["archived"] });
   });
 
-  it("load-time re-validation degrades unknown trait to advisory, not error", () => {
+  it("degrades a persisted archived trait to a load-time advisory", () => {
     const r = seeded();
-    const v = r.validateColumnTraits([col("c", ["totally-unknown"])], "load");
+    const v = r.validateColumnTraits([col("c", ["archived"])], "load");
     const hit = v.find((x) => x.code === "unknown-trait");
-    expect(hit?.severity).toBe("degraded");
-    // The definition still "loads" — there is no error-severity violation.
+    expect(hit).toMatchObject({ severity: "degraded", traitIds: ["archived"] });
     expect(v.some((x) => x.severity === "error")).toBe(false);
   });
 });

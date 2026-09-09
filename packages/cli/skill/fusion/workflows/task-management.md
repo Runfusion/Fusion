@@ -65,9 +65,7 @@ Use `fn_task_show` with the task ID:
 | Retry failed task | `fn_task_retry` | Clears error, moves back to todo |
 | Duplicate task | `fn_task_duplicate` | Creates fresh copy in triage |
 | Refine completed task | `fn_task_refine` | Creates follow-up task with dependency on original |
-| Archive done task | `fn_task_archive` | Moves from done → archived |
-| Restore archived task | `fn_task_unarchive` | Moves from archived → done |
-| Delete task | `fn_task_delete` | Soft delete — hides from active views; ID stays reserved; archive cleanup is the only hard-removal path |
+| Delete task | `fn_task_delete` | Soft delete — hides from active views and keeps the ID reserved |
 
 **Attaching files:**
 

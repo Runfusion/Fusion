@@ -35,14 +35,14 @@ For work larger than L, use missions to break it into phases.
 | Task failed, needs retry | `fn_task_retry` |
 | User explicitly requests manual control | `fn_task_pause` |
 | Completed task needs follow-up | `fn_task_refine` |
-| Clean up done tasks | `fn_task_archive` |
+| Remove a task from live views | `fn_task_delete` |
 | Import external work | `fn_task_import_github*` |
 
 ## Dependency Management
 
 - Declare dependencies at creation time using the `depends` parameter
 - Dependencies must be valid task IDs that exist
-- Tasks wait in todo until all dependencies are in done or archived
+- Tasks wait in todo until all dependencies reach their workflow's Complete column
 - Circular dependencies are rejected
 - Use missions for complex dependency graphs across many tasks
 

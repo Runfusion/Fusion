@@ -117,6 +117,19 @@ export type ChatSessionSummary = ChatSession;
  * The server enriches sessions with lastMessagePreview and lastMessageAt
  * by fetching the most recent message for each session.
  */
+export interface ChatSessionCursor {
+  pinnedAt: string | null;
+  updatedAt: string;
+  id: string;
+}
+
+export interface ChatSessionPage {
+  sessions: ChatSession[];
+  total: number;
+  hasMore: boolean;
+  nextCursor: string | null;
+}
+
 export type EnrichedChatSession = ChatSession & {
   /** Preview of the last message in the session (truncated to 100 chars) */
   lastMessagePreview?: string;
@@ -155,6 +168,20 @@ export interface ChatAttachment {
 /**
  * A single message within a chat session.
  */
+/**
+ * Sidebar-safe projection of a session's newest message.
+ * Content is truncated to at most 101 characters in SQL so callers can retain
+ * the existing 100-character-plus-ellipsis boundary without loading message payloads.
+ * This is deliberately not ChatMessage: thinkingOutput, metadata, and attachments are not fetched.
+ */
+export interface ChatSessionLastMessage {
+  id: string;
+  sessionId: string;
+  role: ChatMessageRole;
+  createdAt: string;
+  content: string;
+}
+
 export interface ChatMessage {
   id: string;
   /** Parent session ID */
@@ -275,7 +302,10 @@ export interface ChatSessionUpdateInput {
 
 /**
  * Filter options for retrieving messages.
- * Supports cursor-based pagination via `before` timestamp.
+ * Supports legacy timestamp pagination and strict tuple pagination.
+ *
+ * FNXC:ChatMessagePagination 2026-09-06-13:40:
+ * A timestamp alone is not a total cursor because bursts can contain more rows than one page with the same creation time. Pairing `before` with `beforeId` follows the store's `(createdAt, id)` order and preserves every older row; omitting the ID deliberately retains the inclusive legacy contract.
  */
 export interface ChatMessagesFilter {
   /** Maximum number of messages to return */
@@ -287,6 +317,8 @@ export interface ChatMessagesFilter {
    * Used for loading older messages in a conversation.
    */
   before?: string;
+  /** ID tie-breaker paired with `before` for a strict total cursor. */
+  beforeId?: string;
   /** Sort order: 'asc' (oldest first, default) or 'desc' (newest first) */
   order?: "asc" | "desc";
 }

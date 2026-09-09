@@ -26,7 +26,6 @@ const facts = (columnId: string, flags: TraitFlags): TransitionColumnFacts => ({
 const WIP: TraitFlags = { countsTowardWip: true };
 const HOLD: TraitFlags = { hold: true };
 const COMPLETE: TraitFlags = { complete: true };
-const ARCHIVED: TraitFlags = { archived: true };
 const HUMAN_REVIEW: TraitFlags = { humanReview: true, mergeBlocker: true };
 
 describe("workflow-transition-policy — merge-blocker on complete-bound entry", () => {
@@ -78,16 +77,6 @@ describe("workflow-transition-policy — terminal → wip re-entry", () => {
     expect(rejection?.retryable).toBe(false);
   });
 
-  it("rejects moving an archived card into a wip column", () => {
-    expect(
-      evaluateTerminalReentryPostcondition({
-        taskId: "T2",
-        from: facts("archived", ARCHIVED),
-        to: facts("in-progress", WIP),
-        mergeBlockerReason: null,
-      })?.code,
-    ).toBe("guard-rejected");
-  });
 
   it("allows a completed card to reopen into a hold column", () => {
     expect(
@@ -182,20 +171,6 @@ describe("workflow-transition-policy — combined invariants + classification", 
     if (!decision.allow) expect(decision.rejection.code).toBe("merge-blocked");
   });
 
-  it("still rejects an automated review-to-archive completion skip", () => {
-    const decision = evaluateTransitionInvariants({
-      taskId: "FN-221",
-      from: facts("in-review", HUMAN_REVIEW),
-      to: facts("archived", ARCHIVED),
-      mergeBlockerReason: null,
-      moveSource: "engine",
-    });
-
-    expect(decision.allow).toBe(false);
-    if (!decision.allow) {
-      expect(decision.rejection.messageKey).toBe("transition.rejected.forbiddenLifecyclePath");
-    }
-  });
 
   it.each([undefined, "user"] as const)(
     "preserves the fail-open operator review-to-complete route for moveSource=%s",
@@ -226,7 +201,6 @@ describe("workflow-transition-policy — combined invariants + classification", 
   it("classifies wip / terminal columns and the hold→wip seam (KTD-2)", () => {
     expect(isWipColumn(WIP)).toBe(true);
     expect(isTerminalColumn(COMPLETE)).toBe(true);
-    expect(isTerminalColumn(ARCHIVED)).toBe(true);
     expect(isHoldToWipBoundary(HOLD, WIP)).toBe(true);
     expect(isHoldToWipBoundary(WIP, WIP)).toBe(false);
     expect(isHoldToWipBoundary(HOLD, HUMAN_REVIEW)).toBe(false);

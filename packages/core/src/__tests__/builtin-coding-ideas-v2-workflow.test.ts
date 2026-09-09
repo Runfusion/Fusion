@@ -31,9 +31,9 @@ function successChainFrom(start: string): string[] {
 }
 
 describe("builtin:coding-ideas-v2", () => {
-  it("is a selectable validated workflow that keeps the Ideas intake untouched", () => {
+  it("is the offered validated Ideas workflow and keeps the intake untouched", () => {
     const workflow = getBuiltinWorkflow("builtin:coding-ideas-v2");
-    expect(workflow?.name).toBe("Coding (Ideas) V2");
+    expect(workflow?.name).toBe("Coding (Ideas)");
     expect(parseWorkflowIr(serializeWorkflowIr(BUILTIN_CODING_IDEAS_V2_WORKFLOW_IR)))
       .toEqual(BUILTIN_CODING_IDEAS_V2_WORKFLOW_IR);
 

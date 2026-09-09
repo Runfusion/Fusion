@@ -1781,10 +1781,9 @@ A plugin trait may **not** declare these flags (rejected at validation, and as a
 backstop at registry registration):
 
 - `complete` — a terminal-success column that silently satisfies dependencies.
-- `archived` — globally hidden column semantics.
 
-A plugin needing those semantics composes its trait **alongside** the built-in
-`complete` / `archived` trait on the same column.
+A plugin needing terminal-success semantics composes its trait **alongside** the built-in
+`complete` trait on the same column. Fusion has no task-archive trait or hidden archive column.
 
 ### Versioned hook-descriptor schema
 

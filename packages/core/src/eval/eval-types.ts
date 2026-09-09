@@ -462,7 +462,7 @@ export interface EvaluationEvidenceRef {
 
 export interface DeterministicSignals {
   taskId: string;
-  column: "done" | "archived";
+  column: "done";
   executionStartedAt?: string;
   executionCompletedAt?: string;
   timedExecutionMs?: number;

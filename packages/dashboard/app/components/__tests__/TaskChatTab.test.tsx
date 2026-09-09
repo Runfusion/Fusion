@@ -1298,7 +1298,6 @@ describe("TaskChatTab", () => {
     ["idle", "todo"],
     ["planning", "triage"],
     ["terminal", "done"],
-    ["archived", "archived"],
   ] as const)("defaults thinking blocks collapsed for %s tasks", (_state, column) => {
     mockLogs([
       makeEntry({ agent: "executor", type: "thinking", text: "Immediately readable reasoning" }),
@@ -2304,7 +2303,6 @@ describe("TaskChatTab", () => {
     ["in-review", makeTask({ column: "in-review", assignedAgentId: "agent-1", status: "reviewing" })],
     ["todo", makeTask({ column: "todo", assignedAgentId: undefined, checkedOutBy: undefined })],
     ["triage", makeTask({ column: "triage", assignedAgentId: undefined, checkedOutBy: undefined })],
-    ["archived", makeTask({ column: "archived", assignedAgentId: undefined, checkedOutBy: undefined })],
   ])("keeps %s sends routed to addSteeringComment", async (_label, task) => {
     const user = userEvent.setup();
     mockedAddSteeringComment.mockResolvedValue(task);
@@ -2874,7 +2872,6 @@ describe("TaskChatTab", () => {
     ["todo task", makeTask({ column: "todo", assignedAgentId: "agent-1", status: undefined }), false],
     ["triage task", makeTask({ column: "triage", assignedAgentId: "agent-1", status: undefined }), true],
     ["done task", makeTask({ column: "done", assignedAgentId: "agent-1", status: undefined }), false],
-    ["archived task", makeTask({ column: "archived", assignedAgentId: "agent-1", status: undefined }), false],
   ])("keeps the composer sendable for %s column", (_label, task, _previouslyShowedActiveCopy) => {
     render(<TaskChatTab task={task} active addToast={vi.fn()} sessionLive={false} />);
 

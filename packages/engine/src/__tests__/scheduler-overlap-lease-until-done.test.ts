@@ -79,7 +79,6 @@ describe("classifyFileScopeLease", () => {
 
   it("releases terminal and soft-deleted cards before considering their lane", () => {
     expect(classifyFileScopeLease(makeTask({ column: "done", worktree: "/wt/a" }), [])).toMatchObject({ kind: "none" });
-    expect(classifyFileScopeLease(makeTask({ column: "archived", worktree: "/wt/a" }), [])).toMatchObject({ kind: "none" });
     expect(classifyFileScopeLease(makeTask({ column: "in-progress", deletedAt: "2026-01-02T00:00:00.000Z" }), [])).toMatchObject({ kind: "none" });
   });
 

@@ -39,7 +39,7 @@ import {
   check,
   index,
 } from "drizzle-orm/pg-core";
-import { sql } from "drizzle-orm";
+import { desc, sql } from "drizzle-orm";
 import { PROJECT_SCHEMA, bytea, tsvector } from "./_shared.js";
 
 /**
@@ -244,6 +244,7 @@ export const tasks = projectSchema.table("tasks", {
   repositoryScope: jsonb("repository_scope"),
   // FNXC:ExternalBlock 2026-08-28-03:48: obstacle origin and exact resume coordinates survive process restarts.
   externalBlock: jsonb("external_block"),
+  planningFailure: jsonb("planning_failure"),
   noCommitsExpected: integer("no_commits_expected").default(0),
   enabledWorkflowSteps: jsonb("enabled_workflow_steps").default([]),
   modifiedFiles: jsonb("modified_files").default([]),
@@ -2315,6 +2316,7 @@ export const chatMessages = projectSchema.table("chat_messages", {
   primaryKey({ columns: [t.projectId, t.id] }),
   index("idxChatMessagesSessionId").on(t.sessionId),
   index("idxChatMessagesCreatedAt").on(t.createdAt),
+  index("idxChatMessagesSessionCreatedAtId").on(t.sessionId, desc(t.createdAt), desc(t.id)),
 ]);
 
 /*

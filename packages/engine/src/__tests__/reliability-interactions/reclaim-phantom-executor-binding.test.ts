@@ -74,7 +74,6 @@ function makeStore(task: Task, options: { recentAuditRows?: AuditRow[] } = {}): 
     recordRunAuditEvent: vi.fn(async () => undefined),
     getRunAuditEvents: vi.fn(() => options.recentAuditRows ?? []),
     walCheckpoint: vi.fn(() => ({ busy: 0, log: 0, checkpointed: 0 })),
-    archiveTaskAndCleanup: vi.fn(async () => ({})),
     mergeTask: vi.fn(async () => undefined),
     getRootDir: vi.fn(() => "/tmp/test"),
   }) as unknown as TaskStore & EventEmitter;
@@ -152,7 +151,7 @@ describe("FN-6736: phantom executor binding reclaim", () => {
     vi.useRealTimers();
   });
 
-  it("requeues an old in-progress task when executor-active is only a phantom binding", async () => {
+  it("repairs an old in-progress task in place when executor-active is only a phantom binding", async () => {
     const h = makeHarness();
     expect(existsSync(h.worktree)).toBe(true);
 
@@ -160,13 +159,8 @@ describe("FN-6736: phantom executor binding reclaim", () => {
 
     expect(recovered).toBe(1);
     expect(h.clearPhantomExecutorBinding).toHaveBeenCalledWith(h.task.id, { preserveWorktrees: true });
-    expect(h.store.moveTask).toHaveBeenCalledWith(h.task.id, "todo", expect.objectContaining({
-      moveSource: "engine",
-      recoveryRehome: true,
-      preserveProgress: true,
-      preserveWorktree: true,
-    }));
-    expect(h.task.column).toBe("todo");
+    expect(h.store.moveTask).not.toHaveBeenCalled();
+    expect(h.task.column).toBe("in-progress");
     expect(h.task.userPaused).toBe(false);
     expect(h.task.paused).toBe(false);
     expect((h.task as any).status).not.toBe("failed");
@@ -313,13 +307,14 @@ describe("FN-6736: phantom executor binding reclaim", () => {
     h.cleanup();
   });
 
-  it("does not increment FN-5704 resume-limbo counters on the phantom-binding requeue", async () => {
+  it("does not increment FN-5704 resume-limbo counters on the in-place phantom-binding repair", async () => {
     const h = makeHarness({ resumeLimboCount: 1 } as Partial<Task>);
 
     await h.manager.reclaimSelfOwnedBranchConflicts();
     await h.manager.reclaimSelfOwnedBranchConflicts();
 
-    expect(h.store.moveTask).toHaveBeenCalledTimes(1);
+    expect(h.store.moveTask).not.toHaveBeenCalled();
+    expect(h.task.column).toBe("in-progress");
     expect(h.task.resumeLimboCount).toBe(1);
     expect(findAudit(h.store, "task:resume-limbo-escalated")).toBeUndefined();
     h.cleanup();

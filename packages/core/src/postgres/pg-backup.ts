@@ -37,6 +37,7 @@ import { mkdir, open, readFile, readdir, rename, stat, unlink } from "node:fs/pr
 import { existsSync } from "node:fs";
 import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
+import { MIGRATION_BOOKKEEPING_TABLE } from "./schema-applier.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -66,6 +67,7 @@ export interface PgBackupSelection {
   readonly selectedPath: string;
   readonly projectPath: string;
   readonly centralPath: string;
+  readonly migrationsPath: string;
 }
 
 export interface PgBackupPair {
@@ -74,6 +76,7 @@ export interface PgBackupPair {
   readonly central?:
     | PgDumpResult
     | { skipped: "disabled" | "missing" };
+  readonly migrations?: PgDumpResult | { skipped: "missing" };
 }
 
 /**
@@ -84,6 +87,7 @@ type MutablePgBackupPair = {
   timestamp: string;
   project?: PgDumpResult;
   central?: PgDumpResult | { skipped: "disabled" | "missing" };
+  migrations?: PgDumpResult | { skipped: "missing" };
 };
 
 /** Options for the PostgreSQL backup manager. */
@@ -224,8 +228,9 @@ export class PgBackupManager {
       const stem = counter === 0 ? initial : `${initial}-${counter}`;
       const projectPath = join(backupDirPath, formatBackupFilename("project", family, stem));
       const centralPath = join(backupDirPath, formatBackupFilename("central", family, stem));
+      const migrationsPath = join(backupDirPath, formatBackupFilename("migrations", family, stem));
       const markerPath = `${projectPath}.reserved`;
-      if (existsSync(projectPath) || existsSync(centralPath)) {
+      if (existsSync(projectPath) || existsSync(centralPath) || existsSync(migrationsPath)) {
         counter += 1;
         continue;
       }
@@ -241,7 +246,7 @@ export class PgBackupManager {
         }
         throw error;
       }
-      if (existsSync(projectPath) || existsSync(centralPath)) {
+      if (existsSync(projectPath) || existsSync(centralPath) || existsSync(migrationsPath)) {
         await this.releaseReservation(markerPath, nonce);
         counter += 1;
         continue;
@@ -276,6 +281,9 @@ export class PgBackupManager {
         `Invalid PostgreSQL backup filename: ${input}. Expected a canonical fusion-*-pg-<timestamp>.dump file.`,
       );
     }
+    if (parsed.kind === "migrations") {
+      throw new Error(`Invalid PostgreSQL backup filename: ${input}. Migration bookkeeping dumps cannot be restored alone.`);
+    }
     const selectedPath = selectedFilename === input
       ? join(this.getBackupDirPath(), selectedFilename)
       : resolve(input);
@@ -293,6 +301,7 @@ export class PgBackupManager {
         directory,
         formatBackupFilename("central", parsed.family, parsed.stem),
       ),
+      migrationsPath: join(directory, formatBackupFilename("migrations", parsed.family, parsed.stem)),
     };
   }
 
@@ -340,17 +349,20 @@ export class PgBackupManager {
     const reservation = await this.allocateBackupStem(options.family);
     const projectFilename = formatBackupFilename("project", options.family, reservation.stem);
     const centralFilename = formatBackupFilename("central", options.family, reservation.stem);
+    const migrationsFilename = formatBackupFilename("migrations", options.family, reservation.stem);
     const projectPath = join(backupDirPath, projectFilename);
     const centralPath = join(backupDirPath, centralFilename);
+    const migrationsPath = join(backupDirPath, migrationsFilename);
     const projectPartPath = `${projectPath}.part`;
     const centralPartPath = `${centralPath}.part`;
-    let publishedProject = false;
+    const migrationsPartPath = `${migrationsPath}.part`;
+    const publishedPaths: string[] = [];
     let pair: MutablePgBackupPair | undefined;
 
     try {
       await this.dumpSchemas(PROJECT_BACKUP_SCHEMAS, projectPartPath);
       const project = await this.publishDump(projectPartPath, projectPath, reservation);
-      publishedProject = true;
+      publishedPaths.push(projectPath);
       pair = {
         timestamp: options.family === "pre-restore" ? `pre-restore-${reservation.stem}` : reservation.stem,
         project,
@@ -358,14 +370,19 @@ export class PgBackupManager {
       if (options.includeCentral) {
         await this.dumpSchemas(CENTRAL_BACKUP_SCHEMAS, centralPartPath);
         pair.central = await this.publishDump(centralPartPath, centralPath, reservation);
+        publishedPaths.push(centralPath);
       }
+      await this.dumpMigrationBookkeeping(migrationsPartPath);
+      pair.migrations = await this.publishDump(migrationsPartPath, migrationsPath, reservation);
+      publishedPaths.push(migrationsPath);
     } catch (error) {
-      if (publishedProject) await unlink(projectPath).catch(() => undefined);
+      await Promise.all(publishedPaths.map((path) => unlink(path).catch(() => undefined)));
       throw error;
     } finally {
       await Promise.all([
         unlink(projectPartPath).catch(() => undefined),
         unlink(centralPartPath).catch(() => undefined),
+        unlink(migrationsPartPath).catch(() => undefined),
       ]);
       await this.releaseReservation(reservation.markerPath, reservation.nonce);
     }
@@ -419,6 +436,14 @@ export class PgBackupManager {
     const clean = opts.clean ?? true;
     const args = ["--format=custom", "--no-owner", "--no-privileges"];
     if (clean) args.push("--clean", "--if-exists");
+    /*
+    FNXC:PostgresBackup 2026-09-04-04:40:
+    pg_restore requires an explicit destination even when PGDATABASE is present
+    in libpq environment variables. Pass only the database name here; connection
+    credentials remain exclusively in buildLibpqEnv and never enter argv.
+    */
+    const databaseName = parsePgUrl(this.connectionString).dbname;
+    if (databaseName) args.push("--dbname", databaseName);
     args.push("--single-transaction", dumpPath);
     await this.runPgRestore(args);
   }
@@ -460,7 +485,8 @@ export class PgBackupManager {
         createdAt: stats.mtime.toISOString(),
       };
       if (parsed.kind === "project") pair.project = result;
-      else pair.central = result;
+      else if (parsed.kind === "central") pair.central = result;
+      else pair.migrations = result;
       byStem.set(key, pair);
     }
 
@@ -498,6 +524,9 @@ export class PgBackupManager {
       if (pair.central && "path" in pair.central && await unlinkIfPresent(pair.central.path)) {
         deleted.push(pair.central.filename);
       }
+      if (pair.migrations && "path" in pair.migrations && await unlinkIfPresent(pair.migrations.path)) {
+        deleted.push(pair.migrations.filename);
+      }
     }
     return { deleted };
   }
@@ -526,10 +555,12 @@ export class PgBackupManager {
       }
       const projectPartPath = `${join(backupDirPath, dumpFilename)}.part`;
       const centralPartPath = `${join(backupDirPath, formatBackupFilename("central", parsed.family, parsed.stem))}.part`;
+      const migrationsPartPath = `${join(backupDirPath, formatBackupFilename("migrations", parsed.family, parsed.stem))}.part`;
       await Promise.all([
         unlink(markerPath).catch(() => undefined),
         unlink(projectPartPath).catch(() => undefined),
         unlink(centralPartPath).catch(() => undefined),
+        unlink(migrationsPartPath).catch(() => undefined),
       ]);
     }
     return live;
@@ -539,6 +570,16 @@ export class PgBackupManager {
    * Run pg_dump for the given schemas into the target path. The connection
    * string is passed via PG_CONNECTION_STRING env var (credential safety).
    */
+  /*
+   * FNXC:PostgresBackup 2026-09-04-02:58:
+   * pg_dump ignores --schema once --table is supplied, so migration bookkeeping
+   * needs its own archive rather than being appended to the project schema dump.
+   */
+  private async dumpMigrationBookkeeping(outputPath: string): Promise<void> {
+    await this.runPgDump(["--format=custom", "--no-owner", "--no-privileges", "--table", `public.${MIGRATION_BOOKKEEPING_TABLE}`, "--file", outputPath]);
+    await stat(outputPath);
+  }
+
   private async dumpSchemas(schemas: readonly string[], outputPath: string): Promise<void> {
     const args = [
       "--format=custom",
@@ -636,7 +677,7 @@ async function unlinkIfPresent(path: string): Promise<boolean> {
   }
 }
 
-type PgBackupKind = "project" | "central";
+type PgBackupKind = "project" | "central" | "migrations";
 type PgBackupFamily = "regular" | "pre-restore";
 
 interface ParsedBackupFilename {
@@ -650,18 +691,18 @@ function formatBackupFilename(
   family: PgBackupFamily,
   stem: string,
 ): string {
-  const central = kind === "central" ? "central-" : "";
+  const prefix = kind === "central" ? "central-" : kind === "migrations" ? "migrations-" : "";
   const preRestore = family === "pre-restore" ? "pre-restore-" : "";
-  return `fusion-${central}${preRestore}pg-${stem}.dump`;
+  return `fusion-${prefix}${preRestore}pg-${stem}.dump`;
 }
 
 function parseBackupFilename(filename: string): ParsedBackupFilename | null {
   const match = filename.match(
-    /^fusion-(central-)?(pre-restore-)?pg-((?:\d{8}|\d{4}-\d{2}-\d{2})-\d{6}(?:-\d+)?)\.dump$/,
+    /^fusion-(central-|migrations-)?(pre-restore-)?pg-((?:\d{8}|\d{4}-\d{2}-\d{2})-\d{6}(?:-\d+)?)\.dump$/,
   );
   if (!match) return null;
   return {
-    kind: match[1] ? "central" : "project",
+    kind: match[1] === "central-" ? "central" : match[1] === "migrations-" ? "migrations" : "project",
     family: match[2] ? "pre-restore" : "regular",
     stem: match[3],
   };

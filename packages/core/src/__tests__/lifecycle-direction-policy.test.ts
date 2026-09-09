@@ -20,21 +20,20 @@ const policyInput = (fromFlags: object, toFlags: object, options: Partial<{ move
 });
 
 describe("workflow lifecycle direction", () => {
-  it("orders lifecycle roles from intake through archived", () => {
+  it("orders lifecycle roles from intake through complete", () => {
     expect(LIFECYCLE_ROLE_RANK).toEqual({
       intake: 0,
       hold: 1,
       wip: 2,
       review: 3,
       complete: 4,
-      archived: 5,
     });
   });
 
   it("classifies effective column flags with highest-rank precedence", () => {
     expect(classifyLifecycleRole({ intake: true, hold: true })).toBe("hold");
     expect(classifyLifecycleRole({ mergeBlocker: true, humanReview: true, mergeOrchestration: true })).toBe("review");
-    expect(classifyLifecycleRole({ archived: true, complete: true, countsTowardWip: true })).toBe("archived");
+    expect(classifyLifecycleRole({ complete: true, countsTowardWip: true })).toBe("complete");
     expect(classifyLifecycleRole({})).toBeUndefined();
   });
 
@@ -46,14 +45,13 @@ describe("workflow lifecycle direction", () => {
   });
 
   it("asserts the deny-list verdict for every ordered lifecycle role pair", () => {
-    const roles: LifecycleRole[] = ["intake", "hold", "wip", "review", "complete", "archived"];
-    const expectedRules: Record<LifecycleRole, Array<"F1" | "F2" | "F3" | "F4" | "F5" | null>> = {
-      intake: ["F1", null, null, null, null, null],
-      hold: ["F1", null, null, null, null, null],
-      wip: ["F1", "F5", null, null, null, null],
-      review: ["F1", "F2", null, null, null, "F3"],
-      complete: ["F1", "F2", "F2", "F4", null, null],
-      archived: ["F1", "F2", "F2", "F2", "F4", null],
+    const roles: LifecycleRole[] = ["intake", "hold", "wip", "review", "complete"];
+    const expectedRules: Record<LifecycleRole, Array<"F1" | "F2" | "F4" | "F5" | null>> = {
+      intake: ["F1", null, null, null, null],
+      hold: ["F1", null, null, null, null],
+      wip: ["F1", "F5", null, null, null],
+      review: ["F1", "F2", null, null, null],
+      complete: ["F1", "F2", "F2", "F4", null],
     };
 
     for (const from of roles) {
@@ -79,6 +77,10 @@ describe("workflow lifecycle direction", () => {
     expect(evaluateLifecycleDirectionPostcondition(policyInput({ mergeBlocker: true }, { hold: true }, {
       moveSource: "engine",
       lifecycleReason: "code-review-revise-remediation",
+    }))?.messageKey).toBe("transition.rejected.forbiddenLifecyclePath");
+    expect(evaluateLifecycleDirectionPostcondition(policyInput({ countsTowardWip: true }, { hold: true }, {
+      moveSource: "engine",
+      lifecycleReason: "stuck-session-timeout",
     }))?.messageKey).toBe("transition.rejected.forbiddenLifecyclePath");
     expect(evaluateLifecycleDirectionPostcondition(policyInput({ mergeBlocker: true }, { countsTowardWip: true }, {
       moveSource: "engine",
