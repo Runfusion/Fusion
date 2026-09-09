@@ -222,19 +222,17 @@ export async function reconcileStaleSymbolLocksAsync(store: TaskStore): Promise<
   sweep over N locks costs one workflow read per distinct workflow rather than per lock.
 
   A workflow expressing no trait at all is a v1 upgrade rather than a board without terminal lanes, so
-  it keeps the legacy pair — as does an unresolvable one. Failing to reclaim is the harm here, and the
-  fallback stays exactly as permissive as before.
+  it keeps the built-in `done` fallback. Soft deletion is detected separately through `deletedAt`.
   */
   const terminalIrCache = new Map<string, WorkflowIr>();
   const terminalLanesFor = async (taskId: string): Promise<ReadonlySet<string>> => {
-    const lanes = new Set<string>(["done", "archived"]);
+    const lanes = new Set<string>(["done"]);
     try {
       const ir = await resolveWorkflowIrForTask(store, taskId, terminalIrCache);
       if (ir && declaresAnyLifecycleTrait(ir)) {
         for (const id of columnsWithFlag(ir, "complete")) lanes.add(id);
-        for (const id of columnsWithFlag(ir, "archived")) lanes.add(id);
       }
-    } catch { /* degraded: the legacy pair */ }
+    } catch { /* degraded: built-in Complete fallback */ }
     return lanes;
   };
 

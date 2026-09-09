@@ -4,6 +4,11 @@ FN-9234 requires a singular stale approval to exit through review of CURRENT con
 transferring a lane's approval to content it did not inspect. The seed is idle-guarded, so a live
 graph continuation wins. Selecting only a stale lane and refusing no-progress makes this route
 terminating rather than a merge-retry loop.
+
+FNXC:PreMergeApproval 2026-09-06-00:11:
+FN-9264 deliberately defers a stale-content seed that is discovered from a live merge node. The
+one-active-task-continuation constraint means excluding or retiring the merge row would race its
+runner's terminal transition; the idle self-healing owner seeds only after that row is terminal.
 */
 import {
   computeWorkflowIrPin,

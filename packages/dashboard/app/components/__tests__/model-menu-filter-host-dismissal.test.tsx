@@ -1,67 +1,9 @@
 // @vitest-environment jsdom
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ChatView } from "../ChatView";
 import { ChatThinkingLevelControl } from "../ChatThinkingLevelControl";
 import { ModelSelectionModal } from "../ModelSelectionModal";
-import * as api from "../../api";
-import * as useChatModule from "../../hooks/useChat";
-import * as useChatRoomsModule from "../../hooks/useChatRooms";
-import { _resetInitialViewportHeight } from "../../hooks/useMobileKeyboard";
-import type { UseChatReturn } from "../../hooks/useChat";
-import type { UseChatRoomsResult } from "../../hooks/useChatRooms";
-
 Element.prototype.scrollIntoView = vi.fn();
-
-vi.mock("../SessionTerminal", () => ({ SessionTerminal: () => <div /> }));
-vi.mock("../../hooks/useChat");
-vi.mock("../../hooks/useChatRooms");
-vi.mock("../../hooks/useNavigationHistory", () => ({
-  useNavigationHistoryContext: () => ({ pushNav: vi.fn(), replaceCurrent: vi.fn() }),
-}));
-vi.mock("../../hooks/useModelsCache", () => ({
-  useModelsCache: () => ({
-    models: [
-      { id: "gpt-4o", provider: "openai", name: "GPT-4o" },
-      { id: "claude-sonnet", provider: "anthropic", name: "Claude Sonnet" },
-    ],
-    favoriteProviders: [], favoriteModels: [], defaultProvider: "openai", defaultModelId: "gpt-4o",
-    loading: false, refresh: vi.fn(async () => undefined),
-  }),
-}));
-vi.mock("../../hooks/useAgentsMapCache", () => ({
-  useAgentsMapCache: () => ({ loading: false, agents: [], agentsMap: new Map(), refresh: vi.fn(async () => undefined) }),
-}));
-vi.mock("../../api", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../api")>()),
-  fetchDiscoveredSkills: vi.fn().mockResolvedValue([]), fetchTasks: vi.fn().mockResolvedValue([]),
-  fetchSettings: vi.fn().mockResolvedValue({}), searchFiles: vi.fn().mockResolvedValue({ files: [] }),
-  fetchModels: vi.fn().mockResolvedValue({ models: [
-    { id: "gpt-4o", provider: "openai", name: "GPT-4o" },
-    { id: "claude-sonnet", provider: "anthropic", name: "Claude Sonnet" },
-  ] }),
-  fetchAgents: vi.fn().mockResolvedValue([]), fetchPluginRuntimes: vi.fn().mockResolvedValue({ runtimes: [] }),
-  createAgent: vi.fn().mockResolvedValue({ id: "agent-1" }),
-}));
-
-const mockUseChat = vi.mocked(useChatModule.useChat);
-const mockUseChatRooms = vi.mocked(useChatRoomsModule.useChatRooms);
-const mockFetchSettings = vi.mocked(api.fetchSettings);
-
-function chatState(): UseChatReturn {
-  return {
-    sessions: [], activeSession: null, sessionsLoading: false, messages: [], messagesLoading: false,
-    isStreaming: false, streamingText: "", streamingThinking: "", streamingToolCalls: [],
-    selectSession: vi.fn(), createSession: vi.fn(), archiveSession: vi.fn(), renameSession: vi.fn(),
-    setSessionThinkingLevel: vi.fn(), deleteSession: vi.fn(), sendMessage: vi.fn(), editMessageAndResend: vi.fn(),
-    stopStreaming: vi.fn(), pendingMessages: [], clearPendingMessage: vi.fn(), loadMoreMessages: vi.fn(),
-    hasMoreMessages: false, searchQuery: "", setSearchQuery: vi.fn(), filteredSessions: [], refreshSessions: vi.fn(), agentsMap: new Map(),
-  };
-}
-
-function roomsState(): UseChatRoomsResult {
-  return { rooms: [], roomsLoading: false, roomsError: null, activeRoom: null, activeRoomMembers: [], messages: [], messagesLoading: false, selectRoom: vi.fn(), createRoom: vi.fn(), deleteRoom: vi.fn(), sendRoomMessage: vi.fn(), refreshRooms: vi.fn() };
-}
 
 function setViewport(mobile: boolean) {
   Object.defineProperty(window, "innerWidth", { configurable: true, value: mobile ? 375 : 1280 });
@@ -74,34 +16,8 @@ function setViewport(mobile: boolean) {
  */
 describe("model-menu filter host dismissal", () => {
   beforeEach(() => {
-    _resetInitialViewportHeight();
-    vi.clearAllMocks(); localStorage.clear();
-    mockUseChat.mockReturnValue(chatState());
-    mockUseChatRooms.mockReturnValue(roomsState());
-    mockFetchSettings.mockResolvedValue({ chatNewSessionMode: "prompt", chatDefaultKind: "model", chatDefaultModelProvider: "openai", chatDefaultModelId: "gpt-4o" } as Awaited<ReturnType<typeof api.fetchSettings>>);
-  });
-
-  it.each([{ mobile: false }, { mobile: true }])("keeps New Chat open after a $mobile portal-origin filter gesture", async ({ mobile }) => {
-    setViewport(mobile);
-    await act(async () => { render(<ChatView projectId="project-a" addToast={vi.fn()} />); });
-    await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
-    fireEvent.click(screen.getAllByTestId("chat-new-btn")[0]);
-    fireEvent.click(screen.getByLabelText("Model"));
-    const filter = await screen.findByPlaceholderText("Filter models…");
-    const backdrop = screen.getByRole("dialog");
-
-    if (mobile) fireEvent.touchStart(filter);
-    fireEvent.pointerDown(filter);
-    fireEvent.mouseDown(filter);
-    fireEvent.change(filter, { target: { value: "no-match" } });
-    if (mobile) fireEvent.touchEnd(backdrop);
-    fireEvent.mouseUp(backdrop);
-    fireEvent.click(backdrop);
-
-    expect(screen.getByRole("dialog")).toBeInTheDocument();
-    expect(screen.getByTestId("model-combobox-portal")).toBeInTheDocument();
-    expect(filter).toHaveValue("no-match");
-    expect(screen.getByText(/No models match/)).toBeInTheDocument();
+    vi.clearAllMocks();
+    localStorage.clear();
   });
 
   it.each([{ mobile: false }, { mobile: true }])("keeps ModelSelectionModal open after a $mobile portal-origin filter gesture and still closes for a genuine backdrop touch", async ({ mobile }) => {

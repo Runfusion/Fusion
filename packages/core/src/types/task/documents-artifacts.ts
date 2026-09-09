@@ -63,32 +63,6 @@ export interface TaskDocumentCreateInput {
 }
 
 /**
- * FNXC:ArchivedTaskDocumentPublication 2026-07-20-15:36:
- * Archived evidence can only gain an operator-attributed correction through a dedicated additive contract. The caller supplies no replacement content or parent metadata, and both exact-current CAS expectations plus a non-empty audit reason are mandatory. This contract is intentionally absent from agent document-write tools.
- */
-export interface ArchivedTaskDocumentAdditionInput {
-  /** Existing document key. Must match the ordinary task-document key grammar. */
-  key: string;
-  /** Non-empty bytes appended after the canonical archived-addition boundary. */
-  appendContent: string;
-  /** Existing positive revision that must still be current under the transaction lock. */
-  expectedRevision: number;
-  /** Canonical SHA-256 hash of the exact current UTF-8 content. */
-  expectedContentHash: string;
-  /** Non-empty operator attribution persisted on the new current revision. */
-  author: string;
-  /** Non-empty operator justification used only in ids/outcomes-only audit metadata. */
-  reason: string;
-}
-
-export interface ArchivedTaskDocumentAdditionResult {
-  document: TaskDocument;
-  previousRevision: number;
-  previousContentHash: string;
-  appendedContentHash: string;
-}
-
-/**
  * TaskDocument extended with its parent task metadata for display in the documents view.
  */
 export interface TaskDocumentWithTask extends TaskDocument {
@@ -96,7 +70,7 @@ export interface TaskDocumentWithTask extends TaskDocument {
   taskTitle?: string;
   /** Description of the parent task */
   taskDescription?: string;
-  /** Column of the parent task (e.g., "triage", "todo", "in-progress", "done", "in-review", "archived") */
+  /** Column of the live parent task (for example "triage", "todo", "in-progress", "in-review", or "done") */
   taskColumn?: string;
 }
 
@@ -178,7 +152,7 @@ export interface ArtifactWithTask extends Artifact {
   taskTitle?: string;
   /** Description of the parent task */
   taskDescription?: string;
-  /** Column of the parent task (e.g., "triage", "todo", "in-progress", "done", "in-review", "archived") */
+  /** Column of the live parent task (for example "triage", "todo", "in-progress", "in-review", or "done") */
   taskColumn?: string;
 }
 

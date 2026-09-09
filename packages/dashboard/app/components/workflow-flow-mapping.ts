@@ -1237,15 +1237,6 @@ export function validateColumnsClient(
         message: `Column '${col.name || col.id}' is both a completion column and an intake column`,
       });
     }
-    if (flags.archived && flags.countsTowardWip) {
-      violations.push({
-        code: "archived-with-wip",
-        severity: "error",
-        columnId: col.id,
-        traitIds: traitIdsWithFlags(col.traits, byId, ["archived", "countsTowardWip"]),
-        message: `Column '${col.name || col.id}' is archived but counts toward WIP`,
-      });
-    }
     if (flags.intake) intakeCount += 1;
   }
 

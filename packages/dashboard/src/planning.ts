@@ -4366,7 +4366,7 @@ export async function createTaskFromPlanSession(
   let claimEpoch = session.taskCreationEpoch ?? 0;
   const currentProposalClaimId = () => planningProposalClaimId(sessionId, claimEpoch);
   const findCreatedTask = async (): Promise<Task | undefined> =>
-    (await store.listTasks({ includeArchived: true })).find((candidate) => candidate.proposalClaimId === currentProposalClaimId());
+    (await store.listTasks({ includeArchived: false })).find((candidate) => candidate.proposalClaimId === currentProposalClaimId());
   const markSessionComplete = async (): Promise<void> => {
     const current = await getSession(sessionId);
     if (current && !current.validated) {
@@ -4385,13 +4385,12 @@ export async function createTaskFromPlanSession(
   /*
   FNXC:PlanningMultiTask 2026-07-24-03:20:
   Reported bug (dashboard surface, same contract here): deleting the task created from a plan
-  dead-ended the session forever. When the linked task is absent from the include-archived
-  task list (task-row authority — a successful scan proves deletion, not a flaky read), clear
+  dead-ended the session forever. When the linked task is absent from the live task list (task-row authority — a successful scan proves deletion, not a flaky read), clear
   the stale linkage so this attempt creates a fresh task; a transient read failure keeps
   failing closed so we never fork on a hiccup.
   */
   const clearStaleLinkedTask = async (staleTaskId: string): Promise<boolean> => {
-    const allTasks = await store.listTasks({ includeArchived: true }).catch(() => null);
+    const allTasks = await store.listTasks({ includeArchived: false }).catch(() => null);
     if (allTasks === null || allTasks.some((candidate) => candidate.id === staleTaskId)) return false;
     diagnostics.warn("Planning session linked task no longer exists; advancing creation epoch", {
       sessionId,
@@ -4561,7 +4560,7 @@ export async function finalizePlanningTaskCreation(sessionId: string, ownerToken
   return row ? restoreClaimSession(row) : undefined;
 }
 
-// FNXC:PlanningMultiTask 2026-07-24-01:40: expectedTaskCreationEpoch makes reconcile a no-op when the plan was edited (epoch rotated) since the task's claim key was derived — never re-link an archived task to the new epoch.
+// FNXC:PlanningMultiTask 2026-07-24-01:40: expectedTaskCreationEpoch makes reconcile a no-op when the plan was edited (epoch rotated) since the task's claim key was derived; never re-link a stale task to the new epoch.
 export async function reconcilePlanningTaskCreation(sessionId: string, taskId: string, expectedTaskCreationEpoch?: number): Promise<Session | undefined> {
   if (!_aiSessionStore || typeof (_aiSessionStore as unknown as { reconcilePlanningTaskCreation?: unknown }).reconcilePlanningTaskCreation !== "function") {
     const session = await getSession(sessionId);

@@ -858,9 +858,9 @@ export async function handleGraphFailure(
           graph run reach this sink, where it logged "Workflow graph failure
           surfaced ... operator action required; retry or explicitly
           unpause/resume" on a task that finished perfectly. The `status:
-          "failed"` write below was already guarded for done/archived, but the
+          "failed"` write below was already guarded for workflow Complete, but the
           alarming operator-action log entry (and its warn) still fired on
-          every auto-merged task. Treat done/archived like the todo benign
+          every auto-merged task. Treat Complete like the todo benign
           case: clear the abort marker, release the worktree slot, log a
           benign completion note, and never emit the PAUSE_ABORT_PARK markers
           (so self-healing's recoverPausedAbortFailures has nothing to chase).

@@ -9,6 +9,9 @@ Operators need a manual-capture intake ("Ideas") in front of the default coding 
 
 FNXC:CodingIdeasWorkflow 2026-07-04-09:18:
 The "Ideas" column is the intake column with autoTriage disabled. Tasks created into this workflow land there and are NOT picked up by the triage service until an operator moves them to "Planning" (the merged planner + capacity column, id `todo`). Specification and Plan Review then run in place inside "Planning"; a "ready" badge distinguishes planned (real PROMPT.md) tasks from unplanned (bootstrap stub) ones while they wait for an in-progress slot. See createTask intake-column wiring (store.ts) and the triage todo-discovery extension (triage.ts).
+
+FNXC:WorkflowSuccession 2026-09-06-02:15:
+FN-297 retires this module's former standalone catalog entry but preserves the IR as the shared composition base cloned by builtin-coding-ideas-v2-workflow-ir.ts and imported by invariant tests. The symbol, slug and five-column contract remain stable; only the catalog consumer is removed.
 */
 
 /** The board columns for the Coding (Ideas) workflow. The "ideas" intake carries
@@ -49,7 +52,6 @@ const CODING_IDEAS_COLUMNS: WorkflowIrColumn[] = [
     traits: [{ trait: "merge-blocker" }, { trait: "human-review" }, { trait: "stall-detection" }, { trait: "merge" }],
   },
   { id: "done", name: "Done", traits: [{ trait: "complete" }] },
-  { id: "archived", name: "Archived", traits: [{ trait: "archived" }] },
 ];
 
 const RAW_BUILTIN_CODING_IDEAS_WORKFLOW_IR: WorkflowIr = (() => {

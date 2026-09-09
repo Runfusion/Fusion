@@ -49,7 +49,7 @@ Reconciliation-scoped auto-recover/reclaim events the self-healing sweep surface
 | --- | --- |
 | `task:auto-recover-paused-abort-park` | Self-healing clears a benign pause-abort operator park and requeues the task. |
 | `task:auto-rebound-paused-scope-decay` | Self-healing rebounds a task whose paused scope decayed past its floor, unblocking followers. |
-| `task:auto-archive-failure-budget-exhausted` | Self-healing abandons a repeatedly failing stale-task archive and surfaces it for operator action. |
+| `task:auto-archive-failure-budget-exhausted` | Historical event retained for reading pre-removal logs; current self-healing does not archive tasks. |
 | `task:reclaim-phantom-executor-binding` | Self-healing proves an in-memory executor-active binding is stale and requeues the task. |
 | `task:reconcile-orphaned-pending-step-results` | Self-healing rewrites orphaned `pending` workflow-step results (no live session) to `failed`. |
 | `task:reconcile-unproven-review-approval` | Self-healing rewrites singular content-review approvals without input proof to recoverable `failed` results. |
@@ -61,6 +61,7 @@ Reconciliation-scoped auto-recover/reclaim events the self-healing sweep surface
 | `task:reconcile-wedged-active-merge` | Self-healing reclaims a wedged single-flight merge entry. |
 | `task:reconcile-stranded-completed-no-action` | A stranded-completed promoter withholds promotion of an all-steps-done/skipped task with a failure-park provenance (no-action). |
 | `task:reconcile-legacy-adoption` | Self-healing startup adopts a pre-cutover legacy task row through the KTD-8 adoption table. |
+| `task:reconcile-archived-into-done` | Self-healing moves a live historical archive row or restores a cold snapshot into the task's workflow completion lane. Metadata is limited to the task ID, source, counters, and a fixed outcome. |
 
 ## Durable-agent error-state
 
@@ -100,7 +101,7 @@ All `recordRunAuditEventWithinTransaction(tx, ...)` calls and the `recordRunAudi
 
 `task:review-empty-content-parked` records the one-time terminal close for a provably empty Code Review input. Its metadata is limited to task and workflow-step ids, the resting column, and the fixed failed outcome; reviewer prose and findings remain off audit rows. The empty-merge finalize-blocked events also include the fixed `parkedStatus: "failed"` outcome. These writes use bounded best-effort emission and are intentionally outside the curated delivery-pipeline event table.
 
-`task:review-input-recaptured` records a positive review lane that proved its own checkout fast-forwarded and re-bound its identity to the final reviewed content. `task:merge-stale-content-review-rerouted` records a singular stale-content merge refusal, from merge admission or self-healing, that attempted graph-owned review re-entry. Their metadata is task and workflow-step ids, approval verdict or fixed reroute reason, source, and a resolved-in-review finding count only; neither event records fingerprints, diffs, paths, findings, or reviewer prose. Both use the FN-9175 bounded best-effort seam.
+`task:review-input-recaptured` records a positive review lane that proved its own checkout fast-forwarded and re-bound its identity to the final reviewed content. `task:merge-stale-content-review-rerouted` records a singular stale-content merge refusal, from merge admission or self-healing, that attempted graph-owned review re-entry. Self-healing may recover the bounded-retry rejection, raw merge-door blocker, or retry-exhausted park only after re-seeding the stale lane; metadata uses task and workflow-step ids, fixed reroute reason/source, and fixed park outcome fields (`parkShape`, `parkCleared`, `mergeRetriesReset`) only. Neither event records fingerprints, diffs, paths, findings, or reviewer prose. Both use the FN-9175 bounded best-effort seam.
 
 | Event | Metadata |
 | --- | --- |

@@ -27,7 +27,7 @@ export interface TaskColumnRestartPlan {
 
 export interface TaskColumnRestartRefusal {
   kind: "refused";
-  reason: "terminal-column" | "archived-column" | "column-not-in-workflow" | "no-column-model" | "no-entry-node-in-column";
+  reason: "terminal-column" | "column-not-in-workflow" | "no-column-model" | "no-entry-node-in-column";
   detail?: { resolvedEntryNodeId?: string; resolvedEntryNodeColumn?: string };
 }
 
@@ -79,7 +79,6 @@ export function planTaskColumnRestart(input: {
   if (!column) return { kind: "refused", reason: "column-not-in-workflow" };
   const flags = resolveColumnFlags(column);
   if (flags.complete) return { kind: "refused", reason: "terminal-column" };
-  if (flags.archived) return { kind: "refused", reason: "archived-column" };
   if (!entryNode || entryNode.column !== task.column) {
     return {
       kind: "refused",

@@ -15,7 +15,7 @@ const workflow = (overrides: Record<string, unknown> = {}) => ({
 describe("quick add Start workflow guards", () => {
   it("limits resolved built-ins to Coding Ideas", () => {
     const resolvedBuiltinFirstColumns = [
-      ["builtin:coding-ideas", { intake: true, hold: true, manualIntake: true }, true],
+      ["builtin:coding-ideas-v2", { intake: true, hold: true, manualIntake: true }, true],
       ["builtin:coding", { intake: true, hold: true }, false],
       ["builtin:quick-fix", { intake: true, hold: true }, false],
       ["builtin:stepwise-coding", { intake: true, hold: true }, false],
@@ -41,10 +41,6 @@ describe("quick add Start workflow guards", () => {
       { id: "todo", flags: {} },
     ] })))).toBe(true);
     expect(workflowSupportsQuickAddStart(validateQuickAddStartWorkflow(workflow({ columns: [
-      { id: "archived", flags: { archived: true, manualIntake: true } },
-      { id: "waiting", flags: { manualIntake: true } },
-    ] })))).toBe(true);
-    expect(workflowSupportsQuickAddStart(validateQuickAddStartWorkflow(workflow({ columns: [
       { id: "hidden", flags: { hiddenFromBoard: true, manualIntake: true } },
       { id: "planning", flags: { intake: true, hold: true } },
     ] })))).toBe(false);
@@ -56,7 +52,7 @@ describe("quick add Start workflow guards", () => {
   });
 
   it("derives Todo only from a captured, visible Coding Ideas definition", () => {
-    const canonical = validateQuickAddStartWorkflow(workflow({ id: "builtin:coding-ideas" }));
+    const canonical = validateQuickAddStartWorkflow(workflow({ id: "builtin:coding-ideas-v2" }));
     expect(canonical).not.toBeNull();
     expect(resolveQuickAddStartInitialColumn(canonical!)).toBe("todo");
 
@@ -66,16 +62,55 @@ describe("quick add Start workflow guards", () => {
       [{ id: "ideas", flags: { hold: true } }, { id: "todo", flags: { intake: true } }],
       [{ id: "ideas", flags: { hold: true } }, { id: "todo", flags: { complete: true } }],
     ]) {
-      const invalidTarget = validateQuickAddStartWorkflow(workflow({ id: "builtin:coding-ideas", columns }));
+      const invalidTarget = validateQuickAddStartWorkflow(workflow({ id: "builtin:coding-ideas-v2", columns }));
       expect(invalidTarget).not.toBeNull();
       expect(resolveQuickAddStartInitialColumn(invalidTarget!)).toBeNull();
     }
 
     expect(resolveQuickAddStartInitialColumn(validateQuickAddStartWorkflow(workflow())!)).toBeNull();
     expect(validateQuickAddStartWorkflow(workflow({
-      id: "builtin:coding-ideas",
+      id: "builtin:coding-ideas-v2",
       columns: [{ id: "ideas", flags: {} }, { id: "todo", flags: {} }, { id: "todo", flags: {} }],
     }))).toBeNull();
+  });
+
+  it("resolves the Ideas shape identically for the successor and a custom workflow", () => {
+    const columns = [
+      { id: "ideas", name: "Ideas", flags: { intake: true, manualIntake: true } },
+      { id: "todo", name: "Planning", flags: { hold: true } },
+      { id: "done", name: "Done", flags: { complete: true } },
+    ];
+    const successor = validateQuickAddStartWorkflow(workflow({ id: "builtin:coding-ideas-v2", columns }));
+    const custom = validateQuickAddStartWorkflow(workflow({ id: "WF-IDEAS-COPY", columns }));
+
+    expect(resolveQuickAddStartInitialColumn(successor!)).toBe("todo");
+    expect(resolveQuickAddStartInitialColumn(custom!)).toBe("todo");
+  });
+
+  it("keeps trait routing for other manual-intake workflows", () => {
+    const other = validateQuickAddStartWorkflow(workflow({
+      id: "WF-MANUAL-INTAKE",
+      columns: [
+        { id: "capture", name: "Capture", flags: { intake: true, manualIntake: true } },
+        { id: "ready", name: "Ready", flags: { hold: true } },
+      ],
+    }));
+
+    expect(resolveQuickAddStartInitialColumn(other!)).toBe("ready");
+    expect(resolveQuickAddStartWorkflowTarget(other)).toBe("ready");
+  });
+
+  it("hides Start when the successor metadata is reordered", () => {
+    const reordered = validateQuickAddStartWorkflow(workflow({
+      id: "builtin:coding-ideas-v2",
+      columns: [
+        { id: "todo", name: "Planning", flags: { hold: true } },
+        { id: "ideas", name: "Ideas", flags: { intake: true, manualIntake: true } },
+        { id: "done", name: "Done", flags: { complete: true } },
+      ],
+    }));
+
+    expect(resolveQuickAddStartWorkflowTarget(reordered)).toBeNull();
   });
 
   it("proves a Start target from the manual intake lane", () => {
@@ -114,8 +149,8 @@ describe("quick add Start workflow guards", () => {
 
   /*
   FNXC:QuickAddStart 2026-08-26-19:19:
-  Regression: a duplicated Ideas workflow ("Coding ideas V2") reported as "Start does not start the
-  task". Start resolved its destination from the literal `builtin:coding-ideas` id, so a copy fell
+  Regression: a duplicated Ideas workflow reported as "Start does not start the task". Start
+  resolved its destination from a named built-in id, so a copy fell
   through to a promotion that skipped the Planning hold lane and targeted the WIP lane — a move
   `intake -> wip` that column adjacency always rejects. Surfaces: both Start callers share these
   helpers (QuickEntryBox composer and NewTaskModal), so the invariant is asserted here once for the
@@ -124,14 +159,13 @@ describe("quick add Start workflow guards", () => {
   describe("duplicated Ideas workflows", () => {
     const clone = (overrides: Record<string, unknown> = {}) => validateQuickAddStartWorkflow(workflow({
       id: "WF-014",
-      name: "Coding ideas V2",
+      name: "Coding ideas",
       columns: [
         { id: "ideas", name: "Ideas", flags: { intake: true, manualIntake: true } },
         { id: "todo", name: "Planning", flags: { hold: true } },
         { id: "in-progress", name: "In progress", flags: { countsTowardWip: true } },
         { id: "in-review", name: "In review", flags: { mergeBlocker: true, humanReview: true } },
         { id: "done", name: "Done", flags: { complete: true } },
-        { id: "archived", name: "Archived", flags: { archived: true, hiddenFromBoard: true } },
       ],
       ...overrides,
     }));

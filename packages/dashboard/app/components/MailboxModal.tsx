@@ -388,15 +388,16 @@ export function MailboxModal({
     }
     skipOpenSpinnerInboxRef.current = false;
     try {
-      const data = await fetchInbox({ limit: 50 }, projectId);
+      const data = await fetchInbox({ limit: 50, category: "message" }, projectId);
       setInbox(data);
-      setUnreadCount(data.unreadCount);
+      const messageUnreadCount = data.categoryUnreadCounts?.message ?? data.unreadCount;
+      setUnreadCount(messageUnreadCount);
       writeCache(
         inboxCacheKey,
         { ...data, messages: data.messages.slice(0, 100) },
         { maxBytes: 500_000 },
       );
-      writeCache(unreadCountCacheKey, data.unreadCount, { maxBytes: 500_000 });
+      writeCache(unreadCountCacheKey, messageUnreadCount, { maxBytes: 500_000 });
     } catch {
       // Silently fail — empty state will show
     } finally {
@@ -471,8 +472,9 @@ export function MailboxModal({
   const refreshUnreadCount = useCallback(async () => {
     try {
       const data = await fetchUnreadCount(projectId);
-      setUnreadCount(data.unreadCount);
-      writeCache(unreadCountCacheKey, data.unreadCount, { maxBytes: 500_000 });
+      const messageUnreadCount = data.categoryUnreadCounts?.message ?? data.unreadCount;
+      setUnreadCount(messageUnreadCount);
+      writeCache(unreadCountCacheKey, messageUnreadCount, { maxBytes: 500_000 });
     } catch {
       // Silently fail
     }
@@ -686,7 +688,7 @@ export function MailboxModal({
 
   const handleMarkAllRead = useCallback(async () => {
     try {
-      const result = await markAllMessagesRead(projectId);
+      const result = await markAllMessagesRead(projectId, { category: "message" });
       setUnreadCount(0);
       writeCache(unreadCountCacheKey, 0, { maxBytes: 500_000 });
       setInbox((prev) => {

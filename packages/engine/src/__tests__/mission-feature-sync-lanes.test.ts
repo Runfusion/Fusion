@@ -2,8 +2,7 @@
 FNXC:MissionFeatureSyncLanes 2026-07-30-02:10 (U7 / R3, R12 — unowned drift site):
 
 `reconcileMissionFeatureState` maps a task's lifecycle POSITION onto its mission
-feature's roadmap status. It read five column literals — `done`, `archived`,
-`in-progress`, `in-review`, `triage`/`todo` — and on a renamed workflow every one of
+feature's roadmap status. It once read literal lifecycle ids, and on a renamed workflow every one of
 them silently answers "no", so the function collapses to a permanent `noop`.
 
 WHAT THAT LOOKS LIKE TO AN OPERATOR: a mission roadmap frozen at whatever status it
@@ -18,7 +17,6 @@ reader and nobody else has it.
 
 The three mappings, in role terms:
   complete                  -> feature done
-  archived                  -> noop (retention, never progress)
   wip or review             -> feature in-progress
   intake or hold            -> feature triaged ("returned to triage")
 
@@ -35,13 +33,13 @@ import { reconcileMissionFeatureState, resolveFeatureRepairTargets } from "../mi
 
 const DEFAULT_NAMES = {
   intake: "triage", hold: "todo", wip: "in-progress",
-  review: "in-review", complete: "done", archived: "archived",
+  review: "in-review", complete: "done",
 };
 /* Every role renamed, and no id collides with a legacy literal, so a surviving
    comparison cannot match by luck. */
 const RENAMED = {
   intake: "backlog", hold: "drafting", wip: "building",
-  review: "checking", complete: "shipped", archived: "attic",
+  review: "checking", complete: "shipped",
 };
 
 function ir(n: typeof DEFAULT_NAMES): WorkflowIr {
@@ -56,7 +54,6 @@ function ir(n: typeof DEFAULT_NAMES): WorkflowIr {
         traits: [{ trait: "merge-blocker" }, { trait: "human-review" }, { trait: "merge" }],
       },
       { id: n.complete, name: "Complete", traits: [{ trait: "complete" }] },
-      { id: n.archived, name: "Archived", traits: [{ trait: "archived" }] },
     ],
   } as unknown as WorkflowIr;
 }
@@ -92,11 +89,6 @@ describe("mission feature reconciliation resolves lifecycle roles", () => {
       const d = await decide(n, n.complete, "in-progress");
       expect(d.kind).toBe("update");
       expect(d.kind === "update" && d.status).toBe("done");
-    });
-
-    it(`treats the ${label} archived column as retention, never progress`, async () => {
-      // Archiving must not fabricate roadmap progress.
-      expect((await decide(n, n.archived, "triaged")).kind).toBe("noop");
     });
 
     it(`marks a feature in-progress when its task reaches the ${label} wip column`, async () => {

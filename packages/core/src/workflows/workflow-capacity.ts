@@ -20,7 +20,11 @@
  * in-txn check arbitrates (two holds, one slot → one wins).
  */
 
-import { DEFAULT_PROJECT_SETTINGS, type Settings } from "../types.js";
+import {
+  DEFAULT_PROJECT_SETTINGS,
+  RETIRED_BUILTIN_WORKFLOW_SUCCESSORS,
+  type Settings,
+} from "../types.js";
 import type { WorkflowIr, WorkflowIrV2, WorkflowIrColumn } from "./workflow-ir-types.js";
 import { DEFAULT_WORKFLOW_COLUMN_IDS } from "./workflow-ir.js";
 import { getTraitRegistry } from "./trait-registry.js";
@@ -155,9 +159,13 @@ resolvable workflow row id and is the correct fallback when the value is used to
 RESOLVE AN IR (as `scheduler.ts` does). This is a bucketing key that deliberately
 cannot collide with any workflow id. Using either one in the other's role is the
 bug this function exists to make unspellable.
+
+FNXC:WorkflowSuccession 2026-09-06-02:54:
+Capacity is keyed by durable workflow identity, so historical selections must join their named successor's pool. Canonicalizing in this shared resolver keeps move candidates, synchronous counters, asynchronous transaction counters, and scheduler snapshots from treating one workflow as two independent capacity budgets.
 */
 export function resolveCapacityPoolId(selectionWorkflowId: string | null | undefined): string {
-  return selectionWorkflowId ?? DEFAULT_WORKFLOW_POOL_ID;
+  const poolId = selectionWorkflowId ?? DEFAULT_WORKFLOW_POOL_ID;
+  return RETIRED_BUILTIN_WORKFLOW_SUCCESSORS.get(poolId) ?? poolId;
 }
 
 /** Resolved capacity configuration for a single column. */

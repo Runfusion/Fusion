@@ -10,6 +10,8 @@ import { FloatingWindow } from "./FloatingWindow";
 import { useMobileKeyboard } from "../hooks/useMobileKeyboard";
 import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
 import { useEmbeddedPresentation, type ModalPresentation } from "../hooks/useEmbeddedPresentation";
+import { useVirtualizedList } from "../hooks/useVirtualizedList";
+import { useAutoPaginationSentinel } from "../hooks/useAutoPaginationSentinel";
 import { useModalDismissPreference } from "../hooks/useOverlayDismiss";
 import { useViewportMode } from "../hooks/useViewportMode";
 import { copyTextToClipboard } from "../utils/copyToClipboard";
@@ -2148,6 +2150,11 @@ function CommitsPanel({
   copyToClipboard: (text: string, label?: string) => void;
 }) {
   const { t } = useTranslation("app");
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const virtualCommits = useVirtualizedList({ collectionKey: `${commitWorktreePath ?? "current"}:${commitSearch}`, keys: commits.map((commit) => commit.hash), scrollRef: listRef, estimateHeight: 76, maxRenderedRows: 60, initialAlign: "start" });
+  const visibleCommitHashes = new Set(virtualCommits.visibleKeys);
+  const renderedCommits = commits.filter((commit) => visibleCommitHashes.has(commit.hash));
+  const pagination = useAutoPaginationSentinel({ rootRef: listRef, hasMore: canLoadMore, loading: false, onLoadMore, direction: "end" });
   const commitTargetWorktrees = useMemo(() => {
     const seen = new Set<string>();
     return worktrees.filter((worktree) => {
@@ -2200,13 +2207,15 @@ function CommitsPanel({
           </div>
         </div>
       </div>
-      <div className="gm-commits-list">
+      <div className="gm-commits-list" ref={listRef} onScroll={virtualCommits.onScroll}>
         {commits.length === 0 ? (
           <div className="gm-empty">
             {commitSearch ? t("git.noMatchingCommits", "No matching commits") : t("git.noCommitsFound", "No commits found")}
           </div>
         ) : (
-          commits.map((commit, idx) => (
+          <>
+          {virtualCommits.topSpacerHeight > 0 ? <div aria-hidden="true" style={{ height: virtualCommits.topSpacerHeight }} /> : null}
+          {renderedCommits.map((commit, idx) => (
             <div key={commit.hash} className="gm-commit-item">
               {/* Simple commit graph line */}
               <div className="gm-commit-graph">
@@ -2262,14 +2271,12 @@ function CommitsPanel({
                 )}
               </div>
             </div>
-          ))
+          ))}
+          {virtualCommits.bottomSpacerHeight > 0 ? <div aria-hidden="true" style={{ height: virtualCommits.bottomSpacerHeight }} /> : null}
+          {canLoadMore ? <div ref={pagination.sentinelRef} className="gm-load-more" role="status" aria-live="polite" data-testid="git-commits-auto-pagination-sentinel" /> : null}
+          </>
         )}
       </div>
-      {canLoadMore && (
-        <button className="gm-load-more" onClick={onLoadMore}>
-          {t("git.loadMoreCommits", "Load more commits")}
-        </button>
-      )}
     </div>
   );
 }

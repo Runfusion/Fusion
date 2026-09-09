@@ -42,6 +42,16 @@ export const globalGeneralSearchEntries: SettingsSearchEntry[] = [
   },
   {
     sectionId: "global-general",
+    key: "chatSubmitOnEnter",
+    labelKey: "settings.globalGeneral.chatSubmitOnEnter",
+    labelFallback: " Enter key behavior in conversations ",
+    helpKey: "settings.globalGeneral.chatSubmitOnEnterHint",
+    helpFallback:
+      " Default: automatic — Enter inserts a newline on touch devices with an on-screen keyboard, and sends on desktop. Shift+Enter never sends, even with Cmd/Ctrl held; it inserts a newline except in Chat while an autocomplete menu is open, where the files/tasks, agents and skills menus consume it instead. Cmd/Ctrl+Enter without Shift sends regardless of this setting and of the device. While an autocomplete menu is open it takes priority and consumes both Enter and Cmd/Ctrl+Enter; press Escape to close it. In the task chat, an in-progress IME composition takes priority over all of these. The Send button stays available whenever the draft is not empty. ",
+    keywords: ["enter", "newline", "mobile", "keyboard", "chat", "send", "shift"],
+  },
+  {
+    sectionId: "global-general",
     key: "persistAgentToolOutput",
     labelKey: "settings.globalGeneral.saveToolOutputInAgentLogs",
     labelFallback: " Save tool output in agent logs ",

@@ -41,6 +41,19 @@ describe("createAskQuestionTool", () => {
     expect(confirm.isError).not.toBe(true);
   });
 
+  it("accepts optional questions without relaxing select option requirements", async () => {
+    const mixed = await execute({
+      questions: [
+        { question: "Choose a path", type: "single_select", options: [{ label: "A" }] },
+        { question: "Anything else?", type: "text", optional: true },
+      ],
+    });
+
+    expect(mixed.isError).not.toBe(true);
+    expect(mixed.details).toEqual({ questionCount: 2 });
+    await expect(execute({ questions: [{ question: "Pick one", type: "single_select", optional: true }] })).resolves.toMatchObject({ isError: true });
+  });
+
   it("rejects empty question lists, blank question text, and optionless select questions", async () => {
     await expect(execute({ questions: [] })).resolves.toMatchObject({ isError: true });
     await expect(execute({ questions: [{ question: "   ", type: "text" }] })).resolves.toMatchObject({ isError: true });

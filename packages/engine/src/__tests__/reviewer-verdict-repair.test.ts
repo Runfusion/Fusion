@@ -90,7 +90,7 @@ function installSessions(repliesBySession: Reply[][]) {
   return prompts;
 }
 
-async function runStep(repliesBySession: Reply[][], options: { verdictRequired?: boolean; audit?: ReturnType<typeof vi.fn> } = {}) {
+async function runStep(repliesBySession: Reply[][], options: { verdictRequired?: boolean; audit?: ReturnType<typeof vi.fn>; reviewKind?: "plan" | "code" } = {}) {
   const store = createMockStore();
   if (options.audit) (store as any).recordRunAuditEvent = options.audit;
   const prompts = installSessions(repliesBySession);
@@ -107,7 +107,9 @@ async function runStep(repliesBySession: Reply[][], options: { verdictRequired?:
   }
   const step = options.verdictRequired === false
     ? { ...reviewStep(), id: "graph:report", name: "Report", optionalGroupId: undefined, gateMode: "advisory", skillName: "report" }
-    : reviewStep();
+    : options.reviewKind
+      ? { ...reviewStep(), reviewKind: options.reviewKind }
+      : reviewStep();
   const outcome = await (executor as any).executeWorkflowStep(
     task(),
     step,
@@ -212,5 +214,36 @@ describe("workflow-step verdict repair", () => {
     expect(prompts).toHaveLength(1);
     expect(prompts[0]).toHaveBeenCalledOnce();
     expect(prompts[0]).not.toHaveBeenCalledWith(expect.stringContaining("parseable verdict"));
+  });
+});
+
+/*
+FNXC:ReviewVerdictAuthority 2026-09-05-22:54:
+FN-295's exact shape: the reviewer emitted REVISE with three `high` findings inside a payload whose JSON
+was broken, the repair round replied with the verdict alone, and the empty finding list was read as
+"nothing blocking" — so the card entered execution on a plan the reviewer had just rejected.
+*/
+describe("verdict repair with unreadable findings", () => {
+  beforeEach(() => {
+    resetExecutorMocks();
+    mockedExecSync.mockImplementation(() => Buffer.from(""));
+  });
+
+  const malformedRevise = '{"verdict":"REVISE","notes":"Plan incomplet.","findings":[{"id":"a","title":"Plan absent",'
+    + '"body":"severity":"high. Ajouter un plan exécutable.","severity":"high","resolution":"open"}]}';
+
+  it("keeps a REVISE rescued from a malformed payload blocking", async () => {
+    const { outcome } = await runStep([[malformedRevise, '{"verdict":"REVISE"}']], { reviewKind: "plan" });
+
+    expect(outcome).toMatchObject({ verdict: "REVISE" });
+    expect(outcome).not.toMatchObject({ verdict: "APPROVE_WITH_NOTES" });
+  });
+
+  it("still downgrades a well-formed finding-less REVISE", async () => {
+    const { outcome } = await runStep([[
+      'Nothing blocking. {"verdict":"REVISE","notes":"Nits only.","findings":[]}',
+    ]], { reviewKind: "plan" });
+
+    expect(outcome).toMatchObject({ verdict: "APPROVE_WITH_NOTES" });
   });
 });

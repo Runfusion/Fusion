@@ -75,31 +75,14 @@ async function flushAsync(): Promise<void> {
 }
 
 describe("decideIssueAction", () => {
-  const columns = ["triage", "todo", "in-progress", "in-review", "done", "archived"] as const;
   const activeColumns = ["triage", "todo", "in-progress", "in-review"] as const;
 
-  it.each(columns.filter((from) => from !== "done" && from !== "archived"))("returns close for %s -> done", (from) => {
+  it.each(activeColumns)("returns close for %s -> done", (from) => {
     expect(decideIssueAction(from, "done")).toEqual({ action: "close", stateReason: "completed" });
-  });
-
-  it("returns reopen for archived -> done", () => {
-    expect(decideIssueAction("archived", "done")).toEqual({ action: "reopen", stateReason: "reopened" });
   });
 
   it.each(activeColumns)("returns reopen for done -> %s", (to) => {
     expect(decideIssueAction("done", to)).toEqual({ action: "reopen", stateReason: "reopened" });
-  });
-
-  it("closes on done -> archived", () => {
-    expect(decideIssueAction("done", "archived")).toEqual({ action: "close", stateReason: "completed" });
-  });
-
-  it("closes on in-review -> archived", () => {
-    expect(decideIssueAction("in-review", "archived")).toEqual({ action: "close", stateReason: "not_planned" });
-  });
-
-  it.each(["todo", "triage", "in-progress"] as const)("returns close not_planned for %s -> archived", (from) => {
-    expect(decideIssueAction(from, "archived")).toEqual({ action: "close", stateReason: "not_planned" });
   });
 
   it.each([
@@ -107,7 +90,6 @@ describe("decideIssueAction", () => {
     ["todo", "in-progress"],
     ["in-progress", "in-review"],
     ["done", "done"],
-    ["archived", "archived"],
   ] as const)("returns null for %s -> %s", (from, to) => {
     expect(decideIssueAction(from, to)).toBeNull();
   });
@@ -150,7 +132,6 @@ describe("GitHubTrackingStateService", () => {
       columns: [
         { id: "building", name: "Building", traits: [{ trait: "wip" }] },
         { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
-        { id: "attic", name: "Attic", traits: [{ trait: "archived" }] },
       ],
     };
 
@@ -198,7 +179,7 @@ describe("GitHubTrackingStateService", () => {
         name: "Legacy",
         nodes: [],
         edges: [],
-        columns: ["todo", "in-progress", "in-review", "done", "archived"].map((id) => ({ id, name: id, traits: [] })),
+        columns: ["todo", "in-progress", "in-review", "done"].map((id) => ({ id, name: id, traits: [] })),
       };
       const s = new MockStore();
       Object.assign(s, {
@@ -213,23 +194,12 @@ describe("GitHubTrackingStateService", () => {
       expect(mockSetIssueState).toHaveBeenCalledWith("owner", "repo", 42, "closed", "completed");
     });
 
-    it("maps a RENAMED archive lane to not_planned", async () => {
-      const s = renamedStore();
-      new GitHubTrackingStateService(s as unknown as TaskStore).start();
-
-      s.emit("task:moved", { task: createTask(), from: "building", to: "attic" });
-      await flushAsync();
-
-      expect(mockSetIssueState).toHaveBeenCalledWith("owner", "repo", 42, "closed", "not_planned");
-    });
-
     it("closes the issue from a SECOND complete lane, not just the first", async () => {
       /*
       FNXC:WorkflowResolvedColumns 2026-07-30-14:20 (PR #2754 review — greptile):
       `LifecycleColumns` names ONE column per role by design (#2721), so a workflow declaring `complete`
       on two columns had the second invisible: a card moved there left its linked GitHub issue OPEN, with
-      no error and nothing in the log to notice. Core's `resolveTerminalColumns` is the same singular
-      pair, so the flag SETS are the membership answer.
+      no error and nothing in the log to notice. Complete-trait sets are the membership answer.
       */
       const TWO_COMPLETE_IR = {
         ...RENAMED_IR,
@@ -294,15 +264,6 @@ describe("GitHubTrackingStateService", () => {
     expect(store.logEntry).toHaveBeenCalledWith("FN-1", "Closed linked GitHub tracking issue", "owner/repo#42");
   });
 
-  it("reopens on archived -> done", async () => {
-    service.start();
-
-    store.emit("task:moved", { task: createTask(), from: "archived", to: "done" });
-    await flushAsync();
-
-    expect(mockSetIssueState).toHaveBeenCalledWith("owner", "repo", 42, "open", "reopened");
-  });
-
   it.each(["todo", "triage", "in-progress", "in-review"] as const)("reopens on done -> %s", async (to) => {
     service.start();
 
@@ -311,26 +272,6 @@ describe("GitHubTrackingStateService", () => {
 
     expect(mockSetIssueState).toHaveBeenCalledWith("owner", "repo", 42, "open", "reopened");
     expect(store.logEntry).toHaveBeenCalledWith("FN-1", "Reopened linked GitHub tracking issue", "owner/repo#42");
-  });
-
-  it("closes on done -> archived", async () => {
-    service.start();
-
-    store.emit("task:moved", { task: createTask(), from: "done", to: "archived" });
-    await flushAsync();
-
-    expect(mockSetIssueState).toHaveBeenCalledWith("owner", "repo", 42, "closed", "completed");
-    expect(store.logEntry).toHaveBeenCalledWith("FN-1", "Closed linked GitHub tracking issue", "owner/repo#42");
-  });
-
-  it("closes triage -> archived with not_planned", async () => {
-    service.start();
-
-    store.emit("task:moved", { task: createTask(), from: "triage", to: "archived" });
-    await flushAsync();
-
-    expect(mockSetIssueState).toHaveBeenCalledWith("owner", "repo", 42, "closed", "not_planned");
-    expect(store.logEntry).toHaveBeenCalledWith("FN-1", "Closed linked GitHub tracking issue", "owner/repo#42");
   });
 
   it("does nothing for non-done transitions", async () => {

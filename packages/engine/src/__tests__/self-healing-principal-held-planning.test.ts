@@ -24,7 +24,7 @@ const HOLD_IR = {
   nodes: [],
 };
 
-import { SelfHealingManager } from "../self-healing.js";
+import { SelfHealingManager, type SelfHealingOptions } from "../self-healing.js";
 
 /*
 FNXC:PrincipalHeldPlanning 2026-08-10-08:20:
@@ -47,7 +47,12 @@ function heldPlanItem(overrides: Partial<WorkflowWorkItem> = {}): WorkflowWorkIt
   } as WorkflowWorkItem;
 }
 
-function harness(taskOverrides: Partial<Task> = {}, items: WorkflowWorkItem[] = [heldPlanItem()], settings: Partial<Settings> = {}) {
+function harness(
+  taskOverrides: Partial<Task> = {},
+  items: WorkflowWorkItem[] = [heldPlanItem()],
+  settings: Partial<Settings> = {},
+  managerOptions: Partial<SelfHealingOptions> = {},
+) {
   const task = {
     id: "FN-8923", title: "Investigate merge body cancellation fences", description: "",
     column: "todo", dependencies: [], steps: [], currentStep: 0, log: [],
@@ -67,10 +72,30 @@ function harness(taskOverrides: Partial<Task> = {}, items: WorkflowWorkItem[] = 
     withPlanningLifecycleLock: vi.fn(async (_id: string, callback: () => Promise<unknown>) => callback()),
   } as unknown as TaskStore;
   resolveWorkflowIrForTaskMock.mockResolvedValue(HOLD_IR);
-  return { task, store, logged, manager: new SelfHealingManager(store, { rootDir: "/repo" }) };
+  return {
+    task,
+    store,
+    logged,
+    manager: new SelfHealingManager(store, { rootDir: "/repo", ...managerOptions }),
+  };
 }
 
 describe("reconcilePrincipalHeldPlanningContinuations", () => {
+  it("defers a principal hold while planning owns the card, then repairs it after release", async () => {
+    const planningIds = new Set(["FN-8923"]);
+    const { task, store, manager } = harness({}, [heldPlanItem()], {}, {
+      getPlanningTaskIds: () => planningIds,
+    });
+
+    await expect(manager.reconcilePrincipalHeldPlanningContinuations()).resolves.toBe(0);
+    expect(store.updateTask).not.toHaveBeenCalled();
+    expect(task.status).toBeUndefined();
+
+    planningIds.clear();
+    await expect(manager.reconcilePrincipalHeldPlanningContinuations()).resolves.toBe(1);
+    expect(task.status).toBe("needs-replan");
+  });
+
   it("re-queues planning for a card stranded on a principal-routing hold", async () => {
     recordRunAuditEventMock.mockClear();
     const { task, manager, logged } = harness();

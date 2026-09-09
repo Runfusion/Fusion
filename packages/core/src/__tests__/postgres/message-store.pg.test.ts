@@ -10,6 +10,7 @@
  */
 
 import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll } from "vitest";
+import type { MessageMetadata } from "../../types/messaging/messages.js";
 
 import {
   pgDescribe,
@@ -72,6 +73,86 @@ pgTest("MessageStore send (PostgreSQL backend mode)", () => {
       type: "agent-to-user",
     });
     expect((await store.getMessage(msg.id))?.content).toBe("hi user");
+  });
+
+  it("filters, counts, and marks dashboard inbox notices by category", async () => {
+    const { MessageStore } = await import("../../stores/message-store.js");
+    const store = new MessageStore(null, { asyncLayer: h.layer() });
+    await Promise.all([
+      store.sendMessage({
+        fromId: "system",
+        fromType: "system",
+        toId: "dashboard",
+        toType: "user",
+        content: "Recommendation notice",
+        type: "system",
+        metadata: { kind: "task-recommendation-notice", taskId: "FN-1" },
+      }),
+      store.sendMessage({
+        fromId: "system",
+        fromType: "system",
+        toId: "dashboard",
+        toType: "user",
+        content: "Artifact notice",
+        type: "system",
+        metadata: { artifactId: "artifact-1", artifactType: "document" },
+      }),
+      store.sendMessage({
+        fromId: "agent-a",
+        fromType: "agent",
+        toId: "dashboard",
+        toType: "user",
+        content: "Ordinary message",
+        type: "agent-to-user",
+      }),
+      store.sendMessage({
+        fromId: "system",
+        fromType: "system",
+        toId: "dashboard",
+        toType: "user",
+        content: "Explicit null kind",
+        type: "system",
+        metadata: { kind: null, artifactId: "artifact-2" } as unknown as MessageMetadata,
+      }),
+      store.sendMessage({
+        fromId: "system",
+        fromType: "system",
+        toId: "dashboard",
+        toType: "user",
+        content: "Numeric artifact identifier",
+        type: "system",
+        metadata: { artifactId: 123 },
+      }),
+      store.sendMessage({
+        fromId: "system",
+        fromType: "system",
+        toId: "dashboard",
+        toType: "user",
+        content: "Null artifact identifier",
+        type: "system",
+        metadata: { artifactId: null },
+      }),
+    ]);
+
+    const ordinaryInbox = await store.getInbox("dashboard", "user", { category: "message" });
+    expect(ordinaryInbox.map(({ content }) => content).sort()).toEqual([
+      "Explicit null kind",
+      "Null artifact identifier",
+      "Numeric artifact identifier",
+      "Ordinary message",
+    ]);
+    await expect(store.getDashboardInboxCategoryCounts("dashboard", "user")).resolves.toEqual({
+      message: 4,
+      recommendation: 1,
+      artifact: 1,
+    });
+
+    await expect(store.markAllAsRead("dashboard", "user", "recommendation")).resolves.toBe(1);
+    await expect(store.getDashboardInboxCategoryCounts("dashboard", "user")).resolves.toEqual({
+      message: 4,
+      recommendation: 0,
+      artifact: 1,
+    });
   });
 
   it("archives correspondence by default and restores it on unarchive", async () => {

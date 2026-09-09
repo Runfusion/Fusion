@@ -120,6 +120,30 @@ describe("ChatView popped-out conversation contract", () => {
     expect(pushNav).not.toHaveBeenCalled();
   });
 
+  it("opens a validated project-saved conversation without a phantom navigation entry and Back restores the list", async () => {
+    localStorage.setItem("kb:proj-123:kb-chat-active-session", activeSessionFixture.id);
+    pushNav.mockClear();
+    setupMockChat({ activeSession: activeSessionFixture, sessions: [activeSessionFixture], filteredSessions: [activeSessionFixture] });
+
+    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} compactLayout />);
+
+    await waitFor(() => expectThreadOpen({ narrow: true }));
+    expect(pushNav).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId("chat-back-btn"));
+    expect(screen.queryByTestId("chat-back-btn")).not.toBeInTheDocument();
+    expect(localStorage.getItem("kb:proj-123:kb-chat-active-session")).toBeNull();
+  });
+
+  it("keeps a non-persistent host list-first despite another host's saved preference", async () => {
+    localStorage.setItem("kb:proj-123:kb-chat-active-session", activeSessionFixture.id);
+    setupMockChat({ activeSession: activeSessionFixture, sessions: [activeSessionFixture], filteredSessions: [activeSessionFixture] });
+
+    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} persistChatPreferences={false} />);
+
+    expect(screen.queryByTestId("chat-back-btn")).not.toBeInTheDocument();
+    expect(localStorage.getItem("kb:proj-123:kb-chat-active-session")).toBe(activeSessionFixture.id);
+  });
+
   it("renders an empty transcript and re-opens a different selected session on a nonce", async () => {
     const selectSession = vi.fn();
     const other = { ...activeSessionFixture, id: "session-other", title: "Other" };

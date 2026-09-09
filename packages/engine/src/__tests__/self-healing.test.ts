@@ -222,7 +222,6 @@ function createMockStore(overrides: Record<string, unknown> = {}): TaskStore & E
     peekMergeQueue: vi.fn().mockReturnValue([]),
     mergeTask: vi.fn().mockResolvedValue(undefined),
     getBranchGroup: vi.fn().mockResolvedValue(null),
-    archiveTaskAndCleanup: vi.fn().mockResolvedValue({} as Task),
     /*
     FNXC:PgMigrationQuarantine 2026-07-16-08:00:
     VAL-REMOVAL-005 moved run-audit reads and operational-log retention to the
@@ -1690,9 +1689,9 @@ describe("SelfHealingManager", () => {
       managerWithAgents.stop();
     });
 
-    it("FN-8919: archived, live, ephemeral, and unlinked agents keep existing running-sweep behavior", async () => {
+    it("FN-8919: complete, live, ephemeral, and unlinked agents keep existing running-sweep behavior", async () => {
       const agents = [
-        { id: "agent-archive", state: "running", taskId: "FN-archive", updatedAt: new Date().toISOString() } as Agent,
+        { id: "agent-complete", state: "running", taskId: "FN-complete", updatedAt: new Date().toISOString() } as Agent,
         { id: "agent-live", state: "running", taskId: "FN-live", updatedAt: new Date().toISOString() } as Agent,
         { id: "agent-ephemeral", state: "running", taskId: "FN-stale", metadata: { type: "spawned" }, updatedAt: new Date().toISOString() } as Agent,
         { id: "agent-unlinked", state: "running", updatedAt: new Date().toISOString() } as Agent,
@@ -1703,7 +1702,7 @@ describe("SelfHealingManager", () => {
         updateAgentState: vi.fn(),
         syncExecutionTaskLink: vi.fn(),
       } as unknown as AgentStore;
-      const getTask = vi.fn(async (taskId: string) => ({ id: taskId, column: taskId === "FN-archive" ? "archived" : "in-progress" } as Task));
+      const getTask = vi.fn(async (taskId: string) => ({ id: taskId, column: taskId === "FN-complete" ? "done" : "in-progress" } as Task));
       const managerWithAgents = new SelfHealingManager(createMockStore({ getTask }), { rootDir: "/tmp/test-project", agentStore });
 
       await expect(managerWithAgents.recoverAgentsRunningOnInactiveTasks()).resolves.toBe(0);
@@ -1936,351 +1935,6 @@ describe("SelfHealingManager", () => {
 
       mockedExecSync.mockClear();
       mockedExistsSync.mockReset();
-    });
-  });
-
-  // ── Auto-archive ────────────────────────────────────────────────────
-
-  describe("archiveStaleDoneTasks", () => {
-    it("skips when auto-archive is disabled and doneAutoArchiveDays is 0", async () => {
-      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
-        autoArchiveDoneTasksEnabled: false,
-        doneAutoArchiveDays: 0,
-      } as unknown as Settings);
-
-      const result = await manager.archiveStaleDoneTasks();
-
-      expect(result).toBe(0);
-      expect(store.listTasks).not.toHaveBeenCalled();
-      expect(store.archiveTaskAndCleanup).not.toHaveBeenCalled();
-    });
-
-    it("archives stale done tasks with cleanup using the configured ms age when doneAutoArchiveDays is 0", async () => {
-      vi.setSystemTime(new Date("2026-01-04T00:00:00.000Z"));
-      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
-        autoArchiveDoneTasksEnabled: true,
-        autoArchiveDoneAfterMs: 24 * 60 * 60 * 1000,
-        doneAutoArchiveDays: 0,
-      } as unknown as Settings);
-      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
-        {
-          id: "FN-001",
-          column: "done",
-          columnMovedAt: "2026-01-02T23:59:00.000Z",
-          updatedAt: "2026-01-02T23:59:00.000Z",
-        },
-        {
-          id: "FN-002",
-          column: "done",
-          columnMovedAt: "2026-01-03T12:00:00.000Z",
-          updatedAt: "2026-01-03T12:00:00.000Z",
-        },
-      ]);
-
-      const result = await manager.archiveStaleDoneTasks();
-
-      expect(result).toBe(1);
-      expect(store.listTasks).toHaveBeenCalledWith({ slim: true, includeArchived: false });
-      expect(store.archiveTaskAndCleanup).toHaveBeenCalledWith("FN-001");
-      expect(store.archiveTaskAndCleanup).not.toHaveBeenCalledWith("FN-002");
-    });
-
-    /*
-    FNXC:WorkflowResolvedColumns 2026-07-31-20:10:
-    #3047 converted this sweep's two lane guards to the COMPLETE and TERMINAL roles and merged with no
-    case that could see the difference — measured: reverting that commit leaves all 825 self-healing
-    tests passing, because every fixture above uses the id `done`, where the literal is correct.
-
-    What the literal cost on a renamed board: the dependent scan treated EVERY task as active (nothing
-    matched `done`/`archived`), so every candidate looked like it had active dependents and the sweep
-    archived nothing. A silent no-op — the board just quietly stops auto-archiving.
-    */
-    it("archives a stale card in a RENAMED complete lane, and skips one whose dependent is still live", async () => {
-      vi.setSystemTime(new Date("2026-01-04T00:00:00.000Z"));
-      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
-        autoArchiveDoneTasksEnabled: true,
-        autoArchiveDoneAfterMs: 24 * 60 * 60 * 1000,
-        doneAutoArchiveDays: 0,
-      } as unknown as Settings);
-      (store.listWorkflowDefinitions as ReturnType<typeof vi.fn> | undefined)?.mockResolvedValue?.([]);
-      (store as unknown as { listWorkflowDefinitions: unknown }).listWorkflowDefinitions = vi.fn(async () => [{
-        ir: {
-          version: "v2",
-          id: "custom:renamed",
-          nodes: [],
-          edges: [],
-          columns: [
-            { id: "building", name: "building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
-            { id: "shipped", name: "shipped", traits: [{ trait: "complete" }] },
-            { id: "vault", name: "vault", traits: [{ trait: "archived" }] },
-          ],
-        },
-      }]);
-      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
-        { id: "FN-OLD", column: "shipped", columnMovedAt: "2026-01-02T00:00:00.000Z", updatedAt: "2026-01-02T00:00:00.000Z" },
-        { id: "FN-BLOCKED", column: "shipped", columnMovedAt: "2026-01-02T00:00:00.000Z", updatedAt: "2026-01-02T00:00:00.000Z" },
-        /* A LIVE dependent in the renamed wip lane must still protect its blocker from archiving. */
-        { id: "FN-LIVE", column: "building", dependencies: ["FN-BLOCKED"], updatedAt: "2026-01-03T00:00:00.000Z" },
-        /* Already in the renamed archive lane: terminal, so neither a candidate nor an active dependent. */
-        { id: "FN-FILED", column: "vault", dependencies: ["FN-OLD"], updatedAt: "2026-01-03T00:00:00.000Z" },
-      ]);
-
-      const result = await manager.archiveStaleDoneTasks();
-
-      expect(result).toBe(1);
-      expect(store.archiveTaskAndCleanup).toHaveBeenCalledWith("FN-OLD");
-      expect(store.archiveTaskAndCleanup).not.toHaveBeenCalledWith("FN-BLOCKED");
-    });
-
-    it("uses doneAutoArchiveDays threshold and logs task age", async () => {
-      vi.setSystemTime(new Date("2026-03-01T00:00:00.000Z"));
-      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
-        autoArchiveDoneTasksEnabled: true,
-        autoArchiveDoneAfterMs: 48 * 60 * 60 * 1000,
-        doneAutoArchiveDays: 30,
-      } as unknown as Settings);
-      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
-        {
-          id: "FN-030",
-          column: "done",
-          columnMovedAt: "2026-01-29T00:00:00.000Z",
-          updatedAt: "2026-01-29T00:00:00.000Z",
-        },
-        {
-          id: "FN-031",
-          column: "done",
-          columnMovedAt: "2026-01-31T00:00:00.000Z",
-          updatedAt: "2026-01-31T00:00:00.000Z",
-        },
-      ]);
-
-      const result = await manager.archiveStaleDoneTasks();
-
-      expect(result).toBe(1);
-      expect(store.archiveTaskAndCleanup).toHaveBeenCalledWith("FN-030");
-      expect(store.archiveTaskAndCleanup).not.toHaveBeenCalledWith("FN-031");
-      // self-healing.ts:2747 emits this at DEBUG level, not log.
-      expect(getSelfHealingLogger().debug).toHaveBeenCalledWith(
-        "auto-archive: archived FN-030 (age 31d, threshold 30d)",
-      );
-    });
-
-    it("doneAutoArchiveDays takes precedence over autoArchiveDoneAfterMs", async () => {
-      vi.setSystemTime(new Date("2026-03-01T00:00:00.000Z"));
-      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
-        autoArchiveDoneTasksEnabled: true,
-        autoArchiveDoneAfterMs: 60 * 60 * 1000,
-        doneAutoArchiveDays: 30,
-      } as unknown as Settings);
-      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
-        {
-          id: "FN-AGE-29",
-          column: "done",
-          columnMovedAt: "2026-01-31T00:00:00.000Z",
-          updatedAt: "2026-01-31T00:00:00.000Z",
-        },
-      ]);
-
-      const result = await manager.archiveStaleDoneTasks();
-
-      expect(result).toBe(0);
-      expect(store.archiveTaskAndCleanup).not.toHaveBeenCalled();
-    });
-
-    it.each([
-      { label: "negative", doneAutoArchiveDays: -1 },
-      { label: "non-integer", doneAutoArchiveDays: 2.5 },
-    ])("falls back to ms retention when doneAutoArchiveDays is $label", async ({ doneAutoArchiveDays }) => {
-      vi.setSystemTime(new Date("2026-01-04T00:00:00.000Z"));
-      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
-        autoArchiveDoneTasksEnabled: true,
-        autoArchiveDoneAfterMs: 24 * 60 * 60 * 1000,
-        doneAutoArchiveDays,
-      } as unknown as Settings);
-      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
-        {
-          id: "FN-FALLBACK",
-          column: "done",
-          columnMovedAt: "2026-01-02T23:59:00.000Z",
-          updatedAt: "2026-01-02T23:59:00.000Z",
-        },
-      ]);
-
-      const result = await manager.archiveStaleDoneTasks();
-
-      expect(result).toBe(1);
-      expect(store.archiveTaskAndCleanup).toHaveBeenCalledWith("FN-FALLBACK");
-    });
-
-    it("skips stale done tasks that have active dependents", async () => {
-      vi.setSystemTime(new Date("2026-01-04T00:00:00.000Z"));
-      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
-        autoArchiveDoneTasksEnabled: true,
-        autoArchiveDoneAfterMs: 24 * 60 * 60 * 1000,
-      } as unknown as Settings);
-      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
-        {
-          id: "FN-100",
-          column: "done",
-          columnMovedAt: "2026-01-02T00:00:00.000Z",
-          updatedAt: "2026-01-02T00:00:00.000Z",
-          dependencies: [],
-        },
-        {
-          id: "FN-101",
-          column: "done",
-          columnMovedAt: "2026-01-02T00:00:00.000Z",
-          updatedAt: "2026-01-02T00:00:00.000Z",
-          dependencies: [],
-        },
-        {
-          id: "FN-200",
-          column: "todo",
-          dependencies: ["FN-100"],
-        },
-        {
-          id: "FN-201",
-          column: "done",
-          columnMovedAt: "2026-01-03T23:00:00.000Z",
-          updatedAt: "2026-01-03T23:00:00.000Z",
-          dependencies: ["FN-101"],
-        },
-      ]);
-
-      const result = await manager.archiveStaleDoneTasks();
-
-      expect(result).toBe(1);
-      expect(store.archiveTaskAndCleanup).toHaveBeenCalledWith("FN-101");
-      expect(store.archiveTaskAndCleanup).not.toHaveBeenCalledWith("FN-100");
-    });
-
-    /*
-    FNXC:SelfHealing 2026-08-21-08:44:
-    Archive retry tests must drive past the prior failure budget on one manager instance. Separate
-    task IDs make same-reason exhaustion and failure-class reset independently observable.
-    */
-    it("bounds same-reason archive failures and resets the budget when the failure class changes", async () => {
-      vi.setSystemTime(new Date("2026-01-04T00:00:00.000Z"));
-      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
-        autoArchiveDoneTasksEnabled: true,
-        autoArchiveDoneAfterMs: 24 * 60 * 60 * 1000,
-        doneAutoArchiveDays: 0,
-      } as unknown as Settings);
-      const stale = [
-        { id: "FN-BOUNDED", column: "done", columnMovedAt: "2026-01-02T00:00:00.000Z", updatedAt: "2026-01-02T00:00:00.000Z" },
-        { id: "FN-CHANGING", column: "done", columnMovedAt: "2026-01-02T00:00:00.000Z", updatedAt: "2026-01-02T00:00:00.000Z" },
-      ];
-      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue(stale);
-      const changingFailures = [
-        new Error("disk busy"),
-        new Error("disk busy"),
-        Object.assign(new Error("live"), { name: "TaskIsLiveError" }),
-        new Error("disk busy"),
-        new Error("disk busy"),
-        new Error("disk busy"),
-      ];
-      (store.archiveTaskAndCleanup as ReturnType<typeof vi.fn>).mockImplementation(async (id: string) => {
-        if (id === "FN-BOUNDED") throw new Error("disk busy");
-        throw changingFailures.shift() ?? new Error("disk busy");
-      });
-
-      for (let index = 0; index < 10; index++) await manager.archiveStaleDoneTasks();
-
-      const calls = (store.archiveTaskAndCleanup as ReturnType<typeof vi.fn>).mock.calls;
-      expect(calls.filter(([id]) => id === "FN-BOUNDED")).toHaveLength(3);
-      expect(calls.filter(([id]) => id === "FN-CHANGING")).toHaveLength(6);
-    });
-
-    it("escalates an exhausted archive budget once without letting log or audit failures stop other archives", async () => {
-      vi.setSystemTime(new Date("2026-01-04T00:00:00.000Z"));
-      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
-        autoArchiveDoneTasksEnabled: true,
-        autoArchiveDoneAfterMs: 24 * 60 * 60 * 1000,
-        doneAutoArchiveDays: 0,
-      } as unknown as Settings);
-      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
-        { id: "FN-EXHAUSTED", column: "done", columnMovedAt: "2026-01-02T00:00:00.000Z", updatedAt: "2026-01-02T00:00:00.000Z" },
-        { id: "FN-OTHER", column: "done", columnMovedAt: "2026-01-02T00:00:00.000Z", updatedAt: "2026-01-02T00:00:00.000Z" },
-      ]);
-      (store.archiveTaskAndCleanup as ReturnType<typeof vi.fn>).mockImplementation(async (id: string) => {
-        if (id === "FN-EXHAUSTED") throw new Error("disk busy");
-        return {};
-      });
-      (store.logEntry as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("log unavailable"));
-      (store.recordRunAuditEvent as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("audit unavailable"));
-      const priorErrorCalls = (getSelfHealingLogger().error as ReturnType<typeof vi.fn>).mock.calls.length;
-
-      for (let index = 0; index < 10; index++) await manager.archiveStaleDoneTasks();
-
-      expect((store.archiveTaskAndCleanup as ReturnType<typeof vi.fn>).mock.calls.filter(([id]) => id === "FN-EXHAUSTED")).toHaveLength(3);
-      expect(store.logEntry).toHaveBeenCalledTimes(1);
-      const exhaustedEvents = (store.recordRunAuditEvent as ReturnType<typeof vi.fn>).mock.calls.filter(
-        ([event]) => (event as { mutationType?: string }).mutationType === "task:auto-archive-failure-budget-exhausted",
-      );
-      expect(exhaustedEvents).toHaveLength(1);
-      expect((getSelfHealingLogger().error as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(priorErrorCalls + 1);
-      expect(store.archiveTaskAndCleanup).toHaveBeenCalledWith("FN-OTHER");
-    });
-
-    it("clears an archive failure budget after success and when a task leaves the candidate set", async () => {
-      vi.setSystemTime(new Date("2026-01-04T00:00:00.000Z"));
-      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
-        autoArchiveDoneTasksEnabled: true,
-        autoArchiveDoneAfterMs: 24 * 60 * 60 * 1000,
-        doneAutoArchiveDays: 0,
-      } as unknown as Settings);
-      const successTask = { id: "FN-RESET-SUCCESS", column: "done", columnMovedAt: "2026-01-02T00:00:00.000Z", updatedAt: "2026-01-02T00:00:00.000Z" };
-      const candidateTask = { id: "FN-RESET-CANDIDATE", column: "done", columnMovedAt: "2026-01-02T00:00:00.000Z", updatedAt: "2026-01-02T00:00:00.000Z" };
-      (store.listTasks as ReturnType<typeof vi.fn>)
-        .mockResolvedValueOnce([successTask, candidateTask])
-        .mockResolvedValueOnce([successTask, candidateTask])
-        .mockResolvedValueOnce([successTask])
-        .mockResolvedValueOnce([successTask, candidateTask])
-        .mockResolvedValueOnce([successTask, candidateTask])
-        .mockResolvedValueOnce([successTask, candidateTask]);
-      let successCalls = 0;
-      (store.archiveTaskAndCleanup as ReturnType<typeof vi.fn>).mockImplementation(async (id: string) => {
-        if (id === "FN-RESET-SUCCESS") {
-          successCalls++;
-          if (successCalls === 3) return {};
-        }
-        throw new Error("disk busy");
-      });
-
-      for (let index = 0; index < 6; index++) await manager.archiveStaleDoneTasks();
-
-      const calls = (store.archiveTaskAndCleanup as ReturnType<typeof vi.fn>).mock.calls;
-      expect(calls.filter(([id]) => id === "FN-RESET-SUCCESS")).toHaveLength(6);
-      expect(calls.filter(([id]) => id === "FN-RESET-CANDIDATE")).toHaveLength(5);
-    });
-
-    it("skips stale done lineage parents, including complete children, without blocking unrelated archives", async () => {
-      vi.setSystemTime(new Date("2026-01-04T00:00:00.000Z"));
-      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
-        autoArchiveDoneTasksEnabled: true,
-        autoArchiveDoneAfterMs: 24 * 60 * 60 * 1000,
-        doneAutoArchiveDays: 0,
-      } as unknown as Settings);
-      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
-        { id: "FN-PARENT-TODO", column: "done", columnMovedAt: "2026-01-02T00:00:00.000Z", updatedAt: "2026-01-02T00:00:00.000Z" },
-        { id: "FN-PARENT-DONE", column: "done", columnMovedAt: "2026-01-02T00:00:00.000Z", updatedAt: "2026-01-02T00:00:00.000Z" },
-        { id: "FN-PARENT-MULTI", column: "done", columnMovedAt: "2026-01-02T00:00:00.000Z", updatedAt: "2026-01-02T00:00:00.000Z" },
-        { id: "FN-UNRELATED", column: "done", columnMovedAt: "2026-01-02T00:00:00.000Z", updatedAt: "2026-01-02T00:00:00.000Z" },
-        { id: "FN-CHILD-TODO", column: "todo", sourceParentTaskId: "FN-PARENT-TODO" },
-        { id: "FN-CHILD-DONE", column: "done", sourceParentTaskId: "FN-PARENT-DONE", columnMovedAt: "2026-01-03T23:00:00.000Z", updatedAt: "2026-01-03T23:00:00.000Z" },
-        { id: "FN-CHILD-ONE", column: "todo", sourceParentTaskId: "FN-PARENT-MULTI" },
-        { id: "FN-CHILD-TWO", column: "in-progress", sourceParentTaskId: "FN-PARENT-MULTI" },
-      ]);
-
-      const priorErrorCalls = (getSelfHealingLogger().error as ReturnType<typeof vi.fn>).mock.calls.length;
-      for (let index = 0; index < 6; index++) await manager.archiveStaleDoneTasks();
-
-      expect(store.archiveTaskAndCleanup).toHaveBeenCalledTimes(6);
-      expect(store.archiveTaskAndCleanup).toHaveBeenCalledWith("FN-UNRELATED");
-      expect(store.archiveTaskAndCleanup).not.toHaveBeenCalledWith("FN-PARENT-TODO");
-      expect(store.archiveTaskAndCleanup).not.toHaveBeenCalledWith("FN-PARENT-DONE");
-      expect(store.archiveTaskAndCleanup).not.toHaveBeenCalledWith("FN-PARENT-MULTI");
-      expect((getSelfHealingLogger().error as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(priorErrorCalls);
     });
   });
 
@@ -4944,7 +4598,7 @@ describe("SelfHealingManager", () => {
       }));
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-9234-STUCK",
-        expect.stringContaining("Self-healing re-seeded Code Review"),
+        expect.stringContaining("Review lane 'code-review' approved older content"),
       );
 
       managerWithRecovery.stop();
@@ -6425,14 +6079,38 @@ describe("SelfHealingManager", () => {
       const result = await managerWithRecovery.recoverReviewTasksWithFailedPreMergeSteps();
 
       expect(result).toBe(1);
-      expect(store.updateTask).toHaveBeenCalledWith("FN-1572", { postReviewFixCount: 1 });
+      expect(store.updateTask).not.toHaveBeenCalledWith("FN-1572", expect.objectContaining({ postReviewFixCount: expect.any(Number) }));
       expect(recoverFn).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-1572" }));
-      expect(store.logEntry).toHaveBeenCalledWith(
+      expect(store.logEntry).not.toHaveBeenCalledWith(
         "FN-1572",
         expect.stringContaining("Auto-reviving in-review task"),
-        expect.stringContaining("Workflow revision key: ws-004"),
+        expect.anything(),
       );
 
+      managerWithRecovery.stop();
+    });
+
+    it("does not charge repeated sterile detailed recovery probes", async () => {
+      const recoverFn = vi.fn().mockResolvedValue(false);
+      const detailed = vi.fn().mockResolvedValue({ kind: "skipped" as const });
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        recoverFailedPreMergeStep: recoverFn,
+        recoverFailedPreMergeStepDetailed: detailed,
+      });
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ maxPostReviewFixes: 2 });
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([{ ...baseTask }]);
+
+      await expect(managerWithRecovery.recoverReviewTasksWithFailedPreMergeSteps()).resolves.toBe(0);
+      await expect(managerWithRecovery.recoverReviewTasksWithFailedPreMergeSteps()).resolves.toBe(0);
+
+      expect(detailed).toHaveBeenCalledTimes(2);
+      expect(store.updateTask).not.toHaveBeenCalledWith("FN-1572", expect.objectContaining({ postReviewFixCount: expect.any(Number) }));
+      expect(store.logEntry).not.toHaveBeenCalledWith(
+        "FN-1572",
+        expect.stringContaining("Auto-reviving in-review task"),
+        expect.anything(),
+      );
       managerWithRecovery.stop();
     });
 
@@ -6493,7 +6171,7 @@ describe("SelfHealingManager", () => {
       }]);
 
       await expect(managerWithRecovery.recoverReviewTasksWithFailedPreMergeSteps()).resolves.toBe(1);
-      expect(store.logEntry).toHaveBeenLastCalledWith("FN-1572", expect.stringContaining("attempt 100/unbounded"), expect.stringContaining("Workflow revision key: ws-004"));
+      expect(store.logEntry).not.toHaveBeenCalledWith("FN-1572", expect.stringContaining("attempt 100/unbounded"), expect.anything());
       expect(recoverFn).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-1572" }));
 
       managerWithRecovery.stop();
@@ -6545,7 +6223,7 @@ describe("SelfHealingManager", () => {
       ]);
 
       await expect(managerWithRecovery.recoverReviewTasksWithFailedPreMergeSteps()).resolves.toBe(1);
-      expect(store.logEntry).toHaveBeenLastCalledWith("FN-1572", expect.stringContaining("attempt 2/2"), expect.stringContaining("Workflow revision key: code-review"));
+      expect(store.logEntry).not.toHaveBeenCalledWith("FN-1572", expect.stringContaining("attempt 2/2"), expect.anything());
       expect(recoverFn).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-1572" }));
 
       managerWithRecovery.stop();
@@ -6592,11 +6270,11 @@ describe("SelfHealingManager", () => {
        */
       await expect(managerWithRecovery.recoverReviewTasksWithFailedPreMergeSteps()).resolves.toBe(1);
 
-      expect(store.updateTask).toHaveBeenCalledWith("FN-1572", { postReviewFixCount: 51 });
-      expect(store.logEntry).toHaveBeenCalledWith(
+      expect(store.updateTask).not.toHaveBeenCalledWith("FN-1572", expect.objectContaining({ postReviewFixCount: expect.any(Number) }));
+      expect(store.logEntry).not.toHaveBeenCalledWith(
         "FN-1572",
-        expect.stringContaining("Auto-reviving in-review task with failed pre-merge workflow step (attempt 51/3)"),
-        expect.stringContaining("Workflow revision key: code-review"),
+        expect.stringContaining("Auto-reviving in-review task with failed pre-merge workflow step"),
+        expect.anything(),
       );
       expect(recoverFn).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-1572", status: "failed" }));
 
@@ -6717,8 +6395,8 @@ describe("SelfHealingManager", () => {
 
       await expect(managerWithRecovery.recoverReviewTasksWithFailedPreMergeSteps()).resolves.toBe(1);
 
-      expect(store.updateTask).toHaveBeenCalledWith("FN-1572", { postReviewFixCount: 2 });
-      expect(store.logEntry).toHaveBeenLastCalledWith("FN-1572", expect.stringContaining("attempt 1/1"), expect.stringContaining("Workflow revision key: code-review"));
+      expect(store.updateTask).not.toHaveBeenCalledWith("FN-1572", expect.objectContaining({ postReviewFixCount: expect.any(Number) }));
+      expect(store.logEntry).not.toHaveBeenCalledWith("FN-1572", expect.stringContaining("attempt 1/1"), expect.anything());
       expect(recoverFn).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-1572" }));
 
       managerWithRecovery.stop();
@@ -6736,7 +6414,7 @@ describe("SelfHealingManager", () => {
       (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([{ ...baseTask, postReviewFixCount: 0 }]);
 
       await expect(managerWithRecovery.recoverReviewTasksWithFailedPreMergeSteps()).resolves.toBe(1);
-      expect(store.logEntry).toHaveBeenCalledWith("FN-1572", expect.stringContaining("attempt 1/1"), expect.stringContaining("Workflow revision key: ws-004"));
+      expect(store.logEntry).not.toHaveBeenCalledWith("FN-1572", expect.stringContaining("attempt 1/1"), expect.anything());
       expect(recoverFn).toHaveBeenCalledOnce();
 
       managerWithRecovery.stop();
@@ -8667,9 +8345,10 @@ describe("clearStaleBlockedBy", () => {
     manager.stop();
   });
 
-  it.each(["done", "archived"] as const)("clears stale blockedBy when blocker is %s", async (column) => {
+  it("clears stale blockedBy when blocker is complete", async () => {
     const store = createRunningStore();
     const blockerId = "FN-100";
+    const column = "done";
     const taskA = createTask("A", { blockedBy: blockerId });
     const taskB = createTask(blockerId, { column });
     mockSweepTasks(store, { todo: [taskA], all: [taskA, taskB] });
@@ -9606,12 +9285,11 @@ describe("FN-5335 triple-proof no-action unit coverage", () => {
     };
 
 
-    it("leaves satisfied, archived, and missing dependencies untouched", async () => {
+    it("leaves satisfied and missing dependencies untouched", async () => {
       const { store, manager } = setup([
-        makeTask({ id: "FN-OK", column: "in-review", dependencies: ["FN-DONE", "FN-REVIEW", "FN-ARCHIVED", "FN-MISSING"] }),
+        makeTask({ id: "FN-OK", column: "in-review", dependencies: ["FN-DONE", "FN-REVIEW", "FN-MISSING"] }),
         makeTask({ id: "FN-DONE", column: "done" }),
         makeTask({ id: "FN-REVIEW", column: "in-review" }),
-        makeTask({ id: "FN-ARCHIVED", column: "archived" }),
       ]);
 
       await expect(manager.reconcileInReviewUnmetDependencies()).resolves.toBe(0);

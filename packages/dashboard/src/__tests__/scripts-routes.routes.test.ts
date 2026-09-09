@@ -46,10 +46,9 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
     updateTask: vi.fn(),
     deleteTask: vi.fn(),
     mergeTask: vi.fn(),
-    archiveTask: vi.fn(),
-    unarchiveTask: vi.fn(),
     getSettings: vi.fn().mockResolvedValue({}),
     updateSettings: vi.fn(),
+    mutateScript: vi.fn().mockResolvedValue([]),
     updateGlobalSettings: vi.fn(),
     getSettingsByScope: vi.fn().mockResolvedValue({ global: {}, project: {} }),
     getGlobalSettingsStore: vi.fn().mockReturnValue(createMockGlobalSettingsStore()),
@@ -128,32 +127,34 @@ describe("Scripts routes", () => {
     expect(res.body).toEqual({ build: "pnpm build", test: "pnpm test" });
   });
 
-  it("GET /api/scripts returns empty object when no scripts", async () => {
-    vi.mocked(store.getSettings).mockResolvedValueOnce({ scripts: {} } as any);
+  it("GET /api/scripts keeps the legacy map and exposes an enriched catalog mode", async () => {
+    vi.mocked(store.getSettings)
+      .mockResolvedValueOnce({ scripts: {} } as any)
+      .mockResolvedValueOnce({
+        scripts: { "Build production": "pnpm build", test: "pnpm test" },
+        scriptMetadata: { "Build production": { description: "Production bundle" } },
+      } as any);
 
-    const res = await GET(buildApp(), "/api/scripts");
-
-    expect(res.status).toBe(200);
-    expect(res.body).toEqual({});
+    expect((await GET(buildApp(), "/api/scripts")).body).toEqual({});
+    expect((await GET(buildApp(), "/api/scripts?catalog=1")).body).toEqual([
+      { name: "Build production", command: "pnpm build", description: "Production bundle" },
+      { name: "test", command: "pnpm test" },
+    ]);
   });
 
-  it("POST /api/scripts creates a new script and returns updated scripts", async () => {
-    vi.mocked(store.getSettings).mockResolvedValueOnce({ scripts: { test: "pnpm test" } } as any);
-    vi.mocked(store.updateSettings).mockResolvedValueOnce({} as any);
-
-    const res = await REQUEST(
-      buildApp(),
-      "POST",
-      "/api/scripts",
-      JSON.stringify({ name: "build", command: "pnpm build" }),
-      { "Content-Type": "application/json" },
-    );
+  it("POST /api/scripts creates or renames names with spaces and metadata atomically", async () => {
+    vi.mocked(store.mutateScript).mockResolvedValueOnce([
+      { name: "Build production", command: "pnpm build", description: "Production bundle" },
+    ]);
+    const res = await REQUEST(buildApp(), "POST", "/api/scripts", JSON.stringify({
+      originalName: "build", name: " Build production ", command: "pnpm build", description: "Production bundle",
+    }), { "Content-Type": "application/json" });
 
     expect(res.status).toBe(200);
-    expect(store.updateSettings).toHaveBeenCalledWith({
-      scripts: { test: "pnpm test", build: "pnpm build" },
+    expect(store.mutateScript).toHaveBeenCalledWith({
+      originalName: "build", name: " Build production ", command: "pnpm build", description: "Production bundle",
     });
-    expect(res.body).toEqual({ test: "pnpm test", build: "pnpm build" });
+    expect(res.body).toEqual({ name: "Build production", command: "pnpm build", description: "Production bundle" });
   });
 
   it("POST /api/scripts returns 400 for missing name", async () => {
@@ -182,53 +183,49 @@ describe("Scripts routes", () => {
     expect(res.body.error).toContain("command is required");
   });
 
-  it("POST /api/scripts creates script with any name", async () => {
-    vi.mocked(store.getSettings).mockResolvedValueOnce({ scripts: {} } as any);
-    vi.mocked(store.updateSettings).mockResolvedValueOnce({} as any);
-
-    // The actual implementation accepts any name
-    const res = await REQUEST(
-      buildApp(),
-      "POST",
-      "/api/scripts",
-      JSON.stringify({ name: "my-script", command: "echo hi" }),
-      { "Content-Type": "application/json" },
-    );
-
+  it("POST /api/scripts accepts Unicode and punctuation", async () => {
+    vi.mocked(store.mutateScript).mockResolvedValueOnce([{ name: "Déployer 🚀!", command: "echo hi" }]);
+    const res = await REQUEST(buildApp(), "POST", "/api/scripts", JSON.stringify({
+      name: "Déployer 🚀!", command: "echo hi",
+    }), { "Content-Type": "application/json" });
     expect(res.status).toBe(200);
-    expect(store.updateSettings).toHaveBeenCalledWith({
-      scripts: { "my-script": "echo hi" },
-    });
+    expect(store.mutateScript).toHaveBeenCalledWith({ name: "Déployer 🚀!", command: "echo hi", originalName: undefined, description: undefined });
   });
 
-  it("DELETE /api/scripts/:name removes script and returns updated scripts", async () => {
-    vi.mocked(store.getSettings).mockResolvedValueOnce({
-      scripts: { build: "pnpm build", test: "pnpm test" },
-    } as any);
-    vi.mocked(store.updateSettings).mockResolvedValueOnce({} as any);
-
-    const res = await REQUEST(buildApp(), "DELETE", "/api/scripts/build");
-
+  it("DELETE /api/scripts/:name removes an encoded spaced name and its metadata", async () => {
+    vi.mocked(store.mutateScript).mockResolvedValueOnce([{ name: "test", command: "pnpm test" }]);
+    const res = await REQUEST(buildApp(), "DELETE", "/api/scripts/Build%20production");
     expect(res.status).toBe(200);
-    expect(store.updateSettings).toHaveBeenCalledWith({
-      scripts: { test: "pnpm test" },
+    expect(store.mutateScript).toHaveBeenCalledWith({
+      originalName: "Build production", name: "Build production", delete: true,
     });
     expect(res.body).toEqual({ test: "pnpm test" });
   });
 
-  it("DELETE /api/scripts/:name removes script regardless of name format", async () => {
-    vi.mocked(store.getSettings).mockResolvedValueOnce({ scripts: { build: "pnpm build" } } as any);
-    vi.mocked(store.updateSettings).mockResolvedValueOnce({} as any);
-
-    // The actual implementation doesn't validate names, it just removes
-    const res = await REQUEST(buildApp(), "DELETE", "/api/scripts/build");
-
-    expect(res.status).toBe(200);
-    expect(store.updateSettings).toHaveBeenCalledWith({ scripts: {} });
+  it("POST /api/scripts returns a typed conflict without a fallback write", async () => {
+    vi.mocked(store.mutateScript).mockRejectedValueOnce(Object.assign(new Error("Script 'test' already exists"), { code: "SCRIPT_NAME_CONFLICT" }));
+    const res = await REQUEST(buildApp(), "POST", "/api/scripts", JSON.stringify({
+      originalName: "build", name: "test", command: "pnpm build",
+    }), { "Content-Type": "application/json" });
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({ error: "Script 'test' already exists", details: { code: "SCRIPT_NAME_CONFLICT" } });
+    expect(store.updateSettings).not.toHaveBeenCalled();
   });
 
-  it("POST /api/scripts/:name/run defers command write until terminal readiness", async () => {
-    vi.mocked(store.getSettings).mockResolvedValueOnce({ scripts: { build: "pnpm build" } } as any);
+  it.each([
+    [{ name: 42, command: "echo hi" }, "name is required"],
+    [{ name: "build", command: 42 }, "command is required"],
+    [{ name: "build", command: "echo hi", originalName: 42 }, "originalName must be a string"],
+    [{ name: "build", command: "echo hi", description: 42 }, "description must be a string"],
+  ])("POST /api/scripts validates field types", async (payload, expected) => {
+    const res = await REQUEST(buildApp(), "POST", "/api/scripts", JSON.stringify(payload), { "Content-Type": "application/json" });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain(expected);
+    expect(store.mutateScript).not.toHaveBeenCalled();
+  });
+
+  it("POST /api/scripts/:name/run accepts an encoded spaced name and waits for terminal readiness", async () => {
+    vi.mocked(store.getSettings).mockResolvedValueOnce({ scripts: { "Build production": "pnpm build" } } as any);
     let resolveReady!: () => void;
     terminalServiceMock.waitForReady.mockReturnValueOnce(
       new Promise<void>((resolve) => {
@@ -239,7 +236,7 @@ describe("Scripts routes", () => {
     const responsePromise = REQUEST(
       buildApp(),
       "POST",
-      "/api/scripts/build/run",
+      "/api/scripts/Build%20production/run",
       JSON.stringify({ args: ["--filter", "@fusion/dashboard"] }),
       { "Content-Type": "application/json" },
     );

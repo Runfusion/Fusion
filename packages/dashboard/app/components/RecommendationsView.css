@@ -1,0 +1,154 @@
+/*
+FNXC:RecommendationsView 2026-09-06-03:16:
+The dedicated recommendation screen reuses shared card and button primitives, while token-only layout rules keep its hierarchy usable from the desktop pane down to the mobile viewport without introducing a parallel design system.
+*/
+.recommendations-view {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-block-size: 0;
+  overflow: hidden;
+}
+
+.recommendations-view__count,
+.recommendations-view__source,
+.recommendations-view__notice {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.recommendations-view__body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-lg);
+  min-block-size: 0;
+  overflow: auto;
+  padding: var(--space-lg);
+}
+
+.recommendations-view__list {
+  display: grid;
+  gap: var(--space-md);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.recommendations-view__item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  min-inline-size: 0;
+  padding: var(--space-lg);
+}
+
+.recommendations-view__item-header,
+.recommendations-view__actions,
+.recommendations-view__error-panel {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.recommendations-view__item-header {
+  justify-content: space-between;
+}
+
+.recommendations-view__item-header h3,
+.recommendations-view__description,
+.recommendations-view__source,
+.recommendations-view__state h3,
+.recommendations-view__state p {
+  margin: 0;
+}
+
+.recommendations-view__description,
+.recommendations-view__source {
+  overflow-wrap: anywhere;
+}
+
+.recommendations-view__category {
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-pill);
+  color: var(--text-muted);
+  flex: none;
+  font-size: var(--font-size-xs);
+  padding: var(--space-3xs) var(--space-sm);
+  text-transform: capitalize;
+}
+
+.recommendations-view__actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.recommendations-view__actions > [role="status"] {
+  margin-inline-end: auto;
+}
+
+.recommendations-view__error,
+.recommendations-view__error-panel {
+  color: var(--color-error);
+}
+
+.recommendations-view__error {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: var(--font-size-sm);
+}
+
+.recommendations-view__error svg,
+.recommendations-view__actions .btn svg {
+  inline-size: var(--icon-size-sm);
+  block-size: var(--icon-size-sm);
+}
+
+.recommendations-view__error-panel {
+  border: var(--btn-border-width) solid color-mix(in srgb, var(--color-error) 45%, var(--border));
+  border-radius: var(--radius-md);
+  flex-wrap: wrap;
+  padding: var(--space-md);
+}
+
+.recommendations-view__error-panel .btn {
+  margin-inline-start: auto;
+}
+
+.recommendations-view__state {
+  display: grid;
+  place-items: center;
+  gap: var(--space-sm);
+  margin: auto;
+  text-align: center;
+}
+
+.recommendations-view__state > svg {
+  color: var(--text-muted);
+}
+
+.recommendations-view__load-more {
+  align-self: center;
+}
+
+@media (max-width: 48rem) {
+  .recommendations-view__body {
+    padding: var(--space-md);
+  }
+
+  .recommendations-view__item-header,
+  .recommendations-view__actions,
+  .recommendations-view__error-panel {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .recommendations-view__actions > [role="status"],
+  .recommendations-view__error-panel .btn,
+  .recommendations-view__load-more {
+    inline-size: 100%;
+    margin-inline-end: 0;
+    margin-inline-start: 0;
+  }
+}

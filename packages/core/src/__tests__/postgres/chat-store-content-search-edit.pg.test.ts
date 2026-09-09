@@ -15,6 +15,8 @@
  */
 
 import { it, expect, beforeAll, beforeEach, afterEach, afterAll } from "vitest";
+import { PgDialect } from "drizzle-orm/pg-core";
+import * as schema from "../../postgres/schema/index.js";
 import type { AsyncDataLayer } from "../../postgres/data-layer.js";
 import {
   pgDescribe,
@@ -28,6 +30,9 @@ import {
   deleteChatMessagesFrom,
   getChatMessages,
   getChatSession,
+  getLastMessageForSessions,
+  buildLastMessageForSessionsSql,
+  buildSearchChatSessionsByMessageContentSql,
   setInFlightGeneration,
   searchChatSessionsByMessageContent,
   updateChatMessageMetadata,
@@ -72,18 +77,18 @@ async function addMessage(
   role: "user" | "assistant",
   content: string,
   metadata: Record<string, unknown> | null = null,
+  createdAt?: string,
 ): Promise<ChatMessage> {
-  // Monotonic createdAt so most-recent-match dedup is deterministic.
-  const createdAt = new Date(Date.now() + ++messageCounter).toISOString();
+  const sequence = ++messageCounter;
   return addChatMessage(ctx.layer.db, {
-    id: `msg-cs-${messageCounter}`,
+    id: `msg-cs-${sequence}`,
     sessionId,
     role,
     content,
     thinkingOutput: null,
     metadata,
     attachments: undefined,
-    createdAt,
+    createdAt: createdAt ?? new Date(Date.now() + sequence).toISOString(),
   });
 }
 
@@ -100,6 +105,91 @@ pgDescribe("async chat store content search + edit primitives (PostgreSQL)", () 
   });
   afterEach(h.afterEach);
   afterAll(h.afterAll);
+
+  /*
+  FNXC:ChatSidebarPerf 2026-09-08-05:07:
+  The sidebar must prove its production invariant against PostgreSQL: a lateral recency lookup
+  returns only one SQL-truncated preview per session, rather than materializing full chat rows.
+  Search shares the returned-row projection but not the sidebar's history-independent scan bound.
+  */
+  it("projects one lateral sidebar preview per session with stable ordering and boundaries", async () => {
+    const sessions = await Promise.all([makeSession(ctx), makeSession(ctx), makeSession(ctx)]);
+    const source = "x".repeat(5_000);
+    await addMessage(ctx, sessions[0].id, "assistant", "older");
+    const newest = await addMessage(ctx, sessions[0].id, "assistant", source, { large: true });
+    await addMessage(ctx, sessions[1].id, "assistant", "older second");
+    const secondNewest = await addMessage(ctx, sessions[1].id, "assistant", "newest second");
+    const previews = await getLastMessageForSessions(ctx.layer.db, [sessions[0].id, sessions[1].id, sessions[0].id, sessions[2].id]);
+
+    expect(previews.size).toBe(2);
+    expect(previews.get(sessions[0].id)).toMatchObject({ id: newest.id, content: source.slice(0, 101) });
+    expect(previews.get(sessions[0].id)?.content).toHaveLength(101);
+    expect(previews.get(sessions[1].id)).toMatchObject({ id: secondNewest.id, content: "newest second" });
+    expect(previews.has(sessions[2].id)).toBe(false);
+    expect(await getLastMessageForSessions(ctx.layer.db, [])).toEqual(new Map());
+
+    const tied = await makeSession(ctx);
+    const timestamp = "2026-09-08T00:00:00.000Z";
+    await addChatMessage(ctx.layer.db, {
+      id: "tie-a", sessionId: tied.id, role: "user", content: "lower id", thinkingOutput: null,
+      metadata: null, attachments: undefined, createdAt: timestamp,
+    });
+    const higherId = await addChatMessage(ctx.layer.db, {
+      id: "tie-b", sessionId: tied.id, role: "assistant", content: "higher id", thinkingOutput: null,
+      metadata: null, attachments: undefined, createdAt: timestamp,
+    });
+    expect((await getLastMessageForSessions(ctx.layer.db, [tied.id])).get(tied.id)?.id).toBe(higherId.id);
+
+    const boundaries = await Promise.all([makeSession(ctx), makeSession(ctx), makeSession(ctx), makeSession(ctx)]);
+    await addMessage(ctx, boundaries[0].id, "user", "");
+    await addMessage(ctx, boundaries[1].id, "user", "a".repeat(100));
+    await addMessage(ctx, boundaries[2].id, "user", "b".repeat(101));
+    await addMessage(ctx, boundaries[3].id, "user", "😀".repeat(102));
+    const boundaryPreviews = await getLastMessageForSessions(ctx.layer.db, boundaries.map((session) => session.id));
+    expect(boundaryPreviews.get(boundaries[0].id)?.content).toBe("");
+    expect(boundaryPreviews.get(boundaries[1].id)?.content).toHaveLength(100);
+    expect(boundaryPreviews.get(boundaries[2].id)?.content).toHaveLength(101);
+    expect(Array.from(boundaryPreviews.get(boundaries[3].id)?.content ?? "")).toHaveLength(101);
+  });
+
+  it("emits parameterized lateral SQL with only preview columns", () => {
+    const dialect = new PgDialect();
+    const previewQuery = dialect.sqlToQuery(buildLastMessageForSessionsSql(ctx.layer.db, ["session-a", "session-b"]));
+    const searchQuery = dialect.sqlToQuery(buildSearchChatSessionsByMessageContentSql(ctx.layer.db, "needle", ["session-a", "session-b"]));
+    const previewSql = previewQuery.sql.toLowerCase();
+    const searchSql = searchQuery.sql.toLowerCase();
+
+    for (const statement of [previewSql, searchSql]) {
+      expect(statement).toContain("lateral");
+      expect(statement).toContain("limit 1");
+      expect(statement).toContain("left(");
+      expect(statement).not.toContain("thinking_output");
+      expect(statement).not.toContain("metadata");
+      expect(statement).not.toContain("attachments");
+      expect(statement).not.toContain("distinct on");
+    }
+    expect(previewQuery.params).toEqual(["session-a", "session-b"]);
+    expect(searchQuery.params).toEqual(["session-a", "session-b", "%needle%"]);
+    expect(searchSql.indexOf("ilike")).toBeGreaterThan(searchSql.indexOf("cross join lateral"));
+    expect(searchSql.indexOf("ilike")).toBeLessThan(searchSql.indexOf("order by"));
+  });
+
+  it("keeps colliding session ids inside the requested project", async () => {
+    const createdAt = "2026-09-08T00:00:00.000Z";
+    await ctx.layer.db.insert(schema.project.chatSessions).values([
+      { projectId: "project-a", id: "colliding-session", agentId: "agent-a", title: "A", status: "active", createdAt, updatedAt: createdAt },
+      { projectId: "project-b", id: "colliding-session", agentId: "agent-b", title: "B", status: "active", createdAt, updatedAt: createdAt },
+    ]);
+    await ctx.layer.db.insert(schema.project.chatMessages).values([
+      { projectId: "project-a", id: "colliding-message-a", sessionId: "colliding-session", role: "assistant", content: "project A preview", createdAt },
+      { projectId: "project-b", id: "colliding-message-b", sessionId: "colliding-session", role: "assistant", content: "project B preview", createdAt },
+    ]);
+
+    const previews = await getLastMessageForSessions(ctx.layer.db, ["colliding-session"], "project-a");
+    const search = await searchChatSessionsByMessageContent(ctx.layer.db, "preview", ["colliding-session"], "project-a");
+    expect(previews.get("colliding-session")?.content).toBe("project A preview");
+    expect(search.get("colliding-session")).toBe("project A preview");
+  });
 
   it("matches by message content, dedups to the most recent match, and respects scope", async () => {
     const session = await makeSession(ctx, "Weekend plans");
@@ -123,6 +213,16 @@ pgDescribe("async chat store content search + edit primitives (PostgreSQL)", () 
     expect(deduped.size).toBe(1);
     expect(deduped.get(multi.id)).toBe("third gizmo reference, most recent");
 
+    // The newest matching message remains eligible even when a newer message does not match.
+    const olderMatch = await makeSession(ctx);
+    const longMatch = "needle " + "z".repeat(5_000);
+    await addMessage(ctx, olderMatch.id, "user", longMatch);
+    await addMessage(ctx, olderMatch.id, "assistant", "a newer non-matching message");
+    const olderMatchResult = await searchChatSessionsByMessageContent(ctx.layer.db, "needle", [olderMatch.id, olderMatch.id]);
+    expect(olderMatchResult.size).toBe(1);
+    expect(olderMatchResult.get(olderMatch.id)).toBe(longMatch.slice(0, 100) + "…");
+    expect(olderMatchResult.get(olderMatch.id)).toHaveLength(101);
+
     // No match / empty query / empty scope.
     expect((await searchChatSessionsByMessageContent(ctx.layer.db, "nonexistent-term", [session.id])).size).toBe(0);
     expect((await searchChatSessionsByMessageContent(ctx.layer.db, "   ", [session.id])).size).toBe(0);
@@ -138,9 +238,9 @@ pgDescribe("async chat store content search + edit primitives (PostgreSQL)", () 
 
   it("treats literal % and _ as literal characters, not LIKE wildcards", async () => {
     const literalSession = await makeSession(ctx);
-    await addMessage(ctx, literalSession.id, "user", "Discount is 50% off, use code A_B");
+    await addMessage(ctx, literalSession.id, "user", "Discount is 50% off, use code A_B and C\\D");
     const otherSession = await makeSession(ctx);
-    await addMessage(ctx, otherSession.id, "user", "Discount is 50X off, use code AZB");
+    await addMessage(ctx, otherSession.id, "user", "Discount is 50X off, use code AZB and CDD");
 
     const percentResult = await searchChatSessionsByMessageContent(
       ctx.layer.db, "50%", [literalSession.id, otherSession.id],
@@ -153,6 +253,12 @@ pgDescribe("async chat store content search + edit primitives (PostgreSQL)", () 
     );
     expect(underscoreResult.has(literalSession.id)).toBe(true);
     expect(underscoreResult.has(otherSession.id)).toBe(false);
+
+    const backslashResult = await searchChatSessionsByMessageContent(
+      ctx.layer.db, "C\\D", [literalSession.id, otherSession.id],
+    );
+    expect(backslashResult.has(literalSession.id)).toBe(true);
+    expect(backslashResult.has(otherSession.id)).toBe(false);
   });
 
   it("deleteChatMessagesFrom truncates from the target (inclusive) and preserves retained order", async () => {

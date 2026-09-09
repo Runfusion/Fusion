@@ -75,7 +75,6 @@ const RAW_BUILTIN_PR_WORKFLOW_IR: WorkflowIr = {
       traits: [{ trait: "merge-blocker" }, { trait: "stall-detection" }],
     },
     { id: "done", name: "Done", traits: [{ trait: "complete" }] },
-    { id: "archived", name: "Archived", traits: [{ trait: "archived" }] },
   ],
   nodes: [
     { id: "start", kind: "start", column: "triage" },

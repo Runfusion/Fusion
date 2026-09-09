@@ -52,7 +52,7 @@ function harness(row: TaskDetail, workflowId: string) {
 }
 
 describe("graph failure execution-resume containment", () => {
-  it.each(["builtin:coding", "builtin:coding-ideas"])(
+  it.each(["builtin:coding", "builtin:coding-ideas-v2"])(
     "keeps incomplete review work in review on %s without a REVISE handoff",
     async (workflowId) => {
       const row = task("in-review", true);
@@ -78,7 +78,7 @@ describe("graph failure execution-resume containment", () => {
 
   it("does not issue a second move when incomplete merge work is already in WIP", async () => {
     const row = task("in-progress", true);
-    const { store, deps } = harness(row, "builtin:coding-ideas");
+    const { store, deps } = harness(row, "builtin:coding-ideas-v2");
 
     await expect(routeGraphFailureToExecutionResume(
       deps as never,
@@ -114,7 +114,7 @@ describe("graph failure execution-resume containment", () => {
 
   it("keeps a clean-handoff retry in review without a REVISE", async () => {
     const row = task("in-review", false);
-    const { store, deps } = harness(row, "builtin:coding-ideas");
+    const { store, deps } = harness(row, "builtin:coding-ideas-v2");
 
     await expect(routeGraphFailureToExecutionResume(
       deps as never,

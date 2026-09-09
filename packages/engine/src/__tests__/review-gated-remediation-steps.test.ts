@@ -110,6 +110,15 @@ describe("review remediation release and fallback policy", () => {
       prompt: "## File Scope\n- `src/**`\n",
       modifiedFiles: [],
       steps: [],
+      workflowStepResults: [{
+        workflowStepId: "code-review",
+        workflowStepName: "Code Review",
+        phase: "pre-merge",
+        status: "failed",
+        verdict: "REVISE",
+        startedAt: "2026-09-08T02:24:00.000Z",
+        completedAt: "2026-09-08T02:24:01.000Z",
+      }],
       ...overrides,
     } as Task;
   }
@@ -139,6 +148,14 @@ describe("review remediation release and fallback policy", () => {
       { store: store as never, readTaskArtifact: async () => task.prompt, sendTaskBackForFix: vi.fn(async () => undefined) },
       task,
       { stepName: "Code Review", feedback: "advisory", phase: "pre-merge", status: "failed", verdict: "REVISE", nodeId: "code-review", findings },
+      {
+        attemptClaim: {
+          revisionKey: "code-review",
+          stepName: "Code Review",
+          status: "failed",
+          maxRevisions: "unbounded",
+        },
+      },
     );
     expect(task).toMatchObject({ status: null, paused: false });
     expect(task).not.toHaveProperty("awaitingApprovalReason");
@@ -202,14 +219,14 @@ describe("review remediation release and fallback policy", () => {
     const task = subject({
       steps: [{
         name: "Fix: fix guard",
-        status: "done",
+        status: "pending",
         remediation: { wave: 1, gate: "Code Review", gateStepId: "code-review", findingId: "same", filePath: "src/a.ts", detail: "fix guard" },
       }],
     });
     const store = storeFor(task, []);
     await expect(append(task, store, [{ id: "same", title: "guard", body: "fix guard", filePath: "src/a.ts", severity: "critical" }]))
-      .resolves.toBe("released-no-pending-work");
-    expect(store.logEntry).toHaveBeenCalledWith(task.id, "Review remediation released as non-blocking", "review-remediation-no-pending-work");
+      .resolves.toBe("duplicate-no-new-work");
+    expect(store.logEntry).not.toHaveBeenCalled();
   });
 
   it("releases a workspace remediation whose checkout is missing", async () => {

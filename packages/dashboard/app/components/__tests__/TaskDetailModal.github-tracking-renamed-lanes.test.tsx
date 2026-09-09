@@ -7,7 +7,7 @@ GITHUB TRACKING WAS UNREACHABLE ON A RENAMED BOARD.
 all. On a board whose lanes are renamed it matched nothing, so the helper returned false for EVERY
 task and `showGithubTrackingSection` hid the section outright. The operator could not turn tracking on
 or off, with no error and no explanation. The only thing keeping it reachable was the unrelated
-`builtin:coding-ideas` escape hatch.
+Ideas-workflow escape hatch.
 
 WHY NO GATE SAW IT. The census counts COMPARISONS against legacy ids; this is a Set literal — a
 DEFINITION — consulted via `.has()`. Nothing in the backlog ever pointed here. Same blind spot that
@@ -48,7 +48,6 @@ const RENAMED_PAYLOAD = {
         { id: "drafting", name: "Drafting", flags: { intake: true, hold: true } },
         { id: "building", name: "Building", flags: { countsTowardWip: true } },
         { id: "shipped", name: "Shipped", flags: { complete: true } },
-        { id: "filed", name: "Filed", flags: { archived: true } },
       ],
     },
   ],
@@ -113,7 +112,7 @@ describe("GitHub tracking editability under a renamed board vocabulary", () => {
 
   /*
   The paired negative: resolving roles must not hand editability to a FINISHED card. The legacy set
-  excluded `done`/`archived` and the resolved form must exclude their renamed equivalents, or the fix
+  excluded `done` and the resolved form must exclude its renamed equivalent, or the fix
   trades a missing affordance for one that should not be there.
   */
   it("renamed vocabulary: a task in the COMPLETE lane cannot edit GitHub tracking", async () => {

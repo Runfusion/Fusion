@@ -69,9 +69,12 @@ export async function importCore() {
  * Throws when PostgreSQL cannot start. These scripts must never fall back to
  * the removed SQLite runtime.
  */
-export async function openBackend(rootDir = process.cwd()) {
+export async function openBackend(rootDir = process.cwd(), options = {}) {
   const core = await importCore();
-  const boot = await core.createTaskStoreForBackend({ rootDir });
+  const boot = await core.createTaskStoreForBackend({
+    rootDir,
+    skipArchiveReintegrationOnInit: options.skipArchiveReintegrationOnInit === true,
+  });
   const asyncLayer = boot.taskStore.getAsyncLayer();
   if (!asyncLayer) {
     await boot.shutdown().catch(() => {});

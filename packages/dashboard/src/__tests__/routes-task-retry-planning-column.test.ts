@@ -31,7 +31,7 @@ both already-correct builtins are asserted alongside, so neither direction can r
 
 - All five builtins that declare `triage` but plan in `todo` — previously 400, must now retry.
 - Default workflow (`builtin:coding`, plans in `todo`) — must STILL get specification retry.
-- Manual-intake plan-in-place workflow (`builtin:coding-ideas`) — must STILL; FN-8587 path.
+- Manual-intake plan-in-place workflow (`builtin:coding-ideas-v2`) — must STILL; FN-8587 path.
 - Custom workflow planning outside `todo` — must NOT take the spec-deleting branch...
 - ...but must STILL be retryable (routed to execution retry), or the fix strands the card instead.
 - Legacy workflow planning in `triage`, card in `todo` — must NOT, unchanged from before.
@@ -264,7 +264,7 @@ describe("POST /api/tasks/:id/retry — specification retry follows the plan nod
   });
 
   it("STILL takes it for the Coding (Ideas) plan-in-place workflow (FN-8587 path)", async () => {
-    const { app, updateTask } = buildApp({ task: mkTask(), workflowId: "builtin:coding-ideas" });
+    const { app, updateTask } = buildApp({ task: mkTask(), workflowId: "builtin:coding-ideas-v2" });
 
     const res = await retry(app);
     expect(res.status).toBe(200);

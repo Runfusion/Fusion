@@ -108,6 +108,19 @@ describe("useFileMention", () => {
       ).toBe("Check #FN-5218 now");
     });
 
+    it("replaces a partial mention with a conversation id", () => {
+      const { result } = renderHook(() => useFileMention());
+      act(() => {
+        result.current.detectMention("Review #chat-1a now", 15);
+      });
+      expect(
+        result.current.selectConversation(
+          { id: "chat-1a2b3c4d", title: "Delivery status" },
+          "Review #chat-1a now",
+        ),
+      ).toBe("Review #chat-1a2b3c4d now");
+    });
+
     it("does nothing when mention is not active", () => {
       const { result } = renderHook(() => useFileMention());
       expect(result.current.selectFile({ path: "src/index.ts", name: "index.ts" }, "Some text")).toBe("Some text");
@@ -115,6 +128,53 @@ describe("useFileMention", () => {
   });
 
   describe("search", () => {
+    it("filters loaded conversations by id and title without case sensitivity", () => {
+      const conversations = [
+        { id: "chat-AAAABBBB", title: "Release Progress" },
+        { id: "chat-CCCCDDDD", title: "Unrelated" },
+      ];
+      const { result } = renderHook(() => useFileMention({ conversations }));
+
+      act(() => {
+        result.current.detectMention("#aaaa", 5);
+      });
+      expect(result.current.conversations).toEqual([conversations[0]]);
+
+      act(() => {
+        result.current.detectMention("#PROGRESS", 9);
+      });
+      expect(result.current.conversations).toEqual([conversations[0]]);
+    });
+
+    it("preserves loaded conversation order and caps results at five", () => {
+      const conversations = Array.from({ length: 7 }, (_, index) => ({
+        id: `chat-match00${index}`,
+        title: `Match ${index}`,
+      }));
+      const { result } = renderHook(() => useFileMention({ conversations }));
+
+      act(() => {
+        result.current.detectMention("#match", 6);
+      });
+
+      expect(result.current.conversations).toEqual(conversations.slice(0, 5));
+    });
+
+    it("returns no conversations for an empty query or omitted candidates", () => {
+      const conversations = [{ id: "chat-1a2b3c4d", title: "Delivery status" }];
+      const withCandidates = renderHook(() => useFileMention({ conversations }));
+      const withoutCandidates = renderHook(() => useFileMention());
+
+      act(() => {
+        withCandidates.result.current.detectMention("#", 1);
+        withoutCandidates.result.current.detectMention("#chat", 5);
+      });
+
+      expect(withCandidates.result.current.conversations).toEqual([]);
+      expect(withoutCandidates.result.current.conversations).toEqual([]);
+      expect(withoutCandidates.result.current.combinedItems).toEqual([]);
+    });
+
     it("returns task matches for id queries", async () => {
       mockFetchTasks.mockResolvedValue([
         { id: "FN-5218", title: "Hash entries in chat", column: "todo" } as never,
@@ -147,6 +207,28 @@ describe("useFileMention", () => {
       await flushSearch();
 
       expect(result.current.files).toEqual([{ path: "src/project.ts", name: "project.ts" }]);
+    });
+
+    it("combines tasks, conversations, and files in stable group order", async () => {
+      mockFetchTasks.mockResolvedValue([
+        { id: "FN-5218", title: "Project task", column: "todo" } as never,
+      ]);
+      mockSearchFiles.mockResolvedValue({
+        files: [{ path: "src/project.ts", name: "project.ts" }],
+      });
+      const conversation = { id: "chat-1a2b3c4d", title: "Project discussion" };
+      const { result } = renderHook(() => useFileMention({ conversations: [conversation] }));
+
+      act(() => {
+        result.current.detectMention("#project", 8);
+      });
+      await flushSearch();
+
+      expect(result.current.combinedItems).toEqual([
+        { kind: "task", task: { id: "FN-5218", title: "Project task", column: "todo" } },
+        { kind: "conversation", conversation },
+        { kind: "file", file: { path: "src/project.ts", name: "project.ts" } },
+      ]);
     });
 
     it("keeps file results when task search rejects", async () => {

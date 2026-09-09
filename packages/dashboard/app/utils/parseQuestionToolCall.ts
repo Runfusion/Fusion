@@ -27,6 +27,7 @@ export interface ChatQuestion {
   description?: string;
   options?: ChatQuestionOption[];
   multiSelect?: boolean;
+  optional?: boolean;
 }
 
 export interface ParsedQuestionToolCall {
@@ -89,6 +90,7 @@ function normalizeQuestion(rawValue: unknown, index: number): ChatQuestion | nul
   const options = normalizeOptions(firstArray(raw.options, raw.choices, raw.enum, raw.values));
   const explicitType = normalizeQuestionType(firstString(raw.type, raw.questionType, raw.inputType, raw.responseType));
   const multiSelect = Boolean(raw.multiSelect ?? raw.multiselect ?? raw.multiple ?? raw.allowMultiple ?? raw.multiple_choice);
+  const optional = normalizeOptional(raw);
 
   const type = inferQuestionType(raw, options, explicitType, multiSelect);
 
@@ -104,7 +106,28 @@ function normalizeQuestion(rawValue: unknown, index: number): ChatQuestion | nul
     description: firstString(raw.description, raw.details, raw.helpText) ?? undefined,
     options: options.length > 0 ? options : undefined,
     multiSelect: type === "multi_select" ? true : multiSelect || undefined,
+    ...(optional ? { optional: true } : {}),
   };
+}
+
+/*
+ * FNXC:ChatQuestionResponse 2026-09-09-02:42:
+ * Third-party question tools use several optionality aliases, while every submitted card needs a non-empty transcript.
+ * Normalize those aliases once and preserve explicit optional non-answers so agents can distinguish them from lost input.
+ */
+function normalizeOptional(raw: Record<string, unknown>): boolean {
+  return isTrue(raw.optional)
+    || isTrue(raw.isOptional)
+    || isTrue(raw.is_optional)
+    || isFalse(raw.required);
+}
+
+function isTrue(value: unknown): boolean {
+  return value === true || value === "true";
+}
+
+function isFalse(value: unknown): boolean {
+  return value === false || value === "false";
 }
 
 function inferQuestionType(
@@ -188,8 +211,8 @@ function normalizeOptions(rawOptions: unknown[] | null): ChatQuestionOption[] {
 }
 
 function formatAnswerValue(question: ChatQuestion, answer: ChatQuestionAnswerValue | undefined): string {
-  if (answer === undefined) {
-    return "(no answer)";
+  if (isMeaningfullyUnanswered(answer)) {
+    return question.optional ? "(no answer — optional)" : "(no answer)";
   }
 
   if (question.type === "confirm") {
@@ -205,7 +228,13 @@ function formatAnswerValue(question: ChatQuestion, answer: ChatQuestionAnswerVal
     return optionLabelForId(question, String(answer)) ?? String(answer);
   }
 
-  return String(answer).trim() || "(no answer)";
+  return String(answer).trim() || (question.optional ? "(no answer — optional)" : "(no answer)");
+}
+
+function isMeaningfullyUnanswered(answer: ChatQuestionAnswerValue | undefined): boolean {
+  return answer === undefined
+    || (typeof answer === "string" && answer.trim().length === 0)
+    || (Array.isArray(answer) && answer.length === 0);
 }
 
 function optionLabelForId(question: ChatQuestion, id: string): string | null {

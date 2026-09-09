@@ -6,10 +6,10 @@ The scheduler's due-poll (`in-process-runtime.ts` -> `drainDuePlanningContinuati
 `runnable`/`retrying`. A continuation that stops in `running` or `held` is therefore never looked at
 again by any dispatcher, and the two ways it can stop there are both ordinary:
 
-  1. `running` with a dead session. `acquireWorkflowWorkItemLease` is the only writer that sets
-     `leaseExpiresAt`; the upsert/transition paths that install a fence leave it NULL. So a row claimed
-     through those paths whose process then dies keeps `state: "running"` with a `leaseOwner` and NO
-     expiry — permanently indistinguishable from live work to every reader that filters on state alone.
+  1. `running` with a dead session. `acquireWorkflowWorkItemLease` is the only historical writer that
+     sets `leaseExpiresAt`; the upsert/transition paths that install a fence leave it NULL. Triage's
+     `writePlanningContinuation` is one such path, so a LIVE planner used to look exactly like a dead
+     owner unless the caller supplied the independent planning-liveness proof.
   2. `held` with a blocked reason nothing retries. `acquireWorkflowWorkItemLease` can only re-take a
      `held` row whose `blockedReason` matches `workflow-principal-%`, `workflow-named-principal-%`, or
      `workflow-role-pool-%`; a NULL or non-matching reason never becomes claimable again.
@@ -42,6 +42,7 @@ export type StrandedContinuationReason =
   | "operator-paused"
   | "manual-hold"
   | "live-session"
+  | "live-planning"
   | "too-fresh"
   | "lease-active"
   | "scheduler-owned"
@@ -59,14 +60,14 @@ export interface StrandedContinuationVerdict {
  *
  * - `enginePaused` wins over everything. A paused engine must not silently re-queue work an operator
  *   stopped; the row is still stranded when the engine resumes and the next sweep sees it.
- * - Retirement is tested BEFORE the pause and liveness gates. A soft-deleted or archived task has no
+ * - Retirement is tested BEFORE the pause and liveness gates. A soft-deleted or historical task has no
  *   operator decision left to respect and no session that could be live, and its row is exactly the
  *   residue that accumulates for a month when this check sits behind those guards.
  * - `manual-hold` is an operator-owned kind (`WORKFLOW_WORK_ITEM_KINDS`), not an accident. Its whole
  *   purpose is to stop until a human acts, so automatic reclaim must never touch it.
- * - The liveness proof is the caller's (the canonical `activeSessionRegistry` / `executingTaskLock` /
- *   `isTaskActive` triple). A live session with a NULL-expiry lease is the exact false positive that
- *   would double-dispatch a running task, so `live` outranks the dead-lease test below it.
+ * - Execution and planning liveness are separate caller proofs. Triage is a fourth possible owner of
+ *   a `running` row, and its historical `writePlanningContinuation` path left `leaseExpiresAt` NULL.
+ *   Both live-owner guards therefore outrank dead-lease classification and prevent double dispatch.
  * - `lease-active` still defers to a real unexpired lease even past the grace window: an expiry in the
  *   future is affirmative proof of a live claim, which staleness alone never is.
  *
@@ -74,6 +75,7 @@ export interface StrandedContinuationVerdict {
  * @param input.taskTerminal The owning task is deleted, archived, or otherwise past running this row.
  * @param input.taskMissing No task row resolved for `item.taskId` at all.
  * @param input.live Caller-proven live execution for the owning task.
+ * @param input.planningLive Caller-proven live planning for the owning task; omitted means false.
  * @param input.stalenessMs Age of the row's last update.
  * @param input.graceMs Minimum age before a row is considered abandoned.
  */
@@ -83,6 +85,7 @@ export function evaluateStrandedContinuationReclaim(input: {
   taskMissing: boolean;
   taskPaused: boolean;
   live: boolean;
+  planningLive?: boolean;
   enginePaused: boolean;
   stalenessMs: number;
   graceMs: number;
@@ -97,6 +100,12 @@ export function evaluateStrandedContinuationReclaim(input: {
   if (input.item.kind === "manual-hold") return { action: "none", reason: "manual-hold" };
   if (input.taskPaused) return { action: "none", reason: "operator-paused" };
   if (input.live) return { action: "none", reason: "live-session" };
+  /*
+  FNXC:PlanningExecutionLiveness 2026-09-06-00:29:
+  A triage planner can own this row without any execution-liveness signal. Keep that proof distinct so
+  recovery diagnostics identify `live-planning`, while omission preserves legacy callers as not live.
+  */
+  if (input.planningLive === true) return { action: "none", reason: "live-planning" };
   /*
   FNXC:StrandedContinuationReclaim 2026-08-11-09:12:
   `runnable`/`retrying` rows are the dispatcher's own queue. They are only reachable here through the

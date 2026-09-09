@@ -61,7 +61,7 @@ const canRun = hasGit && hasPg;
     const liveTasks = await fx.store.listTasks({ includeArchived: false });
     expect(liveTasks.map((task) => task.id)).toContain(duplicate.id);
     expect((await fx.store.getTask(canonical.id)).column).toBe("todo");
-    const activity = await fx.store.getActivityLog({ type: "task:auto-archived-duplicate", limit: 20 });
+    const activity = await fx.store.getActivityLog({ type: "task:near-duplicate-flagged", limit: 20 });
     expect(activity.find((entry) => entry.taskId === duplicate.id)).toEqual(
       expect.objectContaining({
         metadata: expect.objectContaining({ canonicalTaskId: canonical.id, source: "triage-marker-flagged" }),

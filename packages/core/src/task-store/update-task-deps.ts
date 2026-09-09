@@ -398,18 +398,10 @@ async function updateTaskDependenciesWithTaskLockImpl(store: TaskStore, id: stri
       };
 
       /*
-      FNXC:WorkflowLifecycleColumns 2026-08-02-02:20 (fleet — THE "WHAT DOES SATISFIED MEAN" DECISION):
-      A DEPENDENCY IS SATISFIED WHEN IT RESTS IN ITS OWN BOARD'S TERMINAL PAIR (complete or archived).
-      I flagged this question in three files rather than guessing at it — executor.ts, the task routes, and
-      here — because the answer had to be the same in all three or the scheduler and the store would
-      disagree about which cards are blocked. It is settled here, in the store, which is where the blocker
-      is actually written:
-
-        SATISFIED  = complete OR archived. Archived counts because an archived dependency is finished work
-                     the operator has filed away; treating it as unsatisfied blocks its dependents forever
-                     with no way to clear them short of editing the graph.
-        NOT REVIEW = a card in review is not done; its branch has not landed. (The task ROUTES guard also
-                     excluded `in-review`, which is the same rule stated as an exclusion.)
+      FNXC:WorkflowLifecycleColumns 2026-08-02-02:20:
+      A dependency is satisfied only when it reaches its own workflow Complete column. Review remains
+      unfinished, while deleted or missing dependencies remain unsatisfied. Historical archive rows are
+      re-integrated into Complete during store open rather than treated as a second terminal authority.
 
       Each dependency resolves through its OWN workflow — dependencies can live on different boards — with
       one shared IR cache for the set. On a renamed board this comparison matched nothing, so EVERY
@@ -422,21 +414,16 @@ async function updateTaskDependenciesWithTaskLockImpl(store: TaskStore, id: stri
         if (!dep) return false;
         const lifecycle = await resolveTaskLifecycleColumns(store, dep.id, depIrCache);
         /*
-        Unioned with the legacy ids for the same reason as the refine gate above: a dependency row can
-        still be stored in a column its workflow no longer declares, and reading such a row as UNSATISFIED
-        blocks its dependents permanently with no operator recourse short of editing the graph.
+        Unioned with the built-in Complete fallback for the same reason as the refine gate above: a
+        dependency row can still be stored in `done` after its workflow changes, and reading such a row
+        as UNSATISFIED would strand dependents.
         */
         /*
-        DELIBERATE-LITERAL — reviewed 2026-07-31-02:40 (batch-core feed). The legacy half of this
-        union is load-bearing, not leftover: it is what lets a dependency row stored in a column its
-        workflow no longer declares still read as SATISFIED. Deleting it strands every dependent
-        permanently with no operator recourse short of editing the graph. The comment above already
-        argued this; the marker is what keeps the census from re-listing it as unconverted work.
+        DELIBERATE-LITERAL — reviewed 2026-07-31-02:40. The `done` half of this union is the degraded
+        built-in fallback for an unresolvable workflow.
         */
         return dep.column === (lifecycle?.complete ?? "done")
-          || dep.column === (lifecycle?.archived ?? "archived")
-          || dep.column === "done"
-          || dep.column === "archived";
+          || dep.column === "done";
       };
       const depSatisfaction = await Promise.all(allDepTasks.map(isDependencySatisfied));
       const unresolvedDependencyIndex = depSatisfaction.findIndex((satisfied) => !satisfied);

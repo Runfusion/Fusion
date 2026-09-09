@@ -36,7 +36,7 @@ pgDescribe("Coding (Ideas) custom-column moves (workflow-columns graduation)", (
 
   it("moves an ideas-workflow task from the ideas intake column to todo", async () => {
     const store = harness.store();
-    const task = await store.createTask({ description: "idea", workflowId: "builtin:coding-ideas" });
+    const task = await store.createTask({ description: "idea", workflowId: "builtin:coding-ideas-v2" });
     expect(task.column).toBe("ideas");
 
     const moved = await store.moveTask(task.id, "todo", { moveSource: "user" });
@@ -45,7 +45,7 @@ pgDescribe("Coding (Ideas) custom-column moves (workflow-columns graduation)", (
 
   it("advances an ideas task along the Coding (Ideas) custom-column chain", async () => {
     const store = harness.store();
-    const task = await store.createTask({ description: "idea", workflowId: "builtin:coding-ideas" });
+    const task = await store.createTask({ description: "idea", workflowId: "builtin:coding-ideas-v2" });
 
     await store.moveTask(task.id, "todo", { moveSource: "user" });
     await store.moveTask(task.id, "in-progress", { moveSource: "user" });
@@ -55,7 +55,7 @@ pgDescribe("Coding (Ideas) custom-column moves (workflow-columns graduation)", (
 
   it("still rejects a non-adjacent move out of the ideas column", async () => {
     const store = harness.store();
-    const task = await store.createTask({ description: "idea", workflowId: "builtin:coding-ideas" });
+    const task = await store.createTask({ description: "idea", workflowId: "builtin:coding-ideas-v2" });
     await expect(
       store.moveTask(task.id, "in-progress", { moveSource: "user" }),
     ).rejects.toThrow(/Invalid transition: 'ideas' → 'in-progress'/);
@@ -63,7 +63,7 @@ pgDescribe("Coding (Ideas) custom-column moves (workflow-columns graduation)", (
 
   it("allows the ideas → todo move from an engine source too", async () => {
     const store = harness.store();
-    const task = await store.createTask({ description: "idea", workflowId: "builtin:coding-ideas" });
+    const task = await store.createTask({ description: "idea", workflowId: "builtin:coding-ideas-v2" });
     const moved = await store.moveTask(task.id, "todo", { moveSource: "engine" });
     expect(moved.column).toBe("todo");
   });
@@ -71,7 +71,7 @@ pgDescribe("Coding (Ideas) custom-column moves (workflow-columns graduation)", (
   /*
   FNXC:CodingIdeasWorkflow 2026-07-25-10:05:
   Regression for the one-way Ideas intake. The reverse move (Todo → Ideas) was rejected with
-  "Invalid transition: 'todo' → 'ideas'. Valid targets: in-progress, triage, archived" because `todo`
+  "Invalid transition: 'todo' → 'ideas'. Valid targets: in-progress, triage" because `todo`
   is a LEGACY column id, so validation used the closed VALID_TRANSITIONS map — which cannot know
   about a workflow-declared "ideas" column — instead of the task's own workflow adjacency. Legacy
   source columns now UNION both, so an operator can demote a card back to Ideas.
@@ -80,14 +80,14 @@ pgDescribe("Coding (Ideas) custom-column moves (workflow-columns graduation)", (
   addition to the legacy table):
    - Board drag / context menu / task detail / List view / CLI + tools all funnel through
      store.moveTask, so the store-level assertions below cover every move surface.
-   - Both move sources (user and engine).
-   - Round-trip: the demoted card can be promoted again.
+   - User move succeeds; automatic engine movement back into intake remains forbidden by lifecycle containment.
+   - Round-trip: the user-demoted card can be promoted again.
    - Default (legacy-column) workflow parity: the union never widens builtin:coding, and a column
      the workflow does not declare still rejects.
   */
   it("moves an ideas-workflow task back from todo to the ideas intake column", async () => {
     const store = harness.store();
-    const task = await store.createTask({ description: "idea", workflowId: "builtin:coding-ideas" });
+    const task = await store.createTask({ description: "idea", workflowId: "builtin:coding-ideas-v2" });
     await store.moveTask(task.id, "todo", { moveSource: "user" });
 
     const demoted = await store.moveTask(task.id, "ideas", { moveSource: "user" });
@@ -97,13 +97,13 @@ pgDescribe("Coding (Ideas) custom-column moves (workflow-columns graduation)", (
     expect((await store.moveTask(task.id, "todo", { moveSource: "user" })).column).toBe("todo");
   });
 
-  it("allows the todo → ideas move from an engine source too", async () => {
+  it("keeps automatic todo → ideas movement out of the intake role", async () => {
     const store = harness.store();
-    const task = await store.createTask({ description: "idea", workflowId: "builtin:coding-ideas" });
+    const task = await store.createTask({ description: "idea", workflowId: "builtin:coding-ideas-v2" });
     await store.moveTask(task.id, "todo", { moveSource: "user" });
 
-    const demoted = await store.moveTask(task.id, "ideas", { moveSource: "engine" });
-    expect(demoted.column).toBe("ideas");
+    await expect(store.moveTask(task.id, "ideas", { moveSource: "engine" }))
+      .rejects.toThrow(/Automatic moves may not target the intake lifecycle role/);
   });
 
   it("keeps the default workflow's legacy adjacency unchanged", async () => {
@@ -117,8 +117,8 @@ pgDescribe("Coding (Ideas) custom-column moves (workflow-columns graduation)", (
     /*
     FNXC:WorkflowColumns 2026-07-30-04:30 (U12 — the move-path flag is resolved):
     ...and so is a non-adjacent target. The advertised target list changed from
-    `in-progress, triage, archived` to `archived, in-progress`, and that is the FIX rather than a
-    regression: the old list came from the hardcoded legacy adjacency table, which still offered
+    `in-progress, triage` to `in-progress`, and that is the FIX rather than a regression: the old
+    list came from the hardcoded legacy adjacency table, which still offered
     `triage` — a column the default lineage stopped declaring at #2515. The move path now resolves
     adjacency from the task's own workflow, so it can no longer advertise a column that does not
     exist. An operator following the old message would have been told to move somewhere impossible.
@@ -126,12 +126,12 @@ pgDescribe("Coding (Ideas) custom-column moves (workflow-columns graduation)", (
     await store.moveTask(task.id, "todo", { moveSource: "user" });
     await expect(
       store.moveTask(task.id, "in-review", { moveSource: "user" }),
-    ).rejects.toThrow("Invalid transition: 'todo' → 'in-review'. Valid targets: archived, in-progress");
+    ).rejects.toThrow("Invalid transition: 'todo' → 'in-review'. Valid targets: in-progress");
   });
 
   it("cancels an active task continuation when a user sends implementation back to todo", async () => {
     const store = harness.store();
-    const task = await store.createTask({ description: "idea", workflowId: "builtin:coding-ideas" });
+    const task = await store.createTask({ description: "idea", workflowId: "builtin:coding-ideas-v2" });
     await store.moveTask(task.id, "todo", { moveSource: "user" });
     await store.moveTask(task.id, "in-progress", { moveSource: "user" });
     const continuation = await store.upsertWorkflowWorkItem({

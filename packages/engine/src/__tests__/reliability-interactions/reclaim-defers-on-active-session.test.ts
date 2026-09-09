@@ -52,7 +52,6 @@ function makeStore(task: Task): TaskStore & EventEmitter {
     clearStaleExecutionStartBranchReferences: vi.fn(() => []),
     recordRunAuditEvent: vi.fn(async () => undefined),
     walCheckpoint: vi.fn(() => ({ busy: 0, log: 0, checkpointed: 0 })),
-    archiveTaskAndCleanup: vi.fn(async () => ({})),
     mergeTask: vi.fn(async () => undefined),
     getRootDir: vi.fn(() => "/tmp/test"),
   }) as unknown as TaskStore & EventEmitter;

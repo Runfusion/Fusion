@@ -30,7 +30,10 @@ function makeSession(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function buildApp(initialSessions: Array<Record<string, unknown>> = []) {
+function buildApp(
+  initialSessions: Array<Record<string, unknown>> = [],
+  lastMessages = new Map<string, { id: string; content: string; createdAt: string }>(),
+) {
   const sessions = [...initialSessions];
   const lifecycleLocks = new Map<string, Promise<void>>();
   const withPlanningLifecycleLock = async <T>(id: string, fn: () => Promise<T>): Promise<T> => {
@@ -71,7 +74,13 @@ function buildApp(initialSessions: Array<Record<string, unknown>> = []) {
     createSession,
     updateSession,
     findLatestActiveSessionForTarget,
-    getLastMessageForSessions: vi.fn(async (ids: string[]) => new Map(ids.map((id) => [id, { id }]))),
+    listSessionsPage: vi.fn(async () => ({ total: sessions.length, hasMore: false, nextCursor: null, sessions })),
+    getLastMessageForSessions: vi.fn(async (ids: string[]) => new Map(
+      ids.flatMap((id) => {
+        const message = lastMessages.get(id);
+        return message ? [[id, message] as const] : [];
+      }),
+    )),
   };
   const scopedStore = {
     getFusionDir: () => "/route-project/.fusion",
@@ -113,6 +122,39 @@ function buildApp(initialSessions: Array<Record<string, unknown>> = []) {
 
 describe("task Chat session routes", () => {
   afterEach(() => vi.restoreAllMocks());
+
+  /*
+  FNXC:ChatSidebarPerf 2026-09-08-05:07:
+  SQL now supplies at most 101 preview characters, but this route remains responsible for the
+  public 100-character-plus-ellipsis contract and for excluding empty planner chats from the
+  common feed. Exercise the real route so the projected store type cannot change that JSON shape.
+  */
+  it("preserves sidebar preview truncation, timestamps, and empty planner filtering", async () => {
+    const direct = makeSession({ id: "chat-direct", agentId: "agent-direct" });
+    const emptyPlanner = makeSession({ id: "chat-empty-planner" });
+    const timestamp = "2026-09-08T05:07:00.000Z";
+    const { app } = buildApp([direct, emptyPlanner], new Map([[direct.id, {
+      id: "last-direct", content: "x".repeat(101), createdAt: timestamp,
+    }]]));
+
+    const truncated = await request(app, "GET", `/api/chat/sessions?projectId=${PROJECT_ID}`);
+    expect(truncated.status).toBe(200);
+    expect(truncated.body.sessions).toHaveLength(1);
+    expect(truncated.body.sessions[0]).toMatchObject({
+      id: direct.id,
+      lastMessagePreview: "x".repeat(100) + "…",
+      lastMessageAt: timestamp,
+    });
+
+    const shortApp = buildApp([direct], new Map([[direct.id, {
+      id: "last-direct", content: "short preview", createdAt: timestamp,
+    }]])).app;
+    const verbatim = await request(shortApp, "GET", `/api/chat/sessions?projectId=${PROJECT_ID}`);
+    expect(verbatim.body.sessions[0]).toMatchObject({
+      lastMessagePreview: "short preview",
+      lastMessageAt: timestamp,
+    });
+  });
 
   it("looks up a prior task transcript without matching the current model", async () => {
     const prior = makeSession();

@@ -29,7 +29,7 @@ Key fields stored in the `tasks` table:
 | `id` | string | Task ID (e.g., FN-001) |
 | `title` | string? | Short title (optional, can be auto-generated) |
 | `description` | string | Full task description |
-| `column` | string | Current column: triage/todo/in-progress/in-review/done/archived |
+| `column` | string | Current workflow column; built-ins use triage/todo/in-progress/in-review/done |
 | `status` | string? | Sub-status: failed, paused, awaiting-approval |
 | `size` | string? | Size estimate: S, M, L |
 | `reviewLevel` | number? | Review intensity: 0-3 |

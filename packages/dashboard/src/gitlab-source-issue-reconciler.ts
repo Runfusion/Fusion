@@ -16,8 +16,8 @@ Two-stage on purpose: the CHEAP provider and closedAt tests run first and reject
 so the workflow read only happens for tasks that could actually be candidates. It also shares one IR
 cache across the scan, making it one read per distinct workflow rather than per task.
 
-`completeColumnsForTask`, not the landed set: this backfill's own note records that archived tasks
-live in archiveDb and are intentionally excluded, so it must not widen to the archived role.
+`completeColumnsForTask` is the sole terminal criterion. The live store scan excludes soft-deleted
+and historical-sentinel rows.
 */
 function isGitLabSourceCandidate(task: Task): boolean {
   return task.sourceIssue?.provider === "gitlab" && !task.sourceIssue.closedAt;
@@ -45,7 +45,7 @@ function normalizeProviderTimestamp(value: string | undefined): string | undefin
  * GitLab closed-at backfill is an explicit operator action for local analytics accuracy. It reads real GitLab issue/MR terminal timestamps only, skips already-filled rows, and never fabricates timestamps from local task state or provider `updated_at` values.
  *
  * FNXC:CommandCenterGitLab 2026-07-02-00:00:
- * Archived tasks live in archiveDb, so this active-task backfill intentionally excludes them instead of calling updateTask/logEntry on read-only archive rows.
+ * This active-task backfill excludes soft-deleted and historical-sentinel rows instead of mutating read-only history.
  */
 export class GitLabSourceIssueReconciler {
   async backfillSourceIssueClosedAt(

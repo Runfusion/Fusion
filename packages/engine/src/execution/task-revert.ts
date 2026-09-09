@@ -1,7 +1,7 @@
 /**
  * FNXC:TaskRevert 2026-07-04-00:00:
  * Intelligent git-revert service (FN-7523, foundation for FN-7501). Given a
- * done/archived task, this module:
+ * workflow Complete task, this module:
  *   1. Resolves the set of commits attributable to that task (squash / rebase
  *      / lineage-snapshot precedence — see `resolveTaskRevertCommits`).
  *   2. Performs a NON-committing dry-run revert to classify the outcome as
@@ -467,12 +467,12 @@ export type TaskRevertGranularity = "squash" | "per-sha";
 export interface PerformTaskRevertOptions {
   /*
   FNXC:WorkflowResolvedColumns 2026-07-30-17:20:
-  The task's resolved TERMINAL lanes, as membership. Optional: without it the legacy `done`/`archived`
-  pair answers, so any caller that cannot resolve a workflow is unchanged. The dashboard revert route
+  The task's resolved Complete lanes, as membership. Optional: without it the built-in `done`
+  built-in fallback answers, so any caller that cannot resolve a workflow is unchanged. The dashboard revert route
   already computes this via `resolveTerminalColumnsForTask` for its own gate and now passes the same set
   down, so the route and the service cannot disagree about which cards are revertable.
 
-  MEMBERSHIP, not a single id — a workflow may declare more than one complete or archived lane, and
+  MEMBERSHIP, not a single id — a workflow may declare more than one Complete lane, and
   first-per-role would refuse a revert on the second. That arity trap has now been hit three times in this
   program (routes review lane, the FN-7720 bypass guard, dependency satisfaction), so it is the default
   shape here rather than a later correction.
@@ -497,14 +497,14 @@ FNXC:WorkflowResolvedColumns 2026-07-30-17:20 (the two halves had drifted apart)
 This is the DEGRADED default now, not the answer. `POST /tasks/:id/revert` already gates on
 `resolveTerminalColumnsForTask(...)` — resolved membership over the task's own workflow — while this
 service kept the literal pair. On a board whose terminal lanes are renamed the two halves DISAGREED: the
-route admitted the request and the service then refused it with "only done/archived tasks are revertable",
+route admitted the request and the service then refused it as non-complete,
 so the operator got a dead end from an affordance the UI and the route both offered.
 
 Defence-in-depth is the point of having the check twice, but only if both halves answer the same question.
 Callers pass `revertableColumns`; without it the legacy pair keeps today's behaviour for any caller that
 cannot resolve a workflow.
 */
-const LEGACY_REVERTABLE_COLUMNS: ReadonlySet<string> = new Set(["done", "archived"]);
+const LEGACY_REVERTABLE_COLUMNS: ReadonlySet<string> = new Set(["done"]);
 
 /**
  * FNXC:TaskRevert 2026-07-04-00:00 (commit message/trailer contract):
@@ -517,8 +517,7 @@ const LEGACY_REVERTABLE_COLUMNS: ReadonlySet<string> = new Set(["done", "archive
  * AGENTS.md (task-id-prefixed subjects, `Fusion-Task-Id` trailer).
  *
  * FNXC:TaskRevert 2026-07-04-00:00 (guard rails):
- * - Only `done`/`archived` tasks may be reverted (checked here AND at the API
- *   route layer — defense in depth).
+ * - Only completed tasks may be reverted (checked here and at the API route layer).
  * - When `autoMerge` is effectively off for this task, this function refuses
  *   with a `needsHuman` result instead of force-writing a revert commit onto
  *   a branch the project has opted out of automated writes to.
@@ -1093,12 +1092,12 @@ export type WorkspaceTaskRevertResult =
 export interface RevertWorkspaceTaskOptions {
   /*
   FNXC:WorkflowResolvedColumns 2026-07-30-17:20:
-  The task's resolved TERMINAL lanes, as membership. Optional: without it the legacy `done`/`archived`
-  pair answers, so any caller that cannot resolve a workflow is unchanged. The dashboard revert route
+  The task's resolved Complete lanes, as membership. Optional: without it the built-in `done`
+  built-in fallback answers, so any caller that cannot resolve a workflow is unchanged. The dashboard revert route
   already computes this via `resolveTerminalColumnsForTask` for its own gate and now passes the same set
   down, so the route and the service cannot disagree about which cards are revertable.
 
-  MEMBERSHIP, not a single id — a workflow may declare more than one complete or archived lane, and
+  MEMBERSHIP, not a single id — a workflow may declare more than one Complete lane, and
   first-per-role would refuse a revert on the second. That arity trap has now been hit three times in this
   program (routes review lane, the FN-7720 bypass guard, dependency satisfaction), so it is the default
   shape here rather than a later correction.
@@ -1154,7 +1153,7 @@ interface WorkspaceRepoRevertContext {
  * sub-repo worktree is guaranteed byte-identical to its pre-call state on any
  * non-success path.
  *
- * GUARD RAILS (mirrors `performTaskRevert`): only done/archived tasks are
+ * GUARD RAILS (mirrors `performTaskRevert`): only workflow Complete tasks are
  * revertable; `autoMerge:false` refuses with `needsHuman` instead of forcing
  * a write; this function NEVER mutates the source task's store row/column.
  */
@@ -1643,12 +1642,12 @@ export async function prepareWorkspaceRevertPrBranches(
  * FNXC:TaskRevert 2026-07-04-00:00 (AI-undo marker contract):
  * `REVERT_OF_METADATA_KEY` is the idempotency key stamped onto an AI-undo
  * board task's `source.sourceMetadata`. The route's dedup guard
- * (`TaskStore.findOpenRevertTaskForSource`, core) scans OPEN (non
- * done/archived) tasks for `sourceMetadata.revertOf === sourceTaskId` before
+ * (`TaskStore.findOpenRevertTaskForSource`, core) scans tasks outside workflow Complete
+ * columns for `sourceMetadata.revertOf === sourceTaskId` before
  * creating a new one — a second `mode:"ai"`/conflict-fallback call for the
  * same source task while an undo task is still open MUST return the existing
  * task's id (`alreadyOpen: true`) instead of creating a duplicate. A prior
- * undo task that has itself reached `done`/`archived` does NOT suppress a
+ * undo task that has itself reached workflow Complete does NOT suppress a
  * fresh one — the work may need undoing again (e.g. redone, then relanded).
  * NEVER repurpose this key for another meaning.
  */
@@ -1709,7 +1708,7 @@ export function buildAiUndoTaskDescription(params: {
  * The AI-undo task is created via the store's normal `createTask` path
  * (lands in `triage`, gets its own generated PROMPT.md) with `dependencies: []`
  * — it must NEVER depend on the source task. The source task is already
- * done/archived; a dependency on it would be a permanently-satisfied no-op
+ * complete; a dependency on it would be a permanently-satisfied no-op
  * that misrepresents the relationship in dependency UIs.
  */
 export interface CreateAiUndoTaskDeps {

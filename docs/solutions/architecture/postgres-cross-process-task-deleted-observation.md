@@ -37,7 +37,7 @@ The mechanism must ultimately feed these existing bridge and listener surfaces:
 
 The delete writer owns the transactional soft-delete (`deletedAt`) and its one `task:deleted` run-audit row. After commit it also owns the best-effort operator mailbox side effect in `task-delete-notice.ts`. An observing process must **not** invoke either writer-owned operation again. Observers only update their local cache and deliver an explicitly observed lifecycle notification to safe consumers.
 
-`deletedAt` remains the deletion identity: a repeated delete of an already soft-deleted task creates no new lifecycle event. An archived task is a separate archive flow; its delete event retains the pre-delete task snapshot and does not turn an archive move into a second delete.
+`deletedAt` remains the deletion identity: a repeated delete of an already soft-deleted task creates no new lifecycle event. The row's `archived` column value is only a historical persistence sentinel; there is no separate live task-archive flow.
 
 ## Options considered
 

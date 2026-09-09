@@ -19,12 +19,13 @@ status, while retaining the execution checkout it will resume onto. Count that r
 consulting agent liveness so it cannot disappear from the host-resource gate; pause, failure, and
 terminal lifecycle state still release the slot.
 
-DELIBERATE-LITERAL — resolved lifecycle metadata wins when present. The legacy done, archived, and
-in-progress names are compatibility fallbacks for callers whose task shape predates those fields.
+DELIBERATE-LITERAL — resolved lifecycle metadata wins when present. The legacy `done` and
+`in-progress` names are compatibility fallbacks for callers whose task shape predates those fields;
+historical-sentinel rows are excluded from the live inventory before this predicate runs.
 */
 export function isWorktreeCapacityHolder(task: WorktreeCapacityTaskShape): boolean {
   const terminalKind = task.columnTerminalKind
-    ?? (task.column === "done" ? "complete" : task.column === "archived" ? "archived" : "none");
+    ?? (task.column === "done" ? "complete" : "none");
   if (terminalKind !== "none" || task.paused || task.userPaused || task.status === "failed") return false;
   if (taskHoldsUnmergedCheckout(task)) return true;
   if (!isRunningAgentTask(task)) return false;

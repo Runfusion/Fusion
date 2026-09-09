@@ -140,8 +140,6 @@ function createMockStore(): TaskStore {
     updateStep: vi.fn(),
     deleteTask: vi.fn(),
     mergeTask: vi.fn(),
-    archiveTask: vi.fn(),
-    unarchiveTask: vi.fn(),
     getSettings: vi.fn().mockResolvedValue({ defaultBranch: "main", autoMerge: false }),
     getSettingsFast: vi.fn().mockResolvedValue({ defaultBranch: "main", autoMerge: false }),
     updateSettings: vi.fn(),

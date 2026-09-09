@@ -183,22 +183,29 @@ describe("browser layout smoke fixture", () => {
     expect(html).toContain("pr-checks__details-link");
   });
 
-  it("includes Task Detail inline icon fixtures for all optional-control variants", () => {
+  it("includes Task Detail footer Actions menu fixtures for all optional-control variants", () => {
     const html = createSmokeHtml();
-    expect(html).toContain('data-smoke="task-detail-inline-row-fixtures"');
+    expect(html).toContain('data-smoke="task-detail-actions-menu-fixtures"');
     for (const variant of ["full", "without-github", "without-oversight", "without-optionals"]) {
-      expect(html).toContain(`data-smoke="task-detail-inline-row-${variant}"`);
+      expect(html).toContain(`data-smoke="task-detail-actions-menu-${variant}"`);
     }
     for (const testId of [
       "detail-inline-attach",
       "detail-inline-github-toggle",
-      "detail-oversight-menu-trigger",
-      "detail-priority-trigger",
+      "detail-actions-oversight-heading",
+      "detail-oversight-level-standard",
+      "detail-session-advisor-toggle",
+      "detail-actions-priority-heading",
+      "detail-priority-option-normal",
       "detail-execution-mode-toggle",
     ]) {
       expect(html).toContain(`data-testid="${testId}"`);
     }
-    expect(html).toContain('<span class="provider-icon"><svg width="16" height="16"');
+    expect(html).toContain('class="detail-actions-menu" role="menu"');
+    expect(html).toContain('class="detail-actions-menu-item detail-actions-menu-note"');
+    expect(html).not.toContain("detail-meta-inline-controls");
+    expect(html).not.toContain("detail-oversight-menu-trigger");
+    expect(html).not.toContain("detail-priority-trigger");
   });
 
   /*

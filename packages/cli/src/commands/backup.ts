@@ -132,7 +132,7 @@ export async function runBackupList(projectName?: string): Promise<void> {
       return;
     }
 
-    const totalSize = pairs.reduce((sum, pair) => sum + (pair.project?.size ?? 0) + (pair.central?.size ?? 0), 0);
+    const totalSize = pairs.reduce((sum, pair) => sum + (pair.project?.size ?? 0) + (pair.central?.size ?? 0) + (pair.migrations?.size ?? 0), 0);
     const formattedTotal = formatBytes(totalSize);
 
     console.log("Date                      Size      Filename");
@@ -141,12 +141,11 @@ export async function runBackupList(projectName?: string): Promise<void> {
     for (const pair of pairs) {
       if (pair.project) {
         const date = formatListDate(pair.project.createdAt);
-        const pairSize = formatBytes((pair.project?.size ?? 0) + (pair.central?.size ?? 0)).padEnd(10);
-        const noSibling = pair.central ? "" : "   (no central sibling)";
+        const pairSize = formatBytes((pair.project?.size ?? 0) + (pair.central?.size ?? 0) + (pair.migrations?.size ?? 0)).padEnd(10);
+        const noSibling = pair.central ? (pair.migrations ? "" : "   (migration bookkeeping unavailable)") : "   (no central sibling)";
         console.log(`${date}  ${pairSize}  ${pair.project.filename}${noSibling}`);
-        if (pair.central) {
-          console.log(`${" ".repeat(28)}${formatBytes(pair.central.size).padEnd(10)}  └─ ${pair.central.filename}`);
-        }
+        if (pair.central) console.log(`${" ".repeat(28)}${formatBytes(pair.central.size).padEnd(10)}  └─ ${pair.central.filename}`);
+        if (pair.migrations) console.log(`${" ".repeat(28)}${formatBytes(pair.migrations.size).padEnd(10)}  └─ ${pair.migrations.filename}`);
         continue;
       }
 
@@ -183,10 +182,8 @@ export async function runBackupRestore(filename: string, projectName?: string): 
     const { manager } = resolved;
 
     console.log(`Restoring PostgreSQL backup: ${filename}`);
-    console.log("A retained project/archive + central pre-restore dump pair will be created first.");
-    console.log(
-      "Warning: dump pairs cover only the project, archive, and central schemas. PostgreSQL migration bookkeeping in public is not restored; restoring data older than this binary's schema baseline can leave data and recorded migration state inconsistent until reviewed.\n",
-    );
+    console.log("A retained project/archive + central + migration-bookkeeping pre-restore stem will be created first.");
+    console.log("Migration bookkeeping is restored with project/archive data when the selected stem contains it; central-only and legacy restores leave it unchanged.\n");
 
     try {
       const result = await manager.restoreBackup(filename, { createPreRestoreBackup: true });
@@ -197,10 +194,10 @@ export async function runBackupRestore(filename: string, projectName?: string): 
       } else {
         console.log(`Successfully restored the project/archive schemas from ${filename}`);
       }
+      console.log(`Migration bookkeeping: ${result.migrationBookkeeping}.`);
       if (result.preRestoreBackup?.project && result.preRestoreBackup.central) {
-        console.log(
-          `Retained pre-restore dump pair: ${result.preRestoreBackup.project.filename} + ${result.preRestoreBackup.central.filename}`,
-        );
+        const migrations = result.preRestoreBackup.migrations ? ` + ${result.preRestoreBackup.migrations.filename}` : "";
+        console.log(`Retained pre-restore dumps: ${result.preRestoreBackup.project.filename} + ${result.preRestoreBackup.central.filename}${migrations}`);
       }
     } catch (err) {
       console.error(`Restore failed: ${(err as Error).message}`);

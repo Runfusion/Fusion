@@ -1195,7 +1195,6 @@
     "retrying": "重试中…"
   },
   "board": {
-    "archived": "已归档",
     "done": "完成",
     "inProgress": "进行中",
     "inReview": "审查中",
@@ -1435,7 +1434,11 @@
     "slashSuggestions": "斜杠建议",
     "loadingSlashSuggestions": "正在加载建议…",
     "snippetSuggestion": "插入已保存的提示词",
-    "snippetSuggestions": "片段建议"
+    "snippetSuggestions": "片段建议",
+    "conversationIdCopied": "",
+    "copyConversationId": "",
+    "questionOptionalLabel": "",
+    "questionSelectHintWithOptional": ""
   },
   "chatRooms": {
     "error": {
@@ -1512,21 +1515,9 @@
   "column": {
     "actionsAriaLabel": "{{columnLabel}} 列操作",
     "actionsTitle": "列操作",
-    "archiveAllDoneAriaLabel": "存档所有已完成的任务",
-    "archiveAllDoneTitle": "存档所有已完成的任务",
-    "archiveAllMessage_one": "",
-    "archiveAllMessage_other": "",
-    "archiveAllTitle": "全部存档已完成",
-    "archivedTasks_one": "",
-    "archivedTasks_other": "",
     "autoMerge": "自动合并",
     "autoMergeDisabled": "自动合并已禁用",
     "autoMergeEnabled": "自动合并已启用",
-    "collapseArchivedLabel": "折叠已存档的任务",
-    "collapseArchivedTitle": "折叠已存档的任务",
-    "expandArchivedLabel": "展开已存档的任务",
-    "expandArchivedTitle": "展开已存档的任务",
-    "failedToArchive": "存档任务失败",
     "keepProgress": "保留进度",
     "loadMore_one": "",
     "loadMore_other": "",
@@ -1560,7 +1551,8 @@
     "sortTaskIdDescHint": "",
     "replannedTasks_one": "Replanned {{count}} task{{plural}}",
     "replannedTasks_other": "Replanned {{count}} task{{plural}}",
-    "replanPartialFailure": "Replanned {{replanned}} of {{total}} tasks; {{failed}} failed"
+    "replanPartialFailure": "Replanned {{replanned}} of {{total}} tasks; {{failed}} failed",
+    "paginationError": "无法加载更早的任务。"
   },
   "commandCenter": {
     "activity": {
@@ -2120,7 +2112,20 @@
     "runLocalButton": "本地运行 Fusion",
     "settingUpRemote": "正在设置远程连接…",
     "starting": "正在启动…",
-    "startingLocalRuntime": "正在启动本地 Fusion 运行时…"
+    "startingLocalRuntime": "正在启动本地 Fusion 运行时…",
+    "copyStartupDetails": "",
+    "detailsCopied": "",
+    "localStartupUnknown": "",
+    "showStartupDetails": "",
+    "startupAttempts": "",
+    "startupLog": "",
+    "startupLogUnavailable": "",
+    "startupMessage": "",
+    "startupPhase": "",
+    "startupPlatform": "",
+    "startupStack": "",
+    "copyStartupDetailsUnavailable": "",
+    "startupDetailsText": ""
   },
   "devserver": {
     "allSeverities": "所有严重程度",
@@ -2574,7 +2579,10 @@
     "fileHeader": "文件",
     "fileMatches": "匹配的文件",
     "taskHeader": "任务",
-    "taskMatches": "匹配的任务"
+    "taskMatches": "匹配的任务",
+    "conversationHeader": "",
+    "conversationMatches": "",
+    "untitledConversation": ""
   },
   "git": {
     "addComment": "Add comment",
@@ -3123,7 +3131,11 @@
     "viewProjects": "查看项目",
     "viewUsage": "查看用量",
     "workflows": "工作流",
-    "workingBranch": "工作分支"
+    "workingBranch": "工作分支",
+    "unreadArtifacts_one": "",
+    "unreadArtifacts_other": "",
+    "unreadRecommendations_one": "",
+    "unreadRecommendations_other": ""
   },
   "health": {
     "activeTasks": "活动任务",
@@ -3336,26 +3348,11 @@
   "listView": {
     "apply": "应用",
     "applying": "应用中…",
-    "archiveSelected": "归档选中",
-    "archiveSelectedTitle": "归档选中的已完成任务",
-    "archiveUnavailable": "归档操作不可用",
-    "archiveViaButton": "任务只能通过归档按钮归档",
-    "bulkArchiveDone_one": "",
-    "bulkArchiveDone_other": "",
-    "bulkArchiveMessage_one": "",
-    "bulkArchiveMessage_other": "",
-    "bulkArchiveNoTasks": "没有可以归档的选中任务（只有已完成的任务）",
-    "bulkArchiveSummary": "已归档 {{archived}} · {{skipped}} 已跳过 · {{failed}} 失败",
-    "bulkArchiveTitle": "归档选中的任务",
     "bulkDeleteAll": "全部删除",
-    "bulkDeleteArchiveSummary": "已归档 {{archived}}，已删除 {{deleted}}，失败 {{failed}}",
     "bulkDeleteMessage_one": "",
     "bulkDeleteMessage_other": "",
-    "bulkDeleteNoTasks": "没有可删除的选中任务（已归档的任务除外）",
-    "bulkDeleteSummary_one": "已删除 {{count}} 个任务 · 跳过 {{skipped}} 个已归档 · {{failed}} 个失败",
     "bulkDeleteSummary_other": "已删除 {{count}} 个任务 · 跳过 {{skipped}} 个已归档 · {{failed}} 个失败",
     "bulkDeleteTitle": "删除选中的任务",
-    "bulkDeleteWithDoneMessage": "删除 {{deletable}} 个任务，或归档 {{done}} 个已完成任务并删除其余的？",
     "bulkEdit": "批量编辑",
     "bulkEditModelsLabel": "批量编辑模型和节点：",
     "bulkNoChanges": "没有可应用的更改",
@@ -3392,7 +3389,6 @@
     "hideDoneTitle": "隐藏已完成的任务",
     "keepProgress": "保留进度",
     "lastColumnWarning": "至少一列必须可见",
-    "lineageArchiveMessage": "{{taskId}} 有谱系子任务（{{children}}）引用它为源父级。\n\n要先取消这些引用后归档吗？",
     "lineageDeleteMessage": "{{taskId}} 有谱系子任务（{{children}}）引用它为源父级。\n\n要先取消这些引用后删除吗？",
     "listControlsLabel": "列表控件",
     "newTask": "+ 新建任务",
@@ -3444,7 +3440,8 @@
     "workflowLabel": "",
     "statusReplan": "重新规划",
     "statusWaiting": "",
-    "statusWaitingOn": ""
+    "statusWaitingOn": "",
+    "bulkDeleteSummary": ""
   },
   "mailbox": {
     "agent": "代理",
@@ -3562,7 +3559,9 @@
     "videoArtifactAria": "",
     "viewTask": "",
     "viewTaskAria": "",
-    "viewTaskLabel": ""
+    "viewTaskLabel": "",
+    "recommendationsUnavailableIdsReason": "",
+    "recommendationsUnavailableTaskReason": ""
   },
   "memory": {
     "auditChecksTitle": "审计检查",
@@ -4235,7 +4234,14 @@
     "todos": "待办",
     "usage": "用量",
     "workflows": "工作流",
-    "patchnode": ""
+    "patchnode": "",
+    "artifactsUnreadAriaLabel_one": "",
+    "artifactsUnreadAriaLabel_other": "",
+    "artifactsUnreadDotAriaLabel": "",
+    "recommendations": "",
+    "recommendationsUnreadAriaLabel_one": "",
+    "recommendationsUnreadAriaLabel_other": "",
+    "recommendationsUnreadDotAriaLabel": ""
   },
   "newTaskModal": {
     "addDependencies": "添加依赖项",
@@ -5390,7 +5396,6 @@
     "viewExpanded": "",
     "views": "",
     "resizeExpandedView": "",
-    "archivedCopy": "",
     "doneHiddenCopy": "",
     "emptyCopy": "",
     "hideDone": "",
@@ -5727,13 +5732,13 @@
     "confirmDelete": "确认删除",
     "confirmDeleteNamed": "确认删除 {{name}}",
     "deleteScriptNamed": "删除 {{name}}",
+    "description": "描述（可选）",
+    "descriptionPlaceholder": "此脚本用于做什么？",
     "editScriptNamed": "编辑 {{name}}",
     "failedToDelete": "无法删除脚本",
     "failedToLoadScripts": "加载脚本失败",
     "failedToSave": "无法保存脚本",
     "loadingScripts": "正在加载脚本...",
-    "nameErrorMsg": "名称只能包含字母、数字、连字符和下划线（不能有空格）",
-    "nameHint": "仅允许字母、数字、连字符和下划线",
     "noScriptsDefined": "未定义脚本",
     "noScriptsYet": "尚未定义脚本。",
     "runScript": "运行脚本",
@@ -6234,7 +6239,12 @@
       "noLimitOnAgentToolOutput": "",
       "noLimitOnAgentToolOutputHint": "",
       "quickAddSubmitOnEnter": "",
-      "quickAddSubmitOnEnterHint": ""
+      "quickAddSubmitOnEnterHint": "",
+      "chatSubmitOnEnter": "",
+      "chatSubmitOnEnterHint": "",
+      "chatSubmitOnEnterAuto": "",
+      "chatSubmitOnEnterAlways": "",
+      "chatSubmitOnEnterNever": ""
     },
     "globalModels": {
       "modelOverrides": "",
@@ -6916,10 +6926,6 @@
     },
     "scheduling": {
       "addIgnoredPath": "",
-      "archiveAgentLog": "",
-      "archiveCompletedTasksAfterDays": "",
-      "autoArchiveDuplicateTasks": "",
-      "autoArchiveDuplicateTasksHelp": "",
       "backlogNoTaskAutoClaimIsExecutorOnly": "",
       "browse": "",
       "closeParenPeriod": "",
@@ -6927,7 +6933,6 @@
       "compactSummaryAndRecentEntries": "",
       "completedTasksOlderThanTheThresholdAreMoved": "",
       "docs": "",
-      "doNotArchiveAgentLogs": "",
       "enableAutomaticTaskArchiving": "",
       "enablePlanStalenessEnforcement": "",
       "escalateHighFanOutBlockersOnlyAfterThey": "",
@@ -7640,7 +7645,14 @@
     "snippetsAdd": "添加片段",
     "snippetsEmpty": "尚未保存片段。",
     "snippetsEdit": "编辑 /{{name}}",
-    "snippetsDelete": "删除 /{{name}}"
+    "snippetsDelete": "删除 /{{name}}",
+    "tabSkills": "技能",
+    "tabSnippets": "片段",
+    "tabsLabel": "技能和片段分区",
+    "skillsDescription": "浏览、启用并安装此项目可用的技能。",
+    "snippetsEmptyHint": "在此创建一个片段，然后在任意聊天中输入 /名称 即可插入。",
+    "refreshSkillsLabel": "刷新技能",
+    "refreshSnippetsLabel": "刷新片段"
   },
   "specEditor": {
     "edit": "编辑",
@@ -7849,7 +7861,9 @@
   },
   "taskDetail": {
     "actions": {
-      "menuBtn": "操作"
+      "menuBtn": "操作",
+      "oversightHeading": "",
+      "priorityHeading": ""
     },
     "agent": {
       "assignBtn": "分配代理",
@@ -7919,9 +7933,6 @@
       "actionLeft": "保留了",
       "allowRecreation": "允许稍后重新创建（操作员解锁）",
       "allowRecreationDesc": "允许代理在没有 --force-resurrect 的情况下重新创建此任务 ID。取消选中以保持此任务的墓碑状态。",
-      "archivedAfterUnlink": "在取消世系引用关联后已归档 {{id}}",
-      "archiveInstead": "改为归档",
-      "archiveUnlinkPrompt": "先取消这些引用的关联后归档？",
       "ariaLabel": "删除任务",
       "btn": "删除",
       "closeIssue": "关闭 Issue",
@@ -8080,11 +8091,6 @@
     },
     "nearDuplicate": {
       "actions": "This task continues normally. Archive it if the work is already covered, or clear this flag once you have read it.",
-      "archiveBtn": "归档",
-      "archiveConfirm": "归档",
-      "archived": "已归档 {{id}}",
-      "archiveMessage": "将 {{id}} 作为 {{duplicateOf}} 的重复归档？",
-      "archiveTitle": "归档近似重复任务",
       "copy": "此任务看起来是以下任务的近似重复：",
       "headline": "检测到潜在重复",
       "deleteBtn": "删除",
@@ -8635,12 +8641,6 @@
     "agent": "智能体",
     "agentLabel": "智能体",
     "answerQuestions": "",
-    "archive": "归档",
-    "archived": "已归档 {{taskId}}",
-    "archivedUnlinked": "已解除谱系引用并归档 {{taskId}}",
-    "archiveFailed": "归档 {{taskId}} 失败：{{error}}",
-    "archiveLineageConflict": "{{taskId}} 有子项（{{children}}）将其引用为来源父项。\n\n仍要先解除这些引用并归档吗？",
-    "archiveTask": "归档任务",
     "assignedTo": "已分配给 {{name}}",
     "attach": "附件",
     "attachCount_one": "",
@@ -8822,10 +8822,6 @@
     "subtask": "子任务",
     "subtaskButtonTitle": "拆分为 AI 生成的子任务",
     "toggleFastMode": "切换快速执行模式",
-    "unarchive": "取消归档",
-    "unarchived": "已取消归档 {{taskId}}",
-    "unarchiveFailed": "取消归档 {{taskId}} 失败：{{error}}",
-    "unarchiveTask": "取消归档任务",
     "updated": "已更新 {{taskId}}",
     "updateFailed": "更新 {{taskId}} 失败：{{error}}",
     "uploadFailed": "上传失败：{{files}}",
@@ -9511,13 +9507,13 @@
     "widgetDefault": ""
   },
   "workflowSwitcher": {
-    "countsAria": "{{todoLabel}}: {{todo}}, {{inProgressLabel}}: {{inProgress}}, {{doneLabel}}: {{done}}{{mergingSuffix}}",
-    "done": "Done",
-    "inProgress": "In Progress",
+    "countsAria": "{{planLabel}}: {{plan}}, {{progressLabel}}: {{progress}}, {{reviewLabel}}: {{review}}{{mergingSuffix}}",
+    "plan": "计划",
+    "progress": "进行中",
     "label": "Workflow",
     "merging": "",
     "mergingTitle": "",
-    "todo": "Todo",
+    "review": "审核",
     "triggerAria": "Select workflow. Current workflow: {{name}}",
     "editWorkflow": "Edit workflow",
     "newWorkflow": "New workflow"
@@ -9838,5 +9834,23 @@
     "lines": "lines",
     "showLess": "Show less",
     "showMore": "Show more ({{count}} {{lineLabel}})"
+  },
+  "recommendations": {
+    "count": "",
+    "createError": "",
+    "createTask": "",
+    "created": "",
+    "creating": "",
+    "emptyDescription": "",
+    "emptyTitle": "",
+    "loadError": "",
+    "loadMore": "",
+    "loading": "",
+    "loadingMore": "",
+    "retryCreate": "",
+    "source": "",
+    "title": "",
+    "truncated": "",
+    "viewTask": ""
   }
 }

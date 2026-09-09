@@ -33,12 +33,11 @@ const SETUP_CHANNELS = ["stable", "beta", "nightly"] as const;
 /**
  * FNXC:PluginTaskStoreGate 2026-07-26-12:20:
  * Opt-in privilege declarations. Plugins receive a gated TaskStore by default:
- * destructive methods (deleteTask*, bypassFailedPreMergeReviewStep, archiveAllDone,
- * cleanupArchivedTasks) throw unless the manifest declares
+ * destructive methods (deleteTask*, bypassFailedPreMergeReviewStep) throw unless the manifest declares
  * `permissions: { destructiveTaskOps: true }`. See plugin-task-store-gate.ts.
  */
 export interface PluginPermissions {
-  /** Allow calling destructive TaskStore methods (delete/bypass/bulk-archive). */
+  /** Allow calling destructive TaskStore methods (delete/bypass). */
   destructiveTaskOps?: boolean;
 }
 
@@ -772,8 +771,7 @@ export interface PluginWorkflowStepContribution {
  *
  * Restricted (built-in-only) capabilities a plugin trait may NOT declare (R22,
  * KTD-2/KTD-7), rejected at validation:
- *   - the `complete` / `archived` flags (silently satisfying dependencies /
- *     hiding cards is a scheduling-poison surface);
+ *   - the `complete` flag (silently satisfying dependencies is a scheduling-poison surface);
  *   - a sync `guard` hook (sync guards run in-lock and must be fast/pure — a
  *     plugin hook there could wedge the task lock).
  *
@@ -799,7 +797,7 @@ export interface PluginTraitHookDescriptor {
 
 /**
  * The declarative flag subset a plugin trait may declare. Restricted flags
- * (`complete`, `archived`) are intentionally absent from this type AND rejected
+ * (`complete`) is intentionally absent from this type AND rejected
  * at validation — declaring them is a contribution error, not silently ignored.
  */
 export interface PluginTraitFlags {
@@ -852,7 +850,7 @@ export interface PluginTraitContribution {
 }
 
 /** The restricted flag keys a plugin trait may not declare (R22, KTD-7). */
-export const PLUGIN_TRAIT_RESTRICTED_FLAGS = ["complete", "archived"] as const;
+export const PLUGIN_TRAIT_RESTRICTED_FLAGS = ["complete"] as const;
 
 /** The async-only hook points a plugin trait may declare (R22). The sync
  *  `guard` hook point is built-in-only and rejected at validation. */
@@ -906,7 +904,7 @@ export function validatePluginTraitContribution(
     );
   }
 
-  // Restricted flags (R22): a plugin trait must not declare complete/archived.
+  // Restricted flags (R22): a plugin trait must not declare complete.
   if (t.flags !== undefined) {
     if (typeof t.flags !== "object" || t.flags === null || Array.isArray(t.flags)) {
       errors.push(`${prefix}.flags must be an object`);

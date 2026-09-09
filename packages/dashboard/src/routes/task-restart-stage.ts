@@ -9,7 +9,7 @@ import {
   type Task,
   type TaskStore,
 } from "@fusion/core";
-import { isMergeActiveStatus, isStaleMergeActiveStatus, resolveColumnResumeNode } from "@fusion/engine";
+import { isMergeActiveStatus, isStaleMergeActiveStatus, optionalStepRevisionResetOutcome, resolveColumnResumeNode } from "@fusion/engine";
 import { badRequest, conflict, notFound } from "../api-error.js";
 
 interface RestartTaskStageEngine {
@@ -209,6 +209,21 @@ export async function restartTaskStage(deps: RestartTaskStageDeps): Promise<Rest
       fenced = false;
       const preservedWorkspaceRepositoryRecords = Object.keys(task.workspaceWorktrees ?? {}).length;
       await store.logEntry(taskId, `Retry requested from dashboard (${plan.scope} restart in ${task.column}, discarded ${plan.discardedWorkflowStepIds.length} workflow step result(s), preserved ${preservedWorkspaceRepositoryRecords} workspace repository record(s), re-entering at ${plan.entryNodeId})`);
+      /*
+      FNXC:WorkflowRevisionBudget 2026-09-05-23:30:
+      FN-1711: an explicit operator restart opens a NEW review episode, so the discarded gates start
+      with a fresh revision budget. The budget is derived from the append-only task log, which the
+      restart cannot rewrite; it appends a reset marker per discarded gate instead. Without it the
+      restart re-ran the review at full model cost and the remediation was refused for a budget the
+      previous episode had already spent — the card could never converge.
+      */
+      for (const workflowStepId of plan.discardedWorkflowStepIds) {
+        await store.logEntry(
+          taskId,
+          `Revision budget reset for '${workflowStepId}' by operator retry`,
+          optionalStepRevisionResetOutcome(workflowStepId),
+        ).catch(() => undefined);
+      }
       const updated = await store.getTask(taskId);
       if (!updated) throw notFound(`Task ${taskId} not found after retry`);
       return updated;

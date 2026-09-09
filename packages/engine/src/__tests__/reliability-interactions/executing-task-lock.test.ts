@@ -52,6 +52,139 @@ describe("FN-4811 follow-up (FN-4809): process-wide executingTaskLock", () => {
     executingTaskLock._clearForTest();
   });
 
+  it("fences a stale owner from releasing or mutating a successor", async () => {
+    const first = executingTaskLock.claim("FN-312");
+    expect(first).not.toBeNull();
+    if (!first) throw new Error("first lease missing");
+
+    expect(await executingTaskLock.invalidate(first)).toMatchObject({ executed: true });
+    const second = executingTaskLock.claim("FN-312");
+    expect(second).not.toBeNull();
+    if (!second) throw new Error("second lease missing");
+
+    executingTaskLock.release("FN-312", first);
+    expect(executingTaskLock.owns(second)).toBe(true);
+    const staleMutation = vi.fn();
+    expect(await executingTaskLock.runIfOwner(first, staleMutation)).toEqual({ executed: false });
+    expect(staleMutation).not.toHaveBeenCalled();
+
+    executingTaskLock.release("FN-312", second);
+    expect(executingTaskLock.has("FN-312")).toBe(false);
+  });
+
+  it("serializes mutation settlement with forced invalidation", async () => {
+    const lease = executingTaskLock.claim("FN-312");
+    if (!lease) throw new Error("lease missing");
+    let settleMutation!: () => void;
+    const mutationGate = new Promise<void>((resolve) => { settleMutation = resolve; });
+    const order: string[] = [];
+
+    const mutation = executingTaskLock.runIfOwner(lease, async () => {
+      order.push("mutation-entered");
+      await mutationGate;
+      order.push("mutation-settled");
+    });
+    await vi.waitFor(() => expect(order).toEqual(["mutation-entered"]));
+
+    const invalidation = executingTaskLock.invalidate(lease).then((result) => {
+      order.push("invalidated");
+      return result;
+    });
+    await Promise.resolve();
+    expect(order).toEqual(["mutation-entered"]);
+    expect(executingTaskLock.claim("FN-312")).toBeNull();
+
+    settleMutation();
+    expect(await mutation).toMatchObject({ executed: true });
+    expect(await invalidation).toMatchObject({ executed: true });
+    expect(order).toEqual(["mutation-entered", "mutation-settled", "invalidated"]);
+
+    const successor = executingTaskLock.claim("FN-312");
+    expect(successor).not.toBeNull();
+    if (successor) executingTaskLock.release("FN-312", successor);
+  });
+
+  it("publishes forced invalidation when its callback rejects", async () => {
+    const lease = executingTaskLock.claim("FN-312-REJECTED-INVALIDATION");
+    if (!lease) throw new Error("lease missing");
+
+    await expect(executingTaskLock.invalidateWithSignal(
+      lease,
+      () => "signaled",
+      async () => { throw new Error("auxiliary publication failed"); },
+    )).rejects.toThrow("auxiliary publication failed");
+
+    expect(executingTaskLock.owns(lease)).toBe(false);
+    const successor = executingTaskLock.claim("FN-312-REJECTED-INVALIDATION");
+    expect(successor).not.toBeNull();
+    if (successor) executingTaskLock.release(successor.taskId, successor);
+  });
+
+  it("does not signal through a timer lease after a successor owns the task", async () => {
+    const taskId = "FN-312-STALE-TIMER";
+    const oldLease = executingTaskLock.claim(taskId);
+    if (!oldLease) throw new Error("old lease missing");
+    expect(await executingTaskLock.invalidate(oldLease)).toMatchObject({ executed: true });
+    const successorLease = executingTaskLock.claim(taskId);
+    if (!successorLease) throw new Error("successor lease missing");
+    const signal = vi.fn(() => "abort-successor");
+    const settle = vi.fn(async () => undefined);
+
+    await expect(executingTaskLock.invalidateWithSignal(oldLease, signal, settle)).resolves.toEqual({
+      executed: false,
+    });
+
+    expect(signal).not.toHaveBeenCalled();
+    expect(settle).not.toHaveBeenCalled();
+    expect(executingTaskLock.owns(successorLease)).toBe(true);
+    executingTaskLock.release(taskId, successorLease);
+  });
+
+  it("reserves forced invalidation before signaling and waits for an entered mutation", async () => {
+    const lease = executingTaskLock.claim("FN-312-SIGNAL");
+    if (!lease) throw new Error("lease missing");
+    let settleMutation!: () => void;
+    const mutationGate = new Promise<void>((resolve) => { settleMutation = resolve; });
+    const order: string[] = [];
+
+    const mutation = executingTaskLock.runIfOwner(lease, async () => {
+      order.push("mutation-entered");
+      await mutationGate;
+      order.push("mutation-settled");
+    });
+    await vi.waitFor(() => expect(order).toEqual(["mutation-entered"]));
+
+    const invalidation = executingTaskLock.invalidateWithSignal(
+      lease,
+      () => {
+        order.push("abort-signaled");
+        return Promise.resolve();
+      },
+      async (abortSettlement) => {
+        order.push("invalidation-entered");
+        await abortSettlement;
+        order.push("abort-settled");
+      },
+    );
+
+    expect(order).toEqual(["mutation-entered", "abort-signaled"]);
+    expect(executingTaskLock.claim("FN-312-SIGNAL")).toBeNull();
+    settleMutation();
+    expect(await mutation).toMatchObject({ executed: true });
+    expect(await invalidation).toMatchObject({ executed: true });
+    expect(order).toEqual([
+      "mutation-entered",
+      "abort-signaled",
+      "mutation-settled",
+      "invalidation-entered",
+      "abort-settled",
+    ]);
+
+    const successor = executingTaskLock.claim("FN-312-SIGNAL");
+    expect(successor).not.toBeNull();
+    if (successor) executingTaskLock.release("FN-312-SIGNAL", successor);
+  });
+
   it("two TaskExecutor instances racing execute() for the same task produce only one run", async () => {
     // Two stores, two executors — simulates engine restart race, multi-project
     // hybrid runtime, or any code path that creates a second TaskExecutor.

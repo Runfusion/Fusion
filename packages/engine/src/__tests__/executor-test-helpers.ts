@@ -1,6 +1,6 @@
 import { vi } from "vitest";
 import type { Mock } from "vitest";
-import type { Task } from "@fusion/core";
+import { DEFAULT_MAX_POST_REVIEW_FIXES, type Task } from "@fusion/core";
 import { installTaskWorktreeIdentityGuard } from "../worktree/worktree-hooks.js";
 import type * as ReviewerModule from "../execution/reviewer.js";
 
@@ -538,6 +538,16 @@ const withLegacyWorkflowFeatureDefaults = (settings: Record<string, unknown>) =>
   },
 });
 
+const LEGACY_MOCK_SETTINGS_DEFAULTS = {
+  maxConcurrent: 2,
+  maxWorktrees: 4,
+  pollIntervalMs: 15000,
+  groupOverlappingFiles: false,
+  autoMerge: false,
+  maxPostReviewFixes: DEFAULT_MAX_POST_REVIEW_FIXES,
+  worktreeInitCommand: undefined,
+};
+
 const createLegacySettingsMock = (initialSettings: Record<string, unknown>) => {
   const mock = vi.fn().mockResolvedValue(withLegacyWorkflowFeatureDefaults(initialSettings));
   const mockResolvedValue = mock.mockResolvedValue.bind(mock);
@@ -545,6 +555,19 @@ const createLegacySettingsMock = (initialSettings: Record<string, unknown>) => {
     mockResolvedValue(withLegacyWorkflowFeatureDefaults(settings))) as typeof mock.mockResolvedValue;
   return mock;
 };
+
+/*
+FNXC:EngineTests 2026-09-09-07:19:
+The legacy mockResolvedValue override intentionally replaces its settings object because existing
+callers use minimal settings fixtures to model incomplete configuration. Tests that need one setting
+while retaining the standard executor defaults must opt into this overlay helper instead.
+*/
+export function setMockSettings(
+  store: { getSettings: ReturnType<typeof createLegacySettingsMock> },
+  patch: Record<string, unknown>,
+): void {
+  store.getSettings.mockResolvedValue({ ...LEGACY_MOCK_SETTINGS_DEFAULTS, ...patch });
+}
 
 export function createMockStore() {
   const listeners = new Map<string, EventListener[]>();
@@ -778,14 +801,7 @@ export function createMockStore() {
     parseStepsFromPrompt: vi.fn().mockResolvedValue([]),
     parseFileScopeFromPrompt: vi.fn().mockResolvedValue([]),
     updateSettings: vi.fn().mockResolvedValue({}),
-    getSettings: createLegacySettingsMock({
-      maxConcurrent: 2,
-      maxWorktrees: 4,
-      pollIntervalMs: 15000,
-      groupOverlappingFiles: false,
-      autoMerge: false,
-      worktreeInitCommand: undefined,
-    }),
+    getSettings: createLegacySettingsMock(LEGACY_MOCK_SETTINGS_DEFAULTS),
     /*
     FNXC:EngineTests 2026-07-19-14:20 (U10b):
     Write-through step state, for the same reason `updateTask` became write-through (U5g).

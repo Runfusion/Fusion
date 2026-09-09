@@ -75,33 +75,19 @@ describe("U12: column ids stay open across operator surfaces", () => {
   });
 });
 
-describe("U12: GitHub issue state keys on complete/archived traits", () => {
-  /** Classify by TRAIT, the way the re-keyed caller does, rather than by literal id. */
+describe("U12: GitHub issue state keys on the complete trait", () => {
   const classifyByTrait = (ir: WorkflowIr) => {
     const complete = new Set(columnsWithFlag(ir, "complete"));
-    const archived = new Set(columnsWithFlag(ir, "archived"));
-    return (columnId: string) => ({ complete: complete.has(columnId), archived: archived.has(columnId) });
+    return (columnId: string) => ({ complete: complete.has(columnId) });
   };
 
-  it("closes the issue when a card reaches a workflow's own complete column", () => {
-    const classify = classifyByTrait(BENCHMARK_IR);
-    // The benchmark's complete column happens to be `done`, but the decision is trait-driven:
-    expect(decideIssueAction("merging", "done", classify)).toEqual({
-      action: "close",
-      stateReason: "completed",
-    });
-    // A move between non-terminal columns is not a GitHub event at all.
-    expect(decideIssueAction("in-review", "merging", classify)).toBeNull();
-  });
-
-  it("closes on a RENAMED complete column, which the literal mapping missed entirely", () => {
+  it("closes on a renamed complete column and reopens when leaving it", () => {
     const renamed = parseWorkflowIr({
       version: "v2",
       name: "renamed-terminal",
       columns: [
         { id: "building", name: "Building", traits: [{ trait: "wip" }] },
         { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
-        { id: "dropped", name: "Dropped", traits: [{ trait: "archived" }] },
       ],
       nodes: [
         { id: "start", kind: "start", column: "building" },
@@ -111,46 +97,17 @@ describe("U12: GitHub issue state keys on complete/archived traits", () => {
     } as never) as WorkflowIr;
     const classify = classifyByTrait(renamed);
 
-    expect(decideIssueAction("building", "shipped", classify)).toEqual({
-      action: "close",
-      stateReason: "completed",
-    });
-    expect(decideIssueAction("building", "dropped", classify)).toEqual({
-      action: "close",
-      stateReason: "not_planned",
-    });
-    expect(decideIssueAction("shipped", "building", classify)).toEqual({
-      action: "reopen",
-      stateReason: "reopened",
-    });
-    expect(decideIssueAction("dropped", "shipped", classify)).toEqual({
-      action: "reopen",
-      stateReason: "reopened",
-    });
-
-    // The regression this replaces: with the legacy literal classifier, none of it fires.
+    expect(decideIssueAction("building", "shipped", classify)).toEqual({ action: "close", stateReason: "completed" });
+    expect(decideIssueAction("shipped", "building", classify)).toEqual({ action: "reopen", stateReason: "reopened" });
     expect(decideIssueAction("building", "shipped", legacyColumnLifecycleClass)).toBeNull();
   });
 
-  it("keeps the default workflow byte-identical under the default classifier", () => {
+  it("keeps the default complete mapping", () => {
     expect(decideIssueAction("in-review", "done")).toEqual({ action: "close", stateReason: "completed" });
-    expect(decideIssueAction("done", "archived")).toEqual({ action: "close", stateReason: "completed" });
-    expect(decideIssueAction("todo", "archived")).toEqual({ action: "close", stateReason: "not_planned" });
-    expect(decideIssueAction("archived", "done")).toEqual({ action: "reopen", stateReason: "reopened" });
     expect(decideIssueAction("done", "todo")).toEqual({ action: "reopen", stateReason: "reopened" });
-    expect(decideIssueAction("todo", "in-progress")).toBeNull();
-    expect(decideIssueAction("archived", "archived")).toBeNull();
   });
 });
 
-/*
-FNXC:WorkflowColumns 2026-07-19-2c:20 (U12 / R11 first half):
-EDITOR BUILDABILITY. R11 asks that the 6-column benchmark be constructible in the workflow editor,
-not merely hand-written as a test fixture. The editor's save path validates through
-`parseWorkflowIr` (via `validateWorkflowIrDryRun`), so parsing the benchmark IR and getting back a
-usable v2 graph IS the buildability claim — and because U11's runner drives this exact object, the
-saved artifact is provably byte-usable by the runtime.
-*/
 describe("U12: the 6-column benchmark is editor-buildable (R11)", () => {
   it("passes save validation and round-trips its columns, traits, nodes and caps", () => {
     const parsed = parseWorkflowIr(BENCHMARK_IR as never) as WorkflowIr & {

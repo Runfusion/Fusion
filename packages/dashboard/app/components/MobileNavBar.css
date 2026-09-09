@@ -422,6 +422,33 @@ rather than the full-width row.
   padding-left: 28px;
 }
 
+.mobile-more-script-info {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-xs);
+}
+
+.mobile-more-script-name,
+.mobile-more-script-description {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-more-script-name {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.mobile-more-script-description {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
 .mobile-more-submenu-loading {
   display: flex;
   align-items: center;

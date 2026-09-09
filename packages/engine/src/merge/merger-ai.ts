@@ -1353,15 +1353,12 @@ export async function landOneRepo(
 /*
 FNXC:WorkflowLifecycleColumns 2026-07-27-23:50 (Phase B / U5):
 Legacy ids for the roles this module decides by: the builtin coding workflow's
-`complete`/`archived` terminal pair and its `hold` rebound column. Used only
+Complete terminal role and its Hold rebound column. Used only
 when the task's workflow resolves to no column vocabulary, where preserving
 today's behavior exactly beats guessing.
 */
 const LEGACY_COMPLETE_COLUMN = "done";
-const LEGACY_ARCHIVED_COLUMN = "archived";
-/* The pair, for the no-vocabulary-at-all case. Derived from the per-role ids so
-   the set and the individual fallbacks cannot drift apart. */
-const LEGACY_TERMINAL_COLUMNS: readonly string[] = [LEGACY_COMPLETE_COLUMN, LEGACY_ARCHIVED_COLUMN];
+const LEGACY_TERMINAL_COLUMNS: readonly string[] = [LEGACY_COMPLETE_COLUMN];
 const LEGACY_REBOUND_COLUMN = "todo";
 
 /*

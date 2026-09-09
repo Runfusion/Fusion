@@ -176,7 +176,7 @@ describe("sweepAutostashOrphans", () => {
     expect(stashList(dir)).toBe("");
   });
 
-  it("preserves closed-task archived orphan when stash still differs", async () => {
+  it("preserves a historical-sentinel orphan when its stash still differs", async () => {
     const sha = createAutostash(dir, "FN-1002", "archived-content\n");
 
     await sweepAutostashOrphans(dir, "FN-MERGE", makeStore({ "FN-1002": "archived" }));

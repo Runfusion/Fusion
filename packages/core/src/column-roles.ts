@@ -16,8 +16,6 @@ SEMANTICS ARE MIRRORED, NOT INVENTED. The three distinctions below are the ones 
 for the dashboard-side set, restated here deliberately so the two cannot answer the same question
 differently:
 
-  - `isCompleteColumnRole` does NOT count `archived`. An archived card is finished but not
-    *completed*; a throughput surface counting both double-counts it.
   - `isWipColumnRole` keys on `countsTowardWip` — the same flag capacity arithmetic uses, so a board
     cannot have a column that counts toward WIP for capacity but not for this predicate.
   - `isReviewColumnRole` accepts `mergeBlocker` OR `humanReview`. They are separable traits, but
@@ -44,12 +42,11 @@ const LEGACY_HOLD_COLUMN_ID = "todo";
 const LEGACY_WIP_COLUMN_ID = "in-progress";
 const LEGACY_REVIEW_COLUMN_ID = "in-review";
 const LEGACY_COMPLETE_COLUMN_ID = "done";
-const LEGACY_ARCHIVED_COLUMN_ID = "archived";
 
 /** The subset of resolved trait flags these role questions read. */
 export type ColumnRoleTraitFlags = Pick<
   TraitFlags,
-  "intake" | "hold" | "countsTowardWip" | "mergeBlocker" | "humanReview" | "complete" | "archived"
+  "intake" | "hold" | "countsTowardWip" | "mergeBlocker" | "humanReview" | "complete"
 >;
 
 /** Does this column play the INTAKE role — the lane a card enters before implementation? */
@@ -100,24 +97,16 @@ export function isReviewColumnRole(flags: ColumnRoleTraitFlags | undefined, colu
 /**
  * Is this a terminal-SUCCESS column — work completed, dependencies satisfied?
  *
- * Excludes archived: see the header note. Use `isTerminalColumnRole` for "finished either way".
+ * Deleted/historical rows are classified outside workflow role metadata.
  */
 export function isCompleteColumnRole(flags: ColumnRoleTraitFlags | undefined, columnId: string): boolean {
   return flags ? flags.complete === true : columnId === LEGACY_COMPLETE_COLUMN_ID;
 }
 
-/** Is this column ARCHIVED — globally hidden and out of the lifecycle? */
-export function isArchivedColumnRole(flags: ColumnRoleTraitFlags | undefined, columnId: string): boolean {
-  return flags ? flags.archived === true : columnId === LEGACY_ARCHIVED_COLUMN_ID;
-}
-
 /**
- * Is a card here FINISHED either way — completed or archived?
- *
- * Exists because the pattern `column !== "done" && column !== "archived"` is the single most
- * repeated shape in the backlog (e.g. `task-merge.ts` dependency/blocker checks). Naming the union
- * keeps callers from re-deriving it and from accidentally dropping one half.
+ * Is a card here finished successfully? Task archiving no longer exists, so terminal and complete
+ * are the same lifecycle role.
  */
 export function isTerminalColumnRole(flags: ColumnRoleTraitFlags | undefined, columnId: string): boolean {
-  return isCompleteColumnRole(flags, columnId) || isArchivedColumnRole(flags, columnId);
+  return isCompleteColumnRole(flags, columnId);
 }

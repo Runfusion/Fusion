@@ -34,7 +34,7 @@ interface DropdownPosition {
   maxHeight: number;
 }
 
-const ZERO_COUNTS: WorkflowStatusCounts = { todo: 0, inProgress: 0, done: 0, merging: 0 };
+const ZERO_COUNTS: WorkflowStatusCounts = { plan: 0, progress: 0, review: 0, merging: 0 };
 const DEFAULT_MENU_HORIZONTAL_PADDING = 16;
 const DEFAULT_MENU_MIN_WIDTH = 240;
 
@@ -76,12 +76,12 @@ function getWorkflowIconValue(workflow: WorkflowSwitcherAggregateOption | BoardW
 
 /**
  * FNXC:WorkflowSwitcher 2026-06-20-00:09:
- * The board/list workflow switcher must be a fully rendered themed dropdown rather than a native select so each workflow option can include compact inline Todo, In Progress, and Done counts.
+ * The board/list workflow switcher must be a fully rendered themed dropdown rather than a native select so each workflow option can include compact inline Plan, Progress, and Review counts.
  * The component owns only presentation and accessible dropdown behavior; all status-bucket semantics stay in computeWorkflowStatusCounts so Board and ListView cannot drift.
  *
  * FNXC:WorkflowSwitcher 2026-06-20-00:31:
  * Counts are contextual detail, so the collapsed trigger must stay visually and accessibly scoped to the active workflow name plus chevron.
- * Render Todo, In Progress, and Done counts only while the dropdown is expanded; option rows keep their count text because the listbox is the comparison surface.
+ * Render Plan, Progress, and Review counts only while the dropdown is expanded; option rows keep their count text because the listbox is the comparison surface.
  *
  * FNXC:WorkflowSwitcher 2026-06-20-15:34:
  * Workflow edit and creation affordances moved into the shared dropdown so Board and ListView cannot leave separate toolbar icon shells behind.
@@ -94,9 +94,9 @@ function getWorkflowIconValue(workflow: WorkflowSwitcherAggregateOption | BoardW
 export function WorkflowSwitcher({ workflows, value, onChange, counts, aggregateOption, onOpen, label: labelProp, onEditWorkflow, onCreateWorkflow }: WorkflowSwitcherProps) {
   const { t } = useTranslation("app");
   const label = labelProp ?? t("workflowSwitcher.label", "Workflow");
-  const todoLabel = t("workflowSwitcher.todo", "Todo");
-  const inProgressLabel = t("workflowSwitcher.inProgress", "In Progress");
-  const doneLabel = t("workflowSwitcher.done", "Done");
+  const planLabel = t("workflowSwitcher.plan", "Plan");
+  const progressLabel = t("workflowSwitcher.progress", "Progress");
+  const reviewLabel = t("workflowSwitcher.review", "Review");
   const mergingLabel = t("workflowSwitcher.merging", "Merging");
   const editWorkflowLabel = t("workflowSwitcher.editWorkflow", "Edit workflow");
   const newWorkflowLabel = t("workflowSwitcher.newWorkflow", "New workflow");
@@ -297,23 +297,23 @@ export function WorkflowSwitcher({ workflows, value, onChange, counts, aggregate
           title={t("workflowSwitcher.mergingTitle", "{{count}} merging", { count: workflowCounts.merging })}
         />
       ) : null}
-      <span className="workflow-switcher-count workflow-switcher-count--todo" title={`${todoLabel}: ${workflowCounts.todo}`}>{workflowCounts.todo}</span>
+      <span className="workflow-switcher-count workflow-switcher-count--plan" title={`${planLabel}: ${workflowCounts.plan}`}>{workflowCounts.plan}</span>
       <span className="workflow-switcher-count-separator">·</span>
-      <span className="workflow-switcher-count workflow-switcher-count--in-progress" title={`${inProgressLabel}: ${workflowCounts.inProgress}`}>{workflowCounts.inProgress}</span>
+      <span className="workflow-switcher-count workflow-switcher-count--progress" title={`${progressLabel}: ${workflowCounts.progress}`}>{workflowCounts.progress}</span>
       <span className="workflow-switcher-count-separator">·</span>
-      <span className="workflow-switcher-count workflow-switcher-count--done" title={`${doneLabel}: ${workflowCounts.done}`}>{workflowCounts.done}</span>
+      <span className="workflow-switcher-count workflow-switcher-count--review" title={`${reviewLabel}: ${workflowCounts.review}`}>{workflowCounts.review}</span>
     </span>
   );
 
   const renderAccessibleCounts = (workflowCounts: WorkflowStatusCounts) => (
     <span className="visually-hidden">
-      {t("workflowSwitcher.countsAria", "{{todoLabel}}: {{todo}}, {{inProgressLabel}}: {{inProgress}}, {{doneLabel}}: {{done}}{{mergingSuffix}}", {
-        todoLabel,
-        todo: workflowCounts.todo,
-        inProgressLabel,
-        inProgress: workflowCounts.inProgress,
-        doneLabel,
-        done: workflowCounts.done,
+      {t("workflowSwitcher.countsAria", "{{planLabel}}: {{plan}}, {{progressLabel}}: {{progress}}, {{reviewLabel}}: {{review}}{{mergingSuffix}}", {
+        planLabel,
+        plan: workflowCounts.plan,
+        progressLabel,
+        progress: workflowCounts.progress,
+        reviewLabel,
+        review: workflowCounts.review,
         mergingSuffix: workflowCounts.merging > 0 ? `, ${mergingLabel}: ${workflowCounts.merging}` : "",
       })}
     </span>

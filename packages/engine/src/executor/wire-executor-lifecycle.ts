@@ -2,7 +2,7 @@
  * FNXC:CodeOrganization 2026-08-03-22:40:
  * TaskExecutor constructor lifecycle wiring peeled from executor.ts (U4).
  *
- * Registers task-move/archive disposers and task:moved / task:deleted /
+ * Registers the task-move disposer and task:moved / task:deleted /
  * task:updated / settings:updated listeners. Free function so the class
  * constructor stays a thin wire-up of deps.
  *
@@ -13,20 +13,13 @@
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type { Task, TaskStore, TaskMoveLanes, RunMutationContext } from "@fusion/core";
 import {
-  canonicalizeWorktreePath,
-  registerArchiveWorkspaceWorktreeDisposer,
-  registerArchiveWorktreeDisposer,
   registerTaskMoveDisposer,
   resolveEffectiveAgent,
 } from "@fusion/core";
-import { RemovalReason, removeWorktree } from "../worktree/worktree-pool.js";
 import { activeSessionRegistry } from "../agents/active-session-registry.js";
 import { resolveExecutorSessionModel } from "../agents/agent-session-helpers.js";
 import { executorLog } from "../logger.js";
 import { mergeEffectiveSettings } from "../project/effective-settings.js";
-import { resolveExternalExecutionCheckoutRoute } from "../execution/external-execution-checkout.js";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import type { TaskExecutorOptions, ActiveExecutorSessionState } from "./task-executor-options.js";
 import type { PausedAbortProvenance } from "./paused-abort-provenance.js";
 import type { StepSessionExecutor } from "../execution/step-session-executor.js";
@@ -36,8 +29,6 @@ import { detectReviewHandoffIntent } from "./pseudo-pause.js";
 import { createSeenSteeringIds } from "./task-predicates.js";
 import { facadeFields, facadeMethods } from "./facade-methods.js";
 import { WorkflowAgentCapacity } from "../agents/workflow-agent-capacity.js";
-
-const execFileAsync = promisify(execFile);
 
 /**
  * FNXC:WorkspaceWorktree 2026-08-23-06:25:
@@ -75,7 +66,7 @@ const WIRE_LIFECYCLE_METHODS = [
   "dispatchUnpauseResume", "disposeSubagentsForTask", "execute", "executeReviewHandoff",
   "getAssignedAgentRuntimeConfig", "getModelRegistry", "getRunContextFor",
   "isBackwardMoveOutOfPlanning", "markPausedAborted", "releasePreExecutionWorktree",
-  "removeOwnWorktreeWithReconcile", "resetMergeStateIfNeeded", "resolveResumeLanes",
+  "resetMergeStateIfNeeded", "resolveResumeLanes",
   "terminateAllChildren", "trackTaskDisposal",
 ] as const;
 
@@ -129,8 +120,6 @@ export type WireExecutorLifecycleDeps = {
   markPausedAborted: (taskId: string, provenance?: PausedAbortProvenance, source?: string) => void;
    
   releasePreExecutionWorktree: (...args: any[]) => Promise<unknown>;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  removeOwnWorktreeWithReconcile: (input: any) => Promise<void>;
   resetMergeStateIfNeeded: (task: Task, from: string) => Promise<Task>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   resolveResumeLanes: (...args: any[]) => Promise<any>;
@@ -140,8 +129,6 @@ export type WireExecutorLifecycleDeps = {
 
 export type WireExecutorLifecycleResult = {
   unregisterTaskMoveDisposer: (() => void) | undefined;
-  unregisterArchiveWorktreeDisposer: (() => void) | undefined;
-  unregisterArchiveWorkspaceWorktreeDisposer: (() => void) | undefined;
 };
 
 /**
@@ -178,122 +165,17 @@ export function wireExecutorLifecycle(deps: WireExecutorLifecycleDeps): WireExec
     });
     await Promise.all([children, activeWork]);
   });
-  /* FNXC:WorkflowLifecycle 2026-07-16-10:00: Executor replaces the baseline only for its own TaskStore, so archive awaits abort/sweep/removal before branch deletion without cross-store coupling. */
-  const unregisterArchiveWorktreeDisposer = registerArchiveWorktreeDisposer(deps.store, async (task) => {
-    /*
-    FNXC:ExternalExecutionCheckout 2026-08-09-22:43:
-    Operator-owned external checkouts must never be removed on archive.
-    */
-    const externalExecutionRoute = await resolveExternalExecutionCheckoutRoute(task);
-    if (externalExecutionRoute.configured) return;
-    if (!task.worktree || await canonicalizeWorktreePath(task.worktree) === await canonicalizeWorktreePath(deps.rootDir)) return;
-    await deps.awaitAbortInFlightTaskWork(task.id, "task archived");
-    for (const path of activeSessionRegistry.pathsForTask(task.id)) activeSessionRegistry.unregisterPath(path);
-    await deps.removeOwnWorktreeWithReconcile({worktreePath: task.worktree, settings: await deps.store.getSettings(), taskId: task.id, reason: RemovalReason.ExecutorDispose});
-    task.worktree = undefined;
-  });
-  const unregisterArchiveWorkspaceWorktreeDisposer = registerArchiveWorkspaceWorktreeDisposer(deps.store, async (task, plan) => {
-    const removed: string[] = [];
-    const failed: {repoRel: string; error: unknown}[] = [];
-    await deps.awaitAbortInFlightTaskWork(task.id, "workspace task archived");
-    for (const entry of plan) {
-      try {
-        if (await canonicalizeWorktreePath(entry.worktreePath) === await canonicalizeWorktreePath(entry.repoRootDir)) throw new Error("Refusing to remove workspace repository root");
-        activeSessionRegistry.unregisterPath(entry.worktreePath);
-        await removeWorktree({worktreePath: entry.worktreePath, rootDir: entry.repoRootDir, settings: await deps.store.getSettings(), taskId: task.id, reason: RemovalReason.ExecutorDispose, force: true});
-        /* FNXC:WorkflowLifecycle 2026-07-16-16:00: Archive metadata can contain valid Git refs with shell metacharacters. Pass the ref as an argv value so cleanup never evaluates it as shell code. */
-        await execFileAsync("git", ["branch", "-D", entry.branch], {cwd: entry.repoRootDir, timeout: 120_000, maxBuffer: 10 * 1024 * 1024});
-        if (task.workspaceWorktrees) for (const repoRel of [entry.repoRel, ...entry.aliasRepoRels]) delete task.workspaceWorktrees[repoRel];
-        removed.push(entry.repoRel);
-      } catch (error) { failed.push({repoRel: entry.repoRel, error}); }
-    }
-    return {removed, failed};
-  });
-
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-23:20 (was FLAGGED AND LEFT COUNTED; RESOLVED below —
-  still do NOT convert with `resolveTaskWorkflowIrSync` / `resolvePlannerLanes`):
-
-  Four lifecycle literals live in this listener and they are genuinely wrong on a renamed board:
-  execution never starts on a move INTO the board's own wip lane, terminal session release never
-  runs on a move into its archive lane, and the two `from` guards never fire, so in-flight work is
-  not aborted when a card leaves implementation. Nothing errors; the engine simply stops reacting.
-
-  THE OBVIOUS FIX IS INERT, AND THAT IS NOW PROVED RATHER THAN ARGUED. `task:moved` is emitted
-  synchronously, so an await here reorders this handler against every other subscriber — which
-  points at the sync IR path. That path cannot answer for a renamed board, for TWO independent
-  reasons (`sync-workflow-ir-second-blocker.test.ts`):
-
-    1. `getTaskWorkflowSelectionImpl` returns `undefined` unconditionally under PostgreSQL, so
-       `resolveTaskWorkflowIrSync` always takes its `!workflowId` branch;
-    2. even with a selection, the CUSTOM-workflow branch loads its IR through `store.db`, whose
-       implementation is an unconditional throw — so it falls into the catch and returns the
-       DEFAULT IR anyway.
-
-  A renamed lane IS a custom workflow, so (2) alone is decisive: the sync path can never serve this
-  listener's case. `check-inert-sync-lane-conversions` already baselines twenty guards in exactly
-  that state in `scheduler.ts`; these four must not join them.
-
-  They stay literal and COUNTED, which is the honest state — an unconverted literal is visible to
-  the census, while an inert conversion leaves the backlog and takes the evidence with it.
-
-  THE CRITERION IS NARROWER THAN "THE LISTENER IS SYNC", and I got this wrong first time elsewhere:
-  what blocks a guard is whether ITS ANSWER IS CONSUMED SYNCHRONOUSLY, not whether it happens to sit
-  inside a synchronous function. In `self-healing.ts`'s fan-out, three of four guards only gated work
-  the listener already `void`s, so they were reachable by the async resolver all along and are now
-  converted. These four are NOT that case, for two independent reasons:
-
-    A. `trackTaskDisposal` writes `pendingTaskDisposals` in THIS tick, and the `to === wip` branch
-       above READS that map to serialise a fast bounce (in-progress -> todo -> in-progress; the
-       FN-5256 note it carries). Deferring the branch selection to a microtask lets the second
-       event's prologue read the map before the first event's write lands — which reopens exactly
-       the race that comment exists to close.
-    B. This is an if / else-if CHAIN, so the guards are entangled: converting one changes which
-       branch a move falls into. They convert together or not at all, and (A) blocks the set.
-
-  UNBLOCKING therefore needs the async resolver reachable from a SYNCHRONOUS consumer, which means
-  either a sync reader that answers for custom workflows AND survives a writer on another node, or
-  restructuring the disposal bookkeeping so nothing is read in-tick — the constraints are written up
-  in `sync-workflow-ir-second-blocker.test.ts`.
-
-  FNXC:WorkflowResolvedColumns 2026-07-31-23:55 — RESOLVED BY A THIRD ROUTE, and the analysis above
-  is kept because it is what rules the other two out.
-
-  The block reduces to "no resolver can be CALLED here". It never required that the answer be
-  unavailable — only that this listener cannot go and fetch it. So the lanes are resolved ONCE by
-  the emitter, which is already async, and ride along on the event payload (`moves.ts`). Every
-  objection above is about calling a resolver in-tick, so none of them survive the move:
-
-    - (2)/the PostgreSQL sync-IR dead end: no sync resolver is used, so neither blocker applies.
-    - (A) the in-tick `pendingTaskDisposals` race: NO await is introduced. Destructuring one more
-      field is as synchronous as reading `to`, so branch selection still happens in this tick and
-      the FN-5256 fast-bounce serialisation is untouched.
-    - (B) the entangled if / else-if chain: satisfied rather than dodged — all four convert in
-      this one commit, so no move can fall into a different branch than before.
-
-  THE RESIDUAL RISK MOVES TO THE EMITTER, AND IT IS NOT YET CLOSED — stated plainly because the
-  tempting version of this note is the false one. `lanes` is OPTIONAL on the payload
-  (`store.ts`: `lanes?: TaskMoveLanes`) and the fallback below is the LEGACY LITERAL, so a
-  `task:moved` published without it leaves these four guards exactly as inert as before, on a
-  renamed board, with nothing failing. The conversion is only as good as the emitters.
-
-  That is a strictly better position than the flagged state — the fallback is reached on one path
-  instead of every path, and `moves.ts` (the move path these branches actually serve) does pass
-  lanes — but it is NOT the compile-time guarantee it would be if the field were required.
-  Requiring it is the right end state and is deliberately NOT done here: it retypes every
-  `task:moved` emitter, which is its own change with its own blast radius, and bundling it would
-  put a mechanical retype in the same commit as this behavior change.
-
-  FOLLOW-UP, tracked with the emitter-side work: either make `lanes` required, or add a gate that
-  asserts every `task:moved` emit site supplies it. Until one of those lands, treat the fallback
-  as a live inertness path rather than defensive dead code.
+  FNXC:WorkflowResolvedColumns 2026-08-22-00:13:
+  Task-move emitters resolve lifecycle lanes before synchronous listener dispatch and the lane cache
+  preserves the last authoritative answer. WIP and Hold routing therefore supports renamed workflows
+  without awaiting inside this ordering-sensitive listener; cold-cache callers use legacy fallbacks.
   */
-  /* FNXC:WorkflowResolvedColumns 2026-08-22-00:13: This supersedes the prior residual-risk note: optional emitter payloads now consult TaskLaneCache before legacy ids; making lanes required and bridge forwarding remain separate follow-ups. */
   deps.store.on("task:moved", ({ task, from, to, source, lanes }) => {
     /*
     FNXC:Diagnostics 2026-08-10-18:32:
     Per-move tracing is DEBUG. This listener fires on every task:moved event — every dispatch,
-    rebound, requeue, archive and self-healing move across every task — so at `log` level it was the
+    rebound, requeue, and self-healing move across every task — so at `log` level it was the
     single loudest line in engine output and buried the events an operator actually needs to see.
     The information is still available at debug level; nothing here is an operator-actionable signal
     on its own.
@@ -309,7 +191,7 @@ export function wireExecutorLifecycle(deps: WireExecutorLifecycleDeps): WireExec
     DEFAULT workflow under PostgreSQL, so a guard written through it is inert.
 
     Fail-soft to the legacy ids when the emit path could not resolve, matching every other consumer
-    of this payload. `wipLane`/`archivedLane`/`holdLane` are read as SINGLE ids rather than sets
+    of this payload. `wipLane`/`holdLane` are read as SINGLE ids rather than sets
     because each branch below is a lane-identity test on one column, which is what the literals were.
     */
     /*
@@ -322,7 +204,6 @@ export function wireExecutorLifecycle(deps: WireExecutorLifecycleDeps): WireExec
     const effectiveLanes = lanes ?? deps.store.laneCache?.get(task.id);
     /* FNXC:WorkflowResolvedColumns 2026-08-22-00:28: fall back only when no lane answer exists; an answer with an absent role must not invent a legacy role-named column. */
     const wipLane = effectiveLanes ? effectiveLanes.wip : "in-progress";
-    const archivedLane = effectiveLanes ? effectiveLanes.archived : "archived";
     const holdLane = effectiveLanes ? effectiveLanes.hold : "todo";
     if (to === wipLane) {
       deps.userCanceledTaskIds.delete(task.id);
@@ -347,42 +228,6 @@ export function wireExecutorLifecycle(deps: WireExecutorLifecycleDeps): WireExec
         await deps.execute(taskForExecution);
       })().catch((err) =>
         executorLog.error(`Failed to start ${task.id}:`, err),
-      );
-    } else if (to === archivedLane) {
-      /*
-      FNXC:WorkflowLifecycle 2026-07-09-00:05:
-      Archived is terminal, so it must release every active-session registry entry the
-      task holds. Plan Review / other workflow-step and step-session sessions run while
-      the task is in triage/planning/todo (not in-progress), so the old
-      `from === "in-progress"`-only disposal branch below never fired for them — the
-      registry entry (activeSessions / activeStepExecutors / activeWorkflowStepSessions,
-      keyed on the shared project browse root) leaked past archive and blocked a
-      successor task from acquiring the same session path with
-      ActiveSessionPathHeldByForeignTaskError (FN-7717 / NEXT-508 -> NEXT-433). We
-      deliberately do NOT do this for to === "done" / "in-review": those columns
-      legitimately hold ai-merge / workspace-repo-land merge leases that must survive
-      the transition (FN-6736 / Phase C/D merge-lease guarantees).
-
-      This branch is checked BEFORE `from === "in-progress"` (and handles it too — a
-      task can be archived directly from in-progress via fn_task_archive, a single
-      `task:moved` event with no intermediate todo hop). Ordering the plain
-      `from === "in-progress"`-only branch first would let that direct
-      in-progress → archived transition fall into the narrower branch and skip the
-      leaked-entry sweep below, re-opening the exact class of leak this fix closes for
-      that one origin column. `awaitAbortInFlightTaskWork` here is the same call the
-      in-progress branch makes (superset of its cleanup), so no case regresses.
-      */
-      deps.trackTaskDisposal(
-        task.id,
-        deps.awaitAbortInFlightTaskWork(task.id, "task archived").then(async () => {
-          await releaseWorkspaceAcquireClaims(deps.store, task.id);
-          // Belt-and-suspenders sweep: clear any registry entry that survived the
-          // abort above because its in-memory session map was already empty
-          // (a leaked entry with no live session to abort).
-          for (const path of activeSessionRegistry.pathsForTask(task.id)) {
-            activeSessionRegistry.unregisterPath(path);
-          }
-        }),
       );
     } else if (deps.isBackwardMoveOutOfPlanning(task.id, from, to, effectiveLanes)) {
       /*
@@ -927,8 +772,6 @@ export function wireExecutorLifecycle(deps: WireExecutorLifecycleDeps): WireExec
 
   return {
     unregisterTaskMoveDisposer,
-    unregisterArchiveWorktreeDisposer,
-    unregisterArchiveWorkspaceWorktreeDisposer,
   };
 }
 
@@ -945,8 +788,6 @@ export function applyWireExecutorLifecycleDisposers(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- protected TaskExecutorState disposer fields
   const h = host as any;
   h.unregisterTaskMoveDisposer = wired.unregisterTaskMoveDisposer;
-  h.unregisterArchiveWorktreeDisposer = wired.unregisterArchiveWorktreeDisposer;
-  h.unregisterArchiveWorkspaceWorktreeDisposer = wired.unregisterArchiveWorkspaceWorktreeDisposer;
 }
 
 /*

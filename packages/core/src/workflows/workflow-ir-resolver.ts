@@ -14,7 +14,7 @@
  * stays separate by design.
  */
 
-import { getBuiltinWorkflow, isBuiltinWorkflowId, resolveDefaultWorkflowIr } from "./builtin-workflows.js";
+import { getBuiltinWorkflow, isBuiltinWorkflowId, resolveDefaultWorkflowIr, resolveRetiredBuiltinWorkflowId } from "./builtin-workflows.js";
 import { parseWorkflowIr, serializeWorkflowIr } from "./workflow-ir.js";
 import { applyPromptOverridesToIr } from "./workflow-prompt-overrides.js";
 import type { WorkflowIr } from "./workflow-ir-types.js";
@@ -103,6 +103,12 @@ export type WorkflowSelection = { workflowId: string; stepIds: string[] };
 /** A caller-owned cache that is valid only for one resolver pass. */
 export type WorkflowSelectionCache = Map<string, WorkflowSelection | undefined>;
 
+/** Selection database work performed by one multi-row hydration pass. */
+export type WorkflowSelectionReadTally = { batched: number; singles: number };
+
+/** Definition reads actually issued by one caller-owned resolver pass. */
+export type WorkflowDefinitionReadTally = { definitions: number };
+
 /*
 FNXC:WorkflowScheduling 2026-08-12-20:00 (RUFU-073):
 In-flight selection-read coalescing, keyed by the CALLER-OWNED per-pass cache object. Several
@@ -114,6 +120,38 @@ onto ONE in-flight read promise; the weak key binds it strictly to that pass, so
 uses a fresh cache (fresh WeakMap slot) and is always observed.
 */
 const inflightSelectionReads = new WeakMap<WorkflowSelectionCache, Map<string, Promise<WorkflowSelection | undefined>>>();
+
+/*
+FNXC:WorkflowScheduling 2026-09-08-04:11:
+Task-list rows share a caller-owned cache but populate it only after the definition await, so concurrent
+misses previously re-read and re-parse one custom workflow per row (Runfusion/Fusion#3585). This weak
+key scopes in-flight coalescing strictly to that pass and releases it with the caller-owned cache.
+*/
+const inflightIrReads = new WeakMap<Map<string, WorkflowIr>, Map<string, Promise<WorkflowIr>>>();
+
+/*
+FNXC:WorkflowScheduling 2026-09-05-23:12:
+Multi-row read hydration must prefetch into its caller-owned, per-pass cache: a cached undefined is
+intentional and prevents absent selections from becoming an N+1. Failed batch reads leave the cache
+unchanged so a later pass retries and hydration uses its established individual-read fallback. Callers
+must use this returned tally for accounting; cache growth cannot distinguish one batch from N reads.
+*/
+export async function prefetchWorkflowSelections(
+  store: WorkflowIrResolverStore,
+  taskIds: readonly string[],
+  cache: WorkflowSelectionCache,
+): Promise<WorkflowSelectionReadTally> {
+  const missingIds = [...new Set(taskIds)].filter((id) => !cache.has(id));
+  if (missingIds.length === 0) return { batched: 0, singles: 0 };
+  if (!store.getTaskWorkflowSelectionsAsync) return { batched: 0, singles: missingIds.length };
+  try {
+    const selections = await store.getTaskWorkflowSelectionsAsync(missingIds);
+    for (const id of missingIds) cache.set(id, selections.get(id));
+    return { batched: 1, singles: 0 };
+  } catch {
+    return { batched: 0, singles: missingIds.length };
+  }
+}
 
 export interface WorkflowIrResolverStore {
   getTaskWorkflowSelection(taskId: string): WorkflowSelection | undefined;
@@ -181,73 +219,67 @@ export async function resolveTaskPlanningPrompt(
  */
 export async function resolveWorkflowIrById(
   store: Pick<WorkflowIrResolverStore, "getWorkflowDefinition"> & Partial<Pick<WorkflowIrResolverStore, "getWorkflowSettingsProjectId" | "getWorkflowPromptOverrides" | "getWorkflowPromptOverridesAsync">>,
-  workflowId: string,
+  requestedWorkflowId: string,
   irCache?: Map<string, WorkflowIr>,
+  definitionReadTally?: WorkflowDefinitionReadTally,
 ): Promise<WorkflowIr> {
+  const workflowId = resolveRetiredBuiltinWorkflowId(requestedWorkflowId);
   let projectId: string | undefined;
-  try {
-    projectId = store.getWorkflowSettingsProjectId?.();
-  } catch {
-    /*
-     * FNXC:CustomWorkflows 2026-06-22-23:27:
-     * Workflow IR resolution is an engine-entry fallback path, so project identity failures must behave like no scoped project is available.
-     * Keep built-in/default IRs usable and skip project-scoped prompt overrides instead of propagating identity lookup errors.
-     */
-    projectId = undefined;
-  }
+  try { projectId = store.getWorkflowSettingsProjectId?.(); } catch { projectId = undefined; }
   const cacheKey = projectId ? `${workflowId}\u0000${projectId}` : workflowId;
   const cached = irCache?.get(cacheKey);
   if (cached) return cached;
 
-  if (isBuiltinWorkflowId(workflowId)) {
-    const builtin = getBuiltinWorkflow(workflowId);
-    /*
-    FNXC:WorkflowLifecycleColumns 2026-08-01-01:15 (PR #2815 review — greptile P1, and it corrects me):
-    THE FOURTH DEGRADATION PATH, and the only one that was never branded. An id that LOOKS builtin but
-    is not registered — a workflow removed between releases, a typo'd selection — lands here, finds no
-    `builtin.ir`, and silently substitutes the default coding IR.
+  const resolve = async (): Promise<WorkflowIr> => {
+    if (isBuiltinWorkflowId(workflowId)) {
+      const builtin = getBuiltinWorkflow(workflowId);
+      const fellBackToDefault = !builtin?.ir;
+      const ir = builtin?.ir ?? defaultCodingWorkflowIr();
+      const resolved = typeof ir === "string" ? parseWorkflowIr(ir) : ir;
+      const overrides = projectId ? await (store.getWorkflowPromptOverridesAsync?.(workflowId, projectId) ?? store.getWorkflowPromptOverrides?.(workflowId, projectId)) : undefined;
+      const effective = applyPromptOverridesToIr(resolved, overrides);
+      const answer = fellBackToDefault ? markFellBack(effective) : effective;
+      irCache?.set(cacheKey, answer);
+      return answer;
+    }
+    try {
+      /*
+      FNXC:WorkflowScheduling 2026-09-08-04:11:
+      This tally counts getWorkflowDefinition invocations actually issued. Distinct ids, cache growth,
+      and prefetch attempts misreport built-in, absent-selection, warm-cache, and retryable fallback paths.
+      */
+      if (definitionReadTally) definitionReadTally.definitions += 1;
+      const def = await store.getWorkflowDefinition(workflowId);
+      if (!def) return markFellBack(defaultCodingWorkflowIr());
+      const ir = typeof def.ir === "string" ? parseWorkflowIr(def.ir) : def.ir;
+      irCache?.set(cacheKey, ir);
+      return ir;
+    } catch { return markFellBack(defaultCodingWorkflowIr()); }
+  };
 
-    That matters to this PR specifically. Deleting the id cross-check was justified on the grounds
-    that every fallback is branded and the brand is checked first; this path is the counterexample, so
-    the deletion would have turned an unmarked fallback into a reported `source: "selection"` — the
-    lying signal this API exists to prevent, arriving through the one door I had not checked. My claim
-    that the id comparison "caught nothing the marker misses" was wrong: it caught exactly this,
-    because the default IR's id differs from the requested one.
+  if (!irCache) return resolve();
+  let inflight = inflightIrReads.get(irCache);
+  if (!inflight) { inflight = new Map(); inflightIrReads.set(irCache, inflight); }
+  const pending = inflight.get(cacheKey);
+  if (pending) return pending;
+  const readPromise = resolve();
+  inflight.set(cacheKey, readPromise);
+  try { return await readPromise; } finally { inflight.delete(cacheKey); }
+}
 
-    Branding it is the right repair rather than restoring the id check, because it fixes the cause —
-    the resolver knew it was substituting and did not say so — instead of re-adding an inference that
-    misfires on every authored workflow (see the note below).
-    */
-    const fellBackToDefault = !builtin?.ir;
-    const ir = builtin?.ir ?? defaultCodingWorkflowIr();
-    const resolved = typeof ir === "string" ? parseWorkflowIr(ir) : ir;
-    const overrides = projectId
-      ? await (store.getWorkflowPromptOverridesAsync?.(workflowId, projectId)
-        ?? store.getWorkflowPromptOverrides?.(workflowId, projectId))
-      : undefined;
-    // FNXC:CustomWorkflows 2026-06-21-19:12:
-    // Public IR resolution must see the same project-scoped built-in prompt overrides as task execution, while callers without the new store methods keep the canonical built-in IR.
-    /*
-    Marked AFTER the overrides are applied, because `applyPromptOverridesToIr` may return a new object
-    and a non-enumerable brand does not survive a copy. Marking earlier would leave the returned and
-    cached IR unbranded, which is the bug this fixes wearing a different shape.
-    */
-    const effective = applyPromptOverridesToIr(resolved, overrides);
-    /* Branded BEFORE caching, so a later cache hit on this key reports the fallback too. */
-    const answer = fellBackToDefault ? markFellBack(effective) : effective;
-    irCache?.set(cacheKey, answer);
-    return answer;
-  }
-
-  try {
-    const def = await store.getWorkflowDefinition(workflowId);
-    if (!def) return markFellBack(defaultCodingWorkflowIr());
-    const ir = typeof def.ir === "string" ? parseWorkflowIr(def.ir) : def.ir;
-    irCache?.set(cacheKey, ir);
-    return ir;
-  } catch {
-    return markFellBack(defaultCodingWorkflowIr());
-  }
+/** Prefetch distinct effective workflow IRs into a caller-owned pass cache. */
+export async function prefetchWorkflowIrs(
+  store: WorkflowIrResolverStore,
+  taskIds: readonly string[],
+  irCache: Map<string, WorkflowIr>,
+  selectionCache: WorkflowSelectionCache,
+  definitionReadTally?: WorkflowDefinitionReadTally,
+): Promise<void> {
+  /* FNXC:WorkflowScheduling 2026-09-08-04:11: Delegating to the resolver keeps observed-read accounting at the store call site and isolates one broken definition from board hydration. */
+  const ids = new Set(taskIds.map((taskId) => selectionCache.get(taskId)?.workflowId ?? "builtin:coding"));
+  await Promise.all([...ids].map(async (id) => {
+    try { await resolveWorkflowIrById(store, id, irCache, definitionReadTally); } catch { /* fail-soft */ }
+  }));
 }
 
 /*
@@ -331,6 +363,7 @@ export async function resolveWorkflowIrForTaskWithProvenance(
   taskId: string,
   irCache?: Map<string, WorkflowIr>,
   selectionCache?: WorkflowSelectionCache,
+  definitionReadTally?: WorkflowDefinitionReadTally,
 ): Promise<ResolvedWorkflowIr> {
   let workflowId: string | undefined;
   try {
@@ -381,7 +414,7 @@ export async function resolveWorkflowIrForTaskWithProvenance(
     return { ir: defaultCodingWorkflowIr(), source: "default" };
   }
   if (!workflowId) {
-    return { ir: await resolveWorkflowIrById(store, "builtin:coding", irCache), source: "default", selectionAbsent: true };
+    return { ir: await resolveWorkflowIrById(store, "builtin:coding", irCache, definitionReadTally), source: "default", selectionAbsent: true };
   }
   /*
   FNXC:WorkflowLifecycleColumns 2026-07-30-13:20 (PR #2618 review — greptile P1):
@@ -396,7 +429,7 @@ export async function resolveWorkflowIrForTaskWithProvenance(
   the selected one is a fallback however it arose. A v1/column-less IR carries no id to check, and
   it has no column vocabulary either, so it is reported as a default rather than guessed at.
   */
-  const ir = await resolveWorkflowIrById(store, workflowId, irCache);
+  const ir = await resolveWorkflowIrById(store, workflowId, irCache, definitionReadTally);
   /*
 FNXC:WorkflowLifecycleColumns 2026-08-01-03:10 (the id cross-check is DELETED — it is unreliable and redundant):
   THE MARKER IS THE WHOLE ANSWER. An id-equality check used to run after this line, on the reasoning
@@ -438,6 +471,7 @@ export async function resolveWorkflowIrForTask(
   taskId: string,
   irCache?: Map<string, WorkflowIr>,
   selectionCache?: WorkflowSelectionCache,
+  definitionReadTally?: WorkflowDefinitionReadTally,
 ): Promise<WorkflowIr> {
   /*
    * FNXC:WorkflowModelLanes 2026-07-14-16:26:
@@ -446,7 +480,7 @@ export async function resolveWorkflowIrForTask(
    * FNXC:WorkflowLifecycleColumns 2026-07-30-12:15: delegates to the provenance form and drops
    * the provenance, so the two answers cannot drift apart.
    */
-  return (await resolveWorkflowIrForTaskWithProvenance(store, taskId, irCache, selectionCache)).ir;
+  return (await resolveWorkflowIrForTaskWithProvenance(store, taskId, irCache, selectionCache, definitionReadTally)).ir;
 }
 
 /*

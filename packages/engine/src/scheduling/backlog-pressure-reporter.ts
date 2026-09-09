@@ -80,14 +80,15 @@ export class BacklogPressureReporter {
       alert names only dependency-free cards as the runnable ones. The operator is told the queue is
       blocked on nothing in particular.
 
-      MEMBERSHIP over complete ∪ archived, because a dependency that has been archived is finished too —
-      this reporter reads with `includeArchived: true` precisely so archived blockers resolve.
+      Membership is workflow Complete only. Store-open reintegration moves historical snapshots into
+      those live columns before scheduling, so this reporter never needs a second archive authority.
       */
-      const [holdColumns, wipColumns, dependencyFinishedColumns] = await Promise.all([
+      const [holdColumns, wipColumns, dependencyCompleteColumns] = await Promise.all([
         resolveProjectColumnsForRoles(this.store, ["hold"]),
         resolveProjectColumnsForRoles(this.store, ["countsTowardWip"]),
-        resolveProjectColumnsForRoles(this.store, ["complete", "archived"]),
+        resolveProjectColumnsForRoles(this.store, ["complete"]),
       ]);
+      const dependencyFinishedColumns = new Set(dependencyCompleteColumns);
       const listByColumns = async (columns: ReadonlySet<string>, slim: boolean): Promise<Task[]> => {
         const byId = new Map<string, Task>();
         for (const column of columns) {
@@ -109,7 +110,7 @@ export class BacklogPressureReporter {
 
       const [todoFull, allTasks] = await Promise.all([
         listByColumns(holdColumns, false),
-        this.store.listTasks({ slim: true, includeArchived: true }),
+        this.store.listTasks({ slim: true, includeArchived: false }),
       ]);
       const byId = new Map(allTasks.map((task) => [task.id, task]));
       const candidates = todoFull

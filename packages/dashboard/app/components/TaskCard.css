@@ -423,11 +423,6 @@ and no hardcoded color. Same geometry as every other status badge; only the fill
   background: var(--status-done-bg);
   color: var(--done);
 }
-.card-status-badge--archived {
-  background: var(--status-archived-bg);
-  color: var(--text-muted);
-}
-
 .card-status-badge.pulsing {
   animation: pulse 1.5s ease-in-out infinite;
 }
@@ -1911,16 +1906,7 @@ The mobile/short-landscape 28px ⋯ touch target must not expand .card-header-ac
   opacity: 1;
 }
 
-/* Archive/Unarchive/Revert buttons */
-/*
-FNXC:TaskRevert 2026-07-05-00:00 (FN-7525):
-.card-revert-btn shares the .card-archive-btn/.card-unarchive-btn tokenized
-look (no one-off px/hex) — it's applied alongside .card-archive-btn on the
-markup so no separate ruleset was strictly required, but it's declared here
-too so future divergence doesn't have to rediscover the shared selector group.
-*/
-.card-archive-btn,
-.card-unarchive-btn,
+/* Revert button */
 .card-revert-btn {
   display: inline-flex;
   align-items: center;
@@ -1939,22 +1925,16 @@ too so future divergence doesn't have to rediscover the shared selector group.
     color var(--transition-fast), border-color var(--transition-fast);
 }
 
-.card:hover .card-archive-btn,
-.card:hover .card-unarchive-btn,
 .card:hover .card-revert-btn {
   opacity: 1;
 }
 
-.card-archive-btn:hover,
-.card-unarchive-btn:hover,
 .card-revert-btn:hover {
   background: var(--card-hover);
   color: var(--text);
   border-color: color-mix(in srgb, var(--border) 70%, var(--text) 30%);
 }
 
-.card-archive-btn:focus,
-.card-unarchive-btn:focus,
 .card-revert-btn:focus {
   opacity: 1;
   outline: 1px solid var(--todo);
@@ -2124,8 +2104,6 @@ The three-dot menu is the sole card move/action entry point. Keep this shared bu
 
 
   /* FN-4351/FN-3965: keep secondary actions visible on touch, but compact per WCAG 2.5.8 because the card tap surface is the primary target for opening task detail. */
-  .card-archive-btn,
-  .card-unarchive-btn,
   .card-revert-btn {
     opacity: 1;
   }

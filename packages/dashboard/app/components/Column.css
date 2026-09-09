@@ -1,0 +1,43 @@
+/*
+FNXC:DoneColumnGeometry 2026-09-09-00:33:
+The Done scroller owns one normal-flow virtual-content block. Spacer heights and row spacing are therefore physical scroll extent, never shrinkable flex children or unmeasured parent gaps.
+*/
+.column-body {
+  display: block;
+  gap: 0;
+}
+
+.column-body > * + * {
+  margin-block-start: var(--space-xs);
+}
+
+.column-virtual-content {
+  min-inline-size: 0;
+}
+
+.column-virtual-row {
+  box-sizing: border-box;
+  padding-block-end: var(--space-xs);
+}
+
+.column-virtual-spacer {
+  inline-size: 100%;
+  min-block-size: 0;
+  pointer-events: none;
+}
+
+.column-pagination-footer {
+  min-block-size: var(--space-lg);
+  padding-block: var(--space-xs);
+  color: var(--text-dim);
+  text-align: center;
+}
+
+.column-pagination-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  color: var(--color-error);
+}

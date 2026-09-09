@@ -54,7 +54,6 @@ const REPAIR_WORKFLOW = {
     { id: "in-progress", name: "In progress", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
     { id: "in-review", name: "In review", traits: [{ trait: "merge" }] },
     { id: "done", name: "Done", traits: [{ trait: "complete" }] },
-    { id: "archived", name: "Archived", traits: [{ trait: "archived" }] },
   ],
 };
 

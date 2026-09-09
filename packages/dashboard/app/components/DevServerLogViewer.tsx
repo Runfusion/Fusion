@@ -4,6 +4,7 @@ import { ChevronDown, Loader2, Maximize2, Minimize2, Search } from "lucide-react
 import "./DevServerLogViewer.css";
 import type { DevServerLogEntry } from "../hooks/useDevServerLogs";
 import { linkifyReactChildren } from "../utils/filePathLinkify";
+import { useAutoPaginationSentinel } from "../hooks/useAutoPaginationSentinel";
 
 interface DevServerLogViewerProps {
   entries: DevServerLogEntry[];
@@ -101,6 +102,7 @@ export function DevServerLogViewer({
 }: DevServerLogViewerProps) {
   const { t } = useTranslation("app");
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const historyPagination = useAutoPaginationSentinel({ rootRef: containerRef, hasMore, loading: loadingMore, onLoadMore, direction: "start" });
   const prevEntryCountRef = useRef(entries.length);
   const prevRunningRef = useRef(isRunning);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -274,33 +276,17 @@ export function DevServerLogViewer({
       </header>
 
       <div className="devserver-log-viewer__body">
-        {hasMore && (
-          <div className="devserver-log-viewer__load-more" data-testid="devserver-log-load-more">
-            <button
-              type="button"
-              className="btn btn-sm touch-target"
-              onClick={onLoadMore}
-              disabled={loadingMore}
-              data-testid="devserver-log-load-more-button"
-            >
-              {loadingMore ? (
-                <>
-                  <Loader2 size={14} className="devserver-log-viewer__spinner" />
-                  {t("devserver.loadingOlderLogs", "Loading older logs…")}
-                </>
-              ) : (
-                t("devserver.loadOlderLogs", "Load older logs")
-              )}
-            </button>
-          </div>
-        )}
-
         <div
           ref={containerRef}
           className="devserver-log-viewer__content"
           onScroll={handleScroll}
           data-testid="devserver-log-content"
         >
+          {hasMore ? (
+            <div ref={historyPagination.sentinelRef} className="devserver-log-viewer__load-more" data-testid="devserver-log-auto-pagination-sentinel" role="status" aria-live="polite">
+              {loadingMore ? <><Loader2 size={14} className="devserver-log-viewer__spinner" />{t("devserver.loadingOlderLogs", "Loading older logs…")}</> : null}
+            </div>
+          ) : null}
           {!loading && filteredEntries.length === 0 && (
             <p className="devserver-log-viewer__empty" data-testid="devserver-log-empty">
               {entries.length === 0

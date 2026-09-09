@@ -50,7 +50,7 @@ export function useUnmappedWorkflowRefetch(params: {
   boardWorkflows: BoardWorkflowsPayload | null;
   tasks: readonly Task[];
   workflowMode: boolean;
-  refreshBoardWorkflows: (options?: { forceFresh?: boolean }) => void | Promise<void>;
+  refreshBoardWorkflows: (options?: { forceFresh?: boolean; taskIds?: readonly string[] }) => void | Promise<void>;
   /*
   FNXC:WorkflowBoard 2026-07-29-00:00 (PR #2530 review — greptile):
   The project this repair belongs to. A repair pending across a PROJECT SWITCH would
@@ -138,8 +138,10 @@ export function useUnmappedWorkflowRefetch(params: {
       if (projectIdRef.current !== armedForProject) return;
       const latestWorkflows = boardWorkflowsRef.current;
       if (!latestWorkflows) return;
-      const stillUnmapped = tasksRef.current.some((task) => isTaskWorkflowMappingSuspect(latestWorkflows, task));
-      if (!stillUnmapped) return;
+      const stillUnmappedTaskIds = tasksRef.current
+        .filter((task) => isTaskWorkflowMappingSuspect(latestWorkflows, task))
+        .map((task) => task.id);
+      if (stillUnmappedTaskIds.length === 0) return;
       if (signatureAttemptsRef.current >= MAX_ATTEMPTS_PER_SIGNATURE) return;
       signatureAttemptsRef.current += 1;
       /*
@@ -152,7 +154,7 @@ export function useUnmappedWorkflowRefetch(params: {
       for both outcomes; a non-promise return degrades to the old immediate re-arm.
       */
       repairInFlightRef.current = true;
-      const settled = refreshBoardWorkflows({ forceFresh: true });
+      const settled = refreshBoardWorkflows({ forceFresh: true, taskIds: stillUnmappedTaskIds });
       if (settled && typeof (settled as Promise<void>).finally === "function") {
         void (settled as Promise<void>).finally(() => {
           repairInFlightRef.current = false;

@@ -2,6 +2,127 @@
 
 User-facing release notes aggregated across all packages. This file is auto-synced from each `packages/*/CHANGELOG.md` by `scripts/release.mjs` — do not edit by hand.
 
+## 0.78.0-beta.4
+
+### Highlights
+
+- Task archiving is gone — completed work now lives in the paginated Done column
+- Enter makes new lines in mobile chat composers, with a global submit-on-Enter setting
+- Long Direct and Planner Chat threads stay responsive with full history preserved
+- Plan Review no longer runs before planning finishes, so approvals stay exclusive
+- Chat composers stay editable right after you stop a response
+
+### Breaking
+
+- Task archiving is removed. Completed history now stays in the paginated Done column; the archive and unarchive commands, task tools, routes, settings, and the Archived workflow role are gone.
+
+### New
+
+- Enter now inserts a new line in mobile conversation composers, controlled by a global submit-on-Enter setting with `auto`, `always`, and `never`. On `auto`, touch devices treat plain Enter as a newline while pointer devices still send. Shift+Enter never sends, and Cmd/Ctrl+Enter always sends.
+- The inbox adds dedicated recommendation navigation plus new-item badges for recommendations and artifacts, with unread counts split by category.
+- Task detail moves metadata into Details and quick controls into the footer Actions menu, replacing the inline action row and the Priority/Oversight popovers.
+- Quick scripts can be renamed and described across every terminal launcher, with existing commands and script references kept intact on rename.
+
+### Fixed
+
+- Chat composers stay editable immediately after you stop a response instead of locking up mid-reconciliation.
+- Plan Review no longer starts before planning finishes, and its outcome stays exclusive through planner-aware liveness, continuation leases, and fail-closed routing.
+- Chat keeps your reading position while sending and only follows streaming replies when you are pinned to the bottom.
+- Legacy archives returning to Done restore their complete task history and metrics, with a dry-run/apply repair tool for auditing the fix.
+- Favorite stars work again in chat model selectors, and mobile Brain menus stay overlaid on the viewport.
+- OAuth re-login status stays consistent after an automatic token renewal, so the dashboard banner clears promptly.
+- Headings inside a task description no longer block plan approval; spec lock failures now explain what to fix.
+- The GitHub import screen uses the full phone width for its top controls and insets.
+
+### Performance
+
+- Long Direct and Planner Chat conversations stay responsive using bounded transcript windows and strict history cursors, with no history dropped.
+
+### Internal
+
+- One Coding (Ideas) workflow remains, and Coding is now Coding (Auto). Legacy selections are canonicalized on read and write, so the board and scheduler share one Ideas identity. No migration ships and older Fusion binaries keep database access.
+
+## 0.78.0-beta.3
+
+### Highlights
+
+- Approve button on board and list cards works again after a page reload
+- Review bypass now reaches any blocking gate, and merge blockers name the gate at fault
+- Blocked review cards stay recoverable: collateral-archived gates are restored automatically
+- Reference another Direct chat by conversation ID with bounded #id context
+- Task lists and hold-release scheduling are faster from batched workflow selection reads
+
+### New
+
+- Reference another Direct chat by pasting its conversation ID, and pull in bounded `#id` context.
+- The chat delivery-history tool is now named `fn_history_read`. The Patchnode view, navigation, and API stay where they are.
+
+### Fixed
+
+- The Approve button on board and list cards no longer does nothing after a page reload.
+- The review bypass now reaches any blocking gate, not just a failed one, and the merge blocker names the gate at fault.
+- Review gates archived as collateral by another gate's remediation are restored on startup and during maintenance, so blocked cards stay recoverable. No verdict is ever fabricated, and operator waivers, workspace cards, paused cards, and live sessions are left alone.
+- A review remediation now archives only the gate it is remediating instead of every failed gate.
+- Restarting an operator review starts the gate's revision budget fresh instead of inheriting what the previous episode spent.
+- Archived pre-merge review failures are recoverable again through operator bypass.
+- A verdict rescued from a malformed reviewer reply can no longer be downgraded to an approval — an empty finding list reads as unknown, not as nothing blocking.
+- Stale review approvals no longer leave merge cards permanently failed; the outdated review lane is routed back to current content.
+- A task being planned is no longer read as abandoned work and re-dispatched mid-planning.
+- Planning retries preserve annotated plan steps and manual approval.
+- Workflow step activity history shows up again for unassigned tasks.
+- Automatic dependency repair keeps working without archived-history error noise.
+- Bulk archive completes refinement chains reliably and reports which items are still active.
+- New agent-log entries survive an interrupted prior write, and corruption warnings are aggregated per read.
+- Generated fix features come back, so validated defects can become board tasks again.
+- Stale recommendation notices in the mailbox now explain why they have no inline actions, distinguishing a missing parent task from a replaced recommendation.
+
+### Performance
+
+- Task lists and hold-release scheduling batch their workflow selection reads instead of issuing one per task.
+
+## 0.78.0-beta.2
+
+### Highlights
+
+- Reviewers are judge-only by default and must emit a verdict to approve a gate
+- Cloud Link pairs and self-tunnels: fn serve starts cloudflared and heartbeats the URL every 20s
+- Planning runs on main, so AI concurrency no longer eats worktree capacity
+- Dashboard terminal works on macOS with no native compile step
+- Tasks stuck waiting on a finished file-scope blocker now clear themselves
+
+### Breaking
+
+- Reviewers are judge-only by default: inline reviewer fixes are off, a machine-readable verdict is required to pass a review gate, and Code Review remediation is bounded by a revision cap.
+- The concurrency resolver and API no longer report a single effective limit or binding knob; admission now classifies whether a task consumes a worktree.
+- 32-bit Linux terminal payloads are no longer supported.
+
+### New
+
+- Linked Fusion instances start a Cloudflare tunnel automatically. `fn serve` and `fn dashboard` point `cloudflared` at the bound dashboard port and heartbeat candidate URLs — including host rotations — every 20 seconds, so Cloud Link keeps working when the URL changes. `fn cloud heartbeat` with no `--url` does the same until you stop it.
+- New `fn cloud` CLI for device pairing: `pair-start`, `pair-complete`, `heartbeat`, `status`, and `unlink`, with device state in `~/.fusion/cloud-link.json`. Remote login redeems a cloud ticket against your configured cloud endpoint and issues a short-lived token. Point it at an endpoint with `FUSION_CLOUD_HTTP_URL` or `--http`.
+- Tasks are planned on main before any worktree is created, so planning no longer holds a worktree slot and AI concurrency is capped separately from worktree capacity.
+- Quick Chat controls now minimize and restore every open chat window together.
+- Reusable chat snippets: save them in Skills & Snippets and insert them with a slash command from any dashboard composer.
+- Mobile New Task moved to the header edge, and artifact images gained zoom controls — wheel, pinch, keyboard, double-click, and drag-to-pan.
+- PostgreSQL backups now carry migration bookkeeping and restore it with rollback protection.
+
+### Fixed
+
+- Reviewer output without a verdict can no longer approve a review gate; prose approval is gone from both the workflow-step and reviewer parsers.
+- File-scope overlap waits clear automatically once the blocking task finishes, reconciled across self-healing, completion fan-out, and scheduler dispatch.
+- The dashboard terminal runs on macOS without manually compiling native code, using script-free platform packages verified against the lockfile.
+- Misnumbered plan steps no longer rerun completed work, and step dependency annotations now line up with their numbered headings.
+- Terminal task failures survive temporary storage outages and restarts instead of being lost.
+- Interrupted step sessions recover in place without discarding completed work.
+- Multi-repository landing progress now shows in Task Detail's Details tab instead of the header.
+- Skills and Chat Snippets are separate responsive tabs with per-tab counts and refresh actions.
+- Dismissed update notices stay dismissed per release across dashboard sessions.
+- PostgreSQL backup pair listing is fixed, and native restore validates paired dumps, retains rollback evidence, and enforces project-only retention.
+
+### Internal
+
+- Folder ZIP downloads migrated to the archiver 8 ESM API.
+
 ## 0.78.0-beta.1
 
 ### Highlights
