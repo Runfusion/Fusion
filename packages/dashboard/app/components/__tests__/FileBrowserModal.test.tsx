@@ -134,6 +134,8 @@ describe("FileBrowserModal", () => {
     expect(screen.getByRole("button", { name: "Create new file" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Create new folder" })).toBeInTheDocument();
     expect(screen.getByRole("searchbox", { name: "Search project files" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Sort by" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sort direction: ascending" })).toBeInTheDocument();
 
     rerender(
       <FileBrowserModal
@@ -147,6 +149,8 @@ describe("FileBrowserModal", () => {
       expect(screen.queryByRole("searchbox", { name: "Search project files" })).toBeNull();
       expect(screen.queryByRole("button", { name: "Create new file" })).toBeNull();
       expect(screen.getByRole("button", { name: /^New$/i })).toBeInTheDocument();
+      expect(screen.getByRole("combobox", { name: "Sort by" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Sort direction: ascending" })).toBeInTheDocument();
     });
   });
 
@@ -171,7 +175,28 @@ describe("FileBrowserModal", () => {
       expect(screen.getByRole("searchbox", { name: "Search project files" })).toBeInTheDocument();
       expect(screen.getByRole("button", { name: "Create new file" })).toBeInTheDocument();
       expect(screen.getByRole("button", { name: "Create new folder" })).toBeInTheDocument();
+      expect(screen.getByRole("combobox", { name: "Sort by" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Sort direction: ascending" })).toBeInTheDocument();
+      expect(document.querySelector(".file-browser-sort-controls")).toBeInTheDocument();
     });
+  });
+
+  it("sorts the real modal list through keyboard and pointer controls", async () => {
+    const user = userEvent.setup();
+    render(
+      <FileBrowserModal
+        initialWorkspace="project"
+        isOpen={true}
+        onClose={mockOnClose}
+      />,
+    );
+
+    expect(Array.from(document.querySelectorAll(".file-browser-list > .file-node .file-node-name")).map((node) => node.textContent))
+      .toEqual(["folder1", "file1.ts"]);
+    await user.selectOptions(screen.getByRole("combobox", { name: "Sort by" }), "mtime");
+    const direction = screen.getByRole("button", { name: "Sort direction: ascending" });
+    await user.click(direction);
+    expect(screen.getByRole("button", { name: "Sort direction: descending" })).toBeInTheDocument();
   });
 
   it("opens a file in the editor when selected", async () => {

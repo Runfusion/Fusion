@@ -2566,7 +2566,14 @@
     "upOneLevel": "Subir um nível",
     "workspaceProject": "Projeto",
     "previewOnly": "Somente visualização",
-    "previewTitle": "Visualização de {{file}}"
+    "previewTitle": "Visualização de {{file}}",
+    "sortBy": "Ordenar por",
+    "sortName": "Nome",
+    "sortModified": "Data de modificação",
+    "sortSize": "Tamanho",
+    "sortDirectionAscending": "Direção da ordenação: crescente",
+    "sortDirectionDescending": "Direção da ordenação: decrescente",
+    "sortUnavailableDuringSearch": "A ordenação se aplica às listas de pastas e fica indisponível durante a pesquisa"
   },
   "fileEditor": {
     "autoSave": "Salvamento automático",

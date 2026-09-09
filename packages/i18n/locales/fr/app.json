@@ -2556,7 +2556,14 @@
     "upOneLevel": "Remonter d'un niveau",
     "workspaceProject": "Projet",
     "previewOnly": "Aperçu uniquement",
-    "previewTitle": "Aperçu de {{file}}"
+    "previewTitle": "Aperçu de {{file}}",
+    "sortBy": "Trier par",
+    "sortName": "Nom",
+    "sortModified": "Date de modification",
+    "sortSize": "Taille",
+    "sortDirectionAscending": "Sens du tri : croissant",
+    "sortDirectionDescending": "Sens du tri : décroissant",
+    "sortUnavailableDuringSearch": "Le tri s’applique aux listes de dossiers et n’est pas disponible pendant la recherche"
   },
   "fileEditor": {
     "autoSave": "",

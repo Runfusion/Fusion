@@ -184,7 +184,46 @@
 .file-browser .file-browser-header-actions {
   margin-left: var(--space-sm);
   gap: var(--space-sm);
+  flex: 1 1 auto;
+  min-width: 0;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+/*
+FNXC:FileBrowser 2026-09-09-21:10:
+The shared sort controls remain visible in project, dock, and picker hosts. Their flex sizing uses the existing spacing and control tokens so narrow and mobile layouts wrap into touch-safe rows instead of clipping or creating a separate host-specific toolbar.
+
+FNXC:FileBrowser 2026-09-09-21:28:
+Dock file trees stay 220–360 CSS pixels wide even on desktop viewports, including the deterministic two-pane layout. Apply the compact header projection from the dock host rather than the viewport so its path, search, sort, and file actions wrap inside the actual tree pane.
+*/
+.file-browser-sort-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+.file-browser-sort-label {
   flex-shrink: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+}
+
+.file-browser-sort-select {
+  width: auto;
+  min-width: 0;
+  min-height: calc(var(--space-lg) + var(--space-md));
+  padding-block: var(--space-xs);
+  padding-inline: var(--space-sm) var(--space-lg);
+  font-size: var(--font-size-xs);
+}
+
+.file-browser-sort-direction {
+  flex-shrink: 0;
+  min-width: calc(var(--space-lg) + var(--space-md));
+  min-height: calc(var(--space-lg) + var(--space-md));
 }
 
 .file-browser .file-browser-header-actions .btn-sm {
@@ -563,6 +602,38 @@ Narrow Files windows use the same single-pane list/editor behavior as mobile eve
   justify-content: flex-start;
 }
 
+.file-browser-modal--narrow .file-browser-sort-controls {
+  flex: 1 1 calc(var(--space-xl) * 5);
+}
+
+.file-browser-modal--narrow .file-browser-sort-select {
+  flex: 1 1 auto;
+}
+
+.dock-files-view__tree .file-browser .file-browser-header {
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.dock-files-view__tree .file-browser .file-browser-path {
+  flex: 1 1 auto;
+  max-width: none;
+}
+
+.dock-files-view__tree .file-browser .file-browser-header-actions {
+  width: 100%;
+  margin-left: 0;
+  justify-content: flex-start;
+}
+
+.dock-files-view__tree .file-browser-sort-controls {
+  flex: 1 1 calc(var(--space-xl) * 5);
+}
+
+.dock-files-view__tree .file-browser-sort-select {
+  flex: 1 1 auto;
+}
+
 .file-browser-modal--narrow .file-editor-toolbar {
   align-items: center;
   flex-wrap: nowrap;
@@ -750,6 +821,15 @@ Narrow Files windows use the same single-pane list/editor behavior as mobile eve
     width: 100%;
     margin-left: 0;
     justify-content: flex-start;
+  }
+
+  .file-browser-sort-controls {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+
+  .file-browser-sort-select {
+    flex: 1 1 auto;
   }
 
   .file-browser-create-button {

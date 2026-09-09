@@ -2566,7 +2566,14 @@
     "upOneLevel": "Up one level",
     "workspaceProject": "Project",
     "previewOnly": "Preview only",
-    "previewTitle": "Preview for {{file}}"
+    "previewTitle": "Preview for {{file}}",
+    "sortBy": "Sort by",
+    "sortName": "Name",
+    "sortModified": "Date modified",
+    "sortSize": "Size",
+    "sortDirectionAscending": "Sort direction: ascending",
+    "sortDirectionDescending": "Sort direction: descending",
+    "sortUnavailableDuringSearch": "Sorting applies to folder listings and is unavailable during search"
   },
   "fileEditor": {
     "autoSave": "Auto-save",

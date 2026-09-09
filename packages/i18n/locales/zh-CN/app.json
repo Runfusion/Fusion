@@ -2556,7 +2556,14 @@
     "upOneLevel": "上一级",
     "workspaceProject": "项目",
     "previewOnly": "仅预览",
-    "previewTitle": "{{file}} 的预览"
+    "previewTitle": "{{file}} 的预览",
+    "sortBy": "排序方式",
+    "sortName": "名称",
+    "sortModified": "修改日期",
+    "sortSize": "大小",
+    "sortDirectionAscending": "排序方向：升序",
+    "sortDirectionDescending": "排序方向：降序",
+    "sortUnavailableDuringSearch": "排序仅适用于文件夹列表，搜索期间不可用"
   },
   "fileEditor": {
     "autoSave": "",

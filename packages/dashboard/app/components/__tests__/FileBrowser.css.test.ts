@@ -41,6 +41,37 @@ describe("FileBrowser mobile dropdown regression", () => {
     expect(headerRule).not.toMatch(/overflow\s*:\s*hidden/);
   });
 
+  it("lets sort controls wrap and fill the mobile header without clipping", () => {
+    const css = loadAllAppCss();
+    const mobileCss = extractMediaBlocks(css, "(max-width: 768px)").join("\n");
+    const controlsRule = mobileCss.match(/\.file-browser-sort-controls\s*\{[^}]*\}/)?.[0];
+    const selectRule = mobileCss.match(/\.file-browser-sort-select\s*\{[^}]*\}/)?.[0];
+
+    expect(controlsRule).toMatch(/flex:\s*1 1 100%/);
+    expect(controlsRule).toMatch(/width:\s*100%/);
+    expect(selectRule).toMatch(/flex:\s*1 1 auto/);
+  });
+
+  it("gives narrow modal sort controls a flexible token-based row", () => {
+    const css = loadAllAppCss();
+    expect(css).toMatch(/\.file-browser-modal--narrow \.file-browser-sort-controls\s*\{[^}]*flex:\s*1 1 calc\(var\(--space-xl\) \* 5\)/);
+    expect(css).toMatch(/\.file-browser-modal--narrow \.file-browser-sort-select\s*\{[^}]*flex:\s*1 1 auto/);
+  });
+
+  it("wraps the file header against the dock tree width in both desktop layouts", () => {
+    const css = loadAllAppCss();
+    const headerRule = css.match(/\.dock-files-view__tree \.file-browser \.file-browser-header\s*\{[^}]*\}/)?.[0];
+    const actionsRule = css.match(/\.dock-files-view__tree \.file-browser \.file-browser-header-actions\s*\{[^}]*\}/)?.[0];
+    const controlsRule = css.match(/\.dock-files-view__tree \.file-browser-sort-controls\s*\{[^}]*\}/)?.[0];
+    const selectRule = css.match(/\.dock-files-view__tree \.file-browser-sort-select\s*\{[^}]*\}/)?.[0];
+
+    expect(headerRule).toMatch(/flex-wrap:\s*wrap/);
+    expect(actionsRule).toMatch(/width:\s*100%/);
+    expect(actionsRule).toMatch(/margin-left:\s*0/);
+    expect(controlsRule).toMatch(/flex:\s*1 1 calc\(var\(--space-xl\) \* 5\)/);
+    expect(selectRule).toMatch(/flex:\s*1 1 auto/);
+  });
+
   it("keeps workspace selector menu positioned above content", () => {
     const css = loadAllAppCss();
     const menuRuleMatch = css.match(/\.workspace-selector-menu\s*\{[^}]*\}/);

@@ -1317,6 +1317,10 @@ The view replaces the former **Command Center → Ideation** tab. It preserves t
 
 The Files modal provides a workspace-aware file browser and editor.
 
+<!-- FNXC:FileBrowser 2026-09-09-21:10: Folder-list sorting is shared by the Files modal, right dock, and Settings pickers. Document directory priority, deterministic missing-metadata handling, and the recursive-search limitation so operators do not mistake server search order for a date or size sort. -->
+
+- Use **Sort by** to order the current folder by **Name**, **Date modified**, or **Size**, then use the adjacent direction button to switch between ascending and descending order. Directories always remain before files. Equal values are ordered by name; missing sizes and missing or invalid dates remain after known values in either direction. Directories have no invented size and stay name-ordered when **Size** is selected.
+- Sorting is local to the current folder and starts at name ascending each time the browser mounts. During recursive **Search project files**, the sort controls remain visible but unavailable because search results do not include date or size metadata; clearing the search restores the selected folder sort.
 - In **Files — Project**, use the visible **Create new file** and **Create new folder** buttons in the browser header to create entries in the current folder; new files open in the editor after creation
 - In **Files — Project**, use **Search project files** to find project files recursively without navigating the tree; matching rows include path context so duplicate filenames can be distinguished
 - Source/text editing supports a **Line #** header toggle to show or hide line numbers in the editor gutter

@@ -2556,7 +2556,14 @@
     "upOneLevel": "상위 폴더로",
     "workspaceProject": "프로젝트",
     "previewOnly": "미리보기 전용",
-    "previewTitle": "{{file}} 미리보기"
+    "previewTitle": "{{file}} 미리보기",
+    "sortBy": "정렬 기준",
+    "sortName": "이름",
+    "sortModified": "수정 날짜",
+    "sortSize": "크기",
+    "sortDirectionAscending": "정렬 방향: 오름차순",
+    "sortDirectionDescending": "정렬 방향: 내림차순",
+    "sortUnavailableDuringSearch": "정렬은 폴더 목록에 적용되며 검색 중에는 사용할 수 없습니다"
   },
   "fileEditor": {
     "autoSave": "",

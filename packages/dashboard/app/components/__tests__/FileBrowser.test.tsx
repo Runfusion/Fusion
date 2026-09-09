@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, cleanup, act } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { loadAllAppCss } from "../../test/cssFixture";
 import { FileBrowser } from "../FileBrowser";
 import type { FileNode } from "../../api";
@@ -122,6 +123,19 @@ function getNewFolderAction() {
   return screen.getByRole("menuitem", { name: /New Folder/i });
 }
 
+function getRenderedEntryNames(): string[] {
+  return Array.from(document.querySelectorAll(".file-browser-list > .file-node .file-node-name"))
+    .map((node) => node.textContent ?? "");
+}
+
+function chooseSortCriterion(value: "name" | "mtime" | "size") {
+  fireEvent.change(screen.getByRole("combobox", { name: "Sort by" }), { target: { value } });
+}
+
+function reverseSortDirection() {
+  fireEvent.click(screen.getByRole("button", { name: /Sort direction:/ }));
+}
+
 async function typeProjectSearch(query: string) {
   fireEvent.change(screen.getByRole("searchbox", { name: "Search project files" }), { target: { value: query } });
   await waitFor(() => expect(mockSearchFiles).toHaveBeenCalled());
@@ -174,6 +188,78 @@ describe("FileBrowser", () => {
     expect(screen.getByText("1.2 KB")).toBeDefined();
   });
 
+  describe("directory sorting", () => {
+    const unsortedEntries: FileNode[] = [
+      { name: "file10.ts", type: "file", size: 100, mtime: "2026-01-03T00:00:00Z" },
+      { name: "Zebra", type: "directory", mtime: "invalid-date" },
+      { name: "file2.ts", type: "file", size: 200, mtime: "2026-01-01T00:00:00Z" },
+      { name: "alpha", type: "directory", mtime: "2026-01-02T00:00:00Z" },
+      { name: "unknown.txt", type: "file" },
+      { name: "same-b.txt", type: "file", size: 50, mtime: "2026-01-04T00:00:00Z" },
+      { name: "same-a.txt", type: "file", size: 50, mtime: "2026-01-04T00:00:00Z" },
+      { name: "bad-date.txt", type: "file", size: 300, mtime: "not-a-date" },
+    ];
+
+    it("defaults to case-insensitive numeric name order with directories first", () => {
+      renderFileBrowser({ entries: unsortedEntries });
+      expect(getRenderedEntryNames()).toEqual([
+        "alpha", "Zebra", "bad-date.txt", "file2.ts", "file10.ts", "same-a.txt", "same-b.txt", "unknown.txt",
+      ]);
+
+      reverseSortDirection();
+      expect(getRenderedEntryNames()).toEqual([
+        "Zebra", "alpha", "unknown.txt", "same-b.txt", "same-a.txt", "file10.ts", "file2.ts", "bad-date.txt",
+      ]);
+    });
+
+    it("sorts modification dates both ways and leaves invalid or missing dates last", () => {
+      renderFileBrowser({ entries: unsortedEntries });
+      chooseSortCriterion("mtime");
+      expect(getRenderedEntryNames()).toEqual([
+        "alpha", "Zebra", "file2.ts", "file10.ts", "same-a.txt", "same-b.txt", "bad-date.txt", "unknown.txt",
+      ]);
+
+      reverseSortDirection();
+      expect(getRenderedEntryNames()).toEqual([
+        "alpha", "Zebra", "same-a.txt", "same-b.txt", "file10.ts", "file2.ts", "bad-date.txt", "unknown.txt",
+      ]);
+    });
+
+    it("sorts file sizes both ways, breaks ties by name, and keeps folders name-ordered", () => {
+      renderFileBrowser({ entries: unsortedEntries });
+      chooseSortCriterion("size");
+      expect(getRenderedEntryNames()).toEqual([
+        "alpha", "Zebra", "same-a.txt", "same-b.txt", "file10.ts", "file2.ts", "bad-date.txt", "unknown.txt",
+      ]);
+
+      reverseSortDirection();
+      expect(getRenderedEntryNames()).toEqual([
+        "alpha", "Zebra", "bad-date.txt", "file2.ts", "file10.ts", "same-a.txt", "same-b.txt", "unknown.txt",
+      ]);
+    });
+
+    it("never mutates the entries prop while changing criteria and direction", () => {
+      const entries = unsortedEntries.map((entry) => ({ ...entry }));
+      const original = entries.map((entry) => ({ ...entry }));
+      renderFileBrowser({ entries });
+      chooseSortCriterion("size");
+      reverseSortDirection();
+      chooseSortCriterion("mtime");
+      expect(entries).toEqual(original);
+    });
+
+    it("handles a single entry and an empty directory", () => {
+      const { rerender } = renderFileBrowser({ entries: [{ name: "only.txt", type: "file" }] });
+      chooseSortCriterion("size");
+      reverseSortDirection();
+      expect(getRenderedEntryNames()).toEqual(["only.txt"]);
+
+      rerender(<FileBrowser {...defaultProps} entries={[]} />);
+      expect(screen.getByText("(empty directory)")).toBeInTheDocument();
+      expect(screen.getByRole("combobox", { name: "Sort by" })).toBeEnabled();
+    });
+  });
+
   it("shows root path label", () => {
     renderFileBrowser({ currentPath: "." });
     expect(screen.getByText("Root")).toBeDefined();
@@ -212,6 +298,8 @@ describe("FileBrowser", () => {
   it("keeps settings-style picker chrome compact unless project controls are enabled", () => {
     renderFileBrowser();
     expect(screen.getByRole("button", { name: /^New$/i })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Sort by" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sort direction: ascending" })).toBeInTheDocument();
     expect(screen.queryByRole("searchbox", { name: "Search project files" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Create new file" })).toBeNull();
   });
@@ -326,6 +414,38 @@ describe("FileBrowser", () => {
 
     fireEvent.click(screen.getAllByRole("button", { name: /config.json/i })[1]);
     expect(onSelectFile).toHaveBeenCalledWith("packages/core/config.json");
+  });
+
+  it("keeps the chosen sort state but disables it accessibly during recursive search", async () => {
+    const user = userEvent.setup();
+    mockSearchFiles.mockResolvedValue({ files: [{ name: "file10.ts", path: "nested/file10.ts" }] });
+    renderFileBrowser({
+      showProjectFileControls: true,
+      entries: [
+        { name: "file10.ts", type: "file", size: 10 },
+        { name: "file2.ts", type: "file", size: 20 },
+      ],
+    });
+
+    const criterion = screen.getByRole("combobox", { name: "Sort by" });
+    await user.selectOptions(criterion, "size");
+    const direction = screen.getByRole("button", { name: "Sort direction: ascending" });
+    direction.focus();
+    await user.keyboard("{Enter}");
+    expect(screen.getByRole("button", { name: "Sort direction: descending" })).toBeInTheDocument();
+    expect(getRenderedEntryNames()).toEqual(["file2.ts", "file10.ts"]);
+
+    await typeProjectSearch("file");
+    await waitFor(() => expect(screen.getByText("nested/file10.ts")).toBeInTheDocument());
+    expect(criterion).toBeDisabled();
+    expect(criterion).toHaveAccessibleDescription("Sorting applies to folder listings and is unavailable during search");
+    expect(screen.getByRole("button", { name: "Sort direction: descending" })).toBeDisabled();
+
+    await user.clear(screen.getByRole("searchbox", { name: "Search project files" }));
+    expect(criterion).toBeEnabled();
+    expect(criterion).toHaveValue("size");
+    expect(screen.getByRole("button", { name: "Sort direction: descending" })).toBeEnabled();
+    expect(getRenderedEntryNames()).toEqual(["file2.ts", "file10.ts"]);
   });
 
   it("does not search without a workspace and preserves normal browsing", async () => {
