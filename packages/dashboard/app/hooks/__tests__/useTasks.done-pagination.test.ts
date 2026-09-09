@@ -330,6 +330,54 @@ describe("useTasks Done keyset pagination", () => {
     expect(result.current.completedCounts.byWorkflow["builtin:coding"]?.done).toBe(1);
   });
 
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-09-09-15:44:
+  FN-319's late-page live-mutation path used `column === "done"` before the resolver. A workflow that
+  marks the built-in `done` id as non-complete must keep that live mutation out of completed history.
+  */
+  it("does not resurrect a resolved non-complete done lane from a late completed page", async () => {
+    const late = deferred<ReturnType<typeof response>>();
+    fetchCompletedTasks
+      .mockResolvedValueOnce(response(
+        [task("FN-2", "complete-a")],
+        2,
+        "late-cursor",
+        { byColumn: { "complete-a": 2 }, byWorkflow: { "wf-a": { "complete-a": 2 } } },
+      ))
+      .mockReturnValueOnce(late.promise);
+    const { result } = renderHook(() => useTasks({
+      projectId: "project-a",
+      sseEnabled: true,
+      resolveColumnFlags: (candidate) => ({ complete: candidate.column === "complete-a" }),
+      resolveWorkflowId: () => "wf-a",
+    }));
+    await waitFor(() => expect(result.current.completedHasMore).toBe(true));
+    let load!: Promise<void>;
+    await act(async () => { load = result.current.loadMoreCompletedTasks(); await Promise.resolve(); });
+    await act(async () => {
+      sseHandlers["task:moved"]?.(new MessageEvent("task:moved", {
+        data: JSON.stringify({
+          task: task("FN-1", "done"),
+          from: "complete-a",
+          to: "done",
+          projectId: "project-a",
+        }),
+      }));
+    });
+    late.resolve(response(
+      [task("FN-1")],
+      2,
+      null,
+      { byColumn: { "complete-a": 1, done: 1 }, byWorkflow: { "wf-a": { "complete-a": 1, done: 1 } } },
+    ));
+    await act(() => load);
+    expect(result.current.tasks.find((candidate) => candidate.id === "FN-1")?.column).toBe("done");
+    expect(result.current.tasks.filter((candidate) => candidate.column === "complete-a").map((candidate) => candidate.id)).toEqual(["FN-2"]);
+    expect(result.current.completedTotal).toBe(1);
+    expect(result.current.completedCounts.byColumn["complete-a"]).toBe(1);
+    expect(result.current.completedCounts.byColumn.done ?? 0).toBe(0);
+  });
+
   it("fences a late Done page as soon as search changes", async () => {
     const late = deferred<ReturnType<typeof response>>();
     fetchCompletedTasks
