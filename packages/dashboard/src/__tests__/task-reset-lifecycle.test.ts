@@ -145,7 +145,11 @@ describe("POST /tasks/:id/reset", () => {
       steps: [],
       currentStep: 0,
       workflowStepResults: [],
+      reviewState: undefined,
+      awaitingApprovalReason: undefined,
       approvedPlanFingerprint: undefined,
+      stepReports: [],
+      mergeRetries: undefined,
     };
     let store!: TaskStore;
     store = createStore(root, task, events, async function (this: TaskStore, id, intake) {
@@ -183,6 +187,10 @@ describe("POST /tasks/:id/reset", () => {
       expect(res.body.error).toBeUndefined();
       expect(res.body.steps).toEqual([]);
       expect(res.body.workflowStepResults).toEqual([]);
+      expect(res.body.reviewState).toBeUndefined();
+      expect(res.body.awaitingApprovalReason).toBeUndefined();
+      expect(res.body.stepReports).toEqual([]);
+      expect(res.body.mergeRetries).toBeUndefined();
       expect(res.body.approvedPlanFingerprint).toBeUndefined();
     } finally {
       unregister();

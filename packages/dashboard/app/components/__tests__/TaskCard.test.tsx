@@ -149,6 +149,28 @@ function makeTask(overrides: Partial<Task> = {}): Task {
   } as Task;
 }
 
+function ResettableTaskCardHarness({
+  initialTask,
+  requestReset,
+}: {
+  initialTask: Task;
+  requestReset: () => Promise<Task>;
+}) {
+  const [task, setTask] = React.useState(initialTask);
+  return (
+    <TaskCard
+      task={task}
+      onOpenDetail={noop}
+      addToast={noop}
+      onResetTask={async () => {
+        const confirmed = await requestReset();
+        setTask(confirmed);
+        return confirmed;
+      }}
+    />
+  );
+}
+
 const noop = () => {};
 
 function seedAgentsCache(projectId: string, agents: Array<{ id: string; name: string; role?: string; state?: string }>) {
@@ -575,11 +597,28 @@ describe("TaskCard", () => {
     }
   });
 
-  it("opens editable Reset without consulting confirmation settings", async () => {
+  it("replaces the populated board card with the confirmed unplanned Reset row", async () => {
     const cleanupGeometry = mockBoardContextMenuGeometry();
-    const onResetTask = vi.fn(async () => makeTask());
+    let resolveReset!: (task: Task) => void;
+    const requestReset = vi.fn(() => new Promise<Task>((resolve) => { resolveReset = resolve; }));
+    const initialTask = makeTask({
+      column: "in-progress",
+      description: "Original request",
+      status: "executing",
+      error: "old failure",
+      steps: [{ id: "old-step", title: "Old work", status: "done" } as Task["steps"][number]],
+      workflowStepResults: [{ stepId: "code-review", status: "failed" } as Task["workflowStepResults"][number]],
+    });
+    const { status: _status, error: _error, ...confirmedJson } = makeTask({
+      column: "todo",
+      description: "Corrected board request",
+      steps: [],
+      workflowStepResults: [],
+      awaitingPlanning: true,
+    });
     try {
-      render(<TaskCard task={makeTask({ column: "in-progress", description: "Original request" })} onOpenDetail={noop} onResetTask={onResetTask} addToast={noop} />);
+      render(<ResettableTaskCardHarness initialTask={initialTask} requestReset={requestReset} />);
+      expect(document.body).toHaveTextContent(/executing/i);
       fireEvent.click(screen.getByTestId("card-menu-btn-FN-001"));
       await waitFor(() => expectBoardContextMenuPortaled());
       fireEvent.click(screen.getByRole("menuitem", { name: "Reset" }));
@@ -589,10 +628,19 @@ describe("TaskCard", () => {
       expect(screen.getByTestId("task-reset-description")).toHaveValue("Original request");
       fireEvent.change(screen.getByTestId("task-reset-description"), { target: { value: "Corrected board request" } });
       fireEvent.click(screen.getByTestId("task-reset-submit"));
-      await waitFor(() => expect(onResetTask).toHaveBeenCalledWith(
-        "FN-001",
-        { description: "Corrected board request" },
-      ));
+      expect(screen.getByTestId("task-reset-submit")).toHaveTextContent("Resetting…");
+
+      await act(async () => {
+        resolveReset(confirmedJson as Task);
+        await Promise.resolve();
+      });
+
+      await waitFor(() => expect(screen.queryByTestId("task-reset-dialog")).not.toBeInTheDocument());
+      expect(requestReset).toHaveBeenCalledOnce();
+      expect(screen.getByTestId("card-queued-to-plan-FN-001")).toHaveTextContent("Queued to plan");
+      expect(document.body).not.toHaveTextContent(/executing/i);
+      expect(document.body).not.toHaveTextContent("old failure");
+      expect(document.body).not.toHaveTextContent("undefined");
     } finally {
       cleanupGeometry();
     }
