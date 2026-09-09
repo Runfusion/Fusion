@@ -27,7 +27,6 @@ import {
 } from "@fusion/core";
 import { mergeEffectiveSettings } from "../project/effective-settings.js";
 import { reviewStep } from "../execution/reviewer.js";
-import type { EngineRunContext } from "../util/run-audit.js";
 import { emitBoundedRunAudit } from "./emit-bounded-run-audit.js";
 import type { AppendReviewRemediationOptions, AppendReviewRemediationOutcome } from "./append-review-remediation-steps.js";
 import type { RequestPreMergeOptionalStepFixInfo } from "./request-pre-merge-optional-step-fix.js";

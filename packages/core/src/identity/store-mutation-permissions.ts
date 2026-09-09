@@ -51,8 +51,6 @@ export const TASK_STORE_MUTATION_PERMISSIONS: Readonly<Record<string, CatalogPer
     deleteTaskIf: "tasks:delete",
     deleteTaskById: "tasks:delete",
     deleteTaskBackend: "tasks:delete",
-    archiveAllDone: "tasks:archive",
-    cleanupArchivedTasks: "tasks:delete",
     bypassFailedPreMergeReviewStep: "runtime:review-gate-bypass",
     getDatabase: "runtime:file-write-delete",
 
@@ -60,8 +58,6 @@ export const TASK_STORE_MUTATION_PERMISSIONS: Readonly<Record<string, CatalogPer
     createTask: "tasks:create",
     updateTask: "runtime:task-agent-mutation",
     moveTask: "runtime:task-agent-mutation",
-    archiveTask: "tasks:archive",
-    unarchiveTask: "tasks:archive",
     updateSettings: "settings:update",
 
     // Read-prefix names that still mutate. Denied for plugins; mapped so authorization cannot skip them.

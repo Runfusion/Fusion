@@ -1,7 +1,6 @@
 import { createLogger } from "../process/logger.js";
 import { UNATTRIBUTED_MUTATION_CONTEXT } from "../identity/mutation-context.js";
-import { columnsWithFlag, declaresAnyLifecycleTrait } from "../workflows/workflow-lifecycle-traits.js";
-import { resolveWorkflowIrForTask } from "../workflows/workflow-ir-resolver.js";
+import { columnsWithFlag } from "../workflows/workflow-lifecycle-traits.js";
 
 const severityAuditLog = createLogger("core-async-mission-store");
 /**

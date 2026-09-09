@@ -15,7 +15,6 @@ import { clearTerminalWorkflowStepFailures } from "./workflow-step-failures.js";
  * where the move does not. Passed/skipped/pending evidence is kept.
  */
 import type { TaskStore, WorkflowStepResult } from "@fusion/core";
-import type { EngineRunContext } from "../util/run-audit.js";
 import { archiveTerminalWorkflowStepFailures } from "@fusion/core";
 import { clearTerminalWorkflowStepFailures } from "./workflow-step-failures.js";
 

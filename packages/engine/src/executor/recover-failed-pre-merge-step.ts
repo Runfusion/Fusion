@@ -23,7 +23,6 @@ import type { Task, TaskStore, WorkflowStepResult as CoreWorkflowStepResult } fr
 import type { SendTaskBackForFixOutcome } from "./send-task-back-for-fix.js";
 import { hasPreMergeRemediationAutoMergeHold, resolveStepReopenPolicy, resolveWorkflowIrForTask } from "@fusion/core";
 import { executorLog } from "../logger.js";
-import type { EngineRunContext } from "../util/run-audit.js";
 import type {
   AppendReviewRemediationOptions,
   AppendReviewRemediationOutcome,

@@ -9,7 +9,6 @@ import { resolveAuthoritativeExternalExecutionRoute } from "./resolve-authoritat
  * Remediation reuses the live external checkout path and must not persist it as task.worktree.
  */
 import type { Task, TaskStore, WorkflowReviewFinding } from "@fusion/core";
-import type { EngineRunContext } from "../util/run-audit.js";
 import { resolveAuthoritativeExternalExecutionRoute } from "./resolve-authoritative-external-execution-route.js";
 import type { TrailingReplayAccounting, TrailingReplayAccountingOutcome } from "./reopen-last-step-for-revision.js";
 

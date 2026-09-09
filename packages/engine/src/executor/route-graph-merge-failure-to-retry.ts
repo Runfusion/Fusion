@@ -19,7 +19,6 @@ import type { WorkflowGraphTaskRunResult } from "../workflows/workflow-graph-tas
 import type { PausedAbortProvenance } from "./paused-abort-provenance.js";
 import { isGenericAbortProvenance } from "./paused-abort-provenance.js";
 import { graphFailureValue } from "./graph-failure-pure.js";
-import type { EngineRunContext } from "../util/run-audit.js";
 import { executorLog } from "../logger.js";
 import { MERGE_BOUNDARY_UNPROVEN_VALUE } from "../workflows/workflow-merge-nodes.js";
 import { emitMergeBoundaryUnprovenParked } from "./emit-merge-boundary-unproven-audit.js";
