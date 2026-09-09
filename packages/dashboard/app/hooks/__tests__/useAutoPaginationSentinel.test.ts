@@ -65,6 +65,30 @@ describe("useAutoPaginationSentinel", () => {
     await act(async () => secondPage.resolve());
   });
 
+  it("rechecks the same near-edge sentinel once after owner progress without a new intersection", async () => {
+    vi.stubGlobal("IntersectionObserver", Observer);
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { callback(0); return 1; });
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+    const root = document.createElement("div");
+    Object.defineProperties(root, { clientHeight: { value: 100 }, scrollHeight: { value: 1_000 }, scrollTop: { writable: true, value: 860 } });
+    const sentinel = document.createElement("div");
+    const load = vi.fn().mockResolvedValue(undefined);
+    const { result, rerender } = renderHook(
+      ({ progressKey, loading }) => useAutoPaginationSentinel({ rootRef: { current: root }, hasMore: true, loading, onLoadMore: load, progressKey, collectionKey: "tasks" }),
+      { initialProps: { progressKey: "page-0", loading: false } },
+    );
+    act(() => result.current.sentinelRef(sentinel));
+    await act(async () => { intersection?.([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver); await Promise.resolve(); });
+    expect(load).toHaveBeenCalledTimes(1);
+
+    rerender({ progressKey: "page-1", loading: true });
+    expect(load).toHaveBeenCalledTimes(1);
+    await act(async () => { rerender({ progressKey: "page-1", loading: false }); await Promise.resolve(); });
+    expect(load).toHaveBeenCalledTimes(2);
+    rerender({ progressKey: "page-1", loading: false });
+    expect(load).toHaveBeenCalledTimes(2);
+  });
+
   it("allows retry on a later crossing after an error and disconnects on unmount", async () => {
     vi.stubGlobal("IntersectionObserver", Observer);
     const root = document.createElement("div");

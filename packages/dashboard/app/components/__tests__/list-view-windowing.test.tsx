@@ -277,6 +277,15 @@ describe("ListView render windowing", () => {
     expect(screen.queryByRole("button", { name: /Load .*more|Show more/i })).toBeNull();
   });
 
+  it("retains list rows and delegates an explicit pagination retry", async () => {
+    const onRetryCurrentTasks = vi.fn().mockResolvedValue(undefined);
+    await renderList({ currentTasksPaginationError: "request-failed", onRetryCurrentTasks });
+    expect(renderedTaskIds().length).toBeGreaterThan(0);
+    expect(screen.getByText("Older tasks could not be loaded.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(onRetryCurrentTasks).toHaveBeenCalledOnce());
+  });
+
   it("filters against the full set, so a match beyond the window is still found", async () => {
     await renderList({ searchQuery: "Needle" });
 

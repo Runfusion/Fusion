@@ -1537,6 +1537,7 @@ export default interface Resources {
       "noManuallyPausableTasks": "No manually pausable tasks",
       "noTasks": "No tasks",
       "noTasksInColumn": "No tasks in this column",
+      "paginationError": "Older tasks could not be loaded.",
       "pauseHint_one": "Pause {{count}} active unassigned task{{plural}}",
       "pauseHint_other": "Pause {{count}} active unassigned task{{plural}}",
       "preserveProgressTitle": "Preserve Progress?",

@@ -8,6 +8,10 @@ export interface AutoPaginationOptions {
   direction?: "start" | "end";
   rootMargin?: string;
   enabled?: boolean;
+  /** Changes only after the owner accepts a page/continuation. Enables one post-commit edge recheck. */
+  progressKey?: string | number;
+  /** Stable list incarnation; changing it cancels deferred checks and resets progress baselines. */
+  collectionKey?: string;
 }
 
 const DEFAULT_ROOT_MARGIN = "50% 0%";
@@ -25,6 +29,8 @@ export function useAutoPaginationSentinel({
   direction = "end",
   rootMargin = DEFAULT_ROOT_MARGIN,
   enabled = true,
+  progressKey,
+  collectionKey = "default",
 }: AutoPaginationOptions) {
   const [sentinel, setSentinel] = useState<HTMLElement | null>(null);
   const inFlightRef = useRef(false);
@@ -32,6 +38,9 @@ export function useAutoPaginationSentinel({
   const observerGenerationRef = useRef(0);
   const loadRef = useRef(onLoadMore);
   const eligibilityRef = useRef({ enabled, hasMore, loading });
+  const intersectsRef = useRef(false);
+  const progressRef = useRef<{ collectionKey: string; value: string | number | undefined }>({ collectionKey, value: progressKey });
+  const deferredCheckGenerationRef = useRef(0);
   loadRef.current = onLoadMore;
   eligibilityRef.current = { enabled, hasMore, loading };
 
@@ -72,11 +81,13 @@ export function useAutoPaginationSentinel({
     if (typeof IntersectionObserver !== "undefined") {
       const observer = new IntersectionObserver((entries) => {
         if (!mountedRef.current || generation !== observerGenerationRef.current) return;
-        if (entries.some((entry) => entry.isIntersecting)) void requestNextPage();
+        intersectsRef.current = entries.some((entry) => entry.isIntersecting);
+        if (intersectsRef.current) void requestNextPage();
       }, { root, rootMargin });
       observer.observe(sentinel);
       return () => {
         observerGenerationRef.current += 1;
+        intersectsRef.current = false;
         observer.disconnect();
       };
     }
@@ -95,6 +106,43 @@ export function useAutoPaginationSentinel({
       root.removeEventListener("scroll", handleScroll);
     };
   }, [direction, enabled, hasMore, requestNextPage, rootMargin, rootRef, sentinel]);
+
+  /*
+  FNXC:AutomaticListPagination 2026-09-09-00:33:
+  Task lists may accept a page while the same sentinel remains inside the preload zone. An optional owner progress key schedules exactly one post-commit edge check; unchanged keys, errors/disabled hosts, teardown, and stale collection incarnations cannot drain pages.
+  */
+  useEffect(() => {
+    const previous = progressRef.current;
+    deferredCheckGenerationRef.current += 1;
+    const generation = deferredCheckGenerationRef.current;
+    if (previous.collectionKey !== collectionKey) {
+      progressRef.current = { collectionKey, value: progressKey };
+      return;
+    }
+    if (progressKey === undefined || previous.value === progressKey) return;
+    // A progress render may commit before the owner's loading=false release. Preserve the old
+    // baseline so that release render performs the one allowed post-commit check.
+    if (loading) return;
+    progressRef.current = { collectionKey, value: progressKey };
+
+    const root = rootRef.current;
+    if (!root || !sentinel || !enabled || !hasMore) return;
+    const check = () => {
+      if (!mountedRef.current || generation !== deferredCheckGenerationRef.current) return;
+      const threshold = root.clientHeight * FALLBACK_EDGE_RATIO;
+      const geometricallyNear = direction === "start"
+        ? root.scrollTop <= threshold
+        : root.scrollHeight - root.scrollTop - root.clientHeight <= threshold;
+      if (intersectsRef.current || geometricallyNear) void requestNextPage();
+    };
+    const usesAnimationFrame = typeof requestAnimationFrame === "function";
+    const frame = usesAnimationFrame ? requestAnimationFrame(check) : window.setTimeout(check, 0);
+    return () => {
+      deferredCheckGenerationRef.current += 1;
+      if (usesAnimationFrame && typeof cancelAnimationFrame === "function") cancelAnimationFrame(frame);
+      else window.clearTimeout(frame);
+    };
+  }, [collectionKey, direction, enabled, hasMore, loading, progressKey, requestNextPage, rootRef, sentinel]);
 
   return { sentinelRef: setSentinelRef, requestNextPage };
 }

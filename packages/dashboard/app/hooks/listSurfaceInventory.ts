@@ -15,9 +15,12 @@ export interface ListSurfaceInventoryEntry {
 /*
 FNXC:ListSurfaceInventory 2026-09-07-16:03:
 Every dynamic dashboard collection that can grow without a product bound is registered here with its pagination owner, render-window contract, loading direction, and production-reachability test. Finite selectors and per-row disclosure controls stay explicit exemptions so the performance policy cannot accidentally turn menus into remote lists.
+
+FNXC:ListSurfaceInventory 2026-09-09-00:33:
+Board completion history and current/search results share cursor owners but not cursors. ListView continues only current/search pages; Done history remains Column-owned, with progress and physical-geometry coverage named below.
 */
 export const LIST_SURFACE_INVENTORY: readonly ListSurfaceInventoryEntry[] = [
-  { id: "board-columns", hosts: ["Board", "Column", "ListView"], pagination: "server-cursor", virtualized: true, direction: "end", tests: ["DoneColumn.history-pagination.integration", "Board.done-pagination", "Column", "list-view-windowing"] },
+  { id: "board-columns", hosts: ["Board", "Column", "ListView"], pagination: "server-cursor", virtualized: true, direction: "end", tests: ["DoneColumn.history-pagination.integration", "Column.scroll-geometry", "useTasks.done-pagination", "useAutoPaginationSentinel", "Board.done-pagination", "Column", "list-view-windowing"] },
   { id: "chat-sessions", hosts: ["ChatView", "FloatingWindow", "RightDock", "mobile"], pagination: "server-cursor", virtualized: true, direction: "end", tests: ["ChatView.sessions-rooms", "ChatView.virtualization"] },
   { id: "direct-transcript", hosts: ["ChatView", "FloatingWindow", "RightDock", "mobile"], pagination: "server-cursor", virtualized: true, direction: "start", tests: ["ChatView.virtualization"] },
   { id: "planner-transcript", hosts: ["TaskPlannerChatTab", "expanded"], pagination: "server-cursor", virtualized: true, direction: "start", tests: ["TaskPlannerChatTab.virtualization"] },

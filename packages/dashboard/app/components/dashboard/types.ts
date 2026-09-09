@@ -233,6 +233,9 @@ export interface MainContentProps {
   currentTasksTotal: number;
   currentTasksHasMore: boolean;
   currentTasksLoadingMore: boolean;
+  currentTasksPaginationError?: "timeout" | "invalid-continuation" | "request-failed" | null;
+  currentTasksProgressKey?: string;
+  retryCurrentTasksPagination?: () => Promise<void>;
   loadMoreCompletedTasks: () => Promise<void>;
   completedCounts: {
     byColumn: Record<string, number>;
@@ -240,6 +243,9 @@ export interface MainContentProps {
   };
   completedHasMore: boolean;
   completedLoadingMore: boolean;
+  completedPaginationError?: "timeout" | "invalid-continuation" | "request-failed" | null;
+  completedProgressKey?: string;
+  retryCompletedTasksPagination?: () => Promise<void>;
   completedSortMode: TaskColumnSortMode;
   changeCompletedSortMode: (mode: TaskColumnSortMode) => Promise<void>;
   searchQuery: string;

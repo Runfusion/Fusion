@@ -394,6 +394,7 @@ Features:
 - Search/filter tasks (including working-branch and base-branch dropdown filters with explicit **No working branch** / **No base branch** options)
 - Working-branch and base-branch filter selections are persisted per project and restored across refresh/navigation
 - Column visibility controls
+- Done history continues automatically in bounded server pages as you approach the bottom. Fusion keeps only a measured window of cards mounted, stops at the server’s terminal continuation, and preserves visible cards if a page fails; in that error state, **Retry** explicitly resumes loading instead of leaving an endless spinner.
 - Inline quick entry creation
 - The quick-entry GitHub icon is a per-task tracking override: leave it untouched to use the project default, turn it on to opt the next task into tracking when the default is off, or turn it off to opt the next task out when the default is on.
 - PR/issue badges with live updates

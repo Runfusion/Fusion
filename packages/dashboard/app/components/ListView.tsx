@@ -302,7 +302,10 @@ interface ListViewProps {
   /** Shared current-task page state; search and ordinary list scopes use the same fenced cursor owner. */
   currentTasksHasMore?: boolean;
   currentTasksLoadingMore?: boolean;
+  currentTasksPaginationError?: "timeout" | "invalid-continuation" | "request-failed" | null;
+  currentTasksProgressKey?: string;
   onLoadMoreCurrentTasks?: () => Promise<void>;
+  onRetryCurrentTasks?: () => Promise<void>;
   /** Timestamp (ms) when task data was last confirmed fresh from the server. */
   lastFetchTimeMs?: number;
   prAuthAvailable?: boolean;
@@ -406,7 +409,10 @@ export function ListView({
   searchQuery = "",
   currentTasksHasMore = false,
   currentTasksLoadingMore = false,
+  currentTasksPaginationError = null,
+  currentTasksProgressKey,
   onLoadMoreCurrentTasks,
+  onRetryCurrentTasks,
   lastFetchTimeMs,
   prAuthAvailable,
   autoMerge,
@@ -1265,7 +1271,9 @@ export function ListView({
     loading: currentTasksLoadingMore,
     onLoadMore: onLoadMoreCurrentTasks ?? (() => undefined),
     direction: "end",
-    enabled: active,
+    enabled: active && !currentTasksPaginationError,
+    progressKey: currentTasksProgressKey,
+    collectionKey: `${projectId ?? "default"}:list:${searchQuery}`,
   });
 
   /*
@@ -3253,9 +3261,15 @@ export function ListView({
             </tbody>
           </table>
         )}
-          {currentTasksHasMore ? (
-            <div ref={autoPagination.sentinelRef} role="status" aria-live="polite" data-testid="list-auto-pagination-sentinel">
+          {(currentTasksHasMore || currentTasksPaginationError) ? (
+            <div className="list-pagination-footer" ref={currentTasksHasMore ? autoPagination.sentinelRef : undefined} role="status" aria-live="polite" data-testid="list-auto-pagination-sentinel">
               {currentTasksLoadingMore ? t("column.loadMoreCompletedLoading", "Loading…") : null}
+              {currentTasksPaginationError ? (
+                <div className="list-pagination-error">
+                  <span>{t("column.paginationError", "Older tasks could not be loaded.")}</span>
+                  <button type="button" className="btn btn-sm" onClick={() => void onRetryCurrentTasks?.()}>{t("common.retry", "Retry")}</button>
+                </div>
+              ) : null}
             </div>
           ) : null}
           </div>

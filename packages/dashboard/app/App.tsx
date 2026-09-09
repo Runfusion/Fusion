@@ -613,7 +613,7 @@ function AppInner() {
       ?.columns.find((column) => column.id === task.column)?.flags;
   }, [footerBoardWorkflows, resolveTaskWorkflowId]);
 
-  const { tasks, isStale, createTask, moveTask, pauseTask, unpauseTask, deleteTask, mergeTask, retryTask, bypassReview, resetTask, updateTask, duplicateTask, revertTask, loadMoreCurrentTasks, currentTasksTotal, currentTasksHasMore, currentTasksLoadingMore, loadMoreCompletedTasks, completedSortMode, changeCompletedSortMode, completedCounts, completedHasMore, completedLoadingMore, ingestCreatedTasks, lastFetchTimeMs } = useTasks(
+  const { tasks, isStale, createTask, moveTask, pauseTask, unpauseTask, deleteTask, mergeTask, retryTask, bypassReview, resetTask, updateTask, duplicateTask, revertTask, loadMoreCurrentTasks, retryCurrentTasksPagination, currentTasksTotal, currentTasksHasMore, currentTasksLoadingMore, currentTasksPaginationError, currentTasksProgressKey, loadMoreCompletedTasks, retryCompletedTasksPagination, completedSortMode, changeCompletedSortMode, completedCounts, completedHasMore, completedLoadingMore, completedPaginationError, completedProgressKey, ingestCreatedTasks, lastFetchTimeMs } = useTasks(
     {
       ...(currentProject ? { projectId: currentProject.id } : {}),
       searchQuery: searchQuery || undefined,
@@ -1880,10 +1880,16 @@ function AppInner() {
     currentTasksTotal,
     currentTasksHasMore,
     currentTasksLoadingMore,
+    currentTasksPaginationError,
+    currentTasksProgressKey,
+    retryCurrentTasksPagination,
     loadMoreCompletedTasks,
     completedCounts,
     completedHasMore,
     completedLoadingMore,
+    completedPaginationError,
+    completedProgressKey,
+    retryCompletedTasksPagination,
     completedSortMode,
     changeCompletedSortMode,
     searchQuery,

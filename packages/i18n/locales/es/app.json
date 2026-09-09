@@ -1551,7 +1551,8 @@
     "sortTaskIdDescHint": "",
     "replannedTasks_one": "Replanned {{count}} task{{plural}}",
     "replannedTasks_other": "Replanned {{count}} task{{plural}}",
-    "replanPartialFailure": "Replanned {{replanned}} of {{total}} tasks; {{failed}} failed"
+    "replanPartialFailure": "Replanned {{replanned}} of {{total}} tasks; {{failed}} failed",
+    "paginationError": "No se pudieron cargar las tareas anteriores."
   },
   "commandCenter": {
     "activity": {

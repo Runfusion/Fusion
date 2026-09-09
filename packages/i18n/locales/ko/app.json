@@ -1551,7 +1551,8 @@
     "sortTaskIdDescHint": "",
     "replannedTasks_one": "Replanned {{count}} task{{plural}}",
     "replannedTasks_other": "Replanned {{count}} task{{plural}}",
-    "replanPartialFailure": "Replanned {{replanned}} of {{total}} tasks; {{failed}} failed"
+    "replanPartialFailure": "Replanned {{replanned}} of {{total}} tasks; {{failed}} failed",
+    "paginationError": "이전 작업을 불러올 수 없습니다."
   },
   "commandCenter": {
     "activity": {

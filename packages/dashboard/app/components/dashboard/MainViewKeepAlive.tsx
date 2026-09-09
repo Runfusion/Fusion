@@ -39,6 +39,7 @@ function renderBoardSubtree(props: MainContentProps, active: boolean) {
     handleDismissCapacityRisk,
     filteredBoardTasks,
     currentProject,
+    isRemote,
     maxConcurrent,
     maxWorktrees,
     showWorktreeGrouping,
@@ -71,10 +72,16 @@ function renderBoardSubtree(props: MainContentProps, active: boolean) {
     currentTasksTotal,
     currentTasksHasMore,
     currentTasksLoadingMore,
+    currentTasksPaginationError,
+    currentTasksProgressKey,
+    retryCurrentTasksPagination,
     loadMoreCompletedTasks,
     completedCounts,
     completedHasMore,
     completedLoadingMore,
+    completedPaginationError,
+    completedProgressKey,
+    retryCompletedTasksPagination,
     completedSortMode,
     changeCompletedSortMode,
     searchQuery,
@@ -130,14 +137,20 @@ function renderBoardSubtree(props: MainContentProps, active: boolean) {
         onRevertTask={revertTask}
         onReviseTask={(task) => modalManager.openNewTaskWithDescription(task.description)}
         onDeleteTask={deleteTask}
-        onLoadMoreCurrentTasks={loadMoreCurrentTasks}
-        currentTasksTotal={currentTasksTotal}
-        currentTasksHasMore={currentTasksHasMore}
-        currentTasksLoadingMore={currentTasksLoadingMore}
-        onLoadMoreCompletedTasks={loadMoreCompletedTasks}
-        completedCounts={completedCounts}
-        completedHasMore={completedHasMore}
-        completedLoadingMore={completedLoadingMore}
+        onLoadMoreCurrentTasks={isRemote ? undefined : loadMoreCurrentTasks}
+        currentTasksTotal={isRemote ? undefined : currentTasksTotal}
+        currentTasksHasMore={isRemote ? false : currentTasksHasMore}
+        currentTasksLoadingMore={isRemote ? false : currentTasksLoadingMore}
+        currentTasksPaginationError={isRemote ? null : currentTasksPaginationError}
+        currentTasksProgressKey={isRemote ? undefined : currentTasksProgressKey}
+        onRetryCurrentTasks={isRemote ? undefined : retryCurrentTasksPagination}
+        onLoadMoreCompletedTasks={isRemote ? undefined : loadMoreCompletedTasks}
+        completedCounts={isRemote ? undefined : completedCounts}
+        completedHasMore={isRemote ? false : completedHasMore}
+        completedLoadingMore={isRemote ? false : completedLoadingMore}
+        completedPaginationError={isRemote ? null : completedPaginationError}
+        completedProgressKey={isRemote ? undefined : completedProgressKey}
+        onRetryCompletedTasks={isRemote ? undefined : retryCompletedTasksPagination}
         completedSortMode={completedSortMode}
         onCompletedSortModeChange={changeCompletedSortMode}
         searchQuery={searchQuery}
@@ -194,6 +207,9 @@ function renderListSubtree(props: MainContentProps, active: boolean) {
     loadMoreCurrentTasks,
     currentTasksHasMore,
     currentTasksLoadingMore,
+    currentTasksPaginationError,
+    currentTasksProgressKey,
+    retryCurrentTasksPagination,
     lastFetchTimeMs,
     prAuthAvailable,
     autoMerge,
@@ -236,9 +252,12 @@ function renderListSubtree(props: MainContentProps, active: boolean) {
         onToggleFavorite={handleToggleFavorite}
         onToggleModelFavorite={handleToggleModelFavorite}
         searchQuery={searchQuery}
-        onLoadMoreCurrentTasks={loadMoreCurrentTasks}
-        currentTasksHasMore={currentTasksHasMore}
-        currentTasksLoadingMore={currentTasksLoadingMore}
+        onLoadMoreCurrentTasks={isRemote ? undefined : loadMoreCurrentTasks}
+        currentTasksHasMore={isRemote ? false : currentTasksHasMore}
+        currentTasksLoadingMore={isRemote ? false : currentTasksLoadingMore}
+        currentTasksPaginationError={isRemote ? null : currentTasksPaginationError}
+        currentTasksProgressKey={isRemote ? undefined : currentTasksProgressKey}
+        onRetryCurrentTasks={isRemote ? undefined : retryCurrentTasksPagination}
         lastFetchTimeMs={lastFetchTimeMs}
         prAuthAvailable={prAuthAvailable}
         autoMerge={autoMerge}

@@ -1320,3 +1320,22 @@ ListView needs a neutral workflow-loading shell under the same flag-aware gate a
     padding: var(--space-md);
   }
 }
+
+/*
+FNXC:TaskListPagination 2026-09-09-00:33:
+ListView shares the current/search request owner with Board. Its footer renders only a live request or an explicit retry, and remains non-interactive after a true terminal page.
+*/
+.list-pagination-footer {
+  padding: var(--space-sm);
+  color: var(--text-dim);
+  text-align: center;
+}
+
+.list-pagination-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  color: var(--color-error);
+}

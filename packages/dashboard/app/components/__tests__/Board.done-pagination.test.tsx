@@ -2,7 +2,8 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { describe, expect, it, vi } from "vitest";
 import type { ComponentProps } from "react";
 import type { Task } from "@fusion/core";
-import { Board } from "../Board";
+import { ALL_WORKFLOWS_BOARD_VIEW_ID, Board } from "../Board";
+import { writeBoardWorkflowSelection } from "../../utils/boardWorkflowSelection";
 
 const { fetchBoardWorkflows } = vi.hoisted(() => ({
   fetchBoardWorkflows: vi.fn().mockResolvedValue({
@@ -37,13 +38,19 @@ vi.mock("../../hooks/useBatchBadgeFetch", () => ({
 vi.mock("../../sse-bus", () => ({ subscribeSse: () => () => undefined }));
 
 vi.mock("../Column", () => ({
-  Column: ({ column, onLoadMoreServer, serverHasMore }: {
+  Column: ({ column, onLoadMoreServer, onRetryServer, serverHasMore, serverPaginationError, serverProgressKey, paginationActive, paginationCollectionKey }: {
     column: string;
     onLoadMoreServer?: () => Promise<void>;
+    onRetryServer?: () => Promise<void>;
     serverHasMore?: boolean;
+    serverPaginationError?: string | null;
+    serverProgressKey?: string;
+    paginationActive?: boolean;
+    paginationCollectionKey?: string;
   }) => (
-    <section data-testid={`search-column-${column}`} data-has-more={String(Boolean(serverHasMore))}>
+    <section data-testid={`search-column-${column}`} data-has-more={String(Boolean(serverHasMore))} data-error={serverPaginationError ?? ""} data-progress={serverProgressKey ?? ""} data-active={String(paginationActive)} data-collection={paginationCollectionKey}>
       <button type="button" onClick={() => void onLoadMoreServer?.()}>intersect-{column}</button>
+      <button type="button" onClick={() => void onRetryServer?.()}>retry-{column}</button>
     </section>
   ),
 }));
@@ -89,6 +96,63 @@ FNXC:TaskSearchPagination 2026-09-07-18:20:
 Board search uses one cursor across every workflow lane. Completion lanes must request that search cursor rather than the independent completion-history page, otherwise matching tasks beyond page one are unreachable.
 */
 describe("Board search pagination wiring", () => {
+  it("routes Done progress, errors, retry, and active state through the selected workflow host", async () => {
+    const onRetryCompletedTasks = vi.fn().mockResolvedValue(undefined);
+    render(<Board {...props({
+      searchQuery: "",
+      active: false,
+      completedHasMore: false,
+      completedPaginationError: "request-failed",
+      completedProgressKey: "done-progress-2",
+      onRetryCompletedTasks,
+    })} />);
+
+    const done = await screen.findByTestId("search-column-done");
+    expect(done).toHaveAttribute("data-error", "request-failed");
+    expect(done).toHaveAttribute("data-progress", "done-progress-2");
+    expect(done).toHaveAttribute("data-active", "false");
+    expect(done.getAttribute("data-collection")).toContain("builtin:coding:done");
+    fireEvent.click(screen.getByRole("button", { name: "retry-done" }));
+    await waitFor(() => expect(onRetryCompletedTasks).toHaveBeenCalledOnce());
+  });
+
+  it("does not paginate a selected workflow completion lane whose exact total is zero", async () => {
+    render(<Board {...props({
+      projectId: "project-zero-selected",
+      searchQuery: "",
+      tasks: [task("FN-001", "todo")],
+      completedCounts: { byColumn: { done: 8 }, byWorkflow: { "builtin:coding": { done: 0 } } },
+      completedHasMore: true,
+    })} />);
+
+    await waitFor(() => expect(screen.getByTestId("search-column-done")).toHaveAttribute("data-has-more", "false"));
+  });
+
+  it("paginates an empty selected workflow completion lane when its exact total is positive", async () => {
+    render(<Board {...props({
+      projectId: "project-positive-selected",
+      searchQuery: "",
+      tasks: [task("FN-001", "todo")],
+      completedCounts: { byColumn: { done: 3 }, byWorkflow: { "builtin:coding": { done: 3 } } },
+      completedHasMore: true,
+    })} />);
+
+    await waitFor(() => expect(screen.getByTestId("search-column-done")).toHaveAttribute("data-has-more", "true"));
+  });
+
+  it("does not paginate an aggregate completion lane whose exact total is zero", async () => {
+    writeBoardWorkflowSelection("project-zero-aggregate", ALL_WORKFLOWS_BOARD_VIEW_ID);
+    render(<Board {...props({
+      projectId: "project-zero-aggregate",
+      searchQuery: "",
+      tasks: [task("FN-001", "todo")],
+      completedCounts: { byColumn: { done: 0 }, byWorkflow: { "builtin:coding": { done: 8 } } },
+      completedHasMore: true,
+    })} />);
+
+    await waitFor(() => expect(screen.getByTestId("search-column-done")).toHaveAttribute("data-has-more", "false"));
+  });
+
   it("routes searched current and completion lanes to the shared search continuation", async () => {
     const onLoadMoreCurrentTasks = vi.fn().mockResolvedValue(undefined);
     const onLoadMoreCompletedTasks = vi.fn().mockResolvedValue(undefined);

@@ -1561,7 +1561,8 @@
     "stoppedTasks_other": "Stopped {{count}} task{{plural}}",
     "replannedTasks_one": "Replanned {{count}} task{{plural}}",
     "replannedTasks_other": "Replanned {{count}} task{{plural}}",
-    "replanPartialFailure": "Replanned {{replanned}} of {{total}} tasks; {{failed}} failed"
+    "replanPartialFailure": "Replanned {{replanned}} of {{total}} tasks; {{failed}} failed",
+    "paginationError": "Older tasks could not be loaded."
   },
   "commandCenter": {
     "activity": {

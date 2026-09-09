@@ -37,13 +37,13 @@ export interface TaskListPageResponse {
   nextCursor: string | null;
 }
 
-export function fetchTaskPage(projectId?: string, options?: { limit?: number; cursor?: string; query?: string }): Promise<TaskListPageResponse> {
+export function fetchTaskPage(projectId?: string, options?: { limit?: number; cursor?: string; query?: string; signal?: AbortSignal }): Promise<TaskListPageResponse> {
   const search = new URLSearchParams();
   if (options?.limit !== undefined) search.set("limit", String(options.limit));
   if (options?.cursor) search.set("cursor", options.cursor);
   if (options?.query) search.set("q", options.query);
   const suffix = search.size > 0 ? `?${search.toString()}` : "";
-  return api<TaskListPageResponse>(withProjectId(`/tasks/page${suffix}`, projectId));
+  return api<TaskListPageResponse>(withProjectId(`/tasks/page${suffix}`, projectId), { signal: options?.signal });
 }
 
 export function fetchTasks(
@@ -80,13 +80,14 @@ export function fetchCompletedTasks(
   limit?: number,
   cursor?: string,
   sortMode?: TaskColumnSortMode,
+  options?: { signal?: AbortSignal },
 ): Promise<CompletedTaskPageResponse> {
   const search = new URLSearchParams();
   if (limit !== undefined) search.set("limit", String(limit));
   if (cursor !== undefined) search.set("cursor", cursor);
   if (sortMode !== undefined) search.set("sort", sortMode);
   const suffix = search.size > 0 ? `?${search.toString()}` : "";
-  return api<CompletedTaskPageResponse>(withProjectId(`/tasks/done${suffix}`, projectId));
+  return api<CompletedTaskPageResponse>(withProjectId(`/tasks/done${suffix}`, projectId), { signal: options?.signal });
 }
 
 /** Row-paginated recommendation aggregate returned by the Insights triage route. */

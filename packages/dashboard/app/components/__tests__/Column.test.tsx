@@ -1,7 +1,6 @@
 import React from "react";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { loadStylesCss } from "../../test/cssFixture";
 import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Column } from "../Column";
@@ -337,7 +336,7 @@ describe("Column Coding (Ideas) header indicator", () => {
   });
 
   it("maps the canonical Ideas dot to the shared triage token", () => {
-    const css = readFileSync(resolve(__dirname, "../../styles.css"), "utf8");
+    const css = loadStylesCss();
     expect(css).toMatch(/\.dot-ideas\s*\{\s*background:\s*var\(--triage\);\s*\}/);
   });
 });
@@ -393,7 +392,7 @@ describe("Column workflow mode (U9)", () => {
 
     const descriptionElement = document.querySelector(".column-desc");
     expect(descriptionElement?.textContent).toBe(description);
-    const css = readFileSync(resolve(__dirname, "../../styles.css"), "utf8");
+    const css = loadStylesCss();
     expect(css).toMatch(/\.column-desc\s*\{[\s\S]*white-space:\s*pre-wrap;[\s\S]*overflow-wrap:\s*anywhere;/);
   });
 
@@ -583,10 +582,27 @@ describe("Column automatic pagination and virtualization", () => {
   it.each([false, true])("loads the next server page automatically from the column scroller (search=%s)", async (isSearchActive) => {
     const onLoadMoreServer = vi.fn().mockResolvedValue(undefined);
     render(<Column {...defaultProps} column="todo" tasks={[makeTask("KB-001")]} isSearchActive={isSearchActive} serverHasMore onLoadMoreServer={onLoadMoreServer} />);
-    const sentinel = screen.getByTestId("column-auto-pagination-sentinel");
-    fireEvent.scroll(sentinel.parentElement!);
+    screen.getByTestId("column-auto-pagination-sentinel");
+    fireEvent.scroll(document.querySelector(".column-body")!);
     await waitFor(() => expect(onLoadMoreServer).toHaveBeenCalledOnce());
     expect(screen.queryByRole("button", { name: /Load .*more|Show more/i })).toBeNull();
+  });
+
+  it("keeps a measurable sentinel for an empty filtered page that still has a continuation", async () => {
+    const onLoadMoreServer = vi.fn().mockResolvedValue(undefined);
+    render(<Column {...defaultProps} column="done" columnFlags={{ complete: true }} tasks={[]} totalTaskCount={12} serverHasMore onLoadMoreServer={onLoadMoreServer} />);
+    expect(screen.getByTestId("column-auto-pagination-sentinel")).toBeInTheDocument();
+    fireEvent.scroll(document.querySelector(".column-body")!);
+    await waitFor(() => expect(onLoadMoreServer).toHaveBeenCalledOnce());
+  });
+
+  it("keeps existing cards visible and exposes one accessible retry after a page error", async () => {
+    const onRetryServer = vi.fn().mockResolvedValue(undefined);
+    render(<Column {...defaultProps} column="done" columnFlags={{ complete: true }} tasks={[makeTask("KB-001")]} serverPaginationError="request-failed" onRetryServer={onRetryServer} />);
+    expect(screen.getByTestId("task-KB-001")).toBeInTheDocument();
+    expect(screen.getByText("Older tasks could not be loaded.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(onRetryServer).toHaveBeenCalledOnce());
   });
 
   it("keeps capacity-bounded worktree groups exempt from the card virtualizer", () => {

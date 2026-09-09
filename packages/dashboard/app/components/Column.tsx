@@ -23,6 +23,7 @@ import type { TaskContextMenuColumnMetadata } from "./TaskContextMenu";
 import { MoreVertical } from "lucide-react";
 import type { BoardWorkflowDefinition, ModelInfo, BoardWorkflowColumnFlags, RevertTaskOptions, RevertTaskResult } from "../api";
 import type { BlockerFanoutEntry } from "../hooks/useBlockerFanout";
+import "./Column.css";
 
 /** Shape of a structured transition rejection carried in a 409's `details`. */
 interface TransitionRejectionDetail {
@@ -175,7 +176,12 @@ interface ColumnProps {
   totalTaskCount?: number;
   serverHasMore?: boolean;
   serverLoadingMore?: boolean;
+  serverPaginationError?: "timeout" | "invalid-continuation" | "request-failed" | null;
+  serverProgressKey?: string;
+  paginationCollectionKey?: string;
+  paginationActive?: boolean;
   onLoadMoreServer?: () => Promise<void>;
+  onRetryServer?: () => Promise<void>;
   allTasks?: Task[];
   availableModels?: ModelInfo[];
   /**
@@ -230,7 +236,7 @@ interface ColumnProps {
   taskContextMenuColumnsByTaskId?: ReadonlyMap<string, readonly TaskContextMenuColumnMetadata[]>;
 }
 
-function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeGrouping, onMoveTask, onPauseTask, onUnpauseTask, onResetTask, onDuplicateTask, onMergeTask, onOpenDetail, onOpenRefine, onOpenGroupModal, addToast, onQuickCreate, onNewTask, autoMerge, mergeStrategy = "direct", onToggleAutoMerge, planAutoApproveEnabled, onTogglePlanAutoApprove, globalPaused, onUpdateTask, onRetryTask, onOpenChatWithPrefill, onRevertTask, onReviseTask, onDeleteTask, sortMode, onSortModeChange, doneSortMode, onDoneSortModeChange, totalTaskCount, serverHasMore, serverLoadingMore, onLoadMoreServer, allTasks, availableModels, onPlanningMode, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, isSearchActive, onOpenMission, lastFetchTimeMs, taskCardFieldDefs, taskWorkflowBadges, blockerFanoutMap, prAuthAvailable, holdTaskIds, workflowMode, workflowId, workflowOptions, defaultWorkflowId, columnDisplayName, columnDescription, columnFlags, workflowContextMenuColumns, taskContextMenuColumnsByTaskId }: ColumnProps) {
+function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeGrouping, onMoveTask, onPauseTask, onUnpauseTask, onResetTask, onDuplicateTask, onMergeTask, onOpenDetail, onOpenRefine, onOpenGroupModal, addToast, onQuickCreate, onNewTask, autoMerge, mergeStrategy = "direct", onToggleAutoMerge, planAutoApproveEnabled, onTogglePlanAutoApprove, globalPaused, onUpdateTask, onRetryTask, onOpenChatWithPrefill, onRevertTask, onReviseTask, onDeleteTask, sortMode, onSortModeChange, doneSortMode, onDoneSortModeChange, totalTaskCount, serverHasMore, serverLoadingMore, serverPaginationError, serverProgressKey, paginationCollectionKey, paginationActive = true, onLoadMoreServer, onRetryServer, allTasks, availableModels, onPlanningMode, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, isSearchActive, onOpenMission, lastFetchTimeMs, taskCardFieldDefs, taskWorkflowBadges, blockerFanoutMap, prAuthAvailable, holdTaskIds, workflowMode, workflowId, workflowOptions, defaultWorkflowId, columnDisplayName, columnDescription, columnFlags, workflowContextMenuColumns, taskContextMenuColumnsByTaskId }: ColumnProps) {
   const { t } = useTranslation("app");
   // Anchor the board.rejection.* catalog keys for the i18next extractor (it
   // scopes `t` to the useTranslation binding, so the shared translateRejection
@@ -355,10 +361,7 @@ function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeG
   FNXC:BoardColumnWindowing 2026-09-07-16:03:
   Every ordinary Board lane mounts only its measured viewport window, including search results. The result signature resets geometry when a different search collection arrives; worktree grouping remains exempt because its provider is already bounded by execution capacity.
   */
-  const searchResultSignature = useMemo(() => {
-    if (!isSearchActive || tasks.length === 0) return "";
-    return `${tasks.length}:${tasks[0]?.id ?? ""}:${tasks[tasks.length - 1]?.id ?? ""}`;
-  }, [isSearchActive, tasks]);
+  const stableCollectionKey = paginationCollectionKey ?? `${projectId ?? "default"}:${column}:${isSearchActive ? "search" : "board"}`;
 
   /*
   FNXC:WorkflowResolvedColumns 2026-07-30-20:10 (PR #2772 review — my own inert conversion):
@@ -402,7 +405,7 @@ function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeG
   const columnBodyRef = useRef<HTMLDivElement | null>(null);
   const taskById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
   const virtualList = useVirtualizedList({
-    collectionKey: `${projectId ?? "default"}:${column}:${searchResultSignature}`,
+    collectionKey: stableCollectionKey,
     keys: showWorktreeGroups ? [] : tasks.map((task) => task.id),
     scrollRef: columnBodyRef,
     estimateHeight: 320,
@@ -421,7 +424,9 @@ function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeG
     loading: Boolean(serverLoadingMore),
     onLoadMore: onLoadMoreServer ?? (() => undefined),
     direction: "end",
-    enabled: !showWorktreeGroups,
+    enabled: paginationActive && !showWorktreeGroups && !serverPaginationError,
+    progressKey: serverProgressKey,
+    collectionKey: stableCollectionKey,
   });
   /*
   FNXC:WorkflowResolvedColumns 2026-07-30-19:45 (Phase B — third attempt, this time with the
@@ -789,10 +794,10 @@ function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeG
           ) : tasks.length === 0 ? (
             <div className="empty-column">{t("column.noTasks", "No tasks")}</div>
           ) : (
-            <>
-              {virtualList.topSpacerHeight > 0 ? <div aria-hidden="true" style={{ height: virtualList.topSpacerHeight }} /> : null}
+            <div className="column-virtual-content">
+              {virtualList.topSpacerHeight > 0 ? <div className="column-virtual-spacer" aria-hidden="true" style={{ height: virtualList.topSpacerHeight }} /> : null}
               {visibleTasks.map((task) => (
-                <div key={task.id} ref={virtualList.measureRow(task.id)} data-virtual-task-row={task.id}>
+                <div className="column-virtual-row" key={task.id} ref={virtualList.measureRow(task.id)} data-virtual-task-row={task.id}>
                 <TaskCard
                   key={task.id}
                   task={task}
@@ -831,14 +836,22 @@ function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeG
                 />
                 </div>
               ))}
-              {virtualList.bottomSpacerHeight > 0 ? <div aria-hidden="true" style={{ height: virtualList.bottomSpacerHeight }} /> : null}
-              {serverHasMore ? (
-                <div ref={autoPagination.sentinelRef} role="status" aria-live="polite" data-testid="column-auto-pagination-sentinel">
-                  {serverLoadingMore ? t("column.loadMoreCompletedLoading", "Loading…") : null}
+              {virtualList.bottomSpacerHeight > 0 ? <div className="column-virtual-spacer" aria-hidden="true" style={{ height: virtualList.bottomSpacerHeight }} /> : null}
+            </div>
+          )}
+          {(serverHasMore || serverPaginationError) ? (
+            <div className="column-pagination-footer" ref={serverHasMore ? autoPagination.sentinelRef : undefined} role="status" aria-live="polite" data-testid="column-auto-pagination-sentinel">
+              {serverLoadingMore ? t("column.loadMoreCompletedLoading", "Loading…") : null}
+              {serverPaginationError ? (
+                <div className="column-pagination-error">
+                  <span>{t("column.paginationError", "Older tasks could not be loaded.")}</span>
+                  <button type="button" className="btn btn-sm" onClick={() => void onRetryServer?.()}>
+                    {t("common.retry", "Retry")}
+                  </button>
                 </div>
               ) : null}
-            </>
-          )}
+            </div>
+          ) : null}
           <PluginSlot slotId="board-column-footer" projectId={projectId} />
         </div>
     </div>

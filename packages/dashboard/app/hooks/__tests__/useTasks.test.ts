@@ -754,10 +754,42 @@ describe("useTasks", () => {
 
       await act(async () => result.current.loadMoreCurrentTasks());
 
-      expect(mockFetchTaskPage).toHaveBeenNthCalledWith(1, undefined, { limit: 100, query: "match" });
-      expect(mockFetchTaskPage).toHaveBeenNthCalledWith(2, undefined, { limit: 100, cursor: "search-next", query: "match" });
+      expect(mockFetchTaskPage).toHaveBeenNthCalledWith(1, undefined, { limit: 100, query: "match", signal: expect.any(AbortSignal) });
+      expect(mockFetchTaskPage).toHaveBeenNthCalledWith(2, undefined, { limit: 100, cursor: "search-next", query: "match", signal: expect.any(AbortSignal) });
       expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-SEARCH-1", "FN-SEARCH-2"]);
       expect(result.current.currentTasksHasMore).toBe(false);
+    });
+
+    it("keeps previously loaded Done history out of searched pagination", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      const historicDone = createMockTask({ id: "FN-HISTORIC-DONE", title: "unrelated archive", column: "done" });
+      const firstMatch = createMockTask({ id: "FN-SEARCH-1", title: "match one", column: "done" });
+      const secondMatch = createMockTask({ id: "FN-SEARCH-2", title: "match two", column: "done" });
+      mockFetchCompletedTasks.mockResolvedValueOnce({
+        tasks: [historicDone],
+        total: 1,
+        hasMore: false,
+        nextCursor: null,
+        counts: { byColumn: { done: 1 }, byWorkflow: {} },
+      });
+      mockFetchTaskPage
+        .mockResolvedValueOnce({ tasks: [], total: 0, hasMore: false, nextCursor: null })
+        .mockResolvedValueOnce({ tasks: [firstMatch], total: 2, hasMore: true, nextCursor: "search-next" })
+        .mockResolvedValueOnce({ tasks: [secondMatch], total: 2, hasMore: false, nextCursor: null });
+
+      const { result, rerender } = renderHook(
+        ({ searchQuery }: { searchQuery?: string }) => useTasks({ searchQuery, sseEnabled: false }),
+        { initialProps: { searchQuery: undefined } },
+      );
+      await waitFor(() => expect(result.current.tasks.map((task) => task.id)).toContain("FN-HISTORIC-DONE"));
+
+      rerender({ searchQuery: "match" });
+      await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+      await waitFor(() => expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-SEARCH-1"]));
+      await act(() => result.current.loadMoreCurrentTasks());
+
+      expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-SEARCH-1", "FN-SEARCH-2"]);
+      expect(result.current.tasks.some((task) => task.id === "FN-HISTORIC-DONE")).toBe(false);
     });
 
     it("rejects a late search page after the search scope changes", async () => {
@@ -781,6 +813,30 @@ describe("useTasks", () => {
 
       await act(async () => resolveLatePage({ tasks: [createMockTask({ id: "FN-A-LATE" })], total: 2, hasMore: false, nextCursor: null }));
       expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-B"]);
+    });
+
+    it("rejects a late search page across an A → B → A incarnation cycle before debounce", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      let resolveLatePage!: (page: Awaited<ReturnType<typeof api.fetchTaskPage>>) => void;
+      mockFetchTaskPage
+        .mockResolvedValueOnce({ tasks: [createMockTask({ id: "FN-A" })], total: 2, hasMore: true, nextCursor: "a-next" })
+        .mockImplementationOnce(() => new Promise((resolve) => { resolveLatePage = resolve; }));
+
+      const { result, rerender } = renderHook(
+        ({ searchQuery }) => useTasks({ searchQuery, sseEnabled: false }),
+        { initialProps: { searchQuery: "alpha" } },
+      );
+      await waitFor(() => expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-A"]));
+      let staleLoad!: Promise<void>;
+      await act(async () => { staleLoad = result.current.loadMoreCurrentTasks(); await Promise.resolve(); });
+
+      rerender({ searchQuery: "beta" });
+      rerender({ searchQuery: "alpha" });
+      resolveLatePage({ tasks: [createMockTask({ id: "FN-A-STALE" })], total: 2, hasMore: false, nextCursor: null });
+      await act(() => staleLoad);
+
+      expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-A"]);
+      expect(result.current.currentTasksHasMore).toBe(true);
     });
 
     it("does not refetch when toggling between already-live task views", async () => {
