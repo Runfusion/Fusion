@@ -1696,21 +1696,27 @@ export interface ProjectSettings {
    * remain published surface to avoid a breaking @runfusion/fusion type change.
    */
   /**
-   * @deprecated Inert under master-plan U0; consumed only by soft-deprecated
-   * aiMergeTask. Retained as published surface. Legacy full opt-out switch.
-   * Default: true.
+   * FNXC:MergerUnification 2026-09-09-07:46:
+   * Master-plan U0 retains these published settings without letting their
+   * legacy semantics imply a live merge safeguard. Their sole consumer is the
+   * soft-deprecated aiMergeTask call site in merger.ts; runAiMerge reads none.
+   */
+  /**
+   * @deprecated Inert under master-plan U0. Legacy aiMergeTask treated only
+   * `=== false` as disabled after the worktrunk-deferred short-circuit; it was
+   * the sole opt-out from the any-divergence safety fallback. Default: true.
    */
   prerebaseAutoEnabled?: boolean;
   /**
-   * @deprecated Inert under master-plan U0; consumed only by soft-deprecated
-   * aiMergeTask. Retained as published surface. Legacy hot-file trigger list.
+   * @deprecated Inert under master-plan U0. Legacy aiMergeTask compared exact
+   * hot-file paths from the base commit to the resolved integration ref tip.
    * Default: curated project hot-file list.
    */
   prerebaseHotFiles?: string[];
   /**
-   * @deprecated Inert under master-plan U0; consumed only by soft-deprecated
-   * aiMergeTask. Retained as published surface. Legacy divergence trigger.
-   * Default: 50.
+   * @deprecated Inert under master-plan U0. Legacy aiMergeTask checked this
+   * positive threshold after hot files, with an absent value falling back to 1;
+   * zero did not suppress the any-divergence safety fallback. Default: 50.
    */
   prerebaseDivergenceThreshold?: number;
   /** Strategy used when a merge conflict can't be resolved by AI. See
