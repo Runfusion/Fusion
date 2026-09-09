@@ -176,6 +176,12 @@ async function resolveInferredBranch(rootDir: string): Promise<ReturnType<typeof
   });
 }
 
+/*
+FNXC:EngineProcessRules 2026-09-09-07:17:
+The synchronous branch-inference ladder uses only audited short git plumbing. Its execSync calls
+have explicit timeout/maxBuffer bounds, and refPrefix comes only from this module's fixed local and
+origin ref literals; retain their call-site allowlist entries when editing this fallback path.
+*/
 function resolveInferredBranchSync(rootDir: string): ReturnType<typeof selectIntegrationBranch> {
   return selectIntegrationBranch({
     localBranches: listBranchRefsSync(rootDir, "refs/heads/"),

@@ -40,6 +40,14 @@ const allowlist: AllowlistEntry[] = [
   { file: "src/merge/already-merged-detector.ts", line: 345, primitive: "execSync", signature: "execSync(`git rev-parse --verify ${shellQuote(treeBranchName)}`, {", reason: SHORT_GIT_PLUMBING },
   { file: "src/merge/integration-branch.ts", line: 71, primitive: "execSync", signature: "const stdout = execSync(\"git symbolic-ref --short refs/remotes/origin/HEAD\", {", reason: SHORT_GIT_PLUMBING },
   { file: "src/merge/integration-branch.ts", line: 107, primitive: "execSync", signature: "const stdout = execSync(\"git remote\", {", reason: SHORT_GIT_PLUMBING },
+  /*
+  FNXC:EngineProcessRules 2026-09-09-07:17:
+  resolveIntegrationBranchSync backs the synchronous branch-inference ladder with fixed git
+  plumbing. Its refPrefix values are module-internal literals, both calls set timeout/maxBuffer,
+  and the asynchronous ladder remains the default path, so these sites stay call-site audited.
+  */
+  { file: "src/merge/integration-branch.ts", line: 146, primitive: "execSync", signature: "const stdout = execSync(`git for-each-ref --format=%(refname:short) ${refPrefix}`, {", reason: SHORT_GIT_PLUMBING },
+  { file: "src/merge/integration-branch.ts", line: 203, primitive: "execSync", signature: "const stdout = execSync(\"git symbolic-ref --quiet --short HEAD\", {", reason: SHORT_GIT_PLUMBING },
   { file: "src/merge/merger-git-parse.ts", line: 102, primitive: "execFileSync", signature: "const output = execFileSync(", reason: BOUNDED_GIT_DIFF },
   { file: "src/merge/merger-workspace-test-commands.ts", line: 204, primitive: "execSync", signature: "changedFilesOutput = execSync(", reason: BOUNDED_GIT_DIFF },
   { file: "src/merge/merger-workspace-test-commands.ts", line: 301, primitive: "execSync", signature: "changedFilesOutput = execSync(", reason: BOUNDED_GIT_DIFF },
@@ -207,6 +215,16 @@ describe("engine blocking-shellout static guard", () => {
     const { unmatched, stale } = classifySites(scanEngineSource());
     expect(unmatched).toEqual([]);
     expect(stale).toEqual([]);
+  });
+
+  it("keeps every synchronous integration-branch site audited", () => {
+    const file = "src/merge/integration-branch.ts";
+    const source = readFileSync(join(process.cwd(), file), "utf-8");
+    const sites = scanSource(file, source);
+    const { unmatched } = classifySites(sites);
+
+    expect(sites).toHaveLength(4);
+    expect(unmatched).toEqual([]);
   });
 
   it("flags a synchronous call in a non-allowlisted file", () => {
