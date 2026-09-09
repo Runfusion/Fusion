@@ -56,7 +56,6 @@ pgDescribe("dependency satisfaction on a renamed board (PostgreSQL)", () => {
         { id: "queued", label: "Queued", traits: [{ trait: "hold", config: { release: "capacity" } }] },
         { id: "building", label: "Building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
         { id: "shipped", label: "Shipped", traits: [{ trait: "complete" }] },
-        { id: "filed", label: "Filed", traits: [{ trait: "archived" }] },
       ],
     };
     const definition = await store.createWorkflowDefinition({ name: "Renamed", kind: "workflow", ir } as never);

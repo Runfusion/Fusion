@@ -123,26 +123,4 @@ pgDescribe("PostgreSQL store-migration residue fixes", () => {
     await expect(store.deleteWorkflowStep("WS-does-not-exist")).rejects.toThrow(/not found/);
   });
 
-  it("cleanupArchivedTasks hard-deletes archived project rows while retaining the cold snapshot", async () => {
-    const store = h.store();
-    const task = await store.createTask({ description: "to be purged" });
-    await store.archiveTask(task.id);
-
-    const cleaned = await store.cleanupArchivedTasks();
-    expect(cleaned).toContain(task.id);
-
-    // Live project row is gone...
-    const liveRows = await h.adminDb()
-      .select({ id: schema.project.tasks.id })
-      .from(schema.project.tasks)
-      .where(eq(schema.project.tasks.id, task.id));
-    expect(liveRows).toEqual([]);
-
-    // ...but the cold-storage snapshot survives for restore.
-    const coldRows = await h.adminDb()
-      .select({ id: schema.archive.archivedTasks.id })
-      .from(schema.archive.archivedTasks)
-      .where(eq(schema.archive.archivedTasks.id, task.id));
-    expect(coldRows.map((r) => r.id)).toContain(task.id);
-  });
 });

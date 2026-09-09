@@ -46,19 +46,17 @@ function makeTask(overrides: Partial<Task> = {}): Task {
 
 describe("a finished blocker reads as STALE under a renamed vocabulary", () => {
   const RENAMED = {
-    terminal: new Set(["shipped", "filed"]),
+    terminal: new Set(["shipped"]),
     review: new Set(["checking"]),
   };
 
   it("default vocabulary: a completed blocker is stale", () => {
     expect(isStaleBlockedByBlocker(makeTask({ column: "done" }), 3)).toBe(true);
-    expect(isStaleBlockedByBlocker(makeTask({ column: "archived" }), 3)).toBe(true);
   });
 
   /* The defect: `shipped` matched neither literal, so the marker never cleared. */
   it("renamed vocabulary: a completed blocker is stale", () => {
     expect(isStaleBlockedByBlocker(makeTask({ column: "shipped" }), 3, RENAMED)).toBe(true);
-    expect(isStaleBlockedByBlocker(makeTask({ column: "filed" }), 3, RENAMED)).toBe(true);
   });
 
   it("renamed vocabulary: a PAUSED review blocker is stale, an active one is not", () => {

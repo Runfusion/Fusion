@@ -47,7 +47,6 @@ function makeStore(tasks: Task[], settings: Partial<Settings> = {}) {
       return next;
     }),
     getTask: vi.fn(async (id: string) => byId.get(id)),
-    archiveTaskAndCleanup: vi.fn(async () => undefined),
     logEntry: vi.fn(async () => undefined),
     recordRunAuditEvent: vi.fn(async (event: any) => audits.push(event.mutationType)),
   });

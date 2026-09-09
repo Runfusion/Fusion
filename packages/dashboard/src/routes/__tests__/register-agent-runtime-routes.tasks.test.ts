@@ -126,9 +126,9 @@ describe("GET /api/agents/:id/tasks", () => {
     expect(staleLink.body.map((entry: Task) => entry.id)).toEqual([assigned.id]);
   });
 
-  it("excludes archived tasks and does not read another project's task list", async () => {
-    const archived = task("FN-ARCHIVED", { column: "archived", assignedAgentId: "executor-agent" });
-    const projectA = createStore([archived]);
+  it("excludes completed tasks and does not read another project's task list", async () => {
+    const completed = task("FN-COMPLETE", { column: "done", assignedAgentId: "executor-agent" });
+    const projectA = createStore([completed]);
     const projectB = createStore([task("FN-FOREIGN", { assignedAgentId: "executor-agent" })]);
     const { server, engineManager } = scopedApp({ "project-a": projectA, "project-b": projectB });
     getAgent.mockResolvedValue({ id: "executor-agent", roles: ["executor"], taskId: "FN-FOREIGN" });

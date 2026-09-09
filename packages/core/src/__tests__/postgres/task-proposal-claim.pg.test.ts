@@ -26,7 +26,6 @@ function planningWorkflowIr(): WorkflowIr {
       { id: "building", name: "Building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
       { id: "checking", name: "Checking", traits: [{ trait: "merge" }, { trait: "merge-blocker" }] },
       { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
-      { id: "archive", name: "Archive", traits: [{ trait: "archived" }] },
     ],
     nodes: [
       { id: "start", kind: "start", column: "planning-inbox" },

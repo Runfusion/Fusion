@@ -23,9 +23,7 @@ export interface TraitFlags {
   countsTowardWip?: boolean;
   /** Terminal-success column; satisfies dependencies. RESTRICTED (built-in only). */
   complete?: boolean;
-  /** Globally archived; hidden from the board. RESTRICTED (built-in only). */
-  archived?: boolean;
-  /** Hidden from the board lane (e.g. archived columns). */
+  /** Hidden from the board without changing lifecycle completion semantics. */
   hiddenFromBoard?: boolean;
   /** Leaving this column hard-cancels in-flight work (abort-on-exit). */
   abortOnExit?: boolean;
@@ -54,7 +52,7 @@ export interface TraitFlags {
 /** The flag keys that are restricted to built-in traits (R22, KTD-7). A
  *  non-builtin (plugin) trait declaring any of these is rejected at
  *  registration. The sync `guard` hook descriptor is restricted separately. */
-export const RESTRICTED_TRAIT_FLAGS = ["complete", "archived"] as const;
+export const RESTRICTED_TRAIT_FLAGS = ["complete"] as const;
 export type RestrictedTraitFlag = (typeof RESTRICTED_TRAIT_FLAGS)[number];
 
 /** A trait's hook descriptors — *what* the trait declares it participates in.
@@ -97,7 +95,7 @@ export interface TraitDefinition {
   flags: TraitFlags;
   configSchema?: TraitConfigSchema;
   hooks?: TraitHookDescriptors;
-  /** True for the 14 built-in traits; plugin/custom traits leave this falsy.
+  /** True for the 13 built-in traits; plugin/custom traits leave this falsy.
    *  Restricted capabilities (R22) are allowed only when `builtin` is true. */
   builtin?: boolean;
 }

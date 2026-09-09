@@ -143,7 +143,6 @@ export const DEFAULT_WORKFLOW_COLUMN_IDS = [
   "in-progress",
   "in-review",
   "done",
-  "archived",
 ] as const;
 
 /** Place a v1 node into a synthesized default-workflow column by its seam. */

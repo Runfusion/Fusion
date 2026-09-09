@@ -30,8 +30,20 @@ export interface DeleteTaskOptions {
   allowResurrection?: boolean;
 }
 
-export interface ArchiveTaskOptions {
-  removeLineageReferences?: boolean;
+export interface TaskListPageResponse {
+  tasks: Task[];
+  total: number;
+  hasMore: boolean;
+  nextCursor: string | null;
+}
+
+export function fetchTaskPage(projectId?: string, options?: { limit?: number; cursor?: string; query?: string; signal?: AbortSignal }): Promise<TaskListPageResponse> {
+  const search = new URLSearchParams();
+  if (options?.limit !== undefined) search.set("limit", String(options.limit));
+  if (options?.cursor) search.set("cursor", options.cursor);
+  if (options?.query) search.set("q", options.query);
+  const suffix = search.size > 0 ? `?${search.toString()}` : "";
+  return api<TaskListPageResponse>(withProjectId(`/tasks/page${suffix}`, projectId), { signal: options?.signal });
 }
 
 export function fetchTasks(
@@ -39,37 +51,43 @@ export function fetchTasks(
   offset?: number,
   projectId?: string,
   q?: string,
-  includeArchived?: boolean,
+  excludeDone?: boolean,
 ): Promise<Task[]> {
   const search = new URLSearchParams();
   if (limit !== undefined) search.set("limit", String(limit));
   if (offset !== undefined) search.set("offset", String(offset));
   if (projectId) search.set("projectId", projectId);
   if (q) search.set("q", q);
-  if (includeArchived) search.set("includeArchived", "1");
+  if (excludeDone) search.set("excludeDone", "1");
   const suffix = search.size > 0 ? `?${search.toString()}` : "";
   return api<Task[]>(`/tasks${suffix}`);
 }
 
-/**
- * FNXC:ArchivePagination 2026-07-08-00:00:
- * Dedicated paged read for the Archived board column (FN-7659). Returns
- * one bounded page (default 100) ordered `archivedAt DESC` plus `total`/
- * `hasMore` so the caller can drive a "Show more" affordance without ever
- * fetching the whole archive in one request.
- */
-export function fetchArchivedTasks(
+export interface CompletedTaskPageResponse {
+  tasks: Task[];
+  total: number;
+  hasMore: boolean;
+  nextCursor?: string | null;
+  counts?: {
+    byColumn: Record<string, number>;
+    byWorkflow: Record<string, Record<string, number>>;
+  };
+}
+
+/** One bounded keyset page from the workflow-defined completion lanes. */
+export function fetchCompletedTasks(
   projectId?: string,
   limit?: number,
-  offset?: number,
-  sortMode: TaskColumnSortMode = "completion-date-desc",
-): Promise<{ tasks: Task[]; total: number; hasMore: boolean }> {
+  cursor?: string,
+  sortMode?: TaskColumnSortMode,
+  options?: { signal?: AbortSignal },
+): Promise<CompletedTaskPageResponse> {
   const search = new URLSearchParams();
   if (limit !== undefined) search.set("limit", String(limit));
-  if (offset !== undefined) search.set("offset", String(offset));
-  search.set("sort", sortMode);
+  if (cursor !== undefined) search.set("cursor", cursor);
+  if (sortMode !== undefined) search.set("sort", sortMode);
   const suffix = search.size > 0 ? `?${search.toString()}` : "";
-  return api<{ tasks: Task[]; total: number; hasMore: boolean }>(withProjectId(`/tasks/archived${suffix}`, projectId));
+  return api<CompletedTaskPageResponse>(withProjectId(`/tasks/done${suffix}`, projectId), { signal: options?.signal });
 }
 
 /** Row-paginated recommendation aggregate returned by the Insights triage route. */

@@ -5,7 +5,7 @@
  */
 
 import "./InsightsView.css";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Sparkles,
@@ -32,6 +32,7 @@ import { isNativeStructureDragEnabled, serializeNativeStructureRef } from "../ut
 import { fetchModels, updateGlobalSettings, type ModelInfo } from "../api";
 import { useInsights, type InsightSection } from "../hooks/useInsights";
 import { useTaskRecommendations } from "../hooks/useTaskRecommendations";
+import { useAutoPaginationSentinel } from "../hooks/useAutoPaginationSentinel";
 import { BACKLOG_HEALTH_TITLE_PREFIXES, isBacklogHealthInsight } from "./backlog-health-filter";
 import type { InsightCategory } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
@@ -87,6 +88,8 @@ export function InsightsView({ projectId, addToast, onClose, onCreateTask, model
     showArchived = false,
   } = useInsights(projectId);
   const taskRecommendations = useTaskRecommendations(projectId);
+  const recommendationsViewportRef = useRef<HTMLDivElement | null>(null);
+  const recommendationPagination = useAutoPaginationSentinel({ rootRef: recommendationsViewportRef, hasMore: taskRecommendations.hasMore && !taskRecommendations.truncated, loading: taskRecommendations.loadingMore, onLoadMore: taskRecommendations.loadMore, direction: "end" });
 
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [statusType, setStatusType] = useState<"success" | "error" | "info">("info");
@@ -379,7 +382,7 @@ export function InsightsView({ projectId, addToast, onClose, onCreateTask, model
   };
 
   const renderRecommendations = () => (
-    <section className="insights-section insights-recommendations" data-testid="insights-section-recommendations">
+    <section className="insights-section insights-recommendations" data-testid="insights-section-recommendations" ref={recommendationsViewportRef}>
       <div className="insights-section-header"><div className="insights-section-title"><Lightbulb size={18} className="insights-section-icon" /><h3>{t("insights.recommendations.title", "Task Recommendations")}</h3><span className="insights-section-count">{taskRecommendations.items.length}</span></div></div>
       <p className="insights-recommendations__count">{t("insights.recommendations.count", "Showing {{shown}} of {{total}} source tasks", { shown: taskRecommendations.items.length, total: taskRecommendations.totalRowCount })}</p>
       <ul className="insights-list">
@@ -390,7 +393,7 @@ export function InsightsView({ projectId, addToast, onClose, onCreateTask, model
           return <li className="insight-item insights-recommendations__item" key={key} data-testid={`task-recommendation-${key}`}><div className="insight-item-header"><h4 className="insight-item-title">{item.recommendation.title}</h4><span className="insights-category-count">{item.recommendation.category}</span></div><p>{item.recommendation.description}</p><p className="insights-recommendations__source">{t("insights.recommendations.source", "Source: {{task}}", { task: item.taskTitle ? `${item.taskId} — ${item.taskTitle}` : item.taskId })}</p>{createdTaskId ? <span role="status">{t("taskDetail.recommendations.created", "Created {{taskId}}", { taskId: createdTaskId })}</span> : <div><button className="btn btn-primary" type="button" disabled={action?.running} onClick={() => void taskRecommendations.createTask(item.taskId, item.recommendation.id)}>{action?.running ? t("taskDetail.recommendations.creating", "Creating…") : action?.error ? t("taskDetail.recommendations.retry", "Retry creating task") : t("taskDetail.recommendations.create", "Create task")}</button>{action?.error && <span role="status">{t("taskDetail.recommendations.error", "Could not create task. Try again.")}</span>}</div>}</li>;
         })}
       </ul>
-      {taskRecommendations.truncated ? <p role="status">{t("insights.recommendations.truncated", "Showing the first 20 pages. Refresh to see the latest recommendations.")}</p> : taskRecommendations.hasMore ? <button className="btn" type="button" disabled={taskRecommendations.loadingMore} onClick={() => void taskRecommendations.loadMore()}>{taskRecommendations.loadingMore ? t("insights.recommendations.loadingMore", "Loading more…") : t("insights.recommendations.loadMore", "Load more")}</button> : null}
+      {taskRecommendations.truncated ? <p role="status">{t("insights.recommendations.truncated", "Showing the first 20 pages. Refresh to see the latest recommendations.")}</p> : taskRecommendations.hasMore ? <div ref={recommendationPagination.sentinelRef} role="status" aria-live="polite" data-testid="insights-recommendations-auto-pagination-sentinel">{taskRecommendations.loadingMore ? t("insights.recommendations.loadingMore", "Loading more…") : null}</div> : null}
       {taskRecommendations.error && !taskRecommendations.loading && <div role="status"><span>{t("insights.recommendations.loadMoreFailed", "Could not load more recommendations.")}</span><button className="btn" type="button" onClick={() => void (taskRecommendations.hasMore ? taskRecommendations.loadMore() : taskRecommendations.refresh())}>{t("actions.retry", "Retry")}</button></div>}
     </section>
   );

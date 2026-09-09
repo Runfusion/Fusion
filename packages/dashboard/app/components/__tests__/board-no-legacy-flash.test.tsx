@@ -62,7 +62,6 @@ const workflowPayload: BoardWorkflowsPayload = {
       columns: [
         { id: "todo", name: "Todo", flags: { intake: true } },
         { id: "done", name: "Done", flags: { complete: true } },
-        { id: "archived", name: "Archived", flags: { archived: true } },
       ],
     },
     {

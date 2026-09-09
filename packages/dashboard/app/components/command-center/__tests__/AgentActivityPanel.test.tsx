@@ -120,7 +120,7 @@ describe("AgentActivityPanel", () => {
     await screen.findByTestId("cc-area-agent-activity-empty");
     fireEvent.click(screen.getByRole("button", { name: "Timeline" }));
     expect(screen.getByTestId("cc-area-agent-activity-empty")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Load older" })).toBeInTheDocument();
+    expect(screen.getByTestId("agent-activity-auto-pagination-sentinel")).toBeInTheDocument();
   });
 
   it("opens a task from its timeline row and retains a separate agent target", async () => {
@@ -158,12 +158,12 @@ describe("AgentActivityPanel", () => {
 
     await screen.findByText("Completed work 4");
     fireEvent.click(screen.getByRole("button", { name: "Timeline" }));
-    fireEvent.click(screen.getByRole("button", { name: "Load older" }));
+    fireEvent.scroll(screen.getByTestId("agent-activity-auto-pagination-sentinel").closest("section")!);
 
     await waitFor(() => expect(getAgentActivity).toHaveBeenLastCalledWith(expect.objectContaining({ before: "3", limit: 50 })));
     await screen.findByText("Completed work 2");
     expect(screen.getAllByText("Completed work 3")).toHaveLength(1);
-    expect(screen.queryByRole("button", { name: "Load older" })).not.toBeInTheDocument();
+    expect(screen.queryByTestId("agent-activity-auto-pagination-sentinel")).not.toBeInTheDocument();
   });
 
   it("refetches with each timeline filter and omits inactive filters", async () => {

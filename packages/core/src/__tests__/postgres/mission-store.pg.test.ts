@@ -23,6 +23,7 @@ import { readFile } from "node:fs/promises";
 import type { DbTransaction } from "../../postgres/data-layer.js";
 import type { TaskCreateInput } from "../../types/task/task-core.js";
 import type { MissionEvent, FeatureUnlinkedPayload } from "../../missions/mission-types.js";
+import { ValidatorRunOwnershipLostError } from "../../missions/mission-types.js";
 
 import {
   pgDescribe,
@@ -44,7 +45,6 @@ import {
   listMissions as listMissionRows,
   updateMilestoneValidationState,
 } from "../../async-stores/async-mission-store.js";
-import { BUILTIN_CODING_WORKFLOW_IR } from "../../workflows/builtin-coding-workflow-ir.js";
 
 const pgTest = pgDescribe;
 
@@ -659,78 +659,22 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
     });
     await m.linkFeatureToTask(siblingFeature.id, siblingTask.id);
 
-    await m.archiveDefinedFeatureBootstrapDuplicate({
+    await m.deleteDefinedFeatureBootstrapDuplicate({
       featureId: firstFeature.id,
       taskId: claimedTask.id,
       duplicateTaskId: siblingTask.id,
     });
 
-    /* FNXC:MissionAdmission 2026-07-23-21:10: a late same-fingerprint task claimed by another feature is not a duplicate eligible for archival. */
-    /* FNXC:MergedPlanningColumn 2026-07-29-15:30 (U11): the assertion is "not archived" — the card
-       stays where it was created, which for the default lineage is now the merged planning column
-       `todo` rather than `triage`. */
+    /* FNXC:MissionAdmission 2026-07-23-21:10: a late same-fingerprint task claimed by another feature is not eligible for deletion. */
     expect(await taskStore.getTask(siblingTask.id)).toMatchObject({ id: siblingTask.id, column: "todo" });
     expect(await m.getFeature(siblingFeature.id)).toMatchObject({ taskId: siblingTask.id, status: "triaged" });
     expect(await m.getFeature(firstFeature.id)).toMatchObject({ taskId: claimedTask.id, status: "triaged" });
   });
 
-  /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-10:20:
-  THE BOOTSTRAP DUPLICATE WAS PARKED IN A LANE THE BOARD DOES NOT DECLARE.
-
-  This path writes `tasks.column` DIRECTLY rather than going through `moveTask`, so neither the
-  lifecycle census (which reads comparisons) nor the move-target census (which reads `moveTask`
-  arguments) could see the literal `archived`. On a board whose archive lane is renamed, the
-  duplicate landed in a column that workflow does not declare — a card in a lane the board cannot
-  render, from a path that runs during ordinary feature bootstrap.
-
-  DIFFERENTIAL: `filed` collides with no legacy id, so a surviving `"archived"` cannot pass by luck.
-
-  FNXC:WorkflowResolvedColumns 2026-08-03-23:52:
-  This fixture imports the canonical workflow module directly. The PostgreSQL schema barrel is only
-  the Drizzle table contract and deliberately does not re-export workflow definitions; sibling
-  renamed-lane PostgreSQL coverage uses the same direct source to keep schema and workflow APIs
-  separate.
-  */
-  it("archives a bootstrap duplicate into the RENAMED archive lane", async () => {
+  it("soft-deletes a bootstrap duplicate without creating a live archive-lane task", async () => {
     const m = missions();
     const taskStore = h.store();
-
-    const ir = JSON.parse(JSON.stringify(BUILTIN_CODING_WORKFLOW_IR)) as {
-      id: string; nodes?: { column?: string }[]; columns?: { id: string }[];
-    };
-    ir.id = "custom:renamed-archive-missions";
-    for (const node of ir.nodes ?? []) if (node.column === "archived") node.column = "filed";
-    for (const column of ir.columns ?? []) if (column.id === "archived") column.id = "filed";
-    expect((ir.columns ?? []).map((c) => c.id)).not.toContain("archived");
-    const definition = await taskStore.createWorkflowDefinition({ name: "Renamed archive", kind: "workflow", ir } as never);
-    const workflowId = (definition as unknown as { id: string }).id;
-
-    const mission = await m.createMission({ title: "Renamed archive bootstrap" });
-    const milestone = await m.addMilestone(mission.id, { title: "MS" });
-    const slice = await m.addSlice(milestone.id, { title: "SL" });
-    const feature = await m.addFeature(slice.id, { title: "Feature" });
-
-    const claimedTask = await taskStore.createTask({ description: "same fingerprint work", missionId: mission.id, sliceId: slice.id });
-    await m.linkFeatureToTask(feature.id, claimedTask.id);
-    const duplicateTask = await taskStore.createTask({ description: "same fingerprint work", missionId: mission.id, sliceId: slice.id });
-    await taskStore.writeTaskWorkflowSelection(duplicateTask.id, workflowId, []);
-
-    await m.archiveDefinedFeatureBootstrapDuplicate({
-      featureId: feature.id,
-      taskId: claimedTask.id,
-      duplicateTaskId: duplicateTask.id,
-    });
-
-    expect(await taskStore.getTask(duplicateTask.id)).toMatchObject({ id: duplicateTask.id, column: "filed" });
-  });
-
-  /* Control: with no renamed workflow the duplicate still lands in the legacy archive lane, so an
-     unconverted board is byte-identical. */
-  it("archives a bootstrap duplicate into `archived` on the default lineage", async () => {
-    const m = missions();
-    const taskStore = h.store();
-    const mission = await m.createMission({ title: "Default archive bootstrap" });
+    const mission = await m.createMission({ title: "Default duplicate bootstrap" });
     const milestone = await m.addMilestone(mission.id, { title: "MS" });
     const slice = await m.addSlice(milestone.id, { title: "SL" });
     const feature = await m.addFeature(slice.id, { title: "Feature" });
@@ -739,13 +683,18 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
     await m.linkFeatureToTask(feature.id, claimedTask.id);
     const duplicateTask = await taskStore.createTask({ description: "same fingerprint work", missionId: mission.id, sliceId: slice.id });
 
-    await m.archiveDefinedFeatureBootstrapDuplicate({
+    await m.deleteDefinedFeatureBootstrapDuplicate({
       featureId: feature.id,
       taskId: claimedTask.id,
       duplicateTaskId: duplicateTask.id,
     });
 
-    expect(await taskStore.getTask(duplicateTask.id)).toMatchObject({ id: duplicateTask.id, column: "archived" });
+    await expect(taskStore.getTask(duplicateTask.id)).rejects.toThrow();
+    expect(await taskStore.getTask(duplicateTask.id, { includeDeleted: true })).toMatchObject({
+      id: duplicateTask.id,
+      column: "archived",
+      deletedAt: expect.any(String),
+    });
   });
 
   /*
@@ -758,7 +707,7 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
 
   `getTerminalTaskEvidence` tested only `column === "done"`, so a genuinely completed card on a
   renamed board fell through every branch to `nonterminal` and this method threw
-  `TASK_NOT_TERMINAL: ... must be in done or supported archived state, not shipped`. Mission
+  `TASK_NOT_TERMINAL: ... must be in a workflow Complete column, not shipped`. Mission
   shipped-delivery repair refused valid work — and the message named the real column while the check
   could not see it, which is the tell that the classifier and the reporter disagreed.
 
@@ -794,60 +743,6 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
     const slice = await m.addSlice(milestone.id, { title: "SL" });
     const feature = await m.addFeature(slice.id, { title: "Delivered" });
     const task = await store.createTask({ description: "shipped elsewhere", column: "shipped" as never });
-
-    const reconciled = await m.reconcileFeatureDoneWithTerminalTask(feature.id, task.id);
-
-    expect(reconciled).toMatchObject({ taskId: task.id, status: "done" });
-  });
-
-  /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-23:40:
-  THE ARCHIVED HALF OF THE SAME PAIR. The case above pins the `complete` resolver; the `archived`
-  one is declared on the very next line and nothing reached it — blinding it back to `["archived"]`
-  left the whole 16-file lane-detector set green while blinding its neighbour failed immediately.
-
-  Terminal evidence is "done OR supported archived state", so an archived card is equally valid
-  repair evidence. On a board whose archive lane is `vaulted`, the archived half could not see it and
-  the method threw `TASK_NOT_TERMINAL` for a card that was genuinely filed away — the same refusal
-  the case above fixed, reached through the other door.
-
-  Being adjacent to a covered resolver is not coverage; this is the third such split found in core.
-  */
-  it("accepts an ARCHIVED card whose board calls the archive lane something else", async () => {
-    const m = missions();
-    const store = h.store();
-    await store.createWorkflowDefinition({
-      name: "Renamed archive",
-      ir: {
-        version: "v2",
-        name: "Renamed archive",
-        columns: [
-          { id: "todo", name: "Todo", traits: [{ trait: "intake" }, { trait: "hold" }] },
-          { id: "done", name: "Done", traits: [{ trait: "complete" }] },
-          { id: "vaulted", name: "Vaulted", traits: [{ trait: "archived" }] },
-        ],
-        nodes: [
-          { id: "start", kind: "start", column: "todo" },
-          { id: "end", kind: "end", column: "done" },
-        ],
-        edges: [{ from: "start", to: "end", condition: "success" }],
-      } as never,
-    });
-    const mission = await m.createMission({ title: "Renamed-archive repair" });
-    const milestone = await m.addMilestone(mission.id, { title: "MS" });
-    const slice = await m.addSlice(milestone.id, { title: "SL" });
-    const feature = await m.addFeature(slice.id, { title: "Delivered" });
-    const task = await store.createTask({ description: "filed away", column: "done" });
-    /*
-    A REAL archive, then the lane rename. The `archived` verdict requires all three of
-    `deletedAt !== null`, an archive-snapshot row, and `isArchived(column)` — a live card merely
-    sitting in an archive-trait column is `invalid-deleted`, not `archived`, so seeding one would
-    fail for a reason that has nothing to do with the lane read under test. Archiving first and
-    then renaming the recorded lane isolates exactly the third condition.
-    */
-    await store.archiveTask(task.id, { cleanup: false });
-    await h.adminDb().execute(sql`UPDATE project.tasks SET "column" = 'vaulted' WHERE id = ${task.id}`);
-    store.taskCache.delete(task.id);
 
     const reconciled = await m.reconcileFeatureDoneWithTerminalTask(feature.id, task.id);
 
@@ -899,27 +794,6 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
     expect(await m.getFeature(feature.id)).toEqual(reconciled);
   });
 
-  it("accepts a supported archived tombstone without resurrecting or back-linking it", async () => {
-    const m = missions();
-    const mission = await m.createMission({ title: "Archived repair" });
-    const milestone = await m.addMilestone(mission.id, { title: "MS" });
-    const slice = await m.addSlice(milestone.id, { title: "SL" });
-    const feature = await m.addFeature(slice.id, { title: "Archived delivery" });
-    const task = await h.store().createTask({ description: "archived shipped work", column: "done" });
-    await h.store().archiveTask(task.id, { cleanup: false });
-
-    const reconciled = await m.reconcileFeatureDoneWithTerminalTask(feature.id, task.id);
-
-    expect(reconciled).toMatchObject({ taskId: task.id, status: "done", loopState: "idle", implementationAttemptCount: 0 });
-    expect(await h.store().getTask(task.id)).toMatchObject({ column: "archived" });
-    const tombstones = await h.layer().db
-      .select({ column: schema.project.tasks.column, deletedAt: schema.project.tasks.deletedAt, missionId: schema.project.tasks.missionId, sliceId: schema.project.tasks.sliceId })
-      .from(schema.project.tasks)
-      .where(eq(schema.project.tasks.id, task.id));
-    expect(tombstones).toEqual([{ column: "archived", deletedAt: expect.any(String), missionId: null, sliceId: null }]);
-    expect(await m.getMission(mission.id)).toMatchObject({ status: "planning", autopilotEnabled: false, autoAdvance: false });
-  });
-
   it("rejects missing, nonterminal, invalid-deleted, feature mismatch, and duplicate task links without mutation", async () => {
     const m = missions();
     const mission = await m.createMission({ title: "Guarded repair" });
@@ -930,7 +804,7 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
       m.addFeature(slice.id, { title: "Other" }),
     ]);
     const nonterminal = await h.store().createTask({ description: "active", column: "todo" });
-    const invalidDeleted = await h.store().createTask({ description: "deleted without archive", column: "done" });
+    const invalidDeleted = await h.store().createTask({ description: "deleted delivery", column: "done" });
     await h.layer().db.update(schema.project.tasks).set({ deletedAt: new Date().toISOString() })
       .where(eq(schema.project.tasks.id, invalidDeleted.id));
     const linkedTask = await h.store().createTask({ description: "already linked", column: "done" });
@@ -938,7 +812,7 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
 
     await expect(m.reconcileFeatureDoneWithTerminalTask(feature.id, "FN-MISSING")).rejects.toMatchObject({ code: "TASK_NOT_FOUND" });
     await expect(m.reconcileFeatureDoneWithTerminalTask(feature.id, nonterminal.id)).rejects.toMatchObject({ code: "TASK_NOT_TERMINAL" });
-    await expect(m.reconcileFeatureDoneWithTerminalTask(feature.id, invalidDeleted.id)).rejects.toMatchObject({ code: "TASK_ARCHIVE_INVALID" });
+    await expect(m.reconcileFeatureDoneWithTerminalTask(feature.id, invalidDeleted.id)).rejects.toMatchObject({ code: "TASK_DELIVERY_DELETED" });
     await expect(m.reconcileFeatureDoneWithTerminalTask(feature.id, linkedTask.id)).rejects.toMatchObject({ code: "TASK_FEATURE_CONFLICT" });
 
     const canonicalTask = await h.store().createTask({ description: "canonical", column: "done" });
@@ -1461,11 +1335,40 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
     expect(audited).toHaveLength(2);
     expect(audited.map((event) => (event.metadata as Record<string, unknown>)?.featureId))
       .toEqual(expect.arrayContaining([firstFix.id, secondFix.id]));
+    await expect(m.getFeature(firstFix.id)).resolves.toMatchObject({
+      status: "done",
+      loopState: "passed",
+      taskId: undefined,
+      lastValidatorStatus: undefined,
+    });
+    await expect(m.getFeature(secondFix.id)).resolves.toMatchObject({
+      status: "done",
+      loopState: "passed",
+      taskId: undefined,
+      lastValidatorStatus: undefined,
+    });
 
     await expect(m.reconcileSupersededGeneratedFixFeatures(slice.id)).resolves.toMatchObject({ supersededCount: 0, featureIds: [] });
     expect((await m.getMissionEvents(mission.id, { limit: 20 })).events
       .filter((event) => event.eventType === "feature_status_changed" && (event.metadata as Record<string, unknown>)?.source === "superseded-fix-reconcile"))
       .toHaveLength(2);
+  });
+
+  it("repairs a fabricated generated-fix marker and restores triage", async () => {
+    const m = missions();
+    const mission = await m.createMission({ title: "Fabricated generated-fix marker" });
+    const milestone = await m.addMilestone(mission.id, { title: "MS" });
+    const slice = await m.addSlice(milestone.id, { title: "SL" });
+    const root = await m.addFeature(slice.id, { title: "Root" });
+    const failedRun = await m.startValidatorRun(root.id, "scheduled");
+    await m.completeValidatorRun(failedRun.id, "failed", "needs fix");
+    const fix = await m.createGeneratedFixFeature(root.id, failedRun.id, [], "repair");
+    await m.updateFeature(fix.id, { status: "done", loopState: "passed", lastValidatorStatus: "passed", lastValidatorRunId: undefined, taskId: undefined });
+
+    await expect(m.reconcileSupersededGeneratedFixFeatures(slice.id)).resolves.toMatchObject({ repairedCount: 1, repairedFeatureIds: [fix.id] });
+    await expect(m.getFeature(fix.id)).resolves.toMatchObject({ status: "defined", loopState: "idle", lastValidatorStatus: undefined, taskId: undefined });
+    await expect(m.reconcileSupersededGeneratedFixFeatures(slice.id)).resolves.toMatchObject({ repairedCount: 0, repairedFeatureIds: [] });
+    await expect(m.triageFeature(fix.id)).resolves.toMatchObject({ taskId: expect.any(String) });
   });
 
   it("runs the validator/fix lifecycle and reaps stale runs in PostgreSQL", async () => {
@@ -1532,12 +1435,7 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
     expect(await m.getFeature(root.id)).toMatchObject({ loopState: "blocked", implementationStopReason: "budget-exhausted", implementationAttemptCount: 3 });
   });
 
-  it("records generated-task archive as a durable root stop before unlinking", async () => {
-    /*
-    FNXC:MissionLineageBudget 2026-07-22-15:30:
-    Task archive is a supported removal surface. Its archive transaction must
-    retain the root stop even though it clears the generated feature's task link.
-    */
+  it("records generated-task deletion as a durable root stop before unlinking", async () => {
     const m = missions();
     const mission = await m.createMission({ title: "Generated task stop" });
     const milestone = await m.addMilestone(mission.id, { title: "MS" });
@@ -1549,7 +1447,7 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
     const task = await h.store().createTask({ description: "Generated fix task" });
     await m.linkFeatureToTask(fix.id, task.id);
 
-    await h.store().archiveTask(task.id, { cleanup: false });
+    await h.store().deleteTask(task.id);
 
     expect(await m.getFeature(root.id)).toMatchObject({
       loopState: "blocked",
@@ -1558,7 +1456,7 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
     expect(await m.getFeature(fix.id)).toMatchObject({ taskId: undefined });
     const stops = await h.layer().db.select().from(schema.project.missionLineageStops)
       .where(sql`${schema.project.missionLineageStops.rootFeatureId} = ${root.id}`);
-    expect(stops).toMatchObject([{ reason: "operator-intervention", origin: "task-archive" }]);
+    expect(stops).toMatchObject([{ reason: "operator-intervention", origin: "task-delete" }]);
   });
 
   it("clears only a stale blocked mission badge with one attributed audit event", async () => {
@@ -1694,6 +1592,125 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
     );
   });
 
+  it("atomically applies validator effects only for the winning current running owner", async () => {
+    const m = missions();
+    const mission = await m.createMission({ title: "Completion effects" });
+    const milestone = await m.addMilestone(mission.id, { title: "MS" });
+    const slice = await m.addSlice(milestone.id, { title: "SL" });
+    const feature = await m.addFeature(slice.id, { title: "F", acceptanceCriteria: "observable result" });
+    const [assertion] = await m.ensureFeatureAssertionLinked(feature.id);
+    for (const milestoneAssertion of (await m.listContractAssertions(milestone.id)).filter((a) => a.scope === "milestone")) {
+      await m.updateContractAssertion(milestoneAssertion.id, { status: "passed" });
+    }
+    const old = await m.startValidatorRun(feature.id, "manual");
+    const current = await m.startValidatorRun(feature.id, "scheduled");
+    const effects = { featureId: feature.id, assertions: [{ assertionId: assertion!.id, status: "passed" as const }] };
+    const stale = await m.completeValidatorRun(old.id, "passed", "old pass", undefined, effects);
+    expect(stale.completionApplied).toBe(false);
+    expect((await m.getFeature(feature.id))?.status).not.toBe("done");
+    expect((await m.listAssertionsForFeature(feature.id))[0]?.status).toBe("pending");
+    const winner = await m.completeValidatorRun(current.id, "passed", "current pass", undefined, effects);
+    expect(winner.completionApplied).toBe(true);
+    expect((await m.getMilestone(milestone.id))?.validationState).toBe("passed");
+    expect((await m.getSlice(slice.id))?.status).toBe("complete");
+    expect(await m.getFeature(feature.id)).toMatchObject({ status: "done", loopState: "passed", lastValidatorRunId: current.id });
+    expect((await m.listAssertionsForFeature(feature.id))[0]?.status).toBe("passed");
+    const duplicate = await m.completeValidatorRun(current.id, "failed", "late fail", undefined, {
+      featureId: feature.id, assertions: [{ assertionId: assertion!.id, status: "failed" }],
+      failures: [{ featureId: feature.id, assertionId: assertion!.id, message: "late" }],
+    });
+    expect(duplicate.completionApplied).toBe(false);
+    expect((await m.listAssertionsForFeature(feature.id))[0]?.status).toBe("passed");
+    expect(await m.getFailuresForRun(current.id)).toEqual([]);
+  });
+
+  it.each(["reaper", "replacement"])("discards all effects when %s wins before the completion lock", async (winner) => {
+    const m = missions();
+    const competing = new AsyncMissionStore(h.layer(), h.store());
+    const mission = await m.createMission({ title: "Completion race" });
+    const milestone = await m.addMilestone(mission.id, { title: "MS" });
+    const slice = await m.addSlice(milestone.id, { title: "SL" });
+    const feature = await m.addFeature(slice.id, { title: "F" });
+    const [assertion] = await m.ensureFeatureAssertionLinked(feature.id);
+    const run = await m.startValidatorRun(feature.id, "manual");
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const original = h.layer().transactionImmediate.bind(h.layer());
+    const gate = vi.spyOn(h.layer(), "transactionImmediate").mockImplementationOnce(async (fn) => {
+      entered.resolve();
+      await release.promise;
+      return original(fn);
+    });
+    const emitted = vi.spyOn(m, "emit").mockClear();
+    const pending = m.completeValidatorRun(run.id, "failed", "late verdict", undefined, {
+      featureId: feature.id, triggerType: "manual",
+      assertions: [{ assertionId: assertion!.id, status: "failed" }],
+      failures: [{ featureId: feature.id, assertionId: assertion!.id, message: "late failure" }],
+    });
+    let expectedFeature;
+    let expectedRun;
+    try {
+      await entered.promise;
+      gate.mockRestore();
+      if (winner === "reaper") await competing.reapValidatorRun(run.id, "reaper won");
+      else await competing.startValidatorRun(feature.id, "scheduled");
+      expectedFeature = await competing.getFeature(feature.id);
+      expectedRun = await competing.getValidatorRun(run.id);
+    } finally {
+      gate.mockRestore();
+      release.resolve();
+    }
+    expect(await pending).toMatchObject({ ...expectedRun, completionApplied: false });
+    expect(await m.getFeature(feature.id)).toEqual(expectedFeature);
+    expect((await m.listAssertionsForFeature(feature.id))[0]?.status).toBe("pending");
+    expect(await m.getFailuresForRun(run.id)).toEqual([]);
+    expect(emitted).not.toHaveBeenCalled();
+  });
+
+  it("rolls back every validator effect and event when a later assertion is invalid", async () => {
+    const m = missions();
+    const mission = await m.createMission({ title: "Rollback" });
+    const milestone = await m.addMilestone(mission.id, { title: "MS" });
+    const slice = await m.addSlice(milestone.id, { title: "SL" });
+    const feature = await m.addFeature(slice.id, { title: "F" });
+    const [assertion] = await m.ensureFeatureAssertionLinked(feature.id);
+    const run = await m.startValidatorRun(feature.id, "manual");
+    const beforeFeature = await m.getFeature(feature.id);
+    const beforeMilestone = await m.getMilestone(milestone.id);
+    const emitted = vi.spyOn(m, "emit").mockClear();
+    await expect(m.completeValidatorRun(run.id, "passed", "invalid", undefined, {
+      featureId: feature.id,
+      assertions: [{ assertionId: assertion!.id, status: "passed" }, { assertionId: "CA-NOT-LINKED", status: "passed" }],
+      failures: [{ featureId: feature.id, assertionId: assertion!.id, message: "must roll back" }],
+    })).rejects.toThrow("not linked");
+    expect(await m.getValidatorRun(run.id)).toEqual(run);
+    expect(await m.getFeature(feature.id)).toEqual(beforeFeature);
+    expect(await m.getMilestone(milestone.id)).toEqual(beforeMilestone);
+    expect((await m.listAssertionsForFeature(feature.id))[0]?.status).toBe("pending");
+    expect(await m.getFailuresForRun(run.id)).toEqual([]);
+    expect(emitted).not.toHaveBeenCalled();
+  });
+
+  it("atomically refreshes every milestone owning accepted linked assertions", async () => {
+    const m = missions();
+    const mission = await m.createMission({ title: "Cross-milestone verdicts" });
+    const first = await m.addMilestone(mission.id, { title: "Source" });
+    const second = await m.addMilestone(mission.id, { title: "Shared contract" });
+    const slice = await m.addSlice(first.id, { title: "SL" });
+    const feature = await m.addFeature(slice.id, { title: "F" });
+    const [own] = await m.ensureFeatureAssertionLinked(feature.id);
+    const shared = await m.addContractAssertion(second.id, { title: "Shared", assertion: "Shared observable", status: "pending" });
+    await m.linkFeatureToAssertion(feature.id, shared.id);
+    const run = await m.startValidatorRun(feature.id, "manual");
+    const result = await m.completeValidatorRun(run.id, "passed", "verified", undefined, {
+      featureId: feature.id,
+      assertions: [{ assertionId: own!.id, status: "passed" }, { assertionId: shared.id, status: "passed" }],
+    });
+    expect(result.completionApplied).toBe(true);
+    expect((await m.getMilestone(first.id))?.validationState).toBe("passed");
+    expect((await m.getMilestone(second.id))?.validationState).toBe("passed");
+  });
+
   it("allows exactly one terminal validator transition when completion races the stale reaper", async () => {
     const primary = missions();
     const competing = new AsyncMissionStore(h.layer(), h.store());
@@ -1725,6 +1742,157 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
       expect(persistedFeature?.loopState).toBe("needs_fix");
       expect(persistedFeature?.lastValidatorStatus).toBe("error");
     }
+  });
+
+  it("fences stale generated fixes after replacement without minting lineage or consuming budget", async () => {
+    const m = missions();
+    const mission = await m.createMission({ title: "Stale fix" });
+    const milestone = await m.addMilestone(mission.id, { title: "MS" });
+    const slice = await m.addSlice(milestone.id, { title: "SL" });
+    const feature = await m.addFeature(slice.id, { title: "F" });
+    const old = await m.startValidatorRun(feature.id, "manual");
+    await m.completeValidatorRun(old.id, "failed");
+    const current = await m.startValidatorRun(feature.id, "manual");
+    await expect(m.createGeneratedFixFeature(feature.id, old.id, [], "stale", undefined, undefined, { requireCurrentRun: true }))
+      .rejects.toMatchObject({ code: "VALIDATOR_RUN_OWNERSHIP_LOST" });
+    expect(await m.listFeatures(slice.id)).toHaveLength(1);
+    expect(await m.getFeature(feature.id)).toMatchObject({ implementationAttemptCount: 0, lastValidatorRunId: current.id, loopState: "validating" });
+    expect(await m.findGeneratedFixFeature(feature.id, old.id)).toBeUndefined();
+  });
+
+  it("rejects a delayed failed-child continuation after a newer root pass", async () => {
+    const m = missions();
+    const mission = await m.createMission({ title: "Superseded remediation" });
+    const milestone = await m.addMilestone(mission.id, { title: "MS" });
+    const slice = await m.addSlice(milestone.id, { title: "SL" });
+    const root = await m.addFeature(slice.id, { title: "Root" });
+    const initialRun = await m.startManualValidatorRun(root.id);
+    await m.completeValidatorRun(initialRun.run.id, "failed", "first failure");
+    const child = await m.createGeneratedFixFeature(root.id, initialRun.run.id, [], "repair");
+    await m.transitionLoopState(child.id, "implementing");
+    const childRun = await m.startValidatorRun(child.id, "scheduled");
+    await m.completeValidatorRun(childRun.id, "failed", "child failure");
+    const passedRun = await m.startValidatorRun(root.id, "scheduled");
+    await m.completeValidatorRun(passedRun.id, "passed", "root is correct now");
+    expect(await m.getFeature(child.id)).toMatchObject({ status: "done", loopState: "passed", lastValidatorRunId: childRun.id, lastValidatorStatus: "failed" });
+    const rootBefore = await m.getFeature(root.id);
+    const featuresBefore = await m.listFeatures(slice.id);
+    await expect(m.createGeneratedFixFeature(child.id, childRun.id, [], "late repair", undefined, undefined, { requireCurrentRun: true }))
+      .rejects.toBeInstanceOf(ValidatorRunOwnershipLostError);
+    expect(await m.getFeature(root.id)).toEqual(rootBefore);
+    expect(await m.listFeatures(slice.id)).toEqual(featuresBefore);
+  });
+
+  it("rejects delayed remediation while an intermediate ancestor pass awaits reconciliation", async () => {
+    const m = missions();
+    const competing = new AsyncMissionStore(h.layer(), h.store());
+    const mission = await m.createMission({ title: "Intermediate supersession" });
+    const milestone = await m.addMilestone(mission.id, { title: "MS" });
+    const slice = await m.addSlice(milestone.id, { title: "SL" });
+    const root = await m.addFeature(slice.id, { title: "Root" });
+    const failedRun = async (featureId: string) => {
+      const admission = await m.startManualValidatorRun(featureId);
+      await m.completeValidatorRun(admission.run.id, "failed", "repair");
+      return admission.run;
+    };
+    const rootRun = await failedRun(root.id);
+    const ancestor = await m.createGeneratedFixFeature(root.id, rootRun.id, [], "repair");
+    const ancestorRun = await failedRun(ancestor.id);
+    const child = await m.createGeneratedFixFeature(ancestor.id, ancestorRun.id, [], "repair");
+    const childRun = await failedRun(child.id);
+    const pass = await m.startManualValidatorRun(ancestor.id);
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const reconcile = m.reconcileSupersededGeneratedFixFeatures.bind(m);
+    const gate = vi.spyOn(m, "reconcileSupersededGeneratedFixFeatures").mockImplementationOnce(async (sliceId) => {
+      entered.resolve();
+      await release.promise;
+      return reconcile(sliceId);
+    });
+    const pending = m.completeValidatorRun(pass.run.id, "passed", "ancestor verified");
+    try {
+      await entered.promise;
+      expect((await competing.getFeature(child.id))?.loopState).toBe("needs_fix");
+      const beforeRoot = await competing.getFeature(root.id);
+      await expect(competing.createGeneratedFixFeature(child.id, childRun.id, [], "late", undefined, undefined, { requireCurrentRun: true }))
+        .rejects.toBeInstanceOf(ValidatorRunOwnershipLostError);
+      expect(await competing.getFeature(root.id)).toEqual(beforeRoot);
+      expect(await competing.findGeneratedFixFeature(child.id, childRun.id)).toBeUndefined();
+    } finally {
+      release.resolve();
+      await pending;
+      gate.mockRestore();
+    }
+  });
+
+  it("serializes delayed remediation before reconciliation can invert ancestor row locks", async () => {
+    const m = missions();
+    const competing = new AsyncMissionStore(h.layer(), h.store());
+    const mission = await m.createMission({ title: "Lineage lock order" });
+    const milestone = await m.addMilestone(mission.id, { title: "MS" });
+    const slice = await m.addSlice(milestone.id, { title: "SL" });
+    const root = await m.addFeature(slice.id, { title: "Root" });
+    const fail = async (featureId: string) => {
+      const { run } = await m.startManualValidatorRun(featureId);
+      await m.completeValidatorRun(run.id, "failed");
+      return run;
+    };
+    const rootRun = await fail(root.id);
+    const ancestor = await m.createGeneratedFixFeature(root.id, rootRun.id, [], "repair");
+    const ancestorRun = await fail(ancestor.id);
+    const child = await m.createGeneratedFixFeature(ancestor.id, ancestorRun.id, [], "repair");
+    const childRun = await fail(child.id);
+    const { run: pass } = await m.startManualValidatorRun(ancestor.id);
+    const deferReconcile = vi.spyOn(m, "reconcileSupersededGeneratedFixFeatures").mockResolvedValueOnce({
+      supersededCount: 0, featureIds: [], repairedCount: 0, repairedFeatureIds: [],
+    });
+    await m.completeValidatorRun(pass.id, "passed");
+    deferReconcile.mockRestore();
+
+    const transaction = h.layer().transactionImmediate.bind(h.layer());
+    type Tx = Parameters<Parameters<typeof transaction>[0]>[0];
+    const locking = competing as unknown as { lockGeneratedFixLineage(tx: Tx): Promise<void> };
+    const lockLineage = locking.lockGeneratedFixLineage.bind(locking);
+    const entered = Promise.withResolvers<number>();
+    const release = Promise.withResolvers<void>();
+    const gate = vi.spyOn(locking, "lockGeneratedFixLineage").mockImplementationOnce(async (tx) => {
+      await lockLineage(tx);
+      // Force the permitted ancestor-first order of reconciliation's bulk row lock.
+      await tx.select({ id: schema.project.missionFeatures.id }).from(schema.project.missionFeatures)
+        .where(eq(schema.project.missionFeatures.id, ancestor.id)).for("update");
+      const rows = await tx.execute(sql`SELECT pg_backend_pid() AS pid`) as unknown as Array<{ pid: number }>;
+      entered.resolve(rows[0]!.pid);
+      await release.promise;
+      // A regression must fail promptly, not hang the suite waiting for a deadlock.
+      await tx.execute(sql`SET LOCAL lock_timeout = '500ms'`);
+    });
+    const reconciled = competing.reconcileSupersededGeneratedFixFeatures(slice.id).then(
+      (value) => ({ ok: true, value }), (error: unknown) => ({ ok: false, error }),
+    );
+    let admission: Promise<unknown> | undefined;
+    try {
+      const holderPid = await entered.promise;
+      admission = m.createGeneratedFixFeature(child.id, childRun.id, [], "late", undefined, undefined, { requireCurrentRun: true })
+        .then((value) => value, (error: unknown) => error);
+      const deadline = Date.now() + 5_000;
+      let blocked = false;
+      while (!blocked && Date.now() < deadline) {
+        const rows = await h.adminDb().execute(sql`SELECT EXISTS (
+          SELECT 1 FROM pg_stat_activity activity WHERE ${holderPid} = ANY(pg_blocking_pids(activity.pid))
+        ) AS blocked`) as unknown as Array<{ blocked: boolean }>;
+        blocked = rows[0]?.blocked === true;
+        if (!blocked) await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(blocked).toBe(true);
+    } finally {
+      release.resolve();
+      gate.mockRestore();
+    }
+    const [reconciliationResult, admissionResult] = await Promise.all([reconciled, admission]);
+    expect(reconciliationResult).toMatchObject({ ok: true });
+    expect(admissionResult).toBeInstanceOf(ValidatorRunOwnershipLostError);
+    expect(await m.findGeneratedFixFeature(child.id, childRun.id)).toBeUndefined();
+    expect((await m.getFeature(root.id))?.implementationAttemptCount).toBe(2);
   });
 
   it("creates one generated fix and consumes one retry under concurrent stores", async () => {

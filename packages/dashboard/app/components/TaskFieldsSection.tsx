@@ -48,7 +48,7 @@ export interface TaskFieldsSectionProps {
   /**
    * Persist a single-field patch. Resolves on success; the caller is expected
    * to throw / reject with the server's typed rejection so it can flow into
-   * `error`. May be omitted to render read-only (e.g. archived tasks).
+   * `error`. May be omitted to render read-only.
    */
   onSave?: (patch: Record<string, unknown>) => Promise<void>;
   /**

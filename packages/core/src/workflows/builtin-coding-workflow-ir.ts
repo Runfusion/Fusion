@@ -26,7 +26,6 @@ import {
  *   in-progress = wip + abort-on-exit + timing
  *   in-review   = merge-blocker + human-review + stall-detection + merge
  *   done        = complete
- *   archived    = archived
  *
  * The lifecycle seam nodes are placed in their columns. Planning is explicit so
  * the built-in workflow owns the specification phase rather than relying on
@@ -67,7 +66,6 @@ const RAW_BUILTIN_CODING_WORKFLOW_IR: WorkflowIr = {
       traits: [{ trait: "merge-blocker" }, { trait: "human-review" }, { trait: "stall-detection" }, { trait: "merge" }],
     },
     { id: "done", name: "Done", traits: [{ trait: "complete" }] },
-    { id: "archived", name: "Archived", traits: [{ trait: "archived" }] },
   ],
   nodes: [
     { id: "start", kind: "start", column: "triage" },

@@ -10,7 +10,7 @@
  * The plan asks: derive allowed column adjacency from node placement + edges,
  * and for the DEFAULT workflow it MUST reproduce `VALID_TRANSITIONS` exactly.
  * Pure graph-edge derivation CANNOT reproduce it: `VALID_TRANSITIONS` encodes
- * backward/reopen edges (in-review → todo, done → todo, archived → done, …) and
+ * backward/reopen edges (in-review → todo, done → todo, …) and
  * cross edges (in-progress → done) that have no counterpart in the linear
  * execute → review → merge → end pipeline graph. The IR edges describe the
  * forward automation walk; the column adjacency describes legal *board* moves
@@ -87,7 +87,6 @@ neighbor adjacency both DROPS legal moves and INVENTS an illegal one:
   in-progress -> done       DROPPED — the mission-validation cross edge, which is the exact case
                             `custom-review-lane-merge-blocker` covers
   in-review   -> todo       DROPPED — sending review work back to planning
-  todo/done   -> archived   DROPPED — the FN-4892 direct-archival edges
   done        -> in-review  INVENTED — a backward edge into review that no rule ever allowed
 
 So adjacency is derived from lifecycle ROLES instead of column ids. `VALID_TRANSITIONS` is a
@@ -101,22 +100,21 @@ verbatim (asserted). For the merged shape the two roles resolve to the SAME colu
 self-edges collapse and the remaining edges are exactly the legacy ones with `triage` folded in.
 */
 const ROLE_TRANSITIONS: Record<string, string[]> = {
-  intake: ["hold", "archived"],
-  hold: ["wip", "intake", "archived"],
+  intake: ["hold"],
+  hold: ["wip", "intake"],
   wip: ["review", "hold", "intake", "complete"],
   review: ["complete", "wip", "hold", "intake"],
-  complete: ["hold", "intake", "archived"],
-  archived: ["complete"],
+  complete: ["hold", "intake"],
 };
 
 /** Role→column-id for this workflow, or `undefined` when a lifecycle role is missing. */
 function resolveRoleColumns(ir: WorkflowIrV2): Record<string, string> | undefined {
   const lifecycle = resolveLifecycleColumns(ir);
   if (!lifecycle) return undefined;
-  const { intake, hold, wip, review, complete, archived } = lifecycle;
+  const { intake, hold, wip, review, complete } = lifecycle;
   // A workflow missing any lifecycle role is a genuinely custom shape; neighbor adjacency is the
   // honest answer there rather than a half-applied lifecycle.
-  if (!wip || !review || !complete || !archived) return undefined;
+  if (!wip || !review || !complete) return undefined;
   const planning = hold ?? intake;
   if (!planning) return undefined;
   return {
@@ -125,7 +123,6 @@ function resolveRoleColumns(ir: WorkflowIrV2): Record<string, string> | undefine
     wip,
     review,
     complete,
-    archived,
   };
 }
 

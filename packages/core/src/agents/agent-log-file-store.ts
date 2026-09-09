@@ -58,10 +58,16 @@ export function appendAgentLogEntriesSync(
 
   const filePath = getAgentLogFilePath(taskDir);
   mkdirSync(dirname(filePath), { recursive: true });
-  const startingLineNo = countLineNumbers(filePath);
-  const payload = entries
+  /*
+   * FNXC:AgentLogging 2026-09-05-22:05:
+   * FN-9263 requires an interrupted JSONL write to cost at most the interrupted entry. Prefix the next
+   * append with a boundary newline when its existing tail is unterminated so returned line numbers stay
+   * aligned with physical lines. This read-then-append tail check is intentionally not atomic across writers.
+   */
+  const { lineCount: startingLineNo, endsWithNewline } = inspectAgentLogTail(filePath);
+  const payload = `${startingLineNo > 0 && !endsWithNewline ? "\n" : ""}${entries
     .map((entry) => serializeEntry(entry))
-    .join("");
+    .join("")}`;
   appendFileSync(filePath, payload, "utf8");
 
   return entries.map((entry, index) => materializeEntry(entry, startingLineNo + index + 1));
@@ -118,6 +124,7 @@ function readAllAgentLogEntries(
 
   const lines = content.split("\n");
   const entries: StoredAgentLogEntry[] = [];
+  const skippedLines: Array<{ lineNo: number; message: string }> = [];
   for (let index = 0; index < lines.length; index += 1) {
     const rawLine = lines[index];
     if (!rawLine) continue;
@@ -144,8 +151,18 @@ function readAllAgentLogEntries(
       }
       entries.push(entry);
     } catch (error) {
-      log.warn(`Skipping malformed JSONL line ${lineNo} in ${filePath}`, error);
+      skippedLines.push({
+        lineNo,
+        message: error instanceof Error ? error.message : String(error),
+      });
     }
+  }
+
+  const firstSkipped = skippedLines[0];
+  if (firstSkipped) {
+    log.warn(
+      `Skipped ${skippedLines.length} malformed JSONL line(s) in ${filePath}; first line ${firstSkipped.lineNo}: ${firstSkipped.message}`,
+    );
   }
 
   return entries;
@@ -193,16 +210,19 @@ function materializeEntry(entry: AgentLogFileAppendInput, lineNo: number): Store
   };
 }
 
-function countLineNumbers(filePath: string): number {
+function inspectAgentLogTail(filePath: string): { lineCount: number; endsWithNewline: boolean } {
   if (!existsSync(filePath)) {
-    return 0;
+    return { lineCount: 0, endsWithNewline: true };
   }
   const content = readFileSync(filePath, "utf8");
   if (content.length === 0) {
-    return 0;
+    return { lineCount: 0, endsWithNewline: true };
   }
   const lines = content.split("\n");
-  return lines.at(-1) === "" ? lines.length - 1 : lines.length;
+  return {
+    lineCount: lines.at(-1) === "" ? lines.length - 1 : lines.length,
+    endsWithNewline: content.endsWith("\n"),
+  };
 }
 
 /**

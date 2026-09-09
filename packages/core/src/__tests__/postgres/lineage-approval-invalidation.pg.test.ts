@@ -75,17 +75,12 @@ pgDescribe("lineage approval invalidation", () => {
     return { parent, child, lock };
   }
 
-  it("invalidates approval and publishes a divergent report when parent lineage is removed by delete or archive", async () => {
-    for (const operation of ["delete", "archive"] as const) {
-      const { parent, child, lock } = await createApprovedLineagePair();
+  it("invalidates approval and publishes a divergent report when parent lineage is removed by delete", async () => {
+    const { parent, child, lock } = await createApprovedLineagePair();
     expect(lock.plan.sections.lineage.canonical).toContain(`parent-task:${parent.id}`);
     expect(await store.getActiveSpecLock(child.id)).toBeDefined();
 
-    if (operation === "delete") {
-      await store.deleteTask(parent.id, { removeLineageReferences: true });
-    } else {
-      await store.archiveTask(parent.id, { cleanup: false, removeLineageReferences: true });
-    }
+    await store.deleteTask(parent.id, { removeLineageReferences: true });
 
     const [updated, activeLock, latestLock, evidence, report] = await Promise.all([
       store.getTask(child.id),
@@ -106,7 +101,6 @@ pgDescribe("lineage approval invalidation", () => {
     }));
     expect(report?.approvedPlanFingerprint).toBeUndefined();
     expect(report?.alignment).not.toBe("on-plan");
-    }
   });
 
   it("warns when a missing prompt is the sanctioned evidence-unavailable input", async () => {
@@ -253,7 +247,7 @@ pgDescribe("lineage approval invalidation", () => {
       evidenceTargetVersionForTest: () => collisionVersion,
     };
 
-    await expect(store.archiveTask(abortPair.parent.id, { cleanup: false, removeLineageReferences: true }))
+    await expect(store.deleteTask(abortPair.parent.id, { removeLineageReferences: true }))
       .rejects.toMatchObject({ name: "LineageEvidenceAppendError", reason: "no-durable-version" } satisfies Partial<LineageEvidenceAppendError>);
     expect((await store.getTask(abortPair.parent.id))?.deletedAt).toBeUndefined();
     expect((await store.getTask(abortPair.child.id))?.sourceParentTaskId).toBe(abortPair.parent.id);
@@ -304,47 +298,6 @@ pgDescribe("lineage approval invalidation", () => {
     const reconciles = events.filter((event) => event.kind === "reconcile");
     expect(reconciles.map((event) => event.kind === "reconcile" ? event.childId : undefined).sort())
       .toEqual([child.id, secondChildId].sort());
-  });
-
-  it("retries an archive child discovered inside its transaction and publishes before releasing its lock", async () => {
-    const parent = await store.createTask({ description: "archive lineage parent" });
-    const events: LineageInvalidationTestEvent[] = [];
-    let childId: string | undefined;
-    let injected = false;
-    (store as unknown as {
-      __lineageInvalidationForTest?: { onEvent: (event: LineageInvalidationTestEvent) => void };
-      __beforeArchiveLineageGateForTest?: () => Promise<void>;
-    }).__lineageInvalidationForTest = { onEvent: (event) => events.push(event) };
-    (store as unknown as { __beforeArchiveLineageGateForTest?: () => Promise<void> }).__beforeArchiveLineageGateForTest = async () => {
-      if (injected) return;
-      injected = true;
-      const child = await store.createTask({
-        description: "archive raced-in approved child",
-        source: { sourceType: "api", sourceParentTaskId: parent.id },
-      });
-      childId = child.id;
-      await writeFile(join(store.taskDir(child.id), "PROMPT.md"), SPEC_LOCK_PROMPT);
-      await store.lockCurrentPlan(child.id, "archive-raced-lineage-scope", SPEC_LOCK_PROMPT);
-      await store.updateTask(child.id, { approvedPlanFingerprint: "archive-raced-lineage-scope" });
-    };
-
-    await store.archiveTask(parent.id, { cleanup: false, removeLineageReferences: true });
-
-    expect(childId).toBeDefined();
-    const child = await store.getTask(childId!);
-    expect(child?.sourceParentTaskId).toBeUndefined();
-    expect(child?.approvedPlanFingerprint).toBeUndefined();
-    expect(await store.getActiveSpecLock(childId!)).toBeUndefined();
-    const outcomes = events.filter((event) => event.kind === "outcome");
-    expect(outcomes).toHaveLength(2);
-    expect(outcomes[0]).toMatchObject({ kind: "outcome", outcome: { candidateIds: [], clearedChildIds: [], evidenceInsertAttempts: 0 } });
-    expect(outcomes[1]).toMatchObject({ kind: "outcome", outcome: { candidateIds: [childId], clearedChildIds: [childId] } });
-    const acquire = events.findIndex((event) => event.kind === "acquire" && event.childIds.includes(childId!));
-    const reconcile = events.findIndex((event) => event.kind === "reconcile" && event.childId === childId);
-    const release = events.findIndex((event) => event.kind === "release" && event.childIds.includes(childId!));
-    expect(acquire).toBeGreaterThan(-1);
-    expect(reconcile).toBeGreaterThan(acquire);
-    expect(release).toBeGreaterThan(reconcile);
   });
 
   it("records lifecycle outcomes and uses structural degradation but never turns a lock acquisition failure into an unlocked delete", async () => {

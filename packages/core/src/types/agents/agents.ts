@@ -105,7 +105,6 @@ export const AGENT_PERMISSIONS = [
   "tasks:review", // Review task output (code, specs)
   "tasks:merge", // Merge completed task branches
   "tasks:delete", // Delete tasks
-  "tasks:archive", // Archive/unarchive tasks
   "agents:create", // Create new agents
   "agents:update", // Update agent configuration
   "agents:delete", // Delete agents

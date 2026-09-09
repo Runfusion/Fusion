@@ -111,8 +111,8 @@ describe("aiMergeTask finalized-task guard (FN-5007)", () => {
     vi.clearAllMocks();
   });
 
-  it.each(["done", "archived"] as const)("short-circuits for %s tasks", async (column) => {
-    const store = createMockStore(column);
+  it("short-circuits for Complete tasks", async () => {
+    const store = createMockStore("done");
     const logSpy = vi.spyOn(mergerLog, "log").mockImplementation(() => undefined);
 
     const result = await aiMergeTask(store, "/tmp/root", "FN-5007");

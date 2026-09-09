@@ -3,7 +3,6 @@ import { UNATTRIBUTED_MUTATION_CONTEXT } from "../identity/mutation-context.js";
 import { computeContentFingerprint, findDuplicateMatches, tokenize } from "./duplicate-detection.js";
 import type { ColumnId } from "../types.js";
 import type { TaskStore } from "../store.js";
-import { resolveArchiveTargetForTask } from "../workflows/workflow-lifecycle-traits.js";
 
 export interface SameAgentDuplicateInput {
   title?: string | null;
@@ -222,20 +221,9 @@ export function findSameAgentDuplicates(
   });
 
   /*
-  FNXC:WorkflowLifecycleColumns 2026-07-31-04:20 (batch-core feed):
-  THE EXACT-FINGERPRINT PATH NEEDED THIS TOO, and it is the path that actually fires.
-
-  `findDuplicateMatches` excludes terminal candidates via its own `DEFAULT_EXCLUDE_COLUMNS`
-  (`["done", "archived"]` in `duplicate-detection.ts`) — a literal LIST, which the census does not
-  count because it is a definition rather than a comparison. `findSameAgentDuplicates` never passed
-  `excludeColumns`, so it inherited that default: on a renamed board the exact-match path returned a
-  COMPLETED task as the canonical for new work.
-
-  I found this only because my first test asserted the exclusion and failed — the bigram fallback
-  below (the site the census pointed at) is unreachable whenever the exact path already matched, so
-  converting that line alone would have left the real path untouched while the census read 2 → 0.
-  Worth flagging for the rest of the batch: a census-invisible literal LIST can sit in front of the
-  guard the census does point at.
+  FNXC:WorkflowLifecycleColumns 2026-07-31-04:20:
+  Exact-fingerprint matching receives each candidate's resolved workflow Complete columns. The
+  built-in fallback is only `done`; historical sentinels are excluded by live-store reads.
   */
   const resolvedExcludeColumns = candidateFlagsByColumn === undefined
     ? undefined
@@ -308,46 +296,13 @@ export function findSameAgentDuplicates(
   );
 }
 
-/*
-FNXC:Identity 2026-08-09-03:04 (U18):
-Duplicate intake runs inside the create path, so the honest actor is whoever created the task - but
-`createTask`'s own callers (dashboard routes, CLI, engine triage) do not carry one until U9/U11/U13,
-so threading it here would only propagate an absence. Marked instead, and threading becomes a
-one-line change per helper once the create callers are real.
-*/
-export async function archiveAsSameAgentDuplicate(
-  store: TaskStore,
-  taskId: string,
-  siblingIds: string[],
-  scores: Record<string, number>,
-): Promise<void> {
-  await store.logEntry(
-    taskId,
-    "Auto-archived as same-agent duplicate",
-    `Duplicate of recently-filed sibling task(s): ${siblingIds.join(", ")}`,
-    UNATTRIBUTED_MUTATION_CONTEXT,
-  );
-  // FN-4892: store-side intake path does activity-only emission; run-audit requires runId+agentId context from engine callers.
-  await store.recordActivity({
-    type: "task:auto-archived-duplicate",
-    taskId,
-    details: "Auto-archived as same-agent duplicate during intake",
-    metadata: { siblingTaskIds: siblingIds, scores },
-  });
-  await store.moveTask(taskId, await resolveArchiveTargetForTask(store, taskId), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
-}
 
 /**
- * FNXC:DuplicateIntake 2026-07-07-00:00 (FN-7658):
- * This is the DEFAULT same-agent duplicate intake outcome (the setting
- * `autoArchiveDuplicateTasksEnabled` defaults to `false`). Operators do not
- * want duplicates silently disappearing into `archived` on creation — they
- * want visibility and a chance to decide. Instead of moving the task, this
- * records the same near-duplicate marker (`nearDuplicateOf`/`nearDuplicateScore`)
- * used elsewhere (see FN-6439 `clearNearDuplicateReferencesTo`) so the dashboard's
- * existing yellow "Duplicate" chip with Keep/Archive actions to surface it
- * for a human decision. The task is left in whatever column it was created
- * in — this function does NOT call `moveTask`.
+ * FNXC:DuplicateIntake 2026-09-04-10:36 (FN-295):
+ * Same-agent duplicates remain visible in their current column for a human
+ * Keep/Delete decision. Task archival and its opt-in duplicate setting no
+ * longer exist, so this path only records the shared near-duplicate marker
+ * (`nearDuplicateOf`/`nearDuplicateScore`) and never calls `moveTask`.
  *
  * `siblingIds` should be ordered with the canonical/earliest sibling first;
  * that first id becomes `nearDuplicateOf` and its score becomes
@@ -363,16 +318,13 @@ export async function flagSameAgentDuplicate(
   await store.logEntry(
     taskId,
     "Flagged as same-agent duplicate",
-    `Near-duplicate of recently-filed sibling task(s): ${siblingIds.join(", ")} (not archived — autoArchiveDuplicateTasksEnabled is off)`,
+    `Near-duplicate of recently-filed sibling task(s): ${siblingIds.join(", ")} (awaiting Keep/Delete decision)`,
     UNATTRIBUTED_MUTATION_CONTEXT,
   );
-  // FN-7658: reuse the existing duplicate activity type with a `source` disambiguator
-  // rather than inventing a schema-unknown activity type; run-audit consumers already
-  // understand `task:auto-archived-duplicate` and can key off `metadata.source`.
   await store.recordActivity({
-    type: "task:auto-archived-duplicate",
+    type: "task:near-duplicate-flagged",
     taskId,
-    details: "Flagged (not archived) as same-agent duplicate during intake",
+    details: "Flagged as same-agent duplicate during intake",
     metadata: { siblingTaskIds: siblingIds, scores, source: "same-agent-flagged" },
   });
   if (!canonicalId) return undefined;
@@ -424,9 +376,9 @@ export async function flagTriageDuplicate(
   };
   await store.logEntry(taskId, "Flagged as triage duplicate", `Duplicate marker points to ${canonicalId}; awaiting operator decision`, UNATTRIBUTED_MUTATION_CONTEXT);
   await store.recordActivity({
-    type: "task:auto-archived-duplicate",
+    type: "task:near-duplicate-flagged",
     taskId,
-    details: "Flagged (not deleted) as triage-marker duplicate",
+    details: "Flagged as triage-marker duplicate",
     metadata: { canonicalTaskId: canonicalId, source: "triage-marker-flagged" },
   });
   await store.updateTask(taskId, { sourceMetadataPatch }, UNATTRIBUTED_MUTATION_CONTEXT);

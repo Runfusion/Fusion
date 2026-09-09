@@ -56,9 +56,9 @@ export type { IngestedCheckState, IngestedCheckStateValue, MergeablePrCheck } fr
 /*
  * FNXC:WorkflowDeprecation 2026-07-15-16:35:
  * Keep deprecated IDs browser-safe because Settings loads the management list
- * (including disabled built-ins) but must not re-offer retired workflows for new
- * selection. FN-7970 and FN-7969 preserve direct resolution for pre-existing
- * Brainstorming and Coding (Ideas) task selections while hiding them elsewhere.
+ * (including disabled built-ins) but must not re-offer deprecated workflows for new
+ * work. FN-7970 preserves direct resolution for pre-existing Brainstorming selections
+ * while hiding that definition from ordinary selection lists.
  */
 /*
 FNXC:WorkflowDeprecation 2026-08-25-14:40:
@@ -74,6 +74,14 @@ never reach.
 */
 export const DEPRECATED_BUILTIN_WORKFLOW_IDS: ReadonlySet<string> = new Set([
   "builtin:brainstorming",
+]);
+
+/*
+FNXC:WorkflowSuccession 2026-09-06-02:15:
+FN-297 removes builtin:coding-ideas from the catalog instead of deprecating it and names builtin:coding-ideas-v2 as its successor. The project default lacks the Ideas column and manual intake, so falling back to it would move existing cards onto a different board. The retired id is read-tolerant and requestable, never offered and never written for task selections or project defaults; enabledBuiltinWorkflowIds is the explicit exception because operator-owned activation lists are understood without being rewritten. Read/write normalization carries this succession without a schema migration, keeping SCHEMA_BASELINE_VERSION unchanged so older Fusion binaries can still open the database.
+*/
+export const RETIRED_BUILTIN_WORKFLOW_SUCCESSORS: ReadonlyMap<string, string> = new Map([
+  ["builtin:coding-ideas", "builtin:coding-ideas-v2"],
 ]);
 
 
@@ -528,8 +536,6 @@ import type {
   TaskDocument,
   TaskDocumentRevision,
   TaskDocumentCreateInput,
-  ArchivedTaskDocumentAdditionInput,
-  ArchivedTaskDocumentAdditionResult,
   TaskDocumentWithTask,
   Artifact,
   ArtifactCreateInput,
@@ -551,8 +557,6 @@ export type {
   TaskDocument,
   TaskDocumentRevision,
   TaskDocumentCreateInput,
-  ArchivedTaskDocumentAdditionInput,
-  ArchivedTaskDocumentAdditionResult,
   TaskDocumentWithTask,
   Artifact,
   ArtifactCreateInput,
@@ -639,6 +643,7 @@ import type {
   WorkspaceLandFailure,
   WorkspaceWorktreeEntry,
   TaskRepositoryScope,
+  TaskPlanningFailureState,
   Task,
   TaskReleaseGateVerdict,
   TaskVerificationResultSummary,
@@ -689,6 +694,7 @@ export type {
   WorkspaceLandFailure,
   WorkspaceWorktreeEntry,
   TaskRepositoryScope,
+  TaskPlanningFailureState,
   Task,
   TaskReleaseGateVerdict,
   TaskVerificationResultSummary,
@@ -1462,11 +1468,24 @@ import {
   normalizeMessageParticipant,
   resolveEphemeralTaskCreationPolicy,
 } from "./types/messaging/messages.js";
+import {
+  ARTIFACT_NOTICE_METADATA_KEY,
+  DASHBOARD_INBOX_CATEGORIES,
+  TASK_RECOMMENDATION_NOTICE_KIND,
+  classifyDashboardInboxMessage,
+  isDashboardInboxCategory,
+} from "./messaging/inbox-categories.js";
 export {
   DASHBOARD_USER_ID,
   normalizeMessageParticipant,
   resolveEphemeralTaskCreationPolicy,
+  ARTIFACT_NOTICE_METADATA_KEY,
+  DASHBOARD_INBOX_CATEGORIES,
+  TASK_RECOMMENDATION_NOTICE_KIND,
+  classifyDashboardInboxMessage,
+  isDashboardInboxCategory,
 };
+import type { DashboardInboxCategory } from "./messaging/inbox-categories.js";
 import type {
   ParticipantType,
   MessageType,
@@ -1483,6 +1502,7 @@ import type {
   MessageFilter,
 } from "./types/messaging/messages.js";
 export type {
+  DashboardInboxCategory,
   ParticipantType,
   MessageType,
   MessageReplyReference,

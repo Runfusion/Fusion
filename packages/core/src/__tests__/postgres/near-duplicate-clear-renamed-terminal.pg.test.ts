@@ -1,13 +1,13 @@
 /*
 FNXC:WorkflowResolvedColumns 2026-07-30-03:20 (duplicate markers never cleared on a renamed board):
 
-`clearNearDuplicateReferencesTo` runs whenever a canonical task is completed, archived, or deleted,
+`clearNearDuplicateReferencesTo` runs whenever a canonical task is completed or deleted,
 and clears the `nearDuplicateOf` markers pointing at it. It first asks
 `isNearDuplicateCanonicalInactive` whether the canonical really is finished — a safety check, so a
 live canonical's markers are not cleared out from under an operator.
 
 That check was called WITHOUT the canonical's resolved column flags, so it fell back to the legacy
-`done`/`archived` ids. On a board whose terminal lanes are named anything else, a canonical that had
+`done` id. On a board whose Complete lane is named anything else, a canonical that had
 just been completed read as still ACTIVE, the guard early-returned, and the markers were never
 cleared. The flagged duplicates stayed parked behind a user decision that could never arrive.
 
@@ -17,7 +17,7 @@ the failure is markers that are never cleared at all. `isNearDuplicateCanonicalI
 says exactly this: it exists so a FINISHED canonical stops holding a flag open.
 
 Five of the predicate's six production call sites already resolved flags. This one did not, and it is
-the one that runs on every archive/complete transition.
+the one that runs on every Complete transition.
 
 The cases are DIFFERENTIAL: the same clear against two vocabularies whose roles are identical and
 only the ids differ. `shipped` collides with no legacy literal, so a surviving `"done"` cannot pass
@@ -37,6 +37,7 @@ import { BUILTIN_CODING_WORKFLOW_IR } from "../../index.js";
 pgDescribe("near-duplicate markers clear when the canonical reaches a RENAMED terminal column", () => {
   const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
     prefix: "fusion_neardup_renamed",
+    projectId: "project-near-duplicate-renamed-complete",
   });
 
   beforeAll(h.beforeAll);

@@ -1,6 +1,6 @@
 import { cliOperatorMutationContext } from "../identity/cli-operator-mutation-context.js";
-import { TaskStore, COLUMNS, COLUMN_LABELS, MAX_TASK_MESSAGE_LENGTH, resolveProjectColumnsForRoles, TERMINAL_ROLES, resolveReviewColumns, resolveTaskLifecycleColumns, resolveWorkflowIrForTask, CentralCore, buildAutoPauseClearPatch, buildManualRetryResetPatch, extractIntentSignature, findNearDuplicates, getTaskDuplicateLineage, isValidRepoSlug, isWorkspaceTask, reconcileDeterministicDuplicate, resolveTaskGithubTracking, runDeterministicDuplicateGuard, evaluateArchiveTaskLiveness, describeArchiveLiveness, TaskIsLiveError, type Settings, type Column, type ColumnId, type StepStatus, type AgentLogType, type AgentLogEntry, type IntentSignature, type NearDuplicateCandidate, type NearDuplicateMatch, type TaskDependencyMutation } from "@fusion/core";
-import { isInReviewMissingWorktreeSessionStartFailure, runAiMerge, landWorkspaceTask, withWorkspaceMergeDispatchLease, installBaselineArchiveWorktreeDisposer, clearOwnedMergeStamp, reconcileUnownedStaleMergeStamp } from "@fusion/engine";
+import { TaskStore, COLUMNS, COLUMN_LABELS, MAX_TASK_MESSAGE_LENGTH, resolveProjectColumnsForRoles, TERMINAL_ROLES, resolveReviewColumns, resolveTaskLifecycleColumns, resolveWorkflowIrForTask, CentralCore, buildAutoPauseClearPatch, buildManualRetryResetPatch, extractIntentSignature, findNearDuplicates, getTaskDuplicateLineage, isValidRepoSlug, isWorkspaceTask, reconcileDeterministicDuplicate, resolveTaskGithubTracking, runDeterministicDuplicateGuard, type Settings, type Column, type ColumnId, type StepStatus, type AgentLogType, type AgentLogEntry, type IntentSignature, type NearDuplicateCandidate, type NearDuplicateMatch, type TaskDependencyMutation } from "@fusion/core";
+import { isInReviewMissingWorktreeSessionStartFailure, runAiMerge, landWorkspaceTask, withWorkspaceMergeDispatchLease, clearOwnedMergeStamp, reconcileUnownedStaleMergeStamp } from "@fusion/engine";
 import { createInterface } from "node:readline/promises";
 import type { PlanningQuestion, PlanningSummary } from "@fusion/core";
 // FNXC:Identity 2026-08-09-03:04: pre-credential operator writes are attributed to the reserved bootstrap actor.
@@ -20,7 +20,6 @@ import { findNodeByNameOrId } from "./node.js";
 import { retryOnLock, LockRetryExhaustedError } from "../lock-retry.js";
 
 const STEP_STATUSES: StepStatus[] = ["pending", "in-progress", "done", "skipped"];
-let archiveForceOverride = false;
 
 /*
 FNXC:TaskMessageLength 2026-08-29-08:02:
@@ -88,24 +87,9 @@ function getResearchSourceContext(sourceMetadata: unknown): string | undefined {
   return typeof runId === "string" && runId.length > 0 ? runId : undefined;
 }
 
-async function formatTaskDuplicateLineage(task: Awaited<ReturnType<TaskStore["getTask"]>>, store: TaskStore): Promise<string | null> {
+function formatTaskDuplicateLineage(task: Awaited<ReturnType<TaskStore["getTask"]>>): string | null {
   const lineage = getTaskDuplicateLineage(task);
-  if (lineage.length === 0) return null;
-
-  const labels = await Promise.all(lineage.map(async (id) => {
-    try {
-      const linked = await store.getTask(id);
-      /* FNXC:WorkflowLifecycleColumns 2026-08-02-08:10 (fleet: CLI surface): the board's archived column.
-         With the literal, a renamed board's archived duplicates printed with no `(archived)` marker, so the
-         operator could not tell a live duplicate from a filed one in the lineage line. */
-      const linkedLifecycle = await resolveTaskLifecycleColumns(store, id);
-      return linked.column === (linkedLifecycle?.archived ?? "archived") ? `${id} (archived)` : id;
-    } catch {
-      return id;
-    }
-  }));
-
-  return labels.join(", ");
+  return lineage.length > 0 ? lineage.join(", ") : null;
 }
 
 function formatTaskSource(task: {
@@ -194,7 +178,6 @@ async function getBoardCommandContext(projectName?: string): Promise<ProjectCont
     if (!context) {
       throw new Error(`Project ${projectName} not found`);
     }
-    installBaselineArchiveWorktreeDisposer(context.store, {rootDir: context.projectPath, getSettings: () => context.store.getSettings(), allowLiveRemoval: () => archiveForceOverride});
     return context;
   }
 
@@ -203,7 +186,6 @@ async function getBoardCommandContext(projectName?: string): Promise<ProjectCont
     if (!context) {
       throw new Error("No project context");
     }
-    installBaselineArchiveWorktreeDisposer(context.store, {rootDir: context.projectPath, getSettings: () => context.store.getSettings(), allowLiveRemoval: () => archiveForceOverride});
     return context;
   } catch {
     // FNXC:PostgresCutover 2026-07-05-12:00: the cwd fallback must boot through
@@ -211,7 +193,6 @@ async function getBoardCommandContext(projectName?: string): Promise<ProjectCont
     // resolves to the removed SQLite runtime, which throws on first DB access.
     const store = await createLocalStore(process.cwd());
     const context = asLocalProjectContext(store);
-    installBaselineArchiveWorktreeDisposer(store, {rootDir: context.projectPath, getSettings: () => store.getSettings(), allowLiveRemoval: () => archiveForceOverride});
     return context;
   }
 }
@@ -593,7 +574,7 @@ export async function runTaskCreate(descriptionArg?: string, attachFiles?: strin
             fingerprint: guard.fingerprint,
           });
           createdOrLinked = reconcileResult.canonical;
-          didLinkExisting = reconcileResult.outcome === "archived";
+          didLinkExisting = reconcileResult.outcome === "removed";
         }
       } finally {
         guard.releaseLock();
@@ -820,7 +801,7 @@ export async function buildTaskListBoardLines(
     /* The "retires with the loop" condition above is now met: `col` can be a custom id, so the terminal
        test is a resolved-lane membership check. DELIBERATE-LITERAL only as the degraded fallback when the
        resolve failed, which is the documented unconverted-caller default. */
-    const dot = (terminalColumns ? terminalColumns.has(col) : col === "done" || col === "archived") ? "○" : "●";
+    const dot = (terminalColumns ? terminalColumns.has(col) : col === "done") ? "○" : "●";
 
     lines.push(`  ${dot} ${label} (${colTasks.length})`);
     for (const t of colTasks) {
@@ -1235,7 +1216,7 @@ async function runTaskShowWithStore(id: string, store: TaskStore) {
   if (sourceSummary) {
     console.log(`  Source: ${sourceSummary}`);
   }
-  const duplicateLineage = await formatTaskDuplicateLineage(task, store);
+  const duplicateLineage = formatTaskDuplicateLineage(task);
   if (duplicateLineage) {
     console.log(`  Duplicate of: ${duplicateLineage}`);
   }
@@ -1491,7 +1472,7 @@ export async function runTaskUnpause(id: string, projectName?: string) {
 }
 
 export async function runTaskMove(id: string, column: string, projectName?: string) {
-  if (!COLUMNS.includes(column as Column)) {
+  if (!COLUMNS.includes(column as (typeof COLUMNS)[number])) {
     console.error(`Invalid column: ${column}`);
     console.error(`Valid columns: ${COLUMNS.join(", ")}`);
     process.exit(1);
@@ -1567,49 +1548,6 @@ export async function runTaskRefine(id: string, feedbackArg?: string, projectNam
   });
 }
 
-export async function runTaskArchive(id: string, projectName?: string, options: {force?: boolean} = {}) {
-  /* FNXC:CliBoardMutation 2026-08-15-06:35: force is scoped to this command's disposer lifetime; every other CLI archive stays protective by default. */
-  archiveForceOverride = options.force === true;
-  try {
-    await withBoardWrite(projectName, { id, action: "archive task" }, async (context) => {
-      // Compatibility test/store doubles may expose archiveTask without the advisory reader.
-      const current = typeof (context.store as unknown as {getTask?: unknown}).getTask === "function" ? await context.store.getTask(id) : undefined;
-      const refuseLiveArchive = async (verdict: Parameters<typeof describeArchiveLiveness>[1]) => {
-        /*
-        FNXC:CliBoardMutation 2026-08-15-07:07:
-        A CLI liveness refusal is an operator-facing safety result, not an uncaught stack trace.
-        Exit through the established board-context path so the command is non-zero while its store closes.
-        */
-        console.error(`\n  ✗ ${describeArchiveLiveness(id, verdict, {workspaceWorktreeCount: Object.keys(current?.workspaceWorktrees ?? {}).length})}\n`);
-        await closeBoardContextAndExit(context, 1);
-      };
-      if (current && !options.force) {
-        const verdict = await evaluateArchiveTaskLiveness(context.store, current);
-        if (verdict.live) await refuseLiveArchive(verdict);
-      }
-      try {
-        const task = await context.store.archiveTask(id, {liveExecutionGuard: options.force ? "off" : "refuse"});
-        console.log();
-        console.log(`  ✓ Archived ${task.id} → ${columnLabel(task.column)}`);
-        console.log();
-      } catch (error) {
-        if (error instanceof TaskIsLiveError) await refuseLiveArchive({live: true, reasons: error.reasons});
-        throw error;
-      }
-    });
-  } finally { archiveForceOverride = false; }
-}
-
-export async function runTaskUnarchive(id: string, projectName?: string) {
-  // FNXC:CliBoardMutation 2026-07-09-00:00 (FN-7734): single board write.
-  await withBoardWrite(projectName, { id, action: "unarchive task" }, async (context) => {
-    const task = await context.store.unarchiveTask(id);
-
-    console.log();
-    console.log(`  ✓ Unarchived ${task.id} → ${columnLabel(task.column)}`);
-    console.log();
-  });
-}
 
 export async function runTaskRetry(id: string, projectName?: string) {
   // FNXC:CliBoardMutation 2026-07-09-00:00 (FN-7734): MULTI-STEP mutation

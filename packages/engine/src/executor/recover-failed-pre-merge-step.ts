@@ -19,6 +19,26 @@ import { isDefiniteEmptyCodeReviewRevise } from "./review-empty-content-close.js
  * A failed pre-merge result is a blocking gate failure by construction. Recovery revives the task
  * from that failed gate while retaining the gate's structured findings for the implementer.
  */
+import type { Task, TaskStore, WorkflowStepResult as CoreWorkflowStepResult } from "@fusion/core";
+import type { SendTaskBackForFixOutcome } from "./send-task-back-for-fix.js";
+import { hasPreMergeRemediationAutoMergeHold, resolveStepReopenPolicy, resolveWorkflowIrForTask } from "@fusion/core";
+import { executorLog } from "../logger.js";
+import type { EngineRunContext } from "../util/run-audit.js";
+import type {
+  AppendReviewRemediationOptions,
+  AppendReviewRemediationOutcome,
+} from "./append-review-remediation-steps.js";
+import { reassertRemediationAttempt } from "./claim-review-remediation-attempt.js";
+import { ClaimSupersededError, fenceStoreForClaim } from "./fence-store-for-claim.js";
+import { routeReviewConvergenceLadder } from "./review-convergence-ladder.js";
+import { hasRepeatedUnchangedReview, reviewInputSignature, type RequestPreMergeOptionalStepFixInfo } from "./request-pre-merge-optional-step-fix.js";
+import { resolveReviewRemediationGate } from "./review-remediation-gate.js";
+import { resolveRemediationCheckout } from "./resolve-remediation-checkout.js";
+import { isDefiniteEmptyCodeReviewRevise } from "./review-empty-content-close.js";
+import {
+  hasReviewRemediationAttemptForEpisode,
+  reviewRemediationEpisodeIdentity,
+} from "./optional-step-revision.js";
 
 export type RemediationRefusalReason =
   | "no-actionable-findings"
@@ -34,7 +54,8 @@ export type ReviewRemediationAttemptDescriptor = {
 
 /** The caller distinguishes a durable refusal from a transient skip or a stale claimed review. */
 export type RecoverFailedPreMergeStepOutcome =
-  | { kind: "scheduled" }
+  | { kind: "scheduled"; producer: "named" | "trailing" }
+  | { kind: "convergence" }
   | { kind: "refused"; reason: RemediationRefusalReason; gate: string }
   | { kind: "skipped" }
   | { kind: "superseded" };
@@ -64,6 +85,7 @@ export type RecoverFailedPreMergeStepDeps = {
     findings?: CoreWorkflowStepResult["findings"],
     persistWorktreePath?: boolean,
     stepReopenPolicy?: "reopen-trailing" | "none",
+    replayAccounting?: import("./reopen-last-step-for-revision.js").TrailingReplayAccounting,
   ) => Promise<void>;
 };
 
@@ -91,7 +113,7 @@ function refusalFromAppender(outcome: AppendReviewRemediationOutcome): Remediati
 
 /** True only for the successful hand-off outcome; callers must not treat every object as success. */
 export function isRecoverFailedPreMergeStepScheduled(outcome: RecoverFailedPreMergeStepOutcome): boolean {
-  return outcome.kind === "scheduled";
+  return outcome.kind === "scheduled" || outcome.kind === "convergence";
 }
 
 /**
@@ -210,7 +232,17 @@ export async function recoverFailedPreMergeWorkflowStepDetailed(
     if (!producesRemediation && await closeEmptyReviewContent()) return { kind: "skipped" };
 
     const budget = await deps.resolveFailedPreMergeWorkflowStepBudget(liveTask, target);
-    if (!budget.unbounded && (!Number.isFinite(budget.max) || budget.max <= 0)) {
+    const episodeIdentity = reviewRemediationEpisodeIdentity(target);
+    /*
+    FNXC:ReviewRemediationBudget 2026-09-08-01:46:
+    A crash after the atomic publication may leave the task in review with the failed gate and its
+    pending remediation still present. That is a handoff retry, not a new revision: bypass convergence
+    admission only for the exact episode marker plus durable pending work, then let the producer resume
+    scheduling without another append or charge.
+    */
+    const resumesCommittedRemediation = hasReviewRemediationAttemptForEpisode(liveTask, episodeIdentity)
+      && (liveTask.steps ?? []).some((step) => step.status === "pending");
+    if (!resumesCommittedRemediation && !budget.unbounded && (!Number.isFinite(budget.max) || budget.max <= 0)) {
       executorLog.warn(`${liveTask.id}: failed pre-merge step recovery NOT scheduled for "${stepName}" — revision budget is zero/invalid (attempts=${budget.attempts}, max=${String(budget.max)}). Card left parked.`);
       await deps.store.logEntry(
         liveTask.id,
@@ -221,7 +253,7 @@ export async function recoverFailedPreMergeWorkflowStepDetailed(
       return { kind: "skipped" };
     }
 
-    if (hasRepeatedUnchangedReview(liveTask, {
+    if (!resumesCommittedRemediation && hasRepeatedUnchangedReview(liveTask, {
       nodeId: target.workflowStepId,
       stepName,
       feedback,
@@ -239,10 +271,10 @@ export async function recoverFailedPreMergeWorkflowStepDetailed(
         max: budget.unbounded ? undefined : budget.max,
       });
       return outcome === "escalated" || outcome === "arbitrated"
-        ? { kind: "scheduled" }
+        ? { kind: "convergence" }
         : { kind: "skipped" };
     }
-    if (!budget.unbounded && budget.attempts >= budget.max) {
+    if (!resumesCommittedRemediation && !budget.unbounded && budget.attempts >= budget.max) {
       const outcome = await routeReviewConvergenceLadder({
         ...deps,
         getRunContextFor: deps.getRunContextFor ?? (() => undefined),
@@ -250,7 +282,7 @@ export async function recoverFailedPreMergeWorkflowStepDetailed(
         kind: "budget-exhausted", workflowStepId: target.workflowStepId, stepName,
         feedback, findings: target.findings, attempt: budget.attempts, max: budget.max,
       });
-      if (outcome === "escalated" || outcome === "arbitrated") return { kind: "scheduled" };
+      if (outcome === "escalated" || outcome === "arbitrated") return { kind: "convergence" };
       executorLog.warn(`${liveTask.id}: failed pre-merge step recovery NOT scheduled for "${stepName}" — revision budget exhausted (attempts=${budget.attempts}, max=${String(budget.max)}). Card left parked.`);
       await deps.store.logEntry(liveTask.id, "Failed pre-merge step recovery not scheduled — revision budget exhausted", `Step: ${stepName}\nAttempts: ${budget.attempts}\nMax: ${String(budget.max)}`, deps.runContextFor?.(liveTask.id));
       return { kind: "skipped" };
@@ -282,8 +314,19 @@ export async function recoverFailedPreMergeWorkflowStepDetailed(
 
     if (producesRemediation && deps.appendReviewRemediationSteps) {
       if (!await holdsClaim()) return { kind: "superseded" };
-      const appenderOutcome = await deps.appendReviewRemediationSteps(liveTask, info);
-      if (appenderOutcome === "appended") return { kind: "scheduled" };
+      const appenderOutcome = await deps.appendReviewRemediationSteps(liveTask, info, {
+        attemptClaim: {
+          revisionKey: budget.key,
+          stepName,
+          status: target.status,
+          maxRevisions: budget.unbounded ? "unbounded" : budget.max,
+          expectedWorkflowStepId: target.workflowStepId,
+          expectedReviewSignature: reviewInputSignature(target),
+          expectedReviewEpisodeIdentity: episodeIdentity,
+          runContext: deps.getRunContextFor?.(liveTask.id),
+        },
+      });
+      if (appenderOutcome === "appended") return { kind: "scheduled", producer: "named" };
       /* The producer genuinely declined; only now may a provably empty round close terminally. */
       if (await closeEmptyReviewContent()) return { kind: "skipped" };
       return { kind: "refused", reason: refusalFromAppender(appenderOutcome), gate: gate ?? stepName };
@@ -292,7 +335,9 @@ export async function recoverFailedPreMergeWorkflowStepDetailed(
       return { kind: "refused", reason: "unclassified-gate-no-reopen", gate: stepName };
     }
     if (!await holdsClaim()) return { kind: "superseded" };
-    await deps.sendTaskBackForFix(
+    const sendOutcome = await (deps.sendTaskBackForFix as unknown as (
+      ...args: Parameters<RecoverFailedPreMergeStepDeps["sendTaskBackForFix"]>
+    ) => Promise<SendTaskBackForFixOutcome>)(
       liveTask,
       checkout.path,
       feedback,
@@ -304,8 +349,27 @@ export async function recoverFailedPreMergeWorkflowStepDetailed(
       target.findings,
       checkout.persist,
       stepReopenPolicy,
+      {
+        revisionKey: budget.key,
+        stepName,
+        status: target.status ?? "failed",
+        maxRevisions: budget.unbounded ? "unbounded" : budget.max,
+        expectedWorkflowStepId: target.workflowStepId ?? stepName,
+        expectedReviewSignature: reviewInputSignature(target),
+        expectedReviewEpisodeIdentity: episodeIdentity,
+        expectedColumn: liveTask.column,
+        expectedStatus: liveTask.status,
+        runContext: deps.getRunContextFor?.(liveTask.id),
+      },
     );
-    return { kind: "scheduled" };
+    /* Legacy test/adapter callbacks reported only completion; production returns the committed producer result. */
+    if (!sendOutcome) return { kind: "scheduled", producer: "trailing" };
+    if (sendOutcome.kind === "scheduled" && sendOutcome.remediationCommitted) {
+      return { kind: "scheduled", producer: "trailing" };
+    }
+    if (sendOutcome.kind === "superseded") return { kind: "superseded" };
+    if (sendOutcome.kind === "budget-exhausted") return { kind: "skipped" };
+    return { kind: "refused", reason: "appender-declined", gate: stepName };
   } catch (err: unknown) {
     if (err instanceof ClaimSupersededError) return { kind: "superseded" };
     const errorMessage = err instanceof Error ? err.message : String(err);

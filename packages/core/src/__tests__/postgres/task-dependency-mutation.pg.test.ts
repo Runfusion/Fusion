@@ -317,7 +317,7 @@ pgTest("TaskStore dependency mutations (PostgreSQL)", () => {
     const prerequisite = await store.createTask({ description: `${api} ideas prerequisite`, column: "done" });
     const dependent = await store.createTask({
       description: `${api} ideas dependent`,
-      workflowId: "builtin:coding-ideas",
+      workflowId: "builtin:coding-ideas-v2",
     } as never);
     expect(dependent.column).toBe("ideas");
     await store.moveTask(dependent.id, "todo", {

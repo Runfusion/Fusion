@@ -70,8 +70,7 @@ describe("task recovery presentation", () => {
     }
   });
 
-  it("never infers retryability for done or archived tasks without terminal state", () => {
+  it("never infers retryability for completed tasks without terminal state", () => {
     expect(isTaskManuallyRetryable(makeTask({ column: "done" }), nowMs)).toBe(false);
-    expect(isTaskManuallyRetryable(makeTask({ column: "archived" }), nowMs)).toBe(false);
   });
 });

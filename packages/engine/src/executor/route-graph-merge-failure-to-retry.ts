@@ -14,6 +14,17 @@ import type { MergeBoundaryUnprovenReasonCode } from "./workflow-merge-boundary.
  * FNXC:WorkflowMerge 2026-07-12-17:38:
  * FN-1165: never route implementation-incomplete merge failures to the merge requester.
  */
+import type { TaskDetail, TaskStore } from "@fusion/core";
+import type { WorkflowGraphTaskRunResult } from "../workflows/workflow-graph-task-runner.js";
+import type { PausedAbortProvenance } from "./paused-abort-provenance.js";
+import { isGenericAbortProvenance } from "./paused-abort-provenance.js";
+import { graphFailureValue } from "./graph-failure-pure.js";
+import type { EngineRunContext } from "../util/run-audit.js";
+import { executorLog } from "../logger.js";
+import { MERGE_BOUNDARY_UNPROVEN_VALUE } from "../workflows/workflow-merge-nodes.js";
+import { emitMergeBoundaryUnprovenParked } from "./emit-merge-boundary-unproven-audit.js";
+import type { MergeBoundaryUnprovenReasonCode } from "./workflow-merge-boundary.js";
+import { AUTO_MERGE_RETRY_REJECTED_PREFIX } from "../merge/stale-content-park.js";
 
 export type RouteGraphMergeFailureToRetryDeps = {
   store: TaskStore;
@@ -298,7 +309,7 @@ export async function routeGraphMergeFailureToRetry(
     const parked = await parkTaskFailed(
       deps.store,
       live.id,
-      `AUTO_MERGE_RETRY_REJECTED: ${reason}`,
+      `${AUTO_MERGE_RETRY_REJECTED_PREFIX} ${reason}`,
       deps.getRunContextFor(live.id),
       live.columnMovedAt,
     );

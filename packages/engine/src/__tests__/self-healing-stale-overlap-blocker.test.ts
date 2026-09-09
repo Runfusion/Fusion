@@ -121,7 +121,6 @@ describe("SelfHealingManager stale overlap blocker reconciliation", () => {
   });
 
   it.each([
-    { name: "archived blocker", blocker: createTask("MRG-ARCHIVED", { column: "archived" }), dependentColumn: "todo" },
     { name: "soft-deleted blocker", blocker: createTask("MRG-DELETED", { deletedAt: NOW }), dependentColumn: "todo" },
     { name: "missing blocker", blocker: null, dependentColumn: "todo" },
     { name: "non-queued hold card", blocker: createTask("MRG-DONE-HOLD", { column: "done" }), dependentColumn: "todo" },

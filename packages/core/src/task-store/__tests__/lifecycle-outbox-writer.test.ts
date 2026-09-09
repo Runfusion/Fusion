@@ -173,7 +173,7 @@ pgTest("transactional task:deleted lifecycle outbox writer (PostgreSQL)", () => 
     expect(rows[0]?.seq).toBe(1n);
   });
 
-  it("serializes distinct deletes without collisions while archive and no-op paths write nothing", async () => {
+  it("serializes distinct deletes without collisions while no-op paths write nothing", async () => {
     h = await createTaskStoreForTest({ prefix: "lifecycle_outbox_distinct", copyFromGolden: true });
     const tasks = await Promise.all(Array.from({ length: 4 }, (_, index) => h!.store.createTask({ description: `distinct ${index}` })));
     await Promise.all(tasks.map((task) => h!.store.deleteTask(task.id)));
@@ -181,9 +181,6 @@ pgTest("transactional task:deleted lifecycle outbox writer (PostgreSQL)", () => 
     expect(rows.map((row) => row.seq)).toEqual([1n, 2n, 3n, 4n]);
     expect((await Promise.all(tasks.map((task) => h!.store.getTask(task.id, { includeDeleted: true })))).every((task) => Boolean(task.deletedAt))).toBe(true);
 
-    const archived = await h.store.createTask({ description: "archive is not delete" });
-    await h.store.archiveTask(archived.id, { cleanup: false });
-    expect(await lifecycleRows(h, archived.id)).toHaveLength(0);
     await h.store.deleteTask(tasks[0]!.id);
     expect(await lifecycleRows(h, tasks[0]!.id)).toHaveLength(1);
     await expect(h.store.deleteTask("FN-DOES-NOT-EXIST")).rejects.toThrow();

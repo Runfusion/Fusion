@@ -1,8 +1,7 @@
 import React from "react";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { loadStylesCss } from "../../test/cssFixture";
+import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Column } from "../Column";
 import type { Task, Column as ColumnType } from "@fusion/core";
@@ -34,7 +33,7 @@ vi.mock("../WorktreeGroup", () => ({
 vi.mock("../QuickEntryBox", () => ({
   QuickEntryBox: ({ favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, autoExpand, onCreate, onMoveTask, workflowId, workflowOptions }: { favoriteProviders?: string[]; favoriteModels?: string[]; onToggleFavorite?: (provider: string) => void; onToggleModelFavorite?: (modelId: string) => void; autoExpand?: boolean; onCreate?: (input: { description: string; workflowId?: string; column?: string }) => void; onMoveTask?: (id: string, column: string) => Promise<unknown>; workflowId?: string; workflowOptions?: { id: string; columns?: { flags?: { manualIntake?: boolean } }[] }[] }) => {
     const selectedWorkflow = workflowOptions?.find((option) => option.id === workflowId);
-    const showStart = workflowId === "builtin:coding-ideas" || selectedWorkflow?.columns?.[0]?.flags?.manualIntake === true;
+    const showStart = workflowId === "builtin:coding-ideas-v2" || selectedWorkflow?.columns?.[0]?.flags?.manualIntake === true;
     return (
     <div
       data-testid="quick-entry-box"
@@ -45,7 +44,7 @@ vi.mock("../QuickEntryBox", () => ({
       data-auto-expand={autoExpand === false ? "false" : "true"}
     >
       <button type="button" onClick={() => onCreate?.({ description: "Quick task" })}>create</button>
-      {showStart && <button type="button" data-testid="quick-entry-start" onClick={() => onCreate?.({ description: "Started task", workflowId: "builtin:coding-ideas", column: "todo" })}>start</button>}
+      {showStart && <button type="button" data-testid="quick-entry-start" onClick={() => onCreate?.({ description: "Started task", workflowId: "builtin:coding-ideas-v2", column: "todo" })}>start</button>}
       <button type="button" data-testid="quick-entry-move" onClick={() => void onMoveTask?.("FN-created", "todo")}>move</button>
     </div>
     );
@@ -144,6 +143,90 @@ describe("Column count-flash", () => {
 
     const badge = screen.getByText("1").parentElement!;
     expect(badge.className).not.toContain("count-flash");
+  });
+
+  it.each([1_200, 600])("keeps measured Done pagination bounded and crash-free at %ipx", async (viewportWidth) => {
+    const previousWidth = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: viewportWidth });
+    const resizeCallbacks: ResizeObserverCallback[] = [];
+    const observedRows = new Set<Element>();
+    class Observer {
+      constructor(callback: ResizeObserverCallback) { resizeCallbacks.push(callback); }
+      observe(element: Element) { observedRows.add(element); }
+      unobserve(element: Element) { observedRows.delete(element); }
+      disconnect() { observedRows.clear(); }
+    }
+    vi.stubGlobal("ResizeObserver", Observer);
+    const rowGeometry = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function measuredRow() {
+      const id = this.getAttribute("data-virtual-task-row") ?? "";
+      const index = Number(id.split("-").at(-1) ?? 0);
+      return { height: 280 + (index % 3) * 40 } as DOMRect;
+    });
+    let releasePage!: () => void;
+    const page = new Promise<void>((resolve) => { releasePage = resolve; });
+    const onLoadMore = vi.fn();
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    function DoneHarness() {
+      const [tasks, setTasks] = React.useState(() => Array.from({ length: 50 }, (_, index) => ({
+        ...makeTask(`FN-DONE-${index}`),
+        column: "done" as ColumnType,
+      })));
+      const [loading, setLoading] = React.useState(false);
+      const [hasMore, setHasMore] = React.useState(true);
+      const loadMore = React.useCallback(async () => {
+        onLoadMore();
+        setLoading(true);
+        await page;
+        setTasks(Array.from({ length: 75 }, (_, index) => ({
+          ...makeTask(`FN-DONE-${index}`),
+          column: "done" as ColumnType,
+        })));
+        setHasMore(false);
+        setLoading(false);
+      }, []);
+      return <Column {...defaultProps} column={"done" as ColumnType} columnName="Done" columnFlags={{ complete: true }} tasks={tasks} totalTaskCount={1_284} serverHasMore={hasMore} serverLoadingMore={loading} onLoadMoreServer={loadMore} />;
+    }
+
+    try {
+      render(<DoneHarness />);
+      const root = document.querySelector<HTMLElement>(".column-body")!;
+      Object.defineProperties(root, {
+        clientHeight: { configurable: true, value: 640 },
+        scrollHeight: { configurable: true, value: 24_000 },
+        scrollTop: { configurable: true, writable: true, value: 23_500 },
+      });
+      await act(async () => {
+        for (const callback of resizeCallbacks) callback(Array.from(observedRows, (target, index) => ({ target, borderBoxSize: [{ blockSize: 280 + (index % 3) * 40 }], contentRect: { height: 280 + (index % 3) * 40 } }) as unknown as ResizeObserverEntry), {} as ResizeObserver);
+        await Promise.resolve();
+      });
+
+      expect(screen.getByLabelText("1,284 tasks")).toHaveTextContent("1,284");
+      expect(document.querySelectorAll("[data-virtual-task-row]").length).toBeLessThanOrEqual(40);
+      expect(screen.queryByRole("button", { name: /Show more|Load .*more/i })).toBeNull();
+      fireEvent.scroll(root);
+      fireEvent.scroll(root);
+      await waitFor(() => expect(onLoadMore).toHaveBeenCalledOnce());
+
+      await act(async () => {
+        releasePage();
+        await page;
+      });
+      await waitFor(() => expect(screen.queryByTestId("column-auto-pagination-sentinel")).toBeNull());
+      act(() => {
+        root.scrollTop = 24_000;
+        fireEvent.scroll(root);
+      });
+      await waitFor(() => expect(screen.getByTestId("task-FN-DONE-74")).toBeTruthy());
+      expect(document.querySelectorAll("[data-virtual-task-row]").length).toBeLessThanOrEqual(40);
+      expect(onLoadMore).toHaveBeenCalledOnce();
+      expect(consoleError.mock.calls.flat().join(" ")).not.toMatch(/Maximum update depth|Minified React error #185|ErrorBoundary/i);
+    } finally {
+      rowGeometry.mockRestore();
+      consoleError.mockRestore();
+      vi.unstubAllGlobals();
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: previousWidth });
+    }
   });
 
   it("shows accurate executing/total for WIP (unpaused active over card total)", () => {
@@ -253,7 +336,7 @@ describe("Column Coding (Ideas) header indicator", () => {
   });
 
   it("maps the canonical Ideas dot to the shared triage token", () => {
-    const css = readFileSync(resolve(__dirname, "../../styles.css"), "utf8");
+    const css = loadStylesCss();
     expect(css).toMatch(/\.dot-ideas\s*\{\s*background:\s*var\(--triage\);\s*\}/);
   });
 });
@@ -309,7 +392,7 @@ describe("Column workflow mode (U9)", () => {
 
     const descriptionElement = document.querySelector(".column-desc");
     expect(descriptionElement?.textContent).toBe(description);
-    const css = readFileSync(resolve(__dirname, "../../styles.css"), "utf8");
+    const css = loadStylesCss();
     expect(css).toMatch(/\.column-desc\s*\{[\s\S]*white-space:\s*pre-wrap;[\s\S]*overflow-wrap:\s*anywhere;/);
   });
 
@@ -488,184 +571,44 @@ describe("Column memoization", () => {
 
 });
 
-describe("Column pagination", () => {
-  it("shows only the initial page for large non-in-progress columns", () => {
-    const tasks = Array.from({ length: 110 }, (_, index) => makeTask(`KB-${String(index + 1).padStart(3, "0")}`));
-    render(<Column {...defaultProps} column="todo" tasks={tasks} />);
-
-    expect(screen.getAllByTestId(/task-/)).toHaveLength(50);
-    expect(screen.getByRole("button", { name: /Load 25 more/i })).toBeTruthy();
+describe("Column automatic pagination and virtualization", () => {
+  it.each([false, true])("keeps a 1,000-task result bounded without manual pagination (search=%s)", (isSearchActive) => {
+    const tasks = Array.from({ length: 1_000 }, (_, index) => makeTask(`KB-${String(index + 1).padStart(4, "0")}`));
+    render(<Column {...defaultProps} column="todo" tasks={tasks} isSearchActive={isSearchActive} />);
+    expect(screen.getAllByTestId(/task-/).length).toBeLessThanOrEqual(40);
+    expect(screen.queryByRole("button", { name: /Load .*more|Show more/i })).toBeNull();
   });
 
-  it("loads more tasks on demand", async () => {
-    const tasks = Array.from({ length: 110 }, (_, index) => makeTask(`KB-${String(index + 1).padStart(3, "0")}`));
-    render(<Column {...defaultProps} column="todo" tasks={tasks} />);
-
-    await userEvent.click(screen.getByRole("button", { name: /Load 25 more/i }));
-
-    expect(screen.getAllByTestId(/task-/)).toHaveLength(75);
+  it.each([false, true])("loads the next server page automatically from the column scroller (search=%s)", async (isSearchActive) => {
+    const onLoadMoreServer = vi.fn().mockResolvedValue(undefined);
+    render(<Column {...defaultProps} column="todo" tasks={[makeTask("KB-001")]} isSearchActive={isSearchActive} serverHasMore onLoadMoreServer={onLoadMoreServer} />);
+    screen.getByTestId("column-auto-pagination-sentinel");
+    fireEvent.scroll(document.querySelector(".column-body")!);
+    await waitFor(() => expect(onLoadMoreServer).toHaveBeenCalledOnce());
+    expect(screen.queryByRole("button", { name: /Load .*more|Show more/i })).toBeNull();
   });
 
-  it("preserves pagination across task array updates", async () => {
-    const tasks = Array.from({ length: 110 }, (_, index) => makeTask(`KB-${String(index + 1).padStart(3, "0")}`));
-    const { rerender } = render(<Column {...defaultProps} column="todo" tasks={tasks} />);
-
-    await userEvent.click(screen.getByRole("button", { name: /Load 25 more/i }));
-    expect(screen.getAllByTestId(/task-/)).toHaveLength(75);
-
-    rerender(<Column {...defaultProps} column="todo" tasks={[...tasks]} />);
-
-    expect(screen.getAllByTestId(/task-/)).toHaveLength(75);
+  it("keeps a measurable sentinel for an empty filtered page that still has a continuation", async () => {
+    const onLoadMoreServer = vi.fn().mockResolvedValue(undefined);
+    render(<Column {...defaultProps} column="done" columnFlags={{ complete: true }} tasks={[]} totalTaskCount={12} serverHasMore onLoadMoreServer={onLoadMoreServer} />);
+    expect(screen.getByTestId("column-auto-pagination-sentinel")).toBeInTheDocument();
+    fireEvent.scroll(document.querySelector(".column-body")!);
+    await waitFor(() => expect(onLoadMoreServer).toHaveBeenCalledOnce());
   });
 
-  it("clamps visible tasks when a paginated list shrinks", async () => {
-    const tasks = Array.from({ length: 110 }, (_, index) => makeTask(`KB-${String(index + 1).padStart(3, "0")}`));
-    const { rerender } = render(<Column {...defaultProps} column="todo" tasks={tasks} />);
-
-    await userEvent.click(screen.getByRole("button", { name: /Load 25 more/i }));
-    expect(screen.getAllByTestId(/task-/)).toHaveLength(75);
-
-    rerender(<Column {...defaultProps} column="todo" tasks={tasks.slice(0, 60)} />);
-
-    expect(screen.getAllByTestId(/task-/)).toHaveLength(60);
+  it("keeps existing cards visible and exposes one accessible retry after a page error", async () => {
+    const onRetryServer = vi.fn().mockResolvedValue(undefined);
+    render(<Column {...defaultProps} column="done" columnFlags={{ complete: true }} tasks={[makeTask("KB-001")]} serverPaginationError="request-failed" onRetryServer={onRetryServer} />);
+    expect(screen.getByTestId("task-KB-001")).toBeInTheDocument();
+    expect(screen.getByText("Older tasks could not be loaded.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(onRetryServer).toHaveBeenCalledOnce());
   });
 
-
-
-  it("does not paginate at the threshold boundary", () => {
-    const tasks = Array.from({ length: 100 }, (_, index) => makeTask(`KB-${String(index + 1).padStart(3, "0")}`));
-    render(<Column {...defaultProps} column="todo" tasks={tasks} />);
-
-    expect(screen.queryByRole("button", { name: /Load 25 more/i })).toBeNull();
-  });
-
-  it("does not paginate grouped in-progress columns", () => {
-    const tasks = Array.from({ length: 110 }, (_, index) => ({ ...makeTask(`KB-${String(index + 1).padStart(3, "0")}`), column: "in-progress" as ColumnType }));
+  it("keeps capacity-bounded worktree groups exempt from the card virtualizer", () => {
+    const tasks = Array.from({ length: 10 }, (_, index) => ({ ...makeTask(`KB-${index}`), column: "in-progress" as ColumnType }));
     render(<Column {...defaultProps} column="in-progress" showWorktreeGrouping tasks={tasks} />);
-
-    expect(screen.queryByRole("button", { name: /Load 25 more/i })).toBeNull();
-  });
-
-  it("does not paginate archived columns", () => {
-    const tasks = Array.from({ length: 110 }, (_, index) => ({ ...makeTask(`KB-${String(index + 1).padStart(3, "0")}`), column: "archived" as ColumnType }));
-    render(<Column {...defaultProps} column="archived" tasks={tasks} collapsed={false} />);
-
-    expect(screen.queryByRole("button", { name: /Load 25 more/i })).toBeNull();
-  });
-
-  /*
-  FNXC:ArchivePagination 2026-07-08-00:00:
-  FN-7659 — the Archived column's server-backed "Show more" is a distinct
-  affordance from the client-side Load-more button covered above: it renders
-  only when `archivedHasMore` is true, is absent for an empty/under-one-page
-  archive, and invokes `onLoadMoreArchived` (not the client-side visible-count
-  bump) when clicked.
-  */
-  describe("archived pagination (FN-7659)", () => {
-    const archivedTasks = Array.from({ length: 3 }, (_, index) => ({
-      ...makeTask(`KB-ARCH-${index + 1}`),
-      column: "archived" as ColumnType,
-    }));
-
-    it("shows the server-backed Show more button only when archivedHasMore is true", () => {
-      render(<Column {...defaultProps} column="archived" tasks={archivedTasks} collapsed={false} archivedHasMore={false} />);
-      expect(screen.queryByRole("button", { name: /Show more/i })).toBeNull();
-    });
-
-    it("renders no Show more button for an empty archive", () => {
-      render(<Column {...defaultProps} column="archived" tasks={[]} collapsed={false} archivedHasMore={false} />);
-      expect(screen.queryByRole("button", { name: /Show more/i })).toBeNull();
-    });
-
-    it("renders the Show more button when archivedHasMore is true and invokes onLoadMoreArchived on click", async () => {
-      const onLoadMoreArchived = vi.fn().mockResolvedValue(undefined);
-      const user = userEvent.setup();
-      render(<Column {...defaultProps} column="archived" tasks={archivedTasks} collapsed={false} archivedHasMore onLoadMoreArchived={onLoadMoreArchived} />);
-
-      const button = screen.getByRole("button", { name: /Show more/i });
-      await user.click(button);
-
-      expect(onLoadMoreArchived).toHaveBeenCalledTimes(1);
-    });
-
-    it("does not render the Show more button when the archived column is collapsed", () => {
-      render(<Column {...defaultProps} column="archived" tasks={archivedTasks} collapsed archivedHasMore onLoadMoreArchived={vi.fn()} />);
-      expect(screen.queryByRole("button", { name: /Show more/i })).toBeNull();
-    });
-  });
-
-  /*
-  FNXC:BoardColumnWindowing 2026-07-26-12:30:
-  These two cases previously pinned the OLD contract (search disables pagination, render every match).
-  That escape hatch was unbounded and is deliberately gone: `tasks` arrives already search-filtered, so
-  paginating search results still shows matches while keeping the mounted TaskCard count bounded — the
-  resident set is what makes mobile browsers discard the backgrounded tab.
-  */
-  it("paginates even when isSearchActive is true", () => {
-    const tasks = Array.from({ length: 110 }, (_, index) => makeTask(`KB-${String(index + 1).padStart(3, "0")}`));
-    render(<Column {...defaultProps} column="todo" tasks={tasks} isSearchActive={true} />);
-
-    expect(screen.getAllByTestId(/task-/)).toHaveLength(50);
-    expect(screen.getByRole("button", { name: /Load 25 more/i })).toBeTruthy();
-  });
-
-  it("collapses the window back to one screenful when isSearchActive changes back to false", () => {
-    const tasks = Array.from({ length: 110 }, (_, index) => makeTask(`KB-${String(index + 1).padStart(3, "0")}`));
-    const { rerender } = render(<Column {...defaultProps} column="todo" tasks={tasks} isSearchActive={true} />);
-
-    expect(screen.getAllByTestId(/task-/)).toHaveLength(50);
-
-    // Search cleared — the result set changed, so the window resets to the initial page.
-    rerender(<Column {...defaultProps} column="todo" tasks={tasks} isSearchActive={false} />);
-
-    expect(screen.getAllByTestId(/task-/)).toHaveLength(50);
-    expect(screen.getByRole("button", { name: /Load 25 more/i })).toBeTruthy();
-  });
-
-  /*
-  FNXC:BoardColumnWindowing 2026-07-26-14:24:
-  The reset used to key on the `isSearchActive` boolean, so refining one broad query into another kept
-  the boolean true and carried an expanded window (up to hundreds of mounted TaskCards) into a brand-new
-  result set. These cases pin the corrected contract: a DIFFERENT search result set collapses back to
-  one screenful, while an unchanged one keeps the operator's expanded window (nothing to bound).
-  */
-  it("collapses an expanded window when the search result set changes while search stays active", () => {
-    const tasks = Array.from({ length: 110 }, (_, index) => makeTask(`KB-${String(index + 1).padStart(3, "0")}`));
-    const { rerender } = render(<Column {...defaultProps} column="todo" tasks={tasks} isSearchActive={true} />);
-
-    fireEvent.click(screen.getByRole("button", { name: /Load 25 more/i }));
-    fireEvent.click(screen.getByRole("button", { name: /Load 25 more/i }));
-    expect(screen.getAllByTestId(/task-/)).toHaveLength(100);
-
-    // Operator edits the query from one broad term to another: isSearchActive is STILL true, but the
-    // result set is entirely different.
-    const nextTasks = Array.from({ length: 130 }, (_, index) => makeTask(`FN-${String(index + 1).padStart(3, "0")}`));
-    rerender(<Column {...defaultProps} column="todo" tasks={nextTasks} isSearchActive={true} />);
-
-    expect(screen.getAllByTestId(/task-/)).toHaveLength(50);
-  });
-
-  it("keeps the expanded window across a re-render that yields the same search result set", () => {
-    const tasks = Array.from({ length: 110 }, (_, index) => makeTask(`KB-${String(index + 1).padStart(3, "0")}`));
-    const { rerender } = render(<Column {...defaultProps} column="todo" tasks={tasks} isSearchActive={true} />);
-
-    fireEvent.click(screen.getByRole("button", { name: /Load 25 more/i }));
-    expect(screen.getAllByTestId(/task-/)).toHaveLength(75);
-
-    // A poll hands back an equal-but-not-identical array; the window must not be yanked from under the
-    // operator.
-    rerender(<Column {...defaultProps} column="todo" tasks={[...tasks]} isSearchActive={true} />);
-
-    expect(screen.getAllByTestId(/task-/)).toHaveLength(75);
-  });
-
-  it("preserves non-search pagination behavior when isSearchActive is not provided", () => {
-    const tasks = Array.from({ length: 110 }, (_, index) => makeTask(`KB-${String(index + 1).padStart(3, "0")}`));
-    render(<Column {...defaultProps} column="todo" tasks={tasks} />);
-
-    // Default (undefined isSearchActive) should still paginate
-    expect(screen.getAllByTestId(/task-/)).toHaveLength(50);
-    expect(screen.getByRole("button", { name: /Load 25 more/i })).toBeTruthy();
+    expect(screen.queryByTestId("column-auto-pagination-sentinel")).toBeNull();
   });
 });
 
@@ -704,13 +647,13 @@ describe("Column QuickEntryBox", () => {
 
   it("preserves the explicit Coding Ideas Start column in workflow mode", async () => {
     const onQuickCreate = vi.fn().mockResolvedValue({});
-    render(<Column {...defaultProps} column="ideas" workflowMode workflowId="builtin:coding-ideas" workflowOptions={[{ id: "builtin:coding-ideas", name: "Coding (Ideas)", columns: [{ id: "ideas", name: "Ideas", flags: { intake: true, hold: true, manualIntake: true } }] }]} tasks={[]} onQuickCreate={onQuickCreate} />);
+    render(<Column {...defaultProps} column="ideas" workflowMode workflowId="builtin:coding-ideas-v2" workflowOptions={[{ id: "builtin:coding-ideas-v2", name: "Coding (Ideas)", columns: [{ id: "ideas", name: "Ideas", flags: { intake: true, hold: true, manualIntake: true } }] }]} tasks={[]} onQuickCreate={onQuickCreate} />);
 
     fireEvent.click(screen.getByTestId("quick-entry-start"));
 
     await waitFor(() => expect(onQuickCreate).toHaveBeenCalledWith({
       description: "Started task",
-      workflowId: "builtin:coding-ideas",
+      workflowId: "builtin:coding-ideas-v2",
       column: "todo",
     }));
   });
@@ -932,183 +875,19 @@ describe("Column plan auto-approval action", () => {
   });
 });
 
-describe("Column Done action menu", () => {
-  it("renders one accessible Done actions dropdown with sort choices and archive", async () => {
-    const user = userEvent.setup();
-    const { container } = render(
-      <Column
-        {...defaultProps}
-        column="done"
-        tasks={[{ ...makeTask("FN-001"), column: "done" }]}
-        onArchiveAllDone={vi.fn().mockResolvedValue([])}
-        doneSortMode="completion-date-desc"
-        onDoneSortModeChange={vi.fn()}
-      />,
-    );
-
-    const header = screen.getByRole("heading", { name: "Done" }).closest(".column-header") as HTMLElement;
-    const actionsButton = screen.getByRole("button", { name: "Done column actions" });
-    expect(actionsButton.closest(".column-header")).toBe(header);
-    expect(header.querySelectorAll(".column-menu")).toHaveLength(1);
-    expect(screen.queryByRole("combobox", { name: "Sort Done tasks" })).toBeNull();
-    expect(container.querySelector(".done-sort-control")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Archive all done tasks" })).toBeNull();
-
-    await user.click(actionsButton);
-
-    expect(screen.getByRole("menuitemradio", { name: /Completion date \(newest first\)/ })).toHaveAttribute("aria-checked", "true");
-    expect(screen.getByRole("menuitemradio", { name: /Task ID \(newest first\)/ })).toHaveAttribute("aria-checked", "false");
-    expect(screen.getByRole("menuitem", { name: /Archive all done tasks/i })).toBeEnabled();
+describe("Column terminal actions", () => {
+  it("does not render an action shell for Done", () => {
+    const { container } = render(<Column {...defaultProps} column="done" columnFlags={{ complete: true }} tasks={[{ ...makeTask("FN-001"), column: "done" }]} />);
+    expect(screen.queryByRole("button", { name: "Done column actions" })).toBeNull();
+    expect(container.querySelector(".column-menu")).toBeNull();
   });
 
-  it("renders the same Done dropdown for workflow complete columns with custom ids", async () => {
+  it("keeps the generic sort menu on non-complete columns", async () => {
     const user = userEvent.setup();
-    render(
-      <Column
-        {...defaultProps}
-        column={"shipped" as ColumnType}
-        workflowMode
-        columnDisplayName="Shipped"
-        columnFlags={{ complete: true }}
-        tasks={[{ ...makeTask("FN-001"), column: "shipped" as ColumnType }]}
-        onArchiveAllDone={vi.fn().mockResolvedValue([])}
-        doneSortMode="completion-date-desc"
-        onDoneSortModeChange={vi.fn()}
-      />,
-    );
-
-    expect(screen.getByRole("heading", { name: "Shipped" })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Shipped column actions" }));
-
-    expect(screen.getByRole("menuitemradio", { name: /Completion date \(newest first\)/ })).toBeInTheDocument();
-    expect(screen.getByRole("menuitemradio", { name: /Task ID \(newest first\)/ })).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: /Archive all done tasks/i })).toBeInTheDocument();
-  });
-
-  it("selects task ID descending from the Done actions menu", async () => {
-    const user = userEvent.setup();
-    const onDoneSortModeChange = vi.fn();
-    render(
-      <Column
-        {...defaultProps}
-        column="done"
-        tasks={[{ ...makeTask("FN-001"), column: "done" }]}
-        doneSortMode="completion-date-desc"
-        onDoneSortModeChange={onDoneSortModeChange}
-      />,
-    );
-
-    await user.click(screen.getByRole("button", { name: "Done column actions" }));
-    await user.click(screen.getByRole("menuitemradio", { name: /Task ID \(newest first\)/ }));
-
-    expect(onDoneSortModeChange).toHaveBeenCalledWith("task-id-desc");
-    expect(screen.queryByRole("menu")).toBeNull();
-  });
-
-  it("selects completion-date descending from the Done actions menu", async () => {
-    const user = userEvent.setup();
-    const onDoneSortModeChange = vi.fn();
-    render(
-      <Column
-        {...defaultProps}
-        column="done"
-        tasks={[{ ...makeTask("FN-002"), column: "done" }]}
-        doneSortMode="task-id-desc"
-        onDoneSortModeChange={onDoneSortModeChange}
-      />,
-    );
-
-    await user.click(screen.getByRole("button", { name: "Done column actions" }));
-    await user.click(screen.getByRole("menuitemradio", { name: /Completion date \(newest first\)/ }));
-
-    expect(onDoneSortModeChange).toHaveBeenCalledWith("completion-date-desc");
-    expect(screen.queryByRole("menu")).toBeNull();
-  });
-
-  it("archives Done tasks from the menu only after confirmation", async () => {
-    const user = userEvent.setup();
-    const onArchiveAllDone = vi.fn().mockResolvedValue([{ ...makeTask("FN-001"), column: "archived" }]);
-    render(
-      <Column
-        {...defaultProps}
-        column="done"
-        tasks={[{ ...makeTask("FN-001"), column: "done" }]}
-        onArchiveAllDone={onArchiveAllDone}
-        doneSortMode="completion-date-desc"
-        onDoneSortModeChange={vi.fn()}
-      />,
-    );
-
-    await user.click(screen.getByRole("button", { name: "Done column actions" }));
-    await user.click(screen.getByRole("menuitem", { name: /Archive all done tasks/i }));
-
-    await waitFor(() => expect(onArchiveAllDone).toHaveBeenCalledTimes(1));
-    expect(mockConfirm).toHaveBeenCalledWith({
-      title: "Archive All Done",
-      message: "Archive all 1 done tasks?",
-      danger: true,
-    });
-  });
-
-  it("keeps sort choices available while blocking archive for an empty Done column", async () => {
-    const user = userEvent.setup();
-    const onArchiveAllDone = vi.fn().mockResolvedValue([]);
-    render(
-      <Column
-        {...defaultProps}
-        column="done"
-        tasks={[]}
-        onArchiveAllDone={onArchiveAllDone}
-        doneSortMode="completion-date-desc"
-        onDoneSortModeChange={vi.fn()}
-      />,
-    );
-
-    await user.click(screen.getByRole("button", { name: "Done column actions" }));
-
-    expect(screen.getByRole("menuitemradio", { name: /Completion date \(newest first\)/ })).toBeInTheDocument();
-    expect(screen.getByRole("menuitemradio", { name: /Task ID \(newest first\)/ })).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: /Archive all done tasks/i })).toBeDisabled();
-    expect(onArchiveAllDone).not.toHaveBeenCalled();
-    expect(mockConfirm).not.toHaveBeenCalled();
-  });
-
-  it("shows the generic sort menu on non-complete columns without standalone wrappers", async () => {
-    const user = userEvent.setup();
-    const { container } = render(
-      <Column
-        {...defaultProps}
-        column="todo"
-        tasks={[{ ...makeTask("FN-001"), column: "todo" }]}
-        onArchiveAllDone={vi.fn().mockResolvedValue([])}
-        doneSortMode="completion-date-desc"
-        onDoneSortModeChange={vi.fn()}
-      />,
-    );
-
-    expect(screen.queryByRole("combobox", { name: "Sort Done tasks" })).toBeNull();
-    expect(container.querySelector(".done-sort-control")).toBeNull();
-    expect(container.querySelector("[aria-label='Sort tasks in this column']")).toBeNull();
-
+    render(<Column {...defaultProps} column="todo" tasks={[{ ...makeTask("FN-001"), column: "todo" }]} sortMode="completion-date-desc" onSortModeChange={vi.fn()} />);
     await user.click(screen.getByRole("button", { name: "Todo column actions" }));
-
     expect(screen.getByRole("menuitemradio", { name: /Arrival in this column/ })).toBeInTheDocument();
     expect(screen.getByRole("menuitemradio", { name: /Task ID \(newest first\)/ })).toBeInTheDocument();
-    expect(screen.queryByRole("menuitem", { name: /Archive all done tasks/i })).toBeNull();
-  });
-
-  it("does not render a Done actions menu when Done sort and archive props are absent", () => {
-    const { container } = render(
-      <Column
-        {...defaultProps}
-        column="done"
-        tasks={[{ ...makeTask("FN-001"), column: "done" }]}
-      />,
-    );
-
-    expect(screen.queryByRole("button", { name: "Done column actions" })).toBeNull();
-    expect(screen.queryByRole("combobox", { name: "Sort Done tasks" })).toBeNull();
-    expect(container.querySelector(".done-sort-control")).toBeNull();
   });
 });
 

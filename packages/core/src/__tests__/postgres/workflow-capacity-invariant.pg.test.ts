@@ -164,6 +164,53 @@ pgTest("in-transaction column capacity — ground truth (Phase A3)", () => {
 
   });
 
+  it.each([
+    { holderWorkflowId: "builtin:coding-ideas", contenderWorkflowId: "builtin:coding-ideas-v2" },
+    { holderWorkflowId: "builtin:coding-ideas-v2", contenderWorkflowId: "builtin:coding-ideas" },
+  ])(
+    "treats $holderWorkflowId holder and $contenderWorkflowId contender as one capacity pool",
+    async ({ holderWorkflowId, contenderWorkflowId }) => {
+      /*
+      FNXC:WorkflowSuccession 2026-09-06-02:54:
+      Seed through the low-level writer because public selection requests deliberately persist only the successor. Both historical-holder and historical-contender orderings must bind the same transaction-authoritative capacity budget.
+      */
+      const store = h.store();
+      await store.updateSettings({ maxConcurrent: 1 });
+      await assertMovePathLive();
+
+      const holder = await store.createTask({ description: "successor capacity holder" });
+      await store.writeTaskWorkflowSelection(holder.id, holderWorkflowId, []);
+      await store.moveTask(holder.id, "todo");
+      await store.moveTask(holder.id, "in-progress");
+
+      const contender = await store.createTask({ description: "successor capacity contender" });
+      await store.writeTaskWorkflowSelection(contender.id, contenderWorkflowId, []);
+      await store.moveTask(contender.id, "todo");
+
+      const observedPoolIds: string[] = [];
+      const originalCounter = store.countActiveInCapacitySlotAsync;
+      store.countActiveInCapacitySlotAsync = async (params) => {
+        observedPoolIds.push(params.workflowId);
+        return originalCounter.call(store, params);
+      };
+
+      let error: Error | null;
+      try {
+        error = await store
+          .moveTask(contender.id, "in-progress")
+          .then(() => null, (cause: unknown) => cause as Error);
+      } finally {
+        store.countActiveInCapacitySlotAsync = originalCounter;
+      }
+
+      expect(observedPoolIds).toContain("builtin:coding-ideas-v2");
+      expect((error as unknown as { rejection?: { code?: string } })?.rejection?.code).toBe(
+        "capacity-exhausted",
+      );
+      expect((await store.getTask(contender.id))?.column).toBe("todo");
+    },
+  );
+
   it("DISCRIMINATOR: with an EXPLICIT builtin:coding selection the sentinels agree and the limit BINDS", async () => {
     /*
     This is what proves R1 is a sentinel mismatch rather than "capacity is not
@@ -273,7 +320,7 @@ pgTest("in-transaction column capacity — ground truth (Phase A3)", () => {
     await store.moveTask(contender.id, "todo");
 
     /*
-    The stub diverges from what is PERSISTED: it reports builtin:coding-ideas (whose
+    The stub diverges from what is PERSISTED: it reports builtin:coding-ideas-v2 (whose
     wip pool holds zero occupants and whose in-progress column still carries a
     finite maxConcurrent-backed limit), while the row says builtin:coding (pool
     full). Restored in `finally` so a failure cannot leak a patched store into the
@@ -285,7 +332,7 @@ pgTest("in-transaction column capacity — ground truth (Phase A3)", () => {
       .getTaskWorkflowSelectionAsync = async (taskId: string) => {
         if (taskId !== contender.id) return realReader(taskId);
         stubCalls++;
-        return { workflowId: "builtin:coding-ideas", stepIds: [] };
+        return { workflowId: "builtin:coding-ideas-v2", stepIds: [] };
       };
 
     let error: Error | null;
@@ -431,7 +478,7 @@ pgTest("in-transaction column capacity — ground truth (Phase A3)", () => {
 
     let settled = false;
     const write = store
-      .selectTaskWorkflow(task.id, "builtin:coding-ideas")
+      .selectTaskWorkflow(task.id, "builtin:coding-ideas-v2")
       .then(() => { settled = true; }, () => { settled = true; });
 
     try {
@@ -446,6 +493,6 @@ pgTest("in-transaction column capacity — ground truth (Phase A3)", () => {
       await write;
     }
 
-    expect((await store.getTaskWorkflowSelectionAsync(task.id))?.workflowId).toBe("builtin:coding-ideas");
+    expect((await store.getTaskWorkflowSelectionAsync(task.id))?.workflowId).toBe("builtin:coding-ideas-v2");
   });
 });

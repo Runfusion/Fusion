@@ -21,7 +21,6 @@ LEGACY_….has(columnId)`) fails the "traits win" cases; making it ignore the id
 */
 import { describe, expect, it } from "vitest";
 import {
-  isArchivedColumnRole,
   isCompleteColumnRole,
   isReviewColumnRole,
   isWipColumnRole,
@@ -99,7 +98,6 @@ describe("isFieldEditableColumnRole", () => {
     expect(isFieldEditableColumnRole({ intake: true, mergeBlocker: true }, "backlog")).toBe(false);
     expect(isFieldEditableColumnRole({ intake: true, humanReview: true }, "backlog")).toBe(false);
     expect(isFieldEditableColumnRole({ intake: true, complete: true }, "backlog")).toBe(false);
-    expect(isFieldEditableColumnRole({ intake: true, archived: true }, "backlog")).toBe(false);
   });
 
   it("refuses a resolved column with no pre-implementation trait", () => {
@@ -117,9 +115,7 @@ describe("isFieldEditableColumnRole", () => {
 
 /*
 FNXC:WorkflowResolvedColumns 2026-07-30-19:00 (fleet phase):
-The four roles the helper set was missing. 680 of the 722 backlog guards target these — `done` 195,
-`in-review` 200, `archived` 147, `in-progress` 138 — against 42 for the two roles that already had
-helpers, so every fleet worker needs them on their first file.
+Complete, review, and implementation roles use the same flags-first helper contract as intake and hold.
 
 Each case asserts BOTH directions, because a helper that returns false unconditionally would satisfy
 a one-sided test while converting every site to a dead guard.
@@ -139,27 +135,15 @@ describe("terminal and mid-flight column roles", () => {
   */
   it("lets a resolved FALSE trait beat a matching legacy id", () => {
     expect(isCompleteColumnRole({ complete: false }, "done")).toBe(false);
-    expect(isArchivedColumnRole({ archived: false }, "archived")).toBe(false);
     expect(isWipColumnRole({ countsTowardWip: false }, "in-progress")).toBe(false);
     expect(isReviewColumnRole({ mergeBlocker: false, humanReview: false }, "in-review")).toBe(false);
   });
 
-  it("isCompleteColumnRole reads the complete trait, and does NOT count archived", () => {
+  it("isCompleteColumnRole reads the complete trait and does not count the historical sentinel", () => {
     expect(isCompleteColumnRole({ complete: true }, "shipped")).toBe(true);
-    /*
-    The distinction the doc comment claims, asserted rather than asserted-in-prose: an archived card
-    is finished but not COMPLETED. Surfaces that count throughput would double-count it otherwise.
-    */
-    expect(isCompleteColumnRole({ archived: true }, "archived")).toBe(false);
+    expect(isCompleteColumnRole(undefined, "archived")).toBe(false);
     expect(isCompleteColumnRole(undefined, "done")).toBe(true);
     expect(isCompleteColumnRole(undefined, "shipped")).toBe(false);
-  });
-
-  it("isArchivedColumnRole reads the archived trait", () => {
-    expect(isArchivedColumnRole({ archived: true }, "cold-storage")).toBe(true);
-    expect(isArchivedColumnRole({ complete: true }, "done")).toBe(false);
-    expect(isArchivedColumnRole(undefined, "archived")).toBe(true);
-    expect(isArchivedColumnRole(undefined, "cold-storage")).toBe(false);
   });
 
   it("isWipColumnRole keys on countsTowardWip, the same flag capacity arithmetic uses", () => {

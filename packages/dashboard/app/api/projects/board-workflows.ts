@@ -37,7 +37,6 @@ export type {
 export interface BoardWorkflowColumnFlags {
   countsTowardWip?: boolean;
   complete?: boolean;
-  archived?: boolean;
   hiddenFromBoard?: boolean;
   hold?: boolean;
   intake?: boolean;
@@ -115,8 +114,16 @@ export function updateTaskCustomFields(
 
 /** Fetch the multi-lane board metadata (U9). When the flag is OFF the server
  *  returns `{ flagEnabled: false }` and the board renders its legacy form. */
-export function fetchBoardWorkflows(projectId?: string, options?: FetchOptions): Promise<BoardWorkflowsPayload> {
-  const path = withProjectId("/tasks/board-workflows", projectId);
+export function fetchBoardWorkflows(
+  projectId?: string,
+  options?: FetchOptions & { taskIds?: readonly string[] },
+): Promise<BoardWorkflowsPayload> {
+  const basePath = withProjectId("/tasks/board-workflows", projectId);
+  const separator = basePath.includes("?") ? "&" : "?";
+  const taskIds = [...new Set(options?.taskIds ?? [])].sort();
+  const path = taskIds.length > 0
+    ? `${basePath}${separator}taskIds=${encodeURIComponent(taskIds.join(","))}`
+    : basePath;
   return dedupe(path, () => api<BoardWorkflowsPayload>(path), options);
 }
 

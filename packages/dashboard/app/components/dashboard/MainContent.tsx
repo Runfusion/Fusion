@@ -11,6 +11,7 @@ import { applyLocalTaskPatch, mergeTaskSnapshot } from "../../hooks/useTasks";
 import { ProjectOverview } from "../ProjectOverview";
 import { MissionManager } from "../MissionManager";
 import { MailboxView } from "../MailboxView";
+import { RecommendationsView } from "../RecommendationsView";
 import { IdeationPanel } from "../command-center/IdeationPanel";
 import type { NativeStructureCandidate } from "../MessageComposer";
 import { PageErrorBoundary } from "../ErrorBoundary";
@@ -101,6 +102,9 @@ export function MainContent(props: MainContentProps) {
   mailComposerPrefill,
   onOpenChatWithPrefill,
   setMailboxUnreadCount,
+  recommendationUnreadCount,
+  artifactUnreadCount,
+  onMarkCategorySeen,
   setMissionTargetId,
   setMissionResumeSessionId,
   setMilestoneSliceResumeSessionId,
@@ -141,7 +145,6 @@ export function MainContent(props: MainContentProps) {
   globalPaused,
   updateTask,
   retryTask,
-    archiveTask,
   revertTask,
   deleteTask,
   searchQuery,
@@ -540,6 +543,24 @@ export function MainContent(props: MainContentProps) {
   }
 
 
+  if (taskView === "recommendations") {
+    return (
+      <PageErrorBoundary>
+        <RecommendationsView
+          projectId={currentProject?.id}
+          addToast={addToast}
+          unreadCount={recommendationUnreadCount}
+          onSeen={() => void onMarkCategorySeen("recommendation")}
+          onOpenTask={(taskId) => {
+            void fetchTaskDetail(taskId, currentProject?.id)
+              .then((task) => popOutTaskDetail(task))
+              .catch(() => addToast?.("Failed to open task", "error"));
+          }}
+        />
+      </PageErrorBoundary>
+    );
+  }
+
   if (taskView === "missions") {
     return (
       <PageErrorBoundary>
@@ -623,6 +644,8 @@ export function MainContent(props: MainContentProps) {
             onOpenDetail={openDetailTask}
             onOpenArtifactTaskDetail={popOutTaskDetail}
             onSendSelectionToTask={modalManager.openNewTaskWithDescription}
+            artifactUnreadCount={artifactUnreadCount}
+            onSeen={() => void onMarkCategorySeen("artifact")}
           />
         </Suspense>
       </PageErrorBoundary>
@@ -931,7 +954,7 @@ export function MainContent(props: MainContentProps) {
               onDuplicateTask={duplicateTask}
               /*
               FNXC:Navigation 2026-06-22-09:00:
-              The full-panel task-detail must dismiss back to the board when a destructive/terminal action (delete/merge/archive/retry/reset/duplicate) fires, mirroring the modal path. Without onRequestClose the panel kept showing a ghost of the just-acted-on task.
+              The full-panel task-detail must dismiss back to the board when a destructive/terminal action (delete/merge/retry/reset/duplicate) fires, mirroring the modal path. Without onRequestClose the panel kept showing a ghost of the just-acted-on task.
               */
               onRequestClose={closeTaskDetailMainPanel}
               onRefinementCreated={(task) => ingestCreatedTasks([task])}
@@ -982,7 +1005,6 @@ export function MainContent(props: MainContentProps) {
         onReviseTask={(task) => modalManager.openNewTaskWithDescription(task.description)}
         onPauseTask={pauseTask}
         onUnpauseTask={unpauseTask}
-        onArchiveTask={archiveTask}
         onRevertTask={revertTask}
         onMergeTask={mergeTask}
             onResetTask={resetTask}

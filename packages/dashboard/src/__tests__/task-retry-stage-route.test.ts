@@ -30,7 +30,6 @@ const RESTART_IR = {
     { id: "building", name: "Building", traits: [{ trait: "wip" }] },
     { id: "signoff", name: "Signoff", traits: [{ trait: "merge-blocker" }, { trait: "human-review" }] },
     { id: "done", name: "Done", traits: [{ trait: "complete" }] },
-    { id: "archive", name: "Archive", traits: [{ trait: "archived" }] },
   ],
   nodes: [
     { id: "start", kind: "start" },

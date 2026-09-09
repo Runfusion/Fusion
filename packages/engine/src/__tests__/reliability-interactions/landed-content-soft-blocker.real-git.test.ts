@@ -22,7 +22,6 @@ function makeStore(task: Task, events: unknown[] = []): TaskStore & EventEmitter
     logEntry: async () => undefined,
     getTask: async () => task,
     walCheckpoint: () => ({ busy: 0, log: 0, checkpointed: 0 }),
-    archiveTaskAndCleanup: async () => ({}),
     clearStaleExecutionStartBranchReferences: () => [],
     updateSettings: async () => settings,
     mergeTask: async () => undefined,
@@ -87,7 +86,7 @@ describe("landed-content soft-blocker reliability interactions (real git)", () =
     }
   });
 
-  it("keeps task in-review when landed content exists but hard blockers remain", async () => {
+  it("finalizes proven landed content while reconciling an incomplete checklist", async () => {
     const dir = mkdtempSync(join(tmpdir(), "fn-4648-ri-hard-"));
     try {
       git(dir, "git init -b main");
@@ -127,10 +126,11 @@ describe("landed-content soft-blocker reliability interactions (real git)", () =
 
       const recovered = await manager.recoverAlreadyMergedReviewTasks();
 
-      expect(recovered).toBe(0);
-      expect(task.column).toBe("in-review");
-      expect(task.status).toBe("failed");
-      expect(task.error).toContain("task has incomplete steps");
+      expect(recovered).toBe(1);
+      expect(task.column).toBe("done");
+      expect(task.status).toBeNull();
+      expect(task.error).toBeNull();
+      expect(task.steps[0]?.status).toBe("skipped");
       manager.stop();
     } finally {
       rmSync(dir, { recursive: true, force: true });

@@ -1,11 +1,12 @@
 /*
-FNXC:ModelDropdown 2026-08-15-12:27:
-Body-portaled menus are logical children of their launching controls. Dismissal hosts must share this contract instead of copying class selectors, so a menu re-anchor during mobile keyboard use cannot turn an inside gesture into an outside dismissal.
+FNXC:ModelDropdown 2026-09-06-21:10:
+Body-portaled menus and the chat Brain panel are logical children of their launching controls. Dismissal hosts must share this contract instead of copying class selectors, so a menu re-anchor during mobile keyboard use cannot turn an inside gesture into an outside dismissal.
 */
 export const PORTAL_SAFE_SURFACE_SELECTOR = [
   ".floating-window",
   ".modal-overlay",
   "[role=\"dialog\"]",
+  "[data-portal-surface=\"chat-thinking\"]",
   ".model-combobox-dropdown--portal",
   ".model-nested-menu--portal",
   ".dep-dropdown--portal",

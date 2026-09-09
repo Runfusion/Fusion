@@ -22,7 +22,7 @@ export interface DerivedRemediationSteps {
 }
 
 const fileReference = /(?:^|[\s(])([\w@./-]+\.(?:[cm]?[jt]sx?|json|md|css|html|yml|yaml))(?::(\d+))?/gm;
-const ansiEscapeSequence = /\u001B\[[0-?]*[ -/]*[@-~]/g;
+const ansiEscapeSequence = new RegExp(String.raw`\u001B\[[0-?]*[ -/]*[@-~]`, "g");
 const isoTimestamp = /\b\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?\b/g;
 const bareTimestamp = /\b\d{2}:\d{2}:\d{2}\b/g;
 const elapsedDuration = /\b\d+(?:\.\d+)?(?:ms|s)\b/g;

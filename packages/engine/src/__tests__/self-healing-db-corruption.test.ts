@@ -150,7 +150,6 @@ function stubMaintenance(manager: SelfHealingManager) {
   untouched.
   */
   vi.spyOn(manager as never, "openSurfacingCycle").mockResolvedValue(null as never);
-  vi.spyOn(manager, "archiveStaleDoneTasks").mockResolvedValue(0);
 }
 
 const RM = { recursive: true, force: true, maxRetries: 5, retryDelay: 50 } as const;

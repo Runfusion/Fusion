@@ -30,16 +30,11 @@ import { isActiveNearDuplicateColumn, isNearDuplicateCanonicalInactive } from ".
 import type { ColumnRoleTraitFlags } from "../column-roles.js";
 
 const COMPLETE_FLAGS = { complete: true } as unknown as ColumnRoleTraitFlags;
-const ARCHIVED_FLAGS = { archived: true } as unknown as ColumnRoleTraitFlags;
 const WIP_FLAGS = { countsTowardWip: true } as unknown as ColumnRoleTraitFlags;
 
 describe("near-duplicate canonicals stop holding work once finished", () => {
   it("treats a RENAMED complete column as inactive", () => {
     expect(isActiveNearDuplicateColumn("shipped" as never, COMPLETE_FLAGS)).toBe(false);
-  });
-
-  it("treats a RENAMED archived column as inactive too — the union, not just complete", () => {
-    expect(isActiveNearDuplicateColumn("vault" as never, ARCHIVED_FLAGS)).toBe(false);
   });
 
   it("keeps a live card active", () => {

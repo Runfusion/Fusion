@@ -168,8 +168,8 @@ describe("fn_spawn_agent capacity", () => {
 FNXC:WorkflowResolvedColumns 2026-08-01-03:20:
 THE SPAWN WORKTREE LEDGER EXCLUDES TERMINAL LANES BY ROLE, NOT BY NAME.
 
-`6c7467a78d` added the maxWorktrees dimension to this gate with `t.column !== "done" && t.column
-!== "archived"`. On a RENAMED board neither literal matches, so every finished card still counts as
+The maxWorktrees gate once used literal terminal column ids. On a renamed board the literal `done`
+does not match, so every finished card still counts as
 a live worktree holder, `heldWorktrees` only grows, and eventually EVERY spawn is refused on a board
 with free slots. That is worse than the over-spawn the gate exists to prevent, because a permanent
 refusal is silent — the operator sees children that never start and no capacity breach to explain it.
@@ -189,7 +189,6 @@ describe("fn_spawn_agent worktree ledger on a renamed board", () => {
     columns: [
       { id: "building", name: "Building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
       { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
-      { id: "filed", name: "Filed", traits: [{ trait: "archived" }] },
     ],
   };
 

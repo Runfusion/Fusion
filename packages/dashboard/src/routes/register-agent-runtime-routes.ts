@@ -1,6 +1,7 @@
 import { ApiError, badRequest, notFound } from "../api-error.js";
 import type { ApiRoutesContext } from "./types.js";
 import { requireAsyncLayer } from "../require-async-layer.js";
+import { resolveTaskLifecycleColumns } from "@fusion/core";
 
 type NormalizedAuditEvent = import("../routes.js").NormalizedRunAuditEvent;
 type TimelineEntry = import("../routes.js").TimelineEntry;
@@ -469,7 +470,6 @@ export function registerAgentRuntimeRoutes(ctx: ApiRoutesContext, deps: AgentRun
           if (nextState === "active") {
             const pausedTasks = await scopedStore.getTasksByAssignedAgent(agentId, {
               pausedOnly: true,
-              excludeArchived: true,
             });
             const toUnpause = pausedTasks.filter((task) => task.pausedByAgentId === agentId && !task.userPaused);
             const results = await Promise.allSettled(
@@ -871,7 +871,7 @@ export function registerAgentRuntimeRoutes(ctx: ApiRoutesContext, deps: AgentRun
    * FNXC:AgentTasks 2026-08-09-01:03:
    * Durable assignment uses `task.assignedAgentId`, while workflow roles carry
    * their active execution link in `agent.taskId`. Return their deduplicated
-   * union from the already project-scoped non-archived task list so every role
+   * union from the already project-scoped live task list so every role
    * sees its current work without changing ownership semantics.
    */
   router.get("/agents/:id/tasks", async (req, res) => {
@@ -888,12 +888,21 @@ export function registerAgentRuntimeRoutes(ctx: ApiRoutesContext, deps: AgentRun
 
       const tasks = await scopedStore.listTasks({ slim: true, includeArchived: false });
       const visibleTaskIds = new Set<string>();
-      const visibleTasks = tasks.filter((task) => {
-        if (task.assignedAgentId !== agent.id && task.id !== agent.taskId) return false;
-        if (visibleTaskIds.has(task.id)) return false;
+      const visibleTasks: typeof tasks = [];
+      const workflowCache = new Map<string, import("@fusion/core").WorkflowIr>();
+      /*
+      FNXC:AgentTasks 2026-09-04-17:51:
+      Assigned-task inventory represents current work, while completed history stays in the workflow's
+      Complete column. Resolve that column per task and retain `done` only as the degraded fallback.
+      */
+      for (const task of tasks) {
+        if (task.assignedAgentId !== agent.id && task.id !== agent.taskId) continue;
+        const lifecycle = await resolveTaskLifecycleColumns(scopedStore, task.id, workflowCache);
+        if (task.column === (lifecycle?.complete ?? "done")) continue;
+        if (visibleTaskIds.has(task.id)) continue;
         visibleTaskIds.add(task.id);
-        return true;
-      });
+        visibleTasks.push(task);
+      }
       res.json(visibleTasks);
     } catch (err: unknown) {
       if (err instanceof ApiError) {

@@ -163,13 +163,12 @@ export interface CommitAssociationDiffBackfillReport {
   dryRun: boolean;
 }
 
-export const COLUMN_LABELS: Record<Column, string> = {
+export const COLUMN_LABELS: Partial<Record<Column, string>> = {
   triage: "Planning",
   todo: "Todo",
   "in-progress": "In Progress",
   "in-review": "In Review",
   done: "Done",
-  archived: "Archived",
 };
 
 /*
@@ -181,7 +180,6 @@ export const COLUMN_DESCRIPTIONS: Partial<Record<Column, string>> = {
   triage: "Raw ideas — AI will plan these",
   "in-progress": "AI is working on this in a worktree",
   done: "Merged and closed",
-  archived: "Completed and archived",
 };
 
 /**
@@ -192,15 +190,14 @@ export const COLUMN_DESCRIPTIONS: Partial<Record<Column, string>> = {
  * while legacy call sites are retired.
  */
 export const VALID_TRANSITIONS: Record<Column, Column[]> = {
-  // FN-4892: intake-side heuristics may cold-archive tasks before execution starts.
-  triage: ["todo", "archived"],
-  // FN-4892: allow direct archival for newly specified intake tasks.
-  todo: ["in-progress", "triage", "archived"],
+  triage: ["todo"],
+  todo: ["in-progress", "triage"],
   // NOTE: "in-progress" → "done" is enabled for mission validation tasks that complete directly.
   // Regular implementation tasks should move through "in-review" before "done".
   "in-progress": ["in-review", "todo", "triage", "done"],
   "in-review": ["done", "in-progress", "todo", "triage"],
-  done: ["todo", "triage", "archived"],
-  archived: ["done"],
+  done: ["todo", "triage"],
+  // Historical soft-delete sentinel: never a production move source or target.
+  archived: [],
 };
 

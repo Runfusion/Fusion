@@ -37,7 +37,7 @@ import {
  *     → merge seam
  *
  * The columns/traits are identical to the default builtin so the full lifecycle
- * (merge-blocker, human review, capacity, hold, complete, archived) behaves
+ * (merge-blocker, human review, capacity, hold, complete) behaves
  * exactly as it does for the default workflow — only the in-progress step
  * modeling differs.
  *
@@ -118,7 +118,6 @@ const RAW_BUILTIN_STEPWISE_CODING_WORKFLOW_IR: WorkflowIr = {
       traits: [{ trait: "merge-blocker" }, { trait: "human-review" }, { trait: "stall-detection" }, { trait: "merge" }],
     },
     { id: "done", name: "Done", traits: [{ trait: "complete" }] },
-    { id: "archived", name: "Archived", traits: [{ trait: "archived" }] },
   ],
   // KTD-12: PROMPT.md is the planning-produced step-source artifact this workflow
   // parses into task steps.

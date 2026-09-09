@@ -3,10 +3,10 @@ import type { PatchnodeDay, PatchnodeEntry, PatchnodeEntryKind } from "../types/
 
 /*
 FNXC:PatchnodeLedger 2026-08-28-12:16:
-Patchnode is durable rather than derived because archived task snapshots omit completion summaries and completed tasks auto-archive after 48 hours. UTC day grouping matches DailyActivity so storage, API, chat, and dashboard assign every delivery to the same date.
+Patchnode is durable rather than derived because task history can be edited or soft-deleted after delivery. UTC day grouping matches DailyActivity so storage, API, chat, and dashboard assign every delivery to the same date.
 
 FNXC:PatchnodeLedger 2026-08-28-12:16:
-Title and body are denormalized point-in-time snapshots because the next task move rewrites delivery evidence and archive cleanup can hard-delete the task row. Identity includes the delivery occurrence rather than only the task, so every re-delivery remains visible. All capture paths must use this one builder or retries and backlog repair can multiply one delivery into different rows.
+Title and body are denormalized point-in-time snapshots because later task updates can rewrite delivery evidence. Identity includes the delivery occurrence rather than only the task, so every re-delivery remains visible. All capture paths must use this one builder or retries and backlog repair can multiply one delivery into different rows.
 */
 
 export function toPatchnodeDay(iso: string): string {

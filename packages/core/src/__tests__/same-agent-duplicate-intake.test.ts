@@ -16,7 +16,7 @@ vi.mock("../task-store/async/async-persistence.js", async (importOriginal) => ({
 }));
 
 import { TombstonedTaskResurrectionError } from "../task-store/errors.js";
-import { _maybeAutoArchiveSameAgentDuplicateBackendImpl } from "../task-store/task-mutation-ops.js";
+import { _resolveSameAgentDuplicateIntakeBackendImpl } from "../task-store/task-mutation-ops.js";
 import { resolveSameAgentDuplicateIntake } from "../task-store/task-creation.js";
 
 const NOW = new Date().toISOString();
@@ -38,7 +38,7 @@ function createStore(overrides: Record<string, unknown> = {}) {
     isWatching: false,
     asyncLayer: { db: {} },
     taskCache: new Map(),
-    getSettings: vi.fn().mockResolvedValue({ autoArchiveDuplicateTasksEnabled: false, tombstoneStickyWindowDays: 7 }),
+    getSettings: vi.fn().mockResolvedValue({ tombstoneStickyWindowDays: 7 }),
     listTasks: vi.fn().mockResolvedValue([]),
     listTasksBySourceLineage: vi.fn().mockResolvedValue([]),
     listWorkflowDefinitions: vi.fn().mockResolvedValue([]),
@@ -79,7 +79,7 @@ describe("same-agent duplicate intake policy (FN-8401)", () => {
     The production backend wrapper must remain thin so it cannot reintroduce the
     former delete-on-match behavior independently of the shared resolver.
     */
-    await _maybeAutoArchiveSameAgentDuplicateBackendImpl(store as any, created as any, created as any);
+    await _resolveSameAgentDuplicateIntakeBackendImpl(store as any, created as any, created as any);
 
     // Pre-fix performed a board scan; provenance creates must use the narrow lineage read.
     expect(store.listTasks).not.toHaveBeenCalled();
@@ -103,21 +103,6 @@ describe("same-agent duplicate intake policy (FN-8401)", () => {
     expect(created.column).toBe("triage");
   });
 
-  it("archives only the new task when the legacy setting is explicitly enabled", async () => {
-    const sibling = task("FN-SIBLING", { createdAt: new Date(Date.now() - 60_000).toISOString() });
-    const created = task("FN-NEW");
-    const store = createStore({
-      getSettings: vi.fn().mockResolvedValue({ autoArchiveDuplicateTasksEnabled: true, tombstoneStickyWindowDays: 7 }),
-      listTasksBySourceLineage: vi.fn().mockResolvedValue([created, sibling]),
-    });
-
-    await resolveSameAgentDuplicateIntake(store as any, created as any, created as any);
-
-    expect(store.moveTask).toHaveBeenCalledWith("FN-NEW", "archived", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
-    expect(store.moveTask).not.toHaveBeenCalledWith("FN-SIBLING", "archived", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
-    expect(store.deleteTaskById).not.toHaveBeenCalled();
-    expect(created.column).toBe("archived");
-  });
 
   it("uses backend-safe tombstone reads and rejects a sticky same-agent resurrection", async () => {
     const deletedAt = new Date(Date.now() - 60_000).toISOString();

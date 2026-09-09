@@ -36,7 +36,8 @@ import {sanitizeFileScopeInPromptContent} from "../task-store/file-scope.js";
 import {writePromptFileAtomic} from "./prompt-file.js";
 import {preserveDurableTaskWedgeInvariants, type TaskRow} from "../task-store/persistence.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
-import {isWorkflowDefinitionIdPrimaryKeyCollision, nextWorkflowDefinitionIdAsyncImpl} from "../task-store/workflow-definitions.js";
+import {isWorkflowDefinitionIdPrimaryKeyCollision, maxWorkflowDefinitionSequence} from "../task-store/workflow-definitions.js";
+import {acquireProjectConfigurationMutationLock, readProjectConfig, writeProjectConfig} from "./async/async-settings.js";
 import {upsertTaskRowInTransaction, buildTaskInsertValues} from "./async/async-persistence.js";
 import {readTaskRowInTransaction} from "./async/async-persistence.js";
 import {withTaskWorkflowSerialization} from "./async/async-workflow-workitems.js";
@@ -911,56 +912,69 @@ export async function createWorkflowDefinitionImpl(store: TaskStore, input: Work
       another process, and retrying every unique error would hide unrelated
       constraints from plugin and API callers.
       */
+      const layer = store.asyncLayer!;
       for (let attempt = 0; attempt < 8; attempt += 1) {
-        const id = await nextWorkflowDefinitionIdAsyncImpl(store);
-        const definition: WorkflowDefinition = {
-          id,
-          name,
-          description: input.description ?? "",
-          icon: normalizeWorkflowIcon(input.icon),
-          kind: input.kind === "fragment" ? "fragment" : "workflow",
-          ir,
-          layout,
-          createdAt: now,
-          updatedAt: now,
-        };
-
         try {
-          await workflowDefinitionBeforeInsertForTesting?.(id, store.backendMode);
-          /*
-          FNXC:MultiProjectIsolation 2026-08-15-22:10:
-          Stamp the bound layer's project explicitly, like the FN-8997 workflowSteps insert does.
-          FN-8998 scopes every workflow-definition READ by `layer.projectId`; leaving the INSERT to
-          the session GUC default splits the write/read authority, so a layer bound in JS over a
-          bypass connection creates a row it can never read back ('' normalizes to the GUC/legacy
-          partition via the fusion_assign_project_id trigger, preserving unbound behavior).
-          */
-                    await store.asyncLayer!.db.insert(schema.project.workflows).values({
-            projectId: store.asyncLayer!.projectId?.trim() ?? "",
-            id: definition.id,
-            name: definition.name,
-            description: definition.description,
-            icon: definition.icon ?? null,
-            ir: downgradeIrToV1IfPure(definition.ir) as unknown as object,
-            layout: definition.layout as unknown as object,
-            kind: definition.kind,
-            createdAt: definition.createdAt,
-            updatedAt: definition.updatedAt,
-          });
+          return await layer.transactionImmediate(async (tx) => {
+            await acquireProjectConfigurationMutationLock(tx, layer.projectId);
+            const configRow = await readProjectConfig(layer, tx);
+            const workflowIds = await tx.select({ id: schema.project.workflows.id }).from(schema.project.workflows);
+            const counter = configRow.nextWorkflowDefinitionId ?? 1;
+            const nextSequence = Math.max(counter, maxWorkflowDefinitionSequence(workflowIds.map(({ id }) => id)) + 1);
+            const id = `WF-${String(nextSequence).padStart(3, "0")}`;
+            const definition: WorkflowDefinition = {
+              id,
+              name,
+              description: input.description ?? "",
+              icon: normalizeWorkflowIcon(input.icon),
+              kind: input.kind === "fragment" ? "fragment" : "workflow",
+              ir,
+              layout,
+              createdAt: now,
+              updatedAt: now,
+            };
 
+            await workflowDefinitionBeforeInsertForTesting?.(id, store.backendMode);
+            /*
+            FNXC:MultiProjectIsolation 2026-08-15-22:10:
+            Stamp the bound layer's project explicitly, like the FN-8997 workflowSteps insert does.
+            FN-8998 scopes every workflow-definition READ by `layer.projectId`; leaving the INSERT to
+            the session GUC default splits the write/read authority, so a layer bound in JS over a
+            bypass connection creates a row it can never read back ('' normalizes to the GUC/legacy
+            partition via the fusion_assign_project_id trigger, preserving unbound behavior).
+            */
+            await tx.insert(schema.project.workflows).values({
+              projectId: layer.projectId?.trim() ?? "",
+              id: definition.id,
+              name: definition.name,
+              description: definition.description,
+              icon: definition.icon ?? null,
+              ir: downgradeIrToV1IfPure(definition.ir) as unknown as object,
+              layout: definition.layout as unknown as object,
+              kind: definition.kind,
+              createdAt: definition.createdAt,
+              updatedAt: definition.updatedAt,
+            });
+            await writeProjectConfig(layer, configRow.settings ?? {}, {
+              nextWorkflowDefinitionId: nextSequence + 1,
+            }, tx);
+            return definition;
+          });
         } catch (error) {
           if (!isWorkflowDefinitionIdPrimaryKeyCollision(error)) throw error;
-          continue;
         }
-
-                return definition;
       }
       throw new Error("Unable to allocate a free workflow definition id after repeated id collisions");
     });
   }
 
+/*
+FNXC:WorkflowSuccession 2026-09-06-02:54:
+Both capacity counters canonicalize the requested pool and every persisted occupant through the shared resolver. This keeps historical retired selections in the successor budget regardless of which identity belongs to the candidate.
+*/
 export function countActiveInCapacitySlotSyncImpl(store: TaskStore, params: { targetColumn: string; workflowId: string; countPending: boolean; excludeTaskId: string; }): number {
     const { targetColumn, workflowId, countPending, excludeTaskId } = params;
+    const requestedWorkflowId = resolveCapacityPoolId(workflowId);
     // Candidate rows: in the column now, or (optionally) mid-transition into it.
     // LEFT JOIN the selection row so we can scope by effective workflow id in JS.
     const rows = store.db
@@ -982,7 +996,7 @@ export function countActiveInCapacitySlotSyncImpl(store: TaskStore, params: { ta
     let count = 0;
     for (const row of rows) {
       const effectiveWorkflowId = resolveCapacityPoolId(row.wid);
-      if (effectiveWorkflowId !== workflowId) continue;
+      if (effectiveWorkflowId !== requestedWorkflowId) continue;
 
       if (row.col === targetColumn) {
         count += 1;
@@ -1005,6 +1019,7 @@ export function countActiveInCapacitySlotSyncImpl(store: TaskStore, params: { ta
 
 export async function countActiveInCapacitySlotAsyncImpl(store: TaskStore, params: { tx: DbTransaction; targetColumn: string; workflowId: string; countPending: boolean; excludeTaskId: string; }): Promise<number> {
     const { tx, targetColumn, workflowId, countPending, excludeTaskId } = params;
+    const requestedWorkflowId = resolveCapacityPoolId(workflowId);
     const rows = await tx
       .select({
         id: schema.project.tasks.id,
@@ -1034,7 +1049,7 @@ export async function countActiveInCapacitySlotAsyncImpl(store: TaskStore, param
     let count = 0;
     for (const row of rows) {
       const effectiveWorkflowId = resolveCapacityPoolId(row.wid);
-      if (effectiveWorkflowId !== workflowId) continue;
+      if (effectiveWorkflowId !== requestedWorkflowId) continue;
 
       if (row.col === targetColumn) {
         count += 1;

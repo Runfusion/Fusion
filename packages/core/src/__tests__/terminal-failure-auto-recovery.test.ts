@@ -16,7 +16,7 @@ function task(overrides: Partial<Task> = {}): Task {
 
 const generic = {
   isGenericTerminalFailure: true, hasRecoveryOwner: false, isProgressing: false,
-  inTerminalSuccessColumn: false, isArchivedOrDeleted: false, autoRecoveryEnabled: true,
+  inTerminalSuccessColumn: false, isDeletedOrHistorical: false, autoRecoveryEnabled: true,
   now: () => 20_000,
 };
 

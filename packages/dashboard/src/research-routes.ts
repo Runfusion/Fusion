@@ -17,7 +17,6 @@ U9: replace these with the request's resolved actor. Nothing else about the call
 // FNXC:Identity 2026-08-09-03:04: one-line import on purpose — the U18 census counts any non-`import`-prefixed line naming the marker, so a multi-line import block would score as debt it is not.
 import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import { Router } from "express";
-import { archivedColumnsForTask } from "./task-lifecycle-lanes.js";
 import type { NextFunction, Request, Response } from "express";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { TaskStore, ResearchRun, TaskCreateInput } from "@fusion/core";
@@ -449,13 +448,6 @@ export function createResearchRouter(store: TaskStore, options?: ServerOptions):
 
       const task = await scopedStore.getTask(req.params.taskId);
       if (!task) throw notFound(`Task not found: ${req.params.taskId}`);
-      /*
-      FNXC:WorkflowResolvedColumns 2026-07-30-06:50 (batch-core):
-      Archived tasks are read-only for research enrichment. Keyed on the literal, a renamed board let
-      an ARCHIVED card be enriched — writes landing on a row the archive treats as immutable.
-      */
-      if ((await archivedColumnsForTask(scopedStore, task.id)).has(task.column)) throw new ApiError(409, "Cannot enrich archived task");
-
       let documentKey: string;
       try {
         documentKey = buildResearchDocumentKey(req.params.runId);

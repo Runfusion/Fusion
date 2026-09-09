@@ -1243,9 +1243,6 @@ Map it to the established triage token so the decorative header indicator remain
 .dot-done {
   background: var(--done);
 }
-.dot-archived {
-  background: var(--text-muted);
-}
 
 .column-header h2 {
   font-size: 0.875rem;
@@ -1282,8 +1279,8 @@ Map it to the established triage token so the decorative header indicator remain
 
 /*
 FNXC:WorkflowColumnDescriptions 2026-07-22-12:35:
-Custom workflow descriptions are author-entered explanatory text shared by selected,
-aggregate, and archived board columns. Preserve explicit line breaks and break long
+Custom workflow descriptions are author-entered explanatory text shared by selected and
+aggregate board columns. Preserve explicit line breaks and break long
 unspaced values so narrow desktop and mobile lanes do not clip the copy.
 */
 .column-desc {

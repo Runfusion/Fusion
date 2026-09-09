@@ -9,7 +9,7 @@ const severityAuditLog = createLogger("dashboard-board-workflows");
  * tasks, the workflow each card belongs to plus the (deduplicated) set of
  * workflow definitions referenced — each carrying its ordered columns, display
  * names, and *resolved trait flags* (archived / hold / complete / wip etc.) so
- * the client can render lanes, hide archived columns, show promote affordances,
+ * the client can render live lanes and show promote affordances,
  * and pre-check drag adjacency/capacity without a second round-trip.
  *
  * The payload is served by a sibling endpoint (`GET /tasks/board-workflows`)
@@ -110,7 +110,6 @@ const BUILTIN_WORKFLOW_COLUMN_LABELS: Record<string, string> = {
   "in-progress": "In Progress",
   "in-review": "In Review",
   done: "Done",
-  archived: "Archived",
 };
 
 function toV2(ir: WorkflowIr): WorkflowIrV2 | undefined {

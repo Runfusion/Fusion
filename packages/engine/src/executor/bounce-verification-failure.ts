@@ -7,8 +7,8 @@
  * `stepReopenPolicy` decides the shape, and the two are not interchangeable:
  *
  *  - `reopen-trailing` — the workflow expects the trailing completed step to be reopened and redone
- *    in place. `sendTaskBackForFix` performs that reopen itself. This is every ordinary coding
- *    workflow (builtin:coding, builtin:coding-ideas).
+ *    in place. `sendTaskBackForFix` performs that reopen itself. `builtin:coding` and stepwise
+ *    workflows retaining the default parse contract use this policy.
  *  - `none` — the workflow declared (`parse.implementationOnlySteps` + `preserveRemediationSteps`)
  *    that remediation arrives as APPENDED named steps, so nothing may be reopened.
  *
@@ -19,6 +19,12 @@
  * unaddressed — the verification result was measured, reported, and then silently discarded.
  * Measured on builtin:coding-ideas-v2, the only built-in that selects `none`.
  *
+ * FNXC:WorkflowSuccession 2026-09-06-02:15:
+ * FN-297 retires the earlier Ideas catalog entry. The surviving Coding (Ideas) workflow keeps
+ * `stepReopenPolicy: none`, while Coding (Auto) continues through the default stepwise
+ * `reopen-trailing` path; comments and recovery routing must not treat the composition-only base
+ * IR as another offered workflow.
+ *
  * `appendReviewRemediationSteps` is the existing authority for the appended shape (it already serves
  * the Code Review gate). Its `Verification` branch has been caller-less since the graph's
  * `verification` node was removed, which is why the gap was invisible: the code was present and
@@ -27,12 +33,17 @@
  * bounce again.
  *
  * It returns a non-blocking release when it cannot derive work (unchanged normalized verification
- * evidence, out-of-scope-only evidence, or no actionable findings). Remediation waves are unbounded.
- * A follow-up `sendTaskBackForFix` would create the empty executor bounce this contract forbids, so
- * released outcomes stop here without lifecycle mutation.
+ * evidence, out-of-scope-only evidence, or no actionable findings). A follow-up `sendTaskBackForFix`
+ * would create the empty executor bounce this contract forbids, so released outcomes stop here
+ * without lifecycle mutation.
+ *
+ * FNXC:ReviewRemediationBudget 2026-09-08-02:24:
+ * Final deterministic verification explicitly requests an accounting claim from the executor
+ * adapter. The adapter resolves the workflow/project ceiling and synthetic verification episode;
+ * the strict producer then publishes the named work, keyed attempt, and aggregate charge together.
  */
 import type { StepReopenPolicy, Task, TaskStore, WorkflowReviewFinding } from "@fusion/core";
-import type { AppendReviewRemediationOutcome } from "./append-review-remediation-steps.js";
+import type { AppendReviewRemediationOptions, AppendReviewRemediationOutcome } from "./append-review-remediation-steps.js";
 
 /** What actually happened to the card, so callers and tests observe an outcome rather than a spy. */
 export type VerificationBounceOutcome =
@@ -54,7 +65,7 @@ export type BounceVerificationFailureDeps = {
       status: "failed";
       nodeId: string;
     },
-    options?: { worktreePath?: string },
+    options?: AppendReviewRemediationOptions,
   ) => Promise<AppendReviewRemediationOutcome>;
   sendTaskBackForFix: (
     task: Task,
@@ -111,7 +122,7 @@ export async function bounceVerificationFailure(
       status: "failed",
       nodeId: "verification",
     },
-    { worktreePath },
+    { worktreePath, resolveAttemptClaim: true },
   );
   if (remediationOutcome === "appended") return "named-remediation";
   deps.clearCompletedTaskWatchdog(task.id);

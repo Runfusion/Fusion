@@ -14,8 +14,6 @@ import {
   connectMissionInterviewStream,
   assignTask,
   fetchAgentTasks,
-  archiveTask,
-  unarchiveTask,
   deleteTask,
   ApiRequestError,
   moveTask,
@@ -183,7 +181,7 @@ describe("fetchAuthStatus", () => {
     const result = await fetchAuthStatus();
 
     expect(result.providers).toEqual([{ id: "anthropic", name: "Anthropic", authenticated: true }]);
-    expect(globalThis.fetch).toHaveBeenCalledWith("/api/auth/status", {
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/auth/status?origin=http%3A%2F%2Flocalhost%3A3000", {
       headers: API_JSON_HEADERS,
     });
   });

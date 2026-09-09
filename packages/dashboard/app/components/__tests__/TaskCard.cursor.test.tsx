@@ -334,8 +334,6 @@ function renderCursorFixtures(): CursorFixtures {
           onOpenPullRequest={noop}
           onUpdateTask={updateTask}
           onDeleteTask={updateTask}
-          onArchiveTask={updateTask}
-          onUnarchiveTask={updateTask}
           onRetryTask={updateTask}
           onResetTask={updateTask}
           onDuplicateTask={updateTask}
@@ -402,9 +400,6 @@ const taskControlClasses = [
   "card-answer-questions-btn",
   "card-menu-btn",
   "card-delete-btn",
-  "card-archive-btn",
-  "card-unarchive-btn",
-  "card-revert-btn",
   "card-send-back-btn",
 ] as const;
 

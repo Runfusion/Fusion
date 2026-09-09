@@ -3,11 +3,11 @@ FNXC:MergedPlanningColumn 2026-07-29-11:15 (U11):
 Column adjacency derived from lifecycle ROLES rather than column ids.
 
 `VALID_TRANSITIONS` is a role-level statement wearing legacy-id clothing, and it was reachable
-only by matching the legacy SIX ids as a set. U11's merged default declares FIVE, so that match
+only by matching the legacy lifecycle ids as a set. U11's merged default changed that shape, so the match
 stopped firing and the default board fell through to neighbor-only adjacency — which both drops
 legal moves and invents an illegal one.
 
-The critical assertion in this file is the FIRST one: the legacy six must still produce
+The critical assertion in this file is the FIRST one: the built-in lifecycle must still produce
 `VALID_TRANSITIONS` verbatim. Everything else is worthless if that regressed.
 */
 import { describe, expect, it } from "vitest";
@@ -19,7 +19,7 @@ const defaultIr: WorkflowIr = parseWorkflowIr(getBuiltinWorkflow("builtin:coding
 const legacyIr: WorkflowIr = parseWorkflowIr(getBuiltinWorkflow("builtin:legacy-coding")!.ir as never);
 
 describe("column adjacency survives the Todo→Planning merge", () => {
-  it("still reproduces VALID_TRANSITIONS verbatim for the legacy six-column shape", () => {
+  it("reproduces VALID_TRANSITIONS verbatim for the built-in lifecycle shape", () => {
     const adjacency = resolveColumnAdjacency(legacyIr);
     for (const [from, targets] of Object.entries(VALID_TRANSITIONS)) {
       expect(adjacency.get(from)?.slice().sort()).toEqual([...targets].sort());
@@ -31,10 +31,8 @@ describe("column adjacency survives the Todo→Planning merge", () => {
     expect(resolveAllowedColumns(defaultIr, "in-progress")).toContain("done");
   });
 
-  it("keeps review → planning and the direct-archival edges on the merged default", () => {
+  it("keeps the review → planning revision edge on the merged default", () => {
     expect(resolveAllowedColumns(defaultIr, "in-review")).toContain("todo");
-    expect(resolveAllowedColumns(defaultIr, "todo")).toContain("archived");
-    expect(resolveAllowedColumns(defaultIr, "done")).toContain("archived");
   });
 
   it("does NOT invent a backward done → in-review edge", () => {

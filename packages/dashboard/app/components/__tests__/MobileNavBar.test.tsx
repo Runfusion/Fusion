@@ -9,6 +9,9 @@ import { readAppFile } from "../../test/cssFixture";
 
 vi.mock("../../api", () => ({
   fetchScripts: vi.fn(),
+  normalizeScriptCatalog: (value: Record<string, string> | Array<{ name: string; command: string; description?: string }>) => Array.isArray(value)
+    ? value
+    : Object.entries(value).map(([name, command]) => ({ name, command })),
 }));
 
 import { fetchScripts } from "../../api";
@@ -111,6 +114,8 @@ const createDefaultProps = () => ({
   onOpenActivityLog: vi.fn(),
   onOpenMailbox: vi.fn(),
   mailboxUnreadCount: 0,
+  recommendationUnreadCount: 0,
+  artifactUnreadCount: 0,
   mailboxPendingApprovalCount: 0,
   onOpenGitManager: vi.fn(),
   onOpenWorkflowEditor: vi.fn(),
@@ -153,6 +158,31 @@ describe("MobileNavBar", () => {
 
     fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
     expect(screen.getByTestId("mobile-more-item-skills")).toBeDefined();
+  });
+
+  it("shows recommendation and artifact badges in primary tabs and the More sheet", () => {
+    const primary = render(
+      <MobileNavBar
+        {...createDefaultProps()}
+        recommendationUnreadCount={7}
+        artifactUnreadCount={120}
+        mobileNavPrimaryItems={["recommendations", "documents"]}
+      />,
+    );
+    expect(screen.getByTestId("mobile-nav-tab-recommendations").querySelector(".mobile-nav-tab-badge")).toHaveTextContent("7");
+    expect(screen.getByTestId("mobile-nav-tab-documents").querySelector(".mobile-nav-tab-badge")).toHaveTextContent("99+");
+    primary.unmount();
+
+    render(
+      <MobileNavBar
+        {...createDefaultProps()}
+        recommendationUnreadCount={7}
+        artifactUnreadCount={120}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
+    expect(screen.getByTestId("mobile-more-item-recommendations").querySelector(".mobile-more-item-badge")).toHaveTextContent("7");
+    expect(screen.getByTestId("mobile-more-item-documents").querySelector(".mobile-more-item-badge")).toHaveTextContent("99+");
   });
 
   it("promotes Planning and routes demoted Missions to More without an empty tab", () => {
@@ -1217,6 +1247,21 @@ describe("MobileNavBar", () => {
         expect(screen.getByTestId("mobile-more-script-item-build")).toBeDefined();
         expect(screen.getByTestId("mobile-more-script-item-test")).toBeDefined();
       });
+    });
+
+    it("shows descriptions with command fallback and runs spaced Unicode names exactly", async () => {
+      vi.mocked(fetchScripts).mockResolvedValue([
+        { name: "Build production", command: "pnpm build", description: "Production bundle" },
+        { name: "Déployer 🚀", command: "pnpm deploy" },
+      ]);
+      const props = createDefaultProps();
+      render(<MobileNavBar {...props} />);
+      fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
+      fireEvent.click(screen.getByTestId("mobile-more-terminal-split-toggle"));
+      expect(await screen.findByText("Production bundle")).toBeInTheDocument();
+      expect(screen.getByText("pnpm deploy")).toBeInTheDocument();
+      fireEvent.click(screen.getByTestId("mobile-more-script-item-Build production"));
+      expect(props.onRunScript).toHaveBeenCalledWith("Build production", "pnpm build");
     });
 
     it("clicking a script item calls onRunScript and closes sheet", async () => {

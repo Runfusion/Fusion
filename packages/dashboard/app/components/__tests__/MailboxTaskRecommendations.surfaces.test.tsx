@@ -28,15 +28,19 @@ const ordinary = (id: string): Message => ({ ...recommendationNotice(id), metada
 
 /**
  * FNXC:TaskRecommendations 2026-08-15-22:39:
- * The create control is mounted separately in each selected and conversation body. Exercise real
- * mailbox hosts at both breakpoints so a future one-site wiring regression cannot leave a hidden surface prose-only.
+ * The create control is mounted separately in each selected and conversation body. Recommendation
+ * notices have moved out of the active Inbox, so archived history is the retained mailbox route that
+ * must keep every detail action working across real hosts and breakpoints.
  */
 describe("mailbox task recommendation production surfaces", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
-    const messages = [recommendationNotice("notice"), ordinary("ordinary")];
-    vi.mocked(api.fetchInbox).mockResolvedValue({ messages, total: messages.length, unreadCount: 0 });
+    const archivedMessages = [recommendationNotice("notice")];
+    const inboxMessages = [ordinary("ordinary")];
+    vi.mocked(api.fetchInbox).mockImplementation(async (filter) => filter?.archived
+      ? { messages: archivedMessages, total: archivedMessages.length, unreadCount: 0 }
+      : { messages: inboxMessages, total: inboxMessages.length, unreadCount: 0 });
     vi.mocked(api.fetchOutbox).mockResolvedValue({ messages: [], total: 0 });
     vi.mocked(api.fetchUnreadCount).mockResolvedValue({ unreadCount: 0 });
     vi.mocked(api.fetchAgents).mockResolvedValue(agents as never);
@@ -60,6 +64,7 @@ describe("mailbox task recommendation production surfaces", () => {
     vi.mocked(api.fetchConversation).mockResolvedValue(pane === "conversation" ? messages as never : []);
     const user = userEvent.setup({ delay: null, pointerEventsCheck: 0 });
     render(<Host addToast={vi.fn()} onOpenNativeStructure={vi.fn()} nativeStructureCandidates={[]} />);
+    await user.click(await screen.findByTestId("mailbox-tab-archived"));
     await user.click(await screen.findByTestId("mailbox-item-notice"));
     if (pane === "conversation") await waitFor(() => expect(screen.getByTestId("mailbox-conversation")).toBeInTheDocument());
     expect(await screen.findByRole("button", { name: "Create task" })).toBeInTheDocument();

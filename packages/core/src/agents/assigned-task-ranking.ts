@@ -127,7 +127,7 @@ const TIER_ORDER: Record<AssignedTaskRankTier, number> = {
 
 /**
  * Rank open assigned tasks for Wake Delta multi-assign inventory.
- * Excludes done/archived; titled lines only for actionable tiers; cap applied.
+ * Excludes workflow Complete rows; titled lines only for actionable tiers; cap applied.
  */
 export function rankAssignedTasksForWakeDelta(
   tasks: AssignedTaskLike[],

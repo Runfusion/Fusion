@@ -1195,7 +1195,6 @@
     "retrying": "재시도 중…"
   },
   "board": {
-    "archived": "보관됨",
     "done": "완료",
     "inProgress": "진행 중",
     "inReview": "검토 중",
@@ -1435,7 +1434,11 @@
     "slashSuggestions": "슬래시 제안",
     "loadingSlashSuggestions": "제안 불러오는 중…",
     "snippetSuggestion": "저장된 프롬프트 삽입",
-    "snippetSuggestions": "스니펫 제안"
+    "snippetSuggestions": "스니펫 제안",
+    "conversationIdCopied": "",
+    "copyConversationId": "",
+    "questionOptionalLabel": "",
+    "questionSelectHintWithOptional": ""
   },
   "chatRooms": {
     "error": {
@@ -1512,21 +1515,9 @@
   "column": {
     "actionsAriaLabel": "{{columnLabel}} 열 작업",
     "actionsTitle": "열 작업",
-    "archiveAllDoneAriaLabel": "완료된 모든 작업 보관",
-    "archiveAllDoneTitle": "완료된 모든 작업 보관",
-    "archiveAllMessage_one": "",
-    "archiveAllMessage_other": "",
-    "archiveAllTitle": "완료된 모든 작업 보관",
-    "archivedTasks_one": "",
-    "archivedTasks_other": "",
     "autoMerge": "자동 병합",
     "autoMergeDisabled": "자동 병합 비활성화됨",
     "autoMergeEnabled": "자동 병합 활성화됨",
-    "collapseArchivedLabel": "보관된 작업 접기",
-    "collapseArchivedTitle": "보관된 작업 접기",
-    "expandArchivedLabel": "보관된 작업 펼치기",
-    "expandArchivedTitle": "보관된 작업 펼치기",
-    "failedToArchive": "작업 보관에 실패했습니다",
     "keepProgress": "진행 상황 유지",
     "loadMore_one": "",
     "loadMore_other": "",
@@ -1560,7 +1551,8 @@
     "sortTaskIdDescHint": "",
     "replannedTasks_one": "Replanned {{count}} task{{plural}}",
     "replannedTasks_other": "Replanned {{count}} task{{plural}}",
-    "replanPartialFailure": "Replanned {{replanned}} of {{total}} tasks; {{failed}} failed"
+    "replanPartialFailure": "Replanned {{replanned}} of {{total}} tasks; {{failed}} failed",
+    "paginationError": "이전 작업을 불러올 수 없습니다."
   },
   "commandCenter": {
     "activity": {
@@ -2120,7 +2112,20 @@
     "runLocalButton": "로컬에서 Fusion 실행",
     "settingUpRemote": "원격 연결 설정 중…",
     "starting": "시작 중…",
-    "startingLocalRuntime": "로컬 Fusion 런타임 시작 중…"
+    "startingLocalRuntime": "로컬 Fusion 런타임 시작 중…",
+    "copyStartupDetails": "",
+    "detailsCopied": "",
+    "localStartupUnknown": "",
+    "showStartupDetails": "",
+    "startupAttempts": "",
+    "startupLog": "",
+    "startupLogUnavailable": "",
+    "startupMessage": "",
+    "startupPhase": "",
+    "startupPlatform": "",
+    "startupStack": "",
+    "copyStartupDetailsUnavailable": "",
+    "startupDetailsText": ""
   },
   "devserver": {
     "allSeverities": "모든 심각도",
@@ -2574,7 +2579,10 @@
     "fileHeader": "파일",
     "fileMatches": "파일 검색 결과",
     "taskHeader": "작업",
-    "taskMatches": "작업 검색 결과"
+    "taskMatches": "작업 검색 결과",
+    "conversationHeader": "",
+    "conversationMatches": "",
+    "untitledConversation": ""
   },
   "git": {
     "addComment": "Add comment",
@@ -3123,7 +3131,11 @@
     "viewProjects": "프로젝트 보기",
     "viewUsage": "사용량 보기",
     "workflows": "워크플로",
-    "workingBranch": "작업 브랜치"
+    "workingBranch": "작업 브랜치",
+    "unreadArtifacts_one": "",
+    "unreadArtifacts_other": "",
+    "unreadRecommendations_one": "",
+    "unreadRecommendations_other": ""
   },
   "health": {
     "activeTasks": "활성 작업",
@@ -3336,26 +3348,11 @@
   "listView": {
     "apply": "적용",
     "applying": "적용 중...",
-    "archiveSelected": "선택 항목 보관",
-    "archiveSelectedTitle": "완료된 선택 작업 보관",
-    "archiveUnavailable": "보관 작업을 사용할 수 없습니다.",
-    "archiveViaButton": "작업은 보관 버튼을 통해서만 보관할 수 있습니다.",
-    "bulkArchiveDone_one": "",
-    "bulkArchiveDone_other": "",
-    "bulkArchiveMessage_one": "",
-    "bulkArchiveMessage_other": "",
-    "bulkArchiveNoTasks": "보관할 수 있는 선택된 작업이 없습니다 (완료된 작업만 가능)",
-    "bulkArchiveSummary": "{{archived}}개 보관됨 · {{skipped}}개 건너뜀 · {{failed}}개 실패",
-    "bulkArchiveTitle": "선택된 작업 보관",
     "bulkDeleteAll": "전체 삭제",
-    "bulkDeleteArchiveSummary": "{{archived}}개 보관됨, {{deleted}}개 삭제됨, {{failed}}개 실패",
     "bulkDeleteMessage_one": "",
     "bulkDeleteMessage_other": "",
-    "bulkDeleteNoTasks": "삭제할 수 있는 선택된 작업이 없습니다 (보관된 작업 제외)",
-    "bulkDeleteSummary_one": "{{count}}개 작업 삭제됨 · {{skipped}}개 보관됨 건너뜀 · {{failed}}개 실패",
     "bulkDeleteSummary_other": "{{count}}개 작업 삭제됨 · {{skipped}}개 보관됨 건너뜀 · {{failed}}개 실패",
     "bulkDeleteTitle": "선택된 작업 삭제",
-    "bulkDeleteWithDoneMessage": "{{deletable}}개 작업을 삭제하거나, {{done}}개 완료 작업을 보관하고 나머지를 삭제하시겠습니까?",
     "bulkEdit": "일괄 편집",
     "bulkEditModelsLabel": "모델 및 노드 일괄 편집:",
     "bulkNoChanges": "적용할 변경 사항이 없습니다.",
@@ -3392,7 +3389,6 @@
     "hideDoneTitle": "완료된 작업 숨기기",
     "keepProgress": "진행률 유지",
     "lastColumnWarning": "최소 하나의 열이 표시되어야 합니다",
-    "lineageArchiveMessage": "{{taskId}}에 이 항목을 소스 부모로 참조하는 계보 자식({{children}})이 있습니다.\n\n이 참조를 먼저 해제하고 보관하시겠습니까?",
     "lineageDeleteMessage": "{{taskId}}에 이 항목을 소스 부모로 참조하는 계보 자식({{children}})이 있습니다.\n\n이 참조를 먼저 해제하고 삭제하시겠습니까?",
     "listControlsLabel": "목록 컨트롤",
     "newTask": "+ 새 작업",
@@ -3444,7 +3440,8 @@
     "workflowLabel": "",
     "statusReplan": "재계획",
     "statusWaiting": "",
-    "statusWaitingOn": ""
+    "statusWaitingOn": "",
+    "bulkDeleteSummary": ""
   },
   "mailbox": {
     "agent": "에이전트",
@@ -3562,7 +3559,9 @@
     "videoArtifactAria": "",
     "viewTask": "",
     "viewTaskAria": "",
-    "viewTaskLabel": ""
+    "viewTaskLabel": "",
+    "recommendationsUnavailableIdsReason": "",
+    "recommendationsUnavailableTaskReason": ""
   },
   "memory": {
     "auditChecksTitle": "감사 검사",
@@ -4235,7 +4234,14 @@
     "todos": "할 일",
     "usage": "사용량",
     "workflows": "워크플로",
-    "patchnode": ""
+    "patchnode": "",
+    "artifactsUnreadAriaLabel_one": "",
+    "artifactsUnreadAriaLabel_other": "",
+    "artifactsUnreadDotAriaLabel": "",
+    "recommendations": "",
+    "recommendationsUnreadAriaLabel_one": "",
+    "recommendationsUnreadAriaLabel_other": "",
+    "recommendationsUnreadDotAriaLabel": ""
   },
   "newTaskModal": {
     "addDependencies": "의존성 추가",
@@ -5390,7 +5396,6 @@
     "viewExpanded": "",
     "views": "",
     "resizeExpandedView": "",
-    "archivedCopy": "",
     "doneHiddenCopy": "",
     "emptyCopy": "",
     "hideDone": "",
@@ -5727,13 +5732,13 @@
     "confirmDelete": "삭제 확인",
     "confirmDeleteNamed": "{{name}} 삭제 확인",
     "deleteScriptNamed": "{{name}} 삭제",
+    "description": "설명 (선택 사항)",
+    "descriptionPlaceholder": "이 스크립트는 어떤 작업을 하나요?",
     "editScriptNamed": "{{name}} 편집",
     "failedToDelete": "스크립트 삭제에 실패했습니다",
     "failedToLoadScripts": "스크립트 불러오기에 실패했습니다",
     "failedToSave": "스크립트 저장에 실패했습니다",
     "loadingScripts": "스크립트 불러오는 중...",
-    "nameErrorMsg": "이름은 문자, 숫자, 하이픈, 언더스코어만 포함할 수 있습니다 (공백 없음)",
-    "nameHint": "문자, 숫자, 하이픈, 언더스코어만 가능",
     "noScriptsDefined": "정의된 스크립트 없음",
     "noScriptsYet": "아직 정의된 스크립트가 없습니다.",
     "runScript": "스크립트 실행",
@@ -6234,7 +6239,12 @@
       "noLimitOnAgentToolOutput": "",
       "noLimitOnAgentToolOutputHint": "",
       "quickAddSubmitOnEnter": "",
-      "quickAddSubmitOnEnterHint": ""
+      "quickAddSubmitOnEnterHint": "",
+      "chatSubmitOnEnter": "",
+      "chatSubmitOnEnterHint": "",
+      "chatSubmitOnEnterAuto": "",
+      "chatSubmitOnEnterAlways": "",
+      "chatSubmitOnEnterNever": ""
     },
     "globalModels": {
       "modelOverrides": "",
@@ -6916,10 +6926,6 @@
     },
     "scheduling": {
       "addIgnoredPath": "",
-      "archiveAgentLog": "",
-      "archiveCompletedTasksAfterDays": "",
-      "autoArchiveDuplicateTasks": "",
-      "autoArchiveDuplicateTasksHelp": "",
       "backlogNoTaskAutoClaimIsExecutorOnly": "",
       "browse": "",
       "closeParenPeriod": "",
@@ -6927,7 +6933,6 @@
       "compactSummaryAndRecentEntries": "",
       "completedTasksOlderThanTheThresholdAreMoved": "",
       "docs": "",
-      "doNotArchiveAgentLogs": "",
       "enableAutomaticTaskArchiving": "",
       "enablePlanStalenessEnforcement": "",
       "escalateHighFanOutBlockersOnlyAfterThey": "",
@@ -7856,7 +7861,9 @@
   },
   "taskDetail": {
     "actions": {
-      "menuBtn": "작업"
+      "menuBtn": "작업",
+      "oversightHeading": "",
+      "priorityHeading": ""
     },
     "agent": {
       "assignBtn": "에이전트 할당",
@@ -7926,9 +7933,6 @@
       "actionLeft": "유지됨",
       "allowRecreation": "나중에 재생성 허용 (운영자 잠금 해제)",
       "allowRecreationDesc": "에이전트가 --force-resurrect 없이 이 작업 ID를 재생성할 수 있습니다. 이 작업을 삭제 표시로 유지하려면 선택 해제하세요.",
-      "archivedAfterUnlink": "계보 참조 연결 해제 후 {{id}} 보관됨",
-      "archiveInstead": "보관으로 대체",
-      "archiveUnlinkPrompt": "이 참조를 먼저 연결 해제하고 보관하시겠습니까?",
       "ariaLabel": "작업 삭제",
       "btn": "삭제",
       "closeIssue": "이슈 닫기",
@@ -8087,11 +8091,6 @@
     },
     "nearDuplicate": {
       "actions": "This task continues normally. Archive it if the work is already covered, or clear this flag once you have read it.",
-      "archiveBtn": "보관",
-      "archiveConfirm": "보관",
-      "archived": "{{id}} 보관됨",
-      "archiveMessage": "{{id}}를 {{duplicateOf}}의 중복으로 보관하시겠습니까?",
-      "archiveTitle": "근사 중복 작업 보관",
       "copy": "이 작업은 다음의 근사 중복으로 보입니다",
       "headline": "잠재적 중복 감지됨",
       "deleteBtn": "삭제",
@@ -8642,12 +8641,6 @@
     "agent": "에이전트",
     "agentLabel": "에이전트",
     "answerQuestions": "",
-    "archive": "보관",
-    "archived": "{{taskId}}을(를) 보관했습니다",
-    "archivedUnlinked": "계보 참조 해제 후 {{taskId}}을(를) 보관했습니다",
-    "archiveFailed": "{{taskId}} 보관에 실패했습니다: {{error}}",
-    "archiveLineageConflict": "{{taskId}}에는 소스 부모로 참조하는 계보 자식({{children}})이 있습니다.\n\n이 참조를 먼저 해제하고 보관하시겠습니까?",
-    "archiveTask": "작업 보관",
     "assignedTo": "{{name}}에게 할당됨",
     "attach": "첨부",
     "attachCount_one": "",
@@ -8829,10 +8822,6 @@
     "subtask": "하위 작업",
     "subtaskButtonTitle": "AI 생성 하위 작업으로 분해",
     "toggleFastMode": "빠른 실행 모드 전환",
-    "unarchive": "보관 해제",
-    "unarchived": "{{taskId}}의 보관을 해제했습니다",
-    "unarchiveFailed": "{{taskId}} 보관 해제에 실패했습니다: {{error}}",
-    "unarchiveTask": "작업 보관 해제",
     "updated": "{{taskId}}이(가) 업데이트되었습니다",
     "updateFailed": "{{taskId}} 업데이트에 실패했습니다: {{error}}",
     "uploadFailed": "업로드에 실패했습니다: {{files}}",
@@ -9518,13 +9507,13 @@
     "widgetDefault": ""
   },
   "workflowSwitcher": {
-    "countsAria": "{{todoLabel}}: {{todo}}, {{inProgressLabel}}: {{inProgress}}, {{doneLabel}}: {{done}}{{mergingSuffix}}",
-    "done": "Done",
-    "inProgress": "In Progress",
+    "countsAria": "{{planLabel}}: {{plan}}, {{progressLabel}}: {{progress}}, {{reviewLabel}}: {{review}}{{mergingSuffix}}",
+    "plan": "계획",
+    "progress": "진행",
     "label": "Workflow",
     "merging": "",
     "mergingTitle": "",
-    "todo": "Todo",
+    "review": "검토",
     "triggerAria": "Select workflow. Current workflow: {{name}}",
     "editWorkflow": "Edit workflow",
     "newWorkflow": "New workflow"
@@ -9845,5 +9834,23 @@
     "lines": "lines",
     "showLess": "Show less",
     "showMore": "Show more ({{count}} {{lineLabel}})"
+  },
+  "recommendations": {
+    "count": "",
+    "createError": "",
+    "createTask": "",
+    "created": "",
+    "creating": "",
+    "emptyDescription": "",
+    "emptyTitle": "",
+    "loadError": "",
+    "loadMore": "",
+    "loading": "",
+    "loadingMore": "",
+    "retryCreate": "",
+    "source": "",
+    "title": "",
+    "truncated": "",
+    "viewTask": ""
   }
 }

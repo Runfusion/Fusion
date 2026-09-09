@@ -96,6 +96,19 @@ export interface ShellConnectionState {
     /* FNXC:DesktopHostAuth 2026-08-09-03:04: bearer token for the now-authenticated, loopback-bound embedded desktop API (see packages/desktop/src/api-token.ts). Only set for source "embedded-local". */
     authToken?: string;
     error?: string;
+    startupFailure?: {
+      phase: "create-store" | "store-init" | "store-watch" | "create-dashboard-server" | "server-listen" | "resolve-port";
+      attempts: number;
+      name: string;
+      message: string;
+      stack?: string;
+      logPath?: string;
+      logUnavailableReason?: "write-failed" | "disabled";
+      platform: string;
+      appVersion?: string;
+      nodeVersion: string;
+      occurredAt: string;
+    };
   };
 }
 

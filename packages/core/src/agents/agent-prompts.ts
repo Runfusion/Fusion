@@ -301,7 +301,7 @@ Write a lean, executable PROMPT.md quickly. Preserve safety gates, but skip heav
 - Preserve required safety sections for bugs, workflow routing, forensic tasks, and decision-only work.
 
 ## Duplicate check
-Before writing a spec, call \`fn_task_list\` for active work, then call \`fn_task_search\` with \`includeDone: false\` and \`includeArchived: false\` for 2-4 targeted keyword phrases from the title/description, such as file paths, symptoms, and symbols. Do not search completed or archived work for duplicate candidates. When an active match is a duplicate, do not write a spec — but still write PROMPT.md, with its entire contents being the single line \`DUPLICATE: {existing-task-id}\` and nothing else. That file is how the duplicate is recorded; announcing it only in your reply leaves no plan behind and re-plans the task in a loop.
+Before writing a spec, call \`fn_task_list\` for active work, then call \`fn_task_search\` with \`includeDone: false\` for 2-4 targeted keyword phrases from the title/description, such as file paths, symptoms, and symbols. Do not search completed work for duplicate candidates. When an active match is a duplicate, do not write a spec — but still write PROMPT.md, with its entire contents being the single line \`DUPLICATE: {existing-task-id}\` and nothing else. That file is how the duplicate is recorded; announcing it only in your reply leaves no plan behind and re-plans the task in a loop.
 
 ## Required PROMPT.md shape
 Write PROMPT.md with Original Description, What This Delivers, Before → After Transformation, Mission, Dependencies, Context to Read First, File Scope, Steps, Documentation Requirements, Completion Criteria, Git Commit Convention, and Do NOT. Put \`## Original Description\` immediately after the title/\`Created\`/\`Size\` metadata with the operator's original task description copied **verbatim** (do not paraphrase). Immediately after it, write \`## What This Delivers\` in plain product language so anyone can verify at a glance what the operator will gain; do not use file paths, symbols, or framework terms. Put \`## Before → After Transformation\` next, before \`## Mission\`, with concise Before/After bullets: current state, target state, why it satisfies the user's request at a glance. In \`## Steps\`, every executable heading MUST use \`### Step N: <name>\` (e.g. \`### Step 0: Preflight\`), numbered 0-based from \`### Step 0:\` through \`### Step N-1:\` with no gaps. Do not write bare \`### Preflight\` / \`### Implementation\` headings, and do not add review-level, triage subtask, or proactive subtask headings.
@@ -593,8 +593,8 @@ Verified facts about this codebase's storage — cite these correctly so Plan Re
 - New Postgres migrations must be **registered explicitly** in \`packages/core/src/postgres/schema-applier.ts\` (version constant + bookkeeping check); a \`.sql\` file dropped in the migrations dir that is not wired there silently never runs.
 
 ## Duplicate check
-Before writing a spec, first call \`fn_task_list\` to see active tasks, then call \`fn_task_search\` with \`includeDone: false\` and \`includeArchived: false\` for 2-4 distinct keyword phrases from the task title and description (for example file paths, error symptoms, and symbol names).
-Do not search completed or archived work for duplicate candidates.
+Before writing a spec, first call \`fn_task_list\` to see active tasks, then call \`fn_task_search\` with \`includeDone: false\` for 2-4 distinct keyword phrases from the task title and description (for example file paths, error symptoms, and symbol names).
+Do not search completed work for duplicate candidates.
 If an actionable task already covers the same work (even if worded differently), do not write a spec.
 Instead you MUST still write PROMPT.md, with its ENTIRE contents being this one line and nothing else:
 \`DUPLICATE: {existing-task-id}\`
@@ -908,7 +908,7 @@ the changes into the assigned worktree.
 export function buildPlanningDuplicatePolicyInstruction(): string {
   return `## Duplicate policy for this task
 
-Only active tasks can be duplicate blockers. A matching task in a done or archived column is historical evidence, not a duplicate verdict: inspect it for context, then write a new plan for the reported work or regression. Do not emit \`DUPLICATE: ...\` for completed or archived work.`;
+Only active tasks can be duplicate blockers. A matching task in a workflow Complete column or a deleted historical record is context, not a duplicate verdict: write a new plan for the reported work or regression. Do not emit \`DUPLICATE: ...\` for completed or deleted work.`;
 }
 
 /**

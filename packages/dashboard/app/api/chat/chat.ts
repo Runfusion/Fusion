@@ -23,6 +23,9 @@ import type { StreamConnectionState } from "../client/event-source.js";
 
 export interface ChatSessionListResponse {
   sessions: EnrichedChatSession[];
+  total?: number;
+  hasMore?: boolean;
+  nextCursor?: string | null;
 }
 
 export interface ChatSessionResponse {
@@ -73,6 +76,9 @@ export interface FetchChatSessionsOptions {
   status?: string;
   q?: string;
   titleOnly?: boolean;
+  tagId?: string;
+  limit?: number;
+  cursor?: string;
 }
 
 export function fetchChatTags(projectId?: string): Promise<ChatTagListResponse> {
@@ -100,6 +106,9 @@ export function fetchChatSessions(
   if (resolvedStatus) search.set("status", resolvedStatus);
   if (options?.q && options.q.trim()) search.set("q", options.q.trim());
   if (options?.titleOnly) search.set("titleOnly", "true");
+  if (options?.tagId) search.set("tagId", options.tagId);
+  if (options?.limit !== undefined) search.set("limit", String(options.limit));
+  if (options?.cursor) search.set("cursor", options.cursor);
   const qs = search.toString();
   return api<ChatSessionListResponse>(`/chat/sessions${qs ? `?${qs}` : ""}`);
 }
@@ -276,13 +285,14 @@ export function backfillChatSessionToStash(id: string, projectId?: string): Prom
 /** Fetch messages for a chat session */
 export function fetchChatMessages(
   sessionId: string,
-  opts?: { limit?: number; offset?: number; before?: string; order?: "asc" | "desc" },
+  opts?: { limit?: number; offset?: number; before?: string; beforeId?: string; order?: "asc" | "desc" },
   projectId?: string,
 ): Promise<ChatMessageListResponse> {
   const search = new URLSearchParams();
   if (opts?.limit !== undefined) search.set("limit", String(opts.limit));
   if (opts?.offset !== undefined) search.set("offset", String(opts.offset));
   if (opts?.before) search.set("before", opts.before);
+  if (opts?.beforeId) search.set("beforeId", opts.beforeId);
   if (opts?.order) search.set("order", opts.order);
   const qs = search.toString();
   return api<ChatMessageListResponse>(

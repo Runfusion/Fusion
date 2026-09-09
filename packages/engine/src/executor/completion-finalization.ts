@@ -31,13 +31,12 @@ export async function parkCompletedBlockedTask(
   if (task.paused === true || task.userPaused === true) return false;
   /*
   FNXC:WorkflowLifecycleColumns 2026-07-29-13:10:
-  Was the raw literal pair `column === "done" || column === "archived"`. On a renamed
+  Was a raw Done literal. On a renamed
   board neither matched, so this "already finished, nothing to park" guard was INERT
   and a completed card resting in the workflow's own terminal column fell through —
   and the `column !== "todo"` branch below would then have MOVED it back out of that
   terminal column. Resolved through core's shared `resolveTerminalColumns`, which owns
-  the per-role fallback (a partially-declared workflow keeps the legacy id for the
-  half it did not declare).
+  the Complete-role fallback.
   */
   const terminalColumns = await resolveTerminalColumnsFor(deps.store, task.id);
   /*
