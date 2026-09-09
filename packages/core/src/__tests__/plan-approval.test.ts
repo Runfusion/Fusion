@@ -151,6 +151,15 @@ describe("computePlanApprovalFingerprint", () => {
     );
   });
 
+  it("ignores a tracked operator heading when What This Delivers follows the generated region", () => {
+    const plannerText = "# Task: FN-1\n\n## What This Delivers\n\n- Deliver the interface.\n\n## Mission\n\nBuild the interface.\n";
+    const description = "Operator context.\n\n## Do NOT\n\nOperator-owned constraint.";
+
+    expect(computePlanApprovalFingerprint(applyOriginalDescription(plannerText, description))).toBe(
+      computePlanApprovalFingerprint(plannerText),
+    );
+  });
+
   it("ignores Original Description when its verbatim body contains marker-like text", () => {
     const plannerText = "# Task: FN-1\n\n## Mission\n\nBuild the interface.\n";
     const descriptionWithMarker = [
