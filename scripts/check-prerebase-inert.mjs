@@ -99,17 +99,44 @@ export function protectedCorpusHoles(allPaths = listAllTrackedFiles(), corpus = 
   const scanned = new Set(corpus);
   return allPaths.filter((path) => protectedPath.test(path) && isCorpusPath(path) && !scanned.has(path));
 }
+/*
+ * FNXC:MergerUnification 2026-09-09-07:46:
+ * Ordering claims use the exact phrases before the disabled check, before the
+ * threshold check, and after the hot-file check. Presence cannot prove ordering,
+ * so deliberate wording changes must update this contract; semantic truth is
+ * re-established by the code audit and task-document evidence.
+ */
+export const DOCS_ROW_CONTRACT = Object.freeze({
+  prerebaseAutoEnabled: Object.freeze({
+    required: Object.freeze(["**Legacy and inert (master-plan U0)**", "runAiMerge", "aiMergeTask", "=== false", "absent means enabled", "worktrunk.enabled", "worktrunk-deferred", "before the disabled check", "only opt-out", "safety-fallback-any-divergence"]),
+    forbidden: Object.freeze(["Stage 1/2"]),
+  }),
+  prerebaseHotFiles: Object.freeze({
+    required: Object.freeze(["**Legacy and inert (master-plan U0)**", "runAiMerge", "aiMergeTask", "task.baseCommitSha", "refs/heads/", "git rev-parse --verify", "not the rootDir HEAD", "git diff --name-only", "exact full-path equality", "no globs", "before the threshold check"]),
+    forbidden: Object.freeze(["Stage 1/2", "localMainHead"]),
+  }),
+  prerebaseDivergenceThreshold: Object.freeze({
+    required: Object.freeze(["**Legacy and inert (master-plan U0)**", "runAiMerge", "aiMergeTask", "after the hot-file check", "threshold > 0", "commitsBehind >= threshold", "?? 1", "shipped project default 50", "not a full opt-out", "divergence-threshold", "safety-fallback-any-divergence"]),
+    forbidden: Object.freeze(["Stage 1/2"]),
+  }),
+});
 export function checkDocs(root = repoRoot) {
   const content = readFileSync(resolve(root, "docs/settings-reference.md"), "utf8");
-  return ["prerebaseAutoEnabled", "prerebaseHotFiles", "prerebaseDivergenceThreshold"].flatMap((setting) => {
+  const architecture = readFileSync(resolve(root, "docs/architecture.md"), "utf8");
+  const failures = Object.entries(DOCS_ROW_CONTRACT).flatMap(([setting, contract]) => {
     const row = content.split("\n").find((line) => line.startsWith(`| \`${setting}\` |`));
     if (!row) return [`docs contract: missing ${setting} row`];
-    const failures = [];
-    if (row.includes("Stage 1/2")) failures.push("stale Stage 1/2 wording");
-    if (!row.includes("**Legacy and inert (master-plan U0)**")) failures.push("missing inert marker");
-    if (!row.includes("runAiMerge")) failures.push("missing runAiMerge");
-    return failures.map((failure) => `docs contract: ${setting}: ${failure}`);
+    return [
+      ...contract.required.filter((token) => !row.includes(token)).map((token) => `docs contract: ${setting}: missing required claim token: ${token}`),
+      ...contract.forbidden.filter((token) => row.includes(token)).map((token) => `docs contract: ${setting}: forbidden claim token: ${token}`),
+    ];
   });
+  architecture.split("\n").forEach((line, index) => {
+    if (/\baiMergeTask\b/.test(line) && !/\b(?:legacy|soft-deprecated|deprecated|inert)\b/i.test(line)) {
+      failures.push(`docs contract: architecture: unqualified aiMergeTask mention on line ${index + 1}`);
+    }
+  });
+  return failures;
 }
 export function scanSources(paths = listTrackedFiles(), root = repoRoot) {
   const failures = [], identifierPaths = new Set(), specifierPaths = new Set();
@@ -140,7 +167,7 @@ export function scanSources(paths = listTrackedFiles(), root = repoRoot) {
   return failures;
 }
 export function formatFailureMessage(matches) {
-  return ["[check-prerebase-inert] retained legacy prerebase contract violated.", "Re-wiring prerebase or aiMergeTask by identifier, import, alias, or package path requires updating docs/settings-reference.md, AGENTS.md item 10, and docs/architecture.md.", ...matches].join("\n");
+  return ["[check-prerebase-inert] retained legacy prerebase contract violated.", "Re-wiring prerebase or aiMergeTask by identifier, import, alias, or package path requires updating docs/settings-reference.md, the AGENTS.md Merging Branches Into Main item titled Legacy auto-prerebase is inert., and docs/architecture.md.", ...matches].join("\n");
 }
 export function main() { const failures = [...checkDocs(), ...scanSources()]; if (!failures.length) return 0; console.error(formatFailureMessage(failures)); return 1; }
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) process.exitCode = main();
