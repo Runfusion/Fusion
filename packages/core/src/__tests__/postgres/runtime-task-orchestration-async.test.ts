@@ -3,7 +3,7 @@
  * FNXC:TestMigrationTail 2026-06-24-16:00:
  * PostgreSQL integration tests for the backend-mode delegation of task
  * orchestration methods (createTask, updateTask, moveTask, handoffToReview,
- * archiveTask, getDistributedTaskIdAllocator).
+ * deleteTask, getDistributedTaskIdAllocator).
  *
  * Refactored to use the reusable createTaskStoreForTest() helper, eliminating
  * the per-test database lifecycle boilerplate.
@@ -135,20 +135,20 @@ pgDescribe("runtime-task-orchestration-async (PostgreSQL integration)", () => {
     expect(queueRows.length).toBe(1);
   });
 
-  it("archiveTask archives a task against PostgreSQL", async () => {
+  it("deleteTask soft-deletes a task against PostgreSQL", async () => {
     h = await createTaskStoreForTest({ prefix: "rt_orch" });
     await writeProjectConfig(h.layer, { taskPrefix: "KB" });
 
     const task = await h.store.createTask({
-      description: "Archive test",
-      title: "Archive",
+      description: "Delete test",
+      title: "Delete",
       column: "done",
     });
 
-    const archived = await h.store.archiveTask(task.id);
-    expect(archived.column).toBe("archived");
+    const deleted = await h.store.deleteTask(task.id);
+    expect(deleted.deletedAt).toBeTruthy();
 
-    // Verify the task row was soft-deleted (deletedAt set, column = archived).
+    // Soft-delete snapshots retain the historical sentinel internally while disappearing from the board.
     const rows = await h.adminDb
       .select({
         column: schema.project.tasks.column,
@@ -160,8 +160,8 @@ pgDescribe("runtime-task-orchestration-async (PostgreSQL integration)", () => {
     expect(rows[0].deletedAt).not.toBeNull();
   });
 
-  it("full lifecycle: create → update → move → handoff → archive against PostgreSQL", async () => {
-    h = await createTaskStoreForTest({ prefix: "rt_orch" });
+  it("full lifecycle: create → update → move → handoff → done against PostgreSQL", async () => {
+    h = await createTaskStoreForTest({ prefix: "rt_orch", projectId: "project-rt-orch" });
     await writeProjectConfig(h.layer, { taskPrefix: "KB" });
 
     // Create
@@ -189,8 +189,6 @@ pgDescribe("runtime-task-orchestration-async (PostgreSQL integration)", () => {
     const done = await h.store.moveTask(task.id, "done", { skipMergeBlocker: true });
     expect(done.column).toBe("done");
 
-    // Archive
-    const archived = await h.store.archiveTask(task.id);
-    expect(archived.column).toBe("archived");
+    expect((await h.store.getTask(task.id)).column).toBe("done");
   });
 });

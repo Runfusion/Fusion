@@ -505,4 +505,257 @@ describe("FN-6599 ChatView streaming prior thread", () => {
     expect(mockFetchChatMessages).toHaveBeenCalledWith(freshSessions[1].id, { limit: 50, order: "desc" }, "proj-123");
   });
 
+  it.each([
+    ["desktop détaché", 1280, 300],
+    ["téléphone au sommet volontaire", 390, 0],
+  ])("FN-302 conserve l’ancre avant l’ajout optimiste sur %s", async (_label, width, readingTop) => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
+    window.dispatchEvent(new Event("resize"));
+    const session = makeSession({ id: `session-detached-${width}`, agentId: "agent-001" });
+    const priorThread = [
+      makeMessage({ id: "anchor-1", sessionId: session.id, role: "user", content: "Question ancienne" }),
+      makeMessage({ id: "anchor-2", sessionId: session.id, role: "assistant", content: "Réponse ancienne" }),
+      makeMessage({ id: "anchor-3", sessionId: session.id, role: "user", content: "Question récente" }),
+      makeMessage({ id: "anchor-4", sessionId: session.id, role: "assistant", content: "Réponse récente" }),
+    ];
+    mockGetScopedItem.mockImplementation((key) => key === "kb-chat-active-session" ? session.id : undefined);
+    mockFetchChatSessions.mockResolvedValue({ sessions: [session] });
+    mockFetchChatSession.mockResolvedValue({ session });
+    mockFetchChatMessages.mockResolvedValue({ messages: priorThread });
+
+    render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    await openRestoredConversation();
+    await screen.findByText("Réponse récente");
+
+    const container = document.querySelector(".chat-messages") as HTMLDivElement;
+    let scrollTop = readingTop;
+    Object.defineProperties(container, {
+      scrollTop: { configurable: true, get: () => scrollTop, set: (value: number) => { scrollTop = value; } },
+      clientHeight: { configurable: true, value: 300 },
+      scrollHeight: {
+        configurable: true,
+        get: () => 1200 + Math.max(0, container.querySelectorAll(".chat-message").length - priorThread.length) * 100,
+      },
+    });
+    const offsetTopSpy = vi.spyOn(HTMLElement.prototype, "offsetTop", "get").mockImplementation(function () {
+      const messageId = this.getAttribute("data-message-id");
+      const index = priorThread.findIndex((message) => message.id === messageId);
+      return Math.max(0, index) * 250;
+    });
+    const offsetHeightSpy = vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(250);
+
+    const input = screen.getByTestId("chat-input");
+    fireEvent.change(input, { target: { value: "Nouvelle question" } });
+    fireEvent.click(screen.getByTestId("chat-send-btn"));
+
+    await screen.findByText("Nouvelle question");
+    expect(scrollTop).toBe(readingTop);
+    offsetTopSpy.mockRestore();
+    offsetHeightSpy.mockRestore();
+  });
+
+  it.each([
+    ["Chat principal", 1280, {}],
+    ["floating large", 1280, { floating: true }],
+    ["floating étroit", 600, { floating: true }],
+    ["compactLayout", 1280, { compactLayout: true }],
+    ["téléphone", 390, {}],
+  ])("FN-302 suit le bas pendant tout le streaming dans %s", async (_label, width, hostProps) => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
+    window.dispatchEvent(new Event("resize"));
+    const session = makeSession({ id: `session-pinned-${_label}`, agentId: "agent-001" });
+    const prior = makeMessage({ id: "prior", sessionId: session.id, role: "assistant", content: "Historique" });
+    let handlers: Parameters<typeof apiModule.streamChatResponse>[2] | undefined;
+    let subscribeHandler: Record<string, (event: MessageEvent) => void> = {};
+    mockGetScopedItem.mockImplementation((key) => key === "kb-chat-active-session" ? session.id : undefined);
+    mockFetchChatSessions.mockResolvedValue({ sessions: [session] });
+    mockFetchChatSession.mockResolvedValue({ session });
+    mockFetchChatMessages.mockResolvedValue({ messages: [prior] });
+    mockStreamChatResponse.mockImplementation((_sessionId, _content, nextHandlers) => {
+      handlers = nextHandlers;
+      return { close: vi.fn(), isConnected: () => true };
+    });
+    mockSubscribeSse.mockImplementation((_url, options) => {
+      subscribeHandler = options?.events as typeof subscribeHandler;
+      return () => {};
+    });
+    const frames: FrameRequestCallback[] = [];
+    const frameSpy = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      frames.push(callback);
+      return frames.length;
+    });
+    const flushFrames = () => {
+      act(() => {
+        for (let count = 0; count < 20 && frames.length > 0; count += 1) {
+          frames.shift()?.(count);
+        }
+      });
+    };
+
+    render(<ChatView projectId="proj-123" addToast={vi.fn()} {...hostProps} />);
+    await openRestoredConversation();
+    await screen.findByText("Historique");
+    flushFrames();
+    const container = document.querySelector(".chat-messages") as HTMLDivElement;
+    let scrollTop = 900;
+    let baseScrollHeight = 1200;
+    const currentScrollHeight = () => baseScrollHeight + (container.querySelectorAll(".chat-message").length > 1 ? 100 : 0);
+    Object.defineProperties(container, {
+      scrollTop: { configurable: true, get: () => scrollTop, set: (value: number) => { scrollTop = value; } },
+      clientHeight: { configurable: true, value: 300 },
+      scrollHeight: { configurable: true, get: currentScrollHeight },
+    });
+
+    fireEvent.change(screen.getByTestId("chat-input"), { target: { value: "Question streamée" } });
+    fireEvent.click(screen.getByTestId("chat-send-btn"));
+    await waitFor(() => expect(scrollTop).toBe(1300));
+    flushFrames();
+
+    act(() => {
+      subscribeHandler["chat:message:added"]?.({
+        data: JSON.stringify(makeMessage({
+          id: "persisted-user",
+          sessionId: session.id,
+          role: "user",
+          content: "Question streamée",
+        })),
+      } as MessageEvent);
+    });
+    await waitFor(() => expect(screen.getAllByText("Question streamée")).toHaveLength(1));
+    expect(scrollTop).toBe(1300);
+    flushFrames();
+
+    baseScrollHeight = 1350;
+    act(() => handlers?.onThinking?.("raisonnement"));
+    flushFrames();
+    await waitFor(() => expect(scrollTop).toBe(1450));
+    flushFrames();
+
+    baseScrollHeight = 1500;
+    act(() => handlers?.onToolStart?.({ toolName: "read", args: { path: "README.md" } }));
+    flushFrames();
+    await waitFor(() => expect(scrollTop).toBe(1600));
+    flushFrames();
+
+    baseScrollHeight = 1550;
+    act(() => handlers?.onText?.("réponse"));
+    flushFrames();
+    await waitFor(() => expect(scrollTop).toBe(1650));
+    flushFrames();
+
+    baseScrollHeight = 1600;
+    act(() => handlers?.onDone?.({ messageId: "assistant-final" }));
+    flushFrames();
+    await waitFor(() => expect(scrollTop).toBe(1700));
+    flushFrames();
+    frameSpy.mockRestore();
+  });
+
+  it("FN-302 donne la priorité au scroll manuel sur une frame et un observateur déjà programmés", async () => {
+    const resizeCallbacks: ResizeObserverCallback[] = [];
+    const originalResizeObserver = globalThis.ResizeObserver;
+    class ControlledResizeObserver implements ResizeObserver {
+      constructor(callback: ResizeObserverCallback) { resizeCallbacks.push(callback); }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    globalThis.ResizeObserver = ControlledResizeObserver;
+    const frames: FrameRequestCallback[] = [];
+    const frameSpy = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      frames.push(callback);
+      return frames.length;
+    });
+    const flushFrames = () => {
+      act(() => {
+        for (let count = 0; count < 20 && frames.length > 0; count += 1) {
+          frames.shift()?.(count);
+        }
+      });
+    };
+    const session = makeSession({ id: "session-manual-wins", agentId: "agent-001" });
+    const prior = makeMessage({ id: "manual-prior", sessionId: session.id, role: "assistant", content: "Lecture" });
+    let handlers: Parameters<typeof apiModule.streamChatResponse>[2] | undefined;
+    mockGetScopedItem.mockImplementation((key) => key === "kb-chat-active-session" ? session.id : undefined);
+    mockFetchChatSessions.mockResolvedValue({ sessions: [session] });
+    mockFetchChatSession.mockResolvedValue({ session });
+    mockFetchChatMessages.mockResolvedValue({ messages: [prior] });
+    mockStreamChatResponse.mockImplementation((_sessionId, _content, nextHandlers) => {
+      handlers = nextHandlers;
+      return { close: vi.fn(), isConnected: () => true };
+    });
+
+    render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    await openRestoredConversation();
+    await screen.findByText("Lecture");
+    flushFrames();
+    const container = document.querySelector(".chat-messages") as HTMLDivElement;
+    let scrollTop = 900;
+    let baseScrollHeight = 1200;
+    const currentScrollHeight = () => baseScrollHeight + (container.querySelectorAll(".chat-message").length > 1 ? 100 : 0);
+    Object.defineProperties(container, {
+      scrollTop: { configurable: true, get: () => scrollTop, set: (value: number) => { scrollTop = value; } },
+      clientHeight: { configurable: true, value: 300 },
+      scrollHeight: { configurable: true, get: currentScrollHeight },
+    });
+
+    fireEvent.change(screen.getByTestId("chat-input"), { target: { value: "Question" } });
+    fireEvent.click(screen.getByTestId("chat-send-btn"));
+    expect(frames.length).toBeGreaterThan(0);
+    scrollTop = 280;
+    fireEvent.scroll(container);
+    baseScrollHeight = 1400;
+    act(() => {
+      handlers?.onToolStart?.({ toolName: "read", args: { path: "README.md" } });
+      resizeCallbacks.forEach((callback) => callback([], {} as ResizeObserver));
+    });
+    flushFrames();
+    expect(scrollTop).toBe(280);
+
+    scrollTop = 1200;
+    fireEvent.scroll(container);
+    baseScrollHeight = 1550;
+    act(() => handlers?.onText?.("delta suivi"));
+    flushFrames();
+    await waitFor(() => expect(scrollTop).toBe(1650));
+
+    scrollTop = 200;
+    fireEvent.scroll(container);
+    fireEvent.click(screen.getByTestId("chat-jump-to-latest"));
+    expect(scrollTop).toBe(1650);
+    frameSpy.mockRestore();
+    globalThis.ResizeObserver = originalResizeObserver;
+  });
+
+  it("FN-302 ancre le premier envoi d’une conversation vide", async () => {
+    const session = makeSession({ id: "session-empty-send", agentId: "agent-001" });
+    mockGetScopedItem.mockImplementation((key) => key === "kb-chat-active-session" ? session.id : undefined);
+    mockFetchChatSessions.mockResolvedValue({ sessions: [session] });
+    mockFetchChatSession.mockResolvedValue({ session });
+    mockFetchChatMessages.mockResolvedValue({ messages: [] });
+    render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    await openRestoredConversation();
+    const container = document.querySelector(".chat-messages") as HTMLDivElement;
+    let scrollTop = 0;
+    Object.defineProperties(container, {
+      scrollTop: { configurable: true, get: () => scrollTop, set: (value: number) => { scrollTop = value; } },
+      clientHeight: { configurable: true, value: 300 },
+      scrollHeight: { configurable: true, get: () => container.querySelectorAll(".chat-message").length * 100 },
+    });
+
+    fireEvent.change(screen.getByTestId("chat-input"), { target: { value: "Premier message" } });
+    fireEvent.click(screen.getByTestId("chat-send-btn"));
+    await screen.findByText("Premier message");
+    expect(scrollTop).toBe(container.scrollHeight);
+  });
+
+  it("FN-302 n’écrit aucun viewport sans session", async () => {
+    mockFetchChatSessions.mockResolvedValue({ sessions: [] });
+    mockFetchChatMessages.mockResolvedValue({ messages: [] });
+    render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    await waitFor(() => expect(screen.queryByTestId("chat-input")).not.toBeInTheDocument());
+    expect(document.querySelector(".chat-messages")).toBeNull();
+    expect(mockStreamChatResponse).not.toHaveBeenCalled();
+  });
+
 });

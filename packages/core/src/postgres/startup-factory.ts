@@ -776,6 +776,8 @@ export interface CreateTaskStoreForBackendOptions {
   readonly projectId?: string;
   /** Explicit durable lifecycle observer identity; absent deliberately disables observation. */
   readonly consumerId?: string;
+  /** Operational dry-run escape hatch: skip only archive reintegration during TaskStore.init. */
+  readonly skipArchiveReintegrationOnInit?: boolean;
   /*
   FNXC:MigrationHoldingPage 2026-07-17-12:20:
   During the one-time SQLite→PostgreSQL auto-migration the caller's HTTP server is
@@ -1270,7 +1272,7 @@ export async function createTaskStoreForBackend(
         asyncLayer,
         ...(options.consumerId ? { consumerId: options.consumerId } : {}),
       });
-      await taskStore.init();
+      await taskStore.init({ skipArchiveReintegration: options.skipArchiveReintegrationOnInit });
     }
     log.log(`startup phase backend.taskStore.construct: ${Date.now() - constructT0}ms`);
   } catch (err) {

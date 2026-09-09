@@ -26,8 +26,6 @@ fn task move FN-001 todo                  # Move task to column
 fn task merge FN-001                      # Merge in-review task to main
 fn task duplicate FN-001                  # Copy task to triage
 fn task refine FN-001 --feedback "..."    # Create follow-up task
-fn task archive FN-001                    # Move done → archived
-fn task unarchive FN-001                  # Move archived → done
 fn task delete FN-001 [--force]           # Soft delete (recoverable via DB)
 fn task retry FN-001                      # Retry failed task → todo
 fn task comment FN-001 "text"             # Add general comment
@@ -111,13 +109,13 @@ fn backup --cleanup                                     # Remove old pairs and a
 Before native backup operations, quiesce Fusion writers and competing
 create/list/cleanup/restore processes; the command has no cross-process lock.
 A restore validates every required archive and retains a current-state
-`fusion-pre-restore-pg-*` + `fusion-central-pre-restore-pg-*` pair first.
-Project/archive restores before central, each in its own transaction. If central
-fails, Fusion attempts project/archive rollback from the retained dump. The two
-dumps do not share one snapshot or one pair-wide transaction. In-progress backup
-artifacts are never listed or restorable, and cleanup removes only abandoned ones.
-Dump pairs exclude PostgreSQL migration bookkeeping in `public`; restoring data
-older than the running schema baseline requires reviewing migration state.
+`fusion-pre-restore-pg-*` + `fusion-central-pre-restore-pg-*` +
+`fusion-migrations-pre-restore-pg-*` stem first. Project/archive restores
+before central and captured migration bookkeeping. If a later group fails,
+Fusion rolls every committed group back from the retained stem. Legacy
+two-member stems remain restorable; Fusion then rewinds
+`public.fusion_schema_migrations` from the earliest missing CREATE-TABLE
+sentinel and replays pending migrations.
 
 ## Multi-Project
 

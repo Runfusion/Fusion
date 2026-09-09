@@ -54,7 +54,6 @@ function createStore(tasks: TaskMap, logsByTask: Map<string, AgentLogEntry[]>): 
     }),
     getAgentLogs: vi.fn(async (taskId: string) => logsByTask.get(taskId) ?? []),
     walCheckpoint: vi.fn(() => ({ busy: 0, log: 0, checkpointed: 0 })),
-    archiveTaskAndCleanup: vi.fn(async () => ({})),
     clearStaleExecutionStartBranchReferences: vi.fn(() => []),
     getTask: vi.fn(async (id: string) => tasks.get(id)),
     updateSettings: vi.fn(async () => settings),
@@ -80,7 +79,7 @@ describeIfGit("recoverOrphanOnlyScopeViolations (real git)", () => {
     return repo;
   }
 
-  it("finalizes orphan-only scope violation as no-op when task work is already on main (FN-4350)", async () => {
+  it("finalizes landed work while preserving the dirty orphan worktree for explicit cleanup (FN-4350)", async () => {
     const repo = setupRepo();
     mkdirSync(path.join(repo, "packages/dashboard/app/components"), { recursive: true });
     writeFileSync(path.join(repo, "packages/dashboard/app/components/QuickChatFAB.tsx"), "export const QuickChatFAB = () => null;\n", "utf-8");
@@ -133,7 +132,7 @@ describeIfGit("recoverOrphanOnlyScopeViolations (real git)", () => {
     expect(updated.mergeDetails?.commitSha).toBe(landedSha);
     expect(updated.mergeDetails?.mergeConfirmed).toBe(true);
     expect(updated.mergeDetails?.resolutionStrategy).toBe("orphan-discard-no-op");
-    expect(existsSync(worktreePath)).toBe(false);
+    expect(existsSync(worktreePath)).toBe(true);
     expect(git(repo, "git log --oneline -- packages/dashboard/app/components/__tests__/QuickChatFAB.test.tsx")).toBe("");
   }, 20000);
 });

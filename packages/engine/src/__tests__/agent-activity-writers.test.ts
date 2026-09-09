@@ -294,8 +294,6 @@ pgDescribe("engine agent activity durable writer", () => {
       implementation-path test so the shared harness cannot retain a stale executor.
       */
       (executor as any).unregisterTaskMoveDisposer?.();
-      (executor as any).unregisterArchiveWorktreeDisposer?.();
-      (executor as any).unregisterArchiveWorkspaceWorktreeDisposer?.();
     }
 
     const { events } = await queryAgentActivityEvents(h.layer(), { taskId: task.id, type: "task:started" });

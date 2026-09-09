@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
-  isArchivedColumnRole,
   isCompleteColumnRole,
   isPreImplementationColumnRole,
   isReviewColumnRole,
@@ -23,10 +22,9 @@ a PER-COLUMN question. The two do not line up in one state, and it is a state th
 board is in workflow mode, but THIS column has no resolved traits, because a mid-flight workflow edit
 left a card in a column the workflow no longer declares.
 
-There, the ternary took its FIRST arm and evaluated `Boolean(undefined?.archived)` — false. Not
-"fall back to the legacy id": false for EVERY role at once. So for that column the archive action,
-the revert action, the promote affordance, the auto-merge toggle, the Done-sort control and all bulk
-actions silently disappeared, and nothing in the UI explained why.
+There, the ternary took its first arm and evaluated an absent trait as false for every role. The
+revert action, promote affordance, auto-merge toggle, Done-sort control, and bulk actions silently
+disappeared, and nothing in the UI explained why.
 
 The shared helpers ask per column: traits when resolved, the legacy id ONLY when the flags are truly
 absent. That covers the pre-load window the old form handled with `workflowMode === false` AND the
@@ -43,7 +41,6 @@ describe("board surfaces resolve column roles per column, not per board", () => 
   `false` for; every helper must instead degrade to its documented legacy id.
   */
   it("degrades to the legacy column id when a column has no resolved traits", () => {
-    expect(isArchivedColumnRole(undefined, "archived")).toBe(true);
     expect(isCompleteColumnRole(undefined, "done")).toBe(true);
     expect(isWipColumnRole(undefined, "in-progress")).toBe(true);
     expect(isReviewColumnRole(undefined, "in-review")).toBe(true);
@@ -52,7 +49,6 @@ describe("board surfaces resolve column roles per column, not per board", () => 
 
   /* The paired negative: degrading must not turn into "every column has every role". */
   it("degrading does not grant roles to unrelated columns", () => {
-    expect(isArchivedColumnRole(undefined, "done")).toBe(false);
     expect(isCompleteColumnRole(undefined, "archived")).toBe(false);
     expect(isWipColumnRole(undefined, "in-review")).toBe(false);
     expect(isReviewColumnRole(undefined, "in-progress")).toBe(false);
@@ -60,8 +56,6 @@ describe("board surfaces resolve column roles per column, not per board", () => 
 
   /* Resolved traits still win outright — the whole point of resolving them. */
   it("prefers resolved traits over the column id in both directions", () => {
-    expect(isArchivedColumnRole({ archived: true }, "shipped")).toBe(true);
-    expect(isArchivedColumnRole({ archived: false }, "archived")).toBe(false);
     expect(isWipColumnRole({ countsTowardWip: true }, "building")).toBe(true);
     expect(isWipColumnRole({ countsTowardWip: false }, "in-progress")).toBe(false);
   });
@@ -79,7 +73,7 @@ describe("board surfaces resolve column roles per column, not per board", () => 
       .replace(/(^|[^:])\/\/.*$/gm, "$1");
 
     const boardLevelRoleTernaries = code.match(
-      /workflowMode\s*\?[^;]*?column(?:Flags)?[^;]*?===\s*"(?:todo|triage|in-progress|in-review|done|archived)"/g,
+      /workflowMode\s*\?[^;]*?column(?:Flags)?[^;]*?===\s*"(?:todo|triage|in-progress|in-review|done)"/g,
     );
 
     expect(
@@ -105,22 +99,17 @@ describe("board surfaces resolve column roles per column, not per board", () => 
 
   `columnFlagsById` in ListView is built from `listColumns`, which is a union across workflows keyed
   by column id — the file already documents this for `moveTargets`. The union was harmless while the
-  flags answered COLUMN-level questions (is this whole list section the archive?). Converting the row
-  context menu and progress bar made them per-TASK questions, and there two workflows reusing an id
-  with different traits serve one workflow's semantics to the other's card: Archive and Revert appear
-  or vanish, and the progress bar shows or hides, for reasons belonging to a neighbouring workflow.
+  Flags originally answered column-level questions. The row context menu and progress bar ask per-task
+  questions, and two workflows reusing an id with different traits must not share semantics.
 
   Pinned at the seam that decides it, because the divergence only exists when the two maps disagree.
   */
   it("resolves a task's role from ITS workflow when two workflows reuse a column id", () => {
-    const unionFlags = { complete: true, archived: false };
-    const ownWorkflowFlags = { complete: false, archived: true };
+    const unionFlags = { complete: true };
+    const ownWorkflowFlags = { complete: false, countsTowardWip: true };
 
-    /* The union says "complete" (so: offer Archive); the task's own workflow says "archived"
-       (so: do not offer Archive, offer Revert). They must not agree by construction. */
     expect(isCompleteColumnRole(unionFlags, "wrapped")).toBe(true);
     expect(isCompleteColumnRole(ownWorkflowFlags, "wrapped")).toBe(false);
-    expect(isArchivedColumnRole(ownWorkflowFlags, "wrapped")).toBe(true);
   });
 
   /* The ratchet: the per-task sites must not read the union map directly. */
@@ -166,11 +155,11 @@ describe("board surfaces resolve column roles per column, not per board", () => 
     the violation, regardless of how the union is reached.
     */
     const columnLevelPredicatesAskedPerTask = outsideAccessor.match(
-      /\bis(?:Complete|Archived|Intake|Review|Wip)Column\(\s*task\.column\s*\)/g,
+      /\bis(?:Complete|Intake|Review|Wip)Column\(\s*task\.column\s*\)/g,
     );
     expect(
       columnLevelPredicatesAskedPerTask,
-      "a per-task question must use the per-task predicate (isTaskCompleteColumn/isTaskArchivedColumn), "
+      "a per-task question must use the per-task predicate (for example isTaskCompleteColumn), "
         + "not the column-level one — the column-level pair reads the cross-workflow union",
     ).toBeNull();
   });
@@ -201,7 +190,6 @@ describe("board surfaces resolve column roles per column, not per board", () => 
   /* And the behaviour that rule produces: absent flags degrade to the legacy id, per column. */
   it("absent flags degrade per column rather than granting a neighbour's role", () => {
     expect(isCompleteColumnRole(undefined, "wrapped")).toBe(false);
-    expect(isArchivedColumnRole(undefined, "wrapped")).toBe(false);
     expect(isCompleteColumnRole(undefined, "done")).toBe(true);
   });
 });

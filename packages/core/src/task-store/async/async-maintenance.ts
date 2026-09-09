@@ -20,8 +20,9 @@ export interface OperationalLogPruneResult {
  * maintenance sweep (`prune-agent-log-files`) called it unguarded, so every PG
  * sweep with retention enabled threw and agent-log pruning never ran. This
  * async variant is the PostgreSQL equivalent: it reads the inactive task ids
- * (`deleted_at IS NOT NULL OR column = 'archived'`, project-scoped) from
- * `project.tasks` and delegates the file pruning to the shared helper. Query
+ * (`deleted_at IS NOT NULL OR column = 'archived'`, where `archived` is the
+ * historical persistence sentinel) from project-scoped `project.tasks` and delegates
+ * file pruning to the shared helper. Query
  * semantics mirror the SQLite path exactly.
  */
 export async function pruneAgentLogFilesAsync(
@@ -38,11 +39,9 @@ export async function pruneAgentLogFilesAsync(
   }
   const projectId = boundProjectId || "__legacy_unscoped__";
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-30-22:12 DELIBERATE-LITERAL:
-  `'archived'` is the STATE marker here, not a lane. This sweep collects rows Fusion itself archived
-  or soft-deleted; a card merely sitting in a workflow's archived-TRAIT lane is live work and must not
-  be collected. Widening to the resolved archived set would pull real cards into a cleanup pass.
-  See #2839 for why the live-VIEW exclusions that share this literal are a different question.
+  FNXC:TaskArchiveRemoval 2026-09-04-18:25 DELIBERATE-LITERAL:
+  `archived` is the historical persistence sentinel here, not a workflow lane. This maintenance
+  helper collects sentinel and soft-deleted rows only; task workflows expose no archive trait.
   */
   const rows = (await layer.db.execute(
     sql`SELECT id FROM project.tasks WHERE project_id = ${projectId} AND (deleted_at IS NOT NULL OR "column" = 'archived')`,

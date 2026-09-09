@@ -10,10 +10,9 @@
  *
  * Document/artifact parent-task scoping (VAL-CROSS-015):
  *   Documents and artifacts scoped to a task are read-only when the task is
- *   archived. The upsert paths reject writes against archived tasks. The list
- *   paths filter by the parent task's live state (`deleted_at IS NULL` AND
- *   `column != 'archived'`) so rows scoped to an archived parent disappear
- *   from live views but are retained for restore.
+ *   soft-deleted or still carries the historical archive sentinel. Live list
+ *   paths hide those parents while named reads remain available for migration
+ *   and forensic recovery.
  *
  * JSON columns (VAL-SCHEMA-004):
  *   The `metadata` columns are jsonb in PostgreSQL. Drizzle returns them
@@ -28,22 +27,17 @@
 import { and, desc, eq, ilike, isNull, or } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import * as schema from "../../postgres/schema/index.js";
-import { projectScopeFor, recordRunAuditEventWithinTransaction, type AsyncDataLayer, type DbTransaction } from "../../postgres/data-layer.js";
+import { projectScopeFor, type AsyncDataLayer, type DbTransaction } from "../../postgres/data-layer.js";
 import { ACTIVE_TASK_FILTER } from "./async-persistence.js";
 import { projectPartition } from "./async-lifecycle.js";
 import {
-  ARCHIVED_TASK_DOCUMENT_ADDITION_BOUNDARY,
-  ArchivedTaskDocumentPublicationRejectedError,
   assertTaskDocumentPreconditions,
   taskDocumentContentHash,
-  validateArchivedTaskDocumentAddition,
 } from "../../task-document-concurrency.js";
 import type {
   Artifact,
   ArtifactCreateInput,
   ArtifactWithTask,
-  ArchivedTaskDocumentAdditionInput,
-  ArchivedTaskDocumentAdditionResult,
   TaskDocument,
   TaskDocumentCreateInput,
   TaskDocumentWithTask,
@@ -115,35 +109,19 @@ function rowToArtifact(row: ArtifactRow): Artifact {
 
 /**
  * FNXC:TaskStoreCommentsAttachments 2026-06-24-09:35:
- * Check whether a task is live (exists, not soft-deleted, not archived). This
- * is the document/artifact write gate — upserts are rejected against archived
- * or soft-deleted tasks. Returns the task's column if live, or `null` if the
- * task is absent, archived, or soft-deleted.
+ * Return a task's live column, `null` for absence, or the stable historical sentinel for a
+ * soft-deleted/pre-reintegration row. Document, comment, log, and artifact writes share this
+ * project-scoped gate so deleted history stays read-only.
  */
-/*
-FNXC:WorkflowLifecycleColumns 2026-07-31-04:10:
-The sentinel is only as correct as the lane test that PRODUCES it.
-
-A dozen call sites across five files compare this function's result against the string "archived",
-and every one of those comparisons is right precisely because this function manufactures it. Keyed on
-the literal, a live row in a renamed archived lane (`vault`, not soft-deleted) was reported as LIVE —
-so documents stayed readable and writable, artifacts listed, and log writes were accepted on a card
-the board shows as archived. Fixing the twelve comparisons individually would have been wrong twice
-over: they are sentinels, and the defect is here.
-
-`archivedColumns` is threaded from the store-level impls, which are the only layer that can resolve
-it — this function holds a `db` handle. Omitted, the legacy id answers, which is the behaviour every
-caller had before.
-*/
 export async function getLiveTaskColumn(
   db: AsyncDataLayer["db"] | DbTransaction,
   taskId: string,
   projectId?: string,
-  archivedColumns?: ReadonlySet<string>,
+  historicalSentinelColumns?: ReadonlySet<string>,
 ): Promise<string | null> {
   /*
   FNXC:PostgresArchiveSafety 2026-07-14-21:48:
-  PostgreSQL async log, comment, document, and artifact paths must distinguish an archived or soft-deleted parent from a missing task within the bound project. Task IDs repeat across projects, so the state gate must never borrow another project's live or archived row.
+  Task IDs repeat across projects, so historical/read-only classification must remain project-scoped.
   */
   const rows = await db
     .select({ column: schema.project.tasks.column, deletedAt: schema.project.tasks.deletedAt })
@@ -155,53 +133,30 @@ export async function getLiveTaskColumn(
     .limit(1);
   const row = rows[0];
   if (!row) return null;
-  /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-23:51 (DELIBERATE-LITERAL — FALLBACK ARM, not pending work):
-  `archivedColumns` is the resolved path; the literal is reached only when a caller supplies no
-  resolved set. `archived-column-gate-parity.test.ts` opens by naming THIS FILE as the worked example
-  of why the archived gate cannot be converted one encoding at a time — the SQL halves in this same
-  module still compare the raw string, so converting the TypeScript arm alone is the split brain it
-  describes. Marked so the census stops offering it as available; the comparison is unchanged and that
-  guard's scan is marker-blind, so its audited inventory is untouched.
-  */
-  const isArchivedLane = archivedColumns ? archivedColumns.has(row.column) : row.column === "archived";
-  if (isArchivedLane || row.deletedAt != null) return "archived";
+  const historical = historicalSentinelColumns ? historicalSentinelColumns.has(row.column) : row.column === "archived";
+  if (historical || row.deletedAt != null) return "archived";
   return row.column;
 }
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-30-23:40:
-The ARCHIVED-lane checks that read a task row, as opposed to the sentinel ones that do not.
-
-`packages/core/src/task-store/async-comments-attachments.ts` holds both classes spelled identically,
-which is why they were miscounted once already (#2877 review). The comparisons downstream of
-`getLiveTaskColumn` test that function's MANUFACTURED "archived" and must stay literal. These two test
-`task.column` straight off a row `select`, so they are board lanes and a renamed archived column is
-simply not recognised:
-
-  - `upsertTaskDocument` fails to reject, so an ARCHIVED card's documents stay WRITABLE;
-  - `publishArchivedTaskDocumentAddition` fails to accept, rejecting a legitimate archived-document
-    publication as `parent-not-archived` / `archived-state-inconsistent` — a false rejection of valid
-    operator work, which is the sharper of the two.
-
-Both take an `AsyncDataLayer` and cannot resolve anything themselves; their store-level impls can, so
-the lane set arrives as a parameter. Optional with the legacy id as the default, so a caller that
-resolves nothing keeps today's behaviour exactly.
+FNXC:HistoricalTaskSentinel 2026-09-04-14:51:
+The archived literal remains only as a read-safety sentinel for pre-reintegration rows. It is not a
+workflow trait or writable task destination; soft-deleted and sentinel parents stay out of live lists.
 */
-const LEGACY_ARCHIVED_LANES: ReadonlySet<string> = new Set(["archived"]);
+const HISTORICAL_SENTINEL_LANES: ReadonlySet<string> = new Set(["archived"]);
 
-/** Board columns that mean "archived"; omit to keep the built-in id. */
-export type ArchivedLanes = ReadonlySet<string> | undefined;
+/** Historical task sentinels; omit to use the legacy persisted literal. */
+export type HistoricalSentinelLanes = ReadonlySet<string> | undefined;
 
-const isArchivedLane = (column: string | null | undefined, lanes: ArchivedLanes): boolean =>
-  column != null && (lanes ?? LEGACY_ARCHIVED_LANES).has(column);
+const isHistoricalSentinel = (column: string | null | undefined, lanes: HistoricalSentinelLanes): boolean =>
+  column != null && (lanes ?? HISTORICAL_SENTINEL_LANES).has(column);
 
 // ── Task documents ───────────────────────────────────────────────────
 
 /**
  * FNXC:TaskStoreCommentsAttachments 2026-06-24-09:40:
  * Read a task document by (taskId, key). Direct named reads include retained
- * archived documents; missing parents and keys return `null`. Editable list
+ * historical documents; missing parents and keys return `null`. Editable list
  * surfaces remain live-only through `listTaskDocuments`.
  */
 export async function getTaskDocument(
@@ -210,8 +165,8 @@ export async function getTaskDocument(
   key: string,
   projectId?: string,
 
-  archivedColumns?: ReadonlySet<string>,): Promise<TaskDocument | null> {
-  const column = await getLiveTaskColumn(db, taskId, projectId, archivedColumns);
+  historicalSentinelColumns?: ReadonlySet<string>,): Promise<TaskDocument | null> {
+  const column = await getLiveTaskColumn(db, taskId, projectId, historicalSentinelColumns);
   if (column === null) return null;
 
   const rows = await db
@@ -247,7 +202,7 @@ export async function upsertTaskDocument(
   layer: AsyncDataLayer,
   taskId: string,
   input: TaskDocumentCreateInput,
-  archivedColumns?: ReadonlySet<string>,
+  historicalSentinelColumns?: ReadonlySet<string>,
 ): Promise<TaskDocument> {
   return layer.transactionImmediate(async (tx) => {
     const projectId = projectPartition(layer.projectId);
@@ -265,8 +220,8 @@ export async function upsertTaskDocument(
       .limit(1)
       .for("update");
     const task = taskRows[0];
-    if (isArchivedLane(task?.column, archivedColumns) || task?.deletedAt != null) {
-      throw new Error(`Task ${taskId} is archived — documents are read-only`);
+    if (isHistoricalSentinel(task?.column, historicalSentinelColumns) || task?.deletedAt != null) {
+      throw new Error(`Task ${taskId} is deleted or historical — documents are read-only`);
     }
     if (!task) throw new Error(`Task ${taskId} not found`);
 
@@ -360,129 +315,7 @@ export async function upsertTaskDocument(
 }
 
 /**
- * FNXC:ArchivedTaskDocumentPublication 2026-07-20-15:36:
- * This is the sole PostgreSQL mutation allowed for a retained archived document. It locks the project-scoped parent and current document, requires the tombstone and cold archive snapshot to agree, checks both FX-004 CAS values before writing, archives the exact prior current row, and appends a fixed two-newline boundary plus caller bytes. Audit commits in the same transaction and stores no correction or reason prose. No task, archive, mission, citation, event, or scheduler row is touched.
- */
-export async function publishArchivedTaskDocumentAddition(
-  layer: AsyncDataLayer,
-  taskId: string,
-  input: ArchivedTaskDocumentAdditionInput,
-  archivedColumns?: ReadonlySet<string>,
-): Promise<ArchivedTaskDocumentAdditionResult> {
-  validateArchivedTaskDocumentAddition(input);
-  return layer.transactionImmediate(async (tx) => {
-    const projectId = projectPartition(layer.projectId);
-    const taskRows = await tx
-      .select({ column: schema.project.tasks.column, deletedAt: schema.project.tasks.deletedAt })
-      .from(schema.project.tasks)
-      .where(and(
-        eq(schema.project.tasks.projectId, projectId),
-        eq(schema.project.tasks.id, taskId),
-      ))
-      .limit(1)
-      .for("update");
-    const task = taskRows[0];
-    if (!task) {
-      throw new ArchivedTaskDocumentPublicationRejectedError("parent-not-found", projectId, taskId, input.key);
-    }
-    if (!isArchivedLane(task.column, archivedColumns) && task.deletedAt == null) {
-      throw new ArchivedTaskDocumentPublicationRejectedError("parent-not-archived", projectId, taskId, input.key);
-    }
-
-    const archiveRows = await tx
-      .select({ id: schema.archive.archivedTasks.id })
-      .from(schema.archive.archivedTasks)
-      .where(and(
-        eq(schema.archive.archivedTasks.projectId, projectId),
-        eq(schema.archive.archivedTasks.id, taskId),
-      ))
-      .limit(1)
-      .for("key share");
-    if (!isArchivedLane(task.column, archivedColumns) || task.deletedAt == null || !archiveRows[0]) {
-      throw new ArchivedTaskDocumentPublicationRejectedError("archived-state-inconsistent", projectId, taskId, input.key);
-    }
-
-    const existingRows = await tx
-      .select()
-      .from(schema.project.taskDocuments)
-      .where(and(
-        eq(schema.project.taskDocuments.projectId, projectId),
-        eq(schema.project.taskDocuments.taskId, taskId),
-        eq(schema.project.taskDocuments.key, input.key),
-      ))
-      .limit(1)
-      .for("update");
-    const existing = existingRows[0] as TaskDocumentRow | undefined;
-    if (!existing) {
-      throw new ArchivedTaskDocumentPublicationRejectedError("document-not-found", projectId, taskId, input.key);
-    }
-
-    assertTaskDocumentPreconditions(
-      { projectId, taskId, key: input.key },
-      { expectedRevision: input.expectedRevision, expectedContentHash: input.expectedContentHash },
-      { revision: existing.revision, content: existing.content },
-    );
-
-    const now = new Date().toISOString();
-    const content = existing.content + ARCHIVED_TASK_DOCUMENT_ADDITION_BOUNDARY + input.appendContent;
-    const nextRevision = existing.revision + 1;
-    await tx.insert(schema.project.taskDocumentRevisions).values({
-      projectId,
-      taskId,
-      key: input.key,
-      content: existing.content,
-      revision: existing.revision,
-      author: existing.author,
-      metadata: existing.metadata ?? null,
-      createdAt: now,
-    });
-    await tx
-      .update(schema.project.taskDocuments)
-      .set({ content, revision: nextRevision, author: input.author, updatedAt: now })
-      .where(and(
-        eq(schema.project.taskDocuments.projectId, projectId),
-        eq(schema.project.taskDocuments.taskId, taskId),
-        eq(schema.project.taskDocuments.key, input.key),
-      ));
-    await recordRunAuditEventWithinTransaction(tx, {
-      taskId,
-      agentId: input.author,
-      runId: `archived-document-publication:${randomUUID()}`,
-      domain: "database",
-      mutationType: "task-document:archived-addition-published",
-      target: `${taskId}:${input.key}`,
-      metadata: {
-        projectId,
-        key: input.key,
-        previousRevision: existing.revision,
-        revision: nextRevision,
-        reasonProvided: true,
-        outcome: "published",
-      },
-    });
-
-    const rows = await tx
-      .select()
-      .from(schema.project.taskDocuments)
-      .where(and(
-        eq(schema.project.taskDocuments.projectId, projectId),
-        eq(schema.project.taskDocuments.taskId, taskId),
-        eq(schema.project.taskDocuments.key, input.key),
-      ))
-      .limit(1);
-    const row = rows[0] as TaskDocumentRow | undefined;
-    if (!row) throw new Error(`Failed to publish archived document addition for ${taskId}/${input.key}`);
-    return {
-      document: rowToTaskDocument(row),
-      previousRevision: existing.revision,
-      previousContentHash: taskDocumentContentHash(existing.content),
-      appendedContentHash: taskDocumentContentHash(content),
-    };
-  });
-}
-
-/**
- * List all documents for a LIVE parent task (archived/soft-deleted parents
+ * List all documents for a LIVE parent task (historical-sentinel/soft-deleted parents
  * return an empty list). This is the async equivalent of the sync
  * `hasActiveTask`-gated document list.
  */
@@ -491,8 +324,8 @@ export async function listTaskDocuments(
   taskId: string,
   projectId?: string,
 
-  archivedColumns?: ReadonlySet<string>,): Promise<TaskDocument[]> {
-  const column = await getLiveTaskColumn(db, taskId, projectId, archivedColumns);
+  historicalSentinelColumns?: ReadonlySet<string>,): Promise<TaskDocument[]> {
+  const column = await getLiveTaskColumn(db, taskId, projectId, historicalSentinelColumns);
   /*
   FNXC:LifecycleColumnCensus 2026-07-30-21:10 DELIBERATE-LITERAL: a SENTINEL, not a board lane.
   
@@ -528,8 +361,8 @@ export async function getTaskDocumentRevisions(
   key: string,
   projectId?: string,
 
-  archivedColumns?: ReadonlySet<string>,): Promise<TaskDocumentRevisionRow[]> {
-  const column = await getLiveTaskColumn(db, taskId, projectId, archivedColumns);
+  historicalSentinelColumns?: ReadonlySet<string>,): Promise<TaskDocumentRevisionRow[]> {
+  const column = await getLiveTaskColumn(db, taskId, projectId, historicalSentinelColumns);
   if (column === null) return [];
 
   const rows = await db
@@ -565,9 +398,9 @@ export async function deleteTaskDocument(
   taskId: string,
   key: string,
 
-  archivedColumns?: ReadonlySet<string>,): Promise<void> {
+  historicalSentinelColumns?: ReadonlySet<string>,): Promise<void> {
   return layer.transactionImmediate(async (tx) => {
-    const state = await getLiveTaskColumn(tx, taskId, layer.projectId, archivedColumns);
+    const state = await getLiveTaskColumn(tx, taskId, layer.projectId, historicalSentinelColumns);
     /*
     FNXC:LifecycleColumnCensus 2026-07-30-21:10 DELIBERATE-LITERAL: a SENTINEL, not a board lane.
     
@@ -581,7 +414,7 @@ export async function deleteTaskDocument(
     archived and soft-deleted into one string. Converting this comparison would therefore keep passing on
     the built-in board and start FAILING on a renamed one — a soft-deleted task would read as not-archived.
     */
-    if (state === "archived") throw new Error(`Task ${taskId} is archived — documents are read-only`);
+    if (state === "archived") throw new Error(`Task ${taskId} is deleted or historical — documents are read-only`);
     if (state === null) throw new Error(`Task ${taskId} not found`);
     const existing = await tx
       .select({ id: schema.project.taskDocuments.id })
@@ -622,7 +455,7 @@ export async function deleteTaskDocument(
  * FNXC:TaskStoreCommentsAttachments 2026-06-24-09:50:
  * Insert an artifact row. The binary payload is written to disk by the caller
  * (the store's artifact-registry path); this helper only persists the metadata
- * row. The upsert is rejected against archived tasks (the gate mirrors
+ * row. The upsert is rejected for deleted or historical-sentinel tasks (the gate mirrors
  * `upsertTaskDocument`). This is the async equivalent of `insertArtifactRow`.
  *
  * @param layer The async data layer (the insert runs in its own transaction
@@ -637,11 +470,11 @@ export async function insertArtifactRow(
   input: ArtifactCreateInput,
   stored: { uri?: string; sizeBytes?: number },
 
-  archivedColumns?: ReadonlySet<string>,): Promise<Artifact> {
+  historicalSentinelColumns?: ReadonlySet<string>,): Promise<Artifact> {
   return layer.transactionImmediate(async (tx) => {
     // Gate: if taskId is set, the parent must be live.
     if (input.taskId) {
-      const column = await getLiveTaskColumn(tx, input.taskId, layer.projectId, archivedColumns);
+      const column = await getLiveTaskColumn(tx, input.taskId, layer.projectId, historicalSentinelColumns);
       /*
       FNXC:LifecycleColumnCensus 2026-07-30-21:10 DELIBERATE-LITERAL: a SENTINEL, not a board lane.
       
@@ -656,7 +489,7 @@ export async function insertArtifactRow(
       the built-in board and start FAILING on a renamed one — a soft-deleted task would read as not-archived.
       */
       if (column === "archived") {
-        throw new Error(`Task ${input.taskId} is archived — artifacts are read-only`);
+        throw new Error(`Task ${input.taskId} is deleted or historical — artifacts are read-only`);
       }
       if (column === null) {
         throw new Error(`Task ${input.taskId} not found`);
@@ -708,14 +541,14 @@ export async function updateArtifactRow(
   id: string,
   updates: { title?: string; description?: string; content?: string },
 
-  archivedColumns?: ReadonlySet<string>,): Promise<Artifact> {
+  historicalSentinelColumns?: ReadonlySet<string>,): Promise<Artifact> {
   return layer.transactionImmediate(async (tx) => {
     const existing = await getArtifact(tx, id, layer.projectId);
     if (!existing) {
       throw new Error(`Artifact ${id} not found`);
     }
     if (existing.taskId) {
-      const column = await getLiveTaskColumn(tx, existing.taskId, layer.projectId, archivedColumns);
+      const column = await getLiveTaskColumn(tx, existing.taskId, layer.projectId, historicalSentinelColumns);
       /*
       FNXC:LifecycleColumnCensus 2026-07-30-21:10 DELIBERATE-LITERAL: a SENTINEL, not a board lane.
       
@@ -730,7 +563,7 @@ export async function updateArtifactRow(
       the built-in board and start FAILING on a renamed one — a soft-deleted task would read as not-archived.
       */
       if (column === "archived") {
-        throw new Error(`Task ${existing.taskId} is archived — artifacts are read-only`);
+        throw new Error(`Task ${existing.taskId} is deleted or historical — artifacts are read-only`);
       }
       if (column === null) throw new Error(`Task ${existing.taskId} not found`);
     }
@@ -793,8 +626,8 @@ export async function getArtifacts(
   taskId: string,
   projectId?: string,
 
-  archivedColumns?: ReadonlySet<string>,): Promise<Artifact[]> {
-  const column = await getLiveTaskColumn(db, taskId, projectId, archivedColumns);
+  historicalSentinelColumns?: ReadonlySet<string>,): Promise<Artifact[]> {
+  const column = await getLiveTaskColumn(db, taskId, projectId, historicalSentinelColumns);
   /*
   FNXC:LifecycleColumnCensus 2026-07-30-21:10 DELIBERATE-LITERAL: a SENTINEL, not a board lane.
   

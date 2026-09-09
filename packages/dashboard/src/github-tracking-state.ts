@@ -17,7 +17,6 @@ arm stays on the backlog permanently, and the number stops distinguishing real d
 degraded answers. Same shape as `LEGACY_PLANNER_LANES` and `LEGACY_TERMINAL_COLUMNS`.
 */
 const LEGACY_COMPLETE_LANES: ReadonlySet<string> = new Set(["done"]);
-const LEGACY_ARCHIVE_LANES: ReadonlySet<string> = new Set(["archived"]);
 
 
 
@@ -38,26 +37,18 @@ interface TaskMovedEvent {
       };
     };
   };
-  // #1403: the store's `task:moved` event carries `ColumnId` (custom column ids
-  // admitted). U12 re-keys the decision on the complete/archived traits, so a
-  // workflow-defined terminal column maps to GitHub state like `done` does.
+  // The store's task:moved event admits custom column ids. Completion decisions
+  // resolve the task workflow so renamed Complete columns behave like Done.
   from: string;
   to: string;
 }
 
 /*
-FNXC:WorkflowColumns 2026-07-19-2b:50 (U12 / R2):
-GitHub open/closed state keys on the `complete` and `archived` TRAITS, not the literal ids `done`
-and `archived`. A user-authored workflow whose terminal column is called something else never
-closed its linked GitHub issue, and a custom archive column never mapped to `not_planned`.
-
-`classify` is injected rather than resolved here so this stays a pure decision function (the
-caller owns IR resolution). Its default reproduces the legacy literal mapping exactly, so every
-existing caller and the default workflow are byte-identical.
+FNXC:WorkflowColumns 2026-09-04-10:36:
+GitHub issue state follows the Complete role. The injected classifier keeps this decision pure while the caller owns workflow resolution.
 */
 export interface ColumnLifecycleClass {
   complete: boolean;
-  archived: boolean;
 }
 
 /*
@@ -73,7 +64,6 @@ marker — which is why the wiring change and this marker are in the same commit
 */
 export const legacyColumnLifecycleClass = (columnId: string): ColumnLifecycleClass => ({
   complete: columnId === "done",
-  archived: columnId === "archived",
 });
 
 export function decideIssueAction(
@@ -84,23 +74,8 @@ export function decideIssueAction(
   const fromClass = classify(from);
   const toClass = classify(to);
 
-  // Un-archiving back into the completed column re-opens the issue.
-  if (fromClass.archived && toClass.complete) {
-    return { action: "reopen", stateReason: "reopened" };
-  }
-
   if (toClass.complete && !fromClass.complete) {
     return { action: "close", stateReason: "completed" };
-  }
-
-  if (toClass.archived) {
-    if (fromClass.complete) {
-      return { action: "close", stateReason: "completed" };
-    }
-    if (!fromClass.archived) {
-      return { action: "close", stateReason: "not_planned" };
-    }
-    return null;
   }
 
   // Leaving the completed column re-opens the issue.
@@ -233,14 +208,8 @@ export class GitHubTrackingStateService {
     }
 
     /*
-    FNXC:WorkflowResolvedColumns 2026-07-30-14:20 (PR #2754 review — greptile):
-    EVERY TERMINAL LANE, NOT THE FIRST ONE. `LifecycleColumns` names one column per role by design
-    (#2721 pinned that), so a workflow declaring `complete` or `archived` on two columns had the second
-    invisible here: moving a card there left the linked GitHub issue OPEN, and moving it back out never
-    reopened one.
-
-    Core's `resolveTerminalColumns` does not help — it is the same singular pair, one `complete` and one
-    `archived`. The flag sets are the membership answer.
+    FNXC:WorkflowResolvedColumns 2026-09-04-10:36:
+    Resolve every Complete lane, not only the first one. A workflow may declare more than one Complete column, and each one must close the linked issue.
 
     RESOLUTION FAILURE vs A RESOLVED ABSENCE, the distinction this program keeps paying for (#2731,
     #2733, #2734): `ir === undefined` means the workflow could not be READ, and the legacy ids are the
@@ -270,10 +239,8 @@ export class GitHubTrackingStateService {
     const ir = await resolveWorkflowIrForTask(store, event.task.id).catch(() => undefined);
     const traitsExpressed = ir !== undefined && declaresAnyLifecycleTrait(ir);
     const completeLanes = ir === undefined || !traitsExpressed ? undefined : columnsWithFlag(ir, "complete");
-    const archivedLanes = ir === undefined || !traitsExpressed ? undefined : columnsWithFlag(ir, "archived");
     const decision = decideIssueAction(event.from, event.to, (columnId) => ({
       complete: completeLanes === undefined ? LEGACY_COMPLETE_LANES.has(columnId) : completeLanes.includes(columnId),
-      archived: archivedLanes === undefined ? LEGACY_ARCHIVE_LANES.has(columnId) : archivedLanes.includes(columnId),
     }));
     if (!decision) {
       return;

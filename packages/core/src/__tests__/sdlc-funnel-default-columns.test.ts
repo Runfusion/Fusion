@@ -41,18 +41,11 @@ describe("the funnel's built-in column fallback tracks the SHIPPED default board
     const stageMap = buildColumnStageMap(columns);
 
     expect(columns.length).toBeGreaterThan(0);
-    /*
-    `archived` is EXCLUDED, and my first version of this assertion got that wrong — it failed on the
-    archived column and I nearly read that as a product bug. The funnel's stages are the SDLC path
-    (triage -> todo -> in-progress -> in-review -> done); archived is not a stage on it, so folding to
-    `other` there is correct. Measured mapping on the shipped board:
-      todo -> triage (intake/hold) | in-progress -> in-progress | in-review -> in-review | done -> done
-    Note `todo` maps to the `triage` STAGE because it carries the intake trait — the post-U11 merged
-    planning column, which is exactly what the legacy fallback could not express.
-    */
-    const funnelColumns = columns.filter((column) => !column.traits.some((t) => t.trait === "archived"));
-    expect(funnelColumns.length).toBeGreaterThan(0);
-    for (const column of funnelColumns) {
+    /* The shipped board now consists entirely of SDLC stages. `todo` maps to the `triage` STAGE
+    because it carries the intake trait — the post-U11 merged planning column, which is exactly what
+    the legacy fallback could not express. */
+    expect(columns.length).toBeGreaterThan(0);
+    for (const column of columns) {
       expect(stageMap.get(column.id)).not.toBe("other");
     }
   });

@@ -38,6 +38,7 @@ import { useConfirm } from "../hooks/useConfirm";
 import type { ToastType } from "../hooks/useToast";
 import { useViewportMode } from "../hooks/useViewportMode";
 import { useNavigationHistoryContext } from "../hooks/useNavigationHistory";
+import { useAutoPaginationSentinel } from "../hooks/useAutoPaginationSentinel";
 import { subscribeSse } from "../sse-bus";
 import { MissionInterviewModal } from "./MissionInterviewModal";
 import { MilestoneSliceInterviewModal } from "./MilestoneSliceInterviewModal";
@@ -1215,6 +1216,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
   const activeTabRef = useRef<"structure" | "activity">("structure");
   const eventsFilterRef = useRef<"all" | "errors" | "state_changes" | "tasks" | "slices" | "autopilot">("all");
   const [eventsLoading, setEventsLoading] = useState(false);
+  const missionActivityRef = useRef<HTMLDivElement | null>(null);
   const [eventsTotal, setEventsTotal] = useState(0);
   const [eventsFilter, setEventsFilter] = useState<
     "all" | "errors" | "state_changes" | "tasks" | "slices" | "autopilot"
@@ -3117,6 +3119,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
 
     void loadMissionEvents(selectedMission.id, { append: true });
   }, [eventsLoading, hasMoreEvents, loadMissionEvents, selectedMission]);
+  const missionEventPagination = useAutoPaginationSentinel({ rootRef: missionActivityRef, hasMore: hasMoreEvents, loading: eventsLoading, onLoadMore: handleLoadMoreEvents, direction: "start" });
 
   const toggleEventMetadata = useCallback((eventId: string) => {
     setExpandedEventMetadata((prev) => {
@@ -4862,7 +4865,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                 )}
                 </div>
               ) : (
-                <div className="mission-detail__activity" data-testid="mission-activity-tab">
+                <div className="mission-detail__activity" data-testid="mission-activity-tab" ref={missionActivityRef}>
                   <div className="mission-detail__activity-controls">
                     <label className="mission-detail__activity-filter">
                       <span>{t("missions.filterLabel", "Filter")}</span>
@@ -4884,17 +4887,9 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                     </span>
                   </div>
 
-                  {!eventsLoading && hasMoreEvents && (
-                    <div className="mission-detail__activity-load-more mission-detail__activity-load-more--top">
-                      <button
-                        className="mission-btn mission-btn--ghost"
-                        onClick={handleLoadMoreEvents}
-                        data-testid="mission-activity-load-more"
-                      >
-                        {t("missions.loadMore", "Load more")}
-                      </button>
-                    </div>
-                  )}
+                  {hasMoreEvents ? (
+                    <div ref={missionEventPagination.sentinelRef} className="mission-detail__activity-load-more mission-detail__activity-load-more--top" data-testid="mission-activity-auto-pagination-sentinel" role="status" aria-live="polite" />
+                  ) : null}
 
                   {eventsLoading ? (
                     <div className="mission-manager__loading mission-detail__activity-loading">

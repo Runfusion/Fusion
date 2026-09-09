@@ -165,46 +165,6 @@ export const schedulingSearchEntries: SettingsSearchEntry[] = [
   },
   {
     sectionId: "scheduling",
-    key: "autoArchiveDoneTasksEnabled",
-    labelKey: "settings.scheduling.enableAutomaticTaskArchiving",
-    labelFallback: " Enable automatic task archiving ",
-    helpKey: "settings.scheduling.completedTasksOlderThanTheThresholdAreMoved",
-    helpFallback:
-      "Completed tasks older than the threshold are moved out of the active task database. Default: enabled.",
-    keywords: ["done column", "cleanup", "prune", "board clutter"],
-  },
-  {
-    sectionId: "scheduling",
-    key: "autoArchiveDoneAfterMs",
-    labelKey: "settings.scheduling.archiveCompletedTasksAfterDays",
-    labelFallback: "Archive Completed Tasks After (days)",
-    helpKey: "settings.scheduling.numberOfDaysATaskCanStayIn",
-    helpFallback:
-      "Number of days a task can stay in Done before it is archived. Default: 2 days (48 hours).",
-    keywords: ["retention", "cleanup", "age"],
-  },
-  {
-    sectionId: "scheduling",
-    key: "archiveAgentLogMode",
-    labelKey: "settings.scheduling.archiveAgentLog",
-    labelFallback: "Archive Agent Log",
-    helpKey: "settings.scheduling.compactModeKeepsArchiveSizeLowWhilePreserving",
-    helpFallback:
-      "Compact mode keeps archive size low while preserving recent agent activity for context. Default: compact.",
-    keywords: ["history", "transcript", "disk space", "retention"],
-  },
-  {
-    sectionId: "scheduling",
-    key: "autoArchiveDuplicateTasksEnabled",
-    labelKey: "settings.scheduling.autoArchiveDuplicateTasks",
-    labelFallback: " Automatically archive duplicate tasks ",
-    helpKey: "settings.scheduling.autoArchiveDuplicateTasksHelp",
-    helpFallback:
-      "Automatically archive tasks detected as same-agent duplicates on creation (off by default). When disabled, duplicates are flagged in place with the yellow Duplicate chip and Keep/Archive actions instead of being archived automatically.",
-    keywords: ["near duplicate", "dedupe", "repeat"],
-  },
-  {
-    sectionId: "scheduling",
     key: "triageDuplicateResolution",
     labelKey: "settings.scheduling.triageDuplicateResolution",
     labelFallback: "Triage duplicate resolution",

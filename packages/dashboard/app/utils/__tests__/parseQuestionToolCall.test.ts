@@ -76,6 +76,26 @@ describe("parseQuestionToolCall", () => {
     ]);
   });
 
+  it("preserves optionality from native and third-party question payloads", () => {
+    const native = parseQuestionToolCall(toolCall("fn_ask_question", {
+      questions: [
+        { question: "Required", type: "text" },
+        { question: "Optional", type: "text", optional: true },
+      ],
+    }));
+    const thirdParty = parseQuestionToolCall(toolCall("ask_user", {
+      questions: [
+        { question: "Optional", required: false },
+        { question: "Required", required: true },
+      ],
+    }));
+    const single = parseQuestionToolCall(toolCall("ask_question", { question: "Notes", optional: true }));
+
+    expect(native?.questions.map((question) => question.optional)).toEqual([undefined, true]);
+    expect(thirdParty?.questions.map((question) => question.optional)).toEqual([true, undefined]);
+    expect(single?.questions[0]?.optional).toBe(true);
+  });
+
   it("falls back for malformed, empty option select, and non-question tools", () => {
     expect(parseQuestionToolCall(toolCall("ask_user"))).toBeNull();
     expect(parseQuestionToolCall(toolCall("ask_user", { question: "" }))).toBeNull();
@@ -88,6 +108,20 @@ describe("parseQuestionToolCall", () => {
     );
     expect(parseQuestionToolCall(toolCall("fn_ask_question", { question: "Pick many", type: "multi_select", options: [] }))?.questions[0]).toEqual(
       expect.objectContaining({ id: "q-0", type: "text", question: "Pick many", options: undefined }),
+    );
+  });
+
+  it("marks unanswered optional answers while preserving required and false confirmation answers", () => {
+    const questions = [
+      { id: "text", type: "text" as const, question: "Notes", optional: true },
+      { id: "many", type: "multi_select" as const, question: "Choices", optional: true },
+      { id: "answered", type: "text" as const, question: "Detail", optional: true },
+      { id: "required", type: "text" as const, question: "Required" },
+      { id: "confirm", type: "confirm" as const, question: "Proceed?", optional: true },
+    ];
+
+    expect(formatQuestionAnswer(questions, { text: "  ", many: [], answered: "Present", confirm: false })).toBe(
+      "> Q: Notes\n(no answer — optional)\n\n> Q: Choices\n(no answer — optional)\n\n> Q: Detail\nPresent\n\n> Q: Required\n(no answer)\n\n> Q: Proceed?\nNo",
     );
   });
 

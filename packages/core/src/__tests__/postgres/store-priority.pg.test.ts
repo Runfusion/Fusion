@@ -72,23 +72,4 @@ pgTest("TaskStore task priority (PostgreSQL)", () => {
     expect(updated.column).toBe("triage");
   });
 
-  // FNXC:SqliteFinalRemoval 2026-06-25:
-  // SKIPPED: archiveTask/unarchiveTask in backend mode is not yet fully wired
-  // (the archive DB path uses async-archive-lineage.ts but the composite
-  // move+archive operation has gaps). Un-skip once archive backend mode works.
-  it.skip("preserves explicit priority through archive and unarchive", async () => {
-    const store = h.store();
-    const task = await store.createTask({
-      description: "Archive priority task",
-      column: "done",
-      priority: "high",
-    });
-
-    await store.archiveTask(task.id, false);
-    const archived = await store.getTask(task.id);
-    expect(archived.priority).toBe("high");
-
-    const unarchived = await store.unarchiveTask(task.id);
-    expect(unarchived.priority).toBe("high");
-  });
 });

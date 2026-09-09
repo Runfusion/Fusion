@@ -70,26 +70,12 @@ function collectCommitSummary(task: TaskDetail): DeterministicSignals["commitSum
 }
 
 /*
-FNXC:WorkflowResolvedColumns 2026-07-31-23:55:
-`archivedColumns` is an optional RESOLVED answer supplied by the caller; omitted, the `archived`
-literal answers exactly as before.
-
-This collector is SYNC and pure — no store, no workflow — so the lane answer has to arrive as a
-parameter. `HybridEvaluatorService.evaluateTask` is async and already holds an optional store, which
-is where the resolution is paid.
-
-WHAT THE LITERAL COST. `column` is a two-value eval-record field, so a renamed ARCHIVE lane was
-recorded as `"done"`. Not a crash and not a lifecycle decision — a mislabelled row in the eval
-corpus, which is a dataset every later comparison reads. Wrong labels in evaluation data are quiet
-in exactly the way that makes them expensive: nothing fails, the numbers just drift.
-
-A renamed COMPLETE lane is unaffected either way — it was, and remains, `"done"`, which is correct.
-Only the archived arm was ever wrong, so only it is resolved.
+FNXC:TaskArchiveRemoval 2026-09-04-10:36:
+Evaluation records classify completed task evidence as Done. Deleted tasks are absent from evaluation intake rather than represented as a second terminal column.
 */
 export function collectDeterministicSignals(
   task: TaskDetail,
   _run: EvalRunContext,
-  options?: { archivedColumns?: ReadonlySet<string> },
 ): DeterministicSignals {
   const workflowSummary = countWorkflow(task.workflowStepResults);
   const logSummaryWithEvidence = summarizeLogs(task.log ?? []);
@@ -131,19 +117,7 @@ export function collectDeterministicSignals(
 
   return {
     taskId: task.id,
-    /*
-    FNXC:WorkflowResolvedColumns 2026-07-31-23:51 (DELIBERATE-LITERAL — this is a FALLBACK ARM, not
-    pending work): the resolved path is `options.archivedColumns`, and the literal is only reached when
-    a caller supplies no resolved set. Marked rather than converted because there is nothing left to
-    convert here: rewriting the fallback to resolve on its own would need a workflow read inside a
-    collector that takes none, and would move this file's TypeScript tally in
-    `archived-column-gate-parity.test.ts`, whose argument is that the archived gate's three encodings
-    must move together. The marker exempts it from the census; the comparison itself is unchanged, and
-    that guard's scan is marker-blind, so its inventory is untouched.
-    */
-    column: (options?.archivedColumns ? options.archivedColumns.has(task.column) : task.column === "archived")
-      ? "archived"
-      : "done",
+    column: "done",
     executionStartedAt: task.executionStartedAt,
     executionCompletedAt: task.executionCompletedAt,
     timedExecutionMs: task.timedExecutionMs,

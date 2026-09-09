@@ -194,7 +194,7 @@ describe("formatTaskPlannerChatMetrics", () => {
   });
 
   it("returns deterministic empty metrics when token and timing data are absent", () => {
-    const result = formatTaskPlannerChatMetrics(makeTask({ id: "FN-EMPTY", column: "archived", status: "done" }), {
+    const result = formatTaskPlannerChatMetrics(makeTask({ id: "FN-EMPTY", column: "done", status: "done" }), {
       nowMs: Date.parse("2026-07-01T12:00:00.000Z"),
     });
 

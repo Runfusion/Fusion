@@ -659,9 +659,7 @@ export class PluginLoader extends EventEmitter<{
         try {
           await rm(reloadedPath, { force: true });
         } catch {
-          // Best-effort scratch cleanup: this runs in `finally`, so a throw here would replace the
-          // import's real error (or its success) with an unlink failure. A leftover temp file is a
-          // strictly better outcome than losing the reason a plugin failed to load.
+          // Best-effort cleanup: a failed scratch removal should not fail a successful plugin import.
         }
       }
     } else {

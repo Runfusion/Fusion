@@ -5,6 +5,7 @@ import { SettingsSelectRow } from "../SettingsSelectRow";
 import { SettingsHelpTip } from "../SettingsHelpTip";
 import type { SectionBaseProps } from "./context";
 import { useTranslation } from "react-i18next";
+import { normalizeChatSubmitOnEnterMode } from "../../../context/ChatSubmitOnEnterContext";
 export type GlobalGeneralSectionProps = SectionBaseProps;
 /*
 FNXC:SettingsStyling 2026-07-15-17:35:
@@ -56,6 +57,21 @@ export function GlobalGeneralSection({ form, setForm }: GlobalGeneralSectionProp
         }}
         value={form.quickAddSubmitOnEnter !== false}
         onChange={(v) => setForm((f) => ({ ...f, quickAddSubmitOnEnter: v === true }))}
+      />
+      <SettingsSelectRow
+        descriptor={{
+          key: "chatSubmitOnEnter",
+          label: t("settings.globalGeneral.chatSubmitOnEnter", " Enter key behavior in conversations "),
+          help: t("settings.globalGeneral.chatSubmitOnEnterHint", " Default: automatic — Enter inserts a newline on touch devices with an on-screen keyboard, and sends on desktop. Shift+Enter never sends, even with Cmd/Ctrl held; it inserts a newline except in Chat while an autocomplete menu is open, where the files/tasks, agents and skills menus consume it instead. Cmd/Ctrl+Enter without Shift sends regardless of this setting and of the device. While an autocomplete menu is open it takes priority and consumes both Enter and Cmd/Ctrl+Enter; press Escape to close it. In the task chat, an in-progress IME composition takes priority over all of these. The Send button stays available whenever the draft is not empty. "),
+          scope: "global",
+          options: [
+            { value: "auto", label: t("settings.globalGeneral.chatSubmitOnEnterAuto", "Automatic (recommended)") },
+            { value: "always", label: t("settings.globalGeneral.chatSubmitOnEnterAlways", "Always send") },
+            { value: "never", label: t("settings.globalGeneral.chatSubmitOnEnterNever", "Never send") },
+          ],
+        }}
+        value={normalizeChatSubmitOnEnterMode(form.chatSubmitOnEnter)}
+        onChange={(v) => setForm((f) => ({ ...f, chatSubmitOnEnter: normalizeChatSubmitOnEnterMode(v) }))}
       />
       <SettingsToggleRow
         descriptor={{

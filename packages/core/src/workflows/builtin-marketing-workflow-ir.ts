@@ -36,7 +36,6 @@ const RAW_BUILTIN_MARKETING_WORKFLOW_IR: WorkflowIr = {
       traits: [{ trait: "merge-blocker" }, { trait: "human-review" }, { trait: "stall-detection" }, { trait: "merge" }],
     },
     { id: "published", name: "Published", traits: [{ trait: "complete" }] },
-    { id: "archived", name: "Archived", traits: [{ trait: "archived" }] },
   ],
   nodes: [
     { id: "start", kind: "start", column: "ideation" },

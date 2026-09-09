@@ -11,12 +11,14 @@ vi.mock("../execution/external-execution-checkout.js", () => ({
   resolveExternalExecutionCheckoutRoute: resolveExternalExecutionCheckoutRouteMock,
 }));
 import { routeRetryableRemediationGraphFailureToPreMergeFix } from "../executor/route-retryable-remediation.js";
-import { recoverFailedPreMergeWorkflowStep } from "../executor/recover-failed-pre-merge-step.js";
+import { recoverFailedPreMergeWorkflowStep, recoverFailedPreMergeWorkflowStepDetailed } from "../executor/recover-failed-pre-merge-step.js";
+import { appendReviewRemediationSteps } from "../executor/append-review-remediation-steps.js";
 import { requestPreMergeOptionalStepFix } from "../executor/request-pre-merge-optional-step-fix.js";
 import { routeReviewConvergenceLadder } from "../executor/review-convergence-ladder.js";
 import { runReviewArbitration } from "../executor/review-arbitration.js";
 import { resolveRemediationCheckout } from "../executor/resolve-remediation-checkout.js";
 import { sendTaskBackForFix } from "../executor/send-task-back-for-fix.js";
+import { reopenLastStepForRevision } from "../executor/reopen-last-step-for-revision.js";
 import { SelfHealingManager } from "../self-healing.js";
 import { EMPTY_REVIEW_DIFF_FINGERPRINT } from "../worktree/review-diff-fingerprint.js";
 
@@ -635,6 +637,166 @@ function emptyReviewStore(row: any) {
     logEntry: vi.fn(async () => undefined),
   } as any;
 }
+
+describe("FN-315 self-healing remediation accounting chain", () => {
+  function recoveryRow(gate: "Code Review" | "Browser Verification") {
+    return {
+      id: `FN-315-${gate === "Code Review" ? "named" : "sterile"}`,
+      column: "in-review",
+      status: null,
+      paused: false,
+      autoMerge: true,
+      worktree: "/tmp/fn-315",
+      steps: [{ name: "Implement", status: "done" }],
+      currentStep: 0,
+      postReviewFixCount: 0,
+      log: [],
+      workflowStepResults: [{
+        workflowStepId: gate === "Code Review" ? "code-review" : "verification",
+        workflowStepName: gate,
+        phase: "pre-merge",
+        status: "failed",
+        verdict: gate === "Code Review" ? "REVISE" : undefined,
+        reviewKind: gate === "Code Review" ? "code" : undefined,
+        output: gate === "Code Review" ? "Fix the guard" : "packages/outside.ts:1 failed",
+        findings: gate === "Code Review" ? [{
+          id: "guard", title: "Fix guard", body: "Restore the guard.", severity: "critical", resolution: "open", filePath: "src/guard.ts",
+        }] : [],
+      }],
+      modifiedFiles: ["src/guard.ts"],
+      prompt: "# Task\n\n## File Scope\n\n- `src/guard.ts`\n",
+    } as any;
+  }
+
+  function recoveryStore(row: any) {
+    return {
+      getSettings: vi.fn(async () => ({ autoMerge: true, globalPause: false, enginePaused: false, maxPostReviewFixes: 2 })),
+      listTasks: vi.fn(async ({ column }: { column?: string } = {}) => !column || row.column === column ? [row] : []),
+      getTask: vi.fn(async () => row),
+      getTaskWorkflowSelection: vi.fn(() => undefined),
+      getWorkflowDefinition: vi.fn(async () => undefined),
+      listWorkflowDefinitions: vi.fn(async () => []),
+      publishReviewRemediationFenced: vi.fn(async (_id: string, compute: (current: any) => any) => {
+        const patch = compute(row);
+        if (!patch) return { applied: false as const, reason: "refused" as const };
+        Object.assign(row, patch);
+        return { applied: true as const, task: row };
+      }),
+      updateTask: vi.fn(async (_id: string, patch: any) => { Object.assign(row, patch); return row; }),
+      updateTaskAtomic: vi.fn(async (_id: string, compute: (current: any) => any) => {
+        const patch = compute(row);
+        if (patch) Object.assign(row, patch);
+        return row;
+      }),
+      logEntry: vi.fn(async (_id: string, action: string, outcome?: string) => { row.log.push({ action, outcome }); }),
+      addTaskComment: vi.fn(async () => undefined),
+    } as any;
+  }
+
+  function managerFor(row: any, sendTaskBackForFix = vi.fn(async () => { row.column = "in-progress"; })) {
+    const store = recoveryStore(row);
+    const detailed = (task: any) => recoverFailedPreMergeWorkflowStepDetailed({
+      store,
+      getRunContextFor: () => undefined,
+      resolveFailedPreMergeWorkflowStepBudget: vi.fn(async () => ({ unbounded: false, max: 2, attempts: 0, label: "2", key: task.workflowStepResults[0].workflowStepId, stepName: task.workflowStepResults[0].workflowStepName })),
+      appendReviewRemediationSteps: row.workflowStepResults[0].workflowStepName === "Browser Verification"
+        ? vi.fn(async () => "released-no-actionable-findings" as const)
+        : (liveTask, info, options) => appendReviewRemediationSteps({
+            store,
+            readTaskArtifact: vi.fn(async () => row.prompt),
+            sendTaskBackForFix,
+          }, liveTask, info, options),
+      sendTaskBackForFix,
+    } as any, task);
+    const manager = new SelfHealingManager(store, {
+      rootDir: "/tmp/fn-315",
+      recoverFailedPreMergeStep: vi.fn(async (task) => (await detailed(task)).kind === "scheduled"),
+      recoverFailedPreMergeStepDetailed: detailed,
+    });
+    return { manager, store, sendTaskBackForFix };
+  }
+
+  it("commits one named remediation and one charge through the production recovery chain", async () => {
+    const row = recoveryRow("Code Review");
+    const { manager } = managerFor(row);
+    try {
+      await expect(manager.recoverReviewTasksWithFailedPreMergeSteps()).resolves.toBe(1);
+      await expect(manager.recoverReviewTasksWithFailedPreMergeSteps()).resolves.toBe(0);
+      expect(row.steps.filter((step: any) => step.status === "pending" && step.remediation)).toHaveLength(1);
+      expect(row.log.filter((entry: any) => entry.action.includes("named remediation"))).toHaveLength(1);
+      expect(row.postReviewFixCount).toBe(1);
+    } finally { manager.stop(); }
+  });
+
+  it("resumes the production handoff after a named commit survives an interruption", async () => {
+    const row = recoveryRow("Code Review");
+    const sendTaskBackForFix = vi.fn()
+      .mockRejectedValueOnce(new Error("injected post-commit handoff failure"))
+      .mockImplementation(async () => { row.column = "in-progress"; });
+    const { manager } = managerFor(row, sendTaskBackForFix);
+    try {
+      await expect(manager.recoverReviewTasksWithFailedPreMergeSteps()).resolves.toBe(0);
+      await expect(manager.recoverReviewTasksWithFailedPreMergeSteps()).resolves.toBe(1);
+      expect(sendTaskBackForFix).toHaveBeenCalledTimes(2);
+      expect(row.column).toBe("in-progress");
+      expect(row.steps.filter((step: any) => step.status === "pending" && step.remediation)).toHaveLength(1);
+      expect(row.log.filter((entry: any) => entry.action.includes("named remediation"))).toHaveLength(1);
+      expect(row.postReviewFixCount).toBe(1);
+    } finally { manager.stop(); }
+  });
+
+  it("resumes the production trailing-replay handoff after its atomic commit survives an interruption", async () => {
+    const row = recoveryRow("Custom Gate");
+    const store = recoveryStore(row);
+    const scheduleWorkflowRerun = vi.fn()
+      .mockImplementationOnce(() => { throw new Error("injected post-commit handoff failure"); })
+      .mockImplementation(() => undefined);
+    const sendDeps = {
+      store,
+      clearCompletedTaskWatchdog: vi.fn(),
+      injectWorkflowStepFailureInstructions: vi.fn(async () => undefined),
+      reopenLastStepForRevision: (taskId: string, current: any, accounting?: any) =>
+        accounting
+          ? reopenLastStepForRevision(store, taskId, current, accounting)
+          : reopenLastStepForRevision(store, taskId, current),
+      scheduleWorkflowRerun,
+      maxWorkflowStepRetries: 3,
+    };
+    const send = (...args: any[]) => (sendTaskBackForFix as any)(sendDeps, ...args);
+    const recover = () => recoverFailedPreMergeWorkflowStepDetailed({
+      store,
+      getRunContextFor: () => undefined,
+      resolveFailedPreMergeWorkflowStepBudget: vi.fn(async () => ({
+        unbounded: false,
+        max: 1,
+        attempts: row.log.filter((entry: any) => /attempt \d+\//.test(entry.action)).length,
+        label: "1",
+        key: "verification",
+        stepName: "Custom Gate",
+      })),
+      sendTaskBackForFix: send,
+    } as any, row);
+
+    await expect(recover()).resolves.toEqual({ kind: "skipped" });
+    await expect(recover()).resolves.toEqual({ kind: "scheduled", producer: "trailing" });
+    expect(scheduleWorkflowRerun).toHaveBeenCalledTimes(2);
+    expect(row.steps.filter((step: any) => step.status === "pending")).toHaveLength(1);
+    expect(row.log.filter((entry: any) => /attempt \d+\//.test(entry.action))).toHaveLength(1);
+    expect(row.postReviewFixCount).toBe(1);
+  });
+
+  it("repeats a sterile production recovery probe without consuming either counter", async () => {
+    const row = recoveryRow("Browser Verification");
+    const { manager } = managerFor(row);
+    try {
+      await expect(manager.recoverReviewTasksWithFailedPreMergeSteps()).resolves.toBe(0);
+      await expect(manager.recoverReviewTasksWithFailedPreMergeSteps()).resolves.toBe(0);
+      expect(row.steps).toEqual([{ name: "Implement", status: "done" }]);
+      expect(row.log.filter((entry: any) => /attempt \d+\//.test(entry.action))).toHaveLength(0);
+      expect(row.postReviewFixCount).toBe(0);
+    } finally { manager.stop(); }
+  });
+});
 
 describe("FN-225 definite empty review entry points", () => {
   /*

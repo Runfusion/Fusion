@@ -14,6 +14,7 @@ import type {
   AgentPerformanceSummary,
   AgentBudgetStatus,
   ApprovalRequestStatus,
+  DashboardInboxCategory,
 } from "@fusion/core";
 import { api } from "../client/client.js";
 import { withProjectId } from "../client/health.js";
@@ -25,6 +26,7 @@ export interface InboxResponse {
   messages: Message[];
   total: number;
   unreadCount: number;
+  categoryUnreadCounts?: Record<DashboardInboxCategory, number>;
 }
 
 /** Response shape for GET /messages/outbox */
@@ -37,6 +39,7 @@ export interface OutboxResponse {
 export interface UnreadCountResponse {
   unreadCount: number;
   pendingApprovalCount?: number;
+  categoryUnreadCounts?: Record<DashboardInboxCategory, number>;
 }
 
 /** Response shape for POST /messages/read-all */
@@ -123,7 +126,7 @@ export interface ApprovalListResponse {
 
 /** Fetch inbox messages for the current user. */
 export function fetchInbox(
-  options?: { limit?: number; offset?: number; unreadOnly?: boolean; type?: MessageType; archived?: boolean },
+  options?: { limit?: number; offset?: number; unreadOnly?: boolean; type?: MessageType; archived?: boolean; category?: DashboardInboxCategory },
   projectId?: string,
 ): Promise<InboxResponse> {
   const params = new URLSearchParams();
@@ -132,6 +135,7 @@ export function fetchInbox(
   if (options?.unreadOnly) params.set("unreadOnly", "true");
   if (options?.archived) params.set("archived", "true");
   if (options?.type) params.set("type", options.type);
+  if (options?.category) params.set("category", options.category);
   if (projectId) params.set("projectId", projectId);
   const query = params.size > 0 ? `?${params.toString()}` : "";
   return api<InboxResponse>(`/messages/inbox${query}`);
@@ -183,9 +187,13 @@ export function markMessageRead(id: string, projectId?: string): Promise<Message
 }
 
 /** Mark all inbox messages as read. */
-export function markAllMessagesRead(projectId?: string): Promise<MarkAllReadResponse> {
+export function markAllMessagesRead(
+  projectId?: string,
+  options?: { category?: DashboardInboxCategory },
+): Promise<MarkAllReadResponse> {
   return api<MarkAllReadResponse>(withProjectId("/messages/read-all", projectId), {
     method: "POST",
+    ...(options?.category ? { body: JSON.stringify({ category: options.category }) } : {}),
   });
 }
 

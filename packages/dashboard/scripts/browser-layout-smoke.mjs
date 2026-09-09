@@ -222,24 +222,38 @@ export function createSmokeHtml(options = {}) {
   const quickAddComposerFixtures = buildQuickAddSaveFixtures(options.quickAddSaveLabels);
 
   /*
-  FNXC:TaskDetailModalResponsive 2026-07-19-12:00:
-  FN-8396 mirrors Task Detail's direct and wrapped SVG structures so Blink can
-  prove the scoped row rule normalizes ProviderIcon alongside the CSS-only
-  Oversight Eye/EyeOff contract at every responsive breakpoint.
+  FNXC:TaskDetailFooterActions 2026-09-06-00:31:
+  FN-300's browser fixture mirrors the relocated flat footer menu instead of the removed icon row. Keep the full Oversight and Priority groups long enough to exercise the production viewport cap and vertical scrolling, while optional-state variants prove the menu remains horizontally contained when GitHub or Oversight actions are absent.
   */
-  const taskDetailInlineRowFixtures = [
+  const taskDetailActionsMenuFixtures = [
     ["full", true, true],
     ["without-github", false, true],
     ["without-oversight", true, false],
     ["without-optionals", false, false],
   ].map(([variant, includeGithub, includeOversight]) => `
-    <section data-smoke="task-detail-inline-row-${variant}" aria-label="Task Detail inline action ${variant} fixture">
-      <div class="detail-meta-inline-controls" data-testid="detail-meta-inline-controls">
-        <button class="btn btn-icon btn-sm" data-testid="detail-inline-attach" type="button" aria-label="Attach file"><svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6h8"/></svg></button>
-        ${includeGithub ? '<button class="btn btn-icon btn-sm" data-testid="detail-inline-github-toggle" type="button" aria-label="Toggle GitHub tracking"><span class="provider-icon"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 8h12"/></svg></span></button>' : ""}
-        ${includeOversight ? '<button class="btn btn-icon btn-sm detail-oversight-menu-trigger" data-testid="detail-oversight-menu-trigger" type="button" aria-label="Oversight actions"><svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s4-6 10-6 10 6 10 6-4 6-10 6S2 12 2 12Z"/></svg></button>' : ""}
-        <div class="detail-priority-picker"><button class="btn btn-icon btn-sm" data-testid="detail-priority-trigger" type="button" aria-label="Priority: Normal"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M2 7h10"/></svg></button></div>
-        <button class="btn btn-icon btn-sm detail-execution-mode-toggle" data-testid="detail-execution-mode-toggle" type="button" aria-label="Execution mode: fast"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M7 2v10"/></svg></button>
+    <section class="detail-actions-dropdown" data-smoke="task-detail-actions-menu-${variant}" aria-label="Task Detail footer Actions ${variant} fixture">
+      <div class="detail-actions-menu" role="menu">
+        <button class="detail-actions-menu-item" data-testid="detail-inline-attach" type="button" role="menuitem">Attach file</button>
+        ${includeGithub ? '<button class="detail-actions-menu-item" data-testid="detail-inline-github-toggle" type="button" role="menuitem" aria-pressed="true">Toggle GitHub tracking</button>' : ""}
+        ${includeOversight ? `
+          <span class="detail-actions-menu-item detail-actions-menu-note" data-testid="detail-actions-oversight-heading" role="note">Oversight: on</span>
+          <button class="detail-actions-menu-item" data-testid="detail-oversight-level-__inherit__" type="button" role="menuitem" aria-pressed="true">Inherit (Standard)</button>
+          <button class="detail-actions-menu-item" data-testid="detail-oversight-level-off" type="button" role="menuitem" aria-pressed="false">Off</button>
+          <button class="detail-actions-menu-item" data-testid="detail-oversight-level-light" type="button" role="menuitem" aria-pressed="false">Light</button>
+          <button class="detail-actions-menu-item" data-testid="detail-oversight-level-standard" type="button" role="menuitem" aria-pressed="false">Standard</button>
+          <button class="detail-actions-menu-item" data-testid="detail-oversight-level-thorough" type="button" role="menuitem" aria-pressed="false">Thorough</button>
+          <button class="detail-actions-menu-item" data-testid="detail-session-advisor-toggle" type="button" role="menuitem" aria-pressed="true">Session advisor: on (inherited)</button>
+          <span class="detail-actions-menu-item detail-actions-menu-note" data-testid="detail-oversight-controls-label" role="note">Overseer controls</span>
+          <button class="detail-actions-menu-item" data-testid="detail-overseer-nudge" type="button" role="menuitem">Manual nudge</button>
+          <button class="detail-actions-menu-item" data-testid="detail-overseer-stop" type="button" role="menuitem">Stop oversight</button>
+          <button class="detail-actions-menu-item" data-testid="detail-overseer-explain" type="button" role="menuitem" aria-pressed="false">Explain current action</button>
+        ` : ""}
+        <span class="detail-actions-menu-item detail-actions-menu-note" data-testid="detail-actions-priority-heading" role="note">Priority</span>
+        <button class="detail-actions-menu-item" data-testid="detail-priority-option-low" type="button" role="menuitem" aria-pressed="false">Low</button>
+        <button class="detail-actions-menu-item" data-testid="detail-priority-option-normal" type="button" role="menuitem" aria-pressed="true">Normal</button>
+        <button class="detail-actions-menu-item" data-testid="detail-priority-option-high" type="button" role="menuitem" aria-pressed="false">High</button>
+        <button class="detail-actions-menu-item" data-testid="detail-priority-option-urgent" type="button" role="menuitem" aria-pressed="false">Urgent</button>
+        <button class="detail-actions-menu-item" data-testid="detail-execution-mode-toggle" type="button" role="menuitem" aria-pressed="true">Execution mode: fast</button>
       </div>
     </section>
   `).join("");
@@ -471,8 +485,8 @@ export function createSmokeHtml(options = {}) {
         ${quickAddComposerFixtures}
       </section>
 
-      <section data-smoke="task-detail-inline-row-fixtures" aria-label="Task Detail inline action layout fixtures">
-        ${taskDetailInlineRowFixtures}
+      <section data-smoke="task-detail-actions-menu-fixtures" aria-label="Task Detail footer Actions menu layout fixtures">
+        ${taskDetailActionsMenuFixtures}
       </section>
 
       <section data-smoke="mailbox-mobile-header-fixtures" aria-label="Mailbox mobile header layout fixtures">
@@ -1796,43 +1810,56 @@ async function runSmokeChecks(page, pageUrl) {
     });
   })()`);
 
-  const collectTaskDetailInlineIconSizes = () => evaluate(page, `(() => {
-    return [...document.querySelectorAll('section[data-smoke^="task-detail-inline-row-"]:not([data-smoke="task-detail-inline-row-fixtures"])')].map((fixture) => {
-      const row = fixture.querySelector('.detail-meta-inline-controls');
-      const icons = [...row.querySelectorAll('svg')].map((svg) => {
-        const style = getComputedStyle(svg);
-        return { width: style.width, height: style.height };
-      });
+  const collectTaskDetailActionsMenuLayout = () => evaluate(page, `(() => {
+    return [...document.querySelectorAll('section[data-smoke^="task-detail-actions-menu-"]:not([data-smoke="task-detail-actions-menu-fixtures"])')].map((fixture) => {
+      const menu = fixture.querySelector('.detail-actions-menu');
+      const menuRect = menu.getBoundingClientRect();
+      const items = [...menu.querySelectorAll('.detail-actions-menu-item')];
+      const style = getComputedStyle(menu);
       return {
         fixture: fixture.dataset.smoke,
-        rowOverflow: row.scrollWidth - row.clientWidth,
-        icons,
+        horizontalOverflow: menu.scrollWidth - menu.clientWidth,
+        verticalOverflow: menu.scrollHeight - menu.clientHeight,
+        overflowX: style.overflowX,
+        overflowY: style.overflowY,
+        itemCount: items.length,
+        noteCount: menu.querySelectorAll('.detail-actions-menu-note').length,
+        itemsContained: items.every((item) => {
+          const rect = item.getBoundingClientRect();
+          return rect.left >= menuRect.left - 1 && rect.right <= menuRect.right + 1;
+        }),
+        hasOversightHeading: Boolean(menu.querySelector('[data-testid="detail-actions-oversight-heading"]')),
+        hasPriorityHeading: Boolean(menu.querySelector('[data-testid="detail-actions-priority-heading"]')),
       };
     });
   })()`);
 
   /*
-  FNXC:TaskDetailModalResponsive 2026-07-19-12:00:
-  Visible SVG dimensions are a browser-only invariant: every optional-control
-  variant must measure the compact token at mobile, tablet, and desktop, rather
-  than relying on CSS-source parsing or a tablet-only regression check.
+  FNXC:TaskDetailFooterActions 2026-09-06-00:31:
+  Blink verifies the relocated menu's horizontal containment and scrolling at the compact mobile height as well as the supported tablet and desktop widths. The full variant must overflow vertically on the short viewport so this smoke exercises the actual scroll surface instead of merely parsing its CSS.
   */
-  for (const [name, width, height, deviceScaleFactor, mobile] of [
-    ["mobile", 390, 844, 2, true],
-    ["tablet", 900, 900, 1, false],
-    ["desktop", 1440, 900, 1, false],
+  for (const [name, width, height, deviceScaleFactor, mobile, expectFullMenuScroll] of [
+    ["short mobile", 390, 480, 2, true, true],
+    ["tablet", 900, 900, 1, false, false],
+    ["desktop", 1440, 900, 1, false, false],
   ]) {
     await page.send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor, mobile });
     await evaluate(page, "document.fonts ? document.fonts.ready.then(() => true) : true");
-    const taskDetailIconSizes = await collectTaskDetailInlineIconSizes();
+    const taskDetailActionsMenus = await collectTaskDetailActionsMenuLayout();
+    const fullMenu = taskDetailActionsMenus.find((fixture) => fixture.fixture === "task-detail-actions-menu-full");
     assertSmokeResult(
-      `Task Detail inline action icons are uniformly 14px at ${name}`,
-      taskDetailIconSizes.length === 4
-        && taskDetailIconSizes.every((fixture) => fixture.rowOverflow <= 1
-          && fixture.icons.length >= 3
-          && fixture.icons.every((icon) => icon.width === "14px" && icon.height === "14px")
-          && new Set(fixture.icons.map((icon) => `${icon.width}×${icon.height}`)).size === 1),
-      JSON.stringify(taskDetailIconSizes),
+      `Task Detail footer Actions menus stay contained and scrollable at ${name}`,
+      taskDetailActionsMenus.length === 4
+        && taskDetailActionsMenus.every((fixture) => fixture.horizontalOverflow <= 1
+          && fixture.overflowX === "hidden"
+          && fixture.overflowY === "auto"
+          && fixture.itemCount >= 7
+          && fixture.noteCount >= 1
+          && fixture.itemsContained
+          && fixture.hasPriorityHeading)
+        && fullMenu?.hasOversightHeading === true
+        && (!expectFullMenuScroll || (fullMenu?.verticalOverflow ?? 0) > 1),
+      JSON.stringify(taskDetailActionsMenus),
     );
   }
 

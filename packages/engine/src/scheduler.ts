@@ -251,20 +251,18 @@ A dependency's satisfaction is decided on ITS OWN board, because a dependency ed
 workflows: the dependent can sit on the default board while the dependency lives on a renamed one.
 
 THE TWO RULES THIS FILE ALREADY HAD, PRESERVED EXACTLY:
-  legacy (live)   satisfied = COMPLETE or ARCHIVED or the REVIEW lane (mergeBlocker/humanReview)
-  marker (shadow) satisfied = COMPLETE or ARCHIVED, else the handoff marker decides
+  legacy (live)   satisfied = COMPLETE or the REVIEW lane (mergeBlocker/humanReview)
+  marker (shadow) satisfied = COMPLETE, else the handoff marker decides
 
-They genuinely differ on the review lane, and the conversion does NOT reconcile them — that is a
-product decision, not a vocabulary one. See the PR body: #2720 settled "satisfied = complete or
-archived" for `update-task-deps.ts`, which matches the MARKER rule, so the live legacy rule here is
-the broader of the two. Narrowing it silently would strand every dependent of an in-review card.
+They genuinely differ on the review lane. Narrowing the live rule silently would strand every
+dependent of an in-review card.
 
 `columns` is resolved per dependency and passed in by the caller. Omitted (or absent for a given
 dependency) → the legacy literals, i.e. exactly today's behaviour, so no unconverted call site
 changes meaning and an unresolvable workflow fails soft rather than reading as unsatisfied forever.
 */
 export interface DependencySatisfactionColumns {
-  /** COMPLETE ∪ ARCHIVED for the dependency's own workflow. */
+  /** Complete columns for the dependency's own workflow. */
   terminal: ReadonlySet<string>;
   /** The dependency's own review lane (mergeBlocker ∪ humanReview). */
   review: ReadonlySet<string>;
@@ -279,7 +277,7 @@ dependent forever. That is strictly worse than the legacy behaviour it would rep
 */
 function isTerminalDependencyColumn(dep: Task, columns: DependencySatisfactionColumns | undefined): boolean {
   if (columns) return columns.terminal.has(dep.column);
-  return dep.column === "done" || dep.column === "archived";
+  return dep.column === "done";
 }
 
 /* DELIBERATE-LITERAL — same no-metadata fallback as above, reviewed 2026-07-30-20:40. */
@@ -321,7 +319,7 @@ export async function resolveDependencySatisfactionColumns(
     try {
       const ir = await resolveWorkflowIrForTask(store, dep.id, irCache);
       if (!ir) continue;
-      const terminal = new Set([...columnsWithFlag(ir, "complete"), ...columnsWithFlag(ir, "archived")]);
+      const terminal = new Set(columnsWithFlag(ir, "complete"));
       const review = new Set([...columnsWithFlag(ir, "mergeBlocker"), ...columnsWithFlag(ir, "humanReview")]);
       if (terminal.size === 0 && review.size === 0) continue;
       resolved.set(dep.id, { terminal, review });
@@ -448,12 +446,11 @@ Overlay emitter-resolved lanes onto the fail-soft defaults. Only fields the emit
 are taken, so a partial payload cannot blank a lane back to a wrong answer.
 */
 function mergeParkedColumns(
-  base: { hold: string; intake: string; wip: string; wipColumns: ReadonlySet<string>; review: string; complete: string; archived: string; terminal: ReadonlySet<string> },
+  base: { hold: string; intake: string; wip: string; wipColumns: ReadonlySet<string>; review: string; complete: string; terminal: ReadonlySet<string> },
   lanes: TaskMoveLanes | undefined,
-): { hold: string; intake: string; wip: string; wipColumns: ReadonlySet<string>; review: string; complete: string; archived: string; terminal: ReadonlySet<string> } {
+): { hold: string; intake: string; wip: string; wipColumns: ReadonlySet<string>; review: string; complete: string; terminal: ReadonlySet<string> } {
   if (!lanes) return base;
   const complete = lanes.complete ?? base.complete;
-  const archived = lanes.archived ?? base.archived;
   return {
     hold: lanes.hold ?? base.hold,
     intake: lanes.intake ?? base.intake,
@@ -469,12 +466,9 @@ function mergeParkedColumns(
     ]),
     review: lanes.review ?? base.review,
     complete,
-    archived,
     /*
     FNXC:WorkflowResolvedColumns 2026-07-31-11:10 (u12 — the overlay NARROWED a membership set):
-    This rebuilt `terminal` as `new Set([complete, archived])`, which is first-match-per-role and so
-    contradicted the note above ("`terminal` is a MEMBERSHIP set, and it is not the same question as
-    `complete`/`archived`"). Two losses in one line: it DISCARDED `base.terminal`, which the sync IR
+    This rebuilt `terminal` from only one Complete id, which is first-match-per-role. It discarded `base.terminal`, which the sync IR
     path had already resolved correctly, and it had no way to express a second complete-trait column
     even when the emitter knew about one.
 
@@ -482,7 +476,7 @@ function mergeParkedColumns(
     argues for at line ~422: a superset makes the reconciliation run on a move it would otherwise
     ignore — one extra query — while a subset silently withholds work from a card that is finished.
     */
-    terminal: new Set([...base.terminal, ...(lanes.terminal ?? []), complete, archived]),
+    terminal: new Set([...base.terminal, ...(lanes.terminal ?? []), complete]),
   };
 }
 
@@ -506,11 +500,10 @@ const LEGACY_PARKED_COLUMNS = {
   wipColumns: new Set(["in-progress"]),
   review: "in-review",
   complete: "done",
-  archived: "archived",
-  terminal: new Set(["done", "archived"]),
+  terminal: new Set(["done"]),
 };
 
-async function resolveTaskParkedColumns(store: TaskStore, taskId: string, selectionCache?: WorkflowSelectionCache): Promise<{ hold: string; intake: string; wip: string; wipColumns: ReadonlySet<string>; review: string; complete: string; archived: string; terminal: ReadonlySet<string>; wake: ReadonlySet<string> }> {
+async function resolveTaskParkedColumns(store: TaskStore, taskId: string, selectionCache?: WorkflowSelectionCache): Promise<{ hold: string; intake: string; wip: string; wipColumns: ReadonlySet<string>; review: string; complete: string; terminal: ReadonlySet<string>; wake: ReadonlySet<string> }> {
   try {
     /*
     FNXC:WorkflowScheduling 2026-08-12-20:00 (RUFU-073):
@@ -529,7 +522,6 @@ async function resolveTaskParkedColumns(store: TaskStore, taskId: string, select
     const ir = await resolveWorkflowIrForTask(store, taskId, undefined, selectionCache);
     const l = resolveLifecycleColumns(ir);
     const complete = l?.complete ?? LEGACY_PARKED_COLUMNS.complete;
-    const archived = l?.archived ?? LEGACY_PARKED_COLUMNS.archived;
     return {
       hold: l?.hold ?? LEGACY_PARKED_COLUMNS.hold,
       intake: l?.intake ?? LEGACY_PARKED_COLUMNS.intake,
@@ -541,13 +533,10 @@ async function resolveTaskParkedColumns(store: TaskStore, taskId: string, select
       ]),
       review: l?.review ?? LEGACY_PARKED_COLUMNS.review,
       complete,
-      archived,
       terminal: new Set([
         ...LEGACY_PARKED_COLUMNS.terminal,
         ...columnsWithFlag(ir, "complete"),
-        ...columnsWithFlag(ir, "archived"),
         complete,
-        archived,
       ]),
       /*
       FNXC:WorkflowResolvedColumns 2026-07-31-06:35 (fleet):
@@ -585,9 +574,7 @@ export interface FileScopeLeaseOptions {
 /*
 FNXC:OverlapScheduling 2026-08-29-05:49:
 File-scope ownership is a lifetime contract: a task keeps its claim until its work has landed, is
-archived/deleted, or a non-WIP lane has released its checkout. Paused, failed, and external-blocked
-cards therefore retain their claim while their unmerged singular or per-repository checkout exists;
-archiving, deleting, or clearing those checkouts is the explicit escape hatch for a dead holder.
+deleted, or a non-WIP lane has released its checkout. Paused, failed, and external-blocked cards therefore retain their claim while their unmerged singular or per-repository checkout exists; deleting or clearing those checkouts is the explicit escape hatch for a dead holder.
 
 Check every checkout form before granting a non-WIP card an active lease. A workspace task deliberately
 has no singular `task.worktree`, so review and dormant classification must recognize its repository
@@ -614,7 +601,7 @@ export function classifyFileScopeLease(
   // FNXC:WorkflowLifecycle 2026-08-30-07:27: DELIBERATE-LITERAL — callers without resolved workflow roles require the legacy review fallback.
   const isReviewColumn = options?.isReviewColumn ?? task.column === "in-review";
   // FNXC:WorkflowLifecycle 2026-08-30-07:27: DELIBERATE-LITERAL — callers without resolved workflow roles require the legacy terminal fallback.
-  const isTerminalColumn = options?.isTerminalColumn ?? (task.column === "done" || task.column === "archived");
+  const isTerminalColumn = options?.isTerminalColumn ?? task.column === "done";
 
   if (isTerminalColumn || task.deletedAt) {
     return { kind: "none", waivedForTaskIds: [] };
@@ -995,6 +982,7 @@ export class Scheduler {
   private running = false;
   private scheduling = false;
   private schedulingSince = 0;
+  private immediateSchedulePending = false;
   private wasWorktreeLimited = false;
   private wasGlobalPaused = false;
   private wasEnginePaused = false;
@@ -1091,7 +1079,7 @@ export class Scheduler {
           start: async () => {
             this.coordinatorReadyTasks.delete(task.id);
             this.coordinatorAdmittedTaskIds.add(task.id);
-            void this.schedule();
+            this.requestImmediateSchedule();
           },
         })),
     });
@@ -1109,7 +1097,7 @@ export class Scheduler {
       visible on the board and via task:moved logs. Keep the trigger line debug-only.
       */
       schedulerLog.debug("Task created — triggering scheduling");
-      this.schedule();
+      this.requestImmediateSchedule();
     });
 
     /**
@@ -1118,12 +1106,12 @@ export class Scheduler {
      * for the next poll interval (up to 15 s). Only reacts to true→false
      * transitions — no-ops on false→false and true→true.
      *
-     * The re-entrance guard (`this.scheduling`) inside `schedule()` safely
-     * drops the call if a poll-based pass is already in flight.
+     * The coalesced immediate-schedule primitive preserves one follow-up pass
+     * when a poll-based pass is already in flight.
      */
     this.store.on("settings:updated", ({ settings, previous }) => {
       if (previous.globalPause && !settings.globalPause && this.running) {
-        this.schedule();
+        this.requestImmediateSchedule();
       }
     });
 
@@ -1135,7 +1123,7 @@ export class Scheduler {
      */
     this.store.on("settings:updated", ({ settings, previous }) => {
       if (previous.enginePaused && !settings.enginePaused && this.running) {
-        this.schedule();
+        this.requestImmediateSchedule();
       }
     });
 
@@ -1355,7 +1343,7 @@ export class Scheduler {
         Duplicate of the column-move lifecycle line; schedule side-effect is not operator-facing.
         */
         schedulerLog.debug(`Task moved to ${to} — triggering scheduling`);
-        this.schedule();
+        this.requestImmediateSchedule();
       }
     });
 
@@ -1429,7 +1417,7 @@ export class Scheduler {
           const unpausedParked = await resolveTaskParkedColumns(this.store, task.id, updatedSelectionCache);
           if (this.running && unpausedParked.wake.has(task.column)) {
             schedulerLog.log(`Task ${task.id} unpaused — triggering scheduling`);
-            void this.schedule();
+            this.requestImmediateSchedule();
           }
         })();
       }
@@ -1447,8 +1435,8 @@ export class Scheduler {
       Same shape as the pausedTaskIds tracker above: remember ids seen mid-planning, then fire once
       on the transition back to a dispatchable state. Guarded on `!task.status` so a planning ->
       failed/awaiting-approval park does not trigger a pointless pass, and on column so a card
-      finishing planning somewhere unschedulable is ignored. schedule()'s re-entrance guard drops
-      the call harmlessly if a poll-based pass is already running.
+      finishing planning somewhere unschedulable is ignored. The immediate request coalesces one
+      follow-up when a poll-based pass is already running.
       */
       if (task.status === "planning") {
         this.planningTaskIds.add(task.id);
@@ -1467,7 +1455,7 @@ export class Scheduler {
             && planningParked.wake.has(task.column)
           ) {
             schedulerLog.log(`Task ${task.id} finished planning — triggering scheduling`);
-            void this.schedule();
+            this.requestImmediateSchedule();
           }
         })();
       }
@@ -1498,7 +1486,7 @@ export class Scheduler {
             && approvalParked.wake.has(task.column)
           ) {
             schedulerLog.log(`Task ${task.id} plan approval cleared — triggering scheduling`);
-            void this.schedule();
+            this.requestImmediateSchedule();
           }
         })();
       }
@@ -1624,7 +1612,7 @@ export class Scheduler {
             }
           }
 
-          this.schedule();
+          this.requestImmediateSchedule();
         } catch (error) {
           schedulerLog.error(`Failed event-driven soft-delete blocker reconciliation for ${task.id}`, error);
         }
@@ -1727,6 +1715,7 @@ export class Scheduler {
 
   stop(): void {
     this.running = false;
+    this.immediateSchedulePending = false;
     if (this.pollInterval) {
       clearInterval(this.pollInterval);
       this.pollInterval = null;
@@ -1920,7 +1909,7 @@ export class Scheduler {
       holdByTaskId.set(task.id, columnsWithFlag(ir, "hold").includes(task.column));
       terminalByTaskId.set(
         task.id,
-        columnsWithFlag(ir, "complete").includes(task.column) || columnsWithFlag(ir, "archived").includes(task.column),
+        columnsWithFlag(ir, "complete").includes(task.column),
       );
     }
     const fanoutMap = computeBlockerFanoutMap(tasks, 3, {
@@ -1944,7 +1933,7 @@ export class Scheduler {
          the answer `computeBlockerFanoutMap` would have given it with no options at all. */
       classify: (task: Task) => ({
         isHold: holdByTaskId.get(task.id) ?? task.column === "todo",
-        isTerminal: terminalByTaskId.get(task.id) ?? (task.column === "done" || task.column === "archived"),
+        isTerminal: terminalByTaskId.get(task.id) ?? task.column === "done",
       }),
     });
     const seenBlockers = new Set<string>();
@@ -2165,6 +2154,23 @@ export class Scheduler {
   }
 
   /**
+   * Request an event-driven pass without losing a wake that arrives during an active pass.
+   *
+   * FNXC:OverlapScheduling 2026-09-07-14:23:
+   * A terminal move can wake the scheduler before completion fan-out commits its overlap clear.
+   * Preserve one coalesced follow-up request until the active pass finishes so the post-commit wake
+   * observes durable state, while `stop()` cancels pending work and normal pause guards remain authoritative.
+   */
+  requestImmediateSchedule(): void {
+    if (!this.running) return;
+    if (this.scheduling) {
+      this.immediateSchedulePending = true;
+      return;
+    }
+    void this.schedule();
+  }
+
+  /**
    * Run one scheduling pass.
    *
    * Uses a re-entrance guard (`this.scheduling`) to prevent overlapping
@@ -2285,6 +2291,11 @@ export class Scheduler {
       schedulerLog.error("Scheduling error:", err);
     } finally {
       this.scheduling = false;
+      this.schedulingSince = 0;
+      if (this.running && this.immediateSchedulePending) {
+        this.immediateSchedulePending = false;
+        void this.schedule();
+      }
     }
   }
 
@@ -3748,7 +3759,7 @@ export class Scheduler {
         for (const slice of hierarchy.milestones.flatMap((milestone) => milestone.slices).filter((slice) => slice.status === "active")) {
           try {
             const superseded = await missionStore.reconcileSupersededGeneratedFixFeatures(slice.id);
-            fixed += superseded.supersededCount;
+            fixed += superseded.supersededCount + (superseded.repairedCount ?? 0);
             if (superseded.supersededCount > 0) {
               const refreshed = await missionStore.getSlice(slice.id);
               if (refreshed?.status === "complete") { await this.onSliceComplete(refreshed); continue; }
@@ -3763,8 +3774,14 @@ export class Scheduler {
             const supersededFeatureIds = new Set(superseded.featureIds ?? []);
             const autoTriage = mission.autopilotEnabled === true || mission.autoAdvance === true;
             for (const feature of features) {
-              if (supersededFeatureIds.has(feature.id) || feature.taskId || !autoTriage || feature.status === "blocked") continue;
+              /*
+              FNXC:MissionAutoReconcile 2026-09-05-22:07:
+              Per-pass IDs disappear when the idempotent supersede writer is called a second time.
+              A terminal done state is the durable guard that prevents writer B re-blocking it (issue #3574).
+              */
+              if (supersededFeatureIds.has(feature.id) || feature.taskId || !autoTriage || feature.status === "blocked" || feature.status === "done") continue;
               if (feature.status !== "defined" && this.isGeneratedFixFeature(feature)) {
+                schedulerLog.warn(`Parking stranded generated Fix feature ${feature.id} from ${feature.status}: not triageable without a defined state`);
                 await missionStore.updateFeature(feature.id, { status: "blocked", loopState: "blocked", taskId: undefined });
                 fixed++;
                 continue;

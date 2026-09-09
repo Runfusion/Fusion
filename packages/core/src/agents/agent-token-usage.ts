@@ -169,7 +169,7 @@ export async function aggregateAgentTokenUsage({
   FNXC:AgentTokenUsage 2026-06-27-19:10:
   Ephemeral/task-worker agents must surface task-derived token usage because their cumulative agent token fields are never accumulated by the durable-agent heartbeat path.
   */
-  const tasks = await taskStore.listTasks({ slim: true, includeArchived: true });
+  const tasks = await taskStore.listTasks({ slim: true, includeArchived: false });
   const nowMs = now.getTime();
   const last24hMs = nowMs - (24 * 60 * 60 * 1000);
   const last7dMs = nowMs - (7 * 24 * 60 * 60 * 1000);

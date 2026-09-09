@@ -9,7 +9,13 @@ import { describe, expect, it, vi } from "vitest";
 import { MissionAutopilot } from "../missions/mission-autopilot.js";
 import { reconcileMissionState } from "../missions/mission-state-reconcile.js";
 
-const taskStore = { on: vi.fn(), off: vi.fn(), getSettings: vi.fn(), listTasks: vi.fn().mockResolvedValue([]) };
+const taskStore = {
+  on: vi.fn(),
+  off: vi.fn(),
+  getSettings: vi.fn(),
+  getLatestSpecDriftReport: vi.fn().mockResolvedValue(undefined),
+  listTasks: vi.fn().mockResolvedValue([]),
+};
 
 function rollupStore(status: "blocked" | "archived" = "blocked") {
   const mission = { id: "M-1", title: "Protected", status, autopilotEnabled: true, autopilotState: "inactive" };
@@ -52,6 +58,14 @@ function rollupStore(status: "blocked" | "archived" = "blocked") {
       return target;
     }),
     computeSliceStatus: vi.fn().mockResolvedValue("complete"),
+    updateFeatureStatus: vi.fn().mockImplementation(async (featureId: string, status: string) => {
+      const target = slices.flatMap((candidate) => candidate.features.map((feature) => ({ slice: candidate, feature }))).find(({ feature }) => feature.id === featureId);
+      if (!target) throw new Error("feature not found");
+      target.feature.status = status;
+      target.slice.status = "complete";
+      recomputeMilestone(milestones.find((candidate) => candidate.id === target.slice.milestoneId)!);
+      return target.feature;
+    }),
     reconcileFeatureDoneWithTerminalTask: vi.fn().mockImplementation(async (featureId: string, taskId: string) => {
       const target = slices.flatMap((candidate) => candidate.features.map((feature) => ({ slice: candidate, feature }))).find(({ feature }) => feature.id === featureId);
       if (!target || target.feature.taskId !== taskId) throw new Error("terminal feature mismatch");
@@ -93,19 +107,21 @@ describe("MissionAutopilot rollup ownership", () => {
     autopilot.stop();
   });
 
-  it("reconciles terminal features through the guarded store primitive without clobbering protected intent", async () => {
+  it("reconciles live Complete tasks without clobbering protected intent", async () => {
     const store = rollupStore();
     const reconciliationTaskStore = {
       ...taskStore,
-      getTask: vi.fn().mockImplementation(async (id: string) => ({ id, column: "archived" })),
+      getTask: vi.fn().mockImplementation(async (id: string) => ({ id, column: "done" })),
     };
 
     const result = await reconcileMissionState({ taskStore: reconciliationTaskStore as never, missionStore: store }, { source: "self-healing" });
 
-    expect(store.reconcileFeatureDoneWithTerminalTask).toHaveBeenCalledTimes(2);
-    expect(store.reconcileFeatureDoneWithTerminalTask).toHaveBeenCalledWith("F-1", "T-1");
-    expect(store.reconcileFeatureDoneWithTerminalTask).toHaveBeenCalledWith("F-2", "T-2");
-    expect(result.terminalRepairs).toBe(2);
+    expect(store.updateFeatureStatus).toHaveBeenCalledTimes(2);
+    expect(store.updateFeatureStatus).toHaveBeenCalledWith("F-1", "done", expect.anything());
+    expect(store.updateFeatureStatus).toHaveBeenCalledWith("F-2", "done", expect.anything());
+    expect(store.reconcileFeatureDoneWithTerminalTask).not.toHaveBeenCalled();
+    expect(result.statusUpdates).toBe(2);
+    expect(result.terminalRepairs).toBe(0);
     expect(store.mission.status).toBe("blocked");
     expect(store.milestone.status).toBe("blocked");
     expect(store.controlMilestone.status).toBe("complete");

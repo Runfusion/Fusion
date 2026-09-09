@@ -130,12 +130,11 @@ export const taskShowParams = Type.Object({
 
 export const taskSearchParams = Type.Object({
   query: Type.String({ minLength: 1, description: "Search query" }),
-  includeDone: Type.Optional(Type.Boolean({ description: "Include done tasks (default true)" })),
-  includeArchived: Type.Optional(Type.Boolean({ description: "Include archived tasks (default true)" })),
+  includeDone: Type.Optional(Type.Boolean({ description: "Include done tasks (default false)" })),
   limit: Type.Optional(Type.Number({ minimum: 1, maximum: 50, description: "Max results (default 20, max 50)" })),
 });
 
-export const patchnodeReadParams = Type.Object({
+export const historyReadParams = Type.Object({
   query: Type.Optional(Type.String({ description: "Search task IDs, titles, and completion summaries" })),
   from: Type.Optional(Type.String({ description: "First UTC day, YYYY-MM-DD (inclusive)" })),
   to: Type.Optional(Type.String({ description: "Last UTC day, YYYY-MM-DD (inclusive)" })),
@@ -280,19 +279,10 @@ export const taskPromoteParams = Type.Object({
   ),
 });
 
-export const taskArchiveParams = Type.Object({
-  id: Type.String({ description: "Task ID to archive from any live column (e.g. FN-001)." }),
-  removeLineageReferences: Type.Optional(Type.Boolean({ description: "When true, clear incoming lineage-parent references (child sourceParentTaskId) before archiving, so a task still referenced as a lineage parent can be archived." })),
-});
-
 export const taskDeleteParams = Type.Object({
   id: Type.String({ description: "Task ID to delete (e.g. FN-001)" }),
   allowResurrection: Type.Optional(Type.Boolean({ description: "When true, mark this tombstone as explicitly reusable for future recreation." })),
   removeLineageReferences: Type.Optional(Type.Boolean({ description: "When true, clear incoming lineage-parent references before deleting." })),
-});
-
-export const taskUnarchiveParams = Type.Object({
-  id: Type.String({ description: "Task ID to unarchive (e.g. FN-001). Must be in 'archived' column." }),
 });
 
 export const taskRetryParams = Type.Object({
@@ -609,6 +599,13 @@ export const askQuestionParams = Type.Object({
       })),
       multiSelect: Type.Optional(Type.Boolean({
         description: "Set true when the user may choose multiple options. Prefer type='multi_select' for clarity.",
+      })),
+      /*
+       * FNXC:ChatAskQuestion 2026-09-09-02:42:
+       * An agent must be able to append a non-blocking free-text field to a structured form without forcing the user to type filler.
+       */
+      optional: Type.Optional(Type.Boolean({
+        description: "Set true when the user may leave this question unanswered; the card can be submitted without it. Defaults to false (required).",
       })),
       type: Type.Optional(Type.Union([
         Type.Literal("text"),
@@ -1210,7 +1207,7 @@ async function resolveApprovedMissionLineage(
 type DefinedFeatureBootstrapStore = {
   claimDefinedFeatureTaskInTransaction: (tx: DbTransaction, input: { featureId: string; taskId: string; missionId: string; sliceId: string }) => Promise<unknown>;
   claimDefinedFeatureTask: (input: { featureId: string; taskId: string; missionId: string; sliceId: string }) => Promise<unknown>;
-  archiveDefinedFeatureBootstrapDuplicate: (input: { featureId: string; taskId: string; duplicateTaskId: string }) => Promise<void>;
+  deleteDefinedFeatureBootstrapDuplicate: (input: { featureId: string; taskId: string; duplicateTaskId: string }) => Promise<void>;
 };
 
 type AgentTaskInputWithBootstrap = TaskCreateInput & {
@@ -1224,7 +1221,7 @@ type AgentTaskInputWithBootstrap = TaskCreateInput & {
 function definedFeatureBootstrapInput(store: TaskStore, lineage: MissionLineageReference | null): Pick<AgentTaskInputWithBootstrap, "afterTaskInsert" | "validateDuplicateCanonical" | "skipSameAgentDuplicateIntake" | "preflightSameAgentDuplicate" | "reconcileCreatedDuplicate"> {
   if (!lineage?.bootstrapDefinedFeature) return {};
   const missionStore = store.getMissionStore() as Partial<DefinedFeatureBootstrapStore>;
-  if (!missionStore.claimDefinedFeatureTaskInTransaction || !missionStore.claimDefinedFeatureTask || !missionStore.archiveDefinedFeatureBootstrapDuplicate) {
+  if (!missionStore.claimDefinedFeatureTaskInTransaction || !missionStore.claimDefinedFeatureTask || !missionStore.deleteDefinedFeatureBootstrapDuplicate) {
     throw new Error("Defined-feature bootstrap requires the PostgreSQL mission store; no task was created.");
   }
   const claim = (taskId: string) => ({ featureId: lineage.featureId, taskId, missionId: lineage.missionId, sliceId: lineage.sliceId });
@@ -1239,14 +1236,14 @@ function definedFeatureBootstrapInput(store: TaskStore, lineage: MissionLineageR
     validateDuplicateCanonical: async (task) => { await missionStore.claimDefinedFeatureTask!(claim(task.id)); },
     /*
     FNXC:MissionAdmission 2026-07-23-20:00:
-    The ordinary same-agent intake runs after task-row commit and could archive
+    The ordinary same-agent intake runs after task-row commit and could delete
     feature.taskId. Suppress only that path; deterministic reconciliation below
-    retains the claimed task and atomically archives a late competing duplicate.
+    retains the claimed task and atomically soft-deletes a late competing duplicate.
     */
     skipSameAgentDuplicateIntake: true,
     preflightSameAgentDuplicate: true,
     reconcileCreatedDuplicate: async (duplicate, created) => {
-      await missionStore.archiveDefinedFeatureBootstrapDuplicate!({
+      await missionStore.deleteDefinedFeatureBootstrapDuplicate!({
         featureId: lineage.featureId,
         taskId: created.id,
         duplicateTaskId: duplicate.id,
@@ -1266,14 +1263,13 @@ async function findDefinedFeatureBootstrapDuplicate(
   sourceParentTaskId: string | undefined,
 ): Promise<Task | undefined> {
   if (!sourceAgentId && !sourceParentTaskId) return undefined;
-  const candidates = await store.listTasks({ slim: true, includeArchived: true, includeDeleted: true });
+  const candidates = await store.listTasks({ slim: true, includeArchived: false, includeDeleted: true });
   const byId = new Map(candidates.map((task) => [task.id, task]));
   /*
   FNXC:WorkflowResolvedColumns 2026-07-30-10:05 (batch-engine tail):
-  Resolved AHEAD of the synchronous `flatMap` below, which cannot await. NOT the query-filter class: this
-  query passes `includeArchived: true`, so the predicate inside the callback is the ONLY archived guard on
-  this path — on a renamed archive lane an archived sibling became a bootstrap canonical, and
-  `claimDefinedFeatureTask` then rejects the non-live row, so the claim fails outright.
+  Resolve terminal columns ahead of the synchronous `flatMap`, which cannot await. The query excludes
+  historical snapshots but includes soft-deleted rows so the explicit `deletedAt` guard below preserves
+  the no-resurrection boundary without treating deleted work as a canonical duplicate.
   */
   const isTerminalCandidate = await resolveTerminalColumnsForTasks(store, candidates);
   const matches = findSameAgentDuplicates({
@@ -1285,8 +1281,8 @@ async function findDefinedFeatureBootstrapDuplicate(
     /*
     FNXC:MissionAdmission 2026-07-23-21:10:
     Defined-feature retry preflight follows the normal duplicate guard's live
-    task boundary. An archived sibling cannot be a bootstrap canonical because
-    claimDefinedFeatureTask rejects non-live task rows.
+    task boundary. Completed or soft-deleted siblings cannot become bootstrap
+    canonicals because `claimDefinedFeatureTask` accepts only live work.
     */
     if (Number.isNaN(createdAt) || task.deletedAt || isTerminalCandidate(task)) return [];
     return [{
@@ -1344,12 +1340,11 @@ async function carryCanonicalTaskRouting(
 
 /*
 FNXC:WorkflowResolvedColumns 2026-07-30-23:05 (batch-engine — the agent tools listed finished cards as active):
-`fn_task_list` describes itself as "list active tasks that aren't done or archived", and `fn_task_search`
-offers `includeDone: false`. Both filtered with `task.column !== "done"`, so on a board whose complete lane
+`fn_task_list` describes itself as listing active tasks, and `fn_task_search` offers `includeDone: false`. Both filtered with `task.column !== "done"`, so on a board whose Complete lane
 is renamed a FINISHED card came back as active — to an AGENT, which then reasons and acts on it as
 outstanding work. `includeArchived: false` is handled by the query, but "done" was only ever a TS predicate.
 
-MEMBERSHIP over the complete AND archived roles, unioned with the legacy pair: `resolveWorkflowIrForTask`
+MEMBERSHIP over every Complete column, unioned with the legacy Done fallback: `resolveWorkflowIrForTask`
 returns the BUILT-IN IR for a missing or corrupt workflow rather than throwing, so without the union a
 degraded renamed board would resolve a terminal set that excludes its own terminal lane and the filter
 would go inert.
@@ -1364,14 +1359,13 @@ export async function resolveTerminalColumnsForTasks(
   const terminalByTaskId = new Map<string, ReadonlySet<string>>();
   for (const task of tasks) {
     if (terminalByTaskId.has(task.id)) continue;
-    const columns = new Set<string>(["done", "archived"]);
+    const columns = new Set<string>(["done"]);
     try {
       const ir = await fusionCore.resolveWorkflowIrForTask(store, task.id, cache);
       if (ir) {
         for (const id of fusionCore.columnsWithFlag(ir, "complete")) columns.add(id);
-        for (const id of fusionCore.columnsWithFlag(ir, "archived")) columns.add(id);
       }
-    } catch { /* degraded: legacy pair only */ }
+    } catch { /* degraded: Done only */ }
     terminalByTaskId.set(task.id, columns);
   }
   return (task: Task) => terminalByTaskId.get(task.id)?.has(task.column) === true;
@@ -1578,10 +1572,10 @@ export async function createAgentTask(
         : undefined,
     });
 
-    const wasDuplicate = proposalClaimConflict || reconcile.outcome === "archived" || reconcile.outcome === "kept-duplicate";
+    const wasDuplicate = proposalClaimConflict || reconcile.outcome === "removed" || reconcile.outcome === "kept-duplicate";
     const canonical = proposalClaimConflict
       ? await carryCanonicalTaskRouting(store, createdTask, input)
-      : reconcile.outcome === "archived"
+      : reconcile.outcome === "removed"
       ? await carryCanonicalTaskRouting(store, reconcile.canonical, input)
       : reconcile.canonical;
     /*
@@ -1803,7 +1797,7 @@ export function createTaskListTool(store: TaskStore): ToolDefinition {
     name: "fn_task_list",
     label: "List Tasks",
     description:
-      "List active tasks that aren't done or archived. Returns ID, description, column, " +
+      "List active tasks that have not reached their workflow's Complete column. Returns ID, description, column, " +
       "and dependencies for each. Use to discover work and check for duplicates.",
     parameters: taskListParams,
     execute: async () => {
@@ -1825,7 +1819,7 @@ export function createTaskSearchTool(store: TaskStore): ToolDefinition {
     label: "Search Tasks",
     description:
       "Keyword search across active tasks by default. " +
-      "Done and archived history is opt-in and must not be used for duplicate detection.",
+      "Done history is opt-in and must not be used for duplicate detection.",
     parameters: taskSearchParams,
     execute: async (_id: string, params: Static<typeof taskSearchParams>) => {
       const query = params.query.trim();
@@ -1838,7 +1832,7 @@ export function createTaskSearchTool(store: TaskStore): ToolDefinition {
       const limit = Math.min(50, Math.max(1, Math.floor(params.limit ?? 20)));
       const results = await store.searchTasks(query, {
         slim: true,
-        includeArchived: params.includeArchived ?? false,
+        includeArchived: false,
         limit,
       });
       const includeDone = params.includeDone ?? false;
@@ -1859,19 +1853,19 @@ export function createTaskSearchTool(store: TaskStore): ToolDefinition {
 
 /*
 FNXC:PatchnodeChat 2026-08-28-12:16:
-Chat reads the same permanent, per-delivery ledger as the dashboard and never looks task rows up, so archived and deleted deliveries remain answerable.
+Chat reads the same permanent, per-delivery ledger as the dashboard and never looks task rows up, so later-deleted deliveries remain answerable.
 
-FNXC:PatchnoteChat 2026-08-30-06:36:
-The former Patchnote display strings now call this delivery ledger History.
-The stable `fn_patchnode_read` tool name remains unchanged for existing agent prompts.
+FNXC:HistoryChat 2026-09-04-09:35:
+FN-293 completes the agent-facing rename by exposing only `fn_history_read`, without a compatibility alias.
+The HTTP route, PostgreSQL table, view id, i18n keys, and `@fusion/core` types and methods intentionally retain their stable `patchnode` identifiers.
 */
-export function createPatchnodeReadTool(store: TaskStore): ToolDefinition {
+export function createHistoryReadTool(store: TaskStore): ToolDefinition {
   return {
-    name: "fn_patchnode_read",
+    name: "fn_history_read",
     label: "Read History",
     description: "Read the permanent daily history of completed and reverted task deliveries.",
-    parameters: patchnodeReadParams,
-    execute: async (_id: string, params: Static<typeof patchnodeReadParams>) => {
+    parameters: historyReadParams,
+    execute: async (_id: string, params: Static<typeof historyReadParams>) => {
       const limit = Math.min(50, Math.max(1, Math.floor(params.limit ?? 20)));
       const result = await store.listPatchnodeEntries({
         ...(params.query?.trim() ? { query: params.query.trim() } : {}),
@@ -1967,18 +1961,7 @@ export function createTaskLogTool(store: TaskStore, taskId: string): ToolDefinit
       "Use for significant events — not every small step.",
     parameters: taskLogParams,
     execute: async (_id: string, params: Static<typeof taskLogParams>) => {
-      try {
-        await store.logEntry(taskId, params.message, params.outcome);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      } catch (err: any) {
-        if (typeof err?.message === "string" && err.message.toLowerCase().includes("archived")) {
-          return {
-            content: [{ type: "text" as const, text: "ERROR: Cannot log to archived task — this task is read-only" }],
-            details: {},
-          };
-        }
-        throw err;
-      }
+      await store.logEntry(taskId, params.message, params.outcome);
 
       return {
         content: [{ type: "text" as const, text: `Logged: ${params.message}` }],
@@ -2005,18 +1988,7 @@ export function createTaskLogToolWithContext(store: TaskStore, taskId: string, r
       "Use for significant events — not every small step.",
     parameters: taskLogParams,
     execute: async (_id: string, params: Static<typeof taskLogParams>) => {
-      try {
-        await store.logEntry(taskId, params.message, params.outcome, runContext);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      } catch (err: any) {
-        if (typeof err?.message === "string" && err.message.toLowerCase().includes("archived")) {
-          return {
-            content: [{ type: "text" as const, text: "ERROR: Cannot log to archived task — this task is read-only" }],
-            details: {},
-          };
-        }
-        throw err;
-      }
+      await store.logEntry(taskId, params.message, params.outcome, runContext);
 
       return {
         content: [{ type: "text" as const, text: `Logged: ${params.message}` }],
@@ -3430,53 +3402,6 @@ Keep catch blocks typed as unknown (no-explicit-any) and surface err.message via
 */
 function toolErrorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
-}
-
-export function createTaskArchiveTool(store: TaskStore): ToolDefinition {
-  return {
-    name: "fn_task_archive",
-    label: "Archive Task",
-    description:
-      "Archive a task from any live column (move to archived). " +
-      "Archived tasks are preserved for historical reference but moved out of the main board view. " +
-      "If the task is still referenced as a lineage parent by another task, archiving is rejected unless removeLineageReferences:true is passed.",
-    parameters: taskArchiveParams,
-    execute: async (_id: string, params: Static<typeof taskArchiveParams>) => {
-      try {
-        const task = await store.archiveTask(params.id, {
-          removeLineageReferences: params.removeLineageReferences === true,
-        });
-        return {
-          content: [{ type: "text" as const, text: `Archived ${task.id} → ${task.column}` }],
-          details: { taskId: task.id, column: task.column },
-        };
-      } catch (err: unknown) {
-        return { content: [{ type: "text" as const, text: `ERROR: Failed to archive task: ${toolErrorMessage(err)}` }], details: {}, isError: true };
-      }
-    },
-  };
-}
-
-export function createTaskUnarchiveTool(store: TaskStore): ToolDefinition {
-  return {
-    name: "fn_task_unarchive",
-    label: "Unarchive Task",
-    description:
-      "Unarchive an archived task (move from archived → its restore column). " +
-      "Restores to the pre-archive column when available, with active execution columns downgraded to todo.",
-    parameters: taskUnarchiveParams,
-    execute: async (_id: string, params: Static<typeof taskUnarchiveParams>) => {
-      try {
-        const task = await store.unarchiveTask(params.id);
-        return {
-          content: [{ type: "text" as const, text: `Unarchived ${task.id} → ${task.column}` }],
-          details: { taskId: task.id, column: task.column },
-        };
-      } catch (err: unknown) {
-        return { content: [{ type: "text" as const, text: `ERROR: Failed to unarchive task: ${toolErrorMessage(err)}` }], details: {}, isError: true };
-      }
-    },
-  };
 }
 
 export function createTaskDeleteTool(store: TaskStore): ToolDefinition {

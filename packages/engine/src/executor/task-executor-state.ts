@@ -84,8 +84,6 @@ export abstract class TaskExecutorState {
   protected workflowLifecycleMovesInFlight = new Set<string>();
   protected pendingTaskDisposals = new Map<string, Promise<void>>();
   protected unregisterTaskMoveDisposer: (() => void) | undefined;
-  protected unregisterArchiveWorktreeDisposer: (() => void) | undefined;
-  protected unregisterArchiveWorkspaceWorktreeDisposer: (() => void) | undefined;
   protected activeSessions = new Map<string, ActiveExecutorSessionState>();
   protected activeStepExecutors = new Map<string, StepSessionExecutor>();
   protected activeStepExecutorSeenSteeringIds = new Map<string, Set<string>>();

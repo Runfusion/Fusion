@@ -45,7 +45,7 @@ import {
   type PipelineTerminalState,
 } from "./_pipeline-terminal-state.js";
 
-export type PipelineBuiltinWorkflow = "builtin:coding-ideas" | "builtin:coding-ideas-v2" | "builtin:coding";
+export type PipelineBuiltinWorkflow = "builtin:coding-ideas-v2" | "builtin:coding";
 export type PipelineWorkflowId = PipelineBuiltinWorkflow | string;
 
 export type PipelineTaskSeed = {

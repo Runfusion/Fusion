@@ -1,10 +1,10 @@
-import { readFileSync } from "node:fs";
 import { fireEvent, render, screen, within } from "@testing-library/react";
+import type { Task } from "@fusion/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { BoardWorkflowDefinition } from "../../api";
+import type { BoardWorkflowDefinition, BoardWorkflowsPayload } from "../../api";
 import { loadAllAppCssBaseOnly } from "../../test/cssFixture";
 import { computeMenuWidth, OPTION_DECORATIONS_WIDTH, WorkflowSwitcher } from "../WorkflowSwitcher";
-import type { WorkflowStatusCounts } from "../workflowStatusCounts";
+import { computeWorkflowStatusCounts, type WorkflowStatusCounts } from "../workflowStatusCounts";
 import { readAppFile } from "../../test/cssFixture";
 
 const workflows: BoardWorkflowDefinition[] = [
@@ -70,15 +70,15 @@ describe("WorkflowSwitcher", () => {
         workflows={workflows}
         value="builtin:coding"
         onChange={vi.fn()}
-        counts={countMap([["builtin:coding", { todo: 3, inProgress: 1, done: 5, merging: 0 }]])}
+        counts={countMap([["builtin:coding", { plan: 3, progress: 1, review: 5, merging: 0 }]])}
       />,
     );
 
     const trigger = screen.getByTestId("workflow-switcher");
     expect(trigger).toHaveTextContent("Coding");
-    expect(within(trigger).queryByText("3", { selector: ".workflow-switcher-count--todo" })).not.toBeInTheDocument();
-    expect(within(trigger).queryByText("1", { selector: ".workflow-switcher-count--in-progress" })).not.toBeInTheDocument();
-    expect(within(trigger).queryByText("5", { selector: ".workflow-switcher-count--done" })).not.toBeInTheDocument();
+    expect(within(trigger).queryByText("3", { selector: ".workflow-switcher-count--plan" })).not.toBeInTheDocument();
+    expect(within(trigger).queryByText("1", { selector: ".workflow-switcher-count--progress" })).not.toBeInTheDocument();
+    expect(within(trigger).queryByText("5", { selector: ".workflow-switcher-count--review" })).not.toBeInTheDocument();
     expect(trigger.querySelector(".workflow-switcher-counts--trigger")).toBeNull();
     expect(trigger).toHaveAccessibleName("Select workflow. Current workflow: Coding");
   });
@@ -273,7 +273,7 @@ describe("WorkflowSwitcher", () => {
         workflows={workflows}
         value="__all_workflows__"
         onChange={onChange}
-        counts={countMap([["__all_workflows__", { todo: 4, inProgress: 3, done: 2, merging: 1 }]])}
+        counts={countMap([["__all_workflows__", { plan: 4, progress: 3, review: 2, merging: 1 }]])}
         aggregateOption={{ id: "__all_workflows__", name: "All workflows" }}
         onEditWorkflow={onEditWorkflow}
       />,
@@ -422,7 +422,7 @@ describe("WorkflowSwitcher", () => {
         workflows={workflows}
         value="builtin:coding"
         onChange={vi.fn()}
-        counts={countMap([["builtin:coding", { todo: 3, inProgress: 1, done: 5, merging: 0 }]])}
+        counts={countMap([["builtin:coding", { plan: 3, progress: 1, review: 5, merging: 0 }]])}
       />,
     );
 
@@ -431,19 +431,94 @@ describe("WorkflowSwitcher", () => {
 
     fireEvent.click(trigger);
 
-    expect(within(trigger).getByText("3", { selector: ".workflow-switcher-count--todo" })).toBeInTheDocument();
-    expect(within(trigger).getByText("1", { selector: ".workflow-switcher-count--in-progress" })).toBeInTheDocument();
-    expect(within(trigger).getByText("5", { selector: ".workflow-switcher-count--done" })).toBeInTheDocument();
+    expect(within(trigger).getByText("3", { selector: ".workflow-switcher-count--plan" })).toBeInTheDocument();
+    expect(within(trigger).getByText("1", { selector: ".workflow-switcher-count--progress" })).toBeInTheDocument();
+    expect(within(trigger).getByText("5", { selector: ".workflow-switcher-count--review" })).toBeInTheDocument();
 
     const codingOption = screen.getByTestId("workflow-switcher-option-builtin:coding");
-    expect(within(codingOption).getByText("3", { selector: ".workflow-switcher-count--todo" })).toBeInTheDocument();
-    expect(within(codingOption).getByText("1", { selector: ".workflow-switcher-count--in-progress" })).toBeInTheDocument();
-    expect(within(codingOption).getByText("5", { selector: ".workflow-switcher-count--done" })).toBeInTheDocument();
+    expect(within(codingOption).getByText("3", { selector: ".workflow-switcher-count--plan" })).toBeInTheDocument();
+    expect(within(codingOption).getByText("1", { selector: ".workflow-switcher-count--progress" })).toBeInTheDocument();
+    expect(within(codingOption).getByText("5", { selector: ".workflow-switcher-count--review" })).toBeInTheDocument();
 
     const designOption = screen.getByTestId("workflow-switcher-option-design");
-    expect(within(designOption).getByText("0", { selector: ".workflow-switcher-count--todo" })).toBeInTheDocument();
-    expect(within(designOption).getByText("0", { selector: ".workflow-switcher-count--in-progress" })).toBeInTheDocument();
-    expect(within(designOption).getByText("0", { selector: ".workflow-switcher-count--done" })).toBeInTheDocument();
+    expect(within(designOption).getByText("0", { selector: ".workflow-switcher-count--plan" })).toBeInTheDocument();
+    expect(within(designOption).getByText("0", { selector: ".workflow-switcher-count--progress" })).toBeInTheDocument();
+    expect(within(designOption).getByText("0", { selector: ".workflow-switcher-count--review" })).toBeInTheDocument();
+
+    const badges = within(codingOption).getAllByTitle(/^(Plan|Progress|Review):/);
+    expect(badges.map((badge) => badge.getAttribute("title"))).toEqual([
+      "Plan: 3",
+      "Progress: 1",
+      "Review: 5",
+    ]);
+    expect(codingOption).toHaveAccessibleName(/Plan: 3, Progress: 1, Review: 5/);
+  });
+
+  it("shows Review instead of Done for the four-phase symptom fixture", () => {
+    const payload: BoardWorkflowsPayload = {
+      flagEnabled: true,
+      defaultWorkflowId: "symptom",
+      taskWorkflowIds: {},
+      workflows: [{
+        id: "symptom",
+        name: "Symptom workflow",
+        columns: [
+          { id: "plan", name: "Plan", flags: { intake: true } },
+          { id: "progress", name: "Progress", flags: { countsTowardWip: true } },
+          { id: "review", name: "Review", flags: { mergeBlocker: true } },
+          { id: "done", name: "Done", flags: { complete: true } },
+        ],
+      }],
+    };
+    const tasks = ["plan", "progress", "review", "done"].map((column, index) => ({
+      id: `FN-${index}`,
+      title: column,
+      description: column,
+      column,
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+    } as Task));
+    const counts = computeWorkflowStatusCounts(tasks, payload);
+
+    render(
+      <WorkflowSwitcher
+        workflows={payload.workflows}
+        value="symptom"
+        onChange={vi.fn()}
+        counts={counts}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("workflow-switcher"));
+
+    const option = screen.getByTestId("workflow-switcher-option-symptom");
+    expect(within(option).getByTitle("Plan: 1")).toHaveTextContent("1");
+    expect(within(option).getByTitle("Progress: 1")).toHaveTextContent("1");
+    expect(within(option).getByTitle("Review: 1")).toHaveTextContent("1");
+    expect(option.querySelectorAll(".workflow-switcher-count")).toHaveLength(3);
+    expect(option).not.toHaveTextContent("Done");
+  });
+
+  it("keeps counts scoped by workflow id when names are duplicated", () => {
+    const duplicateNames = [
+      { id: "first", name: "Duplicate", columns: [] },
+      { id: "second", name: "Duplicate", columns: [] },
+    ];
+    render(
+      <WorkflowSwitcher
+        workflows={duplicateNames}
+        value="first"
+        onChange={vi.fn()}
+        counts={countMap([
+          ["first", { plan: 1, progress: 2, review: 3, merging: 0 }],
+          ["second", { plan: 4, progress: 5, review: 6, merging: 0 }],
+        ])}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("workflow-switcher"));
+
+    expect(screen.getByTestId("workflow-switcher-option-first")).toHaveAccessibleName(/Plan: 1, Progress: 2, Review: 3/);
+    expect(screen.getByTestId("workflow-switcher-option-second")).toHaveAccessibleName(/Plan: 4, Progress: 5, Review: 6/);
   });
 
   it("shows a merging indicator only for workflows with merging tasks", () => {
@@ -453,8 +528,8 @@ describe("WorkflowSwitcher", () => {
         value="builtin:coding"
         onChange={vi.fn()}
         counts={countMap([
-          ["builtin:coding", { todo: 3, inProgress: 1, done: 5, merging: 1 }],
-          ["design", { todo: 0, inProgress: 2, done: 0, merging: 0 }],
+          ["builtin:coding", { plan: 3, progress: 1, review: 5, merging: 1 }],
+          ["design", { plan: 0, progress: 2, review: 0, merging: 0 }],
         ])}
       />,
     );
@@ -472,9 +547,9 @@ describe("WorkflowSwitcher", () => {
   it("colors status counts with board column color tokens", () => {
     const css = loadAllAppCssBaseOnly();
     const badgeRules = [
-      [".workflow-switcher-count--todo", "--todo"],
-      [".workflow-switcher-count--in-progress", "--in-progress"],
-      [".workflow-switcher-count--done", "--done"],
+      [".workflow-switcher-count--plan", "--todo"],
+      [".workflow-switcher-count--progress", "--in-progress"],
+      [".workflow-switcher-count--review", "--in-review"],
     ] as const;
 
     for (const [selector, token] of badgeRules) {

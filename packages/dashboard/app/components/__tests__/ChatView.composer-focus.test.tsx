@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import { userEvent } from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { ChatView } from "../ChatView";
@@ -21,6 +22,18 @@ vi.mock("../SessionTerminal", () => ({
 }));
 vi.mock("../../hooks/useChat");
 vi.mock("../../hooks/useChatRooms");
+vi.mock("../../hooks/useVoiceDictation", () => ({
+  useVoiceDictation: () => ({
+    enabled: true,
+    supported: true,
+    state: "idle",
+    partialText: "",
+    finalText: "",
+    error: undefined,
+    start: vi.fn().mockResolvedValue(undefined),
+    stop: vi.fn().mockResolvedValue(undefined),
+  }),
+}));
 vi.mock("../../hooks/useNavigationHistory", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../hooks/useNavigationHistory")>()),
   useNavigationHistoryContext: () => ({ pushNav: vi.fn(), replaceCurrent: vi.fn(), removeNav: vi.fn() }),
@@ -35,6 +48,9 @@ vi.mock("../../hooks/useModelsCache", () => ({
     loading: false,
     refresh: vi.fn(),
   }),
+}));
+vi.mock("../../hooks/useFavorites", () => ({
+  useFavorites: () => ({ availableModels: [{ provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5" }], favoriteProviders: [], favoriteModels: [], providerInstances: {}, toggleFavoriteProvider: vi.fn(), toggleFavoriteModel: vi.fn() }),
 }));
 vi.mock("../../api", () => ({
   fetchSettings: vi.fn().mockResolvedValue({}),
@@ -321,13 +337,67 @@ describe("ChatView composer focus when a conversation opens", () => {
     expect(stopStreaming).not.toHaveBeenCalled();
   });
 
-  it("does not throw or focus a disabled composer while the pending queue is busy", async () => {
-    const { current } = setupListedConversation({ pendingQueueAction: true });
+  it("keeps local composition active while cancellation-owned controls remain locked", async () => {
+    const user = userEvent.setup();
+    const { current } = setupListedConversation({
+      pendingQueueAction: true,
+      pendingMessages: ["Already queued"],
+    });
     await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
     const composer = await openConversation(current.id);
-    expect(composer).toBeDisabled();
-    expect(composer).not.toHaveFocus();
+    expect(composer).not.toBeDisabled();
+    await waitFor(() => expect(composer).toHaveFocus());
+    expect(screen.getByRole("button", { name: "Start voice dictation" })).not.toBeDisabled();
+    expect(screen.getByTestId("chat-attach-btn")).toBeDisabled();
+    expect(screen.getByTestId("chat-thinking-btn")).toBeDisabled();
+    expect(screen.getByTestId("chat-pending-edit-0")).toBeDisabled();
+    expect(screen.getByTestId("chat-pending-force-0")).toBeDisabled();
+
+    await user.type(composer, "Typed during cancellation");
+    expect(composer).toHaveValue("Typed during cancellation");
+    expect(screen.getByTestId("chat-send-btn")).not.toBeDisabled();
+  });
+
+  it("preserves focus and character-by-character input when cancellation begins", async () => {
+    const user = userEvent.setup();
+    const { current } = setupListedConversation({ pendingQueueAction: false });
+    const view = await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    const composer = await openConversation(current.id);
+    await waitFor(() => expect(composer).toHaveFocus());
+
+    setupListedConversation({ pendingQueueAction: true });
+    view.rerender(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    expect(screen.getByTestId("chat-input")).toBe(composer);
+    expect(composer).not.toBeDisabled();
+    expect(composer).toHaveFocus();
+    await user.type(composer, "Toujours actif");
+    expect(composer).toHaveValue("Toujours actif");
+    expect(composer).toHaveFocus();
+  });
+
+  it.each([
+    ["mobile portrait", () => {
+      const spy = mockViewportMode("mobile");
+      return () => spy.mockRestore();
+    }],
+    ["mobile landscape", () => mockPhoneLandscapeViewport()],
+  ])("accepts local input during cancellation on %s", async (_name, installViewport) => {
+    const restore = installViewport();
+    try {
+      const user = userEvent.setup();
+      const { current } = setupListedConversation({ pendingQueueAction: true });
+      await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+      const composer = await openConversation(current.id);
+
+      expect(composer).not.toBeDisabled();
+      await user.click(composer);
+      await user.type(composer, "Mobile draft");
+      expect(composer).toHaveValue("Mobile draft");
+    } finally {
+      restore();
+    }
   });
 
   it("drives the real list selection and New Chat handlers before asserting focus", async () => {

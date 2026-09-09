@@ -56,7 +56,6 @@ function customNoMergeIr(): WorkflowIr {
       { id: "inbox", name: "Inbox", traits: [{ trait: "intake" }] },
       { id: "working", name: "Working", traits: [{ trait: "wip" }] },
       { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
-      { id: "archived", name: "Archived", traits: [{ trait: "archived" }] },
     ],
     nodes: [
       { id: "start", kind: "start", column: "inbox" },

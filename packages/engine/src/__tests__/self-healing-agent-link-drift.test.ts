@@ -49,17 +49,6 @@ describe("FN-4296: self-healing agent link drift", () => {
     manager.stop();
   });
 
-  it("FN-4296: durable agent linked to archived task is cleared by sweep", async () => {
-    const agents = [makeAgent("agent-1", "FN-1")];
-    const { manager, store } = buildManager(agents, { "FN-1": { id: "FN-1", column: "archived" } as Task });
-    await manager.recoverDriftedAgentTaskLinks();
-    expect(agents[0].taskId).toBeUndefined();
-    expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
-      metadata: expect.objectContaining({ reason: "linked task in terminal column archived" }),
-    }));
-    manager.stop();
-  });
-
   it("FN-4296: durable agent linked to queued todo task with no live run is cleared", async () => {
     const agents = [makeAgent("agent-1", "FN-1")];
     const { manager } = buildManager(agents, { "FN-1": { id: "FN-1", column: "todo" } as Task }, () => false);

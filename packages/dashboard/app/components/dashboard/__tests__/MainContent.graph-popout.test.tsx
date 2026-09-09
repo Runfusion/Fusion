@@ -203,11 +203,7 @@ function mainContentProps(overrides: Partial<MainContentProps> = {}): MainConten
     globalPaused: false,
     updateTask: vi.fn(),
     retryTask: vi.fn(),
-    archiveTask: vi.fn(),
-    unarchiveTask: vi.fn(),
     deleteTask: vi.fn(),
-    archiveAllDone: vi.fn(),
-    loadArchivedTasks: vi.fn(),
     searchQuery: "",
     availableModels: [],
     favoriteProviders: [],
@@ -397,8 +393,8 @@ describe("MainContent graph task pop-out wiring", () => {
   A PLUGIN-RENDERED CARD RESOLVED NO COLUMN TRAITS AT ALL.
 
   `renderTaskCard` is how a plugin view draws a real task card. It built a `TaskCard` without
-  `taskColumnFlags`, so every role helper inside that card fell back to the legacy id — archive and
-  revert affordances, progress, the elapsed-time indicator, the planning badge — for every plugin
+  `taskColumnFlags`, so every role helper inside that card fell back to the legacy id — Revert
+  affordances, progress, the elapsed-time indicator, and the planning badge — for every plugin
   view on every board. The map was already in this component's scope; the card was simply never
   given it.
 

@@ -81,7 +81,6 @@ const DEFAULT_WORKFLOW = {
     { id: "triage", name: "Triage", flags: { intake: true } },
     { id: "todo", name: "Todo", flags: { hold: true } },
     { id: "done", name: "Done", flags: { complete: true } },
-    { id: "archived", name: "Archived", flags: { archived: true } },
   ],
 };
 
@@ -97,16 +96,15 @@ const CUSTOM_WORKFLOW = {
 /*
 FNXC:CodingIdeasWorkflow 2026-07-05-00:00:
 A task created under the Coding (Ideas) workflow (manual "ideas" intake, autoTriage:false) must render in the board's
-"ideas" lane, not "triage" — mirrors the real builtin:coding-ideas workflow's intake column id/flag shape.
+"ideas" lane, not "triage" — mirrors the real builtin:coding-ideas-v2 workflow's intake column id/flag shape.
 */
 const CODING_IDEAS_WORKFLOW = {
-  id: "builtin:coding-ideas",
+  id: "builtin:coding-ideas-v2",
   name: "Coding (Ideas)",
   columns: [
     { id: "ideas", name: "Ideas", flags: { intake: true } },
     { id: "todo", name: "Todo", flags: { hold: true } },
     { id: "done", name: "Done", flags: { complete: true } },
-    { id: "archived", name: "Archived", flags: { archived: true } },
   ],
 };
 
@@ -300,7 +298,7 @@ describe("workflow lane quick-create visibility", () => {
     });
 
     const ideasColumn = screen.getByTestId("column-ideas");
-    expect(within(ideasColumn).getByText("Created builtin:coding-ideas")).toBeTruthy();
+    expect(within(ideasColumn).getByText("Created builtin:coding-ideas-v2")).toBeTruthy();
     expect(JSON.parse(ideasColumn.getAttribute("data-task-ids") ?? "[]")).toContain("FN-new");
 
     await act(async () => {
@@ -308,7 +306,7 @@ describe("workflow lane quick-create visibility", () => {
       await refetch.promise;
     });
 
-    expect(within(screen.getByTestId("column-ideas")).getByText("Created builtin:coding-ideas")).toBeTruthy();
+    expect(within(screen.getByTestId("column-ideas")).getByText("Created builtin:coding-ideas-v2")).toBeTruthy();
   });
 
   /*

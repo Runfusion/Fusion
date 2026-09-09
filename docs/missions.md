@@ -276,7 +276,7 @@ Use this to edit existing features without delete-and-re-add cycles.
 
 The shared eligibility rule is used by the store, agent tool, REST route, and dashboard. A `blocked` or `needs_fix` loop state permits both actions regardless of feature status. A blocked status with no loop state or `idle` also permits both. A blocked status with `validating`, `implementing`, or `passed` permits **Clear only**; `re_run` is refused while a live cycle is active and for passed features. Healthy features expose neither action, and `re_run` also refuses a feature with an in-flight validator run or no linked assertions.
 
-For a status-changing clear, the engine resolves a target status and loop target plus a ground-truth fence. The fence type lives in `@fusion/core` while the engine produces it, preserving core's dependency direction. It captures the linked task identity, lane role, and whether that task was observed `live` or `absent`. A missing, deleted, or archived linked task is an absent ground truth that resolves to `defined`, so it can be repaired rather than permanently rejected.
+For a status-changing clear, the engine resolves a target status and loop target plus a ground-truth fence. The fence type lives in `@fusion/core` while the engine produces it, preserving core's dependency direction. It captures the linked task identity, lane role, and whether that task was observed `live` or `absent`. A missing, deleted, or historical-sentinel linked task is absent ground truth that resolves to `defined`, so it can be repaired rather than permanently rejected.
 
 The store rechecks the fence under its feature-row lock: a live task must still be live and unchanged, while an absent task must remain absent. It retries a stale resolution once. The no-`taskStore` fixture fallback records `groundTruthTaskVerified: false` for a non-null task ID. Callers provide both resolved targets: the store ignores `resolvedLoopState` on a status-only clear and ignores `resolvedStatus` on a loop-only clear, avoiding stale pre-lock branching. The mutation and `feature_validation_repaired` audit event commit in one transaction; clearing resets the implementation retry count, and unlinked features cannot be resumed as `triaged` or `in-progress`. The normal execution loop still cannot escape `blocked` by itself.
 
@@ -290,7 +290,7 @@ Mission hierarchy records (`missions`, `milestones`, `slices`, `mission_features
 
 To keep behavior consistent, Fusion uses **hard delete with guard** for feature/slice/milestone deletes:
 
-- Delete is rejected when the target (or any cascading child feature) is linked to a **live** task (`deletedAt IS NULL` and not archived).
+- Delete is rejected when the target (or any cascading child feature) is linked to a **live** task (`deletedAt IS NULL` and outside the historical sentinel).
 - Callers can pass `force: true` to override the guard. Force clears the mission linkage before deletion, then proceeds with the same hard delete.
 - Linked tasks are preserved; only mission hierarchy rows are removed.
 
@@ -423,7 +423,7 @@ Automatic hierarchy rollup, including terminal-task delivery reconciliation, own
 
 ## Feature Reconciliation API Endpoint
 
-Use this endpoint when a feature's delivery task has already shipped and is now terminal (`done` or `archived`), but the feature status still needs to be reconciled to `done`.
+Use this endpoint when a feature's delivery task has already shipped into its workflow's Complete column, but the feature status still needs to be reconciled to `done`.
 
 ### `POST /api/missions/features/:featureId/reconcile-done`
 
@@ -437,14 +437,13 @@ Use this endpoint when a feature's delivery task has already shipped and is now 
 
 - Validates `featureId` and requires a non-empty string `taskId`.
 - Resolves the feature and terminal delivery evidence in the request's scoped PostgreSQL project.
-- Accepts either a live, non-deleted task in `done`, or a supported archived task represented by both its retained soft-deleted `column=archived` project-task tombstone and its project-scoped cold archive snapshot. A deletion without both archive representations is not delivery evidence.
-- Atomically validates conflicts, writes the canonical feature→task link, marks the feature `done`, updates the live task's reverse mission/slice link when applicable, and recomputes slice/milestone rollups. Any validation or write failure rolls back the complete operation.
-- Archived evidence remains archived and read-only: reconciliation intentionally leaves its retained task tombstone without a writable reverse backlink rather than resurrecting the task.
+- Accepts only a live, non-deleted task in a column carrying its workflow's `complete` trait (`done` is the degraded built-in fallback). Deleted and historical rows are never delivery evidence.
+- Atomically validates conflicts, writes the canonical feature→task link, marks the feature `done`, updates the task's reverse mission/slice link, and recomputes slice/milestone rollups. Any validation or write failure rolls back the complete operation.
 - Repeating the same terminal task against the same completed feature is idempotent. A feature linked to another task, or a task linked to another feature, returns `409` without mutation.
 - The repair path never enters ordinary triage/implementation state, changes loop attempts, creates or moves a task, activates/watches the mission, or changes mission `status`, `autopilotEnabled`, or `autoAdvance`.
 
-<!-- FNXC:MissionReconciliation 2026-07-20-08:34: Operators need a supported atomic terminal-evidence repair because unarchive/move workarounds enter ordinary task lifecycle observers and can wake a parked mission or generate duplicate work. -->
-**Safe duplicate cleanup:** preserve the first `409`; verify through supported APIs that the current linked task is generated duplicate work with no unique delivery or lineage value; call `POST /api/missions/features/:featureId/unlink-task`; archive only the proven duplicate through the supported task archive API; then call `reconcile-done` with the canonical terminal task. Never overwrite a mismatched link, unarchive/move canonical delivery evidence, or use direct storage edits. If the duplicate is ambiguous, leave it untouched and escalate for evidence.
+<!-- FNXC:MissionReconciliation 2026-07-20-08:34: Operators need a supported atomic terminal-evidence repair because ordinary task moves can wake a parked mission. -->
+**Safe duplicate cleanup:** preserve the first `409`; verify through supported APIs that the current linked task is generated duplicate work with no unique delivery or lineage value; call `POST /api/missions/features/:featureId/unlink-task`; delete only that proven duplicate; then call `reconcile-done` with the canonical Complete task. Never overwrite a mismatched link, move canonical delivery evidence, or use direct storage edits. If the duplicate is ambiguous, leave it untouched and escalate for evidence.
 
 ## Unlink / Re-point a feature's task link
 
@@ -463,8 +462,8 @@ Both tools are classified as permanent-task-agent mutation surfaces (action gati
 **Error responses:**
 
 - `400` — invalid feature ID format or missing/empty `taskId`.
-- `404` — feature not found or no task/archive evidence exists for the supplied task ID.
-- `409` — feature/task mismatch, task already linked to another feature, nonterminal task, or a deleted/archived task lacking the supported retained tombstone plus cold snapshot. Every `409` leaves feature, task, rollups, and mission controls unchanged.
+- `404` — feature or supplied task ID not found.
+- `409` — feature/task mismatch, task already linked to another feature, nonterminal task, or deleted/historical task. Every `409` leaves feature, task, rollups, and mission controls unchanged.
 
 ## Validation Contract Lifecycle
 
@@ -658,10 +657,10 @@ A feature transitions to `blocked` when:
 - Autopilot stops advancing the slice containing the blocked feature
 - `MilestoneValidationRollup.state` reflects `blocked` assertions
 - The feature remains in `blocked` state until operator intervention
-- Deleting a generated fix, or archiving/deleting its generated task, records a durable root-scoped `operator-intervention` stop in the same transaction as unlink/removal. Recovery, duplicate delivery, unarchive, task/root recreation, and relinking cannot mint a sibling. The stop remains even if a hierarchy cascade removes root and lineage rows.
+- Deleting a generated fix or its generated task records a durable root-scoped `operator-intervention` stop in the same transaction as unlink/removal. Recovery, duplicate delivery, task/root recreation, and relinking cannot mint a sibling. The stop remains even if a hierarchy cascade removes root and lineage rows.
 - `POST /api/missions/:missionId/resume` is the sole resume seam. It atomically clears only operator-intervention stops, preserves attempt counts, moves extant roots to `needs_fix`, and activates the mission. If any root is non-resumable, it changes no root, tombstone, counter, or mission state and returns HTTP 409 with `code: "MISSION_RESUME_CONFLICT"`, `blockerSchemaVersion: 1`, and `blockers: MissionBlockerDescriptor[]`. A descriptor has `schemaVersion: 1`, `kind: "mission-resume-conflict"`, `rootFeatureId`, closed `reason` (`budget-exhausted`, `operator-intervention`, or fail-closed `legacy-unknown-stop`), and `source` (`feature-row` or `lineage-stop`); lineage stops also retain `stoppedAt` and `origin`. Unknown or empty persisted reasons normalize to `legacy-unknown-stop`, retaining a non-empty persisted value as `rawReason`. The canonical array is deduplicated on `(rootFeatureId, source, reason)` while preserving distinct cross-source provenance. Consumers must treat an unrecognized `blockerSchemaVersion` as non-resumable and ask an operator rather than guessing. FN-8979 retired the v0 mirror; `legacyBlockers` is not part of this response.
 
-On engine restart, `recoverActiveMissions()` re-enqueues features in `validating` or `needs_fix` states, ensuring no validation work is lost. It also re-triggers `implementing` features whose linked task is already `done`/`archived` and whose assertion validation has not passed yet. When the stale-run reaper has already converted an abandoned validator run into `needs_fix`, `processTaskOutcome()` promotes the feature back through `implementing` and re-validates instead of skipping it. The same recovery path is replayed during periodic self-heal maintenance, so historically stranded `implementing` features can self-heal without requiring an engine restart.
+On engine restart, `recoverActiveMissions()` re-enqueues features in `validating` or `needs_fix` states, ensuring no validation work is lost. It also re-triggers `implementing` features whose linked task is already in its workflow's Complete column and whose assertion validation has not passed yet. When the stale-run reaper has already converted an abandoned validator run into `needs_fix`, `processTaskOutcome()` promotes the feature back through `implementing` and re-validates instead of skipping it. The same recovery path is replayed during periodic self-heal maintenance, so historically stranded `implementing` features can self-heal without requiring an engine restart.
 
 **Reaper → slice deadlock closure (P0).** A *task-less, done, assertion-linked* feature is the dangerous case: it carries no board task to re-drive from, and `computeSliceStatus` refuses to count it complete until its validator passes. When the reaper terminates such a feature's stale run, the feature is left stranded in `loopState="validating"` (the reaper's done-guard, above) — a state the `validating`/`needs_fix` recovery branches (which only re-drive features that carry a `taskId`) never re-validate, while default-to-fail would otherwise re-drive it forever to a non-terminal `error`. `recoverActiveMissions()` closes this with a **stranded-done catch-all**: any task-less, done feature in `loopState` `implementing` *or* `validating` (or `needs_fix` + `lastValidatorStatus="error"`) that has not reached a passing validator status and is not currently being validated is re-driven directly through `runFeatureValidation()`. Because the verification run is bounded and non-mutating, this reaches a terminal `pass` / `fail` / `inconclusive` (and the slice can finally resolve) instead of livelocking on `validating`/`error`.
 
@@ -742,6 +741,8 @@ Evidence is secret-redacted before persistence. Each assertion retains at most 1
 
 Generated fix features and their triaged tasks include the same **Validation cause** section with source feature, validator run, failed assertion IDs, bounded observations, and evidence. SQLite `MissionStore` and PostgreSQL `AsyncMissionStore` use the shared renderer, so a retry does not produce backend-specific causes or duplicate sections. A fix that is already linked to a canonical task is an idempotent race; otherwise Mission activity tells the operator to inspect and retry triage rather than exposing internal exception/loop-state prose.
 
+A generated fix superseded by successful validation is terminal because it is no longer needed; superseding it never invents a passed validator result. Autonomous reconciliation preserves that terminal state instead of re-blocking it. A task-less generated fix with an unvalidated passed marker is restored to `defined` automatically, and an operator may also use validation repair to clear that marker; a passed marker tied to a validator run remains genuine evidence and is not cleared.
+
 The loop state is internal scheduling context, not an operator diagnosis. Its public meanings and actions are:
 
 | Public state | Meaning | Operator action |
@@ -797,7 +798,7 @@ Mission detail includes **Reconcile now** for an on-demand operator pass. It fir
 
 Selection changes discard reconcile responses silently, including responses arriving before the newly selected mission detail finishes loading. Leaving a mission also releases its busy and preview state so the next mission is immediately actionable. While a new mission detail is loading, the retained previous header's reconcile controls are inert (disabled and handler-refused), preventing reconciliation of the mission just left.
 
-Correction scans every non-archived mission and slice but never activates or triages work. It maps deterministic task lifecycle lanes, failure state, and assertion validation to feature status, repairs stale validation badges when the store supports its fenced repair primitive, and uses explicit task links only to reconcile shipped archived delivery through the store's `terminal-task-reconcile` attribution. A bounded `mission:reconcile-pass` audit event records IDs, source enums, and counters only. Git history, GitHub polling, FR-41 receipts, and FN-8845 spec-lock drift are deliberately deferred extension inputs.
+Correction scans every non-archived mission and slice but never activates or triages work. It maps deterministic task lifecycle lanes, failure state, and assertion validation to feature status, repairs stale validation badges when the store supports its fenced repair primitive, and accepts delivery evidence only from an explicit link to a live task in its workflow's Complete column. A bounded `mission:reconcile-pass` audit event records IDs, source enums, and counters only. Git history, GitHub polling, FR-41 receipts, and FN-8845 spec-lock drift are deliberately deferred extension inputs.
 
 Beyond the single-valued forward `feature.taskId` link, the reconcile also credits a feature as satisfying its acceptance criteria when a **terminal, non-failed** task carries the feature's reverse `mission_lineage` (`sourceMetadata.missionLineage` naming the feature's `missionId`/`sliceId`/`featureId`). This reverse-lineage credit is an additional satisfying input, not a replacement: it leaves the forward link untouched, never fires when any live lineage follow-up keeps the feature active (live withholding takes precedence), and ignores failed/errored lineage tasks. It lets a roadmap feature close `done` even when its forward link is pinned to a shared, non-satisfying task (RUFU-109).
 
@@ -823,7 +824,7 @@ Every automatic suppression appends one visible `validation memoized` activity e
 
 ## Spec alignment
 
-A linked task may expose a separate spec alignment signal: `on-plan`, `diverged-needs-review`, `diverged-relocked-approved`, or `unavailable`. This signal is independent of feature delivery and validation status; it never marks a feature done, blocks a task, or substitutes for assertion validation. Archived tasks retain their task-visible lock history but follow the existing unlink behavior and do not recreate a feature projection. Scheduler and autopilot reconciliation persist the current deterministic projection on each linked feature even when delivery status does not change, and Mission Manager renders that retained projection.
+A linked task may expose a separate spec alignment signal: `on-plan`, `diverged-needs-review`, `diverged-relocked-approved`, or `unavailable`. This signal is independent of feature delivery and validation status; it never marks a feature done, blocks a task, or substitutes for assertion validation. Deleted tasks retain only internal historical evidence and do not recreate a feature projection. Scheduler and autopilot reconciliation persist the current deterministic projection on each linked feature even when delivery status does not change, and Mission Manager renders that retained projection.
 
 
 `fn_feature_set_status` preserves the linked-task guard: `triaged`, `in-progress`, `done`, and `blocked` require a linked task; link an existing task with `fn_feature_link_task` or triage the feature first. Feature status writes emit `feature_status_changed` atomically with the row write at every production writer: engine and pi tools, dashboard REST repairs, scheduler work, linking/claiming, terminal-task reconciliation, validator reuse, and superseded-fix reconciliation. Feature and mission status events use one total, size-capped metadata builder, which persists only ids-only actor fields (`type`, `id`, `source`; never `displayName`) and an optional redacted, byte-bounded reason.

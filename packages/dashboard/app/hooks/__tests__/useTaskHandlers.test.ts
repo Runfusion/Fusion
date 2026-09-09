@@ -56,7 +56,7 @@ describe("useTaskHandlers", () => {
   it("handleBoardQuickCreate forwards an explicit workflowId without forcing a column", async () => {
     const options = createOptions();
     const { result } = renderHook(() => useTaskHandlers(options));
-    const input: TaskCreateInput = { description: "Do work", workflowId: "builtin:coding-ideas" };
+    const input: TaskCreateInput = { description: "Do work", workflowId: "builtin:coding-ideas-v2" };
 
     await act(async () => {
       await result.current.handleBoardQuickCreate(input);
@@ -64,7 +64,7 @@ describe("useTaskHandlers", () => {
 
     expect(options.createTask).toHaveBeenCalledWith({
       description: "Do work",
-      workflowId: "builtin:coding-ideas",
+      workflowId: "builtin:coding-ideas-v2",
       source: { sourceType: "dashboard_ui" },
     });
   });

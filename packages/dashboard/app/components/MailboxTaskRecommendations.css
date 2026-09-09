@@ -72,6 +72,12 @@ silently invalidates its declaration and previously erased card padding, spacing
   margin-block: var(--space-md);
 }
 
+.mailbox-task-recommendations__unavailable span {
+  color: var(--text-muted);
+  display: block;
+  margin-block-start: var(--space-xs);
+}
+
 @media (max-width: 768px) {
   .mailbox-task-recommendations__item {
     padding: var(--space-sm);

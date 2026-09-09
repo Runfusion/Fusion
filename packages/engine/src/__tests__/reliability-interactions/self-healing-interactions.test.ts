@@ -37,7 +37,6 @@ function makeStore(tasks: Map<string, Task>): TaskStore & EventEmitter {
     parseFileScopeFromPrompt: vi.fn().mockResolvedValue([]),
     getCompletionHandoffAcceptedMarker: vi.fn().mockReturnValue(null),
     walCheckpoint: vi.fn(() => ({ busy: 0, log: 0, checkpointed: 0 })),
-    archiveTaskAndCleanup: vi.fn(async () => ({})),
     clearStaleExecutionStartBranchReferences: vi.fn(() => []),
     updateSettings: vi.fn(async () => ({})),
     mergeTask: vi.fn(async () => undefined),
@@ -81,7 +80,7 @@ describe("reliability interactions: self-healing", () => {
     "Refusing to start coding agent in missing worktree: /tmp/wt",
     "Refusing to start coding agent in incomplete worktree: /tmp/wt",
     "Refusing to start coding agent in unregistered git worktree: /tmp/wt",
-  ])("recoverMissingWorktreeReviewFailures rebounds no-progress review tasks for '%s'", async (error) => {
+  ])("recoverMissingWorktreeReviewFailures contains no-progress review tasks for '%s'", async (error) => {
     const taskId = "WT";
     const tasks = new Map<string, Task>([[
       taskId,
@@ -102,7 +101,7 @@ describe("reliability interactions: self-healing", () => {
     const recovered = await mgr.recoverMissingWorktreeReviewFailures();
 
     expect(recovered).toBe(1);
-    expect(tasks.get(taskId)?.column).toBe("todo");
+    expect(tasks.get(taskId)?.column).toBe("in-review");
     expect(tasks.get(taskId)?.worktree ?? null).toBeNull();
     expect(tasks.get(taskId)?.branch ?? null).toBeNull();
     expect(store.logEntry).toHaveBeenCalledWith(

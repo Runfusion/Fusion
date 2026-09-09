@@ -33,6 +33,7 @@ import type { AsyncMissionStore, Goal, Settings, ThinkingLevel } from "@fusion/c
 import { hasTerminalReconcileCapability, reconcileMissionState, resolveFeatureRepairTargets, resolvePlanningThinkingLevel } from "@fusion/engine";
 import {
   getScopedStore as resolveScopedRequestStore,
+  resolveRequestProjectId,
   getProjectContext as resolveSharedProjectContext,
 } from "./routes/context.js";
 import type { ServerOptions } from "./server.js";
@@ -375,6 +376,7 @@ export function createMissionRouter(
   missionExecutionLoop?: {
     recoverActiveMissions(): Promise<{ recoveredCount: number }>;
     isRunning(): boolean;
+    executeManualValidatorRun?(run: { id: string; featureId: string }): Promise<void>;
   },
   engineManager?: import("@fusion/engine").ProjectEngineManager,
   pluginRunner?: Parameters<typeof import("@fusion/engine").buildSessionSkillContextSync>[3],
@@ -385,6 +387,29 @@ export function createMissionRouter(
 
   function getScopedStore(): TaskStore {
     return requestContext.getStore() ?? store;
+  }
+
+  /**
+   * FNXC:MissionValidation 2026-09-07-03:43:
+   * Admit manual work only with its existing project-scoped executor available.
+   * A foreign or stopped engine must not leave an ownerless running row, and a
+   * managed project must never fall back to the launch project's validator.
+   */
+  function requireManualValidator(req: Request) {
+    const projectId = resolveRequestProjectId(req, options);
+    const manager = engineManager ?? options?.engineManager;
+    const engine = projectId && manager ? manager.getEngine(projectId) : undefined;
+    const loop = projectId && manager
+      ? engine?.getTaskStore() === getScopedStore() ? engine.getRuntime().getMissionExecutionLoop() : undefined
+      : getScopedStore() === store ? missionExecutionLoop : undefined;
+    if (!loop?.isRunning() || typeof loop.executeManualValidatorRun !== "function") {
+      throw conflict("Mission validation executor is not available for this project");
+    }
+    return (run: { id: string; featureId: string }) => {
+      void loop.executeManualValidatorRun!(run).catch((error) => {
+        missionRoutesLog.error(`Manual validator dispatch failed for run ${run.id}:`, error);
+      });
+    };
   }
 
   function getScopedMissionStore() {
@@ -2466,6 +2491,7 @@ export function createMissionRouter(
           | { outcome: "already-running"; run: { id: string; startedAt: string } }
         >;
       };
+      const dispatch = requireManualValidator(req);
       const admission = typeof manualAdmissionStore.startManualValidatorRun === "function"
         ? await manualAdmissionStore.startManualValidatorRun(featureId)
         : { outcome: "started" as const, run: await missionStore.startValidatorRun(featureId, "manual") };
@@ -2478,6 +2504,7 @@ export function createMissionRouter(
         });
       }
       const run = admission.run;
+      dispatch(run);
 
       res.status(202).json({
         runId: run.id,
@@ -2526,6 +2553,7 @@ export function createMissionRouter(
         throw conflict(`Validation repair '${action}' is not eligible for status '${feature.status}' and loop state '${feature.loopState ?? "idle"}'`);
       }
 
+      const dispatch = action === "re_run" ? requireManualValidator(req) : undefined;
       const repair = async () => {
         if (action === "re_run") {
           return repairMissionStore.repairFeatureValidationState(featureId, {
@@ -2571,6 +2599,7 @@ export function createMissionRouter(
       if (action === "re_run") {
         const run = result.run;
         if (!run) throw new Error("Validation repair did not create a validator run");
+        dispatch!(run);
         res.status(202).json({
           runId: run.id,
           featureId: run.featureId,
@@ -2980,7 +3009,7 @@ export function createMissionRouter(
 
       /*
       FNXC:MissionReconciliation 2026-07-20-08:34:
-      Route validation stays project-scoped, but all terminal-evidence checks, mismatch guards, linkage, and rollups belong to one store transaction. Never pre-link or move/unarchive a shipped task here because those ordinary lifecycle paths can wake a parked mission.
+      Route validation stays project-scoped, but all terminal-evidence checks, mismatch guards, linkage, and rollups belong to one store transaction. Never pre-link or move a shipped task here because ordinary lifecycle paths can wake a parked mission.
       */
       try {
         const feature = await scopedMissionStore.reconcileFeatureDoneWithTerminalTask(featureId, normalizedTaskId);

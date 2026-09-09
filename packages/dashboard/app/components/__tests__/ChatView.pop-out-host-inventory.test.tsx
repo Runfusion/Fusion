@@ -41,6 +41,8 @@ describe("ChatView pop-out host inventory", () => {
     const chatView = readAppFile("components/ChatView.tsx");
     const affordanceFiles = sourceFiles.filter((file) => readAppFile(file).includes("chat-context-open-window"));
     expect(affordanceFiles).toEqual(["components/ChatView.tsx"]);
+    const copyConversationIdFiles = sourceFiles.filter((file) => readAppFile(file).includes("chat-context-copy-id"));
+    expect(copyConversationIdFiles).toEqual(["components/ChatView.tsx"]);
 
     /*
     FNXC:ChatWindows 2026-08-27-09:23:

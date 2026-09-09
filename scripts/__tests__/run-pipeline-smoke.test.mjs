@@ -35,7 +35,7 @@ function withReports(fn) {
 function records(count = PIPELINE_SMOKE_SCENARIO_COUNT) {
   return expectedScenarioIds().slice(0, count).map((scenarioId) => ({
     scenarioId,
-    workflowId: "builtin:coding-ideas",
+    workflowId: "builtin:coding-ideas-v2",
     expectedTerminal: "merged-done",
     observedTerminal: "merged-done",
     verdict: "pass",

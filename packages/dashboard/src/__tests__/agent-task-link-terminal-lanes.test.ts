@@ -4,7 +4,7 @@ FNXC:WorkflowLifecycleColumns 2026-07-31-07:00 (dashboard-server feed):
 THE INVARIANT: the agent "working on" sanitizer asks each linked task's OWN terminal lanes.
 
 `sanitizeAgentTaskLinks` drops `taskId` from an agent response when the linked task is finished, so
-the UI stops showing a stale "working on" indicator. It tested a hard-coded `Set(["done","archived"])`
+the UI stops showing a stale "working on" indicator. It tested hard-coded terminal ids
 — CENSUS-INVISIBLE, because a Set literal is a definition rather than a comparison, so nothing in the
 lifecycle backlog pointed at this file. On a renamed board it matched nothing and a FINISHED card kept
 its agent's indicator lit: the agent list advertised work that had already shipped, which is exactly
@@ -31,14 +31,14 @@ describe("agent task-link sanitizer resolves each task's own terminal lanes", ()
     expect(source).toContain("resolveWorkflowIrForTask(scopedStore, taskId, terminalIrCache");
   });
 
-  it("unions EVERY complete and archived column, not the first of each role", () => {
+  it("uses EVERY Complete column, not only the first", () => {
     /*
-    #2787 review (greptile P1). The first version resolved `lifecycle.complete`/`lifecycle.archived`,
-    which are FIRST-per-role: a workflow declaring two complete lanes had only one recognised, so a
+    #2787 review (greptile P1). The first version resolved `lifecycle.complete`, which is
+    FIRST-per-role: a workflow declaring two Complete lanes had only one recognised, so a
     task in the second kept its taskId and the agent stayed shown as working on finished work — the
     exact symptom this sanitizer removes, one degree narrower.
     */
-    expect(source).toContain('const terminal = [...columnsWithFlag(ir, "complete"), ...columnsWithFlag(ir, "archived")];');
+    expect(source).toContain('const terminal = columnsWithFlag(ir, "complete");');
   });
 
   it("passes the resolved answer into the terminal check", () => {
@@ -53,10 +53,10 @@ describe("agent task-link sanitizer resolves each task's own terminal lanes", ()
     expect(source).toContain("const terminalIrCache = new Map");
   });
 
-  it("keeps the literal pair as the documented unresolvable-workflow fallback", () => {
+  it("keeps Done as the documented unresolvable-workflow fallback", () => {
     // Removing it would make an unresolvable task read as non-terminal forever, which is a
     // regression in the opposite direction — the indicator would never clear.
-    expect(source).toContain('const TERMINAL_TASK_STATUSES = new Set(["done", "archived"])');
+    expect(source).toContain('const TERMINAL_TASK_STATUSES = new Set(["done"])');
     expect(source).toContain("resolvedTerminal ?? TERMINAL_TASK_STATUSES");
   });
 });

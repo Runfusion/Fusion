@@ -110,7 +110,7 @@ async function findExistingSignalTask(
   provider: SignalProvider,
   externalId: string,
 ): Promise<Task | undefined> {
-  const tasks = await store.listTasks({ slim: true, includeArchived: true });
+  const tasks = await store.listTasks({ slim: true, includeArchived: false });
   return tasks.find((t) => {
     const meta = t.source?.sourceMetadata as Record<string, unknown> | undefined;
     return (

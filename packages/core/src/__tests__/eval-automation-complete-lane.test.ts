@@ -42,13 +42,13 @@ describe("the eval batch's complete-lane vocabulary", () => {
   });
 
   it("does NOT include the wip lane — complete only, as the original filter was", async () => {
-    // Widening this to the terminal PAIR would start evaluating archived work the literal never saw.
+    // Evaluation remains scoped to completed work and excludes active WIP.
     const store = { listWorkflowDefinitions: vi.fn(async () => [{ ir: RENAMED_IR }]) };
 
     const columns = await resolveProjectColumnsForRoles(store, ["complete"]);
 
     expect(columns.has("building")).toBe(false);
-    expect([...(await resolveProjectColumnsForRoles(store, TERMINAL_ROLES))].includes("archived")).toBe(true);
+    expect([...(await resolveProjectColumnsForRoles(store, TERMINAL_ROLES))].includes("archived")).toBe(false);
   });
 
   it("the eval batch reads through the resolver, not the literal", () => {

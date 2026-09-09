@@ -11,6 +11,11 @@ import { _resetInitialViewportHeight } from "../../hooks/useMobileKeyboard";
 
 Element.prototype.scrollIntoView = vi.fn();
 
+const { mockToggleFavoriteProvider, mockToggleFavoriteModel } = vi.hoisted(() => ({
+  mockToggleFavoriteProvider: vi.fn().mockResolvedValue(undefined),
+  mockToggleFavoriteModel: vi.fn().mockResolvedValue(undefined),
+}));
+
 vi.mock("../SessionTerminal", () => ({
   SessionTerminal: () => <div data-testid="session-terminal">terminal</div>,
 }));
@@ -35,6 +40,16 @@ vi.mock("../../hooks/useModelsCache", () => ({
     refresh: vi.fn(async () => undefined),
   }),
 }));
+vi.mock("../../hooks/useFavorites", () => ({
+  useFavorites: () => ({
+    availableModels: [{ id: "gpt-4o", provider: "openai", name: "GPT-4o" }],
+    favoriteProviders: [],
+    favoriteModels: [],
+    providerInstances: {},
+    toggleFavoriteProvider: mockToggleFavoriteProvider,
+    toggleFavoriteModel: mockToggleFavoriteModel,
+  }),
+}));
 vi.mock("../../hooks/useAgentsMapCache", () => ({
   useAgentsMapCache: () => ({
     loading: false,
@@ -50,13 +65,16 @@ vi.mock("../../hooks/useAgentsMapCache", () => ({
   }),
 }));
 vi.mock("../CustomModelDropdown", () => ({
-  CustomModelDropdown: ({ value, thinkingLevel, defaultThinkingLevel }: { value?: string; thinkingLevel?: string; defaultThinkingLevel?: string }) => (
+  CustomModelDropdown: ({ value, thinkingLevel, defaultThinkingLevel, onToggleFavorite, onToggleModelFavorite }: { value?: string; thinkingLevel?: string; defaultThinkingLevel?: string; onToggleFavorite?: (provider: string) => void; onToggleModelFavorite?: (modelId: string) => void }) => (
     <div
       data-testid="custom-model-dropdown"
       data-value={value ?? ""}
       data-thinking-value={thinkingLevel ?? ""}
       data-default-thinking={defaultThinkingLevel ?? ""}
-    />
+    >
+      {onToggleFavorite ? <button type="button" onClick={() => onToggleFavorite("openai")}>Favorite provider</button> : null}
+      {onToggleModelFavorite ? <button type="button" onClick={() => onToggleModelFavorite("openai/gpt-4o")}>Favorite model</button> : null}
+    </div>
   ),
 }));
 vi.mock("../../api", async (importOriginal) => {
@@ -200,6 +218,25 @@ describe("ChatView New Chat project default behavior", () => {
     vi.clearAllMocks();
     mockDesktopViewport();
     mockFetchSettings.mockResolvedValue({ defaultThinkingLevel: "medium" } as Awaited<ReturnType<typeof api.fetchSettings>>);
+  });
+
+  it.each(["desktop", "mobile"])("forwards persistent favorite actions from the %s direct-chat host", async (viewport) => {
+    if (viewport === "mobile") mockMobileViewport();
+    const activeSession = makeSession({ agentId: "__fn_agent__", modelProvider: "openai", modelId: "gpt-4o" });
+    mockUseChat.mockReturnValue(chatState({ activeSession }));
+    await renderWithAct(<ChatView projectId="project-a" addToast={vi.fn()} />);
+    await waitForSettings();
+    fireEvent.click(screen.getByTestId("chat-session-sess-1"));
+    await waitFor(() => expect(screen.getByTestId("chat-thinking-btn")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByTestId("chat-thinking-btn"));
+    expect(screen.getByTestId("chat-thinking-popover").parentElement).toBe(document.body);
+    expect(document.querySelector(".chat-input-area")?.contains(screen.getByTestId("chat-thinking-popover"))).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Favorite provider" }));
+    fireEvent.click(screen.getByRole("button", { name: "Favorite model" }));
+
+    expect(mockToggleFavoriteProvider).toHaveBeenCalledWith("openai");
+    expect(mockToggleFavoriteModel).toHaveBeenCalledWith("openai/gpt-4o");
   });
 
   it("creates immediately from the configured model default without rendering the removed dialog", async () => {

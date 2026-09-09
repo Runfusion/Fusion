@@ -2,7 +2,8 @@ import "./TerminalLauncher.css";
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { ChevronDown, Loader2, Play, Settings, Terminal } from "lucide-react";
-import { fetchScripts } from "../api";
+import { fetchScripts, type ScriptEntry } from "../api";
+import { normalizeScriptCatalog } from "../api/system/workflows";
 
 interface DropdownPosition {
   top: number;
@@ -33,7 +34,7 @@ export function TerminalLauncher({
 }: TerminalLauncherProps) {
   const { t } = useTranslation("app");
   const [isScriptsOpen, setIsScriptsOpen] = useState(false);
-  const [scripts, setScripts] = useState<Record<string, string>>({});
+  const [scripts, setScripts] = useState<ScriptEntry[]>([]);
   const [scriptsLoading, setScriptsLoading] = useState(false);
   const [highlightedScriptIndex, setHighlightedScriptIndex] = useState(-1);
   const [scriptsDropdownPosition, setScriptsDropdownPosition] = useState<DropdownPosition | null>(null);
@@ -41,7 +42,7 @@ export function TerminalLauncher({
   const chevronButtonRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  const scriptEntries = useMemo(() => Object.entries(scripts).sort(([a], [b]) => a.localeCompare(b)), [scripts]);
+  const scriptEntries = useMemo(() => [...scripts].sort((a, b) => a.name.localeCompare(b.name)), [scripts]);
   const showScriptsFooter = scriptEntries.length > 0;
   const totalScriptItems = scriptEntries.length + (showScriptsFooter ? 1 : 0);
   const scriptsEnabled = Boolean(onOpenScripts && onRunScript);
@@ -116,8 +117,8 @@ export function TerminalLauncher({
         e.preventDefault();
         if (highlightedScriptIndex >= 0) {
           if (highlightedScriptIndex < scriptEntries.length) {
-            const [name, command] = scriptEntries[highlightedScriptIndex];
-            handleRunQuickScript(name, command);
+            const script = scriptEntries[highlightedScriptIndex];
+            handleRunQuickScript(script.name, script.command);
           } else if (showScriptsFooter && highlightedScriptIndex === scriptEntries.length) {
             handleManageScripts();
           }
@@ -140,10 +141,10 @@ export function TerminalLauncher({
     setScriptsLoading(true);
     fetchScripts(projectId)
       .then((data) => {
-        if (!cancelled) setScripts(data);
+        if (!cancelled) setScripts(normalizeScriptCatalog(data));
       })
       .catch(() => {
-        if (!cancelled) setScripts({});
+        if (!cancelled) setScripts([]);
       })
       .finally(() => {
         if (!cancelled) setScriptsLoading(false);
@@ -266,20 +267,22 @@ export function TerminalLauncher({
               ) : (
                 <>
                   <div className="quick-scripts-dropdown__list">
-                    {scriptEntries.map(([name, command], index) => (
+                    {scriptEntries.map((script, index) => (
                       <button
-                        key={name}
+                        key={script.name}
                         className={`quick-scripts-dropdown__item ${highlightedScriptIndex === index ? "highlighted" : ""}`}
-                        onClick={() => handleRunQuickScript(name, command)}
+                        onClick={() => handleRunQuickScript(script.name, script.command)}
                         role="option"
                         aria-selected={highlightedScriptIndex === index}
-                        data-testid={`quick-script-item-${name}`}
+                        data-testid={`quick-script-item-${script.name}`}
                         type="button"
                       >
                         <Play size={14} className="quick-scripts-dropdown__item-icon" />
                         <div className="quick-scripts-dropdown__item-info">
-                          <span className="quick-scripts-dropdown__item-name">{name}</span>
-                          <span className="quick-scripts-dropdown__item-command" title={command}>{command.length > 50 ? `${command.slice(0, 50)}...` : command}</span>
+                          <span className="quick-scripts-dropdown__item-name">{script.name}</span>
+                          <span className="quick-scripts-dropdown__item-command" title={script.description ?? script.command}>
+                            {script.description ?? script.command}
+                          </span>
                         </div>
                       </button>
                     ))}

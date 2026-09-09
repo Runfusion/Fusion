@@ -223,7 +223,7 @@ describe("fn pr create resolves the board's own review lane", () => {
     */
     const v1Ir = {
       ...RENAMED_IR,
-      columns: ["todo", "in-progress", "in-review", "done", "archived"].map((id) => ({ id, name: id, traits: [] })),
+      columns: ["todo", "in-progress", "in-review", "done"].map((id) => ({ id, name: id, traits: [] })),
     };
     const store = mockBoard("in-review", v1Ir);
 

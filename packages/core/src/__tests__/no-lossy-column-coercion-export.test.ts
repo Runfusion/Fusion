@@ -41,7 +41,7 @@ describe("no lossy column coercion on the core public surface", () => {
     asserted.
     */
     const twoRequiredArgs = (value: unknown, fallback: string) =>
-      (["triage", "todo", "in-progress", "in-review", "done", "archived"] as string[]).includes(value as string)
+      (["triage", "todo", "in-progress", "in-review", "done"] as string[]).includes(value as string)
         ? (value as string)
         : fallback;
     expect(twoRequiredArgs.length).toBe(2);
@@ -59,7 +59,7 @@ describe("no lossy column coercion on the core public surface", () => {
     "column" and fail if it turns a valid custom id into a different, legacy id. That is
     the behaviour being banned, not the identifier.
     */
-    const legacy = new Set(["triage", "todo", "in-progress", "in-review", "done", "archived"]);
+    const legacy = new Set(["triage", "todo", "in-progress", "in-review", "done"]);
     const offenders: string[] = [];
     for (const [name, value] of Object.entries(core)) {
       if (typeof value !== "function" || !/column/i.test(name)) continue;

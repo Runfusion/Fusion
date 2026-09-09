@@ -14,7 +14,6 @@ const ir: WorkflowIr = {
     { id: "review", name: "Review", traits: [{ trait: "merge-blocker" }, { trait: "human-review" }] },
     { id: "waiting", name: "Waiting", traits: [] },
     { id: "done", name: "Done", traits: [{ trait: "complete" }] },
-    { id: "archive", name: "Archive", traits: [{ trait: "archived" }] },
   ],
   nodes: [
     { id: "plan", kind: "prompt", column: "planning" },
@@ -207,7 +206,7 @@ describe("planTaskColumnRestart", () => {
   it("retains every shape-based refusal for workspace rows", () => {
     const workspace = { workspaceWorktrees: workspaceStates.one };
     expect(plan({ ...workspace, column: "done" }, "done")).toMatchObject({ kind: "refused", reason: "terminal-column" });
-    expect(plan({ ...workspace, column: "archive" }, "archive")).toMatchObject({ kind: "refused", reason: "archived-column" });
+    expect(plan({ ...workspace, column: "archive" }, "archive")).toMatchObject({ kind: "refused", reason: "column-not-in-workflow" });
     expect(plan({ ...workspace, column: "missing" }, "missing")).toMatchObject({ kind: "refused", reason: "column-not-in-workflow" });
     expect(plan(workspace, "planning", { version: "v1", name: "legacy", steps: [] })).toMatchObject({ kind: "refused", reason: "no-column-model" });
     const noEntry = plan(workspace, "building");

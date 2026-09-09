@@ -104,21 +104,11 @@ pgDescribe("unplanned execution refusal dedupe", () => {
     }
   });
 
-  it("rolls back the marker when the live task guard fails", async () => {
-    const archived = await h.store().createTask({ description: "archived task" });
-    await h.store().archiveTask(archived.id, { cleanup: false });
-
-    await expect(h.store().checkAndRecordUnplannedExecutionBlock(archived.id, "episode-a"))
-      .rejects.toThrow(/not found or archived/);
-
-    const archivedMarkers = await h.adminDb().select().from(schema.project.unplannedExecutionBlocks)
-      .where(eq(schema.project.unplannedExecutionBlocks.taskId, archived.id));
-    expect(archivedMarkers).toHaveLength(0);
-
+  it("rolls back the marker when the live task guard finds a deleted task", async () => {
     const deleted = await h.store().createTask({ description: "deleted task" });
     await h.store().deleteTask(deleted.id);
     await expect(h.store().checkAndRecordUnplannedExecutionBlock(deleted.id, "episode-a"))
-      .rejects.toThrow(/not found or archived/);
+      .rejects.toThrow(/not found or deleted/);
     const deletedMarkers = await h.adminDb().select().from(schema.project.unplannedExecutionBlocks)
       .where(eq(schema.project.unplannedExecutionBlocks.taskId, deleted.id));
     expect(deletedMarkers).toHaveLength(0);

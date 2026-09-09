@@ -305,66 +305,8 @@ describe("TaskCard mobile", () => {
     expectRuleToContain(css, ".card :is(input, textarea, select, [contenteditable=\"true\"])", "user-select: text;");
   });
 
-  it("sets .card-archive-btn opacity: 1 in the mobile media block", () => {
-    const css = loadAllAppCss();
-    const mobileSection = getMainMobileSection(css);
 
-    expectRuleToContain(mobileSection, ".card-archive-btn", "opacity: 1;");
-  });
 
-  it("keeps archive/unarchive/Promote controls visible without min-height overrides in the mobile media block", () => {
-    const css = loadAllAppCss();
-    const mobileSection = getMainMobileSection(css);
-
-    const selectors = [
-      ".card-archive-btn",
-      ".card-unarchive-btn",
-      ".card-send-back-btn",
-    ];
-    const pattern = /([^{}]+)\{([\s\S]*?)\}/g;
-
-    for (const selector of selectors) {
-      let found = false;
-      for (const match of mobileSection.matchAll(pattern)) {
-        const blockSelector = match[1];
-        const block = match[2];
-        if (!blockSelector.includes(selector)) continue;
-        found = true;
-        expect(block).toContain("opacity: 1;");
-        expect(block).not.toContain("min-height:");
-      }
-      expect(found).toBe(true);
-    }
-  });
-
-  it("FN-4351: archive/unarchive/Promote buttons have no min-height in the mobile media block", () => {
-    const css = loadAllAppCss();
-    const mobileSection = getMainMobileSection(css);
-
-    const selectors = [
-      ".card-archive-btn",
-      ".card-unarchive-btn",
-      ".card-send-back-btn",
-    ];
-    const pattern = /([^{}]+)\{([\s\S]*?)\}/g;
-
-    for (const selector of selectors) {
-      let found = false;
-      for (const match of mobileSection.matchAll(pattern)) {
-        const blockSelector = match[1];
-        const block = match[2];
-        if (!blockSelector.includes(selector)) continue;
-        found = true;
-        expect(block).not.toContain("min-height:");
-      }
-      expect(found).toBe(true);
-    }
-
-    expectRuleToContain(mobileSection, ".card-edit-btn", "width: 28px;");
-    expectRuleToContain(mobileSection, ".card-edit-btn", "height: 28px;");
-    expectRuleToContain(mobileSection, ".card-delete-btn", "width: 28px;");
-    expectRuleToContain(mobileSection, ".card-delete-btn", "height: 28px;");
-  });
 
   it("does not force .card-steps-toggle min-height in the mobile media block", () => {
     const css = loadAllAppCss();
@@ -457,11 +399,11 @@ describe("TaskCard mobile", () => {
   /*
   FNXC:TaskRevert 2026-07-05-00:00 (FN-7525):
   Mobile coverage for the Revert affordance (FN-5893 Surface Enumeration —
-  mobile breakpoint): the button renders on done/archived cards at mobile
+  mobile breakpoint): the button renders on Done cards at mobile
   width and, critically, leaves NO empty/orphaned button shell when it is
   hidden (no landed commit, or onRevertTask undefined).
   */
-  it("sets .card-revert-btn opacity: 1 in the mobile media block alongside archive/unarchive", () => {
+  it("sets .card-revert-btn opacity to one in the mobile media block", () => {
     const css = loadAllAppCss();
     const mobileSection = getMainMobileSection(css);
 
@@ -485,20 +427,6 @@ describe("TaskCard mobile", () => {
     expect(screen.getByRole("menuitem", { name: "Revert" })).toBeTruthy();
   });
 
-  it("renders the Revert affordance on an archived card at the mobile breakpoint", () => {
-    const task = createTask({ id: "FN-202", column: "archived", mergeDetails: { commitSha: "abc123def456" } as any });
-
-    const { container } = render(
-      <TaskCard
-        task={task}
-        onOpenDetail={vi.fn()}
-        addToast={vi.fn()}
-        onRevertTask={vi.fn(async () => ({ mode: "git", clean: true, revertCommitSha: "deadbeef" }) as any)}
-      />,
-    );
-
-    expect(container.querySelector(".card-revert-btn")).toBeTruthy();
-  });
 
   it("leaves no empty/orphaned Revert button shell when not revertable or onRevertTask is undefined", () => {
     const notRevertableTask = createTask({ id: "FN-203", column: "done", mergeDetails: undefined });

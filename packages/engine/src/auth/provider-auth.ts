@@ -21,6 +21,7 @@ import {
   shouldHydrateStoredCredential,
   DEFAULT_PROVIDER_INSTANCE_ID,
   isSameStoredCredentialMaterial,
+  mergeStoredCredentialPreservingMetadata,
   type ProviderInstanceRef,
   type StoredAuthCredential,
 } from "@fusion/core";
@@ -204,6 +205,12 @@ export function wrapAuthStorageWithApiKeyProviders(
   */
   const login = async (providerId: string, callbacks: LoginCallbacks): Promise<StoredCredential | undefined> => {
       if (providerId !== ANTHROPIC_STORAGE_PROVIDER_ID && providerId !== ANTHROPIC_SUBSCRIPTION_STORAGE_PROVIDER_ID) {
+        /*
+        FNXC:ProviderAuth 2026-09-09-14:01:
+        Upstream OAuth login replaces the bare provider row itself, so capture operator metadata before
+        invoking it. The minted credential must replace all stale material while retaining that metadata.
+        */
+        const preLoginCredential = authStorage.get(providerId) as StoredCredential | undefined;
         await mergedAuthStorage.login(
           providerId,
           callbacks,
@@ -218,10 +225,16 @@ export function wrapAuthStorageWithApiKeyProviders(
             accountFingerprint: computeStoredCredentialAccountFingerprint(credential),
           } : {}),
         };
-        await authStorage.set(providerId, stampedCredential);
+        await authStorage.set(providerId, mergeStoredCredentialPreservingMetadata(preLoginCredential, stampedCredential));
         return stampedCredential;
       }
 
+      /*
+      FNXC:ProviderAuth 2026-09-09-14:01:
+      The subscription row survives the upstream Anthropic bare-slot login, so preserve its operator
+      metadata when relocating freshly minted OAuth material back into the subscription storage row.
+      */
+      const preLoginSubscriptionCredential = mergedAuthStorage.get(ANTHROPIC_SUBSCRIPTION_STORAGE_PROVIDER_ID);
       const existingApiKey = mergedAuthStorage.get(ANTHROPIC_STORAGE_PROVIDER_ID);
       await mergedAuthStorage.login(
         ANTHROPIC_STORAGE_PROVIDER_ID,
@@ -240,7 +253,10 @@ export function wrapAuthStorageWithApiKeyProviders(
             accountFingerprint: computeStoredCredentialAccountFingerprint(oauthCredential),
           } : {}),
         };
-        await mergedAuthStorage.set(ANTHROPIC_SUBSCRIPTION_STORAGE_PROVIDER_ID, stampedCredential);
+        await mergedAuthStorage.set(
+          ANTHROPIC_SUBSCRIPTION_STORAGE_PROVIDER_ID,
+          mergeStoredCredentialPreservingMetadata(preLoginSubscriptionCredential, stampedCredential),
+        );
         if (existingApiKey?.type === "api_key") {
           await mergedAuthStorage.set(ANTHROPIC_STORAGE_PROVIDER_ID, existingApiKey as StoredCredential);
         } else {
@@ -369,6 +385,12 @@ export function wrapAuthStorageWithApiKeyProviders(
         : ref.providerId;
       return withProviderInstanceLoginLock(authStorage, providerId, async () => {
         const target = { providerId, instanceId: ref.instanceId };
+        /*
+        FNXC:ProviderAuth 2026-09-09-14:01:
+        Re-login must preserve target-row metadata such as the operator's label, but cannot retain any
+        old credential material or account identity. Snapshot it before the bare-slot login may overwrite it.
+        */
+        const existingTargetCredential = mergedAuthStorage.getInstance(target);
         const previousDefault = mergedAuthStorage.getDefaultInstance(providerId);
         const previousCredential = previousDefault && mergedAuthStorage.getInstance(previousDefault);
         const preLoginInstances = mergedAuthStorage.listInstances(providerId)
@@ -408,7 +430,10 @@ export function wrapAuthStorageWithApiKeyProviders(
             `This login authorized the account already stored as ${conflictingAccount}. Sign out of the provider in your browser and retry.`,
           );
         }
-        await mergedAuthStorage.setInstance(target, { ...credential, ...(label ? { label } : {}) });
+        await mergedAuthStorage.setInstance(target, {
+          ...mergeStoredCredentialPreservingMetadata(existingTargetCredential, credential),
+          ...(label ? { label } : {}),
+        });
         if (previousDefault && previousCredential && previousDefault.instanceId !== target.instanceId) {
           await mergedAuthStorage.setInstance(previousDefault, previousCredential);
         } else if (!previousDefault && target.instanceId !== DEFAULT_PROVIDER_INSTANCE_ID) {

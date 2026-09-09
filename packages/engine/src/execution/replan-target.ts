@@ -252,20 +252,12 @@ export function hasAdvancedPastPlanning(
   `resolvePlannerLanesForTaskAsync` and passes the answer in.
 
   The default is `LEGACY_PLANNER_LANES`, which populates all four roles, so a caller that passes
-  nothing is byte-identical to the four literals this replaces. A workflow that declares columns but
-  no archive lane leaves that arm undefined and it cannot match — the board has no such lane.
+  nothing preserves the built-in planning vocabulary.
   */
-  roles: { mergedPlanningColumn?: string; lanes?: PlannerLanes; archivedColumn?: string } = { mergedPlanningColumn: "todo" },
+  roles: { mergedPlanningColumn?: string; lanes?: PlannerLanes } = { mergedPlanningColumn: "todo" },
 ): boolean {
   const lanes = roles.lanes ?? LEGACY_PLANNER_LANES;
-  /*
-  `archivedColumn` is a SEPARATE argument rather than a fifth `PlannerLanes` role, and that is a
-  deliberate scope choice. Adding the field surfaced a real divergence between the sync and async
-  planner-lane twins — the shared `_workflow-vocabulary-fixture` models no archive lane, so the two
-  disagree there — and that fixture backs 37 test files. The divergence is worth its own change;
-  it is not this conversion's to force. Absent, the legacy id keeps the previous answer.
-  */
-  const advanced = [lanes.wip, lanes.review, lanes.complete, roles.archivedColumn ?? (roles.lanes ? undefined : "archived")];
+  const advanced = [lanes.wip, lanes.review, lanes.complete];
   if (advanced.some((column) => column !== undefined && column === task.column)) {
     return true;
   }

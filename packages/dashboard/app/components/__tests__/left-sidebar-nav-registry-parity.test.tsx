@@ -58,6 +58,7 @@ const SIDEBAR_REGISTRY_VIEW_IDS = [
   "agents",
   "chat",
   "mailbox",
+  "recommendations",
   "skills",
   "memory",
   "documents",

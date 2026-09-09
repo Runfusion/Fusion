@@ -92,9 +92,6 @@ const mockUseTasks = vi.fn(() => ({
   retryTask: vi.fn(),
   updateTask: vi.fn(),
   duplicateTask: vi.fn(),
-  archiveTask: vi.fn(),
-  unarchiveTask: vi.fn(),
-  archiveAllDone: vi.fn(),
   refreshTasks: vi.fn(),
 }));
 
@@ -432,9 +429,6 @@ describe("Navigation history integration", () => {
       retryTask: vi.fn(),
       updateTask: vi.fn(),
       duplicateTask: vi.fn(),
-      archiveTask: vi.fn(),
-      unarchiveTask: vi.fn(),
-      archiveAllDone: vi.fn(),
       refreshTasks: vi.fn(),
     }));
     mockProjectsState.projects = [];
@@ -633,9 +627,6 @@ describe("Navigation history integration", () => {
       retryTask: vi.fn(),
       updateTask: vi.fn(),
       duplicateTask: vi.fn(),
-      archiveTask: vi.fn(),
-      unarchiveTask: vi.fn(),
-      archiveAllDone: vi.fn(),
       refreshTasks: vi.fn(),
     }));
 
@@ -668,9 +659,6 @@ describe("Navigation history integration", () => {
       retryTask: vi.fn(),
       updateTask: vi.fn(),
       duplicateTask: vi.fn(),
-      archiveTask: vi.fn(),
-      unarchiveTask: vi.fn(),
-      archiveAllDone: vi.fn(),
       refreshTasks: vi.fn(),
     }));
 
@@ -725,9 +713,6 @@ describe("Navigation history integration", () => {
       retryTask: vi.fn(),
       updateTask: vi.fn(),
       duplicateTask: vi.fn(),
-      archiveTask: vi.fn(),
-      unarchiveTask: vi.fn(),
-      archiveAllDone: vi.fn(),
       refreshTasks: vi.fn(),
     }));
 
@@ -738,7 +723,7 @@ describe("Navigation history integration", () => {
 
     await waitFor(() => {
       expect(screen.getByTestId("task-detail-main-panel-content")).toBeTruthy();
-      expect(screen.queryByTestId("board-view")).toBeNull();
+      expect(screen.getByTestId("board-view").closest('[aria-hidden="true"]')).toBeTruthy();
     });
     expect((window.history.pushState as any).mock.calls.length).toBeGreaterThan(pushCallsBefore);
 
@@ -764,9 +749,6 @@ describe("Navigation history integration", () => {
       retryTask: vi.fn(),
       updateTask: vi.fn(),
       duplicateTask: vi.fn(),
-      archiveTask: vi.fn(),
-      unarchiveTask: vi.fn(),
-      archiveAllDone: vi.fn(),
       refreshTasks: vi.fn(),
     }));
 
@@ -808,9 +790,6 @@ describe("Navigation history integration", () => {
       retryTask: vi.fn(),
       updateTask: vi.fn(),
       duplicateTask: vi.fn(),
-      archiveTask: vi.fn(),
-      unarchiveTask: vi.fn(),
-      archiveAllDone: vi.fn(),
       refreshTasks: vi.fn(),
     }));
 
@@ -840,8 +819,7 @@ describe("Navigation history integration", () => {
     };
     mockUseTasks.mockImplementation(() => ({
       tasks: [task], createTask: mockCreateTask, moveTask: vi.fn(), deleteTask: vi.fn(), mergeTask: vi.fn(),
-      retryTask: vi.fn(), updateTask: vi.fn(), duplicateTask: vi.fn(), archiveTask: vi.fn(),
-      unarchiveTask: vi.fn(), archiveAllDone: vi.fn(), refreshTasks: vi.fn(),
+      retryTask: vi.fn(), updateTask: vi.fn(), duplicateTask: vi.fn(),
     }));
 
     await renderMobileAppAndWait();

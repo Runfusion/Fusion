@@ -1,5 +1,7 @@
 import { once } from "node:events";
 import { appendFileSync } from "node:fs";
+import { appendFile, mkdir, rename } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import type { Server } from "node:http";
 import type { AsyncDataLayer, LoadedPluginSchemaContract } from "@fusion/core";
 import type { AddressInfo } from "node:net";
@@ -18,13 +20,93 @@ import { resolveDesktopBundlePluginDirs } from "./bundled-plugin-dirs.js";
  */
 const STARTUP_TRACE_FILE = process.env.FUSION_STARTUP_TRACE;
 const __traceStart = Date.now();
+const STARTUP_TRACE_MAX_ENTRIES = 500;
+const STARTUP_TRACE_ENTRY_MAX_LENGTH = 2_000;
+let startupTraceEntries: string[] = [];
+let startupTracePath: string | undefined;
+let startupTraceRotated = false;
+let startupTraceFlushChain: Promise<void> = Promise.resolve();
+
+/*
+FNXC:DesktopStartupDiagnostics 2026-09-08-19:44:
+Issue #3589 arrived as a screenshot because packaged startup kept its useful trace behind an
+operator-only environment variable. Keep a bounded trace in memory for every launch, then flush
+only at terminal points so the runtime can explain failures without synchronously writing on launch.
+*/
+/*
+FNXC:DesktopStartupDiagnostics 2026-09-08-20:25:
+Startup failures can include persisted provider or database configuration rather than only environment
+values. Redact bare, quoted, JSON-style, authorization credential values, and every non-empty runtime
+environment value before diagnostics enter the record or automatic log, because a generic configuration
+key can carry a short secret and the support payload must remain safe to copy from a failed host.
+*/
+function redactStartupDiagnostic(value: string): string {
+  let redacted = value
+    .replace(/([a-z][a-z\d+.-]*:\/\/)[^\s/@:]+(?::[^\s/@]+)?@/gi, "$1[REDACTED]@")
+    .replace(/(authorization\s*[:=]\s*)(bearer\s+)?[^\s,;"']+/gi, "$1$2[REDACTED]")
+    .replace(/\b(bearer)\s+[A-Za-z0-9._\-+/=]+/gi, "$1 [REDACTED]")
+    .replace(/((?:["']?(?:api[_-]?key|key|token|secret|password|passwd|pwd|access[_-]?token|refresh[_-]?token|client[_-]?secret)["']?)\s*[:=]\s*)(?:"[^"]*"|'[^']*')/gi, "$1[REDACTED]")
+    .replace(/((?:["']?(?:api[_-]?key|key|token|secret|password|passwd|pwd|access[_-]?token|refresh[_-]?token|client[_-]?secret)["']?)\s*[:=]\s*)[^\s,;}"']+/gi, "$1[REDACTED]")
+    .replace(/\b(sk-|ghp_|gho_|github_pat_|xox[abpr]-|AKIA)[A-Za-z0-9_-]{8,}/g, "[REDACTED]")
+    .replace(/\b[A-Za-z0-9+/]{40,}={0,2}\b/g, "[REDACTED]")
+    .replace(/\b[0-9a-fA-F]{32,}\b/g, "[REDACTED]");
+  for (const key of Object.keys(process.env)) {
+    if (key) redacted = redacted.replaceAll(key, "[REDACTED_ENV]");
+  }
+  /* FNXC:DesktopStartupDiagnostics 2026-09-08-20:25: Replace longer values first so a short
+     value cannot leave a suffix of a longer secret exposed. */
+  for (const envValue of [...new Set(Object.values(process.env).filter((value): value is string => Boolean(value)))].sort((left, right) => right.length - left.length)) {
+    redacted = redacted.replaceAll(envValue, "[REDACTED_ENV]");
+  }
+  return redacted;
+}
+
+function formatStartupFailureTrace(failure: DesktopStartupFailure): string[] {
+  return [
+    `failure phase=${failure.phase} attempts=${failure.attempts} name=${failure.name}`,
+    `failure message=${failure.message}`,
+    ...(failure.stack ? [`failure stack=${failure.stack}`] : []),
+    `failure platform=${failure.platform} node=${failure.nodeVersion} occurredAt=${failure.occurredAt}`,
+  ];
+}
+
 function strace(msg: string): void {
+  const elapsed = `[+${((Date.now() - __traceStart) / 1000).toFixed(2)}s] `;
+  const rawEntry = `${elapsed}${msg}`.slice(0, STARTUP_TRACE_ENTRY_MAX_LENGTH);
+  const entry = `${elapsed}${redactStartupDiagnostic(msg)}`.slice(0, STARTUP_TRACE_ENTRY_MAX_LENGTH);
+  startupTraceEntries.push(entry);
+  if (startupTraceEntries.length > STARTUP_TRACE_MAX_ENTRIES) startupTraceEntries = startupTraceEntries.slice(-STARTUP_TRACE_MAX_ENTRIES);
   if (!STARTUP_TRACE_FILE) return;
   try {
-    appendFileSync(STARTUP_TRACE_FILE, `[+${((Date.now() - __traceStart) / 1000).toFixed(2)}s] ${msg}\n`);
+    /* FNXC:DesktopStartupDiagnostics 2026-09-08-20:01: The explicit operator-selected trace
+       remains verbatim; automatic persisted diagnostics use the redacted in-memory buffer. */
+    appendFileSync(STARTUP_TRACE_FILE, `${rawEntry}\n`);
   } catch {
-    // best-effort
+    // best-effort operator-selected synchronous sink
   }
+}
+
+function bindStartupTraceSink(rootDir: string): void {
+  if (startupTracePath) return;
+  startupTracePath = join(rootDir, ".fusion", "logs", "desktop-startup.log");
+}
+
+function flushStartupTrace(failure?: DesktopStartupFailure): Promise<string | undefined> {
+  if (!startupTracePath) return Promise.resolve(undefined);
+  const path = startupTracePath;
+  const entries = failure ? [...startupTraceEntries, ...formatStartupFailureTrace(failure)] : startupTraceEntries;
+  const body = entries.length > 0 ? `${entries.join("\n")}\n` : "";
+  startupTraceFlushChain = startupTraceFlushChain.then(async () => {
+    await mkdir(dirname(path), { recursive: true });
+    if (!startupTraceRotated) {
+      startupTraceRotated = true;
+      await rename(path, join(dirname(path), "desktop-startup.prev.log")).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== "ENOENT") throw error;
+      });
+    }
+    if (body) await appendFile(path, body, "utf8");
+  });
+  return startupTraceFlushChain.then(() => path);
 }
 
 export type RuntimeSource = "embedded-local" | "external-cli" | "none";
@@ -46,12 +128,27 @@ export interface DesktopMigrationProgress {
   label: string;
 }
 
+export interface DesktopStartupFailure {
+  phase: "create-store" | "store-init" | "store-watch" | "create-dashboard-server" | "server-listen" | "resolve-port";
+  attempts: number;
+  name: string;
+  message: string;
+  stack?: string;
+  logPath?: string;
+  logUnavailableReason?: "write-failed" | "disabled";
+  platform: string;
+  appVersion?: string;
+  nodeVersion: string;
+  occurredAt: string;
+}
+
 export interface DesktopRuntimeStatus {
   source: RuntimeSource;
   state: RuntimeState;
   port?: number;
   baseUrl?: string;
   error?: string;
+  startupFailure?: DesktopStartupFailure;
   migration?: DesktopMigrationProgress;
 }
 
@@ -225,7 +322,7 @@ async function createDashboardServerDefault(store: TaskStoreLike, rootDir: strin
     strace("createDashboardServer: startAll DONE; startReconciliation");
     engineManager.startReconciliation();
     const rootProject = await resolveDesktopRuntimePrimaryProject(centralCore);
-    strace(`createDashboardServer: primaryProject=${rootProject?.id ?? "none"}`);
+    strace(`createDashboardServer: primary project ${rootProject ? "resolved" : "absent"}`);
     const primaryEngine = rootProject ? await engineManager.ensureEngine(rootProject.id) : undefined;
     /*
      * FNXC:DesktopRuntime 2026-07-07-00:00:
@@ -250,7 +347,8 @@ async function createDashboardServerDefault(store: TaskStoreLike, rootDir: strin
       store: store as never,
       authStorage,
       modelRegistry,
-      log: (scope, message) => strace(`[${scope}] ${message}`),
+      // Provider registration may include operator configuration, so its detailed messages never enter the persisted startup trace.
+      log: () => strace("createDashboardServer: provider registration event"),
     });
     providerSeeding.dispose = dispose;
 
@@ -295,43 +393,44 @@ async function createDashboardServerDefault(store: TaskStoreLike, rootDir: strin
           "fusion-plugin-dependency-graph",
           resolveDesktopBundlePluginDirs,
         );
-        strace(`createDashboardServer: bundled dependency-graph auto-install status=${installStatus}`);
+        void installStatus;
+        strace("createDashboardServer: bundled dependency-graph auto-install completed");
       } catch (error) {
-        strace(
-          `createDashboardServer: bundled dependency-graph auto-install FAILED (non-fatal) — ${error instanceof Error ? error.stack : String(error)}`,
-        );
+        void error;
+        strace("createDashboardServer: bundled dependency-graph auto-install failed (non-fatal)");
       }
 
       strace("createDashboardServer: pluginLoader.loadAllPlugins");
       const { loaded, errors } = await pluginLoader.loadAllPlugins();
-      strace(`createDashboardServer: plugins loaded=${loaded} errors=${errors}`);
+      void loaded;
+      void errors;
+      strace("createDashboardServer: plugins loaded");
       /* FNXC:DesktopPluginSchema 2026-07-14-23:31: PluginLoader runs backend-aware schema contracts before onLoad; embedded desktop must not replay them after loadAllPlugins. */
 
       ensureBundledPluginInstalledCallback = async (pluginId: string): Promise<boolean> => {
         if (!isBundledPluginId(pluginId)) {
-          strace(`ensureBundledPluginInstalled: unknown bundled plugin id "${pluginId}"`);
+          void pluginId;
+          strace("ensureBundledPluginInstalled: unknown bundled plugin id");
           return false;
         }
         try {
           const status = await ensureBundledPluginInstalled(boundPluginStore as never, boundPluginLoader, pluginId, resolveDesktopBundlePluginDirs);
           if (status === "missing-bundle") {
-            strace(`ensureBundledPluginInstalled: bundled plugin "${pluginId}" not found in this build`);
+            strace("ensureBundledPluginInstalled: bundled plugin not found in this build");
             return false;
           }
-          strace(`ensureBundledPluginInstalled: bundled plugin "${pluginId}" status=${status}`);
+          strace("ensureBundledPluginInstalled: bundled plugin completed");
           return true;
         } catch (error) {
-          strace(
-            `ensureBundledPluginInstalled: failed to auto-install "${pluginId}" — ${error instanceof Error ? error.stack : String(error)}`,
-          );
+          void error;
+          strace("ensureBundledPluginInstalled: auto-install failed");
           throw error;
         }
       };
     } catch (error) {
       console.error(`[plugins] Desktop plugin initialization failed: ${error instanceof Error ? error.message : String(error)}`);
-      strace(
-        `createDashboardServer: plugin subsystem init FAILED (non-fatal, dashboard still boots) — ${error instanceof Error ? error.stack : String(error)}`,
-      );
+      void error;
+      strace("createDashboardServer: plugin subsystem init failed (non-fatal)");
       pluginStore = undefined;
       pluginLoader = undefined;
       ensureBundledPluginInstalledCallback = undefined;
@@ -358,7 +457,8 @@ async function createDashboardServerDefault(store: TaskStoreLike, rootDir: strin
       cleanup,
     };
   } catch (error) {
-    strace(`createDashboardServer: THREW ${error instanceof Error ? error.stack : String(error)}`);
+    void error;
+    strace("createDashboardServer: failed");
     await cleanup();
     throw error;
   }
@@ -397,6 +497,7 @@ export class LocalRuntimeManager {
   private readonly createDashboardServer: (store: TaskStoreLike, rootDir: string) => Promise<Server | { server: Server; cleanup?: RuntimeCleanup }>;
   private readonly startupRetries: number;
   private readonly startupRetryDelayMs: number;
+  private lastAttemptPhase: DesktopStartupFailure["phase"] = "create-store";
 
   constructor(private readonly options: LocalRuntimeManagerOptions) {
     this.getExternalPort = options.getExternalPort ?? (() => parsePort(process.env.FUSION_SERVER_PORT));
@@ -437,7 +538,7 @@ export class LocalRuntimeManager {
     strace("startLocal: ENTER");
     const externalPort = this.getExternalPort();
     if (externalPort) {
-      strace(`startLocal: external-cli branch (FUSION_SERVER_PORT=${externalPort}) — NOT starting embedded`);
+      strace("startLocal: external-cli branch — not starting embedded");
       this.status = {
         source: "external-cli",
         state: "running",
@@ -455,6 +556,7 @@ export class LocalRuntimeManager {
       return this.startupPromise;
     }
 
+    bindStartupTraceSink(this.options.rootDir);
     this.status = { source: "embedded-local", state: "starting" };
     this.startupPromise = this.startEmbedded();
 
@@ -483,31 +585,61 @@ export class LocalRuntimeManager {
     for (let attempt = 1; attempt <= this.startupRetries; attempt++) {
       strace(`startEmbedded: attempt ${attempt}/${this.startupRetries}`);
       try {
-        return await this.startEmbeddedAttempt();
+        const status = await this.startEmbeddedAttempt();
+        void this.settleStartupTrace();
+        return status;
       } catch (error) {
         lastError = error;
-        strace(
-          `startEmbedded: attempt ${attempt}/${this.startupRetries} FAILED — ${error instanceof Error ? error.message : String(error)}`,
-        );
+        strace(`startEmbedded: attempt ${attempt}/${this.startupRetries} failed`);
+        void this.settleStartupTrace();
         if (attempt < this.startupRetries) {
-          // Keep reporting "starting" while a retry is still pending — the operator/gate
-          // must not see "error" for a transient attempt that self-heals.
           this.status = { source: "embedded-local", state: "starting" };
-          if (this.startupRetryDelayMs > 0) {
-            await delay(this.startupRetryDelayMs);
-          }
+          if (this.startupRetryDelayMs > 0) await delay(this.startupRetryDelayMs);
         }
       }
     }
 
-    this.runtime = null;
-    this.status = {
-      source: "embedded-local",
-      state: "error",
-      error: lastError instanceof Error ? lastError.message : String(lastError),
+    const error = lastError instanceof Error ? lastError : new Error(String(lastError));
+    /*
+    FNXC:DesktopStartupDiagnostics 2026-09-08-20:01:
+    The host that fails to start may also be unable to write its data root. Publish a complete,
+    redacted failure before detached logging, and persist only this approved diagnostic shape rather
+    than provider/configuration trace payloads that could contain credentials.
+    */
+    const startupFailure: DesktopStartupFailure = {
+      phase: this.lastAttemptPhase,
+      attempts: this.startupRetries,
+      name: redactStartupDiagnostic(error.name || "Error"),
+      message: redactStartupDiagnostic(error.message || String(lastError)),
+      stack: error.stack ? redactStartupDiagnostic(error.stack) : undefined,
+      platform: process.platform,
+      nodeVersion: process.versions.node,
+      occurredAt: new Date().toISOString(),
     };
+    this.runtime = null;
+    this.status = { source: "embedded-local", state: "error", error: startupFailure.message, startupFailure };
     strace(`startEmbedded: all ${this.startupRetries} attempts failed — surfacing final error`);
+    void this.settleStartupTrace(startupFailure);
     throw lastError;
+  }
+
+  /** The trace write is detached because a read-only host is often the startup failure itself. */
+  private async settleStartupTrace(failure?: DesktopStartupFailure): Promise<void> {
+    try {
+      const logPath = await flushStartupTrace(failure);
+      if (failure && logPath && this.status.state === "error" && this.status.startupFailure === failure) {
+        this.status = { ...this.status, startupFailure: { ...failure, logPath } };
+      }
+    } catch {
+      if (failure && this.status.state === "error" && this.status.startupFailure === failure) {
+        this.status = { ...this.status, startupFailure: { ...failure, logUnavailableReason: "write-failed" } };
+      }
+    }
+  }
+
+  /** Test-only synchronization seam; startup itself never awaits trace I/O. */
+  waitForStartupTraceFlush(): Promise<void> {
+    return startupTraceFlushChain.catch(() => undefined);
   }
 
   private async startEmbeddedAttempt(): Promise<DesktopRuntimeStatus> {
@@ -516,7 +648,7 @@ export class LocalRuntimeManager {
     let cleanup: RuntimeCleanup | undefined;
 
     try {
-      strace(`startEmbedded: BEGIN rootDir=${this.options.rootDir}`);
+      strace("startEmbedded: begin");
       /*
       FNXC:MigrationHoldingPage 2026-07-17-13:20:
       Publish live migration progress into the "starting" status so the renderer's
@@ -524,21 +656,25 @@ export class LocalRuntimeManager {
       overwrite while still starting — a late/stale event must never clobber a
       terminal running/error status.
       */
+      this.lastAttemptPhase = "create-store";
       store = await this.createStore(this.options.rootDir, (progress) => {
         if (this.status.state === "starting") {
           this.status = { source: "embedded-local", state: "starting", migration: progress };
         }
       });
       strace("startEmbedded: store.init");
+      this.lastAttemptPhase = "store-init";
       await store.init();
       strace("startEmbedded: store.watch");
+      this.lastAttemptPhase = "store-watch";
       await store.watch();
       strace("startEmbedded: createDashboardServer()");
-
+      this.lastAttemptPhase = "create-dashboard-server";
       const dashboardServer = await this.createDashboardServer(store, this.options.rootDir);
       cleanup = "server" in dashboardServer ? dashboardServer.cleanup : undefined;
       server = "server" in dashboardServer ? dashboardServer.server : dashboardServer;
       strace("startEmbedded: awaiting server 'listening' | 'error'");
+      this.lastAttemptPhase = "server-listen";
       await Promise.race([
         once(server, "listening"),
         once(server, "error").then(([error]) => {
@@ -546,11 +682,12 @@ export class LocalRuntimeManager {
         }),
       ]);
 
+      this.lastAttemptPhase = "resolve-port";
       const port = getAddressPort(server);
       const baseUrl = `http://127.0.0.1:${port}`;
       this.runtime = { store, server, port, baseUrl, cleanup };
       this.status = { source: "embedded-local", state: "running", port, baseUrl };
-      strace(`startEmbedded: RUNNING port=${port}`);
+      strace("startEmbedded: running");
       return this.status;
     } catch (error) {
       if (server) {
@@ -565,7 +702,7 @@ export class LocalRuntimeManager {
         else store.close();
       }
       this.runtime = null;
-      strace(`startEmbedded: CATCH/ERROR ${error instanceof Error ? error.stack : String(error)}`);
+      strace("startEmbedded: failed");
       throw error;
     }
   }

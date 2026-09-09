@@ -53,7 +53,6 @@ export type TraitViolationCode =
   | "complete-with-wip"
   | "two-capacity-traits"
   | "complete-with-intake"
-  | "archived-with-wip"
   | "multiple-intake-columns"
   | "unknown-trait";
 
@@ -321,16 +320,6 @@ export class TraitRegistry {
           columnId: column.id,
           traitIds: this.traitIdsWithFlags(knownDefs, ["complete", "intake"]),
           message: `Column '${column.id}' is both a completion column and an intake column`,
-        });
-      }
-
-      if (flags.archived && flags.countsTowardWip) {
-        violations.push({
-          code: "archived-with-wip",
-          severity: "error",
-          columnId: column.id,
-          traitIds: this.traitIdsWithFlags(knownDefs, ["archived", "countsTowardWip"]),
-          message: `Column '${column.id}' is archived but counts toward WIP — archived cards must not hold capacity`,
         });
       }
 

@@ -43,6 +43,19 @@ export interface ProjectConfigRow {
 /** Sentinel config id (legacy singleton-row id; still written for column parity). */
 export const CONFIG_ROW_ID = 1;
 
+/*
+FNXC:TerminalScripts 2026-09-06-20:02:
+Script catalog renames and every settings or workflow writer share one project-scoped transaction lock. Writers must acquire it before their first authoritative read so a concurrent rename cannot be followed by a stale settings document or workflow reference.
+*/
+export async function acquireProjectConfigurationMutationLock(
+  tx: DbTransaction,
+  projectId: string | undefined,
+): Promise<void> {
+  // Unbound compatibility harnesses and stores share the same partition used by the ownership trigger.
+  const scopedProjectId = projectId?.trim() || "__legacy_unscoped__";
+  await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${'fusion:project-configuration:'} || ${scopedProjectId}))`);
+}
+
 /**
  * FNXC:MultiProjectIsolation 2026-07-11:
  * Per-project scope predicate for the config row. Embedded-PG mode consolidated

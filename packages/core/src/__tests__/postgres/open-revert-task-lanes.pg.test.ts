@@ -6,9 +6,8 @@ THE OPEN-UNDO QUERY, on a RENAMED board.
 behind the dashboard's Undo affordance. It answers it by EXCLUDING the finished lanes, so a prior
 undo attempt that already landed does not keep rendering as open.
 
-WHY THIS FILE EXISTS. That exclusion was converted to
-`resolveProjectColumnsForRoles(this, ["complete", "archived"])`, and blinding it back to
-`ne(column,"archived"), ne(column,"done")` left the whole 16-file lane-detector set green — no test
+WHY THIS FILE EXISTS. That exclusion must resolve the task workflow's Complete column; blinding it
+back to `ne(column,"done")` left the whole 16-file lane-detector set green — no test
 in `packages/core` reaches this method at all. The dashboard-side twin (`taskRevert.ts`, #3129) has
 tests; the store-side query behind it did not.
 
@@ -50,7 +49,6 @@ pgDescribe("findOpenRevertTaskForSource under a renamed board vocabulary", () =>
       "in-progress": "building",
       "in-review": "checking",
       done: "shipped",
-      archived: "vaulted",
     };
     const rename = (id: string | undefined) => (id && RENAME[id]) ?? id;
     const ir = JSON.parse(JSON.stringify(BUILTIN_CODING_WORKFLOW_IR)) as {
@@ -101,12 +99,6 @@ pgDescribe("findOpenRevertTaskForSource under a renamed board vocabulary", () =>
     expect(await h.store().findOpenRevertTaskForSource("KB-SRC")).toBeNull();
   });
 
-  it("renamed vocabulary: an undo task in the RENAMED archived lane is not reported as open", async () => {
-    await seedRenamedWorkflow();
-    await seedRevertPair("vaulted");
-
-    expect(await h.store().findOpenRevertTaskForSource("KB-SRC")).toBeNull();
-  });
 
   /*
   The paired positive. Excluding the finished lanes must not degrade into excluding everything — an

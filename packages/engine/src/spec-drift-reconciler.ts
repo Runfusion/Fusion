@@ -21,7 +21,7 @@ pooled one. `persist` -> `appendSpecDriftReport` -> `withPlanningLifecycleLock` 
 deliberately fences a stale report against a newer plan (see `appendSpecDriftReportWhilePlanningLocked`).
 
 Unbounded fan-out therefore converts directly into unbounded connections. At runtime boundary setup
-`project-engine.ts` enqueues EVERY task (`listTasks({ includeArchived: true })`) and `enqueue` released
+`project-engine.ts` enqueues every live task (`listTasks({ includeArchived: false })`) and `enqueue` released
 each one straight into a `queueMicrotask`, so a 1,082-task project opened ~1,082 lock sessions at once
 against `max_connections = 500`. The cluster saturated ~25s into boot; every later query then failed
 with "sorry, too many clients already", including the engine's own startup, so Fusion wedged on

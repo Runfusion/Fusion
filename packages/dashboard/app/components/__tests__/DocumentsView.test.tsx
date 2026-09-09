@@ -136,19 +136,6 @@ const mockStatusTaskDocuments: TaskDocumentWithTask[] = [
     taskColumn: "todo",
   },
   {
-    id: "doc-status-archived",
-    taskId: "KB-ARCHIVED",
-    key: "summary",
-    content: "Archived document content",
-    revision: 1,
-    contentHash: `sha256:${"a".repeat(64)}`,
-    author: "agent",
-    createdAt: "2026-04-19T10:00:00.000Z",
-    updatedAt: "2026-04-19T14:00:00.000Z",
-    taskTitle: "Archived task",
-    taskColumn: "archived",
-  },
-  {
     id: "doc-status-custom",
     taskId: "KB-CUSTOM",
     key: "handoff",
@@ -456,6 +443,109 @@ describe("DocumentsView", () => {
     expect(screen.getByRole("tab", { name: /show project markdown files/i })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("button", { name: "Open README.md" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Open docs/guide.md" })).toBeInTheDocument();
+  });
+
+  it("marks artifact notices seen once when the Artifacts landing tab opens", () => {
+    const onSeen = vi.fn();
+
+    render(
+      <DocumentsView
+        addToast={addToast}
+        onOpenDetail={onOpenDetail}
+        artifactUnreadCount={3}
+        onSeen={onSeen}
+      />,
+    );
+
+    expect(onSeen).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not mark artifact notices seen when the unread count is zero", () => {
+    const onSeen = vi.fn();
+
+    render(
+      <DocumentsView
+        addToast={addToast}
+        onOpenDetail={onOpenDetail}
+        artifactUnreadCount={0}
+        onSeen={onSeen}
+      />,
+    );
+
+    expect(onSeen).not.toHaveBeenCalled();
+  });
+
+  it("does not mark artifact notices seen again for rerenders or tab changes within one project visit", () => {
+    const onSeen = vi.fn();
+    const view = (
+      <DocumentsView
+        projectId="proj-a"
+        addToast={addToast}
+        onOpenDetail={onOpenDetail}
+        artifactUnreadCount={3}
+        onSeen={onSeen}
+      />
+    );
+    const { rerender } = render(view);
+
+    expect(onSeen).toHaveBeenCalledTimes(1);
+    rerender(view);
+    fireEvent.click(screen.getByRole("tab", { name: /show project markdown files/i }));
+    fireEvent.click(screen.getByRole("tab", { name: /show artifacts/i }));
+
+    expect(onSeen).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-arms artifact notice consumption when the mounted view changes project", () => {
+    const onSeen = vi.fn();
+    const { rerender } = render(
+      <DocumentsView
+        projectId="proj-a"
+        addToast={addToast}
+        onOpenDetail={onOpenDetail}
+        artifactUnreadCount={3}
+        onSeen={onSeen}
+      />,
+    );
+
+    expect(onSeen).toHaveBeenCalledTimes(1);
+    rerender(
+      <DocumentsView
+        projectId="proj-b"
+        addToast={addToast}
+        onOpenDetail={onOpenDetail}
+        artifactUnreadCount={2}
+        onSeen={onSeen}
+      />,
+    );
+
+    expect(onSeen).toHaveBeenCalledTimes(2);
+  });
+
+  it("treats an undefined project as a visit before re-arming for a selected project", () => {
+    const onSeen = vi.fn();
+    const { rerender } = render(
+      <DocumentsView
+        projectId={undefined}
+        addToast={addToast}
+        onOpenDetail={onOpenDetail}
+        artifactUnreadCount={1}
+        onSeen={onSeen}
+      />,
+    );
+
+    expect(onSeen).toHaveBeenCalledTimes(1);
+    rerender(
+      <DocumentsView
+        projectId="proj-a"
+        addToast={addToast}
+        onOpenDetail={onOpenDetail}
+        artifactUnreadCount={1}
+        onSeen={onSeen}
+      />,
+    );
+
+    expect(onSeen).toHaveBeenCalledTimes(2);
   });
 
   it("keeps hidden project files off by default and reveals them when toggled on", async () => {
@@ -850,7 +940,7 @@ describe("DocumentsView", () => {
     expect(screen.queryByText("Alpha document content")).not.toBeInTheDocument();
   });
 
-  it("renders task document sidebar status badges for done non-done archived custom and legacy documents", async () => {
+  it("renders task document sidebar status badges for done, current, custom, and legacy documents", async () => {
     mockUseProjectMarkdownFiles.mockReturnValue({
       files: [],
       loading: false,
@@ -872,13 +962,11 @@ describe("DocumentsView", () => {
 
     const doneGroup = screen.getByRole("heading", { name: /KB-DONE.*Done task/i }).closest(".documents-task-sidebar-group");
     const todoGroup = screen.getByRole("heading", { name: /KB-TODO.*Todo task/i }).closest(".documents-task-sidebar-group");
-    const archivedGroup = screen.getByRole("heading", { name: /KB-ARCHIVED.*Archived task/i }).closest(".documents-task-sidebar-group");
     const customGroup = screen.getByRole("heading", { name: /KB-CUSTOM.*Custom task/i }).closest(".documents-task-sidebar-group");
     const missingGroup = screen.getByRole("heading", { name: /KB-MISSING.*Legacy task/i }).closest(".documents-task-sidebar-group");
 
     expect(doneGroup).not.toBeNull();
     expect(todoGroup).not.toBeNull();
-    expect(archivedGroup).not.toBeNull();
     expect(customGroup).not.toBeNull();
     expect(missingGroup).not.toBeNull();
 
@@ -886,7 +974,6 @@ describe("DocumentsView", () => {
     expect(within(doneGroup as HTMLElement).getByText("2 docs · 0 artifacts")).toBeInTheDocument();
     expect(within(doneGroup as HTMLElement).getByLabelText("Task status: Done").querySelector(".status-dot--online")).toBeInTheDocument();
     expect(within(todoGroup as HTMLElement).getByLabelText("Task status: Todo")).toHaveTextContent("Todo");
-    expect(within(archivedGroup as HTMLElement).getByLabelText("Task status: Archived")).toHaveTextContent("Archived");
     expect(within(customGroup as HTMLElement).getByLabelText("Task status: qa-ready")).toHaveTextContent("qa-ready");
     expect((missingGroup as HTMLElement).querySelector(".documents-group-status")).not.toBeInTheDocument();
     expect(screen.queryByText("Done document content")).not.toBeInTheDocument();

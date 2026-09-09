@@ -7,10 +7,10 @@ and its card-chip fields the same way. That constant is the LEGACY monolithic IR
 (`builtin:legacy-coding`); the catalog's actual default is `resolveDefaultWorkflowIr()`. Post-U11 they
 differ, and the difference is a whole column:
 
-    default  todo, in-progress, in-review, done, archived          (planning merged into todo)
-    legacy   triage, todo, in-progress, in-review, done, archived
+    default  todo, in-progress, in-review, done          (planning merged into todo)
+    legacy   triage, todo, in-progress, in-review, done
 
-So a task with no workflow selection row was rendered against a six-column board including `triage`,
+So a task with no workflow selection row was rendered against a five-column board including `triage`,
 which the real default no longer declares.
 
 This is the same drift `builtin-workflows.ts` records as ALREADY FIXED for the move-path resolvers —

@@ -910,23 +910,15 @@ describe("branch group list N+1 elimination (Fix #6)", () => {
     expect(byId["BG-C"].completion).toEqual({ landed: 0, total: 0, complete: false });
   });
 
-  /*
-  FNXC:SharedBranchPromotionAdvisories 2026-08-08-01:58:
-  FN-8823 intentionally includes archived members in the one full list scan:
-  their landed review advisories must remain visible before manual promotion.
-  Completion uses the same complete membership set so list and single-group
-  serialization cannot disagree about a group that contains archived work.
-  */
-  it("includes an archived landed member in completion and the full advisory scan", async () => {
+  it("includes a completed landed member in completion and the full advisory scan", async () => {
     const groups = buildGroups();
-    const archivedLandedMember = memberTask("FN-A3", "BG-A", "feature/a", true);
-    const nonArchivedTasks: Task[] = [
+    const completedLandedMember = memberTask("FN-A3", "BG-A", "feature/a", true);
+    const allTasks: Task[] = [
       memberTask("FN-A1", "BG-A", "feature/a", true),
       memberTask("FN-A2", "BG-A", "feature/a", true),
-    ];
-    const allTasksIncludingArchived = [...nonArchivedTasks, {
-      ...archivedLandedMember,
-      column: "archived" as const,
+      {
+      ...completedLandedMember,
+      column: "done" as const,
       workflowStepResults: [{
         workflowStepId: "code-review",
         workflowStepName: "Code Review",
@@ -937,9 +929,7 @@ describe("branch group list N+1 elimination (Fix #6)", () => {
         notes: "Review this before promotion.",
       }],
     }];
-    const listTasks = vi.fn(async (opts?: { includeArchived?: boolean }) =>
-      opts?.includeArchived ? allTasksIncludingArchived : nonArchivedTasks,
-    );
+    const listTasks = vi.fn(async () => allTasks);
     const store = {
       getRootDir: vi.fn(() => "/tmp/project"),
       listBranchGroups: vi.fn(() => [groups[0]]),
@@ -955,7 +945,7 @@ describe("branch group list N+1 elimination (Fix #6)", () => {
 
     const res = await REQUEST(app, "GET", "/branch-groups");
     expect(res.status).toBe(200);
-    expect(listTasks).toHaveBeenCalledWith({ includeArchived: true, slim: false });
+    expect(listTasks).toHaveBeenCalledWith({ slim: false });
     expect(res.body.groups[0].completion).toEqual({ landed: 3, total: 3, complete: true });
     expect(res.body.groups[0].advisories).toEqual([expect.objectContaining({
       taskId: "FN-A3",

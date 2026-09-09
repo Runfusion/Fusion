@@ -32,6 +32,7 @@ import type { TaskRow } from "./persistence.js";
 import { fromJson } from "../db/db.js";
 import { generateTaskLineageId } from "../tasks/task-lineage.js";
 import { normalizeTaskPriority } from "../tasks/task-priority.js";
+import { pickArchiveRestorableTaskFields } from "./archive-restoration-contract.js";
 import { normalizeTaskReviewState } from "./review-state.js";
 import {
   parseTaskBranchContextFromSourceMetadata,
@@ -80,6 +81,7 @@ export function rowToTask(row: TaskRow): Task {
     paused: row.paused ? true : undefined,
     pausedReason: row.pausedReason || undefined,
     externalBlock: fromJson<Task["externalBlock"]>(row.externalBlock) ?? undefined,
+    planningFailure: fromJson<Task["planningFailure"]>(row.planningFailure) ?? undefined,
     wedgeNotification: fromJson<Task["wedgeNotification"]>(row.wedgeNotification) ?? undefined,
     userPaused: row.userPaused ? true : undefined,
     baseBranch: row.baseBranch || undefined,
@@ -280,7 +282,7 @@ export function rowToTask(row: TaskRow): Task {
     // selection must hydrate back as [], not undefined — "all disabled" and "not
     // materialized" are different states (mirrors main's SQLite-path fix).
     enabledWorkflowSteps: (() => { const e = fromJson<string[]>(row.enabledWorkflowSteps); return Array.isArray(e) ? e : undefined; })(),
-    modifiedFiles: (() => { const m = fromJson<string[]>(row.modifiedFiles); return m && m.length > 0 ? m : undefined; })(),
+    modifiedFiles: (() => { const m = fromJson<string[]>(row.modifiedFiles); return Array.isArray(m) ? m : undefined; })(),
     declaredSymbols: (() => { const v = fromJson<string[]>(row.declaredSymbols); return v && v.length > 0 ? v : undefined; })(),
     missionId: row.missionId || undefined,
     sliceId: row.sliceId || undefined,
@@ -388,15 +390,7 @@ export function archiveEntryToTask(
     createdAt: entry.createdAt,
     updatedAt: entry.updatedAt,
     columnMovedAt: entry.columnMovedAt,
-    firstExecutionAt: entry.firstExecutionAt,
-    cumulativeActiveMs: entry.cumulativeActiveMs,
-    // FNXC:TaskTiming 2026-07-20-13:00: archive/restore must retain both
-    // planning fields so archived tasks neither lose accumulated AI time nor
-    // revive without the live segment anchor needed for exactly-once finalize.
-    cumulativePlanningMs: entry.cumulativePlanningMs,
-    planningStartedAt: entry.planningStartedAt,
-    executionStartedAt: entry.executionStartedAt,
-    executionCompletedAt: entry.executionCompletedAt,
+    ...pickArchiveRestorableTaskFields(entry),
     /*
     FNXC:ArchiveLifecycle 2026-07-24-11:02:
     FN-8561 needs archived TaskCard completion fallback to use the immutable
@@ -405,25 +399,6 @@ export function archiveEntryToTask(
     restore persistence semantics.
     */
     archivedAt: entry.archivedAt,
-    modelPresetId: entry.modelPresetId,
-    modelProvider: entry.modelProvider,
-    modelId: entry.modelId,
-    validatorModelProvider: entry.validatorModelProvider,
-    validatorModelId: entry.validatorModelId,
-    planningModelProvider: entry.planningModelProvider,
-    planningModelId: entry.planningModelId,
-    mergerModelProvider: entry.mergerModelProvider,
-    mergerModelId: entry.mergerModelId,
-    mergerThinkingLevel: entry.mergerThinkingLevel,
-    noCommitsExpected: entry.noCommitsExpected,
-    branchContext: entry.branchContext,
-    autoMerge: entry.autoMerge,
-    modifiedFiles: slim ? undefined : entry.modifiedFiles,
-    declaredSymbols: entry.declaredSymbols,
-    missionId: entry.missionId,
-    sliceId: entry.sliceId,
-    assigneeUserId: entry.assigneeUserId,
-    mergeDetails: slim ? undefined : entry.mergeDetails,
   };
 }
 

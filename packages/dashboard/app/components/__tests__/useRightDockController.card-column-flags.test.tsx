@@ -4,7 +4,7 @@ THE DOCK'S `renderTaskCard` IS THE SECOND PRODUCER OF THIS AFFORDANCE, AND IT HA
 
 #3025 fixed both producers of a dock/plugin-rendered `TaskCard` — `MainContent.renderTaskCard` and
 this hook's — so that the card receives `taskColumnFlags` instead of resolving nothing and falling
-back to legacy lane ids for every role helper inside it (archive/revert affordances, progress, the
+back to legacy lane ids for every role helper inside it (Revert affordances, progress, the
 elapsed-time indicator, the planning badge).
 
 Its test covered `MainContent` only. MEASURED: deleting

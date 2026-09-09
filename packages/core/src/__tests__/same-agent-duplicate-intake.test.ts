@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { UNATTRIBUTED_MUTATION_CONTEXT } from "../identity/mutation-context.js";
 
 const { recordRunAuditEventAsync, softDeleteTaskRowAsync } = vi.hoisted(() => ({
   recordRunAuditEventAsync: vi.fn().mockResolvedValue(undefined),
@@ -16,7 +15,7 @@ vi.mock("../task-store/async/async-persistence.js", async (importOriginal) => ({
 }));
 
 import { TombstonedTaskResurrectionError } from "../task-store/errors.js";
-import { _maybeAutoArchiveSameAgentDuplicateBackendImpl } from "../task-store/task-mutation-ops.js";
+import { _resolveSameAgentDuplicateIntakeBackendImpl } from "../task-store/task-mutation-ops.js";
 import { resolveSameAgentDuplicateIntake } from "../task-store/task-creation.js";
 
 const NOW = new Date().toISOString();
@@ -38,7 +37,7 @@ function createStore(overrides: Record<string, unknown> = {}) {
     isWatching: false,
     asyncLayer: { db: {} },
     taskCache: new Map(),
-    getSettings: vi.fn().mockResolvedValue({ autoArchiveDuplicateTasksEnabled: false, tombstoneStickyWindowDays: 7 }),
+    getSettings: vi.fn().mockResolvedValue({ tombstoneStickyWindowDays: 7 }),
     listTasks: vi.fn().mockResolvedValue([]),
     listTasksBySourceLineage: vi.fn().mockResolvedValue([]),
     listWorkflowDefinitions: vi.fn().mockResolvedValue([]),
@@ -79,21 +78,14 @@ describe("same-agent duplicate intake policy (FN-8401)", () => {
     The production backend wrapper must remain thin so it cannot reintroduce the
     former delete-on-match behavior independently of the shared resolver.
     */
-    await _maybeAutoArchiveSameAgentDuplicateBackendImpl(store as any, created as any, created as any);
+    await _resolveSameAgentDuplicateIntakeBackendImpl(store as any, created as any, created as any);
 
     // Pre-fix performed a board scan; provenance creates must use the narrow lineage read.
     expect(store.listTasks).not.toHaveBeenCalled();
     expect(store.listTasksBySourceLineage).toHaveBeenCalledWith({ sourceAgentId: "agent-intake", sourceParentTaskId: null });
-    /*
-    FNXC:Identity 2026-08-09-03:04 (U18):
-    The mutation context is asserted positionally rather than waved through, so the day U9/U11/U13
-    hand this path a real actor the assertion fails and names the line instead of quietly accepting
-    whatever arrived. Duplicate intake runs inside the create path, so its actor is the creating
-    caller's - it is a census entry, not a permanent marker.
-    */
     expect(store.updateTask).toHaveBeenCalledWith("FN-NEW", {
       sourceMetadataPatch: expect.objectContaining({ nearDuplicateOf: "FN-SIBLING" }),
-    }, UNATTRIBUTED_MUTATION_CONTEXT);
+    });
     expect(store.recordActivity).toHaveBeenCalledWith(expect.objectContaining({
       taskId: "FN-NEW", metadata: expect.objectContaining({ source: "same-agent-flagged" }),
     }));
@@ -101,22 +93,6 @@ describe("same-agent duplicate intake policy (FN-8401)", () => {
     expect(store.deleteTaskById).not.toHaveBeenCalled();
     expect((store as any).deleteTask).toBeUndefined();
     expect(created.column).toBe("triage");
-  });
-
-  it("archives only the new task when the legacy setting is explicitly enabled", async () => {
-    const sibling = task("FN-SIBLING", { createdAt: new Date(Date.now() - 60_000).toISOString() });
-    const created = task("FN-NEW");
-    const store = createStore({
-      getSettings: vi.fn().mockResolvedValue({ autoArchiveDuplicateTasksEnabled: true, tombstoneStickyWindowDays: 7 }),
-      listTasksBySourceLineage: vi.fn().mockResolvedValue([created, sibling]),
-    });
-
-    await resolveSameAgentDuplicateIntake(store as any, created as any, created as any);
-
-    expect(store.moveTask).toHaveBeenCalledWith("FN-NEW", "archived", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
-    expect(store.moveTask).not.toHaveBeenCalledWith("FN-SIBLING", "archived", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
-    expect(store.deleteTaskById).not.toHaveBeenCalled();
-    expect(created.column).toBe("archived");
   });
 
   it("uses backend-safe tombstone reads and rejects a sticky same-agent resurrection", async () => {

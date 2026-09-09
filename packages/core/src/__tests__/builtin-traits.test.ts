@@ -16,8 +16,8 @@ function freshRegistry(): TraitRegistry {
 }
 
 describe("built-in traits", () => {
-  it("ships exactly the 14 vocabulary traits", () => {
-    expect(BUILTIN_TRAIT_IDS).toHaveLength(14);
+  it("ships exactly the 13 vocabulary traits", () => {
+    expect(BUILTIN_TRAIT_IDS).toHaveLength(13);
     expect(BUILTIN_TRAIT_DEFINITIONS.map((d) => d.id).sort()).toEqual([...BUILTIN_TRAIT_IDS].sort());
   });
 
@@ -28,13 +28,12 @@ describe("built-in traits", () => {
       expect(def, `missing built-in trait ${id}`).toBeDefined();
       expect(def?.builtin).toBe(true);
     }
-    expect(r.listTraits()).toHaveLength(14);
+    expect(r.listTraits()).toHaveLength(13);
   });
 
   it("only built-in traits carry restricted capabilities", () => {
     const r = freshRegistry();
     expect(r.getTrait("complete")?.flags.complete).toBe(true);
-    expect(r.getTrait("archived")?.flags.archived).toBe(true);
     // Sync guards live only on built-ins (merge-blocker, human-review).
     expect(r.getTrait("merge-blocker")?.hooks?.guard).toBe(true);
     expect(r.getTrait("human-review")?.hooks?.guard).toBe(true);
@@ -73,7 +72,7 @@ describe("built-in traits", () => {
   it("registering built-ins twice into the same registry is idempotent", () => {
     const r = freshRegistry();
     expect(() => registerBuiltinTraits(r)).not.toThrow();
-    expect(r.listTraits()).toHaveLength(14);
+    expect(r.listTraits()).toHaveLength(13);
   });
 });
 

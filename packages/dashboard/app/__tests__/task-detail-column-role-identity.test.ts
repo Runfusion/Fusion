@@ -113,7 +113,7 @@ describe("TaskDetailModal resolved column roles are identity-safe", () => {
     const effects = collectEffects();
     expect(effects.length, "expected to find useEffect calls to inspect").toBeGreaterThan(0);
 
-    const ROLE_BINDINGS = ["isReviewColumn", "isDoneColumn", "isArchivedColumn", "isWipColumn"];
+    const ROLE_BINDINGS = ["isReviewColumn", "isDoneColumn", "isWipColumn"];
 
     const unguarded = effects.filter((effect) => {
       const actsOnARole = ROLE_BINDINGS.some((role) => effect.used.has(role));

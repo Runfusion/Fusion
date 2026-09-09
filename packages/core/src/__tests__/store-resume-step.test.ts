@@ -6,6 +6,7 @@ import {
   type SharedPgTaskStoreHarness,
 } from "../__test-utils__/pg-test-harness.js";
 import { queryRunAuditEvents } from "../task-store/async/async-audit.js";
+import { archiveTerminalWorkflowStepFailures } from "../workflows/workflow-step-results.js";
 
 /*
  * FNXC:StepResume 2026-07-24-13:00:
@@ -108,6 +109,20 @@ pgDescribe("TaskStore.resumeWorkflowStep", () => {
         actor: "operator",
       }),
     ).rejects.toThrow(/only pending steps can be resumed/);
+  });
+
+  it("points an archived failure carrier at bypass without rewriting its history", async () => {
+    const archived = archiveTerminalWorkflowStepFailures([
+      pendingStep({ status: "failed", completedAt: "2026-09-02T00:00:00.000Z" }),
+    ], "2026-09-03T00:00:00.000Z")![0]!;
+    await seedInReviewTask("FN-RES-003A", { workflowStepResults: [archived] });
+
+    await expect(store().resumeWorkflowStep("FN-RES-003A", {
+      stepId: "code-review", reason: "x", actor: "operator",
+    })).rejects.toThrow(/archived remediation carrier.*fn_task_bypass_review/);
+    expect((await store().getTask("FN-RES-003A")).workflowStepResults?.[0]).toMatchObject({
+      status: "skipped", remediationArchivedAt: "2026-09-03T00:00:00.000Z", remediationArchivedFromStatus: "failed",
+    });
   });
 
   it("rejects when the step is not found as a pending pre-merge step", async () => {

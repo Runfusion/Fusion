@@ -70,6 +70,7 @@ export const DELIVERY_PIPELINE_RUN_AUDIT_EVENTS_LITERALS = [
   "task:reconcile-wedged-active-merge",
   "task:reconcile-stranded-completed-no-action",
   "task:reconcile-legacy-adoption",
+  "task:reconcile-archived-into-done",
 
   /* ── 3. Durable-agent error-state ──────────────────────────────────────── */
   "agent:auto-recover-error-state",
@@ -137,7 +138,7 @@ export const DELIVERY_PIPELINE_RUN_AUDIT_EVENT_NOTES: Readonly<Record<DeliveryPi
   "task:auto-rebound-paused-scope-decay":
     "Self-healing rebounds a task whose paused scope decayed past its floor, unblocking followers.",
   "task:auto-archive-failure-budget-exhausted":
-    "Self-healing abandons a repeatedly failing stale-task archive and surfaces it for operator action.",
+    "Historical compatibility event for a retired stale-task archive sweep.",
 
   "task:reclaim-phantom-executor-binding":
     "Self-healing proves an in-memory executor-active binding is stale and requeues the task.",
@@ -161,6 +162,8 @@ export const DELIVERY_PIPELINE_RUN_AUDIT_EVENT_NOTES: Readonly<Record<DeliveryPi
     "A stranded-completed promoter withholds promotion of an all-steps-done/skipped task with a failure park provenance (no-action).",
   "task:reconcile-legacy-adoption":
     "Self-healing startup adopts a pre-cutover legacy task row through the KTD-8 adoption table.",
+  "task:reconcile-archived-into-done":
+    "Self-healing moves or restores one historical archived task into its workflow completion lane.",
 
   /* ── 3. Durable-agent error-state ──────────────────────────────────────── */
   "agent:auto-recover-error-state":

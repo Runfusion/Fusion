@@ -1,5 +1,5 @@
 import type { MissionFeature, MissionFeatureRepairGroundTruth, MissionTransitionActor, Task, TaskStore, WorkflowSelectionCache } from "@fusion/core";
-import { TerminalTaskReconciliationError, resolveLifecycleColumns, resolveWorkflowIrForTask } from "@fusion/core";
+import { resolveWorkflowIrForTask } from "@fusion/core";
 import { createRunAuditor, generateSyntheticRunId } from "../util/run-audit.js";
 import { resolveTerminalColumnsFor } from "../executor/lifecycle-columns.js";
 import { resolvePlannerLanesForTask } from "../planner-lane-resolution.js";
@@ -16,12 +16,6 @@ type MissionApi = {
   linkFeatureToTask?(featureId: string, taskId: string): Promise<MissionFeature>;
 };
 
-/*
-FNXC:MissionAutoReconcile 2026-08-11-02:39:
-The dashboard mission-store Proxy has only a get trap over an empty target, so `in` and hasOwn
-report optional methods as absent. A property-read typeof probe works for that Proxy and concrete
-stores, preventing terminal archived delivery repair from being silently disabled.
-*/
 export function hasTerminalReconcileCapability(missionStore: unknown): missionStore is TerminalCapability {
   return typeof (missionStore as Record<string, unknown> | null | undefined)?.reconcileFeatureDoneWithTerminalTask === "function";
 }
@@ -50,15 +44,6 @@ function titleKey(sliceId: string, title: string): string { return `${sliceId}\0
 function lineageKey(missionId: string, sliceId: string, featureId: string): string { return `${missionId}\0${sliceId}\0${featureId}`; }
 function hasRepairCapability(store: unknown): store is RepairCapability {
   return typeof (store as Record<string, unknown> | null | undefined)?.repairFeatureValidationState === "function";
-}
-/*
-FNXC:MissionAutoReconcile 2026-08-11-04:57 DELIBERATE-LITERAL:
-The physical archived lane remains a compatibility terminal signal before workflow resolution; custom workflows are checked against their resolved archived lane immediately afterward.
-*/
-async function isArchivedTask(taskStore: TaskStore, task: Task): Promise<boolean> {
-  if (task.deletedAt || task.column === "archived") return true;
-  const ir = await resolveWorkflowIrForTask(taskStore, task.id).catch(() => undefined);
-  return ir ? resolveLifecycleColumns(ir)?.archived === task.column : false;
 }
 function liveGroundTruth(feature: MissionFeature, task: Task, laneRole: "wip" | "planner"): MissionFeatureRepairGroundTruth {
   return { featureId: feature.id, taskId: task.id, taskLiveness: "live", taskColumn: task.column, taskUpdatedAt: task.updatedAt, laneRole, resolvedAt: new Date().toISOString() };
@@ -160,8 +145,8 @@ export async function reconcileMissionState(
   FNXC:MissionReverseLineageCredit 2026-08-17-09:08 (RUFU-109):
   Each lineage candidate records whether it keeps its feature live AND whether it is a satisfied
   done-lineage delivery. The liveness classification reuses the existing `resolveTerminalColumnsFor`
-  call unchanged; a terminal (done/archived/complete or soft-deleted-with-retained-evidence),
-  non-failed candidate additionally credits its feature. A feature key is added to
+  call unchanged; a live, non-failed workflow Complete candidate additionally credits its feature.
+  A feature key is added to
   `featuresWithDoneLineageDelivery` only when none of its candidates is live.
   */
   const lineageDeliverySnapshot = new Map<string, { hasLive: boolean; hasSatisfyingDoneDelivery: boolean; satisfyingTask?: Task }>();
@@ -281,8 +266,7 @@ export async function reconcileMissionState(
           await deps.extensionHook?.({ feature, task });
           continue;
         }
-        const terminalCandidate = Boolean(explicitTaskId && task && await isArchivedTask(deps.taskStore, task));
-        if (!terminalCandidate && task) {
+        if (task) {
           const assertions = missionApi.listAssertionsForFeature ? await missionApi.listAssertionsForFeature(feature.id) : [];
           const plannerColumns = await resolvePlannerLanesForTask(deps.taskStore, task.id, terminalIrCache, selectionCache) ?? [];
           const decision = await reconcileMissionFeatureState(deps.taskStore, task, feature, {
@@ -322,18 +306,8 @@ export async function reconcileMissionState(
           await deps.extensionHook?.({ feature, task });
           continue;
         }
-        // Only explicit links may establish terminal evidence; title matching never fabricates completion.
-        if (explicitTaskId && !(feature.status === "done" && feature.taskId === explicitTaskId)) {
-          const terminal = hasTerminalReconcileCapability(deps.missionStore) ? deps.missionStore.reconcileFeatureDoneWithTerminalTask.bind(deps.missionStore) : undefined;
-          if (!terminal) result.terminalSkipped++;
-          else if (options.dryRun) result.planned!.push({ featureId: feature.id, action: "terminal-done" });
-          else try { await terminal(feature.id, explicitTaskId); result.terminalRepairs++; }
-          catch (error) {
-            if (error instanceof TerminalTaskReconciliationError) {
-              if (error.code === "FEATURE_TASK_CONFLICT" || error.code === "TASK_FEATURE_CONFLICT") result.conflicts++; else result.terminalSkipped++;
-            } else result.failures++;
-          }
-        }
+        // Missing or deleted task links never fabricate terminal delivery evidence.
+        await deps.extensionHook?.({ feature });
         } catch { result.failures++; }
       }
     }

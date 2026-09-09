@@ -71,7 +71,6 @@ const collectSystemStatsResponse = async (req: Request) => {
     "in-progress": 0,
     "in-review": 0,
     done: 0,
-    archived: 0,
   };
   const agentCounts = { idle: 0, active: 0, running: 0, error: 0 };
   let vitestLastAutoKillAt: string | null = null;

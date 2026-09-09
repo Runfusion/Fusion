@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { BUILTIN_CODING_WORKFLOW_IR, getBuiltinWorkflow, type WorkflowIr } from "@fusion/core";
+import { getTaskWorkflowSelectionAsyncImpl } from "../../../core/src/task-store/workflow-definitions.js";
 import { buildBoardWorkflowsPayload } from "../routes/board-workflows.js";
 
 const CUSTOM_WORKFLOW_ID = "WF-DESCRIPTIONS";
@@ -103,6 +104,46 @@ describe("buildBoardWorkflowsPayload disabled built-ins", () => {
   });
 });
 
+describe("buildBoardWorkflowsPayload retired workflow succession", () => {
+  it("projects legacy and successor selections into one Ideas lane", async () => {
+    const persisted = new Map([
+      ["FN-OLD", { workflowId: "builtin:coding-ideas", stepIds: ["plan-review"] }],
+      ["FN-NEW", { workflowId: "builtin:coding-ideas-v2", stepIds: ["code-review"] }],
+    ]);
+    const getTaskWorkflowSelectionAsync = vi.fn(async (taskId: string) => {
+      const row = persisted.get(taskId);
+      const db = {
+        select: () => ({
+          from: () => ({
+            where: () => ({ limit: async () => row ? [row] : [] }),
+          }),
+        }),
+      };
+      return getTaskWorkflowSelectionAsyncImpl({
+        asyncLayer: { projectId: "board-successor", db },
+      } as never, taskId);
+    });
+    const store = {
+      getSettings: vi.fn(async () => ({ defaultWorkflowId: "builtin:coding" })),
+      getTaskWorkflowSelection: vi.fn(() => undefined),
+      getTaskWorkflowSelectionAsync,
+      getWorkflowDefinition: vi.fn(async () => undefined),
+      listWorkflowDefinitions: vi.fn(async () => []),
+    };
+
+    const payload = await buildBoardWorkflowsPayload(store as never, ["FN-OLD", "FN-NEW"]);
+    const ideas = payload.workflows.filter((workflow) => workflow.id === "builtin:coding-ideas-v2");
+
+    expect(ideas).toHaveLength(1);
+    expect(ideas[0]?.name).toBe("Coding (Ideas)");
+    expect(payload.workflows.filter((workflow) => workflow.name === "Coding (Ideas)")).toHaveLength(1);
+    expect(payload.taskWorkflowIds).toMatchObject({
+      "FN-OLD": "builtin:coding-ideas-v2",
+      "FN-NEW": "builtin:coding-ideas-v2",
+    });
+  });
+});
+
 describe("buildBoardWorkflowsPayload built-in column labels", () => {
   function builtinStore(workflowId: string) {
     return {
@@ -149,7 +190,6 @@ describe("buildBoardWorkflowsPayload built-in column labels", () => {
       "in-progress": "In Progress",
       "in-review": "In Review",
       done: "Done",
-      archived: "Archived",
     });
     // And the merged column is gone, so nothing should be canonicalising a `triage` label any more.
     expect(named).not.toHaveProperty("triage");

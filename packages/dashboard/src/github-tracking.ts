@@ -262,11 +262,7 @@ export type MaybeCreateTrackingIssueReason =
 
 /*
 FNXC:GithubTracking 2026-08-15-22:27:
-A tracking issue created AFTER the Fusion task is already done/archived has no later
-task:moved event, so GitHubTrackingStateService never closes it. Observed on FN-9046 /
-FN-9054 / FN-9061: executionCompletedAt preceded issue.createdAt by 4–15 minutes, and
-the issues stayed OPEN. After create or dedup-link, close immediately when the task is
-already in a complete or archived lane. Failures are logged and never undo the link.
+A tracking issue created after the Fusion task is already complete has no later task:moved event, so GitHubTrackingStateService never closes it. After create or dedup-link, close immediately when the task is already in a Complete lane. Failures are logged and never undo the link.
 */
 async function closeTrackingIssueIfTaskAlreadyTerminal(
   task: Task,
@@ -280,10 +276,8 @@ async function closeTrackingIssueIfTaskAlreadyTerminal(
   const ir = await resolveWorkflowIrForTask(store, latest.id).catch(() => undefined);
   const traitsExpressed = ir !== undefined && declaresAnyLifecycleTrait(ir);
   const completeLanes = ir === undefined || !traitsExpressed ? ["done"] : columnsWithFlag(ir, "complete");
-  const archivedLanes = ir === undefined || !traitsExpressed ? ["archived"] : columnsWithFlag(ir, "archived");
   const isComplete = completeLanes.includes(latest.column);
-  const isArchived = archivedLanes.includes(latest.column);
-  if (!isComplete && !isArchived) {
+  if (!isComplete) {
     return;
   }
 
@@ -292,8 +286,7 @@ async function closeTrackingIssueIfTaskAlreadyTerminal(
     if (!existing || existing.state === "closed") {
       return;
     }
-    const stateReason = isArchived && !latest.executionCompletedAt ? "not_planned" : "completed";
-    await client.setIssueState(issue.owner, issue.repo, issue.number, "closed", stateReason);
+    await client.setIssueState(issue.owner, issue.repo, issue.number, "closed", "completed");
     if (typeof store.logEntry === "function") {
       await store.logEntry(latest.id, "Closed linked GitHub tracking issue", `${issue.owner}/${issue.repo}#${issue.number}`);
     }

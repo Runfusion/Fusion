@@ -357,23 +357,6 @@ describe("research-routes", () => {
     expect(response.body.error).toContain("Task not found");
   });
 
-  it("returns 409 when enriching an archived task", async () => {
-    const app = express();
-    app.use(express.json());
-    app.use(createResearchRouter(createMockStore({ taskColumn: "archived" }) as any));
-
-    const response = await performRequest(
-      app,
-      "POST",
-      "/runs/RR-1/findings/finding-1/tasks/FN-42/enrich",
-      JSON.stringify({ attachExport: false }),
-      { "content-type": "application/json" },
-    );
-
-    expect(response.status).toBe(409);
-    expect(response.body.error).toContain("Cannot enrich archived task");
-  });
-
   it("returns 400 when run id sanitizes to an empty document key", async () => {
     const app = express();
     app.use(express.json());

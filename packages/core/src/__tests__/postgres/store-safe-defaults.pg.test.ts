@@ -42,32 +42,32 @@ pgDescribe("TaskStore PostgreSQL safe-default removal", () => {
     expect((await store.getTask(dependent.id)).executionStartBranch).toBeUndefined();
   });
 
-  it("keeps archived logs, comments, documents, and artifacts read-only", async () => {
+  it("keeps soft-deleted logs, comments, documents, and artifacts read-only", async () => {
     const store = h.store();
-    const task = await store.createTask({ description: "archive safety" });
-    const commented = await store.addComment(task.id, "before archive", "user");
+    const task = await store.createTask({ description: "soft-delete safety" });
+    const commented = await store.addComment(task.id, "before delete", "user");
     const commentId = commented.comments?.[0]?.id;
     expect(commentId).toBeTruthy();
-    await store.upsertTaskDocument(task.id, { key: "spec", content: "before archive" });
+    await store.upsertTaskDocument(task.id, { key: "spec", content: "before delete" });
     const artifact = await store.registerArtifact({
       type: "document",
-      title: "before archive",
+      title: "before delete",
       content: "body",
       authorId: "user",
       authorType: "user",
       taskId: task.id,
     });
-    await store.archiveTask(task.id, { cleanup: false });
+    await store.deleteTask(task.id);
 
-    await expect(store.logEntry(task.id, "must reject")).rejects.toThrow(/archived.*read-only/);
-    await expect(store.moveTask(task.id, "todo")).rejects.toThrow(/archived|soft-deleted|not found/);
-    await expect(store.updateTask(task.id, { priority: "high" })).rejects.toThrow(/archived|soft-deleted|not found/);
-    await expect(store.addComment(task.id, "must reject", "user")).rejects.toThrow(/archived.*read-only/);
-    await expect(store.updateTaskComment(task.id, commentId!, "must reject")).rejects.toThrow(/archived.*read-only/);
-    await expect(store.deleteTaskComment(task.id, commentId!)).rejects.toThrow(/archived.*read-only/);
-    await expect(store.upsertTaskDocument(task.id, { key: "spec", content: "must reject" })).rejects.toThrow(/archived.*read-only/);
-    await expect(store.deleteTaskDocument(task.id, "spec")).rejects.toThrow(/archived.*read-only/);
-    await expect(store.updateArtifact(artifact.id, { title: "must reject" })).rejects.toThrow(/archived.*read-only/);
+    await expect(store.logEntry(task.id, "must reject")).rejects.toThrow(/deleted or historical.*read-only/);
+    await expect(store.moveTask(task.id, "todo")).rejects.toThrow(/deleted|historical|soft-deleted|not found/);
+    await expect(store.updateTask(task.id, { priority: "high" })).rejects.toThrow(/deleted|historical|soft-deleted|not found/);
+    await expect(store.addComment(task.id, "must reject", "user")).rejects.toThrow(/deleted or historical.*read-only/);
+    await expect(store.updateTaskComment(task.id, commentId!, "must reject")).rejects.toThrow(/deleted or historical.*read-only/);
+    await expect(store.deleteTaskComment(task.id, commentId!)).rejects.toThrow(/deleted or historical.*read-only/);
+    await expect(store.upsertTaskDocument(task.id, { key: "spec", content: "must reject" })).rejects.toThrow(/deleted or historical.*read-only/);
+    await expect(store.deleteTaskDocument(task.id, "spec")).rejects.toThrow(/deleted or historical.*read-only/);
+    await expect(store.updateArtifact(artifact.id, { title: "must reject" })).rejects.toThrow(/deleted or historical.*read-only/);
     await expect(store.registerArtifact({
       type: "document",
       title: "must reject",
@@ -75,31 +75,15 @@ pgDescribe("TaskStore PostgreSQL safe-default removal", () => {
       authorId: "user",
       authorType: "user",
       taskId: task.id,
-    })).rejects.toThrow(/archived.*read-only/);
+    })).rejects.toThrow(/deleted or historical.*read-only/);
     expect(await store.getTaskDocuments(task.id)).toEqual([]);
     expect(await store.getArtifacts(task.id)).toEqual([]);
 
     const retained = await store.getTaskDocument(task.id, "spec");
-    expect(retained).toMatchObject({ content: "before archive", revision: 1 });
+    expect(retained).toMatchObject({ content: "before delete", revision: 1 });
     expect(await store.getTaskDocumentRevisions(task.id, "spec")).toEqual([]);
-    const published = await store.publishArchivedTaskDocumentAddition(task.id, {
-      key: "spec",
-      appendContent: "operator correction",
-      expectedRevision: retained!.revision,
-      expectedContentHash: retained!.contentHash,
-      author: "operator",
-      reason: "Correct retained evidence",
-    });
-    expect(published.document).toMatchObject({
-      content: "before archive\n\noperator correction",
-      revision: 2,
-      author: "operator",
-    });
-    expect(await store.getTaskDocumentRevisions(task.id, "spec")).toMatchObject([
-      { content: "before archive", revision: 1 },
-    ]);
     expect(await store.getTaskDocuments(task.id)).toEqual([]);
-    await expect(store.upsertTaskDocument(task.id, { key: "spec", content: "still rejected" })).rejects.toThrow(/archived.*read-only/);
+    await expect(store.upsertTaskDocument(task.id, { key: "spec", content: "still rejected" })).rejects.toThrow(/deleted or historical.*read-only/);
   });
 
   it("runs plugin schema initialization through the PostgreSQL executor without opening SQLite", async () => {
@@ -117,7 +101,7 @@ pgDescribe("TaskStore PostgreSQL safe-default removal", () => {
   it("repairs soft-deleted task column drift and audits the repaired row", async () => {
     const store = h.store();
     const task = await store.createTask({ description: "drift repair" });
-    await store.archiveTask(task.id, { cleanup: false });
+    await store.deleteTask(task.id);
     await h.layer().db
       .update(schema.project.tasks)
       .set({ column: "todo" })
