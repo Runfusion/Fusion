@@ -27,6 +27,9 @@ headroom, which is a flake waiting to happen rather than a passing lane.
 The standing rule is unchanged and now has three precedents: an overrun with NO attributable growth
 is a regression to fix in the lane, never a budget to raise. Per-file cost remains the first
 optimization to reach for.
+
+FNXC:WorkflowSuccession 2026-09-06-02:15:
+FN-297 removes the retired Ideas workflow from every scenario matrix because its alias resolves the same successor graph and would duplicate work. The declared duration budget remains a ceiling rather than being lowered around one catalog cleanup.
 */
 export const PIPELINE_SMOKE_DURATION_BUDGET_MS = 175_000;
 export const DEFAULT_REPORT_PATH = join(ENGINE_DIR, ".pipeline-smoke-report.json");

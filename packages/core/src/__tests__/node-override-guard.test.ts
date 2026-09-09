@@ -157,7 +157,7 @@ describe("validateNodeOverrideChange", () => {
     expect(result).toEqual({ allowed: true });
   });
 
-  it.each(["triage", "todo", "in-review", "done", "archived"])(
+  it.each(["triage", "todo", "in-review", "done"])(
     "allows setting nodeId on a task in %s",
     (column) => {
       const result = validateNodeOverrideChange({ id: "FN-1", column }, "node-b");

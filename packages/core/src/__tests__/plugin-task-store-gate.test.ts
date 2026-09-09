@@ -20,8 +20,6 @@ function makeFakeStore() {
     deleteTaskById: vi.fn().mockResolvedValue(undefined),
     deleteTaskBackend: vi.fn().mockResolvedValue(undefined),
     bypassFailedPreMergeReviewStep: vi.fn().mockResolvedValue({ id: "FN-1" }),
-    archiveAllDone: vi.fn().mockResolvedValue([]),
-    cleanupArchivedTasks: vi.fn().mockResolvedValue(0),
     getDatabase: vi.fn().mockReturnValue({ raw: "sync-db" }),
     getAsyncLayer: vi.fn().mockReturnValue({ raw: "async-layer" }),
     getTask: vi.fn().mockResolvedValue({ id: "FN-1", column: "todo" }),
@@ -84,9 +82,7 @@ describe("createPluginGatedTaskStore", () => {
     }) as unknown as typeof raw;
 
     await gated.deleteTask("FN-1");
-    await gated.archiveAllDone();
     expect(raw.deleteTask).toHaveBeenCalledWith("FN-1");
-    expect(raw.archiveAllDone).toHaveBeenCalledOnce();
   });
 
   it("leaves non-destructive methods and plain properties untouched", async () => {

@@ -79,18 +79,6 @@ pgTest("TaskStore.searchTasks facade (PostgreSQL)", () => {
     expect(ids).not.toContain(drop.id);
   });
 
-  it("includeArchived=false excludes archived-column tasks", async () => {
-    const store = h.store();
-    const live = await store.createTask({ description: "archived filter probe", column: "todo" });
-    const archived = await store.createTask({ description: "archived filter probe", column: "archived" });
-
-    const all = await store.searchTasks("probe");
-    expect(all.map((t) => t.id).sort()).toEqual([archived.id, live.id].sort());
-
-    const liveOnly = await store.searchTasks("probe", { includeArchived: false });
-    expect(liveOnly.map((t) => t.id)).toEqual([live.id]);
-  });
-
   it("slim mode strips the log payload", async () => {
     const store = h.store();
     await store.createTask({ description: "slim log probe target" });

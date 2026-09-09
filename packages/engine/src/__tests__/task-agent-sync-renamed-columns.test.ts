@@ -5,8 +5,7 @@ task-agent-sync clears an agent's `taskId` link when its task moves to a column
 where the agent is no longer working it. Both halves of that decision were keyed
 on literal column ids:
 
-  - CLEAR_COLUMNS = {done, archived, todo, triage} — the roles complete,
-    archived, hold and intake.
+  - CLEAR_COLUMNS once named the built-in completion, hold, and intake ids.
   - isParkedTaskColumn = {todo, triage} — the roles hold and intake, where a
     link is preserved if (and only if) there is live execution proof.
 
@@ -17,7 +16,7 @@ failing test. The agent also stays `running`. These tests were written against
 the literal implementation and observed FAILING first.
 
 The role mapping is asserted, not assumed: hold/intake preserve-with-proof,
-complete/archived always clear. A renamed workflow must behave identically to
+complete always clears. A renamed workflow must behave identically to
 the default-named one role-for-role.
 */
 import { describe, expect, it, vi } from "vitest";
@@ -28,7 +27,7 @@ import { attachAgentLinkSync, isParkedTaskColumn } from "../agents/task-agent-sy
 const WF = "custom:wf";
 
 /** Same workflow SHAPE under two vocabularies; only the ids differ. */
-function ir(names: Record<"intake" | "hold" | "wip" | "complete" | "archived", string>): WorkflowIr {
+function ir(names: Record<"intake" | "hold" | "wip" | "complete", string>): WorkflowIr {
   return {
     version: "v2",
     id: WF,
@@ -39,7 +38,6 @@ function ir(names: Record<"intake" | "hold" | "wip" | "complete" | "archived", s
       { id: names.hold, label: "Hold", traits: [{ trait: "hold", config: { release: "capacity" } }] },
       { id: names.wip, label: "Wip", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
       { id: names.complete, label: "Complete", traits: [{ trait: "complete" }] },
-      { id: names.archived, label: "Archived", traits: [{ trait: "archived" }] },
     ],
   } as unknown as WorkflowIr;
 }
@@ -49,7 +47,6 @@ const DEFAULT_NAMES = {
   hold: "todo",
   wip: "in-progress",
   complete: "done",
-  archived: "archived",
 };
 /* No renamed id collides with a legacy literal, so a surviving `=== "todo"`
    cannot pass by coincidence. */
@@ -58,7 +55,6 @@ const RENAMED = {
   hold: "drafting",
   wip: "building",
   complete: "shipped",
-  archived: "retired",
 };
 
 interface Harness {
@@ -143,12 +139,6 @@ describe("task-agent-sync under a renamed column vocabulary", () => {
       // entirely and the agent keeps pointing at a finished card.
       expect(h.syncCalls()).toEqual([undefined]);
       expect(h.stateCalls()).toEqual(["active"]);
-    });
-
-    it("clears the agent link when a card moves to a RENAMED archived column", async () => {
-      const h = harness(RENAMED);
-      await h.emitMove(RENAMED.archived);
-      expect(h.syncCalls()).toEqual([undefined]);
     });
 
     it("clears the link on a move to a RENAMED hold column with no live execution proof", async () => {

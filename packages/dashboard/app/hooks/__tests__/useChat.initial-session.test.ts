@@ -118,6 +118,23 @@ describe("useChat initial session isolation", () => {
     expect(fetchChatMessages).toHaveBeenCalledWith(initial.id, { limit: 50, order: "desc" }, PROJECT_ID);
   });
 
+  it("keeps selection usable when project storage refuses the write", async () => {
+    const available = session({ id: "available-session" });
+    fetchChatSessions.mockResolvedValueOnce({ sessions: [available] });
+    const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new DOMException("Storage unavailable", "SecurityError");
+    });
+
+    try {
+      const { result } = renderHook(() => useChat(PROJECT_ID));
+      await waitFor(() => expect(result.current.sessionsLoading).toBe(false));
+      act(() => result.current.selectSession(available.id, available));
+      expect(result.current.activeSession?.id).toBe(available.id);
+    } finally {
+      setItem.mockRestore();
+    }
+  });
+
   it("does not persist a secondary window selection", async () => {
     const initial = session({ id: "window-session" });
     const other = session({ id: "other-session" });
@@ -134,7 +151,7 @@ describe("useChat initial session isolation", () => {
     expect(localStorage.getItem(ACTIVE_SESSION_KEY)).toBeNull();
   });
 
-  it("waits for sessions before restoring the legacy saved selection", async () => {
+  it("waits for sessions before restoring the saved open conversation", async () => {
     const saved = session({ id: "saved-session" });
     const list = deferred<{ sessions: EnrichedChatSession[] }>();
     localStorage.setItem(ACTIVE_SESSION_KEY, saved.id);
@@ -148,6 +165,43 @@ describe("useChat initial session isolation", () => {
     await waitFor(() => expect(result.current.activeSession?.id).toBe(saved.id));
     expect(fetchChatSession).toHaveBeenCalledWith(saved.id, PROJECT_ID);
     expect(fetchChatMessages).toHaveBeenCalledWith(saved.id, { limit: 50, order: "desc" }, PROJECT_ID);
+  });
+
+  it("clears an absent or archived saved conversation after the active list loads", async () => {
+    localStorage.setItem(ACTIVE_SESSION_KEY, "missing-session");
+    fetchChatSessions.mockResolvedValueOnce({ sessions: [session({ id: "available-session" })] });
+
+    const { result } = renderHook(() => useChat(PROJECT_ID));
+
+    await waitFor(() => expect(result.current.sessionsLoading).toBe(false));
+    expect(result.current.activeSession).toBeNull();
+    expect(localStorage.getItem(ACTIVE_SESSION_KEY)).toBeNull();
+    expect(fetchChatSession).not.toHaveBeenCalled();
+  });
+
+  it("ignores a late project A list after project B has restored its own conversation", async () => {
+    const projectA = "project-a";
+    const projectB = "project-b";
+    const sessionA = session({ id: "session-a", projectId: projectA });
+    const sessionB = session({ id: "session-b", projectId: projectB });
+    const listA = deferred<{ sessions: EnrichedChatSession[] }>();
+    localStorage.setItem(`kb:${projectA}:kb-chat-active-session`, sessionA.id);
+    localStorage.setItem(`kb:${projectB}:kb-chat-active-session`, sessionB.id);
+    fetchChatSessions.mockImplementation((projectId) => {
+      if (projectId === projectA) return listA.promise;
+      return Promise.resolve({ sessions: [sessionB] });
+    });
+
+    const { result, rerender } = renderHook(
+      ({ projectId }) => useChat(projectId),
+      { initialProps: { projectId: projectA } },
+    );
+    rerender({ projectId: projectB });
+
+    await waitFor(() => expect(result.current.activeSession?.id).toBe(sessionB.id));
+    await act(async () => listA.resolve({ sessions: [sessionA] }));
+    expect(result.current.activeSession?.id).toBe(sessionB.id);
+    expect(fetchChatSession).not.toHaveBeenCalledWith(sessionA.id, projectA);
   });
 
   /*

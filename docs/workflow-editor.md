@@ -110,7 +110,7 @@ For task dispatch, the queue column that holds ready work must carry a `hold` tr
 }
 ```
 
-Copying a selectable built-in workflow is the easiest way to inherit the full canonical trait set (`todo`, `in-progress`, `in-review`, `done`, `archived`) before customizing nodes or prompts.
+Copying a selectable built-in workflow is the easiest way to inherit the canonical lifecycle traits (`intake`, `hold`, `wip`, merge/review gates, and `complete`) before customizing nodes or prompts. Task workflows have no archive trait.
 
 When column-agent support is enabled by the required experimental features, a column can also assign a permanent agent with one of two modes:
 

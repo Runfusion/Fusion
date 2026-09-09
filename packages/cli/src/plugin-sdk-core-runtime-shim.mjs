@@ -34,7 +34,7 @@ export { AgentStore, postgresSchema, redactSecrets, getErrorMessage };
  * Lifecycle ROLE resolution, re-exported for bundled plugins.
  *
  * A plugin that asks "is this card in a terminal lane?" must resolve the board's roles rather than
- * compare against `done`/`archived`, or it stalls forever on a renamed board. That is what the
+ * compare against a literal `done`; it must resolve the `complete` trait or it stalls forever on a renamed board. That is what the
  * compound-engineering reconciler now does — but this shim is what `@fusion/core` resolves to inside
  * the bundled build, so an import it does not re-export is a hard esbuild failure ("No matching
  * export"), not a runtime fallback. The plugin built fine in the workspace and broke only in the CLI

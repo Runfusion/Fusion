@@ -71,11 +71,7 @@ describe("triage explicit duplicate marker short-circuit", () => {
         runId: expect.stringMatching(/^triage-delete-FN-002-/),
       }),
     }));
-    expect(store.recordActivity).toHaveBeenCalledWith(expect.objectContaining({
-      type: "task:auto-archived-duplicate",
-      taskId: "FN-002",
-      metadata: expect.objectContaining({ canonicalTaskId: "FN-001", source: "explicit-marker" }),
-    }));
+    expect(store.recordActivity).not.toHaveBeenCalled();
   });
 
 
@@ -235,21 +231,19 @@ describe("triage explicit duplicate marker short-circuit", () => {
 
     /*
      * FNXC:DuplicateIntake 2026-08-23-18:30:
-     * FN-8911 (8a7ab1dedc) made the duplicate branch clear its planning-lifecycle-lock
-     * transport-failure marker from `customFields` before any decision, so "no write at all" is no
-     * longer the contract. The invariant this test owns is the PAUSE: a user pause must survive
-     * marker reprocessing untouched, so the only permitted write is that customFields cleanup —
-     * never `paused`, `pausedReason`, `userPaused`, or a duplicate `sourceMetadataPatch`.
+     * FN-9273 made the duplicate branch clear engine-owned planningFailure before any decision, so
+     * "no write at all" is no longer the contract. The invariant this test owns is the PAUSE: a
+     * user pause must survive marker reprocessing untouched, so the only permitted write is that
+     * planningFailure cleanup — never `paused`, `pausedReason`, `userPaused`, or source metadata.
      */
     for (const [, patch] of (store.updateTask as ReturnType<typeof vi.fn>).mock.calls as [string, Record<string, unknown>][]) {
-      expect(Object.keys(patch)).toEqual(["customFields"]);
+      expect(Object.keys(patch)).toEqual(["planningFailure"]);
     }
   });
   it.each([
     ["missing", null],
     ["soft-deleted", createTask({ id: "FN-001", deletedAt: new Date().toISOString() })],
     ["done", createTask({ id: "FN-001", column: "done" })],
-    ["archived", createTask({ id: "FN-001", column: "archived" })],
   ])("clears an inactive %s canonical marker instead of pausing for a hidden decision", async (_state, canonical) => {
     const task = createTask();
     const store = createMockStore({

@@ -247,7 +247,7 @@ describe("createMissionTools", () => {
 /*
 FNXC:MissionValidationRepair 2026-08-11-01:46:
 These use the real PostgreSQL MissionStore behind the production tool adapter. A forwarding mock
-cannot prove that a stale fence retries once or that an archived linked task remains repairable.
+cannot prove that a stale fence retries once or that a soft-deleted linked task remains repairable.
 */
 pgDescribe("mission validation repair agent tool", () => {
   const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
@@ -268,9 +268,9 @@ pgDescribe("mission validation repair agent tool", () => {
     return missionStore.updateFeature(feature.id, { taskId, status: "blocked", loopState: "blocked" });
   }
 
-  it("clears an archived linked task through the real tool and persists its audit event", async () => {
-    const task = await h.store().createTask({ description: "Archived delivery", column: "done" });
-    await h.store().archiveTask(task.id, { cleanup: false });
+  it("clears a soft-deleted linked task through the real tool and persists its audit event", async () => {
+    const task = await h.store().createTask({ description: "Deleted delivery", column: "done" });
+    await h.store().deleteTask(task.id);
     const feature = await blockedFeature(task.id);
     const tool = createMissionTools(h.store(), { agentId: "agent-repair" })
       .find((candidate) => candidate.name === "fn_feature_repair_validation")!;

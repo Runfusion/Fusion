@@ -1474,6 +1474,26 @@ describe("SettingsModal", () => {
       }
     });
 
+    it("saves chatSubmitOnEnter only via global settings payload", async () => {
+      renderModal({ initialSection: "global-general" });
+      await waitForSettingsModalReady();
+
+      vi.useFakeTimers();
+      fireEvent.change(screen.getByRole("combobox", { name: "Enter key behavior in conversations" }), {
+        target: { value: "never" },
+      });
+      await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+      expect(mockUpdateGlobalSettings).toHaveBeenCalled();
+      vi.useRealTimers();
+
+      const globalPayload = mockUpdateGlobalSettings.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(globalPayload.chatSubmitOnEnter).toBe("never");
+      if (mockUpdateSettings.mock.calls.length > 0) {
+        const projectPayload = mockUpdateSettings.mock.calls[0]?.[0] as Record<string, unknown>;
+        expect(projectPayload.chatSubmitOnEnter).toBeUndefined();
+      }
+    });
+
     it("saves persistAgentToolOutput only via global settings payload", async () => {
       renderModal({ initialSection: "global-general" });
       await waitForSettingsModalReady();

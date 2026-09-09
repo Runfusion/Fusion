@@ -169,6 +169,42 @@ describe("TaskTokenStatsPanel", () => {
     expect(screen.getAllByText("4m 0s").length).toBeGreaterThan(0);
   });
 
+  it("renders restored completed timestamps, cumulative duration, and token totals together", () => {
+    const tokenUsage = {
+      inputTokens: 1200,
+      outputTokens: 450,
+      cachedTokens: 210,
+      cacheWriteTokens: 15,
+      totalTokens: 1875,
+      firstUsedAt: "2026-05-15T13:00:00.000Z",
+      lastUsedAt: "2026-05-15T13:15:00.000Z",
+    };
+    render(
+      <TaskTokenStatsPanel
+        loading={false}
+        tokenUsage={tokenUsage}
+        task={makeTask({
+          column: "done",
+          status: undefined,
+          firstExecutionAt: "2026-05-15T13:00:00.000Z",
+          executionStartedAt: "2026-05-15T13:10:00.000Z",
+          executionCompletedAt: "2026-05-15T13:15:00.000Z",
+          cumulativeActiveMs: 300_000,
+          cumulativePlanningMs: 120_000,
+          tokenUsage,
+          workflowStepResults: [],
+          log: [],
+        })}
+      />,
+    );
+
+    expect(screen.getByText("Total execution time").closest(".task-token-stats-panel__metric")).toHaveTextContent("7m 0s");
+    expect(screen.getByText("1,200")).toBeInTheDocument();
+    expect(screen.getByText("1,875")).toBeInTheDocument();
+    expect(screen.getByText((_, element) => element?.tagName === "TIME" && element.getAttribute("datetime") === tokenUsage.firstUsedAt)).toBeInTheDocument();
+    expect(screen.getByText((_, element) => element?.tagName === "TIME" && element.getAttribute("datetime") === tokenUsage.lastUsedAt)).toBeInTheDocument();
+  });
+
   it("uses end-to-end execution window for total execution time when available", () => {
     render(
       <TaskTokenStatsPanel

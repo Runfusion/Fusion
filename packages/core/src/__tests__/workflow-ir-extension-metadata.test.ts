@@ -199,7 +199,6 @@ describe("workflow IR extension metadata", () => {
         { id: "in-progress", name: "in-progress", traits: [] },
         { id: "in-review", name: "in-review", traits: [] },
         { id: "done", name: "done", traits: [] },
-        { id: "archived", name: "archived", traits: [] },
       ],
     }));
 

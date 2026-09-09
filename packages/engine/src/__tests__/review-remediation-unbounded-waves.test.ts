@@ -224,7 +224,7 @@ describe("unbounded review remediation waves", () => {
     const firstWave = Math.max(...(h.task.steps ?? []).map((step) => step.remediation?.wave ?? 0));
 
     await expect(h.revise("duplicate-fingerprint-2")).resolves.toBe(false);
-    expect(h.store.logEntry).toHaveBeenCalledWith(
+    expect(h.store.logEntry).not.toHaveBeenCalledWith(
       h.task.id,
       "Review remediation released as non-blocking",
       "review-remediation-no-pending-work",

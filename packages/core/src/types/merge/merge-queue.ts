@@ -134,6 +134,13 @@ export interface WorkflowWorkItemTransitionPatch {
   (the executor's own lifecycle writes) simply omit this and behave as before.
   */
   expectedState?: WorkflowWorkItemState;
+  /*
+  FNXC:WorkflowWorkItemLeaseCas 2026-09-06-01:28:
+  State alone cannot fence a lease renewal because a reclaimed work item can return to `running`
+  under a different owner. Callers that renew or terminalize an owned attempt must also compare the
+  exact durable owner so an old callback cannot overwrite or complete its successor's lease.
+  */
+  expectedLeaseOwner?: string | null;
 }
 
 export interface WorkflowWorkItemDueFilter {

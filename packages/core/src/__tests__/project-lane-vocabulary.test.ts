@@ -44,7 +44,6 @@ const RENAMED_IR = {
     { id: "signoff", name: "Sign-off", traits: [{ trait: "merge" }] },
     { id: "waiting", name: "Waiting", traits: [{ trait: "human-review" }] },
     { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
-    { id: "vault", name: "Vault", traits: [{ trait: "archived" }] },
   ],
 };
 
@@ -88,7 +87,7 @@ describe("resolveProjectColumnsForRoles", () => {
     const terminal = await resolveProjectColumnsForRoles(store([{ ir: RENAMED_IR }]), TERMINAL_ROLES);
 
     expect(terminal.has("shipped")).toBe(true);
-    expect(terminal.has("vault")).toBe(true);
+    expect(terminal.has("archived")).toBe(false);
     expect(terminal.has("signoff")).toBe(false);
   });
 
@@ -96,7 +95,7 @@ describe("resolveProjectColumnsForRoles", () => {
     // A throwing workflow read must not turn a degraded definition into a failed sweep.
     const throwing = { listWorkflowDefinitions: vi.fn(async () => { throw new Error("unreadable"); }) };
 
-    expect([...(await resolveProjectColumnsForRoles(throwing, TERMINAL_ROLES))].sort()).toEqual(["archived", "done"]);
+    expect([...(await resolveProjectColumnsForRoles(throwing, TERMINAL_ROLES))]).toEqual(["done"]);
   });
 
   it("parses a string-serialised IR, the shape some backends actually return", async () => {
@@ -129,7 +128,7 @@ describe("resolveProjectColumnsForRoles", () => {
     );
 
     expect(columns.has("shipped")).toBe(true);
-    expect(columns.has("vault")).toBe(true);
+    expect(columns.has("archived")).toBe(false);
   });
 
   it("degrades when the store does not declare listWorkflowDefinitions at all", async () => {
@@ -140,7 +139,7 @@ describe("resolveProjectColumnsForRoles", () => {
     already "degrade to the legacy ids when the workflows cannot be read". Absent and throwing are
     the same case.
     */
-    expect([...(await resolveProjectColumnsForRoles({} as never, TERMINAL_ROLES))].sort()).toEqual(["archived", "done"]);
+    expect([...(await resolveProjectColumnsForRoles({} as never, TERMINAL_ROLES))]).toEqual(["done"]);
   });
 
   it("declares a legacy id for every role it can be asked about", () => {

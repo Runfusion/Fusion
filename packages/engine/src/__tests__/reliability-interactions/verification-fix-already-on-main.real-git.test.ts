@@ -23,7 +23,6 @@ function makeStore(task: Task, settings: Partial<Settings> = {}): TaskStore & Ev
     logEntry: async () => undefined,
     getTask: async () => task,
     walCheckpoint: () => ({ busy: 0, log: 0, checkpointed: 0 }),
-    archiveTaskAndCleanup: async () => ({}),
     clearStaleExecutionStartBranchReferences: () => [],
     updateSettings: async () => allSettings,
     mergeTask: async () => undefined,

@@ -79,7 +79,7 @@ function productionStore(options: {
 }
 
 describe("forbidden lifecycle rebound paths", () => {
-  it.each(["builtin:coding", "builtin:coding-ideas"])(
+  it.each(["builtin:coding", "builtin:coding-ideas-v2"])(
     "contains review and WIP rebounds to one adjacent rank on %s",
     async (workflowId) => {
       const store = storeFor(workflowId);

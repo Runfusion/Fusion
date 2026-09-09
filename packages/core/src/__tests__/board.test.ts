@@ -34,7 +34,7 @@ describe("board", () => {
     it("returns false for some invalid backwards transitions", () => {
       // done cannot go back to in-review directly
       expect(canTransition("done", "in-review")).toBe(false);
-      // archived cannot go directly back to in-progress
+      // historical deleted snapshots cannot re-enter active work
       expect(canTransition("archived", "in-progress")).toBe(false);
       // triage cannot go directly to done
       expect(canTransition("triage", "done")).toBe(false);
@@ -49,9 +49,9 @@ describe("board", () => {
       // so we don't test that case here
     });
 
-    it("allows intake-side archival transitions", () => {
-      expect(canTransition("triage", "archived")).toBe(true);
-      expect(canTransition("todo", "archived")).toBe(true);
+    it("rejects moves into the historical archived sentinel", () => {
+      expect(canTransition("triage", "archived")).toBe(false);
+      expect(canTransition("todo", "archived")).toBe(false);
     });
   });
 
@@ -71,11 +71,11 @@ describe("board", () => {
     });
 
     it("returns correct transitions for triage", () => {
-      expect(getValidTransitions("triage")).toEqual(["todo", "archived"]);
+      expect(getValidTransitions("triage")).toEqual(["todo"]);
     });
 
     it("returns correct transitions for todo", () => {
-      expect(getValidTransitions("todo")).toEqual(["in-progress", "triage", "archived"]);
+      expect(getValidTransitions("todo")).toEqual(["in-progress", "triage"]);
     });
 
     it("returns correct transitions for in-progress", () => {
@@ -87,11 +87,11 @@ describe("board", () => {
     });
 
     it("returns correct transitions for done", () => {
-      expect(getValidTransitions("done")).toEqual(["todo", "triage", "archived"]);
+      expect(getValidTransitions("done")).toEqual(["todo", "triage"]);
     });
 
     it("returns correct transitions for archived", () => {
-      expect(getValidTransitions("archived")).toEqual(["done"]);
+      expect(getValidTransitions("archived")).toEqual([]);
     });
   });
 

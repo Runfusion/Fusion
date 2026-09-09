@@ -18,7 +18,7 @@ import {hasSyncPassphraseConfigured} from "../secrets/secrets-sync-passphrase.js
 import {ensureMemoryFileWithBackend} from "../memory/project-memory.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {canonicalizeSettings, isPlainObject, deepMergeWithNullDelete} from "../task-store/settings-helpers.js";
-import {readProjectConfig as readProjectConfigAsync, writeProjectConfig as writeProjectConfigAsync} from "../task-store/async/async-settings.js";
+import {acquireProjectConfigurationMutationLock, readProjectConfig as readProjectConfigAsync, writeProjectConfig as writeProjectConfigAsync} from "../task-store/async/async-settings.js";
 import {appendConfigurationRevision, createConfigurationRevision} from "../async-stores/async-configuration-revision-store.js";
 import {isValidProviderInstanceId} from "../provider-instance.js";
 import {applyWorkspaceModeToggle, withWorkspaceModeLock, type WorkspaceModeToggleOps} from "../git/git-repository.js";
@@ -57,6 +57,12 @@ filesystem failure. Keep this test-only ops seam at the universal publish bounda
 mocking applyWorkspaceModeToggle, which would bypass mirror, removal, re-read, and compensation.
 */
 let workspaceModeOpsForTesting: Partial<WorkspaceModeToggleOps> | undefined;
+let afterProjectConfigurationLockForTesting: (() => void | Promise<void>) | undefined;
+
+/** @internal Test-only concurrency barrier after the project configuration lock is held. */
+export function __setAfterProjectConfigurationLockForTesting(callback: (() => void | Promise<void>) | undefined): void {
+  afterProjectConfigurationLockForTesting = callback;
+}
 
 /** @internal Test-only workspace filesystem override for production-shaped settings writers. */
 export function __setWorkspaceModeOpsForTesting(ops: Partial<WorkspaceModeToggleOps> | undefined): void {
@@ -234,6 +240,8 @@ export async function updateSettingsImpl(store: TaskStore, patch: Partial<Settin
       */
       const layer = store.asyncLayer!;
       const transactionResult = await layer.transactionImmediate(async (tx) => {
+        await acquireProjectConfigurationMutationLock(tx, layer.projectId);
+        await afterProjectConfigurationLockForTesting?.();
         const projectConfig = await readProjectConfigAsync(layer, tx);
         const config: BoardConfig = {
           nextId: projectConfig.nextId ?? 1,

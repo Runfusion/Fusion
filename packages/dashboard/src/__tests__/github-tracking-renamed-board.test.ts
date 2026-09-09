@@ -61,7 +61,7 @@ vi.mock("../github-auth.js", () => ({
 const { GitHubTrackingCommentService } = await import("../github-tracking-comments.js");
 const { GitHubTrackingReconciler } = await import("../github-tracking-reconciler.js");
 
-/** A board whose wip lane is `building`, complete is `shipped`, archived is `filed`. */
+/** A board whose WIP lane is `building` and complete lane is `shipped`. */
 const RENAMED_IR = {
   version: "v2", id: "wf-renamed", name: "renamed", nodes: [], edges: [],
   columns: [
@@ -69,7 +69,6 @@ const RENAMED_IR = {
     { id: "building", name: "Building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
     { id: "signoff", name: "Sign-off", traits: [{ trait: "merge" }] },
     { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
-    { id: "filed", name: "Filed", traits: [{ trait: "archived" }] },
   ],
 } as unknown as WorkflowIr;
 
@@ -144,36 +143,18 @@ describe("tracking comments follow the board's own wip and complete lanes", () =
   });
 });
 
-describe("the reconciler scans the board's own terminal columns", () => {
-  it("finds a renamed board's completed and archived tasks", async () => {
-    /*
-    Pre-fix: the filter compared `done`/`archived`, so this scanned 0 of 2 and reported a clean pass —
-    tracked issues for finished work were left open forever.
-    */
+describe("the reconciler scans the board's complete columns", () => {
+  it("finds a renamed board's completed tasks", async () => {
     mockSetIssueState.mockClear();
     const store = storeWith([
       { id: "FN-1", column: "shipped", ...TRACKED },
-      { id: "FN-2", column: "filed", executionCompletedAt: "2026-01-01T00:00:00.000Z", ...TRACKED },
-      { id: "FN-3", column: "building", ...TRACKED },
+      { id: "FN-2", column: "building", ...TRACKED },
     ], RENAMED_IR);
 
     const result = await new GitHubTrackingReconciler().reconcile(store);
 
-    expect(result.scanned).toBe(2);
-    expect(mockSetIssueState).toHaveBeenCalledTimes(2);
-  });
-
-  it("closes an archived-with-no-execution row as not_planned, using the board's ARCHIVED column", async () => {
-    /*
-    The state_reason distinction needs the archived column specifically, not the terminal pair: closing a
-    finished issue as "not planned" is operator-visible and wrong, and so is the reverse.
-    */
-    mockSetIssueState.mockClear();
-    const store = storeWith([{ id: "FN-4", column: "filed", ...TRACKED }], RENAMED_IR);
-
-    await new GitHubTrackingReconciler().reconcile(store);
-
-    expect(mockSetIssueState).toHaveBeenCalledWith("o", "r", 5, "closed", "not_planned");
+    expect(result.scanned).toBe(1);
+    expect(mockSetIssueState).toHaveBeenCalledTimes(1);
   });
 
   it("closes a completed row as completed", async () => {
@@ -185,7 +166,7 @@ describe("the reconciler scans the board's own terminal columns", () => {
     expect(mockSetIssueState).toHaveBeenCalledWith("o", "r", 5, "closed", "completed");
   });
 
-  it("still scans the DEFAULT board's done and archived rows", async () => {
+  it("still scans the default board's Done rows", async () => {
     mockSetIssueState.mockClear();
     const store = storeWith([
       { id: "FN-6", column: "done", ...TRACKED },

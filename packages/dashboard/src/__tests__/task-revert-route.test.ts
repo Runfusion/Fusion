@@ -5,7 +5,7 @@ FNXC:TaskRevert 2026-07-04-00:00:
 API-level coverage for POST /tasks/:id/revert (FN-7523). The real git dry-run/
 classify/apply behavior is proven in packages/engine/src/__tests__/task-revert.real-git.test.ts —
 this suite stubs `performTaskRevert` at the route boundary and asserts:
-  - the done/archived guard (4xx for other columns, before the engine service is even called);
+  - the Done guard (4xx for other columns, before the engine service is even called);
   - the response contract shapes for clean / alreadyReverted / conflicting outcomes;
   - error mapping (TaskRevertError -> 409 for dirty-working-tree, 500 otherwise).
 */
@@ -278,7 +278,7 @@ describe("POST /tasks/:id/revert", () => {
   });
 
   it("returns an alreadyReverted result without invoking a second commit", async () => {
-    const task = makeTask({ column: "archived" });
+    const task = makeTask({ column: "done" });
     const store = createMockStore(task);
     performTaskRevertMock.mockResolvedValue({ mode: "git", clean: true, alreadyReverted: true });
 
@@ -338,14 +338,14 @@ describe("POST /tasks/:id/revert", () => {
     });
   });
 
-  it("rejects a non-done/archived task with a 4xx guard before invoking the engine service", async () => {
+  it("rejects a non-complete task with a 4xx guard before invoking the engine service", async () => {
     const task = makeTask({ column: "in-progress" });
     const store = createMockStore(task);
 
     const res = await REQUEST(createApp(store), "POST", `/api/tasks/${task.id}/revert`);
     expect(res.status).toBeGreaterThanOrEqual(400);
     expect(res.status).toBeLessThan(500);
-    expect(String((res.body as { error?: string }).error ?? "")).toMatch(/done\/archived/i);
+    expect(String((res.body as { error?: string }).error ?? "")).toMatch(/completed/i);
     expect(performTaskRevertMock).not.toHaveBeenCalled();
   });
 
@@ -417,7 +417,6 @@ describe("POST /tasks/:id/revert", () => {
     columns: [
       { id: "building", name: "Building", traits: [{ trait: "wip" }] },
       { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
-      { id: "attic", name: "Attic", traits: [{ trait: "archived" }] },
     ],
   };
 
@@ -435,12 +434,10 @@ describe("POST /tasks/:id/revert", () => {
         typeof arg === "object" && arg !== null && "revertableColumns" in arg,
     );
     /*
-    The set itself, not merely its presence: a forwarding that hands over the legacy pair would
-    still refuse this card, which is the bug. `shipped` and `attic` must both be in it, since the
-    roles resolve independently and can fail independently.
+    The set itself, not merely its presence: forwarding the legacy `done` id would still refuse this card.
     */
     expect(forwarded).toBeDefined();
-    expect([...(forwarded?.revertableColumns ?? [])].sort()).toEqual(["attic", "shipped"]);
+    expect([...(forwarded?.revertableColumns ?? [])]).toEqual(["shipped"]);
   });
 
   it("forwards the route's RESOLVED terminal lanes to revertWorkspaceTask (workspace, renamed board)", async () => {
@@ -461,7 +458,7 @@ describe("POST /tasks/:id/revert", () => {
         typeof arg === "object" && arg !== null && "revertableColumns" in arg,
     );
     expect(forwarded).toBeDefined();
-    expect([...(forwarded?.revertableColumns ?? [])].sort()).toEqual(["attic", "shipped"]);
+    expect([...(forwarded?.revertableColumns ?? [])]).toEqual(["shipped"]);
   });
 
   it("dispatches a done workspace task to revertWorkspaceTask and returns the per-repo breakdown (clean)", async () => {
@@ -493,7 +490,7 @@ describe("POST /tasks/:id/revert", () => {
   });
 
   it("mode:'git' dispatches a workspace task conflict to the per-repo conflict shape without creating an AI-undo task or calling performTaskRevert", async () => {
-    const task = makeWorkspaceTask({ column: "archived" });
+    const task = makeWorkspaceTask({ column: "done" });
     const store = createMockStore(task);
     revertWorkspaceTaskMock.mockResolvedValue({
       mode: "git",
@@ -520,7 +517,7 @@ describe("POST /tasks/:id/revert", () => {
   // FN-7547 + FN-7524: default mode is "auto", which falls back to the AI-undo
   // task on a conflicting WORKSPACE result too, same as the single-repo contract.
   it("auto (default) mode falls back to the AI-undo task on a conflicting workspace result", async () => {
-    const task = makeWorkspaceTask({ id: "FN-950", column: "archived" });
+    const task = makeWorkspaceTask({ id: "FN-950", column: "done" });
     const store = createMockStore(task);
     revertWorkspaceTaskMock.mockResolvedValue({
       mode: "git",
@@ -541,7 +538,7 @@ describe("POST /tasks/:id/revert", () => {
     expect(performTaskRevertMock).not.toHaveBeenCalled();
   });
 
-  it("rejects a non-done/archived workspace task with a 4xx guard before invoking the workspace service", async () => {
+  it("rejects a non-complete workspace task with a 4xx guard before invoking the workspace service", async () => {
     const task = makeWorkspaceTask({ column: "in-progress" });
     const store = createMockStore(task);
 
@@ -898,7 +895,7 @@ describe("POST /tasks/:id/revert — FN-7554 mode:'pr' (autoMerge:false)", () =>
     expect(performTaskRevertMock).toHaveBeenCalledTimes(1);
   });
 
-  it("regression — non-done/archived guard unchanged: still 4xx before any engine/GitHub call", async () => {
+  it("regression — non-complete guard stays 4xx before any engine/GitHub call", async () => {
     process.env.GITHUB_REPOSITORY = "o/r";
     const task = makeTask({ id: "FN-971", column: "in-progress" });
     const store = createMockStore(task, { autoMerge: false });

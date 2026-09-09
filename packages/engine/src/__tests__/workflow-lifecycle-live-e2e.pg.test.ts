@@ -104,6 +104,7 @@ function scriptedSeams(log: SeamLog) {
 pgDescribe("live lifecycle E2E: real graph + real PostgreSQL store", () => {
   const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
     prefix: "fusion_lifecycle_live_e2e",
+    projectId: "project-workflow-lifecycle-live-e2e",
   });
 
   beforeAll(h.beforeAll);
@@ -374,7 +375,7 @@ pgDescribe("live lifecycle E2E: real graph + real PostgreSQL store", () => {
       expect(r.columnsObserved.afterRelease).toBe(MERGED_RENAMED_VOCAB.wip);
       expect(r.columnsObserved.afterRun).toBe(MERGED_RENAMED_VOCAB.complete);
       // No leg may touch a legacy id on this board.
-      const legacy = new Set(["triage", "todo", "in-progress", "in-review", "done", "archived"]);
+      const legacy = new Set(["triage", "todo", "in-progress", "in-review", "done"]);
       for (const observed of Object.values(r.columnsObserved)) expect(legacy.has(observed)).toBe(false);
     });
   });
@@ -732,22 +733,12 @@ pgDescribe("live lifecycle E2E: real graph + real PostgreSQL store", () => {
     });
   });
   /*
-  FNXC:ReviewRework 2026-07-30-01:30 (U9 E2E evidence — the review half):
-  The plan's target lifecycle includes `InReview --> InProgress: review requests
-  changes`, and until now NO board proved it against a live engine: the fixture's
-  review seam always succeeded, so every E2E drove review as a pass-through.
-
-  This drives a real REVISE. The graph takes the `review --failure--> exec` rework
-  edge, which is a BACKWARD column move (review -> wip) through the real boundary
-  controller and the real `store.moveTask` — the move class most likely to be refused
-  by an adjacency or trait guard, and the one a rework loop cannot work without.
-
-  Run on the merged board as well as the renamed one: rework re-enters the wip column,
-  whose trait set differs on a merged board, so a guard that resolves the rework target
-  by elimination ("the column that is not intake and not review") behaves differently
-  there.
+  FNXC:LifecycleContainment 2026-09-04-18:25:
+  A bare graph-review REVISE does not authorize a backward Review-to-WIP move. The graph remains in
+  Review until a named remediation path publishes actionable work; this is identical on renamed
+  and merged boards.
   */
-  describe("scenario 6 — a REVISE verdict routes the card back to wip", () => {
+  describe("scenario 6 — a bare REVISE remains contained in Review", () => {
     async function driveRevise(taskId: string, v: Vocabulary, key: string, merged: boolean) {
       const { workflowId } = await seedWorkflow(v, key, merged, true);
       await seedTask(taskId, v, workflowId);
@@ -759,7 +750,7 @@ pgDescribe("live lifecycle E2E: real graph + real PostgreSQL store", () => {
       // Leg 2: the real sweep releases into wip.
       await runHoldReleaseSweep(h.store(), { now: () => Date.now() });
       const afterRelease = await persistedColumn(taskId);
-      // Leg 3: execute -> review -> REVISE -> rework back to exec.
+      // Leg 3: execute -> review -> REVISE, then contain the failure in Review.
       const items = await h.store().listWorkflowWorkItemsForTask(taskId, { kinds: ["task"] });
       const resumeNode = items.find((i) => ["held", "runnable", "running"].includes(i.state))?.nodeId;
       const leg3 = await makeRunner(taskId, workflowId, log, marks, revisingSeams)
@@ -767,38 +758,20 @@ pgDescribe("live lifecycle E2E: real graph + real PostgreSQL store", () => {
       return { afterRelease, afterRevise: await persistedColumn(taskId), calls: log.calls, leg3 };
     }
 
-    /*
-    MEASURED, and it corrected the assertion I first wrote. A REVISE does not leave the
-    card resting in wip: the rework edge re-enters `exec` WITHIN THE SAME run, review is
-    called again, approves, and the card finishes at complete. So the observable proof
-    that rework happened is the SEAM SEQUENCE — execute appears twice, the second time
-    after a review — not an intermediate column, which the run has already moved past by
-    the time the leg returns.
-
-    Asserting the final column alone would have been satisfied by a graph that ignored
-    the REVISE entirely and went straight to merge, which is exactly the failure this
-    scenario is for.
-    */
-    it("re-enters exec on a REVISE and only completes after the second review (renamed board)", async () => {
+    it("keeps a renamed-board REVISE in Review without redispatching execution", async () => {
       const r = await driveRevise("FN-E2E-REV", RENAMED_VOCAB, "revise-renamed", false);
 
       expect(r.afterRelease).toBe(RENAMED_VOCAB.wip);
-      // The rework edge was traversed: execute ran a SECOND time, after a review.
-      expect(r.calls).toEqual(["planning", "execute", "review", "execute", "review", "merge"]);
-      // And the loop resolved rather than spinning — the card reached complete.
-      expect(r.afterRevise).toBe(RENAMED_VOCAB.complete);
+      expect(r.calls).toEqual(["planning", "execute", "review"]);
+      expect(r.afterRevise).toBe(RENAMED_VOCAB.review);
     });
 
-    it("does the same on a MERGED board, without bouncing to the dual-role column", async () => {
+    it("does the same on a merged board without bouncing to its dual-role planning column", async () => {
       const r = await driveRevise("FN-E2E-REV-M", MERGED_VOCAB, "revise-merged", true);
 
       expect(r.afterRelease).toBe(MERGED_VOCAB.wip);
-      expect(r.calls).toEqual(["planning", "execute", "review", "execute", "review", "merge"]);
-      expect(r.afterRevise).toBe(MERGED_VOCAB.complete);
-      // Rework must re-enter wip, not the dual-role Planning column: on a merged board
-      // intake and hold share an id, so an elimination-based target resolution lands
-      // there. A second "planning" call in the sequence above would reveal that.
-      expect(r.calls.filter((c) => c === "planning")).toHaveLength(1);
+      expect(r.calls).toEqual(["planning", "execute", "review"]);
+      expect(r.afterRevise).toBe(MERGED_VOCAB.review);
     });
   });
 

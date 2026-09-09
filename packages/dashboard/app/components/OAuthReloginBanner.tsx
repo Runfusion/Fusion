@@ -78,10 +78,23 @@ export function OAuthReloginBanner({
 
   useEffect(() => {
     void refreshAuthStatus();
-    const interval = window.setInterval(refreshAuthStatus, pollIntervalMs ?? 60 * 60 * 1000);
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") void refreshAuthStatus();
+    };
+    const interval = window.setInterval(refreshWhenVisible, pollIntervalMs ?? 5 * 60 * 1000);
+    window.addEventListener("focus", refreshWhenVisible);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
 
+    /*
+    FNXC:ProviderAuth 2026-09-07-05:09:
+    A credential repaired by pi must clear this shared banner promptly. Poll at the expiry
+    monitor cadence and revalidate on visible/focused tabs so Settings Authentication cannot
+    contradict a stale re-login banner for an hour, without fetching while the tab is hidden.
+    */
     return () => {
       window.clearInterval(interval);
+      window.removeEventListener("focus", refreshWhenVisible);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
   }, [pollIntervalMs, refreshAuthStatus]);
 

@@ -36,7 +36,6 @@ function makeStore(tasks: Task[], events: unknown[] = [], settings?: Partial<Set
     parseFileScopeFromPrompt: vi.fn().mockResolvedValue([]),
     getCompletionHandoffAcceptedMarker: vi.fn().mockReturnValue(null),
     walCheckpoint: () => ({ busy: 0, log: 0, checkpointed: 0 }),
-    archiveTaskAndCleanup: async () => ({}),
     clearStaleExecutionStartBranchReferences: () => [],
     updateSettings: async () => baseSettings,
     mergeTask: async () => undefined,
@@ -124,7 +123,7 @@ describe("soft-blocker auto-finalize reliability interactions (real git)", () =>
     }
   });
 
-  it("preserves hard blockers, then finalizes via recoverMergedReviewTasks when blocker clears", async () => {
+  it("finalizes proven landed content in one pass while reconciling stale checklist state", async () => {
     const dir = mkdtempSync(join(tmpdir(), "fn-4653-ri-hard-handoff-"));
     try {
       git(dir, "git init -b main");
@@ -145,29 +144,18 @@ describe("soft-blocker auto-finalize reliability interactions (real git)", () =>
 
       const firstSweep = await manager.recoverAlreadyMergedReviewTasks();
 
-      expect(firstSweep).toBe(0);
-      expect(task.column).toBe("in-review");
-      expect(task.paused).toBe(true);
-      expect(task.status).toBe("failed");
-      expect(task.error).toContain("task has incomplete steps");
-      expect(task.mergeDetails?.mergeConfirmed).toBe(true);
-      expect(
-        auditEvents.some((event: any) => event?.mutationType === "task:auto-recover-finalize-already-on-main"),
-      ).toBe(false);
-
-      task.steps = [];
-      task.error = "stale failure";
-
-      const secondSweep = await manager.recoverMergedReviewTasks();
-
-      expect(secondSweep).toBe(1);
+      expect(firstSweep).toBe(1);
       expect(task.column).toBe("done");
       expect(task.paused).toBe(false);
       expect(task.status).toBeNull();
       expect(task.error).toBeNull();
+      expect(task.steps[0]?.status).toBe("skipped");
+      expect(task.mergeDetails?.mergeConfirmed).toBe(true);
       expect(
         auditEvents.some((event: any) => event?.mutationType === "task:auto-recover-finalize-already-on-main"),
       ).toBe(true);
+
+      await expect(manager.recoverMergedReviewTasks()).resolves.toBe(0);
 
       manager.stop();
     } finally {

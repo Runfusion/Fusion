@@ -41,7 +41,6 @@ const RENAMED_IR = {
     { id: "building", name: "Building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
     { id: "checking", name: "Checking", traits: [{ trait: "merge" }] },
     { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
-    { id: "filed", name: "Filed", traits: [{ trait: "archived" }] },
   ],
 } as unknown as WorkflowIr;
 
@@ -159,13 +158,6 @@ describe("FN-5147: unusable-worktree recovery does not run on a finished or huma
     expect(recover).not.toHaveBeenCalled();
   });
 
-  it("does not attempt recovery for a card in the board's ARCHIVED column", async () => {
-    const live = { id: "FN-8", column: "filed", worktree: "/gone" };
-    const { executor, recover } = harnessWithSpy(live);
-
-    expect(await route(executor, live)).toBe(false);
-    expect(recover).not.toHaveBeenCalled();
-  });
 
   it("applies the FN-5147 auto-merge gate to the board's REVIEW lane", async () => {
     /*
@@ -309,18 +301,11 @@ describe("the review-lane family resolves the board's own review column", () => 
 /*
 FNXC:WorkflowLifecycleColumns 2026-08-01-13:30 (fleet: executor.ts — the REVERSE half-conversion):
 
-`routeGraphFailureToExecutionResume`'s move DESTINATION was already resolved from the workflow (U7's
-`resolveReboundColumnFor`) while its entry gate compared against three default-lineage literals. So on
-a renamed board the router refused before it ever reached the resolved move: a recovery that was fully
-implemented, never running.
-
-That is the mirror image of the dangerous half-conversion. The familiar direction admits a card and
-then sends it to a column the board does not declare; this direction refuses a card whose recovery
-already worked. Both are one decision reading two boards, and only the second is silent — which is
-why it survived.
-
-The gate admits three shapes, so all three are asserted plus the refusal, which is what stops a gate
-that returns true unconditionally from passing.
+`routeGraphFailureToExecutionResume` resolves the task's workflow before deciding whether an
+implementation-incomplete failure can resume. Lifecycle containment now permits only a WIP card to
+resume in place; review, hold, intake, and terminal cards remain where they are. The renamed-board
+fixtures ensure both that the WIP role is resolved correctly and that no default-id comparison can
+silently grant a backward move.
 */
 describe("the execution-resume router's gate reads the same board as its destination", () => {
   function routeResume(executor: TaskExecutor, live: Record<string, unknown>, failureValue: string): Promise<boolean> {
@@ -333,18 +318,18 @@ describe("the execution-resume router's gate reads the same board as its destina
     id, column, worktree: "/wt", steps: [{ name: "s", status: "pending" }], workflowStepResults: [],
   });
 
-  it("admits a review-lane card", async () => {
+  it("contains a review-lane graph failure in place", async () => {
     const live = withIncompleteSteps("checking", "FN-18");
     const { executor } = harness(RENAMED_IR, live);
 
-    expect(await routeResume(executor, live, "other")).toBe(true);
+    expect(await routeResume(executor, live, "other")).toBe(false);
   });
 
-  it("admits a HOLD-lane card that still has unfinished steps", async () => {
+  it("contains a HOLD-lane graph failure in place even with unfinished steps", async () => {
     const live = withIncompleteSteps("queued", "FN-19");
     const { executor } = harness(RENAMED_IR, live);
 
-    expect(await routeResume(executor, live, "other")).toBe(true);
+    expect(await routeResume(executor, live, "other")).toBe(false);
   });
 
   it("admits a WIP-lane card after a premature merge attempt", async () => {

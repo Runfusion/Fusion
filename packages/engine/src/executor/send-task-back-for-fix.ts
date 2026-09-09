@@ -9,6 +9,7 @@
 import type { Task, TaskStore, WorkflowReviewFinding } from "@fusion/core";
 import type { EngineRunContext } from "../util/run-audit.js";
 import { resolveAuthoritativeExternalExecutionRoute } from "./resolve-authoritative-external-execution-route.js";
+import type { TrailingReplayAccounting, TrailingReplayAccountingOutcome } from "./reopen-last-step-for-revision.js";
 
 export type SendTaskBackForFixDeps = {
   store: TaskStore;
@@ -24,6 +25,7 @@ export type SendTaskBackForFixDeps = {
   reopenLastStepForRevision: (
     taskId: string,
     task: Task,
+    accounting?: TrailingReplayAccounting,
   ) => Promise<unknown>;
   scheduleWorkflowRerun: (
     taskId: string,
@@ -34,6 +36,10 @@ export type SendTaskBackForFixDeps = {
   ) => void;
   maxWorkflowStepRetries: number;
 };
+
+export type SendTaskBackForFixOutcome =
+  | { kind: "scheduled"; remediationCommitted: boolean }
+  | Exclude<TrailingReplayAccountingOutcome, { kind: "appended" }>;
 
 export async function sendTaskBackForFix(
   deps: SendTaskBackForFixDeps,
@@ -49,7 +55,8 @@ export async function sendTaskBackForFix(
   /** Workspace remediation must not overwrite singular task checkout routing. */
   persistWorktreePath?: boolean,
   stepReopenPolicy: "reopen-trailing" | "none" = "reopen-trailing",
-): Promise<void> {
+  replayAccounting?: TrailingReplayAccounting,
+): Promise<SendTaskBackForFixOutcome> {
   const taskId = task.id;
   deps.clearCompletedTaskWatchdog(taskId);
   const { task: authoritativeRemediationTask, route: externalExecutionRoute } =
@@ -68,6 +75,18 @@ export async function sendTaskBackForFix(
   const remediationWorktreePath = externalExecutionRoute.configured
     ? externalExecutionRoute.checkoutPath!
     : worktreePath;
+
+  let remediationCommitted = false;
+  if (stepReopenPolicy === "reopen-trailing" && replayAccounting) {
+    const committed = await deps.reopenLastStepForRevision(taskId, authoritativeRemediationTask, replayAccounting) as TrailingReplayAccountingOutcome | undefined;
+    if (committed && committed.kind !== "appended" && committed.kind !== "already-committed") return committed;
+    /*
+    FNXC:ReviewRemediationBudget 2026-09-08-01:46:
+    A retry that finds this exact episode's atomically paired pending replay resumes the post-commit
+    handoff without appending or charging again. Unrelated pending work remains a refusal.
+    */
+    remediationCommitted = true;
+  }
 
   // 1. Add a task comment explaining the failure
   await deps.store.addTaskComment(
@@ -103,7 +122,7 @@ export async function sendTaskBackForFix(
   // 4. Append one replay occurrence for the workflow-selected trailing step.
   // Completed occurrences remain immutable history, and existing pending work prevents duplicate growth.
   const updatedTask = await deps.store.getTask(taskId);
-  if (stepReopenPolicy === "reopen-trailing") {
+  if (stepReopenPolicy === "reopen-trailing" && !replayAccounting) {
     await deps.reopenLastStepForRevision(taskId, updatedTask);
   }
 
@@ -142,4 +161,5 @@ export async function sendTaskBackForFix(
     preserveResumeState,
     persistWorktreePath ?? !externalExecutionRoute.configured,
   );
+  return { kind: "scheduled", remediationCommitted };
 }

@@ -2,8 +2,8 @@
 FNXC:WorkflowResolvedColumns 2026-07-31-08:25:
 THE "Completed <date>" LINE NEVER APPEARED ON A RENAMED BOARD.
 
-`lifecycleDates` gates its `completed` value on `isCompleteColumn || isArchivedColumn`, both derived
-from the `taskColumnFlags` PROP. The board resolves workflow traits asynchronously, so the first
+`lifecycleDates` gates its `completed` value on the Complete-column role derived from the
+`taskColumnFlags` PROP. The board resolves workflow traits asynchronously, so the first
 computation runs with the flags undefined, the role helpers fall back to the legacy ids, and on a
 board whose complete lane is named anything but `done` the answer is false.
 

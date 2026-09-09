@@ -178,26 +178,6 @@ describe("GitHubIssueCommentService", () => {
     expect(mockCommentOnIssue).not.toHaveBeenCalled();
   });
 
-  /*
-  FNXC:WorkflowResolvedColumns 2026-07-30-04:50 (#2783 review — greptile):
-  ARCHIVAL IS NOT COMPLETION, AND THE CONVERSION MUST NOT WIDEN THE TRIGGER.
-
-  Resolving this gate by role invited using the LANDED set (complete u archived), which I did in the
-  first pass. That silently changed behaviour on the DEFAULT board: `to === "done"` never fired on
-  archival, and the landed set does. A vocabulary conversion has to answer the same question under a
-  new name, not a bigger one — archival's source-issue behaviour is owned by the tracking commenter,
-  not this one.
-
-  Pinned on the default board deliberately: this is a widening that no renamed-board fixture would
-  catch, because it is visible precisely where the legacy names still apply.
-  */
-  it("does NOT comment when a task is archived rather than completed", async () => {
-    store.emit("task:moved", { task: createTask(), from: "done", to: "archived" });
-    await flushAsync();
-
-    expect(mockCommentOnIssue).not.toHaveBeenCalled();
-  });
-
   it("posts comment when setting enabled and task moved to done (non-self-repo, byte-for-byte unchanged)", async () => {
     mockCommentOnIssue.mockResolvedValue(undefined);
 

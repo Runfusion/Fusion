@@ -124,6 +124,12 @@ export interface ReviewSeverityGateInput {
   verdict: string | undefined;
   findings: WorkflowReviewFinding[] | undefined;
   threshold: ReviewBlockingSeverity;
+  /**
+   * True when the finding list could not be read from the reviewer's response (for example a verdict
+   * recovered from a malformed payload). An empty list then means "unknown", not "nothing blocking",
+   * and a REVISE must never be downgraded on it.
+   */
+  findingsUnreadable?: boolean;
 }
 
 export interface ReviewSeverityGateResult<V = string | undefined> {
@@ -146,7 +152,7 @@ export interface ReviewSeverityGateResult<V = string | undefined> {
  * while attaching a critical finding is left alone (that combination is a reviewer contradiction the
  * gate has no authority to resolve, and escalating it here would make approval non-deterministic).
  */
-export function applyReviewSeverityGate({ verdict, findings, threshold }: ReviewSeverityGateInput): ReviewSeverityGateResult {
+export function applyReviewSeverityGate({ verdict, findings, threshold, findingsUnreadable }: ReviewSeverityGateInput): ReviewSeverityGateResult {
   const all = findings ?? [];
   const open = all.filter(isActionableReviewFinding);
   const resolved = all.filter((finding) => !isActionableReviewFinding(finding));
@@ -155,6 +161,16 @@ export function applyReviewSeverityGate({ verdict, findings, threshold }: Review
 
   if (verdict !== "REVISE") return { verdict, downgraded: false, blocking, advisory, resolved };
   if (blocking.length > 0) return { verdict, downgraded: false, blocking, advisory, resolved };
+  /*
+  FNXC:ReviewSeverityGate 2026-09-05-22:54:
+  FN-295: "no blocking finding" may only downgrade a REVISE when the finding list was actually READ.
+  A verdict recovered from a malformed reviewer payload carries no findings because they could not be
+  parsed — not because the reviewer raised none. Measured: a Plan Review returned REVISE with three
+  `high` findings in a payload whose JSON was broken; the repair round replied `{"verdict":"REVISE"}`
+  alone, the empty list read as "nothing blocking", and the card entered execution on a plan the
+  reviewer had just rejected. Absent evidence is not evidence of absence: fail closed.
+  */
+  if (findingsUnreadable) return { verdict, downgraded: false, blocking, advisory, resolved };
 
   return { verdict: "APPROVE_WITH_NOTES", downgraded: true, blocking, advisory, resolved };
 }

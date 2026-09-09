@@ -15,19 +15,28 @@ export interface GhostBugProbeResult {
 }
 
 export interface GhostBugDecision {
-  decision: "archive" | "pass";
+  decision: "delete" | "pass";
   reason: string;
   findings: GhostBugProbeResult[];
 }
 
-interface ExecResult {
+export interface ExecResult {
   stdout: string;
   stderr: string;
+  exitCode?: number;
 }
 
-export type ProbeExec = (command: string, options?: { cwd?: string; timeoutMs?: number }) => Promise<ExecResult>;
+/**
+ * FNXC:GhostBugPreflight 2026-09-07-17:01:
+ * Probe matched-ness is an exit-code fact, not a printed-bytes heuristic. Cited text originates in
+ * plan prose, so it is passed only as an argv datum to fixed git commands and never shell-interpreted.
+ */
+export type ProbeExec = (argv: string[], options?: { cwd?: string; timeoutMs?: number }) => Promise<ExecResult>;
 
 const BUG_FIX_REGEX = /typecheck error|compile error|broken|regression|lint error/i;
+const MAX_CONSTRUCT_LENGTH = 200;
+const MAX_OUTPUT_LENGTH = 500;
+const TEXTISH_EXTENSIONS = new Set(["ts", "tsx", "js", "mjs", "cjs", "md", "json", "yml", "yaml", "toml", "cs", "csproj", "go", "py", "java", "rb", "rs", "php", "swift", "kt", "kts", "c", "cc", "cpp", "h", "hpp", "html", "css", "scss", "vue", "svelte", "sh"]);
 
 export function isBugFixShape(task: { title: string | null; description: string }): boolean {
   const title = task.title?.trim() ?? "";
@@ -82,6 +91,36 @@ export function extractCitedConstructs(prompt: string): CitedConstruct[] {
   return constructs;
 }
 
+function truncateOutput(stdout: string): string {
+  const trimmed = stdout.trim();
+  return trimmed.length <= MAX_OUTPUT_LENGTH
+    ? trimmed
+    : `${trimmed.slice(0, MAX_OUTPUT_LENGTH)}…[truncated]`;
+}
+
+function isSafeRaw(raw: string): boolean {
+  return raw.length <= MAX_CONSTRUCT_LENGTH && !/[\0\n\r]/.test(raw);
+}
+
+function isSafeFilePath(filePath: string): boolean {
+  return !filePath.startsWith("/")
+    && !filePath.startsWith("-")
+    && !/[\0\n\r]/.test(filePath)
+    && !filePath.split("/").includes("..");
+}
+
+function classifyProbe(construct: CitedConstruct, result: ExecResult): GhostBugProbeResult {
+  const output = truncateOutput(result.stdout);
+  if (result.exitCode === 0) return { construct, matched: true, output };
+  if (result.exitCode === 1 && result.stderr.trim().length === 0) return { construct, matched: false, output };
+  return {
+    construct,
+    matched: false,
+    output,
+    probeError: result.exitCode === undefined ? "exit_code_unavailable" : "probe_command_failed",
+  };
+}
+
 export async function probeCitedConstructs(
   constructs: CitedConstruct[],
   opts: { cwd: string; timeoutMs?: number; exec: ProbeExec },
@@ -90,34 +129,25 @@ export async function probeCitedConstructs(
   const timeoutMs = opts.timeoutMs ?? 5000;
 
   for (const construct of constructs) {
-    try {
-      let command = "";
-      if (construct.kind === "identifier") {
-        if (construct.filePath) {
-          command = `git show HEAD:${construct.filePath} | grep -nF ${JSON.stringify(construct.raw)} || true`;
-        } else {
-          command = `git grep -nF -- ${JSON.stringify(construct.raw)} packages/ || true`;
-        }
-      } else if (construct.kind === "snippet") {
-        command = `git grep -nF -- ${JSON.stringify(construct.raw)} packages/ || true`;
-      } else {
-        command = construct.raw;
-      }
+    if (construct.kind === "command") {
+      /*
+      FNXC:GhostBugPreflight 2026-09-07-17:01:
+      Command citations are non-definitive. Executing a shell line lifted from plan prose is an
+      execution surface with no evidential value, so command probes are intentionally not run.
+      */
+      findings.push({ construct, matched: false, probeError: "command_probes_not_executed" });
+      continue;
+    }
+    if (!isSafeRaw(construct.raw) || (construct.filePath !== undefined && !isSafeFilePath(construct.filePath))) {
+      findings.push({ construct, matched: false, probeError: "unsafe_construct" });
+      continue;
+    }
 
-      const { stdout, stderr } = await opts.exec(command, { cwd: opts.cwd, timeoutMs });
-      if (construct.kind === "command") {
-        // FN-4892: command probes are intentionally non-definitive here because
-        // ProbeExec does not expose exit codes. Keep fail-open behavior.
-        findings.push({
-          construct,
-          matched: true,
-          output: `${stdout}${stderr}`.trim(),
-          probeError: "exit_code_unavailable",
-        });
-        continue;
-      }
-      const output = `${stdout}${stderr}`.trim();
-      findings.push({ construct, matched: output.length > 0, output });
+    const argv = construct.kind === "identifier" && construct.filePath
+      ? ["git", "cat-file", "-e", `HEAD:${construct.filePath}`]
+      : ["git", "grep", "-nF", "-e", construct.raw, "--", ":/"];
+    try {
+      findings.push(classifyProbe(construct, await opts.exec(argv, { cwd: opts.cwd, timeoutMs })));
     } catch (error) {
       findings.push({
         construct,
@@ -127,7 +157,42 @@ export async function probeCitedConstructs(
     }
   }
 
-  return findings.filter((result) => !result.probeError || result.matched === true || result.matched === false);
+  return findings;
+}
+
+export type ProbeControlOutcome = "matched" | "unmatched" | "unavailable";
+
+/**
+ * FNXC:GhostBugPreflight 2026-09-07-17:01:
+ * Deleting work the engine just planned demands positive evidence that the probe apparatus works.
+ * A successful sample from tracked repository content detects systematically empty probe environments.
+ */
+export async function runProbePositiveControl(
+  opts: { cwd: string; timeoutMs?: number; exec: ProbeExec },
+): Promise<ProbeControlOutcome> {
+  const exec = (argv: string[]) => opts.exec(argv, { cwd: opts.cwd, timeoutMs: opts.timeoutMs ?? 5000 });
+  try {
+    const files = await exec(["git", "ls-files"]);
+    if (files.exitCode !== 0) return "unavailable";
+    const path = files.stdout.split("\n").map((entry) => entry.trim()).find((entry) => {
+      const extension = entry.split(".").pop()?.toLowerCase();
+      return Boolean(extension && TEXTISH_EXTENSIONS.has(extension) && isSafeFilePath(entry));
+    });
+    if (!path) return "unavailable";
+
+    const source = await exec(["git", "show", `HEAD:${path}`]);
+    if (source.exitCode !== 0) return "unavailable";
+    const line = source.stdout.split("\n").map((entry) => entry.trim()).find((entry) => (
+      entry.length >= 8 && entry.length <= MAX_CONSTRUCT_LENGTH && !/[\0\r]/.test(entry)
+    ));
+    if (!line) return "unavailable";
+
+    const probe = await exec(["git", "grep", "-nF", "-e", line, "--", ":/"]);
+    if (probe.exitCode === 0) return "matched";
+    return probe.exitCode === 1 && probe.stderr.trim().length === 0 ? "unmatched" : "unavailable";
+  } catch {
+    return "unavailable";
+  }
 }
 
 export async function runGhostBugPreflight(
@@ -151,10 +216,18 @@ export async function runGhostBugPreflight(
   }
 
   if (definitive.every((finding) => finding.matched === false)) {
+    const controlOutcome = await runProbePositiveControl(opts);
+    if (controlOutcome === "matched") {
+      return { decision: "delete", reason: "all_cited_constructs_missing_on_main", findings };
+    }
     return {
-      decision: "archive",
-      reason: "all_cited_constructs_missing_on_main",
-      findings,
+      decision: "pass",
+      reason: "probe_control_failed",
+      findings: [...findings, {
+        construct: { kind: "identifier", raw: "positive_control" },
+        matched: false,
+        probeError: `probe_control_${controlOutcome}`,
+      }],
     };
   }
 

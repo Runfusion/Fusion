@@ -119,7 +119,10 @@ export { resumeOrphaned as resumeOrphanedImpl } from "./resume-orphaned.js";
 export { handleLoopDetected as handleLoopDetectedImpl } from "./handle-loop-detected.js";
 export { recoverCompletedTask as recoverCompletedTaskImpl } from "./recover-completed-task.js";
 export { markStuckAborted as markStuckAbortedImpl } from "./mark-stuck-aborted.js";
-export { awaitAbortInFlightTaskWork as awaitAbortInFlightTaskWorkImpl } from "./await-abort-in-flight.js";
+export {
+  awaitAbortInFlightTaskWork as awaitAbortInFlightTaskWorkImpl,
+  prepareAbortInFlightTaskWork as prepareAbortInFlightTaskWorkImpl,
+} from "./await-abort-in-flight.js";
 export { abortAllInFlight as abortAllInFlightImpl } from "./abort-all-in-flight.js";
 export { maybeDispatchWorkflowWorkEngine as maybeDispatchWorkflowWorkEngineImpl } from "./maybe-dispatch-workflow-work-engine.js";
 export { executeCore as executeCoreImpl } from "./execute-core.js";

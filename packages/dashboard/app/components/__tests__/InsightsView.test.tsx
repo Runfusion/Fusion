@@ -1589,7 +1589,7 @@ describe("InsightsView", () => {
       expect(loadMore).toHaveBeenCalledOnce();
     });
 
-    it("offers Load more only while another row page is available and surfaces truncation", async () => {
+    it("auto-loads while another row page is available and surfaces truncation", async () => {
       const loadMore = vi.fn();
       mockUseTaskRecommendations.mockReturnValue({
         items: [recommendations[0]], loading: false, loadingMore: false, error: null,
@@ -1597,9 +1597,10 @@ describe("InsightsView", () => {
         createTask: vi.fn(), createStates: new Map(),
       });
       const { rerender } = render(<InsightsView {...defaultProps} />);
-      await waitFor(() => expect(screen.getByRole("button", { name: "Load more" })).toBeInTheDocument());
-      fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+      const sentinel = await screen.findByTestId("insights-recommendations-auto-pagination-sentinel");
+      fireEvent.scroll(sentinel.parentElement!);
       expect(loadMore).toHaveBeenCalledOnce();
+      expect(screen.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument();
 
       mockUseTaskRecommendations.mockReturnValue({
         items: [recommendations[0]], loading: false, loadingMore: false, error: null,
@@ -1611,7 +1612,7 @@ describe("InsightsView", () => {
       expect(screen.getByText("Showing the first 20 pages. Refresh to see the latest recommendations.")).toBeInTheDocument();
     });
 
-    it("keeps the Load more affordance reachable in the mobile and tablet layouts", () => {
+    it("keeps the automatically paged recommendations surface reachable in mobile and tablet layouts", () => {
       const css = loadAllAppCss();
       expect(css).toMatch(/@media[^{]*\(max-width:\s*768px\)[^{]*\{[\s\S]*?\.insights-recommendations[^}]*\}/);
       expect(css).toMatch(/@media[^{]*\(min-width:\s*769px\)\s*and\s*\(max-width:\s*1024px\)[^{]*\{[\s\S]*?\.insights-recommendations[^}]*\}/);

@@ -2,7 +2,7 @@
   "entries": [
     {
       "file": "packages/core/src/__tests__/plugin-task-store-gate.test.ts",
-      "line": 64,
+      "line": 62,
       "snippet": "expect(() => gated.getDatabase()).toThrow(",
       "reason": "Negative-path assertion only: the plugin task-store gate must DENY the raw sync getDatabase handle for undeclared plugins; the invocation exists to prove it throws and never reaches a database.",
       "allowlistedAt": "2026-07-26T19:10:00.000Z"

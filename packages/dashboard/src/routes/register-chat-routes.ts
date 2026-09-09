@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { archivedColumnsForTask } from "../task-lifecycle-lanes.js";
 import { createReadStream } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
@@ -101,10 +100,14 @@ function backfillEventType(role: string): string {
   return role === "user" ? "user_message" : role === "assistant" ? "assistant_message" : "tool_use";
 }
 
+function stripNulBytes(content: string): string {
+  return content.split("\u0000").join("");
+}
+
 function backfillEventKey(eventType: string, createdAt: string | undefined, content: string): string {
   const parsed = createdAt !== undefined ? Date.parse(createdAt) : Number.NaN;
   const t = Number.isFinite(parsed) ? String(parsed) : (createdAt ?? "");
-  return [eventType, t, content.replace(/\u0000/g, "")].join("\u0001");
+  return [eventType, t, stripNulBytes(content)].join("\u0001");
 }
 
 export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): void {
@@ -294,10 +297,10 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
   Task planner Chat uses a synthetic task-scoped chat target (`task-planner:<taskId>`) so the dashboard can persist/resume a conversation without binding it to an executor/reviewer agent or the Activity steering-comment pipeline. The route validates the task in the scoped project store and stores the current Chat target on the session.
 
   FNXC:TaskDetailPlannerChatRetention 2026-06-30-18:45:
-  Planner chats that already have user interaction remain available when a task reaches done, and archived-task cleanup removes existing task-planner sessions through ChatStore deletion so archived tasks stop retaining task-local planner context.
+  Planner chats with user interaction remain available after a task reaches Complete. Soft-deleted tasks are absent from task lookup and cannot open new task-planner sessions.
 
   FNXC:TaskDetailPlannerChat 2026-07-01-21:40:
-  Completed tasks may start a task-detail planner Chat after the fact so operators can ask retrospective questions and request a refinement from the completed source task. Archived tasks remain non-startable, and common Chat feed visibility is still controlled only by the global task-chat filtering setting below.
+  Completed tasks may start a task-detail planner Chat after the fact so operators can ask retrospective questions and request a refinement. Deleted tasks remain non-startable; common Chat feed visibility is controlled by the global task-chat filtering setting below.
   */
   router.post("/chat/task-planner/:taskId/session", rateLimit(RATE_LIMITS.mutation), async (req, res) => {
     try {
@@ -359,15 +362,6 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
             ? await chatStore.updateSession(existing.id, updates)
             : existing;
           return { created: false, session };
-        }
-
-        /*
-        FNXC:WorkflowResolvedColumns 2026-07-30-06:50 (batch-core):
-        Planner chat is refused for archived tasks. Keyed on the literal, a renamed board started
-        planner sessions against archived cards, whose rows the archive treats as immutable.
-        */
-        if ((await archivedColumnsForTask(scopedStore, task.id)).has(task.column)) {
-          throw badRequest(`Task ${task.id} is archived; planner chat cannot be started for archived tasks`);
         }
 
         const session = await chatStore.createSession({
@@ -469,7 +463,7 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
    */
   router.get("/chat/sessions", rateLimit(RATE_LIMITS.api), async (req, res) => {
     try {
-      const { projectId, status, agentId, lookup, modelProvider, modelId, q, titleOnly } = req.query as {
+      const { projectId, status, agentId, lookup, modelProvider, modelId, q, titleOnly, tagId, limit: limitValue, cursor } = req.query as {
         projectId?: string;
         status?: string;
         agentId?: string;
@@ -478,6 +472,9 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
         modelId?: string;
         q?: string;
         titleOnly?: string;
+        tagId?: string;
+        limit?: string;
+        cursor?: string;
       };
       const { store: scopedStore, chatStore } = await resolveScopedChatStore(req);
       const hasSearchQuery = typeof q === "string" && q.trim().length > 0;
@@ -497,6 +494,14 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
       if (isResumeLookup && (!agentId || !agentId.trim())) {
         throw badRequest("agentId is required when lookup=resume");
       }
+      if (status !== undefined && status !== "active" && status !== "archived") {
+        throw badRequest("status must be active or archived");
+      }
+      const parsedLimit = limitValue === undefined ? 50 : Number(limitValue);
+      if (!Number.isInteger(parsedLimit) || parsedLimit < 1) throw badRequest("limit must be a positive integer");
+      if (parsedLimit > 200) throw badRequest("limit must not exceed 200");
+      const settings = !isResumeLookup ? await scopedStore.getSettings() : undefined;
+      let pageMeta: { total: number; hasMore: boolean; nextCursor: string | null } = { total: 0, hasMore: false, nextCursor: null };
 
       let sessions = isResumeLookup
         ? await (async () => {
@@ -522,20 +527,39 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
 
             return matched ? [matched] : [];
           })()
-        : await chatStore.listSessions({
-            ...(projectId && { projectId }),
-            ...(status && { status: status as "active" | "archived" }),
-            ...(agentId && { agentId }),
-          });
+        : await (async () => {
+            let page;
+            try {
+              page = await chatStore.listSessionsPage({
+                ...(projectId && { projectId }),
+                ...(status && { status: status as "active" | "archived" }),
+                ...(agentId && { agentId }),
+                ...(q?.trim() && !isTitleOnly ? { q: q.trim() } : {}),
+                ...(tagId?.trim() ? { tagId: tagId.trim() } : {}),
+                includeTaskPlanner: settings?.showTaskChatsInCommonFeed === true,
+                limit: parsedLimit,
+                ...(cursor ? { cursor } : {}),
+              });
+            } catch (error) {
+              if (error instanceof TypeError && error.message === "Invalid chat session cursor") throw badRequest(error.message);
+              throw error;
+            }
+            pageMeta = { total: page.total, hasMore: page.hasMore, nextCursor: page.nextCursor };
+            return page.sessions;
+          })();
 
+      /*
+      FNXC:ChatSidebarPerf 2026-09-08-04:48:
+      Store previews arrive SQL-truncated to at most 101 characters, preserving this route's
+      existing exact >100-character ellipsis boundary without changing response fields.
+      */
       // Enrich sessions with last message preview
       if (sessions.length > 0) {
         const sessionIds = sessions.map((s) => s.id);
         const lastMessages = await chatStore.getLastMessageForSessions(sessionIds);
 
         if (!isResumeLookup) {
-          const settings = await scopedStore.getSettings();
-          const showTaskChatsInCommonFeed = settings.showTaskChatsInCommonFeed === true;
+          const showTaskChatsInCommonFeed = settings?.showTaskChatsInCommonFeed === true;
           /*
           FNXC:TaskDetailPlannerChat 2026-06-30-18:35:
           Planner-chat sessions may appear in global Chat only after a user has sent at least one message. Lazy creation prevents most empty rows; this server-side guard keeps stale/legacy task-planner rows with no messages out of every global Chat surface while preserving normal direct and room sessions.
@@ -560,7 +584,6 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
         let contentMatches: Map<string, string> | undefined;
         if (isContentSearch && !isResumeLookup) {
           contentMatches = await chatStore.searchSessionsByMessageContent(q!.trim(), sessions.map((s) => s.id));
-          sessions = sessions.filter((session) => contentMatches!.has(session.id));
         }
 
         // Batch-gather generating session IDs to avoid N+1 calls
@@ -590,7 +613,7 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
         }
       }
 
-      res.json({ sessions });
+      res.json(isResumeLookup ? { sessions } : { sessions, ...pageMeta });
     } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
@@ -1266,7 +1289,7 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
           event_type: backfillEventType(message.role),
           agent_name: agentName,
           created_at: message.createdAt || new Date().toISOString(),
-          content: (message.content ?? "").replace(/\u0000/g, ""),
+          content: stripNulBytes(message.content ?? ""),
         };
         const toolName = typeof metadata.tool_name === "string"
           ? metadata.tool_name
@@ -1316,10 +1339,11 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
         throw notFound(`Chat session ${sessionId} not found`);
       }
 
-      const { limit: limitStr, offset: offsetStr, before, order } = req.query as {
+      const { limit: limitStr, offset: offsetStr, before, beforeId, order } = req.query as {
         limit?: string;
         offset?: string;
         before?: string;
+        beforeId?: string;
         order?: string;
       };
 
@@ -1337,6 +1361,9 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
       if (order !== undefined && order !== "asc" && order !== "desc") {
         throw badRequest('order must be "asc" or "desc"');
       }
+      if (beforeId && !before) {
+        throw badRequest("beforeId requires before");
+      }
 
       const effectiveLimit = Math.min(limit, 200);
 
@@ -1344,6 +1371,7 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
         limit: effectiveLimit,
         offset,
         ...(before && { before }),
+        ...(before && beforeId && { beforeId }),
         ...(order === "desc" || order === "asc" ? { order } : {}),
       });
 

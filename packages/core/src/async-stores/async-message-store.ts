@@ -18,13 +18,17 @@
  *   flip. These helpers are the async target the PostgreSQL integration tests
  *   consume.
  */
-import { and, desc, eq, inArray, lte, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, lte, or, sql, type SQL } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import * as schema from "../postgres/schema/index.js";
 import type { AsyncDataLayer, DbTransaction } from "../postgres/data-layer.js";
 import { sanitizeTextValue, sanitizeJsonbValue } from "../postgres/nul-sanitize.js";
 import {
+  ARTIFACT_NOTICE_METADATA_KEY,
+  DASHBOARD_INBOX_CATEGORIES,
   DASHBOARD_USER_ID,
+  TASK_RECOMMENDATION_NOTICE_KIND,
+  type DashboardInboxCategory,
   type Message,
   type MessageFilter,
   type MessageType,
@@ -97,6 +101,23 @@ function archivedCondition(archived?: boolean) {
   if (archived === true) return eq(schema.project.messages.archived, 1);
   if (archived === false) return or(eq(schema.project.messages.archived, 0), sql`${schema.project.messages.archived} IS NULL`)!;
   return or(eq(schema.project.messages.archived, 0), sql`${schema.project.messages.archived} IS NULL`)!;
+}
+
+/*
+FNXC:InboxCategories 2026-09-06-04:07:
+This PostgreSQL predicate mirrors classifyDashboardInboxMessage. JSON key existence—not extracted NULL—defines an absent kind, and artifactId must be a JSON string, so malformed or future metadata cannot route differently between TypeScript and SQL. Change both together so list filtering, unread counts, and category-scoped read acknowledgements agree.
+*/
+function dashboardInboxCategoryCondition(category: DashboardInboxCategory) {
+  const metadata = schema.project.messages.metadata;
+  const recommendationCondition = sql`COALESCE(${metadata}->>'kind' = ${TASK_RECOMMENDATION_NOTICE_KIND}, false)`;
+  const artifactCondition = sql`NOT COALESCE(jsonb_exists(${metadata}, 'kind'), false)
+    AND COALESCE(${metadata}->>'mailKind' NOT IN ('report', 'approval'), true)
+    AND jsonb_typeof(${metadata}->${ARTIFACT_NOTICE_METADATA_KEY}) = 'string'
+    AND NULLIF(btrim(${metadata}->>${ARTIFACT_NOTICE_METADATA_KEY}), '') IS NOT NULL`;
+
+  if (category === "recommendation") return recommendationCondition;
+  if (category === "artifact") return artifactCondition;
+  return sql`NOT (${recommendationCondition}) AND NOT (${artifactCondition})`;
 }
 
 /**
@@ -242,6 +263,9 @@ export async function queryMessagesByParticipant(
   if (filter?.read !== undefined) {
     conditions.push(eq(schema.project.messages.read, filter.read ? 1 : 0));
   }
+  if (filter?.category) {
+    conditions.push(dashboardInboxCategoryCondition(filter.category));
+  }
   conditions.push(archivedCondition(filter?.archived));
   const limit = filter?.limit ?? 100;
   const offset = filter?.offset ?? 0;
@@ -294,36 +318,57 @@ export async function setMessageArchived(
   return rows[0] ? rowToMessage(rows[0] as MessageRow) : null;
 }
 
+export async function getDashboardInboxCategoryCounts(
+  handle: QueryHandle,
+  ownerId: string,
+  ownerType: ParticipantType,
+): Promise<Record<DashboardInboxCategory, number>> {
+  const participantIds = participantIdsForLookup(ownerId, ownerType);
+  const selection = Object.fromEntries(DASHBOARD_INBOX_CATEGORIES.map((category) => [
+    category,
+    sql<number>`(count(*) FILTER (WHERE ${dashboardInboxCategoryCondition(category)}))::int`,
+  ])) as Record<DashboardInboxCategory, SQL<number>>;
+  const countRows = await handle
+    .select(selection)
+    .from(schema.project.messages)
+    .where(and(
+      inArray(schema.project.messages.toId, participantIds),
+      eq(schema.project.messages.toType, ownerType),
+      eq(schema.project.messages.read, 0),
+      archivedCondition(),
+    ));
+  const counts = countRows[0];
+  return {
+    message: Number(counts?.message ?? 0),
+    recommendation: Number(counts?.recommendation ?? 0),
+    artifact: Number(counts?.artifact ?? 0),
+  };
+}
+
 export async function markAllMessagesAsRead(
   handle: QueryHandle,
   ownerId: string,
   ownerType: ParticipantType,
+  category?: DashboardInboxCategory,
 ): Promise<number> {
   const now = new Date().toISOString();
   const participantIds = participantIdsForLookup(ownerId, ownerType);
+  const conditions = [
+    inArray(schema.project.messages.toId, participantIds),
+    eq(schema.project.messages.toType, ownerType),
+    eq(schema.project.messages.read, 0),
+    archivedCondition(),
+  ];
+  if (category) conditions.push(dashboardInboxCategoryCondition(category));
   const countRows = await handle
     .select({ count: sql<number>`count(*)::int` })
     .from(schema.project.messages)
-    .where(
-      and(
-        inArray(schema.project.messages.toId, participantIds),
-        eq(schema.project.messages.toType, ownerType),
-        eq(schema.project.messages.read, 0),
-        archivedCondition(),
-      ),
-    );
+    .where(and(...conditions));
   const count = countRows[0]?.count ?? 0;
   await handle
     .update(schema.project.messages)
     .set({ read: 1, updatedAt: now })
-    .where(
-      and(
-        inArray(schema.project.messages.toId, participantIds),
-        eq(schema.project.messages.toType, ownerType),
-        eq(schema.project.messages.read, 0),
-        archivedCondition(),
-      ),
-    );
+    .where(and(...conditions));
   return count;
 }
 

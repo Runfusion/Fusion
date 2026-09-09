@@ -67,7 +67,7 @@ import {
   requiredArtifactReadFailedValue,
 } from "../execution/required-workflow-artifacts.js";
 import { accumulateSessionTokenUsage } from "../execution/session-token-usage.js";
-import { createStreamingDeltaNormalizer } from "../execution/streaming-delta.js";
+import { createAssistantStreamCapture } from "../execution/assistant-text-capture.js";
 import { describeModel, formatModelMarkerDetails, promptWithFallback } from "../pi.js";
 import {
   detectExternalIntegrationEvidenceGaps,
@@ -1123,28 +1123,18 @@ CRITICAL SCOPING RULES — read before doing anything else:
       }
 
       let output = "";
-      const deltaNormalizer = createStreamingDeltaNormalizer();
+      /* FNXC:AssistantTextCapture 2026-09-08-14:13: Workflow verdict output must include terminal text blocks exactly once, even when providers omit deltas. */
+      const capture = createAssistantStreamCapture({
+        onText: (delta) => { output += delta; agentLogger.onText(delta); },
+        onThinking: (delta) => agentLogger.onThinking(delta),
+      });
       let detectedQuestion: string | null = null;
       let resolveQuestion: ((value: "await-input") => void) | undefined;
       const questionPromise = new Promise<"await-input">((resolve) => {
         resolveQuestion = resolve;
       });
       session.subscribe((event) => {
-        if (event.type === "message_update") {
-          const msgEvent = event.assistantMessageEvent;
-          if (msgEvent.type === "text_delta") {
-            // Repair dropped sentence-boundary spaces at the shared engine delta chokepoint,
-            // including tool-call cross-message boundaries (see streaming-delta.ts).
-            const delta = deltaNormalizer.normalize(msgEvent.partial, msgEvent.contentIndex, msgEvent.delta, "text");
-            output += delta;
-            agentLogger.onText(delta);
-          } else if (msgEvent.type === "thinking_delta") {
-            // Repair dropped sentence-boundary spaces at the shared engine delta chokepoint,
-            // including tool-call cross-message boundaries (see streaming-delta.ts).
-            const delta = deltaNormalizer.normalize(msgEvent.partial, msgEvent.contentIndex, msgEvent.delta, "thinking");
-            agentLogger.onThinking(delta);
-          }
-        }
+        capture.handleAgentEvent(event);
         if (event.type === "tool_execution_start") {
           agentLogger.onToolStart(event.toolName, event.args as Record<string, unknown> | undefined);
           if (!unattended && detectedQuestion === null) {
@@ -1380,11 +1370,20 @@ CRITICAL SCOPING RULES — read before doing anything else:
            * routing decision. A finding-less REVISE is non-blocking because it cannot produce
            * remediation; an unclassified open finding remains fail-closed and blocks.
            */
+          /*
+          FNXC:ReviewVerdictAuthority 2026-09-05-22:54:
+          FN-295: a verdict rescued from a MALFORMED payload carries no findings because they could not
+          be parsed. Tell the severity gate so it fails closed instead of reading the empty list as
+          "nothing blocking" — that read turned a REVISE with three `high` findings into an approval and
+          sent the card into execution on a rejected plan.
+          */
+          const findingsUnreadable = verdictRepairResult === "repaired" && (parsed.findings?.length ?? 0) === 0;
           const gated = reviewBlockingSeverity
             ? applyReviewSeverityGate({
               verdict: parsed.verdict,
               findings: parsed.findings,
               threshold: reviewBlockingSeverity,
+              findingsUnreadable,
             })
             : undefined;
           const effectiveVerdict = (gated?.verdict ?? parsed.verdict) as typeof parsed.verdict;

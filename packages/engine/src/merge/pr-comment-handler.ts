@@ -6,7 +6,7 @@ import { resolveWorkflowIrForTask, columnsWithFlag } from "@fusion/core";
 
 /*
 FNXC:PullRequestReview 2026-07-26-00:00:
-The PR-feedback follow-up card is a real product feature, but it used to borrow the shared automated-recovery follow-up engine (`createAutomatedFollowup` in verification-followup-dedup.ts) purely for its dedup pass. That engine was deleted along with the recovery follow-up cards it existed to file, so the one dedup rule this feature needs is inlined below: never file a second card for the same PR number under the same parent while one is still open. Closed columns (done/archived) are excluded so a later close/reopen of the same PR can legitimately file a fresh card.
+PR-feedback follow-ups inline one dedup rule: never file a second card for the same PR number under the same parent while one is still open. Workflow Complete columns are excluded so a later close/reopen can legitimately file a fresh card.
 */
 /*
 FNXC:WorkflowResolvedColumns 2026-07-30-19:15 (the SECOND copy of the same dedup, converted with the first):
@@ -15,7 +15,7 @@ for this parent still open?" — so it had the same defect: on a renamed board a
 open, the dedup matched it forever, and no fresh PR-feedback card was ever filed.
 
 Converting one and leaving the other is the FN-6115 -> FN-6118 -> FN-6123 shape, so both move together and
-both now call the shared `resolveTerminalColumnsFor` instead of carrying a private copy of the pair.
+both now call the shared `resolveTerminalColumnsFor` instead of carrying a private terminal list.
 */
 
 interface PrComment {

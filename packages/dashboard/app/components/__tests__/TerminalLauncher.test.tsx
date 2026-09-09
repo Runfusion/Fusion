@@ -6,6 +6,9 @@ const mockFetchScripts = vi.fn();
 
 vi.mock("../../api", () => ({
   fetchScripts: (...args: unknown[]) => mockFetchScripts(...args),
+  normalizeScriptCatalog: (value: Record<string, string> | Array<{ name: string; command: string; description?: string }>) => Array.isArray(value)
+    ? value
+    : Object.entries(value).map(([name, command]) => ({ name, command })),
 }));
 
 describe("TerminalLauncher", () => {
@@ -43,6 +46,22 @@ describe("TerminalLauncher", () => {
     fireEvent.click(await screen.findByTestId("quick-script-item-build"));
 
     expect(onRunScript).toHaveBeenCalledWith("build", "pnpm build");
+  });
+
+  it("shows descriptions with command fallback and executes the exact command by keyboard", async () => {
+    mockFetchScripts.mockResolvedValueOnce([
+      { name: "Build production", command: "pnpm build", description: "Production bundle" },
+      { name: "Déployer 🚀", command: "pnpm deploy" },
+    ]);
+    const onRunScript = vi.fn();
+    render(<TerminalLauncher projectId="proj-1" onToggleTerminal={vi.fn()} onOpenScripts={vi.fn()} onRunScript={onRunScript} />);
+    fireEvent.click(screen.getByTestId("scripts-btn"));
+    const menu = await screen.findByTestId("quick-scripts-dropdown");
+    expect(screen.getByText("Production bundle")).toBeInTheDocument();
+    expect(screen.getByText("pnpm deploy")).toBeInTheDocument();
+    fireEvent.keyDown(menu, { key: "ArrowDown" });
+    fireEvent.keyDown(menu, { key: "Enter" });
+    expect(onRunScript).toHaveBeenCalledWith("Build production", "pnpm build");
   });
 
   it("opens manage scripts from the dropdown footer", async () => {

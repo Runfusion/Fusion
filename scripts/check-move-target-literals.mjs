@@ -97,6 +97,32 @@ literal destination is counted and that only a leading DELIBERATE-LITERAL can ex
 The audit found moveTaskInternal confined to moves.ts, its private enforcement point. We still scan it as
 stronger-than-required defense-in-depth and pin that behavior here; external callers would not be invisible.
 */
+/*
+FNXC:MoveProvenanceRatchet 2026-09-07-16:11:
+FN-312 keeps the optionless TaskStore API for operator-compatible legacy callers, so production engine call sites need a separate AST ratchet. The measured baseline may only decrease: every new automatic move must declare moveSource, making lifecycle-direction enforcement and operator logs authoritative without mistaking comments or HTTP operator routes for engine code.
+*/
+export function countMoveTaskCallsMissingProvenance(source, file = "fixture.ts") {
+  if (!source.includes("moveTask")) return 0;
+  const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
+  let count = 0;
+  const walk = (node) => {
+    if (ts.isCallExpression(node)) {
+      const callee = ts.isPropertyAccessExpression(node.expression)
+        ? node.expression.name.text
+        : ts.isIdentifier(node.expression) ? node.expression.text : "";
+      if (callee === "moveTask") {
+        const options = node.arguments[2];
+        const declaresSource = options && ts.isObjectLiteralExpression(options)
+          && options.properties.some((property) => property.name && ts.isIdentifier(property.name) && property.name.text === "moveSource");
+        if (!declaresSource) count += 1;
+      }
+    }
+    ts.forEachChild(node, walk);
+  };
+  walk(sf);
+  return count;
+}
+
 export function countLegacyMoveTargetLiterals(source, file = "fixture.ts") {
   if (!source.includes("moveTask")) return 0;
   const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
@@ -159,6 +185,7 @@ if (isEntryPoint) {
   }
 
   const byFile = {};
+  const missingProvenanceByFile = {};
   for (const file of files) {
     let source;
     try {
@@ -172,11 +199,16 @@ if (isEntryPoint) {
     }
     const count = countLegacyMoveTargetLiterals(source, file);
     if (count > 0) byFile[file] = count;
+    if (file.startsWith("packages/engine/src/")) {
+      const missingProvenance = countMoveTaskCallsMissingProvenance(source, file);
+      if (missingProvenance > 0) missingProvenanceByFile[file] = missingProvenance;
+    }
   }
 
   const total = Object.values(byFile).reduce((a, b) => a + b, 0);
+  const missingProvenanceTotal = Object.values(missingProvenanceByFile).reduce((a, b) => a + b, 0);
   if (json) {
-    console.log(JSON.stringify({ total, byFile }, null, 2));
+    console.log(JSON.stringify({ total, byFile, missingProvenanceTotal, missingProvenanceByFile }, null, 2));
     process.exit(0);
   }
 
@@ -190,15 +222,18 @@ if (isEntryPoint) {
     console.log("  so keep it empty. Use resolveTaskLifecycleColumns / the role helpers for destinations.");
   }
 
-  const baseline = existsSync(BASELINE_PATH) ? JSON.parse(readFileSync(BASELINE_PATH, "utf8")) : { byFile: {} };
+  console.log(`  engine moveTask calls without explicit moveSource: ${missingProvenanceTotal}`);
+
+  const baseline = existsSync(BASELINE_PATH) ? JSON.parse(readFileSync(BASELINE_PATH, "utf8")) : { byFile: {}, missingProvenanceByFile: {} };
   if (updateBaseline) {
-    writeFileSync(BASELINE_PATH, `${JSON.stringify({ byFile }, null, 2)}\n`);
+    writeFileSync(BASELINE_PATH, `${JSON.stringify({ byFile, missingProvenanceByFile }, null, 2)}\n`);
     console.log("check-move-target-literals: baseline re-recorded.");
     process.exit(0);
   }
   if (!strict) process.exit(0);
 
   const allowed = baseline.byFile ?? {};
+  const allowedMissingProvenance = baseline.missingProvenanceByFile ?? {};
   const problems = [];
   for (const [file, n] of Object.entries(byFile)) {
     const cap = allowed[file] ?? 0;
@@ -207,6 +242,14 @@ if (isEntryPoint) {
   for (const [file, cap] of Object.entries(allowed)) {
     const n = byFile[file] ?? 0;
     if (n < cap) problems.push(`  ${file}: ${n} legacy move target(s), baseline allows ${cap} — DROP, re-record it`);
+  }
+  for (const [file, n] of Object.entries(missingProvenanceByFile)) {
+    const cap = allowedMissingProvenance[file] ?? 0;
+    if (n > cap) problems.push(`  ${file}: ${n} moveTask call(s) omit moveSource, baseline allows ${cap}`);
+  }
+  for (const [file, cap] of Object.entries(allowedMissingProvenance)) {
+    const n = missingProvenanceByFile[file] ?? 0;
+    if (n < cap) problems.push(`  ${file}: ${n} moveTask call(s) omit moveSource, baseline allows ${cap} — DROP, re-record it`);
   }
   if (problems.length > 0) {
     console.error("\ncheck-move-target-literals --strict: move-target population DIVERGES from baseline:\n");

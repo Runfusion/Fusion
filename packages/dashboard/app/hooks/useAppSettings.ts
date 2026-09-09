@@ -4,6 +4,7 @@ import { DEFAULT_PROJECT_SETTINGS, type GlobalSettings, type ProjectSettings } f
 import { resolveMobileNavPrimaryItems } from "../../../core/src/board/mobile-nav-primary-items";
 import type { ModelPricingOverrides } from "../../../core/src/ai/model-pricing";
 import { DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS, resolveDashboardKeyboardShortcuts, type DashboardKeyboardShortcutMap } from "../utils/keyboardShortcuts";
+import { normalizeChatSubmitOnEnterMode, type ChatSubmitOnEnterMode } from "../context/ChatSubmitOnEnterContext";
 
 export type QuickChatButtonMode = "floating" | "footer" | "off";
 export type ChatMessageLayout = "bubbles" | "full-width";
@@ -51,6 +52,7 @@ export interface UseAppSettingsResult {
   dashboardKeyboardShortcuts: Required<DashboardKeyboardShortcutMap>;
   dismissModalsOnOutsideClick: boolean;
   quickAddSubmitOnEnter: boolean;
+  chatSubmitOnEnter: ChatSubmitOnEnterMode;
   skipConfirmationDialogs: boolean;
   showQuickChatFAB: boolean;
   maxTotalRetriesBeforeFail: number;
@@ -118,6 +120,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
   const [dashboardKeyboardShortcuts, setDashboardKeyboardShortcuts] = useState<Required<DashboardKeyboardShortcutMap>>(DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS);
   const [dismissModalsOnOutsideClick, setDismissModalsOnOutsideClick] = useState(false);
   const [quickAddSubmitOnEnter, setQuickAddSubmitOnEnter] = useState(true);
+  const [chatSubmitOnEnter, setChatSubmitOnEnter] = useState<ChatSubmitOnEnterMode>("auto");
   const [skipConfirmationDialogs, setSkipConfirmationDialogs] = useState(false);
   const [showQuickChatFAB, setShowQuickChatFAB] = useState(false);
   const [maxTotalRetriesBeforeFail, setMaxTotalRetriesBeforeFail] = useState(25);
@@ -192,6 +195,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
       setDashboardKeyboardShortcuts(resolveDashboardKeyboardShortcuts((settings as GlobalSettings).dashboardKeyboardShortcuts));
       setDismissModalsOnOutsideClick(settings.dismissModalsOnOutsideClick === true);
       setQuickAddSubmitOnEnter(settings.quickAddSubmitOnEnter !== false);
+      setChatSubmitOnEnter(normalizeChatSubmitOnEnterMode(settings.chatSubmitOnEnter));
       setSkipConfirmationDialogs(settings.skipConfirmationDialogs === true);
       setShowQuickChatFAB(nextQuickChatButtonMode === "floating");
       setMaxTotalRetriesBeforeFail(settings.maxTotalRetriesBeforeFail ?? 25);
@@ -404,6 +408,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     dashboardKeyboardShortcuts,
     dismissModalsOnOutsideClick,
     quickAddSubmitOnEnter,
+    chatSubmitOnEnter,
     skipConfirmationDialogs,
     showQuickChatFAB,
     maxTotalRetriesBeforeFail,

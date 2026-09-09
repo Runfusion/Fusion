@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { AgentActivityEventType } from "../../api";
 import { ActivityFeedRowPresentation } from "../ActivityFeed";
@@ -8,9 +8,10 @@ import { AGENT_ACTIVITY_TYPE_CONFIG, resolveAgentActivityPresentation } from "./
 import type { DateRange } from "./DateRangePicker";
 import { useAgentActivity, type AgentActivityFilters } from "./useAgentActivity";
 import "./AgentActivityPanel.css";
+import { useVirtualizedList } from "../../hooks/useVirtualizedList";
+import { useAutoPaginationSentinel } from "../../hooks/useAutoPaginationSentinel";
 
 const LIVE_RENDER_LIMIT = 100;
-const TIMELINE_WINDOW_SIZE = 100;
 const EVENT_TYPES = (Object.keys(AGENT_ACTIVITY_TYPE_CONFIG) as AgentActivityEventType[])
   .filter((type) => !isHiddenAgentActivityType(type));
 
@@ -29,12 +30,9 @@ export function AgentActivityPanel({ projectId, range, onOpenAgent, onOpenTask }
   const { t } = useTranslation("app");
   const [mode, setMode] = useState<"live" | "timeline">("live");
   const [filters, setFilters] = useState<AgentActivityFilters>({});
-  const [timelineLimit, setTimelineLimit] = useState(TIMELINE_WINDOW_SIZE);
   const activity = useAgentActivity({ projectId, filters, range });
-
-  useEffect(() => {
-    setTimelineLimit(TIMELINE_WINDOW_SIZE);
-  }, [filters.agentId, filters.taskId, filters.type, range.from, range.to]);
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const panelRef = useRef<HTMLElement | null>(null);
 
   const agentOptions = useMemo(
     () => [...new Set(activity.events.map((event) => event.agentId).filter(Boolean))].sort(),
@@ -49,10 +47,14 @@ export function AgentActivityPanel({ projectId, range, onOpenAgent, onOpenTask }
   const visibleEvents = activity.visibleEvents.filter((event) => !isHiddenAgentActivityType(event.type));
   const rows = mode === "live"
     ? activity.events.filter((event) => !isHiddenAgentActivityType(event.type)).slice(0, LIVE_RENDER_LIMIT)
-    : visibleEvents.slice(0, timelineLimit);
+    : visibleEvents;
+  const virtualRows = useVirtualizedList({ collectionKey: `${mode}:${filters.agentId ?? ""}:${filters.taskId ?? ""}:${filters.type ?? ""}`, keys: rows.map((row) => row.eventId), scrollRef: listRef, estimateHeight: 64, maxRenderedRows: 60, initialAlign: "start" });
+  const visibleRowIds = new Set(virtualRows.visibleKeys);
+  const renderedRows = rows.filter((row) => visibleRowIds.has(row.eventId));
+  const pagination = useAutoPaginationSentinel({ rootRef: panelRef, hasMore: mode === "timeline" && activity.hasMore, loading: activity.isLoadingOlder, onLoadMore: activity.loadOlder, direction: "end" });
 
   return (
-    <section className="cc-agent-activity">
+    <section className="cc-agent-activity" ref={panelRef}>
       <div className="cc-agent-activity-mode" role="group" aria-label={t("commandCenter.agentActivity.mode", "Activity mode")}>
         <button type="button" className="btn btn-sm" aria-pressed={mode === "live"} onClick={() => setMode("live")}>{t("commandCenter.agentActivity.live", "Live")}</button>
         <button type="button" className="btn btn-sm" aria-pressed={mode === "timeline"} onClick={() => setMode("timeline")}>{t("commandCenter.agentActivity.timeline", "Timeline")}</button>
@@ -73,18 +75,13 @@ export function AgentActivityPanel({ projectId, range, onOpenAgent, onOpenTask }
       ) : null}
       <AreaShell testId="agent-activity" isLoading={activity.isLoading} error={activity.error} isEmpty={!rows.length && !activity.hasMore} emptyMessage={t("commandCenter.agentActivity.empty", "No agent activity yet.")}>
         {!rows.length ? <div className="cc-area-empty" data-testid="cc-area-agent-activity-empty"><p>{t("commandCenter.agentActivity.empty", "No agent activity yet.")}</p></div> : (
-          <div className="cc-agent-activity-list">
-            {rows.map((row) => <AgentActivityRow key={row.eventId} event={row} onOpenAgent={onOpenAgent} onOpenTask={onOpenTask} />)}
+          <div className="cc-agent-activity-list" ref={listRef} onScroll={virtualRows.onScroll}>
+            {virtualRows.topSpacerHeight > 0 ? <div aria-hidden="true" style={{ height: virtualRows.topSpacerHeight }} /> : null}
+            {renderedRows.map((row) => <AgentActivityRow key={row.eventId} event={row} onOpenAgent={onOpenAgent} onOpenTask={onOpenTask} />)}
+            {virtualRows.bottomSpacerHeight > 0 ? <div aria-hidden="true" style={{ height: virtualRows.bottomSpacerHeight }} /> : null}
           </div>
         )}
-        {mode === "timeline" && timelineLimit < visibleEvents.length ? (
-          <button type="button" className="btn" onClick={() => setTimelineLimit((value) => value + TIMELINE_WINDOW_SIZE)}>{t("commandCenter.agentActivity.showMore", "Show more loaded activity")}</button>
-        ) : null}
-        {mode === "timeline" && activity.hasMore ? (
-          <button type="button" className="btn" onClick={activity.loadOlder} disabled={activity.isLoadingOlder}>
-            {activity.isLoadingOlder ? t("commandCenter.agentActivity.loadingOlder", "Loading…") : t("commandCenter.agentActivity.loadOlder", "Load older")}
-          </button>
-        ) : null}
+        {mode === "timeline" && activity.hasMore ? <div ref={pagination.sentinelRef} role="status" aria-live="polite" data-testid="agent-activity-auto-pagination-sentinel">{activity.isLoadingOlder ? t("commandCenter.agentActivity.loadingOlder", "Loading…") : null}</div> : null}
         {mode === "timeline" && !activity.hasMore && activity.exhaustedReason ? <p className="cc-agent-activity-end">{t("commandCenter.agentActivity.end", "End of activity history")}</p> : null}
       </AreaShell>
     </section>

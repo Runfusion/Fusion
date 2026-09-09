@@ -1,23 +1,30 @@
 import {
   buildStepLedgerReopenLog,
+  DEFAULT_MAX_POST_REVIEW_FIXES,
   formatRemediationStepName,
   hasOpenEquivalentRemediationStep,
   remediationDeclaredFiles,
   remediationWaveCount,
   planRemediationPlacement,
+  resolveOptionalReviewRevisionBudget,
+  resolveOptionalStepRevisionBudget,
   type RunMutationContext,
   type Task,
   type TaskStep,
   type TaskStore,
 } from "@fusion/core";
 import { deriveRemediationSteps, verificationEvidenceDigest } from "./derive-remediation-steps.js";
-import type { RequestPreMergeOptionalStepFixInfo } from "./request-pre-merge-optional-step-fix.js";
+import { reviewInputSignature, type RequestPreMergeOptionalStepFixInfo } from "./request-pre-merge-optional-step-fix.js";
 import { deriveWorkspaceReviewRemediation } from "./workspace-review-remediation.js";
+import { mergeEffectiveSettings } from "../project/effective-settings.js";
 import { resolveReviewRemediationGate } from "./review-remediation-gate.js";
 import { resolveRemediationCheckout } from "./resolve-remediation-checkout.js";
 import {
   countOptionalStepRevisionAttempts,
+  hasReviewRemediationAttemptForEpisode,
+  optionalStepRevisionKey,
   optionalStepRevisionLogOutcome,
+  reviewRemediationEpisodeIdentity,
 } from "./optional-step-revision.js";
 
 export type AppendReviewRemediationStepsDeps = {
@@ -35,6 +42,8 @@ export type AppendReviewRemediationOutcome =
   | "released-no-pending-work"
   | "released-workspace-worktree-missing"
   | "superseded-scope"
+  | "superseded-review"
+  | "duplicate-no-new-work"
   | "not-applicable";
 
 /**
@@ -67,12 +76,20 @@ export type ReviewRemediationAttemptClaim = {
   stepName: string;
   status: string;
   maxRevisions: number | "unbounded";
+  expectedWorkflowStepId?: string;
+  /** Legacy content-review signature retained for adapter compatibility. */
+  expectedReviewSignature?: string;
+  expectedReviewEpisodeIdentity?: string;
+  /** Fences deterministic executor verification, which has no WorkflowStepResult occurrence. */
+  expectedTaskUpdatedAt?: string;
   runContext?: RunMutationContext;
 };
 
 export type AppendReviewRemediationOptions = {
   worktreePath?: string;
   attemptClaim?: ReviewRemediationAttemptClaim;
+  /** Executor verification requests resolution before entering the strict fenced producer. */
+  resolveAttemptClaim?: true;
 };
 
 /*
@@ -99,6 +116,48 @@ function missingCodeReviewFixSteps(info: RequestPreMergeOptionalStepFixInfo, wav
   };
 }
 
+export async function appendReviewRemediationStepsWithResolvedAccounting(
+  deps: AppendReviewRemediationStepsDeps,
+  task: Task,
+  info: RequestPreMergeOptionalStepFixInfo,
+  options: AppendReviewRemediationOptions = {},
+): Promise<AppendReviewRemediationOutcome> {
+  if (options.attemptClaim) return appendReviewRemediationSteps(deps, task, info, options);
+  if (options.resolveAttemptClaim !== true) return appendReviewRemediationSteps(deps, task, info, options);
+  const gate = resolveReviewRemediationGate(info);
+  if (!gate) return "not-applicable";
+  const failed = (task.workflowStepResults ?? []).find((result) =>
+    result.workflowStepId === info.nodeId && result.status === "failed",
+  );
+  if (!failed && gate !== "Verification") return "not-applicable";
+  const settings = await mergeEffectiveSettings(deps.store, task, await deps.store.getSettings());
+  const maxRevisions = resolveOptionalReviewRevisionBudget({
+    optionalGroupId: info.nodeId ?? info.stepName,
+    workflowSettings: settings as Record<string, unknown>,
+    nodeMaxRevisions: info.maxRevisions,
+    fallbackMaxRevisions: settings.maxPostReviewFixes ?? DEFAULT_MAX_POST_REVIEW_FIXES,
+  });
+  const budget = resolveOptionalStepRevisionBudget(
+    maxRevisions,
+    settings.maxPostReviewFixes ?? DEFAULT_MAX_POST_REVIEW_FIXES,
+  );
+  const expectedReviewEpisodeIdentity = failed
+    ? reviewRemediationEpisodeIdentity(failed)
+    : `executor-verification:${verificationEvidenceDigest(info.feedback) ?? "empty"}`;
+  return appendReviewRemediationSteps(deps, task, info, {
+    ...options,
+    attemptClaim: {
+      revisionKey: optionalStepRevisionKey(info.nodeId, info.stepName),
+      stepName: info.stepName,
+      status: info.status,
+      maxRevisions: budget.unbounded ? "unbounded" : budget.max,
+      expectedWorkflowStepId: failed?.workflowStepId,
+      expectedReviewEpisodeIdentity,
+      ...(!failed ? { expectedTaskUpdatedAt: task.updatedAt } : {}),
+    },
+  });
+}
+
 export async function appendReviewRemediationSteps(
   deps: AppendReviewRemediationStepsDeps,
   task: Task,
@@ -107,6 +166,14 @@ export async function appendReviewRemediationSteps(
 ): Promise<AppendReviewRemediationOutcome> {
   const gate = resolveReviewRemediationGate(info);
   if (!gate) return "not-applicable";
+  /*
+  FNXC:ReviewRemediationBudget 2026-09-08-02:24:
+  Named remediation has no compatibility path that may publish executable work without its keyed
+  attempt and aggregate charge. Callers that cannot identify the budget and failed review episode
+  are reporting-only: refuse before reading or mutating task artifacts, workspace claims, logs, or
+  lifecycle state so the work-and-accounting transaction remains the sole publication authority.
+  */
+  if (!options.attemptClaim) return "not-applicable";
   const wave = remediationWaveCount(task.steps ?? []) + 1;
   if (gate === "Verification") {
     const currentEvidenceDigest = verificationEvidenceDigest(info.feedback);
@@ -185,36 +252,65 @@ export async function appendReviewRemediationSteps(
   }
 
   let appended: TaskStep[];
-  let live: Task;
-  if (remediation || options.attemptClaim) {
-    let scopeSuperseded = false;
-    let budgetExhausted = false;
-    appended = [];
-    live = await deps.store.updateTaskAtomic(task.id, (current) => {
+  let scopeSuperseded = false;
+  let reviewSuperseded = false;
+  let budgetExhausted = false;
+  let duplicate = false;
+  let alreadyCommitted = false;
+  appended = [];
+  const publish = deps.store.publishReviewRemediationFenced?.bind(deps.store);
+  const claim = options.attemptClaim;
+  const initialExpectedResult = (task.workflowStepResults ?? []).find((result) =>
+    result.workflowStepId === (claim.expectedWorkflowStepId ?? info.nodeId)
+    && result.status === "failed",
+  );
+  const expectedEpisodeIdentity = claim.expectedReviewEpisodeIdentity
+    ?? (initialExpectedResult ? reviewRemediationEpisodeIdentity(initialExpectedResult) : undefined);
+  const expectedColumn = task.column;
+  const expectedStatus = task.status;
+  const mutate = (current: Task) => {
       /*
       FNXC:WorkspaceReviewRemediation 2026-08-27-12:32:
       A successful review-remediation CAS only claims the target at that instant. Append its named
       work and widen PROMPT.md in the same revision-fenced mutation, so an intervening scope edit
       cannot leave an invalid review episode's steps or File Scope behind.
 
-      FNXC:ReviewRemediationBudget 2026-08-28-16:32:
-      The authored revision budget is claimed in the same task mutation that publishes named fix
-      steps. Counting and writing the keyed attempt here prevents crashes, failed follow-up logging,
-      or concurrent requesters from delivering remediation that is absent from the durable budget
-      ledger. Executor dispatch happens only after this transaction commits.
+      FNXC:ReviewRemediationBudget 2026-09-08-01:02:
+      The authored revision budget is claimed in the same project-scoped advisory transaction that
+      publishes named fix steps. The live failed review, keyed ledger, pending-work duplicate guard,
+      prompt, placement, and aggregate counter are re-read and committed together; only executable
+      new work is charged, and executor dispatch happens after this transaction commits.
+
+      FNXC:ReviewRemediationBudget 2026-09-08-01:46:
+      The transaction revalidates the exact failed occurrence and its lifecycle admission, not merely
+      a content-review fingerprint. This fences verification rounds without fingerprints and rejects
+      a concurrent pause, manual-review hold, lane move, status replacement, or review replacement.
       */
+      if (current.deletedAt || current.paused || current.userPaused || current.autoMerge === false
+        || current.column !== expectedColumn || current.status !== expectedStatus) {
+        reviewSuperseded = true;
+        return null;
+      }
       if (remediation && current.repositoryScope?.revision !== remediation.scopeRevision) {
         scopeSuperseded = true;
         return null;
       }
-      const claim = options.attemptClaim;
-      const attemptCount = claim
-        ? countOptionalStepRevisionAttempts(current, claim.revisionKey, claim.stepName)
-        : 0;
-      if (claim && claim.maxRevisions !== "unbounded" && attemptCount >= claim.maxRevisions) {
-        budgetExhausted = true;
+      const expected = (current.workflowStepResults ?? []).find((result) =>
+        result.workflowStepId === (claim.expectedWorkflowStepId ?? info.nodeId) && result.status === "failed",
+      );
+      const exactEpisode = expected ? reviewRemediationEpisodeIdentity(expected) : undefined;
+      const legacySignatureMatches = claim.expectedReviewSignature === undefined
+        || (expected !== undefined && (reviewInputSignature(expected) ?? "") === claim.expectedReviewSignature);
+      const deterministicVerificationMatches = gate === "Verification"
+        && !expected
+        && claim.expectedTaskUpdatedAt !== undefined
+        && current.updatedAt === claim.expectedTaskUpdatedAt;
+      if (!expectedEpisodeIdentity
+        || (!deterministicVerificationMatches && (!expected || exactEpisode !== expectedEpisodeIdentity || !legacySignatureMatches))) {
+        reviewSuperseded = true;
         return null;
       }
+      const attemptCount = countOptionalStepRevisionAttempts(current, claim.revisionKey, claim.stepName);
       const existing = current.steps ?? [];
       const transactionWave = remediationWaveCount(existing) + 1;
       appended = remediationSteps
@@ -226,17 +322,38 @@ export async function appendReviewRemediationSteps(
           remediation: { ...candidate.remediation!, wave: transactionWave },
           ...(candidate.dependsOn ? { dependsOn: [...candidate.dependsOn] } : {}),
         }));
-      if (appended.length === 0) return null;
+      if (appended.length === 0) {
+        duplicate = true;
+        if (expectedEpisodeIdentity && hasReviewRemediationAttemptForEpisode(current, expectedEpisodeIdentity)) {
+          const equivalentPending = existing.filter((step) =>
+            step.status === "pending"
+            && step.remediation !== undefined
+            && remediationSteps.some((candidate) => hasOpenEquivalentRemediationStep([step], candidate)),
+          );
+          if (equivalentPending.length > 0) {
+            alreadyCommitted = true;
+            appended = equivalentPending;
+          }
+        }
+        return null;
+      }
+      if (claim.maxRevisions !== "unbounded" && attemptCount >= claim.maxRevisions) {
+        budgetExhausted = true;
+        appended = [];
+        return null;
+      }
       const placement = planRemediationPlacement(existing, appended);
       const nextPrompt = widenPromptFileScopeContent(current.prompt ?? prompt, remediationDeclaredFiles(appended));
-      const attemptEntry = claim
-        ? {
-            timestamp: new Date().toISOString(),
-            action: `Review gate Code Review requested named remediation (attempt ${attemptCount + 1}/${claim.maxRevisions})`,
-            outcome: optionalStepRevisionLogOutcome(`Step: ${claim.stepName}\nStatus: ${claim.status}`, claim.revisionKey),
-            ...(claim.runContext ? { runContext: claim.runContext } : {}),
-          }
-        : undefined;
+      const attemptEntry = {
+        timestamp: new Date().toISOString(),
+        action: `Review gate ${gate} requested named remediation (attempt ${attemptCount + 1}/${claim.maxRevisions})`,
+        outcome: optionalStepRevisionLogOutcome(
+          `Step: ${claim.stepName}\nStatus: ${claim.status}`,
+          claim.revisionKey,
+          expectedEpisodeIdentity,
+        ),
+        ...(claim.runContext ? { runContext: claim.runContext } : {}),
+      };
       /*
       FNXC:StepLedgerIntegrity 2026-09-01-00:45:
       Reopen the step ledger HERE too. This is the branch Code Review actually takes.
@@ -252,7 +369,7 @@ export async function appendReviewRemediationSteps(
       present while the ledger still claims completion. Only a real seal is answered, so an append
       during a live session still writes nothing.
       */
-      const logWithAttempt = [...(current.log ?? []), ...(attemptEntry ? [attemptEntry] : [])];
+      const logWithAttempt = [...(current.log ?? []), attemptEntry];
       const reopenedLog = buildStepLedgerReopenLog(
         logWithAttempt,
         `${appended.length} remediation step(s) appended after completion (wave ${transactionWave})`,
@@ -261,20 +378,21 @@ export async function appendReviewRemediationSteps(
         steps: placement.steps,
         currentStep: placement.insertionIndex,
         ...(nextPrompt !== current.prompt ? { prompt: nextPrompt } : {}),
-        ...(attemptEntry || reopenedLog ? { log: reopenedLog ?? logWithAttempt } : {}),
+        log: reopenedLog ?? logWithAttempt,
+        postReviewFixCount: (current.postReviewFixCount ?? 0) + 1,
       };
-    }, options.attemptClaim?.runContext);
-    if (scopeSuperseded) {
-      await deps.store.logEntry(task.id, "Workspace review remediation superseded by repository scope change");
-      return "superseded-scope";
-    }
-    if (budgetExhausted) return "budget-exhausted";
-  } else {
-    const appendResult = await deps.store.appendRemediationSteps(task.id, remediationSteps, { wave });
-    appended = appendResult.appended;
-    live = await deps.store.getTask(task.id);
-    await widenPromptFileScope(deps.store, task.id, prompt, remediationDeclaredFiles(appended));
+  };
+  const outcome = publish
+    ? await publish(task.id, mutate)
+    : { applied: true as const, task: await deps.store.updateTaskAtomic(task.id, mutate, claim.runContext) };
+  const live = outcome.applied ? outcome.task : await deps.store.getTask(task.id);
+  if (scopeSuperseded) {
+    await deps.store.logEntry(task.id, "Workspace review remediation superseded by repository scope change");
+    return "superseded-scope";
   }
+  if (reviewSuperseded) return "superseded-review";
+  if (budgetExhausted) return "budget-exhausted";
+  if (!alreadyCommitted && (duplicate || !outcome.applied)) return "duplicate-no-new-work";
   if (appended.length === 0 || !live.steps.some((step) => step.status === "pending")) {
     return release(
       deps.store,
@@ -344,16 +462,6 @@ async function release<T extends AppendReviewRemediationOutcome>(
 ): Promise<T> {
   await store.logEntry(taskId, "Review remediation released as non-blocking", reason);
   return outcome;
-}
-
-/**
- * FNXC:ReviewGatedRemediation 2026-08-23-05:23:
- * A remediation accepted from the branch diff may be outside the original prompt scope. Persist its
- * declared files before the bounce so the executor and scope-aware squash merge see the same contract.
- */
-async function widenPromptFileScope(store: TaskStore, taskId: string, prompt: string | undefined, files: readonly string[]): Promise<void> {
-  const updated = widenPromptFileScopeContent(prompt, files);
-  if (updated !== prompt) await store.updateTask(taskId, { prompt: updated });
 }
 
 function widenPromptFileScopeContent(prompt: string | undefined, files: readonly string[]): string | undefined {

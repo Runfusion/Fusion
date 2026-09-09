@@ -2218,7 +2218,7 @@ export async function listFeaturesForAssertion(handle: QueryHandle, assertionId:
   return rows.map((row) => rowToFeature(row as FeatureRow));
 }
 
-/** Filter the given task ids to those that are live (not deleted, not archived). */
+/** Filter task ids to live rows, excluding soft-deleted and historical-sentinel records. */
 export async function listLiveLinkedTaskIds(handle: QueryHandle, taskIds: string[]): Promise<Set<string>> {
   if (taskIds.length === 0) return new Set();
   const rows = await handle
@@ -2237,29 +2237,23 @@ export async function listLiveLinkedTaskIds(handle: QueryHandle, taskIds: string
 
 /*
 FNXC:WorkflowLifecycleColumns 2026-07-31-05:05:
-`column` is the lane the card ACTUALLY reached, not the built-in name for its role.
-
-These two arms pinned `"done"` and `"archived"` in the TYPE, which is the census-invisible shape that
-blocks a conversion from the other end: the resolver below could not report the real column without a
-compile error, so the type would have forced the literal back in even after the predicate was fixed.
-`kind` already carries the role — that is what a consumer switches on — so the column field is free to
-carry the truth.
+Terminal evidence carries the actual workflow column. Deleted and historical-sentinel rows have one
+invalid-evidence outcome and can never satisfy delivery reconciliation.
 */
 export type TerminalTaskEvidence =
   | { kind: "done"; id: string; column: string }
-  | { kind: "archived"; id: string; column: string }
   | { kind: "nonterminal"; id: string; column: string }
   | { kind: "invalid-deleted"; id: string; column?: string }
   | { kind: "missing" };
 
 /**
  * FNXC:MissionReconciliation 2026-07-20-08:34:
- * Terminal evidence repair must distinguish a supported archive (the retained archived task tombstone plus its project-scoped cold snapshot) from an arbitrary soft/hard deletion. Read both representations on the caller's transaction handle so validation and feature linkage share one snapshot.
+ * Terminal delivery evidence accepts only a live Complete row. Historical or soft-deleted rows remain invalid delivery evidence and are never resurrected into mission state.
  */
 export async function getTerminalTaskEvidence(
   handle: QueryHandle,
   taskId: string,
-  terminalColumns?: { complete?: ReadonlySet<string>; archived?: ReadonlySet<string> },
+  terminalColumns?: { complete?: ReadonlySet<string> },
 ): Promise<TerminalTaskEvidence> {
   const taskRows = await handle
     .select({
@@ -2278,57 +2272,15 @@ export async function getTerminalTaskEvidence(
   const task = taskRows[0];
   const hasArchiveSnapshot = archiveRows.length > 0;
 
-  /*
-  FNXC:WorkflowLifecycleColumns 2026-07-30-21:50 (audited — REAL, deferred with the cost stated):
-  On a renamed board a genuinely completed task is classified `nonterminal`.
-
-  `task.column === "done"` is the only test for the `done` verdict, so a card in a complete lane
-  called anything else falls through every branch to `{ kind: "nonterminal" }`. The caller is mission
-  TERMINAL EVIDENCE repair, so a finished feature reads as unfinished — a wrong verdict rather than an
-  error, which is the shape this program keeps finding. The `archived` test below is the same defect;
-  its `deletedAt` companion masks it for soft-deleted rows, which is why only the `done` half bites in
-  practice.
-
-  Not converted here because `getTerminalTaskEvidence` takes a bare `QueryHandle`: no store, no task
-  object, no workflow, nothing to resolve a lane vocabulary from. The fix is a resolved terminal-lane
-  set threaded in by the caller — the same shape `getLiveTaskColumn` needs, and it should land with
-  it so the two cannot disagree about what "finished" means.
-  */
-  /*
-  FNXC:WorkflowLifecycleColumns 2026-07-31-05:05:
-  The lane sets arrive from the caller; omitted, the legacy ids answer exactly as before.
-
-  I deferred this twice on the premise that `AsyncMissionStore` "holds a layer, not a store" and so
-  could not resolve anything. It holds an OPTIONAL `taskStore`, and the single production construction
-  site supplies it (`workflow-definitions.ts`: `new AsyncMissionStore(layer, store)`). That is the
-  third deferral of mine to dissolve on inspection, which is why the premise is now recorded next to
-  the fix rather than in a note claiming it cannot be done.
-  */
-  /*
-  FNXC:LifecycleColumnCensus 2026-07-31-11:30 (fleet phase — RECLASSIFICATION, not a conversion):
-  DELIBERATE-LITERAL — these two ids are the FALLBACK ARM of the three-state rule, not backlog.
-
-  `terminalColumns` undefined means the caller could not resolve lanes; the legacy id is then the only
-  answer that keeps this query working, exactly as it did before lanes existed. Converting them would
-  delete the fallback and make an unresolvable caller return nothing — the census counts the literal,
-  but the literal IS the design.
-
-  Marked rather than converted because every fleet pass re-derives this and leaves it, and an unmarked
-  correct site is indistinguishable from owed work in `byFile`. The marker moves it to
-  `deliberateByFile`, which is what the count should mean.
-  */
+  /* Complete is workflow-resolved; the literal fallback is only for degraded built-in reads. */
   const isComplete = (column: string) =>
     terminalColumns?.complete ? terminalColumns.complete.has(column) : column === "done";
   /* DELIBERATE-LITERAL — same fallback arm as `isComplete` above; see the note there. */
-  const isArchived = (column: string) =>
-    terminalColumns?.archived ? terminalColumns.archived.has(column) : column === "archived";
+  const isHistoricalSentinel = (column: string) => column === "archived";
 
   if (!task) return hasArchiveSnapshot ? { kind: "invalid-deleted", id: taskId } : { kind: "missing" };
   if (task.deletedAt === null && isComplete(task.column)) return { kind: "done", id: task.id, column: task.column };
-  if (task.deletedAt !== null && isArchived(task.column) && hasArchiveSnapshot) {
-    return { kind: "archived", id: task.id, column: task.column };
-  }
-  if (task.deletedAt !== null || isArchived(task.column)) {
+  if (task.deletedAt !== null || isHistoricalSentinel(task.column)) {
     return { kind: "invalid-deleted", id: task.id, column: task.column };
   }
   return { kind: "nonterminal", id: task.id, column: task.column };

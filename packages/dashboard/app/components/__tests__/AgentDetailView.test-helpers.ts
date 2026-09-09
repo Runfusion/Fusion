@@ -104,6 +104,12 @@ vi.mock("../AgentLogViewer", () => ({
     showMissingDetailHint?: boolean;
   }) => {
     const [expanded, setExpanded] = useState(false);
+    const [showStart, setShowStart] = useState(false);
+    const tailEntries = entries.slice(-60);
+    const reconnectMarker = entries.find((entry) => entry.text.includes("Log stream reconnected"));
+    const renderedEntries = entries.length > 60
+      ? (showStart ? entries.slice(0, 60) : reconnectMarker ? [reconnectMarker, ...tailEntries.slice(-59)] : tailEntries)
+      : entries;
     return createElement(
       "div",
       { "data-testid": "agent-log-viewer" },
@@ -115,11 +121,14 @@ vi.mock("../AgentLogViewer", () => ({
           "Some tool details are unavailable.",
         )
         : null,
-      ...entries.map((entry, index) => {
+      createElement(
+        "div",
+        { className: "agent-log-viewer-scroll", onScroll: (event: { currentTarget: { scrollTop: number } }) => { if (event.currentTarget.scrollTop === 0) setShowStart(true); } },
+        ...renderedEntries.map((entry, index) => {
         const exceedsPreview = Boolean(entry.detail && (entry.detail.length > 600 || entry.detail.split("\n").length > 6));
         return createElement(
           "div",
-          { key: index },
+          { key: index, className: "agent-log-text" },
           createElement("span", null, entry.text),
           entry.detail
             ? createElement(
@@ -147,6 +156,7 @@ vi.mock("../AgentLogViewer", () => ({
             : null,
         );
       }),
+      ),
     );
   },
 }));

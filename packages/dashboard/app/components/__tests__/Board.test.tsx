@@ -60,7 +60,6 @@ vi.mock("../Column", () => ({
     onToggleAutoMerge,
     planAutoApproveEnabled,
     onTogglePlanAutoApprove,
-    onArchiveAllDone,
     favoriteProviders,
     favoriteModels,
     onToggleFavorite,
@@ -89,7 +88,6 @@ vi.mock("../Column", () => ({
     onToggleAutoMerge?: () => void;
     planAutoApproveEnabled?: boolean;
     onTogglePlanAutoApprove?: () => void;
-    onArchiveAllDone?: unknown;
     favoriteProviders?: string[];
     favoriteModels?: string[];
     onToggleFavorite?: (provider: string) => void;
@@ -110,7 +108,7 @@ vi.mock("../Column", () => ({
   }) => {
     columnRenderCounts[column] = (columnRenderCounts[column] ?? 0) + 1;
     return (
-      <div data-testid={`column-${column}`} data-tasks={JSON.stringify(tasks)} data-workflow-badges={JSON.stringify(Object.fromEntries(taskWorkflowBadges ?? new Map()))} data-collapsed={collapsed ? "true" : "false"} data-has-quick-create={onQuickCreate ? "yes" : "no"} data-has-new-task={onNewTask ? "yes" : "no"} data-has-auto-merge-toggle={onToggleAutoMerge ? "yes" : "no"} data-has-plan-auto-approve-toggle={onTogglePlanAutoApprove ? "yes" : "no"} data-plan-auto-approve-enabled={planAutoApproveEnabled ? "true" : "false"} data-has-archive-all={onArchiveAllDone ? "yes" : "no"} data-favorite-providers={JSON.stringify(favoriteProviders ?? [])} data-favorite-models={JSON.stringify(favoriteModels ?? [])} data-has-toggle-favorite={onToggleFavorite ? "yes" : "no"} data-has-toggle-model-favorite={onToggleModelFavorite ? "yes" : "no"} data-is-search-active={isSearchActive ? "true" : "false"} data-done-sort-mode={doneSortMode ?? ""} data-has-done-sort-handler={onDoneSortModeChange ? "yes" : "no"} data-workflow-id={workflowId ?? ""} data-workflow-options={JSON.stringify((workflowOptions ?? []).map((workflow) => workflow.id))} data-default-workflow-id={defaultWorkflowId ?? ""} data-column-display-name={columnDisplayName ?? ""} data-has-can-drop={canDropTask ? "yes" : "no"} data-has-planning={onPlanningMode ? "yes" : "no"}>
+      <div data-testid={`column-${column}`} data-tasks={JSON.stringify(tasks)} data-workflow-badges={JSON.stringify(Object.fromEntries(taskWorkflowBadges ?? new Map()))} data-collapsed={collapsed ? "true" : "false"} data-has-quick-create={onQuickCreate ? "yes" : "no"} data-has-new-task={onNewTask ? "yes" : "no"} data-has-auto-merge-toggle={onToggleAutoMerge ? "yes" : "no"} data-has-plan-auto-approve-toggle={onTogglePlanAutoApprove ? "yes" : "no"} data-plan-auto-approve-enabled={planAutoApproveEnabled ? "true" : "false"} data-favorite-providers={JSON.stringify(favoriteProviders ?? [])} data-favorite-models={JSON.stringify(favoriteModels ?? [])} data-has-toggle-favorite={onToggleFavorite ? "yes" : "no"} data-has-toggle-model-favorite={onToggleModelFavorite ? "yes" : "no"} data-is-search-active={isSearchActive ? "true" : "false"} data-done-sort-mode={doneSortMode ?? ""} data-has-done-sort-handler={onDoneSortModeChange ? "yes" : "no"} data-workflow-id={workflowId ?? ""} data-workflow-options={JSON.stringify((workflowOptions ?? []).map((workflow) => workflow.id))} data-default-workflow-id={defaultWorkflowId ?? ""} data-column-display-name={columnDisplayName ?? ""} data-has-can-drop={canDropTask ? "yes" : "no"} data-has-planning={onPlanningMode ? "yes" : "no"}>
         {onQuickCreate ? (
           <button type="button" data-testid={`mock-quick-create-${column}`} onClick={() => void (onQuickCreate as (input: { description: string; column?: string; workflowId?: string }) => Promise<unknown>)({ description: `Create from ${column}`, column, workflowId: "wf-custom" })}>
             quick-create-{column}
@@ -177,7 +175,6 @@ const DEFAULT_WORKFLOW = {
     { id: "in-progress", name: "In progress", flags: { countsTowardWip: true } },
     { id: "in-review", name: "In review", flags: { mergeBlocker: true } },
     { id: "done", name: "Done", flags: { complete: true } },
-    { id: "archived", name: "Archived", flags: { archived: true } },
   ],
 };
 
@@ -239,8 +236,6 @@ function createBoardProps(overrides = {}) {
     onTogglePlanAutoApprove: noop,
     globalPaused: false,
     onUpdateTask: undefined,
-    onArchiveTask: undefined,
-    onUnarchiveTask: undefined,
     ...overrides,
   };
 }
@@ -337,7 +332,6 @@ const DEFAULT_LANE_PAYLOAD = {
         { id: "in-progress", name: "In progress", flags: { countsTowardWip: true } },
         { id: "in-review", name: "In review", flags: { mergeBlocker: true } },
         { id: "done", name: "Done", flags: { complete: true } },
-        { id: "archived", name: "Archived", flags: { archived: true } },
       ],
     },
   ],
@@ -649,41 +643,6 @@ describe("Board", () => {
       const todoColumn = screen.getByTestId("column-todo");
       const todoTasks = JSON.parse(todoColumn.getAttribute("data-tasks") || "[]");
       expect(todoTasks).toHaveLength(0);
-    });
-
-    /*
-    FNXC:WorkflowBoard 2026-07-29-00:00 (U12):
-    UN-SKIPPED, with the fix rather than with a new expected number.
-
-    This test measured the LEGACY single-lane board — whose Column props were all
-    stable — so it passed for years without covering the board operators actually use.
-    Deleting the legacy board (U12 part 1) repointed it at the real one, where the
-    invariant was FALSE: toggling the archived column re-rendered every other column
-    (todo rendered 3x, not 2x). I skipped it then rather than weaken it.
-
-    The cause is now measured, not guessed: instrumenting `React.memo`'s comparator to
-    print which props change identity on the toggle named exactly one — `canDropTask`,
-    an arrow allocated inline in Board's render. With it bound through a `useMemo`
-    cache, the only column that re-renders on a collapse is `archived` itself.
-
-    So this now guards a real invariant on the real board: a Board state change must
-    not re-render unrelated columns (and, beneath them, every card).
-    */
-    it("keeps unaffected columns stable when archived collapse toggles", () => {
-      const tasks: Task[] = [
-        createTask({ id: "FN-001", description: "Todo task", column: "todo" }),
-        createTask({ id: "FN-002", description: "Archived task", column: "archived" }),
-      ];
-
-      renderBoard({ tasks });
-
-      const initialTodoRenders = columnRenderCounts.todo;
-      const initialArchivedRenders = columnRenderCounts.archived;
-
-      fireEvent.click(screen.getByRole("button", { name: "toggle-archived" }));
-
-      expect(columnRenderCounts.archived).toBeGreaterThan(initialArchivedRenders);
-      expect(columnRenderCounts.todo).toBe(initialTodoRenders);
     });
 
     it("only re-renders the affected column when a task updates", () => {
@@ -1679,7 +1638,6 @@ describe("Board", () => {
           "FN-custom-done": "wf-custom",
           "FN-stale": "wf-deleted",
           "FN-hidden": "builtin:coding",
-          "FN-archived": "builtin:coding",
         },
         [
           {
@@ -1704,7 +1662,6 @@ describe("Board", () => {
           mkTask({ id: "FN-custom-done", column: "done" }),
           mkTask({ id: "FN-stale", column: "todo" }),
           mkTask({ id: "FN-hidden", column: "quiet" }),
-          mkTask({ id: "FN-archived", column: "archived" }),
         ],
       });
 
@@ -1917,45 +1874,6 @@ describe("Board", () => {
       expect(screen.getByTestId("column-intake")).toHaveAttribute("data-tasks", expect.stringContaining("FN-custom"));
     });
 
-    it("keeps hidden workflow tasks out of shared aggregate columns and archived columns collapsed", async () => {
-      const customWorkflow = {
-        id: "wf-archive-hidden",
-        name: "Archive + Hidden Flow",
-        columns: [
-          { id: "ready", name: "Ready", flags: { intake: true } },
-          { id: "quiet", name: "Quiet", flags: { hiddenFromBoard: true } },
-          { id: "cold-storage", name: "Cold storage", flags: { archived: true } },
-        ],
-      };
-      const visibleQuietWorkflow = {
-        id: "wf-visible-quiet",
-        name: "Visible Quiet Flow",
-        columns: [
-          { id: "quiet", name: "Visible quiet", flags: { intake: true } },
-        ],
-      };
-      enableFlag(
-        { "FN-ready": "wf-archive-hidden", "FN-quiet-hidden": "wf-archive-hidden", "FN-quiet-visible": "wf-visible-quiet", "FN-cold": "wf-archive-hidden" },
-        [DEFAULT_WORKFLOW, customWorkflow, visibleQuietWorkflow],
-      );
-      renderBoard({
-        tasks: [
-          mkTask({ id: "FN-ready", column: "ready" }),
-          mkTask({ id: "FN-quiet-hidden", column: "quiet" }),
-          mkTask({ id: "FN-quiet-visible", column: "quiet" }),
-          mkTask({ id: "FN-cold", column: "cold-storage" }),
-        ],
-      });
-
-      await selectWorkflow("__all_workflows__");
-
-      expect(screen.getByTestId("column-ready")).toHaveAttribute("data-tasks", expect.stringContaining("FN-ready"));
-      expect(screen.getByTestId("column-quiet")).toHaveAttribute("data-tasks", expect.stringContaining("FN-quiet-visible"));
-      expect(screen.getByTestId("column-quiet")).not.toHaveAttribute("data-tasks", expect.stringContaining("FN-quiet-hidden"));
-      expect(screen.getByTestId("column-cold-storage")).toHaveAttribute("data-tasks", expect.stringContaining("FN-cold"));
-      expect(screen.getByTestId("column-cold-storage")).toHaveAttribute("data-collapsed", "true");
-      expect(screen.getByRole("main").lastElementChild).toBe(screen.getByTestId("column-cold-storage"));
-    });
 
     it("uses default workflow column labels and flags for duplicate aggregate column ids", async () => {
       const duplicateNameWorkflow = {
@@ -2003,15 +1921,6 @@ describe("Board", () => {
       expect(workflowSwitcherOptionIds()).toEqual(["__all_workflows__", "builtin:coding", "wf-custom"]);
     });
 
-    it("renders archived cards in the selected workflow archived column", async () => {
-      enableFlag({ "FN-1": "builtin:coding", "FN-9": "builtin:coding" });
-      renderBoard({ tasks: [mkTask({ id: "FN-1" }), mkTask({ id: "FN-9", column: "archived" })] });
-      await waitFor(() => expect(screen.getByTestId("column-archived")).toBeDefined());
-      const todoIds = JSON.parse(screen.getByTestId("column-todo").getAttribute("data-tasks") || "[]").map((task: Task) => task.id);
-      expect(todoIds).toEqual(["FN-1"]);
-      const archivedIds = JSON.parse(screen.getByTestId("column-archived").getAttribute("data-tasks") || "[]").map((task: Task) => task.id);
-      expect(archivedIds).toEqual(["FN-9"]);
-    });
 
     it("renders selected workflow columns as direct children of the horizontal board", async () => {
       enableFlag({ "FN-1": "builtin:coding" }, [DEFAULT_WORKFLOW, CUSTOM_WORKFLOW]);
@@ -2023,7 +1932,6 @@ describe("Board", () => {
         "column-in-progress",
         "column-in-review",
         "column-done",
-        "column-archived",
       ]);
     });
 
@@ -2213,27 +2121,7 @@ describe("Board", () => {
       }
     });
 
-    it("archived column is collapsible in workflow mode", async () => {
-      enableFlag({ "FN-9": "builtin:coding" });
-      renderBoard({ tasks: [mkTask({ id: "FN-9", column: "archived" })] });
 
-      const archivedColumn = await screen.findByTestId("column-archived");
-      expect(archivedColumn.getAttribute("data-collapsed")).toBe("true");
-
-      fireEvent.click(screen.getByRole("button", { name: "toggle-archived" }));
-      expect(screen.getByTestId("column-archived").getAttribute("data-collapsed")).toBe("false");
-
-      fireEvent.click(screen.getByRole("button", { name: "toggle-archived" }));
-      expect(screen.getByTestId("column-archived").getAttribute("data-collapsed")).toBe("true");
-    });
-
-    it("workflow without archived column does not render one", async () => {
-      enableFlag({ "FN-1": CUSTOM_WORKFLOW.id }, [CUSTOM_WORKFLOW]);
-      renderBoard({ tasks: [mkTask({ id: "FN-1", column: "intake" })] });
-
-      await waitFor(() => expect(screen.getByTestId("column-intake")).toBeDefined());
-      expect(screen.queryByTestId("column-archived")).toBeNull();
-    });
 
     it("built-in workflow Done uses the selected Done sort mode", async () => {
       const tasks = [
@@ -2258,6 +2146,25 @@ describe("Board", () => {
       expect(screen.getByTestId("column-done")).toHaveAttribute("data-done-sort-mode", "task-id-desc");
       expect(readIds("done")).toEqual(["FN-004", "FN-003", "FN-002", "FN-001"]);
       expect(readIds("todo")).toEqual(["FN-010", "FN-050"]);
+    });
+
+    it("delegates a controlled Done sort change before rendering the server-selected order", async () => {
+      const tasks = [
+        mkTask({ id: "FN-003", column: "done", columnMovedAt: "2024-01-01T09:00:00.000Z" }),
+        mkTask({ id: "FN-001", column: "done", columnMovedAt: "2024-01-01T11:00:00.000Z" }),
+      ];
+      const onCompletedSortModeChange = vi.fn();
+      enableFlag(Object.fromEntries(tasks.map((task) => [task.id, "builtin:coding"])));
+      const { rerender } = renderBoard({ tasks, completedSortMode: "completion-date-desc", onCompletedSortModeChange });
+      await waitFor(() => expect(screen.getByTestId("column-done")).toHaveAttribute("data-done-sort-mode", "completion-date-desc"));
+
+      fireEvent.click(within(screen.getByTestId("column-done")).getByRole("button", { name: "sort-done-by-id" }));
+
+      expect(onCompletedSortModeChange).toHaveBeenCalledWith("task-id-desc");
+      expect(screen.getByTestId("column-done")).toHaveAttribute("data-done-sort-mode", "completion-date-desc");
+
+      rerender(<Board {...createBoardProps({ tasks, completedSortMode: "task-id-desc", onCompletedSortModeChange })} />);
+      expect(screen.getByTestId("column-done")).toHaveAttribute("data-done-sort-mode", "task-id-desc");
     });
 
     it("passes Done sort state to an empty built-in workflow Done column", async () => {
@@ -2297,15 +2204,6 @@ describe("Board", () => {
       expect(readIds()).toEqual(["FN-003", "FN-002", "FN-001"]);
     });
 
-    it("done column in workflow mode receives onArchiveAllDone prop", async () => {
-      const onArchiveAllDone = vi.fn();
-      enableFlag({ "FN-1": "builtin:coding" });
-      renderBoard({ tasks: [mkTask({ id: "FN-1", column: "done" })], onArchiveAllDone });
-
-      await waitFor(() => expect(screen.getByTestId("column-done")).toBeDefined());
-      expect(screen.getByTestId("column-done").getAttribute("data-has-archive-all")).toBe("yes");
-      expect(screen.getByTestId("column-todo").getAttribute("data-has-archive-all")).toBe("no");
-    });
 
     it("re-fetches board-workflows when the workflow switcher opens", async () => {
       enableFlag({ "FN-1": "builtin:coding" }, [DEFAULT_WORKFLOW, CUSTOM_WORKFLOW]);

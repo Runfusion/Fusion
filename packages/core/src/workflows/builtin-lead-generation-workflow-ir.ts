@@ -35,7 +35,6 @@ const RAW_BUILTIN_LEAD_GENERATION_WORKFLOW_IR: WorkflowIr = {
       ],
     },
     { id: "converted", name: "Converted", traits: [{ trait: "complete" }] },
-    { id: "archived", name: "Archived", traits: [{ trait: "archived" }] },
   ],
   fields: [
     { id: "company", name: "Company", type: "string", render: { placement: "card", widget: "input" } },

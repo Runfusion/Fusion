@@ -22,7 +22,6 @@ import {generateTaskLineageId} from "../tasks/task-lineage.js";
 import {type TaskRow, type TaskPersistSerializationContext, type TaskColumnDescriptor, TASK_COLUMN_DESCRIPTORS, TASK_COLUMN_DESCRIPTOR_BY_COLUMN} from "../task-store/persistence.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {readTaskRow as readTaskRowAsync} from "../task-store/async/async-persistence.js";
-import {findArchivedTaskEntry} from "../task-store/async/async-archive-lineage.js";
 import type {PrEntityRow, RunAuditEventRow, MergeQueueRow, MergeRequestRow, CompletionHandoffMarkerRow, WorkflowWorkItemRow} from "../task-store/row-types.js";
 
 export function getTaskSelectClauseImpl2(store: TaskStore, slim: boolean, tableAlias?: string): string {
@@ -42,7 +41,7 @@ export function getTaskSelectClauseImpl2(store: TaskStore, slim: boolean, tableA
       "tokenUsageInputTokens", "tokenUsageOutputTokens", "tokenUsageCachedTokens", "tokenUsageCacheWriteTokens", "tokenUsageTotalTokens", "tokenUsageFirstUsedAt", "tokenUsageLastUsedAt", "tokenUsageModelProvider", "tokenUsageModelId", "tokenUsagePerModel", "tokenBudgetSoftAlertedAt", "tokenBudgetHardAlertedAt", "tokenBudgetOverride",
       "createdAt", "updatedAt", "columnMovedAt", "firstExecutionAt", "cumulativeActiveMs", "cumulativePlanningMs", "planningStartedAt", "executionStartedAt", "executionCompletedAt",
       "dependencies", "steps", "stepReports", "customFields", "comments", "review", "reviewState", "workflowStepResults", "steeringComments",
-      "attachments", "prInfo", "prInfos", "issueInfo", "githubTracking", "sourceIssueProvider", "sourceIssueRepository", "sourceIssueExternalIssueId", "sourceIssueNumber", "sourceIssueUrl", "sourceIssueClosedAt", "mergeDetails", "workspaceWorktrees", "repositoryScope", "externalBlock",
+      "attachments", "prInfo", "prInfos", "issueInfo", "githubTracking", "sourceIssueProvider", "sourceIssueRepository", "sourceIssueExternalIssueId", "sourceIssueNumber", "sourceIssueUrl", "sourceIssueClosedAt", "mergeDetails", "workspaceWorktrees", "repositoryScope", "externalBlock", "planningFailure",
       "noCommitsExpected", "enabledWorkflowSteps", "modifiedFiles", "declaredSymbols",
       "missionId", "sliceId", "scopeOverride", "scopeOverrideReason", "scopeAutoWiden", "assignedAgentId", "pausedByAgentId", "assigneeUserId", "nodeId", "effectiveNodeId", "effectiveNodeSource",
       "sourceType", "sourceAgentId", "sourceRunId", "sourceSessionId", "sourceMessageId", "sourceParentTaskId", "sourceMetadata", "proposalClaimId",
@@ -154,8 +153,10 @@ export async function readTaskForMoveImpl(store: TaskStore, id: string): Promise
     // Backend mode: read the task row directly via the async helper (without
     // acquiring the task lock). This method is called INSIDE withTaskLock from
     // moveTask/handoffToReview, so using getTask() (which also acquires the
-    // lock) would deadlock. We read the raw row and convert it. Fall back to
-    // archive lookup if the task is not in the live table.
+    // lock) would deadlock. We read the raw row and convert it.
+    // FNXC:TaskArchiveRemoval 2026-09-04-18:25:
+    // Move paths are live-only. A missing row must not fall back to a cold historical snapshot,
+    // because that would expose migration/forensic data to a lifecycle mutation.
         const layer = store.asyncLayer!;
     const pgRow = await readTaskRowAsync(layer, id, { includeDeleted: true });
     if (pgRow) {
@@ -163,11 +164,6 @@ export async function readTaskForMoveImpl(store: TaskStore, id: string): Promise
         throw new TaskDeletedError(id, pgRow.deletedAt as string);
       }
       return store.rowToTask(store.pgRowToTaskRow(pgRow));
-    }
-    // Fall back to archive lookup (soft-deleted/archived tasks).
-    const entry = await findArchivedTaskEntry(layer.db, id, layer.projectId);
-    if (entry) {
-      return store.archiveEntryToTask(entry, false);
     }
     throw new Error(`Task ${id} not found`);
 }

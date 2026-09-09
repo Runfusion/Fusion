@@ -181,24 +181,47 @@ export class StepParserRegistry {
  * following the closing paren (if present), else after the first colon — and no
  * `dependsOn` is recorded.
  */
-export function parseStepHeadings(content: string): TaskStep[] {
-  const steps: TaskStep[] = [];
-  // Legacy matcher — UNCHANGED from the original implementation, so unannotated
-  // headings (and every legacy edge case, including `[^:]*` spanning newlines)
-  // parse byte-identically. The full match (`m[0]`) is re-inspected only to layer
-  // the `(depends: …)` annotation on top.
-  const stepRegex = /^###\s+Step\s+\d+[^:]*:\s*(.+)$/gm;
-  // Well-formed annotation form: `### Step N (depends: …): name`.
-  const annotatedRegex = /^###\s+Step\s+\d+\s*\(depends:\s*([^)]*)\)\s*:\s*([^\n]+)$/;
+export interface StepHeadingMatch {
+  headingNumber: number;
+  index: number;
+  headingLineEnd: number;
+  match: string;
+}
 
-  const matches: { full: string; name: string; headingNumber: number }[] = [];
+/*
+FNXC:WorkflowSteps 2026-09-05-22:06:
+Every consumer deciding whether text is a step heading must use this matcher. A private stricter
+matcher hid documented `(depends: …)` headings, causing false contiguity failures and empty step bodies.
+*/
+export function matchStepHeadings(content: string): StepHeadingMatch[] {
+  const stepRegex = /^###\s+Step\s+\d+[^:]*:\s*(.+)$/gm;
+  const matches: StepHeadingMatch[] = [];
   let match: RegExpExecArray | null;
   while ((match = stepRegex.exec(content)) !== null) {
     const heading = /^###\s+Step\s+(\d+)/.exec(match[0]);
-    if (heading) {
-      matches.push({ full: match[0], name: match[1], headingNumber: Number(heading[1]) });
-    }
+    if (!heading) continue;
+    const index = match.index;
+    const newline = content.indexOf("\n", index);
+    matches.push({
+      headingNumber: Number(heading[1]),
+      index,
+      headingLineEnd: newline === -1 ? content.length : newline,
+      match: match[0],
+    });
   }
+  return matches;
+}
+
+export function parseStepHeadings(content: string): TaskStep[] {
+  const steps: TaskStep[] = [];
+  // Well-formed annotation form: `### Step N (depends: …): name`.
+  const annotatedRegex = /^###\s+Step\s+\d+\s*\(depends:\s*([^)]*)\)\s*:\s*([^\n]+)$/;
+  const matches = matchStepHeadings(content).map((entry) => ({
+    full: entry.match,
+    name: /^###\s+Step\s+\d+[^:]*:\s*(.+)$/m.exec(entry.match)?.[1] ?? "",
+    headingNumber: entry.headingNumber,
+  }));
+  let match: RegExpExecArray | null;
   const offset = resolveAuthoredStepHeadingOffset(matches.map((entry) => entry.headingNumber));
 
   for (const { full, name: legacyName } of matches) {

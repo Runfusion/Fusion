@@ -22,15 +22,18 @@ export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
  * column IDs are byte-identical to these — KTD-1). New code should prefer the
  * workflow-resolved path (`resolveAllowedColumns` / `workflowHasColumn` in
  * `workflow-transitions.ts`) and trait predicates over string equality; this
- * enum remains the canonical id set for the built-in default workflow.
+ * exported tuple is the visible built-in board and therefore excludes the historical sentinel.
+ *
+ * FNXC:TaskArchiveRemoval 2026-09-04-10:36:
+ * `getLiveTaskColumn` deliberately manufactures `"archived"` for soft-deleted parents. The literal
+ * remains type-readable for those internal snapshots without restoring it to the board column list.
  */
-export const COLUMNS = ["triage", "todo", "in-progress", "in-review", "done", "archived"] as const;
+export const COLUMNS = ["triage", "todo", "in-progress", "in-review", "done"] as const;
 /**
- * The closed legacy column union — still the correct type for default-workflow
- * column ids. Movement entry points accept the wider {@link ColumnId}; runtime
- * code validates ids against the task's resolved workflow.
+ * The built-in workflow columns plus the read-only historical soft-delete sentinel. Movement entry
+ * points accept the wider {@link ColumnId}; runtime code validates ids against the task's workflow.
  */
-export type Column = (typeof COLUMNS)[number];
+export type Column = (typeof COLUMNS)[number] | "archived";
 
 /**
  * Column identifier accepted at task-movement entry points (KTD-1).

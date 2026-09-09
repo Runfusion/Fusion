@@ -81,7 +81,6 @@ function workflowsPayload(renamed: boolean): BoardWorkflowsPayload {
             flags: { countsTowardWip: true, mergeBlocker: true, humanReview: true },
           },
           { id: id("done"), name: "Shipped", flags: { complete: true } },
-          { id: id("archived"), name: "Filed", flags: { archived: true, hiddenFromBoard: true } },
         ],
       },
     ],

@@ -1,8 +1,18 @@
 import { describe, expect, it } from "vitest";
 
-import { parseJsonSteps, parseStepHeadings } from "../tasks/step-parsers.js";
+import { matchStepHeadings, parseJsonSteps, parseStepHeadings } from "../tasks/step-parsers.js";
 
 describe("step parser dependency indexing", () => {
+  it("matches every canonical numbered heading, including annotations", () => {
+    const content = "### Step 0: Plain\n### Step 1 (depends: 0): Dependent\n### Step 2 (depends:): Independent\n### Step 10 (depends: 1: Malformed";
+    const matches = matchStepHeadings(content);
+    expect(matches.map((match) => match.headingNumber)).toEqual([0, 1, 2, 10]);
+    expect(matches.map((match) => match.headingNumber)).toEqual(parseStepHeadings(content).map((_, index) => [0, 1, 2, 10][index]));
+    expect(matches[1]).toMatchObject({ index: content.indexOf("### Step 1") });
+    expect(content.slice(matches[1].index, matches[1].headingLineEnd)).toBe("### Step 1 (depends: 0): Dependent");
+    expect(matchStepHeadings("#### Step 1: no\n### Preflight")).toEqual([]);
+  });
+
   it("maps canonical heading annotations to their literal heading numbers", () => {
     expect(parseStepHeadings("### Step 0: Preflight\n### Step 1: Implement\n### Step 2 (depends: 1): Test")[2].dependsOn).toEqual([1]);
     expect(parseStepHeadings("### Step 0: Preflight\n### Step 1 (depends: 0): Implement")[1].dependsOn).toEqual([0]);

@@ -10,8 +10,8 @@ import {TaskStore} from "../store.js";
 import type {Settings} from "../types.js";
 import { parseWorkflowIr, downgradeIrToV1IfPure } from "../workflows/workflow-ir.js";
 import {OccupiedColumnsError, assertRehomeTargetValid, computeRemovedOccupiedColumns, computeIncompatibleFieldChanges, IncompatibleFieldChangeError, resolveEntryColumnId} from "../workflows/workflow-reconciliation.js";
-import type {WorkflowFieldDefinition} from "../workflows/workflow-ir-types.js";
-import {resolveDefaultWorkflowIr} from "../workflows/builtin-workflows.js";
+import type {WorkflowFieldDefinition, WorkflowIr} from "../workflows/workflow-ir-types.js";
+import {resolveDefaultWorkflowIr, resolveRetiredBuiltinWorkflowId} from "../workflows/builtin-workflows.js";
 import "../builtin-traits.js";
 import {normalizeWorkflowIcon, type WorkflowDefinition, type WorkflowDefinitionUpdate} from "../workflows/workflow-definition-types.js";
 import {resolveDefaultOnOptionalGroupIds} from "../workflows/workflow-optional-steps.js";
@@ -19,9 +19,37 @@ import {isBuiltinWorkflowId} from "../workflows/builtin-workflows.js";
 import {fromJson} from "../db/db.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import * as schema from "../postgres/schema/index.js";
-import {readProjectConfig, writeProjectConfig} from "../task-store/async/async-settings.js";
+import {acquireProjectConfigurationMutationLock, readProjectConfig, writeProjectConfig} from "../task-store/async/async-settings.js";
 import {and, eq, inArray} from "drizzle-orm";
 import {projectScopeFor, type AsyncDataLayer} from "../postgres/data-layer.js";
+
+function collectWorkflowScriptNames(ir: WorkflowIr): Set<string> {
+  const names = new Set<string>();
+  const visitNodes = (nodes: unknown): void => {
+    if (!Array.isArray(nodes)) return;
+    for (const rawNode of nodes) {
+      if (!rawNode || typeof rawNode !== "object" || Array.isArray(rawNode)) continue;
+      const config = (rawNode as Record<string, unknown>).config;
+      if (!config || typeof config !== "object" || Array.isArray(config)) continue;
+      const configRecord = config as Record<string, unknown>;
+      if (typeof configRecord.scriptName === "string") names.add(configRecord.scriptName);
+      const template = configRecord.template;
+      if (template && typeof template === "object" && !Array.isArray(template)) {
+        visitNodes((template as Record<string, unknown>).nodes);
+      }
+    }
+  };
+  visitNodes(ir.nodes);
+  return names;
+}
+
+/** @internal Test-only concurrency barrier after a workflow definition owns the project configuration lock. */
+let afterWorkflowDefinitionLockForTesting: (() => void | Promise<void>) | undefined;
+
+/** @internal */
+export function __setAfterWorkflowDefinitionLockForTesting(callback: (() => void | Promise<void>) | undefined): void {
+  afterWorkflowDefinitionLockForTesting = callback;
+}
 
 export async function createWorkflowStepImpl(store: TaskStore, input: import("../types.js").WorkflowStepInput): Promise<import("../types.js").WorkflowStep> {
     return store.withConfigLock(async () => {
@@ -37,7 +65,9 @@ export async function createWorkflowStepImpl(store: TaskStore, input: import("..
       Workflow step creation is PostgreSQL-only after dual-path collapse; reuse one AsyncDataLayer binding for counter read + insert.
       */
       const layer = store.asyncLayer!;
-      const configRow = await readProjectConfig(layer);
+      const step = await layer.transactionImmediate(async (tx) => {
+      await acquireProjectConfigurationMutationLock(tx, layer.projectId);
+      const configRow = await readProjectConfig(layer, tx);
       const nextWsId = configRow.nextWorkflowStepId ?? 1;
 
       const id = `WS-${String(nextWsId).padStart(3, "0")}`;
@@ -71,7 +101,7 @@ export async function createWorkflowStepImpl(store: TaskStore, input: import("..
         updatedAt: now,
       };
 
-      await layer.db.insert(schema.project.workflowSteps).values({
+      await tx.insert(schema.project.workflowSteps).values({
         projectId: layer.projectId?.trim() ?? "",
         id: step.id,
         templateId: step.templateId ?? null,
@@ -95,7 +125,9 @@ export async function createWorkflowStepImpl(store: TaskStore, input: import("..
       FNXC:SqliteDualPathCleanup 2026-07-26-15:00:
       writeProjectConfig replaces the settings jsonb wholesale — pass the existing settings so bumping nextWorkflowStepId cannot wipe project config to {}.
       */
-      await writeProjectConfig(layer, (configRow.settings ?? {}) as Record<string, unknown>, { nextWorkflowStepId: nextWsId + 1 });
+      await writeProjectConfig(layer, (configRow.settings ?? {}) as Record<string, unknown>, { nextWorkflowStepId: nextWsId + 1 }, tx);
+      return step;
+      });
       store.workflowStepsCache = null;
       return step;
 });
@@ -105,7 +137,9 @@ export async function updateWorkflowStepImpl(store: TaskStore, id: string, updat
     // FNXC:PostgresCutover 2026-06-28-10:00:
     // Backend-mode branch: read the step row via Drizzle, apply updates, write back.
         const layer = store.asyncLayer!;
-    const rows = await layer.db.select().from(schema.project.workflowSteps).where(and(eq(schema.project.workflowSteps.id, id), projectScopeFor(schema.project.workflowSteps.projectId, layer.projectId))).limit(1);
+    const updatedStep = await layer.transactionImmediate(async (tx) => {
+    await acquireProjectConfigurationMutationLock(tx, layer.projectId);
+    const rows = await tx.select().from(schema.project.workflowSteps).where(and(eq(schema.project.workflowSteps.id, id), projectScopeFor(schema.project.workflowSteps.projectId, layer.projectId))).limit(1);
     const pgRow = rows[0];
     if (!pgRow) throw new Error(`Workflow step '${id}' not found`);
 
@@ -152,7 +186,7 @@ export async function updateWorkflowStepImpl(store: TaskStore, id: string, updat
     if ("migratedFragmentId" in updates) step.migratedFragmentId = updates.migratedFragmentId;
     step.updatedAt = new Date().toISOString();
 
-    await layer.db.update(schema.project.workflowSteps).set({
+    await tx.update(schema.project.workflowSteps).set({
       templateId: step.templateId ?? null,
       name: step.name,
       description: step.description,
@@ -170,8 +204,10 @@ export async function updateWorkflowStepImpl(store: TaskStore, id: string, updat
       updatedAt: step.updatedAt,
     }).where(and(eq(schema.project.workflowSteps.id, id), projectScopeFor(schema.project.workflowSteps.projectId, layer.projectId)));
 
-    store.workflowStepsCache = null;
     return step;
+    });
+    store.workflowStepsCache = null;
+    return updatedStep;
 }
 
 export async function updateWorkflowDefinitionImpl(store: TaskStore, id: string, updates: WorkflowDefinitionUpdate,): Promise<WorkflowDefinition> {
@@ -197,10 +233,16 @@ export async function updateWorkflowDefinitionImpl(store: TaskStore, id: string,
     the first time. Cards are moved by the editor's explicit choice rather than
     stranded silently.
     */
+    const observedWorkflow = updates.ir !== undefined
+      ? await store.getWorkflowDefinition(id)
+      : undefined;
+    if (updates.ir !== undefined && !observedWorkflow) {
+      throw new Error(`Workflow '${id}' not found`);
+    }
+
     let pendingRehome: { rehomeTo: string; occupantTaskIds: string[] } | undefined;
     if (updates.ir !== undefined) {
-      const existingForCheck = await store.getWorkflowDefinition(id);
-      if (!existingForCheck) throw new Error(`Workflow '${id}' not found`);
+      const existingForCheck = observedWorkflow!;
       const nextIrForCheck = parseWorkflowIr(updates.ir);
       const occupantsByColumn = await store.occupantsByColumnForWorkflow(id, false);
       const removed = computeRemovedOccupiedColumns(
@@ -240,8 +282,7 @@ export async function updateWorkflowDefinitionImpl(store: TaskStore, id: string,
       | { oldFields: WorkflowFieldDefinition[]; newFields: WorkflowFieldDefinition[]; occupantTaskIds: string[]; coerce?: "drop" | "keep-orphaned" }
       | undefined;
     if (updates.ir !== undefined) {
-      const existingForFields = await store.getWorkflowDefinition(id);
-      if (!existingForFields) throw new Error(`Workflow '${id}' not found`);
+      const existingForFields = observedWorkflow!;
       const nextIrForFields = parseWorkflowIr(updates.ir);
       const oldFields: WorkflowFieldDefinition[] =
         existingForFields.ir.version === "v2" ? (existingForFields.ir.fields ?? []) : [];
@@ -285,13 +326,42 @@ export async function updateWorkflowDefinitionImpl(store: TaskStore, id: string,
         };
       }
     }
-    const saved = await store.withConfigLock(async () => {
+    const saved = await store.withConfigLock(async () => layer.transactionImmediate(async (tx) => {
+      await acquireProjectConfigurationMutationLock(tx, layer.projectId);
+      await afterWorkflowDefinitionLockForTesting?.();
       const existing = await store.getWorkflowDefinition(id);
       if (!existing) throw new Error(`Workflow '${id}' not found`);
+
+      /*
+      FNXC:TerminalScripts 2026-09-06-20:24:
+      A workflow editor may have derived its replacement IR before a concurrent terminal-script rename acquired the shared project lock. Reject that stale whole-graph write after lock acquisition so it cannot restore the retired scriptName; an editor must reload the authoritative renamed graph before retrying.
+      */
+      if (updates.ir !== undefined && (
+        observedWorkflow?.updatedAt !== existing.updatedAt
+        || JSON.stringify(observedWorkflow.ir) !== JSON.stringify(existing.ir)
+      )) {
+        throw new Error(`Workflow '${id}' changed while the update was waiting; reload and retry`);
+      }
 
       const name = updates.name !== undefined ? updates.name.trim() : existing.name;
       if (!name) throw new Error("Workflow name is required");
       const ir = updates.ir !== undefined ? parseWorkflowIr(updates.ir) : existing.ir;
+      if (updates.ir !== undefined) {
+        const authoritativeScriptNames = collectWorkflowScriptNames(existing.ir);
+        const submittedScriptNames = collectWorkflowScriptNames(ir);
+        const projectConfig = await readProjectConfig(layer, tx);
+        const catalog = ((projectConfig.settings ?? {}) as Settings).scripts ?? {};
+        const retiredSubmittedName = [...submittedScriptNames].find(
+          (scriptName) => catalog[scriptName] === undefined && !authoritativeScriptNames.has(scriptName),
+        );
+        /*
+        FNXC:TerminalScripts 2026-09-06-20:36:
+        A whole-graph save may originate from an editor loaded before a completed script rename, so comparing only workflow revisions observed during the request cannot detect it. Under the shared project lock, reject a submitted scriptName that is absent from both the current catalog and authoritative graph; this preserves legacy dangling references already present while preventing stale editors from restoring a retired name.
+        */
+        if (retiredSubmittedName !== undefined) {
+          throw new Error(`Workflow '${id}' references a script that changed; reload and retry`);
+        }
+      }
       // Residual A: reject save-blocking trait composition conflicts server-side
       // when the IR is being changed.
       if (updates.ir !== undefined) store.assertWorkflowIrTraitsValid(ir);
@@ -307,7 +377,7 @@ export async function updateWorkflowDefinitionImpl(store: TaskStore, id: string,
 
       
       // FNXC:PostgresCutover 2026-06-28: async UPDATE for workflows row
-      await layer.db.update(schema.project.workflows).set({
+      await tx.update(schema.project.workflows).set({
         name: next.name,
         description: next.description,
         icon: next.icon ?? null,
@@ -327,7 +397,7 @@ export async function updateWorkflowDefinitionImpl(store: TaskStore, id: string,
       ));
     
       return next;
-    });
+    }));
 
     // U5 (R20): now that the new IR is committed, re-home the occupants of the
     // removed columns into `rehomeTo` (one audit event per card). Done outside
@@ -435,7 +505,7 @@ export async function deleteWorkflowDefinitionImpl(store: TaskStore, id: string)
       try {
         await store.updateTask(row.taskId, { enabledWorkflowSteps: [] });
       } catch {
-        // Task may be deleted/archived; dangling step ids resolve to undefined
+        // Task may be deleted or historical-only; dangling step ids resolve to undefined
         // at execution time and are skipped.
       }
     }
@@ -452,8 +522,8 @@ export async function deleteWorkflowDefinitionImpl(store: TaskStore, id: string)
       `builtin:legacy-coding`; the catalog's actual default is `resolveDefaultWorkflowIr()`. Post-U11
       they differ by exactly the column this line reads:
 
-          default  todo, in-progress, in-review, done, archived
-          legacy   triage, todo, in-progress, in-review, done, archived
+          default  todo, in-progress, in-review, done
+          legacy   triage, todo, in-progress, in-review, done
 
       so `resolveEntryColumnId` answered `triage` for the legacy IR and `todo` for the default —
       measured, not inferred. The comment above already says "re-home each occupant to the DEFAULT
@@ -476,7 +546,14 @@ export async function deleteWorkflowDefinitionImpl(store: TaskStore, id: string)
     }
   }
 
-export async function setDefaultWorkflowIdImpl(store: TaskStore, workflowId: string | null): Promise<void> {
+export async function setDefaultWorkflowIdImpl(store: TaskStore, requestedWorkflowId: string | null): Promise<void> {
+    /*
+    FNXC:WorkflowSuccession 2026-09-06-02:15:
+    Project-default and task-selection writes normalize retired requests at function entry. The retired id remains requestable for compatibility but cannot be written back into durable selection state.
+    */
+    const workflowId = requestedWorkflowId === null
+      ? null
+      : resolveRetiredBuiltinWorkflowId(requestedWorkflowId);
     if (workflowId) {
       const exists = await store.getWorkflowDefinition(workflowId);
       if (!exists) throw new Error(`Workflow '${workflowId}' not found`);
@@ -492,7 +569,8 @@ export async function setDefaultWorkflowIdImpl(store: TaskStore, workflowId: str
     await store.updateSettings({ defaultWorkflowId: workflowId } as unknown as Partial<Settings>);
   }
 
-export async function selectTaskWorkflowImpl(store: TaskStore, taskId: string, workflowId: string): Promise<string[]> {
+export async function selectTaskWorkflowImpl(store: TaskStore, taskId: string, requestedWorkflowId: string): Promise<string[]> {
+    const workflowId = resolveRetiredBuiltinWorkflowId(requestedWorkflowId);
     /* FNXC:SqliteDualPathCleanup 2026-07-26-14:08: workflow definition deletes require AsyncDataLayer. */
     const layer: AsyncDataLayer = store.asyncLayer!;
     // Hold the task lock across the whole sequence (materialize → owner write →

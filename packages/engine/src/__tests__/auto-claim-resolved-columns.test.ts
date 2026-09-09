@@ -38,7 +38,6 @@ function ir(id: string, names: { hold: string; complete: string }): WorkflowIr {
       { id: names.hold, name: "Hold", traits: [{ trait: "hold", config: { release: "capacity" } }] },
       { id: "wip", name: "Wip", traits: [{ trait: "wip" }] },
       { id: names.complete, name: "Complete", traits: [{ trait: "complete" }] },
-      { id: "archived", name: "Archived", traits: [{ trait: "archived" }] },
     ],
     nodes: [],
     edges: [],

@@ -33,7 +33,7 @@ describe.skipIf(!hasGit)("reliability interactions: defensive removal preserves 
     git(root, 'git config user.email "test@example.com"');
     git(root, 'git config user.name "Test User"');
     await writeFile(join(root, "README.md"), "# repo\n", "utf-8");
-    await writeFile(join(root, ".gitignore"), "dist/\nnode_modules/\n.env\n", "utf-8");
+    await writeFile(join(root, ".gitignore"), ".fusion/\ndist/\nnode_modules/\n.env\n", "utf-8");
     git(root, "git add README.md .gitignore");
     git(root, 'git commit -m "init"');
     await mkdir(join(root, ".worktrees"), { recursive: true });
@@ -127,6 +127,60 @@ describe.skipIf(!hasGit)("reliability interactions: defensive removal preserves 
     await expect(removeWorktree({ rootDir: root, worktreePath, settings: {}, reason })).resolves.toMatchObject({ removed: true });
 
     expect(await pathExists(worktreePath)).toBe(false);
+  });
+
+  it.each([
+    RemovalReason.MergerCleanup,
+    RemovalReason.MergerPostMerge,
+    RemovalReason.PoolPrune,
+    RemovalReason.SelfHealingBranchConflict,
+    RemovalReason.SelfHealingIdleSweep,
+    RemovalReason.SelfHealingReclaim,
+    RemovalReason.SelfHealingStaleActiveBranch,
+    RemovalReason.StepSessionCleanup,
+    RemovalReason.CompletionLandedCleanup,
+  ])("%s removes a built checkout with only proven Fusion scratch and regenerable output", async (reason) => {
+    const root = await setupRepo();
+    const worktreePath = await createWorktree(root, `fusion-scratch-${reason}`);
+    await mkdir(join(worktreePath, ".fusion", "cache"), { recursive: true });
+    await mkdir(join(worktreePath, "node_modules", "pkg"), { recursive: true });
+    await mkdir(join(worktreePath, "dist"), { recursive: true });
+    await writeFile(join(worktreePath, ".fusion", "cache", "plugin-build-cache.json"), "{}\n", "utf-8");
+    await writeFile(join(worktreePath, "node_modules", "pkg", "index.js"), "generated\n", "utf-8");
+    await writeFile(join(worktreePath, "dist", "bundle.js"), "generated\n", "utf-8");
+
+    await expect(removeWorktree({ rootDir: root, worktreePath, settings: {}, reason })).resolves.toMatchObject({ removed: true });
+    expect(await pathExists(worktreePath)).toBe(false);
+  });
+
+  it("preserves Fusion scratch with an unexpected child", async () => {
+    const root = await setupRepo();
+    const worktreePath = await createWorktree(root, "fusion-scratch-unexpected");
+    await mkdir(join(worktreePath, ".fusion", "tasks", "FN-1"), { recursive: true });
+    await writeFile(join(worktreePath, ".fusion", "tasks", "FN-1", "notes.md"), "keep\n", "utf-8");
+
+    await expect(removeWorktree({ rootDir: root, worktreePath, settings: {}, reason: RemovalReason.PoolPrune })).rejects.toThrow(/preserving/);
+    expect(await pathExists(worktreePath)).toBe(true);
+  });
+
+  it("preserves Fusion scratch alongside an ignored env file", async () => {
+    const root = await setupRepo();
+    const worktreePath = await createWorktree(root, "fusion-scratch-env");
+    await mkdir(join(worktreePath, ".fusion", "cache"), { recursive: true });
+    await writeFile(join(worktreePath, ".fusion", "cache", "plugin-build-cache.json"), "{}\n", "utf-8");
+    await writeFile(join(worktreePath, ".env"), "TOKEN=ignored\n", "utf-8");
+
+    await expect(removeWorktree({ rootDir: root, worktreePath, settings: {}, reason: RemovalReason.PoolPrune })).rejects.toThrow(/preserving/);
+    expect(await pathExists(worktreePath)).toBe(true);
+  });
+
+  it("refuses defensive removal of the project root", async () => {
+    const root = await setupRepo();
+    await mkdir(join(root, ".fusion", "cache"), { recursive: true });
+    await writeFile(join(root, ".fusion", "cache", "plugin-build-cache.json"), "{}\n", "utf-8");
+
+    await expect(removeWorktree({ rootDir: root, worktreePath: root, settings: {}, reason: RemovalReason.PoolPrune })).rejects.toThrow(/preserving/);
+    expect(await pathExists(root)).toBe(true);
   });
 
   it.each([

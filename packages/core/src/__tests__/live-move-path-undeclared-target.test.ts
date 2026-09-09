@@ -9,13 +9,13 @@ key — measured: it reads `null` on a fresh store — so that block, including 
 `workflowHasColumn(workflowIr, toColumn)` rejection, does not execute. The legacy
 `VALID_TRANSITIONS` table decides instead.
 
-That table's row for `todo` is `["in-progress", "triage", "archived"]`. After U11 removed `triage`
+The legacy transition table once offered targets that a task's selected workflow did not declare. After U11 removed `triage`
 from the default coding lineage, `triage` is still offered as a legal target — so an operator or
 API caller can move a Planning card INTO the deleted column and re-create exactly the stranded
 state `reconcileUndeclaredTaskColumns` exists to repair. Measured on a fresh store:
 
     moveTask(card in "todo" -> "triage")  ACCEPTED
-    moveTask(card in "todo" -> "bogus")   REJECTED: Valid targets: in-progress, triage, archived
+    moveTask(card in "todo" -> "bogus")   REJECTED as an unknown workflow column
 
 The second line is the tell: the rejection is real, but it is the LEGACY table talking, and the
 legacy table does not know the card's workflow.
@@ -43,6 +43,7 @@ import { workflowHasColumn } from "../workflows/workflow-transitions.js";
 pgDescribe("live move path — which targets it accepts after the Planning merge", () => {
   const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
     prefix: "fusion_undeclared_target",
+    projectId: "project-live-move-targets",
   });
   beforeAll(h.beforeAll);
   afterAll(h.afterAll);
@@ -151,14 +152,7 @@ pgDescribe("live move path — which targets it accepts after the Planning merge
     expect(await column(task.id)).toBe("done");
   });
 
-  it("still permits archiving, which the workflow declares", async () => {
-    const store = h.store();
-    const task = await store.createTask({ description: "archivable" });
-    await store.moveTask(task.id, "archived" as never, { moveSource: "user" } as never);
-    expect(await column(task.id)).toBe("archived");
-  });
-
-  it("still allows a recovery re-home to reach the workflow's REBOUND TARGET past adjacency", async () => {
+  it("lets an undeclared source re-enter only at the workflow's rebound target", async () => {
     /*
     FNXC:MergedPlanningColumn 2026-07-30-10:20 (PR #2601 review — greptile P2):
 
@@ -179,10 +173,9 @@ pgDescribe("live move path — which targets it accepts after the Planning merge
     the literals on the conversion backlog, so that is bug-compatibility, not an
     invariant, and pinning it would cement the bug.
 
-    What recovery genuinely needs, and what is pinned instead: a recovery re-home
-    reaches the workflow's declared rebound target even from a column ADJACENCY
-    would refuse to leave. `done -> todo` is rejected by the legacy table and must
-    still succeed under `recoveryRehome`.
+    An undeclared source has no lifecycle adjacency to violate, so its only legal target is the
+    workflow's resolved rebound column. This permits repair without granting a jump directly into
+    WIP, review, or Complete.
     */
     const store = h.store();
     /*
@@ -194,26 +187,21 @@ pgDescribe("live move path — which targets it accepts after the Planning merge
     */
     const task = await store.createTask({ description: "recovery rehome", enabledWorkflowSteps: [] });
 
-    /* `archived -> todo` is the discriminating pair: the legacy table's `archived`
-       row is `["done"]` only, so ordinary adjacency refuses it while recovery must
-       still reach the rebound target. (`done -> todo` would NOT discriminate — the
-       table permits it, so the assertion would pass with the flag removed.) */
-    await store.moveTask(task.id, "in-progress" as never, { moveSource: "user" } as never);
-    await store.moveTask(task.id, "in-review" as never, { moveSource: "user" } as never);
-    await store.moveTask(task.id, "done" as never, { moveSource: "user" } as never);
-    await store.moveTask(task.id, "archived" as never, { moveSource: "user" } as never);
-    expect(await column(task.id)).toBe("archived");
+    /* Simulate the historical stranded state directly: production moves must not create an
+       undeclared source, while recovery still has to repair rows persisted by old versions. */
+    const schema = await import("../postgres/schema/index.js");
+    const { eq } = await import("drizzle-orm");
+    await h.layer().db.update(schema.project.tasks).set({ column: "stranded" })
+      .where(eq(schema.project.tasks.id, task.id));
+    store.taskCache.delete(task.id);
+    expect(await column(task.id)).toBe("stranded");
 
     await expect(
-      store.moveTask(task.id, "todo" as never, { moveSource: "engine" } as never),
-    ).rejects.toThrow();
-    expect(await column(task.id)).toBe("archived");
+      store.moveTask(task.id, "in-progress" as never, { moveSource: "engine" } as never),
+    ).rejects.toThrow(/Valid targets: todo/);
+    expect(await column(task.id)).toBe("stranded");
 
-    await store.moveTask(task.id, "todo" as never, {
-      moveSource: "engine",
-      recoveryRehome: true,
-    } as never);
-
+    await store.moveTask(task.id, "todo" as never, { moveSource: "engine" } as never);
     expect(await column(task.id)).toBe("todo");
   });
 });

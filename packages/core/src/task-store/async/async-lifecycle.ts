@@ -10,8 +10,8 @@
  *   VAL-DATA-010 — Lineage-integrity gate blocks parent delete with live
  *     children. A parent task that has live (non-archived, non-soft-deleted)
  *     children (rows whose `source_parent_task_id` points at the parent) cannot
- *     be deleted or archived until those children are cleared. This is the
- *     `findLiveLineageChildren` gate that `deleteTask` / `archiveTask` consult.
+ *     be deleted until those children are cleared. This is the
+ *     `findLiveLineageChildren` gate that `deleteTask` consults.
  *   VAL-DATA-011 — `removeLineageReferences` clears the `source_parent_task_id`
  *     edge on each live child so the parent can then be deleted. The clear is a
  *     plain `UPDATE ... SET source_parent_task_id = NULL` (NULL = no parent).
@@ -86,27 +86,14 @@ export function liveLineageChildFilter(
   parentId: string,
   projectId?: string,
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-23:59:
-  The board's own archive lanes, resolved by the caller. Omitted → the `archived` literal, which is
-  what every unwired caller keeps, so an unconverted board produces byte-identical SQL.
-
-  A LANE site, per the triage in `archived-column-gate-parity.test.ts`: "which children still count as
-  LIVE" is a question about the board. The two STATE sites in that inventory
-  (`cleanupArchivedTasksImpl`, `listSoftDeletedColumnDriftCandidates`) are marked at their own sites
-  and must NOT be resolved.
-
-  DIRECTION OF THE FIX, stated because this gate BLOCKS deletion: against the literal, an archived
-  child on a renamed board still counted as live and kept blocking its parent's delete/archive with
-  `TaskHasLineageChildrenError`. Resolving makes those children correctly stop blocking. The change is
-  permissive, and permissive is the CORRECT direction here — the gate exists to protect live children,
-  and an archived child is not one.
+  FNXC:TaskArchiveRemoval 2026-09-04-18:25 DELIBERATE-LITERAL:
+  Live-lineage scans exclude the fixed historical persistence sentinel, not a workflow role. The
+  optional set exists for compatibility test/data-layer callers; omitting it uses `archived`.
   */
-  archivedColumns?: ReadonlySet<string>,
+  historicalSentinelColumns?: ReadonlySet<string>,
 ) {
-  /* One `ne` per archive lane; the resolved set is legacy-seeded, so the unconverted shape is the
-     single `ne(column, "archived")` this replaces. */
-  const archivedExclusions = archivedColumns && archivedColumns.size > 0
-    ? [...archivedColumns].map((lane) => ne(schema.project.tasks.column, lane))
+  const archivedExclusions = historicalSentinelColumns && historicalSentinelColumns.size > 0
+    ? [...historicalSentinelColumns].map((lane) => ne(schema.project.tasks.column, lane))
     : [ne(schema.project.tasks.column, "archived")];
   return and(
     eq(schema.project.tasks.projectId, projectPartition(projectId)),
@@ -122,31 +109,31 @@ export function liveLineageChildFilter(
  * Find the ids of live lineage children of a parent task (VAL-DATA-010).
  *
  * A "live" child is one whose `source_parent_task_id` points at the parent,
- * whose id is not the parent itself, whose column is not `archived`, and whose
- * `deleted_at` is NULL. Archived and soft-deleted children are intentionally
- * excluded so they do not block parent deletion (VAL-DATA-012).
+ * whose id is not the parent itself, whose column is not the historical
+ * `archived` sentinel, and whose `deleted_at` is NULL. Historical and soft-deleted
+ * children are intentionally excluded so they do not block parent deletion (VAL-DATA-012).
  *
  * This is the async equivalent of the sync `findLiveLineageChildren(id)` in
- * store.ts. It is the gate that `deleteTask` / `archiveTask` consult before
+ * store.ts. It is the gate that `deleteTask` consults before
  * proceeding: if the returned list is non-empty and the caller did not opt into
- * `removeLineageReferences`, the delete/archive is rejected with
+ * `removeLineageReferences`, deletion is rejected with
  * `TaskHasLineageChildrenError`.
  *
  * @param db The Drizzle instance or transaction handle to read through.
- * @param parentId The id of the prospective parent being deleted/archived.
+ * @param parentId The id of the prospective parent being deleted.
  * @returns The ids of live children (empty if none).
  */
 export async function findLiveLineageChildren(
   db: AsyncDataLayer["db"] | DbTransaction,
   parentId: string,
   projectId?: string,
-  /** Resolved archive lanes; omitted → the legacy id. See `liveLineageChildFilter`. */
-  archivedColumns?: ReadonlySet<string>,
+  /** Historical sentinel columns; omitted → `archived`. See `liveLineageChildFilter`. */
+  historicalSentinelColumns?: ReadonlySet<string>,
 ): Promise<string[]> {
   const rows = await db
     .select({ id: schema.project.tasks.id })
     .from(schema.project.tasks)
-    .where(liveLineageChildFilter(parentId, projectId, archivedColumns));
+    .where(liveLineageChildFilter(parentId, projectId, historicalSentinelColumns));
   return rows.map((row) => row.id);
 }
 
@@ -252,20 +239,20 @@ export async function removeLineageReferences(
  *
  * @param db The Drizzle instance or transaction handle to read through.
  * @param parentId The id of the prospective parent.
- * @returns `true` if at least one live child exists (delete/archive must be rejected).
+ * @returns `true` if at least one live child exists (deletion must be rejected).
  */
 export async function hasLiveLineageChildren(
   db: AsyncDataLayer["db"] | DbTransaction,
   parentId: string,
   projectId?: string,
-  /** Resolved archive lanes; omitted → the legacy id. Threaded so this and
+  /** Historical sentinel columns; omitted → `archived`. Threaded so this and
    *  `findLiveLineageChildren` cannot disagree about which children are live. */
-  archivedColumns?: ReadonlySet<string>,
+  historicalSentinelColumns?: ReadonlySet<string>,
 ): Promise<boolean> {
   const rows = await db
     .select({ one: sql<number>`1` })
     .from(schema.project.tasks)
-    .where(liveLineageChildFilter(parentId, projectId, archivedColumns))
+    .where(liveLineageChildFilter(parentId, projectId, historicalSentinelColumns))
     .limit(1);
   return rows.length > 0;
 }

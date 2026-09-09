@@ -152,18 +152,18 @@ Active merges on a workflow should be visible from the dropdown without requirin
 
 /*
 FNXC:WorkflowSwitcher 2026-06-20-00:00:
-The switcher's inline Todo, In Progress, and Done count badges intentionally mirror the board column color tokens so each count reads as the same color as the column it summarizes.
+The switcher's inline Plan, Progress, and Review count badges mirror the board lifecycle color tokens so each count reads as the same phase it summarizes.
 */
-.workflow-switcher-count--todo {
+.workflow-switcher-count--plan {
   color: var(--todo);
 }
 
-.workflow-switcher-count--in-progress {
+.workflow-switcher-count--progress {
   color: var(--in-progress);
 }
 
-.workflow-switcher-count--done {
-  color: var(--done);
+.workflow-switcher-count--review {
+  color: var(--in-review);
 }
 
 .workflow-switcher-count-separator {

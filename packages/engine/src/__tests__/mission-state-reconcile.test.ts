@@ -126,7 +126,6 @@ describe("reconcileMissionState", () => {
           columns: [
             { id: "todo", label: "Todo", traits: [{ trait: "hold" }] },
             { id: "shipped", label: "Shipped", traits: [{ trait: "complete" }] },
-            { id: "stored", label: "Stored", traits: [{ trait: "archived" }] },
           ],
         },
       }),

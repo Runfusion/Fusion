@@ -60,6 +60,10 @@ export interface HeaderProps {
   onOpenMailbox?: () => void;
   /** Unread message count for badge display */
   mailboxUnreadCount?: number;
+  /** Unread task-recommendation notices for their dedicated destination. */
+  recommendationUnreadCount?: number;
+  /** Unread artifact-registration notices for the Artifacts destination. */
+  artifactUnreadCount?: number;
   /** Pending approval count for mailbox indicator */
   mailboxPendingApprovalCount?: number;
   /** Whether chat has an unread assistant response */
@@ -130,6 +134,8 @@ export function Header({
   onOpenActivityLog,
   onOpenMailbox,
   mailboxUnreadCount = 0,
+  recommendationUnreadCount = 0,
+  artifactUnreadCount = 0,
   mailboxPendingApprovalCount = 0,
   chatHasUnreadResponse = false,
   stashOrphanCount = 0,
@@ -748,6 +754,9 @@ export function Header({
               /*
               FNXC:Navigation 2026-06-21-18:25:
               The top-level documents destination now displays as Artifacts (FN-6890), but the documents route id remains stable for navigation and tests.
+
+              FNXC:InboxCategories 2026-09-06-03:16:
+              Artifacts keeps both mutually exclusive Header affordances: the inline button owns the unread dot outside tablet mode, while the tablet More-views item owns the numeric badge. Recommendations stays More-only so this saturated inline group does not gain another destination.
               */
               <button
                 className={`view-toggle-btn${view === "documents" ? " active" : ""}`}
@@ -755,8 +764,16 @@ export function Header({
                 title={t("header.documentsView", "Artifacts view")}
                 aria-label={t("header.documentsView", "Artifacts view")}
                 aria-pressed={view === "documents"}
+                data-testid="view-toggle-documents"
               >
                 <FileText size={16} />
+                {view !== "documents" && artifactUnreadCount > 0 ? (
+                  <span
+                    className="status-dot status-dot--online header-chat-unread-dot"
+                    aria-label={t("header.unreadArtifacts", "{{count}} new artifacts", { count: artifactUnreadCount })}
+                    data-testid="header-documents-unread-dot"
+                  />
+                ) : null}
               </button>
             )}
             <button
@@ -800,7 +817,7 @@ export function Header({
               <>
                 <button
                   ref={viewOverflowTriggerRef}
-                  className={`view-toggle-btn${(["research", "ideation", "skills", "insights", "memory", "secrets", "dev-server", "devserver", "graph"].includes(view) || (isTablet && view === "documents") || (experimentalFeatures?.evalsView && view === "evals") || (experimentalFeatures?.goalsView && view === "goalsView") || isPluginViewId(view)) ? " active" : ""}`}
+                  className={`view-toggle-btn${(["research", "ideation", "skills", "insights", "memory", "recommendations", "secrets", "dev-server", "devserver", "graph"].includes(view) || (isTablet && view === "documents") || (experimentalFeatures?.evalsView && view === "evals") || (experimentalFeatures?.goalsView && view === "goalsView") || isPluginViewId(view)) ? " active" : ""}`}
                   onClick={() => {
                     setIsViewOverflowOpen((prev) => !prev);
                   }}
@@ -930,6 +947,27 @@ export function Header({
                       <Lock size={14} />
                       <span>{t("header.secretsView", "Secrets")}</span>
                     </button>
+                    <button
+                      className={`view-toggle-overflow-item${view === "recommendations" ? " active" : ""}`}
+                      onClick={() => {
+                        onChangeView("recommendations");
+                        setIsViewOverflowOpen(false);
+                      }}
+                      role="menuitem"
+                      data-testid="view-overflow-recommendations"
+                    >
+                      <Lightbulb size={14} />
+                      <span>{t("nav.recommendations", "Recommendations")}</span>
+                      {recommendationUnreadCount > 0 ? (
+                        <span
+                          className="header-badge"
+                          data-testid="view-overflow-recommendations-badge"
+                          aria-label={t("header.unreadRecommendations", "{{count}} new recommendations", { count: recommendationUnreadCount })}
+                        >
+                          {recommendationUnreadCount}
+                        </span>
+                      ) : null}
+                    </button>
                     {isTablet && (
                       <button
                         className={`view-toggle-overflow-item${view === "documents" ? " active" : ""}`}
@@ -942,6 +980,15 @@ export function Header({
                       >
                         <FileText size={14} />
                         <span>{t("header.documentsView", "Artifacts view")}</span>
+                        {artifactUnreadCount > 0 ? (
+                          <span
+                            className="header-badge"
+                            data-testid="view-overflow-documents-badge"
+                            aria-label={t("header.unreadArtifacts", "{{count}} new artifacts", { count: artifactUnreadCount })}
+                          >
+                            {artifactUnreadCount}
+                          </span>
+                        ) : null}
                       </button>
                     )}
                     <button

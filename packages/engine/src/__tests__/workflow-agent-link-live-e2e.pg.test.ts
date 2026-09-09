@@ -225,7 +225,7 @@ pgDescribe("live agent-link E2E: a finished card must release its agent", () => 
   it("releases the agent for a renamed board without ever matching a legacy column id", async () => {
     /* The differential, and the one that would have caught the original defect: the
        renamed board's terminal column shares no id with the legacy set, so a handler
-       keyed on `["done","archived","todo","triage"]` returns early and leaks. */
+       keyed on `["done","todo","triage"]` returns early and leaks. */
     const taskId = "FN-AL-DIFF";
     const agent = await seedLinkedAgent(taskId, RENAMED_VOCAB, "diff");
 

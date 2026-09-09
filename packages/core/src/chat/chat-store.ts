@@ -16,11 +16,13 @@ import * as schema from "../postgres/schema/index.js";
 import * as asyncChatStore from "../async-stores/async-chat-store.js";
 import type {
   ChatSession,
+  ChatSessionPage,
   ChatTag,
   ChatTagCreateInput,
   ChatTagUpdateInput,
   ChatSessionStatus,
   ChatMessage,
+  ChatSessionLastMessage,
   ChatAttachment,
   ChatMessageCreateInput,
   ChatSessionCreateInput,
@@ -155,7 +157,26 @@ export class ChatStore extends EventEmitter<ChatStoreEvents> {
     agentId?: string;
     status?: ChatSessionStatus;
   }): Promise<ChatSession[]> {
-    return asyncChatStore.listChatSessions(this.asyncLayer.db, options);
+    return asyncChatStore.listChatSessions(this.asyncLayer.db, {
+      ...options,
+      projectId: options?.projectId ?? this.asyncLayer.projectId,
+    });
+  }
+
+  async listSessionsPage(options: {
+    projectId?: string;
+    agentId?: string;
+    status?: ChatSessionStatus;
+    q?: string;
+    tagId?: string;
+    includeTaskPlanner?: boolean;
+    limit?: number;
+    cursor?: string;
+  } = {}): Promise<ChatSessionPage> {
+    return asyncChatStore.listChatSessionsPage(this.asyncLayer.db, {
+      ...options,
+      projectId: options.projectId ?? this.asyncLayer.projectId,
+    });
   }
 
   /**
@@ -430,13 +451,13 @@ export class ChatStore extends EventEmitter<ChatStoreEvents> {
   }
 
   /**
-   * Get the latest message for each session in the provided list.
-   * Uses a single SQL query with GROUP BY and MAX to efficiently fetch last messages.
+   * Get the latest projected preview message for each requested session.
+   * Uses a per-session lateral LIMIT 1 lookup instead of a whole-history GROUP BY scan.
    *
-   * @param sessionIds - Array of session IDs to fetch last messages for
-   * @returns Map of sessionId -> latest ChatMessage for that session
+   * @param sessionIds - Array of session IDs to fetch last-message previews for
+   * @returns Map of sessionId -> SQL-truncated latest-message projection
    */
-  async getLastMessageForSessions(sessionIds: string[]): Promise<Map<string, ChatMessage>> {
+  async getLastMessageForSessions(sessionIds: string[]): Promise<Map<string, ChatSessionLastMessage>> {
     return asyncChatStore.getLastMessageForSessions(this.asyncLayer.db, sessionIds, this.asyncLayer.projectId);
   }
 

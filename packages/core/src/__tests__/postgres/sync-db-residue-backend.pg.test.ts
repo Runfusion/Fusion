@@ -89,16 +89,15 @@ pgDescribe("sync-db residue surfaces in backend mode (PostgreSQL)", () => {
     }
   });
 
-  it("getTaskColumns resolves active, archived, and missing ids", async () => {
+  it("getTaskColumns resolves active, completed, and missing ids", async () => {
     const h = await makeHarness();
     try {
       const active = await h.store.createTask({ description: "active", column: "in-progress" });
-      const toArchive = await h.store.createTask({ description: "to archive", column: "done" });
-      await h.store.archiveTask(toArchive.id, { cleanup: false });
+      const completed = await h.store.createTask({ description: "completed", column: "done" });
 
-      const map = await h.store.getTaskColumns([active.id, toArchive.id, "FN-NOPE-1"]);
+      const map = await h.store.getTaskColumns([active.id, completed.id, "FN-NOPE-1"]);
       expect(map.get(active.id)).toBe("in-progress");
-      expect(map.get(toArchive.id)).toBe("archived");
+      expect(map.get(completed.id)).toBe("done");
       expect(map.has("FN-NOPE-1")).toBe(false);
     } finally {
       await teardown();

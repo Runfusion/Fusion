@@ -13,8 +13,8 @@ const pgTest = pgDescribe;
 
 /*
  * FNXC:TaskStoreConsistency 2026-07-12-00:00:
- * FN-7069 phantom committed-reservation archive-path tests.
- * The reconciliation logic (reconcilePhantomCommittedReservations) is a
+ * FN-7069 phantom committed-reservation reconciliation tests.
+ * The reconciliation logic preserves committed reservations and audit history
  * PostgreSQL reconciliation preserves committed reservations and audit history
  * while removing orphaned task child rows.
  */
@@ -31,21 +31,6 @@ pgTest("TaskStore phantom committed-reservation reconciliation", () => {
   });
   afterEach(async () => {
     await h.afterEach();
-  });
-
-  it("archiveTask rejects cleanly when neither DB row nor task.json exists", async () => {
-    const store = h.store();
-    await expect(store.archiveTask("FN-7999")).rejects.toThrow("Task FN-7999 not found");
-    await expect(store.archiveTask("FN-7999")).rejects.not.toThrow(/ENOENT/);
-  });
-
-  it("archives a DB-backed task even when its task directory is missing", async () => {
-    const store = h.store();
-    const task = await store.createTask({ description: "Archive without task dir" });
-    await rm(join(h.rootDir(), ".fusion", "tasks", task.id), { recursive: true, force: true });
-
-    const archived = await store.archiveTask(task.id, false);
-    expect(archived).toMatchObject({ id: task.id, column: "archived" });
   });
 
   it("prunes PostgreSQL child rows for a phantom while preserving the committed reservation", async () => {

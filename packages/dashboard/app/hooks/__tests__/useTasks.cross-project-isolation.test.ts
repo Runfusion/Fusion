@@ -8,11 +8,17 @@ import { useTasks } from "../useTasks";
 
 vi.mock("../../api", async (importOriginal) => {
   const { createDashboardApiMock } = await import("../../test/mockApi");
+  const fetchTasks = vi.fn();
   return createDashboardApiMock(() => importOriginal<typeof import("../../api")>(), {
-    fetchTasks: vi.fn(), fetchArchivedTasks: vi.fn().mockResolvedValue({ tasks: [], total: 0, hasMore: false }),
+    fetchTasks,
+    fetchTaskPage: vi.fn(async (projectId?: string, options?: { query?: string }) => {
+      const tasks = await fetchTasks(undefined, undefined, projectId, options?.query, options?.query ? false : true);
+      return { tasks, total: tasks.length, hasMore: false, nextCursor: null };
+    }),
+    fetchCompletedTasks: vi.fn().mockResolvedValue({ tasks: [], total: 0, hasMore: false }),
     createTask: vi.fn(), moveTask: vi.fn(), deleteTask: vi.fn(), mergeTask: vi.fn(), retryTask: vi.fn(),
     bypassReview: vi.fn(), pauseTask: vi.fn(), unpauseTask: vi.fn(), resetTask: vi.fn(), duplicateTask: vi.fn(),
-    updateTask: vi.fn(), archiveTask: vi.fn(), unarchiveTask: vi.fn(), archiveAllDone: vi.fn(),
+    updateTask: vi.fn(),
   });
 });
 
@@ -29,7 +35,7 @@ class MockEventSource {
 }
 
 const task = (title: string, updatedAt: string): Task => ({ id: "KB-001", description: title, column: "todo", dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "2026-01-01T00:00:00Z", updatedAt, columnMovedAt: updatedAt } as Task);
-const aOnly = task("A only", "2026-01-01T00:00:00Z");
+const aOnly = { ...task("A only", "2026-01-01T00:00:00Z"), id: "KB-002" };
 
 describe("useTasks cross-project isolation", () => {
   const originalEventSource = globalThis.EventSource;

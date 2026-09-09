@@ -150,7 +150,7 @@ A past display mirror is not a live recovery owner for this adapter.
 */
 export function classifyTerminalFailureAutoRecoveryForTask(
   task: Task,
-  options: { autoRecoveryEnabled: boolean; inTerminalSuccessColumn?: boolean; isArchivedOrDeleted?: boolean; now?: number },
+  options: { autoRecoveryEnabled: boolean; inTerminalSuccessColumn?: boolean; isDeletedOrHistorical?: boolean; now?: number },
 ): TerminalFailureAutoRecoveryDecision {
   const now = options.now ?? Date.now();
   const nextRecoveryAt = Date.parse(task.nextRecoveryAt ?? "");
@@ -159,7 +159,7 @@ export function classifyTerminalFailureAutoRecoveryForTask(
     hasRecoveryOwner: describeTaskRecoveryOwner(task) !== null && Number.isFinite(nextRecoveryAt) && nextRecoveryAt > now,
     isProgressing: isTaskProgressing(task),
     inTerminalSuccessColumn: options.inTerminalSuccessColumn === true,
-    isArchivedOrDeleted: options.isArchivedOrDeleted === true || task.deletedAt != null,
+    isDeletedOrHistorical: options.isDeletedOrHistorical === true || task.deletedAt != null,
     autoRecoveryEnabled: options.autoRecoveryEnabled,
     now: () => now,
   });

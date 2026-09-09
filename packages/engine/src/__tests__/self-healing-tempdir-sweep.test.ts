@@ -181,14 +181,17 @@ function makeReclaimableWorktree(path: string, name: string): void {
   writeFileSync(join(path, ".git"), `gitdir: ${join(projectRoot, ".git", "worktrees", name)}\n`);
 }
 
-function makeRealIdleWorktree(root: string, name: string): string {
+function makeRealIdleWorktree(root: string, name: string, ignoredPaths?: string, initializeRepo = true): string {
   // Create a genuine git worktree with admin entry so the status probe succeeds.
-  execSync("git init -b main", { cwd: root });
-  execSync('git config user.email "test@example.com"', { cwd: root });
-  execSync('git config user.name "Test"', { cwd: root });
-  writeFileSync(join(root, "README.md"), "# fixture\n");
-  execSync("git add README.md", { cwd: root });
-  execSync('git commit -m init', { cwd: root });
+  if (initializeRepo) {
+    execSync("git init -b main", { cwd: root });
+    execSync('git config user.email "test@example.com"', { cwd: root });
+    execSync('git config user.name "Test"', { cwd: root });
+    writeFileSync(join(root, "README.md"), "# fixture\n");
+    if (ignoredPaths !== undefined) writeFileSync(join(root, ".gitignore"), ignoredPaths);
+    execSync(ignoredPaths === undefined ? "git add README.md" : "git add README.md .gitignore", { cwd: root });
+    execSync('git commit -m init', { cwd: root });
+  }
   const worktreeDir = join(root, ".worktrees", name);
   execFileSync("git", ["worktree", "add", "-b", `fusion/${name}`, worktreeDir], { cwd: root });
   return worktreeDir;
@@ -221,6 +224,23 @@ describe("SelfHealingManager worktrees-dir sweeps", () => {
     expect(fsState.rmCalls).not.toContain(orphan);
     expect(fsState.rmCalls).not.toContain(aiMergeContainer);
     expect(fsState.rmCalls).not.toContain(recoveryContainer);
+  });
+
+  it("reclaims built Fusion scratch during cap enforcement but preserves an untracked deliverable", async () => {
+    const scratchWorktree = makeRealIdleWorktree(projectRoot, "fusion-scratch", ".fusion/\n");
+    const dirtyWorktree = makeRealIdleWorktree(projectRoot, "dirty-wip", undefined, false);
+    mkdirSync(join(scratchWorktree, ".fusion", "cache"), { recursive: true });
+    writeFileSync(join(scratchWorktree, ".fusion", "cache", "plugin-build-cache.json"), "{}\n");
+    mkdirSync(join(dirtyWorktree, ".fusion", "cache"), { recursive: true });
+    writeFileSync(join(dirtyWorktree, ".fusion", "cache", "plugin-build-cache.json"), "{}\n");
+    writeFileSync(join(dirtyWorktree, "wip.txt"), "keep\n");
+    childState.execStdout = gitWorktreeList(["fusion-scratch", "dirty-wip"]);
+    const { manager } = makeManager({ maxWorktrees: 0 });
+
+    await expect((manager as any).enforceWorktreeCap()).resolves.toBeUndefined();
+
+    expect(childState.execCalls.some((command) => command.includes("fusion-scratch"))).toBe(true);
+    expect(childState.execCalls.some((command) => command.includes("dirty-wip"))).toBe(false);
   });
 
   it("excludes internal containers from cap enforcement while removing genuine idle worktrees", async () => {
@@ -499,17 +519,15 @@ describe("SelfHealingManager temp-dir AI merge worktree sweep", () => {
     ]));
   });
 
-  it("removes worktree for archived task after grace period", async () => {
+  it("retains a worktree for an archived task outside a physical terminal lane", async () => {
     const stale = tempMergeDir("fusion-ai-merge-fn-999-archivedtask");
     makeDoneTaskStale(stale);
     const { manager, audits } = makeManager({}, taskWithColumn("archived"));
 
-    await expect(sweep(manager)).resolves.toBe(1);
+    await expect(sweep(manager)).resolves.toBe(0);
 
-    expect(existsSync(stale)).toBe(false);
-    expect(sweepAudits(audits)).toEqual(expect.arrayContaining([
-      expect.objectContaining({ metadata: expect.objectContaining({ success: true, reason: "done-task-stale" }) }),
-    ]));
+    expect(existsSync(stale)).toBe(true);
+    expect(sweepAudits(audits)).toEqual([]);
   });
 
   it("keeps fresh worktree for deleted task until minimum age floor", async () => {

@@ -93,7 +93,6 @@ function createStore(task: Task, sequence: Task[]) {
     on: emitter.on.bind(emitter),
     off: emitter.off.bind(emitter),
     walCheckpoint: () => ({ busy: 0, log: 0, checkpointed: 0 }),
-    archiveTaskAndCleanup: async () => ({}),
     clearStaleExecutionStartBranchReferences: () => [],
     updateSettings: async () => ({}),
     mergeTask: async () => undefined,
@@ -169,24 +168,9 @@ describe("post-finalize verification noop status-write guard", () => {
       expect.objectContaining({ source: expect.objectContaining({ sourceType: "recovery" }) }),
     );
 
-    // FNXC:MergerUnification 2026-07-07-08:35:
-    // FN-4944's post-finalize guard added an earlier "already-on-main fast-path"
-    // no-op that fires whenever a done + merge-confirmed task hits a verification
-    // error, BEFORE the bounce-cap logic. This scenario (done task, VerificationError)
-    // now resolves through that fast-path, whose log message differs from the older
-    // cap-reached "already-done task" wording. Pin the fast-path message text here;
-    // the no-op count (1) and the task:post-finalize-verification-no-op audit are
-    // unchanged across both paths.
-    const noopLogs = logs.filter((entry) =>
-      entry.includes("[verification] post-finalize verification failed for already-on-main fast-path; no action"),
-    );
-    expect(noopLogs).toHaveLength(1);
-
-    const noopAudits = audits.filter((event) => event.mutationType === "task:post-finalize-verification-no-op");
-    expect(noopAudits).toHaveLength(1);
-    expect(noopAudits[0]?.metadata).toEqual(expect.objectContaining({
-      failedCommand: null,
-      exitCode: null,
-    }));
+    // A task already in Complete is rejected at merge admission, before delayed
+    // verification handling can emit retry narration or mutate lifecycle state.
+    expect(logs.filter((entry) => entry.includes("post-finalize verification"))).toHaveLength(0);
+    expect(audits.filter((event) => event.mutationType === "task:post-finalize-verification-no-op")).toHaveLength(0);
   });
 });

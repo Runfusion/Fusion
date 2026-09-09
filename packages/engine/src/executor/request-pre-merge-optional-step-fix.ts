@@ -14,6 +14,9 @@
  * FNXC:WorkflowRevisionBudget 2026-09-03-05:40:
  * Live Plan Review/spec and Code Review remediation honor explicit workflow values before node `maxRevisions`. An otherwise-unset Code Review uses the finite built-in default, Plan Review remains unbounded behind its separate replan cap, and Browser Verification keeps the existing `maxPostReviewFixes` fallback unless its node config explicitly changes it.
  *
+ * FNXC:ReviewRemediationBudget 2026-09-08-02:13:
+ * Live deterministic Verification uses the same advisory-locked work-and-charge publication as Code Review. Resolving its keyed budget before calling the named-remediation producer prevents the legacy no-claim appender path from publishing executable work without an attempt entry and aggregate increment.
+ *
  * FNXC:WorkflowRevisionBudget 2026-06-30-22:04:
  * Plan Review and Code Review caps are independent policy budgets, so attempts are counted by workflow step key instead of the legacy aggregate `postReviewFixCount`. The aggregate still increments for existing dashboard summaries, but it must not let a Plan Review replan consume a Code Review remediation slot.
  *
@@ -583,8 +586,29 @@ async function requestPreMergeOptionalStepFixInner(
 
   const workflowIr = await resolveWorkflowIrForTask(deps.store, taskId).catch(() => undefined);
   if (remediationGate === "Verification") {
+    const verificationSettings = await mergeEffectiveSettings(deps.store, liveTask, await deps.store.getSettings());
+    const maxRevisions = resolveOptionalReviewRevisionBudget({
+      optionalGroupId: info.nodeId ?? info.stepName,
+      workflowSettings: verificationSettings as Record<string, unknown>,
+      nodeMaxRevisions: info.maxRevisions,
+      fallbackMaxRevisions: verificationSettings.maxPostReviewFixes ?? DEFAULT_MAX_POST_REVIEW_FIXES,
+    });
+    const verificationBudget = resolveOptionalStepRevisionBudget(
+      maxRevisions,
+      verificationSettings.maxPostReviewFixes ?? DEFAULT_MAX_POST_REVIEW_FIXES,
+    );
+    const revisionKey = optionalStepRevisionKey(info.nodeId, info.stepName);
     if (!await holdsClaim()) return false;
-    const remediationOutcome = await deps.appendReviewRemediationSteps(liveTask, info);
+    const remediationOutcome = await deps.appendReviewRemediationSteps(liveTask, info, {
+      attemptClaim: {
+        revisionKey,
+        stepName: info.stepName,
+        status: info.status,
+        maxRevisions: verificationBudget.unbounded ? "unbounded" : verificationBudget.max,
+        expectedWorkflowStepId: info.nodeId,
+        runContext: deps.getRunContextFor(taskId),
+      },
+    });
     if (remediationOutcome === "appended") return true;
     if (await closeEmptyReviewContent()) return false;
     return false;

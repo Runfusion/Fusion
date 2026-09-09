@@ -46,14 +46,12 @@ pgDescribe("findTaskByProposalClaimId PostgreSQL persistence", () => {
     });
   }
 
-  it("returns persisted live rows, rejects blank or unknown claims, and keeps archived lanes live", async () => {
+  it("returns persisted live rows and rejects blank or unknown claims", async () => {
     const store = h.store();
     await createClaimedTask("FN-CLAIM", "recommendation:parent:one");
     await h.layer().db.update(schema.project.tasks).set({
       sourceMetadata: { fileScope: ["packages/core/src/store.ts"] },
     }).where(eq(schema.project.tasks.id, "FN-CLAIM"));
-    await createClaimedTask("FN-ARCHIVED-LANE", "recommendation:parent:archived", { column: "archived" });
-
     await expect(store.findTaskByProposalClaimId("recommendation:parent:one")).resolves.toMatchObject({
       id: "FN-CLAIM",
       column: "todo",
@@ -61,10 +59,6 @@ pgDescribe("findTaskByProposalClaimId PostgreSQL persistence", () => {
     });
     await expect(store.findTaskByProposalClaimId("missing")).resolves.toBeNull();
     await expect(store.findTaskByProposalClaimId("   ")).resolves.toBeNull();
-    await expect(store.findTaskByProposalClaimId("recommendation:parent:archived")).resolves.toMatchObject({
-      id: "FN-ARCHIVED-LANE",
-      column: "archived",
-    });
   });
 
   it("hides soft-deleted claim holders by default and returns them only for forensic replay", async () => {
@@ -77,7 +71,7 @@ pgDescribe("findTaskByProposalClaimId PostgreSQL persistence", () => {
       .resolves.toMatchObject({ id: "FN-DELETED", deletedAt: "2026-08-14T01:00:00.000Z" });
   });
 
-  it("is project-scoped and never consults cold archive snapshots", async () => {
+  it("is project-scoped and never consults cold soft-delete snapshots", async () => {
     const layerFor = (projectId: string): AsyncDataLayer => ({ ...h.layer(), projectId });
     const storeA = new TaskStore(h.rootDir(), undefined, { asyncLayer: layerFor("project-a") });
     const storeB = new TaskStore(h.rootDir(), undefined, { asyncLayer: layerFor("project-b") });
@@ -96,10 +90,10 @@ pgDescribe("findTaskByProposalClaimId PostgreSQL persistence", () => {
     await expect(storeB.findTaskByProposalClaimId(claim)).resolves.toBeNull();
     await expect(storeA.findTaskByProposalClaimId(claim)).resolves.toMatchObject({ id: "FN-PROJECT-A" });
 
-    const archived = await createClaimedTask("FN-COLD", "recommendation:cold:snapshot");
-    await h.store().archiveTask(archived.id, { cleanup: false });
-    // A cold-only snapshot has no live row for the indexed reader to match.
-    await h.adminDb().delete(schema.project.tasks).where(eq(schema.project.tasks.id, archived.id));
+    const deleted = await createClaimedTask("FN-COLD", "recommendation:cold:snapshot");
+    await h.store().deleteTask(deleted.id);
+    // A cold-only soft-delete snapshot has no live row for the indexed reader to match.
+    await h.adminDb().delete(schema.project.tasks).where(eq(schema.project.tasks.id, deleted.id));
     await expect(h.store().findTaskByProposalClaimId("recommendation:cold:snapshot", { includeDeleted: true }))
       .resolves.toBeNull();
   });

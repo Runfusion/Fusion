@@ -309,6 +309,20 @@ export const noopMerge = vi.fn(async () => ({ merged: false }) as MergeResult);
 export const noopRetry = vi.fn(async () => ({}) as Task);
 export const noopOpenDetail = vi.fn();
 
+export async function openTaskDetailActionsMenu(): Promise<HTMLElement> {
+  const trigger = await screen.findByRole("button", { name: "Actions" });
+  if (trigger.getAttribute("aria-expanded") !== "true") {
+    fireEvent.click(trigger);
+  }
+  await waitFor(() => expect(document.querySelector(".detail-actions-menu")).toBeInTheDocument());
+  return document.querySelector<HTMLElement>(".detail-actions-menu")!;
+}
+
+export async function findTaskDetailActionByTestId(testId: string): Promise<HTMLElement> {
+  const menu = await openTaskDetailActionsMenu();
+  return within(menu).findByTestId(testId);
+}
+
 export function getCssRuleBlock(css: string, selector: string): string {
   const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const ruleMatch = css.match(new RegExp(`${escapedSelector}\\s*\\{([^}]*)\\}`));

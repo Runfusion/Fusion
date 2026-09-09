@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TaskStore, type Task } from "@fusion/core";
-import { createTaskStoreForTest, pgDescribe } from "../../../core/src/__test-utils__/pg-test-harness.js";
 import { GitLabSourceIssueReconciler } from "../gitlab-source-issue-reconciler.js";
 
 const { mockResolveGitLabClient, mockGetProjectIssue, mockGetMergeRequest } = vi.hoisted(() => ({
@@ -154,35 +153,4 @@ describe("GitLabSourceIssueReconciler.backfillSourceIssueClosedAt", () => {
     expect(store.logEntry as any).toHaveBeenCalledWith("FN-9", "Skipped GitLab source issue closed-at backfill", "GitLab token missing");
   });
 
-  pgDescribe("archived TaskStore rows", () => {
-    it("excludes real archived TaskStore rows instead of mutating archiveDb entries", async () => {
-      // FNXC:PostgresCutover 2026-07-16-06:50: archived-task reconciliation must
-      // use the production async-store archive path after SQLite removal.
-      const harness = await createTaskStoreForTest();
-      const store = harness.store;
-
-      try {
-      /*
-      FNXC:WorkflowSteps 2026-08-23-23:40:
-      The merge door refuses `done` for a task whose ENABLED optional pre-merge groups produced no result. This fixture only needs an archived row to reconcile, so it enables no pre-merge steps rather than pretending reviews ran.
-      */
-      const task = await store.createTask({ description: "Archived GitLab issue", sourceIssue: gitlabTask("template").sourceIssue, enabledWorkflowSteps: [] });
-      await store.moveTask(task.id, "todo");
-      await store.moveTask(task.id, "in-progress");
-      await store.moveTask(task.id, "in-review");
-      await store.moveTask(task.id, "done");
-      await store.archiveTask(task.id, false);
-      mockGetProjectIssue.mockResolvedValueOnce({ state: "closed", closedAt: "2026-07-02T15:00:00.000Z" });
-
-      const result = await new GitLabSourceIssueReconciler().backfillSourceIssueClosedAt(store);
-      const restored = await store.unarchiveTask(task.id);
-
-      expect(result).toEqual({ scanned: 0, filled: 0, skipped: 0, errors: 0, hasMore: false });
-      expect(mockGetProjectIssue).not.toHaveBeenCalled();
-      expect(restored.sourceIssue?.closedAt).toBeUndefined();
-      } finally {
-        await harness.teardown();
-      }
-    });
-  });
 });

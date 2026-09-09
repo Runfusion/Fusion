@@ -4,8 +4,7 @@ import type { PluginPermissions } from "./plugins/plugin-types.js";
 /*
 FNXC:PluginTaskStoreGate 2026-07-26-12:20:
 PluginContext.taskStore historically handed every plugin the FULL TaskStore, so any
-plugin could delete tasks, bypass failed pre-merge review steps, or bulk-archive the
-board with no gate. This module is the smallest honest gate: a Proxy over the store
+plugin could delete tasks or bypass failed pre-merge review steps with no gate. This module is the smallest honest gate: a Proxy over the store
 that intercepts a hardcoded denylist of destructive methods and throws unless the
 plugin's manifest declares `permissions: { destructiveTaskOps: true }`. Everything
 not on the denylist passes through untouched, so default plugin behavior is
@@ -19,10 +18,6 @@ otherwise unchanged.
  *   task-deletion entry point (public and backend seams reachable via the handle).
  * - `bypassFailedPreMergeReviewStep` — the FN-7720 privileged operator bypass of a
  *   failed pre-merge review gate; must never be callable by an ungated plugin.
- * - `archiveAllDone` — the bulk archive sweep (archiveAllDone-style bulk method).
- * - `cleanupArchivedTasks` — bulk destructive removal of archived task history.
- * Single-task `archiveTask` is intentionally NOT denylisted: it is reversible via
- * `unarchiveTask` and gating it would break benign board-hygiene plugins.
  * - `getDatabase` — the raw sync SQLite handle. No in-repo plugin uses it (the QA
  *   plugin explicitly documents NOT to), and a raw handle would let a plugin run
  *   destructive SQL around the named-method denylist, so it requires the same
@@ -45,8 +40,6 @@ export const PLUGIN_DESTRUCTIVE_TASK_STORE_METHODS = [
   "deleteTaskById",
   "deleteTaskBackend",
   "bypassFailedPreMergeReviewStep",
-  "archiveAllDone",
-  "cleanupArchivedTasks",
   "getDatabase",
 ] as const;
 

@@ -43,7 +43,6 @@ function makeStore(task: Task, settings: Partial<Settings> = {}, events: unknown
       events.push(event);
     }),
     walCheckpoint: vi.fn(() => ({ busy: 0, log: 0, checkpointed: 0 })),
-    archiveTaskAndCleanup: vi.fn(async () => ({})),
     mergeTask: vi.fn(async () => undefined),
     getRootDir: vi.fn(() => ""),
   }) as unknown as TaskStore & EventEmitter;

@@ -15,6 +15,7 @@ const severityAuditLog = createLogger("core-mission-store");
  */
 
 import { EventEmitter } from "node:events";
+import { ValidatorRunOwnershipLostError, type GeneratedFixFeatureOptions } from "./mission-types.js";
 import type { Database } from "../db/db.js";
 import { fromJson, toJson, toJsonNullable } from "../db/db.js";
 import { FEATURE_LOOP_TRANSITIONS, normalizeMissionAssertionOrigin, normalizeMissionAssertionScope, normalizeMissionAssertionType, renderValidationCause, ROLLUP_OWNED_MILESTONE_STATUSES, ROLLUP_OWNED_MISSION_STATUSES, selectNextSerialMissionSlice, shouldApplyRecomputedStatus, VALIDATION_INFLIGHT_STALE_MAX_AGE_MS } from "./mission-types.js";
@@ -2677,7 +2678,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       .get(taskId) as { id: string } | undefined;
     if (!liveTask) {
       throw new Error(
-        `Cannot link feature ${featureId} to task ${taskId}: task is not on the active board (it may be archived, deleted, or never existed). Only active tasks can be linked to features.`,
+        `Cannot link feature ${featureId} to task ${taskId}: task is not on the active board (it may be deleted, historical, or never existed). Only active tasks can be linked to features.`,
       );
     }
 
@@ -2805,7 +2806,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       .get(taskId) as { id: string } | undefined;
     if (!liveTask) {
       throw new Error(
-        `Cannot re-point feature ${featureId} to task ${taskId}: task is not on the active board (it may be archived, deleted, or never existed). Only active tasks can be linked to features.`,
+        `Cannot re-point feature ${featureId} to task ${taskId}: task is not on the active board (it may be deleted, historical, or never existed). Only active tasks can be linked to features.`,
       );
     }
     const conflictingFeature = this.db
@@ -3068,7 +3069,9 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
     result: "passed" | "failed" | "blocked" | "error",
     summary?: string,
     blockedReason?: string,
-  ): MissionValidatorRun {
+    effects?: import("./mission-types.js").ValidatorRunCompletionEffects,
+  ): import("./mission-types.js").ValidatorRunCompletion {
+    if (effects) return this.completeValidatorRunWithEffects(runId, result, summary, blockedReason, effects);
     const run = this.getValidatorRun(runId);
     if (!run) {
       throw new Error(`Validator run ${runId} not found`);
@@ -3155,6 +3158,70 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
     }
 
     return updatedRun;
+  }
+
+  /* FNXC:MissionValidation 2026-09-07-04:46: Legacy injected stores retain the same invocation-local ownership token. Persist verdicts, failures and the feature projection together; publish nothing from a rolled-back or losing invocation. */
+  private completeValidatorRunWithEffects(
+    runId: string,
+    result: "passed" | "failed" | "blocked" | "error",
+    summary: string | undefined,
+    blockedReason: string | undefined,
+    effects: import("./mission-types.js").ValidatorRunCompletionEffects,
+  ): import("./mission-types.js").ValidatorRunCompletion {
+    const now = new Date().toISOString();
+    const changedAssertions: MissionContractAssertion[] = [];
+    let updatedFeature: MissionFeature | undefined;
+    const validationRollups: MilestoneValidationRollup[] = [];
+    const completion = this.db.transactionImmediate(() => {
+      const run = this.getValidatorRun(runId);
+      if (!run) throw new Error(`Validator run ${runId} not found`);
+      const feature = this.getFeature(run.featureId);
+      if (!feature) throw new Error(`Feature ${run.featureId} not found`);
+      if (run.status !== "running" || effects.featureId !== run.featureId
+        || (effects.triggerType && effects.triggerType !== run.triggerType)
+        || feature.lastValidatorRunId !== runId || feature.validatorAttemptCount !== run.validatorAttempt
+        || feature.loopState !== "validating") return { ...run, completionApplied: false };
+      const won = this.db.prepare(`UPDATE mission_validator_runs SET status = ?, summary = ?, blockedReason = ?, completedAt = ?, updatedAt = ? WHERE id = ? AND status = 'running'`)
+        .run(result, summary ?? null, blockedReason ?? null, now, now, runId);
+      if (won.changes !== 1) return { ...this.getValidatorRun(runId)!, completionApplied: false };
+      const linked = new Map(this.listAssertionsForFeature(feature.id).map((assertion) => [assertion.id, assertion]));
+      const milestoneIds = new Set([run.milestoneId]);
+      for (const verdict of effects.assertions ?? []) {
+        const assertion = linked.get(verdict.assertionId);
+        if (!assertion) throw new Error(`Assertion ${verdict.assertionId} is not linked to feature ${feature.id}`);
+        milestoneIds.add(assertion.milestoneId);
+        this.db.prepare("UPDATE mission_contract_assertions SET status = ?, updatedAt = ? WHERE id = ?")
+          .run(verdict.status, now, assertion.id);
+        changedAssertions.push({ ...assertion, status: verdict.status, updatedAt: now });
+      }
+      for (const failure of effects.failures ?? []) {
+        if (failure.featureId !== feature.id || !linked.has(failure.assertionId)) throw new Error("Validator failures do not belong to the current feature");
+        this.db.prepare(`INSERT INTO mission_validator_failures (id, runId, featureId, assertionId, message, expected, actual, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+          .run(this.generateFailureId(), runId, feature.id, failure.assertionId, failure.message ?? null, failure.expected ?? null, failure.actual ?? null, now);
+      }
+      const loopState: FeatureLoopState = result === "passed" ? "passed" : result === "failed" ? "needs_fix" : result === "blocked" ? "blocked" : "validating";
+      updatedFeature = { ...feature, status: result === "passed" ? "done" : feature.status, loopState, lastValidatorStatus: result, updatedAt: now };
+      this.db.prepare("UPDATE mission_features SET status = ?, loopState = ?, lastValidatorStatus = ?, updatedAt = ? WHERE id = ?")
+        .run(updatedFeature.status, loopState, result, now, feature.id);
+      for (const milestoneId of milestoneIds) {
+        const rollup = this.getMilestoneValidationRollup(milestoneId);
+        this.db.prepare("UPDATE milestones SET validationState = ?, updatedAt = ? WHERE id = ?")
+          .run(rollup.state, now, milestoneId);
+        validationRollups.push(rollup);
+      }
+      return { ...run, status: result, summary, blockedReason, completedAt: now, updatedAt: now, completionApplied: true };
+    });
+    if (!completion.completionApplied) return completion;
+    this.db.bumpLastModified();
+    for (const rollup of validationRollups) this.emit("milestone:validation:updated", { milestoneId: rollup.milestoneId, state: rollup.state, rollup });
+    for (const assertion of changedAssertions) this.emit("assertion:updated", assertion);
+    if (updatedFeature) {
+      this.emit("feature:updated", updatedFeature);
+      this.recomputeSliceStatus(updatedFeature.sliceId);
+    }
+    this.emit("validator-run:completed", completion, result, Math.max(0, Date.parse(now) - Date.parse(completion.startedAt)));
+    if (result === "passed" && updatedFeature) this.reconcileSupersededGeneratedFixFeatures(updatedFeature.sliceId);
+    return completion;
   }
 
   /**
@@ -3380,6 +3447,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
     failureReason?: string,
     title?: string,
     diagnostics?: ValidationDiagnostics,
+    options: GeneratedFixFeatureOptions = {},
   ): MissionFeature {
     const sourceFeature = this.getFeature(sourceFeatureId);
     if (!sourceFeature) {
@@ -3394,6 +3462,24 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       throw new Error(
         `Validator run ${runId} belongs to feature ${run.featureId}, expected ${sourceFeatureId}`,
       );
+    }
+
+    if (options.requireCurrentRun && (run.status !== "failed" || sourceFeature.lastValidatorRunId !== runId
+      || sourceFeature.validatorAttemptCount !== run.validatorAttempt || sourceFeature.lastValidatorStatus !== "failed"
+      || sourceFeature.loopState === "passed")) {
+      throw new ValidatorRunOwnershipLostError(runId);
+    }
+    if (options.requireCurrentRun) {
+      const visited = new Set([sourceFeature.id]);
+      let ancestorId = sourceFeature.generatedFromFeatureId;
+      while (ancestorId) {
+        const ancestor = this.getFeature(ancestorId);
+        if (!ancestor || visited.has(ancestorId) || ancestor.loopState === "passed" || ancestor.lastValidatorStatus === "passed") {
+          throw new ValidatorRunOwnershipLostError(runId);
+        }
+        visited.add(ancestorId);
+        ancestorId = ancestor.generatedFromFeatureId;
+      }
     }
 
     // R22 — idempotency across re-drives.
@@ -3582,8 +3668,12 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
    * FNXC:Missions 2026-07-11-12:35:
    * A generated fix can also supersede itself once its own validator/loop evidence has passed.
    * Reconciliation treats that as terminal evidence so a completed fix does not stay active only because its ancestor previously failed.
+   *
+   * FNXC:Missions 2026-09-05-22:07:
+   * Superseding a generated fix means it is no longer needed, not that it passed validation.
+   * Never stamp unearned validator evidence because that re-arms the reconciler's own trigger (issue #3574).
    */
-  reconcileSupersededGeneratedFixFeatures(sliceId: string): { supersededCount: number; featureIds: string[] } {
+  reconcileSupersededGeneratedFixFeatures(sliceId: string): { supersededCount: number; featureIds: string[]; repairedCount: number; repairedFeatureIds: string[] } {
     const features = this.listFeatures(sliceId);
     const featureById = new Map(features.map((feature) => [feature.id, feature]));
     const ancestorPassedMemo = new Map<string, boolean>();
@@ -3610,10 +3700,53 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       return passed;
     };
 
+    const isFabricatedMarker = (feature: MissionFeature): boolean => Boolean(
+      (feature.generatedFromFeatureId || feature.generatedFromRunId)
+      && feature.lastValidatorStatus === "passed"
+      && !feature.lastValidatorRunId
+      && !feature.taskId
+      && feature.status === "done"
+      && !hasPassedAncestor(feature),
+    );
+    const repairedFeatureIds = features.filter(isFabricatedMarker).map((feature) => feature.id);
+    const repairedIds = new Set(repairedFeatureIds);
     const supersededFeatureIds = features
+      .filter((feature) => !repairedIds.has(feature.id))
       .filter((feature) => feature.generatedFromFeatureId && (featureHasPassed(feature) || hasPassedAncestor(feature)))
-      .filter((feature) => feature.status !== "done" || feature.loopState !== "passed" || feature.lastValidatorStatus !== "passed" || feature.taskId)
+      .filter((feature) => feature.status !== "done" || feature.loopState !== "passed" || feature.taskId)
       .map((feature) => feature.id);
+
+    if (repairedFeatureIds.length > 0) {
+      this.db.transaction(() => {
+        const hasCurrentPassedAncestor = (feature: MissionFeature, seen = new Set<string>()): boolean => {
+          const sourceFeatureId = feature.generatedFromFeatureId;
+          if (!sourceFeatureId || seen.has(sourceFeatureId)) return false;
+          seen.add(sourceFeatureId);
+          const sourceFeature = this.getFeature(sourceFeatureId);
+          return featureHasPassed(sourceFeature) || (sourceFeature ? hasCurrentPassedAncestor(sourceFeature, seen) : false);
+        };
+        const isCurrentFabricatedMarker = (feature: MissionFeature): boolean => Boolean(
+          (feature.generatedFromFeatureId || feature.generatedFromRunId)
+          && feature.lastValidatorStatus === "passed"
+          && !feature.lastValidatorRunId
+          && !feature.taskId
+          && feature.status === "done"
+          && !hasCurrentPassedAncestor(feature),
+        );
+        for (const featureId of repairedFeatureIds) {
+          const feature = this.getFeature(featureId);
+          if (!feature || !isCurrentFabricatedMarker(feature)) continue;
+          this.updateFeature(featureId, { status: "defined", taskId: undefined, loopState: "idle", lastValidatorStatus: undefined });
+          const slice = this.getSlice(feature.sliceId);
+          const milestone = slice ? this.getMilestone(slice.milestoneId) : undefined;
+          if (milestone) {
+            this.logMissionEvent(milestone.missionId, "feature_status_changed", `Feature status changed from ${feature.status} to defined`, {
+              featureId, field: "status", from: feature.status, to: "defined", source: "superseded-fix-marker-repair",
+            });
+          }
+        }
+      });
+    }
 
     if (supersededFeatureIds.length > 0) {
       this.db.transaction(() => {
@@ -3624,7 +3757,6 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
             status: "done",
             taskId: undefined,
             loopState: "passed",
-            lastValidatorStatus: "passed",
           });
           if (feature.taskId) {
             this.db.prepare("UPDATE tasks SET missionId = NULL, sliceId = NULL WHERE id = ? AND \"deletedAt\" IS NULL").run(feature.taskId);
@@ -3636,6 +3768,8 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
     return {
       supersededCount: supersededFeatureIds.length,
       featureIds: supersededFeatureIds,
+      repairedCount: repairedFeatureIds.length,
+      repairedFeatureIds,
     };
   }
 

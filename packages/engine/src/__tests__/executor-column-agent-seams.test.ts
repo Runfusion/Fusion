@@ -239,7 +239,7 @@ describe("column-agent coding seams (plan U4)", () => {
       expect(loggedLines(store).some((l) => l.includes("running as column agent"))).toBe(false);
     });
 
-    it("step session: attribution falls back to assignedAgentId; no effectiveAgentId override", async () => {
+    it("step session: attribution uses the assigned effective step identity", async () => {
       const store = createMockStore();
       const task = singleSessionTask({ assignedAgentId: "agent-Y" });
       store.getTask.mockResolvedValue(task as any);
@@ -250,9 +250,8 @@ describe("column-agent coding seams (plan U4)", () => {
       await (executor as any).runImplementationPhase(task);
 
       const opts = lastStepExecutorOpts();
-      // No column agent governs → no attribution override (StepSessionExecutor
-      // falls back to taskDetail.assignedAgentId ?? "executor").
-      expect(opts.effectiveAgentId).toBeUndefined();
+      // No column agent governs, so the proven assigned identity is still the attribution.
+      expect(opts.effectiveAgentId).toBe("agent-Y");
       // Model precedence input is the assigned agent's runtimeConfig.
       expect(opts.assignedAgentRuntimeConfig).toEqual(makeAssignedAgent().runtimeConfig);
       expect(loggedLines(store).some((l) => l.includes("running as column agent"))).toBe(false);
@@ -472,8 +471,8 @@ describe("column-agent coding seams (plan U4)", () => {
       await runStepSessionSeam(executor, task, "foreach-1#0:step-exec", DEFER_COL);
 
       const opts = lastStepExecutorOpts();
-      // Own settings (complete model pair) suppress the defer column agent.
-      expect(opts.effectiveAgentId).toBeUndefined();
+      // Own settings suppress column governance, but keep the assigned attribution identity.
+      expect(opts.effectiveAgentId).toBe("agent-Y");
       expect(opts.assignedAgentRuntimeConfig).toEqual(makeAssignedAgent().runtimeConfig);
       expect(agentStore.getAgent).not.toHaveBeenCalledWith("agent-col");
     });
@@ -524,7 +523,8 @@ describe("column-agent coding seams (plan U4)", () => {
       await runStepSessionSeam(executor, task, "foreach-1#0:step-exec", OVERRIDE_COL);
 
       const opts = lastStepExecutorOpts();
-      expect(opts.effectiveAgentId).toBeUndefined();
+      // Missing column agents fall back to the authoritative assigned identity.
+      expect(opts.effectiveAgentId).toBe("agent-Y");
       expect(opts.assignedAgentRuntimeConfig).toEqual(makeAssignedAgent().runtimeConfig);
       expect(
         loggedLines(store).some(

@@ -378,6 +378,19 @@ export function fetchPluginWorkflowStepTemplates(): Promise<{
 export interface ScriptEntry {
   name: string;
   command: string;
+  description?: string;
+}
+
+/** Normalize both the legacy name-command map and the enriched catalog response. */
+export function normalizeScriptCatalog(value: Record<string, string> | ScriptEntry[]): ScriptEntry[] {
+  if (Array.isArray(value)) {
+    return value.map((entry) => ({
+      name: entry.name,
+      command: entry.command,
+      ...(entry.description?.trim() ? { description: entry.description.trim() } : {}),
+    }));
+  }
+  return Object.entries(value).map(([name, command]) => ({ name, command }));
 }
 
 /** Result of running a script via POST /api/scripts/:name/run */
@@ -386,16 +399,26 @@ export interface ScriptRunResult {
   command: string;
 }
 
-/** Fetch all saved scripts from project settings */
-export function fetchScripts(projectId?: string): Promise<Record<string, string>> {
+/** Fetch the enriched catalog. The union keeps older hosts and test adapters compatible. */
+export function fetchScripts(projectId?: string): Promise<Record<string, string> | ScriptEntry[]> {
+  return api<Record<string, string> | ScriptEntry[]>(withProjectId("/scripts?catalog=1", projectId));
+}
+
+/** Explicit historical map reader for integrations that have not adopted metadata. */
+export function fetchLegacyScripts(projectId?: string): Promise<Record<string, string>> {
   return api<Record<string, string>>(withProjectId("/scripts", projectId));
 }
 
-/** Add or update a script */
-export function addScript(name: string, command: string, projectId?: string): Promise<ScriptEntry> {
+/** Add, update, or atomically rename a script. */
+export function addScript(
+  name: string,
+  command: string,
+  projectId?: string,
+  options: { originalName?: string; description?: string } = {},
+): Promise<ScriptEntry> {
   return api<ScriptEntry>(withProjectId("/scripts", projectId), {
     method: "POST",
-    body: JSON.stringify({ name, command }),
+    body: JSON.stringify({ name, command, ...options }),
   });
 }
 

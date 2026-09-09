@@ -28,7 +28,6 @@ describe("built-in lead-generation workflow IR", () => {
       "enrichment",
       "outreach",
       "converted",
-      "archived",
     ]);
     expect(ir.columns.map((column) => column.traits.map((trait) => trait.trait))).toEqual([
       ["intake"],
@@ -37,12 +36,10 @@ describe("built-in lead-generation workflow IR", () => {
       ["timing"],
       ["human-review", "stall-detection"],
       ["complete"],
-      ["archived"],
     ]);
 
     expect(ir.columns.filter((column) => column.traits.some((trait) => trait.trait === "intake"))).toHaveLength(1);
     expect(ir.columns.filter((column) => column.traits.some((trait) => trait.trait === "complete"))).toHaveLength(1);
-    expect(ir.columns.filter((column) => column.traits.some((trait) => trait.trait === "archived"))).toHaveLength(1);
   });
 
   it("places every node in a defined column and orders the prompt spine", () => {

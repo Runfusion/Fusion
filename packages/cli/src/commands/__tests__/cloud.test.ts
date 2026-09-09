@@ -13,8 +13,15 @@ function fixtureSecret(label: string): string {
   return ["fixture", label, "value"].join("-");
 }
 
+function fixtureOrigin(...labels: string[]): string {
+  return ["https://", labels.join(".")].join("");
+}
+
+const pendingOrigin = fixtureOrigin("amiable-gerbil-978", "convex", "site");
+const otherOrigin = fixtureOrigin("other", "convex", "site");
+
 const pending: CloudLinkPendingPairing = {
-  httpBaseUrl: "https://amiable-gerbil-978.convex.site",
+  httpBaseUrl: pendingOrigin,
   code: "ABCD-EFGH",
   pendingSecret: fixtureSecret("pending"),
   createdAt: "2026-08-23T00:00:00Z",
@@ -23,32 +30,32 @@ const pending: CloudLinkPendingPairing = {
 describe("resolveCloudPairCompleteRequest", () => {
   it("uses the pending origin when --http is omitted", () => {
     const result = resolveCloudPairCompleteRequest({}, () => pending);
-    expect(result.http).toBe("https://amiable-gerbil-978.convex.site");
+    expect(result.http).toBe(pendingOrigin);
     expect(result.code).toBe("ABCD-EFGH");
     expect(result.pendingSecret).toBe(fixtureSecret("pending"));
   });
 
   it("allows matching --http with pending fallback credentials", () => {
     const result = resolveCloudPairCompleteRequest(
-      { http: "https://amiable-gerbil-978.convex.site/" },
+      { http: `${pendingOrigin}/` },
       () => pending,
     );
-    expect(result.http).toBe("https://amiable-gerbil-978.convex.site");
+    expect(result.http).toBe(pendingOrigin);
   });
 
   it("rejects mismatched --http when either credential falls back to pending", () => {
     expect(() =>
-      resolveCloudPairCompleteRequest({ http: "https://other.convex.site" }, () => pending),
+      resolveCloudPairCompleteRequest({ http: otherOrigin }, () => pending),
     ).toThrow(/different Cloud URL/);
     expect(() =>
       resolveCloudPairCompleteRequest(
-        { http: "https://other.convex.site", code: "ZZZZ-YYYY" },
+        { http: otherOrigin, code: "ZZZZ-YYYY" },
         () => pending,
       ),
     ).toThrow(/different Cloud URL/);
     expect(() =>
       resolveCloudPairCompleteRequest(
-        { http: "https://other.convex.site", pendingSecret: fixtureSecret("other") },
+        { http: otherOrigin, pendingSecret: fixtureSecret("other") },
         () => pending,
       ),
     ).toThrow(/different Cloud URL/);
@@ -57,13 +64,13 @@ describe("resolveCloudPairCompleteRequest", () => {
   it("allows a different --http when both credentials are explicit", () => {
     const result = resolveCloudPairCompleteRequest(
       {
-        http: "https://other.convex.site",
+        http: otherOrigin,
         code: "ZZZZ-YYYY",
         pendingSecret: fixtureSecret("other"),
       },
       () => pending,
     );
-    expect(result.http).toBe("https://other.convex.site");
+    expect(result.http).toBe(otherOrigin);
     expect(result.code).toBe("ZZZZ-YYYY");
     expect(result.pendingSecret).toBe(fixtureSecret("other"));
   });

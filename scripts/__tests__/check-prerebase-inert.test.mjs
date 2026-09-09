@@ -1,10 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { URL } from "node:url";
 import { maskSource } from "../lib/source-projection.mjs";
 import {
   SELF_EXCLUDED_PATHS, isCorpusPath, partitionCorpus, detectLegacyBindings,
   detectQuotedAccess, detectsPrerebaseSpecifier, checkExemption, listTrackedFiles,
   listAllTrackedFiles, protectedCorpusHoles, scanSources, checkDocs,
+  DOCS_ROW_CONTRACT, formatFailureMessage,
 } from "../check-prerebase-inert.mjs";
 import { readStaticGateChecks } from "../run-static-gate-checks.mjs";
 
@@ -70,4 +75,80 @@ test("real tracked corpus has no protected-source holes and gate is wired", () =
   assert.deepEqual(protectedCorpusHoles(listAllTrackedFiles(), [...corpus]), []);
   assert.deepEqual(checkDocs(), []); assert.deepEqual(scanSources(), []);
   assert.ok(readStaticGateChecks().includes("scripts/check-prerebase-inert.mjs"));
+});
+
+function createDocsFixture({ rows = DOCS_ROW_CONTRACT, architecture = "" } = {}) {
+  const root = mkdtempSync(join(tmpdir(), "fusion-prerebase-docs-"));
+  const settingsRows = Object.entries(rows).map(([setting, contract]) => `| \`${setting}\` | type | default | ${contract.required.join(" ")} |`);
+  const docsDir = join(root, "docs");
+  mkdirSync(docsDir);
+  writeFileSync(join(docsDir, "settings-reference.md"), settingsRows.join("\n"));
+  writeFileSync(join(docsDir, "architecture.md"), architecture);
+  return root;
+}
+
+// FNXC:MergerUnification 2026-09-09-07:46: Iterate the exported contract so a
+// new mechanical claim cannot be added without a negative fixture proof.
+test("docs contract rejects every omitted or forbidden claim token", () => {
+  for (const [setting, contract] of Object.entries(DOCS_ROW_CONTRACT)) {
+    for (const token of contract.required) {
+      const mutated = Object.fromEntries(Object.entries(DOCS_ROW_CONTRACT).map(([name, item]) => [name, {
+        ...item,
+        required: name === setting ? item.required.filter((candidate) => candidate !== token) : item.required,
+      }]));
+      const root = createDocsFixture({ rows: mutated });
+      try {
+        assert.ok(checkDocs(root).includes(`docs contract: ${setting}: missing required claim token: ${token}`));
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    }
+    for (const token of contract.forbidden) {
+      const root = createDocsFixture({ rows: Object.fromEntries(Object.entries(DOCS_ROW_CONTRACT).map(([name, item]) => [name, {
+        ...item,
+        required: name === setting ? [...item.required, token] : item.required,
+      }])) });
+      try {
+        assert.ok(checkDocs(root).includes(`docs contract: ${setting}: forbidden claim token: ${token}`));
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    }
+  }
+});
+test("docs contract accepts corrected rows and identifies missing rows", () => {
+  const root = createDocsFixture();
+  try {
+    assert.deepEqual(checkDocs(root), []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+  const missing = { ...DOCS_ROW_CONTRACT };
+  delete missing.prerebaseHotFiles;
+  const missingRoot = createDocsFixture({ rows: missing });
+  try {
+    assert.ok(checkDocs(missingRoot).includes("docs contract: missing prerebaseHotFiles row"));
+  } finally {
+    rmSync(missingRoot, { recursive: true, force: true });
+  }
+});
+test("docs contract requires an aiMergeTask legacy qualifier on its line", () => {
+  const unqualified = createDocsFixture({ architecture: "aiMergeTask performs merge flow" });
+  try {
+    assert.deepEqual(checkDocs(unqualified), ["docs contract: architecture: unqualified aiMergeTask mention on line 1"]);
+  } finally {
+    rmSync(unqualified, { recursive: true, force: true });
+  }
+  const qualified = createDocsFixture({ architecture: "legacy aiMergeTask performs merge flow" });
+  try {
+    assert.deepEqual(checkDocs(qualified), []);
+  } finally {
+    rmSync(qualified, { recursive: true, force: true });
+  }
+});
+test("failure guidance names the current AGENTS legacy-prerebase item", () => {
+  const agents = readFileSync(new URL("../../AGENTS.md", import.meta.url), "utf8");
+  const itemTitle = agents.match(/^\d+\. \*\*(Legacy auto-prerebase is inert\.)\*\*/m)?.[1];
+  assert.ok(itemTitle);
+  assert.ok(formatFailureMessage([]).includes(itemTitle));
 });

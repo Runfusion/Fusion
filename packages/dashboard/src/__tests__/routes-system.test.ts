@@ -204,8 +204,6 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
     updateTask: vi.fn(),
     deleteTask: vi.fn(),
     mergeTask: vi.fn(),
-    archiveTask: vi.fn(),
-    unarchiveTask: vi.fn(),
     getSettings: vi.fn().mockResolvedValue({}),
     getSettingsFast: vi.fn().mockResolvedValue({}),
     updateSettings: vi.fn(),
@@ -521,7 +519,6 @@ describe("GET /api/system-stats", () => {
         "in-progress": 1,
         "in-review": 1,
         done: 0,
-        archived: 0,
       },
       active: 2,
       agents: {
@@ -643,7 +640,6 @@ describe("GET /api/system-stats", () => {
         "in-progress": 0,
         "in-review": 0,
         done: 0,
-        archived: 0,
       },
       active: 0,
       agents: {
@@ -676,7 +672,7 @@ describe("GET /api/system-stats", () => {
       },
       taskStats: {
         total: 2,
-        byColumn: { triage: 0, todo: 1, "in-progress": 1, "in-review": 0, done: 0, archived: 0 },
+        byColumn: { triage: 0, todo: 1, "in-progress": 1, "in-review": 0, done: 0 },
         active: 1,
         agents: { idle: 1, active: 0, running: 1, error: 0 },
       },
@@ -714,7 +710,7 @@ describe("GET /api/system-stats", () => {
           }),
           taskStats: {
             total: 1,
-            byColumn: { triage: 0, todo: 0, "in-progress": 1, "in-review": 0, done: 0, archived: 0 },
+            byColumn: { triage: 0, todo: 0, "in-progress": 1, "in-review": 0, done: 0 },
             active: 1,
             agents: { idle: 0, active: 0, running: 0, error: 0 },
           },
