@@ -548,11 +548,11 @@ not mention the rescue — the evidence is in the test-file diff.
 
 ---
 
-## Entry: `spec-drift-reconciler` exponential-backoff case (first sighting)
+## Entry: `spec-drift-reconciler` exponential-backoff case (quarantined 2026-09-09)
 
+- **Status:** Quarantined 2026-09-09 after a second timer-driven sighting — FN-9272's selected engine test command observed three persistence attempts after the second 1-second fake-timer advance where the test expects two; no open rescue owner, deletion-ratchet deadline 2026-09-23 (quarantinedAt + 14d).
 - **File:** `packages/engine/src/__tests__/spec-drift-reconciler.test.ts`
 - **Exact test:** `SpecDriftReconciler > backs a persistent outage off exponentially instead of re-firing every second`
-- **Owner:** unowned — first sighting, recorded rather than quarantined because the file's other 9–13 tests are substantial coverage and quarantine is file-level.
 - **Observed tree/SHA:** `a97aa84a20`, full `@fusion/engine` suite run.
 - **Observed frequency:** once in a full-suite run; also failed once when run in the same command as `self-healing-pending-wedge-notification.test.ts`, and passes deterministically alone (10/10) and in other pairings.
 
@@ -566,7 +566,10 @@ Both this and the quarantined `self-healing-pending-wedge-notification` case are
 reconciler tests that fail only alongside other suites, which points at shared fake-timer or
 cross-file state rather than a product defect. No timeout was widened, no retry added, and no
 assertion relaxed. A SECOND sighting is an ordinary on-sight quarantine with no further discretion,
-per the standing rule in AGENTS.md.
+per the standing rule in AGENTS.md. That second sighting occurred 2026-09-09 during FN-9272
+verification (a parser-only change that does not touch the reconciler), so the file is quarantined
+in `scripts/lib/test-quarantine.json` with the matching `engine-default` exclude under the deletion
+ratchet; rescue requires a root-cause fix proving the reconciler coverage is stable.
 
 ---
 
