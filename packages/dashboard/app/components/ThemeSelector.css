@@ -733,6 +733,14 @@
   --swatch-sample-4: #9ca6b4;
 }
 
+/* FNXC:LiquidGlassTheme 2026-09-09-15:50: The shared four-sample swatch previews Liquid Glass depth and blue/cyan functional accents without depending on the currently active theme tokens. */
+.theme-swatch-liquid-glass {
+  --swatch-sample-1: oklch(0.18 0.025 255);
+  --swatch-sample-2: oklch(0.32 0.045 250);
+  --swatch-sample-3: oklch(0.72 0.16 245);
+  --swatch-sample-4: oklch(0.78 0.14 205);
+}
+
 .theme-swatch-horizon {
   --swatch-sample-1: #1c1e26;
   --swatch-sample-2: #16161c;
@@ -1098,6 +1106,13 @@
   --swatch-sample-2: color-mix(in srgb, #ffffff 75%, transparent);
   --swatch-sample-3: #5f6875;
   --swatch-sample-4: #747f8c;
+}
+
+[data-theme="light"] .theme-swatch-liquid-glass {
+  --swatch-sample-1: oklch(0.955 0.012 245);
+  --swatch-sample-2: oklch(0.985 0.01 245);
+  --swatch-sample-3: oklch(0.55 0.19 250);
+  --swatch-sample-4: oklch(0.55 0.15 215);
 }
 
 [data-theme="light"] .theme-swatch-slate {
