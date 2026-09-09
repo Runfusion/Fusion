@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { captureBoardScrollSnapshot, restoreBoardScrollSnapshot } from "../boardScrollSnapshot";
+import { captureBoardScrollSnapshot, readPersistedBoardScrollSnapshot, restoreBoardScrollSnapshot } from "../boardScrollSnapshot";
 
 describe("boardScrollSnapshot", () => {
   afterEach(() => {
@@ -7,10 +7,11 @@ describe("boardScrollSnapshot", () => {
     delete (document as Document & { scrollingElement?: Element | null }).scrollingElement;
     Object.defineProperty(window, "scrollX", { configurable: true, writable: true, value: 0 });
     Object.defineProperty(window, "scrollY", { configurable: true, writable: true, value: 0 });
+    window.sessionStorage.clear();
     document.body.innerHTML = "";
   });
 
-  it("round-trips board horizontal scroll and per-column vertical scroll", () => {
+  it("restores horizontal context while every column starts at the top", () => {
     document.body.innerHTML = `
       <div class="project-content">
         <main id="board">
@@ -45,8 +46,34 @@ describe("boardScrollSnapshot", () => {
     expect(projectContent.scrollTop).toBe(22);
     expect(board.scrollLeft).toBe(240);
     expect(board.scrollTop).toBe(12);
-    expect(todoBody.scrollTop).toBe(380);
-    expect(activeBody.scrollTop).toBe(95);
+    expect(snapshot?.columnTops).toEqual({ todo: 0, "in-progress": 0 });
+    expect(todoBody.scrollTop).toBe(0);
+    expect(activeBody.scrollTop).toBe(0);
+  });
+
+  it("zeros every rendered column from a legacy snapshot with non-zero offsets", () => {
+    document.body.innerHTML = `
+      <main id="board">
+        <section class="column" data-column="todo"><div class="column-body"></div></section>
+        <section class="column" data-column="done"><div class="column-body"></div></section>
+      </main>
+    `;
+    const bodies = Array.from(document.querySelectorAll<HTMLElement>(".column-body"));
+    bodies[0]!.scrollTop = 12;
+    bodies[1]!.scrollTop = 900;
+
+    expect(restoreBoardScrollSnapshot({
+      boardLeft: 77,
+      boardTop: 0,
+      columnTops: { todo: 380, done: 8_000 },
+      projectContentLeft: 0,
+      projectContentTop: 0,
+      documentLeft: 0,
+      documentTop: 0,
+    })).toBe(true);
+
+    expect((document.getElementById("board") as HTMLElement).scrollLeft).toBe(77);
+    expect(bodies.map((body) => body.scrollTop)).toEqual([0, 0]);
   });
 
   it("round-trips document scroll without requiring the project-content shell", () => {
@@ -101,6 +128,15 @@ describe("boardScrollSnapshot", () => {
     expect(board.scrollLeft).toBe(40);
     expect(board.scrollTop).toBe(8);
     expect(scrollTo).toHaveBeenCalledWith(13, 144);
+  });
+
+  it.each([
+    "not-json",
+    JSON.stringify({ boardLeft: 2, columnTops: {} }),
+    JSON.stringify({ boardLeft: 2, boardTop: 0, columnTops: { done: "far" }, projectContentLeft: 0, projectContentTop: 0, documentLeft: 0, documentTop: 0 }),
+  ])("ignores an absent or invalid persisted snapshot: %s", (raw) => {
+    window.sessionStorage.setItem("kb-dashboard-board-scroll", raw);
+    expect(readPersistedBoardScrollSnapshot()).toBeNull();
   });
 
   it("returns false when the board is not mounted", () => {

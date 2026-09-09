@@ -25,7 +25,10 @@ import {
   writeBoardWorkflowSelection,
 } from "../utils/boardWorkflowSelection";
 import type { TaskContextMenuColumnMetadata } from "./TaskContextMenu";
+import { resetBoardColumnsOnArrival } from "../utils/boardScrollSnapshot";
 import { isTaskReverted } from "../utils/taskRevert";
+
+export { resetBoardColumnsOnArrival } from "../utils/boardScrollSnapshot";
 
 interface BoardProps {
   tasks: Task[];
@@ -238,6 +241,10 @@ export function Board({ tasks, projectId, maxConcurrent, maxWorktrees, showWorkt
   */
   const mobileFullTaskModalHidden = viewportMode === "mobile";
   useColumnScrollSnap(boardElement, { mobileOnly: true });
+  useEffect(() => {
+    if (!active) return;
+    resetBoardColumnsOnArrival(boardElement);
+  }, [active, boardElement]);
   /*
   FNXC:BoardNavigation 2026-08-21-18:12:
   FN-115 keeps the shared non-mobile mouse-pan owner on both live Board roots, but card activation

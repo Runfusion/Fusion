@@ -1,3 +1,21 @@
+export type BoardColumnArrivalResetResult = "board-absent" | "columns-pending" | "ready";
+
+/*
+FNXC:BoardNavigation 2026-09-09-22:29:
+Board arrival owns vertical lane position independently from horizontal snapshot restoration. Reset every rendered lane and notify its scroll listener so virtualized rows agree with the DOM; a missing or not-yet-hydrated Board remains distinguishable for bounded replay.
+*/
+export function resetBoardColumnsOnArrival(board: HTMLElement | null): BoardColumnArrivalResetResult {
+  if (!board) return "board-absent";
+  const columnBodies = Array.from(board.querySelectorAll<HTMLElement>(".column-body"));
+  if (columnBodies.length === 0) return "columns-pending";
+
+  for (const body of columnBodies) {
+    body.scrollTop = 0;
+    body.dispatchEvent(new Event("scroll", { bubbles: true }));
+  }
+  return "ready";
+}
+
 export interface BoardScrollSnapshot {
   boardLeft: number;
   boardTop: number;
@@ -15,10 +33,10 @@ function getBoardDocument(doc?: Document): Document | null {
 
 /*
 FNXC:BoardNavigation 2026-06-22-20:15:
-Board-card task detail replaces the board instead of overlaying it. Capture horizontal board scroll and per-column vertical scroll before opening detail, then restore after Back to board remounts the board so users return to the same lane/card context.
+Board-card task detail replaces the board instead of overlaying it. Capture the horizontal Board and shell context before opening detail, but retain column identities with zero vertical offsets so every return starts each lane at the top.
 
 FNXC:BoardNavigation 2026-06-29-20:45:
-Mobile Back-to-board must restore the clicked-card board position even when the browser parks scroll on the project-content/document shell during the full-panel task-detail transition. Snapshot the shell offsets alongside #board and .column-body; CSS keeps #board as the horizontal scroller and .column-body as the vertical lane scroller, but restoring the shell defensively prevents mobile viewport drift from hiding the clicked card after return.
+Mobile Back-to-board must restore horizontal Board and page-shell context even when the browser parks scroll on project-content/document during the full-panel task-detail transition. Snapshot shell offsets alongside #board and retain column identities for hydration; CSS keeps #board as the horizontal scroller while every .column-body deliberately restarts at its top.
 */
 export function captureBoardScrollSnapshot(doc?: Document): BoardScrollSnapshot | null {
   const ownerDocument = getBoardDocument(doc);
@@ -34,7 +52,7 @@ export function captureBoardScrollSnapshot(doc?: Document): BoardScrollSnapshot 
     const columnId = column.dataset.column;
     const body = column.querySelector<HTMLElement>(".column-body");
     if (columnId && body) {
-      columnTops[columnId] = body.scrollTop;
+      columnTops[columnId] = 0;
     }
   });
 
@@ -54,7 +72,7 @@ FNXC:BoardNavigation 2026-07-26-10:05:
 Mobile browsers (iOS Safari tab + installed PWA, Chrome Android) DISCARD a backgrounded dashboard tab and reload it from scratch when the user returns. The restore must land the user back where they were, so the snapshot is also replayed against a freshly hydrated board — not just against a board→detail→back remount.
 A freshly reloaded board is EMPTY for as long as its first fetch takes, and scrolling an empty board silently scrolls to nothing and burns the restore. Treat a board with no rendered columns as "not ready yet" (return false so the caller retries) rather than as a successful restore.
 Also refuse to replay a snapshot whose columns no longer exist at all (project switched, columns renamed/removed): a snapshot that matches nothing is a stale position, not a restorable one.
-Scroll offsets themselves are NOT clamped here — assigning past the maximum is clamped natively by the engine, and computing a max from scrollWidth/clientWidth is meaningless in the layout-less test DOM.
+Horizontal and shell offsets are NOT clamped here — assigning past the maximum is clamped natively by the engine, and computing a max from scrollWidth/clientWidth is meaningless in the layout-less test DOM. Legacy payloads may contain non-zero column offsets, but arrival always resets every rendered lane and dispatches scroll so delayed replay cannot move the DOM or virtual window back down.
 */
 export function restoreBoardScrollSnapshot(snapshot: BoardScrollSnapshot | null, doc?: Document): boolean {
   if (!snapshot) return false;
@@ -97,13 +115,7 @@ export function restoreBoardScrollSnapshot(snapshot: BoardScrollSnapshot | null,
 
   board.scrollLeft = snapshot.boardLeft;
   board.scrollTop = snapshot.boardTop;
-  columns.forEach((column) => {
-    const columnId = column.dataset.column;
-    const body = column.querySelector<HTMLElement>(".column-body");
-    if (columnId && body && Object.prototype.hasOwnProperty.call(snapshot.columnTops, columnId)) {
-      body.scrollTop = snapshot.columnTops[columnId];
-    }
-  });
+  resetBoardColumnsOnArrival(board);
 
   return true;
 }

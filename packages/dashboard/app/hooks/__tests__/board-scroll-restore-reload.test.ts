@@ -2,10 +2,10 @@
 FNXC:BoardNavigation 2026-07-26-11:05:
 Regression coverage for the mobile tab-discard reload: iOS Safari (tab + installed PWA) and Chrome
 Android throw away a backgrounded dashboard and reload it when the operator returns, which used to
-drop them at the top of the board because the scroll snapshot lived only in a useRef.
+lose their horizontal Board context because the scroll snapshot lived only in a useRef.
 The invariant under test is the whole restore path, not just the storage round trip: the snapshot is
-written at hide time, replayed only once the reloaded board actually has columns, and never wins over
-the in-memory board -> task-detail -> back restore.
+written at hide time, replayed only once the reloaded Board actually has columns, preserves horizontal
+position, and never restores a non-zero lane offset from either persisted or in-memory state.
 */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
@@ -71,7 +71,7 @@ describe("board scroll restore across a reload", () => {
 
     expect(readPersistedBoardScrollSnapshot()).toMatchObject({
       boardLeft: 240,
-      columnTops: { todo: 380, "in-progress": 0 },
+      columnTops: { todo: 0, "in-progress": 0 },
     });
 
     // Simulated reload: hook state and DOM scroll offsets are gone, sessionStorage is not.
@@ -85,7 +85,7 @@ describe("board scroll restore across a reload", () => {
     });
 
     expect(board().scrollLeft).toBe(240);
-    expect(columnBody("todo").scrollTop).toBe(380);
+    expect(columnBody("todo").scrollTop).toBe(0);
   });
 
   it("does not restore against an empty board, and waits for the board to render", () => {
@@ -110,12 +110,13 @@ describe("board scroll restore across a reload", () => {
 
     // Board content arrives; the bounded replay picks it up on a later tick.
     mountBoard({ withColumns: true });
+    columnBody("todo").scrollTop = 91;
     act(() => {
       vi.advanceTimersByTime(200);
     });
 
     expect(board().scrollLeft).toBe(240);
-    expect(columnBody("todo").scrollTop).toBe(380);
+    expect(columnBody("todo").scrollTop).toBe(0);
   });
 
   it("gives up after the bounded replay budget instead of polling forever", () => {
@@ -141,6 +142,32 @@ describe("board scroll restore across a reload", () => {
       vi.advanceTimersByTime(1000);
     });
     expect(board().scrollLeft).toBe(0);
+  });
+
+  it("cancels delayed replay on user input and leaves no timer behind", () => {
+    persistBoardScrollSnapshot({
+      boardLeft: 240,
+      boardTop: 0,
+      columnTops: { todo: 380 },
+      projectContentLeft: 0,
+      projectContentTop: 0,
+      documentLeft: 0,
+      documentTop: 0,
+    });
+    mountBoard({ withColumns: false });
+    renderHook(() => useBoardScrollRestore("board"));
+
+    act(() => {
+      window.dispatchEvent(new WheelEvent("wheel"));
+    });
+    mountBoard({ withColumns: true });
+    act(() => {
+      vi.advanceTimersByTime(10_000);
+    });
+
+    expect(board().scrollLeft).toBe(0);
+    expect(columnBody("todo").scrollTop).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("ignores a stale persisted snapshot whose columns no longer exist", () => {
@@ -204,7 +231,7 @@ describe("board scroll restore across a reload", () => {
     });
 
     expect(board().scrollLeft).toBe(120);
-    expect(columnBody("todo").scrollTop).toBe(40);
+    expect(columnBody("todo").scrollTop).toBe(0);
     // capture() also refreshes the persisted copy so a discard right now restores the same place.
     expect(readPersistedBoardScrollSnapshot()).toMatchObject({ boardLeft: 120 });
   });

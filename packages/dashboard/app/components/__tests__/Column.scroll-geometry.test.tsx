@@ -67,5 +67,34 @@ describe("Column scroll geometry", () => {
     expect(document.querySelector("[data-virtual-task-row='FN-9999']")).not.toBeNull();
     const spacerHeights = [...document.querySelectorAll<HTMLElement>(".column-virtual-spacer")].map((node) => Number.parseFloat(node.style.height));
     expect(spacerHeights.some((height) => height > 0)).toBe(true);
+
+    root.scrollTop = 0;
+    await act(async () => {
+      fireEvent.scroll(root);
+      await Promise.resolve();
+    });
+    expect(document.querySelector("[data-virtual-task-row='FN-0']")).not.toBeNull();
+  });
+
+  it("preserves user scroll across an ordinary task refresh", async () => {
+    vi.stubGlobal("ResizeObserver", undefined);
+    const tasks = Array.from({ length: 100 }, (_, index) => task(index));
+    const { rerender } = render(<Column {...props} tasks={tasks} />);
+    const root = document.querySelector<HTMLElement>(".column-body")!;
+    Object.defineProperties(root, {
+      clientHeight: { configurable: true, value: 640 },
+      scrollHeight: { configurable: true, value: 32_000 },
+      scrollTop: { configurable: true, writable: true, value: 0 },
+    });
+
+    root.scrollTop = 1_600;
+    await act(async () => {
+      fireEvent.scroll(root);
+      await Promise.resolve();
+    });
+    rerender(<Column {...props} tasks={[...tasks]} />);
+
+    expect(root.scrollTop).toBe(1_600);
+    expect(document.querySelector("[data-virtual-task-row='FN-0']")).toBeNull();
   });
 });

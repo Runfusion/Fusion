@@ -160,6 +160,7 @@ function mainContentProps(overrides: Partial<MainContentProps> = {}): MainConten
     sidebarActive: true,
     isMobile: false,
     isRemote: false,
+    experimentalFeatures: {},
     ingestCreatedTasks: vi.fn(),
     openDetailTask: vi.fn(),
     popOutTaskDetail: vi.fn(),
@@ -264,7 +265,7 @@ describe("MainContent main-view keep alive", () => {
   it.each([
     { name: "an empty Board", tasks: [] as Task[] },
     { name: "a populated Board", tasks: [taskFixture("task-populated")] },
-  ])("keeps the production $name mounted across Board to Chat to Board navigation", async ({ tasks }) => {
+  ])("keeps the production $name mounted while resetting its lanes across Board to Chat to Board navigation", async ({ tasks }) => {
     const result = render(<MainContent {...mainContentProps({ taskView: "board", tasks, filteredBoardTasks: tasks })} />);
     await waitFor(() => expect(document.getElementById("board")).not.toBeNull());
     const board = boardRoot();
@@ -280,7 +281,7 @@ describe("MainContent main-view keep alive", () => {
     expect(boardRoot()).toBe(board);
     expect(board.querySelector(".column-body")).toBe(column);
     expect(board.scrollLeft).toBe(124);
-    expect(column!.scrollTop).toBe(48);
+    expect(column!.scrollTop).toBe(0);
   });
 
   it("keeps the production Chat composer and transcript position across Chat to Board to Chat", async () => {
@@ -407,11 +408,11 @@ describe("MainContent main-view keep alive", () => {
     await waitFor(() => {
       expect(boardRoot()).toBe(board);
       expect(board.scrollLeft).toBe(37);
-      expect(column!.scrollTop).toBe(53);
+      expect(column!.scrollTop).toBe(0);
     });
     await new Promise((resolve) => window.setTimeout(resolve, 0));
     expect(board.scrollLeft).toBe(37);
-    expect(column!.scrollTop).toBe(53);
+    expect(column!.scrollTop).toBe(0);
     result.unmount();
   });
 

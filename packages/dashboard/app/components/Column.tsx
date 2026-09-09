@@ -408,6 +408,14 @@ function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeG
 
   const columnBodyRef = useRef<HTMLDivElement | null>(null);
   const taskById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
+  /*
+  FNXC:BoardNavigation 2026-09-09-22:29:
+  Every lane virtualizer starts at the first task. Board additionally replays a scroll event at each arrival boundary so a retained Column cannot keep terminal geometry, while later task refreshes leave user-owned scrolling untouched.
+  */
+  /*
+  FNXC:BoardNavigation 2026-09-09-22:29:
+  Board lanes always initialize their virtual window at the first task. Board's arrival boundary may also reset an already-mounted lane and dispatch scroll; keep this local alignment at start, while ordinary task refreshes remain free to preserve the user's later position.
+  */
   const virtualList = useVirtualizedList({
     collectionKey: stableCollectionKey,
     keys: showWorktreeGroups ? [] : tasks.map((task) => task.id),

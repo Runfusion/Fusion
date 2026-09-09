@@ -1,15 +1,15 @@
 /*
 FNXC:BoardNavigation 2026-06-24-00:00:
-Preserves horizontal board scroll and per-column vertical scroll across a board → task-detail → back-to-board round trip. capture() snapshots before opening detail; requestRestore() schedules a restore that fires (double requestAnimationFrame, after the board remounts) once the view returns to "board". Extracted from AppInner.
+Preserves horizontal Board and page-shell scroll across a board → task-detail → back-to-board round trip while every column restarts at the top. capture() snapshots before opening detail; requestRestore() schedules a restore that fires (double requestAnimationFrame, after the Board remounts) once the view returns to "board". Extracted from AppInner.
 
 FNXC:BoardNavigation 2026-06-29-20:45:
-Mobile Back-to-board must restore the clicked-card board position after the full-panel detail unmounts. Retry the restore for a bounded sequence of animation frames because mobile board layout stabilization and workflow-board hydration can temporarily leave #board unavailable or reset its offsets after the first post-return frame.
+Mobile Back-to-board must restore the horizontal Board position after the full-panel detail unmounts while column scroll remains zero. Retry the restore for a bounded sequence of animation frames because mobile Board layout stabilization and workflow hydration can temporarily leave #board unavailable after the first post-return frame.
 
 FNXC:BoardNavigation 2026-07-26-10:20:
-Mobile browsers discard a backgrounded dashboard tab (iOS Safari tab, iOS installed PWA, Chrome Android alike) and reload it from scratch when the user returns — the "white splash reload". That is an involuntary, OS-driven event, so the app must be able to put the user back where they were rather than at the top of the board.
+Mobile browsers discard a backgrounded dashboard tab (iOS Safari tab, iOS installed PWA, Chrome Android alike) and reload it from scratch when the user returns — the "white splash reload". That is an involuntary, OS-driven event, so the app restores horizontal Board and shell context while the vertical arrival invariant deliberately starts every lane at the top.
 Two additions carry the snapshot across that reload:
   1. Persist on hide. `pagehide` / `visibilitychange:hidden` is the LAST moment we are guaranteed to run before a discard, and the common case is a user who was sitting on the board and never opened task detail — so the existing capture-on-open-detail path alone would have nothing to restore. Snapshot-on-hide is cheap (a handful of scrollTop reads plus one sessionStorage write) and does no background work while hidden, so it does not itself make the tab a discard candidate.
-  2. Replay on mount. A reloaded board has no rows until its first fetch resolves, so the restore is retried on a bounded timer (not a busy rAF chain — a discarded-tab restore can take far longer than a remount, and the timer stays cheap) until the board actually has columns, then stops. Any real user scroll/keyboard input aborts the replay immediately; never fight the user for control of the scroll position.
+  2. Replay on mount. A reloaded Board has no rows until its first fetch resolves, so horizontal restoration and vertical zeroing retry on a bounded timer (not a busy rAF chain) until columns exist, then stop. Any real user scroll/keyboard input aborts the replay immediately; never fight the user for control after the arrival boundary.
 The mount replay defers to the in-memory back-navigation path: it only seeds the ref when nothing is captured and no restore is pending, and it re-checks that pending flag on every attempt, so the two paths can never race for the same board.
 */
 
