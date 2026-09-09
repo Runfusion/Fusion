@@ -222,7 +222,7 @@ describe("Cozy Cartoon color theme", () => {
     const colorThemeRow = settingsReference.split("\n").find((line) => line.startsWith("| `colorTheme` |"));
     expect(colorThemeRow).toContain("Cozy Cartoon");
     expect(dashboardGuide).toContain("Cozy Cartoon");
-    expect(dashboardGuide).toContain("93 color themes");
+    expect(dashboardGuide).toContain("94 color themes");
   });
 });
 

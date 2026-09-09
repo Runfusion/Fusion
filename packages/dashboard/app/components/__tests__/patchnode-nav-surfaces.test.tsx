@@ -64,6 +64,34 @@ describe("Patchnode navigation surfaces", () => {
     expect(promoted.onChangeView).toHaveBeenCalledWith("patchnode");
   });
 
+  it("removes every general History surface in Alpha", () => {
+    Object.defineProperty(window, "matchMedia", {
+      writable: true,
+      value: vi.fn().mockImplementation((query: string) => ({
+        matches: query.includes("max-width: 768px"),
+        media: query,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      })),
+    });
+    const mobile = render(<MobileNavBar {...mobileProps()} alphaUpdatesEnabled alphaMenuOpenRequest={1} />);
+    expect(screen.queryByTestId("mobile-nav-tab-patchnode")).toBeNull();
+    expect(screen.queryByTestId("mobile-more-item-patchnode")).toBeNull();
+    mobile.unmount();
+
+    const sidebar = render(<LeftSidebarNav view="board" onChangeView={vi.fn()} alphaUpdatesEnabled />);
+    expect(screen.queryByTestId("sidebar-nav-patchnode")).toBeNull();
+    sidebar.unmount();
+
+    Object.defineProperty(window, "matchMedia", {
+      writable: true,
+      value: vi.fn().mockReturnValue({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }),
+    });
+    render(<Header onOpenSettings={vi.fn()} onOpenGitHubImport={vi.fn()} onChangeView={vi.fn()} showSkillsTab alphaUpdatesEnabled />);
+    fireEvent.click(screen.getByTestId("view-toggle-overflow-trigger"));
+    expect(screen.queryByTestId("view-overflow-patchnode")).toBeNull();
+  });
+
   it("navigates from Header overflow and closes the menu", () => {
     const onChangeView = vi.fn();
     render(<Header onOpenSettings={vi.fn()} onOpenGitHubImport={vi.fn()} onChangeView={onChangeView} showSkillsTab />);

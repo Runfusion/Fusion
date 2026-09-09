@@ -6072,6 +6072,269 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   -webkit-backdrop-filter: none;
 }
 
+/* LIQUID GLASS - Adaptive functional glass over standard content materials */
+[data-color-theme="liquid-glass"] {
+  /*
+  FNXC:LiquidGlassTheme 2026-09-09-15:50:
+  Apple's web-applicable Liquid Glass guidance makes glass a sparse functional layer for navigation and controls, keeps content on standard materials, and uses the regular variant when text legibility matters. Fusion therefore gives bars, controls, menus, modals, and floating windows adaptive blur, luminosity, restrained lens highlights, concentric rounding, and fluid interaction while cards and board columns remain opaque and unblurred.
+
+  FNXC:LiquidGlassTheme 2026-09-09-15:50:
+  Liquid Glass must adapt rather than merely decorate: reduced motion removes fluid transforms, reduced transparency removes blur, increased contrast strengthens separators, and forced colors returns authority to system colors. The CSS approximation does not claim to reproduce Apple's private native optical compositor.
+  */
+  --bg: oklch(0.18 0.025 255);
+  --surface: color-mix(in oklch, oklch(0.28 0.035 255) 78%, transparent);
+  --surface-solid: oklch(0.25 0.03 255);
+  --card: oklch(0.235 0.025 255);
+  --card-hover: oklch(0.275 0.03 255);
+  --surface-hover: color-mix(in oklch, var(--surface) 88%, oklch(0.92 0.02 250) 12%);
+  --border: color-mix(in oklch, oklch(0.94 0.02 250) 30%, transparent);
+  --text: oklch(0.96 0.012 250);
+  --text-muted: oklch(0.78 0.025 250);
+  --text-dim: oklch(0.64 0.03 250);
+
+  --todo: oklch(0.72 0.16 245);
+  --in-progress: oklch(0.78 0.14 205);
+  --in-progress-rgb: 79, 190, 220;
+  --in-review: oklch(0.78 0.14 155);
+  --triage: oklch(0.82 0.14 85);
+  --done: oklch(0.66 0.035 250);
+  --color-success: var(--in-review);
+  --color-warning: var(--triage);
+  --color-error: oklch(0.72 0.19 25);
+  --color-info: var(--in-progress);
+
+  --font-primary: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+  --font-mono: "SF Mono", "JetBrains Mono", Menlo, monospace;
+  --radius-sm: 0.625rem;
+  --radius-md: 0.875rem;
+  --radius-lg: 1.25rem;
+  --radius-xl: 1.75rem;
+  --radius-pill: 999rem;
+  --radius: var(--radius-md);
+
+  --shadow-sm: 0 0.25rem 0.75rem color-mix(in oklch, oklch(0.08 0.02 255) 28%, transparent);
+  --shadow-md: 0 0.75rem 2rem color-mix(in oklch, oklch(0.08 0.02 255) 34%, transparent);
+  --shadow-lg: 0 1.25rem 3rem color-mix(in oklch, oklch(0.06 0.02 255) 42%, transparent);
+  --shadow-glow: 0 0 1rem color-mix(in oklch, var(--accent) 28%, transparent);
+  --shadow: var(--shadow-lg);
+  --focus-ring: 0 0 0 0.125rem color-mix(in oklch, var(--accent) 34%, transparent);
+  --focus-ring-strong: 0 0 0 0.1875rem color-mix(in oklch, var(--accent) 48%, transparent);
+
+  --transition-instant: 80ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  --transition-fast: 140ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  --transition-normal: 240ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  --transition-slow: 360ms cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  --accent: oklch(0.72 0.16 245);
+  --accent-text: oklch(0.99 0.005 250);
+  --cta-bg: color-mix(in oklch, var(--accent) 72%, transparent);
+  --cta-border: color-mix(in oklch, oklch(0.98 0.01 250) 52%, transparent);
+  --cta-text: var(--accent-text);
+  --cta-bg-hover: color-mix(in oklch, var(--accent) 84%, transparent);
+  --cta-border-hover: color-mix(in oklch, oklch(0.98 0.01 250) 68%, transparent);
+  --cta-glow: 0 0.5rem 1.5rem color-mix(in oklch, var(--accent) 30%, transparent);
+  --logo-accent: var(--accent);
+}
+
+[data-color-theme="liquid-glass"][data-theme="light"] {
+  --bg: oklch(0.955 0.012 245);
+  --surface: color-mix(in oklch, oklch(0.995 0.005 245) 74%, transparent);
+  --surface-solid: oklch(0.975 0.009 245);
+  --card: oklch(0.985 0.006 245);
+  --card-hover: oklch(0.96 0.014 245);
+  --surface-hover: color-mix(in oklch, var(--surface) 88%, oklch(0.82 0.04 245) 12%);
+  --border: color-mix(in oklch, oklch(0.38 0.045 250) 28%, transparent);
+  --text: oklch(0.25 0.035 255);
+  --text-muted: oklch(0.43 0.04 255);
+  --text-dim: oklch(0.56 0.035 255);
+
+  --todo: oklch(0.55 0.19 250);
+  --in-progress: oklch(0.55 0.15 215);
+  --in-progress-rgb: 25, 142, 174;
+  --in-review: oklch(0.5 0.14 155);
+  --triage: oklch(0.58 0.15 75);
+  --done: oklch(0.54 0.04 250);
+  --color-success: var(--in-review);
+  --color-warning: var(--triage);
+  --color-error: oklch(0.53 0.2 25);
+  --color-info: var(--in-progress);
+
+  --shadow-sm: 0 0.25rem 0.75rem color-mix(in oklch, oklch(0.3 0.05 250) 12%, transparent);
+  --shadow-md: 0 0.75rem 2rem color-mix(in oklch, oklch(0.3 0.05 250) 16%, transparent);
+  --shadow-lg: 0 1.25rem 3rem color-mix(in oklch, oklch(0.3 0.05 250) 20%, transparent);
+  --accent: oklch(0.55 0.19 250);
+  --accent-text: oklch(0.99 0.005 245);
+  --cta-bg: color-mix(in oklch, var(--accent) 82%, transparent);
+  --cta-border: color-mix(in oklch, var(--accent) 66%, oklch(0.995 0.005 245));
+  --cta-text: var(--accent-text);
+  --cta-bg-hover: color-mix(in oklch, var(--accent) 92%, transparent);
+  --cta-border-hover: var(--accent);
+}
+
+[data-color-theme="liquid-glass"] body {
+  background:
+    radial-gradient(circle at top left, color-mix(in oklch, var(--accent) 12%, transparent), transparent 38%),
+    radial-gradient(circle at bottom right, color-mix(in oklch, var(--in-progress) 10%, transparent), transparent 42%),
+    var(--bg);
+}
+
+[data-color-theme="liquid-glass"] :is(.column, .card) {
+  background: var(--card);
+  border-color: var(--border);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+[data-color-theme="liquid-glass"] :is(.column, .card):hover {
+  background: var(--card-hover);
+}
+
+[data-color-theme="liquid-glass"] :is(
+  .header,
+  .left-sidebar-nav,
+  .mobile-nav-bar,
+  .view-header,
+  .modal,
+  .floating-window,
+  .theme-dropdown-popover,
+  .task-context-menu,
+  [role="menu"],
+  [role="listbox"]
+) {
+  background: linear-gradient(
+    145deg,
+    color-mix(in oklch, var(--surface) 86%, var(--text) 14%),
+    color-mix(in oklch, var(--surface) 96%, transparent)
+  );
+  border-color: var(--border);
+  box-shadow:
+    inset 0 0.0625rem 0 color-mix(in oklch, var(--text) 28%, transparent),
+    var(--shadow-md);
+  backdrop-filter: blur(var(--space-lg)) saturate(1.35) brightness(1.04);
+  -webkit-backdrop-filter: blur(var(--space-lg)) saturate(1.35) brightness(1.04);
+}
+
+[data-color-theme="liquid-glass"] :is(.btn, .input, .select, button:not(:disabled)) {
+  border-color: color-mix(in oklch, var(--border) 82%, var(--text) 18%);
+  background: color-mix(in oklch, var(--surface) 88%, transparent);
+  box-shadow: inset 0 0.0625rem 0 color-mix(in oklch, var(--text) 24%, transparent);
+  backdrop-filter: blur(var(--space-sm)) saturate(1.2);
+  -webkit-backdrop-filter: blur(var(--space-sm)) saturate(1.2);
+  transition:
+    background var(--transition-fast),
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast),
+    transform var(--transition-fast);
+}
+
+[data-color-theme="liquid-glass"] :is(.btn, button:not(:disabled)):hover {
+  background: color-mix(in oklch, var(--surface) 76%, var(--accent) 24%);
+  box-shadow:
+    inset 0 0.0625rem 0 color-mix(in oklch, var(--text) 34%, transparent),
+    var(--shadow-sm);
+  transform: translateY(-0.0625rem);
+}
+
+[data-color-theme="liquid-glass"] :is(.btn, .input, .select, button):focus-visible {
+  outline: medium solid var(--accent);
+  outline-offset: var(--space-3xs);
+  box-shadow: var(--focus-ring-strong);
+}
+
+[data-color-theme="liquid-glass"] .modal-overlay:not(.floating-window-overlay--modal),
+[data-color-theme="liquid-glass"] .floating-window-overlay:not(.floating-window-overlay--modal) {
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+@media (max-width: 768px) {
+  [data-color-theme="liquid-glass"] :is(.header, .mobile-nav-bar, .view-header, .modal, .floating-window) {
+    backdrop-filter: blur(var(--space-md)) saturate(1.25);
+    -webkit-backdrop-filter: blur(var(--space-md)) saturate(1.25);
+  }
+
+  [data-color-theme="liquid-glass"] .modal {
+    border: thin solid var(--border);
+    box-shadow: inset 0 0.0625rem 0 color-mix(in oklch, var(--text) 28%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-color-theme="liquid-glass"] :is(.btn, .input, .select, button, .modal, .floating-window) {
+    animation: none;
+    transition: none;
+  }
+
+  [data-color-theme="liquid-glass"] :is(.btn, button):hover {
+    transform: none;
+  }
+}
+
+/*
+FNXC:LiquidGlassTheme 2026-09-09-16:20:
+Reduced-transparency and forced-colors preferences neutralize every functional surface that receives Liquid Glass, including specialized enabled buttons that do not use the shared .btn class.
+*/
+@media (prefers-reduced-transparency: reduce) {
+  [data-color-theme="liquid-glass"] :is(
+    .header,
+    .left-sidebar-nav,
+    .mobile-nav-bar,
+    .view-header,
+    .btn,
+    .input,
+    .select,
+    button:not(:disabled),
+    .modal,
+    .floating-window,
+    .theme-dropdown-popover,
+    .task-context-menu,
+    [role="menu"],
+    [role="listbox"]
+  ) {
+    background: var(--surface-solid);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
+
+@media (prefers-contrast: more) {
+  [data-color-theme="liquid-glass"] {
+    --border: color-mix(in oklch, var(--text) 68%, transparent);
+  }
+
+  [data-color-theme="liquid-glass"] :is(.btn, .input, .select, button, .modal, .floating-window) {
+    border-color: var(--text);
+  }
+}
+
+@media (forced-colors: active) {
+  [data-color-theme="liquid-glass"] :is(
+    .header,
+    .left-sidebar-nav,
+    .mobile-nav-bar,
+    .view-header,
+    .btn,
+    .input,
+    .select,
+    button:not(:disabled),
+    .modal,
+    .floating-window,
+    .theme-dropdown-popover,
+    .task-context-menu,
+    [role="menu"],
+    [role="listbox"]
+  ) {
+    forced-color-adjust: auto;
+    color: CanvasText;
+    background: Canvas;
+    border-color: ButtonText;
+    box-shadow: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
+
 /* HORIZON - Warm sunset-inspired palette */
 [data-color-theme="horizon"] {
   --bg: #1c1e26;

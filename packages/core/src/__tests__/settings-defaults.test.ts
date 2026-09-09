@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CONSECUTIVE_TOOL_FAILURE_RETRY_THRESHOLD, DEFAULT_CONSECUTIVE_TOOL_FAILURE_RETRY_BACKOFF_MS, DEFAULT_MAX_CONSECUTIVE_TOOL_FAILURE_RETRIES, DEFAULT_MAX_AUTO_MERGE_RETRIES, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries } from "../tasks/in-review-stall.js";
-import { CHAT_FOCUS_FLAG, isExperimentalFeatureEnabled } from "../config/experimental-features.js";
+import { ALPHA_UPDATES_FLAG, CHAT_FOCUS_FLAG, isExperimentalFeatureEnabled } from "../config/experimental-features.js";
 import { DEFAULT_GLOBAL_SETTINGS, DEFAULT_PROJECT_SETTINGS, GLOBAL_SETTINGS_KEYS, PROJECT_SETTINGS_KEYS, isGlobalOnlySettingsKey, isGlobalSettingsKey, isProjectSettingsKey } from "../config/settings-schema.js";
 import {
   __resetLegacyCwdMainWarningForTests,
@@ -83,6 +83,13 @@ describe("settings defaults invariants", () => {
     expect(isExperimentalFeatureEnabled(undefined, "workflowGraphExecutor")).toBe(false);
     expect(isExperimentalFeatureEnabled(undefined, "workflowInterpreterDualObserve")).toBe(false);
     expect(isExperimentalFeatureEnabled({ experimentalFeatures: { workflowInterpreterDualObserve: true } }, "workflowInterpreterDualObserve")).toBe(false);
+  });
+
+  it("keeps Alpha Updates experimental and default off", () => {
+    expect(isExperimentalFeatureEnabled(undefined, ALPHA_UPDATES_FLAG)).toBe(false);
+    expect(isExperimentalFeatureEnabled({ experimentalFeatures: {} }, ALPHA_UPDATES_FLAG)).toBe(false);
+    expect(isExperimentalFeatureEnabled({ experimentalFeatures: { alphaUpdates: false } }, ALPHA_UPDATES_FLAG)).toBe(false);
+    expect(isExperimentalFeatureEnabled({ experimentalFeatures: { alphaUpdates: true } }, ALPHA_UPDATES_FLAG)).toBe(true);
   });
 
   it("keeps chat focus experimental and default off", () => {

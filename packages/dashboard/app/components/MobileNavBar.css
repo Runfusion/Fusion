@@ -6,6 +6,7 @@
 /* Mobile nav height token - used by nav bar, executor status bar, and content padding */
 :root {
   --mobile-nav-height: 44px;
+  --mobile-nav-floating-gap: 0px;
 }
 
 .mobile-nav-bar {
@@ -157,6 +158,34 @@ Wrap every tab icon in the same token-sized icon slot and keep unread/pending do
   transition: color var(--transition-fast);
   position: relative;
   -webkit-tap-highlight-color: transparent;
+}
+
+/*
+FNXC:AlphaUpdates 2026-09-09-19:33:
+The Alpha mobile navigation is a floating five-icon pill. Its tokenized floating gap is included in the runtime-published mobile stack height so ExecutorStatusBar ends exactly at the pill's top edge and project content reserves the complete visible stack; safe-area, standalone, and ICB offsets remain shared terms added by each consumer.
+*/
+.mobile-nav-bar--alpha {
+  --mobile-nav-floating-gap: var(--space-sm);
+  left: var(--space-md);
+  right: calc(var(--icb-right-offset, 0px) + var(--space-md));
+  bottom: calc(var(--icb-bottom-offset, 0px) + max(env(safe-area-inset-bottom, 0px), var(--space-md)) + var(--standalone-bottom-gap) + var(--mobile-nav-floating-gap));
+  min-height: auto;
+  padding: var(--space-xs) var(--space-sm);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-xl);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(var(--space-md));
+}
+
+.mobile-nav-bar--alpha.mobile-nav-bar--with-footer {
+  bottom: calc(var(--icb-bottom-offset, 0px) + max(env(safe-area-inset-bottom, 0px), var(--space-md)) + var(--standalone-bottom-gap) + var(--mobile-nav-floating-gap));
+}
+
+.mobile-nav-bar--alpha .mobile-nav-tab {
+  min-height: var(--touch-target-min-size);
+  padding: 0;
+  border-radius: var(--radius-xl);
 }
 
 .mobile-nav-tab:active {

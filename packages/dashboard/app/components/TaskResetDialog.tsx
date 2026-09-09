@@ -1,7 +1,7 @@
 import "./TaskResetDialog.css";
 
 import { getErrorMessage } from "@fusion/core";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import type { ToastType } from "../hooks/useToast";
@@ -18,6 +18,9 @@ export interface TaskResetDialogProps {
 /*
 FNXC:TaskReset 2026-08-28-16:31:
 Reset uses a dedicated dialog because it collects corrected task intent rather than simple agreement. `ConfirmOptions` cannot carry free text, and skip-confirmations would otherwise auto-resolve the destructive action without showing the description. Edited text travels in the options object at argument two to preserve the client transport contract.
+
+FNXC:TaskReset 2026-09-09-14:48:
+The first valid click claims submission synchronously before React can render the disabled controls. This prevents two same-frame clicks from issuing duplicate destructive requests while the visible pending state blocks edits, dismissal, and later clicks until publication succeeds or a failure makes the dialog retryable.
 */
 export function TaskResetDialog({
   taskId,
@@ -30,13 +33,15 @@ export function TaskResetDialog({
   const { t } = useTranslation("app");
   const [description, setDescription] = useState(initialDescription ?? "");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const submissionRef = useRef(false);
   const trimmedDescription = description.trim();
   const trimmedInitialDescription = (initialDescription ?? "").trim();
   const titleId = `task-reset-title-${taskId}`;
   const helpId = `task-reset-help-${taskId}`;
 
   const submit = async () => {
-    if (!trimmedDescription || isSubmitting) return;
+    if (!trimmedDescription || submissionRef.current) return;
+    submissionRef.current = true;
     setIsSubmitting(true);
     try {
       if (trimmedDescription === trimmedInitialDescription) {
@@ -51,6 +56,7 @@ export function TaskResetDialog({
       onResetCompleted?.();
       onClose();
     } catch (error) {
+      submissionRef.current = false;
       setIsSubmitting(false);
       addToast(getErrorMessage(error), "error");
     }

@@ -1552,7 +1552,8 @@
     "replannedTasks_one": "Replanned {{count}} task{{plural}}",
     "replannedTasks_other": "Replanned {{count}} task{{plural}}",
     "replanPartialFailure": "Replanned {{replanned}} of {{total}} tasks; {{failed}} failed",
-    "paginationError": "Impossible de charger les tâches plus anciennes."
+    "paginationError": "Impossible de charger les tâches plus anciennes.",
+    "openHistory": "Ouvrir l’historique"
   },
   "commandCenter": {
     "activity": {
@@ -3135,7 +3136,8 @@
     "viewProjects": "Voir les projets",
     "viewUsage": "Voir l'utilisation",
     "workflows": "Workflows",
-    "workingBranch": "Branche de travail"
+    "workingBranch": "Branche de travail",
+    "clearSearch": "Effacer la recherche"
   },
   "health": {
     "activeTasks": "Tâches actives",
@@ -4242,7 +4244,9 @@
     "todos": "Tâches à faire",
     "usage": "Utilisation",
     "workflows": "Workflows",
-    "patchnode": ""
+    "patchnode": "",
+    "notes": "Notes",
+    "openMenu": "Ouvrir le menu de navigation"
   },
   "newTaskModal": {
     "addDependencies": "Ajouter des dépendances",
@@ -9857,5 +9861,28 @@
     "lines": "lines",
     "showLess": "Show less",
     "showMore": "Show more ({{count}} {{lineLabel}})"
+  },
+  "notes": {
+    "new": "Nouvelle note",
+    "search": "Rechercher des notes",
+    "list": "Liste des notes",
+    "empty": "Aucune note",
+    "noResults": "Aucune note trouvée",
+    "createFirst": "Créer votre première note",
+    "select": "Sélectionnez une note ou créez-en une",
+    "title": "Titre de la note",
+    "unsaved": "Modifications non enregistrées",
+    "savedState": "Enregistré",
+    "saving": "Enregistrement…",
+    "saved": "Note enregistrée",
+    "deleted": "Note supprimée",
+    "discardTitle": "Abandonner les modifications ?",
+    "discardMessage": "Votre brouillon non enregistré sera perdu.",
+    "discard": "Abandonner",
+    "deleteTitle": "Supprimer la note ?",
+    "deleteMessage": "Cette action est irréversible.",
+    "conflict": "Cette note a été modifiée ailleurs. Votre brouillon est conservé.",
+    "reload": "Recharger la version serveur",
+    "overwrite": "Remplacer par mon brouillon"
   }
 }

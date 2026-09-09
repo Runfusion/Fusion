@@ -91,7 +91,7 @@ FNXC:WorkspaceWorktree 2026-09-09-16:30:
 origin/main then released 0072 (task planning failure) and 0073 (chat-message recency index) while this branch was open, so the pin column is renumbered 0072->0074 and the unique claim 0073->0075; the binary ceiling advances with them.
 */
 /* FNXC:ChatSidebarPerf 2026-09-08-04:48: baseline marker includes the chat-message recency index required for index-backed sidebar previews. */
-export const SCHEMA_BASELINE_VERSION = "0075";
+export const SCHEMA_BASELINE_VERSION = "0077";
 /** FNXC:SymbolLock 2026-07-20-10:00: upgrades need durable task declarations before admission resolves symbols. */
 export const TASK_DECLARED_SYMBOLS_VERSION = "0028";
 const INITIAL_SCHEMA_VERSION = "0000";
@@ -274,6 +274,8 @@ export const PATCHNODE_ENTRIES_VERSION = "0071";
 export const TASK_PLANNING_FAILURE_VERSION = "0072";
 /** FNXC:ChatSidebarPerf 2026-09-08-04:48: upgrades need the descending per-session recency index before sidebar lateral lookups run. */
 export const CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION = "0073";
+/** FNXC:ProjectNotes 2026-09-09-17:08: upgraded projects require revision-fenced personal notes before the API is served. */
+export const PROJECT_NOTES_VERSION = "0074";
 
 /** FNXC:MemoryFocus 2026-08-13-15:57: explicit registration prevents the per-conversation memory-focus migration from being skipped. Renumbered to 0060 (FN-9037 took 0059), then 0061, then 0065 (2026-08-20) when the upstream FN-066..FN-094 batch claimed 0061-0064. */
 export const CHAT_SESSION_MEMORY_FOCUS_VERSION = "0066";
@@ -281,11 +283,11 @@ export const CHAT_SESSION_MEMORY_FOCUS_VERSION = "0066";
 /** FNXC:WorkspaceWorktree 2026-08-24-06:10: R15's pinned workspace task directory segment needs its column on upgraded projects before any acquisition reads the pin. Explicit registration is required — migrations are never auto-discovered. */
 /* FNXC:WorkspaceWorktree 2026-09-04-04:42: renumbered 0067->0072 because origin/main released 0067-0071 while this branch was open. */
 /* FNXC:WorkspaceWorktree 2026-09-09-16:30: renumbered 0072->0074 because origin/main released 0072 (task planning failure) and 0073 (chat-message recency index) while this branch was open. */
-export const WORKSPACE_WORKTREE_DIR_SEGMENT_VERSION = "0074";
+export const WORKSPACE_WORKTREE_DIR_SEGMENT_VERSION = "0076";
 /** FNXC:WorkspaceWorktree 2026-08-25-08:12: the segment is a CLAIM — this partial unique index is what makes a concurrent duplicate mint fail instead of persisting two write-once pins on one directory. */
 /* FNXC:WorkspaceWorktree 2026-09-04-04:42: renumbered 0068->0073 to follow the 0072 column migration. */
 /* FNXC:WorkspaceWorktree 2026-09-09-16:30: renumbered 0073->0075 to follow the 0074 column migration. */
-export const WORKSPACE_WORKTREE_DIR_SEGMENT_UNIQUE_VERSION = "0075";
+export const WORKSPACE_WORKTREE_DIR_SEGMENT_UNIQUE_VERSION = "0077";
 
 /** SECURITY DEFINER helper that only inserts LEGACY_ADOPTION_DRAINED_MARKER. */
 export const LEGACY_ADOPTION_DRAINED_MARKER_FUNCTION = "fusion_mark_legacy_adoption_drained";
@@ -551,8 +553,9 @@ const TASK_REQUIRE_PLAN_APPROVAL_MIGRATION_PATH = join(MIGRATIONS_DIR, "0070_fn_
 const PATCHNODE_ENTRIES_MIGRATION_PATH = join(MIGRATIONS_DIR, "0071_fn_227_patchnode_entries.sql");
 const TASK_PLANNING_FAILURE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0072_fn_9273_task_planning_failure.sql");
 const CHAT_MESSAGES_SESSION_RECENCY_INDEX_MIGRATION_PATH = join(MIGRATIONS_DIR, "0073_fn_9275_chat_messages_session_recency_index.sql");
-const WORKSPACE_WORKTREE_DIR_SEGMENT_MIGRATION_PATH = join(MIGRATIONS_DIR, "0074_workspace_worktree_dir_segment.sql");
-const WORKSPACE_WORKTREE_DIR_SEGMENT_UNIQUE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0075_workspace_worktree_dir_segment_unique.sql");
+const PROJECT_NOTES_MIGRATION_PATH = join(MIGRATIONS_DIR, "0074_fn_323_project_notes.sql");
+const WORKSPACE_WORKTREE_DIR_SEGMENT_MIGRATION_PATH = join(MIGRATIONS_DIR, "0076_workspace_worktree_dir_segment.sql");
+const WORKSPACE_WORKTREE_DIR_SEGMENT_UNIQUE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0077_workspace_worktree_dir_segment_unique.sql");
 
 /**
  * Ensure the migration bookkeeping table exists. Lives in the public schema so
@@ -698,6 +701,7 @@ export async function applySchemaBaseline(
     const workspaceWorktreeDirSegmentUniqueAlreadyApplied = applied.includes(WORKSPACE_WORKTREE_DIR_SEGMENT_UNIQUE_VERSION);
     const taskPlanningFailureAlreadyApplied = applied.includes(TASK_PLANNING_FAILURE_VERSION);
     const chatMessagesSessionRecencyIndexAlreadyApplied = applied.includes(CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION);
+    const projectNotesAlreadyApplied = applied.includes(PROJECT_NOTES_VERSION);
     assertBinaryNotOlderThanDatabase(applied);
     let schemaChanged = false;
 
@@ -1582,6 +1586,15 @@ export async function applySchemaBaseline(
       const migrationSql = await readFile(CHAT_MESSAGES_SESSION_RECENCY_INDEX_MIGRATION_PATH, "utf8");
       await tx.execute(sql.raw(migrationSql));
       await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    const projectNotesMissing = ((await tx.execute(sql`
+      SELECT to_regclass('project.notes') IS NULL AS missing
+    `)) as unknown as Array<{ missing: boolean }>)[0]?.missing ?? true;
+    if (!projectNotesAlreadyApplied || projectNotesMissing) {
+      const migrationSql = await readFile(PROJECT_NOTES_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${PROJECT_NOTES_VERSION}) ON CONFLICT (version) DO NOTHING`);
       schemaChanged = true;
     }
     const taskRequirePlanApprovalColumnState = (await tx.execute(sql`

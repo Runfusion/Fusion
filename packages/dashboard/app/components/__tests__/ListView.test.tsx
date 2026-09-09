@@ -269,6 +269,35 @@ const createMockTask = (overrides: Partial<Task> = {}): Task => ({
   ...overrides,
 });
 
+function ResettableListViewHarness({
+  initialTask,
+  requestReset,
+}: {
+  initialTask: Task;
+  requestReset: () => Promise<Task>;
+}) {
+  const [tasks, setTasks] = useState([initialTask]);
+  return (
+    <ListView
+      tasks={tasks}
+      onMoveTask={async () => initialTask}
+      onRetryTask={async () => initialTask}
+      onDeleteTask={async () => initialTask}
+      onMergeTask={async () => ({ merged: false })}
+      onResetTask={async () => {
+        const confirmed = await requestReset();
+        setTasks([confirmed]);
+        return confirmed;
+      }}
+      onOpenDetail={vi.fn()}
+      addToast={mockAddToast}
+      globalPaused={false}
+      onNewTask={vi.fn()}
+      projectId={TEST_PROJECT_ID}
+    />
+  );
+}
+
 const renderListView = (
   props: Partial<React.ComponentProps<typeof ListView>> = {},
   options: { openViewOptions?: boolean } = {},
@@ -1317,25 +1346,84 @@ describe("ListView", () => {
     viewportSpy.mockRestore();
   });
 
-  it("opens editable Reset without consulting confirmation settings", async () => {
-    const onResetTask = vi.fn(async () => createMockTask());
-    renderListView({
-      tasks: [createMockTask({ id: "FN-901", column: "in-progress", description: "Original list request" })],
-      onResetTask,
+  it("replaces the populated desktop row with the confirmed Reset snapshot", async () => {
+    const initialTask = createMockTask({
+      id: "FN-901",
+      column: "in-progress",
+      description: "Original list request",
+      status: "executing",
+      error: "old list failure",
+      steps: [{ id: "old-step", title: "Old work", status: "done" } as Task["steps"][number]],
+      workflowStepResults: [{ stepId: "code-review", status: "failed" } as Task["workflowStepResults"][number]],
     });
+    const { status: _status, error: _error, ...confirmedJson } = createMockTask({
+      id: "FN-901",
+      column: "todo",
+      description: "Corrected list request",
+      steps: [],
+      workflowStepResults: [],
+    });
+    const requestReset = vi.fn(async () => confirmedJson as Task);
+    render(<ResettableListViewHarness initialTask={initialTask} requestReset={requestReset} />);
 
-    fireEvent.contextMenu(document.querySelector('.list-row[data-id="FN-901"]') as HTMLElement, { clientX: 40, clientY: 50 });
+    const originalRow = document.querySelector('.list-row[data-id="FN-901"]') as HTMLElement;
+    expect(originalRow).toHaveTextContent(/executing/i);
+    fireEvent.contextMenu(originalRow, { clientX: 40, clientY: 50 });
     fireEvent.click(await screen.findByRole("menuitem", { name: "Reset" }));
-
-    expect(await screen.findByTestId("task-reset-dialog")).toBeInTheDocument();
-    expect(mockConfirm).not.toHaveBeenCalled();
-    expect(screen.getByTestId("task-reset-description")).toHaveValue("Original list request");
     fireEvent.change(screen.getByTestId("task-reset-description"), { target: { value: "Corrected list request" } });
     fireEvent.click(screen.getByTestId("task-reset-submit"));
-    await waitFor(() => expect(onResetTask).toHaveBeenCalledWith(
-      "FN-901",
-      { description: "Corrected list request" },
-    ));
+
+    await waitFor(() => expect(screen.queryByTestId("task-reset-dialog")).not.toBeInTheDocument());
+    const resetRow = document.querySelector('.list-row[data-id="FN-901"]') as HTMLElement;
+    expect(requestReset).toHaveBeenCalledOnce();
+    expect(resetRow).toHaveTextContent("Todo");
+    expect(resetRow).not.toHaveTextContent(/executing/i);
+    expect(resetRow).not.toHaveTextContent("old list failure");
+    expect(resetRow).not.toHaveTextContent("undefined");
+  });
+
+  it("replaces the populated compact mobile card with the confirmed Reset snapshot", async () => {
+    vi.useFakeTimers();
+    const viewportSpy = mockMobileViewport();
+    const initialTask = createMockTask({
+      id: "FN-902",
+      column: "in-progress",
+      description: "Mobile reset request",
+      status: "executing",
+      error: "old mobile failure",
+      steps: [{ id: "old-step", title: "Old mobile work", status: "done" } as Task["steps"][number]],
+    });
+    const { status: _status, error: _error, ...confirmedJson } = createMockTask({
+      id: "FN-902",
+      column: "todo",
+      description: "Mobile reset request",
+      steps: [],
+      workflowStepResults: [],
+    });
+    const requestReset = vi.fn(async () => confirmedJson as Task);
+    try {
+      render(<ResettableListViewHarness initialTask={initialTask} requestReset={requestReset} />);
+
+      const card = document.querySelector('.list-card[data-id="FN-902"]') as HTMLElement;
+      expect(card).toHaveTextContent(/executing/i);
+      fireEvent.pointerDown(card, { pointerType: "touch", pointerId: 1, clientX: 24, clientY: 32 });
+      act(() => vi.advanceTimersByTime(550));
+      fireEvent.pointerUp(card, { pointerType: "touch", pointerId: 1, clientX: 24, clientY: 32 });
+      fireEvent.pointerUp(screen.getByRole("menuitem", { name: "Reset" }), { pointerType: "touch", pointerId: 2 });
+      fireEvent.click(screen.getByTestId("task-reset-submit"));
+      await act(async () => { await Promise.resolve(); });
+
+      const resetCard = document.querySelector('.list-card[data-id="FN-902"]') as HTMLElement;
+      expect(requestReset).toHaveBeenCalledOnce();
+      expect(screen.queryByTestId("task-reset-dialog")).not.toBeInTheDocument();
+      expect(screen.getByText("Todo", { selector: ".list-section-title" })).toBeInTheDocument();
+      expect(resetCard).not.toHaveTextContent(/executing/i);
+      expect(resetCard).not.toHaveTextContent("old mobile failure");
+      expect(resetCard).not.toHaveTextContent("undefined");
+    } finally {
+      viewportSpy.mockRestore();
+      vi.useRealTimers();
+    }
   });
 
   it("keeps the list Reset call arity unchanged when the description is untouched", async () => {

@@ -1552,7 +1552,8 @@
     "replannedTasks_one": "Replanned {{count}} task{{plural}}",
     "replannedTasks_other": "Replanned {{count}} task{{plural}}",
     "replanPartialFailure": "Replanned {{replanned}} of {{total}} tasks; {{failed}} failed",
-    "paginationError": "无法加载更早的任务。"
+    "paginationError": "无法加载更早的任务。",
+    "openHistory": "打开历史记录"
   },
   "commandCenter": {
     "activity": {
@@ -3135,7 +3136,8 @@
     "unreadArtifacts_one": "",
     "unreadArtifacts_other": "",
     "unreadRecommendations_one": "",
-    "unreadRecommendations_other": ""
+    "unreadRecommendations_other": "",
+    "clearSearch": "清除搜索"
   },
   "health": {
     "activeTasks": "活动任务",
@@ -4241,7 +4243,9 @@
     "recommendations": "",
     "recommendationsUnreadAriaLabel_one": "",
     "recommendationsUnreadAriaLabel_other": "",
-    "recommendationsUnreadDotAriaLabel": ""
+    "recommendationsUnreadDotAriaLabel": "",
+    "notes": "笔记",
+    "openMenu": "打开导航菜单"
   },
   "newTaskModal": {
     "addDependencies": "添加依赖项",
@@ -9856,5 +9860,28 @@
     "title": "",
     "truncated": "",
     "viewTask": ""
+  },
+  "notes": {
+    "new": "New note",
+    "search": "Search notes",
+    "list": "Notes list",
+    "empty": "No notes yet",
+    "noResults": "No notes found",
+    "createFirst": "Create your first note",
+    "select": "Select a note or create a new one",
+    "title": "Note title",
+    "unsaved": "Unsaved changes",
+    "savedState": "Saved",
+    "saving": "Saving…",
+    "saved": "Note saved",
+    "deleted": "Note deleted",
+    "discardTitle": "Discard changes?",
+    "discardMessage": "Your unsaved draft will be lost.",
+    "discard": "Discard",
+    "deleteTitle": "Delete note?",
+    "deleteMessage": "This action cannot be undone.",
+    "conflict": "This note changed elsewhere. Your draft is preserved.",
+    "reload": "Reload server version",
+    "overwrite": "Overwrite with my draft"
   }
 }

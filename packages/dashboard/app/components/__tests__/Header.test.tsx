@@ -65,6 +65,46 @@ describe("Header", () => {
     expect(screen.getByText("Fusion")).toBeDefined();
   });
 
+  it("hides only the Fusion wordmark in the mobile Alpha shell", () => {
+    const legacy = renderHeader({ mobileNavEnabled: true }, "mobile");
+    expect(screen.getByText("Fusion")).toBeInTheDocument();
+    legacy.unmount();
+
+    const alpha = renderHeader({ mobileNavEnabled: true, alphaUpdatesEnabled: true }, "mobile");
+    expect(screen.queryByText("Fusion")).toBeNull();
+    expect(alpha.container.querySelector(".header-logo")).toBeInTheDocument();
+    alpha.unmount();
+
+    renderHeader({ alphaUpdatesEnabled: true }, "tablet");
+    expect(screen.getByText("Fusion")).toBeInTheDocument();
+  });
+
+  it("keeps Alpha desktop Board search inline and clears without removing it", () => {
+    const onSearchChange = vi.fn();
+    const { rerender } = renderHeader({ view: "board", alphaUpdatesEnabled: true, searchQuery: "alpha", onSearchChange }, "desktop");
+    expect(screen.queryByTestId("desktop-header-search-btn")).toBeNull();
+    expect(screen.getByTestId("alpha-desktop-header-search")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Search tasks...")).toHaveValue("alpha");
+    fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
+    expect(onSearchChange).toHaveBeenCalledWith("");
+
+    rerender(<Header onOpenSettings={noop} onOpenGitHubImport={noop} view="board" alphaUpdatesEnabled searchQuery="" onSearchChange={onSearchChange} />);
+    expect(screen.getByTestId("alpha-desktop-header-search")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Clear search" })).toBeNull();
+  });
+
+  it("renders the Alpha hamburger only in the mobile shell", () => {
+    const onOpenAlphaMenu = vi.fn();
+    renderHeader({ mobileNavEnabled: true, alphaUpdatesEnabled: true, onOpenAlphaMenu }, "mobile");
+    fireEvent.click(screen.getByTestId("alpha-mobile-menu-trigger"));
+    expect(onOpenAlphaMenu).toHaveBeenCalledOnce();
+  });
+
+  it.each(["desktop", "tablet"] as const)("does not render the Alpha hamburger on %s", (tier) => {
+    renderHeader({ mobileNavEnabled: true, alphaUpdatesEnabled: true, onOpenAlphaMenu: vi.fn() }, tier);
+    expect(screen.queryByTestId("alpha-mobile-menu-trigger")).toBeNull();
+  });
+
   it.each(["desktop", "tablet", "mobile"] as const)("does not render the relocated Report affordance in the %s header", (tier) => {
     renderHeader({}, tier);
     expect(screen.queryByRole("button", { name: "Report" })).toBeNull();
@@ -702,6 +742,18 @@ describe("Header", () => {
       renderHeader({ onOpenUsage: vi.fn() }, "mobile");
       fireEvent.click(screen.getByTitle("More header actions"));
       expect(screen.getByTestId("overflow-usage-btn")).toBeDefined();
+    });
+
+    it("removes the direct mobile Usage shortcut from the Alpha header", () => {
+      renderHeader({
+        mobileNavEnabled: true,
+        alphaUpdatesEnabled: true,
+        onOpenAlphaMenu: vi.fn(),
+        onOpenUsage: vi.fn(),
+      }, "mobile");
+
+      expect(screen.queryByTestId("mobile-header-usage-btn")).toBeNull();
+      expect(screen.getByTestId("alpha-mobile-menu-trigger")).toBeInTheDocument();
     });
 
     it("does not call onOpenUsage from the removed desktop toolbar button", () => {

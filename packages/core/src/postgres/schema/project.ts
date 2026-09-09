@@ -1643,6 +1643,26 @@ export const goals = projectSchema.table("goals", {
   index("idxGoalsStatus").on(t.status),
 ]);
 
+/*
+FNXC:ProjectNotes 2026-09-09-17:08:
+Personal notes use a project-local composite identity and revision counter. Duplicate titles are valid; identity and conflict detection never depend on title text.
+*/
+export const notes = projectSchema.table("notes", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  id: text("id").notNull(),
+  title: text("title").notNull(),
+  content: text("content").notNull().default(""),
+  revision: integer("revision").notNull().default(1),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+}, (t) => [
+  primaryKey({ columns: [t.projectId, t.id] }),
+  index("idxNotesProjectUpdatedAt").on(t.projectId, t.updatedAt),
+  check("notes_title_length", sql`char_length(${t.title}) BETWEEN 1 AND 200`),
+  check("notes_content_length", sql`octet_length(${t.content}) <= 1048576`),
+  check("notes_revision_positive", sql`${t.revision} >= 1`),
+]);
+
 export const missionGoals = projectSchema.table("mission_goals", {
   projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
   missionId: text("mission_id").notNull(),
@@ -2651,7 +2671,7 @@ export const projectTableNames = [
   "research_exports", "research_run_events", "experiment_sessions",
   "experiment_session_records", "eval_runs", "eval_task_results", "eval_run_events",
   "secrets", "__meta", "missions", "branch_groups", "pull_requests",
-  "pull_request_thread_state", "goals", "mission_goals", "goal_citations",
+  "pull_request_thread_state", "goals", "notes", "mission_goals", "goal_citations",
   "milestones", "slices", "mission_features", "ideation_sessions", "ideation_candidates", "mission_events", "plugins",
   "routines", "project_insights", "project_insight_runs", "project_insight_run_events",
   "todo_lists", "todo_items", "usage_events", "plugin_activations",

@@ -62,6 +62,7 @@ const SIDEBAR_REGISTRY_VIEW_IDS = [
   "skills",
   "memory",
   "documents",
+  "notes",
   "goalsView",
   "automations",
   "import-tasks",

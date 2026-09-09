@@ -99,6 +99,8 @@ function renderBoardSubtree(props: MainContentProps, active: boolean) {
     openCreateWorkflowWithNav,
     sidebarActive,
     isMobile,
+    experimentalFeatures,
+    handleChangeTaskView,
   } = props;
 
   return (
@@ -167,6 +169,8 @@ function renderBoardSubtree(props: MainContentProps, active: boolean) {
         onOpenWorkflowEditor={openWorkflowEditorWithNav}
         onCreateWorkflow={openCreateWorkflowWithNav}
         workflowControlsInHeader={sidebarActive || isMobile}
+        alphaUpdatesEnabled={experimentalFeatures.alphaUpdates === true}
+        onOpenHistory={() => handleChangeTaskView("patchnode")}
         active={active}
       />
     </PageErrorBoundary>

@@ -125,6 +125,15 @@ describe("LeftSidebarNav", () => {
     window.localStorage.clear();
   });
 
+  it("removes the general History entry only while Alpha is enabled", () => {
+    const legacy = renderSidebar();
+    expect(screen.getByTestId("sidebar-nav-patchnode")).toBeInTheDocument();
+    legacy.unmount();
+
+    renderSidebar({ alphaUpdatesEnabled: true });
+    expect(screen.queryByTestId("sidebar-nav-patchnode")).toBeNull();
+  });
+
   it("documents and asserts the sidebar New Task surface enumeration", () => {
     expect(newTaskSurfaceEnumeration).toHaveLength(6);
     for (const item of newTaskSurfaceEnumeration) {
