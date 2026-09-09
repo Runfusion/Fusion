@@ -1668,16 +1668,16 @@ describe("Board", () => {
       await openWorkflowSwitcher();
       const aggregateOption = screen.getByTestId(`workflow-switcher-option-${ALL_WORKFLOWS_BOARD_VIEW_ID}`);
       expect(aggregateOption).toHaveTextContent("All workflows");
-      expect(within(aggregateOption).getByTitle("Todo: 3")).toBeInTheDocument();
-      expect(within(aggregateOption).getByTitle("In Progress: 1")).toBeInTheDocument();
-      expect(within(aggregateOption).getByTitle("Done: 2")).toBeInTheDocument();
+      expect(within(aggregateOption).getByTitle("Plan: 3")).toBeInTheDocument();
+      expect(within(aggregateOption).getByTitle("Progress: 1")).toBeInTheDocument();
+      expect(within(aggregateOption).getByTitle("Review: 0")).toBeInTheDocument();
       expect(within(aggregateOption).getByTitle("1 merging")).toBeInTheDocument();
-      expect(within(screen.getByTestId("workflow-switcher-option-builtin:coding")).getByTitle("Todo: 2")).toBeInTheDocument();
-      expect(within(screen.getByTestId("workflow-switcher-option-builtin:coding")).getByTitle("In Progress: 1")).toBeInTheDocument();
-      expect(within(screen.getByTestId("workflow-switcher-option-builtin:coding")).getByTitle("Done: 1")).toBeInTheDocument();
-      expect(within(screen.getByTestId("workflow-switcher-option-wf-custom")).getByTitle("Todo: 1")).toBeInTheDocument();
-      expect(within(screen.getByTestId("workflow-switcher-option-wf-custom")).getByTitle("In Progress: 0")).toBeInTheDocument();
-      expect(within(screen.getByTestId("workflow-switcher-option-wf-custom")).getByTitle("Done: 1")).toBeInTheDocument();
+      expect(within(screen.getByTestId("workflow-switcher-option-builtin:coding")).getByTitle("Plan: 2")).toBeInTheDocument();
+      expect(within(screen.getByTestId("workflow-switcher-option-builtin:coding")).getByTitle("Progress: 1")).toBeInTheDocument();
+      expect(within(screen.getByTestId("workflow-switcher-option-builtin:coding")).getByTitle("Review: 0")).toBeInTheDocument();
+      expect(within(screen.getByTestId("workflow-switcher-option-wf-custom")).getByTitle("Plan: 1")).toBeInTheDocument();
+      expect(within(screen.getByTestId("workflow-switcher-option-wf-custom")).getByTitle("Progress: 0")).toBeInTheDocument();
+      expect(within(screen.getByTestId("workflow-switcher-option-wf-custom")).getByTitle("Review: 0")).toBeInTheDocument();
     });
 
     it("renders one selected workflow at a time and switches workflows from the dropdown", async () => {

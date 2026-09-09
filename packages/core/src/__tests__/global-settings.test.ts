@@ -197,6 +197,16 @@ describe("GlobalSettingsStore", () => {
       await expect(new GlobalSettingsStore(dir).getSettings()).resolves.toMatchObject({ colorTheme: "ocean" });
     });
 
+    it("resolves an invalid persisted color theme to the canonical default", async () => {
+      await mkdir(dir, { recursive: true });
+      await writeFile(
+        join(dir, "settings.json"),
+        JSON.stringify({ colorTheme: "unknown-theme" }),
+      );
+
+      await expect(store.getSettings()).resolves.toMatchObject({ colorTheme: "shadcn-ember" });
+    });
+
     it("returns defaults on invalid JSON", async () => {
       await mkdir(dir, { recursive: true });
       await writeFile(join(dir, "settings.json"), "not-json{{{");
@@ -227,6 +237,25 @@ describe("GlobalSettingsStore", () => {
       const raw = await readFile(join(dir, "settings.json"), "utf-8");
       const parsed = JSON.parse(raw);
       expect(parsed.themeMode).toBe("system");
+    });
+
+    it("round-trips the Liquid Glass color theme through persisted settings", async () => {
+      await store.init();
+      await store.updateSettings({ colorTheme: "liquid-glass" });
+
+      await expect(store.getSettings()).resolves.toMatchObject({ colorTheme: "liquid-glass" });
+      await expect(new GlobalSettingsStore(dir).getSettings()).resolves.toMatchObject({ colorTheme: "liquid-glass" });
+    });
+
+    it("replaces an invalid color theme with the canonical default before persistence", async () => {
+      await store.init();
+
+      await expect(store.updateSettings({ colorTheme: "unknown-theme" as never })).resolves.toMatchObject({
+        colorTheme: "shadcn-ember",
+      });
+
+      const persisted = JSON.parse(await readFile(join(dir, "settings.json"), "utf-8"));
+      expect(persisted.colorTheme).toBe("shadcn-ember");
     });
 
     it("round-trips the Aurora color theme through persisted settings", async () => {

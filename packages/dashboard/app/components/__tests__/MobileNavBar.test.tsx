@@ -1,7 +1,9 @@
 import { readFileSync } from "fs";
 import { resolve } from "path";
+import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { Header } from "../Header";
 import { MobileNavBar } from "../MobileNavBar";
 import { MOBILE_NAV_SELECTABLE_ITEMS } from "../../../../core/src/board/mobile-nav-primary-items";
 import { MOBILE_MEDIA_QUERY } from "../../hooks/useViewportMode";
@@ -43,6 +45,26 @@ function extractRuleBlock(css: string, selector: string): string {
 
 function getRenderedMobileTabs(container: HTMLElement): HTMLElement[] {
   return Array.from(container.querySelectorAll<HTMLElement>(".mobile-nav-bar > .mobile-nav-tab"));
+}
+
+function AlphaMobileShellHarness() {
+  const [menuToggleRequest, setMenuToggleRequest] = useState(0);
+  return (
+    <>
+      <Header
+        view="board"
+        mobileNavEnabled
+        alphaUpdatesEnabled
+        onOpenAlphaMenu={() => setMenuToggleRequest((request) => request + 1)}
+        onOpenUsage={() => undefined}
+      />
+      <MobileNavBar
+        {...createDefaultProps()}
+        alphaUpdatesEnabled
+        alphaMenuOpenRequest={menuToggleRequest}
+      />
+    </>
+  );
 }
 
 function expectUniformMobileNavColumns(container: HTMLElement, expectedTabCount: number) {
@@ -140,6 +162,54 @@ describe("MobileNavBar", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it("renders the fixed icon-only Alpha pill and opens its complementary menu from the header request", () => {
+    const { container, rerender } = render(
+      <MobileNavBar
+        {...createDefaultProps()}
+        alphaUpdatesEnabled
+        alphaMenuOpenRequest={0}
+        mobileNavPrimaryItems={["patchnode", "tasks", "tasks"]}
+      />,
+    );
+
+    expect(getRenderedMobileTabs(container).map((tab) => tab.dataset.testid)).toEqual([
+      "mobile-nav-tab-command-center",
+      "mobile-nav-tab-tasks",
+      "mobile-nav-tab-planning",
+      "mobile-nav-tab-chat",
+      "mobile-nav-tab-mailbox",
+    ]);
+    expect(container.querySelectorAll(".mobile-nav-tab-label")).toHaveLength(0);
+    expect(screen.queryByTestId("mobile-nav-tab-list")).toBeNull();
+    expect(screen.queryByTestId("mobile-nav-tab-more")).toBeNull();
+
+    rerender(
+      <MobileNavBar
+        {...createDefaultProps()}
+        alphaUpdatesEnabled
+        alphaMenuOpenRequest={1}
+        mobileNavPrimaryItems={["patchnode", "tasks", "tasks"]}
+      />,
+    );
+    expect(screen.getByTestId("mobile-more-item-list")).toHaveTextContent("List");
+    expect(screen.queryByTestId("mobile-more-item-patchnode")).toBeNull();
+    expect(screen.queryByTestId("mobile-more-item-tasks")).toBeNull();
+    expect(screen.getAllByTestId("mobile-more-item-agents")).toHaveLength(1);
+  });
+
+  it("toggles the shared Alpha menu through two successive header hamburger clicks", () => {
+    render(<AlphaMobileShellHarness />);
+
+    const hamburger = screen.getByTestId("alpha-mobile-menu-trigger");
+    fireEvent.click(hamburger);
+    expect(screen.getByTestId("mobile-more-item-list")).toBeInTheDocument();
+    expect(screen.getByTestId("mobile-more-item-usage")).toBeInTheDocument();
+    expect(screen.queryByTestId("mobile-header-usage-btn")).toBeNull();
+
+    fireEvent.click(hamburger);
+    expect(screen.queryByTestId("mobile-more-item-list")).toBeNull();
   });
 
   it("renders eight top-level tab buttons including dedicated List and keeps skills in More when showSkillsTab is true", () => {

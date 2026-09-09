@@ -51,6 +51,12 @@ until operators enable this flag. Persisted focus topics remain inert while it i
 */
 export const CHAT_FOCUS_FLAG = "chatFocus" as const;
 
+/*
+FNXC:AlphaUpdates 2026-09-09-18:24:
+Alpha features must preserve the current product experience unless the operator explicitly enables the global Alpha Updates boundary. Missing and false values stay off so future Alpha UI can share one reversible opt-in contract.
+*/
+export const ALPHA_UPDATES_FLAG = "alphaUpdates" as const;
+
 export function isExperimentalFeatureEnabled(
   settings: Pick<Settings, "experimentalFeatures"> | undefined,
   key: string,

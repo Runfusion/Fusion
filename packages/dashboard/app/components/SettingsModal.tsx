@@ -501,6 +501,8 @@ export const SETTINGS_SECTIONS: SettingsSection[] = SETTINGS_SECTION_METADATA.ma
  *  IMPORTANT: Dev Server is canonically keyed by `devServerView`; `devServer`
  *  is treated as a legacy alias and must never render as a second row. */
 const KNOWN_EXPERIMENTAL_FEATURES: Record<string, string> = {
+  /* FNXC:AlphaUpdates 2026-09-09-18:24: Expose exactly one global, default-off switch as the boundary for every UI explicitly designated Alpha. */
+  alphaUpdates: "Alpha Updates",
   insights: "Insights",
   memoryView: "Memory Editor",
   skillsView: "Skills View",

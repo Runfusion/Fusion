@@ -3458,6 +3458,21 @@ export function TaskDetailContent({
     if (onResetTask) setShowResetDialog(true);
   }, [onResetTask]);
 
+  /*
+  FNXC:TaskReset 2026-09-09-15:14:
+  The confirmed Reset representation is a complete lifecycle boundary, not a sparse detail patch.
+  Replace retained full-detail data before closing so omitted status, error, progress, and review
+  fields cannot flash from the previous run while the parent snapshot and close action settle.
+  */
+  const submitReset = useCallback(async (id: string, options?: { description?: string }) => {
+    if (!onResetTask) throw new Error("Task Reset is unavailable");
+    const confirmed = options === undefined
+      ? await onResetTask(id)
+      : await onResetTask(id, options);
+    setFullDetail({ ...confirmed, prompt: confirmed.prompt ?? "" } as TaskDetail);
+    return confirmed;
+  }, [onResetTask]);
+
   const handleDuplicate = useCallback(async () => {
     if (!onDuplicateTask) return;
     const duplicated = await runDuplicateTaskAction({
@@ -7268,7 +7283,7 @@ export function TaskDetailContent({
         <TaskResetDialog
           taskId={task.id}
           initialDescription={workingTask.description}
-          onReset={onResetTask}
+          onReset={submitReset}
           addToast={addToast}
           onResetCompleted={requestClose}
           onClose={() => setShowResetDialog(false)}

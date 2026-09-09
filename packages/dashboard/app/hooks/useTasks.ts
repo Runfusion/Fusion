@@ -480,6 +480,37 @@ export function mergeTaskSnapshot<T extends Task>(
 }
 
 /*
+FNXC:TaskReset 2026-09-09-14:48:
+A confirmed Reset response is a complete new-run snapshot, even though JSON serialization omits the
+fields the server cleared to `undefined`. Equal or absent clocks therefore replace the visible row
+instead of sparse-merging old execution state back into it. Only a strictly newer task or column clock
+proves that a post-reset server event already advanced the row; that event still passes through the
+generic freshness merge so Reset cannot overwrite newer SSE state.
+*/
+export function reconcileConfirmedResetSnapshot<T extends Task>(
+  current: T,
+  confirmed: Task,
+  beforeReset?: Task,
+): T {
+  if (current.id !== confirmed.id) return confirmed as T;
+  const currentIsStrictlyNewer = compareTimestamps(current.updatedAt, confirmed.updatedAt) > 0
+    || compareTimestamps(current.columnMovedAt, confirmed.columnMovedAt) > 0;
+  if (!currentIsStrictlyNewer) return confirmed as T;
+
+  // The generic SSE merge may have carried old fields that a sparse newer event omitted. Reapply
+  // only values that demonstrably changed while Reset was pending; the confirmed row owns the rest.
+  const provenNewerSnapshot = beforeReset
+    ? Object.fromEntries(Object.entries(current).filter(([key, value]) =>
+      key === "id" || value !== (beforeReset as unknown as Record<string, unknown>)[key],
+    )) as unknown as Task
+    : current;
+  return mergeTaskSnapshot(confirmed as T, provenNewerSnapshot, {
+    authoritativeMove: true,
+    authoritativeLifecycle: true,
+  });
+}
+
+/*
 FNXC:TaskDetailStateStability 2026-08-09-07:13:
 Open detail views author sparse patches after a PATCH response or derived PR/review refresh. Unlike
 server snapshots, these patches are applied by intent: FN-5148 ignores an explicit foreign id but
@@ -1954,8 +1985,72 @@ export function useTasks(options?: UseTasksOptions) {
   }, [projectId]);
 
   const resetTask = useCallback(async (id: string, options?: TaskResetOptions): Promise<Task> => {
-    return reconcileConfirmedTask(await api.resetTask(id, options, projectId));
-  }, [projectId, reconcileConfirmedTask]);
+    const requestProjectId = projectId;
+    const requestOwnedRows = tasksProjectIdRef.current === requestProjectId ? tasksRef.current : [];
+    const beforeReset = requestOwnedRows.find((task) => task.id === id);
+    const confirmedRow = normalizeNonBoardTask(await api.resetTask(id, options, requestProjectId));
+
+    const publishReset = (currentTasks: Task[]): { tasks: Task[]; published: Task } => {
+      const current = currentTasks.find((task) => task.id === confirmedRow.id);
+      const published = current
+        ? reconcileConfirmedResetSnapshot(current, confirmedRow, beforeReset)
+        : confirmedRow;
+      return {
+        tasks: currentTasks.map((task) => task.id === confirmedRow.id ? published : task),
+        published,
+      };
+    };
+
+    /*
+    FNXC:TaskReset 2026-09-09-15:14:
+    Task IDs are project-local, so a Reset response may publish into the current React rows only while
+    they still belong to the project that issued the request. A project switch during cleanup leaves
+    the new project's fetch and pagination owners untouched and publishes confirmation only to the
+    originating project's cache; otherwise an equal ID can replace an unrelated visible task.
+    */
+    const ownsCurrentRows = tasksProjectIdRef.current === requestProjectId;
+    const localPublication = ownsCurrentRows ? publishReset(tasksRef.current) : undefined;
+    if (localPublication) {
+      fetchVersionRef.current++;
+      refreshAbortRef.current?.abort();
+      abortPaginationOwners();
+      tasksRef.current = localPublication.tasks;
+    }
+
+    let publishedRow = localPublication?.published ?? confirmedRow;
+    if (requestProjectId) {
+      const cacheKey = `${SWR_CACHE_KEYS.TASKS_PREFIX}${requestProjectId}`;
+      const cachedTasks = readCache<unknown>(cacheKey, { maxAgeMs: SWR_TASKS_MAX_AGE_MS });
+      if (Array.isArray(cachedTasks)) {
+        const cacheContainsOnlyTaskRows = cachedTasks.every((task) =>
+          Boolean(task && typeof task === "object" && typeof (task as Task).id === "string"),
+        );
+        if (cacheContainsOnlyTaskRows) {
+          const normalizedCachedTasks = cachedTasks.map((task) => normalizeTask(task as Task));
+          const cachePublication = localPublication
+            ? {
+                tasks: normalizedCachedTasks.map((task) =>
+                  task.id === confirmedRow.id ? localPublication.published : task),
+                published: localPublication.published,
+              }
+            : publishReset(normalizedCachedTasks);
+          publishedRow = cachePublication.published;
+          writeTaskCacheSnapshot(cacheKey, cachePublication.tasks);
+        } else {
+          clearCache(cacheKey);
+        }
+      } else if (cachedTasks === null) {
+        const cachePublication = localPublication ?? publishReset(requestOwnedRows);
+        publishedRow = cachePublication.published;
+        writeTaskCacheSnapshot(cacheKey, cachePublication.tasks);
+      } else {
+        clearCache(cacheKey);
+      }
+    }
+
+    if (localPublication) setTasks(localPublication.tasks);
+    return publishedRow;
+  }, [projectId]);
 
   const duplicateTask = useCallback(async (id: string, options?: { workflowId?: string }): Promise<Task> => {
     const task = normalizeNonBoardTask(await api.duplicateTask(id, options, projectId));

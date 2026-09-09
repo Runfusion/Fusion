@@ -19,7 +19,12 @@ a mocked cache is what let the missing `savedAt` plumbing hide.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act, renderHook } from "@testing-library/react";
 import type { Task } from "@fusion/core";
-import { applyLocalTaskPatch, mergeTaskSnapshot, useTasks } from "../useTasks";
+import {
+  applyLocalTaskPatch,
+  mergeTaskSnapshot,
+  reconcileConfirmedResetSnapshot,
+  useTasks,
+} from "../useTasks";
 import * as api from "../../api";
 import { SWR_CACHE_KEYS } from "../../utils/swrCache";
 /*
@@ -61,8 +66,14 @@ function emitSse(event: string, payload: unknown): void {
 
 vi.mock("../../api", async (importOriginal) => {
   const { createDashboardApiMock } = await import("../../test/mockApi");
+  const fetchTasks = vi.fn().mockResolvedValue([]);
   return createDashboardApiMock(() => importOriginal<typeof import("../../api")>(), {
-    fetchTasks: vi.fn().mockResolvedValue([]),
+    fetchTasks,
+    fetchTaskPage: vi.fn(async (projectId?: string) => {
+      const tasks = await fetchTasks(undefined, undefined, projectId);
+      return { tasks, total: tasks.length, hasMore: false, nextCursor: null };
+    }),
+    fetchCompletedTasks: vi.fn().mockResolvedValue({ tasks: [], total: 0, hasMore: false }),
   });
 });
 
@@ -145,6 +156,70 @@ a real newer column move can advance it. Full-detail prompt/log data is retained
 */
 describe("task snapshot lifecycle freshness", () => {
   const todo = createInProgressTask("FN-ORDER", Date.parse("2026-08-05T10:00:00.000Z"));
+
+  it("treats an equal-clock Reset response as complete while leaving generic sparse merges unchanged", () => {
+    const populated = {
+      ...todo,
+      error: "old failure",
+      steps: [{ title: "Old work", description: "stale", status: "done" }],
+      workflowStepResults: [{ stepId: "code-review", status: "failed" }],
+      mergeRetries: 3,
+    } as Task;
+    const confirmed = {
+      id: populated.id,
+      title: populated.title,
+      description: populated.description,
+      column: "triage",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: populated.createdAt,
+      updatedAt: populated.updatedAt,
+      columnMovedAt: populated.updatedAt,
+    } as Task;
+
+    expect(mergeTaskSnapshot(populated, confirmed)).toMatchObject({
+      error: "old failure",
+      mergeRetries: 3,
+    });
+    const reset = reconcileConfirmedResetSnapshot(populated, confirmed, populated);
+    expect(reset).toEqual(confirmed);
+    expect(reset).not.toHaveProperty("status");
+    expect(reset).not.toHaveProperty("error");
+    expect(reset).not.toHaveProperty("workflowStepResults");
+  });
+
+  it("admits only fields proven newer than the pre-Reset row", () => {
+    const before = {
+      ...todo,
+      error: "old failure",
+      steps: [{ title: "Old work", description: "stale", status: "done" }],
+    } as Task;
+    const confirmed = {
+      id: todo.id,
+      title: todo.title,
+      description: todo.description,
+      column: "triage",
+      dependencies: [],
+      steps: [],
+      log: [],
+      createdAt: todo.createdAt,
+      updatedAt: "2026-08-05T10:01:00.000Z",
+      columnMovedAt: "2026-08-05T10:01:00.000Z",
+    } as Task;
+    const newerSseMergedWithOldRow = {
+      ...before,
+      column: "todo",
+      status: "planning",
+      updatedAt: "2026-08-05T10:02:00.000Z",
+      columnMovedAt: "2026-08-05T10:02:00.000Z",
+    } as Task;
+
+    const reset = reconcileConfirmedResetSnapshot(newerSseMergedWithOldRow, confirmed, before);
+    expect(reset).toMatchObject({ column: "todo", status: "planning", steps: [] });
+    expect(reset).not.toHaveProperty("error");
+  });
 
   it("keeps a newer queued status through an old → new → stale-old scheduler ordering", () => {
     const queued = {

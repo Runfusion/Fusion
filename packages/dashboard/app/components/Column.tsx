@@ -20,7 +20,7 @@ import {
 } from "../utils/columnRoles";
 import type { ToastType } from "../hooks/useToast";
 import type { TaskContextMenuColumnMetadata } from "./TaskContextMenu";
-import { MoreVertical } from "lucide-react";
+import { History, MoreVertical } from "lucide-react";
 import type { BoardWorkflowDefinition, ModelInfo, BoardWorkflowColumnFlags, RevertTaskOptions, RevertTaskResult } from "../api";
 import type { BlockerFanoutEntry } from "../hooks/useBlockerFanout";
 import "./Column.css";
@@ -234,9 +234,13 @@ interface ColumnProps {
   workflowContextMenuColumns?: readonly TaskContextMenuColumnMetadata[];
   /** Per-task workflow columns for aggregate Board cards whose tasks come from different workflows. */
   taskContextMenuColumnsByTaskId?: ReadonlyMap<string, readonly TaskContextMenuColumnMetadata[]>;
+  /** Alpha boundary for relocating History to complete-lane headers. */
+  alphaUpdatesEnabled?: boolean;
+  /** Opens the existing History route. */
+  onOpenHistory?: () => void;
 }
 
-function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeGrouping, onMoveTask, onPauseTask, onUnpauseTask, onResetTask, onDuplicateTask, onMergeTask, onOpenDetail, onOpenRefine, onOpenGroupModal, addToast, onQuickCreate, onNewTask, autoMerge, mergeStrategy = "direct", onToggleAutoMerge, planAutoApproveEnabled, onTogglePlanAutoApprove, globalPaused, onUpdateTask, onRetryTask, onOpenChatWithPrefill, onRevertTask, onReviseTask, onDeleteTask, sortMode, onSortModeChange, doneSortMode, onDoneSortModeChange, totalTaskCount, serverHasMore, serverLoadingMore, serverPaginationError, serverProgressKey, paginationCollectionKey, paginationActive = true, onLoadMoreServer, onRetryServer, allTasks, availableModels, onPlanningMode, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, isSearchActive, onOpenMission, lastFetchTimeMs, taskCardFieldDefs, taskWorkflowBadges, blockerFanoutMap, prAuthAvailable, holdTaskIds, workflowMode, workflowId, workflowOptions, defaultWorkflowId, columnDisplayName, columnDescription, columnFlags, workflowContextMenuColumns, taskContextMenuColumnsByTaskId }: ColumnProps) {
+function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeGrouping, alphaUpdatesEnabled = false, onOpenHistory, onMoveTask, onPauseTask, onUnpauseTask, onResetTask, onDuplicateTask, onMergeTask, onOpenDetail, onOpenRefine, onOpenGroupModal, addToast, onQuickCreate, onNewTask, autoMerge, mergeStrategy = "direct", onToggleAutoMerge, planAutoApproveEnabled, onTogglePlanAutoApprove, globalPaused, onUpdateTask, onRetryTask, onOpenChatWithPrefill, onRevertTask, onReviseTask, onDeleteTask, sortMode, onSortModeChange, doneSortMode, onDoneSortModeChange, totalTaskCount, serverHasMore, serverLoadingMore, serverPaginationError, serverProgressKey, paginationCollectionKey, paginationActive = true, onLoadMoreServer, onRetryServer, allTasks, availableModels, onPlanningMode, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, isSearchActive, onOpenMission, lastFetchTimeMs, taskCardFieldDefs, taskWorkflowBadges, blockerFanoutMap, prAuthAvailable, holdTaskIds, workflowMode, workflowId, workflowOptions, defaultWorkflowId, columnDisplayName, columnDescription, columnFlags, workflowContextMenuColumns, taskContextMenuColumnsByTaskId }: ColumnProps) {
   const { t } = useTranslation("app");
   // Anchor the board.rejection.* catalog keys for the i18next extractor (it
   // scopes `t` to the useTranslation binding, so the shared translateRejection
@@ -595,6 +599,19 @@ function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeG
             ? <span>{displayedTaskCount.toLocaleString()}</span>
             : <><span>{activeTaskCount}</span>/<span>{displayedTaskCount}</span></>}
         </span>
+        {/* FNXC:AlphaUpdates 2026-09-09-18:24: Every resolved complete lane, including custom empty lanes, owns the sole Alpha History entry point. */}
+        {alphaUpdatesEnabled && isCompleteColumn && onOpenHistory && (
+          <button
+            type="button"
+            className="btn btn-icon btn-sm column-history-button"
+            onClick={onOpenHistory}
+            aria-label={t("column.openHistory", "Open History")}
+            title={t("column.openHistory", "Open History")}
+            data-testid={`column-history-${column}`}
+          >
+            <History />
+          </button>
+        )}
         {isReviewColumn && onToggleAutoMerge && (
           <label className="auto-merge-toggle" title={autoMerge ? t("column.autoMergeEnabled", "Auto-merge enabled") : t("column.autoMergeDisabled", "Auto-merge disabled")}>
             {/*

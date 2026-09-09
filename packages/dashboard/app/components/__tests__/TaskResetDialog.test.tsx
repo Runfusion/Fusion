@@ -5,6 +5,16 @@ import { describe, expect, it, vi } from "vitest";
 import { readAppFile } from "../../test/cssFixture";
 import { TaskResetDialog } from "../TaskResetDialog";
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
+}
+
 function renderDialog(overrides: Partial<ComponentProps<typeof TaskResetDialog>> = {}) {
   const props = {
     taskId: "FN-233",
@@ -62,6 +72,33 @@ describe("TaskResetDialog", () => {
     expect(props.onClose).toHaveBeenCalledOnce();
   });
 
+  it("shows pending feedback immediately and synchronously rejects duplicate submissions", async () => {
+    const request = deferred<void>();
+    const onReset = vi.fn(() => request.promise);
+    const { props } = renderDialog({ onReset });
+    const submit = screen.getByTestId("task-reset-submit");
+
+    fireEvent.click(submit);
+    fireEvent.click(submit);
+
+    expect(submit).toHaveTextContent("Resetting…");
+    expect(submit).toBeDisabled();
+    expect(screen.getByTestId("task-reset-description")).toBeDisabled();
+    expect(screen.getByTestId("task-reset-cancel")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Close" })).toBeDisabled();
+    expect(onReset).toHaveBeenCalledOnce();
+    expect(props.addToast).not.toHaveBeenCalled();
+    expect(props.onClose).not.toHaveBeenCalled();
+
+    request.resolve();
+    await waitFor(() => expect(props.onClose).toHaveBeenCalledOnce());
+    expect(props.onResetCompleted).toHaveBeenCalledOnce();
+    expect(props.addToast).toHaveBeenCalledWith(
+      "Reset FN-233 — fresh run will be allocated",
+      "success",
+    );
+  });
+
   it("uses the exact legacy call arity for an unchanged description", async () => {
     const user = userEvent.setup();
     const { props } = renderDialog();
@@ -83,6 +120,9 @@ describe("TaskResetDialog", () => {
     expect(props.addToast).not.toHaveBeenCalledWith(expect.anything(), "success");
     expect(props.onResetCompleted).not.toHaveBeenCalled();
     expect(props.onClose).not.toHaveBeenCalled();
+
+    await user.click(screen.getByTestId("task-reset-submit"));
+    expect(props.onReset).toHaveBeenCalledTimes(2);
   });
 
   it("does not cap or truncate a long description", () => {

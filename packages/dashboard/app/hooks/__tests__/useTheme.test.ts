@@ -174,6 +174,18 @@ describe("useTheme", () => {
     expect(localStorageMock[COLOR_THEME_STORAGE_KEY]).toBe("forest");
   });
 
+  it("hydrates, caches, and applies Liquid Glass from backend settings", async () => {
+    mockFetchGlobalSettings.mockResolvedValue({ colorTheme: "liquid-glass" });
+
+    const { result } = renderHook(() => useTheme());
+
+    await waitFor(() => {
+      expect(result.current.colorTheme).toBe("liquid-glass");
+    });
+    expect(localStorageMock[COLOR_THEME_STORAGE_KEY]).toBe("liquid-glass");
+    expect(document.documentElement.getAttribute("data-color-theme")).toBe("liquid-glass");
+  });
+
   it("hydrates, caches, and applies Aurora from backend settings", async () => {
     mockFetchGlobalSettings.mockResolvedValue({ colorTheme: "aurora" });
 
@@ -296,11 +308,12 @@ describe("useTheme", () => {
     // User changes both fields before initial backend hydration resolves.
     act(() => {
       result.current.setThemeMode("light");
-      result.current.setColorTheme("ocean");
+      result.current.setColorTheme("liquid-glass");
     });
 
     expect(result.current.themeMode).toBe("light");
-    expect(result.current.colorTheme).toBe("ocean");
+    expect(result.current.colorTheme).toBe("liquid-glass");
+    expect(mockUpdateGlobalSettings).toHaveBeenCalledWith({ colorTheme: "liquid-glass" });
 
     // Hydration resolves with stale values from backend cache.
     resolveHydration!({ themeMode: "dark", colorTheme: "forest" } as Settings);
@@ -311,9 +324,9 @@ describe("useTheme", () => {
 
     // Regression expectation: user selections remain authoritative.
     expect(result.current.themeMode).toBe("light");
-    expect(result.current.colorTheme).toBe("ocean");
+    expect(result.current.colorTheme).toBe("liquid-glass");
     expect(localStorageMock[THEME_MODE_STORAGE_KEY]).toBe("light");
-    expect(localStorageMock[COLOR_THEME_STORAGE_KEY]).toBe("ocean");
+    expect(localStorageMock[COLOR_THEME_STORAGE_KEY]).toBe("liquid-glass");
 
     // Ensure stale hydration values did not leak through.
     expect(localStorageMock[THEME_MODE_STORAGE_KEY]).not.toBe("dark");
@@ -868,7 +881,15 @@ describe("useTheme", () => {
     expect(mockUpdateGlobalSettings).toHaveBeenCalledWith({ colorTheme: "medieval" });
   });
 
-  it("preserves explicit Glass and Glass Silver color themes from localStorage", () => {
+  it("preserves explicit Glass, Glass Silver, and Liquid Glass color themes from localStorage", () => {
+    localStorageMock[COLOR_THEME_STORAGE_KEY] = "liquid-glass";
+
+    const liquidGlass = renderHook(() => useTheme());
+
+    expect(liquidGlass.result.current.colorTheme).toBe("liquid-glass");
+    expect(document.documentElement.getAttribute("data-color-theme")).toBe("liquid-glass");
+    liquidGlass.unmount();
+
     localStorageMock[COLOR_THEME_STORAGE_KEY] = "glass-silver";
 
     const { result, rerender } = renderHook(() => useTheme());
