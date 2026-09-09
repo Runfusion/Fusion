@@ -1436,7 +1436,9 @@
     "snippetSuggestion": "Insertar prompt guardado",
     "snippetSuggestions": "Sugerencias de fragmentos",
     "conversationIdCopied": "",
-    "copyConversationId": ""
+    "copyConversationId": "",
+    "questionOptionalLabel": "",
+    "questionSelectHintWithOptional": ""
   },
   "chatRooms": {
     "error": {

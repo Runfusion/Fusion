@@ -1436,7 +1436,9 @@
     "snippetSuggestion": "插入已保存的提示词",
     "snippetSuggestions": "片段建议",
     "conversationIdCopied": "",
-    "copyConversationId": ""
+    "copyConversationId": "",
+    "questionOptionalLabel": "",
+    "questionSelectHintWithOptional": ""
   },
   "chatRooms": {
     "error": {

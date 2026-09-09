@@ -1436,7 +1436,9 @@
     "snippetSuggestion": "저장된 프롬프트 삽입",
     "snippetSuggestions": "스니펫 제안",
     "conversationIdCopied": "",
-    "copyConversationId": ""
+    "copyConversationId": "",
+    "questionOptionalLabel": "",
+    "questionSelectHintWithOptional": ""
   },
   "chatRooms": {
     "error": {

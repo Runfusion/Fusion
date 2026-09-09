@@ -1436,7 +1436,9 @@
     "snippetSuggestion": "Insérer le prompt enregistré",
     "snippetSuggestions": "Suggestions d’extraits",
     "conversationIdCopied": "ID de la conversation copié",
-    "copyConversationId": "Copier l’ID de la conversation"
+    "copyConversationId": "Copier l’ID de la conversation",
+    "questionOptionalLabel": "",
+    "questionSelectHintWithOptional": ""
   },
   "chatRooms": {
     "error": {

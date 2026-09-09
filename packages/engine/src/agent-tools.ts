@@ -600,6 +600,13 @@ export const askQuestionParams = Type.Object({
       multiSelect: Type.Optional(Type.Boolean({
         description: "Set true when the user may choose multiple options. Prefer type='multi_select' for clarity.",
       })),
+      /*
+       * FNXC:ChatAskQuestion 2026-09-09-02:42:
+       * An agent must be able to append a non-blocking free-text field to a structured form without forcing the user to type filler.
+       */
+      optional: Type.Optional(Type.Boolean({
+        description: "Set true when the user may leave this question unanswered; the card can be submitted without it. Defaults to false (required).",
+      })),
       type: Type.Optional(Type.Union([
         Type.Literal("text"),
         Type.Literal("single_select"),

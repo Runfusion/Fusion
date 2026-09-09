@@ -1446,7 +1446,9 @@
     "snippetSuggestion": "Inserir prompt salvo",
     "snippetSuggestions": "Sugestões de snippets",
     "conversationIdCopied": "",
-    "copyConversationId": ""
+    "copyConversationId": "",
+    "questionOptionalLabel": "",
+    "questionSelectHintWithOptional": ""
   },
   "chatRooms": {
     "error": {
