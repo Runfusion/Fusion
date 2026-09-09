@@ -2343,6 +2343,44 @@ describe("TaskCard", () => {
     expect(screen.getByRole("link", { name: "#77" })).toBeDefined();
   });
 
+  it("accepts only newer timestamped GitHub badge updates for the current project and task", () => {
+    const task = makeTask({
+      column: "in-review",
+      updatedAt: "2026-05-13T12:00:00.000Z",
+      prInfo: {
+        url: "https://github.com/owner/repo/pull/50",
+        number: 50,
+        status: "open",
+        title: "Snapshot PR",
+        headBranch: "feature/snapshot",
+        baseBranch: "main",
+        commentCount: 0,
+        lastCheckedAt: "2026-05-13T12:00:00.000Z",
+      } as Task["prInfo"],
+    });
+    badgeUpdatesMock.set("project-a:FN-001", {
+      prInfo: { ...task.prInfo, number: 49, url: "https://github.com/owner/repo/pull/49" },
+      timestamp: "2026-05-13T11:59:00.000Z",
+    });
+    badgeUpdatesMock.set("project-b:FN-001", {
+      prInfo: { ...task.prInfo, number: 99, url: "https://github.com/owner/repo/pull/99" },
+      timestamp: "2026-05-13T12:02:00.000Z",
+    });
+
+    const view = render(<TaskCard task={task} projectId="project-a" onOpenDetail={noop} addToast={noop} />);
+    expect(screen.getByRole("link", { name: "#50" })).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "#49" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "#99" })).toBeNull();
+
+    badgeUpdatesMock.set("project-a:FN-001", {
+      prInfo: { ...task.prInfo, number: 51, url: "https://github.com/owner/repo/pull/51" },
+      timestamp: "2026-05-13T12:01:00.000Z",
+    });
+    view.rerender(<TaskCard task={{ ...task, title: "Test task refreshed" }} projectId="project-a" onOpenDetail={noop} addToast={noop} />);
+    expect(screen.getByRole("link", { name: "#51" })).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "#50" })).toBeNull();
+  });
+
   it("clicking issue badge text does not open the task detail modal", () => {
     const onOpenDetail = vi.fn();
     render(
@@ -6164,22 +6202,22 @@ describe("TaskCard", () => {
       expectedLabel: "2 files changed",
     },
     {
-      name: "uses mergeDetails as transient placeholder while loading",
+      name: "uses mergeDetails as the stable first-paint count while loading",
       diff: { stats: null, loading: true },
       mergeDetails: { filesChanged: 108 },
       expectedLabel: "108 files changed",
     },
     {
-      name: "hides badge when fetch resolved null and no execution fallback exists",
+      name: "retains the snapshot badge when the diff resolves null",
       diff: { stats: null, loading: false },
       mergeDetails: { filesChanged: 108 },
-      expectedLabel: null,
+      expectedLabel: "108 files changed",
     },
     {
-      name: "hides badge when live diff resolves zero",
+      name: "retains the snapshot badge when the same-snapshot diff resolves zero",
       diff: { stats: { filesChanged: 0, additions: 0, deletions: 0 }, loading: false },
       mergeDetails: { filesChanged: 108 },
-      expectedLabel: null,
+      expectedLabel: "108 files changed",
     },
     {
       name: "clamps live diff count when landed files are attribution-restricted",
@@ -6194,10 +6232,10 @@ describe("TaskCard", () => {
       expectedLabel: "5 files changed",
     },
     {
-      name: "uses singular grammar for one live file",
+      name: "does not add a region from a live diff without snapshot delivery evidence",
       diff: { stats: { filesChanged: 1, additions: 1, deletions: 0 }, loading: false },
       mergeDetails: undefined,
-      expectedLabel: "1 file changed",
+      expectedLabel: null,
     },
   ])("FN-4527 done-task files changed contract: $name", ({ diff, mergeDetails, expectedLabel }) => {
     useTaskDiffStatsMock.mockReturnValue(diff);
@@ -6232,7 +6270,7 @@ describe("TaskCard", () => {
     expect(filesChangedButton).toBeNull();
   });
 
-  it("backfills done-card files-changed chip when mergeDetails enrichment arrives without remount", () => {
+  it("adds the done-card files chip only when a new task snapshot carries merge evidence", () => {
     useTaskDiffStatsMock.mockImplementation((...args: any[]) => {
       const options = args[4] as { mergeSignature?: string } | undefined;
       if (options?.mergeSignature === "3:3") {
@@ -6340,7 +6378,7 @@ describe("TaskCard", () => {
     expect(container.querySelector(".card-session-files")).toBeNull();
   });
 
-  it("prefers lineage files-changed stats over stale execution-touched modifiedFiles for done tasks", () => {
+  it("does not let lineage enrichment add a files region when done delivery evidence is absent", () => {
     useTaskDiffStatsMock.mockReturnValue({
       stats: { filesChanged: 4, additions: 12, deletions: 3 },
       loading: false,
@@ -6369,7 +6407,7 @@ describe("TaskCard", () => {
       />,
     );
 
-    expect(screen.getByRole("button", { name: "4 files changed" })).toBeDefined();
+    expect(screen.queryByRole("button", { name: /files changed/i })).toBeNull();
     expect(screen.queryByText(/touched during execution/i)).toBeNull();
     expect(screen.queryByText(/in merged commit/i)).toBeNull();
   });

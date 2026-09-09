@@ -115,7 +115,12 @@ describe("TaskCard/TaskChangesTab files-changed parity", () => {
       stats,
     });
 
-    const task = makeTask({ column, worktree, mergeDetails });
+    const task = makeTask({
+      column,
+      worktree,
+      modifiedFiles: column === "done" ? undefined : ["a.ts", "b.ts", "c.ts"],
+      mergeDetails: column === "done" ? { ...mergeDetails, filesChanged: 3 } : mergeDetails,
+    });
 
     const { container } = render(
       <>
@@ -138,7 +143,7 @@ describe("TaskCard/TaskChangesTab files-changed parity", () => {
       stats,
     });
 
-    const task = makeTask({ id: "FN-014", column: "done", mergeDetails: { commitSha: "rebased-tip" } });
+    const task = makeTask({ id: "FN-014", column: "done", mergeDetails: { commitSha: "rebased-tip", filesChanged: 1 } });
     const { container } = render(
       <>
         <TaskCard task={task} onOpenDetail={() => {}} addToast={() => {}} />
@@ -155,12 +160,29 @@ describe("TaskCard/TaskChangesTab files-changed parity", () => {
     expect(container.querySelectorAll(".card-session-files")).toHaveLength(1);
   });
 
+  it("keeps the snapshot card summary stable when the detailed endpoint fails", async () => {
+    useTaskDiffStatsMock.mockReturnValue({ stats: null, loading: false });
+    fetchTaskDiffMock.mockRejectedValue(new Error("Git evidence unavailable"));
+    const task = makeTask({ column: "done", mergeDetails: { commitSha: "abc123", filesChanged: 2 } });
+
+    const { container } = render(
+      <>
+        <TaskCard task={task} onOpenDetail={() => {}} addToast={() => {}} />
+        <TaskChangesTab taskId={task.id} column="done" mergeDetails={task.mergeDetails} />
+      </>,
+    );
+
+    expect(container.querySelector(".card-session-files")).toHaveTextContent("2 files changed");
+    await waitFor(() => expect(screen.getByText(/Error loading changes: Git evidence unavailable/)).toBeTruthy());
+    expect(container.querySelector(".card-session-files")).toHaveTextContent("2 files changed");
+  });
+
   it("does not render a card files button for an empty scoped result", async () => {
     const stats = { filesChanged: 0, additions: 0, deletions: 0 };
     useTaskDiffStatsMock.mockReturnValue({ stats, loading: false });
     fetchTaskDiffMock.mockResolvedValue({ files: [], stats });
 
-    const task = makeTask({ id: "FN-014", column: "done", mergeDetails: { commitSha: "rebased-tip" } });
+    const task = makeTask({ id: "FN-014", column: "done", mergeDetails: { commitSha: "rebased-tip", filesChanged: 0 } });
     const { container } = render(
       <>
         <TaskCard task={task} onOpenDetail={() => {}} addToast={() => {}} />
