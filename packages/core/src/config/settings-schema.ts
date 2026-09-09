@@ -541,8 +541,6 @@ export const DEFAULT_PROJECT_SETTINGS = {
   maxRecommendationsPerTask: 3,
   // FNXC:TaskRecommendations 2026-08-19-13:05: explicit recommendation evaluation is opt-in and only applies while the positive cap enables capture; relevance always outranks count.
   requireTaskRecommendations: false,
-  // FNXC:TaskRecommendations 2026-08-13-03:56: surface completed-task proposals by default; operators can suppress the notice without suppressing capture.
-  recommendationMailboxNoticeEnabled: true,
   globalPause: false,
   globalPauseReason: undefined,
   defaultWorkflowId: undefined,

@@ -136,8 +136,6 @@ const createDefaultProps = () => ({
   onOpenActivityLog: vi.fn(),
   onOpenMailbox: vi.fn(),
   mailboxUnreadCount: 0,
-  recommendationUnreadCount: 0,
-  artifactUnreadCount: 0,
   mailboxPendingApprovalCount: 0,
   onOpenGitManager: vi.fn(),
   onOpenWorkflowEditor: vi.fn(),
@@ -230,29 +228,11 @@ describe("MobileNavBar", () => {
     expect(screen.getByTestId("mobile-more-item-skills")).toBeDefined();
   });
 
-  it("shows recommendation and artifact badges in primary tabs and the More sheet", () => {
-    const primary = render(
-      <MobileNavBar
-        {...createDefaultProps()}
-        recommendationUnreadCount={7}
-        artifactUnreadCount={120}
-        mobileNavPrimaryItems={["recommendations", "documents"]}
-      />,
-    );
-    expect(screen.getByTestId("mobile-nav-tab-recommendations").querySelector(".mobile-nav-tab-badge")).toHaveTextContent("7");
-    expect(screen.getByTestId("mobile-nav-tab-documents").querySelector(".mobile-nav-tab-badge")).toHaveTextContent("99+");
-    primary.unmount();
-
-    render(
-      <MobileNavBar
-        {...createDefaultProps()}
-        recommendationUnreadCount={7}
-        artifactUnreadCount={120}
-      />,
-    );
-    fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
-    expect(screen.getByTestId("mobile-more-item-recommendations").querySelector(".mobile-more-item-badge")).toHaveTextContent("7");
-    expect(screen.getByTestId("mobile-more-item-documents").querySelector(".mobile-more-item-badge")).toHaveTextContent("99+");
+  it("migrates legacy recommendation and artifact footer preferences to one Mailbox tab", () => {
+    render(<MobileNavBar {...createDefaultProps()} mobileNavPrimaryItems={["recommendations", "documents"]} />);
+    expect(screen.getAllByTestId("mobile-nav-tab-mailbox")).toHaveLength(1);
+    expect(screen.queryByTestId("mobile-nav-tab-recommendations")).toBeNull();
+    expect(screen.queryByTestId("mobile-nav-tab-documents")).toBeNull();
   });
 
   it("promotes Planning and routes demoted Missions to More without an empty tab", () => {
@@ -452,15 +432,11 @@ describe("MobileNavBar", () => {
     expect(screen.getByTestId("mobile-nav-tab-more")).toHaveClass("mobile-nav-tab--active");
   });
 
-  it("shows Artifacts in More and routes to the stable documents view", () => {
-    const props = createDefaultProps();
-    render(<MobileNavBar {...props} />);
-
+  it("does not expose standalone Artifacts or Recommendations in More", () => {
+    render(<MobileNavBar {...createDefaultProps()} />);
     fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
-    expect(screen.getByTestId("mobile-more-item-documents")).toHaveTextContent("Artifacts");
-    fireEvent.click(screen.getByTestId("mobile-more-item-documents"));
-
-    expect(props.onChangeView).toHaveBeenCalledWith("documents");
+    expect(screen.queryByTestId("mobile-more-item-documents")).toBeNull();
+    expect(screen.queryByTestId("mobile-more-item-recommendations")).toBeNull();
   });
 
   it("shows secrets in More and routes to secrets view", () => {

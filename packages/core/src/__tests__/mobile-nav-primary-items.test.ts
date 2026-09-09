@@ -8,8 +8,8 @@ describe("resolveMobileNavPrimaryItems", () => {
   });
 
   it("accepts newly eligible destinations, preserves order, and routes omitted destinations to More", () => {
-    const resolved = resolveMobileNavPrimaryItems({ mobileNavPrimaryItems: ["git", "recommendations", "planning", "agents"] });
-    expect(resolved.primaryItems).toEqual(["git", "recommendations", "planning", "agents"]);
+    const resolved = resolveMobileNavPrimaryItems({ mobileNavPrimaryItems: ["git", "notes", "planning", "agents"] });
+    expect(resolved.primaryItems).toEqual(["git", "notes", "planning", "agents"]);
     expect(resolved.omittedItems).not.toContain("git");
     expect(resolved.omittedItems).toContain("settings");
   });
@@ -22,13 +22,14 @@ describe("resolveMobileNavPrimaryItems", () => {
     expect(resolved.omittedItems).toContain("ideation");
   });
 
-  it("keeps newly eligible settings and documents, drops overflow-only ids, deduplicates, and clamps footer tabs", () => {
+  it("migrates retired category destinations to Mailbox, deduplicates, and clamps footer tabs", () => {
     const resolved = resolveMobileNavPrimaryItems({
-      mobileNavPrimaryItems: ["settings", "tasks", "more", "documents", "tasks", "agents", "missions", "chat", "mailbox", "planning", "unknown"],
+      mobileNavPrimaryItems: ["settings", "tasks", "more", "documents", "recommendations", "tasks", "agents", "missions", "chat", "unknown"],
     });
-    expect(resolved.primaryItems).toEqual(["settings", "tasks", "documents", "agents", "missions", "chat"]);
+    expect(resolved.primaryItems).toEqual(["settings", "tasks", "mailbox", "agents", "missions", "chat"]);
     expect(resolved.omittedItems).not.toContain("settings");
-    expect(resolved.omittedItems).not.toContain("documents");
-    expect(resolved.omittedItems).toContain("git");
+    expect(resolved.omittedItems).not.toContain("mailbox");
+    expect(MOBILE_NAV_SELECTABLE_ITEMS).not.toContain("documents");
+    expect(MOBILE_NAV_SELECTABLE_ITEMS).not.toContain("recommendations");
   });
 });

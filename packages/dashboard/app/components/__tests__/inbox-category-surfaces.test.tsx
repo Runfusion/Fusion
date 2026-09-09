@@ -1,14 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { classifyDashboardInboxMessage, type Message } from "@fusion/core";
+import type { Message } from "@fusion/core";
 import { MailboxView } from "../MailboxView";
 import { MailboxModal } from "../MailboxModal";
-import { InsightsView } from "../InsightsView";
 import { useViewportMode } from "../../hooks/useViewportMode";
 import { useViewportMode as useHeaderViewportMode } from "../Header";
-import { useInsights } from "../../hooks/useInsights";
-import { useTaskRecommendations } from "../../hooks/useTaskRecommendations";
 
 vi.mock("../../api", () => ({
   fetchInbox: vi.fn(), fetchOutbox: vi.fn(), fetchUnreadCount: vi.fn(), fetchAgentMailbox: vi.fn(), fetchAllAgentMailbox: vi.fn(),
@@ -19,12 +16,6 @@ vi.mock("../../api", () => ({
 }));
 vi.mock("../../hooks/useViewportMode", () => ({ useViewportMode: vi.fn(() => "desktop"), isMobileViewport: () => false, isFullScreenSheetViewport: () => false, isShortViewport: () => false, getViewportMode: () => "desktop", isTabletTouchViewport: () => false }));
 vi.mock("../../hooks/useMobileKeyboard", () => ({ useMobileKeyboard: vi.fn(() => ({ keyboardOverlap: 0, viewportHeight: null, viewportOffsetTop: 0, keyboardOpen: false })) }));
-vi.mock("../../hooks/useInsights", () => ({
-  useInsights: vi.fn(),
-  INSIGHT_CATEGORIES: ["features", "architecture", "competitive_analysis", "research", "trends"],
-  CATEGORY_LABELS: { features: "Features", architecture: "Architecture", competitive_analysis: "Competitive Analysis", research: "Research", trends: "Trends" },
-}));
-vi.mock("../../hooks/useTaskRecommendations", () => ({ useTaskRecommendations: vi.fn() }));
 vi.mock("../../sse-bus", () => ({ subscribeSse: vi.fn(() => () => {}) }));
 vi.mock("../Header", () => ({ useViewportMode: vi.fn(() => "desktop") }));
 vi.mock("../ComposeChatPanel", () => ({ ComposeChatPanel: () => null }));
@@ -86,17 +77,15 @@ function configureActiveInbox(messages: Message[]) {
     if (filter?.archived) {
       return { messages: [recommendationNotice], total: 1, unreadCount: 0 };
     }
-    expect(filter).toEqual({ limit: 50, category: "message" });
-    const filteredMessages = messages.filter((message) => classifyDashboardInboxMessage(message.metadata) === filter.category);
-    return { messages: filteredMessages, total: filteredMessages.length, unreadCount: filteredMessages.filter((message) => !message.read).length, categoryUnreadCounts: { message: filteredMessages.filter((message) => !message.read).length, recommendation: 1, artifact: 1 } };
+    expect(filter).toEqual({ limit: 50 });
+    return { messages, total: messages.length, unreadCount: messages.filter((message) => !message.read).length, categoryUnreadCounts: { message: 1, recommendation: 1, artifact: 1 } };
   });
 }
 
 /**
- * FNXC:InboxCategories 2026-09-06-03:16:
- * Both mailbox hosts and breakpoints must expose only ordinary active mail while preserving archived
- * notice details. The test server double enforces the category request so a host cannot regress by
- * merely hiding a rendered row after loading mixed unread state.
+ * FNXC:InboxCategories 2026-09-09-20:37:
+ * Mailbox is the single destination for ordinary messages and legacy artifact/recommendation notices.
+ * Both hosts and breakpoints load the complete active inbox, while archived notices retain their actions.
  */
 describe("inbox category surfaces", () => {
   beforeEach(() => {
@@ -116,46 +105,24 @@ describe("inbox category surfaces", () => {
       id: "FN-9000",
       recommendations: [{ id: "rec-1", title: "Follow up", description: "Optional follow-up", category: "feature" }],
     } as never);
-    vi.mocked(useInsights).mockReturnValue({
-      sections: [], loading: false, error: null, latestRun: null, isRunInFlight: false, runError: null,
-      refresh: vi.fn(), runInsights: vi.fn(), dismiss: vi.fn(), createTask: vi.fn(), archive: vi.fn(), unarchive: vi.fn(), toggleShowArchived: vi.fn(),
-      dismissStates: new Map(), createTaskStates: new Map(), archiveStates: new Map(), unarchiveStates: new Map(),
-      totalCount: 0, dismissedCount: 0, archivedCount: 0, showArchived: false,
-    } as never);
-    vi.mocked(useTaskRecommendations).mockReturnValue({
-      items: [{ taskId: "FN-9000", taskTitle: "Source task", recommendation: { id: "rec-1", title: "Follow up", description: "Optional follow-up", category: "feature" } }],
-      loading: false, loadingMore: false, error: null, hasMore: false, totalRowCount: 1, truncated: false,
-      refresh: vi.fn(), loadMore: vi.fn(), createTask: vi.fn(), createStates: new Map(),
-    });
   });
 
-  it.each(hostCases)("shows only ordinary active mail in %s on %s", async (_name, viewport, Host) => {
+  it.each(hostCases)("shows ordinary mail and legacy notices in %s on %s", async (_name, viewport, Host) => {
     setViewport(viewport);
     renderHost(Host);
 
     expect(await screen.findByTestId("mailbox-item-ordinary")).toBeInTheDocument();
-    expect(screen.queryByTestId("mailbox-item-recommendation-notice")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("mailbox-item-artifact-notice")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("mailbox-task-recommendations")).not.toBeInTheDocument();
-    expect(api.fetchInbox).toHaveBeenCalledWith({ limit: 50, category: "message" }, undefined);
+    expect(screen.getByTestId("mailbox-item-recommendation-notice")).toBeInTheDocument();
+    expect(screen.getByTestId("mailbox-item-artifact-notice")).toBeInTheDocument();
+    expect(api.fetchInbox).toHaveBeenCalledWith({ limit: 50 }, undefined);
   });
 
-  it.each(hostCases.filter(([, viewport]) => viewport === "desktop"))("marks only ordinary %s messages read", async (_name, _viewport, Host) => {
+  it.each(hostCases.filter(([, viewport]) => viewport === "desktop"))("marks every active %s message read", async (_name, _viewport, Host) => {
     const user = userEvent.setup({ delay: null, pointerEventsCheck: 0 });
     renderHost(Host);
 
     await user.click(await screen.findByTestId("mailbox-mark-all-read"));
-    expect(api.markAllMessagesRead).toHaveBeenCalledWith(undefined, { category: "message" });
-  });
-
-  it.each(hostCases)("renders an empty %s inbox without residual notice shells on %s", async (_name, viewport, Host) => {
-    setViewport(viewport);
-    configureActiveInbox([recommendationNotice, artifactNotice]);
-    renderHost(Host);
-
-    expect(await screen.findByTestId("mailbox-inbox-empty")).toBeInTheDocument();
-    expect(document.querySelector('[data-testid^="mailbox-item-"]')).not.toBeInTheDocument();
-    expect(screen.queryByTestId("mailbox-task-recommendations")).not.toBeInTheDocument();
+    expect(api.markAllMessagesRead).toHaveBeenCalledWith(undefined);
   });
 
   it.each(hostCases.filter(([, viewport]) => viewport === "desktop"))("keeps archived recommendation notices accessible in %s", async (_name, _viewport, Host) => {
@@ -170,18 +137,4 @@ describe("inbox category surfaces", () => {
     expect(api.fetchInbox).toHaveBeenCalledWith({ limit: 50, archived: true }, undefined);
   });
 
-  it("keeps the existing Insights recommendation section", async () => {
-    render(<InsightsView addToast={vi.fn()} models={[]} />);
-
-    await waitFor(() => expect(screen.getByTestId("insights-section-recommendations")).toBeInTheDocument());
-  });
-
-  it.each(["desktop", "mobile"] as const)("leaves no recommendation shell in the MailboxView list on %s", async (viewport) => {
-    setViewport(viewport);
-    renderHost((props) => <MailboxView {...props} />);
-
-    expect(await screen.findByTestId("mailbox-item-ordinary")).toBeInTheDocument();
-    expect(screen.queryByTestId("mailbox-task-recommendations")).not.toBeInTheDocument();
-    expect(document.querySelector(".mailbox-task-recommendations")).not.toBeInTheDocument();
-  });
 });

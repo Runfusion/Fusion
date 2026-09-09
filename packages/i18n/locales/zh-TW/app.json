@@ -3467,6 +3467,7 @@
     "composeButton": "撰寫",
     "composeMessageTitle": "撰寫訊息",
     "composeTitle": "撰寫訊息",
+    "completions": "",
     "conversation": "對話",
     "conversationLabel": "對話",
     "delete": "刪除",
@@ -3563,7 +3564,10 @@
     "viewTaskAria": "",
     "viewTaskLabel": "",
     "recommendationsUnavailableIdsReason": "",
-    "recommendationsUnavailableTaskReason": ""
+    "recommendationsUnavailableTaskReason": "",
+    "taskCompletion": "任務完成",
+    "completionImages": "任務完成圖片",
+    "completionImage": "任務完成圖片"
   },
   "memory": {
     "auditChecksTitle": "稽核檢查",
@@ -4240,10 +4244,6 @@
     "artifactsUnreadAriaLabel_one": "",
     "artifactsUnreadAriaLabel_other": "",
     "artifactsUnreadDotAriaLabel": "",
-    "recommendations": "",
-    "recommendationsUnreadAriaLabel_one": "",
-    "recommendationsUnreadAriaLabel_other": "",
-    "recommendationsUnreadDotAriaLabel": "",
     "notes": "筆記",
     "openMenu": "開啟導覽選單"
   },
@@ -6181,9 +6181,7 @@
       "maxRecommendationsPerTask": "",
       "maxRecommendationsPerTaskHelp": "",
       "requireTaskRecommendations": "",
-      "requireTaskRecommendationsHelp": "",
-      "recommendationMailboxNoticeEnabled": "",
-      "recommendationMailboxNoticeEnabledHelp": ""
+      "requireTaskRecommendationsHelp": ""
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",

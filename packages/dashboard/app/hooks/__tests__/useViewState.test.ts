@@ -140,6 +140,23 @@ describe("useViewState", () => {
     expect(localStorage.getItem("kb-dashboard-task-view")).toBe("reliability");
   });
 
+  it.each(["documents", "recommendations"] as const)("migrates the retired %s destination to Mailbox", async (legacyView) => {
+    localStorage.setItem("kb-dashboard-task-view", legacyView);
+    const { result } = renderHook(() => useViewState(createOptions()));
+    await waitFor(() => expect(result.current.taskView).toBe("mailbox"));
+  });
+
+  it.each(["documents", "recommendations"] as const)("migrates the retired %s deep link to Mailbox", async (legacyView) => {
+    const originalUrl = `${window.location.pathname}${window.location.search}`;
+    window.history.replaceState({}, "", `?view=${legacyView}`);
+    try {
+      const { result } = renderHook(() => useViewState(createOptions()));
+      await waitFor(() => expect(result.current.taskView).toBe("mailbox"));
+    } finally {
+      window.history.replaceState({}, "", originalUrl || "/");
+    }
+  });
+
   it("migrates legacy reliability URL param to Command Center", async () => {
     const originalUrl = `${window.location.pathname}${window.location.search}`;
     window.history.replaceState({}, "", "?view=reliability");

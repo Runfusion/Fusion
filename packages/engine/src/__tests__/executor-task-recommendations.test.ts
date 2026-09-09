@@ -1,8 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import "./executor-test-helpers.js";
-import { registerTaskRecommendationNoticeMailbox } from "@fusion/core";
 import { TaskExecutor, validateCompletionRecommendations } from "../executor.js";
-import { __flushPendingRecommendationNotices } from "../executor/completion-recommendation-notice.js";
 import * as worktreePool from "../worktree/worktree-pool.js";
 import { createMockStore, mockedExecSync, resetExecutorMocks } from "./executor-test-helpers.js";
 
@@ -31,7 +29,7 @@ function completionTask() {
   };
 }
 
-function createProductionTaskDoneTool(maximum: number | undefined = 3, recommendationMailboxNoticeEnabled?: boolean, requireTaskRecommendations = false) {
+function createProductionTaskDoneTool(maximum: number | undefined = 3, _retiredNoticeSetting?: boolean, requireTaskRecommendations = false) {
   const store = createMockStore();
   const task = completionTask();
   store._setRow(task.id, task);
@@ -43,7 +41,6 @@ function createProductionTaskDoneTool(maximum: number | undefined = 3, recommend
     autoMerge: false,
     worktreeInitCommand: undefined,
     ...(maximum === undefined ? {} : { maxRecommendationsPerTask: maximum }),
-    ...(recommendationMailboxNoticeEnabled === undefined ? {} : { recommendationMailboxNoticeEnabled }),
     ...(requireTaskRecommendations ? { requireTaskRecommendations: true } : {}),
   });
   const executor = new TaskExecutor(store as any, "/repo");
@@ -149,38 +146,11 @@ describe("fn_task_done recommendation validation", () => {
   });
 
 
-  it("sends one non-blocking operator mailbox notice after accepted completion", async () => {
+  it("persists recommendations without producing an early completion notice", async () => {
     const { store, task, tool } = createProductionTaskDoneTool();
-    const messages: Array<{ input: any; key: string }> = [];
-    registerTaskRecommendationNoticeMailbox(store as any, {
-      sendMessageOnce: async (input, key) => { messages.push({ input, key }); },
-    });
-
-    await expect(tool.execute("call-notice", { recommendations: [recommendation, { ...recommendation, id: "rec-docs", title: "Document exports" }] })).resolves.toMatchObject({ details: {} });
-    await __flushPendingRecommendationNotices();
-
-    expect(messages).toHaveLength(1);
-    expect(messages[0].input).toMatchObject({
-      toId: "dashboard",
-      type: "system",
-      metadata: { kind: "task-recommendation-notice", taskId: task.id, recommendationCount: 2 },
-    });
-    expect(messages[0].input.content).toContain("Export completed tasks");
-    expect(messages[0].input.content).toContain("Document exports");
-
-    await tool.execute("call-notice-retry", { recommendations: [recommendation, { ...recommendation, id: "rec-docs", title: "Document exports" }] });
-    await __flushPendingRecommendationNotices();
-    expect(messages[1].key).toBe(messages[0].key);
-  });
-
-  it("persists recommendations but suppresses notices when the project setting is off", async () => {
-    const { store, task, tool } = createProductionTaskDoneTool(3, false);
-    let messages = 0;
-    registerTaskRecommendationNoticeMailbox(store as any, { sendMessageOnce: async () => { messages += 1; } });
-    await tool.execute("call-notice-off", { recommendations: [recommendation] });
-    await __flushPendingRecommendationNotices();
+    await expect(tool.execute("call-no-early-notice", { recommendations: [recommendation] })).resolves.toMatchObject({ details: {} });
     expect((await store.getTask(task.id)).recommendations).toEqual([recommendation]);
-    expect(messages).toBe(0);
+    expect(store.emit).not.toHaveBeenCalledWith("message:sent", expect.anything());
   });
 
   it("persists an honest empty list and uses the default cap when the setting is absent", async () => {

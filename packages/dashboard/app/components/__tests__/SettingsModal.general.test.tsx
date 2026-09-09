@@ -295,18 +295,10 @@ describe("SettingsModal", () => {
     expect(mockUpdateGlobalSettings).not.toHaveBeenCalled();
   });
 
-  it("renders recommendation mailbox notices enabled by default and persists disabling it", async () => {
+  it("does not render the retired recommendation-mail toggle", async () => {
     renderModal({ initialSection: "general" });
     await waitForSettingsModalReady();
-    const toggle = screen.getByLabelText("Recommendation mailbox notices");
-    expect(toggle).toBeChecked();
-    // FNXC:SettingsModalTests 2026-08-16-03:46: flush the 500ms auto-save debounce on the fake clock instead of a real-timer waitFor (FN-2707); assertions unchanged.
-    vi.useFakeTimers();
-    fireEvent.click(toggle);
-    await flushSettingsAutoSave();
-    vi.useRealTimers();
-    expect(mockUpdateSettings).toHaveBeenCalled();
-    expect(mockUpdateSettings.mock.calls.at(-1)?.[0]).toMatchObject({ recommendationMailboxNoticeEnabled: false });
+    expect(screen.queryByLabelText("Recommendation mailbox notices")).toBeNull();
   });
 
   it.each(["mobile", "desktop"] as const)("shows exactly one default-off required recommendation toggle on %s", async (mode) => {
@@ -2036,7 +2028,7 @@ describe("SettingsModal", () => {
       expect(payload.maxConcurrent).toBeNull();
       expect(payload.maxRecommendationsPerTask).toBeNull();
       expect(payload.requireTaskRecommendations).toBeNull();
-      expect(payload.recommendationMailboxNoticeEnabled).toBeNull();
+      expect(payload).not.toHaveProperty("recommendationMailboxNoticeEnabled");
       // Global-only key must never appear in a project-scope reset payload.
       expect(payload).not.toHaveProperty("themeMode");
       expect(mockUpdateGlobalSettings).not.toHaveBeenCalled();

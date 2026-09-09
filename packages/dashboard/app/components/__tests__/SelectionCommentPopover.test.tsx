@@ -75,7 +75,7 @@ describe("SelectionCommentPopover", () => {
   never fired. jsdom cannot reproduce hit-testing, so this invariant is asserted on the CSS:
   every `.selection-comment-trigger` transform rule — base AND :active, desktop AND mobile —
   must include the `translate(-50%` positioning component. The popover is shared by
-  DocumentsView (plain + markdown preview) and FileEditor (editor + preview), so this one
+  TaskDocumentsTab (plain + markdown preview) and FileEditor (editor + preview), so this one
   stylesheet invariant covers all surfaces.
 
   FNXC:ArtifactsView 2026-07-11-14:20:

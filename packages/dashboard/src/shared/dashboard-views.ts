@@ -11,7 +11,6 @@ export const DASHBOARD_VIEW_IDS = [
   "agents",
   "missions",
   "chat",
-  "documents",
   "notes",
   "research",
   "evals",
@@ -20,7 +19,6 @@ export const DASHBOARD_VIEW_IDS = [
   "planning",
   "skills",
   "mailbox",
-  "recommendations",
   "insights",
   "memory",
   "command-center",
@@ -35,7 +33,7 @@ export const DASHBOARD_VIEW_IDS = [
 ] as const;
 
 export type CanonicalDashboardViewId = (typeof DASHBOARD_VIEW_IDS)[number];
-export type BuiltInTaskView = CanonicalDashboardViewId | "devserver";
+export type BuiltInTaskView = CanonicalDashboardViewId | "devserver" | "documents" | "recommendations";
 
 export interface DashboardViewMetadata {
   id: CanonicalDashboardViewId;
@@ -65,7 +63,6 @@ export const DASHBOARD_VIEWS: readonly DashboardViewMetadata[] = [
   { id: "agents", label: "Agents", labelKey: "nav.agents" },
   { id: "missions", label: "Missions", labelKey: "nav.missions" },
   { id: "chat", label: "Chat", labelKey: "nav.chat" },
-  { id: "documents", label: "Artifacts", labelKey: "nav.documents" },
   /* FNXC:ProjectNotes 2026-09-09-17:08: Notes is one canonical project-scoped destination shared by metadata, deep links, desktop navigation, and mobile customization. */
   { id: "notes", label: "Notes", labelKey: "nav.notes" },
   { id: "research", label: "Research", labelKey: "header.researchView" },
@@ -87,8 +84,11 @@ export const DASHBOARD_VIEWS: readonly DashboardViewMetadata[] = [
   The existing `skills` route and persistence identity stay stable while every navigation label presents the combined Skills & Snippets destination.
   */
   { id: "skills", label: "Skills & Snippets", labelKey: "header.skillsView" },
-  { id: "mailbox", label: "Mailbox", labelKey: "nav.mailbox" },
-  { id: "recommendations", label: "Recommendations", labelKey: "nav.recommendations" },
+  /*
+  FNXC:MailboxNavigation 2026-09-09-20:02:
+  Artifacts and recommendations are mailbox categories rather than standalone dashboard destinations. Legacy persisted and linked ids remain aliases so old navigation state resolves to Mailbox instead of an orphaned route.
+  */
+  { id: "mailbox", label: "Mailbox", labelKey: "nav.mailbox", aliases: ["documents", "recommendations"] },
   { id: "insights", label: "Insights", labelKey: "header.insightsView" },
   { id: "memory", label: "Memory", labelKey: "header.memoryView" },
   { id: "command-center", label: "Dashboard", labelKey: "nav.commandCenter" },

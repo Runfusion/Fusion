@@ -42,7 +42,9 @@ function isRestorableTaskView(value: string | null): value is TaskView {
 const LEGACY_ROADMAPS_PLUGIN_VIEW = getPluginViewId("fusion-plugin-roadmap", "roadmaps");
 
 function normalizeTaskView(value: TaskView): TaskView {
-  return value === "devserver" ? "dev-server" : value;
+  if (value === "devserver") return "dev-server";
+  if (value === "documents" || value === "recommendations") return "mailbox";
+  return value;
 }
 
 /*
@@ -320,7 +322,7 @@ export function useViewState(options: UseViewStateOptions): UseViewStateResult {
   */
 
   const handleChangeTaskView = useCallback((newView: TaskView) => {
-    setTaskView(newView);
+    setTaskView(normalizeTaskView(newView));
   }, []);
 
   const handleToggleTheme = useCallback(() => {
@@ -334,7 +336,7 @@ export function useViewState(options: UseViewStateOptions): UseViewStateResult {
     viewMode,
     setViewMode,
     taskView,
-    setTaskView,
+    setTaskView: handleChangeTaskView,
     handleChangeTaskView,
     handleToggleTheme,
   };

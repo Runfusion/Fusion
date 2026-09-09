@@ -485,64 +485,18 @@ describe("Header", () => {
       expect(screen.getByTestId("view-toggle-overflow-trigger")).toBeDefined();
     });
 
-    it("keeps desktop Artifacts and Command Center inline without Command Center overflow", () => {
-      renderHeader({ onChangeView: noop, showAgentsTab: true }, "desktop");
-
-      expect(screen.getByTitle("Artifacts view")).toBeInTheDocument();
-      const agentsButton = screen.getByTitle("Agents view");
-      const commandCenterButton = screen.getByTestId("view-toggle-command-center");
-      expect(commandCenterButton.previousElementSibling).toBe(agentsButton);
-
+    it("omits standalone Artifacts and Recommendations destinations on desktop and tablet", () => {
+      const desktop = renderHeader({ onChangeView: noop, showAgentsTab: true }, "desktop");
+      expect(screen.queryByTestId("view-toggle-documents")).toBeNull();
       fireEvent.click(screen.getByTestId("view-toggle-overflow-trigger"));
-      expect(screen.queryByTestId("view-overflow-command-center")).toBeNull();
       expect(screen.queryByTestId("view-overflow-documents")).toBeNull();
-    });
+      expect(screen.queryByTestId("view-overflow-recommendations")).toBeNull();
+      desktop.unmount();
 
-    it("shows the Artifacts unread dot on the inline non-tablet affordance only when inactive", () => {
-      const unread = renderHeader({ onChangeView: noop, view: "board", artifactUnreadCount: 3 }, "mobile");
-      expect(screen.getByTestId("view-toggle-documents")).toContainElement(screen.getByTestId("header-documents-unread-dot"));
-      unread.unmount();
-
-      const empty = renderHeader({ onChangeView: noop, view: "board", artifactUnreadCount: 0 }, "mobile");
-      expect(screen.getByTestId("view-toggle-documents").querySelector("[data-testid='header-documents-unread-dot']")).toBeNull();
-      empty.unmount();
-
-      renderHeader({ onChangeView: noop, view: "documents", artifactUnreadCount: 3 }, "mobile");
-      expect(screen.getByTestId("view-toggle-documents").querySelector("[data-testid='header-documents-unread-dot']")).toBeNull();
-    });
-
-    it("shows the exact Artifacts count on the tablet overflow affordance", () => {
-      const unread = renderHeader({ onChangeView: noop, artifactUnreadCount: 8 }, "tablet");
-      fireEvent.click(screen.getByTestId("view-toggle-overflow-trigger"));
-      expect(screen.getByTestId("view-overflow-documents-badge")).toHaveTextContent("8");
-      unread.unmount();
-
-      renderHeader({ onChangeView: noop, artifactUnreadCount: 0 }, "tablet");
-      fireEvent.click(screen.getByTestId("view-toggle-overflow-trigger"));
-      expect(screen.queryByTestId("view-overflow-documents-badge")).toBeNull();
-    });
-
-    it("routes the recommendations overflow destination and displays its count", () => {
-      const onChangeView = vi.fn();
-      renderHeader({ onChangeView, recommendationUnreadCount: 6 }, "mobile");
-      fireEvent.click(screen.getByTestId("view-toggle-overflow-trigger"));
-
-      expect(screen.getByTestId("view-overflow-recommendations-badge")).toHaveTextContent("6");
-      fireEvent.click(screen.getByTestId("view-overflow-recommendations"));
-      expect(onChangeView).toHaveBeenCalledWith("recommendations");
-    });
-
-    it("promotes Command Center after Agents and moves Artifacts to overflow on tablet", () => {
       renderHeader({ onChangeView: noop, showAgentsTab: true }, "tablet");
-
-      const agentsButton = screen.getByTitle("Agents view");
-      const commandCenterButton = screen.getByTestId("view-toggle-command-center");
-      expect(commandCenterButton.previousElementSibling).toBe(agentsButton);
-      expect(screen.queryByTitle("Artifacts view")).toBeNull();
-
       fireEvent.click(screen.getByTestId("view-toggle-overflow-trigger"));
-      expect(screen.getByTestId("view-overflow-documents")).toHaveTextContent("Artifacts view");
-      expect(screen.queryByTestId("view-overflow-command-center")).toBeNull();
+      expect(screen.queryByTestId("view-overflow-documents")).toBeNull();
+      expect(screen.queryByTestId("view-overflow-recommendations")).toBeNull();
     });
 
     it("renders view overflow trigger when skills tab is enabled", () => {

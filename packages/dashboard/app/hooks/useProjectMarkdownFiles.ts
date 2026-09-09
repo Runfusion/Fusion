@@ -15,7 +15,7 @@ export interface UseProjectMarkdownFilesResult {
 /**
  * Hook for fetching markdown files from the project workspace.
  *
- * Loading behavior matches useDocuments: loading is true only for the initial
+ * Loading is true only for the initial
  * fetch, not for subsequent refreshes, to avoid content flicker.
  */
 export function useProjectMarkdownFiles(

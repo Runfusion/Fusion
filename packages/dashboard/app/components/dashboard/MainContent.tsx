@@ -11,7 +11,6 @@ import { applyLocalTaskPatch, mergeTaskSnapshot } from "../../hooks/useTasks";
 import { ProjectOverview } from "../ProjectOverview";
 import { MissionManager } from "../MissionManager";
 import { MailboxView } from "../MailboxView";
-import { RecommendationsView } from "../RecommendationsView";
 import { IdeationPanel } from "../command-center/IdeationPanel";
 import type { NativeStructureCandidate } from "../MessageComposer";
 import { PageErrorBoundary } from "../ErrorBoundary";
@@ -102,9 +101,6 @@ export function MainContent(props: MainContentProps) {
   mailComposerPrefill,
   onOpenChatWithPrefill,
   setMailboxUnreadCount,
-  recommendationUnreadCount,
-  artifactUnreadCount,
-  onMarkCategorySeen,
   setMissionTargetId,
   setMissionResumeSessionId,
   setMilestoneSliceResumeSessionId,
@@ -167,7 +163,6 @@ export function MainContent(props: MainContentProps) {
   AgentsView,
   CommandCenter,
   DevServerView,
-  DocumentsView,
   NotesView,
   EvalsView,
   GoalsView,
@@ -517,7 +512,7 @@ export function MainContent(props: MainContentProps) {
           /*
           FNXC:ArtifactRegistry 2026-07-12-00:00: Artifact-registration mail notifications open their producing task through the shared task-detail fetch path so the mailbox does not invent a separate deep-link scheme.
 
-          FNXC:ArtifactRegistry 2026-07-13-00:00: Mailbox artifact "View task" opens the producing task in the shared movable/resizable popped-out task-detail FloatingWindow (`popOutTaskDetail`), matching DocumentsView's artifact-task path instead of the docked `openDetailTask` modal, so the modal has full resize/move parity.
+          FNXC:ArtifactRegistry 2026-07-13-00:00: Mailbox artifact "View task" opens the producing task in the shared movable/resizable popped-out task-detail FloatingWindow (`popOutTaskDetail`) instead of the docked `openDetailTask` modal, so the modal has full resize/move parity.
           */
           onOpenTask={(taskId) => {
             void fetchTaskDetail(taskId, currentProject?.id)
@@ -543,24 +538,6 @@ export function MainContent(props: MainContentProps) {
     );
   }
 
-
-  if (taskView === "recommendations") {
-    return (
-      <PageErrorBoundary>
-        <RecommendationsView
-          projectId={currentProject?.id}
-          addToast={addToast}
-          unreadCount={recommendationUnreadCount}
-          onSeen={() => void onMarkCategorySeen("recommendation")}
-          onOpenTask={(taskId) => {
-            void fetchTaskDetail(taskId, currentProject?.id)
-              .then((task) => popOutTaskDetail(task))
-              .catch(() => addToast?.("Failed to open task", "error"));
-          }}
-        />
-      </PageErrorBoundary>
-    );
-  }
 
   if (taskView === "missions") {
     return (
@@ -639,25 +616,6 @@ export function MainContent(props: MainContentProps) {
       <PageErrorBoundary>
         <Suspense fallback={null}>
           <NotesView projectId={currentProject?.id} addToast={addToast} />
-        </Suspense>
-      </PageErrorBoundary>
-    );
-  }
-
-  if (taskView === "documents") {
-    return (
-      <PageErrorBoundary>
-        <Suspense fallback={null}>
-          <DocumentsView
-            projectId={currentProject?.id}
-            columnFlagsByTaskId={columnFlagsByTaskId}
-            addToast={addToast}
-            onOpenDetail={openDetailTask}
-            onOpenArtifactTaskDetail={popOutTaskDetail}
-            onSendSelectionToTask={modalManager.openNewTaskWithDescription}
-            artifactUnreadCount={artifactUnreadCount}
-            onSeen={() => void onMarkCategorySeen("artifact")}
-          />
         </Suspense>
       </PageErrorBoundary>
     );

@@ -28,7 +28,6 @@ export const LIST_SURFACE_INVENTORY: readonly ListSurfaceInventoryEntry[] = [
   { id: "activity-logs", hosts: ["ActivityLogModal", "RightDock"], pagination: "server-cursor", virtualized: true, direction: "start", tests: ["ActivityLogModal"] },
   { id: "dev-server-logs", hosts: ["DevServerLogViewer"], pagination: "server-cursor", virtualized: true, direction: "start", tests: ["DevServerLogViewer"] },
   { id: "settings-sync-logs", hosts: ["SettingsSyncLog"], pagination: "local-bounded", virtualized: true, direction: "start", tests: ["SettingsSyncLog"], bound: 1_000 },
-  { id: "recommendations", hosts: ["RecommendationsView", "InsightsView"], pagination: "server-offset-bounded", virtualized: true, direction: "end", tests: ["RecommendationsView", "InsightsView"], bound: 20 },
   { id: "patchnode", hosts: ["PatchnodeView"], pagination: "server-cursor", virtualized: true, direction: "end", tests: ["PatchnodeView"] },
   { id: "git-history", hosts: ["GitManagerModal"], pagination: "server-offset-bounded", virtualized: true, direction: "end", tests: ["GitManagerModal"] },
   { id: "missions", hosts: ["MissionManager"], pagination: "server-offset-bounded", virtualized: true, direction: "end", tests: ["MissionManager"] },

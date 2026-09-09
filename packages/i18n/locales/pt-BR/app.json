@@ -3478,6 +3478,7 @@
     "composeButton": "Escrever",
     "composeMessageTitle": "Escrever mensagem",
     "composeTitle": "Escrever mensagem",
+    "completions": "",
     "conversation": "Conversa",
     "conversationLabel": "Conversa",
     "delete": "Excluir",
@@ -3574,7 +3575,10 @@
     "viewTaskAria": "",
     "viewTaskLabel": "",
     "recommendationsUnavailableIdsReason": "",
-    "recommendationsUnavailableTaskReason": ""
+    "recommendationsUnavailableTaskReason": "",
+    "taskCompletion": "Conclusão da tarefa",
+    "completionImages": "Imagens da conclusão",
+    "completionImage": "Imagem da conclusão"
   },
   "memory": {
     "auditChecksTitle": "Verificações de auditoria",
@@ -4251,10 +4255,6 @@
     "artifactsUnreadAriaLabel_one": "",
     "artifactsUnreadAriaLabel_other": "",
     "artifactsUnreadDotAriaLabel": "",
-    "recommendations": "",
-    "recommendationsUnreadAriaLabel_one": "",
-    "recommendationsUnreadAriaLabel_other": "",
-    "recommendationsUnreadDotAriaLabel": "",
     "notes": "Notas",
     "openMenu": "Abrir menu de navegação"
   },
@@ -6164,8 +6164,6 @@
       "reportDiscussionCategoryUnavailable": "As categorias de discussão não estão disponíveis para o repositório configurado.",
       "reportDiscussionCategoryEmpty": "Nenhuma categoria de discussão está disponível para o repositório configurado.",
       "reportTargetByActionHelp": "Substituição opcional por ação do destino padrão do relatório para bug, feedback, ideia ou ajuda. Sem padrão — ações não definidas herdam reportTarget / os padrões da ação.",
-      "recommendationMailboxNoticeEnabled": "",
-      "recommendationMailboxNoticeEnabledHelp": "",
       "maxRecommendationsPerTask": "Máximo de recomendações por tarefa",
       "maxRecommendationsPerTaskHelp": "Padrão: 3. Defina 0 para desativar recomendações; escolha um número inteiro de 1 a 20 para limitar cada tarefa concluída.",
       "requireTaskRecommendations": "",

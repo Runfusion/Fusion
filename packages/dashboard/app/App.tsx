@@ -141,7 +141,6 @@ const IS_TEST_ENV = import.meta.env.MODE === "test";
 export const TASK_DETAIL_FLOATING_GEOMETRY_KEY = "floating-window:task-detail";
 
 const AgentsView = lazy(() => import("./components/AgentsView").then((m) => ({ default: m.AgentsView })));
-const DocumentsView = lazy(() => import("./components/DocumentsView").then((m) => ({ default: m.DocumentsView })));
 const NotesView = lazy(() => import("./components/NotesView").then((m) => ({ default: m.NotesView })));
 const InsightsView = lazy(() => import("./components/InsightsView").then((m) => ({ default: m.InsightsView })));
 const ResearchView = lazy(() => import("./components/ResearchView").then((m) => ({ default: m.ResearchView })));
@@ -186,7 +185,6 @@ function prefetchLazyViews() {
     ((cb: () => void) => setTimeout(cb, 200));
   idle(() => {
     void import("./components/AgentsView");
-    void import("./components/DocumentsView");
     void import("./components/NotesView");
     void import("./components/InsightsView");
     void import("./components/ResearchView");
@@ -865,11 +863,8 @@ function AppInner() {
   // App-level mailbox/chat unread state (used for header/mobile nav badges)
   const {
     mailboxUnreadCount,
-    recommendationUnreadCount,
-    artifactUnreadCount,
     mailboxPendingApprovalCount,
     setMailboxUnreadCount,
-    markCategorySeen: onMarkCategorySeen,
   } = useMailboxUnread(currentProject?.id);
   const { chatHasUnreadResponse } = useChatUnreadBadge(currentProject?.id, { taskView, quickChatOpen });
   const { stashOrphanCount } = useStashOrphanCount(currentProject?.id);
@@ -1830,9 +1825,6 @@ function AppInner() {
     onSendAsReport: handleSendChatMessageAsReport,
     onOpenChatWithPrefill: openChatWithPrefill,
     setMailboxUnreadCount,
-    recommendationUnreadCount,
-    artifactUnreadCount,
-    onMarkCategorySeen,
     setMissionTargetId,
     setMissionResumeSessionId,
     setMilestoneSliceResumeSessionId,
@@ -1929,7 +1921,6 @@ function AppInner() {
     ChatView,
     CommandCenter,
     DevServerView,
-    DocumentsView,
     NotesView,
     EvalsView,
     GoalsView,
@@ -2028,8 +2019,6 @@ function AppInner() {
         onOpenActivityLog={openActivityLogWithNav}
         onOpenMailbox={() => handleTaskViewChange("mailbox")}
         mailboxUnreadCount={mailboxUnreadCount}
-        recommendationUnreadCount={recommendationUnreadCount}
-        artifactUnreadCount={artifactUnreadCount}
         mailboxPendingApprovalCount={mailboxPendingApprovalCount}
         chatHasUnreadResponse={chatHasUnreadResponse}
         stashOrphanCount={stashOrphanCount}
@@ -2106,8 +2095,6 @@ function AppInner() {
             onNewTask={openNewTaskWithNav}
             onOpenSettings={openSettingsWithNav}
             mailboxUnreadCount={mailboxUnreadCount}
-            recommendationUnreadCount={recommendationUnreadCount}
-            artifactUnreadCount={artifactUnreadCount}
             mailboxPendingApprovalCount={mailboxPendingApprovalCount}
             chatHasUnreadResponse={chatHasUnreadResponse}
             planningNeedsInput={planningNeedsInput}
@@ -2212,8 +2199,6 @@ function AppInner() {
         onOpenActivityLog={openActivityLogWithNav}
         onOpenMailbox={() => handleTaskViewChange("mailbox")}
         mailboxUnreadCount={mailboxUnreadCount}
-        recommendationUnreadCount={recommendationUnreadCount}
-        artifactUnreadCount={artifactUnreadCount}
         mailboxPendingApprovalCount={mailboxPendingApprovalCount}
         chatHasUnreadResponse={chatHasUnreadResponse}
         stashOrphanCount={stashOrphanCount}

@@ -44,6 +44,7 @@ import { MailboxArtifactAttachment } from "./MailboxArtifactAttachment";
 import { MailboxRelatedWorkLink, hasRelatedTaskLink } from "./MailboxRelatedWorkLink";
 import { MailboxNativeStructureEmbeds } from "./MailboxNativeStructureEmbeds";
 import { MailboxTaskProposal } from "./MailboxTaskProposal";
+import { MailboxTaskCompletion, isTaskCompletionNotice } from "./MailboxTaskCompletion";
 import { MailboxTaskRecommendations } from "./MailboxTaskRecommendations";
 import { MailboxKindBadge, MailboxStructuralItem, isStructuralMail } from "./MailboxStructuralItem";
 import type { Agent } from "../api";
@@ -56,7 +57,7 @@ import { getRelativeTimeBucket } from "../utils/relativeTimeAgo";
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
-type MailboxTab = "inbox" | "outbox" | "archived" | "agents";
+type MailboxTab = "inbox" | "completions" | "outbox" | "archived" | "agents";
 
 /*
 FNXC:LifecycleColumnCensus 2026-08-13-21:58:
@@ -338,6 +339,14 @@ export function MailboxModal({
   const [replyContextCache, setReplyContextCache] = useState<Map<string, Message>>(new Map());
   const consumedDeepLinkedMessageIdRef = useRef<string | null>(null);
   const highlightedDeepLinkedMessageIdRef = useRef<string | null>(null);
+  const renderedProjectIdRef = useRef(projectId);
+  const inboxRequestGenerationRef = useRef(0);
+  renderedProjectIdRef.current = projectId;
+
+  /*
+  FNXC:MailboxProjectIsolation 2026-09-09-20:58:
+  The floating Mailbox shares the project-isolation contract of MailboxView. Only the latest Inbox request for the currently rendered project may publish rows, unread state, or project-keyed cache entries.
+  */
 
   /*
    * FNXC:MailboxMobile 2026-06-23-10:55:
@@ -381,27 +390,39 @@ export function MailboxModal({
 
   // ── Data fetching ─────────────────────────────────────────────────────
 
+  /*
+  FNXC:InboxCategories 2026-09-09-20:02:
+  The legacy floating mailbox inherits the main MailboxView's complete-notification contract. Its active Inbox and read-all action therefore operate across every category while archived history keeps its existing combined-source restore behavior.
+  */
   const loadInbox = useCallback(async () => {
+    const requestProjectId = projectId;
+    const requestGeneration = ++inboxRequestGenerationRef.current;
+    const isCurrentRequest = () => (
+      renderedProjectIdRef.current === requestProjectId
+      && inboxRequestGenerationRef.current === requestGeneration
+    );
     const shouldSkipOpenSpinner = skipOpenSpinnerInboxRef.current;
     if (!shouldSkipOpenSpinner) {
       setIsLoading(true);
     }
     skipOpenSpinnerInboxRef.current = false;
     try {
-      const data = await fetchInbox({ limit: 50, category: "message" }, projectId);
+      const data = await fetchInbox({ limit: 50 }, requestProjectId);
+      if (!isCurrentRequest()) return;
       setInbox(data);
-      const messageUnreadCount = data.categoryUnreadCounts?.message ?? data.unreadCount;
-      setUnreadCount(messageUnreadCount);
+      setUnreadCount(data.unreadCount);
       writeCache(
         inboxCacheKey,
         { ...data, messages: data.messages.slice(0, 100) },
         { maxBytes: 500_000 },
       );
-      writeCache(unreadCountCacheKey, messageUnreadCount, { maxBytes: 500_000 });
+      writeCache(unreadCountCacheKey, data.unreadCount, { maxBytes: 500_000 });
     } catch {
       // Silently fail — empty state will show
     } finally {
-      setIsLoading(false);
+      if (isCurrentRequest()) {
+        setIsLoading(false);
+      }
     }
   }, [inboxCacheKey, projectId, unreadCountCacheKey]);
 
@@ -502,7 +523,7 @@ export function MailboxModal({
   // Load data on tab change
   useEffect(() => {
     if (!isOpen) return;
-    if (activeTab === "inbox") loadInbox();
+    if (activeTab === "inbox" || activeTab === "completions") loadInbox();
     else if (activeTab === "outbox") loadOutbox();
     else if (isMailboxArchivedTab(activeTab)) loadArchivedInbox();
   }, [isOpen, activeTab, loadInbox, loadOutbox, loadArchivedInbox]);
@@ -532,7 +553,7 @@ export function MailboxModal({
 
     const onMailboxUpdate = () => {
       void refreshUnreadCount();
-      if (activeTab === "inbox") {
+      if (activeTab === "inbox" || activeTab === "completions") {
         void loadInbox();
       } else if (activeTab === "outbox") {
         void loadOutbox();
@@ -688,7 +709,7 @@ export function MailboxModal({
 
   const handleMarkAllRead = useCallback(async () => {
     try {
-      const result = await markAllMessagesRead(projectId, { category: "message" });
+      const result = await markAllMessagesRead(projectId);
       setUnreadCount(0);
       writeCache(unreadCountCacheKey, 0, { maxBytes: 500_000 });
       setInbox((prev) => {
@@ -914,6 +935,13 @@ export function MailboxModal({
             {unreadCount > 0 && <span className="mailbox-tab-badge">{unreadCount}</span>}
           </button>
           <button
+            className={`btn btn-sm btn-secondary mailbox-tab ${activeTab === "completions" ? "active" : ""}`}
+            onClick={() => { consumeCurrentDeepLink(); setActiveTab("completions"); setSelectedMessage(null); }}
+            data-testid="mailbox-tab-completions"
+          >
+            <span>{t("mailbox.completions", "Completions")}</span>
+          </button>
+          <button
             className={`btn btn-sm btn-secondary mailbox-tab ${activeTab === "outbox" ? "active" : ""}`}
             onClick={() => { consumeCurrentDeepLink(); setActiveTab("outbox"); setSelectedMessage(null); }}
             data-testid="mailbox-tab-outbox"
@@ -1026,11 +1054,11 @@ export function MailboxModal({
                           onOpenTask={onOpenTask}
                         />
                         <MailboxStructuralItem metadata={msg.metadata} projectId={projectId} onOpenTask={onOpenTask} addToast={addToast} onDecided={() => { void loadInbox(); }} />
-                        <MailboxRelatedWorkLink
+                        {!isTaskCompletionNotice(msg.metadata) && <MailboxRelatedWorkLink
                           metadata={msg.metadata}
                           onOpenTask={onOpenTask}
                           onOpenPlanningSession={onOpenPlanningSession}
-                        />
+                        />}
                         <MailboxArtifactAttachment
                           artifactId={msg.metadata?.artifactId}
                           artifactType={msg.metadata?.artifactType}
@@ -1043,7 +1071,8 @@ export function MailboxModal({
                         />
                         <MailboxNativeStructureEmbeds message={msg} projectId={projectId} onOpen={onOpenNativeStructure} />
                         <MailboxTaskProposal messageId={msg.id} metadata={msg.metadata} projectId={projectId} onOpenTask={onOpenTask} />
-                        <MailboxTaskRecommendations metadata={msg.metadata} projectId={projectId} onOpenTask={onOpenTask} />
+                        <MailboxTaskCompletion metadata={msg.metadata} projectId={projectId} onOpenTask={onOpenTask} />
+                        {!isTaskCompletionNotice(msg.metadata) && <MailboxTaskRecommendations metadata={msg.metadata} projectId={projectId} onOpenTask={onOpenTask} />}
                       </div>
                     );
                   })}
@@ -1069,11 +1098,11 @@ export function MailboxModal({
                     onOpenTask={onOpenTask}
                   />
                   <MailboxStructuralItem metadata={selectedMessage.metadata} projectId={projectId} onOpenTask={onOpenTask} addToast={addToast} onDecided={() => { void loadInbox(); }} />
-                  <MailboxRelatedWorkLink
+                  {!isTaskCompletionNotice(selectedMessage.metadata) && <MailboxRelatedWorkLink
                     metadata={selectedMessage.metadata}
                     onOpenTask={onOpenTask}
                     onOpenPlanningSession={onOpenPlanningSession}
-                  />
+                  />}
                   <MailboxArtifactAttachment
                     artifactId={selectedMessage.metadata?.artifactId}
                     artifactType={selectedMessage.metadata?.artifactType}
@@ -1086,7 +1115,8 @@ export function MailboxModal({
                   />
                   <MailboxNativeStructureEmbeds message={selectedMessage} projectId={projectId} onOpen={onOpenNativeStructure} />
                   <MailboxTaskProposal messageId={selectedMessage.id} metadata={selectedMessage.metadata} projectId={projectId} onOpenTask={onOpenTask} />
-                  <MailboxTaskRecommendations metadata={selectedMessage.metadata} projectId={projectId} onOpenTask={onOpenTask} />
+                  <MailboxTaskCompletion metadata={selectedMessage.metadata} projectId={projectId} onOpenTask={onOpenTask} />
+                  {!isTaskCompletionNotice(selectedMessage.metadata) && <MailboxTaskRecommendations metadata={selectedMessage.metadata} projectId={projectId} onOpenTask={onOpenTask} />}
                 </>
               )}
             </div>
@@ -1114,6 +1144,12 @@ export function MailboxModal({
                 <div className="mailbox-list" data-testid="mailbox-archived-list">
                   {archivedInbox?.messages.length === 0 && <div className="mailbox-empty" data-testid="mailbox-archived-empty">{t("mailbox.noArchivedMessages", "No archived messages")}</div>}
                   {archivedInbox?.messages.map((message) => <button type="button" className="mailbox-item" key={message.id} onClick={() => void handleOpenMessage(message)} data-testid={`mailbox-item-${message.id}`}>{message.content}</button>)}
+                </div>
+              )}
+              {activeTab === "completions" && (
+                <div className="mailbox-list" data-testid="mailbox-completions-list">
+                  {inbox?.messages.filter((message) => message.metadata?.kind === "task-completion-notice").map((message) => <button type="button" className={`mailbox-item ${!message.read ? "unread" : ""}`} key={message.id} onClick={() => void handleOpenMessage(message)} data-testid={`mailbox-item-${message.id}`}>{message.content}</button>)}
+                  {inbox && !inbox.messages.some((message) => message.metadata?.kind === "task-completion-notice") && <div className="mailbox-empty" data-testid="mailbox-completions-empty">{t("mailbox.noCompletions", "No task completions yet")}</div>}
                 </div>
               )}
               {activeTab === "inbox" && (

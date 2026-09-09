@@ -41,7 +41,6 @@ import { evaluateTaskDoneRefusal } from "./task-done-refusal.js";
 import { skipBypassTaintUpdateForRefusal } from "./completion-predicates.js";
 import { MAX_TASK_DONE_REQUEUE_RETRIES } from "./task-done-refusal-handler.js";
 import { validateCompletionRecommendations } from "./validate-completion-recommendations.js";
-import { dispatchAcceptedCompletionRecommendationNotice } from "./completion-recommendation-notice.js";
 import type { FinalizeAcceptedNoOpCompletionParams } from "./plan-review-no-op.js";
 
 export type CreateTaskDoneToolDeps = {
@@ -614,18 +613,6 @@ export function createTaskDoneTool(
           bulkCompletionRefusalAt: null,
         });
         await store.logEntry(taskId, "Task marked done by agent", undefined, deps.getRunContextFor(taskId));
-        // FNXC:TaskRecommendations 2026-08-13-03:56: accepted completion boundary; dispatch after durable handoff without awaiting mailbox I/O.
-        if (completionRecommendations !== undefined) {
-          dispatchAcceptedCompletionRecommendationNotice({
-            store,
-            taskId,
-            taskTitle: task.title,
-            recommendations: completionRecommendations,
-            settings,
-            log: executorLog,
-          });
-        }
-
         const latestTask = await store.getTask(taskId);
         let latestColumn = latestTask.column;
         if (latestColumn === await resolveReboundColumnFor(store, taskId)) {

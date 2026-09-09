@@ -72,7 +72,7 @@ function BoardListPopupInteractionHarness({ initialTaskView }: { initialTaskView
   </>;
 }
 
-const origins: TaskView[] = ["board", "list", "planning", "agents", "command-center", "missions", "documents", "plugin:sample"];
+const origins: TaskView[] = ["board", "list", "planning", "agents", "command-center", "missions", "mailbox", "plugin:sample"];
 
 describe("App task popup view gating", () => {
   it.each(origins)("shows a %s-origin popup only on its origin when scoping is enabled, hiding it elsewhere", (originTaskView) => {

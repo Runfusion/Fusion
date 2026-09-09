@@ -213,34 +213,10 @@ describe("LeftSidebarNav", () => {
     expect(hoverRule).not.toMatch(/#|rgb\(/i);
   });
 
-  it("opens the dedicated recommendations destination with its unread count", () => {
-    const { onChangeView } = renderSidebar({ recommendationUnreadCount: 5 });
-    const item = screen.getByTestId("sidebar-nav-recommendations");
-
-    expect(item.querySelector(".left-sidebar-nav__badge")).toHaveTextContent("5");
-    fireEvent.click(item);
-    expect(onChangeView).toHaveBeenCalledWith("recommendations");
-  });
-
-  it.each([
-    { count: 0, expected: null },
-    { count: 5, expected: "5" },
-    { count: 120, expected: "99+" },
-  ])("renders recommendation and artifact badge state for count $count", ({ count, expected }) => {
-    renderSidebar({ recommendationUnreadCount: count, artifactUnreadCount: count });
-
-    for (const testId of ["sidebar-nav-recommendations", "sidebar-nav-documents"]) {
-      const item = screen.getByTestId(testId);
-      const badge = item.querySelector(".left-sidebar-nav__badge");
-      const dot = item.querySelector(".left-sidebar-nav__dot");
-      if (expected === null) {
-        expect(badge).toBeNull();
-        expect(dot).toBeNull();
-      } else {
-        expect(badge).toHaveTextContent(expected);
-        expect(dot).toBeInTheDocument();
-      }
-    }
+  it("omits standalone recommendations and artifacts destinations", () => {
+    renderSidebar();
+    expect(screen.queryByTestId("sidebar-nav-recommendations")).toBeNull();
+    expect(screen.queryByTestId("sidebar-nav-documents")).toBeNull();
   });
 
   it("renders core destinations, enabled overflow destinations, plugins, and bottom settings", () => {
@@ -256,10 +232,8 @@ describe("LeftSidebarNav", () => {
       "sidebar-nav-agents",
       "sidebar-nav-chat",
       "sidebar-nav-mailbox",
-      "sidebar-nav-recommendations",
       "sidebar-nav-planning",
       "sidebar-nav-missions",
-      "sidebar-nav-documents",
       "sidebar-nav-goals",
       "sidebar-nav-automations",
       "sidebar-nav-import-tasks",
@@ -278,7 +252,6 @@ describe("LeftSidebarNav", () => {
     }
 
     expect(screen.getByTestId("sidebar-nav-skills")).toHaveTextContent("Skills & Snippets");
-    expect(screen.getByTestId("sidebar-nav-documents")).toHaveTextContent("Artifacts");
     expect(screen.getByTestId("sidebar-nav-planning")).toHaveTextContent("Planning");
     expect(screen.getByTestId("sidebar-nav-import-tasks")).toHaveTextContent("Import Tasks");
     expect(screen.queryByTestId("sidebar-nav-stash-recovery")).toBeNull();
@@ -310,7 +283,7 @@ describe("LeftSidebarNav", () => {
     /*
     FNXC:Navigation 2026-06-22-12:00:
     Assert the intentional single-list order (top to bottom) for the entries present under the default render flags.
-    command-center precedes agents; recommendations sits immediately after mailbox, then skills/memory (flag-gated) and documents (Artifacts); automations -> import-tasks -> workflows remain contiguous.
+    command-center precedes agents; Mailbox is followed by skills/memory (flag-gated); automations -> import-tasks -> workflows remain contiguous.
     */
     const primaryButtons = within(primaryNav).getAllByRole("button");
     const orderedTestIds = [
@@ -323,10 +296,8 @@ describe("LeftSidebarNav", () => {
       "sidebar-nav-agents",
       "sidebar-nav-chat",
       "sidebar-nav-mailbox",
-      "sidebar-nav-recommendations",
       "sidebar-nav-skills",
       "sidebar-nav-memory",
-      "sidebar-nav-documents",
       "sidebar-nav-goals",
       "sidebar-nav-automations",
       "sidebar-nav-import-tasks",
@@ -340,15 +311,11 @@ describe("LeftSidebarNav", () => {
     expect(orderedIndices).toEqual([...orderedIndices].sort((a, b) => a - b));
     expect(orderedIndices.every((index) => index >= 0)).toBe(true);
     expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-command-center"))).toBeLessThan(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-agents")));
-    // FNXC:Navigation 2026-09-06-03:16: History sits between List and Planning; Recommendations follows Mailbox, and Documents (Artifacts) follows Memory.
     expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-patchnode"))).toBe(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-list")) + 1);
     expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-planning"))).toBe(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-patchnode")) + 1);
     expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-missions"))).toBe(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-planning")) + 1);
     expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-agents"))).toBe(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-missions")) + 1);
-    expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-documents"))).toBe(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-memory")) + 1);
-    expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-recommendations"))).toBe(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-mailbox")) + 1);
-    // Skills and Memory follow Recommendations.
-    expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-skills"))).toBe(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-recommendations")) + 1);
+    expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-skills"))).toBe(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-mailbox")) + 1);
     expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-memory"))).toBe(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-skills")) + 1);
 
     const sidebar = screen.getByTestId("left-sidebar-nav");

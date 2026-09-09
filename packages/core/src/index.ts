@@ -3113,15 +3113,6 @@ export {
   type TaskDeleteNoticeMailbox,
   type TaskDeleteNoticeSnapshot,
 } from "./task-delete-notice.js";
-/* FNXC:TaskRecommendations 2026-08-13-03:56: engine-owned mailbox registration reaches this core-scoped best-effort accepted-completion notice seam. */
-export {
-  registerTaskRecommendationNoticeMailbox,
-  getTaskRecommendationNoticeMailbox,
-  buildTaskRecommendationNoticeContent,
-  buildTaskRecommendationNoticeIdempotencyKey,
-  notifyOperatorOfTaskRecommendations,
-  type TaskRecommendationNoticeMailbox,
-} from "./task-recommendation-notice.js";
 /*
 FNXC:SessionIdentity 2026-07-26-12:10:
 In-process principal channel between the engine (session spawner) and the bundled

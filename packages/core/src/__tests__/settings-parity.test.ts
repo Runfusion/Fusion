@@ -70,7 +70,7 @@ describe("settings key parity", () => {
     expect(isGlobalSettingsKey("chatMessageLayout")).toBe(false);
     expect(PROJECT_SETTINGS_KEYS).toContain("chatMessageLayout");
     expect(GLOBAL_SETTINGS_KEYS).not.toContain("chatMessageLayout");
-    expect(isProjectSettingsKey("recommendationMailboxNoticeEnabled")).toBe(true);
+    expect(isProjectSettingsKey("recommendationMailboxNoticeEnabled")).toBe(false);
     expect(isGlobalSettingsKey("recommendationMailboxNoticeEnabled")).toBe(false);
     expect(isProjectSettingsKey("heartbeatMultiplier")).toBe(true);
     expect(isProjectSettingsKey("completionDocumentationMode")).toBe(true);

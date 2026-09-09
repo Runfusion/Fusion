@@ -424,7 +424,7 @@ canonical emitters remain explicit exclusions until their separately scoped hard
 
 ### Lazy-Loaded Heavy Views
 
-These 21 views are lazy-loaded via `React.lazy()` with `<Suspense fallback={null}>`.
+These 20 views are lazy-loaded via `React.lazy()` with `<Suspense fallback={null}>`.
 Keep this AGENTS inventory in sync with App lazy imports, AppModals lazy modal imports (`SettingsModal`, `WorkflowNodeEditor`, `SetupWizardModal`), plugin settings lazy imports (`PluginManager`, `PiExtensionsManager`), AgentsView lazy imports (`AgentDetailView`), and `packages/dashboard/app/__tests__/lazy-loaded-views-docs.test.ts`.
 
 - `AgentsView`
@@ -433,7 +433,6 @@ Keep this AGENTS inventory in sync with App lazy imports, AppModals lazy modal i
 - `DevServerView`
 - `SecretsView`
 - `InsightsView`
-- `DocumentsView`
 - `NotesView`
 - `SkillsView`
 - `ResearchView`

@@ -12,7 +12,6 @@ import type {
   CapacityRiskSignal,
   ColorTheme,
   ColumnId,
-  DashboardInboxCategory,
   GithubIssueAction,
   MergeResult,
   Task,
@@ -53,7 +52,6 @@ import { ChatView } from "../ChatView";
 import type { ChatSessionInfo } from "../../hooks/useChat";
 import { CommandCenter } from "../command-center/CommandCenter";
 import { DevServerView } from "../DevServerView";
-import { DocumentsView } from "../DocumentsView";
 import { NotesView } from "../NotesView";
 import { EvalsView } from "../EvalsView";
 import { GitHubImportModal } from "../GitHubImportModal";
@@ -160,9 +158,6 @@ export interface MainContentProps {
   onSendAsReport?: (handoff: ChatReportHandoff) => void;
   onOpenChatWithPrefill?: (prefillText: string) => void;
   setMailboxUnreadCount: (count: number) => void;
-  recommendationUnreadCount: number;
-  artifactUnreadCount: number;
-  onMarkCategorySeen: (category: DashboardInboxCategory) => Promise<void>;
   setMissionTargetId: Dispatch<SetStateAction<string | undefined>>;
   setMissionResumeSessionId: Dispatch<SetStateAction<string | undefined>>;
   setMilestoneSliceResumeSessionId: Dispatch<SetStateAction<string | undefined>>;
@@ -278,7 +273,6 @@ export interface MainContentProps {
   ChatView: LazyExoticComponent<typeof ChatView>;
   CommandCenter: LazyExoticComponent<typeof CommandCenter>;
   DevServerView: LazyExoticComponent<typeof DevServerView>;
-  DocumentsView: LazyExoticComponent<typeof DocumentsView>;
   NotesView: LazyExoticComponent<typeof NotesView>;
   EvalsView: LazyExoticComponent<typeof EvalsView>;
   GoalsView: LazyExoticComponent<typeof GoalsView>;

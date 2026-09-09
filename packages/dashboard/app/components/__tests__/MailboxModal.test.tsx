@@ -28,6 +28,10 @@ vi.mock("../../hooks/useMobileKeyboard", () => ({
   useMobileKeyboard: vi.fn(),
 }));
 
+vi.mock("../../hooks/useTaskRecommendations", () => ({
+  useTaskRecommendations: () => ({ items: [], loading: false, loadingMore: false, error: null, hasMore: false, truncated: false, createStates: new Map(), createTask: vi.fn(), loadMore: vi.fn(), refresh: vi.fn() }),
+}));
+
 vi.mock("../Header", () => ({
   useViewportMode: vi.fn(() => "mobile"),
 }));
@@ -128,6 +132,12 @@ const mockOutboxMessage: Message = {
   updatedAt: new Date().toISOString(),
 };
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
 const defaultProps = {
   isOpen: true,
   onClose: vi.fn(),
@@ -219,7 +229,7 @@ describe("MailboxModal", () => {
   it("loads inbox on mount", async () => {
     render(<MailboxModal {...defaultProps} />);
     await waitFor(() => {
-      expect(mockFetchInbox).toHaveBeenCalledWith({ limit: 50, category: "message" }, undefined);
+      expect(mockFetchInbox).toHaveBeenCalledWith({ limit: 50 }, undefined);
     });
   });
 
@@ -437,6 +447,14 @@ describe("MailboxModal", () => {
     await waitFor(() => {
       expect(screen.getByTestId("mailbox-message-detail")).toBeDefined();
     });
+  });
+
+  it("inherits the Completions panel and all-category inbox contract", async () => {
+    render(<MailboxModal {...defaultProps} />);
+    fireEvent.click(screen.getByTestId("mailbox-tab-completions"));
+
+    expect(await screen.findByTestId("mailbox-completions-list")).toBeInTheDocument();
+    expect(mockFetchInbox).toHaveBeenCalledWith({ limit: 50 }, undefined);
   });
 
   it("opens markdown task links from the selected mobile mail detail in the existing tab", async () => {
@@ -676,7 +694,7 @@ describe("MailboxModal", () => {
 
     fireEvent.click(markAllReadButton);
     await waitFor(() => {
-      expect(mockMarkAllMessagesRead).toHaveBeenCalledWith(undefined, { category: "message" });
+      expect(mockMarkAllMessagesRead).toHaveBeenCalledWith(undefined);
     });
   });
 
@@ -1143,8 +1161,42 @@ describe("MailboxModal", () => {
   it("passes projectId to API calls", async () => {
     render(<MailboxModal {...defaultProps} projectId="proj-1" />);
     await waitFor(() => {
-      expect(mockFetchInbox).toHaveBeenCalledWith({ limit: 50, category: "message" }, "proj-1");
+      expect(mockFetchInbox).toHaveBeenCalledWith({ limit: 50 }, "proj-1");
     });
+  });
+
+  it("keeps project B Inbox rows when project A resolves after it", async () => {
+    const projectAInbox = deferred<{ messages: Message[]; total: number; unreadCount: number }>();
+    const projectBInbox = deferred<{ messages: Message[]; total: number; unreadCount: number }>();
+    const projectAMessage = { ...mockMessage, id: "msg-project-a", content: "Project A completion" };
+    const projectBMessage = { ...mockMessage, id: "msg-project-b", content: "Project B completion" };
+    mockFetchInbox.mockImplementation((_options, projectId) => (
+      projectId === "proj-a" ? projectAInbox.promise : projectBInbox.promise
+    ));
+
+    const rendered = render(<MailboxModal {...defaultProps} projectId="proj-a" />);
+    await waitFor(() => {
+      expect(mockFetchInbox).toHaveBeenCalledWith({ limit: 50 }, "proj-a");
+    });
+
+    rendered.rerender(<MailboxModal {...defaultProps} projectId="proj-b" />);
+    await waitFor(() => {
+      expect(mockFetchInbox).toHaveBeenCalledWith({ limit: 50 }, "proj-b");
+    });
+
+    await act(async () => {
+      projectBInbox.resolve({ messages: [projectBMessage], total: 1, unreadCount: 1 });
+      await projectBInbox.promise;
+    });
+    expect(await screen.findByText("Project B completion")).toBeInTheDocument();
+
+    await act(async () => {
+      projectAInbox.resolve({ messages: [projectAMessage], total: 1, unreadCount: 1 });
+      await projectAInbox.promise;
+    });
+
+    expect(screen.getByText("Project B completion")).toBeInTheDocument();
+    expect(screen.queryByText("Project A completion")).not.toBeInTheDocument();
   });
 
   describe("agent mailbox sub-tabs", () => {

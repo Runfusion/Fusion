@@ -217,16 +217,6 @@ export function GeneralSection({ form, setForm, projectId, addToast, prefixError
         The operator asked to be notified in the mailbox when a completed task produces
         recommendations, with an off switch. Turning it off suppresses only the notice, never capture.
       */}
-      <SettingsToggleRow
-        descriptor={{
-          key: "recommendationMailboxNoticeEnabled",
-          label: t("settings.general.recommendationMailboxNoticeEnabled", "Recommendation mailbox notices"),
-          help: t("settings.general.recommendationMailboxNoticeEnabledHelp", "Default: enabled. When a completed task captures recommendations, send a summary to your mailbox. Turning this off does not change whether recommendations are captured."),
-          scope: "project",
-        }}
-        value={form.recommendationMailboxNoticeEnabled !== false}
-        onChange={(v) => setForm((f) => ({ ...f, recommendationMailboxNoticeEnabled: v === true }))}
-      />
       {/*
         FNXC:SettingsGeneral 2026-07-15-17:35:
         A blank prefix stores `undefined`, not "": empty means "no prefix configured" and must delete the

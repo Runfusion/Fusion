@@ -1,0 +1,17 @@
+.mailbox-task-completion {
+  display: grid;
+  gap: var(--space-md);
+  margin-block-start: var(--space-md);
+}
+
+.mailbox-task-completion__images {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-sm);
+}
+
+@media (max-width: 768px) {
+  .mailbox-task-completion__images {
+    grid-template-columns: 1fr;
+  }
+}

@@ -2713,7 +2713,6 @@ async function registerArtifactForAgent(
     };
 
     const artifact: Artifact = await store.registerArtifact(input);
-    void notifyArtifactRegistered(messageStore, artifact, authorId);
     return {
       content: [{
         type: "text" as const,
@@ -2989,35 +2988,6 @@ function hasImageSignature(data: Buffer, mimeType: string): boolean {
   }
 
   return false;
-}
-
-async function notifyArtifactRegistered(messageStore: MessageStore | undefined, artifact: Artifact, authorId: string): Promise<void> {
-  if (!messageStore) return;
-
-  /*
-  FNXC:ArtifactRegistry 2026-07-12-00:00:
-  Artifact-registration mailbox notifications remain best-effort and keep their stable content string, but metadata now carries mimeType so dashboard mailbox surfaces can render document/other artifact affordances from metadata without an extra artifact fetch.
-  */
-  try {
-    await messageStore.sendMessage({
-      fromType: "system",
-      toType: "user",
-      toId: DASHBOARD_USER_ID,
-      type: "system",
-      content: `New ${artifact.type} artifact registered: ${artifact.title}`,
-      metadata: {
-        artifactId: artifact.id,
-        artifactType: artifact.type,
-        title: artifact.title,
-        mimeType: artifact.mimeType,
-        authorId,
-        taskId: artifact.taskId,
-      },
-    });
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  } catch (err: any) {
-    log.warn(`Failed to send best-effort artifact registration notification for ${artifact.id}: ${err instanceof Error ? err.message : String(err)}`);
-  }
 }
 
 async function listArtifactsForAgent(store: TaskStore, params: Static<typeof artifactListParams>) {

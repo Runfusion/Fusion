@@ -84,7 +84,6 @@ export const PROJECT_SECTION_KEYS: Readonly<Record<string, readonly string[]>> =
     "mailAutoCleanupDays",
     "maxRecommendationsPerTask",
     "requireTaskRecommendations",
-    "recommendationMailboxNoticeEnabled",
     "mobileNavPrimaryItems",
     "operationalLogRetentionDays",
     "quickChatButtonMode",

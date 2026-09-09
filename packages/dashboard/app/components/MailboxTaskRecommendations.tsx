@@ -10,7 +10,7 @@ type TaskRecommendationNoticeMetadata = MessageMetadata & {
 };
 
 function getNoticeTarget(metadata?: MessageMetadata): { taskId: string; recommendationIds: string[] } | null {
-  if (metadata?.kind !== "task-recommendation-notice") return null;
+  if (metadata?.kind !== "task-recommendation-notice" && metadata?.kind !== "task-completion-notice") return null;
   const taskId = (metadata as TaskRecommendationNoticeMetadata).taskId?.trim();
   const recommendationIds = (metadata as TaskRecommendationNoticeMetadata).recommendationIds;
   if (!taskId || !Array.isArray(recommendationIds) || recommendationIds.length === 0) return null;

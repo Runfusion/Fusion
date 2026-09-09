@@ -48,6 +48,7 @@ function createStore(settings: Partial<Settings> = {}) {
     },
     getSettings: vi.fn(async () => currentSettings),
     getTask: vi.fn(async (id: string) => tasks.get(id)),
+    getArtifacts: vi.fn(async () => []),
     setTask(task: Task) {
       tasks.set(task.id, task);
     },
@@ -73,6 +74,86 @@ function task(overrides: Partial<Task> = {}): Task {
     ...overrides,
   } as Task;
 }
+
+describe("NotificationService task completion mailbox", () => {
+  it("uses every task-scoped terminal lane, image-only metadata, and snapshot idempotency", async () => {
+    const store = createStore({ ntfyEnabled: false });
+    const sendMessageOnce = vi.fn(async (input, key) => ({ message: { ...input, id: key }, inserted: true }));
+    store.getArtifacts.mockResolvedValue([
+      { id: "img-1", type: "image" },
+      { id: "doc-1", type: "document" },
+      { id: "img-2", type: "image" },
+    ] as any);
+    const service = new NotificationService(store as any, { messageStore: { on: () => undefined, sendMessageOnce } as any });
+    await service.start();
+    const completed = task({
+      id: "FN-complete",
+      summary: "Delivered the requested behavior.",
+      columnMovedAt: "2026-09-09T20:00:00.000Z",
+      recommendations: [{ id: "rec-1", title: "Follow up", description: "Later", category: "improvement" }],
+    });
+    const lanes = { terminal: ["shipped", "released"] };
+
+    store.emit("task:moved", { task: completed, from: "coding", to: "released", lanes });
+    store.emit("task:moved", { task: completed, from: "coding", to: "released", lanes });
+    store.emit("task:moved", { task: completed, from: "shipped", to: "released", lanes });
+    await flushAsyncHandlers();
+
+    expect(sendMessageOnce).toHaveBeenCalledTimes(2);
+    expect(sendMessageOnce.mock.calls[0][0]).toMatchObject({
+      content: expect.stringContaining("Delivered the requested behavior."),
+      metadata: {
+        kind: "task-completion-notice",
+        taskId: "FN-complete",
+        imageArtifactIds: ["img-1", "img-2"],
+        recommendationIds: ["rec-1"],
+      },
+    });
+    expect(sendMessageOnce.mock.calls[0][1]).toBe("task-completion-notice:FN-complete:released:2026-09-09T20:00:00.000Z");
+    expect(sendMessageOnce.mock.calls[1][1]).toBe(sendMessageOnce.mock.calls[0][1]);
+
+    completed.columnMovedAt = "2026-09-09T21:00:00.000Z";
+    store.emit("task:moved", { task: completed, from: "coding", to: "shipped", lanes });
+    await flushAsyncHandlers();
+    expect(sendMessageOnce.mock.calls[2][1]).toBe("task-completion-notice:FN-complete:shipped:2026-09-09T21:00:00.000Z");
+    await service.stop();
+  });
+
+  it("falls back only to done when move lanes and workflow resolution are unavailable", async () => {
+    const store = createStore({ ntfyEnabled: false });
+    const sendMessageOnce = vi.fn(async (input, key) => ({ message: { ...input, id: key }, inserted: true }));
+    const service = new NotificationService(store as any, { messageStore: { on: () => undefined, sendMessageOnce } as any });
+    await service.start();
+    const completed = task({ columnMovedAt: "2026-09-09T20:00:00.000Z" });
+
+    store.emit("task:moved", { task: completed, from: "todo", to: "released" });
+    store.emit("task:moved", { task: completed, from: "todo", to: "done" });
+    await flushAsyncHandlers();
+
+    expect(sendMessageOnce).toHaveBeenCalledTimes(1);
+    expect(sendMessageOnce.mock.calls[0][0].content).toContain("Task completed without a summary.");
+    await service.stop();
+  });
+
+  it("absorbs unavailable and rejecting mailbox stores without suppressing external notifications", async () => {
+    const store = createStore();
+    const sendNotification = vi.fn(async () => ({ success: true, providerId: "mock" }));
+    const service = new NotificationService(store as any, {
+      messageStore: { on: () => undefined, sendMessageOnce: vi.fn(async () => { throw new Error("offline"); }) } as any,
+    });
+    service.registerProvider({ getProviderId: () => "mock", isEventSupported: () => true, sendNotification });
+    await service.start();
+    store.emit("task:moved", {
+      task: task({ branch: "fusion/fn", mergeDetails: { mergeConfirmed: true } as any, columnMovedAt: "2026-09-09T20:00:00.000Z" }),
+      from: "in-review",
+      to: "done",
+      lanes: { terminal: ["done"] },
+    });
+    await flushAsyncHandlers();
+    expect(sendNotification).toHaveBeenCalledTimes(1);
+    await service.stop();
+  });
+});
 
 describe("NotificationService deferred failure notifications", () => {
   it("does not dispatch a stale source-tagged terminal escalation after the live budget advances", async () => {

@@ -3468,6 +3468,7 @@
     "composeButton": "Redactar",
     "composeMessageTitle": "Componer mensaje",
     "composeTitle": "Redactar mensaje",
+    "completions": "",
     "conversation": "Conversación",
     "conversationLabel": "Conversación",
     "delete": "Eliminar",
@@ -3564,7 +3565,10 @@
     "viewTaskAria": "",
     "viewTaskLabel": "",
     "recommendationsUnavailableIdsReason": "",
-    "recommendationsUnavailableTaskReason": ""
+    "recommendationsUnavailableTaskReason": "",
+    "taskCompletion": "Finalización de tarea",
+    "completionImages": "Imágenes de finalización",
+    "completionImage": "Imagen de finalización"
   },
   "memory": {
     "auditChecksTitle": "Comprobaciones de auditoría",
@@ -4241,10 +4245,6 @@
     "artifactsUnreadAriaLabel_one": "",
     "artifactsUnreadAriaLabel_other": "",
     "artifactsUnreadDotAriaLabel": "",
-    "recommendations": "",
-    "recommendationsUnreadAriaLabel_one": "",
-    "recommendationsUnreadAriaLabel_other": "",
-    "recommendationsUnreadDotAriaLabel": "",
     "notes": "Notas",
     "openMenu": "Abrir menú de navegación"
   },
@@ -6182,9 +6182,7 @@
       "maxRecommendationsPerTask": "",
       "maxRecommendationsPerTaskHelp": "",
       "requireTaskRecommendations": "",
-      "requireTaskRecommendationsHelp": "",
-      "recommendationMailboxNoticeEnabled": "",
-      "recommendationMailboxNoticeEnabledHelp": ""
+      "requireTaskRecommendationsHelp": ""
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",

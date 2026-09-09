@@ -1051,8 +1051,6 @@ export class InProcessRuntime
   private messageStore?: MessageStore;
   /** FNXC:TaskDeleteNotice 2026-07-26-16:10: identity-guarded teardown for the delete-notice mailbox seam. */
   private unregisterTaskDeleteNoticeMailbox?: () => void;
-  /** FNXC:TaskRecommendations 2026-08-13-03:56: identity-guarded teardown for the store-scoped recommendation notice seam. */
-  private unregisterTaskRecommendationNoticeMailbox?: () => void;
   private chatStore?: ChatStore;
   /**
    * FNXC:RUFU121RuntimeProjectIdentity 2026-08-18-19:53:
@@ -1139,7 +1137,6 @@ export class InProcessRuntime
         buildConsumerId,
         createProjectScopedPluginMcpProvider,
         registerTaskDeleteNoticeMailbox,
-        registerTaskRecommendationNoticeMailbox,
         syncBackupRoutine,
       } = await import("@fusion/core");
       if (this.config.externalTaskStore) {
@@ -1221,16 +1218,6 @@ export class InProcessRuntime
         this.taskStore,
         this.messageStore,
       );
-      /*
-      FNXC:TaskRecommendations 2026-08-13-03:56:
-      Store-scoped registration prevents a process hosting several projects from delivering one
-      project's recommendation notice into another project's mailbox, matching the delete notice.
-      */
-      this.unregisterTaskRecommendationNoticeMailbox = registerTaskRecommendationNoticeMailbox(
-        this.taskStore,
-        this.messageStore,
-      );
-
       await yieldEventLoop();
 
       // 2. Initialize Plugin system (PluginStore + PluginLoader + PluginRunner)
@@ -2294,8 +2281,6 @@ export class InProcessRuntime
     // cannot keep writing notices; the unregister is identity-guarded against a newer runtime.
     this.unregisterTaskDeleteNoticeMailbox?.();
     this.unregisterTaskDeleteNoticeMailbox = undefined;
-    this.unregisterTaskRecommendationNoticeMailbox?.();
-    this.unregisterTaskRecommendationNoticeMailbox = undefined;
     let stopError: Error | undefined;
     try {
       if (this.workflowContinuationTimer) {

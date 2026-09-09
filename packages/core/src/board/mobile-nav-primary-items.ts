@@ -8,7 +8,6 @@ export const MOBILE_NAV_SELECTABLE_ITEMS = [
   "missions",
   "chat",
   "mailbox",
-  "recommendations",
   "patchnode",
   "planning",
   "activity",
@@ -19,7 +18,6 @@ export const MOBILE_NAV_SELECTABLE_ITEMS = [
   "github-import",
   "usage",
   "projects",
-  "documents",
   "notes",
   "secrets",
   "settings",
@@ -49,7 +47,6 @@ export const MOBILE_NAV_SELECTABLE_ITEM_LABEL_KEYS: Record<MobileNavSelectableIt
   missions: "nav.missions",
   chat: "nav.chat",
   mailbox: "nav.mailbox",
-  recommendations: "nav.recommendations",
   patchnode: "nav.patchnode",
   planning: "nav.planning",
   activity: "nav.activityLog",
@@ -60,7 +57,6 @@ export const MOBILE_NAV_SELECTABLE_ITEM_LABEL_KEYS: Record<MobileNavSelectableIt
   "github-import": "nav.importFromGitHub",
   usage: "nav.usage",
   projects: "nav.projects",
-  documents: "nav.documents",
   notes: "nav.notes",
   secrets: "nav.secrets",
   settings: "nav.settings",
@@ -95,11 +91,15 @@ FNXC:Navigation 2026-07-17-00:00:
 Mobile footer customization includes every navigable sidebar and More-sheet destination, while Terminal,
 scripts, shell controls, plugin views, separators, and `more` remain overflow-only. The resolver is gate-agnostic:
 the render layer suppresses disabled experimental destinations, and More remains the separate trailing tab.
+
+FNXC:MailboxNavigation 2026-09-09-20:02:
+Standalone Artifacts and Recommendations navigation is retired in favor of Mailbox categories. Normalize either legacy persisted mobile preference to Mailbox and deduplicate it so upgrades preserve a reachable footer choice.
 */
 export function resolveMobileNavPrimaryItems(settings?: Pick<ProjectSettings, "mobileNavPrimaryItems">): ResolvedMobileNavPrimaryItems {
   const selected = Array.isArray(settings?.mobileNavPrimaryItems) ? settings.mobileNavPrimaryItems : [];
   const valid = new Set<string>(MOBILE_NAV_PRIMARY_SELECTABLE_ITEMS);
-  const primaryItems = selected.reduce<MobileNavSelectableItem[]>((items, id) => {
+  const primaryItems = selected.reduce<MobileNavSelectableItem[]>((items, persistedId) => {
+    const id = persistedId === "documents" || persistedId === "recommendations" ? "mailbox" : persistedId;
     if (valid.has(id) && !items.includes(id as MobileNavSelectableItem) && items.length < MAX_MOBILE_NAV_PRIMARY_ITEMS) {
       items.push(id as MobileNavSelectableItem);
     }

@@ -231,7 +231,6 @@ function mainContentProps(overrides: Partial<MainContentProps> = {}): MainConten
     ChatView: LazyStub as MainContentProps["ChatView"],
     CommandCenter: LazyStub as MainContentProps["CommandCenter"],
     DevServerView: LazyStub as MainContentProps["DevServerView"],
-    DocumentsView: LazyStub as MainContentProps["DocumentsView"],
     EvalsView: LazyStub as MainContentProps["EvalsView"],
     GoalsView: LazyStub as MainContentProps["GoalsView"],
     InsightsView: LazyStub as MainContentProps["InsightsView"],

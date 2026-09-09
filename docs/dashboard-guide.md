@@ -238,15 +238,15 @@ Task Detail modal opens from onboarding, activity log, and task-to-task navigati
 
 <!-- FNXC:DashboardDocs 2026-06-22-00:00: The dashboard navigation docs must mirror the post-reshuffle source of truth: the left sidebar owns primary content views plus Workflows, Import Tasks, and Automations, while the right dock owns only inline tool panels. -->
 <!-- FNXC:DashboardNavigationDocs 2026-06-22-09:30: FN-6897 synced the user-facing navigation guide after the sidebar/dock reshuffle. Desktop/tablet navigation is split between left-sidebar main-content destinations, a persistent far-right tools dock, and the footer-launched Terminal; stale Header overflow, duplicate dock/sidebar, and standalone Stash Recovery affordances must not be documented as current behavior. -->
-<!-- FNXC:InboxCategories 2026-09-06-03:16: Recommendations and artifact notices have dedicated destinations and project-scoped unread badges instead of competing with ordinary Inbox mail. -->
+<!-- FNXC:InboxCategories 2026-09-09-20:37: Mailbox is the sole navigation destination for ordinary mail, historical artifact/recommendation notices, and task-completion recaps; task documents and non-image artifacts remain available from Task Detail. -->
 
-When enabled on desktop or tablet project screens, the sidebar starts with a centered **New Task** button that opens the existing New Task dialog from any project screen. Expanded mode shows the plus icon and **New Task** label; collapsed rail mode keeps the centered icon-only button accessible through its label/title. Below that action, the sidebar contains primary destinations (**Board**, **List**, **Agents** when enabled, **Command Center**, **Planning**, **Missions**, **Chat**, **Artifacts**, **Mailbox**, **Recommendations**, and plugin primary views) followed by secondary destinations (**Workflows**, **Import Tasks**, **Automations**, optional **Evals**, **Goals**, **Research**, **Insights**, **Skills & Snippets**, **Memory**, **Dev Server**, and plugin overflow views when their flags/plugins are enabled). The footer contains the sidebar collapse toggle directly above **Settings**.
+When enabled on desktop or tablet project screens, the sidebar starts with a centered **New Task** button that opens the existing New Task dialog from any project screen. Expanded mode shows the plus icon and **New Task** label; collapsed rail mode keeps the centered icon-only button accessible through its label/title. Below that action, the sidebar contains primary destinations (**Board**, **List**, **Agents** when enabled, **Command Center**, **Planning**, **Missions**, **Chat**, **Mailbox**, and plugin primary views) followed by secondary destinations (**Workflows**, **Import Tasks**, **Automations**, optional **Evals**, **Goals**, **Research**, **Insights**, **Skills & Snippets**, **Memory**, **Dev Server**, and plugin overflow views when their flags/plugins are enabled). The footer contains the sidebar collapse toggle directly above **Settings**.
 
 Use the desktop/tablet sidebar this way:
 
 1. Select **New Task** at the top of the sidebar.
    Expected outcome: the existing New Task dialog opens from any project screen, including advanced options such as priority, execution mode, workflow/model routing, and GitHub tracking.
-2. Select a primary destination such as **Board**, **Command Center**, **Planning**, or **Artifacts**.
+2. Select a primary destination such as **Board**, **Command Center**, **Planning**, or **Mailbox**.
    Expected outcome: the selected view renders in the main content region and the sidebar item receives the active highlight.
 3. Select **Workflows**, **Import Tasks**, or **Automations** from the secondary section.
    Expected outcome: each surface opens as an embedded main-content view. **Import Tasks** is the GitHub import surface.
@@ -257,7 +257,7 @@ While the sidebar is active on desktop/tablet project screens, Board and List wo
 
 The active nav-item highlight and the resize-handle hover/focus accent track the active color theme's `--accent` token across all themes, so shadcn, forest, ocean, and other themes no longer show a fixed blue selected state. The Header retains the Fusion brand and project selector, keeps non-navigation controls, and hides duplicate desktop view-toggle entries while the sidebar is active.
 
-On mobile viewports (`<=768px`), the sidebar is not rendered even when the default-on setting is enabled. The Header's **New Task** action is the rightmost header control and opens the existing full form from any active project view. The bottom `MobileNavBar` provides separate **Tasks** (Board) and **List** destinations, while the Planning column keeps its inline quick-entry composer. **Artifacts** and **Recommendations** are available either as configured primary tabs or in the **More** sheet, with the same project-scoped new-item counters in both placements. Mobile-only More-sheet entries remain available for compact tools such as Git Manager, Terminal, Files, and **Import from GitHub**.
+On mobile viewports (`<=768px`), the sidebar is not rendered even when the default-on setting is enabled. The Header's **New Task** action is the rightmost header control and opens the existing full form from any active project view. The bottom `MobileNavBar` provides separate **Tasks** (Board) and **List** destinations, while the Planning column keeps its inline quick-entry composer. Mailbox is the single mobile destination for mail, historical notices, and task-completion recaps; persisted footer choices for the retired Artifacts or Recommendations destinations are ignored. Mobile-only More-sheet entries remain available for compact tools such as Git Manager, Terminal, Files, and **Import from GitHub**.
 
 When a soft keyboard opens, fixed mobile bottom bars never rise with it. The navigation bar and executor status bar collapse flush to the bottom of the layout viewport on both iOS and Android as soon as a text field gains focus, including landscape phones, leaving no empty band above the keyboard. The chat composer does not reserve the bottom safe-area inset while the keyboard covers it, so typing sits directly above the keyboard; Safari still accounts for its input-assistant bar. While a text field is focused at normal scale, viewport compensation clamps `--icb-bottom-offset` to `0px`, including in hosts without the visual viewport API, so stale viewport measurements cannot lift fixed chrome.
 
@@ -281,7 +281,7 @@ FNXC:TaskPopupViewGating 2026-07-15-15:20: FN-8016 makes popup view scoping defa
 FNXC:TaskPopupViewGating 2026-07-22-13:20: FN remount-churn fix R7 — off-origin-view popups are now render-only hidden (FloatingWindow `hidden`: visibility-based, aria-hidden, effects suspended), never unmounted. The embedded task detail, including an open terminal WebSocket, stays live while hidden; the detail's SSE/EventSource channels close via `active={false}` and reopen on reveal. Returning to the origin view is an instant reveal, not a remount. -->
 **Settings → Appearance → Open tasks as popups** changes ordinary board task-card clicks, List row/card opens, and right-dock Tasks-list clicks across desktop, tablet, and mobile viewports. When enabled, those clicks use the existing task popup/FloatingWindow surface on the board/task-detail layer instead of the full-panel task detail, List split-detail/docked detail, or right-dock task detail, keeping the board, List view, or dock list visible in the background. Overlapping Quick Chat and task popups interleave by the most-recent pointer or focus interaction; other utility windows retain their higher global stacking. On desktop and tablet, task popups restore the last saved popup size and position between tasks; on mobile, task popups stay full-screen sheets. Board task-card `changes`/`retries`/`workflow` chips open the popup with the requested tab. List context-menu/refine actions, task-detail links, plugin/graph opens, and explicit pop-out actions keep their existing paths.
 
-**Settings → Appearance → Keep task popups on the view where they were opened** is enabled by default. Every task-detail popup is attached to its exact originating view, including Planning, Agents, Command Center, Documents, Missions, and plugin views: navigating elsewhere hides it without closing it, and returning re-shows it in the same saved position. You can open the same task independently in more than one view; closing or pressing Escape on one popup does not affect the other. Disable this setting only to restore legacy globally shared popups. Legacy saved popups without an origin remain visible everywhere for compatibility.
+**Settings → Appearance → Keep task popups on the view where they were opened** is enabled by default. Every task-detail popup is attached to its exact originating view, including Planning, Agents, Command Center, Mailbox, Missions, and plugin views: navigating elsewhere hides it without closing it, and returning re-shows it in the same saved position. You can open the same task independently in more than one view; closing or pressing Escape on one popup does not affect the other. Disable this setting only to restore legacy globally shared popups. Legacy saved popups without an origin remain visible everywhere for compatibility.
 
 <!-- FNXC:DashboardNavigationDocs 2026-06-27-00:00: The right dock now hosts Chat as an inline tool panel; keep this user-facing roster aligned with STATIC_OVERFLOW_VIEW_ENTRIES so users know Chat can also pop out from the dock. -->
 <!-- FNXC:RightDockTasks 2026-06-28-19:55: The dock task-detail overlay is now anchored to the first-class Tasks tool tab. Document that Tasks is a dock-only auxiliary surface with a last-viewed detail/list fallback, not a new primary navigation destination. -->
@@ -303,7 +303,7 @@ Use the desktop/tablet right dock this way:
 6. Use the Header right-sidebar toggle.
    Expected outcome: the far-right surface opens or closes without creating duplicate left-sidebar destinations; mobile viewports never render or reserve space for the right dock.
 
-Content views such as Artifacts, Research, Insights, **Skills & Snippets**, Memory, Evals, Goals, **Workflows**, **Import Tasks**, and **Automations** live in the left sidebar (or compact mobile navigation) rather than the right dock. On desktop/tablet, GitHub import lives under **Import Tasks**; mobile keeps compact GitHub import entries in the More surfaces.
+Content views such as Mailbox, Research, Insights, **Skills & Snippets**, Memory, Evals, Goals, **Workflows**, **Import Tasks**, and **Automations** live in the left sidebar (or compact mobile navigation) rather than the right dock. On desktop/tablet, GitHub import lives under **Import Tasks**; mobile keeps compact GitHub import entries in the More surfaces.
 
 On mobile viewports, the Right Dock never renders. Standard mode keeps the existing compact Header actions and bottom `MobileNavBar`. With global **Alpha Updates** enabled, the wordmark is reduced to its logo, a header hamburger opens every available destination outside the primary set, and a floating icon-only pill provides Dashboard, Board, Planning, Chat, and Mailbox. On desktop Board and List, Alpha Updates keeps search inline in the header; tablet and mobile search retain their existing interaction.
 
@@ -974,7 +974,7 @@ Quick Chat is an optional fast, project-scoped assistant surface for conversatio
 
 ## Mailbox View
 
-Mailbox view shows inbox/outbox communication threads and unread state. The active **Inbox** lists only ordinary `message` mail; recommendation and artifact notices live in their dedicated destinations and no longer inflate the Mailbox unread counter. Historical notices remain available and openable from **Archived**, where their existing details and actions are preserved. When an ephemeral worker is configured for follow-up validation, its task proposals include a **Create task** action; created proposals link directly to the resulting task. Archived completed-task recommendation notices retain an inline **Create task** button for every live recommendation. Already-created recommendations instead provide **View task FN-NNNN**; unavailable parents remain informational and failed creates offer a retry. The controls are available in both desktop and mobile message detail and conversation views, with mobile actions using the message width.
+Mailbox view shows inbox/outbox communication threads, unread state, approvals, historical notices, and task-completion recaps. Every real transition from a nonterminal column into any `complete` column of the task's own workflow creates one best-effort recap after the durable move. The recap contains the task summary, registered image artifacts, actionable recommendations, and **View task**; plans, documents, videos, audio, and other artifacts remain available in Task Detail and are not duplicated in mail. Replayed transitions and moves between terminal columns do not duplicate the recap, while reopening a task and completing it again creates a new completion episode. Mailbox's unread badge and **Mark all read** cover the complete active inbox. Historical artifact and recommendation notices remain available in Inbox or Archived with their existing actions. When an ephemeral worker is configured for follow-up validation, its task proposals include a **Create task** action; created proposals link directly to the resulting task. The controls remain available on desktop and mobile.
 
 - Mail composers can attach a native mission, milestone, goal, persisted insight, eval result, or roadmap item by dragging it from its owning view, or through the keyboard/mobile **Attach structure** picker. Roadmap feature-row drag is available on fine pointers; touch and keyboard use the picker. The shared `nativeStructureDrag` payload is copied into the same first-class mail embed metadata as picker attachments, while a dropped payload from another project is rejected.
 - **Draft with AI** opens a compact compose-chat scratch session that uses attached structures as context. **Use draft** replaces an empty message body; replacing typed text requires confirmation, and attached embeds remain in place.
@@ -985,7 +985,7 @@ Mailbox view shows inbox/outbox communication threads and unread state. The acti
 - Inbox renders one row per message (no sender-based collapsing)
 - clicking a message in the Mail tab opens the task detail pane with full message content and conversation context
 - reply rows in the mailbox modal can expand inline to show the replied-to message context for easier thread reading
-- when an agent or dashboard chat session registers an artifact with `fn_artifact_register`, Fusion records a best-effort `system` → user artifact notice (for example, `New image artifact registered: <title>`) with metadata for `artifactId`, `artifactType`, `title`, optional `mimeType`, `authorId`, and optional `taskId`; notification delivery is informational and never blocks or rolls back the artifact registration. The active Inbox excludes these notices and the Artifacts destination carries their unread indicator. Historical notices already in **Archived** remain actionable in message detail: image artifacts show an inline preview plus **Open artifact**, while video/audio/document/other artifacts show an **Open artifact** link to the managed media URL. When `taskId` metadata is present, the same artifact block also shows **View task FN-NNNN** so users can open the producing task detail directly from the mailbox in the shared movable/resizable task-detail window.
+- artifact registration itself does not create a new mail. Historical artifact notices remain actionable wherever they already exist: image artifacts show an inline preview plus **Open artifact**, while video/audio/document/other artifacts show an **Open artifact** link to the managed media URL. When `taskId` metadata is present, the same artifact block also shows **View task FN-NNNN** so users can open the producing task detail directly from the mailbox in the shared movable/resizable task-detail window.
 - on first engine startup under Fusion `0.59.x`, each project receives one best-effort `system` inbox notice about the upcoming embedded-Postgres storage migration with the Discord help link; `metadata.kind = "postgres-migration-notice"` prevents duplicates across restarts.
 - mailbox now includes an **Approvals** tab with pending and history filters (`approved` / `denied` / `completed`), approval detail context, and inline approve/deny actions for pending requests
 - for approvals gated by an agent's permission policy (permanent agents and task-worker heartbeats), the Approvals detail pane renders the gated action's real payload — tool name, shell command line or structured arguments, and working directory when present — instead of only a generic "Agent gated action for `<tool>`" summary; a stateless heartbeat retrying the same gated command reuses the existing pending approval instead of creating a duplicate (FN-7609)
@@ -999,10 +999,6 @@ Mailbox view shows inbox/outbox communication threads and unread state. The acti
 - Separate top-level messages from the same sender remain independent in the inbox and detail pane
 
 ![Mailbox view](./screenshots/mailbox-view.png)
-
-## Recommendations View
-
-**Recommendations** is a dedicated desktop/sidebar and mobile-navigation destination for optional follow-up work captured by completed tasks. It preserves each recommendation's source task, category, description, task-creation action, and link to an already-created follow-up; operators can load additional completed source-task pages without returning to Mailbox or removing the existing Task Recommendations section from Insights. Its new-item counter is scoped to the selected project, clears when the view opens, and re-arms when the project changes.
 
 ## Interactive Terminal
 
@@ -1225,41 +1221,15 @@ You may also see matching run-audit events in logs, including `pull:fast-forward
 Goal run-audit metadata is IDs-only (`goalIds` + counts/tool fields) and never includes goal titles/descriptions/prompt text.
 For per-run aggregation, `GET /api/agents/:id/runs/:runId/cited-goals` returns `{ runId, taskId?, injectedGoalIds, retrievedGoalIds, citedGoalIds }`.
 
-## Artifacts View
+## Artifacts and documents in Task Detail
 
-Artifacts view aggregates registered artifacts, project markdown files, and task documents. The dashboard title is **Artifacts**; the internal tab bar leads with **Artifacts** (the landing tab), followed by **Project Files** and **Task Documents**. New artifact notices display a counter in the left sidebar, mobile navigation, and both Header Artifacts affordances (the inline button and tablet overflow entry). Opening the **Artifacts** tab clears that project's indicator once; changing projects re-arms the indicator for the newly selected project's unread state. On mobile the tab buttons render at the uniform 44px control height with non-wrapping labels in a horizontally scrollable row.
+Artifacts and task documents no longer have a standalone dashboard destination. Open the producing task and use Task Detail instead:
 
-Features:
-
-- Browse **Task Documents** in the same left-sidebar/right-pane pattern as **Project Files**: the sidebar groups task documents and task-scoped registered artifacts by task ID in distinct task cards with clear spacing between tasks, revision/artifact metadata, and parent task status badges when available, while the right pane loads the selected document or artifact preview
-- Search task documents and task-scoped artifacts across tasks
-- Open project markdown files, task documents, and task-scoped artifacts with inline preview
-- Browse the **Artifacts** tab for registry media registered by any agent, dashboard chat/user action, or system tool across tasks
-- Already-open global and task-detail artifact lists refresh live from the artifact registry event when an agent, dashboard chat session, user action, or system tool registers a new artifact, while preserving active search filters and task scoping
-- Use the tab-count badges to see the current counts for Project Files, Task Documents, and Artifacts; the Artifacts badge reflects the loaded `GET /api/artifacts` result set, including active search filters
-- Browse the category-driven gallery: artifacts are broken down into **Images**, **Docs**, **PDFs**, **Videos**, **Audio**, and **Other** content categories (PDFs are detected by MIME type/extension regardless of registry type). "All" renders one section per present category; the chip row filters to a single category, and chips only appear for categories that exist
-- Open image artifacts in the dedicated authenticated dashboard viewer. It fetches media with the Authorization header and displays a temporary blob URL, so image links and browser navigation never expose a tokenized raw-media URL. Use the zoom in, zoom out, and reset controls with their live percentage readout; zoom at the pointer with the mouse wheel, pinch on touch, double-click to toggle magnification, or use `+` / `-` / `0` from the keyboard. Drag to pan while magnified. Zoom and position reset whenever a different image opens. The viewer remains a desktop floating window and uses the established mobile sheet and Back behavior.
-- Each category has a tailored experience: Images/Videos use a visual-first tile grid with hover metadata and a full-size lightbox; Docs open a full document viewer with rendered markdown; PDFs open an embedded viewer with an open-in-new-tab action; Audio renders inline player rows; Other renders compact download rows
-- Video artifacts (agent-registered recordings, `path`-ingested MP4/WebM/MOV, and bridged video attachments) play with working seek because the media route serves HTTP byte ranges
-- HTML doc artifacts (`mimeType: text/html`) render as **live sandboxed previews** by default in the document viewer (scripts allowed, same-origin denied), with a Preview/Source toggle and the same Edit mode as other docs
-- **Edit any inline-content doc in place**: the document viewer's **Edit** button switches to an editor whose **Save** persists through `PATCH /api/artifacts/:id` and live-refreshes open galleries via the `artifact:updated` registry event; binary-backed documents stay read-only with a media link
-<!-- FNXC:ArtifactsGalleryDocs 2026-07-12-12:02: Artifact viewer docs distinguish desktop draggable/resizable FloatingWindow behavior from the mobile full-screen sheet so users do not expect to drag a small artifact popup on touch devices. -->
-- Every viewer (image/video lightbox, PDF viewer, document viewer) opens in a draggable, resizable floating window on desktop/tablet (drag by the viewer header, resize by any edge/corner; geometry persists per viewer kind); dismiss with the close button or Escape. Windows are non-blocking, so the gallery behind them stays interactive
-- Read artifact metadata on cards, rows, and viewer footers: title, optional description, author ID, timestamp, size, and linked task ID when present
-- Use the task link on a card/row or viewer footer to jump back to the originating task when the artifact has a `taskId`; inside task detail, the **Artifacts** tab shows that task's documents and registered media artifacts together
-- The gallery scales down at the mobile breakpoint (including landscape phones): category chips scroll horizontally, visual grids collapse to two columns, cards and rows go single-column, and viewer windows open as full-screen sheets without desktop resize handles or drag cursors
-- Loading state: the Artifacts tab shows `Loading artifacts…` while the first artifact list request is pending and no artifact results are loaded
-- Empty states: with no search query it shows `No artifacts yet.` plus the hint that artifacts are created by agents, users, and system tools; with a search query it shows `No artifacts match "<query>".`
-- Error state: a failed artifact list request uses the shared `Failed to load artifacts: <error>` panel with a **Retry** action that re-runs the artifact fetch
-- Toggle between raw text and rendered markdown using the **Markdown/Plain** button
-- Highlight text in raw or rendered project-file previews or the selected Task Document's right pane, choose **Add comment**, and send the source path/key, selected snippet, and your comment to the **New Task** dialog
-- Task Detail creates documents with an absence precondition and edits using the revision/hash loaded with the draft. The global **Artifacts → Task Documents** editor uses the same conditional save. If another writer wins first, Fusion keeps the editor open and preserves the exact draft on desktop and mobile, refreshes the visible current revision, and asks the operator to review/rebase; it never silently retries or overwrites the newer document.
-
-Agent registrations also surface through the [Mailbox View](#mailbox-view): successful `fn_artifact_register` calls send a best-effort system inbox notification so users can discover new media even before opening the gallery. Artifact list live-refresh does not depend on that best-effort message; it listens to the registry registration event.
-
-![Artifacts gallery](./screenshots/artifacts-gallery.png)
-
-![Artifact document viewer with edit mode](./screenshots/artifacts-doc-edit.png)
+- The **Artifacts** tab combines task documents with task-scoped registered media artifacts.
+- Image, video, audio, document, PDF, HTML, and other registered artifact types remain stored and available there.
+- Images support the authenticated image viewer; other media retain their existing preview or managed-media actions.
+- Task documents retain revision-aware creation and editing, including conflict protection when another writer updates the same document.
+- Completion mail embeds only registered image artifacts. Plans, documents, video, audio, and other artifacts remain in Task Detail rather than being duplicated in Mailbox.
 
 ## Reports View
 
@@ -1281,14 +1251,14 @@ For plugin internals (registration, API routes, rendering/export pipeline), see 
 
 ### Markdown Rendering
 
-Artifacts view supports toggling between raw text and formatted markdown when viewing document content:
+Task-document and project-file previews support toggling between raw text and formatted markdown:
 
 - **Raw mode** (default): Shows markdown syntax as plain text (e.g., `**bold**`)
 - **Markdown mode**: Renders markdown with proper formatting (e.g., **bold**, headings, lists, tables)
 
 The toggle button is accessible with `aria-pressed` for screen readers. Toggle state is scoped per-document, so switching between documents resets the view to raw mode.
 
-Project-file previews and selected Task Documents also support selection comments in both raw and rendered markdown modes. Select text, click **Add comment**, enter a short note, and Fusion opens **New Task** with a seeded description containing the file path or task-document key, snippet, and comment.
+Project-file previews and selected Task Documents support selection comments in both raw and rendered markdown modes. Select text, click **Add comment**, enter a short note, and Fusion opens **New Task** with a seeded description containing the file path or task-document key, snippet, and comment.
 
 ## Todo View
 
@@ -1519,7 +1489,6 @@ Features:
 - The model gear beside **Generate Insights** opens a model picker with an inline **Thinking Level** selector. Both the model override and reasoning-effort choice persist in the browser, and each insight run records the selected reasoning effort so retries reuse the same setting.
 - Dismiss/archive/unarchive insight records as they age
 - Create triage tasks from selected insights directly from the view
-- **Task Recommendations** aggregates un-actioned follow-up suggestions from completed tasks. It loads 50 completed source-task rows at a time; **Load more** is explicit and remains available while more rows exist, up to 20 pages, after which a truncation notice is shown. The section remains visible even when there are no generated insights, while no captured recommendations leaves no empty category. Both this surface and a task detail Recommendations tab use the same guarded create-task endpoint.
 
 ## Command Center
 
@@ -2457,7 +2426,7 @@ The MCP sections reuse Settings form/card primitives and include mobile layouts 
 
 ### Lazy-Loaded Heavy Views
 
-These 21 views are lazy-loaded via `React.lazy()` with `<Suspense fallback={null}>`. `prefetchLazyViews()` warms App-level chunks once on mount via `requestIdleCallback`; AppModals lazy modal imports (`SettingsModal`, `WorkflowNodeEditor`, `SetupWizardModal`) are part of the same inventory. **Do not make these eager.** The user-facing **Artifacts** section is still implemented by the `DocumentsView` component name.
+These 20 views are lazy-loaded via `React.lazy()` with `<Suspense fallback={null}>`. `prefetchLazyViews()` warms App-level chunks once on mount via `requestIdleCallback`; AppModals lazy modal imports (`SettingsModal`, `WorkflowNodeEditor`, `SetupWizardModal`) are part of the same inventory. **Do not make these eager.**
 
 - `AgentsView`
 - `ChatView`
@@ -2465,7 +2434,6 @@ These 21 views are lazy-loaded via `React.lazy()` with `<Suspense fallback={null
 - `DevServerView`
 - `SecretsView`
 - `InsightsView`
-- `DocumentsView`
 - `NotesView`
 - `SkillsView`
 - `ResearchView`

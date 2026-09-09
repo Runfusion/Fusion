@@ -12,7 +12,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Clock,
-  FileText,
   Gauge,
   History,
   Lightbulb,
@@ -112,8 +111,6 @@ export interface LeftSidebarNavProps {
   onNewTask?: (workflowId?: string | null) => void;
   onOpenSettings?: () => void;
   mailboxUnreadCount?: number;
-  recommendationUnreadCount?: number;
-  artifactUnreadCount?: number;
   mailboxPendingApprovalCount?: number;
   chatHasUnreadResponse?: boolean;
   /*
@@ -170,8 +167,6 @@ export function LeftSidebarNav({
   onNewTask,
   onOpenSettings,
   mailboxUnreadCount = 0,
-  recommendationUnreadCount = 0,
-  artifactUnreadCount = 0,
   mailboxPendingApprovalCount = 0,
   chatHasUnreadResponse = false,
   planningNeedsInput = false,
@@ -400,46 +395,12 @@ export function LeftSidebarNav({
       dot: view !== "mailbox" && mailboxPendingApprovalCount > 0 ? "pending" : view !== "mailbox" && mailboxUnreadCount > 0 ? "online" : undefined,
       onSelect: () => onChangeView("mailbox"),
     },
-    {
-      id: "recommendations",
-      label: t("nav.recommendations", getDashboardViewLabel("recommendations")),
-      view: "recommendations",
-      isActive: view === "recommendations",
-      icon: Lightbulb,
-      testId: "sidebar-nav-recommendations",
-      badge: recommendationUnreadCount > 0 ? recommendationUnreadCount : undefined,
-      badgeLabel: t("nav.recommendationsUnreadAriaLabel", "{{count}} new recommendations", { count: recommendationUnreadCount }),
-      dot: view !== "recommendations" && recommendationUnreadCount > 0 ? "online" : undefined,
-      dotLabel: t("nav.recommendationsUnreadDotAriaLabel", "New recommendations"),
-      onSelect: () => onChangeView("recommendations"),
-    },
-    /*
-    FNXC:Navigation 2026-09-06-03:16:
-    Recommendations sits directly after Mailbox as its dedicated notice destination. Skills and Memory follow it with their existing feature gates.
-    */
     ...(showSkillsTab
       ? [{ id: "skills", label: t("header.skillsView", getDashboardViewLabel("skills")), view: "skills" as TaskView, isActive: view === "skills", icon: Zap, testId: "sidebar-nav-skills", onSelect: () => onChangeView("skills") }]
       : []),
     ...(experimentalFeatures?.memoryView
       ? [{ id: "memory", label: t("header.memoryView", getDashboardViewLabel("memory")), view: "memory" as TaskView, isActive: view === "memory", icon: Brain, testId: "sidebar-nav-memory", onSelect: () => onChangeView("memory") }]
       : []),
-    {
-      id: "documents",
-      /*
-      FNXC:Navigation 2026-06-21-18:25:
-      FN-6890 renames the top-level Documents label to Artifacts while preserving the documents view id and sidebar-nav-documents test id.
-      */
-      label: t("nav.documents", getDashboardViewLabel("documents")),
-      view: "documents",
-      isActive: view === "documents",
-      icon: FileText,
-      testId: "sidebar-nav-documents",
-      badge: artifactUnreadCount > 0 ? artifactUnreadCount : undefined,
-      badgeLabel: t("nav.artifactsUnreadAriaLabel", "{{count}} new artifacts", { count: artifactUnreadCount }),
-      dot: view !== "documents" && artifactUnreadCount > 0 ? "online" : undefined,
-      dotLabel: t("nav.artifactsUnreadDotAriaLabel", "New artifacts"),
-      onSelect: () => onChangeView("documents"),
-    },
     {
       id: "notes",
       label: t("nav.notes", getDashboardViewLabel("notes")),

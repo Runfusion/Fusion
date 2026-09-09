@@ -309,7 +309,6 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   taskPrefix: "general.prefixForNewTaskIDsEGKB",
   maxRecommendationsPerTask: "general.maxRecommendationsPerTaskHelp",
   requireTaskRecommendations: "general.requireTaskRecommendationsHelp",
-  recommendationMailboxNoticeEnabled: "general.recommendationMailboxNoticeEnabledHelp",
   workspaceMode: "general.workspaceModeHint",
   defaultWorkflowId: "general.newTasksInheritThisCustomWorkflowsStepsOverridable",
   enabledBuiltinWorkflowIds: "general.disabledFusionWorkflowsAreHiddenFromWorkflow",

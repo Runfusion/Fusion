@@ -3476,6 +3476,7 @@
     "composeButton": "Compose",
     "composeMessageTitle": "Compose message",
     "composeTitle": "Compose message",
+    "completions": "Completions",
     "conversation": "Conversation",
     "conversationLabel": "Conversation",
     "delete": "Delete",
@@ -3572,7 +3573,10 @@
     "videoArtifactAria": "Video artifact: {{label}}",
     "viewTask": "View task {{id}}",
     "viewTaskAria": "View task: {{id}}",
-    "viewTaskLabel": "View task"
+    "viewTaskLabel": "View task",
+    "taskCompletion": "Task completion",
+    "completionImages": "Completion images",
+    "completionImage": "Completion image"
   },
   "memory": {
     "auditChecksTitle": "Audit Checks",
@@ -4235,10 +4239,6 @@
     "planningNeedsInputAriaLabel": "Planning needs your input",
     "primaryNavAriaLabel": "Primary navigation",
     "projects": "Projects",
-    "recommendations": "Recommendations",
-    "recommendationsUnreadAriaLabel_one": "{{count}} new recommendation",
-    "recommendationsUnreadAriaLabel_other": "{{count}} new recommendations",
-    "recommendationsUnreadDotAriaLabel": "New recommendations",
     "research": "Research",
     "resizeSidebar": "Resize sidebar",
     "scriptsSubmenuAriaLabel": "Scripts submenu",
@@ -6240,9 +6240,7 @@
       "maxRecommendationsPerTask": "Maximum recommendations per task",
       "maxRecommendationsPerTaskHelp": "Default: 3. Set 0 to disable recommendations; choose a whole number from 1 to 20 to cap each completed task.",
       "requireTaskRecommendations": "Require automatic task recommendations",
-      "requireTaskRecommendationsHelp": "Default: disabled. When enabled, successful completion must explicitly evaluate grounded follow-ups. The executor aims toward the configured maximum, but fewer or [] are correct when relevance does not support more; cap 0 disables capture regardless of this setting.",
-      "recommendationMailboxNoticeEnabled": "Recommendation mailbox notices",
-      "recommendationMailboxNoticeEnabledHelp": "Default: enabled. When a completed task captures recommendations, send a summary to your mailbox. Turning this off does not change whether recommendations are captured."
+      "requireTaskRecommendationsHelp": "Default: disabled. When enabled, successful completion must explicitly evaluate grounded follow-ups. The executor aims toward the configured maximum, but fewer or [] are correct when relevance does not support more; cap 0 disables capture regardless of this setting."
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": " and shows update notices in the CLI and dashboard. Cadence is governed by the frequency below. Default: enabled. ",

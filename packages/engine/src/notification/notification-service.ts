@@ -9,9 +9,10 @@ import type {
   NotificationProvider,
   Settings,
   Task,
+  Artifact,
 } from "@fusion/core";
 import type { LifecycleColumns, TaskMoveLanes, WorkflowIrResolverStore } from "@fusion/core";
-import { DASHBOARD_USER_ID, isTaskNotFoundError, MAX_TERMINAL_FAILURE_AUTO_RETRIES, NotificationDispatcher, resolveProjectColumnsForRoles, resolveReviewColumns, resolveTaskLifecycleColumns, resolveWorkflowIrForTask, WEDGE_RENOTIFY_COOLDOWN_MS } from "@fusion/core";
+import { columnsWithFlag, DASHBOARD_USER_ID, isTaskNotFoundError, MAX_TERMINAL_FAILURE_AUTO_RETRIES, NotificationDispatcher, resolveProjectColumnsForRoles, resolveReviewColumns, resolveTaskLifecycleColumns, resolveWorkflowIrForTask, WEDGE_RENOTIFY_COOLDOWN_MS } from "@fusion/core";
 import { DEFAULT_NTFY_EVENTS, buildNtfyClickUrl, formatTaskIdentifier } from "../util/notifier.js";
 import { schedulerLog } from "../logger.js";
 import { NtfyNotificationProvider } from "./ntfy-provider.js";
@@ -40,7 +41,7 @@ export interface NotificationServiceOptions {
 
 interface NotificationServiceStoreEvents {
   "task:created": [task: Task];
-  "task:moved": [data: { task: Task; from: Column; to: Column }];
+  "task:moved": [data: { task: Task; from: Column; to: Column; lanes?: TaskMoveLanes }];
   "task:updated": [task: Task, meta?: { lanes?: TaskMoveLanes }];
   "task:merged": [result: MergeResult];
   "settings:updated": [payload: { settings: Settings; previous: Settings }];
@@ -49,6 +50,8 @@ interface NotificationServiceStoreEvents {
 interface NotificationServiceStore {
   getSettings(): Promise<Settings> | Settings;
   getTask?(id: string): Promise<Task | undefined> | Task | undefined;
+  /** Project-scoped active artifacts produced by the task. */
+  getArtifacts?(taskId: string): Promise<Artifact[]>;
   /** Durable compare-and-set for restart-safe wedge delivery episodes. */
   claimTaskWedgeNotificationEpisode?(taskId: string, reasonKey: string | null): Promise<{ episodeId?: string; claimed: boolean }>;
   markTaskWedgeNotificationPending?(taskId: string, descriptor: { reasonKey: string; source: "auto" | "supplied"; reason: string; action: string; gate?: string }, options?: { staleAfterMs?: number }): Promise<{ since: string; armed: boolean; restamped: boolean }>;
@@ -362,11 +365,60 @@ export class NotificationService {
     }
   }
 
-  private handleTaskMoved = (data: { task: Task; from: Column; to: Column }): void => {
+  private handleTaskMoved = (data: { task: Task; from: Column; to: Column; lanes?: TaskMoveLanes }): void => {
     void this.handleTaskMovedAsync(data);
   };
 
-  private async handleTaskMovedAsync(data: { task: Task; from: Column; to: Column }): Promise<void> {
+  private async resolveTerminalColumnsForMove(data: { task: Task; lanes?: TaskMoveLanes }): Promise<Set<string>> {
+    if (data.lanes?.terminal?.length) return new Set(data.lanes.terminal);
+    try {
+      const ir = await resolveWorkflowIrForTask(this.store as WorkflowIrResolverStore, data.task.id);
+      const terminal = columnsWithFlag(ir, "complete");
+      return terminal.length > 0 ? new Set(terminal) : new Set(["done"]);
+    } catch {
+      return new Set(["done"]);
+    }
+  }
+
+  /**
+   * FNXC:MailboxTaskCompletion 2026-09-09-19:59:
+   * A completion mail belongs to the post-commit move snapshot, not to fn_task_done or task:merged.
+   * Membership uses every complete-trait column from the task's workflow, and the immutable
+   * taskId/destination/columnMovedAt tuple identifies one durable completion episode.
+   */
+  private async writeTaskCompletionMailboxMessage(data: { task: Task; from: Column; to: Column; lanes?: TaskMoveLanes }): Promise<void> {
+    try {
+      const terminalColumns = await this.resolveTerminalColumnsForMove(data);
+      if (!terminalColumns.has(data.to) || terminalColumns.has(data.from) || data.from === data.to) return;
+      const sendMessageOnce = this.options.messageStore?.sendMessageOnce;
+      if (!sendMessageOnce) return;
+
+      const artifacts = await this.store.getArtifacts?.(data.task.id) ?? [];
+      const imageIds = artifacts.filter((artifact) => artifact.type === "image").map((artifact) => artifact.id);
+      const recommendationIds = (data.task.recommendations ?? []).map((recommendation) => recommendation.id);
+      const summary = data.task.summary?.trim() || "Task completed without a summary.";
+      await sendMessageOnce.call(this.options.messageStore, {
+        fromId: "system",
+        fromType: "system",
+        toId: DASHBOARD_USER_ID,
+        toType: "user",
+        type: "system",
+        content: `## Task completed: ${formatTaskIdentifier(data.task)}\n\n${summary}`,
+        metadata: {
+          kind: "task-completion-notice",
+          taskId: data.task.id,
+          imageArtifactIds: imageIds,
+          recommendationIds,
+        },
+      }, `task-completion-notice:${data.task.id}:${data.to}:${data.task.columnMovedAt ?? "unknown"}`);
+    } catch (error) {
+      schedulerLog.debug(`[notify] ${data.task.id} completion mailbox message failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  private async handleTaskMovedAsync(data: { task: Task; from: Column; to: Column; lanes?: TaskMoveLanes }): Promise<void> {
+    // Mailbox delivery is deliberately detached so a slow/failed message store never delays move handling.
+    void this.writeTaskCompletionMailboxMessage(data);
     await this.maybeSuppressTransientFailedNotification(data.task, `moved to ${data.to}`);
 
     /*

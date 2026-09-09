@@ -3468,6 +3468,7 @@
     "composeButton": "Composer",
     "composeMessageTitle": "Composer un message",
     "composeTitle": "Composer un message",
+    "completions": "",
     "conversation": "Conversation",
     "conversationLabel": "Conversation",
     "delete": "Supprimer",
@@ -3564,7 +3565,10 @@
     "viewTaskAria": "",
     "viewTaskLabel": "",
     "recommendationsUnavailableIdsReason": "",
-    "recommendationsUnavailableTaskReason": ""
+    "recommendationsUnavailableTaskReason": "",
+    "taskCompletion": "Fin de tâche",
+    "completionImages": "Images de fin de tâche",
+    "completionImage": "Image de fin de tâche"
   },
   "memory": {
     "auditChecksTitle": "Vérifications d'audit",
@@ -4226,10 +4230,6 @@
     "planningNeedsInputAriaLabel": "La planification nécessite votre saisie",
     "primaryNavAriaLabel": "Navigation principale",
     "projects": "Projets",
-    "recommendations": "Recommandations",
-    "recommendationsUnreadAriaLabel_one": "{{count}} nouvelle recommandation",
-    "recommendationsUnreadAriaLabel_other": "{{count}} nouvelles recommandations",
-    "recommendationsUnreadDotAriaLabel": "Nouvelles recommandations",
     "research": "Recherche",
     "resizeSidebar": "",
     "scriptsSubmenuAriaLabel": "Sous-menu des scripts",
@@ -6200,9 +6200,7 @@
       "maxRecommendationsPerTask": "",
       "maxRecommendationsPerTaskHelp": "",
       "requireTaskRecommendations": "",
-      "requireTaskRecommendationsHelp": "",
-      "recommendationMailboxNoticeEnabled": "",
-      "recommendationMailboxNoticeEnabledHelp": ""
+      "requireTaskRecommendationsHelp": ""
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",

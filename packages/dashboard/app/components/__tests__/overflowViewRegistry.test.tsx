@@ -36,7 +36,7 @@ describe("overflowViewRegistry", () => {
   });
 
   it("does not expose left-sidebar content views or removed dock tools in the registry", () => {
-    const removedKeys = ["documents", "research", "insights", "skills", "memory", "stash-recovery", "evals", "goalsView", "github-import", "automation", "usage", "todos"];
+    const removedKeys = ["documents", "recommendations", "research", "insights", "skills", "memory", "stash-recovery", "evals", "goalsView", "github-import", "automation", "usage", "todos"];
     const keys = getVisibleOverflowViewEntries({
       experimentalFeatures: { insights: true, memoryView: true, devServerView: true, researchView: true, evalsView: true, goalsView: true },
       showSkillsTab: true,

@@ -46,6 +46,7 @@ import { MailboxRelatedWorkLink, hasRelatedTaskLink } from "./MailboxRelatedWork
 import { MailboxNativeStructureEmbeds } from "./MailboxNativeStructureEmbeds";
 import { MailboxTaskProposal } from "./MailboxTaskProposal";
 import { MailboxTaskRecommendations } from "./MailboxTaskRecommendations";
+import { MailboxTaskCompletion, isTaskCompletionNotice } from "./MailboxTaskCompletion";
 import { MailboxKindBadge, MailboxStructuralItem, isStructuralMail } from "./MailboxStructuralItem";
 import type { ChatReportHandoff } from "./chatReportHandoff";
 import { MessageComposer, type NativeStructureCandidate } from "./MessageComposer";
@@ -64,8 +65,10 @@ import { getRelativeTimeBucket } from "../utils/relativeTimeAgo";
 type MailboxTab = "inbox" | "outbox" | "archived" | "agents" | "approvals";
 
 /*
-FNXC:InboxCategories 2026-09-06-03:16:
-The active Inbox is reserved for ordinary messages. Recommendation and artifact notices keep their archived detail rendering, but their unread state belongs to the dedicated Recommendations and Artifacts destinations; every active-inbox read and mark-all operation must therefore request the message category explicitly.
+FNXC:MailboxTaskCompletion 2026-09-09-19:59:
+Mailbox is the single destination for ordinary messages, historical artifact/recommendation notices,
+and task completion recaps. Active reads, unread badges, and Mark all read therefore use the complete
+project-scoped inbox rather than category-specific queries.
 */
 
 /*
@@ -284,6 +287,14 @@ export function MailboxView({
   const [approvalDecisionLoading, setApprovalDecisionLoading] = useState<false | "approve" | "deny">(false);
   const consumedDeepLinkedMessageIdRef = useRef<string | null>(null);
   const highlightedDeepLinkedMessageIdRef = useRef<string | null>(null);
+  const renderedProjectIdRef = useRef(projectId);
+  const inboxRequestGenerationRef = useRef(0);
+  renderedProjectIdRef.current = projectId;
+
+  /*
+  FNXC:MailboxProjectIsolation 2026-09-09-20:58:
+  Inbox responses may settle after a project switch or after a newer refresh for the same project. Fence every Inbox state and unread-count publication by both the latest rendered project identity and request generation so stale project data can never replace the active Mailbox.
+  */
 
   /*
    * FNXC:MailboxMobile 2026-06-23-10:55:
@@ -466,18 +477,26 @@ export function MailboxView({
   // ── Data fetching ─────────────────────────────────────────────────────
 
   const loadInbox = useCallback(async () => {
+    const requestProjectId = projectId;
+    const requestGeneration = ++inboxRequestGenerationRef.current;
+    const isCurrentRequest = () => (
+      renderedProjectIdRef.current === requestProjectId
+      && inboxRequestGenerationRef.current === requestGeneration
+    );
     captureMailboxScroll();
     setIsLoading(true);
     try {
-      const data = await fetchInbox({ limit: 50, category: "message" }, projectId);
+      const data = await fetchInbox({ limit: 50 }, requestProjectId);
+      if (!isCurrentRequest()) return;
       setInbox(data);
-      const messageUnreadCount = data.categoryUnreadCounts?.message ?? data.unreadCount;
-      setUnreadCount(messageUnreadCount);
-      onUnreadCountChange?.(messageUnreadCount);
+      setUnreadCount(data.unreadCount);
+      onUnreadCountChange?.(data.unreadCount);
     } catch {
       // Silently fail — empty state will show
     } finally {
-      setIsLoading(false);
+      if (isCurrentRequest()) {
+        setIsLoading(false);
+      }
     }
   }, [projectId, onUnreadCountChange, captureMailboxScroll]);
 
@@ -558,10 +577,9 @@ export function MailboxView({
   const refreshUnreadCount = useCallback(async () => {
     try {
       const data = await fetchUnreadCount(projectId);
-      const messageUnreadCount = data.categoryUnreadCounts?.message ?? data.unreadCount;
-      setUnreadCount(messageUnreadCount);
+      setUnreadCount(data.unreadCount);
       setApprovalPendingCount(data.pendingApprovalCount ?? 0);
-      onUnreadCountChange?.(messageUnreadCount);
+      onUnreadCountChange?.(data.unreadCount);
     } catch {
       // Silently fail
     }
@@ -777,7 +795,7 @@ export function MailboxView({
 
   const handleMarkAllRead = useCallback(async () => {
     try {
-      const result = await markAllMessagesRead(projectId, { category: "message" });
+      const result = await markAllMessagesRead(projectId);
       setUnreadCount(0);
       onUnreadCountChange?.(0);
       setInbox((prev) =>
@@ -1094,11 +1112,11 @@ export function MailboxView({
                     onOpenTask={onOpenTask}
                   />
                   <MailboxStructuralItem metadata={msg.metadata} projectId={projectId} onOpenTask={onOpenTask} addToast={addToast} onDecided={() => { void loadInbox(); void loadApprovals(approvalSubTab); }} />
-                  <MailboxRelatedWorkLink
+                  {!isTaskCompletionNotice(msg.metadata) && <MailboxRelatedWorkLink
                     metadata={msg.metadata}
                     onOpenTask={onOpenTask}
                     onOpenPlanningSession={onOpenPlanningSession}
-                  />
+                  />}
                   <MailboxArtifactAttachment
                     artifactId={msg.metadata?.artifactId}
                     artifactType={msg.metadata?.artifactType}
@@ -1111,7 +1129,8 @@ export function MailboxView({
                   />
                   <MailboxNativeStructureEmbeds message={msg} projectId={projectId} onOpen={onOpenNativeStructure} />
                   <MailboxTaskProposal messageId={msg.id} metadata={msg.metadata} projectId={projectId} onOpenTask={onOpenTask} />
-                  <MailboxTaskRecommendations metadata={msg.metadata} projectId={projectId} onOpenTask={onOpenTask} />
+                  {!isTaskCompletionNotice(msg.metadata) && <MailboxTaskRecommendations metadata={msg.metadata} projectId={projectId} onOpenTask={onOpenTask} />}
+                  <MailboxTaskCompletion metadata={msg.metadata} projectId={projectId} onOpenTask={onOpenTask} />
                 </div>
               );
             })}
@@ -1131,11 +1150,11 @@ export function MailboxView({
               onOpenTask={onOpenTask}
             />
             <MailboxStructuralItem metadata={selectedMessage.metadata} projectId={projectId} onOpenTask={onOpenTask} addToast={addToast} onDecided={() => { void loadInbox(); void loadApprovals(approvalSubTab); }} />
-            <MailboxRelatedWorkLink
+            {!isTaskCompletionNotice(selectedMessage.metadata) && <MailboxRelatedWorkLink
               metadata={selectedMessage.metadata}
               onOpenTask={onOpenTask}
               onOpenPlanningSession={onOpenPlanningSession}
-            />
+            />}
             <MailboxArtifactAttachment
               artifactId={selectedMessage.metadata?.artifactId}
               artifactType={selectedMessage.metadata?.artifactType}
@@ -1148,7 +1167,8 @@ export function MailboxView({
             />
             <MailboxNativeStructureEmbeds message={selectedMessage} projectId={projectId} onOpen={onOpenNativeStructure} />
             <MailboxTaskProposal messageId={selectedMessage.id} metadata={selectedMessage.metadata} projectId={projectId} onOpenTask={onOpenTask} />
-            <MailboxTaskRecommendations metadata={selectedMessage.metadata} projectId={projectId} onOpenTask={onOpenTask} />
+            {!isTaskCompletionNotice(selectedMessage.metadata) && <MailboxTaskRecommendations metadata={selectedMessage.metadata} projectId={projectId} onOpenTask={onOpenTask} />}
+            <MailboxTaskCompletion metadata={selectedMessage.metadata} projectId={projectId} onOpenTask={onOpenTask} />
           </>
         )}
       </div>

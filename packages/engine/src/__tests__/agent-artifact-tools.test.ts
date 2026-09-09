@@ -3,7 +3,6 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Artifact, ArtifactType, ArtifactWithTask, MessageStore, TaskStore } from "@fusion/core";
-import { DASHBOARD_USER_ID } from "@fusion/core";
 import {
   createArtifactListTool,
   createArtifactRegisterTool,
@@ -269,85 +268,22 @@ describe("artifact register tool", () => {
     expect(getText(result)).not.toContain("ERROR:");
   });
 
-  it("sends exactly one system-to-user inbox notification with artifact metadata", async () => {
+  it("registers artifacts without sending an early mailbox notice", async () => {
     const { store, registerArtifact } = createMockStore();
-    const artifact = createMockArtifact({ id: "art-notify", type: "image", title: "Screenshot", mimeType: "image/png", uri: "artifacts/screenshot.png", content: undefined });
-    registerArtifact.mockResolvedValue(artifact);
+    registerArtifact.mockResolvedValue(createMockArtifact({ id: "art-no-early-notice", type: "document" }));
     const { messageStore, sendMessage } = createMockMessageStore();
 
     const tool = createArtifactRegisterTool(store, AUTHOR_ID, messageStore);
-    await runTool(tool, "call-notify", {
-      type: "image",
-      title: "Screenshot",
-      uri: "artifacts/screenshot.png",
+    const result = await runTool(tool, "call-no-early-notice", {
+      type: "document",
+      title: "Report",
+      content: "body",
       taskId: TASK_ID,
     });
 
-    expect(sendMessage).toHaveBeenCalledTimes(1);
-    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({
-      fromType: "system",
-      toType: "user",
-      toId: DASHBOARD_USER_ID,
-      type: "system",
-      metadata: expect.objectContaining({
-        artifactId: "art-notify",
-        artifactType: "image",
-        title: "Screenshot",
-        mimeType: "image/png",
-        authorId: AUTHOR_ID,
-        taskId: TASK_ID,
-      }),
-    }));
-  });
-
-  it("still sends artifact notification metadata when mimeType is absent", async () => {
-    const { store, registerArtifact } = createMockStore();
-    registerArtifact.mockResolvedValue(createMockArtifact({
-      id: "art-no-mime",
-      title: "Metadata-only artifact",
-      mimeType: undefined,
-      content: undefined,
-      uri: "artifact://metadata-only",
-    }));
-    const { messageStore, sendMessage } = createMockMessageStore();
-
-    const tool = createArtifactRegisterTool(store, AUTHOR_ID, messageStore);
-    const result = await runTool(tool, "call-no-mime-notify", {
-      type: "other",
-      title: "Metadata-only artifact",
-      uri: "artifact://metadata-only",
-    });
-
-    expect(sendMessage).toHaveBeenCalledTimes(1);
-    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({
-      metadata: expect.objectContaining({
-        artifactId: "art-no-mime",
-        title: "Metadata-only artifact",
-        mimeType: undefined,
-      }),
-    }));
-    expect(getText(result)).toContain("Registered artifact");
-  });
-
-  it("still succeeds when notification sendMessage throws", async () => {
-    const { store, registerArtifact } = createMockStore();
-    registerArtifact.mockResolvedValue(createMockArtifact({ id: "art-best-effort" }));
-    const { messageStore, sendMessage } = createMockMessageStore();
-    sendMessage.mockImplementation(() => {
-      throw new Error("inbox unavailable");
-    });
-
-    const tool = createArtifactRegisterTool(store, AUTHOR_ID, messageStore);
-    const result = await runTool(tool, "call-best-effort", {
-      type: "document",
-      title: "Best effort artifact",
-      content: "body",
-    });
-
     expect(registerArtifact).toHaveBeenCalledTimes(1);
-    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).not.toHaveBeenCalled();
     expect(getText(result)).toContain("Registered artifact");
-    expect(getText(result)).not.toContain("ERROR:");
   });
 
   it("succeeds with no message store provided", async () => {
@@ -881,10 +817,7 @@ describe("chat artifact tools", () => {
       authorType: "agent",
       title: "Chat artifact",
     }));
-    expect(sendMessage).toHaveBeenCalledTimes(1);
-    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({
-      metadata: expect.objectContaining({ authorId: "dashboard-chat", taskId: "FN-3030" }),
-    }));
+    expect(sendMessage).not.toHaveBeenCalled();
     expect(getText(result)).toContain("Registered artifact");
   });
 

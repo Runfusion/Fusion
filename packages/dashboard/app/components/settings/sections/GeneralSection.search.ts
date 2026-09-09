@@ -49,20 +49,6 @@ export const generalSearchEntries: SettingsSearchEntry[] = [
     keywords: ["recommendations", "automatic", "completion", "required", "quality"],
   },
   {
-    /*
-    FNXC:SettingsSearch 2026-08-16-05:07:
-    FN-9021 (ea53cbd4ff) added the mailbox-notice toggle without an index entry;
-    same drift-guard gap as above.
-    */
-    sectionId: "general",
-    key: "recommendationMailboxNoticeEnabled",
-    labelKey: "settings.general.recommendationMailboxNoticeEnabled",
-    labelFallback: "Recommendation mailbox notices",
-    helpKey: "settings.general.recommendationMailboxNoticeEnabledHelp",
-    helpFallback: "Default: enabled. When a completed task captures recommendations, send a summary to your mailbox. Turning this off does not change whether recommendations are captured.",
-    keywords: ["notifications", "mail", "inbox", "suggestions"],
-  },
-  {
     sectionId: "general",
     key: "taskPrefix",
     labelKey: "settings.general.taskPrefix",
