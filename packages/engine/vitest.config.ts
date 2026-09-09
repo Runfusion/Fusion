@@ -482,6 +482,12 @@ export default defineConfig({
             // FN-8111 restored meta-archive guard composition with PG-authoritative audits and canonical fixture ids, and fixed completed stale continuations so the in-memory wedge suite is intentionally unquarantined.
             // FNXC:PgMigrationQuarantine 2026-07-16-12:30:
             // FN-8118 verified the already-landed post-done continuation rescue: this pure in-memory suite has no PG fixture and passed its serialized reliability lane three times. Keep it absent from this quarantine list while preserving the engine-default reliability partition exclusion.
+            /*
+            FNXC:ManualMergeHoldRescue 2026-09-09-09:28:
+            Restore merge-node paused-abort coverage after fixing the durable-park classifier ordering
+            and replacing obsolete review-to-WIP expectations with in-place lifecycle assertions.
+            The full file proves recovery across merge aliases while preserving pause/cancel blockers.
+            */
           ],
           // These tests assert event ordering across real worktrees. Parallel
           // execution under merger load caused subprocess-guard timeouts and
