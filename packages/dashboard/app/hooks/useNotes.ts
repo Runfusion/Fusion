@@ -6,11 +6,14 @@ import { createNote, deleteNote, fetchNote, fetchNotes, updateNote } from "../ap
 export interface NotesState {
   notes: ProjectNoteSummary[];
   selected: ProjectNote | null;
+  pendingSelectedId: string | null;
+  failedSelectionId: string | null;
   draftTitle: string;
   draftContent: string;
   loading: boolean;
   saving: boolean;
   error: string | null;
+  errorOperation: "selection" | "save" | "other" | null;
   conflict: boolean;
   dirty: boolean;
   search: string;
@@ -19,9 +22,18 @@ export interface NotesState {
 /*
 FNXC:ProjectNotes 2026-09-09-17:52:
 A project switch invalidates every list/detail response and clears visible note data immediately. Mutations are serialized and fenced by project, note selection, and request identity; a late save updates its list summary but cannot replace another selected note or mark newer local text as saved. Revision and network failures retain the exact local draft until the user explicitly reloads, retries, or overwrites it.
+
+FNXC:ProjectNotes 2026-09-09-23:29:
+A note click publishes its pending id before detail loading finishes so selection feedback is immediate. Only the latest selection request may promote or clear that pending id; stale resolutions and rejections preserve the newer selection, draft, loading state, and error state.
+
+FNXC:ProjectNotes 2026-09-09-23:47:
+Selection failures retain the attempted note id so Retry repeats the failed read instead of saving the previously loaded note. Other operations clear that provenance before publishing their own error.
+
+FNXC:ProjectNotes 2026-09-09-23:47:
+A newly created note takes ownership from the selection request that was current when creation started. It invalidates that in-flight read before publishing the new active note, while a selection started later remains authoritative.
 */
 export function useNotes(projectId?: string) {
-  const [state, setState] = useState<NotesState>({ notes: [], selected: null, draftTitle: "", draftContent: "", loading: false, saving: false, error: null, conflict: false, dirty: false, search: "" });
+  const [state, setState] = useState<NotesState>({ notes: [], selected: null, pendingSelectedId: null, failedSelectionId: null, draftTitle: "", draftContent: "", loading: false, saving: false, error: null, errorOperation: null, conflict: false, dirty: false, search: "" });
   const generation = useRef(0);
   const selectionGeneration = useRef(0);
   const mutationRequest = useRef(0);
@@ -32,12 +44,12 @@ export function useNotes(projectId?: string) {
   const loadList = useCallback(async (search = "") => {
     if (!projectId) return;
     const request = ++generation.current;
-    setState((s) => ({ ...s, loading: true, error: null }));
+    setState((s) => ({ ...s, loading: true, failedSelectionId: null, error: null, errorOperation: null }));
     try {
       const result = await fetchNotes(projectId, search);
       if (request === generation.current) setState((s) => ({ ...s, notes: result.notes, loading: false }));
     } catch (error) {
-      if (request === generation.current) setState((s) => ({ ...s, loading: false, error: error instanceof Error ? error.message : "Unable to load notes" }));
+      if (request === generation.current) setState((s) => ({ ...s, loading: false, error: error instanceof Error ? error.message : "Unable to load notes", errorOperation: "other" }));
     }
   }, [projectId]);
 
@@ -45,22 +57,27 @@ export function useNotes(projectId?: string) {
     generation.current += 1;
     selectionGeneration.current += 1;
     mutationRequest.current += 1;
-    setState({ notes: [], selected: null, draftTitle: "", draftContent: "", loading: Boolean(projectId), saving: false, error: null, conflict: false, dirty: false, search: "" });
+    setState({ notes: [], selected: null, pendingSelectedId: null, failedSelectionId: null, draftTitle: "", draftContent: "", loading: Boolean(projectId), saving: false, error: null, errorOperation: null, conflict: false, dirty: false, search: "" });
     if (projectId) void loadList();
   }, [projectId, loadList]);
 
   const select = useCallback(async (id: string) => {
     if (!projectId) return;
-    selectionGeneration.current += 1;
-    const request = ++generation.current;
-    setState((s) => ({ ...s, loading: true, error: null }));
+    const selectionRequest = ++selectionGeneration.current;
+    setState((s) => ({ ...s, pendingSelectedId: id, failedSelectionId: null, loading: true, error: null, errorOperation: null }));
     try {
       const note = await fetchNote(projectId, id);
-      if (request === generation.current) setState((s) => ({ ...s, selected: note, draftTitle: note.title, draftContent: note.content, loading: false, dirty: false, conflict: false }));
-    } catch (error) { if (request === generation.current) setState((s) => ({ ...s, loading: false, error: error instanceof Error ? error.message : "Unable to load note" })); }
+      if (selectionRequest === selectionGeneration.current && activeProject.current === projectId) {
+        setState((s) => ({ ...s, selected: note, pendingSelectedId: null, failedSelectionId: null, errorOperation: null, draftTitle: note.title, draftContent: note.content, loading: false, dirty: false, conflict: false }));
+      }
+    } catch (error) {
+      if (selectionRequest === selectionGeneration.current && activeProject.current === projectId) {
+        setState((s) => ({ ...s, pendingSelectedId: null, failedSelectionId: id, loading: false, error: error instanceof Error ? error.message : "Unable to load note", errorOperation: "selection" }));
+      }
+    }
   }, [projectId]);
 
-  const clearSelection = useCallback(() => { generation.current += 1; selectionGeneration.current += 1; setState((s) => ({ ...s, selected: null, draftTitle: "", draftContent: "", dirty: false, conflict: false, error: null })); }, []);
+  const clearSelection = useCallback(() => { generation.current += 1; selectionGeneration.current += 1; setState((s) => ({ ...s, selected: null, pendingSelectedId: null, failedSelectionId: null, draftTitle: "", draftContent: "", loading: false, dirty: false, conflict: false, error: null, errorOperation: null })); }, []);
   const setSearch = useCallback((search: string) => { setState((s) => ({ ...s, search })); void loadList(search); }, [loadList]);
   const setDraftTitle = useCallback((draftTitle: string) => setState((s) => ({ ...s, draftTitle, dirty: draftTitle !== s.selected?.title || s.draftContent !== s.selected?.content })), []);
   const setDraftContent = useCallback((draftContent: string) => setState((s) => ({ ...s, draftContent, dirty: draftContent !== s.selected?.content || s.draftTitle !== s.selected?.title })), []);
@@ -75,25 +92,34 @@ export function useNotes(projectId?: string) {
     const requestId = ++mutationRequest.current;
     return enqueue(async () => {
       if (activeProject.current !== projectId) return null;
-      setState((s) => ({ ...s, saving: true, error: null }));
+      setState((s) => ({ ...s, saving: true, failedSelectionId: null, error: null, errorOperation: null }));
       try {
         const note = await createNote(projectId, { title: "Nouvelle note", content: "" });
         if (activeProject.current !== projectId) return null;
+        const becomesSelection = selectionGeneration.current === selectedGeneration;
+        if (becomesSelection) selectionGeneration.current += 1;
         setState((s) => {
           const ownsRequest = mutationRequest.current === requestId;
-          const ownsSelection = selectionGeneration.current === selectedGeneration;
           return {
             ...s,
             ...(ownsRequest ? { saving: false } : {}),
             notes: [note, ...s.notes.filter((summary) => summary.id !== note.id)],
-            ...(ownsSelection ? { selected: note, draftTitle: note.title, draftContent: note.content, dirty: false, conflict: false } : {}),
+            ...(becomesSelection ? {
+              selected: note,
+              pendingSelectedId: null,
+              failedSelectionId: null,
+              draftTitle: note.title,
+              draftContent: note.content,
+              dirty: false,
+              conflict: false,
+            } : {}),
           };
         });
         return note;
       } catch (error) {
         if (activeProject.current !== projectId) return null;
         setState((s) => mutationRequest.current === requestId && selectionGeneration.current === selectedGeneration
-          ? { ...s, saving: false, error: error instanceof Error ? error.message : "Unable to create note" }
+          ? { ...s, saving: false, error: error instanceof Error ? error.message : "Unable to create note", errorOperation: "other" }
           : s);
         return null;
       }
@@ -107,7 +133,7 @@ export function useNotes(projectId?: string) {
     const requestId = ++mutationRequest.current;
     return enqueue(async () => {
       if (activeProject.current !== projectId) return null;
-      setState((s) => ({ ...s, saving: true, error: null, conflict: false }));
+      setState((s) => ({ ...s, saving: true, failedSelectionId: null, error: null, errorOperation: null, conflict: false }));
       try {
         const note = await updateNote(projectId, selected.id, { title: draftTitle, content: draftContent, expectedRevision: selected.revision });
         if (activeProject.current !== projectId) return null;
@@ -122,6 +148,7 @@ export function useNotes(projectId?: string) {
               selected: note,
               conflict: false,
               error: null,
+              errorOperation: null,
               dirty: s.draftTitle !== note.title || s.draftContent !== note.content,
             } : {}),
           };
@@ -138,6 +165,7 @@ export function useNotes(projectId?: string) {
             ...(ownsRequest ? { saving: false } : {}),
             ...(ownsSelection ? {
               error: error instanceof Error ? error.message : "Unable to save note",
+              errorOperation: "save",
               conflict: error instanceof ApiRequestError && error.status === 409,
               dirty: true,
             } : {}),
@@ -156,7 +184,7 @@ export function useNotes(projectId?: string) {
     const requestId = ++mutationRequest.current;
     return enqueue(async () => {
       if (activeProject.current !== projectId) return null;
-      setState((s) => ({ ...s, saving: true, error: null }));
+      setState((s) => ({ ...s, saving: true, failedSelectionId: null, error: null, errorOperation: null }));
       try {
         const latest = await fetchNote(projectId, selected.id);
         if (activeProject.current !== projectId) return null;
@@ -173,6 +201,7 @@ export function useNotes(projectId?: string) {
               selected: note,
               conflict: false,
               error: null,
+              errorOperation: null,
               dirty: s.draftTitle !== note.title || s.draftContent !== note.content,
             } : {}),
           };
@@ -187,7 +216,7 @@ export function useNotes(projectId?: string) {
           return {
             ...s,
             ...(ownsRequest ? { saving: false } : {}),
-            ...(ownsSelection ? { conflict: error instanceof ApiRequestError && error.status === 409, error: error instanceof Error ? error.message : "Unable to overwrite note", dirty: true } : {}),
+            ...(ownsSelection ? { conflict: error instanceof ApiRequestError && error.status === 409, error: error instanceof Error ? error.message : "Unable to overwrite note", errorOperation: "other" as const, dirty: true } : {}),
           };
         });
         return null;
@@ -202,7 +231,7 @@ export function useNotes(projectId?: string) {
     const requestId = ++mutationRequest.current;
     return enqueue(async () => {
       if (activeProject.current !== projectId) return false;
-      setState((s) => ({ ...s, saving: true, error: null }));
+      setState((s) => ({ ...s, saving: true, failedSelectionId: null, error: null, errorOperation: null }));
       try {
         await deleteNote(projectId, selected.id, selected.revision);
         if (activeProject.current !== projectId) return false;
@@ -226,7 +255,7 @@ export function useNotes(projectId?: string) {
           return {
             ...s,
             ...(ownsRequest ? { saving: false } : {}),
-            ...(ownsSelection ? { error: error instanceof Error ? error.message : "Unable to delete note", conflict: error instanceof ApiRequestError && error.status === 409 } : {}),
+            ...(ownsSelection ? { error: error instanceof Error ? error.message : "Unable to delete note", errorOperation: "other" as const, conflict: error instanceof ApiRequestError && error.status === 409 } : {}),
           };
         });
         return false;

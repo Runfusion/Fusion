@@ -2722,4 +2722,6 @@ When the desktop shell cannot start its embedded local Fusion runtime, its failu
 
 La destination **Notes** est disponible dans la barre latérale sur ordinateur et tablette, et dans **More** sur mobile (ou directement dans le footer lorsqu’elle y est promue depuis les réglages). Chaque projet possède sa propre liste persistante de notes; la recherche porte sur les titres et le contenu, et les titres identiques restent autorisés.
 
+Sous l’en-tête, Notes occupe tout le panneau disponible. Sur ordinateur et tablette, une séparation unique place la liste compacte à gauche et donne tout l’espace restant à l’éditeur; la note cliquée reçoit immédiatement un fond et un marqueur d’accent, sans attendre la fin de son chargement. Sur un écran étroit ou peu haut, la liste et le détail deviennent un parcours plein panneau, avec une commande **Back** accessible pour revenir à la liste.
+
 Une note accepte du texte libre et du Markdown, notamment des commandes et des journaux. Les changements restent marqués comme non enregistrés jusqu’à l’action **Save** (ou Ctrl/Cmd+S); une suppression ou l’abandon d’un brouillon demande confirmation. En cas d’erreur réseau ou de conflit de révision, le brouillon local est conservé et l’utilisateur choisit explicitement de recharger la version serveur ou de la remplacer.

@@ -6,10 +6,12 @@ const api = vi.hoisted(() => ({ fetchNotes: vi.fn(), fetchNote: vi.fn(), createN
 vi.mock("../../api/notes", () => api);
 const note = { id: "n1", title: "Commande", content: "pnpm test", revision: 1, createdAt: "2026-01-01", updatedAt: "2026-01-01" };
 const noteB = { id: "n2", title: "Journal", content: "logs B", revision: 1, createdAt: "2026-01-02", updatedAt: "2026-01-02" };
+const noteC = { id: "n3", title: "Journal", content: "logs C", revision: 1, createdAt: "2026-01-03", updatedAt: "2026-01-03" };
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => { resolve = done; });
-  return { promise, resolve };
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail; });
+  return { promise, resolve, reject };
 }
 describe("useNotes", () => {
   beforeEach(() => { vi.clearAllMocks(); api.fetchNotes.mockResolvedValue({ notes: [note] }); api.fetchNote.mockResolvedValue(note); });
@@ -56,6 +58,111 @@ describe("useNotes", () => {
     expect(result.current.draftContent).toBe("brouillon plus récent");
     expect(result.current.dirty).toBe(true);
     expect(result.current.saving).toBe(false);
+  });
+
+  it("publishes pending selection immediately, promotes it, and falls back after the latest failure", async () => {
+    const selection = deferred<typeof noteB>();
+    api.fetchNote.mockImplementation((_projectId: string, id: string) => id === note.id ? Promise.resolve(note) : selection.promise);
+    const { result } = renderHook(() => useNotes("A"));
+    await waitFor(() => expect(result.current.notes).toHaveLength(1));
+    await act(async () => result.current.select(note.id));
+
+    let selecting!: Promise<void>;
+    act(() => { selecting = result.current.select(noteB.id); });
+    expect(result.current.pendingSelectedId).toBe(noteB.id);
+    expect(result.current.selected?.id).toBe(note.id);
+    await act(async () => { selection.resolve(noteB); await selecting; });
+    expect(result.current.pendingSelectedId).toBeNull();
+    expect(result.current.selected).toEqual(noteB);
+
+    const failed = deferred<typeof noteC>();
+    api.fetchNote.mockReturnValueOnce(failed.promise);
+    act(() => { selecting = result.current.select(noteC.id); });
+    expect(result.current.pendingSelectedId).toBe(noteC.id);
+    await act(async () => { failed.reject(new Error("lecture impossible")); await selecting; });
+    expect(result.current.pendingSelectedId).toBeNull();
+    expect(result.current.selected).toEqual(noteB);
+    expect(result.current.error).toBe("lecture impossible");
+  });
+
+  it("clears a pending selection when the project changes", async () => {
+    const selection = deferred<typeof noteB>();
+    api.fetchNote.mockReturnValue(selection.promise);
+    const { result, rerender } = renderHook(({ projectId }) => useNotes(projectId), { initialProps: { projectId: "A" } });
+    await waitFor(() => expect(result.current.notes).toHaveLength(1));
+    let selecting!: Promise<void>;
+    act(() => { selecting = result.current.select(noteB.id); });
+    expect(result.current.pendingSelectedId).toBe(noteB.id);
+    rerender({ projectId: "B" });
+    expect(result.current.pendingSelectedId).toBeNull();
+    await act(async () => { selection.resolve(noteB); await selecting; });
+    expect(result.current.selected).toBeNull();
+    expect(result.current.pendingSelectedId).toBeNull();
+  });
+
+  it("keeps C authoritative when B resolves after C", async () => {
+    const selections = { [noteB.id]: deferred<typeof noteB>(), [noteC.id]: deferred<typeof noteC>() };
+    api.fetchNote.mockImplementation((_projectId: string, id: keyof typeof selections) => selections[id].promise);
+    const { result } = renderHook(() => useNotes("A"));
+    await waitFor(() => expect(result.current.notes).toHaveLength(1));
+    let selectB!: Promise<void>;
+    let selectC!: Promise<void>;
+    act(() => { selectB = result.current.select(noteB.id); selectC = result.current.select(noteC.id); });
+    expect(result.current.pendingSelectedId).toBe(noteC.id);
+    await act(async () => { selections[noteC.id].resolve(noteC); await selectC; });
+    expect(result.current.selected).toEqual(noteC);
+    expect(result.current.loading).toBe(false);
+    await act(async () => { selections[noteB.id].resolve(noteB); await selectB; });
+    expect(result.current.selected).toEqual(noteC);
+    expect(result.current.draftContent).toBe(noteC.content);
+    expect(result.current.loading).toBe(false);
+    expect(result.current.error).toBeNull();
+  });
+
+  it("keeps C pending when the stale B request rejects", async () => {
+    const selections = { [noteB.id]: deferred<typeof noteB>(), [noteC.id]: deferred<typeof noteC>() };
+    api.fetchNote.mockImplementation((_projectId: string, id: keyof typeof selections) => selections[id].promise);
+    const { result } = renderHook(() => useNotes("A"));
+    await waitFor(() => expect(result.current.notes).toHaveLength(1));
+    let selectB!: Promise<void>;
+    let selectC!: Promise<void>;
+    act(() => { selectB = result.current.select(noteB.id); selectC = result.current.select(noteC.id); });
+    await act(async () => { selections[noteB.id].reject(new Error("échec B")); await selectB; });
+    expect(result.current.pendingSelectedId).toBe(noteC.id);
+    expect(result.current.loading).toBe(true);
+    expect(result.current.error).toBeNull();
+    await act(async () => { selections[noteC.id].resolve(noteC); await selectC; });
+    expect(result.current.selected).toEqual(noteC);
+    expect(result.current.draftContent).toBe(noteC.content);
+    expect(result.current.loading).toBe(false);
+    expect(result.current.error).toBeNull();
+  });
+
+  it("invalidates an older pending selection when a created note becomes active", async () => {
+    const selection = deferred<typeof noteB>();
+    const creation = deferred<typeof noteC>();
+    api.fetchNote.mockReturnValue(selection.promise);
+    api.createNote.mockReturnValue(creation.promise);
+    const { result } = renderHook(() => useNotes("A"));
+    await waitFor(() => expect(result.current.notes).toHaveLength(1));
+    let selecting!: Promise<void>;
+    let creating!: Promise<typeof noteC | null>;
+    act(() => {
+      selecting = result.current.select(noteB.id);
+      creating = result.current.create();
+    });
+    expect(result.current.pendingSelectedId).toBe(noteB.id);
+    await waitFor(() => expect(api.createNote).toHaveBeenCalledWith("A", { title: "Nouvelle note", content: "" }));
+
+    await act(async () => { creation.resolve(noteC); await creating; });
+    expect(result.current.selected).toEqual(noteC);
+    expect(result.current.pendingSelectedId).toBeNull();
+    expect(result.current.draftContent).toBe(noteC.content);
+
+    await act(async () => { selection.resolve(noteB); await selecting; });
+    expect(result.current.selected).toEqual(noteC);
+    expect(result.current.pendingSelectedId).toBeNull();
+    expect(result.current.draftContent).toBe(noteC.content);
   });
 
   it("does not replace note B when save A resolves late", async () => {
