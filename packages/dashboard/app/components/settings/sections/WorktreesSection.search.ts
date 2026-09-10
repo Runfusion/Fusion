@@ -59,6 +59,21 @@ export const worktreesSearchEntries: SettingsSearchEntry[] = [
   },
   {
     sectionId: "worktrees",
+
+    key: "worktreeNaming",
+    labelKey: "settings.worktrees.worktreeNamingStyle",
+    labelFallback: "Worktree Naming Style",
+    /*
+    FNXC:SettingsSearch 2026-07-15-17:35:
+    Indexed against the enabled help string. The disabled variant ("not applicable when recycling") is a transient state of one checkbox, not a second setting, so indexing it would make search results read as though recycling were on.
+    */
+    helpKey: "settings.worktrees.howToNameFreshWorktreeDirectories",
+    helpFallback: "How to name fresh worktree directories. Only applies when recycling is off. Default: random.",
+    keywords: ["folder name", "directory name", "branch naming", "ticket name", "jira", "workspace naming"],
+  },
+  {
+    sectionId: "worktrees",
+
     key: "worktreeRebaseBeforeMerge",
     labelKey: "settings.worktrees.rebaseFromRemoteBeforeMerge",
     labelFallback: " Rebase from remote before merge ",

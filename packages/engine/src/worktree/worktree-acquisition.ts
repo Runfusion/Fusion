@@ -1,11 +1,11 @@
 import { existsSync } from "node:fs";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { lstat, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { exec } from "node:child_process";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
-import { acquireWorktreePathReservation, assertWorkspaceRepoRelPath, canonicalizeWorktreePath, classifyTaskBranchOrigin, isLegacyWorkspaceWorktreeLayout, resolveEngineIncarnationId, resolveEngineNodeId, resolveWorkspaceRepoWorktreePath, resolveWorkspaceTaskWorktreeDir, workspaceWorktreeGroupSegment, WORKSPACE_GROUP_MARKER_FILENAME, type RunMutationContext, type Settings, type Task, type TaskStore, type SecretsStore, type WorkspaceConfig, type WorkspaceLeaseHandle, type WorkspaceWorktreeContext } from "@fusion/core";
-import { resolveTaskWorkingBranchWithOrigin } from "./worktree-names.js";
+import { acquireWorktreePathReservation, assertWorkspaceRepoRelPath, canonicalizeWorktreePath, classifyTaskBranchOrigin, isLegacyWorkspaceWorktreeLayout, resolveEngineIncarnationId, resolveEngineNodeId, deriveWorkspaceTaskDirSegment, resolveWorkspaceRepoWorktreePath, resolveWorkspaceTaskDirSegment, resolveWorkspaceTaskWorktreeDir, workspaceWorktreeGroupSegment, WORKSPACE_GROUP_MARKER_FILENAME, type RunMutationContext, type Settings, type Task, type TaskStore, type SecretsStore, type WorkspaceConfig, type WorkspaceLeaseHandle, type WorkspaceWorktreeContext } from "@fusion/core";
+import { generateWorktreeName, resolveTaskWorkingBranch, resolveTaskWorkingBranchWithOrigin } from "./worktree-names.js";
 import { resolveTaskWorktreePathForBackend, resolveWorktreesDir, WORKTREE_RECOVERY_DIRNAME } from "./worktree-paths.js";
 import { hydrateWorktreeDb } from "./worktree-db-hydrate.js";
 import { formatError } from "../logger.js";
@@ -508,14 +508,31 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
    */
   const freshStartPoint = baseBranch ?? await resolveIntegrationBranch(rootDir, settings, { logger: logger ?? console });
 
-  let worktreePath: string = task.worktree || await resolveTaskWorktreePathForBackend(
-    rootDir,
-    task.id.toLowerCase(),
-    settings,
-    backend,
-    branchName,
-    workspaceContext,
-  );
+  let worktreePath = task.worktree;
+  if (!worktreePath) {
+    /*
+    FNXC:WorkspaceWorktree 2026-08-24-06:11:
+    R14: this is the SECOND single-repository naming site (the first is `planTaskWorktreePath`, used
+    by scheduler dispatch and the manual-move route). It runs whenever a task reaches acquisition
+    with no pre-planned `task.worktree`, so a mode handled only in the planner would silently fall
+    through to a random name here — the same "resolved seam nobody wired" shape. Both sites resolve
+    `branch` and `task-title` through the one core derivation ladder. Unset naming keeps FN-258's
+    task-ID default.
+    */
+    const naming = settings.worktreeNaming || "task-id";
+    const worktreeName = naming === "task-id"
+      ? task.id.toLowerCase()
+      : naming === "task-title" || naming === "branch"
+        ? deriveWorkspaceTaskDirSegment({
+            taskId: task.id,
+            worktreeNaming: naming,
+            branch: branchName,
+            title: task.title,
+            description: task.description,
+          }).segment
+        : generateWorktreeName(rootDir, settings, workspaceContext);
+    worktreePath = await resolveTaskWorktreePathForBackend(rootDir, worktreeName, settings, backend, branchName, workspaceContext);
+  }
 
   // Grouped workspace paths have two container levels; native git requires the immediate parent to exist.
   if (workspaceContext && backend.kind !== "worktrunk") await mkdir(dirname(worktreePath), { recursive: true });
@@ -1946,6 +1963,172 @@ export class WorkspaceRepoAcquireBusyError extends Error {
   }
 }
 
+/*
+FNXC:WorkspaceWorktree 2026-08-24-06:10:
+R15 mints the workspace task's directory segment exactly once, at its first workspace
+acquisition, and every later resolution reads the pin instead of re-deriving. Deriving on every
+resolution would make the directory time-varying: a mid-flight branch rename or a
+`worktreeNaming` change would move the task's paths out from under its recorded
+`workspaceWorktrees[*].worktreePath` entries, and the call sites that resolve those paths would
+disagree with each other and with what is on disk. A task that already carries a pin is returned
+untouched, so this is idempotent across the per-repository loop and across re-acquisition.
+*/
+async function ensureWorkspaceTaskDirSegmentPin(input: {
+  task: Task;
+  store: TaskStore;
+  settings: Partial<Settings>;
+  /** The task's working branch read BEFORE singular routing normalization clears it (see resolveWorkspaceNamingBranch). */
+  namingBranch: string;
+  logger?: { log: (m: string) => void };
+  runContext?: RunMutationContext;
+}): Promise<Task> {
+  const existing = input.task.workspaceWorktreeDirSegment;
+  if (typeof existing === "string" && existing.length > 0) return input.task;
+  /*
+  FNXC:WorkspaceWorktree 2026-08-24-06:11:
+  R14/R16: mint through the project's `worktreeNaming` setting, after the working branch is
+  resolved, so an operator-supplied or JIRA-derived branch is the input. Sibling segments come from
+  live tasks so two branches that slug identically cannot claim one directory; an unreadable
+  sibling list degrades to "no siblings" rather than failing the acquisition, since the collision
+  check is a convenience guard and the reservation layer still refuses a duplicate path.
+  */
+  // Only a name-bearing mode can collide with a sibling, so the project-wide read is skipped for the
+  // task-id and random modes — i.e. for every project that has not opted into ticket-derived names.
+  const namesFromTask = input.settings.worktreeNaming === "branch" || input.settings.worktreeNaming === "task-title";
+  const derived = deriveWorkspaceTaskDirSegment({
+    taskId: input.task.id,
+    worktreeNaming: input.settings.worktreeNaming,
+    branch: input.namingBranch,
+    title: input.task.title,
+    description: input.task.description,
+    ...(namesFromTask ? await collectLiveSiblingClaims(input.store, input.task.id) : {}),
+  });
+  const segment = derived.segment;
+  let fallbackReason = derived.fallbackReason;
+  /*
+  FNXC:WorkspaceWorktree 2026-08-24-06:11:
+  The pin is write-ONCE, so minting it is a compare-and-set rather than a read-then-write: two
+  first acquisitions for one task (a mid-flight scope extension racing the primary dispatch, or two
+  nodes on one central database) must converge on a single directory, or one creates a checkout the
+  other cannot resolve — permanently, since the pin is never re-derived. `pinWorkspaceWorktreeDirSegment`
+  performs that CAS under the task advisory transaction lock; the loser adopts the winner's segment.
+  A store without the seam (focused test fakes) degrades to the plain write.
+  */
+  const pinCas = (input.store as Partial<TaskStore>).pinWorkspaceWorktreeDirSegment;
+  if (typeof pinCas === "function") {
+    let outcome = await pinCas.call(input.store, input.task.id, segment);
+    /*
+    FNXC:WorkspaceWorktree 2026-08-25-08:12:
+    R16: the sibling scan above cannot see a task that has not written its pin yet, so two tasks
+    deriving the same slug can reach this line together. The database settles it — the segment is a
+    project-wide unique claim — and the loser re-mints with its task id, which is unique by
+    construction. This happens BEFORE any checkout exists, so nothing on disk moves; the alternative
+    (both pins persisting) would wedge the loser permanently, because the pin never changes and its
+    path reservation would fail on every retry.
+    */
+    if (!outcome.claimed) {
+      const taskIdSegment = input.task.id.toLowerCase();
+      input.logger?.log(`${input.task.id}: workspace directory segment ${segment} is already claimed; using ${taskIdSegment}`);
+      fallbackReason = "sibling-collision";
+      /*
+      FNXC:WorkspaceWorktree 2026-08-25-08:52:
+      The fallback space is a LADDER inside this task's own id namespace, not a single value: `fn-a`,
+      then `fn-a-<hash8>`, then numbered variants. A single fixed fallback is always claimable by
+      something, and because the pin is write-once, one lost claim would wedge the task forever. Only
+      this task may occupy the namespace — derived names are refused from every sibling's `<id>-`
+      prefix — so a rung can be taken only by a legacy pin or this task's own earlier attempt, and
+      the ladder walks past it deterministically (identical order on every retry).
+      */
+      const taskIdHash = createHash("sha256").update(input.task.id).digest("hex").slice(0, 8);
+      const ladder = [taskIdSegment, `${taskIdSegment}-${taskIdHash}`, ...Array.from({ length: 8 }, (_, i) => `${taskIdSegment}-${taskIdHash}-${i + 2}`)];
+      for (const rung of ladder) {
+        outcome = await pinCas.call(input.store, input.task.id, rung);
+        if (outcome.claimed) break;
+        input.logger?.log(`${input.task.id}: workspace directory segment ${rung} is already claimed; trying the next fallback`);
+      }
+      if (!outcome.claimed) {
+        throw new Error(`Cannot pin a workspace worktree directory segment for ${input.task.id}: every fallback in its own id namespace is claimed`);
+      }
+    }
+    /*
+    FNXC:WorkspaceWorktree 2026-08-25-07:53:
+    The pin is write-once with NO rewrite path, deliberately. An earlier revision of this branch
+    tried to settle a mint race after the fact — re-pinning to the task id when a sibling turned out
+    to hold the same segment — and each attempt only narrowed the window instead of closing it: a
+    concurrent acquisition for the SAME task can adopt the segment and start building its checkout
+    before any `workspaceWorktrees` entry exists to detect, so a post-mint rewrite can always move a
+    root another writer is already using. Splitting one task across two roots is silent and
+    unrecoverable; two tasks sharing a derived name is neither.
+
+    So the collision defense is entirely PRE-mint (the sibling scan feeding the fallback ladder),
+    and the residual — two tasks whose branches slug identically minting in the same instant — is
+    left to fail loudly downstream: the second task's repository checkout hits the worktree path
+    reservation and the acquisition fails rather than quietly sharing a directory.
+    */
+    input.logger?.log(`${input.task.id}: ${outcome.minted ? "pinned" : "adopted"} workspace worktree directory segment ${outcome.segment}`);
+    if (fallbackReason && outcome.minted) {
+      await input.store.logEntry(
+        input.task.id,
+        `[worktree] workspace directory name fell back to the task id (${fallbackReason})`,
+      ).catch(() => {});
+    }
+    return outcome.task;
+  }
+  await input.store.updateTask(input.task.id, { workspaceWorktreeDirSegment: segment }, input.runContext);
+  input.logger?.log(`${input.task.id}: pinned workspace worktree directory segment ${segment}`);
+  if (fallbackReason) {
+    await input.store.logEntry(
+      input.task.id,
+      `[worktree] workspace directory name fell back to the task id (${fallbackReason})`,
+    ).catch(() => {});
+  }
+  return await input.store.getTask(input.task.id);
+}
+
+/*
+FNXC:WorkspaceWorktree 2026-08-24-06:11:
+R14: the naming input is the task's working branch, but `normalizeWorkspaceTaskRouting` clears the
+singular `task.branch` at the top of every workspace acquisition — a workspace task's branches live
+per repository. So the branch must be read from the pre-normalization row, with a recorded
+per-repository branch as the fallback for a task that reaches acquisition with its singular field
+already cleared. Reading it after normalization would silently name every checkout `fusion/<task-id>`
+and make the mode look broken.
+*/
+function resolveWorkspaceNamingBranch(task: Task): string {
+  if (task.branch) return task.branch;
+  const recorded = Object.values(task.workspaceWorktrees ?? {})
+    .map((entry) => entry?.branch)
+    .find((branch): branch is string => typeof branch === "string" && branch.length > 0);
+  return recorded ?? resolveTaskWorkingBranch(task);
+}
+
+/*
+Pinned segments of every non-archived sibling, so a derived name cannot collide with a directory
+another task owns. A `done` task is deliberately INCLUDED: its checkout survives until archive
+cleanup removes it, so reusing its segment would put two tasks in one directory. Archived rows are
+already excluded by the read, and the collision penalty is only a fallback to the task id.
+*/
+async function collectLiveSiblingClaims(
+  store: TaskStore,
+  taskId: string,
+): Promise<{ siblingSegments: string[]; siblingTaskIds: string[] }> {
+  try {
+    if (typeof store.listTasks !== "function") return { siblingSegments: [], siblingTaskIds: [] };
+    const siblings = (await store.listTasks({ slim: true, includeArchived: false }))
+      .filter((sibling) => sibling.id !== taskId);
+    return {
+      siblingSegments: siblings
+        .map((sibling) => sibling.workspaceWorktreeDirSegment)
+        .filter((segment): segment is string => typeof segment === "string" && segment.length > 0),
+      // Reserving other task ids keeps every task's own fallback claimable — see the note on
+      // `siblingTaskIds` in deriveWorkspaceTaskDirSegment.
+      siblingTaskIds: siblings.map((sibling) => sibling.id),
+    };
+  } catch {
+    return { siblingSegments: [], siblingTaskIds: [] };
+  }
+}
+
 /**
  * FNXC:WorkspaceRootRouting 2026-08-19-12:15:
  * A workspace task needs a complete durable per-repository worktree set before any planning,
@@ -1961,6 +2144,13 @@ export async function acquireWorkspaceTaskWorktrees(
     throw new Error(`Workspace task ${opts.task.id} has no configured repositories`);
   }
 
+  /*
+  FNXC:WorkspaceWorktree 2026-08-24-06:11:
+  The naming branch must be read BEFORE `normalizeWorkspaceTaskRouting` clears the singular
+  `task.branch`, but only a task with no pin will ever consume it — so an already-pinned task (every
+  re-acquisition, and every repository after the first) skips this read entirely.
+  */
+  const preNormalizationTask = opts.task.workspaceWorktreeDirSegment ? undefined : await opts.store.getTask(opts.task.id);
   let current = await normalizeWorkspaceTaskRouting(opts.store, opts.task.id);
   const hasLandedRepository = Object.values(current.workspaceWorktrees ?? {}).some((entry) => Boolean(entry.landedSha));
   const currentRepositories = [...new Set((current.repositoryScope?.repositories ?? []).map((repo) => repo.trim()).filter(Boolean))].sort();
@@ -1984,7 +2174,15 @@ export async function acquireWorkspaceTaskWorktrees(
   }
   // Validate a durable remediation target without allowing it to choose session cwd.
   resolveWorkspaceReviewRemediationRepository(current, repoRelPaths);
-  const taskWorktreeDir = resolveWorkspaceTaskWorktreeDir(opts.workspaceRootDir, opts.settings, current.id);
+  current = await ensureWorkspaceTaskDirSegmentPin({
+    task: current,
+    namingBranch: resolveWorkspaceNamingBranch(preNormalizationTask ?? opts.task),
+    store: opts.store,
+    settings: opts.settings,
+    logger: opts.logger,
+    runContext: opts.runContext,
+  });
+  const taskWorktreeDir = resolveWorkspaceTaskWorktreeDir(opts.workspaceRootDir, opts.settings, resolveWorkspaceTaskDirSegment(current));
   const legacyLayout = isLegacyWorkspaceWorktreeLayout(current, taskWorktreeDir);
   if (!legacyLayout) await mkdir(taskWorktreeDir, { recursive: true });
 

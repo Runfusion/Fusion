@@ -1711,6 +1711,9 @@ export class InProcessRuntime
       if (this.mergeRequester) {
         this.executor.setMergeRequester(this.mergeRequester);
       }
+      // FNXC:WorkspaceLateAcquire 2026-08-24-06:11: KTD16 — re-apply the late-bound merge providers at executor construction; ProjectEngine registers them before start() creates the executor.
+      if (this.mergePendingProvider) this.executor.setMergePendingProvider(this.mergePendingProvider);
+      if (this.activeMergeTaskIdProvider) this.executor.setActiveMergeTaskIdProvider(this.activeMergeTaskIdProvider);
 
       await yieldEventLoop();
 
@@ -2524,6 +2527,8 @@ export class InProcessRuntime
 
   setActiveMergeTaskIdProvider(getActiveMergeTaskId: () => string | null): void {
     this.activeMergeTaskIdProvider = getActiveMergeTaskId;
+    // FNXC:WorkspaceLateAcquire 2026-08-24-06:11: KTD16 — forward to the executor too; the workspace late-acquire tool reads it through the executor deps bag.
+    this.executor?.setActiveMergeTaskIdProvider?.(getActiveMergeTaskId);
   }
 
   setActiveMergeStartedAtMsProvider(getActiveMergeStartedAtMs: () => number | null): void {
@@ -2536,6 +2541,8 @@ export class InProcessRuntime
 
   setMergePendingProvider(isMergePending: (taskId: string) => boolean | Promise<boolean>): void {
     this.mergePendingProvider = isMergePending;
+    // FNXC:WorkspaceLateAcquire 2026-08-24-06:11: KTD16 — an optional parameter no caller passes is indistinguishable from no change, so wire it at the construction site AND here.
+    this.executor?.setMergePendingProvider?.(isMergePending);
   }
 
   /**

@@ -116,6 +116,8 @@ import {
   PATCHNODE_ENTRIES_VERSION,
   TASK_PLANNING_FAILURE_VERSION,
   CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION,
+  WORKSPACE_WORKTREE_DIR_SEGMENT_VERSION,
+  WORKSPACE_WORKTREE_DIR_SEGMENT_UNIQUE_VERSION,
 } from "../../postgres/schema-applier.js";
 import { ProjectPartitionRekeyError, rekeyFallbackProjectPartition } from "../../postgres/migration-stamping.js";
 import type { PluginSchemaInitHook } from "../../postgres/plugin-schema-hook.js";
@@ -171,8 +173,11 @@ describe("schema-applier: immutable migration identities", () => {
     expect(PATCHNODE_ENTRIES_VERSION).toBe("0071");
     expect(TASK_PLANNING_FAILURE_VERSION).toBe("0072");
     expect(CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION).toBe("0073");
-    expect(Number(SCHEMA_BASELINE_VERSION)).toBeGreaterThanOrEqual(Number(CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION));
-    expect(SCHEMA_BASELINE_VERSION).toBe("0073");
+    /* FNXC:WorkspaceWorktree 2026-09-09-16:30: renumbered 0072->0074 / 0073->0075 because origin/main released 0072/0073 while this branch was open. */
+    expect(WORKSPACE_WORKTREE_DIR_SEGMENT_VERSION).toBe("0074");
+    expect(WORKSPACE_WORKTREE_DIR_SEGMENT_UNIQUE_VERSION).toBe("0075");
+    expect(Number(SCHEMA_BASELINE_VERSION)).toBeGreaterThanOrEqual(Number(WORKSPACE_WORKTREE_DIR_SEGMENT_UNIQUE_VERSION));
+    expect(SCHEMA_BASELINE_VERSION).toBe("0075");
   });
 
   it("keeps monitor and approval isolation assigned to version 0003", () => {

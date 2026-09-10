@@ -3,6 +3,7 @@ import type { GitRemoteDetailed } from "../../../api";
 import type { useWorktrunkInstallStatus } from "../../../hooks/useWorktrunkInstallStatus";
 import { SettingsToggleRow } from "../SettingsToggleRow";
 import { SettingsNumberRow } from "../SettingsNumberRow";
+import { SettingsSelectRow } from "../SettingsSelectRow";
 import { SettingsTextRow } from "../SettingsTextRow";
 import { SettingsHelpTip } from "../SettingsHelpTip";
 import type { SectionBaseProps, SettingsFormState } from "./context";
@@ -145,7 +146,38 @@ export function WorktreesSection({ form, setForm, gitRemotes, worktrunkInstall, 
           <SettingsHelpTip settingKey="executorAllowSiblingBranchRename">{t("settings.worktrees.discouragedThisRestoresTheLegacyBehaviorWhereA", " Discouraged. This restores the legacy behavior where a live ")}<code>fusion/&lt;task-id&gt;</code>{t("settings.worktrees.branchCollisionSilentlyForksWorkOntoSiblingBranches", " branch collision silently forks work onto sibling branches like ")}<code>-2</code>{t("settings.worktrees.andCanHidePriorCommitsFromTheDefault", " and can hide prior commits from the default recovery flow. Default: disabled. ")}</SettingsHelpTip>
         </div>
       </div>
-      {/* FNXC:Worktrees 2026-08-29-08:57: FN-258 standardizes task-ID worktree directories, so naming and recycling are no longer operator-configurable. */}
+      {/*
+      FNXC:WorkspaceWorktree 2026-09-04-04:42:
+      FN-258 removed operator-configurable naming; this PR restores the existing select with a
+      branch/ticket mode so workspace checkouts can carry the ticket they serve. Recycle worktrees
+      stayed deleted, so the select is always enabled.
+      */}
+      <SettingsSelectRow
+        descriptor={{
+          key: "worktreeNaming",
+          label: t("settings.worktrees.worktreeNamingStyle", "Worktree Naming Style"),
+          help: t("settings.worktrees.howToNameFreshWorktreeDirectories", "How to name fresh worktree directories. \"Task ID\" pins each task to its own worktree directory for its whole lifecycle. \"Branch / ticket\" names the directory after the working branch, dropping its namespace, so a JIRA-derived branch names the checkout after its ticket; it is the only mode that also names workspace-project checkouts. Default: task ID."),
+          scope: "project",
+          options: [
+            { value: "random", label: t("settings.worktrees.randomNamesEGSwiftFalcon", "Random names (e.g., swift-falcon)") },
+            { value: "task-id", label: t("settings.worktrees.taskIDEGFN042", "Task ID (e.g., FN-042)") },
+            { value: "task-title", label: t("settings.worktrees.taskTitleEGFixLoginBug", "Task title (e.g., fix-login-bug)") },
+            /*
+            FNXC:WorkspaceWorktree 2026-08-24-06:11:
+            R14: "Branch / ticket" is the mode that makes a workspace project's checkouts carry the
+            ticket they serve — every other mode leaves a workspace task on its task id.
+            */
+            { value: "branch", label: t("settings.worktrees.branchTicketEGPRD1234MySlug", "Branch / ticket (e.g., prd-1234-my-slug)") },
+          ],
+        }}
+        value={typeof form.worktreeNaming === "string" ? form.worktreeNaming : "task-id"}
+        onChange={(v: string | null) => {
+          const worktreeNaming: "random" | "task-id" | "task-title" | "branch" =
+            v === "random" || v === "task-id" || v === "task-title" || v === "branch" ? v : "task-id";
+          setForm((f) => ({ ...f, worktreeNaming }));
+        }}
+      />
+
       <div className="form-group">
         {/* FNXC:SettingsHelp 2026-07-15-21:40: The help swaps to the worktrunk-disabled explanation, so the tip is what tells an operator why the input is greyed out; it stays on the same "?" as every other row rather than becoming a second inline idiom. */}
         <div className="settings-field-label-row">

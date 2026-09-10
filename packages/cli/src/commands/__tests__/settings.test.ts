@@ -103,7 +103,7 @@ describe("settings commands", () => {
     expect(VALID_SETTINGS).not.toContain("runStepsInNewSessions");
     expect(VALID_SETTINGS).not.toContain("maxParallelSteps");
     expect(VALID_SETTINGS).not.toContain("requirePlanApproval");
-    expect(VALID_SETTINGS).not.toContain("worktreeNaming");
+    expect(VALID_SETTINGS).toContain("worktreeNaming");
     expect(VALID_SETTINGS).not.toContain("recycleWorktrees");
     expect(parseValue("ntfyEnabled", "yes")).toBe(true);
     expect(parseValue("maxConcurrent", "4")).toBe(4);

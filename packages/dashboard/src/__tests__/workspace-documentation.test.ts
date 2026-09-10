@@ -37,6 +37,7 @@ describe("workspace documentation contract", () => {
       "## Archiving and cleanup",
       "## Limitations and known sharp edges",
       "## Troubleshooting",
+      "### Late repository acquisition",
     ]) {
       expect(workspaceGuide).toContain(heading);
     }
@@ -66,6 +67,15 @@ describe("workspace documentation contract", () => {
       ["task:reconcile-workspace-partial-land", selfHealingSource],
       ["/projects/detect-workspace", projectRoutesSource],
       ["workspaceMode", settingsScopeSource],
+      /*
+      FNXC:WorkspaceLateAcquire 2026-08-24-06:11:
+      The late-acquisition rules changed from a flat refusal to two tiers, and the guide now states
+      the full-re-review price of the permitted case. Pin the audit literal and the refusal reason
+      codes so the documented contract and the classifier cannot drift apart.
+      */
+      ["task:workspace-scope-extended-post-review", agentToolsSource],
+      ["no-code-review-route", agentToolsSource],
+      ["workspace-review-required", agentToolsSource],
     ]) {
       expect(workspaceGuide).toContain(surface);
       expect(source).toContain(surface);
