@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import type { ConversationMentionItem, FileSearchItem, TaskSearchItem } from "../hooks/useFileMention";
 import { getDisplayDirname } from "../utils/pathDisplay";
 import "./FileMentionPopup.css";
+import { AlphaListBox, AlphaListBoxItem } from "./hero-ui";
 
 import type { ReactNode } from "react";
 
@@ -83,15 +84,17 @@ export function FileMentionPopup({
           {hasTasks && (
             <div className="file-mention-popup-group">
               <div className="file-mention-popup-group-header">{t("fileMention.taskHeader", "Tasks")}</div>
-              <ul className="file-mention-popup-list" role="listbox" aria-label={t("fileMention.taskMatches", "Task matches")}>
+              <AlphaListBox legacyAs="ul" className="file-mention-popup-list" aria-label={t("fileMention.taskMatches", "Task matches")}>
                 {tasks.map((task, index) => {
                   const rowIndex = getTaskRowIndex(index);
                   return (
-                    <li
+                    <AlphaListBoxItem
+                      legacyAs="li"
                       key={task.id}
+                      id={task.id}
+                      textValue={`${task.id} ${task.title}`}
                       className={`file-mention-popup-item${rowIndex === selectedIndex ? " file-mention-popup-item--selected" : ""}`}
                       onClick={() => onSelectTask(task)}
-                      role="option"
                       aria-selected={rowIndex === selectedIndex}
                       data-testid={`task-mention-item-${rowIndex}`}
                     >
@@ -109,25 +112,27 @@ export function FileMentionPopup({
                         </div>
                         <span className="file-mention-popup-item-path">{task.title}</span>
                       </div>
-                    </li>
+                    </AlphaListBoxItem>
                   );
                 })}
-              </ul>
+              </AlphaListBox>
             </div>
           )}
 
           {hasConversations && (
             <div className="file-mention-popup-group">
               <div className="file-mention-popup-group-header">{t("fileMention.conversationHeader", "Conversations")}</div>
-              <ul className="file-mention-popup-list" role="listbox" aria-label={t("fileMention.conversationMatches", "Conversation matches")}>
+              <AlphaListBox legacyAs="ul" className="file-mention-popup-list" aria-label={t("fileMention.conversationMatches", "Conversation matches")}>
                 {conversations.map((conversation, index) => {
                   const rowIndex = getConversationRowIndex(tasks.length, index);
                   return (
-                    <li
+                    <AlphaListBoxItem
+                      legacyAs="li"
                       key={conversation.id}
+                      id={conversation.id}
+                      textValue={conversation.title || conversation.id}
                       className={`file-mention-popup-item${rowIndex === selectedIndex ? " file-mention-popup-item--selected" : ""}`}
                       onClick={() => onSelectConversation?.(conversation)}
-                      role="option"
                       aria-selected={rowIndex === selectedIndex}
                       data-testid={`conversation-mention-item-${rowIndex}`}
                     >
@@ -140,27 +145,29 @@ export function FileMentionPopup({
                           {conversation.title || t("fileMention.untitledConversation", "Untitled conversation")}
                         </span>
                       </div>
-                    </li>
+                    </AlphaListBoxItem>
                   );
                 })}
-              </ul>
+              </AlphaListBox>
             </div>
           )}
 
           {hasFiles && (
             <div className="file-mention-popup-group">
               <div className="file-mention-popup-group-header">{t("fileMention.fileHeader", "Files")}</div>
-              <ul className="file-mention-popup-list" role="listbox" aria-label={t("fileMention.fileMatches", "File matches")}>
+              <AlphaListBox legacyAs="ul" className="file-mention-popup-list" aria-label={t("fileMention.fileMatches", "File matches")}>
                 {files.map((file, index) => {
                   const rowIndex = getFileRowIndex(tasks.length, conversations.length, index);
                   const dirPath = getDisplayDirname(file.path);
 
                   return (
-                    <li
+                    <AlphaListBoxItem
+                      legacyAs="li"
                       key={file.path}
+                      id={file.path}
+                      textValue={file.name}
                       className={`file-mention-popup-item${rowIndex === selectedIndex ? " file-mention-popup-item--selected" : ""}`}
                       onClick={() => onSelectFile(file)}
-                      role="option"
                       aria-selected={rowIndex === selectedIndex}
                       data-testid={`file-mention-item-${rowIndex}`}
                     >
@@ -173,10 +180,10 @@ export function FileMentionPopup({
                           <span className="file-mention-popup-item-path">{dirPath}</span>
                         )}
                       </div>
-                    </li>
+                    </AlphaListBoxItem>
                   );
                 })}
-              </ul>
+              </AlphaListBox>
             </div>
           )}
         </div>

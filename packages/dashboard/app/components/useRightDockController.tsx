@@ -204,6 +204,7 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
 
   const renderProps = useMemo<OverflowViewRenderProps>(() => ({
     projectId: input.projectId,
+    experimentalFeatures: input.visibilityOptions.experimentalFeatures,
     addToast: input.addToast,
     settingsLoaded: input.settingsLoaded,
     readinessVersion: input.researchReadinessVersion,

@@ -2218,6 +2218,12 @@ The `skills` object contains detailed import outcomes for each skill from the pa
 
 ## Styling Guide
 
+### HeroUI Alpha boundary
+
+HeroUI v3 is enabled only when `experimentalFeatures.alphaUpdates` is true and only inside the Board and Chat surface boundaries. This includes the kept-alive Board and main Chat, Quick Chat, popped-out and docked Chat, plus task and planning Chat; List, navigation, Settings, plugin-owned content, and non-Chat Task Detail remain on the stable presentation.
+
+Within those boundaries, use the native HeroUI component whenever it provides the required control or surface. Fusion-owned CSS is limited to layout, token mapping, kanban drag behavior, transcript virtualization/streaming, and other behavior without a HeroUI equivalent. Shared adaptive primitives must keep their historical native rendering outside an active Alpha surface, including when reused by List or Mailbox.
+
 The dashboard's CSS is split into a global stylesheet (`packages/dashboard/app/styles.css`) and per-component files (`packages/dashboard/app/components/ComponentName.css`). Each `ComponentName.tsx` imports its stylesheet at the top.
 
 **Rule:** New CSS for a component goes in `app/components/ComponentName.css`, NOT `styles.css`. Only design tokens, primitives (`.btn`, `.card`, `.modal`, `.form-input`), and cross-component `@media` overrides belong in the global file.

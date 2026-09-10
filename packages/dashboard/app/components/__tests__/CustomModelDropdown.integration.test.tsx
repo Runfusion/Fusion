@@ -3,6 +3,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { CustomModelDropdown } from "../CustomModelDropdown";
 import type { ModelInfo } from "../../api";
+import { HeroUIAlphaProvider, HeroUIAlphaSurface } from "../../context/HeroUIAlphaContext";
 
 const MOCK_MODELS: ModelInfo[] = [
   { provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", reasoning: true, contextWindow: 200000 },
@@ -138,6 +139,44 @@ describe("CustomModelDropdown ProviderIcon Integration", () => {
     const kimiIcon = kimiIcons[0];
     expect(kimiIcon).toHaveAttribute("aria-label", "Kimi");
     expect(kimiIcon.querySelector("path")).toHaveAttribute("fill", "var(--provider-kimi)");
+  });
+
+  it("keeps Alpha model selection and visibly aligned favorite actions as keyboard siblings", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const onToggleFavorite = vi.fn();
+    const onToggleModelFavorite = vi.fn();
+    render(<HeroUIAlphaProvider enabled><HeroUIAlphaSurface><CustomModelDropdown {...defaultProps} onChange={onChange} onToggleFavorite={onToggleFavorite} onToggleModelFavorite={onToggleModelFavorite} /></HeroUIAlphaSurface></HeroUIAlphaProvider>);
+    await user.click(screen.getByLabelText("Test Model"));
+    const option = screen.getByRole("option", { name: /GPT-4o/ });
+    const favorite = screen.getByRole("button", { name: "Add GPT-4o to favorites" });
+    expect(screen.getByRole("option", { name: /GPT-4o/ })).not.toContainElement(favorite);
+    expect(favorite.closest(".model-combobox-alpha-action-row")).toHaveTextContent("GPT-4o");
+    const providerFavorite = screen.getByRole("button", { name: "Add openai to favorites" });
+    expect(providerFavorite.closest(".model-combobox-alpha-action-row")).toHaveTextContent("openai");
+    const listbox = screen.getByRole("listbox", { name: "Test Model" });
+    listbox.focus();
+    await user.tab();
+    const anthropicFavorite = screen.getByRole("button", { name: "Add anthropic to favorites" });
+    expect(anthropicFavorite).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(onToggleFavorite).toHaveBeenCalledWith("anthropic");
+    expect(onToggleModelFavorite).not.toHaveBeenCalled();
+    expect(onChange).not.toHaveBeenCalled();
+
+    favorite.focus();
+    await user.keyboard("{Enter}");
+    expect(onToggleModelFavorite).toHaveBeenCalledWith("openai/gpt-4o");
+    expect(onToggleFavorite).toHaveBeenCalledTimes(1);
+    expect(onChange).not.toHaveBeenCalled();
+
+    const collapse = screen.getByRole("button", { name: "Collapse openai" });
+    collapse.focus();
+    await user.keyboard("{Enter}");
+    expect(collapse).toHaveAttribute("aria-expanded", "false");
+    expect(onToggleFavorite).toHaveBeenCalledTimes(1);
+    expect(onToggleModelFavorite).toHaveBeenCalledTimes(1);
+    expect(onChange).not.toHaveBeenCalled();
   });
 
   it("uses explicit icon/text layout hooks for favorited model rows", async () => {

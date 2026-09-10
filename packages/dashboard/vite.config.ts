@@ -1,5 +1,6 @@
 import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
 import { dirname, resolve } from "node:path";
 import { mkdirSync, writeFileSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { execSync } from "node:child_process";
@@ -93,6 +94,36 @@ function emitVersionJson(): Plugin {
   };
 }
 
+/*
+FNXC:HeroUIAlphaStyles 2026-09-10-18:19:
+HeroUI component CSS must be compiled inside the Board/Chat CSS scope rather than imported as its global bundle. Inline only upstream component modules at transform time; Tailwind's reference-only theme and utility graph resolves every @apply without emitting global resets, tokens, or utility selectors.
+
+FNXC:HeroUIAlphaStyles 2026-09-10-18:49:
+The official Tailwind Vite compiler must run after HeroUI source expansion. Reference directives provide compile-time definitions only, while the emitted component declarations remain inside the Alpha Board/Chat scope.
+*/
+function heroUIAlphaScopedStyles(): Plugin {
+  const stylesRoot = resolve(__dirname, "node_modules/@heroui/styles/dist");
+  const inlineImports = (file: string, seen = new Set<string>()): string => {
+    if (seen.has(file)) return "";
+    seen.add(file);
+    const source = readFileSync(file, "utf8");
+    return source.replace(/@import\s+["'](\.[^"']+)["'](?:\s+layer\([^)]*\))?\s*;/g, (_match, specifier: string) => {
+      const candidate = resolve(dirname(file), specifier.endsWith(".css") ? specifier : `${specifier}.css`);
+      return inlineImports(candidate, seen);
+    });
+  };
+  const scopedSource = inlineImports(resolve(stylesRoot, "components/index.css"));
+
+  return {
+    name: "fusion-heroui-alpha-scoped-styles",
+    enforce: "pre",
+    transform(code, id) {
+      if (!id.replaceAll("\\", "/").endsWith("/app/hero-ui-alpha.css")) return null;
+      return code.replace("/* @heroui-alpha-scoped-components */", scopedSource);
+    },
+  };
+}
+
 function ensureThemeDataStylesheetOrder(): Plugin {
   return {
     name: "fusion-theme-data-link-order",
@@ -117,7 +148,7 @@ function ensureThemeDataStylesheetOrder(): Plugin {
 
 export default defineConfig({
   root: "app",
-  plugins: [react(), ensureThemeDataStylesheetOrder(), emitVersionJson()],
+  plugins: [heroUIAlphaScopedStyles(), tailwindcss(), react(), ensureThemeDataStylesheetOrder(), emitVersionJson()],
   define: {
     __BUILD_VERSION__: JSON.stringify(buildVersion),
   },

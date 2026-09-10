@@ -27,6 +27,7 @@
  * active option; outside-click closes.
  */
 import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { AlphaButton, AlphaInput, AlphaListBox, AlphaListBoxItem, AlphaPopoverSurface } from "./hero-ui";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { ChevronDown } from "lucide-react";
@@ -146,7 +147,7 @@ export function WorkflowOptionalStepsDropdown({
 
   return (
     <div className="wf-optional-steps-dropdown">
-      <button
+      <AlphaButton
         ref={triggerRef}
         type="button"
         id={labelId}
@@ -163,27 +164,27 @@ export function WorkflowOptionalStepsDropdown({
       >
         <span>{triggerLabel}</span>
         <ChevronDown size={12} aria-hidden />
-      </button>
+      </AlphaButton>
 
       {isOpen &&
         position &&
         createPortal(
-          <div
+          <AlphaPopoverSurface
             ref={panelRef}
+            triggerRef={triggerRef}
+            onClose={() => setIsOpen(false)}
             className="wf-optional-steps-dropdown-panel"
-            role="listbox"
-            aria-multiselectable="true"
-            aria-label={t("workflowOptionalSteps.title", "Optional steps")}
-            data-testid="wf-optional-steps-dropdown-panel"
             style={{ top: position.top, left: position.left, minWidth: position.width }}
             onKeyDown={onPanelKeyDown}
           >
+            <AlphaListBox data-testid="wf-optional-steps-dropdown-panel" aria-label={t("workflowOptionalSteps.title", "Optional steps")} aria-multiselectable="true">
             {steps.map((step, i) => {
               const checked = enabledIds.includes(step.templateId);
               return (
-                <div
+                <AlphaListBoxItem
                   key={step.templateId}
-                  role="option"
+                  id={step.templateId}
+                  textValue={step.name}
                   aria-checked={checked}
                   tabIndex={i === activeIndex ? 0 : -1}
                   ref={(el) => {
@@ -193,7 +194,7 @@ export function WorkflowOptionalStepsDropdown({
                   data-testid={`wf-optional-steps-dropdown-option-${step.templateId}`}
                   onClick={() => onToggle(step.templateId)}
                 >
-                  <input
+                  <AlphaInput
                     type="checkbox"
                     checked={checked}
                     tabIndex={-1}
@@ -209,10 +210,11 @@ export function WorkflowOptionalStepsDropdown({
                       <span className="wf-optional-steps-dropdown-option-desc">{step.description}</span>
                     )}
                   </div>
-                </div>
+                </AlphaListBoxItem>
               );
             })}
-          </div>,
+            </AlphaListBox>
+          </AlphaPopoverSurface>,
           document.body,
         )}
     </div>

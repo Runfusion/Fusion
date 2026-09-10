@@ -47,6 +47,7 @@ export type OverflowViewKey =
   | `plugin:${string}:${string}`;
 
 export interface OverflowViewFeatureState {
+  alphaUpdates?: boolean;
   insights?: boolean;
   memoryView?: boolean;
   devServerView?: boolean;
@@ -57,6 +58,7 @@ export interface OverflowViewFeatureState {
 
 export interface OverflowViewRenderProps {
   projectId?: string;
+  experimentalFeatures?: OverflowViewFeatureState;
   /** Per-task resolved column traits, threaded from App via useRightDockController. */
   columnFlagsByTaskId?: ReadonlyMap<string, { complete?: boolean; countsTowardWip?: boolean; mergeBlocker?: boolean; humanReview?: boolean; intake?: boolean; hold?: boolean }>;
   /*
@@ -213,6 +215,7 @@ export const STATIC_OVERFLOW_VIEW_ENTRIES: readonly OverflowViewEntry[] = [
       <ChatView
         projectId={props.projectId}
         addToast={props.addToast}
+        experimentalFeatures={{ ...(props.experimentalFeatures ?? {}) }}
         onOpenSessionInNewWindow={props.onOpenSessionInNewWindow}
         compactLayout={props.surface === "dock" && (props.dockWidth ?? RIGHT_DOCK_CHAT_COMPACT_MAX_WIDTH) <= RIGHT_DOCK_CHAT_COMPACT_MAX_WIDTH}
       />,

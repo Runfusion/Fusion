@@ -1,4 +1,6 @@
 import "./WorkflowSwitcher.css";
+import { AlphaButton, AlphaListBox, AlphaListBoxItem, AlphaPopoverSurface } from "./hero-ui";
+import { useHeroUIAlpha } from "../context/HeroUIAlphaContext";
 
 import { ChevronDown, Pencil, Plus } from "lucide-react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
@@ -93,6 +95,7 @@ function getWorkflowIconValue(workflow: WorkflowSwitcherAggregateOption | BoardW
  */
 export function WorkflowSwitcher({ workflows, value, onChange, counts, aggregateOption, onOpen, label: labelProp, onEditWorkflow, onCreateWorkflow }: WorkflowSwitcherProps) {
   const { t } = useTranslation("app");
+  const heroUIAlpha = useHeroUIAlpha();
   const label = labelProp ?? t("workflowSwitcher.label", "Workflow");
   const planLabel = t("workflowSwitcher.plan", "Plan");
   const progressLabel = t("workflowSwitcher.progress", "Progress");
@@ -321,12 +324,12 @@ export function WorkflowSwitcher({ workflows, value, onChange, counts, aggregate
 
   const dropdown = isOpen && portalRoot && dropdownPosition
     ? createPortal(
-      <div
+      <AlphaPopoverSurface
         ref={dropdownRef}
+        triggerRef={triggerRef}
+        onClose={() => setIsOpen(false)}
         id={listboxId}
         className="workflow-switcher-menu"
-        role="listbox"
-        aria-label={label}
         style={{
           top: dropdownPosition.top,
           left: dropdownPosition.left,
@@ -334,56 +337,89 @@ export function WorkflowSwitcher({ workflows, value, onChange, counts, aggregate
           maxHeight: dropdownPosition.maxHeight,
         }}
       >
-        <div ref={listRef} className="workflow-switcher-options">
-          {switcherOptions.map((workflow, index) => {
-            const workflowCounts = getCounts(counts, workflow.id);
-            const isSelected = workflow.id === selectedWorkflow.id;
-            const isHighlighted = index === highlightedIndex;
-            const isAggregateOption = aggregateOption?.id === workflow.id;
-            return (
-              <div
-                key={workflow.id}
-                className={`workflow-switcher-option-row${isSelected ? " workflow-switcher-option-row--selected" : ""}${isHighlighted ? " workflow-switcher-option-row--highlighted" : ""}`}
-                onMouseEnter={() => setHighlightedIndex(index)}
-              >
-                <button
-                  type="button"
-                  role="option"
-                  aria-selected={isSelected}
-                  data-index={index}
-                  data-testid={`workflow-switcher-option-${workflow.id}`}
-                  className="workflow-switcher-option"
-                  onClick={() => selectWorkflow(workflow.id)}
-                >
-                  <span className="workflow-switcher-option-label">
-                    <WorkflowIcon workflowId={workflow.id} icon={getWorkflowIconValue(workflow)} decorative />
-                    <span className="workflow-switcher-option-name">{workflow.name}</span>
-                  </span>
-                  {renderCountBadges(workflowCounts, "option")}
-                  {renderAccessibleCounts(workflowCounts)}
-                </button>
-                {onEditWorkflow && !isAggregateOption ? (
-                  <button
+        {heroUIAlpha ? (
+          <div
+            ref={listRef}
+            className="workflow-switcher-options workflow-switcher-options--alpha"
+            style={{ width: dropdownPosition.width, maxHeight: dropdownPosition.maxHeight }}
+          >
+            {/*
+            FNXC:HeroUIAlphaCollections 2026-09-10-20:30:
+            Alpha exposes every workflow as one HeroUI listbox so native arrow navigation crosses rows. Edit actions stay in a sibling rail, outside every option, and remain reachable by Tab without creating nested interactive options.
+            */}
+            <AlphaListBox aria-label={label} className="workflow-switcher-option-collection">
+              {switcherOptions.map((workflow, index) => {
+                const workflowCounts = getCounts(counts, workflow.id);
+                const isSelected = workflow.id === selectedWorkflow.id;
+                const isHighlighted = index === highlightedIndex;
+                return (
+                  <AlphaListBoxItem
+                    key={workflow.id}
+                    legacyAs="button"
+                    id={workflow.id}
+                    textValue={workflow.name}
+                    aria-selected={isSelected}
+                    data-index={index}
+                    data-testid={`workflow-switcher-option-${workflow.id}`}
+                    className={`workflow-switcher-option workflow-switcher-option-row${isSelected ? " workflow-switcher-option-row--selected" : ""}${isHighlighted ? " workflow-switcher-option-row--highlighted" : ""}`}
+                    onMouseEnter={() => setHighlightedIndex(index)}
+                    onClick={() => selectWorkflow(workflow.id)}
+                  >
+                    <span className="workflow-switcher-option-label">
+                      <WorkflowIcon workflowId={workflow.id} icon={getWorkflowIconValue(workflow)} decorative />
+                      <span className="workflow-switcher-option-name">{workflow.name}</span>
+                    </span>
+                    {renderCountBadges(workflowCounts, "option")}
+                    {renderAccessibleCounts(workflowCounts)}
+                  </AlphaListBoxItem>
+                );
+              })}
+            </AlphaListBox>
+            {onEditWorkflow ? (
+              <div className="workflow-switcher-edit-rail" aria-label={editWorkflowLabel}>
+                {switcherOptions.map((workflow) => aggregateOption?.id === workflow.id ? <span key={workflow.id} /> : (
+                  <AlphaButton
+                    key={workflow.id}
                     type="button"
                     className="btn btn-icon btn-sm workflow-switcher-edit"
                     data-testid={`workflow-switcher-edit-${workflow.id}`}
-                    aria-label={editWorkflowLabel}
+                    aria-label={`${editWorkflowLabel}: ${workflow.name}`}
                     title={editWorkflowLabel}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      handleEditWorkflow(workflow.id);
-                    }}
+                    onClick={() => handleEditWorkflow(workflow.id)}
                   >
                     <Pencil aria-hidden="true" />
-                  </button>
-                ) : null}
+                  </AlphaButton>
+                ))}
               </div>
-            );
-          })}
-        </div>
+            ) : null}
+          </div>
+        ) : (
+          <AlphaListBox
+            ref={listRef}
+            className="workflow-switcher-options"
+            aria-label={label}
+            style={{ width: dropdownPosition.width, maxHeight: dropdownPosition.maxHeight }}
+          >
+            {switcherOptions.map((workflow, index) => {
+              const workflowCounts = getCounts(counts, workflow.id);
+              const isSelected = workflow.id === selectedWorkflow.id;
+              const isHighlighted = index === highlightedIndex;
+              const isAggregateOption = aggregateOption?.id === workflow.id;
+              return (
+                <div key={workflow.id} className={`workflow-switcher-option-row${isSelected ? " workflow-switcher-option-row--selected" : ""}${isHighlighted ? " workflow-switcher-option-row--highlighted" : ""}`} onMouseEnter={() => setHighlightedIndex(index)}>
+                  <AlphaListBoxItem legacyAs="button" id={workflow.id} textValue={workflow.name} aria-selected={isSelected} data-index={index} data-testid={`workflow-switcher-option-${workflow.id}`} className="workflow-switcher-option" onClick={() => selectWorkflow(workflow.id)}>
+                    <span className="workflow-switcher-option-label"><WorkflowIcon workflowId={workflow.id} icon={getWorkflowIconValue(workflow)} decorative /><span className="workflow-switcher-option-name">{workflow.name}</span></span>
+                    {renderCountBadges(workflowCounts, "option")}{renderAccessibleCounts(workflowCounts)}
+                  </AlphaListBoxItem>
+                  {onEditWorkflow && !isAggregateOption ? <AlphaButton type="button" className="btn btn-icon btn-sm workflow-switcher-edit" data-testid={`workflow-switcher-edit-${workflow.id}`} aria-label={editWorkflowLabel} title={editWorkflowLabel} onClick={(event) => { event.stopPropagation(); handleEditWorkflow(workflow.id); }}><Pencil aria-hidden="true" /></AlphaButton> : null}
+                </div>
+              );
+            })}
+          </AlphaListBox>
+        )}
         {onCreateWorkflow ? (
           <div className="workflow-switcher-footer">
-            <button
+            <AlphaButton
               type="button"
               className="btn workflow-switcher-create"
               data-testid="workflow-switcher-create"
@@ -391,10 +427,10 @@ export function WorkflowSwitcher({ workflows, value, onChange, counts, aggregate
             >
               <Plus aria-hidden="true" />
               <span>{newWorkflowLabel}</span>
-            </button>
+            </AlphaButton>
           </div>
         ) : null}
-      </div>,
+      </AlphaPopoverSurface>,
       portalRoot,
     )
     : null;
@@ -402,7 +438,7 @@ export function WorkflowSwitcher({ workflows, value, onChange, counts, aggregate
   return (
     <div ref={containerRef} className="workflow-switcher">
       <span className="workflow-switcher-label">{label}</span>
-      <button
+      <AlphaButton
         ref={triggerRef}
         type="button"
         className="btn workflow-switcher-trigger"
@@ -423,7 +459,7 @@ export function WorkflowSwitcher({ workflows, value, onChange, counts, aggregate
           {isOpen ? renderAccessibleCounts(selectedCounts) : null}
         </span>
         <ChevronDown size={14} className="workflow-switcher-chevron" aria-hidden="true" />
-      </button>
+      </AlphaButton>
       {dropdown}
     </div>
   );

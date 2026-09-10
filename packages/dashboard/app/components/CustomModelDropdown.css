@@ -259,6 +259,70 @@ FN-8355 requires the portaled list to remain the touch-scroll owner after filter
   padding: 0 0 var(--space-xs);
 }
 
+/*
+FNXC:HeroUIAlphaCollections 2026-09-10-20:43:
+Alpha's complete model list precedes a labelled auxiliary-action rail. Each full-width row visibly aligns its provider or model name with the related controls, and the sibling rail gives keyboard users predictable forward and reverse Tab transitions.
+*/
+.model-combobox-list--alpha,
+.model-combobox-alpha-options,
+.model-combobox-alpha-actions {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.model-combobox-alpha-actions,
+.model-combobox-alpha-provider-actions,
+.model-combobox-alpha-action-controls {
+  gap: var(--space-xs);
+}
+
+.model-combobox-alpha-actions {
+  padding: var(--space-xs);
+  border-top: var(--btn-border-width) solid var(--border);
+}
+
+.model-combobox-alpha-actions-heading {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  padding: var(--space-xs) var(--space-sm);
+}
+
+.model-combobox-alpha-action-row,
+.model-combobox-alpha-action-label,
+.model-combobox-alpha-action-controls {
+  display: flex;
+  align-items: center;
+}
+
+.model-combobox-alpha-action-row {
+  justify-content: space-between;
+  gap: var(--space-sm);
+  min-width: 0;
+  padding: var(--space-xs) var(--space-sm);
+}
+
+.model-combobox-alpha-action-label {
+  gap: var(--space-xs);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  font-size: var(--font-size-sm);
+}
+
+.model-combobox-alpha-action-controls {
+  flex: 0 0 auto;
+}
+
+.model-combobox-option-row {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+}
+
 .model-combobox-option {
   display: flex;
   align-items: center;

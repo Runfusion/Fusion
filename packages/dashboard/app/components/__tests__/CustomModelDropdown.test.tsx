@@ -6,6 +6,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import userEvent from "@testing-library/user-event";
 import { loadAllAppCss } from "../../test/cssFixture";
 import { CustomModelDropdown } from "../CustomModelDropdown";
+import { HeroUIAlphaProvider, HeroUIAlphaSurface } from "../../context/HeroUIAlphaContext";
 
 vi.mock("../ProviderIcon", () => ({
   ProviderIcon: ({ provider }: { provider: string }) => <span data-testid={`provider-icon-${provider}`} />, 
@@ -58,6 +59,24 @@ describe("CustomModelDropdown", () => {
       removeEventListener: vi.fn(),
       dispatchEvent: vi.fn(),
     } as MediaQueryList));
+  });
+
+  it("uses one Alpha listbox before provider and favorite actions", async () => {
+    const user = userEvent.setup();
+    render(
+      <HeroUIAlphaProvider enabled><HeroUIAlphaSurface>
+        <CustomModelDropdown label="Model" value="" onChange={vi.fn()} models={MOCK_MODELS} onToggleFavorite={vi.fn()} onToggleModelFavorite={vi.fn()} />
+      </HeroUIAlphaSurface></HeroUIAlphaProvider>,
+    );
+    await user.click(screen.getByRole("button", { name: "Model" }));
+    const listbox = screen.getByRole("listbox", { name: "Model" });
+    const options = within(listbox).getAllByRole("option");
+    options[0]?.focus();
+    await user.keyboard("{ArrowDown}");
+    expect(options[1]).toHaveFocus();
+    await user.tab();
+    expect(screen.getByRole("button", { name: "Add anthropic to favorites" })).toHaveFocus();
+    expect(listbox).not.toContainElement(screen.getByRole("button", { name: "Add anthropic to favorites" }));
   });
 
   it("stops portal touch events without stopping model option clicks", async () => {

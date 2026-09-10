@@ -1,0 +1,59 @@
+@reference "tailwindcss/theme.css";
+@reference "tailwindcss/utilities.css";
+@reference "@heroui/styles";
+@source "../node_modules/@heroui/react/dist";
+
+/*
+FNXC:HeroUIAlphaTheme 2026-09-10-18:49:
+Tailwind and HeroUI are compile-time references only, so their resets, root theme, and utilities never become global dashboard CSS. HeroUI component declarations are expanded and compiled inside the active Board/Chat scope, while portaled overlays receive the same scoped paint contract.
+*/
+@scope (:where([data-heroui-alpha-surface="true"], [data-heroui-alpha-portal="true"])) {
+  /* @heroui-alpha-scoped-components */
+
+  :scope {
+    --background: var(--bg);
+    --foreground: var(--text);
+    --surface-foreground: var(--text);
+    --surface-secondary: var(--bg-secondary);
+    --surface-secondary-foreground: var(--text);
+    --surface-tertiary: var(--bg-tertiary);
+    --surface-tertiary-foreground: var(--text);
+    --overlay: var(--card);
+    --overlay-foreground: var(--text);
+    --muted: var(--text-muted);
+    --default: var(--bg-secondary);
+    --default-foreground: var(--text);
+    --accent-foreground: var(--bg);
+    --field-background: var(--surface);
+    --field-foreground: var(--text);
+    --field-placeholder: var(--text-muted);
+    --field-border: var(--border);
+    --danger: var(--color-error);
+    --warning: var(--color-warning);
+    --focus: var(--accent);
+    --radius: var(--radius-md);
+    --field-radius: var(--radius-md);
+    --border-width: var(--btn-border-width);
+    --field-border-width: var(--btn-border-width);
+    --disabled-opacity: 0.5;
+    --cursor-interactive: pointer;
+    --cursor-disabled: not-allowed;
+    color: var(--text);
+  }
+
+  [data-heroui-alpha] {
+    font: inherit;
+  }
+}
+
+@media (max-width: 48rem) {
+  [data-heroui-alpha-surface="true"] {
+    min-inline-size: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :where([data-heroui-alpha-surface="true"], [data-heroui-alpha-portal="true"]) [data-heroui-alpha] {
+    transition-duration: var(--duration-instant);
+  }
+}

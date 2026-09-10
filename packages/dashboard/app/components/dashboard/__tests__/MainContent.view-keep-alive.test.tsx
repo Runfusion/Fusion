@@ -347,6 +347,8 @@ describe("MainContent main-view keep alive", () => {
 
     await waitFor(() => expect(document.querySelectorAll("#board")).toHaveLength(1));
     expect(screen.getByTestId("board-keep-alive")).not.toHaveAttribute("aria-hidden");
+    expect(boardRoot().closest('[data-heroui-alpha-surface="true"]')).not.toBeNull();
+    expect(boardRoot().querySelector('[data-heroui-alpha="button"]')).not.toBeNull();
     expect(screen.getByRole("dialog", { name: "Task detail" })).toContainElement(screen.getByTestId("task-detail-back"));
     expect(document.querySelectorAll("[role='dialog']")).toHaveLength(1);
   });
@@ -363,6 +365,8 @@ describe("MainContent main-view keep alive", () => {
     expect(screen.getByTestId("board-keep-alive")).not.toHaveAttribute("aria-hidden");
     expect(screen.getByRole("dialog", { name: "Chat" })).toContainElement(chatRoot());
     expect(screen.getByTestId("chat-keep-alive")).not.toHaveAttribute("aria-hidden");
+    expect(chatRoot().closest('[data-heroui-alpha-surface="true"]')).not.toBeNull();
+    expect(chatRoot().querySelector('[data-heroui-alpha="input"]')).not.toBeNull();
   });
 
   it("uses exactly one retained production Board for the empty task-detail fallback", async () => {

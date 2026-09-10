@@ -1,4 +1,5 @@
 import { Mic, MicOff } from "lucide-react";
+import { AlphaButton } from "./hero-ui";
 import { useEffect, useRef, useState, type ComponentProps } from "react";
 import "./MicButton.css";
 
@@ -16,5 +17,5 @@ export function MicButton({ enabled, supported, state, error, start, stop, disab
   if (!enabled || !supported) return null;
   const active = state === "listening" || state === "transcribing";
   const label = state === "error" ? "Voice dictation error" : active ? "Stop voice dictation" : "Start voice dictation";
-  return <><button type="button" className={`btn btn-icon mic-button mic-button--${state}`} disabled={disabled} aria-label={label} onClick={() => { if (active) stop(); else void start(); }}>{state === "error" ? <MicOff aria-hidden="true" /> : <Mic aria-hidden="true" />}</button><span className="sr-only" aria-live="polite">{announcement}</span></>;
+  return <><AlphaButton type="button" className={`btn btn-icon mic-button mic-button--${state}`} disabled={disabled} aria-label={label} onClick={() => { if (active) stop(); else void start(); }}>{state === "error" ? <MicOff aria-hidden="true" /> : <Mic aria-hidden="true" />}</AlphaButton><span className="sr-only" aria-live="polite">{announcement}</span></>;
 }

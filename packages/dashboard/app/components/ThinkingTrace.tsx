@@ -1,4 +1,5 @@
 import React, { useCallback, useState, type MouseEvent } from "react";
+import { AlphaButton } from "./hero-ui";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useTranslation } from "react-i18next";
@@ -117,7 +118,7 @@ export function ThinkingTrace({ text, format = "plain", className, testId }: Thi
   const setAll = (open: boolean) => setExplicitOpen(Object.fromEntries(sections.map((section) => [section.id, open])));
   const rootClass = ["thinking-trace", className].filter(Boolean).join(" ");
   const hasHeader = titled || inlinedHeadingCount > 0;
-  const rawToggle = <button type="button" className="btn btn-sm" data-testid="thinking-trace-raw-toggle" aria-pressed={showRaw} onClick={() => setShowRaw((current) => !current)}>{showRaw ? t("thinking.showSections", "Sectioned trace") : t("thinking.showRaw", "Raw trace")}</button>;
+  const rawToggle = <AlphaButton type="button" className="btn btn-sm" data-testid="thinking-trace-raw-toggle" aria-pressed={showRaw} onClick={() => setShowRaw((current) => !current)}>{showRaw ? t("thinking.showSections", "Sectioned trace") : t("thinking.showRaw", "Raw trace")}</AlphaButton>;
 
   if (!hasHeader) return <div className={rootClass} data-testid={testId}><ThinkingTraceBody body={sections[0]?.body ?? text} format={format} /></div>;
 
@@ -131,7 +132,7 @@ export function ThinkingTrace({ text, format = "plain", className, testId }: Thi
       {titled && <span>{t("thinking.sectionCount", "{{count}} section", { count: sections.length })}</span>}
       <span className="thinking-trace-header-actions">
         {rawToggle}
-        {titled && !showRaw && <button type="button" className="btn btn-sm" onClick={() => setAll(!allOpen)}>{allOpen ? t("thinking.collapseAll", "Collapse all") : t("thinking.expandAll", "Expand all")}</button>}
+        {titled && !showRaw && <AlphaButton type="button" className="btn btn-sm" onClick={() => setAll(!allOpen)}>{allOpen ? t("thinking.collapseAll", "Collapse all") : t("thinking.expandAll", "Expand all")}</AlphaButton>}
       </span>
     </div>
     {showRaw

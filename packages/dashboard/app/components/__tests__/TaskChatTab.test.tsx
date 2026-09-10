@@ -6,6 +6,7 @@ import { resolve } from "node:path";
 import type { AgentLogEntry, Task } from "@fusion/core";
 import { TaskChatTab } from "../TaskChatTab";
 import { ChatMessageLayoutProvider } from "../../context/ChatMessageLayoutContext";
+import { HeroUIAlphaProvider, HeroUIAlphaSurface } from "../../context/HeroUIAlphaContext";
 import { isCliSessionLive, type CliSessionSummaryRecord } from "../TaskDetailModal";
 import { useAgentLogs } from "../../hooks/useAgentLogs";
 import { addSteeringComment, fetchGlobalSettings, refineTask, updateGlobalSettings } from "../../api";
@@ -388,6 +389,23 @@ describe("TaskChatTab", () => {
     } else {
       delete (window as Partial<Window>).matchMedia;
     }
+  });
+
+  it("renders its production composer with HeroUI only inside the Alpha surface", () => {
+    const view = render(
+      <HeroUIAlphaProvider enabled>
+        <HeroUIAlphaSurface><TaskChatTab task={makeTask()} active addToast={vi.fn()} /></HeroUIAlphaSurface>
+      </HeroUIAlphaProvider>,
+    );
+    expect(screen.getByLabelText("Message active agent session")).toHaveAttribute("data-heroui-alpha", "textarea");
+    expect(view.container.querySelector('[data-heroui-alpha="button"]')).not.toBeNull();
+
+    view.rerender(
+      <HeroUIAlphaProvider enabled={false}>
+        <HeroUIAlphaSurface><TaskChatTab task={makeTask()} active addToast={vi.fn()} /></HeroUIAlphaSurface>
+      </HeroUIAlphaProvider>,
+    );
+    expect(screen.getByLabelText("Message active agent session")).not.toHaveAttribute("data-heroui-alpha");
   });
 
   it("subscribes to live agent logs only when active", () => {

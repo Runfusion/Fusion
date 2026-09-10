@@ -60,6 +60,7 @@ import { PrCreateModal } from "./PrCreateModal";
 import { PlannerInterventionTimeline } from "./PlannerInterventionTimeline";
 import { TaskComments } from "./TaskComments";
 import { TaskChatTab } from "./TaskChatTab";
+import { HeroUIAlphaSurface } from "../context/HeroUIAlphaContext";
 import { TaskPlannerChatTab } from "./TaskPlannerChatTab";
 import { TaskReviewTab } from "./TaskReviewTab";
 import { TaskChangesTab } from "./TaskChangesTab";
@@ -5839,6 +5840,7 @@ export function TaskDetailContent({
                 Activity expansion must not reserve a standalone toolbar row. Live uses TaskChatTab's anchored overlay button, Feed renders the same Activity toggle over its feed panel, and Raw keeps AgentLogViewer's fullscreen control so only one Raw expand affordance is reachable.
               */}
               {activitySegment === "current" ? (
+                <HeroUIAlphaSurface>
                 <TaskChatTab
                   columnFlags={detailColumnFlags}
                   task={workingTask}
@@ -5857,6 +5859,7 @@ export function TaskDetailContent({
                     merger: toTaskChatModelInfo(resolveEffectiveValidator(workingTask, agentLogEntries, assignedAgent, settings, detailColumnFlags)),
                   }}
                 />
+                </HeroUIAlphaSurface>
               ) : activitySegment === "raw-logs" ? (
                 <AgentLogViewer
                   entries={agentLogEntries}
@@ -7031,6 +7034,7 @@ export function TaskDetailContent({
           {keepAliveForCurrentTask.plannerChat ? (
             <KeepAliveView hidden={activeTab !== "planner-chat"} testId="planner-chat-keep-alive">
               <div className="detail-section detail-section--planner-chat">
+                <HeroUIAlphaSurface>
                 <TaskPlannerChatTab
                   task={workingTask}
                   /* FNXC:WorkflowResolvedColumns 2026-07-30-23:40: the kept-alive sibling renders the
@@ -7046,6 +7050,7 @@ export function TaskDetailContent({
                   addToast={addToast}
                   onTaskUpdated={onTaskUpdated}
                 />
+                </HeroUIAlphaSurface>
               </div>
             </KeepAliveView>
           ) : null}

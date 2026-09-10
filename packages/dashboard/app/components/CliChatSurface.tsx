@@ -19,6 +19,7 @@
 // Rendering of the transcript message list itself stays with ChatView's existing
 // renderer (passed in as `renderTranscript`) so there is no parallel message UI.
 import React, { useState, type ReactNode } from "react";
+import { AlphaButton } from "./hero-ui";
 import { useTranslation } from "react-i18next";
 import { Terminal as TerminalIcon, MessageSquare } from "lucide-react";
 import { SessionTerminal, type SessionTerminalProps } from "./SessionTerminal";
@@ -76,7 +77,7 @@ export function CliChatSurface({
   return (
     <div className="cli-chat-surface" data-tier={tier} data-view={view}>
       <div className="cli-chat-surface__toolbar" role="tablist" aria-label={t("cliChat.viewToggleLabel", "Chat view")}>
-        <button
+        <AlphaButton
           type="button"
           role="tab"
           aria-selected={!showTerminal}
@@ -85,8 +86,8 @@ export function CliChatSurface({
         >
           <MessageSquare size={14} aria-hidden="true" />
           <span>{t("cliChat.transcriptTab", "Transcript")}</span>
-        </button>
-        <button
+        </AlphaButton>
+        <AlphaButton
           type="button"
           role="tab"
           aria-selected={showTerminal}
@@ -95,7 +96,7 @@ export function CliChatSurface({
         >
           <TerminalIcon size={14} aria-hidden="true" />
           <span>{t("cliChat.terminalTab", "Terminal")}</span>
-        </button>
+        </AlphaButton>
       </div>
 
       <div className="cli-chat-surface__body">

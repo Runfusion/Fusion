@@ -45,6 +45,32 @@ describe("mobile build output chunking", () => {
     expect(indexHtml).toContain('rel="preload"');
   });
 
+  test("compiles HeroUI without leaking its component selectors outside the Alpha scope", () => {
+    const css = readdirSync(dashboardClientAssetsDir)
+      .filter((file) => file.endsWith(".css"))
+      .map((file) => readFileSync(resolve(dashboardClientAssetsDir, file), "utf8"))
+      .join("\n");
+    const scopeStart = css.indexOf("@scope (:where([data-heroui-alpha-surface=true],[data-heroui-alpha-portal=true])){");
+    expect(scopeStart).toBeGreaterThanOrEqual(0);
+    expect(css).not.toContain("@apply");
+    expect(css).not.toContain("@import");
+
+    let depth = 0;
+    let scopeEnd = -1;
+    for (let index = css.indexOf("{", scopeStart); index < css.length; index += 1) {
+      if (css[index] === "{") depth += 1;
+      if (css[index] === "}") depth -= 1;
+      if (depth === 0) {
+        scopeEnd = index;
+        break;
+      }
+    }
+    expect(scopeEnd).toBeGreaterThan(scopeStart);
+    const heroSelectorOffsets = [...css.matchAll(/\.list-box-item(?=[,{:])/g)].map((match) => match.index);
+    expect(heroSelectorOffsets.length).toBeGreaterThan(0);
+    expect(heroSelectorOffsets.every((offset) => offset >= scopeStart && offset <= scopeEnd)).toBe(true);
+  });
+
   test("keeps theme-data stylesheet link after all other stylesheet links in head", () => {
     const indexHtml = readFileSync(resolve(dashboardClientDistDir, "index.html"), "utf8");
     const head = indexHtml.match(/<head>[\s\S]*?<\/head>/i)?.[0] ?? "";

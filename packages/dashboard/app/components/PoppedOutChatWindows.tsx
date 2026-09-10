@@ -13,8 +13,65 @@ A minimized chat window must retain its component identity and geometry rather t
 import { Suspense } from "react";
 import type { ChatSessionInfo } from "../hooks/useChat";
 import type { PoppedOutChatEntry } from "../hooks/usePoppedOutChats";
-import { ChatView } from "./ChatView";
+import { ChatView, type ChatViewProps } from "./ChatView";
 import { FloatingWindow } from "./FloatingWindow";
+
+export interface QuickChatWindowProps extends Pick<ChatViewProps,
+  | "addToast"
+  | "experimentalFeatures"
+  | "initialComposerDraft"
+  | "initialComposerDraftNonce"
+  | "onSendAsReport"
+  | "onOpenSessionInNewWindow"
+  | "onMaximize"
+> {
+  projectId: string;
+  hidden: boolean;
+  closeOnOutsidePointerDown: boolean;
+  onClose: () => void;
+}
+
+/*
+FNXC:HeroUIAlphaChatHosts 2026-09-10-19:40:
+Quick Chat exposes its production window host as a component so integration tests exercise the real FloatingWindow, ChatView, HeroUI controls, and portals together instead of proving only that App forwarded the Alpha flag to a mocked child. It shares the task-detail interaction layer, suspends persisted desktop geometry for mobile and short full-screen sheets, and retains the narrow resizable desktop contract.
+*/
+export function QuickChatWindow({
+  projectId,
+  hidden,
+  closeOnOutsidePointerDown,
+  onClose,
+  ...chatProps
+}: QuickChatWindowProps) {
+  return (
+    <FloatingWindow
+      windowKey="chat-modal"
+      hidden={hidden}
+      title="Chat"
+      onClose={onClose}
+      closeOnOutsidePointerDown={closeOnOutsidePointerDown}
+      hideHeader
+      dragHandleSelector=".chat-view--floating .view-header"
+      className="floating-window--chat"
+      layer="task-detail"
+      suspendGeometryPersistenceOnMobile
+      suspendGeometryPersistenceOnShortViewport
+      persistGeometryKey="kb-dashboard-chat-floating-window"
+      defaultSize={{ width: 980, height: 680 }}
+      minSize={{ width: 300, height: 420 }}
+    >
+      <Suspense fallback={null}>
+        <ChatView
+          {...chatProps}
+          projectId={projectId}
+          floating
+          findActive={!hidden}
+          active={!hidden}
+          onClose={onClose}
+        />
+      </Suspense>
+    </FloatingWindow>
+  );
+}
 
 export interface PoppedOutChatWindowsProps {
   entries: PoppedOutChatEntry[];

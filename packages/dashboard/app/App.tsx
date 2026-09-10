@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo, useRef, lazy, Suspense } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef, lazy } from "react";
 import { useTranslation } from "react-i18next";
 import {
   type Task,
@@ -9,10 +9,11 @@ import {
   isExperimentalFeatureEnabled,
 } from "@fusion/core";
 import { Header, useViewportMode } from "./components/Header";
+import { HeroUIAlphaProvider } from "./context/HeroUIAlphaContext";
 import { TaskDetailContent } from "./components/TaskDetailModal";
 import { FloatingWindow } from "./components/FloatingWindow";
 import { AlphaMobileDrawer } from "./components/AlphaMobileDrawer";
-import { PoppedOutChatWindows } from "./components/PoppedOutChatWindows";
+import { PoppedOutChatWindows, QuickChatWindow } from "./components/PoppedOutChatWindows";
 import { AppModals } from "./components/AppModals";
 import { DashboardLoader, type DashboardLoaderStage } from "./components/DashboardLoader";
 import { TopProgressBar } from "./components/TopProgressBar";
@@ -2084,6 +2085,7 @@ function AppInner() {
     setShowGitHubStarPrompt,
   };
   return (
+    <HeroUIAlphaProvider enabled={alphaUpdatesEnabled}>
     <ConfirmDialogProvider skipConfirmations={skipConfirmationDialogs}>
       <ChatMessageLayoutProvider value={chatMessageLayout}>
       <ChatSubmitOnEnterProvider value={chatSubmitOnEnter}>
@@ -2401,62 +2403,26 @@ function AppInner() {
         />
       )}
       {currentProject && quickChatEverOpenedProjectId === currentProject.id && (
-        <FloatingWindow
+        <QuickChatWindow
           key={currentProject.id}
-          windowKey="chat-modal"
+          projectId={currentProject.id}
           hidden={!quickChatOpen}
-          title="Chat"
-          onClose={() => setQuickChatOpen(false)}
           closeOnOutsidePointerDown={shouldCloseQuickChatOnOutsideClick({
             quickChatCloseOnOutsideClick,
             poppedOutChatEntries,
           })}
-          hideHeader
-          dragHandleSelector=".chat-view--floating .view-header"
-          className="floating-window--chat"
-          layer="task-detail"
-          /*
-          FNXC:ChatModal 2026-07-17-15:55:
-          Quick Chat and task-detail popups must share the task popup interaction stack: either
-          overlapping surface claims the front on pointer/focus. Other utility FloatingWindows keep
-          their higher utility band, so this scoped opt-in cannot change Terminal, Files, or New Task.
-          */
-          /*
-          FNXC:ModalGeometryPersistence 2026-07-26-21:00:
-          Quick Chat is a full-screen sheet at both the narrow and short-viewport CSS breakpoints.
-          Suspend desktop geometry restoration, writes, drag, and resize controls for both surfaces
-          so a short sheet cannot corrupt the desktop window it restores after rotation.
-          */
-          suspendGeometryPersistenceOnMobile
-          suspendGeometryPersistenceOnShortViewport
-          persistGeometryKey="kb-dashboard-chat-floating-window"
-          defaultSize={{ width: 980, height: 680 }}
-          /*
-          FNXC:ChatModal 2026-06-23-22:14:
-          The full Chat pop-out must be resizable into a very narrow desktop utility window. ChatView uses the same full-pane list/detail flow at narrow widths, so allow the FloatingWindow to shrink below the old two-pane desktop minimum while preserving enough width for composer controls.
-          */
-          minSize={{ width: 300, height: 420 }}
-        >
-          <Suspense fallback={null}>
-            <ChatView
-              addToast={addToast}
-              projectId={currentProject.id}
-              experimentalFeatures={experimentalFeatures}
-              floating
-              findActive={quickChatOpen}
-              active={quickChatOpen}
-              initialComposerDraft={chatComposerPrefill?.text}
-              initialComposerDraftNonce={chatComposerPrefill?.nonce}
-              onSendAsReport={handleSendChatMessageAsReport}
-              onOpenSessionInNewWindow={openSessionInNewWindow}
-              onMaximize={() => {
-                handleTaskViewChange("chat");
-                setQuickChatOpen(false);
-              }}
-              onClose={() => setQuickChatOpen(false)}
-            />
-          </Suspense>
-        </FloatingWindow>
+          addToast={addToast}
+          experimentalFeatures={experimentalFeatures}
+          initialComposerDraft={chatComposerPrefill?.text}
+          initialComposerDraftNonce={chatComposerPrefill?.nonce}
+          onSendAsReport={handleSendChatMessageAsReport}
+          onOpenSessionInNewWindow={openSessionInNewWindow}
+          onMaximize={() => {
+            handleTaskViewChange("chat");
+            setQuickChatOpen(false);
+          }}
+          onClose={() => setQuickChatOpen(false)}
+        />
       )}
       {currentProject ? (
         <PoppedOutChatWindows
@@ -2594,6 +2560,7 @@ function AppInner() {
       </ChatSubmitOnEnterProvider>
       </ChatMessageLayoutProvider>
     </ConfirmDialogProvider>
+    </HeroUIAlphaProvider>
   );
 }
 

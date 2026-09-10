@@ -10,7 +10,7 @@ import { readStoredRightDockView, RIGHT_DOCK_VIEW_STORAGE_KEY } from "../RightDo
 import type { ChatViewProps } from "../ChatView";
 
 vi.mock("../ChatView", () => ({
-  ChatView: ({ projectId, addToast, floating, compactLayout, onPopOut, onMaximize, onClose, onOpenSessionInNewWindow }: ChatViewProps) => (
+  ChatView: ({ projectId, addToast, floating, compactLayout, onPopOut, onMaximize, onClose, onOpenSessionInNewWindow, experimentalFeatures }: ChatViewProps) => (
     <div
       data-testid="mock-chat-view"
       data-project-id={projectId}
@@ -18,6 +18,7 @@ vi.mock("../ChatView", () => ({
       data-compact-layout={String(compactLayout === true)}
       data-has-dock-chrome-props={String(Boolean(floating || onPopOut || onMaximize || onClose))}
       data-has-open-window={String(typeof onOpenSessionInNewWindow === "function")}
+      data-alpha={String(experimentalFeatures?.alphaUpdates === true)}
     >
       Chat dock view
     </div>
@@ -28,6 +29,7 @@ const renderProps: OverflowViewRenderProps = {
   projectId: "project-chat",
   addToast: vi.fn(),
   onOpenSessionInNewWindow: vi.fn(),
+  experimentalFeatures: { alphaUpdates: true },
 };
 
 describe("overflowViewRegistry chat entry", () => {
@@ -71,6 +73,7 @@ describe("overflowViewRegistry chat entry", () => {
     expect(compactChat).toHaveAttribute("data-compact-layout", "true");
     expect(compactChat).toHaveAttribute("data-has-dock-chrome-props", "false");
     expect(compactChat).toHaveAttribute("data-has-open-window", "true");
+    expect(compactChat).toHaveAttribute("data-alpha", "true");
     compact.unmount();
 
     const wideDock = render(<>{chatEntry.render({ ...renderProps, surface: "dock", dockWidth: 900 })}</>);

@@ -1,0 +1,142 @@
+import { fireEvent, render, screen } from "@testing-library/react";
+import type { ComponentProps } from "react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { Board } from "../Board";
+import { writeBoardWorkflowsCache } from "../../utils/boardWorkflowsCache";
+
+vi.mock("../../api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../api")>();
+  return {
+    ...actual,
+    fetchWorkflowSteps: vi.fn(() => new Promise<never>(() => {})),
+    fetchBoardWorkflows: vi.fn(() => new Promise<never>(() => {})),
+  };
+});
+
+const lanePayload = {
+  flagEnabled: true,
+  defaultWorkflowId: "builtin:coding",
+  workflows: [{
+    id: "builtin:coding",
+    name: "Coding",
+    columns: [
+      { id: "triage", name: "Planning", flags: { intake: true } },
+      { id: "todo", name: "Todo", flags: { hold: true } },
+      { id: "in-progress", name: "In progress", flags: { countsTowardWip: true } },
+      { id: "in-review", name: "In review", flags: { mergeBlocker: true } },
+      { id: "done", name: "Done", flags: { complete: true } },
+    ],
+  }],
+  taskWorkflowIds: {},
+};
+
+function board(
+  alphaUpdatesEnabled: boolean,
+  tasks: ComponentProps<typeof Board>["tasks"] = [],
+  overrides: Partial<ComponentProps<typeof Board>> = {},
+) {
+  return (
+    <Board
+      tasks={tasks}
+      maxConcurrent={2}
+      maxWorktrees={2}
+      showWorktreeGrouping={false}
+      onMoveTask={vi.fn()}
+      onOpenDetail={vi.fn()}
+      addToast={vi.fn()}
+      onNewTask={vi.fn()}
+      autoMerge
+      onToggleAutoMerge={vi.fn()}
+      planAutoApproveEnabled={false}
+      onTogglePlanAutoApprove={vi.fn()}
+      alphaUpdatesEnabled={alphaUpdatesEnabled}
+      {...overrides}
+    />
+  );
+}
+
+describe("HeroUI Alpha Board", () => {
+  beforeEach(() => {
+    window.sessionStorage.clear();
+    writeBoardWorkflowsCache(undefined, lanePayload);
+  });
+
+  it("renders loading and missing-workflow states through the Alpha surface", () => {
+    window.sessionStorage.clear();
+    const loading = render(board(true));
+    expect(screen.getByTestId("board-workflows-skeleton")).toHaveAttribute("aria-busy", "true");
+    expect(loading.container.querySelector('[data-heroui-alpha="surface"]')).not.toBeNull();
+    loading.unmount();
+
+    writeBoardWorkflowsCache(undefined, { ...lanePayload, workflows: [], defaultWorkflowId: "" });
+    render(board(true));
+    expect(screen.getByTestId("board-workflows-empty")).toHaveAccessibleName("No workflow lanes available");
+  });
+
+  it("covers duplicate, pagination-error, loading-more, and mobile Board states in Alpha", () => {
+    const retry = vi.fn();
+    const previousWidth = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
+    const task = {
+      id: "FN-DUPLICATE",
+      title: "Carte dupliquée",
+      description: "État mobile",
+      column: "todo",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      sourceMetadata: { nearDuplicateOf: "FN-ORIGINAL" },
+      createdAt: "2026-09-10T00:00:00.000Z",
+      updatedAt: "2026-09-10T00:00:00.000Z",
+    } as never;
+    try {
+      const view = render(board(true, [
+        task,
+        { ...task, id: "FN-ORIGINAL", title: "Carte originale", sourceMetadata: undefined },
+      ], {
+        currentTasksHasMore: true,
+        currentTasksLoadingMore: true,
+        currentTasksPaginationError: "request-failed",
+        onRetryCurrentTasks: retry,
+      }));
+      expect(screen.getByText("Carte dupliquée")).toBeInTheDocument();
+      expect(screen.getByText("Duplicate of FN-ORIGINAL")).toBeInTheDocument();
+      expect(screen.getAllByText("Older tasks could not be loaded.").length).toBeGreaterThan(0);
+      const retryButton = screen.getAllByRole("button", { name: "Retry" })[0];
+      expect(retryButton).toHaveAttribute("data-heroui-alpha", "button");
+      fireEvent.click(retryButton);
+      expect(retry).toHaveBeenCalledTimes(1);
+      expect(view.container.querySelector('[data-heroui-alpha-surface="true"]')).not.toBeNull();
+    } finally {
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: previousWidth });
+    }
+  });
+
+  it("uses HeroUI controls only in Alpha while preserving empty and populated live boards", () => {
+    const view = render(board(false));
+    expect(screen.getByRole("main")).toHaveClass("board");
+    expect(view.container.querySelector("[data-heroui-alpha]")).toBeNull();
+
+    view.rerender(board(true, [{
+      id: "FN-ALPHA",
+      title: "Carte Alpha",
+      description: "Carte peuplée",
+      column: "todo",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      createdAt: "2026-09-10T00:00:00.000Z",
+      updatedAt: "2026-09-10T00:00:00.000Z",
+    } as never]));
+    expect(screen.getByRole("main")).toHaveClass("board");
+    expect(screen.getByText("Carte Alpha")).toBeInTheDocument();
+    expect(view.container.querySelector('[data-heroui-alpha="button"]')).not.toBeNull();
+    expect(view.container.querySelector('[data-heroui-alpha="surface"]')).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Planning column actions" }));
+    expect(screen.getByRole("menu", { name: "Planning column actions" })).toHaveAttribute("data-heroui-alpha", "menu");
+
+    view.rerender(board(false));
+    expect(view.container.querySelector("[data-heroui-alpha]")).toBeNull();
+    expect(screen.getByRole("main")).toHaveClass("board");
+  });
+});

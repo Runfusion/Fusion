@@ -1,3 +1,4 @@
+import { AlphaButton, AlphaInput, AlphaPopoverSurface } from "./hero-ui";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { Target } from "lucide-react";
@@ -55,6 +56,7 @@ export function ChatFocusSelector({
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   const normalizedFocus = memoryFocus && memoryFocus.trim() ? memoryFocus : null;
@@ -65,9 +67,8 @@ export function ChatFocusSelector({
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target;
       if (!(target instanceof Node)) return;
-      if (!rootRef.current?.contains(target)) {
-        setOpen(false);
-      }
+      const insideHeroPopover = target instanceof Element && target.closest('[data-heroui-alpha="popover"]');
+      if (!rootRef.current?.contains(target) && !insideHeroPopover) setOpen(false);
     };
     document.addEventListener("pointerdown", handlePointerDown);
     return () => document.removeEventListener("pointerdown", handlePointerDown);
@@ -136,7 +137,8 @@ export function ChatFocusSelector({
 
   return (
     <div className="chat-focus-root" ref={rootRef} data-testid="chat-focus-root">
-      <button
+      <AlphaButton
+        ref={triggerRef}
         type="button"
         className={`chat-focus-chip${hasTopic ? " chat-focus-chip--active" : " chat-focus-chip--icon-only"}`}
         data-testid="chat-focus-chip"
@@ -152,15 +154,15 @@ export function ChatFocusSelector({
       >
         <Target size={14} aria-hidden="true" />
         {hasTopic ? <span className="chat-focus-chip-topic">{focusedTopic}</span> : null}
-      </button>
+      </AlphaButton>
 
       {open && sessionId ? (
-        <div className="chat-focus-popover" role="dialog" data-testid="chat-focus-popover">
+        <AlphaPopoverSurface className="chat-focus-popover" data-testid="chat-focus-popover" triggerRef={triggerRef} onClose={() => setOpen(false)}>
           <div className="chat-focus-title">{t("chat.focusTitleDialog", "Memory focus topic")}</div>
           <p className="chat-focus-help">
             {t("chat.focusHelp", "Scopes this conversation's memory recall to a topic. Leave empty or use 'all' for whole-project scope.")}
           </p>
-          <input
+          <AlphaInput
             ref={inputRef}
             className="input chat-focus-input"
             data-testid="chat-focus-input"
@@ -172,7 +174,7 @@ export function ChatFocusSelector({
             disabled={saving}
           />
           <div className="chat-focus-actions">
-            <button
+            <AlphaButton
               type="button"
               className="btn btn-primary chat-focus-save"
               data-testid="chat-focus-save"
@@ -180,9 +182,9 @@ export function ChatFocusSelector({
               disabled={saving}
             >
               {saving ? t("chat.focusSaving", "Saving…") : t("chat.focusSave", "Set focus")}
-            </button>
+            </AlphaButton>
             {hasTopic ? (
-              <button
+              <AlphaButton
                 type="button"
                 className="btn btn-ghost chat-focus-clear"
                 data-testid="chat-focus-clear"
@@ -190,10 +192,10 @@ export function ChatFocusSelector({
                 disabled={saving}
               >
                 {t("chat.focusClear", "Clear to whole-project")}
-              </button>
+              </AlphaButton>
             ) : null}
           </div>
-        </div>
+        </AlphaPopoverSurface>
       ) : null}
     </div>
   );

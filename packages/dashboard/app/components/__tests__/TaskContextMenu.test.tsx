@@ -1,8 +1,10 @@
 import React from "react";
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { Task } from "@fusion/core";
 import { TaskContextMenu, buildTaskActionMenuModel } from "../TaskContextMenu";
+import { HeroUIAlphaProvider, HeroUIAlphaSurface } from "../../context/HeroUIAlphaContext";
 
 const t = ((key: string, fallback: string, vars?: Record<string, string>) => {
   if (!vars) return fallback;
@@ -324,6 +326,24 @@ describe("TaskContextMenu shared task action model", () => {
     render(<TaskContextMenu actions={[{ id: "more", label: "More", items: [{ id: "nested", label: "Nested", onSelect }] }]} />);
     fireEvent.keyDown(screen.getByRole("menuitem", { name: "More" }), { key: "ArrowRight" });
     fireEvent.click(screen.getByRole("menuitem", { name: "Nested" }));
+    expect(onSelect).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses one navigable Alpha menu with a native HeroUI submenu", async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+    render(<HeroUIAlphaProvider enabled><HeroUIAlphaSurface><TaskContextMenu actions={[{ id: "pause", label: "Pause" }, { id: "delete", label: "Delete" }, { id: "more", label: "More", items: [{ id: "nested", label: "Nested", onSelect }] }]} /></HeroUIAlphaSurface></HeroUIAlphaProvider>);
+    const pause = screen.getByRole("menuitem", { name: "Pause" });
+    const del = screen.getByRole("menuitem", { name: "Delete" });
+    pause.focus();
+    await user.keyboard("{ArrowDown}");
+    expect(del).toHaveFocus();
+    const more = screen.getByRole("menuitem", { name: "More" });
+    more.focus();
+    await user.keyboard("{ArrowRight}");
+    const nested = await screen.findByRole("menuitem", { name: "Nested" });
+    expect(nested.closest('[data-heroui-alpha="menu"]')?.querySelector('[data-heroui-alpha="menu"]')).toBeNull();
+    await user.click(nested);
     expect(onSelect).toHaveBeenCalledTimes(1);
   });
 });

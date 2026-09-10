@@ -1,3 +1,4 @@
+import { AlphaButton, AlphaInput, AlphaTextArea } from "./hero-ui";
 import "./ChatQuestionResponse.css";
 
 import { useCallback, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
@@ -123,7 +124,7 @@ export function ChatQuestionResponse({
               ? t("chat.questionSelectHintWithOptional", "Answer all required questions to continue the chat.")
               : t("chat.questionSelectHint", "Answer all questions to continue the chat.")}
           </p>
-          <button
+          <AlphaButton
             type="button"
             className="btn btn-primary chat-question-response__submit"
             data-testid="chat-question-response-submit"
@@ -131,7 +132,7 @@ export function ChatQuestionResponse({
             onClick={handleSubmit}
           >
             {t("chat.questionSubmit", "Send answer")}
-          </button>
+          </AlphaButton>
         </div>
       )}
     </section>
@@ -161,7 +162,7 @@ function QuestionControls({
 
   if (question.type === "text") {
     return (
-      <textarea
+      <AlphaTextArea
         className="input chat-question-response__textarea"
         data-testid={`chat-question-response-text-${question.id}`}
         placeholder={t("chat.questionTextPlaceholder", "Type your answer here…")}
@@ -189,7 +190,7 @@ function QuestionControls({
           screen reader users get the same clear selected/unselected signal
           the strengthened CSS now provides visually.
         */}
-        <button
+        <AlphaButton
           type="button"
           className={`btn chat-question-response__confirm${value === true ? " chat-question-response__confirm--selected" : ""}`}
           data-testid={`chat-question-response-option-${question.id}-yes`}
@@ -198,8 +199,8 @@ function QuestionControls({
           onClick={() => setQuestionAnswer(question.id, true)}
         >
           {t("chat.questionConfirmYes", "Yes")}
-        </button>
-        <button
+        </AlphaButton>
+        <AlphaButton
           type="button"
           className={`btn chat-question-response__confirm${value === false ? " chat-question-response__confirm--selected" : ""}`}
           data-testid={`chat-question-response-option-${question.id}-no`}
@@ -208,7 +209,7 @@ function QuestionControls({
           onClick={() => setQuestionAnswer(question.id, false)}
         >
           {t("chat.questionConfirmNo", "No")}
-        </button>
+        </AlphaButton>
       </div>
     );
   }
@@ -228,7 +229,7 @@ function QuestionControls({
             className={`chat-question-response__option${checked ? " chat-question-response__option--selected" : ""}`}
             data-testid={`chat-question-response-option-${question.id}-${option.id}`}
           >
-            <input
+            <AlphaInput
               type={isMulti ? "checkbox" : "radio"}
               name={isMulti ? undefined : radioName}
               value={option.id}

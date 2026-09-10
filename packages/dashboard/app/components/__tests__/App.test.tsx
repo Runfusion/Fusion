@@ -443,7 +443,11 @@ vi.mock("../../components/GoalsView", () => ({
 }));
 
 vi.mock("../../components/ChatView", () => ({
-  ChatView: () => <FileBrowserProbe testId="fb-probe-chat" />,
+  ChatView: ({ experimentalFeatures, floating }: { experimentalFeatures?: { alphaUpdates?: boolean }; floating?: boolean }) => (
+    <div data-testid={floating ? "quick-chat-host" : "main-chat-host"} data-alpha={String(experimentalFeatures?.alphaUpdates === true)}>
+      <FileBrowserProbe testId="fb-probe-chat" />
+    </div>
+  ),
 }));
 
 vi.mock("../../components/DashboardLoader", () => ({
@@ -451,7 +455,7 @@ vi.mock("../../components/DashboardLoader", () => ({
 }));
 
 vi.mock("../../components/QuickChatFAB", () => ({
-  QuickChatFAB: () => null,
+  QuickChatFAB: ({ onToggle }: { onToggle: () => void }) => <button type="button" data-testid="quick-chat-fab-host" onClick={onToggle}>Quick Chat</button>,
 }));
 
 vi.mock("../../components/SetupWizardModal", () => ({
@@ -1085,6 +1089,16 @@ beforeEach(() => {
 });
 
 describe("Alpha Updates production wiring", () => {
+  it("passes the resolved Alpha flag through the real App Quick Chat host", async () => {
+    vi.mocked(fetchSettings).mockResolvedValue({
+      ...defaultSettings,
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates: true },
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByTestId("quick-chat-fab-host"));
+    expect(await screen.findByTestId("quick-chat-host")).toHaveAttribute("data-alpha", "true");
+  });
+
   it.each(["mobile", "tablet", "desktop"] as const)("removes the footer in Alpha %s while preserving project chrome", async (mode) => {
     mockUseViewportMode.mockReturnValue(mode);
     vi.mocked(fetchSettings).mockResolvedValue({

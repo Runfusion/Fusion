@@ -6,6 +6,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import { TaskPlannerChatTab } from "../TaskPlannerChatTab";
 import { ChatMessageLayoutProvider } from "../../context/ChatMessageLayoutContext";
+import { HeroUIAlphaProvider, HeroUIAlphaSurface } from "../../context/HeroUIAlphaContext";
 import { clampChatInputHeight, getChatInputAutomaticMaxHeight, getChatInputBoxMetrics } from "../../utils/chatInputAutosize";
 import { __test_resetChatSnippetsCache } from "../../hooks/useChatSnippetsCache";
 
@@ -236,6 +237,27 @@ describe("TaskPlannerChatTab", () => {
       { provider: "anthropic", id: "claude-plan", name: "Claude Plan", reasoning: true, contextWindow: 200000 },
       { provider: "enterprise-provider", id: "very-long-production-model", name: "Enterprise Production Model With A Readable Long Name", reasoning: true, contextWindow: 200000 },
     ];
+  });
+
+  it("renders the real planner composer through the shared Alpha boundary", async () => {
+    const view = render(
+      <HeroUIAlphaProvider enabled>
+        <HeroUIAlphaSurface>
+          <TaskPlannerChatTab task={makeTask("FN-7310")} active taskChatModel={{ provider: "anthropic", modelId: "claude-plan" }} addToast={vi.fn()} />
+        </HeroUIAlphaSurface>
+      </HeroUIAlphaProvider>,
+    );
+    expect(await screen.findByLabelText("Message task chat")).toHaveAttribute("data-heroui-alpha", "textarea");
+    expect(view.container.querySelector('[data-heroui-alpha="button"]')).not.toBeNull();
+
+    view.rerender(
+      <HeroUIAlphaProvider enabled={false}>
+        <HeroUIAlphaSurface>
+          <TaskPlannerChatTab task={makeTask("FN-7310")} active taskChatModel={{ provider: "anthropic", modelId: "claude-plan" }} addToast={vi.fn()} />
+        </HeroUIAlphaSurface>
+      </HeroUIAlphaProvider>,
+    );
+    expect(screen.getByLabelText("Message task chat")).not.toHaveAttribute("data-heroui-alpha");
   });
 
   afterEach(() => {

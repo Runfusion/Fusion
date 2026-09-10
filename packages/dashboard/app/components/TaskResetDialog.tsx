@@ -1,4 +1,5 @@
 import "./TaskResetDialog.css";
+import { AlphaButton, AlphaDialog, AlphaTextArea } from "./hero-ui";
 
 import { getErrorMessage } from "@fusion/core";
 import { useRef, useState } from "react";
@@ -63,21 +64,16 @@ export function TaskResetDialog({
   };
 
   return (
-    <div
-      className="modal-overlay open task-reset-overlay"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby={titleId}
-      data-testid="task-reset-dialog"
-      onClick={(event) => {
-        event.stopPropagation();
-        if (event.target === event.currentTarget && !isSubmitting) onClose();
-      }}
+    <AlphaDialog
+      overlayClassName="modal-overlay open task-reset-overlay"
+      className="modal modal-md task-reset-dialog"
+      labelledBy={titleId}
+      onClose={isSubmitting ? undefined : onClose}
     >
-      <div className="modal modal-md task-reset-dialog" onClick={(event) => event.stopPropagation()}>
+      <div data-testid="task-reset-dialog">
         <div className="modal-header">
           <h3 id={titleId}>{t("taskDetail.reset.confirmTitle", "Reset this task?")}</h3>
-          <button
+          <AlphaButton
             type="button"
             className="modal-close"
             onClick={onClose}
@@ -85,7 +81,7 @@ export function TaskResetDialog({
             aria-label={t("common.close", "Close")}
           >
             &times;
-          </button>
+          </AlphaButton>
         </div>
         <div className="task-reset-dialog__body">
           <p className="task-reset-dialog__warning">
@@ -97,7 +93,7 @@ export function TaskResetDialog({
           <label className="task-reset-dialog__label" htmlFor={`task-reset-description-${taskId}`}>
             {t("taskDetail.reset.descriptionLabel", "Original description")}
           </label>
-          <textarea
+          <AlphaTextArea
             id={`task-reset-description-${taskId}`}
             className="input task-reset-dialog__textarea"
             data-testid="task-reset-description"
@@ -118,7 +114,7 @@ export function TaskResetDialog({
           </p>
         </div>
         <div className="modal-actions task-reset-dialog__actions">
-          <button
+          <AlphaButton
             type="button"
             className="btn btn-sm"
             data-testid="task-reset-cancel"
@@ -126,8 +122,8 @@ export function TaskResetDialog({
             disabled={isSubmitting}
           >
             {t("common.cancel", "Cancel")}
-          </button>
-          <button
+          </AlphaButton>
+          <AlphaButton
             type="button"
             className="btn btn-danger btn-sm"
             data-testid="task-reset-submit"
@@ -137,9 +133,9 @@ export function TaskResetDialog({
             {isSubmitting
               ? t("taskDetail.reset.submitting", "Resetting…")
               : t("taskDetail.reset.btn", "Reset")}
-          </button>
+          </AlphaButton>
         </div>
       </div>
-    </div>
+    </AlphaDialog>
   );
 }

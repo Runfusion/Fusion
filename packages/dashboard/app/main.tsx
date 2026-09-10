@@ -11,6 +11,7 @@ import { registerBundledPluginViews } from "./plugins/registerBundledPluginViews
 import { i18nReady } from "./i18n";
 import "@fontsource/pixelify-sans/400.css";
 import "./styles.css";
+import "./hero-ui-alpha.css";
 
 // Install the bearer-token fetch wrapper before React mounts so every API
 // call (including ones fired synchronously during the first render) picks up

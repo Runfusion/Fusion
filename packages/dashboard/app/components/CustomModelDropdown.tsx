@@ -1,4 +1,6 @@
 import "./CustomModelDropdown.css";
+import { AlphaButton, AlphaInput, AlphaListBox, AlphaListBoxItem, AlphaListBoxRow, AlphaPopoverSurface, AlphaSelect } from "./hero-ui";
+import { useHeroUIAlpha } from "../context/HeroUIAlphaContext";
 import { useState, useEffect, useCallback, useMemo, useRef, useId } from "react";
 import { THINKING_LEVELS } from "@fusion/core";
 import { useTranslation } from "react-i18next";
@@ -112,6 +114,7 @@ export function CustomModelDropdown({
   credentialInstances,
 }: CustomModelDropdownProps) {
   const { t } = useTranslation("app");
+  const heroUIAlpha = useHeroUIAlpha();
   const placeholder = placeholderProp ?? t("model.selectPlaceholder", "Select a model…");
   const noChangeLabel = noChangeLabelProp ?? t("model.noChange", "No change");
   const defaultOptionLabel = defaultOptionLabelProp ?? t("models.useDefault", "Use default");
@@ -669,14 +672,15 @@ export function CustomModelDropdown({
   }, [highlightedIndex, isOpen]);
 
   const dropdownContent = isOpen && dropdownPosition ? (
-    <div
+    <AlphaPopoverSurface
       ref={dropdownRef}
+      triggerRef={triggerRef}
+      onClose={() => setIsOpen(false)}
       className="model-combobox-dropdown model-combobox-dropdown--portal"
-      role="listbox"
       data-testid="model-combobox-portal"
       data-portal-surface="model-menu"
       data-menu-width={menuWidth}
-      onKeyDown={handleKeyDown}
+      onKeyDown={heroUIAlpha ? undefined : handleKeyDown}
       style={{
         top: dropdownPosition.bottom === null ? `${dropdownPosition.top}px` : "auto",
         bottom: dropdownPosition.bottom === null ? undefined : `${dropdownPosition.bottom}px`,
@@ -686,7 +690,7 @@ export function CustomModelDropdown({
       }}
     >
       <div className="model-combobox-search-wrapper">
-        <input
+        <AlphaInput
           ref={searchInputRef}
           type="text"
           className="model-combobox-search"
@@ -696,14 +700,14 @@ export function CustomModelDropdown({
           onClick={(e) => e.stopPropagation()}
         />
         {hasFilter && (
-          <button
+          <AlphaButton
             type="button"
             className="model-combobox-clear"
             onClick={handleClearFilter}
             aria-label={t("models.clearFilter", "Clear filter")}
           >
             ×
-          </button>
+          </AlphaButton>
         )}
       </div>
 
@@ -716,7 +720,7 @@ export function CustomModelDropdown({
           <label className="model-combobox-instance-label" htmlFor={credentialInstanceSelectId}>
             {t("models.labels.credentialInstance", "Credential instance")}
           </label>
-          <select
+          <AlphaSelect
             id={credentialInstanceSelectId}
             className="thinking-level-select model-combobox-instance-select"
             data-testid="custom-model-dropdown-credential-instance"
@@ -729,7 +733,7 @@ export function CustomModelDropdown({
             {instanceOptions.map((instance) => (
               <option key={instance.id} value={instance.id}>{instance.id}</option>
             ))}
-          </select>
+          </AlphaSelect>
         </div>
       )}
 
@@ -738,7 +742,7 @@ export function CustomModelDropdown({
           <label className="model-combobox-thinking-label" htmlFor={thinkingSelectId}>
             {t("models.labels.thinkingLevel", "Thinking Level")}
           </label>
-          <select
+          <AlphaSelect
             id={thinkingSelectId}
             className="thinking-level-select model-combobox-thinking-select"
             data-testid="custom-model-dropdown-thinking"
@@ -758,23 +762,76 @@ export function CustomModelDropdown({
             {thinkingOptions.map((option) => (
               <option key={option.value} value={option.value}>{option.label}</option>
             ))}
-          </select>
+          </AlphaSelect>
         </div>
       )}
 
-      <div ref={listRef} className="model-combobox-list">
+      {heroUIAlpha ? (
+        <div ref={listRef} className="model-combobox-list model-combobox-list--alpha">
+          {/*
+          FNXC:HeroUIAlphaCollections 2026-09-10-20:43:
+          Alpha models form one HeroUI listbox so native arrow navigation crosses every selectable row. Provider and model controls follow it in a labelled sibling rail whose visible row labels identify exactly which selection each favorite or collapse action affects.
+          */}
+          <AlphaListBox aria-label={label} className="model-combobox-alpha-options">
+            {optionsList.filter((option) => option.type !== "provider").map((option, index) => {
+              const model = option.provider
+                ? models.find((candidate) => `${candidate.provider}/${candidate.id}` === option.value)
+                : undefined;
+              return (
+                <AlphaListBoxItem
+                  key={`${option.type}-${option.value}`}
+                  id={`${option.type}-${option.value}`}
+                  textValue={option.label}
+                  data-index={index}
+                  className={`model-combobox-option ${value === option.value ? "model-combobox-option--selected" : ""}`}
+                  aria-selected={value === option.value}
+                  onClick={() => handleSelect(option.value)}
+                >
+                  <span className="model-combobox-option-main">
+                    {model ? <span className="model-combobox-option-icon"><ProviderIcon provider={model.provider} size="sm" /></span> : null}
+                    <span className="model-combobox-option-text">{option.label}</span>
+                  </span>
+                  {model ? <span className="model-combobox-option-id">{model.id}</span> : null}
+                </AlphaListBoxItem>
+              );
+            })}
+          </AlphaListBox>
+          <div className="model-combobox-alpha-actions" aria-label={t("models.modelActions", "Model actions")}>
+            <div className="model-combobox-alpha-actions-heading">{t("models.modelActions", "Model actions")}</div>
+            {visibleProviderEntries.map(({ provider, isCollapsed }) => {
+              const isFavorite = favoriteProviders.includes(provider);
+              return (
+                <div key={provider} className="model-combobox-alpha-action-row model-combobox-alpha-provider-actions">
+                  <span className="model-combobox-alpha-action-label"><ProviderIcon provider={provider} size="sm" />{provider}</span>
+                  <span className="model-combobox-alpha-action-controls">
+                  {onToggleFavorite ? <AlphaButton type="button" className={`model-combobox-optgroup-favorite ${isFavorite ? "model-combobox-optgroup-favorite--active" : ""}`} onClick={() => onToggleFavorite(provider)} aria-label={isFavorite ? t("models.removeProviderFromFavoritesAriaLabel", "Remove {{provider}} from favorites", { provider }) : t("models.addProviderToFavoritesAriaLabel", "Add {{provider}} to favorites", { provider })}>★</AlphaButton> : null}
+                  <AlphaButton type="button" className="model-combobox-optgroup-toggle" onClick={() => handleToggleCollapsedProvider(provider)} aria-label={isCollapsed ? t("models.expandProvider", "Expand {{provider}}", { provider }) : t("models.collapseProvider", "Collapse {{provider}}", { provider })} aria-expanded={!isCollapsed}>▼</AlphaButton>
+                  </span>
+                </div>
+              );
+            })}
+            {onToggleModelFavorite ? optionsList.filter((option) => option.provider && option.type !== "provider").map((option) => {
+              const isFavorited = favoriteModels.includes(option.value);
+              return <div key={option.value} className="model-combobox-alpha-action-row"><span className="model-combobox-alpha-action-label">{option.label}</span><AlphaButton type="button" className={`model-combobox-option-favorite ${isFavorited ? "model-combobox-option-favorite--active" : ""}`} onClick={() => onToggleModelFavorite(option.value)} aria-label={isFavorited ? t("models.removeFromFavoritesAriaLabel", "Remove {{name}} from favorites", { name: option.label }) : t("models.addToFavoritesAriaLabel", "Add {{name}} to favorites", { name: option.label })}>{isFavorited ? "★" : "☆"}</AlphaButton></div>;
+            }) : null}
+          </div>
+          {filteredModels.length === 0 && hasFilter ? <div className="model-combobox-no-results">{t("models.noResults", "No models match '{{filter}}'", { filter: localFilter })}</div> : null}
+        </div>
+      ) : (
+      <div ref={listRef} className="model-combobox-list" role={"listbox"} aria-label={label}>
         {specialOptions.map((option, index) => (
-          <div
+          <AlphaListBoxRow collectionLabel={label}
             key={`${option.type}-${option.value}`}
+            id={`${option.type}-${option.value}`}
+            textValue={option.label}
             data-index={index}
             className={`model-combobox-option ${highlightedIndex === index ? "model-combobox-option--highlighted" : ""} ${value === option.value ? "model-combobox-option--selected" : ""}`}
             onClick={() => handleSelect(option.value)}
             onMouseEnter={() => setHighlightedIndex(index)}
-            role="option"
             aria-selected={value === option.value}
           >
             <span className="model-combobox-option-text model-combobox-option-text--default">{option.label}</span>
-          </div>
+          </AlphaListBoxRow>
         ))}
 
         {/* Favorited models as pinned rows */}
@@ -786,14 +843,19 @@ export function CustomModelDropdown({
               const isHighlighted = highlightedIndex === optionIndex;
               const isSelected = value === fullId;
               return (
-                <div
+                <AlphaListBoxRow collectionLabel={`${label}: ${model.name}`}
                   key={fullId}
+                  id={`favorite-${fullId}`}
+                  textValue={model.name}
                   data-index={optionIndex}
                   className={`model-combobox-option model-combobox-option--favorite ${isHighlighted ? "model-combobox-option--highlighted" : ""} ${isSelected ? "model-combobox-option--selected" : ""}`}
                   onClick={() => handleSelect(fullId)}
                   onMouseEnter={() => setHighlightedIndex(optionIndex)}
-                  role="option"
                   aria-selected={isSelected}
+                  auxiliary={onToggleModelFavorite ? (
+                    <AlphaButton type="button" className="model-combobox-option-favorite model-combobox-option-favorite--active" onClick={() => onToggleModelFavorite(fullId)} title={t("models.removeFromFavorites", "Remove from favorites")} aria-label={t("models.removeFromFavoritesAriaLabel", "Remove {{name}} from favorites", { name: model.name })}>★</AlphaButton>
+                  ) : null}
+                  rowClassName="model-combobox-option-row"
                 >
                   <span className="model-combobox-option-main">
                     <span className="model-combobox-option-icon">
@@ -802,21 +864,7 @@ export function CustomModelDropdown({
                     <span className="model-combobox-option-text">{model.name}</span>
                   </span>
                   <span className="model-combobox-option-id">{model.id}</span>
-                  {onToggleModelFavorite && (
-                    <button
-                      type="button"
-                      className="model-combobox-option-favorite model-combobox-option-favorite--active"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onToggleModelFavorite(fullId);
-                      }}
-                      title={t("models.removeFromFavorites", "Remove from favorites")}
-                      aria-label={t("models.removeFromFavoritesAriaLabel", "Remove {{name}} from favorites", { name: model.name })}
-                    >
-                      ★
-                    </button>
-                  )}
-                </div>
+                </AlphaListBoxRow>
               );
             })}
             <div className="model-combobox-divider" />
@@ -834,7 +882,7 @@ export function CustomModelDropdown({
                 <ProviderIcon provider={provider} size="sm" />
                 <span className="model-combobox-optgroup-text">{provider}</span>
                 {onToggleFavorite && (
-                  <button
+                  <AlphaButton
                     type="button"
                     className={`model-combobox-optgroup-favorite ${isFavorite ? "model-combobox-optgroup-favorite--active" : ""}`}
                     onClick={(e) => {
@@ -845,9 +893,9 @@ export function CustomModelDropdown({
                     aria-label={isFavorite ? t("models.removeProviderFromFavoritesAriaLabel", "Remove {{provider}} from favorites", { provider }) : t("models.addProviderToFavoritesAriaLabel", "Add {{provider}} to favorites", { provider })}
                   >
                     ★
-                  </button>
+                  </AlphaButton>
                 )}
-                <button
+                <AlphaButton
                   type="button"
                   className={`model-combobox-optgroup-toggle ${isExpanded ? "model-combobox-optgroup-toggle--expanded" : ""}`}
                   onClick={(event) => {
@@ -861,7 +909,7 @@ export function CustomModelDropdown({
                   data-testid={`model-combobox-provider-toggle-${provider}`}
                 >
                   ▼
-                </button>
+                </AlphaButton>
               </div>
               {!isCollapsed && providerModels.map((model) => {
                 const optionValue = `${model.provider}/${model.id}`;
@@ -871,32 +919,23 @@ export function CustomModelDropdown({
                 const isFavorited = favoriteModels.includes(optionValue);
 
                 return (
-                  <div
+                  <AlphaListBoxRow collectionLabel={`${label}: ${model.name}`}
                     key={optionValue}
+                    id={optionValue}
+                    textValue={model.name}
                     data-index={optionIndex}
                     className={`model-combobox-option ${isHighlighted ? "model-combobox-option--highlighted" : ""} ${isSelected ? "model-combobox-option--selected" : ""}`}
                     onClick={() => handleSelect(optionValue)}
                     onMouseEnter={() => setHighlightedIndex(optionIndex)}
-                    role="option"
                     aria-selected={isSelected}
+                    auxiliary={onToggleModelFavorite ? (
+                      <AlphaButton type="button" className={`model-combobox-option-favorite ${isFavorited ? "model-combobox-option-favorite--active" : ""}`} onClick={() => onToggleModelFavorite(optionValue)} title={isFavorited ? t("models.removeFromFavorites", "Remove from favorites") : t("models.addToFavorites", "Add to favorites")} aria-label={isFavorited ? t("models.removeFromFavoritesAriaLabel", "Remove {{name}} from favorites", { name: model.name }) : t("models.addToFavoritesAriaLabel", "Add {{name}} to favorites", { name: model.name })}>{isFavorited ? "★" : "☆"}</AlphaButton>
+                    ) : null}
+                    rowClassName="model-combobox-option-row"
                   >
                     <span className="model-combobox-option-text">{model.name}</span>
                     <span className="model-combobox-option-id">{model.id}</span>
-                    {onToggleModelFavorite && (
-                      <button
-                        type="button"
-                        className={`model-combobox-option-favorite ${isFavorited ? "model-combobox-option-favorite--active" : ""}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onToggleModelFavorite(optionValue);
-                        }}
-                        title={isFavorited ? t("models.removeFromFavorites", "Remove from favorites") : t("models.addToFavorites", "Add to favorites")}
-                        aria-label={isFavorited ? t("models.removeFromFavoritesAriaLabel", "Remove {{name}} from favorites", { name: model.name }) : t("models.addToFavoritesAriaLabel", "Add {{name}} to favorites", { name: model.name })}
-                      >
-                        {isFavorited ? "★" : "☆"}
-                      </button>
-                    )}
-                  </div>
+                  </AlphaListBoxRow>
                 );
               })}
             </div>
@@ -907,13 +946,18 @@ export function CustomModelDropdown({
           <div className="model-combobox-no-results">{t("models.noResults", "No models match '{{filter}}'", { filter: localFilter })}</div>
         )}
       </div>
-    </div>
+      )}
+    </AlphaPopoverSurface>
   ) : null;
 
+  /*
+  FNXC:HeroUIAlphaKeyboard 2026-09-10-21:03:
+  HeroUI owns keyboard navigation for the Alpha listbox and its sibling action rail. Restrict the historical delegated handler to stable mode so Enter activates focused favorite and provider-collapse buttons instead of selecting the highlighted model.
+  */
   return (
     <>
-      <div ref={containerRef} className="model-combobox" onKeyDown={handleKeyDown}>
-        <button
+      <div ref={containerRef} className="model-combobox" onKeyDown={heroUIAlpha ? undefined : handleKeyDown}>
+        <AlphaButton
           ref={triggerRef}
           type="button"
           id={id}
@@ -941,7 +985,7 @@ export function CustomModelDropdown({
             </span>
           )}
           <span className="model-combobox-trigger-arrow">▼</span>
-        </button>
+        </AlphaButton>
       </div>
       {portalRoot && dropdownContent ? createPortal(dropdownContent, portalRoot) : null}
     </>

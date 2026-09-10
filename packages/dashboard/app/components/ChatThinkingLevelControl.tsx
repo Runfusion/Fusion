@@ -1,3 +1,4 @@
+import { AlphaButton, AlphaListBox, AlphaListBoxItem, AlphaPopoverSurface } from "./hero-ui";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
@@ -283,7 +284,7 @@ export function ChatThinkingLevelControl({
     }
   };
 
-  const handleOptionKeyDown = (event: KeyboardEvent<HTMLButtonElement>, value: string) => {
+  const handleOptionKeyDown = (event: KeyboardEvent<HTMLElement>, value: string) => {
     if (event.key === "Escape") {
       event.preventDefault();
       pendingTargetRef.current = null;
@@ -311,7 +312,7 @@ export function ChatThinkingLevelControl({
 
   return (
     <div className="chat-thinking-level-root" ref={rootRef}>
-      <button
+      <AlphaButton
         ref={triggerRef}
         type="button"
         className={`btn-icon chat-thinking-btn${isActive ? " chat-thinking-btn--active" : ""}`}
@@ -329,11 +330,13 @@ export function ChatThinkingLevelControl({
         onKeyDown={handleTriggerKeyDown}
       >
         <Brain size={16} />
-      </button>
+      </AlphaButton>
 
       {open && popoverPosition && typeof document !== "undefined" ? createPortal(
-        <div
+        <AlphaPopoverSurface
           ref={popoverRef}
+          triggerRef={triggerRef}
+          onClose={() => setOpen(false)}
           className="chat-thinking-popover"
           role="presentation"
           data-testid="chat-thinking-popover"
@@ -353,7 +356,7 @@ export function ChatThinkingLevelControl({
             <div className="chat-thinking-section-title">{showAgentTarget ? t("chat.modelAgentSection", "Model / Agent") : t("chat.newChatModeModel", "Model")}</div>
             {showAgentTarget ? (
               <div className="chat-thinking-mode-toggle" data-testid="chat-thinking-mode-toggle">
-                <button
+                <AlphaButton
                   type="button"
                   className={`chat-thinking-mode-btn${targetMode === "model" ? " chat-thinking-mode-btn--active" : ""}`}
                   data-testid="chat-thinking-mode-model"
@@ -366,8 +369,8 @@ export function ChatThinkingLevelControl({
                   }}
                 >
                   {t("chat.newChatModeModel", "Model")}
-                </button>
-                <button
+                </AlphaButton>
+                <AlphaButton
                   type="button"
                   className={`chat-thinking-mode-btn${targetMode === "agent" ? " chat-thinking-mode-btn--active" : ""}`}
                   data-testid="chat-thinking-mode-agent"
@@ -380,7 +383,7 @@ export function ChatThinkingLevelControl({
                   }}
                 >
                   {t("chat.newChatModeAgent", "Agent")}
-                </button>
+                </AlphaButton>
               </div>
             ) : null}
 
@@ -416,7 +419,7 @@ export function ChatThinkingLevelControl({
                   agents.map((agent) => {
                     const selected = selectedAgentId === agent.id;
                     return (
-                      <button
+                      <AlphaButton
                         key={agent.id}
                         type="button"
                         className={`chat-thinking-agent-item${selected ? " chat-thinking-agent-item--selected" : ""}`}
@@ -429,7 +432,7 @@ export function ChatThinkingLevelControl({
                         <Bot size={16} />
                         <span className="chat-thinking-agent-name">{agent.name || agent.id}</span>
                         {agent.role ? <span className="chat-thinking-agent-role">{agent.role}</span> : null}
-                      </button>
+                      </AlphaButton>
                     );
                   })
                 )}
@@ -453,31 +456,32 @@ export function ChatThinkingLevelControl({
 
           <section className="chat-thinking-level-section" aria-label={t("chat.thinkingLevelButton", "Thinking level")}>
             <div className="chat-thinking-section-title">{t("chat.thinkingLevelSection", "Thinking level")}</div>
-            <div
+            <AlphaListBox
               id={listboxId}
               className="chat-thinking-popover-list"
-              role="listbox"
               aria-label={t("chat.thinkingLevelButton", "Thinking level")}
             >
               {hasStaleThinkingLevel ? (
-                <button
-                  type="button"
-                  role="option"
+                <AlphaListBoxItem
+                  legacyAs="button"
+                  id={`stale-${normalizedLevel}`}
+                  textValue={normalizedLevel}
                   aria-selected
-                  disabled
+                  isDisabled
                   className="chat-thinking-popover-option"
                   data-testid={`chat-thinking-option-${normalizedLevel}`}
                 >
                   {t("models.options.unavailable", "Unavailable: {{level}}", { level: normalizedLevel })}
-                </button>
+                </AlphaListBoxItem>
               ) : null}
               {thinkingLevelOptions.map((value) => {
                 const selected = normalizedLevel === value;
                 return (
-                  <button
+                  <AlphaListBoxItem
                     key={value || "default"}
-                    type="button"
-                    role="option"
+                    id={value || "default"}
+                    textValue={optionLabel(value)}
+                    legacyAs="button"
                     aria-selected={selected}
                     className={`chat-thinking-popover-option${selected ? " active" : ""}`}
                     data-testid={`chat-thinking-option-${value || "default"}`}
@@ -485,12 +489,12 @@ export function ChatThinkingLevelControl({
                     onKeyDown={(event) => handleOptionKeyDown(event, value)}
                   >
                     {optionLabel(value)}
-                  </button>
+                  </AlphaListBoxItem>
                 );
               })}
-            </div>
+            </AlphaListBox>
           </section>
-        </div>,
+        </AlphaPopoverSurface>,
         document.body,
       ) : null}
     </div>

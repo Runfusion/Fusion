@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { Task } from "@fusion/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BoardWorkflowDefinition, BoardWorkflowsPayload } from "../../api";
@@ -6,6 +7,7 @@ import { loadAllAppCssBaseOnly } from "../../test/cssFixture";
 import { computeMenuWidth, OPTION_DECORATIONS_WIDTH, WorkflowSwitcher } from "../WorkflowSwitcher";
 import { computeWorkflowStatusCounts, type WorkflowStatusCounts } from "../workflowStatusCounts";
 import { readAppFile } from "../../test/cssFixture";
+import { HeroUIAlphaProvider, HeroUIAlphaSurface } from "../../context/HeroUIAlphaContext";
 
 const workflows: BoardWorkflowDefinition[] = [
   {
@@ -558,6 +560,28 @@ describe("WorkflowSwitcher", () => {
       expect(rule).not.toMatch(/var\(--(?:text-muted|color-warning|color-success)\)/);
       expect(rule).not.toMatch(/#[0-9a-fA-F]{3,8}|rgba?\(/);
     }
+  });
+
+  it("keeps Alpha workflow selection and row editing as separate actions", async () => {
+    const onChange = vi.fn();
+    const onEdit = vi.fn();
+    render(<HeroUIAlphaProvider enabled><HeroUIAlphaSurface><WorkflowSwitcher workflows={workflows} value="builtin:coding" onChange={onChange} counts={countMap()} onEditWorkflow={onEdit} /></HeroUIAlphaSurface></HeroUIAlphaProvider>);
+    fireEvent.click(screen.getByTestId("workflow-switcher"));
+    const firstOption = screen.getByTestId("workflow-switcher-option-builtin:coding");
+    const option = screen.getByTestId("workflow-switcher-option-design");
+    const edit = screen.getByTestId("workflow-switcher-edit-design");
+    expect(option).not.toContainElement(edit);
+    firstOption.focus();
+    await userEvent.keyboard("{ArrowDown}");
+    expect(option).toHaveFocus();
+    await userEvent.tab();
+    expect(screen.getByTestId("workflow-switcher-edit-builtin:coding")).toHaveFocus();
+    fireEvent.click(edit);
+    expect(onEdit).toHaveBeenCalledWith("design");
+    expect(onChange).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId("workflow-switcher"));
+    await userEvent.click(screen.getByTestId("workflow-switcher-option-design"));
+    expect(onChange).toHaveBeenCalledWith("design");
   });
 
   it("styles the merging indicator with a flashing animation and reduced-motion fallback", () => {

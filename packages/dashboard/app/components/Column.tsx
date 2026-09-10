@@ -1,4 +1,5 @@
 import { memo, useMemo, useState, useCallback, useEffect, useRef } from "react";
+import { AlphaButton, AlphaInput, AlphaMenu, AlphaMenuItem, AlphaSurface } from "./hero-ui";
 import { useAutoPaginationSentinel } from "../hooks/useAutoPaginationSentinel";
 import { useVirtualizedList } from "../hooks/useVirtualizedList";
 import { useTranslation } from "react-i18next";
@@ -592,7 +593,7 @@ function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeG
 
 
   return (
-    <div
+    <AlphaSurface
       className="column"
       data-column={column}
     >
@@ -611,7 +612,7 @@ function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeG
         </span>
         {/* FNXC:AlphaUpdates 2026-09-09-18:24: Every resolved complete lane, including custom empty lanes, owns the sole Alpha History entry point. */}
         {alphaUpdatesEnabled && isCompleteColumn && onOpenHistory && (
-          <button
+          <AlphaButton
             type="button"
             className="btn btn-icon btn-sm column-history-button"
             onClick={onOpenHistory}
@@ -620,7 +621,7 @@ function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeG
             data-testid={`column-history-${column}`}
           >
             <History />
-          </button>
+          </AlphaButton>
         )}
         {isReviewColumn && onToggleAutoMerge && (
           <label className="auto-merge-toggle" title={autoMerge ? t("column.autoMergeEnabled", "Auto-merge enabled") : t("column.autoMergeDisabled", "Auto-merge disabled")}>
@@ -628,7 +629,7 @@ function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeG
             FNXC:AutoMergeA11y 2026-07-14-19:20:
             Explicit aria-label keeps the control discoverable as "Auto-merge" for assistive tech and mobile regression tests even when the visible toggle-label is hidden by CSS or i18n wrappers.
             */}
-            <input
+            <AlphaInput
               type="checkbox"
               checked={!!autoMerge}
               onChange={onToggleAutoMerge}
@@ -639,14 +640,14 @@ function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeG
           </label>
         )}
         {onNewTask && (
-          <button className="btn btn-task-create btn-sm" onClick={() => onNewTask()}>
+          <AlphaButton className="btn btn-task-create btn-sm" onClick={() => onNewTask()}>
             + {t("column.newTask", "New Task")}
-          </button>
+          </AlphaButton>
         )}
 
         {hasColumnMenu && (
           <div className="column-menu" ref={menuRef}>
-            <button
+            <AlphaButton
               type="button"
               className="btn btn-icon btn-sm"
               onClick={() => setIsMenuOpen((v) => !v)}
@@ -657,19 +658,13 @@ function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeG
               disabled={isMenuBusy}
             >
               <MoreVertical />
-            </button>
+            </AlphaButton>
             {isMenuOpen && (
-              <div className="column-menu-popover" role="menu">
+              <AlphaMenu className="column-menu-popover" aria-label={t("column.actionsAriaLabel", "{{columnLabel}} column actions", { columnLabel: columnLabelText })}>
                 {hasPlanAutoApproveAction && (
-                  <label className="column-menu-item auto-merge-toggle" role="menuitemcheckbox" aria-checked={!!planAutoApproveEnabled}>
+                  <AlphaMenuItem className="column-menu-item auto-merge-toggle" role="menuitemcheckbox" aria-checked={!!planAutoApproveEnabled} onClick={handlePlanAutoApproveToggle}>
                     <span className="column-menu-item-row">
-                      <input
-                        type="checkbox"
-                        checked={!!planAutoApproveEnabled}
-                        onChange={handlePlanAutoApproveToggle}
-                        aria-label={t("column.planAutoApproveLabel", "Auto-approve plan")}
-                      />
-                      <span className="toggle-slider" aria-hidden="true" />
+                      <span className="column-menu-item-check" aria-hidden="true">{planAutoApproveEnabled ? "✓" : ""}</span>
                       <span>{t("column.planAutoApproveLabel", "Auto-approve plan")}</span>
                     </span>
                     <span className="column-menu-item-hint">
@@ -677,12 +672,14 @@ function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeG
                         ? t("column.planAutoApproveOnHint", "On bypasses manual plan approval for this project")
                         : t("column.planAutoApproveOffHint", "Off uses the workflow/default plan approval setting")}
                     </span>
-                  </label>
+                  </AlphaMenuItem>
                 )}
                 {showSortControl && (
-                  <div className="column-menu-group" role="group" aria-label={sortControlLabel}>
+                  <>
+                    <span className="sr-only">{sortControlLabel}</span>
                     {sortOptions.map((option) => (
-                      <button
+                      <AlphaMenuItem
+                        id={option.mode}
                         key={option.mode}
                         type="button"
                         role="menuitemradio"
@@ -699,14 +696,14 @@ function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeG
                             ? t("column.sortArrivalDescHint", "Show the newest arrivals in this column first")
                             : t("column.sortTaskIdDescHint", "Show the highest task IDs first")}
                         </span>
-                      </button>
+                      </AlphaMenuItem>
                     ))}
-                  </div>
+                  </>
                 )}
                 {isTodoLikeColumn && (
-                  <button
+                  <AlphaMenuItem
+                    id="replan-all"
                     type="button"
-                    role="menuitem"
                     className="column-menu-item"
                     onClick={() => void handleReplanAll()}
                     disabled={tasks.length === 0 || isReplanning}
@@ -715,12 +712,12 @@ function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeG
                     <span className="column-menu-item-hint">
                       {t("column.replanAllHint", "Replan {{count}} task{{plural}} from its original description", { count: tasks.length, plural: tasks.length === 1 ? "" : "s" })}
                     </span>
-                  </button>
+                  </AlphaMenuItem>
                 )}
                 {(isProcessingColumn || isReviewColumn) && (
-                    <button
+                    <AlphaMenuItem
+                      id="pause-all"
                       type="button"
-                      role="menuitem"
                       className="column-menu-item"
                       onClick={() => void handlePauseAll()}
                       disabled={pauseEligibleCount === 0 || isPausingAll || !onPauseTask}
@@ -733,9 +730,9 @@ function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeG
                             ? t("column.noManuallyPausableTasks", "No manually pausable tasks")
                             : t("column.pauseHint", "Pause {{count}} active unassigned task{{plural}}", { count: pauseEligibleCount, plural: pauseEligibleCount === 1 ? "" : "s" })}
                       </span>
-                    </button>
+                    </AlphaMenuItem>
                 )}
-              </div>
+              </AlphaMenu>
             )}
           </div>
         )}
@@ -872,16 +869,16 @@ function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeG
               {serverPaginationError ? (
                 <div className="column-pagination-error">
                   <span>{t("column.paginationError", "Older tasks could not be loaded.")}</span>
-                  <button type="button" className="btn btn-sm" onClick={() => void onRetryServer?.()}>
+                  <AlphaButton type="button" className="btn btn-sm" onClick={() => void onRetryServer?.()}>
                     {t("common.retry", "Retry")}
-                  </button>
+                  </AlphaButton>
                 </div>
               ) : null}
             </div>
           ) : null}
           <PluginSlot slotId="board-column-footer" projectId={projectId} />
         </div>
-    </div>
+    </AlphaSurface>
   );
 }
 
