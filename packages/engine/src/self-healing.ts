@@ -27,9 +27,13 @@ import { setImmediate as setImmediateCb } from "node:timers";
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+/*
+FNXC:CodeOrganization 2026-08-23-22:38:
+Workspace reconcilers live in workspace-reconcile.ts; the class keeps the path helpers used by the
+remaining inline methods.
+*/
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { loadWorkspaceConfig, type TaskMoveLanes, resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, hasSharedBranchMemberAutoMergeHold, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getPostMergeFinalizeBlocker, planConfirmedMergeChecklistReconciliation, getTaskMergeBlocker, isStaleContentApprovalBlocker, resolvePreMergeGateForTask, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isLiveSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, resolveExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, getBuiltinWorkflow, isBuiltinWorkflowId, resolveWorkflowIrForTask, resolveWorkflowIrForTaskWithProvenance, resolveRequiredPreMergeStepIds, resolveReboundTarget, columnsWithFlag, resolveLifecycleColumns, resolveTaskLifecycleColumns, isWipColumnRole, isReviewColumnRole, isTerminalColumnRole, workflowHasColumn, planLegacyAdoption, resolveOrphanedPendingStepResults, resolveUnprovenReviewApproval, resolveCollateralArchivedReviewGate, COLLATERAL_ARCHIVED_REVIEW_GATE_DIAGNOSTIC, classifyReviewLease, PLAN_REVIEW_LEASE_STALENESS_MS, DEFAULT_MAX_POST_REVIEW_FIXES, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type MoveTaskOptions, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult, type WorkflowIr, type WorkflowIrV2,
-
   resolveNearDuplicateCanonicalFlags,
   LEGACY_COLUMN_IDS_BY_ROLE,
   TERMINAL_ROLES,
@@ -46,7 +50,7 @@ import { loadWorkspaceConfig, type TaskMoveLanes, resolveColumnFlags, IN_REVIEW_
   fileScopeLeaseBlocksCandidate,
   normalizeOverlapScopeForTask,
 } from "@fusion/core";
-import { finalizePlanningSegment, isLegacyWorkspaceWorktreeLayout, resolveWorkspaceTaskWorktreeDir } from "@fusion/core";
+import { finalizePlanningSegment } from "@fusion/core";
 import type { WorkspaceLandIntent } from "@fusion/core";
 import { classifyStaleContentPark } from "./merge/stale-content-park.js";
 import type { MeshLeaseManager } from "./project/mesh-lease-manager.js";
@@ -63,7 +67,7 @@ import {
   buildDuplicateReplanExhaustedError,
 } from "./duplicate-marker-clear.js";
 import { mergeEffectiveSettings } from "./project/effective-settings.js";
-import { RemovalReason, classifyTaskWorktree, getRegisteredWorktreeBranchMap, getRegisteredWorktreePaths, isUsableTaskWorktree, relocateReclaimableWorktreeIntoRoot, removeWorktree, resolveWorktreeBackend, scanIdleWorktrees, scanOrphanedBranches } from "./worktree/worktree-pool.js";
+import { RemovalReason, getRegisteredWorktreeBranchMap, getRegisteredWorktreePaths, isUsableTaskWorktree, relocateReclaimableWorktreeIntoRoot, removeWorktree, resolveWorktreeBackend, scanIdleWorktrees, scanOrphanedBranches } from "./worktree/worktree-pool.js";
 import {
   isMissingWorktreeSessionStartFailure,
   isMergeActiveMissingWorktreeSessionStartFailure,
@@ -85,7 +89,7 @@ import {
   resolveErrorRecoveryLimit,
 } from "./agent-heartbeat.js";
 import { classifyForeignOnlyContamination, deriveTaskIdFromFusionBranch, inspectBranchConflict, listUniqueBranchCommits } from "./execution/branch-conflicts.js";
-import { createRunAuditor, generateSyntheticRunId, type DatabaseMutationType, type RunAuditor } from "./util/run-audit.js";
+import { createRunAuditor, generateSyntheticRunId, type DatabaseMutationType } from "./util/run-audit.js";
 import { finalizeProvenAutoMergeTask, validateWorkflowDoneMergeProof } from "./merge/auto-merge-finalization.js";
 import { captureMergeContentDescriptor } from "./merge/merge-content-capture.js";
 import { rerouteSingularStaleContentToReview } from "./merge/stale-content-review-reroute.js";
@@ -109,13 +113,12 @@ import { evaluateStrandedHoldContinuation, seedPreReleasePlanReviewContinuation 
 import { evaluateStrandedContinuationReclaim, RECLAIM_RETIRED_STATE } from "./workflows/stranded-continuation-reclaim.js";
 /*
 FNXC:Workspace 2026-06-22-14:10 (Phase D review G — cycle dissolved):
-`isRepoLanded` is the CANONICAL per-repo landed predicate (Phase C, exported A6). It now lives in
+`isRepoLanded` is the CANONICAL per-repo landed predicate (Phase C, exported A6). It lives in
 the dependency-free `workspace-land-predicate` module, NOT merger-ai. Previously self-healing
 imported it from merger-ai while merger-ai imports `MIN_TEMP_WORKTREE_REAP_AGE_MS` from
-self-healing — a real import cycle. Importing from the predicate module breaks the cycle.
+self-healing — a real import cycle.
+FNXC:CodeOrganization 2026-08-13-03:34: Live import now lives in workspace-reconcile.ts (U5 wave20 peel).
 */
-import { isRepoLanded } from "./merge/workspace-land-predicate.js";
-import { persistWorkspaceRepoLandFailure } from "./merge/workspace-land-failure.js";
 import { getCommitTaskOwnership } from "./merge/already-merged-detector.js";
 import { getTaskCompletionBlockerForStore } from "./execution/task-completion.js";
 import { shouldReclaimWedgedMerge } from "./merge/merge-reclaim-policy.js";
@@ -128,7 +131,6 @@ import { removeDirectoryWithRetry } from "./worktree/worktree-removal-retry.js";
 import { canonicalFusionBranchName, resolveTaskWorkingBranch } from "./worktree/worktree-names.js";
 import { preservedWorktreeTargetPathForTask } from "./worktree/worktree-pinning.js";
 import { resolveIntegrationBranch } from "./merge/integration-branch.js";
-import { recordWorkspaceBaseBranchDecision, resolveWorkspaceRepoBaseBranch } from "./worktree/workspace-base-branch.js";
 import { resolveBranchGroupMergeRouting } from "./merge/group-merge-coordinator.js";
 import type { OwnedLandedClassification } from "./merger.js";
 import { regenerateBareMergeSubject } from "./merge/merger-bare-subject.js";
@@ -147,7 +149,6 @@ import { runSurfacingSweep, hours, type SurfacingCycle } from "./surfacing-sweep
    self-healing-git-evidence.ts. Imported back here because call sites remain. */
 import { SelfHealingGitEvidence, execAsync, shellQuote } from "./self-healing-git-evidence.js";
 import { evaluateParkedAgentTaskLink, PARKED_AGENT_LINK_FRESH_RUN_MS } from "./agents/task-agent-sync.js";
-import { describeSelfHealingNoActionWedge } from "./notification/task-wedge-notification.js";
 import { computeRecoveryDecision, formatDelay, MAX_RECOVERY_RETRIES } from "./healing/recovery-policy.js";
 
 type FileScopeLeaseTaskRoles = {
@@ -337,7 +338,6 @@ const DONE_TASK_INTEGRITY_SWEEP_LIMIT = 50;
 const GIT_WORKTREE_CHURN_INTERVAL_MS = 60 * 60 * 1000;
 const BOARD_STALL_NOTIFICATION_COOLDOWN_MS = 60 * 60_000;
 const DB_CORRUPTION_NOTIFICATION_COOLDOWN_MS = 60 * 60 * 1000;
-const PHANTOM_EXECUTOR_BINDING_AGE_MULTIPLIER = 3;
 const MAX_NO_PROGRESS_RESUME_ATTEMPTS = 2;
 
 type WorkflowRecoveryRoute =
@@ -373,6 +373,23 @@ import {
   isTaskWorkComplete,
 } from "./self-healing/step-progress.js";
 
+import {
+  PHANTOM_EXECUTOR_BINDING_AGE_MULTIPLIER,
+  MAX_STARVATION_DROPS,
+} from "./self-healing/sweep-constants.js";
+import {
+  isWorkspaceTaskLive as isWorkspaceTaskLiveImpl,
+} from "./self-healing/workspace-liveness.js";
+import {
+  evaluateBackwardMoveTripleProof as evaluateBackwardMoveTripleProofImpl,
+  emitBackwardMoveNoAction as emitBackwardMoveNoActionImpl,
+  hasRecentWorktreeIncompleteDetected as hasRecentWorktreeIncompleteDetectedImpl,
+} from "./self-healing/backward-move-proof.js";
+import {
+  reconcileWorkspacePartialLands as reconcileWorkspacePartialLandsImpl,
+  reconcilePreExecutionWorktrees as reconcilePreExecutionWorktreesImpl,
+} from "./self-healing/workspace-reconcile.js";
+
 async function classifyOwnedLandedEvidenceForSelfHealing(rootDir: string, task: Task, mergeTargetBranch: string): Promise<OwnedLandedClassification> {
   const { classifyOwnedLandedEvidence } = await import("./merger.js");
   return classifyOwnedLandedEvidence(rootDir, task, { mergeTargetBranch });
@@ -401,15 +418,6 @@ async function preserveWorktreeChanges(repoDir: string, worktreePath: string, ta
 
 
 
-/*
-FNXC:PlanningEvacuation 2026-07-25-23:20:
-The pre-execution worktree sweep touches VERY OLD trees only. Planning-acquired worktrees are cheap to
-re-create but expensive to lose track of, and a card parked for a few hours is routinely resumed — so
-the sweep waits a month of complete inactivity before reclaiming anything. The event-driven release on
-an explicit operator withdrawal (todo -> Ideas) is separate and immediate; this constant governs only
-the unattended background pass.
-*/
-const PRE_EXECUTION_WORKTREE_MAX_IDLE_MS = 30 * 24 * 60 * 60 * 1000;
 
 export interface SelfHealingOptions {
   /** Project root directory (parent of .worktrees/) */
@@ -738,7 +746,6 @@ async function resolveNoOpFinalizeGateIds(store: TaskStore, task: Task): Promise
   return ir ? resolveRequiredPreMergeStepIds(ir, task.enabledWorkflowSteps) : undefined;
 }
 export { classifyTransientMergeError } from "./errors/transient-merge-error-classifier.js";
-const MAX_STARVATION_DROPS = 3;
 /*
 FNXC:Workspace 2026-08-15-05:13:
 Failed workspace tasks are routinely retried with their progress preserved. Terminal teardown therefore
@@ -901,6 +908,30 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   records that safe half of teardown until the claim index becomes unambiguous or the entry settles.
   */
   private prunedWorkspaceWorktreeTeardowns = new Set<string>();
+
+  /*
+  FNXC:CodeOrganization 2026-08-15-22:49:
+  The peel host carries main's post-peel counters and test seams (durable liveness, show-ref
+  probe, teardown git) so workspace-reconcile.ts can keep FN-9058/9059 behavior without
+  re-inlining the reconcilers on this class.
+  */
+  private workspaceReconcileHost() {
+    return {
+      store: this.store,
+      options: this.options,
+      workspacePartialLandDrops: this.workspacePartialLandDrops,
+      workspacePartialLandEvidenceDefers: this.workspacePartialLandEvidenceDefers,
+      orphanWorktreeRemovalFailures: this.orphanWorktreeRemovalFailures,
+      settledWorkspaceWorktreeTeardowns: this.settledWorkspaceWorktreeTeardowns,
+      prunedWorkspaceWorktreeTeardowns: this.prunedWorkspaceWorktreeTeardowns,
+      probeRepoBranch: (repoRootDir: string, branch: string) => this.probeRepoBranch(repoRootDir, branch),
+      execWorkspaceTeardownGit: (command: string, options: { cwd: string; timeout: number }) =>
+        this.execWorkspaceTeardownGit(command, options),
+      isWorkspaceTaskLiveDurably: (task: Task) => this.isWorkspaceTaskLiveDurably(task),
+      isLegacyCompleteColumnForWorkspaceTeardown,
+    };
+  }
+
   private finalizeUnprovenWarned = new Set<string>();
   /*
    * FNXC:Lifecycle 2026-07-16-10:30:
@@ -1172,37 +1203,11 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   }
 
   private async hasRecentWorktreeIncompleteDetected(taskId: string, graceMs: number): Promise<boolean> {
-    if (!Number.isFinite(graceMs) || graceMs <= 0) return false;
-    let events: Array<{ timestamp?: string | null }> = [];
-    try {
-      events = await this.store.getRunAuditEventsAsync({ taskId, mutationType: "worktree:incomplete-detected", limit: 20 });
-    } catch {
-      return false;
-    }
-    if (!Array.isArray(events) || events.length === 0) return false;
-    const cutoff = Date.now() - graceMs;
-    return events.some((event) => {
-      const ts = Date.parse(event.timestamp ?? "");
-      return Number.isFinite(ts) && ts >= cutoff;
-    });
+    return hasRecentWorktreeIncompleteDetectedImpl(this.store, taskId, graceMs);
   }
 
-  /*
-  FNXC:Workspace 2026-06-22-09:30 (Phase D U1, KTD2 — workspace-aware liveness predicate):
-  `evaluateBackwardMoveTripleProof` is NOT workspace-aware: it keys liveness off the SINGULAR
-  `task.worktree` / `canonicalFusionBranchName(task.id)`, but a workspace task's liveness lives
-  across N sub-repo worktrees (task.worktree is null). A workspace task is LIVE iff ANY of its
-  sub-repo paths is still registered as active in the in-memory session registry
-  (`pathsForTask` ∩ `isPathActive`) OR a process-wide executing/active signal is held. Used by
-  the partial-land reconciler as the "safe to move backward / re-enqueue" gate so a live merging
-  task is never moved backward.
-  */
   private isWorkspaceTaskLive(task: Task): { live: boolean; livePaths: string[] } {
-    const livePaths = activeSessionRegistry.pathsForTask(task.id).filter((path) => activeSessionRegistry.isPathActive(path));
-    const live = livePaths.length > 0
-      || executingTaskLock.has(task.id)
-      || this.options.isTaskActive?.(task.id) === true;
-    return { live, livePaths };
+    return isWorkspaceTaskLiveImpl(task, this.options.isTaskActive);
   }
 
   /**
@@ -1377,74 +1382,16 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       workspaceMode?: boolean;
     },
   ): Promise<{ ok: boolean; stalenessMs: number; reason: string; metadata: Record<string, unknown> }> {
-    const livePaths = activeSessionRegistry.pathsForTask(task.id);
-    const hasActiveRegisteredPath = livePaths.some((path) => activeSessionRegistry.isPathActive(path));
-    const workspaceTask = input.workspaceMode ?? isWorkspaceTask(task);
-    const workspaceLiveness = workspaceTask ? await this.isWorkspaceTaskLiveDurably(task) : undefined;
-    const sessionDead = workspaceTask
-      ? !workspaceLiveness!.live
-      : !hasActiveRegisteredPath && !executingTaskLock.has(task.id) && this.options.isTaskActive?.(task.id) !== true;
-
-    let worktreeUnusable = true;
-    let worktreeClassification: { ok: boolean; classification?: string; reason?: string };
-    if (workspaceTask) {
-      /*
-      FNXC:WorkspaceRootRouting 2026-08-19-12:15:
-      Triple proof for a workspace review failure treats only the stale singular/root route as
-      unusable. Valid sub-repository entries are preserved and are not evidence that implementation
-      work was lost; active sub-repository liveness still blocks the backward move above.
-      */
-      worktreeClassification = {
-        ok: false,
-        classification: "workspace-root-routing",
-        reason: "singular workspace-root worktree metadata is not a managed repository checkout",
-      };
-      worktreeUnusable = true;
-    } else if (task.worktree) {
-      const cls = await classifyTaskWorktree(this.options.rootDir, task.worktree);
-      worktreeClassification = cls.ok
-        ? { ok: true }
-        : { ok: false, classification: cls.classification, reason: cls.reason };
-      worktreeUnusable = !cls.ok;
-    } else {
-      const expected = resolveTaskWorkingBranch(task);
-      const registeredPaths = await getRegisteredWorktreePaths(this.options.rootDir);
-      const registeredBranchMap = await getRegisteredWorktreeBranchMap(this.options.rootDir);
-      const matchingRegisteredPaths = [...registeredPaths].filter((path) => {
-        const branch = registeredBranchMap.get(path);
-        return typeof branch === "string" && branch.trim().toLowerCase() === expected;
-      });
-      worktreeClassification = matchingRegisteredPaths.length === 0
-        ? { ok: false, classification: "missing", reason: "task.worktree is null and no registered fusion worktree exists" }
-        : { ok: true, reason: "registered fusion worktree exists while task.worktree is null" };
-      worktreeUnusable = matchingRegisteredPaths.length === 0;
-    }
-
-    const anchorMs = input.stalenessAnchor ? Date.parse(input.stalenessAnchor) : Number.NaN;
-    const stalenessMs = Number.isFinite(anchorMs) ? Math.max(0, Date.now() - anchorMs) : Number.POSITIVE_INFINITY;
-    const noRecentActivity = stalenessMs >= input.graceMs && !(await this.hasRecentWorktreeIncompleteDetected(task.id, input.graceMs));
-
-    const ok = sessionDead && worktreeUnusable && noRecentActivity;
-    return {
-      ok,
-      stalenessMs,
-      reason: input.reason,
-      metadata: {
-        priorWorktree: task.worktree ?? null,
-        priorBranch: task.branch ?? null,
-        hadWorktree: Boolean(task.worktree),
-        stalenessMs,
-        graceMs: input.graceMs,
-        sessionDead,
-        worktreeUnusable,
-        noRecentActivity,
-        livePaths,
-        hasExecutingTaskLock: executingTaskLock.has(task.id),
-        taskActive: this.options.isTaskActive?.(task.id) === true,
-        worktreeClassification,
-        ...input.extra,
+    return evaluateBackwardMoveTripleProofImpl(
+      {
+        store: this.store,
+        rootDir: this.options.rootDir,
+        isTaskActive: this.options.isTaskActive,
+        isWorkspaceTaskLiveDurably: (candidate) => this.isWorkspaceTaskLiveDurably(candidate),
       },
-    };
+      task,
+      input,
+    );
   }
 
   /*
@@ -1481,54 +1428,9 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   }
 
   private async emitBackwardMoveNoAction(task: Task, stage: string, mutationType: string, proof: { stalenessMs: number; reason: string; metadata: Record<string, unknown> }): Promise<void> {
-    try {
-      await createRunAuditor(this.store, {
-        runId: generateSyntheticRunId(`self-healing-${stage}`, task.id),
-        agentId: "self-healing",
-        taskId: task.id,
-        taskLineageId: task.lineageId,
-        phase: stage,
-      }).database({
-        type: mutationType as DatabaseMutationType,
-        target: task.id,
-        metadata: proof.metadata,
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      log.warn(`[${stage}] ${task.id}: no-action audit emission failed: ${message}`);
-    }
-
-    /*
-    FNXC:TaskWedgeNotifications 2026-07-22-14:30:
-    No-action reconciles do not always write `failed` or `paused`, so task-updated
-    classification cannot see them. Deliver only the bounded ownerless stages
-    through NotificationService; its durable CAS suppresses repeated sweeps.
-    */
-    const descriptor = describeSelfHealingNoActionWedge(task, stage, proof.metadata);
-    if (descriptor) {
-      try {
-        await getActiveNotificationService()?.notifyTaskWedge(task, descriptor);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        log.warn(`[${stage}] ${task.id}: wedge notification failed: ${message}`);
-      }
-    }
-    log.debug(`[${stage}] ${task.id}: triple-proof not satisfied — no action (operator-decides)`);
+    return emitBackwardMoveNoActionImpl({ store: this.store }, task, stage, mutationType, proof);
   }
 
-  /*
-   * FNXC:Lifecycle 2026-07-16-10:30:
-   * FN-8141 — a stranded-completed promoter must respect failure provenance. Before promoting an
-   * all-steps-done/skipped candidate to in-review, verify its MOST RECENT execution-outcome in the
-   * durable task log was not a failure/refusal park; a park bounced to `todo`/`in-progress` by the
-   * pause-abort machinery must not be laundered into `in-review`. Slim listings strip `log`, so the
-   * full task is fetched only for candidates that already cleared the cheap step/status filters.
-   * On block, emits `task:reconcile-stranded-completed-no-action` once per taskId (deduped) and
-   * withholds promotion. Escape hatch: an operator retrying/moving the task starts a fresh execution
-   * whose clean completion marker supersedes the failure park, clearing the block with no code change.
-   * Fail-closed: if the full task cannot be read this cycle, withhold promotion rather than risk
-   * laundering a failed park.
-   */
   private async isStrandedCompletedPromotionBlockedByFailureProvenance(
     taskId: string,
     sweep: "stuck-in-progress" | "stranded-todo",
@@ -11132,405 +11034,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   Otherwise the task is retryable (re-enqueue).
   */
   async reconcileWorkspacePartialLands(): Promise<number> {
-    try {
-      const settings = await this.store.getSettings();
-      if (settings.globalPause || settings.enginePaused) return 0;
-
-      const activeMergeTaskId = this.options.getActiveMergeTaskId?.() ?? null;
-      // Workspace tasks live in in-review (post-capture/review, pre/partial land). A task already
-      // done is finished; todo/in-progress are owned by execution-stage reconcilers.
-      /*
-      FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (the query-filter class, thirty-third sweep):
-      A WORKSPACE task lands per-repo, and this re-enqueues one whose lands are partial or zero. The
-      literal read meant that on a renamed board a workspace task stranded mid-land was never
-      re-enqueued — some repos landed, some not, and nothing to finish the job.
-
-      The comment above records WHY the review lane is the right one; it stays true, only the way the
-      lane is named changes.
-      */
-      const wsPartialColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
-      const wsPartialById = new Map<string, Task>();
-      for (const column of wsPartialColumns) {
-        for (const entry of await this.store.listTasks({ column, slim: true })) wsPartialById.set(entry.id, entry);
-      }
-      const tasks = [...wsPartialById.values()];
-      /* NARROW WHEN THE CARD CAN ANSWER, BROAD WHEN IT CANNOT (#2891). */
-      const wsPartialLanes = new Map<string, Set<string>>();
-      for (const entry of tasks) {
-        try {
-          const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(this.store, entry.id);
-          wsPartialLanes.set(
-            entry.id,
-            source === "default"
-              ? new Set(wsPartialColumns)
-              : new Set(REVIEW_ROLES.flatMap((role) => [...columnsWithFlag(ir, role)])),
-          );
-        } catch {
-          wsPartialLanes.set(entry.id, new Set(wsPartialColumns));
-        }
-      }
-      const candidates = tasks.filter((task) =>
-        (wsPartialLanes.get(task.id) ?? wsPartialColumns).has(task.column) &&
-        isWorkspaceTask(task) &&
-        task.mergeDetails?.mergeConfirmed !== true &&
-        // Active transient merge statuses are owned by the live merger; recover-interrupted /
-        // recover-stale-merging clear STALE ones. A non-transient status (or null) is our domain.
-        !(task.status && ACTIVE_MERGE_STATUSES.has(task.status)),
-      );
-      // Drop counters only track LIVE candidates; forget any task that has left the set so a later
-      // re-appearance starts fresh (mirror of the mergeStarvationDrops cleanup).
-      const candidateIds = new Set(candidates.map((t) => t.id));
-      for (const taskId of [...this.workspacePartialLandDrops.keys()]) {
-        if (!candidateIds.has(taskId)) this.workspacePartialLandDrops.delete(taskId);
-      }
-      for (const taskId of [...this.workspacePartialLandEvidenceDefers.keys()]) {
-        if (!candidateIds.has(taskId)) this.workspacePartialLandEvidenceDefers.delete(taskId);
-      }
-
-      if (candidates.length === 0) return 0;
-
-      let recovered = 0;
-      for (const task of candidates) {
-        try {
-          // GUARD 1 — FN-5147 autoMerge:false: in-review is human-gated; never move it backward.
-          if (!allowsAutoMergeProcessing(task, settings)) {
-            await this.emitWorkspacePartialLandNoAction(task, "auto-merge-off", []);
-            continue;
-          }
-          // GUARD 2 — user-pause: a hard operator stop.
-          if (task.userPaused || task.paused) {
-            await this.emitWorkspacePartialLandNoAction(task, "user-paused", []);
-            continue;
-          }
-          // GUARD 3 — workspace-aware liveness: ANY active sub-repo path / process signal.
-          const liveness = await this.isWorkspaceTaskLiveDurably(task);
-          if (liveness.live) {
-            await this.emitWorkspacePartialLandNoAction(task, "live-worktree", liveness.livePaths);
-            continue;
-          }
-          // GUARD 4 — a live merge lane owns this exact task right now.
-          if (activeMergeTaskId && activeMergeTaskId === task.id) {
-            await this.emitWorkspacePartialLandNoAction(task, "live-worktree", liveness.livePaths);
-            continue;
-          }
-          /*
-          FNXC:Workspace 2026-06-22-16:40 (Phase D P1 TOCTOU — merge-queue dispatch blind spot):
-          GUARD 5 — the task is anywhere in ProjectEngine's in-memory merge pipeline (queued or
-          dequeued-and-dispatching/merging). In the dequeue→rawMerge window the id has been shifted
-          out of `mergeQueue` but `activeMergeTaskId` / `merging` status / the workspace-repo-land
-          lease have not yet been set, so GUARDs 1-4 and `isWorkspaceTaskLive` all read "not live".
-          Re-enqueuing here would launch a SECOND concurrent `landWorkspaceTask(T)`; because a
-          same-task land lease is explicitly NOT contention, the two don't block → double-squash.
-          `mergeActive` lingers across the whole window, so this guard closes the gap. Never moves
-          the task backward; emits no-action and leaves the in-flight dispatch to finish.
-          */
-          if (await this.options.isMergePending?.(task.id) === true) {
-            await this.emitWorkspacePartialLandNoAction(task, "merge-pending", liveness.livePaths);
-            continue;
-          }
-          /*
-          FNXC:WorkspaceFinalization 2026-08-21-08:46:
-          Recovery is another merge door, not an exemption from graph-owned pre-merge review.
-          Re-read immediately before scheduling so a failed/pending review cannot race a stale sweep
-          into a lease or Git attempt; a retry never implicitly approves a negative verdict.
-          */
-          const latestTask = await this.store.getTask(task.id).catch(() => null);
-          /*
-          FNXC:WorkspaceFinalization 2026-08-21-08:52:
-          A prior retryable workspace land failure is recovery input rather than a merge-content
-          blocker. Strip only that known transient status for blocker evaluation; failed review
-          results and every other failed/operator state remain merge-blocking and cannot enqueue.
-          */
-          const blockerTask = latestTask?.status === "failed" && latestTask.error?.startsWith("Workspace partial land:")
-            ? { ...latestTask, status: null, error: undefined }
-            : latestTask;
-          if (!blockerTask || getTaskMergeBlocker(blockerTask as Task, { skipColumnIdentityCheck: true }) !== undefined) {
-            await this.emitWorkspacePartialLandNoAction(task, "merge-blocked", []);
-            continue;
-          }
-
-          // Classify each confirmed, modified sub-repo: landed / retryable / unrecoverable / unreadable (FORK-A).
-          const workspaceWorktrees = task.workspaceWorktrees ?? {};
-          /*
-          FNXC:RepositoryScope 2026-08-20-23:57:
-          Recovery must fail closed for an unconfirmed legacy scope. Acquired worktrees prove only
-          checkout policy, never repository intent, so re-enqueueing them would restart FN-094's
-          clean-peer land loop instead of waiting for an operator-confirmed scope.
-          */
-          const explicitScope = task.repositoryScope?.state === "confirmed" ? task.repositoryScope.repositories : undefined;
-          if (!explicitScope) {
-            await this.emitWorkspacePartialLandNoAction(task, "scope-unresolved", []);
-            continue;
-          }
-          const repoKeys = Object.keys(workspaceWorktrees).filter((repoRel) =>
-            explicitScope.includes(repoRel)
-            && ((task.modifiedFiles ?? []).some((file) => file.startsWith(`${repoRel}/`)) || Boolean(workspaceWorktrees[repoRel]?.landedSha)),
-          );
-          if (repoKeys.length === 0) {
-            await this.emitWorkspacePartialLandNoAction(task, "empty-obligations", []);
-            continue;
-          }
-          const landedRepos: string[] = [];
-          const unlandedRepos: string[] = [];
-          const unrecoverableRepos: string[] = [];
-          const evidenceUnavailableRepos: string[] = [];
-          for (const repoRel of repoKeys) {
-            const entry = workspaceWorktrees[repoRel];
-            const repoRootDir = join(this.options.rootDir, repoRel);
-            let integrationBranch: string;
-            try {
-              const baseResolution = await resolveWorkspaceRepoBaseBranch({
-                mode: "recorded",
-                repoRootDir,
-                repoRelPath: repoRel,
-                task,
-                settings,
-                recordedBaseBranch: entry.baseBranch,
-              });
-              integrationBranch = baseResolution.branch;
-              await recordWorkspaceBaseBranchDecision({
-                store: this.store,
-                audit: createRunAuditor(this.store, {
-                  runId: generateSyntheticRunId("workspace-repo-base-branch", task.id),
-                  agentId: "system:self-healing",
-                  phase: "workspace-repo-base-branch",
-                }),
-                task,
-                repoRelPath: repoRel,
-                repoAbsPath: repoRootDir,
-                resolution: baseResolution,
-                stage: "self-heal",
-              });
-            } catch {
-              // Cannot resolve the sub-repo's integration branch → treat as retryable (re-enqueue
-              // re-runs the same resolution and surfaces the real error there).
-              unlandedRepos.push(repoRel);
-              continue;
-            }
-            /*
-            FNXC:Workspace 2026-08-15-06:45:
-            A boundary-invalidated repo is unlanded here and therefore follows the existing
-            branch-present retry path; FORK-A remains fail-closed when its branch is absent.
-            */
-            /* FNXC:Workspace 2026-08-15-07:05: Creation time bounds branch-gone trailer recovery against recycled task ids. */
-            if (await isRepoLanded(repoRootDir, integrationBranch, entry.landedSha, task.id, entry.branch, entry.revertBoundarySha, task.createdAt)) {
-              landedRepos.push(repoRel);
-              continue;
-            }
-            /*
-            FNXC:Workspace 2026-08-15-04:42:
-            FORK-A may park only on proof, never absence of evidence. `probeRepoBranch` uses
-            `show-ref`: present (0) retries, absent (clean 1) is unrecoverable, and timeout/spawn/
-            ref-read failures are unknown. Deferral wins over any sibling absent repo because a task
-            is not proven unrecoverable while even one sub-repo's branch state cannot be read.
-            */
-            const branchEvidence = entry.branch
-              ? await this.probeRepoBranch(repoRootDir, entry.branch)
-              : "absent";
-            if (branchEvidence === "absent") {
-              unrecoverableRepos.push(repoRel);
-            } else if (branchEvidence === "unknown") {
-              evidenceUnavailableRepos.push(repoRel);
-            } else {
-              unlandedRepos.push(repoRel);
-            }
-          }
-
-          const auditor = createRunAuditor(this.store, {
-            runId: generateSyntheticRunId("self-healing-workspace-partial-land", task.id),
-            agentId: "self-healing",
-            taskId: task.id,
-            taskLineageId: task.lineageId,
-            phase: "reconcile-workspace-partial-land",
-          });
-
-          if (evidenceUnavailableRepos.length > 0) {
-            /*
-            FNXC:WorkspaceFinalization 2026-08-21-09:09:
-            Evidence-unavailable recovery shares the task-owned transient ceiling with lease and
-            publication failures. A process-local defer map resets on restart and would otherwise
-            turn an unreadable repository into an infinite five-minute recovery loop.
-            */
-            const defers = (task.mergeTransientRetryCount ?? 0) + 1;
-            await this.store.updateTask(task.id, { mergeTransientRetryCount: defers });
-            if (defers >= MAX_STARVATION_DROPS) {
-              const error = `Workspace partial-land evidence unavailable: branch state could not be read after ${MAX_STARVATION_DROPS} sweeps for sub-repo(s) ${evidenceUnavailableRepos.join(", ")} — manual intervention required.`;
-              await this.store.updateTask(task.id, { status: "failed", error });
-              await this.store.logEntry(task.id, error);
-              await auditor.database({
-                type: "task:reconcile-workspace-partial-land",
-                target: task.id,
-                metadata: { taskId: task.id, landedRepos, unlandedRepos, failedRepos: unrecoverableRepos, evidenceUnavailableRepos, action: "park-failed", reason: "evidence-unavailable-exhausted" },
-              }).catch(() => undefined);
-              log.warn(`reconcileWorkspacePartialLands: parked ${task.id} failed after unavailable evidence (${evidenceUnavailableRepos.join(", ")})`);
-              recovered++;
-            } else {
-              await this.emitWorkspacePartialLandNoAction(task, "evidence-unavailable", []);
-            }
-            continue;
-          }
-
-
-          if (unrecoverableRepos.length > 0) {
-            // FORK-A: at least one repo is proven branch-gone and not landed → park failed.
-            const missingBranches = unrecoverableRepos
-              .map((repoRel) => workspaceWorktrees[repoRel]?.branch ?? resolveTaskWorkingBranch(task))
-              .join(", ");
-            const error = `Workspace partial-land unrecoverable: sub-repo(s) ${unrecoverableRepos.join(", ")} have no branch (${missingBranches}) and no landedSha — manual intervention required.`;
-            /*
-            FNXC:Workspace 2026-08-15-07:17:
-            This is the third and final writer of the display-only failure breadcrumb. Persist each
-            repo sequentially because the helper fresh-reads then replaces the JSON map; concurrent
-            writes could otherwise lose sibling breadcrumbs. Best-effort persistence must never
-            influence FORK-A's pre-existing park classification or decision.
-            */
-            for (const repoRel of unrecoverableRepos) {
-              const entry = workspaceWorktrees[repoRel];
-              await persistWorkspaceRepoLandFailure(this.store, task.id, repoRel, {
-                message: "Workspace branch is gone and the repository is provably not landed; manual intervention required.",
-                at: new Date().toISOString(),
-                branch: entry?.branch,
-              }).catch(() => undefined);
-            }
-            await this.store.updateTask(task.id, { status: "failed", error });
-            await this.store.logEntry(task.id, error);
-            await auditor.database({
-              type: "task:reconcile-workspace-partial-land",
-              target: task.id,
-              metadata: { taskId: task.id, landedRepos, unlandedRepos, failedRepos: unrecoverableRepos, action: "park-failed", reason: "branch-gone-and-unlanded" },
-            }).catch(() => undefined);
-            log.warn(`reconcileWorkspacePartialLands: parked ${task.id} failed (unrecoverable repos: ${unrecoverableRepos.join(", ")})`);
-            recovered++;
-            continue;
-          }
-
-          if (unlandedRepos.length === 0) {
-            // Every acquired repo is already landed but the task was never finalized (the finalize
-            // enqueue was dropped). Re-enqueue: landWorkspaceTask skips all repos and finalizes once.
-            await this.enqueueWorkspaceMergeBounded(task, auditor, {
-              landedRepos,
-              unlandedRepos: [],
-              reason: "all-landed-not-finalized",
-              successLog: "Workspace merge recovery scheduled: all sub-repositories have proven landing evidence; awaiting finalize-once result",
-            });
-            recovered++;
-            continue;
-          }
-
-          // Partial / none landed, all unlanded repos retryable → re-enqueue the per-repo land.
-          await this.enqueueWorkspaceMergeBounded(task, auditor, {
-            landedRepos,
-            unlandedRepos,
-            reason: landedRepos.length > 0 ? "partial-land" : "zero-land",
-            successLog: `Workspace merge recovery scheduled: ${landedRepos.length} landed, ${unlandedRepos.length} pending`,
-          });
-          recovered++;
-        } catch (err: unknown) {
-          log.error(`reconcileWorkspacePartialLands: failed for ${task.id}: ${err instanceof Error ? err.message : String(err)}`);
-        }
-      }
-      if (recovered > 0) log.log(`reconcileWorkspacePartialLands: recovered ${recovered} workspace task(s)`);
-      return recovered;
-    } catch (err: unknown) {
-      log.error(`reconcileWorkspacePartialLands sweep failed: ${err instanceof Error ? err.message : String(err)}`);
-      return 0;
-    }
+    return reconcileWorkspacePartialLandsImpl(this.workspaceReconcileHost());
   }
-
-  private async emitWorkspacePartialLandNoAction(
-    task: Task,
-    reason: "auto-merge-off" | "user-paused" | "live-worktree" | "merge-pending" | "merge-blocked" | "evidence-unavailable" | "scope-unresolved" | "empty-obligations",
-    livePaths: string[],
-  ): Promise<void> {
-    try {
-      await createRunAuditor(this.store, {
-        runId: generateSyntheticRunId("self-healing-workspace-partial-land-no-action", task.id),
-        agentId: "self-healing",
-        taskId: task.id,
-        taskLineageId: task.lineageId,
-        phase: "reconcile-workspace-partial-land",
-      }).database({
-        type: "task:reconcile-workspace-partial-land-no-action",
-        target: task.id,
-        metadata: { taskId: task.id, reason, livePaths },
-      });
-    } catch (err: unknown) {
-      log.warn(`reconcileWorkspacePartialLands: audit emit failed for ${task.id}: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
-
-  /*
-  FNXC:Workspace 2026-06-22-14:10 (Phase D review B — bounded re-enqueue, no silent infinite loop):
-  Re-enqueue a workspace task's per-repo land via `enqueueMerge`, CAPTURING the boolean it returns.
-  `enqueueMerge` returns false when the merge queue rejects (full); the old code discarded it, so a
-  permanently-rejected task would re-enqueue forever. Mirror `mergeStarvationDrops` in
-  recoverMergeableReviewTasks: on false, increment a per-task drop counter and after
-  MAX_STARVATION_DROPS consecutive drops park the task `status:"failed"` (escalate). On a successful
-  enqueue, reset the counter. When `enqueueMerge` is not wired (option undefined), this is a graceful
-  no-op (not a crash) — recovery falls back to the next sweep / polling.
-  Returns true iff the task was parked failed.
-  */
-  private async enqueueWorkspaceMergeBounded(
-    task: Task,
-    auditor: RunAuditor,
-    input: { landedRepos: string[]; unlandedRepos: string[]; reason: string; successLog: string },
-  ): Promise<boolean> {
-    const enqueueMerge = this.options.enqueueMerge;
-    if (!enqueueMerge) {
-      // Option not wired (standalone/tests with no queue) → graceful no-op; rely on next sweep.
-      this.workspacePartialLandDrops.delete(task.id);
-      await this.store.logEntry(task.id, `${input.successLog} (enqueue not wired — deferred to next sweep)`);
-      await auditor.database({
-        type: "task:reconcile-workspace-partial-land",
-        target: task.id,
-        metadata: { taskId: task.id, landedRepos: input.landedRepos, unlandedRepos: input.unlandedRepos, failedRepos: [], action: "re-enqueue-noop", reason: input.reason },
-      }).catch(() => undefined);
-      return false;
-    }
-
-    const queued = enqueueMerge(task.id);
-    if (queued) {
-      this.workspacePartialLandDrops.delete(task.id);
-      await this.store.logEntry(task.id, input.successLog);
-      await auditor.database({
-        type: "task:reconcile-workspace-partial-land",
-        target: task.id,
-        metadata: { taskId: task.id, landedRepos: input.landedRepos, unlandedRepos: input.unlandedRepos, failedRepos: [], action: "re-enqueue", reason: input.reason },
-      }).catch(() => undefined);
-      return false;
-    }
-
-    /*
-    FNXC:WorkspaceFinalization 2026-08-21-08:46:
-    Queue rejection is a recovery failure, not a successful recovery. Persist its counter before
-    returning so a new SelfHealingManager cannot reset an infinite five-minute scheduling loop.
-    `mergeTransientRetryCount` is the established task-owned ceiling for transient merge attempts.
-    */
-    const drops = (task.mergeTransientRetryCount ?? 0) + 1;
-    await this.store.updateTask(task.id, { mergeTransientRetryCount: drops });
-    this.workspacePartialLandDrops.set(task.id, drops);
-    log.warn(`reconcileWorkspacePartialLands: enqueue dropped for ${task.id} (${drops}/${MAX_STARVATION_DROPS}); merge queue rejected re-enqueue`);
-    if (drops >= MAX_STARVATION_DROPS) {
-      const error = `Workspace partial-land starvation: ${MAX_STARVATION_DROPS} consecutive enqueue attempts were dropped by the merge queue; task requires manual intervention.`;
-      await this.store.updateTask(task.id, { status: "failed", error });
-      await this.store.logEntry(task.id, error);
-      this.workspacePartialLandDrops.delete(task.id);
-      await auditor.database({
-        type: "task:reconcile-workspace-partial-land",
-        target: task.id,
-        metadata: { taskId: task.id, landedRepos: input.landedRepos, unlandedRepos: input.unlandedRepos, failedRepos: [], action: "park-failed", reason: "enqueue-starvation" },
-      }).catch(() => undefined);
-      return true;
-    }
-    await auditor.database({
-      type: "task:reconcile-workspace-partial-land",
-      target: task.id,
-      metadata: { taskId: task.id, landedRepos: input.landedRepos, unlandedRepos: input.unlandedRepos, failedRepos: [], action: "re-enqueue-dropped", reason: input.reason, drops },
-    }).catch(() => undefined);
-    return false;
-  }
-
-  /** True iff `branch` exists as a local ref in the sub-repo at `repoRootDir`. */
 
   /**
    * Clear durable contention-wait paint left behind when its retry timer died with the engine.
@@ -11580,6 +11085,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   LIVE merging task (still in-review with a transient merge status, or the active merge task) is
   UNTOUCHED — only a demonstrably dead owner is reclaimed.
   */
+
   async reclaimPhantomWorkspaceLandLeases(): Promise<number> {
     try {
       const settings = await this.store.getSettings();
@@ -11696,67 +11202,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   that runs on the move itself.
   */
   async reconcilePreExecutionWorktrees(): Promise<number> {
-    try {
-      const release = this.options.releasePreExecutionWorktree;
-      if (!release) return 0;
-      const settings = await this.store.getSettings();
-      if (settings.globalPause || settings.enginePaused) return 0;
-
-      const now = Date.now();
-      /* FNXC:WorkflowResolvedColumns 2026-07-31-23:40: resolved once per sweep — see the guard below. */
-      const preExecLiveColumns = await resolveProjectColumnsForRoles(
-        this.store,
-        ["intake", "hold", "countsTowardWip", ...REVIEW_ROLES, "complete"],
-      );
-      const parked = await this.store.listTasks({ slim: true });
-      const candidates = parked.filter((task) => {
-        if (!task.worktree || task.deletedAt) return false;
-        // Execution evidence — the worktree may hold real work; only the merge/archive lifecycle owns it.
-        if (task.firstExecutionAt || task.executionStartedAt) return false;
-        /*
-        FNXC:WorkflowResolvedColumns 2026-07-31-23:40:
-        Columns where a card is active or queued to become active — resolved MEMBERSHIP. An EXCLUSION
-        from a sweep that REMOVES worktrees, so a legacy-seeded superset can only be conservative;
-        the literal's failure mode was the dangerous direction, treating a live card on a renamed
-        board as pre-execution and removing its worktree.
-        */
-        if (preExecLiveColumns.has(task.column)) return false;
-        /*
-        WAITING is not PARKED. A card paused for an operator decision, carrying any status (planning,
-        needs-replan, awaiting-*), blocked on another task, or scheduled for a recovery attempt is
-        still expected to resume — taking its worktree would disturb work that is merely queued.
-        */
-        if (task.paused || task.userPaused) return false;
-        if (task.status != null) return false;
-        if (task.blockedBy || task.overlapBlockedBy || task.nextRecoveryAt) return false;
-        /*
-        AGE GATE: only very old trees. A recently parked card is routinely un-parked within minutes,
-        and re-acquiring costs a clone-ish setup plus the project's init command. Idleness is measured
-        from the most recent of the column move and the last update, so any touch re-arms the clock.
-        */
-        const lastTouchedMs = Math.max(
-          Date.parse(task.columnMovedAt ?? "") || 0,
-          Date.parse(task.updatedAt ?? "") || 0,
-        );
-        if (!lastTouchedMs) return false; // cannot prove age → never sweep
-        return now - lastTouchedMs >= PRE_EXECUTION_WORKTREE_MAX_IDLE_MS;
-      });
-      if (candidates.length === 0) return 0;
-
-      let released = 0;
-      for (const task of candidates) {
-        try {
-          if (await release(task.id, `parked pre-execution in '${task.column}'`)) released++;
-        } catch (err: unknown) {
-          log.warn(`reconcilePreExecutionWorktrees: release failed for ${task.id}: ${err instanceof Error ? err.message : String(err)}`);
-        }
-      }
-      if (released > 0) log.log(`reconcilePreExecutionWorktrees: released ${released} pre-execution worktree(s)`);
-      return released;
-    } catch (err: unknown) {
-      log.error(`reconcilePreExecutionWorktrees sweep failed: ${err instanceof Error ? err.message : String(err)}`);
-      return 0;
-    }
+    return reconcilePreExecutionWorktreesImpl(this.workspaceReconcileHost());
   }
 
   /**
@@ -11815,6 +11261,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   construction. Each removal is GUARDED by `activeSessionRegistry.isPathActive(path)` (skip if
   active, mirroring the temp-dir sweep at the AI-merge worktree guard) so a still-live path is never
   yanked. Emit `task:reconcile-orphaned-workspace-worktree` per removed path.
+  Implementation lives in workspace-reconcile.ts (U5 wave20 peel).
   */
   /*
   FNXC:Workspace 2026-08-15-05:39:
@@ -12068,8 +11515,6 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       return cleaned;
     } catch (err: unknown) { log.error(`reconcileOrphanedWorkspaceWorktrees sweep failed: ${err instanceof Error ? err.message : String(err)}`); return 0; }
   }
-
-
 
   async recoverDoneTaskMergeMetadata(): Promise<number> {
     try {
