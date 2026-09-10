@@ -39,6 +39,18 @@ describe("planning dependency installation instruction", () => {
     expect(instruction).toContain("`none`");
   });
 
+  it("explains how an ambiguous uv selection may be closed", () => {
+    const instruction = buildPlanningDependencyInstallationInstruction([{ repository: "api", readiness: {
+      readiness: "unresolved", evidence: [],
+      plan: [{ ecosystem: "python-uv", manifests: ["uv.lock", "pyproject.toml"], command: "uv sync --frozen --all-extras --all-groups", refusal: "configuration-required", refusedCommand: "uv sync --frozen" }],
+      unresolvedRepos: [{ ecosystem: "python-uv", manifests: ["uv.lock", "pyproject.toml"], command: "uv sync --frozen --all-extras --all-groups", refusal: "configuration-required", refusedCommand: "uv sync --frozen" }],
+      entries: [{ ecosystem: "python-uv", manifests: ["uv.lock"], command: "uv sync --frozen --all-extras --all-groups", outcome: "configuration-required", fingerprint: "one", reason: "test and lint are optional selections; configure worktreeInitCommand" }],
+    } }]);
+    expect(instruction).toContain("worktreeInitCommand");
+    expect(instruction).toContain("explicitly naming extras or groups");
+    expect(instruction).toContain("uv sync --frozen");
+  });
+
   it("keeps the common satisfied and dependency-free cases out of the planner prompt", () => {
     expect(buildPlanningDependencyInstallationInstruction([
       { repository: "static", readiness: { readiness: "not-needed", plan: [], evidence: [], unresolvedRepos: [], entries: [] } },

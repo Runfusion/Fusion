@@ -242,6 +242,35 @@ describe("worktree dependency installation", () => {
     expect(dependencyEvidenceFingerprint(noneRoot, evidence)).not.toBe("");
   });
 
+  it("refuses incompatible Python metadata without running uv", async () => {
+    const root = fixture({ "uv.lock": "lock", "pyproject.toml": '[project]\nrequires-python = ">=3.99"\n[tool.uv]\npython-downloads = "never"' });
+    const runner = vi.fn().mockResolvedValue(success());
+    const readiness = await ensureWorktreeDependencies(options(root, availableEnv("uv", "python3.11"), runner));
+    expect(runner).not.toHaveBeenCalled();
+    expect(readiness.readiness).toBe("unresolved");
+    expect(readiness.entries).toEqual(expect.arrayContaining([expect.objectContaining({ ecosystem: "python-uv", outcome: "environment-incompatible", reason: expect.stringContaining(">=3.99") })]));
+  });
+
+  it("refuses ambiguous uv extras and only closes it after explicit selection", async () => {
+    const root = fixture({ "uv.lock": "lock", "pyproject.toml": '[project]\noptional-dependencies = { test = ["pytest", "coverage"] }\n[dependency-groups]\nlint = ["ruff"]' });
+    const runner = vi.fn().mockResolvedValue(success());
+    const initial = await ensureWorktreeDependencies(options(root, availableEnv("uv"), runner));
+    expect(runner).not.toHaveBeenCalled();
+    expect(initial.readiness).toBe("unresolved");
+    expect(initial.entries).toEqual(expect.arrayContaining([expect.objectContaining({ outcome: "configuration-required", reason: expect.stringContaining("test") })]));
+    expect(recordPlannerDependencyResolution({ worktreePath: root, action: "install", command: "uv sync --frozen", result: success() }).readiness).toBe("unresolved");
+    expect(recordPlannerDependencyResolution({ worktreePath: root, action: "install", command: "uv sync --frozen --all-extras --all-groups", result: success() }).readiness).toBe("satisfied");
+  });
+
+  it("keeps configured worktree initialization authoritative over uv metadata inference", async () => {
+    const root = fixture({ "uv.lock": "lock", "pyproject.toml": '[project.optional-dependencies]\ntest = ["pytest"]' });
+    const runner = vi.fn().mockResolvedValue(success());
+    const readiness = await ensureWorktreeDependencies({ ...options(root, availableEnv(), runner), settings: { worktreeInitCommand: "bootstrap-project" } });
+    expect(readiness.readiness).toBe("satisfied");
+    expect(readiness.plan).toEqual([expect.objectContaining({ ecosystem: "configured-init-command" })]);
+    expect(runner).toHaveBeenCalledWith("bootstrap-project", root, 300_000, expect.any(Object));
+  });
+
   it("writes the record below the private Git directory without dirtying a real worktree", async () => {
     const root = mkdtempSync(join(tmpdir(), "fn-258-dependency-git-"));
     temporaryRoots.push(root);

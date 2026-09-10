@@ -8,6 +8,7 @@ import {
   getDependencySyncCommand,
   isOutdatedLockfileError,
 } from "../merge/merge-dependency-sync.js";
+import { analyzeUvDependencySelection, uvCommandSelectsOptionalDependencies } from "./python-uv-inference.js";
 import { resolveWorktreePrivateGitDir } from "./worktree-paths.js";
 
 export const DEPENDENCY_INSTALL_RECORD_FILENAME = "fusion-dependency-install.json";
@@ -19,7 +20,9 @@ export type DependencyInstallOutcome =
   | "not-needed"
   | "toolchain-missing"
   | "install-failed"
-  | "budget-exhausted";
+  | "budget-exhausted"
+  | "configuration-required"
+  | "environment-incompatible";
 
 export type WorktreeDependencyReadinessValue =
   | "unresolved"
@@ -32,6 +35,9 @@ export interface DependencyPlanEntry {
   manifests: string[];
   command: string;
   binary?: string;
+  rationale?: string;
+  refusal?: "configuration-required" | "environment-incompatible";
+  refusedCommand?: string;
 }
 
 export interface DependencyInstallEntry {
@@ -41,6 +47,7 @@ export interface DependencyInstallEntry {
   outcome: DependencyInstallOutcome;
   fingerprint: string;
   reason?: string;
+  rationale?: string;
 }
 
 export interface DependencyInstallRecord {
@@ -151,6 +158,8 @@ const MATRIX_CONSUMED_FILENAMES = new Set([
   "bun.lockb",
   "package.json",
   "uv.lock",
+  "pyproject.toml",
+  ".python-version",
   "poetry.lock",
   "Pipfile.lock",
   "requirements.txt",
@@ -242,7 +251,15 @@ function scanWorktreeDependencies(
   const add = (ecosystem: string, manifests: string[], command: string, binary?: string) => {
     if (manifests.length > 0) plan.push({ ecosystem, manifests, command, binary });
   };
-  add("python-uv", manifestsPresent(rootDir, entries, ["uv.lock"]), "uv sync --frozen", "uv");
+  const uvManifests = manifestsPresent(rootDir, entries, ["uv.lock"]);
+  if (uvManifests.length > 0) {
+    const decision = analyzeUvDependencySelection(rootDir, env);
+    const manifests = [...uvManifests, ...manifestsPresent(rootDir, entries, ["pyproject.toml", ".python-version"])];
+    plan.push({
+      ecosystem: "python-uv", manifests, command: decision.command, binary: "uv", rationale: decision.rationale,
+      ...(decision.kind === "run" ? {} : { refusal: decision.kind, refusedCommand: decision.refusedCommand }),
+    });
+  }
   add("python-poetry", manifestsPresent(rootDir, entries, ["poetry.lock"]), "poetry install --no-interaction", "poetry");
   add("python-pipenv", manifestsPresent(rootDir, entries, ["Pipfile.lock"]), "pipenv sync", "pipenv");
   add("python-pip", manifestsPresent(rootDir, entries, ["requirements.txt"]), "pip install -r requirements.txt", "pip");
@@ -520,7 +537,7 @@ async function runPlanCommand(
   await logDependencyEvent(
     options,
     `Worktree dependency install [${entry.ecosystem}] ${success ? "completed" : "failed"} in ${durationMs}ms`,
-    `${command}${success ? "" : `\n${tail(commandFailureReason(result))}`}`,
+    `${command}${entry.rationale ? `\n${entry.rationale}` : ""}${success ? "" : `\n${tail(commandFailureReason(result))}`}`,
   );
   return result;
 }
@@ -538,6 +555,7 @@ function entryForPlan(
     outcome,
     fingerprint: planFingerprint(worktreePath, plan),
     ...(options.reason ? { reason: options.reason } : {}),
+    ...(plan.rationale ? { rationale: plan.rationale } : {}),
   };
 }
 
@@ -560,6 +578,12 @@ export async function ensureWorktreeDependencies(
     const fingerprint = planFingerprint(options.worktreePath, plan);
     const previous = matchingEntry(record, plan.ecosystem, fingerprint);
     if (previous?.outcome === "installed") continue;
+
+    if (plan.refusal) {
+      upsertEntry(record, entryForPlan(options.worktreePath, plan, plan.refusal, { reason: plan.rationale }));
+      await logDependencyEvent(options, `Worktree dependency install [${plan.ecosystem}] ${plan.refusal}`, plan.rationale);
+      continue;
+    }
 
     if (plan.ecosystem === "configured-init-command" && options.configuredInitResult) {
       upsertEntry(record, entryForPlan(
@@ -633,6 +657,20 @@ export async function ensureWorktreeDependencies(
   return readiness;
 }
 
+/*
+FNXC:WorktreeDependencies 2026-09-10-16:38:
+A configuration-required uv row cannot be closed by the bare command Fusion refused: only an
+engine-observed command with an extras/groups selection proves the ambiguity was resolved.
+Environment incompatibility is different: a successful refused command disproves that prediction.
+*/
+export function plannerCommandClosesPlanRow(plan: DependencyPlanEntry, observedCommand: string): boolean {
+  const command = observedCommand.trim();
+  if (plan.ecosystem === "configured-init-command") return false;
+  if (plan.refusal === "configuration-required") return command !== plan.refusedCommand?.trim() && uvCommandSelectsOptionalDependencies(command);
+  if (plan.refusal === "environment-incompatible") return command === plan.command.trim() || command === plan.refusedCommand?.trim();
+  return command === plan.command.trim();
+}
+
 /**
  * Persist the planning tool's resolution. `installed` is intentionally accepted only from the
  * engine's command result, never from planner prose or an unverified tool response.
@@ -666,11 +704,11 @@ export function recordPlannerDependencyResolution(
     ...(reason ? { reason } : outcome === "install-failed" ? { reason: commandFailureReason(input.result) } : {}),
   });
 
-  // A planner may re-run a known matrix command after installing its missing toolchain. Only an
-  // exact engine-observed successful command can close that matrix row; arbitrary prose cannot.
+  // A planner may re-run a known matrix command after installing its missing toolchain. A refused
+  // ambiguous uv selection closes only with evidence that extras or groups were explicitly selected.
   if (installed && input.command) {
     for (const plan of scan.plan) {
-      if (plan.ecosystem !== "configured-init-command" && plan.command.trim() === input.command.trim()) {
+      if (plannerCommandClosesPlanRow(plan, input.command)) {
         upsertEntry(record, entryForPlan(input.worktreePath, plan, "installed", { command: input.command.trim() }));
       }
     }

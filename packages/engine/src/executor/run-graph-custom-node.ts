@@ -181,7 +181,9 @@ function dependencyGateDetails(target: DependencyGateTarget, readiness: Worktree
   }
   const rows = readiness.unresolvedRepos.map((row) => {
     const entry = readiness.entries.find((candidate) => candidate.ecosystem === row.ecosystem);
-    return `${row.manifests.join(", ") || row.ecosystem}; command \`${row.command}\`; ${entry?.reason ?? entry?.outcome ?? "not installed"}`;
+    const outcome = entry?.outcome ?? "not installed";
+    const reason = entry?.reason ?? entry?.rationale ?? outcome;
+    return `${row.manifests.join(", ") || row.ecosystem}; command \`${row.command}\`; ${outcome}: ${reason}`;
   });
   return `${target.repository}: ${rows.join("; ")}`;
 }
