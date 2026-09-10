@@ -263,7 +263,10 @@ export function buildPlanningDependencyInstallationInstruction(
     if (readiness.readiness === "unresolved") {
       for (const row of readiness.unresolvedRepos) {
         const entry = readiness.entries.find((candidate) => candidate.ecosystem === row.ecosystem);
-        lines.push(`- \`${target.repository}\`: ${row.manifests.join(", ") || row.ecosystem}; command \`${row.command}\`; ${entry?.reason ?? entry?.outcome ?? "not yet installed"}.`);
+        const outcome = entry?.outcome ?? "not yet installed";
+        const reason = entry?.reason ?? entry?.rationale ?? outcome;
+        lines.push(`- \`${target.repository}\`: ${row.manifests.join(", ") || row.ecosystem}; command \`${row.command}\`; ${outcome}: ${reason}.`);
+        if (row.refusal === "configuration-required") lines.push("  Configure `worktreeInitCommand`, or call `fn_install_worktree_dependencies` with a command explicitly naming extras or groups. Re-running bare `uv sync --frozen` or recording `none` leaves this worktree unresolved.");
       }
     } else {
       lines.push(`- \`${target.repository}\`: Fusion has no built-in command for ${readiness.evidence.join(", ")}. Determine the package manager and run its install command through \`fn_install_worktree_dependencies\`, or use its \`none\` action with a reason if no install step is genuinely required.`);
