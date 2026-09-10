@@ -1081,8 +1081,13 @@ function AppInner() {
   const leftSidebarNavEnabled = experimentalFeatures.leftSidebarNav !== false;
   /* FNXC:Navigation 2026-06-22-18:00: The right dock panel is no longer experimental or user-toggleable; tablet/desktop project screens always support it regardless of any stale persisted `rightDock` setting. */
   const rightDockEnabled = true;
-  const executorFooterVisible = viewMode === "project" && !!currentProject;
-  const mobileNavVisible = viewMode === "project" && !!currentProject;
+  const projectShellPresent = viewMode === "project" && !!currentProject;
+  /*
+  FNXC:AlphaUpdates 2026-09-10-03:16:
+  Alpha removes the executor footer at every viewport size. Keep project-shell presence separate so tablet and desktop retain their sidebar and right dock, while only the mobile Alpha pill publishes a measured content clearance.
+  */
+  const executorFooterVisible = projectShellPresent && !alphaUpdatesEnabled;
+  const mobileNavVisible = projectShellPresent;
   /*
   FNXC:AlphaUpdates 2026-09-09-22:14:
   App owns the Alpha popover's accessible open state so the Header trigger and MobileNavBar surface cannot drift. Any shell boundary that removes either endpoint closes the transient menu; the legacy More drawer remains MobileNavBar-owned.
@@ -1090,8 +1095,8 @@ function AppInner() {
   useEffect(() => {
     setAlphaMenuOpen(false);
   }, [alphaUpdatesEnabled, currentProject?.id, isMobile, mobileKeyboardOpen, modalManager.anyModalOpen, viewMode]);
-  const rightDockActive = rightDockEnabled && !isMobile && executorFooterVisible;
-  const sidebarActive = leftSidebarNavEnabled && !isMobile && executorFooterVisible;
+  const rightDockActive = rightDockEnabled && !isMobile && projectShellPresent;
+  const sidebarActive = leftSidebarNavEnabled && !isMobile && projectShellPresent;
   const agentOnboardingEnabled = experimentalFeatures.agentOnboarding === true;
   const agentsEnabled = true;
 
@@ -2139,7 +2144,7 @@ function AppInner() {
           />
         )}
         <div
-          className={`project-content${executorFooterVisible && (!isMobile || !mobileKeyboardOpen) ? " project-content--with-footer" : ""}${isMobile && mobileNavVisible && !mobileKeyboardOpen && !alphaUpdatesEnabled ? " project-content--with-mobile-nav" : ""}${isMobile && mobileNavVisible && !mobileKeyboardOpen && alphaUpdatesEnabled ? " project-content--with-alpha-nav" : ""}`}
+          className={`project-content${executorFooterVisible && (!isMobile || !mobileKeyboardOpen) ? " project-content--with-footer" : ""}${isMobile && mobileNavVisible && !mobileKeyboardOpen && !alphaUpdatesEnabled ? " project-content--with-mobile-nav" : ""}${isMobile && mobileNavVisible && !mobileKeyboardOpen && !modalManager.anyModalOpen && alphaUpdatesEnabled ? " project-content--with-alpha-nav" : ""}`}
         >
           <MainContent {...mainContentProps} />
           {/*
@@ -2201,7 +2206,6 @@ function AppInner() {
           quickChatButtonMode={quickChatButtonMode}
           onToggleQuickChat={toggleChatVisibility}
           quickChatToggleAction={chatVisibilityToggleAction}
-          alphaUpdatesEnabled={alphaUpdatesEnabled}
           onOpenScripts={openScriptsWithNav}
           onRunScript={runScriptWithNav}
         />
@@ -2209,7 +2213,7 @@ function AppInner() {
       <MobileNavBar
         view={taskView}
         onChangeView={mobileNavVisible ? handleTaskViewChange : () => {}}
-        footerVisible={mobileNavVisible}
+        footerVisible={executorFooterVisible}
         hidden={!mobileNavVisible}
         modalOpen={modalManager.anyModalOpen}
         keyboardOpen={mobileNavKeyboardOpen}

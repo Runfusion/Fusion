@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { loadAllAppCss } from "../test/cssFixture";
 import { computePublishedMobileNavHeight } from "../components/MobileNavBar";
 
@@ -65,6 +65,12 @@ describe("mobile bottom-space layout invariant", () => {
   const css = loadAllAppCss();
   const mobileCss = extractMobileMediaBlocks(css);
 
+  afterEach(() => {
+    document.body.replaceChildren();
+    document.documentElement.style.removeProperty("--mobile-nav-height");
+    delete document.documentElement.dataset.viewportMode;
+  });
+
   it.each([
     ["nav only / healthy viewport", { footerVisible: false, mobileNavVisible: true, keyboardOpen: false, safeAreaFloor: 12, standaloneGap: 0, icbBottomOffset: 0, executorFooterHeight: 36, mobileNavHeight: 44 }],
     ["footer + nav / iPhone PWA safe area", { footerVisible: true, mobileNavVisible: true, keyboardOpen: false, safeAreaFloor: 34, standaloneGap: 8, icbBottomOffset: 0, executorFooterHeight: 36, mobileNavHeight: 44 }],
@@ -114,5 +120,10 @@ describe("mobile bottom-space layout invariant", () => {
         tabHeights: [],
       }),
     ).toBe(44);
+  });
+
+  it("bounds non-finite Alpha measurements and counts the floating gap once", () => {
+    expect(computePublishedMobileNavHeight({ navOffsetHeight: Number.NaN, paddingBottom: Number.NaN, tabHeights: [Number.NaN], floatingGap: Number.POSITIVE_INFINITY })).toBe(44);
+    expect(computePublishedMobileNavHeight({ navOffsetHeight: 54, paddingBottom: 0, tabHeights: [44], floatingGap: 8 })).toBe(62);
   });
 });

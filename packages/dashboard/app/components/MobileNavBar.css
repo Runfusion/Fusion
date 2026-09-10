@@ -7,6 +7,7 @@
 :root {
   --mobile-nav-height: 44px;
   --mobile-nav-floating-gap: 0px;
+  --mobile-nav-alpha-system-offset: calc(var(--icb-bottom-offset, 0px) + max(env(safe-area-inset-bottom, 0px), var(--space-md)) + var(--standalone-bottom-gap));
 }
 
 .mobile-nav-bar {
@@ -161,14 +162,14 @@ Wrap every tab icon in the same token-sized icon slot and keep unread/pending do
 }
 
 /*
-FNXC:AlphaUpdates 2026-09-09-22:40:
-The Alpha five-icon pill is an overlay, never a second footer. With a status footer it floats above that footer with a token gap; without one it clears the device safe area. The viewport-qualified footer rule must outrank the generic mobile footer selector so the cascade cannot place the pill beneath the status footer. Its measured height remains published only for collision-avoidance consumers and never drives project-content reservation.
+FNXC:AlphaUpdates 2026-09-10-03:16:
+The Alpha five-icon pill stays visually overlaid but must never obscure the final content or system gesture area. Its bottom position uses one shared safe-area/standalone/ICB formula, while the scroller reserves the measured pill border box plus that placement exactly once; tablet and desktop suppress the mobile-only reserve.
 */
 .mobile-nav-bar--alpha {
   --mobile-nav-floating-gap: var(--space-sm);
   left: var(--space-md);
   right: calc(var(--icb-right-offset, 0px) + var(--space-md));
-  bottom: calc(var(--icb-bottom-offset, 0px) + max(env(safe-area-inset-bottom, 0px), var(--space-md)) + var(--standalone-bottom-gap) + var(--mobile-nav-floating-gap));
+  bottom: calc(var(--mobile-nav-alpha-system-offset) + var(--mobile-nav-floating-gap));
   min-height: auto;
   padding: var(--space-xs) var(--space-sm);
   border: var(--btn-border-width) solid var(--border);
@@ -178,18 +179,18 @@ The Alpha five-icon pill is an overlay, never a second footer. With a status foo
   backdrop-filter: blur(var(--space-md));
 }
 
-.mobile-nav-bar--alpha.mobile-nav-bar--with-footer,
-html[data-viewport-mode="mobile"] .mobile-nav-bar--alpha.mobile-nav-bar--with-footer {
-  bottom: calc(var(--icb-bottom-offset, 0px) + var(--executor-footer-height) + var(--mobile-nav-floating-gap));
+@media (max-width: 768px) {
+  .project-content--with-alpha-nav {
+    padding-bottom: calc(var(--mobile-nav-height) + var(--mobile-nav-alpha-system-offset));
+  }
 }
 
-/* Alpha is intentionally absent from the reserved bottom-stack selectors above. */
-.project-content--with-alpha-nav:not(.project-content--with-footer) {
+html[data-viewport-mode="mobile"] .project-content--with-alpha-nav {
+  padding-bottom: calc(var(--mobile-nav-height) + var(--mobile-nav-alpha-system-offset));
+}
+
+html:is([data-viewport-mode="tablet"], [data-viewport-mode="desktop"]) .project-content--with-alpha-nav:not(.project-content--with-footer) {
   padding-bottom: 0;
-}
-
-.project-content--with-footer.project-content--with-alpha-nav {
-  padding-bottom: var(--executor-footer-height);
 }
 
 .mobile-nav-bar--alpha .mobile-nav-tab {

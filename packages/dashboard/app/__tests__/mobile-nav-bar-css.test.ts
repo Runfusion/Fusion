@@ -85,21 +85,16 @@ describe("mobile-nav-bar.css", () => {
     expect(cssContent).toContain("env(safe-area-inset-bottom");
   });
 
-  it("keeps the Alpha pill overlaid above the sole reserved status footer", () => {
+  it("keeps the Alpha pill overlaid while reserving its measured mobile footprint", () => {
     const alphaBlock = extractRuleBlock(cssContent, ".mobile-nav-bar--alpha");
-    const alphaWithFooterBlock = extractRuleBlock(cssContent, ".mobile-nav-bar--alpha.mobile-nav-bar--with-footer");
-    const viewportAlphaWithFooterSelector = 'html[data-viewport-mode="mobile"] .mobile-nav-bar--alpha.mobile-nav-bar--with-footer';
-    const viewportAlphaWithFooterBlock = extractRuleBlock(cssContent, viewportAlphaWithFooterSelector);
-    const genericViewportFooterSelector = 'html[data-viewport-mode="mobile"] .mobile-nav-bar--with-footer';
-    const alphaContentBlock = extractRuleBlock(cssContent, ".project-content--with-footer.project-content--with-alpha-nav");
+    const alphaContentBlock = extractRuleBlock(cssContent, ".project-content--with-alpha-nav");
+    const mobileAlphaContentBlock = extractRuleBlock(cssContent, 'html[data-viewport-mode="mobile"] .project-content--with-alpha-nav');
+    const tabletAlphaContentBlock = extractRuleBlock(cssContent, 'html:is([data-viewport-mode="tablet"], [data-viewport-mode="desktop"]) .project-content--with-alpha-nav:not(.project-content--with-footer)');
     expect(alphaBlock).toContain("--mobile-nav-floating-gap: var(--space-sm)");
-    expect(alphaWithFooterBlock).toContain("var(--executor-footer-height)");
-    expect(alphaWithFooterBlock).toContain("var(--mobile-nav-floating-gap)");
-    expect(viewportAlphaWithFooterBlock).toContain("var(--executor-footer-height)");
-    expect(viewportAlphaWithFooterBlock).toContain("var(--mobile-nav-floating-gap)");
-    expect(cssContent.lastIndexOf(viewportAlphaWithFooterSelector)).toBeGreaterThan(cssContent.lastIndexOf(genericViewportFooterSelector));
-    expect(alphaContentBlock).toContain("padding-bottom: var(--executor-footer-height)");
-    expect(alphaContentBlock).not.toContain("var(--mobile-nav-height)");
+    expect(alphaBlock).toContain("bottom: calc(var(--mobile-nav-alpha-system-offset) + var(--mobile-nav-floating-gap))");
+    expect(alphaContentBlock).toContain("padding-bottom: calc(var(--mobile-nav-height) + var(--mobile-nav-alpha-system-offset))");
+    expect(mobileAlphaContentBlock).toContain("padding-bottom: calc(var(--mobile-nav-height) + var(--mobile-nav-alpha-system-offset))");
+    expect(tabletAlphaContentBlock).toContain("padding-bottom: 0");
 
     const publishedNavHeight = computePublishedMobileNavHeight({
       navOffsetHeight: 54,
@@ -108,8 +103,6 @@ describe("mobile-nav-bar.css", () => {
       floatingGap: 8,
     });
     expect(publishedNavHeight).toBe(62);
-
-    expect(cssContent).toMatch(/\.executor-status-bar\.executor-status-bar--alpha-nav\s*\{[^}]*bottom:\s*var\(--icb-bottom-offset/);
   });
 
   it("tab bar keeps symmetric tokenized side spacing while preserving ICB compensation", () => {

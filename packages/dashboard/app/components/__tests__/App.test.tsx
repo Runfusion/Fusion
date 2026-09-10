@@ -697,8 +697,34 @@ import { __test_clearDashboardViewsCache } from "../../hooks/usePluginDashboardV
 import * as pluginViewRegistry from "../../plugins/pluginViewRegistry";
 import * as apiNodeModule from "../../hooks/useRemoteNodeData";
 import { DEFAULT_BOARD_WORKFLOWS } from "./boardWorkflows.test-helpers";
+import { readAppFile } from "../../test/cssFixture";
 
+function installProductionAlphaReserveRule(): HTMLStyleElement {
+  const css = readAppFile("components/MobileNavBar.css");
+  const selector = 'html[data-viewport-mode="mobile"] .project-content--with-alpha-nav';
+  const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const rule = css.match(new RegExp(`${escapedSelector}\\s*\\{([\\s\\S]*?)\\}`));
+  if (!rule) throw new Error("Production Alpha content reserve rule is missing");
 
+  const style = document.createElement("style");
+  style.textContent = `${selector} { ${rule[1]} }`;
+  document.head.append(style);
+  return style;
+}
+
+function resolvePixelCalcFromRoot(value: string): number {
+  const substituted = value.replace(/var\((--[^),\s]+)(?:,[^)]+)?\)/g, (_match, property: string) => {
+    const resolved = document.documentElement.style.getPropertyValue(property).trim();
+    if (!resolved) throw new Error(`Missing test layout value for ${property}`);
+    return resolved;
+  });
+  const terms = substituted.replace(/^calc\(/, "").replace(/\)$/, "").split("+");
+  return terms.reduce((total, term) => {
+    const match = term.trim().match(/^(-?\d+(?:\.\d+)?)px$/);
+    if (!match) throw new Error(`Unsupported production padding term: ${term.trim()}`);
+    return total + Number(match[1]);
+  }, 0);
+}
 
 async function waitForAppShell(): Promise<void> {
   await waitFor(() => {
@@ -985,6 +1011,201 @@ beforeEach(() => {
 });
 
 describe("Alpha Updates production wiring", () => {
+  it.each(["mobile", "tablet", "desktop"] as const)("removes the footer in Alpha %s while preserving project chrome", async (mode) => {
+    mockUseViewportMode.mockReturnValue(mode);
+    vi.mocked(fetchSettings).mockResolvedValue({
+      ...defaultSettings,
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates: true },
+    });
+
+    render(<App />);
+
+    const shell = screen.getByTestId("dashboard-project-shell");
+    const content = shell.querySelector(".project-content");
+    if (mode === "mobile") {
+      await waitFor(() => expect(document.querySelector(".mobile-nav-bar")).toHaveClass("mobile-nav-bar--alpha"));
+      const nav = document.querySelector(".mobile-nav-bar");
+      expect(document.querySelector(".executor-status-bar")).toBeNull();
+      expect(content).not.toHaveClass("project-content--with-footer");
+      expect(nav).not.toHaveClass("mobile-nav-bar--with-footer");
+      expect(content).toHaveClass("project-content--with-alpha-nav");
+      expect(screen.queryByTestId("left-sidebar-nav")).toBeNull();
+      expect(document.querySelector(".right-dock")).toBeNull();
+    } else {
+      const sidebar = await screen.findByTestId("left-sidebar-nav");
+      await waitFor(() => expect(sidebar).not.toHaveClass("left-sidebar-nav--with-footer"));
+      expect(document.querySelector(".executor-status-bar")).toBeNull();
+      expect(content).not.toHaveClass("project-content--with-footer");
+      expect(shell).toHaveClass("dashboard-project-shell--with-sidebar", "dashboard-project-shell--with-right-dock");
+      expect(content).not.toHaveClass("project-content--with-alpha-nav");
+    }
+  });
+
+  it.each([
+    ["portrait with iOS inset", { viewportHeight: 640, contentHeight: 720, systemOffset: 46 }],
+    ["landscape with Android ICB", { viewportHeight: 360, contentHeight: 720, systemOffset: 48 }],
+    ["standalone display", { viewportHeight: 640, contentHeight: 720, systemOffset: 60 }],
+  ] as const)("scrolls a real App final control above the measured Alpha pill in %s", async (_scenario, layout) => {
+    /*
+    FNXC:AlphaUpdates 2026-09-10-04:03:
+    The regression must exercise App's real project scroller and MobileNavBar publication path. This test imports the production reserve declaration and simulates only jsdom's absent box layout, so removing the class, CSS rule, or measured custom property breaks final-control clearance instead of satisfying a duplicated arithmetic fixture.
+    */
+    mockUseViewportMode.mockReturnValue("mobile");
+    vi.mocked(fetchSettings).mockResolvedValue({
+      ...defaultSettings,
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates: true },
+    });
+    document.documentElement.dataset.viewportMode = "mobile";
+    document.documentElement.style.setProperty("--mobile-nav-alpha-system-offset", `${layout.systemOffset}px`);
+    const productionStyle = installProductionAlphaReserveRule();
+    const nativeGetComputedStyle = window.getComputedStyle.bind(window);
+    const offsetHeight = vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function () {
+      return this.classList.contains("mobile-nav-bar") ? 54 : 0;
+    });
+    const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function () {
+      const height = this.classList.contains("mobile-nav-tab") ? 44 : 0;
+      return { x: 0, y: 0, top: 0, right: 0, bottom: height, left: 0, width: 0, height, toJSON: () => ({}) };
+    });
+    const computedStyle = vi.spyOn(window, "getComputedStyle").mockImplementation((element) => {
+      if ((element as HTMLElement).classList?.contains("mobile-nav-bar")) {
+        return {
+          paddingBottom: "0px",
+          getPropertyValue: (property: string) => property === "--mobile-nav-floating-gap" ? "8px" : "",
+        } as CSSStyleDeclaration;
+      }
+      return nativeGetComputedStyle(element);
+    });
+
+    try {
+      render(<App />);
+
+      const pill = await waitFor(() => {
+        const candidate = document.querySelector<HTMLElement>(".mobile-nav-bar--alpha");
+        expect(candidate).not.toBeNull();
+        expect(document.documentElement.style.getPropertyValue("--mobile-nav-height")).toBe("62px");
+        return candidate!;
+      });
+      const scroller = screen.getByTestId("dashboard-project-shell").querySelector<HTMLElement>(".project-content");
+      const finalControl = await screen.findByTestId("column-history-done");
+      expect(scroller).not.toBeNull();
+      expect(scroller).toHaveClass("project-content--with-alpha-nav");
+      expect(scroller!.style.paddingBottom).toBe("");
+
+      const productionPadding = nativeGetComputedStyle(scroller!).paddingBottom;
+      expect(productionPadding).toContain("var(--mobile-nav-height)");
+      expect(productionPadding).toContain("var(--mobile-nav-alpha-system-offset)");
+      const reserve = resolvePixelCalcFromRoot(productionPadding);
+      let scrollTop = 0;
+      Object.defineProperties(scroller!, {
+        clientHeight: { configurable: true, value: layout.viewportHeight },
+        scrollHeight: { configurable: true, get: () => layout.contentHeight + reserve },
+        scrollTop: {
+          configurable: true,
+          get: () => scrollTop,
+          set: (value: number) => {
+            scrollTop = Math.max(0, Math.min(value, scroller!.scrollHeight - scroller!.clientHeight));
+          },
+        },
+      });
+      finalControl.getBoundingClientRect = () => ({
+        x: 0,
+        y: layout.contentHeight - scrollTop - 44,
+        top: layout.contentHeight - scrollTop - 44,
+        right: 200,
+        bottom: layout.contentHeight - scrollTop,
+        left: 0,
+        width: 200,
+        height: 44,
+        toJSON: () => ({}),
+      });
+      pill.getBoundingClientRect = () => ({
+        x: 0,
+        y: layout.viewportHeight - layout.systemOffset - 8 - 54,
+        top: layout.viewportHeight - layout.systemOffset - 8 - 54,
+        right: 360,
+        bottom: layout.viewportHeight - layout.systemOffset - 8,
+        left: 0,
+        width: 360,
+        height: 54,
+        toJSON: () => ({}),
+      });
+      finalControl.scrollIntoView = () => {
+        scroller!.scrollTop = scroller!.scrollHeight - scroller!.clientHeight;
+      };
+
+      finalControl.scrollIntoView({ block: "end" });
+      finalControl.focus();
+
+      expect(document.querySelector(".executor-status-bar")).toBeNull();
+      expect(scroller!.scrollTop).toBeGreaterThan(0);
+      expect(document.activeElement).toBe(finalControl);
+      expect(finalControl.getBoundingClientRect().bottom).toBeLessThanOrEqual(pill.getBoundingClientRect().top);
+    } finally {
+      productionStyle.remove();
+      offsetHeight.mockRestore();
+      rect.mockRestore();
+      computedStyle.mockRestore();
+      document.documentElement.style.removeProperty("--mobile-nav-alpha-system-offset");
+      document.documentElement.style.removeProperty("--mobile-nav-height");
+      delete document.documentElement.dataset.viewportMode;
+    }
+  });
+
+  it.each(["mobile", "tablet", "desktop"] as const)("keeps the standard footer and reservations in %s", async (mode) => {
+    mockUseViewportMode.mockReturnValue(mode);
+    vi.mocked(fetchSettings).mockResolvedValue({
+      ...defaultSettings,
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates: false },
+    });
+
+    render(<App />);
+
+    await waitFor(() => expect(document.querySelector(".executor-status-bar")).not.toBeNull());
+    const shell = screen.getByTestId("dashboard-project-shell");
+    const content = shell.querySelector(".project-content");
+    expect(content).toHaveClass("project-content--with-footer");
+
+    if (mode === "mobile") {
+      const nav = document.querySelector(".mobile-nav-bar");
+      expect(nav).toHaveClass("mobile-nav-bar--with-footer");
+      expect(content).toHaveClass("project-content--with-mobile-nav");
+    } else {
+      expect(await screen.findByTestId("left-sidebar-nav")).toHaveClass("left-sidebar-nav--with-footer");
+      expect(shell).toHaveClass("dashboard-project-shell--with-sidebar", "dashboard-project-shell--with-right-dock");
+    }
+  });
+
+  it("removes Alpha pill clearance with the keyboard and modal exclusions", async () => {
+    mockUseViewportMode.mockReturnValue("mobile");
+    vi.mocked(fetchSettings).mockResolvedValue({
+      ...defaultSettings,
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates: true },
+    });
+    mockUseMobileKeyboard.mockReturnValue({
+      keyboardOverlap: 250,
+      viewportHeight: 550,
+      viewportOffsetTop: 0,
+      keyboardOpen: true,
+    });
+
+    const keyboardRender = render(<App />);
+    await screen.findByTestId("alpha-mobile-menu-trigger");
+    expect(document.querySelector(".executor-status-bar")).toBeNull();
+    expect(document.querySelector(".mobile-nav-bar")).toHaveClass("mobile-nav-bar--keyboard-open");
+    expect(screen.getByTestId("dashboard-project-shell").querySelector(".project-content")).not.toHaveClass("project-content--with-alpha-nav");
+    keyboardRender.unmount();
+
+    mockUseMobileKeyboard.mockReturnValue({ keyboardOverlap: 0, viewportHeight: null, viewportOffsetTop: 0, keyboardOpen: false });
+    const modalRender = render(<App />);
+    await screen.findByTestId("alpha-mobile-menu-trigger");
+    fireEvent.click(screen.getByTestId("mobile-header-new-task"));
+    await screen.findByRole("heading", { name: "New Task" });
+    expect(document.querySelector(".mobile-nav-bar")).toBeNull();
+    expect(screen.getByTestId("dashboard-project-shell").querySelector(".project-content")).not.toHaveClass("project-content--with-alpha-nav");
+    expect(document.querySelector(".executor-status-bar")).toBeNull();
+    modalRender.unmount();
+  });
+
   it("refreshes the mobile shell on and off without losing configured primary items", async () => {
     mockUseViewportMode.mockReturnValue("mobile");
     const legacySettings = {

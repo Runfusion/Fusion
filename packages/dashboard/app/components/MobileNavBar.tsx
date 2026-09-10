@@ -50,8 +50,8 @@ export interface PublishedMobileNavHeightInput {
 }
 
 /**
- * FNXC:AlphaUpdates 2026-09-09-22:14:
- * Publish the complete Alpha pill border box and gap for local collision avoidance only. Project-content and ExecutorStatusBar no longer consume this measurement as reserved Alpha layout because the pill is an overlay.
+ * FNXC:AlphaUpdates 2026-09-10-03:16:
+ * Publish the rendered Alpha pill border box plus its floating gap exactly once. The shared project scroller consumes this measurement with the separate system offset so final controls remain scrollable above the visual overlay without duplicating safe-area terms.
  */
 export function computePublishedMobileNavHeight({
   navOffsetHeight,
@@ -60,9 +60,10 @@ export function computePublishedMobileNavHeight({
   floatingGap = 0,
 }: PublishedMobileNavHeightInput): number {
   const measuredTabHeight = Math.max(0, ...tabHeights.filter((height) => Number.isFinite(height)));
+  const resolvedNavOffsetHeight = Number.isFinite(navOffsetHeight) ? Math.max(0, navOffsetHeight) : 0;
   const resolvedFloatingGap = Number.isFinite(floatingGap) ? Math.max(0, floatingGap) : 0;
   if (resolvedFloatingGap > 0) {
-    const floatingSurfaceHeight = navOffsetHeight > 0 ? navOffsetHeight : measuredTabHeight;
+    const floatingSurfaceHeight = resolvedNavOffsetHeight > 0 ? resolvedNavOffsetHeight : measuredTabHeight;
     return Math.max(44, Math.ceil(floatingSurfaceHeight + resolvedFloatingGap));
   }
 
@@ -71,7 +72,7 @@ export function computePublishedMobileNavHeight({
   }
 
   const resolvedPaddingBottom = Number.isFinite(paddingBottom) ? paddingBottom : 0;
-  const contentHeight = navOffsetHeight - resolvedPaddingBottom;
+  const contentHeight = resolvedNavOffsetHeight - resolvedPaddingBottom;
   return Math.max(44, Math.ceil(contentHeight));
 }
 
@@ -412,6 +413,9 @@ export function MobileNavBar({
     /*
     FNXC:Navigation 2026-07-25-22:57:
     A hidden overview bar must remove its published height as well as its DOM shell; otherwise project content retains dead bottom space.
+
+    FNXC:AlphaUpdates 2026-09-10-03:51:
+    Measurement follows every condition that mounts the mobile nav. A desktop/tablet-to-mobile transition or modal close must publish the newly rendered pill height instead of leaving the root fallback active.
     */
     if (hidden) {
       document.documentElement.style.removeProperty("--mobile-nav-height");
@@ -451,7 +455,7 @@ export function MobileNavBar({
       observer?.disconnect();
       document.documentElement.style.removeProperty("--mobile-nav-height");
     };
-  }, [alphaUpdatesEnabled, hidden]);
+  }, [alphaUpdatesEnabled, hidden, modalOpen, mode]);
 
   if (mode !== "mobile" || modalOpen || hidden) {
     return null;

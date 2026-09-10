@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Header } from "../Header";
-import { MobileNavBar } from "../MobileNavBar";
+import { computePublishedMobileNavHeight, MobileNavBar } from "../MobileNavBar";
 import { MOBILE_NAV_SELECTABLE_ITEMS } from "../../../../core/src/board/mobile-nav-primary-items";
 import { MOBILE_MEDIA_QUERY } from "../../hooks/useViewportMode";
 import { readAppFile } from "../../test/cssFixture";
@@ -201,6 +201,70 @@ describe("MobileNavBar", () => {
     expect(screen.queryByTestId("mobile-more-item-patchnode")).toBeNull();
     expect(screen.queryByTestId("mobile-more-item-tasks")).toBeNull();
     expect(screen.getAllByTestId("mobile-more-item-agents")).toHaveLength(1);
+  });
+
+  it("remeasures the Alpha pill when mobile navigation appears after a viewport or modal transition", async () => {
+    mockViewport("desktop");
+    const offsetHeight = vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function () {
+      return this.classList.contains("mobile-nav-bar") ? 54 : 0;
+    });
+    const clientRect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function () {
+      const height = this.classList.contains("mobile-nav-tab") ? 44 : 0;
+      return { x: 0, y: 0, top: 0, right: 0, bottom: height, left: 0, width: 0, height, toJSON: () => ({}) };
+    });
+    const computedStyle = vi.spyOn(window, "getComputedStyle").mockImplementation(() => ({
+      paddingBottom: "0",
+      getPropertyValue: (property: string) => property === "--mobile-nav-floating-gap" ? "8" : "",
+    }) as CSSStyleDeclaration);
+
+    const { container, rerender } = render(<MobileNavBar {...createDefaultProps()} alphaUpdatesEnabled />);
+    expect(container.querySelector(".mobile-nav-bar")).toBeNull();
+    expect(document.documentElement.style.getPropertyValue("--mobile-nav-height")).toBe("");
+
+    mockViewport("mobile");
+    fireEvent.resize(window);
+    await waitFor(() => expect(container.querySelector(".mobile-nav-bar--alpha")).not.toBeNull());
+    expect(document.documentElement.style.getPropertyValue("--mobile-nav-height")).toBe("62px");
+
+    rerender(<MobileNavBar {...createDefaultProps()} alphaUpdatesEnabled modalOpen />);
+    expect(container.querySelector(".mobile-nav-bar")).toBeNull();
+    expect(document.documentElement.style.getPropertyValue("--mobile-nav-height")).toBe("");
+
+    rerender(<MobileNavBar {...createDefaultProps()} alphaUpdatesEnabled modalOpen={false} />);
+    expect(container.querySelector(".mobile-nav-bar--alpha")).not.toBeNull();
+    expect(document.documentElement.style.getPropertyValue("--mobile-nav-height")).toBe("62px");
+
+    computedStyle.mockRestore();
+    clientRect.mockRestore();
+    offsetHeight.mockRestore();
+  });
+
+  it("keeps Alpha pill geometry independent from badges and optional plugins", () => {
+    const empty = render(<MobileNavBar {...createDefaultProps()} alphaUpdatesEnabled />);
+    const emptyNav = empty.container.querySelector(".mobile-nav-bar");
+    expect(emptyNav).toHaveClass("mobile-nav-bar--alpha");
+    expect(emptyNav).not.toHaveClass("mobile-nav-bar--with-footer");
+    expect(getRenderedMobileTabs(empty.container)).toHaveLength(5);
+    empty.unmount();
+
+    const populated = render(
+      <MobileNavBar
+        {...createDefaultProps()}
+        alphaUpdatesEnabled
+        mailboxUnreadCount={87}
+        mailboxPendingApprovalCount={3}
+        pluginDashboardViews={[{
+          pluginId: "fusion-plugin-alpha-geometry",
+          view: { viewId: "alpha-geometry", label: "Alpha Geometry", componentPath: "./AlphaGeometry", icon: "Workflow", placement: "primary", order: 1 },
+        }]}
+      />,
+    );
+    const populatedNav = populated.container.querySelector(".mobile-nav-bar");
+    expect(populatedNav).toHaveClass("mobile-nav-bar--alpha");
+    expect(populatedNav).not.toHaveClass("mobile-nav-bar--with-footer");
+    expect(getRenderedMobileTabs(populated.container)).toHaveLength(5);
+    expect(screen.getByTestId("mobile-nav-tab-mailbox").querySelector(".mobile-nav-tab-badge")).toHaveTextContent("87");
+    expect(computePublishedMobileNavHeight({ navOffsetHeight: 54, paddingBottom: 4, tabHeights: [44, 44, 44, 44, 44], floatingGap: 8 })).toBe(62);
   });
 
   it("toggles the shared Alpha menu through two successive real header hamburger clicks", async () => {
