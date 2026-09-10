@@ -11,6 +11,8 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { dirname, join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+// FNXC:Terminal 2026-09-10-20:58: Import the retry timer explicitly so standalone packaging scripts pass no-undef lint.
+import { setTimeout } from "node:timers";
 
 const [platform, arch, version] = process.argv.slice(2);
 if (!platform || !arch || !version) throw new Error("Usage: fetch-node-pty-platform-package.mjs <platform> <arch> <version>");
