@@ -679,11 +679,24 @@ describe("triage planning continuation lease", () => {
     expect(h.store.getTaskWorkflowSelectionAsync).toHaveBeenCalledTimes(3);
     expect(h.store.getWorkflowDefinition).toHaveBeenCalledTimes(3);
     expect(h.execute).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ id: h.current.id, column: "done" }));
-    expect(h.transitions).toHaveBeenCalledExactlyOnceWith(h.runnable.id, "running", expect.objectContaining({
+    /*
+    FNXC:PlanningContinuationDispatch 2026-09-10-18:24:
+    A nonterminal Done lane still dispatches. When the fake executor returns without consuming its
+    claim, file-scope settlement must release that exact owner rather than leave a dead running lease.
+    */
+    expect(h.transitions).toHaveBeenCalledTimes(2);
+    expect(h.transitions).toHaveBeenNthCalledWith(1, h.runnable.id, "running", expect.objectContaining({
       expectedState: "runnable",
       expectedLeaseOwner: null,
     }));
-    expect(isPlanningContinuationDispatchClaim(h.workItem!)).toBe(true);
+    expect(h.transitions).toHaveBeenNthCalledWith(2, h.runnable.id, "runnable", expect.objectContaining({
+      expectedState: "running",
+      expectedLeaseOwner: `planning-continuation-dispatch:${h.runnable.id}:0`,
+      leaseOwner: null,
+      leaseExpiresAt: null,
+    }));
+    expect(h.workItem).toMatchObject({ state: "runnable", leaseOwner: null, leaseExpiresAt: null });
+    expect(isPlanningContinuationDispatchClaim(h.workItem!)).toBe(false);
   });
 
   it("keeps Done terminal when the resolved workflow has no Complete traits", async () => {
