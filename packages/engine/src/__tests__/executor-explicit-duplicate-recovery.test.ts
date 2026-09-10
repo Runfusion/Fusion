@@ -52,9 +52,11 @@ describe("executor explicit duplicate redirect parse recovery", () => {
         context: { "node:parse:value": "parse-error" },
       });
 
-      expect(store.moveTask).toHaveBeenCalledWith(liveTask.id, "todo", { preserveWorktree: true });
+      // FN-9295: FN-217 changed duplicate recovery to update in place without moving;
+      // the task stays in its column with error cleared (status null = ready for replan).
+      expect(store.moveTask).not.toHaveBeenCalled();
       expect(store.updateTask).toHaveBeenCalledWith(liveTask.id, {
-        status: "needs-replan",
+        status: null,
         error: null,
       }, undefined);
       expect(store.logEntry).toHaveBeenCalledWith(

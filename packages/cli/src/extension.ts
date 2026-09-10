@@ -1423,9 +1423,10 @@ export function formatTaskLine(t: Task): string {
   const source = getTaskSourceLabel(t);
   const sourceSuffix = source ? ` [via: ${source}]` : "";
   const deps = t.dependencies.length ? ` [deps: ${t.dependencies.join(", ")}]` : "";
-  /* Degraded synchronous formatter: live task listings exclude deleted/historical rows, and `done` is the
-     built-in Complete fallback when no workflow metadata is available. */
-  const isTerminalColumn = t.column === "done";
+  /* Degraded synchronous formatter: live task listings exclude deleted/historical rows, and `done`/`archived`
+     are the built-in terminal fallbacks when no workflow metadata is available. FN-9295: both suppress the
+     paused marker, matching the lifecycle census. */
+  const isTerminalColumn = t.column === "done" || t.column === "archived";
   const paused = t.paused && !isTerminalColumn ? " (paused)" : "";
   return `${t.id}  ${label}${sourceSuffix}${deps}${paused}`;
 }

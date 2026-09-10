@@ -104,6 +104,12 @@ jobs:
             plugins/fusion-plugin-hermes-runtime/dist
             plugins/fusion-plugin-openclaw-runtime/dist
             plugins/fusion-plugin-paperclip-runtime/dist
+            plugins/fusion-plugin-roadmap/dist
+            plugins/fusion-plugin-claude-runtime/dist
+            plugins/fusion-plugin-cursor-runtime/dist
+            plugins/fusion-plugin-droid-runtime/dist
+            plugins/fusion-plugin-grok-runtime/dist
+            plugins/fusion-plugin-omp-runtime/dist
           key: dist-${{ runner.os }}-${{ steps.dist-hash.outputs.hash }}
 
       # On a cache HIT, restored dist files carry their save-time mtimes while
@@ -185,6 +191,12 @@ jobs:
             plugins/fusion-plugin-hermes-runtime/dist
             plugins/fusion-plugin-openclaw-runtime/dist
             plugins/fusion-plugin-paperclip-runtime/dist
+            plugins/fusion-plugin-roadmap/dist
+            plugins/fusion-plugin-claude-runtime/dist
+            plugins/fusion-plugin-cursor-runtime/dist
+            plugins/fusion-plugin-droid-runtime/dist
+            plugins/fusion-plugin-grok-runtime/dist
+            plugins/fusion-plugin-omp-runtime/dist
           key: dist-${{ runner.os }}-${{ steps.dist-hash.outputs.hash }}
 
       - name: Seed artifact hash-cache on cache hit
@@ -342,6 +354,12 @@ jobs:
             plugins/fusion-plugin-hermes-runtime/dist
             plugins/fusion-plugin-openclaw-runtime/dist
             plugins/fusion-plugin-paperclip-runtime/dist
+            plugins/fusion-plugin-roadmap/dist
+            plugins/fusion-plugin-claude-runtime/dist
+            plugins/fusion-plugin-cursor-runtime/dist
+            plugins/fusion-plugin-droid-runtime/dist
+            plugins/fusion-plugin-grok-runtime/dist
+            plugins/fusion-plugin-omp-runtime/dist
             .fusion/cache/plugin-build-cache.json
           key: gate-dist-${{ runner.os }}-${{ steps.dist-hash.outputs.hash }}
           restore-keys: |

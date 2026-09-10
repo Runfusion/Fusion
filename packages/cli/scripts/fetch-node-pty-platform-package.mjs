@@ -30,9 +30,25 @@ if (!integrity) throw new Error(`No pinned sha512 integrity for ${packageName}@$
 const tarball = process.env.FUSION_NODE_PTY_TARBALL_FILE;
 const tempTarball = join(dirname(cacheDir), `${platform}-${arch}@${version}.tgz`);
 mkdirSync(dirname(cacheDir), { recursive: true });
+/* FN-9295: Bounded retries for transient registry failures. The SHA-512 integrity check
+   below still guards against corrupted downloads; retries only repeat the fetch. */
+async function downloadWithRetry(url, output, maxAttempts = 3) {
+  let lastError;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      execFileSync("curl", ["--fail", "--location", "--silent", "--show-error", url, "--output", output]);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt < maxAttempts) await new Promise((r) => setTimeout(r, 1000 * attempt));
+    }
+  }
+  throw lastError;
+}
+
 try {
   if (tarball) writeFileSync(tempTarball, readFileSync(tarball));
-  else execFileSync("curl", ["--fail", "--location", "--silent", "--show-error", `https://registry.npmjs.org/${packageName}/-/${packageName.split("/")[1]}-${version}.tgz`, "--output", tempTarball]);
+  else await downloadWithRetry(`https://registry.npmjs.org/${packageName}/-/${packageName.split("/")[1]}-${version}.tgz`, tempTarball);
   const actual = `sha512-${createHash("sha512").update(readFileSync(tempTarball)).digest("base64")}`;
   if (actual !== integrity) throw new Error(`Integrity mismatch for ${packageName}@${version}; expected lockfile sha512.`);
   rmSync(cacheDir, { recursive: true, force: true });

@@ -10,7 +10,10 @@ describe("desktop runtime package resolution", () => {
     expect(core.Database).toBeTypeOf("function");
     expect(core.PluginStore).toBeTypeOf("function");
     expect(dashboard.createServer).toBeTypeOf("function");
-  }, 15000);
+    // FN-9295: Vite transforms the full dashboard (and its plugin graph) on
+    // import; 15s is too aggressive on CI runners. 30s still fails fast on
+    // genuine resolution errors.
+  }, 30000);
 
   it("can instantiate LocalRuntimeManager without relying on built dist artifacts", () => {
     const manager = new LocalRuntimeManager({ rootDir: process.cwd() });

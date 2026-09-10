@@ -275,6 +275,9 @@ describeIfGit("landWorkspaceTask — landed predicate + finalize-once + idempote
 
     // Non-ancestor: reset main to before the landedSha → landedSha no longer reachable →
     // predicate false → the repo re-lands.
+    // FN-9295: restore the in-review column — the first land moved the task to done,
+    // and landWorkspaceTask requires a non-terminal column for the retry.
+    store.task.column = "in-review";
     void tip;
     fx.git("repo-a", "git reset --hard HEAD~2"); // before the squash + unrelated commit
     const tipReset = fx.git("repo-a", "git rev-parse refs/heads/main");

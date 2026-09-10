@@ -64,6 +64,47 @@ export const REQUIRED_BUILD_PACKAGES = [
     staleAgainstGlobs: [{ sourcePath: "plugins/fusion-plugin-paperclip-runtime/src" }],
   },
   {
+    // The dashboard imports @fusion-plugin-examples/roadmap (and its
+    // dashboard-view subpath) at module load; the desktop runtime-resolution
+    // tests import the dashboard, so the roadmap dist must exist before any
+    // shard runs.
+    name: "@fusion-plugin-examples/roadmap",
+    requiredArtifacts: [
+      "plugins/fusion-plugin-roadmap/dist/index.js",
+      "plugins/fusion-plugin-roadmap/dist/dashboard-view.js",
+    ],
+    staleAgainstGlobs: [{ sourcePath: "plugins/fusion-plugin-roadmap/src" }],
+  },
+  {
+    // Dashboard runtime-provider probes import these at module load.
+    name: "@fusion-plugin-examples/claude-runtime",
+    requiredArtifacts: ["plugins/fusion-plugin-claude-runtime/dist/index.js"],
+    staleAgainstGlobs: [{ sourcePath: "plugins/fusion-plugin-claude-runtime/src" }],
+  },
+  {
+    name: "@fusion-plugin-examples/cursor-runtime",
+    requiredArtifacts: ["plugins/fusion-plugin-cursor-runtime/dist/index.js"],
+    staleAgainstGlobs: [{ sourcePath: "plugins/fusion-plugin-cursor-runtime/src" }],
+  },
+  {
+    name: "@fusion-plugin-examples/droid-runtime",
+    requiredArtifacts: [
+      "plugins/fusion-plugin-droid-runtime/dist/index.js",
+      "plugins/fusion-plugin-droid-runtime/dist/probe.js",
+    ],
+    staleAgainstGlobs: [{ sourcePath: "plugins/fusion-plugin-droid-runtime/src" }],
+  },
+  {
+    name: "@fusion-plugin-examples/grok-runtime",
+    requiredArtifacts: ["plugins/fusion-plugin-grok-runtime/dist/index.js"],
+    staleAgainstGlobs: [{ sourcePath: "plugins/fusion-plugin-grok-runtime/src" }],
+  },
+  {
+    name: "@fusion-plugin-examples/omp-runtime",
+    requiredArtifacts: ["plugins/fusion-plugin-omp-runtime/dist/index.js"],
+    staleAgainstGlobs: [{ sourcePath: "plugins/fusion-plugin-omp-runtime/src" }],
+  },
+  {
     // dist-freshness.test.ts reads the compiled settings + orchestrator to guard
     // against stale dist (FN-6596). dist/ is build output, so a fresh CI checkout
     // must build the plugin before its tests run or the guard throws "dist/ is
