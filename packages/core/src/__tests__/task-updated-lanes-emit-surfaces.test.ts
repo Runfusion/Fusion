@@ -95,7 +95,7 @@ pgDescribe("task:updated producer integration", () => {
     operation: (store: TaskStore, taskId: string, pass: "warm" | "cold") => Promise<unknown>,
     setup?: (store: TaskStore, taskId: string) => Promise<unknown>,
   ): Promise<void> {
-    const harness = await createTaskStoreForTest({ prefix: `fusion_${description.replaceAll(/[^a-z]/g, "_")}_lanes` });
+    const harness = await createTaskStoreForTest({ prefix: `fusion_${description.replaceAll(/[^a-z]/g, "_")}_lanes`, projectId: "task-updated-lanes" });
     try {
       const store = harness.store;
       const created = await store.createTask({
@@ -121,7 +121,7 @@ pgDescribe("task:updated producer integration", () => {
   }
 
   it("delivers warm then cold metadata through TaskStore's direct emit producer", async () => {
-    const harness = await createTaskStoreForTest({ prefix: "fusion_store_emit_lanes_surface" });
+    const harness = await createTaskStoreForTest({ prefix: "fusion_store_emit_lanes_surface", projectId: "task-updated-lanes" });
     try {
       const store = harness.store;
       const created = await store.createTask({ description: "store emit lane surface" });
@@ -181,9 +181,16 @@ pgDescribe("task:updated producer integration", () => {
     await withWarmAndColdUpdate("mutation", (store, id, pass) => store.updateTaskAtomic(id, () => ({ title: `surface ${pass}` })));
   });
 
+  it("executes fenced stall observations through the warm and cold update producer", async () => {
+    await withWarmAndColdUpdate("stall_observation", (store, id, pass) =>
+      store.applyInReviewStallObservationFenced(id, () => ({
+        logEntry: { timestamp: new Date().toISOString(), action: `stall surface ${pass}` },
+      })));
+  });
+
 
   it("executes moves' same-column completion update producer", async () => {
-    const harness = await createTaskStoreForTest({ prefix: "fusion_moves_lanes_surface" });
+    const harness = await createTaskStoreForTest({ prefix: "fusion_moves_lanes_surface", projectId: "task-updated-lanes" });
     try {
       const store = harness.store;
       const created = await store.createTask({ description: "move lane surface" });
@@ -237,7 +244,7 @@ pgDescribe("task:updated producer integration", () => {
   });
 
   it("delivers warm then cold metadata through task-update's real safe emission", async () => {
-    const harness = await createTaskStoreForTest({ prefix: "fusion_update_lanes_surface" });
+    const harness = await createTaskStoreForTest({ prefix: "fusion_update_lanes_surface", projectId: "task-updated-lanes" });
     try {
       const store = harness.store;
       const created = await store.createTask({ description: "update lane surface" });
@@ -256,7 +263,7 @@ pgDescribe("task:updated producer integration", () => {
   });
 
   it("delivers warm then cold metadata through dependency updates' real safe emission", async () => {
-    const harness = await createTaskStoreForTest({ prefix: "fusion_dependency_lanes_surface" });
+    const harness = await createTaskStoreForTest({ prefix: "fusion_dependency_lanes_surface", projectId: "task-updated-lanes" });
     try {
       const store = harness.store;
       const prerequisite = await store.createTask({ description: "dependency prerequisite" });

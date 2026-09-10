@@ -24,6 +24,14 @@ function createStore(task: Task, settings: Record<string, unknown> = {}): TaskSt
   (emitter as any).updateTask = vi.fn().mockImplementation(async (_taskId: string, updates: Partial<Task>) => {
     Object.assign(task, updates);
   });
+  (emitter as any).applyInReviewStallObservationFenced = vi.fn().mockImplementation(async (_taskId: string, compute: (current: Task) => any) => {
+    const patch = compute(task);
+    if (!patch) return { applied: false, reason: "refused" };
+    await (emitter as any).logEntry(task.id, patch.logEntry.action);
+    const { logEntry: _logEntry, ...fields } = patch;
+    Object.assign(task, fields);
+    return { applied: true, task };
+  });
   (emitter as any).recordRunAuditEvent = vi.fn().mockImplementation(async (event: any) => {
     auditEvents.push(event);
   });
@@ -113,6 +121,72 @@ describe("reliability interactions: in-review stall deadlock disposition", () =>
     expect(disposeAuditsAfterFourth).toHaveLength(auditCountBeforeFourth);
 
     manager.stop();
+  });
+
+  it("uses the default ten-observation threshold when no override is configured", async () => {
+    const reason = "task is marked 'failed': unchanged merge failure";
+    const task = {
+      id: "FN-336-DEFAULT",
+      column: "in-review",
+      paused: false,
+      userPaused: false,
+      status: "failed",
+      error: "unchanged merge failure",
+      steps: [{ name: "implementation", status: "done" }],
+      workflowStepResults: [],
+      worktree: "/tmp/fn-336-default",
+      mergeDetails: {},
+      mergeRetries: 0,
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      log: Array.from({ length: 9 }, (_, index) => ({
+        timestamp: `2026-01-01T00:0${index}:00.000Z`,
+        action: `In-review stall surfaced [merge-blocker]: ${reason}`,
+      })),
+    } as any satisfies Task;
+    const store = createStore(task, { inReviewStallDeadlockThreshold: undefined });
+    const manager = new SelfHealingManager(store, { rootDir: "/tmp/repo" });
+
+    vi.setSystemTime(new Date("2026-01-01T00:20:00.000Z"));
+    expect(await manager.surfaceInReviewStalls()).toBe(1);
+    expect(task.pausedReason).toBe("in-review-stall-deadlock");
+    expect(task.error).toContain("repeated 10× without progress");
+  });
+
+  it("starts a new episode when a failed pre-merge gate progressed after identical stalls", async () => {
+    const reason = "task has failed pre-merge workflow steps";
+    const task = {
+      id: "FN-336-PROGRESS",
+      column: "in-review",
+      paused: false,
+      userPaused: false,
+      steps: [{ name: "implementation", status: "done" }],
+      workflowStepResults: [{
+        workflowStepId: "code-review",
+        workflowStepName: "Code Review",
+        phase: "pre-merge",
+        status: "failed",
+        startedAt: "2026-01-01T00:04:00.000Z",
+        completedAt: "2026-01-01T00:05:00.000Z",
+        priorAttempts: [{ status: "failed", startedAt: "2026-01-01T00:00:00.000Z" }],
+      }],
+      worktree: "/tmp/fn-336-progress",
+      mergeDetails: {},
+      mergeRetries: 0,
+      updatedAt: "2026-01-01T00:05:00.000Z",
+      log: [
+        { timestamp: "2026-01-01T00:01:00.000Z", action: `In-review stall surfaced [merge-blocker]: ${reason}` },
+        { timestamp: "2026-01-01T00:03:00.000Z", action: `In-review stall surfaced [merge-blocker]: ${reason}` },
+      ],
+    } as any satisfies Task;
+    const store = createStore(task, { inReviewStallDeadlockThreshold: 3 });
+    const manager = new SelfHealingManager(store, { rootDir: "/tmp/repo" });
+
+    vi.setSystemTime(new Date("2026-01-01T00:10:00.000Z"));
+    expect(await manager.surfaceInReviewStalls()).toBe(1);
+    expect(task.paused).toBe(false);
+    expect(task.log.filter((entry: { action: string }) => entry.action.startsWith("In-review stall surfaced"))).toHaveLength(3);
+    expect(task.log.some((entry: { action: string }) => entry.action.startsWith("In-review stall auto-disposed"))).toBe(false);
+    expect((store as any).__auditEvents).toEqual([]);
   });
 
   it("FN-6113: terminal provider errors dispose in a single stall cycle", async () => {

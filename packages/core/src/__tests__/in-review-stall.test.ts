@@ -5,6 +5,7 @@ import {
   DEFAULT_MAX_AUTO_MERGE_RETRIES,
   DEFAULT_STALE_MERGING_MIN_AGE_MS,
   getInReviewStallReason,
+  getLatestFailedPreMergeStepProgressAt,
 } from "../tasks/in-review-stall.js";
 
 const NOW = Date.parse("2026-05-12T12:00:00.000Z");
@@ -101,6 +102,27 @@ describe("countRecentIdenticalStallEntries", () => {
       { timestamp: "2026-05-12T11:58:00.000Z", action: `In-review stall surfaced [merge-blocker]: ${reason}` },
       { timestamp: "2026-05-12T11:59:00.000Z", action: `In-review stall surfaced [merge-blocker]: ${reason}` },
     ]), { code: "merge-blocker", reason })).toBe(2);
+  });
+
+  it("resets the episode when gate progress is newer than the latest identical stall", () => {
+    const log = task([
+      { timestamp: "2026-05-12T11:58:00.000Z", action: `In-review stall surfaced [merge-blocker]: ${reason}` },
+      { timestamp: "2026-05-12T11:59:00.000Z", action: `In-review stall surfaced [merge-blocker]: ${reason}` },
+    ]);
+    expect(countRecentIdenticalStallEntries(log, { code: "merge-blocker", reason }, Date.parse("2026-05-12T11:59:30.000Z"))).toBe(0);
+    expect(countRecentIdenticalStallEntries(log, { code: "merge-blocker", reason }, Date.parse("2026-05-12T11:57:00.000Z"))).toBe(2);
+  });
+
+  it("derives progress only from valid top-level failed pre-merge results", () => {
+    expect(getLatestFailedPreMergeStepProgressAt({ workflowStepResults: [
+      { workflowStepId: "code-review", workflowStepName: "Code Review", phase: "pre-merge", status: "failed", startedAt: "invalid", priorAttempts: [{ startedAt: "2026-05-12T12:00:00.000Z" }] },
+      { workflowStepId: "post", workflowStepName: "Post", phase: "post-merge", status: "failed", completedAt: "2026-05-12T12:01:00.000Z" },
+      { workflowStepId: "pending", workflowStepName: "Pending", phase: "pre-merge", status: "pending", startedAt: "2026-05-12T12:02:00.000Z" },
+    ] })).toBeUndefined();
+
+    expect(getLatestFailedPreMergeStepProgressAt({ workflowStepResults: [
+      { workflowStepId: "code-review", workflowStepName: "Code Review", phase: "pre-merge", status: "failed", startedAt: "2026-05-12T11:59:00.000Z", completedAt: "2026-05-12T12:00:00.000Z" },
+    ] })).toBe(Date.parse("2026-05-12T12:00:00.000Z"));
   });
 });
 

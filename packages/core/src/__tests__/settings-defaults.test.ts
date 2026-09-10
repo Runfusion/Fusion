@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CONSECUTIVE_TOOL_FAILURE_RETRY_THRESHOLD, DEFAULT_CONSECUTIVE_TOOL_FAILURE_RETRY_BACKOFF_MS, DEFAULT_MAX_CONSECUTIVE_TOOL_FAILURE_RETRIES, DEFAULT_MAX_AUTO_MERGE_RETRIES, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries } from "../tasks/in-review-stall.js";
+import { CONSECUTIVE_TOOL_FAILURE_RETRY_THRESHOLD, DEFAULT_CONSECUTIVE_TOOL_FAILURE_RETRY_BACKOFF_MS, DEFAULT_IN_REVIEW_STALL_DEADLOCK_THRESHOLD, DEFAULT_MAX_CONSECUTIVE_TOOL_FAILURE_RETRIES, DEFAULT_MAX_AUTO_MERGE_RETRIES, resolveConsecutiveToolFailureRetryBackoffMs, resolveInReviewStallDeadlockThreshold, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries } from "../tasks/in-review-stall.js";
 import { ALPHA_UPDATES_FLAG, CHAT_FOCUS_FLAG, isExperimentalFeatureEnabled } from "../config/experimental-features.js";
 import { DEFAULT_GLOBAL_SETTINGS, DEFAULT_PROJECT_SETTINGS, GLOBAL_SETTINGS_KEYS, PROJECT_SETTINGS_KEYS, isGlobalOnlySettingsKey, isGlobalSettingsKey, isProjectSettingsKey } from "../config/settings-schema.js";
 import {
@@ -25,6 +25,15 @@ describe("settings defaults invariants", () => {
 
   it("keeps project worktreesDir unset by default", () => {
     expect(DEFAULT_PROJECT_SETTINGS.worktreesDir).toBeUndefined();
+  });
+
+  it("defaults unchanged in-review stall disposal to ten observations", () => {
+    expect(DEFAULT_IN_REVIEW_STALL_DEADLOCK_THRESHOLD).toBe(10);
+    expect(DEFAULT_PROJECT_SETTINGS.inReviewStallDeadlockThreshold).toBe(DEFAULT_IN_REVIEW_STALL_DEADLOCK_THRESHOLD);
+    expect(resolveInReviewStallDeadlockThreshold(undefined)).toBe(10);
+    expect(resolveInReviewStallDeadlockThreshold({ inReviewStallDeadlockThreshold: "unknown" })).toBe(10);
+    expect(resolveInReviewStallDeadlockThreshold({ inReviewStallDeadlockThreshold: 3 })).toBe(3);
+    expect(resolveInReviewStallDeadlockThreshold({ inReviewStallDeadlockThreshold: 0 })).toBe(0);
   });
 
   it("defaults local network discovery on and keeps its opt-out global-only", () => {

@@ -1890,9 +1890,10 @@ export interface ProjectSettings {
    *  time-based stuck/stalled/stale signal may fire after activation.
    *  Default: 300000 (5 minutes). Set to 0 to disable the grace period. */
   engineActivationGraceMs?: number;
-  /** Minimum number of identical consecutive in-review stall log entries (same code + reason)
+  /** Minimum number of identical consecutive in-review stall observations in one unchanged episode
    *  before the task is auto-disposed with `pausedReason='in-review-stall-deadlock'`.
-   *  Default: 3. Set to 0 to disable. */
+   *  Proven progress from a fresh failed pre-merge gate starts a new episode.
+   *  Default: 10. Set to 0 to disable. */
   inReviewStallDeadlockThreshold?: number;
   /** Threshold in milliseconds for surfacing paused in-review tasks as stale.
    *  Age is measured from columnMovedAt when present, otherwise updatedAt.

@@ -703,7 +703,7 @@ Default notes:
 | `runtimeStopDrainMs` | `number` | `2000` | Maximum milliseconds `InProcessRuntime.stop()` waits for in-flight tasks to drain after aborting AI sessions. Set `0` to skip drain polling entirely (useful for test/CI). |
 | `engineActiveSinceMs` | `number` | `undefined` | Epoch ms when the in-process runtime last became active (startup or unpause). Time-based stuck/stalled/stale surfaces floor their activity anchor at this timestamp so paused/stopped downtime is not counted as quiet age. Runtime-managed; typically not set manually. |
 | `engineActivationGraceMs` | `number` | `300000` | Extra grace window (ms) added after `engineActiveSinceMs` before time-based stuck/stalled/stale surfaces can fire. Set `0` to disable warmup. |
-| `inReviewStallDeadlockThreshold` | `number` | `3` | Minimum number of identical consecutive in-review stall log entries (same stall code + reason) before self-healing auto-disposes the task by pausing it with `pausedReason="in-review-stall-deadlock"` and marking status `failed`. Set to `0` to disable. |
+| `inReviewStallDeadlockThreshold` | `number` | `10` | Minimum number of identical consecutive in-review stall observations in one unchanged episode before self-healing auto-disposes the task by pausing it with `pausedReason="in-review-stall-deadlock"` and marking status `failed`. A newer active failed pre-merge gate starts a new episode even when blocker text is unchanged. Explicit positive overrides are preserved; set to `0` to disable. |
 | `stalePausedReviewThresholdMs` | `number` | `86400000` | Threshold in ms for surfacing paused `in-review` tasks as stale paused review diagnostics (24 hours). `0` or `undefined` disables stale paused review surfacing/logging. |
 | `inReviewStalledThresholdMs` | `number` | `86400000` | When `> 0`, enables surfacing of unpaused `in-review` tasks quiet beyond threshold via the `surface-in-review-stalled` self-healing pass; `0` disables. See **Backlog health alerts** below. |
 | `stalePausedTodoThresholdMs` | `number` | `86400000` | Threshold in ms for surfacing paused `todo` tasks as stale backlog-health diagnostics (24 hours). When `> 0`, the `surface-stale-paused-todos` self-healing pass emits `Stale paused todo surfaced [stale-paused-todo]: paused <hours>h beyond <threshold>h threshold; ...` log entries. `0` or `undefined` disables stale paused todo surfacing/logging. |
@@ -1555,7 +1555,7 @@ To clear all overrides, set `promptOverrides` to `null`:
     "mergeStrategy": "direct",
     "autoResolveConflicts": true,
     "taskStuckTimeoutMs": 600000,
-    "inReviewStallDeadlockThreshold": 3,
+    "inReviewStallDeadlockThreshold": 10,
     "runStepsInNewSessions": true,
     "maxParallelSteps": 2
   }

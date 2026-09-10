@@ -412,6 +412,17 @@ export type ReviewRemediationPublicationCompute = (
 
 export type ReviewRemediationPublicationResult = WorkflowStepResultsFencedUpdateResult;
 
+export type InReviewStallObservationPatch = Partial<Pick<
+  Task,
+  "paused" | "pausedReason" | "status" | "error"
+>> & { logEntry: TaskLogEntry };
+
+export type InReviewStallObservationCompute = (
+  current: Task,
+) => InReviewStallObservationPatch | null;
+
+export type InReviewStallObservationResult = WorkflowStepResultsFencedUpdateResult;
+
 /*
 FNXC:WorkflowStepResults 2026-08-29-02:04:
 FN-249 makes durable graph step-result writes contend with resetTaskPublicationImpl's exact
@@ -426,6 +437,62 @@ transaction are open, so awaiting a store method can deadlock on the non-reentra
 starve the connection pool. The engine supplies the abort re-check and startedAt attempt CAS in
 this closure, after Reset's transaction has either committed or released its lock.
 */
+/*
+FNXC:InReviewStallProgress 2026-09-10-08:09:
+A stall observation and any resulting disposition are one durable decision over the live task row.
+Serialize that decision with workflow-result and remediation publishers on the project-scoped task
+advisory lock; a stale sweep may select a candidate, but it cannot overwrite a newer review episode.
+The synchronous callback performs no nested store work while the transaction owns the lock.
+*/
+export async function applyInReviewStallObservationFencedImpl(
+  store: TaskStore,
+  id: string,
+  compute: InReviewStallObservationCompute,
+): Promise<InReviewStallObservationResult> {
+  const layer = store.asyncLayer;
+  if (!layer) return { applied: false, reason: "unavailable" };
+
+  return store.withTaskLock(id, async () => {
+    const outcome = await layer.transactionImmediate(async (tx): Promise<InReviewStallObservationResult> => {
+      await acquireTaskAdvisoryXactLock(tx, layer.projectId, id);
+      const row = await readTaskRowInTransaction(tx, id, { includeDeleted: true }, layer.projectId);
+      if (!row) return { applied: false, reason: "task-missing" };
+      if (row.deletedAt) return { applied: false, reason: "task-deleted" };
+
+      const current = store.rowToTask(store.pgRowToTaskRow(row));
+      const patch = compute(current);
+      if (patch === null) return { applied: false, reason: "refused" };
+      const log = [...(current.log ?? []), patch.logEntry];
+      const entryLimit = getTaskActivityLogEntryLimit();
+      if (log.length > entryLimit) log.splice(0, log.length - entryLimit);
+
+      const values: Partial<typeof schema.project.tasks.$inferInsert> = {
+        log: toJson(log),
+        updatedAt: new Date().toISOString(),
+      };
+      if (Object.prototype.hasOwnProperty.call(patch, "paused")) values.paused = patch.paused ? 1 : 0;
+      if (Object.prototype.hasOwnProperty.call(patch, "pausedReason")) values.pausedReason = patch.pausedReason ?? null;
+      if (Object.prototype.hasOwnProperty.call(patch, "status")) values.status = patch.status ?? null;
+      if (Object.prototype.hasOwnProperty.call(patch, "error")) values.error = patch.error ?? null;
+
+      const [updatedRow] = await tx.update(schema.project.tasks).set(values).where(and(
+        eq(schema.project.tasks.id, id),
+        taskProjectScope(layer),
+        isNull(schema.project.tasks.deletedAt),
+      )).returning();
+      if (!updatedRow) return { applied: false, reason: "task-missing" };
+      return { applied: true, task: store.rowToTask(store.pgRowToTaskRow(updatedRow)) };
+    });
+
+    if (outcome.applied) {
+      await store.writeTaskJsonFile(store.taskDir(id), outcome.task);
+      if (store.isWatching) store.taskCache.set(id, { ...outcome.task });
+      store.emitTaskLifecycleEventSafely("task:updated", [outcome.task]);
+    }
+    return outcome;
+  });
+}
+
 export async function updateWorkflowStepResultsFencedImpl(
   store: TaskStore,
   id: string,

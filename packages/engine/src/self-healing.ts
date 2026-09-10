@@ -28,7 +28,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmdirSy
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { loadWorkspaceConfig, type TaskMoveLanes, resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, hasSharedBranchMemberAutoMergeHold, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getPostMergeFinalizeBlocker, planConfirmedMergeChecklistReconciliation, getTaskMergeBlocker, isStaleContentApprovalBlocker, resolvePreMergeGateForTask, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isLiveSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, resolveExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, getBuiltinWorkflow, isBuiltinWorkflowId, resolveWorkflowIrForTask, resolveWorkflowIrForTaskWithProvenance, resolveRequiredPreMergeStepIds, resolveReboundTarget, columnsWithFlag, resolveLifecycleColumns, resolveTaskLifecycleColumns, isWipColumnRole, isReviewColumnRole, isTerminalColumnRole, workflowHasColumn, planLegacyAdoption, resolveOrphanedPendingStepResults, resolveUnprovenReviewApproval, resolveCollateralArchivedReviewGate, COLLATERAL_ARCHIVED_REVIEW_GATE_DIAGNOSTIC, classifyReviewLease, PLAN_REVIEW_LEASE_STALENESS_MS, DEFAULT_MAX_POST_REVIEW_FIXES, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type MoveTaskOptions, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult, type WorkflowIr, type WorkflowIrV2,
+import { loadWorkspaceConfig, type TaskMoveLanes, resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, hasSharedBranchMemberAutoMergeHold, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, getLatestFailedPreMergeStepProgressAt, resolveInReviewStallDeadlockThreshold, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getPostMergeFinalizeBlocker, planConfirmedMergeChecklistReconciliation, getTaskMergeBlocker, isStaleContentApprovalBlocker, resolvePreMergeGateForTask, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isLiveSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, resolveExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, getBuiltinWorkflow, isBuiltinWorkflowId, resolveWorkflowIrForTask, resolveWorkflowIrForTaskWithProvenance, resolveRequiredPreMergeStepIds, resolveReboundTarget, columnsWithFlag, resolveLifecycleColumns, resolveTaskLifecycleColumns, isWipColumnRole, isReviewColumnRole, isTerminalColumnRole, workflowHasColumn, planLegacyAdoption, resolveOrphanedPendingStepResults, resolveUnprovenReviewApproval, resolveCollateralArchivedReviewGate, COLLATERAL_ARCHIVED_REVIEW_GATE_DIAGNOSTIC, classifyReviewLease, PLAN_REVIEW_LEASE_STALENESS_MS, DEFAULT_MAX_POST_REVIEW_FIXES, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type MoveTaskOptions, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult, type WorkflowIr, type WorkflowIrV2,
 
   resolveNearDuplicateCanonicalFlags,
   LEGACY_COLUMN_IDS_BY_ROLE,
@@ -10440,10 +10440,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       let surfaced = 0;
 
       for (const task of tasks) {
-        if (task.deletedAt) continue;
-        if (!allowsAutoMergeProcessing(task, settings)) continue;
-        const signal = getInReviewStallReason(task, {
-          reviewColumns: stallLanes.get(task.id) ?? stallReviewColumns,
+        if (task.deletedAt || !allowsAutoMergeProcessing(task, settings)) continue;
+        const reviewColumns = stallLanes.get(task.id) ?? stallReviewColumns;
+        const selectedSignal = getInReviewStallReason(task, {
+          reviewColumns,
           now: cycleStartMs,
           activeMergeTaskId,
           executingTaskIds,
@@ -10452,93 +10452,98 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           engineActiveSinceMs: settings.engineActiveSinceMs,
           engineActivationGraceMs: settings.engineActivationGraceMs,
         });
-        if (!signal) continue;
-        if (await this.isMergeLaneOwned(task.id)) continue;
+        if (!selectedSignal || await this.isMergeLaneOwned(task.id)) continue;
 
-        if (Date.parse(task.updatedAt) >= cycleStartMs) {
-          continue;
-        }
+        const threshold = resolveInReviewStallDeadlockThreshold(settings);
+        let appliedSignal: typeof selectedSignal | undefined;
+        let repetitionCount = 0;
+        let disposition: "observation" | "deadlock" | "terminal-provider" | undefined;
+        const outcome = await this.store.applyInReviewStallObservationFenced(task.id, (live) => {
+          if (live.deletedAt || live.paused) return null;
+          if (!allowsAutoMergeProcessing(live, settings)) return null;
+          if (Date.parse(live.updatedAt) >= cycleStartMs) return null;
 
-        if (signal.code === "non-retryable-provider-error" && task.userPaused !== true) {
-          await this.store.logEntry(task.id, `${IN_REVIEW_STALL_TERMINAL_LOG_PREFIX}${signal.code}]: ${signal.reason}`);
-          await this.store.updateTask(task.id, {
-            paused: true,
-            pausedReason: "non-retryable-provider-error",
-            status: "failed",
-            error: `Terminal provider error (non-retryable): ${signal.reason}`,
+          const signal = getInReviewStallReason(live, {
+            reviewColumns,
+            now: cycleStartMs,
+            activeMergeTaskId,
+            executingTaskIds,
+            staleMergingMinAgeMs: this.options.staleMergingStatusMinAgeMs ?? DEFAULT_STALE_MERGING_STATUS_MIN_AGE_MS,
+            maxAutoMergeRetries,
+            engineActiveSinceMs: settings.engineActiveSinceMs,
+            engineActivationGraceMs: settings.engineActivationGraceMs,
           });
-          const auditor = createRunAuditor(this.store, {
-            runId: generateSyntheticRunId("self-healing-stall-terminal-provider-error", task.id),
-            agentId: "self-healing",
-            taskId: task.id,
-            phase: "self-healing",
-          });
-          await auditor.database({
-            type: "task:in-review-stall-terminal-provider-error",
-            target: task.id,
-            metadata: {
-              code: signal.code,
-              reason: signal.reason,
-              branch: task.branch ?? null,
-              worktree: task.worktree ?? null,
-            },
-          });
-          surfaced += 1;
-          continue;
-        }
+          if (!signal) return null;
 
-        const previous = [...(task.log ?? [])]
-          .reverse()
-          .find((entry) => entry.action.startsWith(IN_REVIEW_STALL_LOG_PREFIX));
-        if (previous) {
-          const parsed = /^In-review stall surfaced \[([^\]]+)\]/.exec(previous.action);
-          const previousCode = parsed?.[1];
-          const previousAt = Date.parse(previous.timestamp);
-          if (Number.isFinite(previousAt) && previousAt >= cycleStartMs - timeoutMs && previousCode === signal.code) {
-            continue;
+          const previous = [...(live.log ?? [])]
+            .reverse()
+            .find((entry) => entry.action.startsWith(IN_REVIEW_STALL_LOG_PREFIX));
+          if (previous) {
+            const parsed = /^In-review stall surfaced \[([^\]]+)\]/.exec(previous.action);
+            const previousCode = parsed?.[1];
+            const previousAt = Date.parse(previous.timestamp);
+            if (Number.isFinite(previousAt) && previousAt >= cycleStartMs - timeoutMs && previousCode === signal.code) return null;
           }
-        }
 
-        const threshold = settings.inReviewStallDeadlockThreshold ?? 3;
-        const identicalCount = countRecentIdenticalStallEntries(task, { code: signal.code, reason: signal.reason });
-        const nextCount = identicalCount + 1;
-        const shouldDispose = threshold > 0 && task.userPaused !== true && nextCount >= threshold;
+          appliedSignal = signal;
+          const progressAt = signal.code === "merge-blocker" && signal.reason === "task has failed pre-merge workflow steps"
+            ? getLatestFailedPreMergeStepProgressAt(live)
+            : undefined;
+          repetitionCount = countRecentIdenticalStallEntries(live, signal, progressAt) + 1;
+          const timestamp = new Date().toISOString();
 
-        if (shouldDispose) {
-          await this.store.logEntry(
-            task.id,
-            `${IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX}${signal.code}]: deadlock-prevention threshold reached after ${nextCount} identical stalls — pausing task. last reason: ${signal.reason}`,
-          );
-          await this.store.updateTask(task.id, {
-            paused: true,
-            pausedReason: "in-review-stall-deadlock",
-            status: "failed",
-            error: `In-review stall deadlock: ${signal.code} repeated ${nextCount}× without progress. ${signal.reason}`,
-          });
-          const auditor = createRunAuditor(this.store, {
-            runId: generateSyntheticRunId("self-healing-stall-deadlock", task.id),
-            agentId: "self-healing",
-            taskId: task.id,
-            phase: "self-healing",
-          });
-          await auditor.database({
-            type: "task:in-review-stall-deadlock-disposed",
-            target: task.id,
-            metadata: {
-              code: signal.code,
-              reason: signal.reason,
-              repetitionCount: nextCount,
-              threshold,
-              branch: task.branch ?? null,
-              worktree: task.worktree ?? null,
-            },
-          });
-          surfaced += 1;
-          continue;
-        }
+          if (signal.code === "non-retryable-provider-error" && live.userPaused !== true) {
+            disposition = "terminal-provider";
+            return {
+              logEntry: { timestamp, action: `${IN_REVIEW_STALL_TERMINAL_LOG_PREFIX}${signal.code}]: ${signal.reason}` },
+              paused: true,
+              pausedReason: "non-retryable-provider-error",
+              status: "failed",
+              error: `Terminal provider error (non-retryable): ${signal.reason}`,
+            };
+          }
+          if (threshold > 0 && live.userPaused !== true && repetitionCount >= threshold) {
+            disposition = "deadlock";
+            return {
+              logEntry: {
+                timestamp,
+                action: `${IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX}${signal.code}]: deadlock-prevention threshold reached after ${repetitionCount} identical stalls — pausing task. last reason: ${signal.reason}`,
+              },
+              paused: true,
+              pausedReason: "in-review-stall-deadlock",
+              status: "failed",
+              error: `In-review stall deadlock: ${signal.code} repeated ${repetitionCount}× without progress. ${signal.reason}`,
+            };
+          }
+          disposition = "observation";
+          return { logEntry: { timestamp, action: `${IN_REVIEW_STALL_LOG_PREFIX}${signal.code}]: ${signal.reason}` } };
+        });
+        if (!outcome.applied || !appliedSignal || !disposition) continue;
 
-        await this.store.logEntry(task.id, `${IN_REVIEW_STALL_LOG_PREFIX}${signal.code}]: ${signal.reason}`);
         surfaced += 1;
+        if (disposition === "observation") continue;
+        const auditor = createRunAuditor(this.store, {
+          runId: generateSyntheticRunId(
+            disposition === "deadlock" ? "self-healing-stall-deadlock" : "self-healing-stall-terminal-provider-error",
+            task.id,
+          ),
+          agentId: "self-healing",
+          taskId: task.id,
+          phase: "self-healing",
+        });
+        await auditor.database({
+          type: disposition === "deadlock"
+            ? "task:in-review-stall-deadlock-disposed"
+            : "task:in-review-stall-terminal-provider-error",
+          target: task.id,
+          metadata: {
+            code: appliedSignal.code,
+            reason: appliedSignal.reason,
+            ...(disposition === "deadlock" ? { repetitionCount, threshold } : {}),
+            branch: outcome.task.branch ?? null,
+            worktree: outcome.task.worktree ?? null,
+          },
+        });
       }
 
       return surfaced;

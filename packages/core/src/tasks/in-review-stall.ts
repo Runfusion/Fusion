@@ -61,6 +61,13 @@ export interface InReviewStallContext {
 
 /** Keep aligned with engine DEFAULT_STALE_MERGING_STATUS_MIN_AGE_MS. */
 export const DEFAULT_STALE_MERGING_MIN_AGE_MS = 5 * 60_000;
+export const DEFAULT_IN_REVIEW_STALL_DEADLOCK_THRESHOLD = 10;
+export function resolveInReviewStallDeadlockThreshold(settings?: { inReviewStallDeadlockThreshold?: unknown } | null): number {
+  return resolveNonNegativeInteger(
+    settings?.inReviewStallDeadlockThreshold,
+    DEFAULT_IN_REVIEW_STALL_DEADLOCK_THRESHOLD,
+  );
+}
 /** Historical default for the configurable auto-merge conflict retry cap. */
 export const DEFAULT_MAX_AUTO_MERGE_RETRIES = 3;
 export const DEFAULT_MAX_CONSECUTIVE_TOOL_FAILURE_RETRIES = 2;
@@ -198,21 +205,42 @@ export function classifyProviderError(error: string): ProviderErrorClassificatio
   return "unknown";
 }
 
+/*
+FNXC:InReviewStallProgress 2026-09-10-08:09:
+Identical merge-blocker text is not an episode identity: a newly started or completed top-level
+pre-merge failure proves that correction work advanced even when the blocker sentence is unchanged.
+Only valid durable timestamps reset the suffix; missing or malformed evidence keeps the conservative
+historical count, and priorAttempts never substitutes for the active result.
+*/
+export function getLatestFailedPreMergeStepProgressAt(
+  task: Pick<Task, "workflowStepResults">,
+): number | undefined {
+  let latest: number | undefined;
+  for (const result of task.workflowStepResults ?? []) {
+    if ((result.phase ?? "pre-merge") !== "pre-merge" || result.status !== "failed") continue;
+    for (const timestamp of [result.startedAt, result.completedAt]) {
+      if (!timestamp) continue;
+      const parsed = Date.parse(timestamp);
+      if (Number.isFinite(parsed) && (latest === undefined || parsed > latest)) latest = parsed;
+    }
+  }
+  return latest;
+}
+
 export function countRecentIdenticalStallEntries(
   task: Pick<Task, "log">,
   signal: Pick<InReviewStallSignal, "code" | "reason">,
+  progressAt?: number,
 ): number {
   const trimmedReason = signal.reason.trim();
   const reversed = [...(task.log ?? [])].reverse();
   let count = 0;
 
   for (const entry of reversed) {
-    if (!entry.action.startsWith(IN_REVIEW_STALL_LOG_PREFIX)) {
-      break;
-    }
-    if (!matchesStallEntry(entry, signal.code, trimmedReason)) {
-      break;
-    }
+    if (!entry.action.startsWith(IN_REVIEW_STALL_LOG_PREFIX)) break;
+    if (!matchesStallEntry(entry, signal.code, trimmedReason)) break;
+    const observedAt = Date.parse(entry.timestamp);
+    if (progressAt !== undefined && Number.isFinite(observedAt) && progressAt > observedAt) break;
     count += 1;
   }
 

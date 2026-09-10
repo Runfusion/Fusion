@@ -1,4 +1,4 @@
-import { CONSECUTIVE_TOOL_FAILURE_RETRY_THRESHOLD, DEFAULT_MAX_AUTO_MERGE_RETRIES } from "../tasks/in-review-stall.js";
+import { CONSECUTIVE_TOOL_FAILURE_RETRY_THRESHOLD, DEFAULT_IN_REVIEW_STALL_DEADLOCK_THRESHOLD, DEFAULT_MAX_AUTO_MERGE_RETRIES } from "../tasks/in-review-stall.js";
 import type { ChatSnippet, CliAgentSettings, GlobalSettings, McpSecretRef, McpServerDefinition, ProjectSettings, Settings } from "../types.js";
 
 export const CHAT_SNIPPET_MAX_ENTRIES = 50;
@@ -790,7 +790,7 @@ export const DEFAULT_PROJECT_SETTINGS = {
   runtimeStopDrainMs: 2_000,
   engineActiveSinceMs: undefined,
   engineActivationGraceMs: 5 * 60_000,
-  inReviewStallDeadlockThreshold: 3,
+  inReviewStallDeadlockThreshold: DEFAULT_IN_REVIEW_STALL_DEADLOCK_THRESHOLD,
   stalePausedReviewThresholdMs: 24 * 60 * 60_000,
   inReviewStalledThresholdMs: 24 * 60 * 60_000,
   stalePausedTodoThresholdMs: 24 * 60 * 60_000,

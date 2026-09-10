@@ -215,6 +215,20 @@ function createMockStore(overrides: Record<string, unknown> = {}): TaskStore & E
     } as unknown as Task),
     updateTask: vi.fn().mockResolvedValue({} as Task),
     logEntry: vi.fn().mockResolvedValue(undefined),
+    applyInReviewStallObservationFenced: vi.fn().mockImplementation(async (id: string, compute: (current: Task) => any) => {
+      const latestList = (store.listTasks as ReturnType<typeof vi.fn>).mock.results.at(-1);
+      const listed = latestList ? await latestList.value : [];
+      const current = (listed as Task[]).find((candidate) => candidate.id === id);
+      if (!current) return { applied: false, reason: "task-missing" };
+      const patch = compute(current);
+      if (!patch) return { applied: false, reason: "refused" };
+      current.log = [...(current.log ?? []), patch.logEntry];
+      const { logEntry, ...fields } = patch;
+      Object.assign(current, fields);
+      await store.logEntry(id, logEntry.action);
+      if (Object.keys(fields).length > 0) await store.updateTask(id, fields);
+      return { applied: true, task: current };
+    }),
     transitionQueuedEpisode: vi.fn().mockResolvedValue({ appended: true }),
     moveTask: vi.fn().mockResolvedValue(undefined),
     handoffToReview: vi.fn().mockResolvedValue(undefined),
