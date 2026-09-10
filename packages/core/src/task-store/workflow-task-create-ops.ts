@@ -31,6 +31,7 @@ import {toJson} from "../db/db.js";
 import {GoalStore} from "../goals/goal-store.js";
 import {AsyncGoalStore} from "../async-stores/async-goal-store.js";
 import {AsyncNoteStore} from "../async-stores/async-note-store.js";
+import {AsyncWhiteboardStore} from "../async-stores/async-whiteboard-store.js";
 import {normalizeTaskCommitAssociation} from "../tasks/task-lineage.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {withTaskBranchContextInSourceMetadata} from "../task-store/branch-context.js";
@@ -664,6 +665,15 @@ export function getNoteStoreImpl(store: TaskStore): AsyncNoteStore {
       store.noteStore = new AsyncNoteStore(layer);
     }
     return store.noteStore;
+  }
+
+export function getWhiteboardStoreImpl(store: TaskStore): AsyncWhiteboardStore {
+    if (!store.whiteboardStore) {
+      const layer = store.getAsyncLayer();
+      if (!layer) throw new Error("WhiteboardStore is not available: AsyncDataLayer not initialized");
+      store.whiteboardStore = new AsyncWhiteboardStore(layer);
+    }
+    return store.whiteboardStore;
   }
 
 export function getGoalStoreImpl(store: TaskStore): GoalStore | AsyncGoalStore {

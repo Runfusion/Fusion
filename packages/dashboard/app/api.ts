@@ -11,6 +11,7 @@ export * from "./api/settings/provider-status";
 export * from "./api/planning/models-usage";
 export * from "./api/chat";
 export * from "./api/notes";
+export * from "./api/whiteboards";
 export * from "./api-node";
 export * from "./api/system/report";
 

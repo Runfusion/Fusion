@@ -20,6 +20,7 @@ import {
   Mail,
   MessageSquare,
   Plus,
+  PanelsTopLeft,
   Search,
   Settings,
   Sparkles,
@@ -43,6 +44,7 @@ export interface LeftSidebarExperimentalFeatures {
   researchView?: boolean;
   evalsView?: boolean;
   ideationView?: boolean;
+  whiteboardView?: boolean;
   goalsView?: boolean;
 }
 
@@ -55,6 +57,7 @@ interface SidebarNavEntry {
   testId: string;
   badge?: number;
   badgeLabel?: string;
+  alpha?: boolean;
   dot?: "pending" | "online";
   dotLabel?: string;
   onSelect: () => void;
@@ -410,6 +413,9 @@ export function LeftSidebarNav({
       testId: "sidebar-nav-notes",
       onSelect: () => onChangeView("notes"),
     },
+    ...(experimentalFeatures?.whiteboardView
+      ? [{ id: "whiteboard", label: t("nav.whiteboard", getDashboardViewLabel("whiteboard")), view: "whiteboard" as TaskView, isActive: view === "whiteboard", icon: PanelsTopLeft, testId: "sidebar-nav-whiteboard", alpha: true, onSelect: () => onChangeView("whiteboard") }]
+      : []),
     ...(experimentalFeatures?.goalsView
       ? [{ id: "goals", label: t("header.goalsView", getDashboardViewLabel("goalsView")), view: "goalsView" as TaskView, isActive: view === "goalsView", icon: Target, testId: "sidebar-nav-goals", onSelect: () => onChangeView("goalsView") }]
       : []),
@@ -490,6 +496,7 @@ export function LeftSidebarNav({
         </span>
         <span className="left-sidebar-nav__label">{entry.label}</span>
         {entry.badge ? <span className="btn-badge left-sidebar-nav__badge" aria-label={entry.badgeLabel}>{formatCount(entry.badge)}</span> : null}
+        {entry.alpha ? <span className="btn-badge left-sidebar-nav__badge">{t("common.alpha", "Alpha")}</span> : null}
       </button>
     );
   };

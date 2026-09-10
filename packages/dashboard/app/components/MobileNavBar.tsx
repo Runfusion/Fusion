@@ -20,6 +20,7 @@ import {
   Mail,
   MessageSquare,
   MoreHorizontal,
+  PanelsTopLeft,
   Play,
   Settings,
   Monitor,
@@ -133,6 +134,7 @@ export interface MobileNavBarProps {
     researchView?: boolean;
     evalsView?: boolean;
     ideationView?: boolean;
+    whiteboardView?: boolean;
     goalsView?: boolean;
   };
   pluginDashboardViews?: PluginDashboardViewEntry[];
@@ -508,6 +510,7 @@ export function MobileNavBar({
     indicatorLabel?: string;
     badge?: number;
     badgeLabel?: string;
+    alpha?: boolean;
   }> = {
     "command-center": { icon: <Gauge />, labelKey: "nav.commandCenter", fallback: "Dashboard", moreTestId: "mobile-more-item-command-center", isActive: view === "command-center", isAvailable: true, navigate: () => onChangeView("command-center") },
     /*
@@ -530,6 +533,7 @@ export function MobileNavBar({
     usage: { icon: <Activity />, labelKey: "nav.usage", fallback: "Usage", moreTestId: "mobile-more-item-usage", isActive: false, isAvailable: true, navigate: (surface) => surface === "primary" ? onOpenUsage?.() : handleMoreAction(onOpenUsage) },
     projects: { icon: <Grid3X3 />, labelKey: "nav.projects", fallback: "Projects", moreTestId: "mobile-more-item-projects", isActive: false, isAvailable: true, navigate: (surface) => surface === "primary" ? onViewAllProjects?.() : handleMoreAction(onViewAllProjects) },
     notes: { icon: <StickyNote />, labelKey: "nav.notes", fallback: "Notes", moreTestId: "mobile-more-item-notes", isActive: view === "notes", isAvailable: true, navigate: (surface) => surface === "primary" ? onChangeView("notes") : handleMoreAction(() => onChangeView("notes")) },
+    whiteboard: { icon: <PanelsTopLeft />, labelKey: "nav.whiteboard", fallback: "Whiteboard", moreTestId: "mobile-more-item-whiteboard", isActive: view === "whiteboard", isAvailable: Boolean(experimentalFeatures?.whiteboardView), alpha: true, navigate: (surface) => surface === "primary" ? onChangeView("whiteboard") : handleMoreAction(() => onChangeView("whiteboard")) },
     secrets: { icon: <Lock />, labelKey: "nav.secrets", fallback: "Secrets", moreTestId: "mobile-more-item-secrets", isActive: view === "secrets", isAvailable: true, navigate: (surface) => surface === "primary" ? onChangeView("secrets") : handleMoreAction(() => onChangeView("secrets")) },
     settings: { icon: <Settings />, labelKey: "nav.settings", fallback: "Settings", moreTestId: "mobile-more-item-settings", isActive: false, isAvailable: true, navigate: (surface) => surface === "primary" ? onOpenSettings?.() : handleMoreAction(onOpenSettings) },
     skills: { icon: <Zap />, labelKey: "nav.skills", fallback: "Skills & Snippets", moreTestId: "mobile-more-item-skills", isActive: view === "skills", isAvailable: skillsEnabled, navigate: (surface) => surface === "primary" ? onChangeView("skills") : handleMoreAction(() => onChangeView("skills")) },
@@ -560,8 +564,8 @@ export function MobileNavBar({
     const destination = destinationRegistry[item];
     const isPrimary = surface === "primary";
     const label = t(destination.labelKey, destination.fallback);
-    if (isPrimary) return <button key={item} type="button" className={`mobile-nav-tab${destination.isActive ? " mobile-nav-tab--active" : ""}`} data-testid={`mobile-nav-tab-${item}`} role="tab" aria-label={label} aria-selected={destination.isActive} onClick={() => destination.navigate("primary")}><span className="mobile-nav-tab-icon-wrapper">{destination.icon}{destination.indicator && <span className="status-dot status-dot--pending mobile-nav-chat-unread-dot" aria-label={destination.indicatorLabel} />}</span>{!alphaUpdatesEnabled && <span className="mobile-nav-tab-label">{label}</span>}{destination.badge && destination.badge > 0 ? <span className="mobile-nav-tab-badge" aria-label={destination.badgeLabel}>{formatCount(destination.badge)}</span> : null}</button>;
-    return <button key={item} type="button" className="mobile-more-item" data-testid={destination.moreTestId} onClick={() => destination.navigate("more")}><span className="mobile-more-item-icon-wrapper">{destination.icon}{destination.indicator && <span className="status-dot status-dot--pending mobile-more-item-icon-dot" aria-label={destination.indicatorLabel} />}</span><span>{label}</span>{destination.badge && destination.badge > 0 ? <span className="mobile-more-item-badge" aria-label={destination.badgeLabel}>{formatCount(destination.badge)}</span> : null}</button>;
+    if (isPrimary) return <button key={item} type="button" className={`mobile-nav-tab${destination.isActive ? " mobile-nav-tab--active" : ""}`} data-testid={`mobile-nav-tab-${item}`} role="tab" aria-label={label} aria-selected={destination.isActive} onClick={() => destination.navigate("primary")}><span className="mobile-nav-tab-icon-wrapper">{destination.icon}{destination.indicator && <span className="status-dot status-dot--pending mobile-nav-chat-unread-dot" aria-label={destination.indicatorLabel} />}</span>{!alphaUpdatesEnabled && <span className="mobile-nav-tab-label">{label}</span>}{destination.badge && destination.badge > 0 ? <span className="mobile-nav-tab-badge" aria-label={destination.badgeLabel}>{formatCount(destination.badge)}</span> : null}{destination.alpha ? <span className="mobile-nav-tab-badge">{t("common.alpha", "Alpha")}</span> : null}</button>;
+    return <button key={item} type="button" className="mobile-more-item" data-testid={destination.moreTestId} onClick={() => destination.navigate("more")}><span className="mobile-more-item-icon-wrapper">{destination.icon}{destination.indicator && <span className="status-dot status-dot--pending mobile-more-item-icon-dot" aria-label={destination.indicatorLabel} />}</span><span>{label}</span>{destination.badge && destination.badge > 0 ? <span className="mobile-more-item-badge" aria-label={destination.badgeLabel}>{formatCount(destination.badge)}</span> : null}{destination.alpha ? <span className="mobile-more-item-badge">{t("common.alpha", "Alpha")}</span> : null}</button>;
   };
 
   return (

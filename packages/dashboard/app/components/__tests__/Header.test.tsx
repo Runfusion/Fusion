@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { Header, resolveReportContextRefs } from "../Header";
 
 // Mock fetchScripts for overflow submenu
@@ -74,6 +74,19 @@ function renderSearchHeader(tier: ViewportTier) {
 }
 
 describe("Header", () => {
+  it("garde Whiteboard hors du menu tant que son flag Alpha est désactivé", () => {
+    const onChangeView = vi.fn();
+    const disabled = renderHeader({ view: "board", onChangeView, experimentalFeatures: {} });
+    fireEvent.click(screen.getByTitle("More views"));
+    expect(screen.queryByTestId("view-overflow-whiteboard")).toBeNull();
+    disabled.unmount();
+    renderHeader({ view: "board", onChangeView, experimentalFeatures: { whiteboardView: true } });
+    fireEvent.click(screen.getByTitle("More views"));
+    const item = screen.getByTestId("view-overflow-whiteboard");
+    expect(within(item).getByText("Alpha")).toBeInTheDocument();
+    fireEvent.click(item);
+    expect(onChangeView).toHaveBeenCalledWith("whiteboard");
+  });
   it("derives report context from task hash routes and legacy query parameters", () => {
     expect(resolveReportContextRefs({ hash: "#/tasks/FN-8277", search: "?agentId=agent-1" })).toEqual({ taskId: "FN-8277", agentId: "agent-1" });
     expect(resolveReportContextRefs({ hash: "", search: "?taskId=FN-8277" })).toEqual({ taskId: "FN-8277", agentId: undefined });

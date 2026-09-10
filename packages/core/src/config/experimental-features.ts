@@ -57,6 +57,9 @@ Alpha features must preserve the current product experience unless the operator 
 */
 export const ALPHA_UPDATES_FLAG = "alphaUpdates" as const;
 
+/* FNXC:WhiteboardAlpha 2026-09-10-05:42: Whiteboard remains absent from every route affordance unless this global, default-off Alpha flag is explicitly enabled. */
+export const WHITEBOARD_VIEW_FLAG = "whiteboardView" as const;
+
 export function isExperimentalFeatureEnabled(
   settings: Pick<Settings, "experimentalFeatures"> | undefined,
   key: string,

@@ -96,6 +96,7 @@ import {
   MULTI_ROLE_WORKFLOW_AGENTS_VERSION,
   OWNER_PROJECT_ID_SPLIT_VERSION,
   OVERLAP_WAIT_SYNC_VERSION,
+  WHITEBOARDS_SCHEMA_VERSION,
   PATCHNODE_ENTRIES_VERSION,
   PLANNING_ACTIVE_TIMING_VERSION,
   PROJECT_OWNERSHIP_SCHEMA_VERSION,
@@ -366,6 +367,7 @@ export const RESTORED_SCHEMA_RELATION_SENTINELS: readonly RestoredSchemaRelation
   { version: TASK_REQUIRE_PLAN_APPROVAL_VERSION, columns: [tasksColumn("require_plan_approval")] },
   { version: PATCHNODE_ENTRIES_VERSION, relations: ["project.patchnode_entries"] },
   { version: OVERLAP_WAIT_SYNC_VERSION, relations: ["project.task_overlap_waits"] },
+  { version: WHITEBOARDS_SCHEMA_VERSION, relations: ["project.whiteboards", "project.whiteboard_revisions"] },
 ];
 
 export async function detectRestoredSchemaRewindFloor(

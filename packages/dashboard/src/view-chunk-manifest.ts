@@ -30,6 +30,7 @@ Persisted lazy views need the served index bootstrap to know both the JavaScript
 export const VIEW_SOURCE_MAP: Record<TaskViewId, string> = {
   agents: "components/AgentsView.tsx",
   chat: "components/ChatView.tsx",
+  whiteboard: "components/WhiteboardView.tsx",
   documents: "components/DocumentsView.tsx",
   research: "components/ResearchView.tsx",
   evals: "components/EvalsView.tsx",

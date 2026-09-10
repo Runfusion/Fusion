@@ -396,7 +396,7 @@ export const taskOverlapWaits = projectSchema.table("task_overlap_waits", {
   updatedAt: text("updated_at").notNull(),
 }, (t) => [
   primaryKey({ columns: [t.projectId, t.taskId, t.episodeId] }),
-  foreignKey({ columns: [t.projectId, t.taskId], foreignColumns: [tasks.projectId, tasks.id], name: "fk_task_overlap_wait_owner" }).onDelete("cascade"),
+  foreignKey({ columns: [t.projectId, t.taskId], foreignColumns: [tasks.projectId, tasks.id], name: "fk_task_overlap_wait_owner" }).onUpdate("cascade").onDelete("cascade"),
   check("ck_task_overlap_wait_phase", sql`${t.phase} IN ('observed','analyzing','freshness-pending','revalidation-pending','ready','delivered','cancelled')`),
   uniqueIndex("uq_task_overlap_wait_open_blocker").on(t.projectId, t.taskId, t.blockerTaskId).where(sql`${t.phase} NOT IN ('delivered', 'cancelled')`),
   index("idx_task_overlap_wait_unconsumed").on(t.projectId, t.taskId, t.observedAt).where(sql`${t.phase} NOT IN ('delivered', 'cancelled')`),
@@ -1689,6 +1689,34 @@ export const notes = projectSchema.table("notes", {
   check("notes_revision_positive", sql`${t.revision} >= 1`),
 ]);
 
+/*
+FNXC:WhiteboardAlpha 2026-09-10-05:42:
+Whiteboard heads and immutable snapshots share composite project identity. The current row advances only with its matching revision while the child FK cascades deletion without permitting cross-project history joins.
+*/
+export const whiteboards = projectSchema.table("whiteboards", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  id: text("id").notNull(), title: text("title").notNull(), document: jsonb("document").notNull(),
+  revision: integer("revision").notNull().default(1), createdAt: text("created_at").notNull(), updatedAt: text("updated_at").notNull(),
+}, (t) => [
+  primaryKey({ columns: [t.projectId, t.id] }),
+  index("idxWhiteboardsProjectUpdatedAt").on(t.projectId, t.updatedAt),
+  index("idxWhiteboardsProjectTitle").on(t.projectId, t.title),
+  check("whiteboards_title_length", sql`char_length(${t.title}) BETWEEN 1 AND 200`),
+  check("whiteboards_document_length", sql`octet_length(${t.document}::text) <= 5242880`),
+  check("whiteboards_revision_positive", sql`${t.revision} >= 1`),
+]);
+export const whiteboardRevisions = projectSchema.table("whiteboard_revisions", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  whiteboardId: text("whiteboard_id").notNull(), revision: integer("revision").notNull(), title: text("title").notNull(),
+  document: jsonb("document").notNull(), createdAt: text("created_at").notNull(),
+}, (t) => [
+  primaryKey({ columns: [t.projectId, t.whiteboardId, t.revision] }),
+  foreignKey({ columns: [t.projectId, t.whiteboardId], foreignColumns: [whiteboards.projectId, whiteboards.id] }).onUpdate("cascade").onDelete("cascade"),
+  index("idxWhiteboardRevisionsRecent").on(t.projectId, t.whiteboardId, t.revision),
+  check("whiteboard_revisions_document_length", sql`octet_length(${t.document}::text) <= 5242880`),
+  check("whiteboard_revisions_revision_positive", sql`${t.revision} >= 1`),
+]);
+
 export const missionGoals = projectSchema.table("mission_goals", {
   projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
   missionId: text("mission_id").notNull(),
@@ -2697,7 +2725,7 @@ export const projectTableNames = [
   "research_exports", "research_run_events", "experiment_sessions",
   "experiment_session_records", "eval_runs", "eval_task_results", "eval_run_events",
   "secrets", "__meta", "missions", "branch_groups", "pull_requests",
-  "pull_request_thread_state", "goals", "notes", "mission_goals", "goal_citations",
+  "pull_request_thread_state", "goals", "notes", "whiteboards", "whiteboard_revisions", "mission_goals", "goal_citations",
   "milestones", "slices", "mission_features", "ideation_sessions", "ideation_candidates", "mission_events", "plugins",
   "routines", "project_insights", "project_insight_runs", "project_insight_run_events",
   "todo_lists", "todo_items", "usage_events", "plugin_activations",

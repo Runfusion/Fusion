@@ -1,0 +1,4 @@
+import { expect,it,vi } from "vitest"; import { serializeWhiteboardExport,exportWhiteboardJson } from "../whiteboard-export"; import type { WhiteboardDocument } from "@fusion/core";
+const document:WhiteboardDocument={version:1,frames:[],texts:[],relations:[]};
+it("préserve le document structuré dans l'export JSON",()=>{expect(JSON.parse(serializeWhiteboardExport("Flux",3,document))).toEqual({version:1,title:"Flux",revision:3,document})});
+it("révoque toujours l'URL temporaire",()=>{const create=vi.spyOn(URL,"createObjectURL").mockReturnValue("blob:test"), revoke=vi.spyOn(URL,"revokeObjectURL").mockImplementation(()=>{}), click=vi.spyOn(HTMLAnchorElement.prototype,"click").mockImplementation(()=>{}); exportWhiteboardJson("Flux",1,document); expect(create).toHaveBeenCalledOnce(); expect(click).toHaveBeenCalledOnce(); expect(revoke).toHaveBeenCalledWith("blob:test");});

@@ -116,6 +116,9 @@ import {
   PATCHNODE_ENTRIES_VERSION,
   TASK_PLANNING_FAILURE_VERSION,
   CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION,
+  PROJECT_NOTES_VERSION,
+  OVERLAP_WAIT_SYNC_VERSION,
+  WHITEBOARDS_SCHEMA_VERSION,
 } from "../../postgres/schema-applier.js";
 import { ProjectPartitionRekeyError, rekeyFallbackProjectPartition } from "../../postgres/migration-stamping.js";
 import type { PluginSchemaInitHook } from "../../postgres/plugin-schema-hook.js";
@@ -172,7 +175,10 @@ describe("schema-applier: immutable migration identities", () => {
     expect(TASK_PLANNING_FAILURE_VERSION).toBe("0072");
     expect(CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION).toBe("0073");
     expect(Number(SCHEMA_BASELINE_VERSION)).toBeGreaterThanOrEqual(Number(CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION));
-    expect(SCHEMA_BASELINE_VERSION).toBe("0073");
+    expect(PROJECT_NOTES_VERSION).toBe("0074");
+    expect(OVERLAP_WAIT_SYNC_VERSION).toBe("0075");
+    expect(WHITEBOARDS_SCHEMA_VERSION).toBe("0076");
+    expect(SCHEMA_BASELINE_VERSION).toBe("0076");
   });
 
   it("keeps monitor and approval isolation assigned to version 0003", () => {
@@ -707,7 +713,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     ctx = null;
   });
 
-  it("creates all 113 project tables, 17 central tables, 1 archive table", async () => {
+  it("creates all 120 project tables, 17 central tables, 1 archive table", async () => {
     ctx = await setupFreshDb();
     // FNXC:PostgresCutover 2026-07-05-15:55: apply the BASELINE only.
     // applySchemaBaseline now runs the plugin schema-init hooks by default,
@@ -731,8 +737,11 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     0050 adds immutable lock, evidence, and report history (109 → 112); 0052 adds recall records (→ 113);
     0060 adds workspace coordination leases and land intents (→ 115). Plugin tables are added separately
     by the schema-init hook and are excluded here.
+
+    FNXC:WhiteboardAlpha 2026-09-10-05:42:
+    Subsequent core migrations add step reports, patchnode, project notes, overlap waits, and Whiteboard heads/revisions, bringing the current project total to 120.
     */
-    expect(bySchema.project).toBe(115);
+    expect(bySchema.project).toBe(120);
     /*
     FNXC:CapacityModel 2026-07-29-08:10 (drop the cross-project cap — table half):
     17, not 18: `central.global_concurrency` is dropped by migration 0037. A fresh
@@ -1917,7 +1926,9 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_REQUIRE_PLAN_APPROVAL_VERSION,
       PATCHNODE_ENTRIES_VERSION,
       TASK_PLANNING_FAILURE_VERSION,
-      CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION,
+      PROJECT_NOTES_VERSION,
+      OVERLAP_WAIT_SYNC_VERSION,
+      WHITEBOARDS_SCHEMA_VERSION,
     ]);
     expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
   });
@@ -2017,6 +2028,9 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       PATCHNODE_ENTRIES_VERSION,
       TASK_PLANNING_FAILURE_VERSION,
       CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION,
+      PROJECT_NOTES_VERSION,
+      OVERLAP_WAIT_SYNC_VERSION,
+      WHITEBOARDS_SCHEMA_VERSION,
     ]);
   });
 
@@ -2249,6 +2263,9 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       PATCHNODE_ENTRIES_VERSION,
       TASK_PLANNING_FAILURE_VERSION,
       CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION,
+      PROJECT_NOTES_VERSION,
+      OVERLAP_WAIT_SYNC_VERSION,
+      WHITEBOARDS_SCHEMA_VERSION,
     ]);
   });
 
@@ -2362,6 +2379,9 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       PATCHNODE_ENTRIES_VERSION,
       TASK_PLANNING_FAILURE_VERSION,
       CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION,
+      PROJECT_NOTES_VERSION,
+      OVERLAP_WAIT_SYNC_VERSION,
+      WHITEBOARDS_SCHEMA_VERSION,
     ]);
   });
 
@@ -2475,6 +2495,9 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       PATCHNODE_ENTRIES_VERSION,
       TASK_PLANNING_FAILURE_VERSION,
       CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION,
+      PROJECT_NOTES_VERSION,
+      OVERLAP_WAIT_SYNC_VERSION,
+      WHITEBOARDS_SCHEMA_VERSION,
     ]);
   });
 });

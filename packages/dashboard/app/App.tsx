@@ -5,6 +5,7 @@ import {
   type TaskDetail,
   type WorkflowStep,
   ALPHA_UPDATES_FLAG,
+  WHITEBOARD_VIEW_FLAG,
   isExperimentalFeatureEnabled,
 } from "@fusion/core";
 import { Header, useViewportMode } from "./components/Header";
@@ -143,6 +144,8 @@ export const TASK_DETAIL_FLOATING_GEOMETRY_KEY = "floating-window:task-detail";
 
 const AgentsView = lazy(() => import("./components/AgentsView").then((m) => ({ default: m.AgentsView })));
 const NotesView = lazy(() => import("./components/NotesView").then((m) => ({ default: m.NotesView })));
+/* FNXC:WhiteboardAlpha 2026-09-10-05:42: Keep every Whiteboard-owned module behind this destination-only boundary; unlike ordinary lazy views it is intentionally excluded from idle prefetch. */
+const WhiteboardView = lazy(() => import("./components/WhiteboardView").then((m) => ({ default: m.WhiteboardView })));
 const InsightsView = lazy(() => import("./components/InsightsView").then((m) => ({ default: m.InsightsView })));
 const ResearchView = lazy(() => import("./components/ResearchView").then((m) => ({ default: m.ResearchView })));
 const EvalsView = lazy(() => import("./components/EvalsView").then((m) => ({ default: m.EvalsView })));
@@ -1072,6 +1075,7 @@ function AppInner() {
   const researchEnabled = experimentalFeatures.researchView === true;
   const evalsEnabled = experimentalFeatures.evalsView === true;
   const ideationEnabled = experimentalFeatures.ideationView === true;
+  const whiteboardEnabled = isExperimentalFeatureEnabled({ experimentalFeatures }, WHITEBOARD_VIEW_FLAG);
   /* FNXC:AlphaUpdates 2026-09-09-18:24: Resolve the global Alpha boundary once per settings refresh so every shell surface switches together without mutating saved mobile navigation preferences. */
   const alphaUpdatesEnabled = isExperimentalFeatureEnabled({ experimentalFeatures }, ALPHA_UPDATES_FLAG);
   const alphaMobileDrawerActive = alphaUpdatesEnabled && isMobile && viewMode === "project" && Boolean(currentProject);
@@ -1176,10 +1180,13 @@ function AppInner() {
     if (taskView === "ideation" && !ideationEnabled) {
       handleChangeTaskView("board");
     }
+    if (taskView === "whiteboard" && !whiteboardEnabled) {
+      handleChangeTaskView("board");
+    }
     if (taskView === "goalsView" && !goalsEnabled) {
       handleChangeTaskView("board");
     }
-  }, [taskView, settingsLoaded, skillsEnabled, insightsEnabled, handleChangeTaskView, agentsEnabled, memoryEnabled, devServerEnabled, researchEnabled, evalsEnabled, ideationEnabled, goalsEnabled, graphPluginTaskView]);
+  }, [taskView, settingsLoaded, skillsEnabled, insightsEnabled, handleChangeTaskView, agentsEnabled, memoryEnabled, devServerEnabled, researchEnabled, evalsEnabled, ideationEnabled, whiteboardEnabled, goalsEnabled, graphPluginTaskView]);
 
   const {
     availableModels,
@@ -1923,6 +1930,7 @@ function AppInner() {
     researchReadinessVersion,
     evalsEnabled,
     ideationEnabled,
+    whiteboardEnabled,
     memoryEnabled,
     goalsEnabled,
     handleOpenMission,
@@ -2000,6 +2008,7 @@ function AppInner() {
     CommandCenter,
     DevServerView,
     NotesView,
+    WhiteboardView,
     EvalsView,
     GoalsView,
     PatchnodeView,
@@ -2145,6 +2154,7 @@ function AppInner() {
           researchView: researchEnabled,
           evalsView: evalsEnabled,
           ideationView: ideationEnabled,
+          whiteboardView: whiteboardEnabled,
           goalsView: goalsEnabled,
           leftSidebarNav: leftSidebarNavEnabled,
           rightDock: rightDockEnabled,
@@ -2179,6 +2189,7 @@ function AppInner() {
               researchView: researchEnabled,
               evalsView: evalsEnabled,
               ideationView: ideationEnabled,
+              whiteboardView: whiteboardEnabled,
               goalsView: goalsEnabled,
             }}
             pluginDashboardViews={pluginDashboardViews}
@@ -2354,6 +2365,7 @@ function AppInner() {
           researchView: researchEnabled,
           evalsView: evalsEnabled,
           ideationView: ideationEnabled,
+          whiteboardView: whiteboardEnabled,
           goalsView: goalsEnabled,
         }}
         pluginDashboardViews={pluginDashboardViews}

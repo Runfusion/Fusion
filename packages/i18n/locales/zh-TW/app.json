@@ -2019,7 +2019,8 @@
     "unableToLoadData": "無法載入資料",
     "unknown": "未知",
     "unsavedChanges": "未儲存的變更",
-    "yes": "是"
+    "yes": "是",
+    "alpha": "Alpha"
   },
   "composer": {
     "loadingAgents": "載入代理中…",
@@ -4247,7 +4248,8 @@
     "artifactsUnreadAriaLabel_other": "",
     "artifactsUnreadDotAriaLabel": "",
     "notes": "筆記",
-    "openMenu": "開啟導覽選單"
+    "openMenu": "開啟導覽選單",
+    "whiteboard": "Whiteboard"
   },
   "newTaskModal": {
     "addDependencies": "新增相依性",
@@ -9879,5 +9881,42 @@
     "conflict": "This note changed elsewhere. Your draft is preserved.",
     "reload": "Reload server version",
     "overwrite": "Overwrite with my draft"
+  },
+  "whiteboard": {
+    "tools": "Whiteboard tools",
+    "new": "New whiteboard",
+    "list": "Whiteboards",
+    "search": "Search whiteboards",
+    "noProject": "Select a project to use Whiteboard",
+    "noResults": "No whiteboards found",
+    "empty": "No whiteboards yet",
+    "select": "Select or create a whiteboard",
+    "title": "Whiteboard title",
+    "saving": "Saving…",
+    "unsaved": "Unsaved",
+    "saved": "Saved",
+    "rename": "Rename",
+    "history": "History",
+    "conflict": "This whiteboard changed elsewhere. Your draft is preserved.",
+    "reload": "Reload remote",
+    "copyDraft": "Create copy from draft",
+    "discardTitle": "Discard changes?",
+    "discardMessage": "Your unsaved Whiteboard draft will be lost.",
+    "discard": "Discard",
+    "deleteTitle": "Delete whiteboard?",
+    "deleteMessage": "This action cannot be undone.",
+    "deleted": "Whiteboard deleted",
+    "addIdea": "Idea",
+    "addScreen": "Screen",
+    "addArea": "Functional area",
+    "addStep": "Process step",
+    "align": "Align",
+    "distribute": "Distribute",
+    "layout": "Arrange",
+    "inspector": "Selection inspector",
+    "textContent": "Text",
+    "selectHint": "Select an item to edit it",
+    "exportJson": "Export JSON",
+    "exportPng": "Export PNG"
   }
 }

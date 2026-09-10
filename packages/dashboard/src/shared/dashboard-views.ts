@@ -12,6 +12,7 @@ export const DASHBOARD_VIEW_IDS = [
   "missions",
   "chat",
   "notes",
+  "whiteboard",
   "research",
   "evals",
   "ideation",
@@ -65,6 +66,8 @@ export const DASHBOARD_VIEWS: readonly DashboardViewMetadata[] = [
   { id: "chat", label: "Chat", labelKey: "nav.chat" },
   /* FNXC:ProjectNotes 2026-09-09-17:08: Notes is one canonical project-scoped destination shared by metadata, deep links, desktop navigation, and mobile customization. */
   { id: "notes", label: "Notes", labelKey: "nav.notes" },
+  /* FNXC:WhiteboardAlpha 2026-09-10-05:42: Whiteboard is one canonical default-off project destination shared by metadata, deep links, and every responsive navigation host. */
+  { id: "whiteboard", label: "Whiteboard", labelKey: "nav.whiteboard" },
   { id: "research", label: "Research", labelKey: "header.researchView" },
   { id: "evals", label: "Evals", labelKey: "header.evalsView" },
   /*

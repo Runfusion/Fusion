@@ -2050,3 +2050,9 @@ The dashboard always reloads once it detects a new build version. After an opera
 `reviewConvergenceEscalationEnabled` enables the bounded escalation stage. `reviewConvergenceEscalationProvider` and `reviewConvergenceEscalationModelId` select its preferred alternate model. For a frozen `repeat-unchanged` stop, Fusion then consults the configured execution fallback lane automatically. Each candidate must be a complete provider/model pair that differs from the task's effective execution model: leaving the dedicated pair unset no longer degrades to a same-model retry, and configuring it to the current model does not prevent a distinct execution fallback from being used. If neither source supplies a distinct model, Fusion skips directly to arbitration.
 
 `reviewArbitrationEnabled`, `reviewArbitrationProvider`, and `reviewArbitrationModelId` control the arbitration stage. These workflow-native settings apply after ordinary `codeReviewMaxRevisions` and `planReviewReplanCap` limits: an exhausted limit can schedule one bounded AI action, while the convergence cycle ceiling prevents repeated escalation from becoming unbounded. Budget exhaustion and the Plan Review cap do not imply frozen input, so they retain their stage-one remediation or replan action even when no distinct model target is configured.
+
+### `experimentalFeatures.whiteboardView`
+
+- **Scope:** global
+- **Default:** `false` (a missing value remains disabled)
+- **Effect:** exposes **Whiteboard** with its Alpha badge on supported navigation surfaces. When disabled, deep links and restored Whiteboard views normalize to Board and no Whiteboard button, badge, or container is rendered.

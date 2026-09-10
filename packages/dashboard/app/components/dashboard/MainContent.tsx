@@ -160,6 +160,7 @@ export function MainContent(props: MainContentProps) {
   researchReadinessVersion,
   evalsEnabled,
   ideationEnabled,
+  whiteboardEnabled,
   memoryEnabled,
   goalsEnabled,
   handleOpenMission,
@@ -202,6 +203,7 @@ export function MainContent(props: MainContentProps) {
   CommandCenter,
   DevServerView,
   NotesView,
+  WhiteboardView,
   EvalsView,
   GoalsView,
   PatchnodeView,
@@ -681,6 +683,17 @@ export function MainContent(props: MainContentProps) {
       <PageErrorBoundary>
         <Suspense fallback={null}>
           <NotesView projectId={currentProject?.id} addToast={addToast} />
+        </Suspense>
+      </PageErrorBoundary>
+    );
+  }
+
+  if (taskView === "whiteboard") {
+    if (!settingsLoaded || !whiteboardEnabled) return null;
+    return (
+      <PageErrorBoundary>
+        <Suspense fallback={null}>
+          <WhiteboardView projectId={currentProject?.id} addToast={addToast} />
         </Suspense>
       </PageErrorBoundary>
     );

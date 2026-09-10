@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { Settings, LayoutGrid, List, Search, Activity, MoreHorizontal, Menu, Clock, Folder, History, GitBranch, Monitor, Workflow, Bot, Target, Grid3X3, Mail, MessageSquare, Check, Zap, Sparkles, Brain, Lock, Gauge, Lightbulb, ChevronDown, ChevronRight, PanelRight, Plus, Star } from "lucide-react";
+import { Settings, LayoutGrid, List, Search, Activity, MoreHorizontal, Menu, Clock, Folder, History, GitBranch, Monitor, Workflow, Bot, Target, Grid3X3, Mail, MessageSquare, Check, Zap, Sparkles, Brain, Lock, Gauge, Lightbulb, PanelsTopLeft, ChevronDown, ChevronRight, PanelRight, Plus, Star } from "lucide-react";
 import "./Header.css";
 // ProjectSelector styles used by the imported standalone component.
 import "./ProjectSelector.css";
@@ -118,7 +118,7 @@ export interface HeaderProps {
   /** Whether the current view is a remote node */
   isRemote?: boolean;
   /** Experimental feature flags controlling visibility of nav items. */
-  experimentalFeatures?: { insights?: boolean; memoryView?: boolean; devServer?: boolean; devServerView?: boolean; researchView?: boolean; evalsView?: boolean; ideationView?: boolean; goalsView?: boolean; leftSidebarNav?: boolean; rightDock?: boolean };
+  experimentalFeatures?: { insights?: boolean; memoryView?: boolean; devServer?: boolean; devServerView?: boolean; researchView?: boolean; evalsView?: boolean; ideationView?: boolean; whiteboardView?: boolean; goalsView?: boolean; leftSidebarNav?: boolean; rightDock?: boolean };
   pluginDashboardViews?: PluginDashboardViewEntry[];
   shellConnectionControl?: ReactNode;
 }
@@ -282,6 +282,7 @@ export function Header({
       onChangeView ||
       experimentalFeatures?.researchView ||
       experimentalFeatures?.ideationView ||
+      experimentalFeatures?.whiteboardView ||
       experimentalFeatures?.insights ||
 
       showSkillsTab ||
@@ -793,7 +794,7 @@ export function Header({
               <>
                 <button
                   ref={viewOverflowTriggerRef}
-                  className={`view-toggle-btn${(["research", "ideation", "skills", "insights", "memory", "secrets", "dev-server", "devserver", "graph"].includes(view) || (experimentalFeatures?.evalsView && view === "evals") || (experimentalFeatures?.goalsView && view === "goalsView") || isPluginViewId(view)) ? " active" : ""}`}
+                  className={`view-toggle-btn${(["research", "ideation", "whiteboard", "skills", "insights", "memory", "secrets", "dev-server", "devserver", "graph"].includes(view) || (experimentalFeatures?.evalsView && view === "evals") || (experimentalFeatures?.goalsView && view === "goalsView") || isPluginViewId(view)) ? " active" : ""}`}
                   onClick={() => {
                     setIsViewOverflowOpen((prev) => !prev);
                   }}
@@ -866,6 +867,13 @@ export function Header({
                       >
                         <Lightbulb size={14} />
                         <span>{t("nav.ideation", "Ideation")}</span>
+                      </button>
+                    )}
+                    {experimentalFeatures?.whiteboardView && (
+                      <button className={`view-toggle-overflow-item${view === "whiteboard" ? " active" : ""}`} onClick={() => { onChangeView("whiteboard"); setIsViewOverflowOpen(false); }} role="menuitem" data-testid="view-overflow-whiteboard">
+                        <PanelsTopLeft size={14} />
+                        <span>{t("nav.whiteboard", "Whiteboard")}</span>
+                        <span className="btn-badge">{t("common.alpha", "Alpha")}</span>
                       </button>
                     )}
                     {experimentalFeatures?.insights && (

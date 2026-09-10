@@ -365,10 +365,10 @@ describe("MobileNavBar", () => {
   });
 
   it("renders every available selectable destination exactly once across tab and More", () => {
-    const gated = new Set(["skills", "insights", "memory", "research", "evals", "ideation", "goals", "todos", "dev-server"]);
+    const gated = new Set(["skills", "insights", "memory", "research", "evals", "ideation", "whiteboard", "goals", "todos", "dev-server"]);
     const moreTestIds: Record<string, string> = { automation: "schedules", "github-import": "github", workflows: "workflow" };
     for (const item of MOBILE_NAV_SELECTABLE_ITEMS) {
-      const { unmount } = render(<MobileNavBar {...createDefaultProps()} mobileNavPrimaryItems={[item]} showSkillsTab experimentalFeatures={{ insights: true, memoryView: true, researchView: true, evalsView: true, ideationView: true, goalsView: true, todoView: true, devServerView: true }} />);
+      const { unmount } = render(<MobileNavBar {...createDefaultProps()} mobileNavPrimaryItems={[item]} showSkillsTab experimentalFeatures={{ insights: true, memoryView: true, researchView: true, evalsView: true, ideationView: true, whiteboardView: true, goalsView: true, todoView: true, devServerView: true }} />);
       if (item === "ideation") {
         expect(screen.queryByTestId("mobile-nav-tab-ideation")).toBeNull();
         fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
@@ -380,7 +380,7 @@ describe("MobileNavBar", () => {
       }
       unmount();
     }
-    expect(gated.size).toBe(9);
+    expect(gated.size).toBe(10);
   });
 
   it("keeps enabled Ideation in More when persisted customization lists it", () => {

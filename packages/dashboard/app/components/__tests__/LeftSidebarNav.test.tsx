@@ -125,6 +125,17 @@ describe("LeftSidebarNav", () => {
     window.localStorage.clear();
   });
 
+  it("renders Whiteboard and its Alpha badge only when explicitly enabled", () => {
+    const disabled = renderSidebar({ experimentalFeatures: {} });
+    expect(screen.queryByTestId("sidebar-nav-whiteboard")).toBeNull();
+    disabled.unmount();
+    const { onChangeView } = renderSidebar({ experimentalFeatures: { whiteboardView: true } });
+    const entry = screen.getByTestId("sidebar-nav-whiteboard");
+    expect(within(entry).getByText("Alpha")).toBeInTheDocument();
+    fireEvent.click(entry);
+    expect(onChangeView).toHaveBeenCalledWith("whiteboard");
+  });
+
   it("removes the general History entry only while Alpha is enabled", () => {
     const legacy = renderSidebar();
     expect(screen.getByTestId("sidebar-nav-patchnode")).toBeInTheDocument();

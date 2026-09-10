@@ -53,6 +53,7 @@ import type { ChatSessionInfo } from "../../hooks/useChat";
 import { CommandCenter } from "../command-center/CommandCenter";
 import { DevServerView } from "../DevServerView";
 import { NotesView } from "../NotesView";
+import { WhiteboardView } from "../WhiteboardView";
 import { EvalsView } from "../EvalsView";
 import { GitHubImportModal } from "../GitHubImportModal";
 import { GoalsView } from "../GoalsView";
@@ -181,6 +182,7 @@ export interface MainContentProps {
   researchReadinessVersion: number;
   evalsEnabled: boolean;
   ideationEnabled: boolean;
+  whiteboardEnabled: boolean;
   memoryEnabled: boolean;
   goalsEnabled: boolean;
   handleOpenMission: (missionId: string) => void;
@@ -276,6 +278,7 @@ export interface MainContentProps {
   CommandCenter: LazyExoticComponent<typeof CommandCenter>;
   DevServerView: LazyExoticComponent<typeof DevServerView>;
   NotesView: LazyExoticComponent<typeof NotesView>;
+  WhiteboardView: LazyExoticComponent<typeof WhiteboardView>;
   EvalsView: LazyExoticComponent<typeof EvalsView>;
   GoalsView: LazyExoticComponent<typeof GoalsView>;
   PatchnodeView: LazyExoticComponent<typeof PatchnodeView>;

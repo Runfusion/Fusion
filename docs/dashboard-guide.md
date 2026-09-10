@@ -2727,3 +2727,13 @@ La destination **Notes** est disponible dans la barre latérale sur ordinateur e
 Sous l’en-tête, Notes occupe tout le panneau disponible. Sur ordinateur et tablette, une séparation unique place la liste compacte à gauche et donne tout l’espace restant à l’éditeur; la note cliquée reçoit immédiatement un fond et un marqueur d’accent, sans attendre la fin de son chargement. Sur un écran étroit ou peu haut, la liste et le détail deviennent un parcours plein panneau, avec une commande **Back** accessible pour revenir à la liste.
 
 Une note accepte du texte libre et du Markdown, notamment des commandes et des journaux. Les changements restent marqués comme non enregistrés jusqu’à l’action **Save** (ou Ctrl/Cmd+S); une suppression ou l’abandon d’un brouillon demande confirmation. En cas d’erreur réseau ou de conflit de révision, le brouillon local est conservé et l’utilisateur choisit explicitement de recharger la version serveur ou de la remplacer.
+
+## Whiteboard Alpha
+
+Whiteboard is an optional project workspace for ideas, flowcharts, and UI sketches. Enable **Settings → Experimental → Whiteboard Alpha** (`experimentalFeatures.whiteboardView`) to expose it in desktop, tablet, and mobile navigation. The global setting defaults off; deep links and restored Whiteboard views return to Board while it is disabled.
+
+Each board preserves a structured document containing frames (`screen`, `functional-area`, `process-step`), typed text, and relations that can share one trunk across annotated branches. The palette and inspector edit these objects, while the toolbar provides selection, movement, resize, duplicate, copy/paste, delete, undo/redo, alignment, distribution, explicit layout, zoom, and pan. On mobile, the list and canvas use successive full panels with a Back action.
+
+Saves use optimistic revisions. If another window saves the same revision first, the local draft remains editable and exportable: reload the remote version or create a copy, with no forced overwrite. Restoring an older snapshot creates a new current revision. Versioned JSON is canonical; the on-demand PNG export is only a visual companion.
+
+Alpha limits are 500 frames, 5,000 texts, 5,000 relations, 10,000 branches, and 5 MiB per document. Nested frames, real-time collaboration, AI generation, structured import, and executable UI components are not supported.

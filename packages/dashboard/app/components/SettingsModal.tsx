@@ -503,6 +503,8 @@ export const SETTINGS_SECTIONS: SettingsSection[] = SETTINGS_SECTION_METADATA.ma
 const KNOWN_EXPERIMENTAL_FEATURES: Record<string, string> = {
   /* FNXC:AlphaUpdates 2026-09-09-18:24: Expose exactly one global, default-off switch as the boundary for every UI explicitly designated Alpha. */
   alphaUpdates: "Alpha Updates",
+  /* FNXC:WhiteboardAlpha 2026-09-10-05:42: The workspace has its own explicit global default-off toggle so enabling unrelated Alpha chrome never exposes Whiteboard. */
+  whiteboardView: "Whiteboard Alpha",
   insights: "Insights",
   memoryView: "Memory Editor",
   skillsView: "Skills View",

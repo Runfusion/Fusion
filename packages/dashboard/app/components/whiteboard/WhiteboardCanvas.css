@@ -1,0 +1,18 @@
+/* FNXC:WhiteboardResponsiveCanvas 2026-09-10-05:42: Canvas chrome uses shared tokens and keeps essential tools horizontally scrollable with touch-size controls; mobile switches the inspector below the canvas without shrinking interaction targets. */
+.whiteboard-canvas-shell { display:grid; grid-template-columns: minmax(0, 1fr) calc(var(--space-3xl) * 4); grid-template-rows:auto minmax(0, 1fr); min-block-size:0; block-size:100%; background:var(--color-surface); }
+.whiteboard-toolbar { grid-column:1 / -1; display:flex; gap:var(--space-sm); padding:var(--space-sm); overflow-x:auto; border-block-end:var(--btn-border-width) solid var(--color-border); }
+.whiteboard-toolbar .btn { flex:none; min-block-size:var(--touch-target-min); }
+.whiteboard-toolbar svg { inline-size:var(--icon-size-md); block-size:var(--icon-size-md); }
+.whiteboard-canvas { min-inline-size:0; min-block-size:0; background:var(--color-surface-subtle); }
+.whiteboard-inspector { min-inline-size:0; overflow:auto; padding:var(--space-md); border-inline-start:var(--btn-border-width) solid var(--color-border); }
+.whiteboard-inspector label { display:grid; gap:var(--space-xs); }
+.whiteboard-inspector textarea { min-block-size:calc(var(--space-3xl) * 2); resize:vertical; }
+.whiteboard-inspector-fields { display:grid; gap:var(--space-md); }
+.whiteboard-annotation-actions { display:flex; flex-wrap:wrap; gap:var(--space-xs); }
+.whiteboard-text-node { min-inline-size:100%; min-block-size:100%; position:relative; }
+.whiteboard-text-node textarea { inline-size:100%; min-block-size:100%; box-sizing:border-box; resize:none; border:0; background:transparent; color:inherit; font:inherit; }
+.whiteboard-role-grid { display:grid; gap:var(--space-xs); margin-block-start:var(--space-md); }
+@media (max-width: 768px) {
+  .whiteboard-canvas-shell { grid-template-columns:minmax(0, 1fr); grid-template-rows:auto minmax(calc(var(--space-3xl) * 6), 1fr) auto; }
+  .whiteboard-inspector { max-block-size:calc(var(--space-3xl) * 4); border-inline-start:0; border-block-start:var(--btn-border-width) solid var(--color-border); }
+}
