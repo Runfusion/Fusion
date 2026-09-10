@@ -870,3 +870,69 @@ export async function scanOrphanedBranches(rootDir: string, store: TaskStore): P
 
   return allBranches.filter((branch) => !activeBranches.has(branch));
 }
+
+/*
+FN-9295: Minimal in-memory WorktreePool for the pipeline smoke test harness.
+The harness (_pipeline-harness.ts) expects a WorktreePool class with acquire/release
+semantics for test worktree lifecycle management. This is test infrastructure, not
+production worktree management (which uses the functions above).
+*/
+export class WorktreePool {
+  private readonly leased = new Map<string, string>();
+  private readonly available = new Set<string>();
+
+  /**
+   * Returns the map of leased worktree paths to their holder task IDs.
+   */
+  getLeasedPaths(): Map<string, string> {
+    return new Map(this.leased);
+  }
+
+  /**
+   * Returns true if the path is known to the pool (available or leased).
+   */
+  has(path: string): boolean {
+    return this.available.has(path) || this.leased.has(path);
+  }
+
+  /**
+   * Adds paths to the pool as available worktrees.
+   */
+  rehydrate(paths: string[]): void {
+    for (const path of paths) {
+      if (!this.leased.has(path)) {
+        this.available.add(path);
+      }
+    }
+  }
+
+  /**
+   * Acquires an available worktree for the holder. Returns the path, or undefined
+   * if no worktree is available.
+   */
+  acquire(holderTaskId: string): string | undefined {
+    const path = this.available.values().next().value;
+    if (path === undefined) return undefined;
+    this.available.delete(path);
+    this.leased.set(path, holderTaskId);
+    return path;
+  }
+
+  /**
+   * Releases a leased worktree back to the pool.
+   */
+  release(worktreePath: string, holderTaskId: string): void {
+    if (this.leased.get(worktreePath) === holderTaskId) {
+      this.leased.delete(worktreePath);
+      this.available.add(worktreePath);
+    }
+  }
+
+  /**
+   * Clears all state.
+   */
+  dispose(): void {
+    this.leased.clear();
+    this.available.clear();
+  }
+}

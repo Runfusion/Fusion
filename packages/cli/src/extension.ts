@@ -1425,7 +1425,8 @@ export function formatTaskLine(t: Task): string {
   const deps = t.dependencies.length ? ` [deps: ${t.dependencies.join(", ")}]` : "";
   /* Degraded synchronous formatter: live task listings exclude deleted/historical rows, and `done`/`archived`
      are the built-in terminal fallbacks when no workflow metadata is available. FN-9295: both suppress the
-     paused marker, matching the lifecycle census. */
+     paused marker, matching the lifecycle census. DELIBERATE-LITERAL: the `archived` literal is intentional
+     here as the degraded fallback for the historical sentinel column. */
   const isTerminalColumn = t.column === "done" || t.column === "archived";
   const paused = t.paused && !isTerminalColumn ? " (paused)" : "";
   return `${t.id}  ${label}${sourceSuffix}${deps}${paused}`;
