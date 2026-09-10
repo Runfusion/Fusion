@@ -63,7 +63,13 @@ describe("useAuthTokenRecovery", () => {
     await recoveryEvent;
 
     expect(hasDaemonAuthFailure()).toBe(true);
-    const { result } = renderHook(() => useAuthTokenRecovery());
+    const observedRenderStates: boolean[] = [];
+    const { result } = renderHook(() => {
+      const recovery = useAuthTokenRecovery();
+      observedRenderStates.push(recovery.open);
+      return recovery;
+    });
+    expect(observedRenderStates[0]).toBe(true);
     expect(result.current.open).toBe(true);
   });
 

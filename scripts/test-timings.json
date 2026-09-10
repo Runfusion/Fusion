@@ -1083,7 +1083,7 @@
         "packages/dashboard/app/components/__tests__/ApprovalNotificationBanner.test.tsx": 100,
         "packages/dashboard/app/components/__tests__/ArtifactsGallery.css.test.ts": 100,
         "packages/dashboard/app/components/__tests__/ArtifactsGallery.swipe-back.test.tsx": 200,
-        "packages/dashboard/app/components/__tests__/AuthTokenRecoveryDialog.test.tsx": 100,
+        "packages/dashboard/app/components/__tests__/AuthTokenRecoveryPage.test.tsx": 100,
         "packages/dashboard/app/components/__tests__/AuthenticationSection.anthropicPrecedence.test.tsx": 100,
         "packages/dashboard/app/components/__tests__/AuthenticationSection.instances.test.tsx": 100,
         "packages/dashboard/app/components/__tests__/AuthenticationSection.modelsCacheRefresh.test.tsx": 100,

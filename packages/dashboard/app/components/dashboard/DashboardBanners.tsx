@@ -85,7 +85,7 @@ export function DashboardBanners({
 }: DashboardBannersProps) {
   /* FNXC:DashboardBanners 2026-06-26-00:00: The Open Mailbox approval banner is gated by an approval:<id> candidate from a real ApprovalRequest. The count floor remains only for the approval-SSE/count-refresh race and must not fabricate a mailbox request for task awaiting-approval states. */
   const showMailboxApprovalBanner = isMailboxApprovalCandidate(approvalBannerCandidate);
-  /* FNXC:AuthRecovery 2026-06-29-00:00: Daemon-auth token recovery owns unauthorized remediation while its blocking dialog is open. Suppress engine remediation banners in parallel so operators fix the token once without seeing stale engine restart/start controls or live-region shells. */
+  /* FNXC:AuthRecovery 2026-09-10-21:28: Daemon-auth token recovery owns unauthorized remediation while its blocking full-screen page is open. Suppress engine remediation banners in parallel so operators fix the token once without seeing stale engine restart/start controls or live-region shells. */
   const showEngineRemediationBanners = !authTokenRecoveryOpen;
 
 

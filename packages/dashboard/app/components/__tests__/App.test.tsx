@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, act, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { NodeConfig, Settings } from "@fusion/core";
 import type { AiSessionSummary, ProjectInfo } from "../../api";
 import { scopedKey } from "../../utils/projectStorage";
@@ -39,6 +40,10 @@ const mockAgentStats = {
   todoTaskCount: 0,
   idleNonEphemeralCount: 1,
 };
+
+const { mockDashboardLoaderRender } = vi.hoisted(() => ({
+  mockDashboardLoaderRender: vi.fn(),
+}));
 
 const mockSubscribeSse = vi.fn((..._args: any[]) => vi.fn());
 
@@ -450,9 +455,20 @@ vi.mock("../../components/ChatView", () => ({
   ),
 }));
 
-vi.mock("../../components/DashboardLoader", () => ({
-  DashboardLoader: () => <FileBrowserProbe testId="fb-probe-loader" />,
-}));
+vi.mock("../../components/DashboardLoader", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../components/DashboardLoader")>();
+  return {
+    DashboardLoader: (props: Parameters<typeof actual.DashboardLoader>[0]) => {
+      mockDashboardLoaderRender();
+      return (
+        <>
+          <actual.DashboardLoader {...props} />
+          <FileBrowserProbe testId="fb-probe-loader" />
+        </>
+      );
+    },
+  };
+});
 
 vi.mock("../../components/QuickChatFAB", () => ({
   QuickChatFAB: ({ onToggle }: { onToggle: () => void }) => <button type="button" data-testid="quick-chat-fab-host" onClick={onToggle}>Quick Chat</button>,
@@ -693,8 +709,8 @@ vi.mock("../../hooks/useMobileScrollLock", () => ({
   _resetLockState: vi.fn(),
 }));
 
-import { App, didEnterAwaitingApproval, didEnterDone } from "../../App";
-import { AUTH_TOKEN_RECOVERY_REQUIRED_EVENT } from "../../auth";
+import { App, didEnterAwaitingApproval, didEnterDone, shouldShowFirstEverBootLoader } from "../../App";
+import { AUTH_TOKEN_RECOVERY_REQUIRED_EVENT, clearAuthToken, hasDaemonAuthFailure, installAuthFetch } from "../../auth";
 import { fetchAuthStatus, fetchSettings, fetchGlobalSettings, fetchTaskDetail, fetchUnreadCount, updateSettings, runScript, fetchScripts, fetchModels, fetchPluginDashboardViews, fetchDashboardHealth, fetchBoardWorkflows } from "../../api";
 import { __resetShellHostContextForTests } from "../../shell-host";
 import { __test_clearDashboardViewsCache } from "../../hooks/usePluginDashboardViews";
@@ -4821,33 +4837,117 @@ describe("App onboarding reopen", () => {
   });
 });
 
-describe("App auth token recovery dialog", () => {
-  it("opens as a non-dismissable blocking dialog when daemon auth recovery is required", async () => {
+describe("App auth token recovery page", () => {
+  const originalFetch = window.fetch;
+  const originalLocation = window.location;
+  let reloadSpy: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    clearAuthToken();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- production fetch installation sentinel reset for cold-start integration coverage
+    delete (window as any).__fnAuthFetchInstalled;
+    window.fetch = originalFetch;
+    reloadSpy = vi.fn();
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { ...originalLocation, reload: reloadSpy },
+    });
+  });
+
+  afterEach(() => {
+    clearAuthToken();
+    window.fetch = originalFetch;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- restore the production fetch installation sentinel between tests
+    delete (window as any).__fnAuthFetchInstalled;
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: originalLocation,
+    });
+  });
+
+  it("replaces the mounted shell with one non-modal page and submits on Enter", async () => {
+    const user = userEvent.setup();
     render(<App />);
     await waitForAppShell();
 
-    expect(screen.queryByRole("dialog", { name: "Authentication token required" })).toBeNull();
+    expect(screen.queryByRole("main", { name: "Authentication token required" })).toBeNull();
 
     act(() => {
       window.dispatchEvent(new CustomEvent(AUTH_TOKEN_RECOVERY_REQUIRED_EVENT));
+      window.dispatchEvent(new CustomEvent(AUTH_TOKEN_RECOVERY_REQUIRED_EVENT));
     });
 
-    const dialog = await screen.findByRole("dialog", { name: "Authentication token required" });
-    expect(dialog).toBeInTheDocument();
-
+    const page = await screen.findByRole("main", { name: "Authentication token required" });
+    expect(screen.getAllByRole("main", { name: "Authentication token required" })).toHaveLength(1);
+    expect(screen.queryByTitle("Settings")).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.querySelector(".modal-overlay, .modal-md, [aria-modal]")).toBeNull();
     expect(screen.queryByRole("button", { name: /close/i })).toBeNull();
 
-    const overlay = dialog.closest(".auth-token-recovery-overlay");
-    expect(overlay).toBeTruthy();
+    fireEvent.keyDown(page, { key: "Escape" });
+    fireEvent.click(page);
+    expect(screen.getByRole("main", { name: "Authentication token required" })).toBeInTheDocument();
 
-    if (!overlay) {
-      throw new Error("Expected auth token recovery overlay to be present");
-    }
+    await user.type(screen.getByLabelText("Replacement token"), "  nouveau-jeton  {Enter}");
+    expect(localStorage.getItem("fn.authToken")).toBe("nouveau-jeton");
+    expect(reloadSpy).toHaveBeenCalledOnce();
+  });
 
-    fireEvent.keyDown(overlay, { key: "Escape" });
-    fireEvent.click(overlay);
+  it("prioritizes a real pre-mount daemon 401 latch over the active first-boot loader", async () => {
+    const user = userEvent.setup();
+    const daemon401 = new Response(JSON.stringify({
+      error: "Unauthorized",
+      message: "Valid bearer token required",
+    }), {
+      status: 401,
+      headers: { "content-type": "application/json" },
+    });
+    const rawFetch = vi.fn().mockResolvedValue(daemon401);
+    window.fetch = rawFetch;
+    installAuthFetch();
 
-    expect(screen.getByRole("dialog", { name: "Authentication token required" })).toBeInTheDocument();
+    await window.fetch("/api/health");
+    await waitFor(() => expect(hasDaemonAuthFailure()).toBe(true));
+
+    mockProjectsState.projects = [];
+    mockProjectsState.loading = true;
+    mockCurrentProjectState.currentProject = null;
+    mockCurrentProjectState.loading = true;
+    expect(shouldShowFirstEverBootLoader(mockProjectsState.loading, mockProjectsState.projects.length)).toBe(true);
+
+    render(<App />);
+
+    expect(mockDashboardLoaderRender).not.toHaveBeenCalled();
+    const page = screen.getByRole("main", { name: "Authentication token required" });
+    expect(page).toHaveClass("auth-token-recovery-page");
+    expect(screen.getAllByRole("main", { name: "Authentication token required" })).toHaveLength(1);
+    expect(screen.queryByRole("status", { name: "Loading Fusion dashboard" })).toBeNull();
+    expect(screen.queryByText("Initializing dashboard...")).toBeNull();
+    expect(screen.queryByTestId("dashboard-loader-step-projects")).toBeNull();
+    expect(screen.queryByTestId("fb-probe-loader")).toBeNull();
+    expect(screen.queryByTitle("Settings")).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    await user.type(screen.getByLabelText("Replacement token"), "  nouveau-jeton  {Enter}");
+    expect(localStorage.getItem("fn.authToken")).toBe("nouveau-jeton");
+    expect(reloadSpy).toHaveBeenCalledOnce();
+    expect(rawFetch).toHaveBeenCalledWith("/api/health", expect.anything());
+  });
+
+  it("keeps the first-boot loader when no auth failure is latched", async () => {
+    mockProjectsState.projects = [];
+    mockProjectsState.loading = true;
+    mockCurrentProjectState.currentProject = null;
+    mockCurrentProjectState.loading = true;
+    expect(shouldShowFirstEverBootLoader(mockProjectsState.loading, mockProjectsState.projects.length)).toBe(true);
+    expect(hasDaemonAuthFailure()).toBe(false);
+
+    render(<App />);
+
+    expect(await screen.findByRole("status", { name: "Loading Fusion dashboard" })).toBeInTheDocument();
+    expect(screen.getByText("Initializing dashboard...")).toBeInTheDocument();
+    expect(screen.getByTestId("fb-probe-loader")).toHaveTextContent("ok");
+    expect(screen.queryByRole("main", { name: "Authentication token required" })).toBeNull();
   });
 });
 

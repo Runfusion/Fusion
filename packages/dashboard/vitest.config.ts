@@ -106,7 +106,7 @@ const qualityAppComponentTests = [
   "AgentReflectionsTab",
   "AgentTokenStatsPanel",
   "App",
-  "AuthTokenRecoveryDialog",
+  "AuthTokenRecoveryPage",
   "Board",
   "Board.canDropTask",
   "auto-merge-toggle-blank.mobile",

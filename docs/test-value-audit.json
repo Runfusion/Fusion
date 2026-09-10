@@ -82166,7 +82166,7 @@
       ]
     },
     {
-      "file": "packages/dashboard/app/components/__tests__/AuthTokenRecoveryDialog.test.tsx",
+      "file": "packages/dashboard/app/components/__tests__/AuthTokenRecoveryPage.test.tsx",
       "package": "packages/dashboard",
       "valueScore": 3.5,
       "positiveCount": 2,

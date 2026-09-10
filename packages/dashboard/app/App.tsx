@@ -125,7 +125,7 @@ export {
   executeCliSessionBannerAction,
 } from "./utils/appLifecycle";
 import { subscribeSse } from "./sse-bus";
-import { AuthTokenRecoveryDialog } from "./components/AuthTokenRecoveryDialog";
+import { AuthTokenRecoveryPage } from "./components/AuthTokenRecoveryPage";
 import { MainContent } from "./components/dashboard/MainContent";
 import { PlanningKeepAlive } from "./components/dashboard/PlanningKeepAlive";
 import { NATIVE_STRUCTURE_OPEN_EVENT, type NativeStructureOpenEventDetail } from "./components/nativeStructureNavigation";
@@ -2095,7 +2095,10 @@ function AppInner() {
         <FileBrowserProvider openFile={openFileInBrowser}>
           <RetryWarningProvider value={maxTotalRetriesBeforeFail * RETRY_WARNING_RATIO}>
             <CostBadgeProvider value={{ enabled: showCostBadgeOnCards, pricingOverrides: modelPricingOverrides }}>
-        {isFirstEverBoot ? (
+        {/* FNXC:AuthTokenRecovery 2026-09-10-21:28: A latched daemon-auth failure must win the first render over both the first-boot loader and the dashboard shell, leaving one blocking full-screen recovery page. */}
+        {authTokenRecoveryOpen ? (
+          <AuthTokenRecoveryPage open />
+        ) : isFirstEverBoot ? (
           <>
             <DashboardLoader stage={loadingStage} />
             <ToastContainer toasts={toasts} onRemove={removeToast} />
@@ -2532,7 +2535,6 @@ function AppInner() {
         onOpenApprovals={(_approvalId) => handleTaskViewChange("mailbox")}
         agentOnboardingEnabled={agentOnboardingEnabled}
       />
-      <AuthTokenRecoveryDialog open={authTokenRecoveryOpen} />
             {shellApi && (
               <>
                 <NativeShellOnboardingModal

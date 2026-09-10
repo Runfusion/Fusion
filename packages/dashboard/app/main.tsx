@@ -13,10 +13,10 @@ import "@fontsource/pixelify-sans/400.css";
 import "./styles.css";
 import "./hero-ui-alpha.css";
 
-// Install the bearer-token fetch wrapper before React mounts so every API
-// call (including ones fired synchronously during the first render) picks up
-// the token that was either captured from `?token=` in the launch URL or
-// stored from a previous session.
+/*
+FNXC:AuthTokenRecovery 2026-09-10-21:28:
+Install the bearer-token fetch wrapper before React mounts so first-render API calls receive the stored or launch-URL token and a daemon 401 can latch the full-screen recovery page before App's first render.
+*/
 installAuthFetch();
 installVersionCheck();
 bootstrapShellHostContext();

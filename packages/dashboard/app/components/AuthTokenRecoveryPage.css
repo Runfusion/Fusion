@@ -1,0 +1,90 @@
+.auth-token-recovery-page {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  min-height: 100vh;
+  min-height: 100dvh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-block: max(var(--space-2xl), env(safe-area-inset-top, 0)) max(var(--space-2xl), env(safe-area-inset-bottom, 0));
+  padding-inline: max(var(--space-xl), env(safe-area-inset-left, 0)) max(var(--space-xl), env(safe-area-inset-right, 0));
+  background: var(--bg);
+  color: var(--text);
+}
+
+.auth-token-recovery-page__content {
+  display: flex;
+  flex-direction: column;
+  width: min(100%, calc(var(--space-2xl) * 16));
+  gap: var(--space-2xl);
+}
+
+.auth-token-recovery-page__header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.auth-token-recovery-page__header h1,
+.auth-token-recovery-page__header p {
+  margin: 0;
+}
+
+.auth-token-recovery-page__header p {
+  color: var(--text-muted);
+}
+
+.auth-token-recovery-page__form,
+.auth-token-recovery-page__field {
+  display: flex;
+  flex-direction: column;
+}
+
+.auth-token-recovery-page__form {
+  gap: var(--space-xl);
+}
+
+.auth-token-recovery-page__field {
+  gap: var(--space-sm);
+}
+
+.auth-token-recovery-page__field label {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.auth-token-recovery-page__field .input {
+  font-size: var(--font-size-base);
+}
+
+.auth-token-recovery-page__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+}
+
+@media (max-width: 768px) {
+  .auth-token-recovery-page {
+    place-items: start center;
+    padding-block: max(var(--space-xl), env(safe-area-inset-top, 0)) max(var(--space-xl), env(safe-area-inset-bottom, 0));
+    padding-inline: max(var(--space-lg), env(safe-area-inset-left, 0)) max(var(--space-lg), env(safe-area-inset-right, 0));
+  }
+
+  .auth-token-recovery-page__content {
+    min-height: 100%;
+    justify-content: center;
+  }
+
+  .auth-token-recovery-page__actions {
+    flex-direction: column-reverse;
+  }
+
+  .auth-token-recovery-page__actions .btn {
+    width: 100%;
+  }
+}
