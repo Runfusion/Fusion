@@ -1111,10 +1111,10 @@ function AppInner() {
   const rightDockEnabled = true;
   const projectShellPresent = viewMode === "project" && !!currentProject;
   /*
-  FNXC:AlphaUpdates 2026-09-10-03:16:
-  Alpha removes the executor footer at every viewport size. Keep project-shell presence separate so tablet and desktop retain their sidebar and right dock, while only the mobile Alpha pill publishes a measured content clearance.
+  FNXC:AlphaUpdates 2026-09-10-22:00:
+  Alpha removes the executor footer only on mobile, where the navigation pill owns the bottom edge. Desktop and tablet must retain the shared footer, including Terminal and Quick Chat launchers, and every shell reservation must derive from this single visibility decision.
   */
-  const executorFooterVisible = projectShellPresent && !alphaUpdatesEnabled;
+  const executorFooterVisible = projectShellPresent && (!alphaUpdatesEnabled || viewportMode !== "mobile");
   const mobileNavVisible = projectShellPresent;
   /*
   FNXC:AlphaMobileDrawer 2026-09-10-17:16:

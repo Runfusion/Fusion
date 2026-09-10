@@ -1,10 +1,8 @@
-import { readFileSync } from "fs";
-import { resolve } from "path";
 import { describe, expect, it } from "vitest";
+import { readAppFile } from "../test/cssFixture";
 
-const overviewCss = readFileSync(resolve(__dirname, "../components/ProjectOverview.css"), "utf8");
-const cardCss = readFileSync(resolve(__dirname, "../components/ProjectCard.css"), "utf8");
-const appSource = readFileSync(resolve(__dirname, "../App.tsx"), "utf8");
+const overviewCss = readAppFile("components/ProjectOverview.css");
+const cardCss = readAppFile("components/ProjectCard.css");
 
 function extractMediaBlock(css: string, breakpoint: number): string {
   const match = new RegExp(`@media\\s*\\(max-width:\\s*${breakpoint}px\\)\\s*\\{`).exec(css);
@@ -82,13 +80,4 @@ describe("project overview small-screen reflow", () => {
     expect(card480).toContain("var(--space-md)");
   });
 
-  it("reserves mobile-nav padding only while the matching project navigation is visible", () => {
-    expect(appSource).toContain('const projectShellPresent = viewMode === "project" && !!currentProject;');
-    expect(appSource).toContain("const mobileNavVisible = projectShellPresent;");
-    expect(appSource).toContain("const executorFooterVisible = projectShellPresent && !alphaUpdatesEnabled;");
-    expect(appSource).toContain('isMobile && mobileNavVisible && !mobileKeyboardOpen && !alphaUpdatesEnabled ? " project-content--with-mobile-nav" : ""');
-    expect(appSource).toContain('isMobile && mobileNavVisible && !mobileKeyboardOpen && !modalManager.anyModalOpen && alphaUpdatesEnabled ? " project-content--with-alpha-nav" : ""');
-    expect(appSource).toContain("hidden={!mobileNavVisible}");
-    expect(appSource).toContain("footerVisible={executorFooterVisible}");
-  });
 });

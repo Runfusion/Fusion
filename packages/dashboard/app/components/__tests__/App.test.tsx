@@ -388,7 +388,7 @@ const terminalLifecycle = {
 vi.mock("../../components/TerminalModal", async () => {
   const { useEffect } = await import("react");
   return {
-    TerminalModal: ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) => {
+    TerminalModal: ({ isOpen, onClose, footerVisible }: { isOpen: boolean; onClose: () => void; footerVisible?: boolean }) => {
       terminalLifecycle.renders.push(isOpen);
       useEffect(() => {
         terminalLifecycle.mounts += 1;
@@ -397,7 +397,7 @@ vi.mock("../../components/TerminalModal", async () => {
         };
       }, []);
       return isOpen ? (
-        <div className="modal-overlay open" data-testid="terminal-modal">
+        <div className="modal-overlay open" data-testid="terminal-modal" data-footer-visible={String(footerVisible === true)}>
           <button type="button" data-testid="terminal-close-btn" onClick={onClose}>
             Close
           </button>
@@ -1115,8 +1115,51 @@ describe("Alpha Updates production wiring", () => {
     expect(await screen.findByTestId("quick-chat-host")).toHaveAttribute("data-alpha", "true");
   });
 
-  it.each(["mobile", "tablet", "desktop"] as const)("removes the footer in Alpha %s while preserving project chrome", async (mode) => {
+  it.each([
+    ["tablet", "empty"],
+    ["desktop", "populated"],
+  ] as const)("keeps the Alpha footer and every reservation in %s with %s tasks", async (mode, taskState) => {
     mockUseViewportMode.mockReturnValue(mode);
+    if (taskState === "populated") {
+      const emptyResult = mockUseTasks();
+      mockUseTasks.mockReturnValue({
+        ...emptyResult,
+        tasks: [{ id: "FN-340", title: "Footer regression", description: "x", status: "in-progress", column: "in-progress", dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "", updatedAt: "" }],
+      });
+    }
+    vi.mocked(fetchSettings).mockResolvedValue({
+      ...defaultSettings,
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates: true },
+    });
+    localStorage.setItem("fusion:right-dock-open", "true");
+
+    render(<App />);
+
+    await waitFor(() => expect(document.querySelector(".executor-status-bar")).not.toBeNull());
+    const shell = screen.getByTestId("dashboard-project-shell");
+    const content = shell.querySelector(".project-content");
+    const sidebar = await screen.findByTestId("left-sidebar-nav");
+    const rightDock = await waitFor(() => {
+      const dock = document.querySelector(".right-dock");
+      expect(dock).not.toBeNull();
+      return dock;
+    });
+    expect(content).toHaveClass("project-content--with-footer");
+    expect(content).not.toHaveClass("project-content--with-alpha-nav", "project-content--with-mobile-nav");
+    expect(sidebar).toHaveClass("left-sidebar-nav--with-footer");
+    expect(rightDock).toHaveClass("right-dock--with-footer");
+    expect(shell).toHaveClass("dashboard-project-shell--with-sidebar", "dashboard-project-shell--with-right-dock");
+    expect(screen.getByTestId("executor-terminal-launcher-segment")).toBeInTheDocument();
+    expect(document.querySelector(".mobile-nav-bar")).toBeNull();
+
+    if (mode === "desktop") {
+      fireEvent.click(screen.getByTestId("terminal-toggle-btn"));
+      expect(await screen.findByTestId("terminal-modal")).toHaveAttribute("data-footer-visible", "true");
+    }
+  });
+
+  it("removes the Alpha footer and all footer reservations only on mobile", async () => {
+    mockUseViewportMode.mockReturnValue("mobile");
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
       experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates: true },
@@ -1124,25 +1167,33 @@ describe("Alpha Updates production wiring", () => {
 
     render(<App />);
 
+    await waitFor(() => expect(document.querySelector(".mobile-nav-bar")).toHaveClass("mobile-nav-bar--alpha"));
     const shell = screen.getByTestId("dashboard-project-shell");
     const content = shell.querySelector(".project-content");
-    if (mode === "mobile") {
-      await waitFor(() => expect(document.querySelector(".mobile-nav-bar")).toHaveClass("mobile-nav-bar--alpha"));
-      const nav = document.querySelector(".mobile-nav-bar");
-      expect(document.querySelector(".executor-status-bar")).toBeNull();
-      expect(content).not.toHaveClass("project-content--with-footer");
-      expect(nav).not.toHaveClass("mobile-nav-bar--with-footer");
-      expect(content).toHaveClass("project-content--with-alpha-nav");
-      expect(screen.queryByTestId("left-sidebar-nav")).toBeNull();
-      expect(document.querySelector(".right-dock")).toBeNull();
-    } else {
-      const sidebar = await screen.findByTestId("left-sidebar-nav");
-      await waitFor(() => expect(sidebar).not.toHaveClass("left-sidebar-nav--with-footer"));
-      expect(document.querySelector(".executor-status-bar")).toBeNull();
-      expect(content).not.toHaveClass("project-content--with-footer");
-      expect(shell).toHaveClass("dashboard-project-shell--with-sidebar", "dashboard-project-shell--with-right-dock");
-      expect(content).not.toHaveClass("project-content--with-alpha-nav");
-    }
+    const nav = document.querySelector(".mobile-nav-bar");
+    expect(document.querySelector(".executor-status-bar")).toBeNull();
+    expect(screen.queryByTestId("executor-terminal-launcher-segment")).toBeNull();
+    expect(content).not.toHaveClass("project-content--with-footer", "project-content--with-mobile-nav");
+    expect(nav).not.toHaveClass("mobile-nav-bar--with-footer");
+    expect(content).toHaveClass("project-content--with-alpha-nav");
+    expect(screen.queryByTestId("left-sidebar-nav")).toBeNull();
+    expect(document.querySelector(".right-dock")).toBeNull();
+  });
+
+  it("hides the Alpha footer when no project is selected", async () => {
+    localStorage.setItem("kb-dashboard-view-mode", "overview");
+    mockCurrentProjectState.currentProject = null;
+    vi.mocked(fetchSettings).mockResolvedValue({
+      ...defaultSettings,
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates: true },
+    });
+
+    render(<App />);
+
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    expect(document.querySelector(".executor-status-bar")).toBeNull();
+    expect(document.querySelector(".project-content--with-footer")).toBeNull();
+    expect(screen.queryByTestId("executor-terminal-launcher-segment")).toBeNull();
   });
 
   it.each([
