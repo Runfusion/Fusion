@@ -1441,11 +1441,9 @@ export function formatTaskLine(t: Task): string {
   const source = getTaskSourceLabel(t);
   const sourceSuffix = source ? ` [via: ${source}]` : "";
   const deps = t.dependencies.length ? ` [deps: ${t.dependencies.join(", ")}]` : "";
-  /* DELIBERATE-LITERAL: `formatTaskLine` is a SYNCHRONOUS formatter taking only a Task — no store, no IR, and
-     it is called from list rendering where a per-row async resolution would be a read per line. The literal
-     only decides whether to print "(paused)", so a renamed board's mislabel is cosmetic. Converting it means
-     threading resolved flags in from every caller, which belongs with the board-render conversion that owns
-     the same problem (see the glyph note in commands/task.ts). */
+  /* Degraded synchronous formatter: live task listings exclude deleted/historical rows, and `done`/`archived`
+     are the built-in terminal fallbacks when no workflow metadata is available. FN-9295: both suppress the
+     paused marker, matching the lifecycle census. */
   const isTerminalColumn = t.column === "done" || t.column === "archived";
   const paused = t.paused && !isTerminalColumn ? " (paused)" : "";
   return `${t.id}  ${label}${sourceSuffix}${deps}${paused}`;

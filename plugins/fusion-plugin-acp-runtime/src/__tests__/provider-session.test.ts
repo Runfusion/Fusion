@@ -131,7 +131,8 @@ describe("session driving helpers", () => {
 
       // The SDK prompt promise resolves only after all updates are delivered.
       expect(onText.mock.calls.map((c) => c[0]).join("")).toBe("Working on it.");
-      expect(onThinking).toHaveBeenCalledWith("Let me think about this.");
+      // FN-9295: thinking streams in chunks; join them to check the complete thought.
+      expect(onThinking.mock.calls.map((c) => String(c[0])).join("")).toBe("Let me think about this.");
       expect(onToolStart).toHaveBeenCalledWith("Run tests", { command: "pnpm test" });
       expect(onToolEnd).toHaveBeenCalledWith("Run tests", false, { exitCode: 0 });
       // The plan surfaces as a thinking line.

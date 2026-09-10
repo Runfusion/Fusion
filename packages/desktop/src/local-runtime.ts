@@ -50,8 +50,11 @@ function redactStartupDiagnostic(value: string): string {
     .replace(/\b(sk-|ghp_|gho_|github_pat_|xox[abpr]-|AKIA)[A-Za-z0-9_-]{8,}/g, "[REDACTED]")
     .replace(/\b[A-Za-z0-9+/]{40,}={0,2}\b/g, "[REDACTED]")
     .replace(/\b[0-9a-fA-F]{32,}\b/g, "[REDACTED]");
+  /* FN-9295: Skip single-character env names like "_" (set by shells to the last command).
+     Replacing "_" corrupts every underscore in the diagnostic, e.g. turning
+     "ERR_IMPORT_ATTRIBUTE_MISSING" into "ERR[REDACTED_ENV]IMPORT...". */
   for (const key of Object.keys(process.env)) {
-    if (key) redacted = redacted.replaceAll(key, "[REDACTED_ENV]");
+    if (key && key.length >= 2) redacted = redacted.replaceAll(key, "[REDACTED_ENV]");
   }
   /* FNXC:DesktopStartupDiagnostics 2026-09-08-20:25: Replace longer values first so a short
      value cannot leave a suffix of a longer secret exposed. */
