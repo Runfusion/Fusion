@@ -1,16 +1,16 @@
+import type { AgentStore, TaskDetail, TaskStore, WorkflowColumnAgent, WorkflowIrNode, RunMutationContext } from "@fusion/core";
+import { executorLog } from "../logger.js";
+import { buildAgentPersona } from "./agent-binding-pure.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-11:30:
  * adoptColumnAgentForNode peeled from TaskExecutor (U4).
  * Resolve column-agent model/persona for a graph node (best-effort R8 fallback).
  */
-import type { AgentStore, TaskDetail, TaskStore, WorkflowColumnAgent, WorkflowIrNode } from "@fusion/core";
-import { executorLog } from "../logger.js";
-import type { EngineRunContext } from "../util/run-audit.js";
-import { buildAgentPersona } from "./agent-binding-pure.js";
 
 export type AdoptColumnAgentForNodeDeps = {
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   agentStore?: AgentStore | null;
 };
 
@@ -28,7 +28,7 @@ export async function adoptColumnAgentForNode(
         live.id,
         `Workflow node '${node.id}': column agent '${columnAgentId}' not found — falling back to node/default resolution`,
         undefined,
-        deps.getRunContextFor(live.id),
+        deps.runContextFor(live.id),
       );
       return undefined;
     }
@@ -37,7 +37,7 @@ export async function adoptColumnAgentForNode(
       live.id,
       `Workflow node '${node.id}': running as column agent '${columnAgentId}' (${mode})`,
       undefined,
-      deps.getRunContextFor(live.id),
+      deps.runContextFor(live.id),
     );
     return {
       modelProvider: rc.executorProvider,
@@ -53,7 +53,7 @@ export async function adoptColumnAgentForNode(
         live.id,
         `Workflow node '${node.id}': column agent '${columnAgentId}' lookup failed — falling back to node/default resolution`,
         undefined,
-        deps.getRunContextFor(live.id),
+        deps.runContextFor(live.id),
       );
     } catch (logErr: unknown) {
       executorLog.warn(`${live.id}: failed to log column-agent lookup failure: ${logErr instanceof Error ? logErr.message : String(logErr)}`);

@@ -86,9 +86,13 @@ export function setupCliSessionWebSocket(
       socket.destroy();
     };
 
+    /*
+    FNXC:DaemonAuth 2026-08-09-03:04:
+    Unless `--no-auth` is explicit, the upgrade requires BOTH a configured token and a valid credential. The former guard only ran the check when a token happened to be configured, so a no-token launch accepted every upgrade.
+    */
     // 1. Daemon-token auth at the upgrade.
-    if (options.daemonToken && !options.noAuth) {
-      if (!authenticateUpgradeRequest(options.daemonToken, req)) {
+    if (!options.noAuth) {
+      if (!options.daemonToken || !authenticateUpgradeRequest(options.daemonToken, req)) {
         reject(401, "Unauthorized");
         return;
       }

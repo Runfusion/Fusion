@@ -8,7 +8,7 @@
  */
 import { resolve } from "node:path";
 import type { Task, TaskStore } from "@fusion/core";
-import { isWorkspaceTask, loadWorkspaceConfig } from "@fusion/core";
+import { isWorkspaceTask, loadWorkspaceConfig, UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import { hasUsableWorktreeShape } from "../worktree/worktree-pool.js";
 import {
   classifyMissingWorktreeSessionStartFailure,
@@ -74,8 +74,7 @@ export async function autoRecoverWorktreeSessionStartFailure(
   if (nextStaleMetadataClearRecoveryCount !== undefined && nextStaleMetadataClearRecoveryCount > MAX_WORKTREE_SESSION_RETRIES) {
     await store.logEntry(
       task.id,
-      `Auto-recovery exhausted (${MAX_WORKTREE_SESSION_RETRIES}/${MAX_WORKTREE_SESSION_RETRIES}) for merge-active unusable-worktree stale-metadata clears — leaving in-review for human inspection`,
-    );
+      `Auto-recovery exhausted (${MAX_WORKTREE_SESSION_RETRIES}/${MAX_WORKTREE_SESSION_RETRIES}) for merge-active unusable-worktree stale-metadata clears — leaving in-review for human inspection`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
     await opts.auditor?.database({
       type: "task:auto-recover-worktree-session-exhausted",
       target: task.id,
@@ -92,8 +91,7 @@ export async function autoRecoverWorktreeSessionStartFailure(
   if (!resetRetryBudget && nextCount > MAX_WORKTREE_SESSION_RETRIES) {
     await store.logEntry(
       task.id,
-      `Auto-recovery exhausted (${MAX_WORKTREE_SESSION_RETRIES}/${MAX_WORKTREE_SESSION_RETRIES}) for unusable-worktree session-start failure — leaving in-review for human inspection`,
-    );
+      `Auto-recovery exhausted (${MAX_WORKTREE_SESSION_RETRIES}/${MAX_WORKTREE_SESSION_RETRIES}) for unusable-worktree session-start failure — leaving in-review for human inspection`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
     await opts.auditor?.database({
       type: "task:auto-recover-worktree-session-exhausted",
       target: task.id,
@@ -153,7 +151,7 @@ export async function autoRecoverWorktreeSessionStartFailure(
       ? {}
       : { branch: nextBranch, branchWriteOrigin: "engine" as const }),
     sessionFile: null,
-  });
+  }, UNATTRIBUTED_MUTATION_CONTEXT);
   await opts.auditor?.database({
     type: "task:auto-recover-worktree-session-metadata",
     target: task.id,
@@ -198,8 +196,7 @@ export async function autoRecoverWorktreeSessionStartFailure(
           staleWorktree && (!missingWorktreePath || resolve(staleWorktree) !== resolve(missingWorktreePath))
             ? `; the recorded task worktree ${staleWorktree} is ${recordedWorktreeStillUsable ? "still present" : "gone too"}`
             : ""
-        } — cleared stale session metadata${clearWorktreeMetadata && !branchIsRederivable ? ` (kept non-canonical branch ${task.branch})` : ""} and retained in ${recoveryColumn} (${attemptLabel}, failure: ${failureExcerpt})`,
-  );
+        } — cleared stale session metadata${clearWorktreeMetadata && !branchIsRederivable ? ` (kept non-canonical branch ${task.branch})` : ""} and retained in ${recoveryColumn} (${attemptLabel}, failure: ${failureExcerpt})`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
   // Legacy outcome name retained for callers; lifecycle recovery itself is in-place.
   return { outcome: "requeue-todo", retries: nextCount, classification };
 }

@@ -1,4 +1,5 @@
 import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { ANY_MUTATION_CONTEXT, UNATTRIBUTED_CONTEXT_MATCHER } from "./mutation-context-matchers.js";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -83,7 +84,7 @@ describe("plan artifact write-back", () => {
     expect(result.outcome).toBe("recovered");
     expect(result.content).toBe(REAL_SPEC);
     // Persisted through the single validated path, not a raw copy.
-    expect(store.updateTask).toHaveBeenCalledWith(TASK_ID, { prompt: REAL_SPEC });
+    expect(store.updateTask).toHaveBeenCalledWith(TASK_ID, { prompt: REAL_SPEC }, UNATTRIBUTED_CONTEXT_MATCHER);
     await expect(readFile(join(rootDir, relativePromptPath(TASK_ID)), "utf-8")).resolves.toBe(REAL_SPEC);
   });
 

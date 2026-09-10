@@ -5,6 +5,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 import { MissionAutopilot } from "../missions/mission-autopilot.js";
 import type { Mission, Milestone, Slice, MissionFeature } from "@fusion/core";
 
@@ -391,11 +392,10 @@ describe("MissionAutopilot", () => {
 
       await autopilot.handleTaskFailure("FN-001");
 
-      expect(taskStore.moveTask).toHaveBeenCalledWith("FN-001", "todo");
+      expect(taskStore.moveTask).toHaveBeenCalledWith("FN-001", "todo", undefined, ANY_MUTATION_CONTEXT);
       expect(taskStore.updateTask).toHaveBeenCalledWith(
         "FN-001",
-        expect.objectContaining({ error: null, status: null, paused: false }),
-      );
+        expect.objectContaining({ error: null, status: null, paused: false }), ANY_MUTATION_CONTEXT);
       expect(missionStore.updateFeatureStatus).not.toHaveBeenCalled();
     });
 
@@ -414,8 +414,7 @@ describe("MissionAutopilot", () => {
       expect(missionStore.updateFeatureStatus).toHaveBeenCalledWith(feature.id, "blocked");
       expect(taskStore.updateTask).toHaveBeenCalledWith(
         "FN-001",
-        expect.objectContaining({ status: "failed", paused: true }),
-      );
+        expect.objectContaining({ status: "failed", paused: true }), ANY_MUTATION_CONTEXT);
       // No retry: the task must not be requeued to todo.
       expect(taskStore.moveTask).not.toHaveBeenCalled();
     });
@@ -436,8 +435,7 @@ describe("MissionAutopilot", () => {
       expect(taskStore.moveTask).toHaveBeenCalledTimes(1);
       expect(taskStore.updateTask).toHaveBeenCalledWith(
         "FN-001",
-        expect.objectContaining({ status: "failed", paused: true }),
-      );
+        expect.objectContaining({ status: "failed", paused: true }), ANY_MUTATION_CONTEXT);
     });
 
     it("clears retry budget for a task after successful completion", async () => {
@@ -488,8 +486,7 @@ describe("MissionAutopilot", () => {
 
       expect(taskStore.updateTask).toHaveBeenCalledWith(
         "FN-001",
-        expect.objectContaining({ error: null, status: null }),
-      );
+        expect.objectContaining({ error: null, status: null }), ANY_MUTATION_CONTEXT);
     });
   });
 

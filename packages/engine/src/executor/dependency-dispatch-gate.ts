@@ -1,3 +1,7 @@
+import type { Task, TaskStore, RunMutationContext } from "@fusion/core";
+import { getUnmetSchedulingDependencies } from "../scheduler.js";
+import { executorLog } from "../logger.js";
+import { clearDispatchBlockedLogState, logDispatchBlockedOnce } from "./dispatch-block-log.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-19:20:
  * blockOuterDispatchWhenDependenciesUnmet peeled from TaskExecutor (U4).
@@ -6,15 +10,11 @@
  * Workflow-graph and workflow-authoritative executor dispatches can be invoked outside the classic scheduler loop, so they must re-apply the shared scheduling dependency gate before graph routing, column-agent seams, or review handoff can run.
  * Requeue with blockedBy instead of executing so missing or soft-deleted dependency residue keeps the scheduler helper's non-blocking semantics while live todo/queued/in-progress/triage dependencies block every dispatch surface.
  */
-import type { Task, TaskStore } from "@fusion/core";
-import { getUnmetSchedulingDependencies } from "../scheduler.js";
-import { executorLog } from "../logger.js";
-import type { EngineRunContext } from "../util/run-audit.js";
-import { clearDispatchBlockedLogState, logDispatchBlockedOnce } from "./dispatch-block-log.js";
 
 export type DependencyDispatchGateDeps = {
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
 };
 
 export async function blockOuterDispatchWhenDependenciesUnmet(
@@ -59,15 +59,15 @@ export async function blockOuterDispatchWhenDependenciesUnmet(
       overlapBlockedBy: liveTask.overlapBlockedBy ?? null,
       action: `queued — unmet dependencies: ${unmetDeps.join(", ")}`,
       outcome: "Executor pre-dispatch dependency gate blocked workflow/authoritative execution.",
-      runContext: deps.getRunContextFor(liveTask.id),
+      runContext: deps.runContextFor(liveTask.id),
     });
   } else {
-    await deps.store.updateTask(liveTask.id, { status: "queued", blockedBy: unmetDeps[0] }, deps.getRunContextFor(liveTask.id));
+    await deps.store.updateTask(liveTask.id, { status: "queued", blockedBy: unmetDeps[0] }, deps.runContextFor(liveTask.id));
     await deps.store.logEntry(
       liveTask.id,
       `queued — unmet dependencies: ${unmetDeps.join(", ")}`,
       "Executor pre-dispatch dependency gate blocked workflow/authoritative execution.",
-      deps.getRunContextFor(liveTask.id),
+      deps.runContextFor(liveTask.id),
     );
   }
   logDispatchBlockedOnce(

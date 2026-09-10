@@ -1,4 +1,5 @@
 import { isTerminalColumnRole, type ColumnRoleTraitFlags } from "../column-roles.js";
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "../identity/mutation-context.js";
 import { computeContentFingerprint, findDuplicateMatches, tokenize } from "./duplicate-detection.js";
 import type { ColumnId } from "../types.js";
 import type { TaskStore } from "../store.js";
@@ -295,6 +296,7 @@ export function findSameAgentDuplicates(
   );
 }
 
+
 /**
  * FNXC:DuplicateIntake 2026-09-04-10:36 (FN-295):
  * Same-agent duplicates remain visible in their current column for a human
@@ -317,6 +319,7 @@ export async function flagSameAgentDuplicate(
     taskId,
     "Flagged as same-agent duplicate",
     `Near-duplicate of recently-filed sibling task(s): ${siblingIds.join(", ")} (awaiting Keep/Delete decision)`,
+    UNATTRIBUTED_MUTATION_CONTEXT,
   );
   await store.recordActivity({
     type: "task:near-duplicate-flagged",
@@ -329,7 +332,7 @@ export async function flagSameAgentDuplicate(
     nearDuplicateOf: canonicalId,
     nearDuplicateScore: scores[canonicalId] ?? null,
   };
-  await store.updateTask(taskId, { sourceMetadataPatch });
+  await store.updateTask(taskId, { sourceMetadataPatch }, UNATTRIBUTED_MUTATION_CONTEXT);
   // Return the applied patch so the in-memory task object held by the createTask
   // caller (which was written to disk BEFORE this flag runs) can be kept in sync
   // without a redundant re-fetch.
@@ -371,14 +374,14 @@ export async function flagTriageDuplicate(
     duplicateSource: "triage-marker",
     nearDuplicateDismissed: isTriageDuplicateKeepAcknowledged(existing?.sourceMetadata, canonicalId),
   };
-  await store.logEntry(taskId, "Flagged as triage duplicate", `Duplicate marker points to ${canonicalId}; awaiting operator decision`);
+  await store.logEntry(taskId, "Flagged as triage duplicate", `Duplicate marker points to ${canonicalId}; awaiting operator decision`, UNATTRIBUTED_MUTATION_CONTEXT);
   await store.recordActivity({
     type: "task:near-duplicate-flagged",
     taskId,
     details: "Flagged as triage-marker duplicate",
     metadata: { canonicalTaskId: canonicalId, source: "triage-marker-flagged" },
   });
-  await store.updateTask(taskId, { sourceMetadataPatch });
+  await store.updateTask(taskId, { sourceMetadataPatch }, UNATTRIBUTED_MUTATION_CONTEXT);
   return sourceMetadataPatch;
 }
 

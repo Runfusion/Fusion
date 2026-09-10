@@ -1,5 +1,6 @@
 // @vitest-environment node
 
+import { UNATTRIBUTED_CONTEXT_MATCHER } from "./mutation-context-matchers.js";
 import { describe, it, expect, vi, beforeAll, beforeEach, afterAll, afterEach } from "vitest";
 import express from "express";
 import http from "node:http";
@@ -2751,8 +2752,9 @@ describe("Planning Mode Routes", () => {
             dependencies: ["FN-500"],
             priority: "normal",
           }),
+          undefined, UNATTRIBUTED_CONTEXT_MATCHER,
         );
-        expect(store.updateTask).toHaveBeenCalledWith("FN-099", { size: "S" });
+        expect(store.updateTask).toHaveBeenCalledWith("FN-099", { size: "S" }, UNATTRIBUTED_CONTEXT_MATCHER);
         expect(store.upsertTaskDocument).toHaveBeenCalledWith("FN-099", expect.objectContaining({ key: "plan", content: expect.stringContaining("Edited description from summary view") }));
         expect(store.upsertTaskDocument).toHaveBeenCalledWith("FN-099", expect.objectContaining({ key: "original-description", content: "Build a user auth system" }));
       });
@@ -2836,11 +2838,13 @@ describe("Planning Mode Routes", () => {
             title: "Build resumable planning flow",
             dependencies: ["FN-100"],
           }),
+          undefined, UNATTRIBUTED_CONTEXT_MATCHER,
         );
         expect(store.logEntry).toHaveBeenCalledWith(
           "FN-043",
           "Created via Planning Mode",
           expect.stringContaining("Initial plan: Build resumable planning sessions"),
+          UNATTRIBUTED_CONTEXT_MATCHER,
         );
 
         const listRes = await REQUEST(appWithAiSessionStore, "GET", "/api/ai-sessions?includeCompleted=1");
@@ -3013,7 +3017,7 @@ describe("Planning Mode Routes", () => {
         expect(store.createTask).toHaveBeenCalledTimes(1);
         expect(store.createTask).toHaveBeenCalledWith(expect.objectContaining({
           proposalClaimId: `planning-session:${sessionId}#1`,
-        }));
+        }), undefined, UNATTRIBUTED_CONTEXT_MATCHER);
         expect(JSON.parse((await mockStore.get(sessionId))!.inputPayload)).toMatchObject({
           createClaimStatus: "created",
           createdTaskId: "FN-REBORN",
@@ -3079,7 +3083,7 @@ describe("Planning Mode Routes", () => {
         expect(res.body.task.id).toBe("FN-NEXT");
         expect(store.createTask).toHaveBeenCalledWith(expect.objectContaining({
           proposalClaimId: `planning-session:${sessionId}#1`,
-        }));
+        }), undefined, UNATTRIBUTED_CONTEXT_MATCHER);
 
         /*
         FNXC:PlanningMultiTask 2026-08-03-18:32:
@@ -3243,6 +3247,7 @@ describe("Planning Mode Routes", () => {
             branch: expectedBranch,
             baseBranch: expectedBaseBranch,
           }),
+          undefined, UNATTRIBUTED_CONTEXT_MATCHER,
         );
       });
 
@@ -3359,6 +3364,7 @@ describe("Planning Mode Routes", () => {
             title: "Priority auth task",
             priority: "high",
           }),
+          undefined, UNATTRIBUTED_CONTEXT_MATCHER,
         );
       });
 
@@ -3411,6 +3417,7 @@ describe("Planning Mode Routes", () => {
             branch: "feature/shared-auth",
             baseBranch: "develop",
           }),
+          undefined, UNATTRIBUTED_CONTEXT_MATCHER,
         );
       });
 
@@ -3461,6 +3468,7 @@ describe("Planning Mode Routes", () => {
             branch: undefined,
             baseBranch: undefined,
           }),
+          undefined, UNATTRIBUTED_CONTEXT_MATCHER,
         );
       });
 

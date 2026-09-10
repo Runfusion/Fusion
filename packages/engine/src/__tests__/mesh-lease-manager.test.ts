@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 import type { AgentStore, CentralClaimStore, RunAuditEventInput, Task, TaskStore } from "@fusion/core";
 import { MeshLeaseManager } from "../project/mesh-lease-manager.js";
 
@@ -68,7 +69,7 @@ describe("MeshLeaseManager", () => {
     const ok = await manager.recoverAbandonedLease("FN-1", "scheduler detected stale todo lease");
 
     expect(ok).toBe(true);
-    expect(moveTask).toHaveBeenCalledWith("FN-1", "todo", expect.any(Object));
+    expect(moveTask).toHaveBeenCalledWith("FN-1", "todo", expect.any(Object), ANY_MUTATION_CONTEXT);
     const event = recordRunAuditEvent.mock.calls
       .map((call) => call[0] as RunAuditEventInput)
       .find((candidate) => candidate.mutationType === "task:auto-recover-node-unreachable");
@@ -320,7 +321,7 @@ describe("MeshLeaseManager", () => {
     const manager = new MeshLeaseManager({ taskStore });
     const ok = await manager.recoverAbandonedLease("FN-1", "stale-heartbeat", { preserveProgress: true });
     expect(ok).toBe(true);
-    expect(taskStore.moveTask).toHaveBeenCalledWith("FN-1", "todo", { preserveProgress: true });
+    expect(taskStore.moveTask).toHaveBeenCalledWith("FN-1", "todo", { preserveProgress: true }, ANY_MUTATION_CONTEXT);
     expect(recordRunAuditEvent.mock.calls.some((call) => String(call[0].mutationType).includes("task:auto-recover-lease-"))).toBe(false);
   });
 
@@ -343,7 +344,7 @@ describe("MeshLeaseManager", () => {
 
     const ok = await manager.reconcileLeaseRow("FN-1");
     expect(ok).toBe(true);
-    expect(taskStore.updateTask).toHaveBeenCalledWith("FN-1", expect.objectContaining({ checkedOutBy: null }));
+    expect(taskStore.updateTask).toHaveBeenCalledWith("FN-1", expect.objectContaining({ checkedOutBy: null }), ANY_MUTATION_CONTEXT);
   });
 
   it("swallows audit emission failures and still returns expected result", async () => {

@@ -1,7 +1,7 @@
 import type { Task, TaskStore } from "@fusion/core";
 import type { TaskExecutor } from "../executor.js";
 import { createLogger } from "../logger.js";
-import { resolveProjectColumnsForRoles } from "@fusion/core";
+import { resolveProjectColumnsForRoles, UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import { moveTaskToContainedBackwardTarget } from "../execution/lifecycle-move.js";
 import { setImmediate as setImmediateCb } from "node:timers";
 import { NO_PROGRESS_REQUEUE_BUDGET_EXHAUSTED_PREFIX } from "./no-progress-requeue-budget.js";
@@ -241,11 +241,10 @@ export class RestartRecoveryCoordinator {
       branch: null, branchWriteOrigin: "engine" as const,
       sessionFile: null,
       error: null,
-    });
+    }, UNATTRIBUTED_MUTATION_CONTEXT);
     await this.store.logEntry(
       task.id,
-      "Restart recovery: interrupted run had no step progress and no fn_task_done — queued for contained safe retry",
-    );
+      "Restart recovery: interrupted run had no step progress and no fn_task_done — queued for contained safe retry", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
     /*
     FNXC:LifecycleContainment 2026-08-28-03:03:
     Restart recovery uses the live source column and the task's own workflow to choose exactly one

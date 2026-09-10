@@ -1,3 +1,4 @@
+import { UNATTRIBUTED_CONTEXT_MATCHER } from "./mutation-context-matchers.js";
 import { EventEmitter } from "node:events";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { GitLabTrackingStateService } from "../gitlab-tracking-state.js";
@@ -27,8 +28,8 @@ describe("GitLabTrackingStateService", () => {
     vi.stubGlobal("fetch", fetchImpl); const s = store(); new GitLabTrackingStateService(s as any).start();
     s.emit("task:moved", { task: task("merge_request"), from: "todo", to: "done" });
     s.emit("task:moved", { task: { id: "FN-2", gitlabTracking: { item: { kind: "group_issue", iid: 3 } } }, from: "todo", to: "done" });
-    await vi.waitFor(() => expect(s.logEntry).toHaveBeenCalledWith("FN-1", "Skipped closing GitLab merge request", "g/p!2 is merged and cannot be auto-closed"));
-    expect(s.logEntry).toHaveBeenCalledWith("FN-2", "Failed to update GitLab tracking state", "Linked GitLab metadata is incomplete");
+    await vi.waitFor(() => expect(s.logEntry).toHaveBeenCalledWith("FN-1", "Skipped closing GitLab merge request", "g/p!2 is merged and cannot be auto-closed", UNATTRIBUTED_CONTEXT_MATCHER));
+    expect(s.logEntry).toHaveBeenCalledWith("FN-2", "Failed to update GitLab tracking state", "Linked GitLab metadata is incomplete", UNATTRIBUTED_CONTEXT_MATCHER);
   });
   it("retries transient GitLab failures once", async () => {
     const fetchImpl = vi.fn()

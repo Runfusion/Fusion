@@ -1,4 +1,5 @@
-import type { Settings, TaskDetail, WorkflowIr, WorkflowIrArtifact, WorkflowIrNode, WorkflowWorkItem, WorkflowWorkItemState } from "@fusion/core";
+import type { RunMutationContext, Settings, TaskDetail, WorkflowIr, WorkflowIrArtifact, WorkflowIrNode, WorkflowWorkItem, WorkflowWorkItemState } from "@fusion/core";
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import {
   getBuiltinWorkflow,
   resolveTaskOutputLanguage,
@@ -40,8 +41,15 @@ export interface WorkflowTaskRuntimeDeps extends Omit<WorkflowGraphExecutorDeps,
   store: WorkflowIrResolverStore & {
     getTask?: (taskId: string) => Promise<TaskDetail>;
     getTaskDocument?: (taskId: string, key: string) => Promise<unknown | null>;
-    updateTask?: (taskId: string, updates: { summary: string }) => Promise<unknown> | unknown;
-    logEntry?: (taskId: string, action: string, detail?: string) => Promise<unknown> | unknown;
+    /*
+    FNXC:Identity 2026-08-09-03:04 (U18/KTD2 — the seam restates the required context):
+    Hand-declared, so it inherits neither of U18's `TaskStore` overloads; at the old arity the
+    completion-summary write reached the store unattributed no matter what the call-site sweep did.
+    Mirrors the CANONICAL store arity, which also keeps a real `TaskStore` assignable and keeps this
+    surface interchangeable with `WorkflowCompletionSummaryStore`.
+    */
+    updateTask?: (taskId: string, updates: { summary: string }, runContext: RunMutationContext) => Promise<unknown> | unknown;
+    logEntry?: (taskId: string, action: string, detail: string | undefined, runContext: RunMutationContext) => Promise<unknown> | unknown;
     transitionWorkflowWorkItem?: (
       id: string,
       state: WorkflowWorkItemState,
@@ -152,6 +160,9 @@ export class WorkflowTaskRuntime {
         };
       }
       const latestTask = await this.deps.store.getTask?.(task.id).catch(() => undefined);
+      /* FNXC:Identity 2026-08-09-03:04 (U18/KTD2): marker — the runtime carries a run id but no
+         actor and no agent id, and the summary is written by the graph itself rather than by
+         whoever ran the node. U13 owns giving unattended graph writes a real system actor. */
       await ensureWorkflowCompletionSummary(this.deps.store, latestTask ?? task, {
         reason: "workflow-runtime-completed",
         workflowId: target.workflowId,
@@ -159,7 +170,7 @@ export class WorkflowTaskRuntime {
         settings,
         originalInput: task.description,
         outputLanguage,
-      }).catch(() => undefined);
+      }, UNATTRIBUTED_MUTATION_CONTEXT).catch(() => undefined);
     }
 
     const disposition: WorkflowTaskRuntimeDisposition = result.outcome === "success" ? "completed" : "failed";
@@ -225,6 +236,7 @@ export class WorkflowTaskRuntime {
     }
 
     if (fencedWorkItem.kind === "merge" || workItem.kind === "manual-hold") {
+      // FNXC:Identity 2026-08-09-03:04 (U18/KTD2): marker — same reason as above.
       await ensureWorkflowCompletionSummary(this.deps.store, task, {
         reason: `workflow-work-item:${workItem.kind}`,
         workflowId: target.workflowId,
@@ -232,7 +244,7 @@ export class WorkflowTaskRuntime {
         settings,
         originalInput: task.description,
         outputLanguage,
-      }).catch(() => undefined);
+      }, UNATTRIBUTED_MUTATION_CONTEXT).catch(() => undefined);
     }
 
     const invoked: string[] = [];

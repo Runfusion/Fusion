@@ -5,6 +5,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import "./executor-test-helpers.js";
 import { TaskExecutor } from "../executor.js";
 import { createMockStore, mockedExecSync, mockedExistsSync, resetExecutorMocks } from "./executor-test-helpers.js";
+/* FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage C): the executor threads a real mutation context to every store call, so these assertions pin it rather than dropping the argument. */
+import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 
 describe("FN-009: verifyWorktreeInvariants with missing worktree directory", () => {
   let executor: TaskExecutor;
@@ -112,7 +114,7 @@ describe("FN-009: verifyWorktreeInvariants with missing worktree directory", () 
     const result = await (executor as any).verifyWorktreeInvariants(task);
 
     expect(result).toEqual({ ok: true });
-    expect(store.updateTask).toHaveBeenCalledWith("FN-9004", { worktree: "/repo/.worktrees/gentle-flame" });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-9004", { worktree: "/repo/.worktrees/gentle-flame" }, ANY_MUTATION_CONTEXT);
   });
 
   it("preserves wrong_toplevel for non-reanchorable mismatch", async () => {
@@ -141,7 +143,7 @@ describe("FN-009: verifyWorktreeInvariants with missing worktree directory", () 
 
     expect(result.ok).toBe(false);
     expect(result.reason).toBe("wrong_toplevel");
-    expect(store.updateTask).not.toHaveBeenCalledWith("FN-9005", expect.objectContaining({ worktree: expect.any(String) }));
+    expect(store.updateTask).not.toHaveBeenCalledWith("FN-9005", expect.objectContaining({ worktree: expect.any(String) }), ANY_MUTATION_CONTEXT);
   });
 
   /*

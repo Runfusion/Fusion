@@ -1,3 +1,10 @@
+/*
+FNXC:Identity 2026-08-15-22:52 (U18/KTD2 Stage D — why every mutation context in this file is the MARKER):
+An external signal connector POSTs here over HMAC; the caller is a machine. These writes carry the
+unattributed marker until U13 decides whether connectors get a real system actor.
+*/
+// FNXC:Identity 2026-08-15-22:52: one-line import on purpose — the U18 census counts any non-`import`-prefixed line naming the marker.
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import { createLogger, recordGitHubCheckStateAsync } from "@fusion/core";
 
 const severityAuditLog = createLogger("dashboard-register-signal-routes");
@@ -237,7 +244,7 @@ export async function ingestSignal(deps: SignalIngestDeps): Promise<SignalIngest
   }
 
   // 5. Create the triage task.
-  const task = await store.createTask(signalToTaskInput(signal));
+  const task = await store.createTask(signalToTaskInput(signal), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
 
   try {
     /*

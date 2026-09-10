@@ -7,6 +7,8 @@ import { executorLog } from "../../logger.js";
 import { WorktreePool } from "../../worktree/worktree-pool.js";
 import * as worktreePoolModule from "../../worktree/worktree-pool.js";
 import { createMockStore, mockedExistsSync, resetExecutorMocks } from "../executor-test-helpers.js";
+/* FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage C): the executor threads a real mutation context to every store call, so these assertions pin it rather than dropping the argument. */
+import { ANY_MUTATION_CONTEXT } from "../mutation-context-matchers.js";
 
 const ROOT = "/tmp/test";
 const PATH = "/tmp/test/.worktrees/fn-5346";
@@ -35,7 +37,7 @@ describe("FN-5346 reliability interactions: post-completion stale self-owned bin
     expect(store.logEntry).toHaveBeenCalledWith(
       TASK_ID,
       "Cleared stale self-owned active-session entry before remove",
-      PATH,
+      PATH, ANY_MUTATION_CONTEXT,
     );
     expect((executorLog.warn as any).mock.calls.some((call: unknown[]) => String(call[0]).includes("[FN-5346]"))).toBe(true);
   });
@@ -74,7 +76,7 @@ describe("FN-5346 reliability interactions: post-completion stale self-owned bin
     expect(store.logEntry).not.toHaveBeenCalledWith(
       TASK_ID,
       "Cleared stale self-owned active-session entry before remove",
-      PATH,
+      PATH, ANY_MUTATION_CONTEXT,
     );
   });
 

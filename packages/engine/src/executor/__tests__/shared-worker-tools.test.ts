@@ -3,6 +3,7 @@
  * Smoke tests for shared worker-tool free factories peeled from TaskExecutor (U4).
  */
 import { describe, expect, it, vi } from "vitest";
+import { mutationContextForAgent } from "@fusion/core";
 import {
   createArtifactListTool,
   createArtifactRegisterTool,
@@ -22,6 +23,8 @@ function makeDeps(overrides: Partial<SharedWorkerToolsDeps> = {}): SharedWorkerT
     rootDir: "/repo",
     messageStore: undefined,
     getRunContextFor: () => undefined,
+    // FNXC:Identity 2026-08-16-05:10: total carrier — the fixture must supply what the deps type requires.
+    runContextFor: (taskId: string) => mutationContextForAgent("executor", taskId),
     ...overrides,
   };
 }

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { ANY_MUTATION_CONTEXT } from "../mutation-context-matchers.js";
 import "../executor-test-helpers.js";
 import { TaskExecutor } from "../../executor.js";
 import * as worktreeAcquisition from "../../worktree/worktree-acquisition.js";
@@ -164,7 +165,7 @@ describe("reliability interactions: executor no-fn_task_done vs worktree reclaim
       worktree: null,
       branch: null,
       worktreeSessionRetryCount: 1,
-    }));
+    }), ANY_MUTATION_CONTEXT);
     expect(store.moveTask).toHaveBeenCalledWith("FN-4601", "todo", { preserveProgress: true, moveSource: "engine", recoveryRehome: true });
     // FN-4806: session-start missing-worktree is engine self-heal, must not burn retry budget
     // and must not mark the task failed.
@@ -196,7 +197,7 @@ describe("reliability interactions: executor no-fn_task_done vs worktree reclaim
     // failure-in-place model that superseded FN-1284's in-review escalation). The invariant under test is
     // that this path is DISTINCT from the FN-4806 reclaim self-heal (silent todo requeue, no failed): a
     // non-recoverable error marks the task failed and does NOT silently requeue to todo.
-    expect(store.updateTask).toHaveBeenCalledWith("FN-4601", expect.objectContaining({ status: "failed" }));
+    expect(store.updateTask).toHaveBeenCalledWith("FN-4601", expect.objectContaining({ status: "failed" }), ANY_MUTATION_CONTEXT);
     expect(store.moveTask).not.toHaveBeenCalledWith("FN-4601", "todo", { preserveProgress: true });
   });
 

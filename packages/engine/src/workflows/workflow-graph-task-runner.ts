@@ -1,4 +1,11 @@
-import type { Settings, TaskDetail, TaskStep, WorkflowDefinition, WorkflowIr } from "@fusion/core";
+import type {
+  RunMutationContext,
+  Settings,
+  TaskDetail,
+  TaskStep,
+  WorkflowDefinition,
+  WorkflowIr,
+} from "@fusion/core";
 import {
   getBuiltinWorkflow,
   isBuiltinWorkflowId,
@@ -180,6 +187,18 @@ export interface WorkflowGraphTaskRunnerDeps {
 /** Task/workflow-independent hooks the runner needs to build a column-boundary
  *  controller. The runner supplies taskId/workflowId/ir/initialColumn per run. */
 export interface WorkflowColumnBoundaryHooks {
+  /*
+  FNXC:Identity 2026-08-09-03:04 (U18/KTD2 — the seam restates the required context):
+  `moveTask` here is a narrow, hand-declared move hook rather than the store's own method, so it
+  inherits neither of U18's `TaskStore` overloads and cannot itself carry the required parameter —
+  the boundary controller invoking it knows a column and a node, never an actor. The requirement is
+  therefore restated on the BUNDLE: a hooks provider cannot be assembled without naming the run its
+  moves are written under, and the single production provider
+  (`createExecutorColumnBoundaryHooks`) threads that same context into `store.moveTask` and into the
+  durable IR pin. Without this field a hand-rolled bundle would silently reopen the hole the engine
+  sweep just closed.
+  */
+  runContext: RunMutationContext;
   moveTask?: WorkflowColumnMove;
   emitAudit?: (event: WorkflowColumnBoundaryAuditEvent) => void | Promise<void>;
   pinNodeEntry?: (pin: WorkflowIrPin) => void | Promise<void>;

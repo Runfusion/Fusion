@@ -157,6 +157,35 @@ export interface AsyncDataLayer {
   /** Backend descriptor retained for store-owned session advisory locks. */
   readonly backend?: ResolvedBackend;
   /**
+   * FNXC:IdentityGrantEscalation 2026-08-09-03:04:
+   * The owner connection, for the few writes the RUNTIME role is deliberately not allowed to make.
+   *
+   * Exists because of migration 0059: `project.actor_role_grants` decides who holds authority, and
+   * the runtime role's write privilege on it was a grant-yourself-a-role path for any plugin holding
+   * `getAsyncLayer()` (the same pooled runtime connection). Revoking that privilege closes the
+   * escalation, which leaves core needing a handle plugins never receive.
+   *
+   * TWO HAZARDS, because this is not a more-powerful `db`; it is a DIFFERENT connection:
+   *
+   *  1. IT BYPASSES PROJECT ISOLATION (`fusion.project_bypass = on`). RLS is not a backstop here. A
+   *     statement that relied on the policy to confine it to the bound project becomes CROSS-PROJECT
+   *     when moved onto this handle, silently. Every write through it must scope `project_id`
+   *     itself; the `fusion_assign_project_id` trigger cannot infer it either.
+   *  2. IT IS A SEPARATE CONNECTION with a `max: 1` pool shared with migration work, so work that
+   *     must be atomic with a privileged write has to run WHOLLY on this handle. Interleaving the
+   *     two handles inside one logical operation yields two transactions that can half-commit.
+   */
+  readonly privilegedDb?: DrizzleDb;
+  /**
+   * FNXC:IdentityGrantEscalation 2026-08-09-03:04:
+   * Transaction on the owner connection. See {@link privilegedDb} — especially hazard 2: this is NOT
+   * interchangeable with `transactionImmediate`.
+   */
+  privilegedTransactionImmediate?<T>(
+    fn: (tx: DbTransaction) => Promise<T>,
+    options?: TransactionOptions,
+  ): Promise<T>;
+  /**
    * Run an async callback inside a PostgreSQL transaction. All writes inside
    * the callback commit atomically; a thrown error rolls back every write
    * including audit rows. Concurrent transactions do not observe each other's
@@ -234,11 +263,21 @@ export function createAsyncDataLayer(
   // any caller). We cast to the schema-typed view so callers get
   // compile-time table references via `layer.db`.
   const db = connections.runtime as unknown as DrizzleDb;
+  // FNXC:IdentityGrantEscalation 2026-08-09-03:04: see AsyncDataLayer.privilegedDb for why the owner
+  // connection is exposed, and the two hazards it carries.
+  const privilegedDb = connections.migration as unknown as DrizzleDb;
 
   return {
     db,
+    privilegedDb,
     projectId: options?.projectId,
     backend: connections.backend,
+    async privilegedTransactionImmediate<T>(
+      fn: (tx: DbTransaction) => Promise<T>,
+      txOptions?: TransactionOptions,
+    ): Promise<T> {
+      return runInTransaction(privilegedDb, fn, { accessMode: "read write", ...txOptions });
+    },
     async transaction<T>(fn: (tx: DbTransaction) => Promise<T>, options?: TransactionOptions): Promise<T> {
       return runInTransaction(db, fn, options);
     },

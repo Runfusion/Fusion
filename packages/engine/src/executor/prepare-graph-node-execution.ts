@@ -1,3 +1,8 @@
+import { existsSync } from "node:fs";
+import type { Settings, TaskDetail, TaskStore, WorkflowIrNode, WorkspaceConfig, RunMutationContext } from "@fusion/core";
+import type { WorkflowNodePreparationRequirement } from "../workflows/workflow-graph-executor.js";
+import { resolveWorkspaceConfigOnce } from "./workspace-config-resolver.js";
+import { nodeConfigPrincipalAgentId } from "./ensure-graph-custom-node-worktree.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-11:45:
  * prepareGraphNodeExecution peeled from TaskExecutor (U4).
@@ -14,11 +19,6 @@
  * includes read-only Code Review because it inspects the task diff; Plan, Plan Review, and replan
  * nodes return before acquisition so planning remains rooted on dependency-installed main.
  */
-import { existsSync } from "node:fs";
-import type { Settings, TaskDetail, TaskStore, WorkflowIrNode, WorkspaceConfig } from "@fusion/core";
-import type { WorkflowNodePreparationRequirement } from "../workflows/workflow-graph-executor.js";
-import type { EngineRunContext } from "../util/run-audit.js";
-import { resolveWorkspaceConfigOnce } from "./workspace-config-resolver.js";
 
 export type PrepareGraphNodeExecutionDeps = {
   store: TaskStore;
@@ -26,12 +26,14 @@ export type PrepareGraphNodeExecutionDeps = {
   workspaceConfigOwner: object;
   getWorkspaceConfig: () => WorkspaceConfig | null | undefined;
   setWorkspaceConfig: (config: WorkspaceConfig | null) => void;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   ensureGraphCustomNodeWorktree: (
     task: TaskDetail,
     settings: Settings,
     nodeId: string,
     refreshStaleBase?: boolean,
+    principalAgentId?: string | null,
   ) => Promise<TaskDetail>;
 };
 
@@ -51,12 +53,29 @@ export async function prepareGraphNodeExecution(
     ? ({ ...live, worktree: undefined, sessionFile: undefined } as TaskDetail)
     : live;
   if (live.worktree) {
+    /*
+    FNXC:Identity 2026-08-24-02:18:
+    Missing-worktree reacquire logs are attributed through `runContextFor` so the graph node's live
+    run owns the breadcrumb.
+    */
     await deps.store.logEntry(
       live.id,
       `Workflow node '${node.id}' assigned worktree is missing — reacquiring before node execution`,
       live.worktree,
-      deps.getRunContextFor(live.id),
+      deps.runContextFor(live.id),
     );
   }
-  await deps.ensureGraphCustomNodeWorktree(taskForAcquisition, settings, node.id, executionCodeNode);
+  /*
+  FNXC:Identity 2026-09-04-08:13:
+  Checkout mint happens before column-agent adoption. Pass the node's own `config.agentId` when
+  present so first-executable custom-node acquires are not silently attributed to the task assignee.
+  Column-bound principals stay in `run-graph-custom-node` after the worktree exists.
+  */
+  await deps.ensureGraphCustomNodeWorktree(
+    taskForAcquisition,
+    settings,
+    node.id,
+    executionCodeNode,
+    nodeConfigPrincipalAgentId(node),
+  );
 }

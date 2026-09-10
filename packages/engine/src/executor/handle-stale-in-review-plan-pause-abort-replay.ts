@@ -1,11 +1,4 @@
-/**
- * FNXC:CodeOrganization 2026-08-03-13:45:
- * handleStaleInReviewPlanPauseAbortReplay peeled from TaskExecutor (U4).
- *
- * FNXC:WorkflowLifecycle 2026-06-28-21:05:
- * FN-7143: stale plan-node pause/resume replay after in-review is clear/log-only (not a re-entry).
- */
-import type { Settings, TaskDetail, TaskStore } from "@fusion/core";
+import type { Settings, TaskDetail, TaskStore, RunMutationContext } from "@fusion/core";
 import { allowsAutoMergeProcessing } from "@fusion/core";
 import type { WorkflowGraphTaskRunResult } from "../workflows/workflow-graph-task-runner.js";
 import type { PausedAbortProvenance } from "./paused-abort-provenance.js";
@@ -13,14 +6,22 @@ import { isGenericAbortProvenance } from "./paused-abort-provenance.js";
 import { graphFailureValue, isMergeGraphFailure, isStalePauseAbortParkFailure } from "./graph-failure-pure.js";
 import { isTerminalMergeGraphFailureValue } from "./task-predicates.js";
 import type { ResumeLanes } from "./resolve-resume-lanes.js";
-import { generateSyntheticRunId, type EngineRunContext } from "../util/run-audit.js";
+import { generateSyntheticRunId } from "../util/run-audit.js";
 import { emitBoundedRunAudit } from "./emit-bounded-run-audit.js";
 import { executorLog } from "../logger.js";
 import { WORKFLOW_NODE_ENGINE_PAUSE_ABORT_KIND } from "../workflows/workflow-graph-executor.js";
+/**
+ * FNXC:CodeOrganization 2026-08-03-13:45:
+ * handleStaleInReviewPlanPauseAbortReplay peeled from TaskExecutor (U4).
+ *
+ * FNXC:WorkflowLifecycle 2026-06-28-21:05:
+ * FN-7143: stale plan-node pause/resume replay after in-review is clear/log-only (not a re-entry).
+ */
 
 export type HandleStaleInReviewPlanPauseAbortReplayDeps = {
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   resolveResumeLanes: (taskId: string, memo?: { lanes?: ResumeLanes }) => Promise<ResumeLanes>;
   isLiveSharedBranchGroupMember: (live: TaskDetail) => Promise<boolean>;
   clearPausedAborted: (taskId: string) => void;
@@ -73,10 +74,10 @@ export async function handleStaleInReviewPlanPauseAbortReplay(
     deps.activeWorktrees.delete(live.id);
     const message = "Workflow graph plan node pause/resume replay surfaced after task was already in-review — stale replay ignored, in-review state preserved";
     executorLog.log(`${live.id}: ${message}`);
-    await deps.store.logEntry(live.id, message, undefined, deps.getRunContextFor(live.id));
+    await deps.store.logEntry(live.id, message, undefined, deps.runContextFor(live.id));
     if (staleParkedFailure) {
-      await deps.store.updateTask(live.id, { status: null, error: null }, deps.getRunContextFor(live.id));
-      await deps.store.logEntry(live.id, "Auto-recovered: cleared stale in-review plan pause/resume replay failure — failure notification suppressed", undefined, deps.getRunContextFor(live.id));
+      await deps.store.updateTask(live.id, { status: null, error: null }, deps.runContextFor(live.id));
+      await deps.store.logEntry(live.id, "Auto-recovered: cleared stale in-review plan pause/resume replay failure — failure notification suppressed", undefined, deps.runContextFor(live.id));
     }
       await emitBoundedRunAudit(deps.store, {
         taskId: live.id,

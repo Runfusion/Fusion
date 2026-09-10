@@ -1,3 +1,10 @@
+import type { Agent, MessageStore, PermanentAgentGatingContext, TaskStore, RunMutationContext } from "@fusion/core";
+import {
+  AWAITING_APPROVAL_PAUSE_REASON,
+  ApprovalRequestStore,
+  resolveEffectiveAgentPermissionPolicy } from "@fusion/core";
+import { emitApprovalMail } from "../agents/approval-mail.js";
+import { buildAgentGatedActionSummary } from "../agents/permanent-agent-gating.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-10:05:
  * buildPermanentAgentGatingContext peeled from TaskExecutor (U4).
@@ -16,19 +23,11 @@
  * in lanes WITHOUT an actionGateContext, where no executor in-flight
  * session surface exists to abort.
  */
-import type { Agent, MessageStore, PermanentAgentGatingContext, TaskStore } from "@fusion/core";
-import {
-  AWAITING_APPROVAL_PAUSE_REASON,
-  ApprovalRequestStore,
-  resolveEffectiveAgentPermissionPolicy,
-} from "@fusion/core";
-import { emitApprovalMail } from "../agents/approval-mail.js";
-import { buildAgentGatedActionSummary } from "../agents/permanent-agent-gating.js";
-import type { EngineRunContext } from "../util/run-audit.js";
 
 export type BuildPermanentAgentGatingContextDeps = {
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   approvalSuspended: Set<string>;
   approvalRequestStore: ApprovalRequestStore;
   /*
@@ -97,7 +96,12 @@ export function buildPermanentAgentGatingContext(
       if (!taskId) return;
       deps.approvalSuspended.add(taskId);
       try {
-        await deps.store.pauseTask(taskId, true, deps.getRunContextFor(taskId), { pausedByAgentId: actorId, pausedReason: AWAITING_APPROVAL_PAUSE_REASON });
+        /*
+        FNXC:Identity 2026-08-24-02:18:
+        Permanent-agent approval pause uses `runContextFor` so the hold is attributed to the gated
+        agent rather than the deprecated unattributed overload.
+        */
+        await deps.store.pauseTask(taskId, true, deps.runContextFor(taskId), { pausedByAgentId: actorId, pausedReason: AWAITING_APPROVAL_PAUSE_REASON });
         await deps.store.logEntry(
           taskId,
           `Approval required for ${toolName}. Request ${approvalRequestId} created; task paused awaiting decision.`,

@@ -1,3 +1,6 @@
+import type { TaskStore, RunMutationContext } from "@fusion/core";
+import { archiveTerminalWorkflowStepFailures } from "@fusion/core";
+import { clearTerminalWorkflowStepFailures } from "./workflow-step-failures.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-19:00:
  * clearTerminalStepFailuresForRetry peeled from TaskExecutor (U4).
@@ -12,7 +15,6 @@
  * where the move does not. Passed/skipped/pending evidence is kept.
  */
 import type { TaskStore, WorkflowStepResult } from "@fusion/core";
-import type { EngineRunContext } from "../util/run-audit.js";
 import { archiveTerminalWorkflowStepFailures } from "@fusion/core";
 import { clearTerminalWorkflowStepFailures } from "./workflow-step-failures.js";
 
@@ -42,7 +44,8 @@ export type TerminalFailureRetryMode = "archive" | "clear";
 
 export type ClearTerminalStepFailuresForRetryDeps = {
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
 };
 
 export async function clearTerminalStepFailuresForRetry(
@@ -61,6 +64,6 @@ export async function clearTerminalStepFailuresForRetry(
     )
     : clearTerminalWorkflowStepFailures(live.workflowStepResults);
   if (cleared !== live.workflowStepResults) {
-    await deps.store.updateTask(taskId, { workflowStepResults: cleared }, deps.getRunContextFor(taskId));
+    await deps.store.updateTask(taskId, { workflowStepResults: cleared }, deps.runContextFor(taskId));
   }
 }

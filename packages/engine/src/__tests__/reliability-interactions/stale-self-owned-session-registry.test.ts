@@ -4,6 +4,8 @@ import { TaskExecutor } from "../../executor.js";
 import { activeSessionRegistry } from "../../agents/active-session-registry.js";
 import { createMockStore, mockedExistsSync, resetExecutorMocks } from "../executor-test-helpers.js";
 import * as worktreePoolModule from "../../worktree/worktree-pool.js";
+/* FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage C): the executor threads a real mutation context to every store call, so these assertions pin it rather than dropping the argument. */
+import { ANY_MUTATION_CONTEXT } from "../mutation-context-matchers.js";
 
 const ROOT = "/tmp/test";
 const PATH = "/tmp/test/.worktrees/fn-4976";
@@ -38,7 +40,7 @@ describe("FN-4976: stale self-owned activeSessionRegistry deadlock backstop", ()
     expect(store.logEntry).toHaveBeenCalledWith(
       TASK_ID,
       "Cleared stale self-owned active-session entry before remove",
-      PATH,
+      PATH, ANY_MUTATION_CONTEXT,
     );
   });
 

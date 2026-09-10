@@ -1,3 +1,31 @@
+import { Type } from "@earendil-works/pi-ai";
+import type { Settings, Task, TaskDetail, TaskRecommendation, TaskStore, RunMutationContext } from "@fusion/core";
+import {
+  buildTaskExternalBlockPatch,
+  isTaskNotFoundError,
+  parseNoOpCompletionMarker,
+  resolveWipTargetForTask } from "@fusion/core";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { ReviewVerdict } from "../execution/reviewer.js";
+import {
+  BLOCKED_THRASH_LIMIT,
+  buildExternalBlockMetadataPatch,
+  classifyBlockedExit,
+  classifyExternalObstacle,
+  countBlockedThrashHits,
+  detectRepairableObstacleHint,
+  partitionBlockedByRefs } from "../execution-block-classifier.js";
+import { mergeEffectiveSettings } from "../project/effective-settings.js";
+import { generateSyntheticRunId, type RunAuditor } from "../util/run-audit.js";
+import { emitBoundedRunAudit } from "./emit-bounded-run-audit.js";
+import { executorLog } from "../logger.js";
+import { resolveReboundColumnFor } from "./lifecycle-columns.js";
+import { evaluateTaskDoneRefusal } from "./task-done-refusal.js";
+import { skipBypassTaintUpdateForRefusal } from "./completion-predicates.js";
+import { MAX_TASK_DONE_REQUEUE_RETRIES } from "./task-done-refusal-handler.js";
+import { validateCompletionRecommendations } from "./validate-completion-recommendations.js";
+import { dispatchAcceptedCompletionRecommendationNotice } from "./completion-recommendation-notice.js";
+import type { FinalizeAcceptedNoOpCompletionParams } from "./plan-review-no-op.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-13:10:
  * createTaskDoneTool peeled from TaskExecutor (U4).
@@ -13,40 +41,11 @@
  * FNXC:WorkflowResolvedColumns 2026-07-31-09:20:
  * Completed-task watchdog arms on resolved WIP column, not literal in-progress.
  */
-import { Type } from "@earendil-works/pi-ai";
-import type { Settings, Task, TaskDetail, TaskRecommendation, TaskStore } from "@fusion/core";
-import {
-  buildTaskExternalBlockPatch,
-  isTaskNotFoundError,
-  parseNoOpCompletionMarker,
-  resolveWipTargetForTask,
-} from "@fusion/core";
-import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
-import type { ReviewVerdict } from "../execution/reviewer.js";
-import {
-  BLOCKED_THRASH_LIMIT,
-  buildExternalBlockMetadataPatch,
-  classifyBlockedExit,
-  classifyExternalObstacle,
-  countBlockedThrashHits,
-  detectRepairableObstacleHint,
-  partitionBlockedByRefs,
-} from "../execution-block-classifier.js";
-import { mergeEffectiveSettings } from "../project/effective-settings.js";
-import { generateSyntheticRunId, type EngineRunContext, type RunAuditor } from "../util/run-audit.js";
-import { emitBoundedRunAudit } from "./emit-bounded-run-audit.js";
-import { executorLog } from "../logger.js";
-import { resolveReboundColumnFor } from "./lifecycle-columns.js";
-import { evaluateTaskDoneRefusal } from "./task-done-refusal.js";
-import { skipBypassTaintUpdateForRefusal } from "./completion-predicates.js";
-import { MAX_TASK_DONE_REQUEUE_RETRIES } from "./task-done-refusal-handler.js";
-import { validateCompletionRecommendations } from "./validate-completion-recommendations.js";
-import { dispatchAcceptedCompletionRecommendationNotice } from "./completion-recommendation-notice.js";
-import type { FinalizeAcceptedNoOpCompletionParams } from "./plan-review-no-op.js";
 
 export type CreateTaskDoneToolDeps = {
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   workflowLifecycleMovesInFlight: Set<string>;
   persistTokenUsage: (taskId: string) => Promise<void>;
   getTaskCompletionBlocker: (task: Task) => Promise<string | undefined>;
@@ -308,7 +307,7 @@ export function createTaskDoneTool(
             pausedByAgentId: null,
             ...(mergedDependencies ? { dependencies: mergedDependencies } : {}),
             sourceMetadataPatch: metaPatch,
-          }, deps.getRunContextFor(taskId));
+          }, deps.runContextFor(taskId));
 
           await store.logEntry(
             taskId,
@@ -316,7 +315,7 @@ export function createTaskDoneTool(
               ? `${parkError} — durable external block thrash-exhausted (signature=${classification.thrashSignature}); parked failed, no auto-requeue`
               : `${parkError} — recorded dependencies: ${blockedByIds.join(", ")} — parked failed (honest blocked exit; steps preserved)`,
             undefined,
-            deps.getRunContextFor(taskId),
+            deps.runContextFor(taskId),
           );
           await emitBoundedRunAudit(deps.store, {
             taskId,
@@ -370,7 +369,7 @@ export function createTaskDoneTool(
           source: "fn_task_done",
         });
         if (!providerVerdict.ok) {
-          await store.logEntry(taskId, providerVerdict.message, undefined, deps.getRunContextFor(task.id));
+          await store.logEntry(taskId, providerVerdict.message, undefined, deps.runContextFor(task.id));
           executorLog.error(`${taskId}: ${providerVerdict.message}`);
           return {
             content: [{ type: "text" as const, text: providerVerdict.message }],
@@ -389,7 +388,7 @@ export function createTaskDoneTool(
         });
         if (!invariantCheck.ok) {
           const refusalMessage = `fn_task_done refused: ${invariantCheck.reason} — observed=${invariantCheck.observed}, expected=${invariantCheck.expected}`;
-          await store.logEntry(taskId, refusalMessage, undefined, deps.getRunContextFor(task.id));
+          await store.logEntry(taskId, refusalMessage, undefined, deps.runContextFor(task.id));
           executorLog.error(`${taskId}: fn_task_done refused (${invariantCheck.reason}) — observed=${invariantCheck.observed}, expected=${invariantCheck.expected}`);
 
           /*
@@ -399,8 +398,8 @@ export function createTaskDoneTool(
           agent cannot rewrite a shared checkout safely and previously created an identical loop.
           */
           if (invariantCheck.reason === "main_checkout_edit") {
-            await store.updateTask(taskId, { status: "failed", error: refusalMessage });
-            await store.logEntry(taskId, `${refusalMessage} — operator cleanup and Retry are required; executor retry budget preserved`, undefined, deps.getRunContextFor(task.id));
+            await store.updateTask(taskId, { status: "failed", error: refusalMessage }, deps.runContextFor(task.id));
+            await store.logEntry(taskId, `${refusalMessage} — operator cleanup and Retry are required; executor retry budget preserved`, undefined, deps.runContextFor(task.id));
             return {
               content: [{ type: "text" as const, text: refusalMessage }],
               details: { error: refusalMessage },
@@ -424,7 +423,7 @@ export function createTaskDoneTool(
               taskId,
               `${refusalMessage} — requeued to todo immediately (${nextRequeueCount}/${MAX_TASK_DONE_REQUEUE_RETRIES})`,
               undefined,
-              deps.getRunContextFor(task.id),
+              deps.runContextFor(task.id),
             );
             await store.moveTask(taskId, await resolveReboundColumnFor(store, taskId), { preserveProgress: true });
             executorLog.log(`✗ ${taskId} failed invariant check — requeued to todo (${nextRequeueCount}/${MAX_TASK_DONE_REQUEUE_RETRIES})`);
@@ -438,7 +437,7 @@ export function createTaskDoneTool(
               branch: null, branchWriteOrigin: "engine" as const,
               sessionFile: null,
             });
-            await store.logEntry(taskId, `${refusalMessage} — invariant-check retry budget exhausted`, undefined, deps.getRunContextFor(task.id));
+            await store.logEntry(taskId, `${refusalMessage} — invariant-check retry budget exhausted`, undefined, deps.runContextFor(task.id));
             await deps.persistTokenUsage(taskId);
             executorLog.log(`✗ ${taskId} failed invariant check`);
           }
@@ -454,7 +453,7 @@ export function createTaskDoneTool(
         const taskDoneRefusal = evaluateTaskDoneRefusal(task, params, codeReviewVerdicts);
         if (!taskDoneRefusal.ok) {
           const refusalMessage = taskDoneRefusal.message;
-          await store.logEntry(taskId, refusalMessage, undefined, deps.getRunContextFor(task.id));
+          await store.logEntry(taskId, refusalMessage, undefined, deps.runContextFor(task.id));
           executorLog.error(`${taskId}: fn_task_done refused (${taskDoneRefusal.refusalClass}) — ${taskDoneRefusal.reason}`);
 
           // FNXC:Lifecycle 2026-07-16-21:40: FN-8141 — stamp the skip-bypass taint marker so a
@@ -478,7 +477,7 @@ export function createTaskDoneTool(
               taskId,
               `${refusalMessage} — requeued to todo immediately (${nextRequeueCount}/${MAX_TASK_DONE_REQUEUE_RETRIES})`,
               undefined,
-              deps.getRunContextFor(task.id),
+              deps.runContextFor(task.id),
             );
             await store.moveTask(taskId, await resolveReboundColumnFor(store, taskId), { preserveProgress: true });
             executorLog.log(`✗ ${taskId} fn_task_done refusal (${taskDoneRefusal.refusalClass}) — requeued to todo (${nextRequeueCount}/${MAX_TASK_DONE_REQUEUE_RETRIES})`);
@@ -493,7 +492,7 @@ export function createTaskDoneTool(
               branch: null, branchWriteOrigin: "engine" as const,
               sessionFile: null,
             });
-            await store.logEntry(taskId, `${refusalMessage} — fn_task_done refusal retry budget exhausted`, undefined, deps.getRunContextFor(task.id));
+            await store.logEntry(taskId, `${refusalMessage} — fn_task_done refusal retry budget exhausted`, undefined, deps.runContextFor(task.id));
             await deps.persistTokenUsage(taskId);
             executorLog.log(`✗ ${taskId} fn_task_done refusal (${taskDoneRefusal.refusalClass})`);
           }
@@ -518,7 +517,7 @@ export function createTaskDoneTool(
             return { blocked: false } as const;
           });
         if (scopeLeakCheck.blocked) {
-          await store.logEntry(taskId, `[scope-leak] blocked fn_task_done: ${scopeLeakCheck.message}`, undefined, deps.getRunContextFor(task.id));
+          await store.logEntry(taskId, `[scope-leak] blocked fn_task_done: ${scopeLeakCheck.message}`, undefined, deps.runContextFor(task.id));
           return {
             content: [{ type: "text" as const, text: scopeLeakCheck.message }],
             details: {
@@ -591,7 +590,7 @@ export function createTaskDoneTool(
             await store.updateTask(taskId, {
               summary: `${currentTask.summary}\n\n${rerunSuffix}`,
             });
-            await store.logEntry(taskId, "fn_task_done summary appended to existing summary (workflow-step rerun)", undefined, deps.getRunContextFor(taskId));
+            await store.logEntry(taskId, "fn_task_done summary appended to existing summary (workflow-step rerun)", undefined, deps.runContextFor(taskId));
           } else if (!existingSummary || !hasRunWorkflowSteps) {
             await store.updateTask(taskId, { summary: params.summary });
           }
@@ -613,7 +612,7 @@ export function createTaskDoneTool(
           // skip-bypass taint so a subsequent auto-promotion path is not blocked.
           bulkCompletionRefusalAt: null,
         });
-        await store.logEntry(taskId, "Task marked done by agent", undefined, deps.getRunContextFor(taskId));
+        await store.logEntry(taskId, "Task marked done by agent", undefined, deps.runContextFor(taskId));
         // FNXC:TaskRecommendations 2026-08-13-03:56: accepted completion boundary; dispatch after durable handoff without awaiting mailbox I/O.
         if (completionRecommendations !== undefined) {
           dispatchAcceptedCompletionRecommendationNotice({
@@ -635,7 +634,7 @@ export function createTaskDoneTool(
               ? "fn_task_done called while task was in todo during pause — promoting to in-progress for deferred completion handoff"
               : "fn_task_done called while task was in todo — promoting to in-progress before completion handoff",
             undefined,
-            deps.getRunContextFor(taskId),
+            deps.runContextFor(taskId),
           );
           /* FNXC:WorkflowResolvedColumns 2026-07-30-21:40: census-invisible moveTask DESTINATION, and `latestColumn` must be set from the SAME resolved value or the check below it compares against a lane the card is not in. */
           const wipTarget = await resolveWipTargetForTask(store, taskId);

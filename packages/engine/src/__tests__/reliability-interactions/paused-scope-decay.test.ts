@@ -1,4 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
+These call-arg assertions now include the mutation context the converted sweep passes.
+Adding it is what keeps them load-bearing: left at the old arity every
+`toHaveBeenCalledWith` here would fail, and every `.not.toHaveBeenCalledWith` would pass
+vacuously — an assertion that can no longer fail is worse than one that is red.
+*/
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import { EventEmitter } from "node:events";
 import type { Settings, Task, TaskStore } from "@fusion/core";
 import { SelfHealingManager } from "../../self-healing.js";
@@ -81,12 +89,12 @@ describe("reliability interactions: paused scope decay", () => {
       preserveWorktree: true,
       preserveResumeState: true,
       moveSource: "engine",
-    }));
+    }), UNATTRIBUTED_MUTATION_CONTEXT);
     expect((store.moveTask as any).mock.calls[0][2].moveSource).toBe("engine");
     expect((store.moveTask as any).mock.calls[0][2].moveSource).not.toBe("user");
     expect(byId.get("FN-1")?.currentStep).toBe(2);
     expect(byId.get("FN-1")?.worktree).toBe("/tmp/wt");
-    expect(store.logEntry).toHaveBeenCalledWith("FN-1", expect.stringContaining("Auto-rebounded (FN-4890)"));
+    expect(store.logEntry).toHaveBeenCalledWith("FN-1", expect.stringContaining("Auto-rebounded (FN-4890)"), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
     expect(audits.some((event) => event.mutationType === "task:auto-rebound-paused-scope-decay")).toBe(true);
 
     expect(byId.get("FN-1")?.column).toBe("todo");
@@ -173,8 +181,8 @@ describe("reliability interactions: paused scope decay", () => {
 
     // Only the control task is rebounded -- the approval-held task is untouched.
     expect(count).toBe(1);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-CONTROL", "todo", expect.anything());
-    expect(store.moveTask).not.toHaveBeenCalledWith("FN-APPROVAL", "todo", expect.anything());
+    expect(store.moveTask).toHaveBeenCalledWith("FN-CONTROL", "todo", expect.anything(), UNATTRIBUTED_MUTATION_CONTEXT);
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-APPROVAL", "todo", expect.anything(), UNATTRIBUTED_MUTATION_CONTEXT);
     expect(byId.get("FN-APPROVAL")?.column).toBe("in-progress");
     expect(byId.get("FN-APPROVAL")?.paused).toBe(true);
     expect(byId.get("FN-APPROVAL")?.pausedReason).toBe("awaiting-approval");

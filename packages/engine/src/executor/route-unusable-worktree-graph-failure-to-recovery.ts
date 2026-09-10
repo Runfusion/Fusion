@@ -1,3 +1,12 @@
+import type { Task, TaskDetail, TaskStore, RunMutationContext } from "@fusion/core";
+import { allowsAutoMergeProcessing } from "@fusion/core";
+import type { WorkflowGraphTaskRunResult } from "../workflows/workflow-graph-task-runner.js";
+import { createRunAuditor, generateSyntheticRunId, type RunAuditor } from "../util/run-audit.js";
+import { resolveTerminalColumnsFor } from "./lifecycle-columns.js";
+import { extractUnusableWorktreeGraphFailure, graphFailureErrorTexts, isWorkspacePreparationGraphFailure } from "./graph-failure-pure.js";
+import { extractMissingWorktreePathFromSessionStartFailure } from "../healing/restart-recovery-coordinator.js";
+import { autoRecoverWorktreeSessionStartFailure } from "../self-healing/auto-recover-worktree-session.js";
+import type { ResumeLanes } from "./resolve-resume-lanes.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-13:50:
  * routeUnusableWorktreeGraphFailureToRecovery peeled from TaskExecutor (U4).
@@ -8,19 +17,11 @@
  * FNXC:WorkflowLifecycleColumns 2026-07-30-21:40:
  * Review-lane auto-merge-off gate uses resolved resume lanes.
  */
-import type { Task, TaskDetail, TaskStore } from "@fusion/core";
-import { allowsAutoMergeProcessing } from "@fusion/core";
-import type { WorkflowGraphTaskRunResult } from "../workflows/workflow-graph-task-runner.js";
-import { createRunAuditor, generateSyntheticRunId, type EngineRunContext, type RunAuditor } from "../util/run-audit.js";
-import { resolveTerminalColumnsFor } from "./lifecycle-columns.js";
-import { extractUnusableWorktreeGraphFailure, graphFailureErrorTexts, isWorkspacePreparationGraphFailure } from "./graph-failure-pure.js";
-import { extractMissingWorktreePathFromSessionStartFailure } from "../healing/restart-recovery-coordinator.js";
-import { autoRecoverWorktreeSessionStartFailure } from "../self-healing/auto-recover-worktree-session.js";
-import type { ResumeLanes } from "./resolve-resume-lanes.js";
 
 export type RouteUnusableWorktreeGraphFailureToRecoveryDeps = {
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   pausedAborted: Set<string>;
   resolveResumeLanes: (taskId: string, memo?: { lanes?: ResumeLanes }) => Promise<ResumeLanes>;
   recoverMissingWorktreeSessionStartFailure: (

@@ -1,3 +1,8 @@
+import type { Task, TaskDetail, TaskRecommendation, TaskStore, WorkflowWorkItem, RunMutationContext } from "@fusion/core";
+import { resolveWipTargetForTask } from "@fusion/core";
+import { executorLog } from "../logger.js";
+import { resolveReboundColumnFor, resolveTerminalColumnsFor } from "./lifecycle-columns.js";
+import { dispatchAcceptedCompletionRecommendationNotice } from "./completion-recommendation-notice.js";
 /**
  * FNXC:CodeOrganization 2026-08-09-22:10:
  * Plan Review CLOSE_NO_OP terminalization peels (FN-8841 / U4).
@@ -7,16 +12,11 @@
  * Keep one held continuation at plan-review so scheduler resume preserves the audited close
  * evidence without changing the task's column or manufacturing a task error.
  */
-import type { Task, TaskDetail, TaskRecommendation, TaskStore, WorkflowWorkItem } from "@fusion/core";
-import { resolveWipTargetForTask } from "@fusion/core";
-import { executorLog } from "../logger.js";
-import type { EngineRunContext } from "../util/run-audit.js";
-import { resolveReboundColumnFor, resolveTerminalColumnsFor } from "./lifecycle-columns.js";
-import { dispatchAcceptedCompletionRecommendationNotice } from "./completion-recommendation-notice.js";
 
 export type FinalizeAcceptedNoOpCompletionDeps = {
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   scheduleCompletedTaskWatchdog: (taskId: string, source: string) => void;
 };
 
@@ -53,7 +53,7 @@ export async function finalizeAcceptedNoOpCompletion(
   }
   if (rejectIfPaused && (live.paused || live.userPaused)) return { completed: false, hardPauseActive: false };
 
-  const runContext = deps.getRunContextFor(task.id);
+  const runContext = deps.runContextFor(task.id);
   const restoreNoCommitsExpected = async (): Promise<void> => {
     if (live.noCommitsExpected !== true) {
       await deps.store.updateTask(task.id, { noCommitsExpected: false }).catch(() => undefined);

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 import { TriageProcessor } from "../triage.js";
 import type { Settings, Task, TaskStore, WorkflowIr } from "@fusion/core";
 
@@ -133,13 +134,13 @@ async function staleePlanningScenario(plannerColumn: string) {
 describe("triage startup stale-planning sweep reaches a RENAMED planner lane", () => {
   it("default vocabulary: a stale planning card in the planner lane is cleared", async () => {
     const { updateTask, stale } = await staleePlanningScenario("todo");
-    expect(updateTask).toHaveBeenCalledWith("FN-STALE", { status: null });
+    expect(updateTask).toHaveBeenCalledWith("FN-STALE", { status: null }, ANY_MUTATION_CONTEXT);
     expect(stale.status).toBeNull();
   });
 
   it("renamed vocabulary: a stale planning card in the planner lane is cleared", async () => {
     const { updateTask, stale } = await staleePlanningScenario("drafting");
-    expect(updateTask).toHaveBeenCalledWith("FN-STALE", { status: null });
+    expect(updateTask).toHaveBeenCalledWith("FN-STALE", { status: null }, ANY_MUTATION_CONTEXT);
     expect(stale.status).toBeNull();
   });
 
@@ -162,6 +163,6 @@ describe("triage startup stale-planning sweep reaches a RENAMED planner lane", (
     await (processor as unknown as { clearStaleSpecifyingStatuses(): Promise<void> }).clearStaleSpecifyingStatuses();
     processor.stop();
 
-    expect(updateTask).toHaveBeenCalledWith("FN-LEGACY", { status: null });
+    expect(updateTask).toHaveBeenCalledWith("FN-LEGACY", { status: null }, ANY_MUTATION_CONTEXT);
   });
 });

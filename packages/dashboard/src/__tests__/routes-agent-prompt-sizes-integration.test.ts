@@ -54,7 +54,7 @@ pgDescribe("GET /api/agents/:id/prompt-sizes integration", () => {
   });
 
   it("returns prompt-size rows derived from startedAt and run JSON", async () => {
-    const app = createServer(store);
+    const app = createServer(store, { noAuth: true });
     const okRes = await get(app, `/api/agents/${agentId}/prompt-sizes`);
     expect(okRes.status).toBe(200);
     expect(okRes.body).toEqual([

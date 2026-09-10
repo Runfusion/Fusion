@@ -4,6 +4,8 @@ import "./executor-test-helpers.js";
 import { TaskExecutor } from "../executor.js";
 import { BranchAttributionError } from "../execution/branch-attribution.js";
 import { createMockStore, mockedExecSync, resetExecutorMocks } from "./executor-test-helpers.js";
+/* FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage C): the executor threads a real mutation context to every store call, so these assertions pin it rather than accepting `undefined`. */
+import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 
 const { filterFilesToOwnTaskCommitsMock } = vi.hoisted(() => ({
   filterFilesToOwnTaskCommitsMock: vi.fn(),
@@ -129,7 +131,7 @@ describe("FN-5039 executor captureModifiedFiles attribution", () => {
       "FN-5039",
       expect.stringMatching(/\[scope-leak\].*off-scope/),
       undefined,
-      undefined,
+      ANY_MUTATION_CONTEXT,
     );
   });
 
@@ -152,7 +154,7 @@ describe("FN-5039 executor captureModifiedFiles attribution", () => {
       "FN-5039",
       expect.stringMatching(/\[scope-leak\].*AGENTS\.md/),
       undefined,
-      undefined,
+      ANY_MUTATION_CONTEXT,
     );
   });
 
@@ -175,7 +177,7 @@ describe("FN-5039 executor captureModifiedFiles attribution", () => {
       "FN-5039",
       expect.stringMatching(/\[scope-leak\].*AGENTS\.md/),
       undefined,
-      undefined,
+      ANY_MUTATION_CONTEXT,
     );
   });
 

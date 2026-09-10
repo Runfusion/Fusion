@@ -1,5 +1,6 @@
 // @vitest-environment node
 
+import { UNATTRIBUTED_CONTEXT_MATCHER } from "./mutation-context-matchers.js";
 import { describe, it, expect, vi, beforeAll, beforeEach, afterAll, afterEach } from "vitest";
 import express from "express";
 import http from "node:http";
@@ -784,7 +785,7 @@ describe("POST /github/issues/import", () => {
           issueNumber: 1,
         },
       },
-    });
+    }, undefined, UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   /*
@@ -816,7 +817,7 @@ describe("POST /github/issues/import", () => {
     expect(store.createTask).toHaveBeenCalledWith(expect.objectContaining({
       title: "Translated title",
       description: "Translated body\n\nSource: https://github.com/owner/repo/issues/1",
-    }));
+    }), undefined, UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   /*
@@ -953,7 +954,7 @@ describe("POST /github/issues/import", () => {
     expect(store.createTask).toHaveBeenCalledWith(expect.objectContaining({
       githubTracking: { enabled: true },
       sourceIssue: expect.objectContaining({ provider: "github", repository: "owner/repo", issueNumber: 1 }),
-    }));
+    }), undefined, UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("marks a single imported issue as tracked when import linking is on and new-task defaults are off", async () => {
@@ -972,7 +973,7 @@ describe("POST /github/issues/import", () => {
       description: "(no description)\n\nSource: https://github.com/owner/repo/issues/1",
       githubTracking: { enabled: true },
       sourceIssue: expect.objectContaining({ provider: "github", repository: "owner/repo", issueNumber: 1 }),
-    }));
+    }), undefined, UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("leaves a single imported issue unforced when tracking defaults are off", async () => {
@@ -985,7 +986,7 @@ describe("POST /github/issues/import", () => {
     expect(res.status).toBe(201);
     expect(store.createTask).toHaveBeenCalledWith(expect.not.objectContaining({
       githubTracking: expect.anything(),
-    }));
+    }), undefined, UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("logs the import action", async () => {
@@ -995,7 +996,7 @@ describe("POST /github/issues/import", () => {
       "Content-Type": "application/json",
     });
 
-    expect(store.logEntry).toHaveBeenCalledWith("FN-001", "Imported from GitHub", "https://github.com/owner/repo/issues/1");
+    expect(store.logEntry).toHaveBeenCalledWith("FN-001", "Imported from GitHub", "https://github.com/owner/repo/issues/1", UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("returns 400 when issueNumber is missing", async () => {
@@ -1119,7 +1120,7 @@ describe("POST /github/issues/import", () => {
           issueNumber: 1,
         },
       },
-    });
+    }, undefined, UNATTRIBUTED_CONTEXT_MATCHER);
   });
 });
 
@@ -1307,7 +1308,7 @@ describe("POST /github/issues/batch-import", () => {
         issueNumber: 1,
         url: "https://github.com/owner/repo/issues/1",
       },
-    }));
+    }), undefined, UNATTRIBUTED_CONTEXT_MATCHER);
     expect(store.createTask).toHaveBeenNthCalledWith(2, expect.objectContaining({
       sourceIssue: {
         provider: "github",
@@ -1316,7 +1317,7 @@ describe("POST /github/issues/batch-import", () => {
         issueNumber: 2,
         url: "https://github.com/owner/repo/issues/2",
       },
-    }));
+    }), undefined, UNATTRIBUTED_CONTEXT_MATCHER);
     expect(store.createTask).toHaveBeenNthCalledWith(3, expect.objectContaining({
       sourceIssue: {
         provider: "github",
@@ -1325,7 +1326,7 @@ describe("POST /github/issues/batch-import", () => {
         issueNumber: 3,
         url: "https://github.com/owner/repo/issues/3",
       },
-    }));
+    }), undefined, UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   /*
@@ -1359,11 +1360,11 @@ describe("POST /github/issues/batch-import", () => {
     expect(store.createTask).toHaveBeenNthCalledWith(1, expect.objectContaining({
       title: "Translated batch title",
       description: "Translated batch body\n\nSource: https://github.com/owner/repo/issues/1",
-    }));
+    }), undefined, UNATTRIBUTED_CONTEXT_MATCHER);
     expect(store.createTask).toHaveBeenNthCalledWith(2, expect.objectContaining({
       title: "Original closed title",
       description: "Original closed body\n\nSource: https://github.com/owner/repo/issues/2",
-    }));
+    }), undefined, UNATTRIBUTED_CONTEXT_MATCHER);
     expect(mockGetCachedImportTranslation).toHaveBeenCalledTimes(2);
     expect(mockGetCachedImportTranslation).toHaveBeenNthCalledWith(
       2,
@@ -1394,7 +1395,7 @@ describe("POST /github/issues/batch-import", () => {
     expect(store.createTask).toHaveBeenCalledWith(expect.objectContaining({
       githubTracking: { enabled: true },
       sourceIssue: expect.objectContaining({ provider: "github", repository: "owner/repo", issueNumber: 1 }),
-    }));
+    }), undefined, UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("marks batch imported issues as tracked when import linking is on and new-task defaults are off", async () => {
@@ -1420,7 +1421,7 @@ describe("POST /github/issues/batch-import", () => {
     expect(store.createTask).toHaveBeenCalledWith(expect.objectContaining({
       githubTracking: { enabled: true },
       sourceIssue: expect.objectContaining({ provider: "github", repository: "owner/repo", issueNumber: 1 }),
-    }));
+    }), undefined, UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("leaves batch imported issues unforced when tracking defaults are off", async () => {
@@ -1441,7 +1442,7 @@ describe("POST /github/issues/batch-import", () => {
     expect(res.status).toBe(200);
     expect(store.createTask).toHaveBeenCalledWith(expect.not.objectContaining({
       githubTracking: expect.anything(),
-    }));
+    }), undefined, UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("skips already-imported issues", async () => {
@@ -1537,7 +1538,7 @@ describe("POST /github/issues/batch-import", () => {
     expect(store.createTask).toHaveBeenCalledTimes(1);
     expect(store.createTask).toHaveBeenCalledWith(expect.objectContaining({
       sourceIssue: expect.objectContaining({ issueNumber: 2 }),
-    }));
+    }), undefined, UNATTRIBUTED_CONTEXT_MATCHER);
     expect(throttledSpy).toHaveBeenCalledTimes(2);
   });
 
@@ -1781,7 +1782,8 @@ describe("POST /github/issues/batch-import", () => {
     expect(store.logEntry).toHaveBeenCalledWith(
       expect.any(String),
       "Imported from GitHub",
-      "https://github.com/owner/repo/issues/1"
+      "https://github.com/owner/repo/issues/1",
+      UNATTRIBUTED_CONTEXT_MATCHER,
     );
   });
 });
@@ -1826,10 +1828,10 @@ describe("POST /github/pulls/import and /github/comments/import", () => {
     expect(store.createTask).toHaveBeenCalledWith(expect.objectContaining({
       title: "Resolve feedback: PR #9 — Feedback PR",
       description: expect.stringContaining("Resolve the pull request review feedback and address any failed CI checks."),
-    }));
+    }), undefined, UNATTRIBUTED_CONTEXT_MATCHER);
     expect(store.createTask).toHaveBeenCalledWith(expect.objectContaining({
       description: expect.stringContaining("PR: https://github.com/owner/repo/pull/9\nBranch: feature/feedback → main\n\nPR body"),
-    }));
+    }), undefined, UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("creates comment feedback tasks without deduplicating repeated imports", async () => {
@@ -1843,8 +1845,8 @@ describe("POST /github/pulls/import and /github/comments/import", () => {
     expect(store.createTask).toHaveBeenCalledWith(expect.objectContaining({
       title: "Resolve feedback from @reviewer on #9",
       description: "Resolve or address this feedback comment.\n\n> reviewer\n> Please add coverage\n\nSource: https://github.com/owner/repo/pull/9",
-    }));
-    expect(store.logEntry).toHaveBeenCalledWith("FN-FEEDBACK", "Imported PR/issue comment from GitHub", "https://github.com/owner/repo/pull/9");
+    }), undefined, UNATTRIBUTED_CONTEXT_MATCHER);
+    expect(store.logEntry).toHaveBeenCalledWith("FN-FEEDBACK", "Imported PR/issue comment from GitHub", "https://github.com/owner/repo/pull/9", UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("requires GitHub authentication and complete comment payloads", async () => {
@@ -2065,8 +2067,6 @@ describe("projectId store scoping regressions", () => {
     expect(scopedStore.createTask).toHaveBeenCalledTimes(1);
     expect(defaultStore.createTask).not.toHaveBeenCalled();
   });
-
-
 });
 
 // --- Spec Revision route tests ---
@@ -2116,7 +2116,8 @@ describe("POST /tasks/:id/spec/revise", () => {
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-001",
         "AI spec revision requested",
-        "Please add more details about error handling"
+        "Please add more details about error handling",
+        UNATTRIBUTED_CONTEXT_MATCHER,
       );
       /*
       FNXC:PlanApproval 2026-08-28-11:39:
@@ -2124,7 +2125,7 @@ describe("POST /tasks/:id/spec/revise", () => {
       */
       expect(store.moveTask).not.toHaveBeenCalled();
       expect(existsSync(join(taskDir, "PROMPT.md"))).toBe(false);
-      expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "needs-replan" });
+      expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "needs-replan" }, UNATTRIBUTED_CONTEXT_MATCHER);
     } finally {
       rmSync(tempRoot, { recursive: true, force: true });
     }
@@ -2147,7 +2148,7 @@ describe("POST /tasks/:id/spec/revise", () => {
     );
 
     expect(res.status).toBe(200);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo", undefined, UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("allows spec revision for task already in triage", async () => {
@@ -2177,11 +2178,12 @@ describe("POST /tasks/:id/spec/revise", () => {
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-001",
         "AI spec revision requested",
-        "Some feedback"
+        "Some feedback",
+        UNATTRIBUTED_CONTEXT_MATCHER,
       );
       expect(store.moveTask).not.toHaveBeenCalled();
       expect(existsSync(join(taskDir, "PROMPT.md"))).toBe(false);
-      expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "needs-replan" });
+      expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "needs-replan" }, UNATTRIBUTED_CONTEXT_MATCHER);
     } finally {
       rmSync(tempRoot, { recursive: true, force: true });
     }
@@ -2203,8 +2205,8 @@ describe("POST /tasks/:id/spec/revise", () => {
     );
 
     expect(res.status).toBe(200);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo");
-    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "needs-replan" });
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo", undefined, UNATTRIBUTED_CONTEXT_MATCHER);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "needs-replan" }, UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("allows spec revision when task is in done (done can transition to triage)", async () => {
@@ -2223,7 +2225,7 @@ describe("POST /tasks/:id/spec/revise", () => {
     );
 
     expect(res.status).toBe(200);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo", undefined, UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("returns 400 when feedback is missing", async () => {
@@ -2358,8 +2360,8 @@ describe("POST /tasks/:id/spec/revise", () => {
     );
 
     expect(store.logEntry).toHaveBeenCalledTimes(2);
-    expect(store.logEntry).toHaveBeenNthCalledWith(1, "FN-001", "AI spec revision requested", "First feedback");
-    expect(store.logEntry).toHaveBeenNthCalledWith(2, "FN-001", "AI spec revision requested", "Second feedback");
+    expect(store.logEntry).toHaveBeenNthCalledWith(1, "FN-001", "AI spec revision requested", "First feedback", UNATTRIBUTED_CONTEXT_MATCHER);
+    expect(store.logEntry).toHaveBeenNthCalledWith(2, "FN-001", "AI spec revision requested", "Second feedback", UNATTRIBUTED_CONTEXT_MATCHER);
   });
 });
 
@@ -2404,7 +2406,8 @@ describe("POST /tasks/:id/spec/rebuild", () => {
       expect(res.status).toBe(200);
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-001",
-        "Specification rebuild requested by user"
+        "Specification rebuild requested by user",
+        undefined, UNATTRIBUTED_CONTEXT_MATCHER,
       );
       /*
       FNXC:WorkflowLifecycleColumns 2026-08-03-01:40: the resolved rebuild target for the default lineage IS
@@ -2414,7 +2417,7 @@ describe("POST /tasks/:id/spec/rebuild", () => {
       expect(store.moveTask).not.toHaveBeenCalled();
       expect((store as unknown as { clearWorkflowRunStepInstancesAsync: ReturnType<typeof vi.fn> }).clearWorkflowRunStepInstancesAsync).toHaveBeenCalledWith("FN-001");
       expect(existsSync(join(taskDir, "PROMPT.md"))).toBe(false);
-      expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "needs-replan" });
+      expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "needs-replan" }, UNATTRIBUTED_CONTEXT_MATCHER);
     } finally {
       rmSync(tempRoot, { recursive: true, force: true });
     }
@@ -2431,9 +2434,9 @@ describe("POST /tasks/:id/spec/rebuild", () => {
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/spec/rebuild");
 
     expect(res.status).toBe(200);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo", { moveSource: "user", recoveryRehome: true });
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo", { moveSource: "user", recoveryRehome: true }, UNATTRIBUTED_CONTEXT_MATCHER);
     expect((store as unknown as { clearWorkflowRunStepInstancesAsync: ReturnType<typeof vi.fn> }).clearWorkflowRunStepInstancesAsync).toHaveBeenCalledWith("FN-001");
-    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "needs-replan" });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "needs-replan" }, UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("rebuilds spec and moves task from done to triage", async () => {
@@ -2447,7 +2450,7 @@ describe("POST /tasks/:id/spec/rebuild", () => {
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/spec/rebuild");
 
     expect(res.status).toBe(200);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo", { moveSource: "user", recoveryRehome: true });
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo", { moveSource: "user", recoveryRehome: true }, UNATTRIBUTED_CONTEXT_MATCHER);
     expect((store as unknown as { clearWorkflowRunStepInstancesAsync: ReturnType<typeof vi.fn> }).clearWorkflowRunStepInstancesAsync).toHaveBeenCalledWith("FN-001");
   });
 
@@ -2471,12 +2474,13 @@ describe("POST /tasks/:id/spec/rebuild", () => {
       expect(res.status).toBe(200);
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-001",
-        "Specification rebuild requested by user"
+        "Specification rebuild requested by user",
+        undefined, UNATTRIBUTED_CONTEXT_MATCHER,
       );
       expect(store.moveTask).not.toHaveBeenCalled();
       expect((store as unknown as { clearWorkflowRunStepInstancesAsync: ReturnType<typeof vi.fn> }).clearWorkflowRunStepInstancesAsync).toHaveBeenCalledWith("FN-001");
       expect(existsSync(join(taskDir, "PROMPT.md"))).toBe(false);
-      expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "needs-replan" });
+      expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "needs-replan" }, UNATTRIBUTED_CONTEXT_MATCHER);
       expect(res.body.status).toBe("needs-replan");
     } finally {
       rmSync(tempRoot, { recursive: true, force: true });
@@ -2493,9 +2497,9 @@ describe("POST /tasks/:id/spec/rebuild", () => {
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/spec/rebuild");
 
     expect(res.status).toBe(200);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo", { moveSource: "user", recoveryRehome: true });
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo", { moveSource: "user", recoveryRehome: true }, UNATTRIBUTED_CONTEXT_MATCHER);
     expect((store as unknown as { clearWorkflowRunStepInstancesAsync: ReturnType<typeof vi.fn> }).clearWorkflowRunStepInstancesAsync).toHaveBeenCalledWith("FN-001");
-    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "needs-replan" });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "needs-replan" }, UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   function selectWorkflow(columns: Array<{ id: string; traits?: Array<{ trait: string }> }>) {
@@ -2532,10 +2536,10 @@ describe("POST /tasks/:id/spec/rebuild", () => {
          resort applies and the target stays the legacy `triage` — recovery-rehomed because a plain move would
          reject an undeclared target. My blanket `triage` -> `todo` sweep over this file had broken exactly this
          case, which is the one that proves the fallback still exists. */
-      expect(store.moveTask).toHaveBeenCalledWith("FN-001", "triage", { moveSource: "user", recoveryRehome: true });
+      expect(store.moveTask).toHaveBeenCalledWith("FN-001", "triage", { moveSource: "user", recoveryRehome: true }, UNATTRIBUTED_CONTEXT_MATCHER);
       expect((store as unknown as { clearWorkflowRunStepInstancesAsync: ReturnType<typeof vi.fn> }).clearWorkflowRunStepInstancesAsync).toHaveBeenCalledWith("FN-001");
       expect(existsSync(join(taskDir, "PROMPT.md"))).toBe(false);
-      expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "needs-replan" });
+      expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "needs-replan" }, UNATTRIBUTED_CONTEXT_MATCHER);
     } finally {
       rmSync(tempRoot, { recursive: true, force: true });
     }
@@ -2554,7 +2558,7 @@ describe("POST /tasks/:id/spec/rebuild", () => {
 
     expect(res.status).toBe(200);
     expect(store.moveTask).not.toHaveBeenCalled();
-    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "needs-replan" });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "needs-replan" }, UNATTRIBUTED_CONTEXT_MATCHER);
     expect(res.body.status).toBe("needs-replan");
   });
 
@@ -2569,8 +2573,8 @@ describe("POST /tasks/:id/spec/rebuild", () => {
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/spec/rebuild");
 
     expect(res.status).toBe(200);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo", { moveSource: "user", recoveryRehome: true });
-    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "needs-replan" });
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo", { moveSource: "user", recoveryRehome: true }, UNATTRIBUTED_CONTEXT_MATCHER);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "needs-replan" }, UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("returns 404 when task not found", async () => {
@@ -2770,8 +2774,8 @@ describe("POST /tasks/:id/approve-plan", () => {
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/approve-plan");
 
     expect(res.status).toBe(200);
-    expect(store.logEntry).toHaveBeenCalledWith("FN-001", "Plan approved by user");
-    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo");
+    expect(store.logEntry).toHaveBeenCalledWith("FN-001", "Plan approved by user", undefined, UNATTRIBUTED_CONTEXT_MATCHER);
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo", undefined, UNATTRIBUTED_CONTEXT_MATCHER);
     /*
     FNXC:SpecLockApproval 2026-08-15-05:10:
     A readable PROMPT.md is now mandatory at approval (unreadable is a 409), so the persisted
@@ -2780,7 +2784,7 @@ describe("POST /tasks/:id/approve-plan", () => {
     expect(store.updateTask).toHaveBeenCalledWith("FN-001", {
       status: null,
       approvedPlanFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/),
-    });
+    }, UNATTRIBUTED_CONTEXT_MATCHER);
     expect(res.body.column).toBe("todo");
     expect(res.body.status).toBeUndefined();
   });
@@ -2850,7 +2854,7 @@ describe("POST /tasks/:id/approve-plan", () => {
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/approve-plan");
 
     expect(res.status).toBe(200);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo", undefined, UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   // Passthrough: an ordinary manual-approval hold (no awaitingApprovalReason)
@@ -2871,7 +2875,7 @@ describe("POST /tasks/:id/approve-plan", () => {
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/approve-plan");
 
     expect(res.status).toBe(200);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo", undefined, UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   /*
@@ -2908,6 +2912,7 @@ describe("POST /tasks/:id/approve-plan", () => {
       expect(localStore.updateTask).toHaveBeenCalledWith(
         "FN-001",
         expect.objectContaining({ status: null, approvedPlanFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/) }),
+        UNATTRIBUTED_CONTEXT_MATCHER,
       );
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -2944,10 +2949,10 @@ describe("POST /tasks/:id/reject-plan", () => {
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/reject-plan");
 
     expect(res.status).toBe(200);
-    expect(store.logEntry).toHaveBeenCalledWith("FN-001", "Plan rejected by user", "Specification will be regenerated");
+    expect(store.logEntry).toHaveBeenCalledWith("FN-001", "Plan rejected by user", "Specification will be regenerated", UNATTRIBUTED_CONTEXT_MATCHER);
     // FN-7569: reject-plan clears any previously-recorded approval fingerprint so a
     // regenerated plan is always treated as new and requires fresh manual approval.
-    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: null, approvedPlanFingerprint: null });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: null, approvedPlanFingerprint: null }, UNATTRIBUTED_CONTEXT_MATCHER);
     /* The rejected card stays where it was — the workflow's intake column, `todo` on the default lineage since
        #2515 removed `triage`. Reject clears status for regeneration; it does not move the card. */
     expect(res.body.column).toBe("todo");
@@ -3016,7 +3021,7 @@ describe("POST /tasks/:id/reject-plan", () => {
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/reject-plan");
 
     expect(res.status).toBe(200);
-    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: null, approvedPlanFingerprint: null });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: null, approvedPlanFingerprint: null }, UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   // Passthrough: an ordinary manual-approval hold (no awaitingApprovalReason)
@@ -3036,7 +3041,7 @@ describe("POST /tasks/:id/reject-plan", () => {
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/reject-plan");
 
     expect(res.status).toBe(200);
-    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: null, approvedPlanFingerprint: null });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: null, approvedPlanFingerprint: null }, UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   /*
@@ -3059,7 +3064,7 @@ describe("POST /tasks/:id/reject-plan", () => {
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/reject-plan");
 
     expect(res.status).toBe(200);
-    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: null, approvedPlanFingerprint: null });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: null, approvedPlanFingerprint: null }, UNATTRIBUTED_CONTEXT_MATCHER);
   });
 });
 

@@ -31,7 +31,6 @@ describe("SelfHealingManager orphaned task-dir maintenance", () => {
     vi.spyOn(manager as any, "maintainTaskFts").mockResolvedValue(undefined);
     vi.spyOn(manager as any, "checkpointWal").mockReturnValue(undefined);
     vi.spyOn(manager as any, "enforceWorktreeCap").mockResolvedValue(undefined);
-    vi.spyOn(manager, "archiveStaleDoneTasks").mockResolvedValue(0);
 
     await (manager as any).runMaintenance();
 

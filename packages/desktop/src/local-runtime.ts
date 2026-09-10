@@ -8,6 +8,7 @@ import type { AddressInfo } from "node:net";
 
 import { resolveDesktopRuntimePrimaryProject } from "./engine-runtime.js";
 import { resolveDesktopBundlePluginDirs } from "./bundled-plugin-dirs.js";
+import { DESKTOP_SERVER_HOST, getDesktopApiToken } from "./api-token.js";
 
 /*
  * FNXC:DesktopRuntime 2026-07-02-14:35:
@@ -147,6 +148,16 @@ export interface DesktopRuntimeStatus {
   state: RuntimeState;
   port?: number;
   baseUrl?: string;
+  /*
+  FNXC:DesktopHostAuth 2026-08-09-03:04:
+  Bearer token for the embedded server's now-authenticated `/api/*`. Carried to the renderer over
+  the SAME channel that already carries `baseUrl` (runtime status → `shell:getState` IPC →
+  DesktopLaunchGate), which then appends it as `?token=` on the runtime-origin navigation; the SPA's
+  `captureTokenFromUrl` stores it under `fn.authToken` and strips it from history.
+  Only ever set for `source: "embedded-local"` — an `external-cli` runtime is a DIFFERENT process
+  whose token this process does not know, so advertising ours there would be a lie.
+  */
+  authToken?: string;
   error?: string;
   startupFailure?: DesktopStartupFailure;
   migration?: DesktopMigrationProgress;
@@ -438,6 +449,15 @@ async function createDashboardServerDefault(store: TaskStoreLike, rootDir: strin
 
     strace("createDashboardServer: createServer");
     const app = createServer(store as never, {
+      /*
+      FNXC:DesktopHostAuth 2026-08-09-03:04:
+      Mount the real bearer gate on the embedded desktop API. Without a `daemon` token (and with
+      `noAuth` unset) the dashboard server now REFUSES `/api/*` with 503, and before that refusal
+      existed it served the shell-capable terminal API unauthenticated. The renderer receives this
+      same token through `localRuntime.authToken` and replays it as `?token=` when it navigates to
+      the runtime origin. See api-token.ts.
+      */
+      daemon: { token: getDesktopApiToken() },
       ...(primaryEngine ? { engine: primaryEngine } : {}),
       engineManager,
       centralCore,
@@ -449,8 +469,15 @@ async function createDashboardServerDefault(store: TaskStoreLike, rootDir: strin
       ...(await resolveDesktopSystemControl()),
     });
 
-    strace("createDashboardServer: app.listen(0)");
-    const server = app.listen(0);
+    /*
+    FNXC:DesktopHostAuth 2026-08-09-03:04:
+    Ephemeral port, LOOPBACK ONLY. `app.listen(0)` with no host binds 0.0.0.0/:: and put the whole
+    desktop API on the LAN. Mirrors the deliberate 127.0.0.1 pin in `runDashboard`
+    (packages/cli/src/commands/dashboard.ts) — the desktop host has no `--host` opt-in, so this is
+    unconditional.
+    */
+    strace(`createDashboardServer: app.listen(0, "${DESKTOP_SERVER_HOST}")`);
+    const server = app.listen(0, DESKTOP_SERVER_HOST);
     strace("createDashboardServer: returning server object");
     return {
       server,
@@ -514,6 +541,7 @@ export class LocalRuntimeManager {
         state: "running",
         port: this.runtime.port,
         baseUrl: this.runtime.baseUrl,
+        authToken: getDesktopApiToken(),
       };
     }
 
@@ -686,8 +714,8 @@ export class LocalRuntimeManager {
       const port = getAddressPort(server);
       const baseUrl = `http://127.0.0.1:${port}`;
       this.runtime = { store, server, port, baseUrl, cleanup };
-      this.status = { source: "embedded-local", state: "running", port, baseUrl };
-      strace("startEmbedded: running");
+      this.status = { source: "embedded-local", state: "running", port, baseUrl, authToken: getDesktopApiToken() };
+      strace(`startEmbedded: RUNNING port=${port}`);
       return this.status;
     } catch (error) {
       if (server) {

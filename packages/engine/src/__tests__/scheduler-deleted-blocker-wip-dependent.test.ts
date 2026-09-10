@@ -1,4 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
+These call-arg assertions now include the mutation context the converted sweep passes.
+Adding it is what keeps them load-bearing: left at the old arity every
+`toHaveBeenCalledWith` here would fail, and every `.not.toHaveBeenCalledWith` would pass
+vacuously — an assertion that can no longer fail is worse than one that is red.
+*/
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import { Scheduler } from "../scheduler.js";
 import type { Settings, Task, TaskStore, WorkflowIr } from "@fusion/core";
 
@@ -157,12 +165,12 @@ async function deletedBlockerScenario(names: Names) {
 describe("scheduler deleted-blocker reconciliation reaches the WIP lane on a RENAMED board", () => {
   it("default vocabulary: an in-flight dependent of a deleted blocker is unblocked", async () => {
     const { updateTask } = await deletedBlockerScenario(DEFAULT_NAMES);
-    expect(updateTask).toHaveBeenCalledWith("FN-WIP-DEPENDENT", expect.objectContaining({ blockedBy: null }));
+    expect(updateTask).toHaveBeenCalledWith("FN-WIP-DEPENDENT", expect.objectContaining({ blockedBy: null }), UNATTRIBUTED_MUTATION_CONTEXT);
   });
 
   it("renamed vocabulary: an in-flight dependent of a deleted blocker is unblocked", async () => {
     const { updateTask } = await deletedBlockerScenario(RENAMED_NAMES);
-    expect(updateTask).toHaveBeenCalledWith("FN-WIP-DEPENDENT", expect.objectContaining({ blockedBy: null }));
+    expect(updateTask).toHaveBeenCalledWith("FN-WIP-DEPENDENT", expect.objectContaining({ blockedBy: null }), UNATTRIBUTED_MUTATION_CONTEXT);
   });
 
   it("both vocabularies reach the SAME outcome — no column-id literal survives on this path", async () => {

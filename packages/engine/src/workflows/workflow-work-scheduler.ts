@@ -1,4 +1,5 @@
-import type { AsyncMissionStore, MissionStore, Task, WorkflowWorkItem, WorkflowWorkItemDueFilter, WorkflowWorkItemKind } from "@fusion/core";
+import type { AsyncMissionStore, MissionStore, RunMutationContext, Task, WorkflowWorkItem, WorkflowWorkItemDueFilter, WorkflowWorkItemKind } from "@fusion/core";
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import { decideMissionSymbolAdmission } from "../missions/mission-symbol-admission.js";
 
 const WORKFLOW_SYMBOL_LOCK_LEASE_MS = 10 * 60_000;
@@ -21,7 +22,14 @@ export interface WorkflowWorkSchedulerStore {
   ): Promise<{ acquired: true; conflicts: [] } | { acquired: false; conflicts: Array<{ symbolKey: string; ownerTaskId: string }> }>;
   releaseSymbolLocks?(symbols: readonly string[], ownerTaskId: string): Promise<unknown>;
   renewSymbolLocks?(symbols: readonly string[], ownerTaskId: string, leaseMs: number): Promise<{ renewed: string[]; lost: string[] }>;
-  logEntry?(taskId: string, message: string): Promise<unknown>;
+  /*
+  FNXC:Identity 2026-08-09-03:04 (U18/KTD2 — the seam restates the required context):
+  Hand-declared, so it does not inherit U18's canonical/deprecated overload pair on `TaskStore`.
+  Left at the two-argument arity it would keep absorbing unattributed writes after the engine sweep,
+  and the census would report the package converted while this admission path stayed open. The shape
+  below mirrors the CANONICAL store arity, which is also what keeps a real `TaskStore` assignable.
+  */
+  logEntry?(taskId: string, message: string, outcome: string | undefined, runContext: RunMutationContext): Promise<unknown>;
 }
 
 export interface WorkflowWorkDispatch {
@@ -67,7 +75,11 @@ export async function claimDueWorkflowWorkItem(
         planApprovalRequired: settings?.planApprovalMode === "require-all",
       });
       if (admission.kind === "lineage-blocked") {
-        await store.logEntry?.(task.id, `workflow work not claimed — mission lineage blocked: ${admission.reason}`);
+        /* FNXC:Identity 2026-08-09-03:04 (U18/KTD2): marker, not derived — `leaseOwner` names the
+           WORKER that would have taken the claim, not an actor that authored this refusal, and the
+           refusal is written before any run exists. Deriving from it would attribute a system
+           admission decision to a lease holder that never acted. */
+        await store.logEntry?.(task.id, `workflow work not claimed — mission lineage blocked: ${admission.reason}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
         continue;
       }
       if (admission.kind === "symbol-lock") {
@@ -78,7 +90,7 @@ export async function claimDueWorkflowWorkItem(
         );
         if (!result.acquired) {
           const conflict = result.conflicts[0];
-          await store.logEntry?.(task.id, `workflow work not claimed — symbol contention: symbol=${conflict?.symbolKey ?? "unknown"} holder=${conflict?.ownerTaskId ?? "unknown"}`);
+          await store.logEntry?.(task.id, `workflow work not claimed — symbol contention: symbol=${conflict?.symbolKey ?? "unknown"} holder=${conflict?.ownerTaskId ?? "unknown"}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
           continue;
         }
         lockedSymbols = admission.symbols;

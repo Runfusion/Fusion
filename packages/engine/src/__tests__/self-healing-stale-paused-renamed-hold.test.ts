@@ -21,6 +21,14 @@ stayed broken — exactly the "dead guard passes tests" failure mode. Do not
 "simplify" this mock to ignore the filter.
 */
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
+These call-arg assertions now include the mutation context the converted sweep passes.
+Adding it is what keeps them load-bearing: left at the old arity every
+`toHaveBeenCalledWith` here would fail, and every `.not.toHaveBeenCalledWith` would pass
+vacuously — an assertion that can no longer fail is worse than one that is red.
+*/
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import type { Task, TaskStore, WorkflowIr } from "@fusion/core";
 
 import { SelfHealingManager } from "../self-healing.js";
@@ -106,7 +114,7 @@ describe("surfaceStalePausedTodos under a renamed hold column", () => {
     expect(surfaced).toBe(1);
     expect(logEntry).toHaveBeenCalledWith(
       "FN-R",
-      expect.stringContaining("Stale paused todo surfaced [stale-paused-todo]"),
+      expect.stringContaining("Stale paused todo surfaced [stale-paused-todo]"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
     );
   });
 
@@ -147,7 +155,7 @@ describe("surfaceStalePausedTodos under a renamed hold column", () => {
     const surfaced = await manager(store).surfaceStalePausedTodos();
 
     expect(surfaced).toBe(1);
-    expect(logEntry).toHaveBeenCalledWith("FN-D", expect.stringContaining("Stale paused todo surfaced"));
+    expect(logEntry).toHaveBeenCalledWith("FN-D", expect.stringContaining("Stale paused todo surfaced"), undefined, UNATTRIBUTED_MUTATION_CONTEXT);
   });
 
   it("falls back to the legacy todo column when the workflow cannot be resolved", async () => {

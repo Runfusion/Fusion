@@ -1,3 +1,16 @@
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage D — why every mutation context in this file is the MARKER):
+
+This module runs UNATTENDED: a poll/reconcile sweep or a lifecycle hook reacting to an external event,
+not a request anyone made. There is no session, no run and no acting agent to derive from, and the only
+ids in scope name the task being reconciled — attributing to those would produce audit rows claiming a
+task reconciled itself, the same false attribution the engine's self-healing sweeps refused in Stage A.
+
+So each write carries the unattributed marker, counted by the U18 census and ratcheted DOWN.
+Whether these lanes get a real SYSTEM actor is U13's decision; it is deliberately not made here.
+*/
+// FNXC:Identity 2026-08-09-03:04: one-line import on purpose — the U18 census counts any non-`import`-prefixed line naming the marker, so a multi-line import block would score as debt it is not.
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import type { GlobalSettings, ProjectSettings, TaskStore } from "@fusion/core";
 import { resolveGithubTrackingAuth } from "./github-auth.js";
 import { GitHubClient } from "./github.js";
@@ -90,6 +103,7 @@ export class GitHubSourceIssueCloseService {
         event.task.id,
         "Failed to close linked GitHub source issue",
         `Invalid GitHub source issue metadata: ${repository}#${String(issueNumber)}`,
+        UNATTRIBUTED_MUTATION_CONTEXT,
       );
       return;
     }
@@ -100,7 +114,7 @@ export class GitHubSourceIssueCloseService {
       const globalSettings = (await store.getGlobalSettingsStore?.()?.getSettings?.() ?? {}) as Pick<GlobalSettings, never>;
       const resolution = resolveGithubTrackingAuth({ projectSettings: settings, globalSettings });
       if (!resolution.ok) {
-        await store.logEntry(event.task.id, "Skipped closing GitHub source issue", resolution.message);
+        await store.logEntry(event.task.id, "Skipped closing GitHub source issue", resolution.message, UNATTRIBUTED_MUTATION_CONTEXT);
         return;
       }
 
@@ -114,6 +128,7 @@ export class GitHubSourceIssueCloseService {
           event.task.id,
           `Skipped ${action.action === "close" ? "closing" : "reopening"} GitHub source issue - issue not found or already ${state}`,
           `${owner}/${repo}#${issueNumberValue}`,
+          UNATTRIBUTED_MUTATION_CONTEXT,
         );
         return;
       }
@@ -136,12 +151,14 @@ export class GitHubSourceIssueCloseService {
         event.task.id,
         `${action.action === "close" ? "Closed" : "Reopened"} linked GitHub source issue`,
         `${owner}/${repo}#${issueNumberValue}`,
+        UNATTRIBUTED_MUTATION_CONTEXT,
       );
     } catch (error) {
       await store.logEntry(
         event.task.id,
         "Failed to close linked GitHub source issue",
         error instanceof Error ? error.message : String(error),
+        UNATTRIBUTED_MUTATION_CONTEXT,
       );
     }
   }

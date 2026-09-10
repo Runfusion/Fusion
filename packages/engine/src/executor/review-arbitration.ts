@@ -1,3 +1,16 @@
+import type { ArbitrationFailureFence, Task, TaskStore, WorkflowReviewFinding, WorkflowStepResult, RunMutationContext } from "@fusion/core";
+import {
+  archiveArbitratedWorkflowStepFailure,
+  resolveReviewArbitrationTarget,
+  resolveStepReopenPolicy,
+  resolveValidatorFallbackModel,
+  resolveWorkflowIrForTask } from "@fusion/core";
+import { mergeEffectiveSettings } from "../project/effective-settings.js";
+import { reviewStep } from "../execution/reviewer.js";
+import { emitBoundedRunAudit } from "./emit-bounded-run-audit.js";
+import type { AppendReviewRemediationOptions, AppendReviewRemediationOutcome } from "./append-review-remediation-steps.js";
+import type { RequestPreMergeOptionalStepFixInfo } from "./request-pre-merge-optional-step-fix.js";
+import { resolveRemediationCheckout } from "./resolve-remediation-checkout.js";
 /*
 FNXC:ReviewConvergence 2026-08-22-05:44:
 FN-149 requires a second, independent validator decision after a bounded remediation escalation.
@@ -14,7 +27,6 @@ import {
 } from "@fusion/core";
 import { mergeEffectiveSettings } from "../project/effective-settings.js";
 import { reviewStep } from "../execution/reviewer.js";
-import type { EngineRunContext } from "../util/run-audit.js";
 import { emitBoundedRunAudit } from "./emit-bounded-run-audit.js";
 import type { AppendReviewRemediationOptions, AppendReviewRemediationOutcome } from "./append-review-remediation-steps.js";
 import type { RequestPreMergeOptionalStepFixInfo } from "./request-pre-merge-optional-step-fix.js";
@@ -24,7 +36,7 @@ import { optionalStepRevisionKey, reviewRemediationEpisodeIdentity } from "./opt
 
 export type ReviewArbitrationReleaseDeps = {
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
 };
 
 export type ReviewArbitrationDeps = ReviewArbitrationReleaseDeps & {

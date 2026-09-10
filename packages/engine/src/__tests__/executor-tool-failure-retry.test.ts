@@ -3,6 +3,8 @@ import { resolveConsecutiveToolFailureRetryBackoffMs, resolveMaxConsecutiveToolF
 import "./executor-test-helpers.js";
 import { TaskExecutor } from "../executor.js";
 import { createMockStore, resetExecutorMocks } from "./executor-test-helpers.js";
+/* FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage C): the executor threads a real mutation context to every store call, so these assertions pin it rather than accepting `undefined`. */
+import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 
 const now = "2026-07-16T00:00:00.000Z";
 
@@ -193,7 +195,7 @@ describe("executor consecutive tool-failure retry (FN-7996)", () => {
       mutationType: "task:execution-tool-failure-retry-exhausted",
       metadata: expect.objectContaining({ taskId: task.id, attempts: 2, limit: 2, outcome: "terminal-park" }),
     }));
-    expect(store.updateTaskAtomic).toHaveBeenCalledWith(task.id, expect.any(Function), undefined);
+    expect(store.updateTaskAtomic).toHaveBeenCalledWith(task.id, expect.any(Function), ANY_MUTATION_CONTEXT);
     expect(task).toMatchObject({
       status: "failed",
       error: "Workflow graph terminated with failure at node 'steps#0:step-execute'",
@@ -215,7 +217,7 @@ describe("executor consecutive tool-failure retry (FN-7996)", () => {
     expect(task).toMatchObject({ modelProvider: "anthropic", modelId: "claude-sonnet", executorEscalationAttempted: true, status: null, error: null });
     expect(execute).toHaveBeenCalledWith(task);
     expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({ mutationType: "task:execution-escalation-retry", metadata: expect.objectContaining({ taskId: task.id, hasModelTarget: true, hasNodeTarget: false }) }));
-    expect(store.updateTaskAtomic).toHaveBeenCalledWith(task.id, expect.any(Function), undefined);
+    expect(store.updateTaskAtomic).toHaveBeenCalledWith(task.id, expect.any(Function), ANY_MUTATION_CONTEXT);
   });
 
   it("requeues a node escalation for scheduler effective-node resolution", async () => {
@@ -317,13 +319,13 @@ describe("executor consecutive tool-failure retry (FN-7996)", () => {
     const disabled = makeHarness({ retries: 0, entries: [{ type: "tool_error" }, { type: "tool_error" }, { type: "tool_error" }] });
     await (disabled.executor as any).handleGraphFailure(disabled.task, graphFailure());
     expect(disabled.store.claimNextToolFailureRetry).not.toHaveBeenCalled();
-    expect(disabled.store.updateTaskAtomic).toHaveBeenCalled();
+    expect(disabled.store.updateTaskAtomic).toHaveBeenCalledWith(disabled.task.id, expect.any(Function), ANY_MUTATION_CONTEXT);
     expect(disabled.task).toMatchObject({ status: "failed", error: "Workflow graph terminated with failure at node 'steps#0:step-execute'" });
 
     const interleaved = makeHarness({ retries: 2, entries: [{ type: "tool_error" }, { type: "tool_result" }] });
     await (interleaved.executor as any).handleGraphFailure(interleaved.task, graphFailure());
     expect(interleaved.store.claimNextToolFailureRetry).not.toHaveBeenCalled();
-    expect(interleaved.store.updateTaskAtomic).toHaveBeenCalled();
+    expect(interleaved.store.updateTaskAtomic).toHaveBeenCalledWith(interleaved.task.id, expect.any(Function), ANY_MUTATION_CONTEXT);
     expect(interleaved.task).toMatchObject({ status: "failed", error: "Workflow graph terminated with failure at node 'steps#0:step-execute'" });
   });
 });

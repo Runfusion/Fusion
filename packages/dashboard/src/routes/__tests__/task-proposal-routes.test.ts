@@ -1,5 +1,6 @@
 // @vitest-environment node
 
+import { UNATTRIBUTED_CONTEXT_MATCHER } from "../../__tests__/mutation-context-matchers.js";
 import express from "express";
 import { DASHBOARD_USER_ID, type Message, type TaskStore } from "@fusion/core";
 import { describe, expect, it, vi } from "vitest";
@@ -94,6 +95,6 @@ describe("task proposal materialization route", () => {
     expect(response.status).toBe(201);
     expect(messageStore.reconcileProposalCreation).toHaveBeenCalledWith("message-1", undefined);
     expect(messageStore.claimProposalForCreation).toHaveBeenCalledWith("message-1");
-    expect(store.createTask).toHaveBeenCalledWith(expect.objectContaining({ proposalClaimId: "stable-proposal-key" }));
+    expect(store.createTask).toHaveBeenCalledWith(expect.objectContaining({ proposalClaimId: "stable-proposal-key" }), undefined, UNATTRIBUTED_CONTEXT_MATCHER);
   });
 });

@@ -1,16 +1,16 @@
+import type { TaskStore, RunMutationContext } from "@fusion/core";
+import { executorLog } from "../logger.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-17:30:
  * shouldDeferCompletionForGlobalPause peeled from TaskExecutor (U4).
  *
  * When global pause is active, skip completion handoff and leave a task-log breadcrumb.
  */
-import type { TaskStore } from "@fusion/core";
-import { executorLog } from "../logger.js";
-import type { EngineRunContext } from "../util/run-audit.js";
 
 export type ShouldDeferCompletionForGlobalPauseDeps = {
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   clearCompletedTaskWatchdog: (taskId: string) => void;
 };
 
@@ -30,7 +30,7 @@ export async function shouldDeferCompletionForGlobalPause(
     taskId,
     `Completion handoff deferred — global pause active (${context})`,
     undefined,
-    deps.getRunContextFor(taskId),
+    deps.runContextFor(taskId),
   ).catch(() => undefined);
   return true;
 }

@@ -1,4 +1,5 @@
 import type { Task } from "../types.js";
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "../identity/mutation-context.js";
 import type { TaskStore } from "../store.js";
 import { computeContentFingerprint } from "./duplicate-detection.js";
 import { isNearDuplicateCanonicalInactive } from "./near-duplicate-canonical.js";
@@ -212,19 +213,24 @@ export async function reconcileDeterministicDuplicate(
       return { outcome: "kept-duplicate", canonical: args.createdTask };
     }
 
+    /*
+    FNXC:Identity 2026-08-09-03:04 (U18):
+    The deterministic-duplicate guard runs inside the create path; same reasoning as duplicate-intake
+    - the creating actor is the honest attribution and it becomes available with U9/U11/U13.
+    */
     await store.updateTask(args.createdTask.id, {
       sourceMetadataPatch: {
         contentFingerprint: args.fingerprint,
         deterministicDuplicateOf: olderSibling.id,
       },
-    });
+    }, UNATTRIBUTED_MUTATION_CONTEXT);
     /*
     FNXC:TaskArchiveRemoval 2026-09-04-10:36:
     A deterministic duplicate is not completed work. With task archiving removed, preserve its
     reserved identity and duplicate provenance through the ordinary non-resurrectable soft-delete
     path instead of inventing a terminal lane.
     */
-    await store.deleteTask(args.createdTask.id, { allowResurrection: false });
+    await store.deleteTask(args.createdTask.id, { allowResurrection: false }, UNATTRIBUTED_MUTATION_CONTEXT);
 
     return { outcome: "removed", canonical: olderSibling };
   } catch (error) {

@@ -1,3 +1,4 @@
+import { UNATTRIBUTED_CONTEXT_MATCHER } from "./mutation-context-matchers.js";
 import { EventEmitter } from "node:events";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { GitLabSourceIssueCloseService } from "../gitlab-source-issue-close.js";
@@ -15,7 +16,7 @@ describe("GitLabSourceIssueCloseService", () => {
     vi.stubGlobal("fetch", fetchImpl); const s = store(); new GitLabSourceIssueCloseService(s as any).start();
     s.emit("task:moved", { task: task(), from: "todo", to: "done" });
     await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(2));
-    expect(s.logEntry).toHaveBeenCalledWith("FN-1", "Closed linked GitLab source issue", "g/p#2");
+    expect(s.logEntry).toHaveBeenCalledWith("FN-1", "Closed linked GitLab source issue", "g/p#2", UNATTRIBUTED_CONTEXT_MATCHER);
   });
   it("skips when disabled or non-GitLab", async () => {
     const fetchImpl = vi.fn(); vi.stubGlobal("fetch", fetchImpl);

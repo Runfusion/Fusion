@@ -1,3 +1,4 @@
+import { UNATTRIBUTED_CONTEXT_MATCHER } from "./mutation-context-matchers.js";
 import { EventEmitter } from "node:events";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { GitLabIssueCommentService } from "../gitlab-issue-comment.js";
@@ -35,7 +36,7 @@ describe("GitLabIssueCommentService", () => {
     s.emit("task:moved", { task: untrackedTask, from: "in-progress", to: "done" });
     await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalled());
     expect(fetchImpl.mock.calls[0][0]).toBe("https://gitlab.example.com/api/v4/projects/g%2Fp/issues/2/notes");
-    expect(s.logEntry).toHaveBeenCalledWith("FN-1", "Posted GitLab issue completion comment", "g/p#2");
+    expect(s.logEntry).toHaveBeenCalledWith("FN-1", "Posted GitLab issue completion comment", "g/p#2", UNATTRIBUTED_CONTEXT_MATCHER);
   });
   /*
    * FNXC:GitLabIssueComment 2026-07-15-10:05:
@@ -80,7 +81,7 @@ describe("GitLabIssueCommentService", () => {
     s.emit("task:moved", { task, from: "in-progress", to: "done" });
     await new Promise((resolve) => setImmediate(resolve));
     expect(fetchImpl).not.toHaveBeenCalled();
-    expect(s.logEntry).toHaveBeenCalledWith("FN-1", "Skipped GitLab source comment", "g/p#2 is tracked; GitLab tracking comment covers it");
+    expect(s.logEntry).toHaveBeenCalledWith("FN-1", "Skipped GitLab source comment", "g/p#2 is tracked; GitLab tracking comment covers it", UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("still posts for an imported issue with no tracked item", async () => {
@@ -88,7 +89,7 @@ describe("GitLabIssueCommentService", () => {
     const s = store(); new GitLabIssueCommentService(s as any).start();
     s.emit("task:moved", { task: untrackedTask, from: "in-progress", to: "done" });
     await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(1));
-    expect(s.logEntry).toHaveBeenCalledWith("FN-1", "Posted GitLab issue completion comment", "g/p#2");
+    expect(s.logEntry).toHaveBeenCalledWith("FN-1", "Posted GitLab issue completion comment", "g/p#2", UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   /*
@@ -118,7 +119,7 @@ describe("GitLabIssueCommentService", () => {
     s.emit("task:moved", { task: unusableItem, from: "in-progress", to: "done" });
     await new Promise((resolve) => setImmediate(resolve));
     expect(fetchImpl).not.toHaveBeenCalled();
-    expect(s.logEntry).toHaveBeenCalledWith("FN-1", "Skipped GitLab source comment", "Linked GitLab source metadata is incomplete");
+    expect(s.logEntry).toHaveBeenCalledWith("FN-1", "Skipped GitLab source comment", "Linked GitLab source metadata is incomplete", UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("skips non-GitLab and incomplete source metadata", async () => {
@@ -128,6 +129,6 @@ describe("GitLabIssueCommentService", () => {
     s.emit("task:moved", { task: { id: "FN-2", sourceIssue: { provider: "gitlab" }, gitlabTracking: { item: { kind: "group_issue", iid: 3 } } }, to: "done" });
     await new Promise((resolve) => setImmediate(resolve));
     expect(fetchImpl).not.toHaveBeenCalled();
-    expect(s.logEntry).toHaveBeenCalledWith("FN-2", "Skipped GitLab source comment", "Linked GitLab source metadata is incomplete");
+    expect(s.logEntry).toHaveBeenCalledWith("FN-2", "Skipped GitLab source comment", "Linked GitLab source metadata is incomplete", UNATTRIBUTED_CONTEXT_MATCHER);
   });
 });

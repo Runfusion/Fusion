@@ -113,6 +113,7 @@ import {
   TASK_STEP_REPORTS_VERSION,
   TASK_EXTERNAL_BLOCK_VERSION,
   TASK_REQUIRE_PLAN_APPROVAL_VERSION,
+  IDENTITY_ACTORS_VERSION,
   PATCHNODE_ENTRIES_VERSION,
   TASK_PLANNING_FAILURE_VERSION,
   CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION,
@@ -148,7 +149,8 @@ describe("schema-applier: immutable migration identities", () => {
     expect(MESSAGE_ARCHIVE_SCHEMA_VERSION).toBe("0058");
     /* FNXC:PgSchemaApplier 2026-08-15-22:10: 0059 (FN-9037 recommendation source-agent index) and 0060 (FN-9059 workspace
        coordination leases/intents) landed first; the 2026-08-20 upstream batch owns 0061-0064 (FN-066..FN-094), FN-149
-       owns 0065, and the RUFU-068 chat_sessions.memory_focus migration is renumbered to 0066 (2026-08-23), advancing the baseline to 0066. */
+       owns 0065, and the RUFU-068 chat_sessions.memory_focus migration is renumbered to 0066 (2026-08-23).
+       FNXC:Identity 2026-08-24-00:03: identity then takes 0067 and the ceiling moves with it. */
     expect(TASK_SOURCE_AGENT_INDEX_VERSION).toBe("0059");
     expect(WORKSPACE_COORDINATION_LEASES_SCHEMA_VERSION).toBe("0060");
     expect(ACTIVITY_LOG_TASK_ID_INDEX_VERSION).toBe("0061");
@@ -168,11 +170,18 @@ describe("schema-applier: immutable migration identities", () => {
     expect(TASK_STEP_REPORTS_VERSION).toBe("0068");
     expect(TASK_EXTERNAL_BLOCK_VERSION).toBe("0069");
     expect(TASK_REQUIRE_PLAN_APPROVAL_VERSION).toBe("0070");
+    expect(Number(SCHEMA_BASELINE_VERSION)).toBeGreaterThanOrEqual(Number(TASK_REQUIRE_PLAN_APPROVAL_VERSION));
     expect(PATCHNODE_ENTRIES_VERSION).toBe("0071");
     expect(TASK_PLANNING_FAILURE_VERSION).toBe("0072");
     expect(CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION).toBe("0073");
     expect(Number(SCHEMA_BASELINE_VERSION)).toBeGreaterThanOrEqual(Number(CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION));
-    expect(SCHEMA_BASELINE_VERSION).toBe("0073");
+    expect(SCHEMA_BASELINE_VERSION).toBe("0074");
+    /*
+    FNXC:Identity 2026-09-09-16:30:
+    Identity renumbers to 0074: origin/main released 0072 (planning failure) and 0073 (chat recency)
+    while this branch held 0072.
+    */
+    expect(IDENTITY_ACTORS_VERSION).toBe("0074");
   });
 
   it("keeps monitor and approval isolation assigned to version 0003", () => {
@@ -707,7 +716,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     ctx = null;
   });
 
-  it("creates all 113 project tables, 17 central tables, 1 archive table", async () => {
+  it("creates all 116 project tables, 21 central tables, 1 archive table", async () => {
     ctx = await setupFreshDb();
     // FNXC:PostgresCutover 2026-07-05-15:55: apply the BASELINE only.
     // applySchemaBaseline now runs the plugin schema-init hooks by default,
@@ -729,17 +738,23 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     refusal marker (100 → 105); later baseline additions bring the count to 106; and 0048 adds
     GitHub check state (106 → 107); 0049 adds the agent-activity outbox and counter (→ 109);
     0050 adds immutable lock, evidence, and report history (109 → 112); 0052 adds recall records (→ 113);
-    0060 adds workspace coordination leases and land intents (→ 115). Plugin tables are added separately
+    0060 adds workspace coordination leases and land intents (→ 115).
+    FNXC:Identity 2026-08-23-22:39: 0066 adds project.actor_role_grants (→ 116). Plugin tables are added separately
     by the schema-init hook and are excluded here.
+    FNXC:Identity 2026-08-24-00:03: identity is now 0067 after main claimed 0066 for memory-focus; table count is unchanged.
     */
-    expect(bySchema.project).toBe(115);
+    expect(bySchema.project).toBe(116);
     /*
     FNXC:CapacityModel 2026-07-29-08:10 (drop the cross-project cap — table half):
     17, not 18: `central.global_concurrency` is dropped by migration 0037. A fresh
     database still CREATEs it from the historical 0000 baseline and then drops it,
     so fresh and upgraded databases converge on the same shape.
+
+    FNXC:Identity 2026-08-23-22:39:
+    21, not 17: migration 0067 adds central.actors, actor_credentials, actor_sessions, and
+    actor_provider_links (KTD7 — identity is central because one daemon serves N projects).
     */
-    expect(bySchema.central).toBe(17);
+    expect(bySchema.central).toBe(21);
     expect(bySchema.archive).toBe(1);
   });
 
@@ -1915,6 +1930,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_STEP_REPORTS_VERSION,
       TASK_EXTERNAL_BLOCK_VERSION,
       TASK_REQUIRE_PLAN_APPROVAL_VERSION,
+      IDENTITY_ACTORS_VERSION,
       PATCHNODE_ENTRIES_VERSION,
       TASK_PLANNING_FAILURE_VERSION,
       CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION,
@@ -2014,6 +2030,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_STEP_REPORTS_VERSION,
       TASK_EXTERNAL_BLOCK_VERSION,
       TASK_REQUIRE_PLAN_APPROVAL_VERSION,
+      IDENTITY_ACTORS_VERSION,
       PATCHNODE_ENTRIES_VERSION,
       TASK_PLANNING_FAILURE_VERSION,
       CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION,
@@ -2246,6 +2263,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_STEP_REPORTS_VERSION,
       TASK_EXTERNAL_BLOCK_VERSION,
       TASK_REQUIRE_PLAN_APPROVAL_VERSION,
+      IDENTITY_ACTORS_VERSION,
       PATCHNODE_ENTRIES_VERSION,
       TASK_PLANNING_FAILURE_VERSION,
       CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION,
@@ -2359,6 +2377,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_STEP_REPORTS_VERSION,
       TASK_EXTERNAL_BLOCK_VERSION,
       TASK_REQUIRE_PLAN_APPROVAL_VERSION,
+      IDENTITY_ACTORS_VERSION,
       PATCHNODE_ENTRIES_VERSION,
       TASK_PLANNING_FAILURE_VERSION,
       CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION,
@@ -2472,6 +2491,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_STEP_REPORTS_VERSION,
       TASK_EXTERNAL_BLOCK_VERSION,
       TASK_REQUIRE_PLAN_APPROVAL_VERSION,
+      IDENTITY_ACTORS_VERSION,
       PATCHNODE_ENTRIES_VERSION,
       TASK_PLANNING_FAILURE_VERSION,
       CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION,

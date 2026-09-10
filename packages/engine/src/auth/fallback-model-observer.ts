@@ -1,9 +1,19 @@
-import type { AgentLogType } from "@fusion/core";
+import type { AgentLogType, RunMutationContext } from "@fusion/core";
 import { notifyFallbackUsed } from "../util/notifier.js";
 import type { FallbackModelUsedPayload } from "../pi.js";
 
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2 — a structural seam must RESTATE the required context):
+This seam re-declares `logEntry` with its own narrow signature instead of picking it off `TaskStore`,
+so it does not inherit U18's canonical/deprecated overload pair. Left at the old three-argument
+arity it would keep accepting unattributed writes forever — the engine call-site sweep would report
+done while this hole stayed open, which is exactly the `resolved-seams-nobody-wired.md` failure the
+census exists to catch. The signature below mirrors the CANONICAL store arity (`outcome` explicit,
+`runContext` required and last), which is also what keeps a real `TaskStore` structurally assignable
+here: the deprecated overload cannot absorb a `RunMutationContext` in the `outcome` position.
+*/
 type FallbackLogStore = {
-  logEntry?(taskId: string, action: string): Promise<unknown>;
+  logEntry?(taskId: string, action: string, outcome: string | undefined, runContext: RunMutationContext): Promise<unknown>;
   appendAgentLog?(
     taskId: string,
     text: string,
@@ -21,6 +31,15 @@ type FallbackModelObserverOptions = {
   store?: FallbackLogStore;
   taskId?: string;
   taskTitle?: string;
+  /*
+  FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
+  Required, not optional-with-a-default. `agent` above is a LANE LABEL ("merger", "triage"), not an
+  agent id, so deriving an actor from it would mint a fake identity that reads as real in audit. The
+  lane that constructs the observer is the only place that knows its own run, so the requirement is
+  restated here and each construction site must answer it — with `toRunMutationContext` when it holds
+  a run context, or the marker when it genuinely has none.
+  */
+  runContext: RunMutationContext;
 };
 
 function buildFallbackLogMessage(
@@ -50,7 +69,7 @@ export function createFallbackModelObserver(options: FallbackModelObserverOption
     const message = buildFallbackLogMessage(options.label, payload);
 
     if (taskId && options.store?.logEntry) {
-      await options.store.logEntry(taskId, message).catch(() => undefined);
+      await options.store.logEntry(taskId, message, undefined, options.runContext).catch(() => undefined);
     }
     if (taskId && options.store?.appendAgentLog) {
       await options.store.appendAgentLog(taskId, message, "status", undefined, options.agent).catch(() => undefined);

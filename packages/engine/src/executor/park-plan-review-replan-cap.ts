@@ -1,3 +1,5 @@
+import type { Task, TaskStore, RunMutationContext } from "@fusion/core";
+import { executorLog } from "../logger.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-09:50:
  * parkPlanReviewReplanCapExhausted peeled from TaskExecutor (U4).
@@ -12,13 +14,11 @@
  * forever or silently sitting in place. The reason string is special-cased by the
  * dashboard + notifications, so it must be preserved verbatim.
  */
-import type { Task, TaskStore } from "@fusion/core";
-import { executorLog } from "../logger.js";
-import type { EngineRunContext } from "../util/run-audit.js";
 
 export type ParkPlanReviewReplanCapDeps = {
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
 };
 
 export async function parkPlanReviewReplanCapExhausted(
@@ -32,7 +32,7 @@ export async function parkPlanReviewReplanCapExhausted(
     taskId,
     "Plan Review replan cap reached — escalating to manual approval",
     `The Plan Review gate requested a planning revision ${currentCount} times without converging (cap ${capLabel}). To avoid an endless plan → Plan Review REVISE → replan loop, the task is routed to awaiting-approval for a human decision instead of replanning again. Latest Plan Review feedback:\n${feedback}`,
-    deps.getRunContextFor(taskId),
+    deps.runContextFor(taskId),
   );
   // awaitingApprovalReason is written through a Record<string, unknown> (matching
   // the manual plan-approval hold + the deleted triage cap-park) so the distinct
@@ -44,7 +44,7 @@ export async function parkPlanReviewReplanCapExhausted(
     recoveryRetryCount: null,
     nextRecoveryAt: null,
   };
-  await deps.store.updateTask(taskId, escalationUpdates as Partial<Task>, deps.getRunContextFor(taskId));
+  await deps.store.updateTask(taskId, escalationUpdates as Partial<Task>, deps.runContextFor(taskId));
   executorLog.warn(
     `${taskId}: Plan Review replan cap (${capLabel}) reached after ${currentCount} attempts — escalating to awaiting-approval`,
   );

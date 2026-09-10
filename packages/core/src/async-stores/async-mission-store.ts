@@ -1,5 +1,6 @@
 import { createLogger } from "../process/logger.js";
-
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "../identity/mutation-context.js";
+import { columnsWithFlag } from "../workflows/workflow-lifecycle-traits.js";
 
 const severityAuditLog = createLogger("core-async-mission-store");
 /**
@@ -3170,6 +3171,7 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
           resolvedBranch: resolvedAssignmentMode === "shared" ? sharedBranchBaseForMission ?? resolvedBranch : resolvedBranch,
           taskSegment,
         });
+        // FNXC:Identity 2026-08-09-03:04 (U18): mission triage entry points carry no actor yet (U9/U11).
         const createdTask = await this.taskStore.createTask({
           title: taskTitle || feature.title,
           description,
@@ -3195,9 +3197,9 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
           // FNXC:MissionTaskPrefix 2026-07-26-12:00: thread the mission's optional taskPrefix into TaskCreateInput so the distributed allocator mints ERR-N (etc.) instead of the project prefix.
           ...(mission?.taskPrefix ? { taskPrefix: mission.taskPrefix } : {}),
           ...(branchOptions?.workflowId !== undefined ? { workflowId: branchOptions.workflowId } : {}),
-        });
+        }, undefined, UNATTRIBUTED_MUTATION_CONTEXT);
         if (guard.fingerprint) {
-          await this.taskStore.updateTask(createdTask.id, { sourceMetadataPatch: { contentFingerprint: guard.fingerprint } });
+          await this.taskStore.updateTask(createdTask.id, { sourceMetadataPatch: { contentFingerprint: guard.fingerprint } }, UNATTRIBUTED_MUTATION_CONTEXT);
         }
         const reconcile = await reconcileDeterministicDuplicate(this.taskStore, { createdTask, fingerprint: guard.fingerprint });
         linkedTaskId = reconcile.canonical.id;

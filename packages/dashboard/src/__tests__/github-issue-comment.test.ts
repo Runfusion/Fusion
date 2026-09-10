@@ -1,3 +1,4 @@
+import { UNATTRIBUTED_CONTEXT_MATCHER } from "./mutation-context-matchers.js";
 import { EventEmitter } from "node:events";
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import type { TaskStore } from "@fusion/core";
@@ -231,6 +232,7 @@ describe("GitHubIssueCommentService", () => {
       "FN-2623",
       "Posted GitHub issue completion comment",
       "owner/repo#123",
+      UNATTRIBUTED_CONTEXT_MATCHER,
     );
   });
 
@@ -247,6 +249,7 @@ describe("GitHubIssueCommentService", () => {
       "FN-2623",
       "Failed to post GitHub issue comment",
       "rate limited",
+      UNATTRIBUTED_CONTEXT_MATCHER,
     );
   });
 
@@ -270,6 +273,7 @@ describe("GitHubIssueCommentService", () => {
       "FN-2623",
       "Posted GitHub issue completion comment",
       "runfusion/fusion#42",
+      UNATTRIBUTED_CONTEXT_MATCHER,
     );
   });
 
@@ -318,6 +322,7 @@ describe("GitHubIssueCommentService", () => {
       "FN-2623",
       "Posted GitHub issue completion comment",
       "runfusion/fusion#42",
+      UNATTRIBUTED_CONTEXT_MATCHER,
     );
 
     unresolvedService.stop();
@@ -366,6 +371,7 @@ describe("GitHubIssueCommentService duplicate-comment suppression", () => {
       "FN-2623",
       "Skipped GitHub issue completion comment",
       "owner/repo#123 is tracked; GitHub tracking comment covers it",
+      UNATTRIBUTED_CONTEXT_MATCHER,
     );
   });
 

@@ -1,3 +1,5 @@
+import type { Task, TaskStore, WorkflowReviewFinding, RunMutationContext } from "@fusion/core";
+import { resolveAuthoritativeExternalExecutionRoute } from "./resolve-authoritative-external-execution-route.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-19:00:
  * sendTaskBackForFix peeled from TaskExecutor (U4).
@@ -7,13 +9,13 @@
  * Remediation reuses the live external checkout path and must not persist it as task.worktree.
  */
 import type { Task, TaskStore, WorkflowReviewFinding } from "@fusion/core";
-import type { EngineRunContext } from "../util/run-audit.js";
 import { resolveAuthoritativeExternalExecutionRoute } from "./resolve-authoritative-external-execution-route.js";
 import type { TrailingReplayAccounting, TrailingReplayAccountingOutcome } from "./reopen-last-step-for-revision.js";
 
 export type SendTaskBackForFixDeps = {
   store: TaskStore;
-  getRunContextFor?: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor?: (taskId: string) => RunMutationContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   clearCompletedTaskWatchdog: (taskId: string) => void;
   injectWorkflowStepFailureInstructions: (
     task: Task,

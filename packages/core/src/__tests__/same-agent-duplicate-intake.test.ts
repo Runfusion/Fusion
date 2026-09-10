@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "../identity/mutation-context.js";
 
 const { recordRunAuditEventAsync, softDeleteTaskRowAsync } = vi.hoisted(() => ({
   recordRunAuditEventAsync: vi.fn().mockResolvedValue(undefined),
@@ -83,9 +84,16 @@ describe("same-agent duplicate intake policy (FN-8401)", () => {
     // Pre-fix performed a board scan; provenance creates must use the narrow lineage read.
     expect(store.listTasks).not.toHaveBeenCalled();
     expect(store.listTasksBySourceLineage).toHaveBeenCalledWith({ sourceAgentId: "agent-intake", sourceParentTaskId: null });
+    /*
+    FNXC:Identity 2026-08-09-03:04 (U18):
+    The mutation context is asserted positionally rather than waved through, so the day U9/U11/U13
+    hand this path a real actor the assertion fails and names the line instead of quietly accepting
+    whatever arrived. Duplicate intake runs inside the create path, so its actor is the creating
+    caller's - it is a census entry, not a permanent marker.
+    */
     expect(store.updateTask).toHaveBeenCalledWith("FN-NEW", {
       sourceMetadataPatch: expect.objectContaining({ nearDuplicateOf: "FN-SIBLING" }),
-    });
+    }, UNATTRIBUTED_MUTATION_CONTEXT);
     expect(store.recordActivity).toHaveBeenCalledWith(expect.objectContaining({
       taskId: "FN-NEW", metadata: expect.objectContaining({ source: "same-agent-flagged" }),
     }));
@@ -94,6 +102,7 @@ describe("same-agent duplicate intake policy (FN-8401)", () => {
     expect((store as any).deleteTask).toBeUndefined();
     expect(created.column).toBe("triage");
   });
+
 
   it("uses backend-safe tombstone reads and rejects a sticky same-agent resurrection", async () => {
     const deletedAt = new Date(Date.now() - 60_000).toISOString();

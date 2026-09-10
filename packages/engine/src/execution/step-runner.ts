@@ -29,7 +29,7 @@ import { exec } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
 import { promisify } from "node:util";
 
-import type { TaskStore } from "@fusion/core";
+import type { RunMutationContext, TaskStore } from "@fusion/core";
 import type { ImplementationExit } from "@fusion/core";
 
 const execAsync = promisify(exec);
@@ -241,6 +241,14 @@ export interface ResetStepDeps {
   summary?: string;
   /** Optional auditor for the blast-radius guard refusal warning (KTD-2). */
   audit?: Pick<RunAuditor, "database">;
+  /*
+  FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage C):
+  Required, not optional. The RETHINK rewind is reached only from `executor.ts`, so Stage B could
+  only mark its two log rows; with the executor's run carrier threaded, the caller always has a real
+  context and the seam demands it. A rewind is a destructive write (git reset + step reset) — it is
+  exactly the kind of row an audit reader needs an actor on.
+  */
+  runContext: RunMutationContext;
   /**
    * Blast-radius guard hook (KTD-2, shared isolation). Returns `null` when the
    * reset is safe, or a refusal `reason` string when it would destroy other
@@ -362,13 +370,13 @@ export async function resetStepToBaseline(
     await store.logEntry(
       taskId,
       `RETHINK: Step ${step} plan rewound — session checkpoint ${checkpointId || "N/A"}`,
-      deps.summary,
+      deps.summary, deps.runContext,
     );
   } else {
     await store.logEntry(
       taskId,
       `RETHINK: Step ${step} rewound — git reset to ${baselineSha || "N/A"}, session checkpoint ${checkpointId || "N/A"}`,
-      deps.summary,
+      deps.summary, deps.runContext,
     );
   }
 

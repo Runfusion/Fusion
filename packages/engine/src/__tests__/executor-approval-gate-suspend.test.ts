@@ -2,6 +2,8 @@ import "./executor-test-helpers.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TaskExecutor } from "../executor.js";
 import { resetExecutorMocks } from "./executor-test-helpers.js";
+/* FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage C): the executor threads a real mutation context to every store call, so these assertions pin it rather than accepting `undefined`. */
+import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 
 /*
 FNXC:AgentGating 2026-07-05-00:30:
@@ -64,7 +66,7 @@ describe("TaskExecutor.buildActionGateContext pauseForApproval", () => {
     // FN-7736: pauseForApproval must durably stamp the canonical
     // AWAITING_APPROVAL_PAUSE_REASON so recovery/oversight code can recognize
     // this hold via isTaskBlockedOnApproval (not just paused:true).
-    expect(store.pauseTask).toHaveBeenCalledWith("FN-1", true, undefined, expect.objectContaining({ pausedByAgentId: expect.any(String), pausedReason: "awaiting-approval" }));
+    expect(store.pauseTask).toHaveBeenCalledWith("FN-1", true, ANY_MUTATION_CONTEXT, expect.objectContaining({ pausedByAgentId: expect.any(String), pausedReason: "awaiting-approval" }));
     expect(store.logEntry).toHaveBeenCalled();
     // Session suspension must be triggered synchronously (called, not merely
     // scheduled for some later tick) as part of this same pauseForApproval

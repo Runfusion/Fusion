@@ -1,3 +1,21 @@
+import type { Settings, Task, TaskStore, RunMutationContext } from "@fusion/core";
+import { resolveExecutorFallbackModel, resolvePersistAgentThinkingLog } from "@fusion/core";
+import { AgentLogger } from "../agents/agent-logger.js";
+import { attachAgentUsageTelemetry, emitAgentSessionStart } from "../agents/agent-usage-telemetry.js";
+import {
+  createResolvedAgentSession,
+  resolveExecutorSessionModel,
+  resolveExecutorFallbackThinkingLevel,
+  resolveExecutorThinkingLevel } from "../agents/agent-session-helpers.js";
+import { buildSessionSkillContext } from "../cli-runtime/session-skill-context.js";
+import { accumulateSessionTokenUsage } from "../execution/session-token-usage.js";
+import { VERIFICATION_LOG_MAX_CHARS } from "../execution/verification-utils.js";
+import { withRateLimitRetry } from "../errors/rate-limit-retry.js";
+import { describeModel, promptWithFallback } from "../pi.js";
+import { executorLog } from "../logger.js";
+import { createRunAuditor } from "../util/run-audit.js";
+import type { PluginRunner } from "../plugins/plugin-runner.js";
+import type { AgentStore } from "@fusion/core";
 /**
  * FNXC:CodeOrganization 2026-08-03-12:55:
  * attemptExecutorVerificationFix peeled from TaskExecutor (U4).
@@ -12,26 +30,7 @@
  * FNXC:PluginSkills 2026-07-12-00:00:
  * Verification-fix sessions inherit plugin skill body dirs from task skill context.
  */
-import type { Settings, Task, TaskStore } from "@fusion/core";
-import { resolveExecutorFallbackModel, resolvePersistAgentThinkingLog } from "@fusion/core";
-import { AgentLogger } from "../agents/agent-logger.js";
 // FNXC:CommandCenterActivity 2026-08-15-22:15: FN-8868 usage telemetry + session boundaries (restored post-wave-18).
-import { attachAgentUsageTelemetry, emitAgentSessionStart } from "../agents/agent-usage-telemetry.js";
-import {
-  createResolvedAgentSession,
-  resolveExecutorSessionModel,
-  resolveExecutorFallbackThinkingLevel,
-  resolveExecutorThinkingLevel,
-} from "../agents/agent-session-helpers.js";
-import { buildSessionSkillContext } from "../cli-runtime/session-skill-context.js";
-import { accumulateSessionTokenUsage } from "../execution/session-token-usage.js";
-import { VERIFICATION_LOG_MAX_CHARS } from "../execution/verification-utils.js";
-import { withRateLimitRetry } from "../errors/rate-limit-retry.js";
-import { describeModel, promptWithFallback } from "../pi.js";
-import { executorLog } from "../logger.js";
-import { createRunAuditor, type EngineRunContext } from "../util/run-audit.js";
-import type { PluginRunner } from "../plugins/plugin-runner.js";
-import type { AgentStore } from "@fusion/core";
 
 export type AttemptExecutorVerificationFixDeps = {
   store: TaskStore;
@@ -39,7 +38,8 @@ export type AttemptExecutorVerificationFixDeps = {
   pluginRunner?: PluginRunner;
   onAgentText?: ConstructorParameters<typeof AgentLogger>[0]["onAgentText"];
   onAgentTool?: ConstructorParameters<typeof AgentLogger>[0]["onAgentTool"];
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   getAssignedAgentRuntimeConfig: (agentId: string | null | undefined) => Promise<Record<string, unknown> | undefined>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- MCP map shape owned by session helpers
   resolveMcpServers: (agentId?: string | null) => Promise<any>;
@@ -151,7 +151,7 @@ Do not refactor, rename broadly, or make opportunistic improvements.
       fallbackModelId: executorFallback.modelId,
       fallbackThinkingLevel: resolveExecutorFallbackThinkingLevel(task.thinkingLevel, settings),
       defaultThinkingLevel: resolveExecutorThinkingLevel(task.thinkingLevel, settings),
-      runAuditor: createRunAuditor(deps.store, deps.getRunContextFor(task.id)),
+      runAuditor: createRunAuditor(deps.store, deps.runContextFor(task.id)),
       settings,
       taskEnv: extraEnv,
       mcpServers: await deps.resolveMcpServers(undefined),
@@ -170,7 +170,7 @@ Do not refactor, rename broadly, or make opportunistic improvements.
       task.id,
       `Executor verification fix agent started (model: ${describeModel(session)}, attempt ${retryNumber}/${maxRetries})`,
       undefined,
-      deps.getRunContextFor(task.id),
+      deps.runContextFor(task.id),
     );
     await deps.store.appendAgentLog(
       task.id,
@@ -218,7 +218,7 @@ ${failureContext.output.slice(0, VERIFICATION_LOG_MAX_CHARS)}
         task.id,
         `Re-running deterministic verification (attempt ${retryNumber}/${maxRetries})`,
         undefined,
-        deps.getRunContextFor(task.id),
+        deps.runContextFor(task.id),
       );
       await deps.store.appendAgentLog(
         task.id,
@@ -241,7 +241,7 @@ ${failureContext.output.slice(0, VERIFICATION_LOG_MAX_CHARS)}
       task.id,
       `Executor verification fix agent encountered an error`,
       errorMessage,
-      deps.getRunContextFor(task.id),
+      deps.runContextFor(task.id),
     );
     await deps.store.appendAgentLog(
       task.id,

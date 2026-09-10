@@ -1,4 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
+These call-arg assertions now include the mutation context the converted sweep passes.
+Adding it is what keeps them load-bearing: left at the old arity every
+`toHaveBeenCalledWith` here would fail, and every `.not.toHaveBeenCalledWith` would pass
+vacuously — an assertion that can no longer fail is worse than one that is red.
+*/
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import { StuckTaskDetector } from "../healing/stuck-task-detector.js";
 import type { TaskStore } from "@fusion/core";
 
@@ -776,11 +784,11 @@ describe("StuckTaskDetector", () => {
 
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-001",
-        expect.stringContaining("Task terminated due to stuck agent session"),
+        expect.stringContaining("Task terminated due to stuck agent session"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-001",
-        expect.stringContaining("reason=inactivity"),
+        expect.stringContaining("reason=inactivity"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
 
       vi.useRealTimers();
@@ -800,7 +808,7 @@ describe("StuckTaskDetector", () => {
 
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-001",
-        expect.stringContaining("reason=loop"),
+        expect.stringContaining("reason=loop"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
       );
 
       vi.useRealTimers();
@@ -817,7 +825,7 @@ describe("StuckTaskDetector", () => {
 
       // The detector no longer moves the task — the executor handles this
       // in its finally block after clearing the execution guard.
-      expect(store.updateTask).not.toHaveBeenCalledWith("FN-001", { status: "stuck-killed" });
+      expect(store.updateTask).not.toHaveBeenCalledWith("FN-001", { status: "stuck-killed" }, UNATTRIBUTED_MUTATION_CONTEXT);
       expect(store.moveTask).not.toHaveBeenCalled();
 
       vi.useRealTimers();

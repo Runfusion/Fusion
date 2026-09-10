@@ -20,6 +20,12 @@ export abstract class TaskExecutorWorktreePureFacades extends TaskExecutorState 
   protected async shouldGenerateNewWorktreeName(conflictPath: string, currentTaskId: string): Promise<boolean> { return pure.shouldGenerateNewWorktreeName(this.activeWorktrees, this.store, conflictPath, currentTaskId); }
   protected async findActiveWorktreeOwner(worktreePath: string, requestingTaskId: string): Promise<string | null> { return pure.findActiveWorktreeOwner(this.activeWorktrees, this.store, worktreePath, requestingTaskId); }
   protected async isLiveCleanupRefusal(worktreePath: string, taskId: string): Promise<boolean> { return pure.isLiveCleanupRefusal(this.activeWorktrees, this.store, worktreePath, taskId); }
+  /*
+  FNXC:Identity 2026-08-24-02:18:
+  Stale-branch cleanup logs through the injected store. The helper still uses the store's logEntry
+  arity; attributed worktree-create writes (squash-import, remote-rebase, start-point clear) pass
+  `runContextForTotal` at the outer create loop rather than through this facade.
+  */
   protected async cleanupStaleBranch(branch: string, taskId: string): Promise<boolean> { return pure.cleanupStaleBranch(this.rootDir, this.store, branch, taskId); }
   protected async planSquashImportFromDep(...args: FacadeAfterSecond<typeof pure.planSquashImportFromDep>): ReturnType<typeof pure.planSquashImportFromDep> { return pure.planSquashImportFromDep(this.rootDir, this.store, ...args); }
   /*

@@ -1,11 +1,4 @@
-/**
- * FNXC:CodeOrganization 2026-08-03-14:20:
- * createAuthoritativeWorkflowSeams peeled from TaskExecutor (U4).
- *
- * FNXC:WorkflowExecutionOwnership 2026-07-27-16:25 / 2026-07-28-20:25:
- * Seam return vocabulary is the ownership boundary; exit events announce without changing outcomes.
- */
-import type { AgentStore, ResolvedTaskOutputLanguage, Settings, TaskStore, ThinkingLevel, WorkspaceConfig } from "@fusion/core";
+import type { AgentStore, ResolvedTaskOutputLanguage, Settings, TaskStore, ThinkingLevel, WorkspaceConfig, RunMutationContext } from "@fusion/core";
 import { emitWorkflowLifecycleEvent, resolveTaskOutputLanguage, THINKING_LEVELS } from "@fusion/core";
 import type { ImplementationExit } from "./implementation-exit.js";
 import type { WorkflowLegacySeams } from "../workflows/workflow-node-handlers.js";
@@ -16,8 +9,7 @@ import {
   SEAM_SKILL_NAME_CONTEXT_KEY,
   SEAM_THINKING_LEVEL_CONTEXT_KEY,
 
-  type ForeachActiveContext,
-} from "../workflows/workflow-node-handlers.js";
+  type ForeachActiveContext } from "../workflows/workflow-node-handlers.js";
 import { graphActiveContextKey } from "./task-predicates.js";
 import { WorkflowReviewService } from "../workflows/workflow-review-service.js";
 import { MERGE_BOUNDARY_UNPROVEN_VALUE } from "../workflows/workflow-merge-nodes.js";
@@ -29,20 +21,24 @@ import { logReviewCheckoutRouting } from "./review-checkout-routing.js";
 import { selectUserCommentsForAgentContext } from "../agents/agent-user-comments.js";
 import {
   resolveValidatorThinkingLevel,
-  resolveValidatorFallbackThinkingLevel,
-} from "../agents/agent-session-helpers.js";
+  resolveValidatorFallbackThinkingLevel } from "../agents/agent-session-helpers.js";
 import type { ReviewResult } from "../execution/reviewer.js";
 import {
   buildReviewUnavailableMessage,
   buildPlanVerifiedMessage,
   buildReviewVerdictMessage,
   emitProactiveStatus,
-  sanitizeFailureReason,
-} from "../project/proactive-status.js";
-import type { EngineRunContext } from "../util/run-audit.js";
+  sanitizeFailureReason } from "../project/proactive-status.js";
 import { executorLog, reviewerLog } from "../logger.js";
 import { normalizeWorkspaceTaskRouting } from "./workspace-config-resolver.js";
 import { isApprovalFamilyVerdict } from "./workspace-review-per-repo.js";
+/**
+ * FNXC:CodeOrganization 2026-08-03-14:20:
+ * createAuthoritativeWorkflowSeams peeled from TaskExecutor (U4).
+ *
+ * FNXC:WorkflowExecutionOwnership 2026-07-27-16:25 / 2026-07-28-20:25:
+ * Seam return vocabulary is the ownership boundary; exit events announce without changing outcomes.
+ */
 
 const WORKFLOW_THINKING_LEVEL_SET: ReadonlySet<string> = new Set(THINKING_LEVELS);
 
@@ -131,7 +127,8 @@ export type CreateAuthoritativeWorkflowSeamsDeps = {
   pausedAborted: Set<string>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   mergeRequester?: ((taskId: string, opts?: any) => Promise<any>) | null;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   persistTokenUsage: AnyFn;
   runImplementationPhase: AnyFn;
   handoffTaskToReview: AnyFn;
@@ -291,7 +288,7 @@ export function createAuthoritativeWorkflowSeams(
             mergeTask.id,
             `Workflow merge blocked before requester: ${missingImplementationProof}`,
             undefined,
-            deps.getRunContextFor(mergeTask.id),
+            deps.runContextFor(mergeTask.id),
           );
           return { outcome: "failure", value: "implementation-incomplete" };
         }

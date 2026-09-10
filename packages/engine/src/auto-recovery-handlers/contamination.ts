@@ -6,6 +6,7 @@ import { createLogger, type Logger } from "../logger.js";
 import { recoverForeignOnlyContamination } from "../recovery/foreign-only-contamination.js";
 import { resolveIntegrationBranch } from "../merge/integration-branch.js";
 import type { RunAuditor } from "../util/run-audit.js";
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 
 const baseLog = createLogger("auto-recovery:contamination");
 
@@ -104,7 +105,7 @@ export class ContaminationAutoRecoveryHandler implements Pick<AutoRecoveryHandle
         paused: false,
         pausedReason: null,
         error: null,
-      });
+      }, UNATTRIBUTED_MUTATION_CONTEXT);
     }
 
     await this.deps.runAudit.database({

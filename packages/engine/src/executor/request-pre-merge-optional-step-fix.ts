@@ -1,3 +1,40 @@
+import type { Task, TaskStore, WorkflowReviewFinding, WorkflowStepResult as CoreWorkflowStepResult, RunMutationContext } from "@fusion/core";
+import {
+  DEFAULT_MAX_POST_REVIEW_FIXES,
+  DEFAULT_PLAN_REVIEW_REPLAN_CAP,
+  hasPendingReviewRemediationWork,
+  hasPreMergeRemediationAutoMergeHold,
+  PLAN_REVIEW_GROUP_ID,
+  resolveOptionalReviewRevisionBudget,
+  resolveOptionalStepRevisionBudget,
+  resolveStepReopenPolicy,
+  isReportingOnlyOptionalGroup,
+  resolveWorkflowIrForTask } from "@fusion/core";
+import { mergeEffectiveSettings } from "../project/effective-settings.js";
+import { moveTaskToReplanColumn, resolveReplanTargetColumn } from "../execution/replan-target.js";
+import { isNonPlanDefectPlanReviewFailure } from "../errors/transient-error-detector.js";
+import { parseRequiredArtifactMissingValue } from "../execution/required-workflow-artifacts.js";
+import {
+  countOptionalStepRevisionAttempts,
+  optionalStepRevisionKey,
+  optionalStepRevisionLogOutcome } from "./optional-step-revision.js";
+import {
+  countPlanReviewRevisionAttempts,
+  formatPlanReviewRevisionFeedback } from "../plan-review-feedback-history.js";
+import { executorLog } from "../logger.js";
+import {
+  deriveWorkspaceReviewRemediation,
+  hasDurableRepeatedWorkspaceReview } from "./workspace-review-remediation.js";
+import { reassertRemediationAttempt } from "./claim-review-remediation-attempt.js";
+import { ClaimSupersededError, fenceStoreForClaim } from "./fence-store-for-claim.js";
+import type { ReviewRemediationAttemptDescriptor } from "./recover-failed-pre-merge-step.js";
+import { routeReviewConvergenceLadder } from "./review-convergence-ladder.js";
+import type {
+  AppendReviewRemediationOptions,
+  AppendReviewRemediationOutcome } from "./append-review-remediation-steps.js";
+import { resolveReviewRemediationGate } from "./review-remediation-gate.js";
+import { resolveRemediationCheckout } from "./resolve-remediation-checkout.js";
+import { isDefiniteEmptyCodeReviewRevise } from "./review-empty-content-close.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-12:20:
  * requestPreMergeOptionalStepFix peeled from TaskExecutor (U4).
@@ -37,50 +74,7 @@
  * FNXC:RemediationVisibility 2026-08-28-12:16:
  * A blocking result that cannot become remediation must also explain the refusal on the card, including the gate identity, concrete budget or scope state, and the operator's retry or privileged-bypass remedies. Engine-only warnings are not visible where operators diagnose a frozen review.
  */
-import type { Task, TaskStore, WorkflowReviewFinding, WorkflowStepResult as CoreWorkflowStepResult } from "@fusion/core";
-import {
-  DEFAULT_MAX_POST_REVIEW_FIXES,
-  DEFAULT_PLAN_REVIEW_REPLAN_CAP,
-  hasPendingReviewRemediationWork,
-  hasPreMergeRemediationAutoMergeHold,
-  PLAN_REVIEW_GROUP_ID,
-  resolveOptionalReviewRevisionBudget,
-  resolveOptionalStepRevisionBudget,
-  resolveStepReopenPolicy,
-  isReportingOnlyOptionalGroup,
-  resolveWorkflowIrForTask,
-} from "@fusion/core";
-import { mergeEffectiveSettings } from "../project/effective-settings.js";
-import { moveTaskToReplanColumn, resolveReplanTargetColumn } from "../execution/replan-target.js";
-import { isNonPlanDefectPlanReviewFailure } from "../errors/transient-error-detector.js";
-import { parseRequiredArtifactMissingValue } from "../execution/required-workflow-artifacts.js";
-import {
-  countOptionalStepRevisionAttempts,
-  optionalStepRevisionKey,
-  optionalStepRevisionLogOutcome,
-} from "./optional-step-revision.js";
-import {
-  countPlanReviewRevisionAttempts,
-  formatPlanReviewRevisionFeedback,
-} from "../plan-review-feedback-history.js";
-import { executorLog } from "../logger.js";
-import type { EngineRunContext } from "../util/run-audit.js";
-import {
-  deriveWorkspaceReviewRemediation,
-  hasDurableRepeatedWorkspaceReview,
-} from "./workspace-review-remediation.js";
 /* Both sides of this cycle export hoisted function declarations, so the deferred calls are safe. */
-import { reassertRemediationAttempt } from "./claim-review-remediation-attempt.js";
-import { ClaimSupersededError, fenceStoreForClaim } from "./fence-store-for-claim.js";
-import type { ReviewRemediationAttemptDescriptor } from "./recover-failed-pre-merge-step.js";
-import { routeReviewConvergenceLadder } from "./review-convergence-ladder.js";
-import type {
-  AppendReviewRemediationOptions,
-  AppendReviewRemediationOutcome,
-} from "./append-review-remediation-steps.js";
-import { resolveReviewRemediationGate } from "./review-remediation-gate.js";
-import { resolveRemediationCheckout } from "./resolve-remediation-checkout.js";
-import { isDefiniteEmptyCodeReviewRevise } from "./review-empty-content-close.js";
 
 function normalizeConvergenceText(value: string | undefined): string {
   return (value ?? "").replace(/\s+/g, " ").trim().toLowerCase();
@@ -180,7 +174,8 @@ export type RequestPreMergeOptionalStepFixInfo = {
 
 export type RequestPreMergeOptionalStepFixDeps = {
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   recoverMissingRequiredArtifacts: (
     task: Task,
     artifactKeys: string[],
@@ -341,7 +336,7 @@ async function requestPreMergeOptionalStepFixInner(
       taskId,
       "Pre-merge remediation not scheduled — operator task hold",
       `Step/node: ${info.nodeId ?? info.stepName}\nReason: ${reason}`,
-      deps.getRunContextFor(taskId),
+      deps.runContextFor(taskId),
     );
     return false;
   }
@@ -377,7 +372,7 @@ async function requestPreMergeOptionalStepFixInner(
         taskId,
         "Plan Review provider failure — task kept in place",
         `Plan Review failed without a REVISE verdict due to a provider, model, transport, or abort condition. The task remains in ${liveTask.column}; no automatic replan was scheduled.\n\nDiagnostic:\n${info.feedback}`,
-        deps.getRunContextFor(taskId),
+        deps.runContextFor(taskId),
       );
       return false;
     }
@@ -487,13 +482,13 @@ async function requestPreMergeOptionalStepFixInner(
     }
     const totalFixCount = (liveTask.postReviewFixCount ?? 0) + 1;
     const budgetLabel = budget.unbounded ? "unbounded" : String(budget.max);
-    await deps.store.updateTask(taskId, { postReviewFixCount: totalFixCount }, deps.getRunContextFor(taskId));
+    await deps.store.updateTask(taskId, { postReviewFixCount: totalFixCount }, deps.runContextFor(taskId));
     deps.clearPausedAborted(taskId);
     await deps.store.logEntry(
       taskId,
       "AI spec revision requested",
       formatPlanReviewRevisionFeedback(revisionKey, info.status, feedback),
-      deps.getRunContextFor(taskId),
+      deps.runContextFor(taskId),
     );
     /*
     FNXC:PlanReviewReplan 2026-07-12-23:20:
@@ -508,7 +503,7 @@ async function requestPreMergeOptionalStepFixInner(
         ? `Plan Review requested a plan revision — task stays in '${replanColumn}' (attempt ${nextCount}/${budgetLabel})`
         : `Plan Review requested a plan revision — moved to '${replanColumn}' (attempt ${nextCount}/${budgetLabel})`,
       optionalStepRevisionLogOutcome(feedback, revisionKey),
-      deps.getRunContextFor(taskId),
+      deps.runContextFor(taskId),
     );
     deps.workflowLifecycleMovesInFlight.add(taskId);
     try {
@@ -531,7 +526,7 @@ async function requestPreMergeOptionalStepFixInner(
       recoveryRetryCount: null,
       nextRecoveryAt: null,
       graphResumeRetryCount: 0,
-    }, deps.getRunContextFor(taskId));
+    }, deps.runContextFor(taskId));
     return true;
   }
 
@@ -856,12 +851,12 @@ async function requestPreMergeOptionalStepFixInner(
   const nextCount = currentCount + 1;
   const totalFixCount = (liveTask.postReviewFixCount ?? 0) + 1;
   const budgetLabel = budget.unbounded ? "unbounded" : String(budget.max);
-  await deps.store.updateTask(taskId, { postReviewFixCount: totalFixCount }, deps.getRunContextFor(taskId));
+  await deps.store.updateTask(taskId, { postReviewFixCount: totalFixCount }, deps.runContextFor(taskId));
   await deps.store.logEntry(
     taskId,
     `Pre-merge optional workflow step requested executor fixes (attempt ${nextCount}/${budgetLabel})`,
     optionalStepRevisionLogOutcome(`Step: ${info.stepName}\nStatus: ${info.status}\nFeedback:\n${info.feedback}`, revisionKey),
-    deps.getRunContextFor(taskId),
+    deps.runContextFor(taskId),
   );
   const remediationCheckout = resolveRemediationCheckout(liveTask, reviewResult);
   if (!remediationCheckout) {

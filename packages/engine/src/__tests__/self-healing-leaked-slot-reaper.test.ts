@@ -1,4 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
+These call-arg assertions now include the mutation context the converted sweep passes.
+Adding it is what keeps them load-bearing: left at the old arity every
+`toHaveBeenCalledWith` here would fail, and every `.not.toHaveBeenCalledWith` would pass
+vacuously — an assertion that can no longer fail is worse than one that is red.
+*/
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import { EventEmitter } from "node:events";
 
 const { logger } = vi.hoisted(() => ({ logger: { log: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
@@ -91,7 +99,7 @@ describe("reapLeakedConcurrencySlots", () => {
     expect(clearPhantomExecutorBinding).toHaveBeenCalledWith("FN-6756");
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-6756",
-      expect.stringContaining("released leaked worktree/concurrency slot"),
+      expect.stringContaining("released leaked worktree/concurrency slot"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
     );
   });
 

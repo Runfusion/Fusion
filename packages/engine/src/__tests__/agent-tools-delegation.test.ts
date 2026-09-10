@@ -1,4 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+/*
+FNXC:Identity 2026-08-14-05:32 (review finding — unattributed delegation writes were hidden):
+
+These tools are invoked here with NO principal (`undefined`), which is the unresolved-caller path:
+per U11 it resolves to `UNATTRIBUTED_MUTATION_CONTEXT` by design at this stage. The generic matcher
+used to accept that silently, so the assertions read as "attributed" while proving nothing.
+
+Asserting the unattributed marker explicitly keeps the remaining gap countable: 15 writes on the
+delegation tool paths still carry no actor, and that count is now visible instead of inferred.
+
+The two sites that KEEP `ANY_MUTATION_CONTEXT` are attributed for a real reason — they run with a
+resolved agent principal rather than the unresolved path — so the two matchers are not
+interchangeable here, and swapping one for the other should fail.
+*/
+import { ANY_MUTATION_CONTEXT, UNATTRIBUTED_CONTEXT_MATCHER } from "./mutation-context-matchers.js";
 import type { Agent, AgentStore, TaskStore, Task, TaskCreateInput } from "@fusion/core";
 import { createAgentTask, createListAgentsTool, createDelegateTaskTool, createTaskCreateTool } from "../agent-tools.js";
 import { RENAMED_VOCAB, lifecycleIr } from "./_workflow-vocabulary-fixture.js";
@@ -252,7 +267,7 @@ describe("createDelegateTaskTool", () => {
       dependencies: undefined,
       assignedAgentId: "agent-001",
       source: expect.objectContaining({ sourceType: "api" }),
-    }), expect.objectContaining({ settings: { autoSummarizeTitles: false } }));
+    }), expect.objectContaining({ settings: { autoSummarizeTitles: false } }), UNATTRIBUTED_CONTEXT_MATCHER);
     expect(vi.mocked(taskStore.createTask).mock.calls[0]?.[0]).toMatchObject({ column: "todo" });
     expect(vi.mocked(taskStore.createTask).mock.calls[0]?.[0]).not.toHaveProperty("summarize");
 
@@ -290,8 +305,8 @@ describe("createDelegateTaskTool", () => {
       mission_lineage: APPROVED_LINEAGE,
     }, undefined as any, undefined as any, undefined as any);
 
-    expect(taskStore.updateTask).toHaveBeenCalledWith("FN-duplicate", { assignedAgentId: "agent-002" });
-    expect(taskStore.moveTask).toHaveBeenCalledWith("FN-duplicate", "todo");
+    expect(taskStore.updateTask).toHaveBeenCalledWith("FN-duplicate", { assignedAgentId: "agent-002" }, UNATTRIBUTED_CONTEXT_MATCHER);
+    expect(taskStore.moveTask).toHaveBeenCalledWith("FN-duplicate", "todo", undefined, UNATTRIBUTED_CONTEXT_MATCHER);
     const text = (result.content[0] as { text: string }).text;
     expect(text).toContain("Delegated to Rita (agent-002): Linked existing FN-duplicate");
     expect(text).toContain("picked up by Rita on their next heartbeat cycle");
@@ -329,7 +344,7 @@ describe("createDelegateTaskTool", () => {
       mission_lineage: APPROVED_LINEAGE,
     }, undefined as any, undefined as any, undefined as any);
 
-    expect(taskStore.moveTask).toHaveBeenCalledWith("FN-duplicate-renamed", "backlog");
+    expect(taskStore.moveTask).toHaveBeenCalledWith("FN-duplicate-renamed", "backlog", undefined, UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("does not mutate a same-owner duplicate canonical task", async () => {
@@ -469,7 +484,7 @@ describe("createDelegateTaskTool", () => {
           crossParentDiagnosticClaimId: expect.stringMatching(/^agent-diagnostic-intent:/),
         }),
       }),
-    }), expect.anything());
+    }), expect.anything(), UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   /*
@@ -543,7 +558,7 @@ describe("createDelegateTaskTool", () => {
     await tool.execute("call-1", { description: "Capture optional report screenshots", mission_lineage: APPROVED_LINEAGE }, undefined as any, undefined as any, undefined as any);
     expect(taskStore.createTask).toHaveBeenCalledWith(expect.objectContaining({
       source: expect.objectContaining({ sourceType: "api", sourceAgentId: "agent-worker", sourceParentTaskId: "FN-PARENT" }),
-    }), expect.anything());
+    }), expect.anything(), ANY_MUTATION_CONTEXT);
   });
 
   it("requires an explicit lineage when a no-task heartbeat cannot inherit one", async () => {
@@ -581,8 +596,7 @@ describe("createDelegateTaskTool", () => {
         priority: "high",
         source: expect.objectContaining({ sourceType: "api" }),
       }),
-      expect.anything(),
-    );
+      expect.anything(), UNATTRIBUTED_CONTEXT_MATCHER);
     const createInput = vi.mocked(taskStore.createTask).mock.calls[0]?.[0] as Record<string, unknown>;
     expect(createInput.missionId).toBeUndefined();
     expect(createInput.sliceId).toBeUndefined();
@@ -644,7 +658,7 @@ describe("createDelegateTaskTool", () => {
 
     expect(result).not.toMatchObject({ isError: true });
     expect(missionStore.claimDefinedFeatureTaskInTransaction).toHaveBeenCalledWith({}, { featureId: "F-001", taskId: "FN-001", missionId: "M-001", sliceId: "SL-001" });
-    expect(store.createTask).toHaveBeenCalledWith(expect.objectContaining({ missionId: "M-001", sliceId: "SL-001" }), expect.anything());
+    expect(store.createTask).toHaveBeenCalledWith(expect.objectContaining({ missionId: "M-001", sliceId: "SL-001" }), expect.anything(), UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("keeps a claimed defined-feature task canonical when a late duplicate appears", async () => {
@@ -814,7 +828,7 @@ describe("createDelegateTaskTool", () => {
     expect(taskStore.createTask).toHaveBeenCalledWith(expect.objectContaining({
       source: expect.objectContaining({ sourceParentTaskId: "FN-PARENT" }),
       proposalClaimId: expect.stringMatching(/^agent-parent-intent:FN-PARENT:/),
-    }), expect.anything());
+    }), expect.anything(), UNATTRIBUTED_CONTEXT_MATCHER);
     expect(result).toMatchObject({ task: canonical, wasDuplicate: true });
     /* FNXC:MissionAdmission 2026-07-23-17:20: proposal-claim reuse must validate the final canonical, not only pre-create duplicate probes. */
     expect(validateDuplicateCanonical).toHaveBeenCalledWith(canonical);
@@ -855,8 +869,8 @@ describe("createDelegateTaskTool", () => {
 
     expect(result.wasDuplicate).toBe(true);
     expect(result.task).toBe(moved);
-    expect(taskStore.updateTask).toHaveBeenCalledWith("FN-old", { assignedAgentId: "agent-002" });
-    expect(taskStore.moveTask).toHaveBeenCalledWith("FN-old", "todo");
+    expect(taskStore.updateTask).toHaveBeenCalledWith("FN-old", { assignedAgentId: "agent-002" }, UNATTRIBUTED_CONTEXT_MATCHER);
+    expect(taskStore.moveTask).toHaveBeenCalledWith("FN-old", "todo", undefined, UNATTRIBUTED_CONTEXT_MATCHER);
     /* FNXC:MissionAdmission 2026-07-23-17:20: post-create duplicate reconciliation must validate its returned canonical before duplicate success. */
     expect(validateDuplicateCanonical).toHaveBeenCalledWith(moved);
   });
@@ -964,7 +978,7 @@ describe("createDelegateTaskTool", () => {
     expect(taskStore.createTask).toHaveBeenCalledWith(expect.objectContaining({
       assignedAgentId: "agent-009",
       source: expect.objectContaining({ sourceType: "api" }),
-    }), expect.anything());
+    }), expect.anything(), UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("rejects reviewer target without override", async () => {
@@ -1011,7 +1025,7 @@ describe("createDelegateTaskTool", () => {
         sourceType: "api",
         sourceMetadata: expect.objectContaining({ executorRoleOverride: true }),
       }),
-    }), expect.objectContaining({ settings: { autoSummarizeTitles: false } }));
+    }), expect.objectContaining({ settings: { autoSummarizeTitles: false } }), UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   /*
@@ -1059,8 +1073,7 @@ describe("createDelegateTaskTool", () => {
 
     expect(taskStore.createTask).toHaveBeenCalledWith(
       expect.objectContaining({ assignedAgentId: "agent-explicit" }),
-      expect.anything(),
-    );
+      expect.anything(), UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("passes dependencies through to task creation", async () => {
@@ -1092,7 +1105,7 @@ describe("createDelegateTaskTool", () => {
       dependencies: ["FN-010"],
       assignedAgentId: "agent-001",
       source: expect.objectContaining({ sourceType: "api" }),
-    }), expect.objectContaining({ settings: { autoSummarizeTitles: false } }));
+    }), expect.objectContaining({ settings: { autoSummarizeTitles: false } }), UNATTRIBUTED_CONTEXT_MATCHER);
     expect(vi.mocked(taskStore.createTask).mock.calls[0]?.[0]).toMatchObject({ column: "todo" });
 
     const text = (result.content[0] as { text: string }).text;
@@ -1123,8 +1136,7 @@ describe("createDelegateTaskTool", () => {
 
     expect(taskStore.createTask).toHaveBeenCalledWith(
       expect.objectContaining({ dependencies: undefined }),
-      expect.objectContaining({ settings: { autoSummarizeTitles: false } }),
-    );
+      expect.objectContaining({ settings: { autoSummarizeTitles: false } }), UNATTRIBUTED_CONTEXT_MATCHER);
 
     const text = (result.content[0] as { text: string }).text;
     expect(text).not.toContain("depends on:");

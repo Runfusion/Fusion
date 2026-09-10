@@ -1,3 +1,4 @@
+import { UNATTRIBUTED_CONTEXT_MATCHER } from "./mutation-context-matchers.js";
 import { EventEmitter } from "node:events";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { GitLabTrackingCommentService, formatGitLabTrackingComment } from "../gitlab-tracking-comments.js";
@@ -20,7 +21,7 @@ describe("GitLabTrackingCommentService", () => {
     await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(2));
     expect(fetchImpl.mock.calls[0][0]).toBe("https://gitlab.example.com/api/v4/projects/g%2Fp/merge_requests/5/notes");
     expect(fetchImpl.mock.calls[1][0]).toBe("https://gitlab.example.com/api/v4/projects/g%2Fp/issues/5/notes");
-    expect(s.logEntry).toHaveBeenCalledWith("FN-1", "Posted GitLab tracking comment", "g/p!5 (done)");
+    expect(s.logEntry).toHaveBeenCalledWith("FN-1", "Posted GitLab tracking comment", "g/p!5 (done)", UNATTRIBUTED_CONTEXT_MATCHER);
   });
   /*
   FNXC:WorkflowResolvedColumns 2026-07-31-09:35 (fleet phase — the GitLab half, and the PAIR):
@@ -61,7 +62,7 @@ describe("GitLabTrackingCommentService", () => {
     s.emit("task:moved", { task: task("merge_request"), from: "backlog", to: "shipped" });
     await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(1));
     // The comment SHAPE is still the fixed "done" mode — a role decides the lane, not the wording.
-    expect(s.logEntry).toHaveBeenCalledWith("FN-1", "Posted GitLab tracking comment", "g/p!5 (shipped)");
+    expect(s.logEntry).toHaveBeenCalledWith("FN-1", "Posted GitLab tracking comment", "g/p!5 (shipped)", UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("posts a tracking comment when a card reaches a RENAMED wip lane", async () => {

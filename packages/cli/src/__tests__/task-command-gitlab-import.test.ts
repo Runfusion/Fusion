@@ -1,3 +1,4 @@
+import { UNATTRIBUTED_CONTEXT_MATCHER } from "./mutation-context-matchers.js";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -105,7 +106,7 @@ describe("fn task import-gitlab", () => {
       sourceIssue: expect.objectContaining({ provider: "gitlab", issueNumber: 2 }),
       gitlabTracking: expect.objectContaining({ item: expect.objectContaining({ kind: "project_issue", iid: 2 }) }),
       source: expect.objectContaining({ sourceType: "gitlab_import", sourceMetadata: expect.objectContaining({ resourceType: "project_issue" }) }),
-    }));
+    }), undefined, UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("skips duplicates by GitLab source URL", async () => {

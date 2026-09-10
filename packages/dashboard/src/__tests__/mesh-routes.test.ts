@@ -220,6 +220,7 @@ function createMeshTestServer(store: TaskStore, extra: Record<string, unknown> =
   return createServer(store, {
     chatStore: chatStore as never,
     aiSessionStore: aiSessionStore as never,
+    noAuth: true,
     ...extra,
   });
 }
