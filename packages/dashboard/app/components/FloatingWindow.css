@@ -655,15 +655,14 @@ Edge + corner resize handles. touch-action:none keeps the drag from being hijack
 .floating-window__resize-handle--sw { bottom: 0; left: 0; cursor: nesw-resize; }
 
 /*
-FNXC:AlphaMobileDrawer 2026-09-10-04:41:
-Project-scoped Alpha utilities reuse FloatingWindow's existing content, focus, and portal ownership but replace its phone fullscreen geometry with the same bounded bottom-sheet language as destination drawers. Onboarding classes are excluded in React before these markers are emitted, so setup and blocking pre-shell flows retain their dedicated presentation.
+FNXC:AlphaMobileDrawer 2026-09-10-16:56:
+Project-scoped Alpha utilities reuse FloatingWindow's existing content, focus, and portal ownership but place their bounded phone drawer at the viewport bottom above the trigger pill. System clearance is padding inside the scrollable surface; onboarding classes remain excluded so setup and blocking pre-shell flows retain their dedicated presentation.
 */
 html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] .floating-window-overlay--alpha-mobile-drawer {
   display: flex;
   align-items: flex-end;
   inset: 0 var(--icb-right-offset, 0px) 0 0;
   padding-block-start: calc(env(safe-area-inset-top, 0px) + var(--space-2xl));
-  padding-block-end: var(--mobile-nav-alpha-system-offset);
   background: color-mix(in srgb, var(--bg) 38%, transparent);
   pointer-events: auto;
 }
@@ -680,7 +679,7 @@ html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] .floating-wi
   min-width: 0 !important;
   min-height: 0 !important;
   max-width: 100% !important;
-  max-height: calc(100dvh - env(safe-area-inset-top, 0px) - var(--space-2xl) - var(--mobile-nav-alpha-system-offset)) !important;
+  max-height: calc(100dvh - env(safe-area-inset-top, 0px) - var(--space-2xl)) !important;
   overflow: hidden !important;
   border: var(--btn-border-width) solid var(--border);
   border-block-end: 0;
@@ -710,6 +709,7 @@ html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] .floating-wi
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
+  padding-block-end: var(--mobile-nav-alpha-system-offset);
   overflow: auto;
   overscroll-behavior: contain;
 }

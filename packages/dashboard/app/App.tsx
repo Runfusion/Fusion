@@ -1116,6 +1116,11 @@ function AppInner() {
   const executorFooterVisible = projectShellPresent && !alphaUpdatesEnabled;
   const mobileNavVisible = projectShellPresent;
   /*
+  FNXC:AlphaMobileDrawer 2026-09-10-17:16:
+  An Alpha shared drawer is the foreground layer, not a replacement for its navigation trigger. Keep the pill mounted behind Usage and modal-owned Task Detail while ordinary blocking modals continue to suppress mobile navigation.
+  */
+  const alphaSharedModalDrawerOpen = alphaMobileDrawerActive && Boolean(modalManager.usageOpen || modalManager.detailTask);
+  /*
   FNXC:AlphaUpdates 2026-09-09-22:14:
   App owns the Alpha popover's accessible open state so the Header trigger and MobileNavBar surface cannot drift. Any shell boundary that removes either endpoint closes the transient menu; the legacy More drawer remains MobileNavBar-owned.
   */
@@ -1987,8 +1992,6 @@ function AppInner() {
     openCreateWorkflowWithNav,
     sidebarActive,
     isMobile,
-    /* FNXC:AlphaMobileDrawer 2026-09-10-05:38: Drawer pill clearance follows the same live visibility predicate as the Alpha navigation; keyboard or modal suppression must remove the reserve immediately instead of leaving an unusable dead band. */
-    alphaMobileNavVisible: mobileNavVisible && !mobileKeyboardOpen && !modalManager.anyModalOpen,
     mainPanelDetailInitialTab,
     closeTaskDetailMainPanel,
     setMainPanelDetailTask,
@@ -2213,7 +2216,6 @@ function AppInner() {
               title={t("nav.projects", "Projects")}
               closeLabel={t("common.close", "Close")}
               onClose={() => setAlphaProjectsDrawerOpen(false)}
-              avoidMobileNav={!mobileKeyboardOpen}
               testId="alpha-mobile-drawer-projects"
             >
               <ProjectOverview
@@ -2245,7 +2247,6 @@ function AppInner() {
                   modalManager.closePlanning();
                   handleTaskViewChange("board");
                 }}
-                avoidMobileNav={mobileNavVisible && !mobileKeyboardOpen && !modalManager.anyModalOpen}
                 keepMounted
                 testId="alpha-mobile-drawer-planning"
               >
@@ -2328,7 +2329,7 @@ function AppInner() {
         onChangeView={mobileNavVisible ? handleTaskViewChange : () => {}}
         footerVisible={executorFooterVisible}
         hidden={!mobileNavVisible}
-        modalOpen={modalManager.anyModalOpen}
+        modalOpen={modalManager.anyModalOpen && !alphaSharedModalDrawerOpen}
         keyboardOpen={mobileNavKeyboardOpen}
         mobileNavPrimaryItems={mobileNavPrimaryItems}
         alphaUpdatesEnabled={alphaUpdatesEnabled}

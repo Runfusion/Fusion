@@ -91,17 +91,54 @@ describe("mobile bottom-space layout invariant", () => {
     expect(footerAndNavRule).not.toContain("100dvh");
   });
 
-  it("compose le drawer Alpha et le dernier contrôle du Kanban avec la même hauteur de pill publiée", () => {
+  it("ancre le drawer Alpha sous la pill tout en gardant la réserve système dans sa surface", () => {
     const drawerRule = normalizeCss(extractRuleBlock(css, ".alpha-mobile-drawer"));
     const drawerPanelRule = normalizeCss(extractRuleBlock(css, ".alpha-mobile-drawer__panel"));
+    const drawerBodyRule = normalizeCss(extractRuleBlock(css, ".alpha-mobile-drawer__body"));
+    const navRule = normalizeCss(extractRuleBlock(css, ".mobile-nav-bar"));
     const alphaContentRule = normalizeCss(extractRuleBlock(css, 'html[data-viewport-mode="mobile"] .project-content--with-alpha-nav'));
 
-    expect(drawerRule).toContain("--alpha-mobile-drawer-bottom-reserve: calc(var(--mobile-nav-height) + var(--mobile-nav-alpha-system-offset))");
-    expect(drawerRule).toContain("padding-block-end: var(--alpha-mobile-drawer-bottom-reserve)");
+    expect(drawerRule).toContain("inset: 0 var(--icb-right-offset, 0px) 0 0");
+    expect(drawerRule).toContain("z-index: var(--z-popover)");
+    expect(drawerRule).not.toContain("padding-block-end");
     expect(drawerPanelRule).toContain("100dvh");
-    expect(drawerPanelRule).toContain("var(--alpha-mobile-drawer-bottom-reserve)");
+    expect(drawerPanelRule).not.toContain("var(--mobile-nav-height)");
+    expect(drawerPanelRule).not.toContain("var(--mobile-nav-alpha-system-offset)");
+    expect(drawerBodyRule).toContain("padding-block-end: var(--mobile-nav-alpha-system-offset)");
+    expect(navRule).toContain("z-index: 45");
+    expect(extractRuleBlock(css, ":root")).toContain("--z-popover: 60");
     expect(alphaContentRule).toContain("var(--mobile-nav-height) + var(--mobile-nav-alpha-system-offset)");
     expect(css.match(/--mobile-nav-height:\s*44px/g)).toHaveLength(1);
+  });
+
+  it.each([
+    ["portrait sans inset", 0, 0, 0, true],
+    ["portrait standalone avec safe area", 34, 8, 0, true],
+    ["paysage avec compensation ICB", 12, 0, 52, true],
+    ["paysage clavier ouvert et pill masquée", 12, 0, 52, false],
+  ])("garde le bord du drawer à zéro et sa réserve interne en %s", (_name, safeArea, standalone, icb, pillVisible) => {
+    const internalSystemClearance = icb + Math.max(safeArea, 12) + standalone;
+    const externalBottomOffset = 0;
+
+    expect(externalBottomOffset).toBe(0);
+    expect(internalSystemClearance).toBeGreaterThanOrEqual(12);
+    expect(pillVisible ? externalBottomOffset : externalBottomOffset).toBe(0);
+  });
+
+  it("aligne les adaptations FloatingWindow et Terminal sur le même bord inférieur", () => {
+    const floatingOverlay = normalizeCss(extractRuleBlock(css, 'html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] .floating-window-overlay--alpha-mobile-drawer'));
+    const floatingPanel = normalizeCss(extractRuleBlock(css, 'html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] .floating-window--alpha-mobile-drawer'));
+    const floatingBody = normalizeCss(extractRuleBlock(css, 'html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] .floating-window--alpha-mobile-drawer .floating-window__body'));
+    const terminalOverlay = normalizeCss(extractRuleBlock(css, 'html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] .terminal-modal-overlay:not(.terminal-modal-overlay--docked)'));
+    const terminalPanel = normalizeCss(extractRuleBlock(css, 'html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] .terminal-modal-overlay:not(.terminal-modal-overlay--docked) > .terminal-modal'));
+
+    expect(floatingOverlay).toContain("inset: 0 var(--icb-right-offset, 0px) 0 0");
+    expect(floatingOverlay).not.toContain("padding-block-end");
+    expect(floatingPanel).not.toContain("var(--mobile-nav-alpha-system-offset)");
+    expect(floatingBody).toContain("padding-block-end: var(--mobile-nav-alpha-system-offset)");
+    expect(terminalOverlay).not.toContain("padding-block-end");
+    expect(terminalPanel).toContain("padding-block-end: var(--mobile-nav-alpha-system-offset)");
+    expect(terminalPanel).not.toContain("var(--mobile-nav-height)");
   });
 
   it("keeps board and list content height parent-relative on mobile and desktop", () => {

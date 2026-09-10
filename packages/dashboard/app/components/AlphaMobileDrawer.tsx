@@ -11,16 +11,14 @@ export interface AlphaMobileDrawerProps {
   children: ReactNode;
   className?: string;
   keepMounted?: boolean;
-  /** Reserve the visible Alpha pill; modal utilities that hide it reserve only the system inset. */
-  avoidMobileNav?: boolean;
   testId?: string;
 }
 
 const FOCUSABLE_SELECTOR = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 /*
-FNXC:AlphaMobileDrawer 2026-09-10-04:41:
-Alpha mobile keeps Board as the permanent project surface and presents every other destination in one bounded modal drawer. The shared shell owns the visible Board reveal, pill clearance, independent scrolling, Escape/backdrop close, focus containment, and trigger-focus restoration so individual destinations do not invent competing mobile sheets.
+FNXC:AlphaMobileDrawer 2026-09-10-16:56:
+Alpha mobile keeps Board as the permanent project surface and presents every other destination in one bounded modal drawer. The shared shell owns the visible Board reveal, bottom-edge overlay above the trigger pill, internal system-safe clearance, independent scrolling, Escape/backdrop close, focus containment, and trigger-focus restoration so individual destinations do not invent competing mobile sheets.
 */
 export function AlphaMobileDrawer({
   open,
@@ -30,7 +28,6 @@ export function AlphaMobileDrawer({
   children,
   className,
   keepMounted = false,
-  avoidMobileNav = true,
   testId = "alpha-mobile-drawer",
 }: AlphaMobileDrawerProps) {
   const panelRef = useRef<HTMLElement | null>(null);
@@ -78,7 +75,7 @@ export function AlphaMobileDrawer({
 
   return createPortal(
     <div
-      className={`alpha-mobile-drawer${open ? " alpha-mobile-drawer--open" : " alpha-mobile-drawer--hidden"}${avoidMobileNav ? "" : " alpha-mobile-drawer--without-pill"}${className ? ` ${className}` : ""}`}
+      className={`alpha-mobile-drawer${open ? " alpha-mobile-drawer--open" : " alpha-mobile-drawer--hidden"}${className ? ` ${className}` : ""}`}
       data-testid={testId}
       aria-hidden={!open || undefined}
       onMouseDown={(event) => {

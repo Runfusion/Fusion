@@ -260,7 +260,6 @@ export interface MainContentProps {
   sidebarActive: boolean;
   isMobile: boolean;
   /** Whether the measured Alpha pill is currently rendered and needs drawer clearance. */
-  alphaMobileNavVisible?: boolean;
   mainPanelDetailInitialTab: DetailTaskTab | undefined;
   closeTaskDetailMainPanel: () => void;
   setMainPanelDetailTask: Dispatch<SetStateAction<Task | TaskDetail | null>>;

@@ -7383,7 +7383,6 @@ export function TaskDetailModal({ onClose, alphaMobileDrawer = false, ...props }
         title="Task detail"
         closeLabel="Close"
         onClose={requestClose}
-        avoidMobileNav={false}
         testId="alpha-mobile-drawer-task-detail"
       >
         <div className="modal modal-lg task-detail-modal task-detail-modal--alpha-drawer">

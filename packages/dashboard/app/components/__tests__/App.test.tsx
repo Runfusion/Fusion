@@ -699,17 +699,91 @@ import * as apiNodeModule from "../../hooks/useRemoteNodeData";
 import { DEFAULT_BOARD_WORKFLOWS } from "./boardWorkflows.test-helpers";
 import { readAppFile } from "../../test/cssFixture";
 
+function extractProductionRule(css: string, selector: string): string {
+  const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const rule = css.match(new RegExp(`${escapedSelector}\\s*\\{([\\s\\S]*?)\\}`));
+  if (!rule) throw new Error(`Production rule is missing: ${selector}`);
+  return rule[1];
+}
+
+function extractProductionDeclaration(rule: string, property: string): string {
+  const escapedProperty = property.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const declaration = rule.match(new RegExp(`(?:^|;)\\s*${escapedProperty}\\s*:\\s*([^;]+)`));
+  if (!declaration) throw new Error(`Production declaration is missing: ${property}`);
+  return declaration[1].trim();
+}
+
 function installProductionAlphaReserveRule(): HTMLStyleElement {
   const css = readAppFile("components/MobileNavBar.css");
   const selector = 'html[data-viewport-mode="mobile"] .project-content--with-alpha-nav';
-  const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const rule = css.match(new RegExp(`${escapedSelector}\\s*\\{([\\s\\S]*?)\\}`));
-  if (!rule) throw new Error("Production Alpha content reserve rule is missing");
-
   const style = document.createElement("style");
-  style.textContent = `${selector} { ${rule[1]} }`;
+  style.textContent = `${selector} { ${extractProductionRule(css, selector)} }`;
   document.head.append(style);
   return style;
+}
+
+function installProductionAlphaDrawerRules(systemOffset: number): HTMLStyleElement {
+  const drawerCss = readAppFile("components/AlphaMobileDrawer.css");
+  const navCss = readAppFile("components/MobileNavBar.css");
+  const tokenCss = readAppFile("styles.css");
+  const drawerRule = extractProductionRule(drawerCss, ".alpha-mobile-drawer");
+  const bodyRule = extractProductionRule(drawerCss, ".alpha-mobile-drawer__body");
+  const navRule = extractProductionRule(navCss, ".mobile-nav-bar");
+  const inset = extractProductionDeclaration(drawerRule, "inset");
+  const insetParts = inset.match(/^([^\s]+)\s+(var\(--icb-right-offset,\s*[^)]+\))\s+([^\s]+)\s+([^\s]+)$/);
+  if (!insetParts) throw new Error(`Unsupported production drawer inset: ${inset}`);
+
+  const drawerZToken = extractProductionDeclaration(drawerRule, "z-index").match(/^var\((--[^)]+)\)$/)?.[1];
+  if (!drawerZToken) throw new Error("Production drawer z-index must use a token");
+  const drawerZ = tokenCss.match(new RegExp(`${drawerZToken.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*:\\s*(\\d+)`))?.[1];
+  if (!drawerZ) throw new Error(`Production z-index token is missing: ${drawerZToken}`);
+
+  const bodyPadding = extractProductionDeclaration(bodyRule, "padding-block-end");
+  if (bodyPadding !== "var(--mobile-nav-alpha-system-offset)") {
+    throw new Error(`Production drawer must keep system clearance inside its body: ${bodyPadding}`);
+  }
+
+  /*
+  FNXC:AlphaMobileDrawer 2026-09-10-17:16:
+  The App regression must click the shipped pill and hamburger paths, then observe the real production declarations as a resolved cascade. Materialize only environment/custom-property values that jsdom cannot resolve so a bottom offset, layer regression, or external safe-area reserve fails at the real shell boundary.
+  */
+  const style = document.createElement("style");
+  style.textContent = `
+    .mobile-nav-bar { position: ${extractProductionDeclaration(navRule, "position")}; z-index: ${extractProductionDeclaration(navRule, "z-index")}; }
+    .alpha-mobile-drawer {
+      position: ${extractProductionDeclaration(drawerRule, "position")};
+      top: ${insetParts[1]};
+      right: 0;
+      bottom: ${insetParts[3]};
+      left: ${insetParts[4]};
+      z-index: ${drawerZ};
+      display: ${extractProductionDeclaration(drawerRule, "display")};
+      align-items: ${extractProductionDeclaration(drawerRule, "align-items")};
+      pointer-events: auto;
+    }
+    .alpha-mobile-drawer__body { padding-block-end: ${systemOffset}px; }
+  `;
+  document.head.append(style);
+  return style;
+}
+
+function expectProductionAlphaDrawerOverlay(drawer: HTMLElement, systemOffset: number): void {
+  const nav = document.querySelector<HTMLElement>(".mobile-nav-bar");
+  const panel = drawer.querySelector<HTMLElement>(".alpha-mobile-drawer__panel");
+  const body = drawer.querySelector<HTMLElement>(".alpha-mobile-drawer__body");
+  expect(nav).not.toBeNull();
+  expect(panel).not.toBeNull();
+  expect(body).not.toBeNull();
+
+  const drawerStyle = window.getComputedStyle(drawer);
+  const navStyle = window.getComputedStyle(nav!);
+  expect(drawerStyle.position).toBe("fixed");
+  expect(drawerStyle.bottom).toBe("0px");
+  expect(drawerStyle.display).toBe("flex");
+  expect(drawerStyle.alignItems).toBe("flex-end");
+  expect(drawerStyle.pointerEvents).not.toBe("none");
+  expect(Number(drawerStyle.zIndex)).toBeGreaterThan(Number(navStyle.zIndex));
+  expect(window.getComputedStyle(body!).paddingBlockEnd).toBe(`${systemOffset}px`);
 }
 
 function resolvePixelCalcFromRoot(value: string): number {
@@ -1175,7 +1249,7 @@ describe("Alpha Updates production wiring", () => {
     }
   });
 
-  it("removes Alpha pill clearance with the keyboard and modal exclusions", async () => {
+  it("retire la réserve de contenu Alpha avec le clavier et les modales", async () => {
     mockUseViewportMode.mockReturnValue("mobile");
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
@@ -1206,47 +1280,73 @@ describe("Alpha Updates production wiring", () => {
     modalRender.unmount();
   });
 
-  it("synchronise la réserve du drawer avec la visibilité clavier de la pill", async () => {
+  it.each([
+    ["portrait", { width: 390, height: 844, systemOffset: 46 }],
+    ["paysage", { width: 844, height: 390, systemOffset: 48 }],
+  ] as const)("superpose le drawer Command Center à la pill en %s, même quand le clavier la masque", async (_name, viewport) => {
     mockUseViewportMode.mockReturnValue("mobile");
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
       experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates: true },
     });
+    const previousViewport = { width: window.innerWidth, height: window.innerHeight };
+    Object.defineProperties(window, {
+      innerWidth: { configurable: true, value: viewport.width },
+      innerHeight: { configurable: true, value: viewport.height },
+    });
+    const productionStyle = installProductionAlphaDrawerRules(viewport.systemOffset);
 
-    const view = render(<App />);
-    fireEvent.click(await screen.findByTestId("mobile-nav-tab-command-center"));
-    const drawer = await screen.findByTestId("alpha-mobile-drawer-main-content");
-    expect(drawer).not.toHaveClass("alpha-mobile-drawer--without-pill");
+    try {
+      const view = render(<App />);
+      fireEvent.click(await screen.findByTestId("mobile-nav-tab-command-center"));
+      const drawer = await screen.findByTestId("alpha-mobile-drawer-main-content");
+      expect(drawer.className).toBe("alpha-mobile-drawer alpha-mobile-drawer--open");
+      expectProductionAlphaDrawerOverlay(drawer, viewport.systemOffset);
 
-    mockUseMobileKeyboard.mockReturnValue({ keyboardOverlap: 240, viewportHeight: 400, viewportOffsetTop: 0, keyboardOpen: true });
-    view.rerender(<App />);
-    await waitFor(() => expect(drawer).toHaveClass("alpha-mobile-drawer--without-pill"));
-    expect(document.querySelector(".mobile-nav-bar")).toHaveClass("mobile-nav-bar--keyboard-open");
+      mockUseMobileKeyboard.mockReturnValue({ keyboardOverlap: 240, viewportHeight: 400, viewportOffsetTop: 0, keyboardOpen: true });
+      view.rerender(<App />);
+      await waitFor(() => expect(document.querySelector(".mobile-nav-bar")).toHaveClass("mobile-nav-bar--keyboard-open"));
+      expectProductionAlphaDrawerOverlay(drawer, viewport.systemOffset);
+    } finally {
+      productionStyle.remove();
+      Object.defineProperties(window, {
+        innerWidth: { configurable: true, value: previousViewport.width },
+        innerHeight: { configurable: true, value: previousViewport.height },
+      });
+    }
   });
 
-  it("ouvre Usage et Projects dans le drawer Alpha sans quitter le Kanban", async () => {
+  it("ouvre Usage et Projects par le hamburger au-dessus de la pill sans quitter le Kanban", async () => {
     mockUseViewportMode.mockReturnValue("mobile");
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
       experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates: true },
     });
+    const systemOffset = 46;
+    const productionStyle = installProductionAlphaDrawerRules(systemOffset);
 
-    render(<App />);
-    const board = await screen.findByTestId("board-keep-alive");
+    try {
+      render(<App />);
+      const board = await screen.findByTestId("board-keep-alive");
 
-    fireEvent.click(await screen.findByTestId("alpha-mobile-menu-trigger"));
-    fireEvent.click(screen.getByTestId("mobile-more-item-usage"));
-    const usageDrawer = await screen.findByTestId("alpha-mobile-drawer-usage");
-    expect(usageDrawer).toHaveClass("alpha-mobile-drawer--without-pill");
-    expect(board).toBeVisible();
-    expect(mockCurrentProjectState.clearCurrentProject).not.toHaveBeenCalled();
-    fireEvent.click(usageDrawer.querySelector<HTMLButtonElement>(".alpha-mobile-drawer__close")!);
+      fireEvent.click(await screen.findByTestId("alpha-mobile-menu-trigger"));
+      fireEvent.click(screen.getByTestId("mobile-more-item-usage"));
+      const usageDrawer = await screen.findByTestId("alpha-mobile-drawer-usage");
+      expect(usageDrawer.className).toBe("alpha-mobile-drawer alpha-mobile-drawer--open");
+      expectProductionAlphaDrawerOverlay(usageDrawer, systemOffset);
+      expect(board).toBeVisible();
+      expect(mockCurrentProjectState.clearCurrentProject).not.toHaveBeenCalled();
+      fireEvent.click(usageDrawer.querySelector<HTMLButtonElement>(".alpha-mobile-drawer__close")!);
 
-    fireEvent.click(screen.getByTestId("alpha-mobile-menu-trigger"));
-    fireEvent.click(screen.getByTestId("mobile-more-item-projects"));
-    expect(await screen.findByTestId("alpha-mobile-drawer-projects")).toBeInTheDocument();
-    expect(board).toBeVisible();
-    expect(mockCurrentProjectState.clearCurrentProject).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByTestId("alpha-mobile-menu-trigger"));
+      fireEvent.click(screen.getByTestId("mobile-more-item-projects"));
+      const projectsDrawer = await screen.findByTestId("alpha-mobile-drawer-projects");
+      expectProductionAlphaDrawerOverlay(projectsDrawer, systemOffset);
+      expect(board).toBeVisible();
+      expect(mockCurrentProjectState.clearCurrentProject).not.toHaveBeenCalled();
+    } finally {
+      productionStyle.remove();
+    }
   });
 
   it("refreshes the mobile shell on and off without losing configured primary items", async () => {

@@ -455,8 +455,8 @@ export function AppModals({
       )}
 
       {/*
-      FNXC:AlphaMobileDrawer 2026-09-10-05:38:
-      Usage opened from Alpha mobile reuses its embedded content inside the shared bounded drawer. The modal manager remains the single open/close owner, while standard mobile and desktop preserve the existing overlay or anchored popover.
+      FNXC:AlphaMobileDrawer 2026-09-10-16:56:
+      Usage opened from Alpha mobile reuses its embedded content inside the shared bottom-edge drawer above the trigger pill. The modal manager remains the single open/close owner, while standard mobile and desktop preserve the existing overlay or anchored popover.
       */}
       {alphaMobileDrawer ? (
         <AlphaMobileDrawer
@@ -464,7 +464,6 @@ export function AppModals({
           title={t("nav.usage", "Usage")}
           closeLabel={t("common.close", "Close")}
           onClose={closeUsageWithNav}
-          avoidMobileNav={false}
           testId="alpha-mobile-drawer-usage"
         >
           <UsageIndicator

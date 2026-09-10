@@ -58,20 +58,17 @@ describe("AlphaMobileDrawer", () => {
     expect(close).toHaveFocus();
   });
 
-  it("retire immédiatement la réserve de pill quand la navigation est masquée par le clavier", () => {
-    const { rerender } = render(
-      <AlphaMobileDrawer open title="Drawer" closeLabel="Close" onClose={vi.fn()} avoidMobileNav>
-        <input aria-label="Composer" />
+  it("utilise un contrat géométrique unique avec un enfant minimal", () => {
+    render(
+      <AlphaMobileDrawer open title="Drawer" closeLabel="Close" onClose={vi.fn()}>
+        {null}
       </AlphaMobileDrawer>,
     );
-    expect(screen.getByTestId("alpha-mobile-drawer")).not.toHaveClass("alpha-mobile-drawer--without-pill");
 
-    rerender(
-      <AlphaMobileDrawer open title="Drawer" closeLabel="Close" onClose={vi.fn()} avoidMobileNav={false}>
-        <input aria-label="Composer" />
-      </AlphaMobileDrawer>,
-    );
-    expect(screen.getByTestId("alpha-mobile-drawer")).toHaveClass("alpha-mobile-drawer--without-pill");
+    const drawer = screen.getByTestId("alpha-mobile-drawer");
+    expect(drawer).toHaveClass("alpha-mobile-drawer", "alpha-mobile-drawer--open");
+    expect(drawer.className).toBe("alpha-mobile-drawer alpha-mobile-drawer--open");
+    expect(screen.getByRole("dialog", { name: "Drawer" }).querySelector(".alpha-mobile-drawer__body")).toBeEmptyDOMElement();
   });
 
   it("n'appelle pas la fermeture pour une interaction dans le panneau", async () => {

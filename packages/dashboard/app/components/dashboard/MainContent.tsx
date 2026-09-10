@@ -191,7 +191,6 @@ export function MainContent(props: MainContentProps) {
   openCreateWorkflowWithNav,
   sidebarActive,
   isMobile,
-  alphaMobileNavVisible = true,
   mainPanelDetailInitialTab,
   closeTaskDetailMainPanel,
   setMainPanelDetailTask,
@@ -361,7 +360,6 @@ export function MainContent(props: MainContentProps) {
         title: alphaDrawerTitle,
         closeLabel: t("common.close", "Close"),
         onClose: closeAlphaMobileDrawer,
-        avoidMobileNav: alphaMobileNavVisible,
       } : undefined}
     />
   );
@@ -1101,7 +1099,6 @@ export function MainContent(props: MainContentProps) {
           title={alphaDrawerTitle}
           closeLabel={t("common.close", "Close")}
           onClose={closeAlphaMobileDrawer}
-          avoidMobileNav={alphaMobileNavVisible}
           keepMounted
           testId="alpha-mobile-drawer-main-content"
         >

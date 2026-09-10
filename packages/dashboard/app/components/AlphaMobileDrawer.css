@@ -1,23 +1,17 @@
 /*
-FNXC:AlphaMobileDrawer 2026-09-10-04:41:
-The Alpha mobile drawer composes the pill's measured height and canonical system offsets rather than duplicating icon geometry. Its top reveal remains token-based while the dynamic viewport cap lets short landscape and keyboard-resized viewports keep one locally scrollable body.
+FNXC:AlphaMobileDrawer 2026-09-10-16:56:
+The Alpha mobile drawer reaches the viewport bottom in a layer above the trigger pill. Canonical safe-area, standalone, and ICB clearance stays inside the panel, while the token-based top reveal and dynamic viewport cap keep short landscape and keyboard-resized viewports locally scrollable.
 */
 .alpha-mobile-drawer {
-  --alpha-mobile-drawer-bottom-reserve: calc(var(--mobile-nav-height) + var(--mobile-nav-alpha-system-offset));
   position: fixed;
   inset: 0 var(--icb-right-offset, 0px) 0 0;
-  z-index: 44;
+  z-index: var(--z-popover);
   display: flex;
   align-items: flex-end;
   justify-content: stretch;
   padding-block-start: calc(env(safe-area-inset-top, 0px) + var(--space-2xl));
-  padding-block-end: var(--alpha-mobile-drawer-bottom-reserve);
   background: color-mix(in srgb, var(--bg) 38%, transparent);
   overscroll-behavior: contain;
-}
-
-.alpha-mobile-drawer--without-pill {
-  --alpha-mobile-drawer-bottom-reserve: var(--mobile-nav-alpha-system-offset);
 }
 
 .alpha-mobile-drawer--hidden {
@@ -30,7 +24,7 @@ The Alpha mobile drawer composes the pill's measured height and canonical system
   flex-direction: column;
   width: 100%;
   max-width: 100%;
-  max-height: calc(100dvh - env(safe-area-inset-top, 0px) - var(--space-2xl) - var(--alpha-mobile-drawer-bottom-reserve));
+  max-height: calc(100dvh - env(safe-area-inset-top, 0px) - var(--space-2xl));
   min-height: 0;
   overflow: hidden;
   color: var(--text);
@@ -97,6 +91,7 @@ The Alpha mobile drawer composes the pill's measured height and canonical system
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+  padding-block-end: var(--mobile-nav-alpha-system-offset);
   overflow: auto;
   overscroll-behavior: contain;
 }
