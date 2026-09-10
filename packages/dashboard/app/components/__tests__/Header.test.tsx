@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { Header, resolveReportContextRefs } from "../Header";
@@ -46,6 +47,30 @@ function renderHeader(props = {}, tier: ViewportTier = "desktop") {
       {...props}
     />
   );
+}
+
+function SearchHeaderHarness({ tier }: { tier: ViewportTier }) {
+  const [query, setQuery] = useState("");
+  return (
+    <Header
+      onOpenSettings={noop}
+      onOpenGitHubImport={noop}
+      view="board"
+      searchQuery={query}
+      onSearchChange={setQuery}
+      taskSearchTasks={[
+        { id: "FN-331", title: "Remove branch filters" },
+        { id: "ERR-331", title: "Repair matching task" },
+        { id: "FN-332", title: "Different number" },
+      ]}
+      alphaUpdatesEnabled={tier === "desktop"}
+    />
+  );
+}
+
+function renderSearchHeader(tier: ViewportTier) {
+  mockMatchMedia(tier);
+  return render(<SearchHeaderHarness tier={tier} />);
 }
 
 describe("Header", () => {
@@ -1085,64 +1110,37 @@ describe("Header", () => {
       expect(onSearchChange).toHaveBeenCalledWith("");
     });
 
-    it("renders branch filters in desktop board search panel only", () => {
-      renderHeader({
-        onSearchChange: vi.fn(),
-        view: "board",
-        branchOptions: ["feature/a"],
-        baseBranchOptions: ["main"],
-      });
-      fireEvent.click(screen.getByTestId("desktop-header-search-btn"));
-      expect(screen.getByTestId("header-branch-filters-desktop")).toBeInTheDocument();
-      expect(screen.getByTestId("working-branch-filter")).toBeInTheDocument();
-      expect(screen.getByTestId("target-branch-filter")).toBeInTheDocument();
-      expect(screen.getByRole("option", { name: "All working branches" })).toHaveValue("");
-      expect(screen.getByRole("option", { name: "No working branch" })).toHaveValue("__fusion:no-branch__");
-      expect(screen.getByRole("option", { name: "All base branches" })).toHaveValue("");
-      expect(screen.getByRole("option", { name: "No base branch" })).toHaveValue("__fusion:no-branch__");
-    });
+    it.each(["desktop", "tablet", "mobile"] as const)("does not render removed branch filters on %s", (mode) => {
+      renderHeader({ onSearchChange: vi.fn(), view: "board", alphaUpdatesEnabled: mode === "desktop" }, mode);
+      if (mode === "mobile") fireEvent.click(screen.getByTestId("mobile-header-search-btn"));
+      else if (mode === "tablet") fireEvent.click(screen.getByTestId("desktop-header-search-btn"));
 
-    it("does not render branch filters in list view", () => {
-      renderHeader({ onSearchChange: vi.fn(), view: "list" });
-      fireEvent.click(screen.getByTestId("desktop-header-search-btn"));
+      expect(screen.queryByText("Working branch")).toBeNull();
+      expect(screen.queryByText("Base branch")).toBeNull();
       expect(screen.queryByTestId("header-branch-filters-desktop")).toBeNull();
+      expect(screen.queryByTestId("header-branch-filters-mobile")).toBeNull();
     });
 
-    it("calls branch filter callbacks with selected values, unassigned sentinel, and reset", () => {
-      const onBranchFilterChange = vi.fn();
-      const onBaseBranchFilterChange = vi.fn();
-      renderHeader({
-        onSearchChange: vi.fn(),
-        view: "board",
-        branchOptions: ["feature/a"],
-        baseBranchOptions: ["release"],
-        onBranchFilterChange,
-        onBaseBranchFilterChange,
-      });
-      fireEvent.click(screen.getByTestId("desktop-header-search-btn"));
-      fireEvent.change(screen.getByTestId("working-branch-filter"), { target: { value: "feature/a" } });
-      fireEvent.change(screen.getByTestId("working-branch-filter"), { target: { value: "__fusion:no-branch__" } });
-      fireEvent.change(screen.getByTestId("target-branch-filter"), { target: { value: "release" } });
-      fireEvent.change(screen.getByTestId("target-branch-filter"), { target: { value: "__fusion:no-branch__" } });
-      fireEvent.change(screen.getByTestId("working-branch-filter"), { target: { value: "" } });
-      expect(onBranchFilterChange).toHaveBeenCalledWith("feature/a");
-      expect(onBranchFilterChange).toHaveBeenCalledWith("__fusion:no-branch__");
-      expect(onBranchFilterChange).toHaveBeenCalledWith("");
-      expect(onBaseBranchFilterChange).toHaveBeenCalledWith("release");
-      expect(onBaseBranchFilterChange).toHaveBeenCalledWith("__fusion:no-branch__");
+    it("does not leave an empty floating panel beside the Alpha desktop inline search", () => {
+      const { container } = renderHeader({ onSearchChange: vi.fn(), view: "board", alphaUpdatesEnabled: true }, "desktop");
+      expect(screen.getByTestId("alpha-desktop-header-search")).toBeInTheDocument();
+      expect(container.querySelector(".header-floating-search")).toBeNull();
     });
 
-    it("renders branch filters in mobile expanded search for board view", () => {
-      renderHeader({
-        onSearchChange: vi.fn(),
-        view: "board",
-        branchOptions: ["feature/mobile"],
-        baseBranchOptions: ["main"],
-      }, "mobile");
-      fireEvent.click(screen.getByTestId("mobile-header-search-btn"));
-      expect(screen.getByTestId("header-branch-filters-mobile")).toBeInTheDocument();
-      expect(screen.getByTestId("working-branch-filter-mobile")).toBeInTheDocument();
-      expect(screen.getByTestId("target-branch-filter-mobile")).toBeInTheDocument();
+    it.each(["desktop", "tablet", "mobile"] as const)("suggests and applies numeric task matches on %s", (tier) => {
+      renderSearchHeader(tier);
+      if (tier === "tablet") fireEvent.click(screen.getByTestId("desktop-header-search-btn"));
+      if (tier === "mobile") fireEvent.click(screen.getByTestId("mobile-header-search-btn"));
+
+      const input = screen.getByRole("combobox");
+      fireEvent.change(input, { target: { value: "331" } });
+      expect(screen.getByRole("option", { name: "FN-331: Remove branch filters" })).toBeInTheDocument();
+      expect(screen.getByRole("option", { name: "ERR-331: Repair matching task" })).toBeInTheDocument();
+      expect(screen.queryByText("FN-332")).toBeNull();
+
+      fireEvent.click(screen.getByRole("option", { name: "FN-331: Remove branch filters" }));
+      expect(input).toHaveValue("FN-331");
+      expect(screen.queryByRole("listbox")).toBeNull();
     });
   });
 

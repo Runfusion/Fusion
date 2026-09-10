@@ -83,7 +83,6 @@ import { useStashOrphanCount } from "./hooks/useStashOrphanCount";
 import { useChatUnreadBadge } from "./hooks/useChatUnreadBadge";
 import { useMailboxUnread } from "./hooks/useMailboxUnread";
 import { useApprovalBanner } from "./hooks/useApprovalBanner";
-import { useBranchTaskFilters } from "./hooks/useBranchTaskFilters";
 import { useDashboardHealth } from "./hooks/useDashboardHealth";
 import { useAuthTokenRecovery } from "./hooks/useAuthTokenRecovery";
 import { useScopedDismissFlag } from "./hooks/useScopedDismissFlag";
@@ -624,7 +623,36 @@ function AppInner() {
       resolveWorkflowId: resolveTaskWorkflowId,
     }
   );
-  const footerTasks = isRemote && remoteData.tasks.length > 0 ? remoteData.tasks : tasks;
+  const remoteTaskRequestIdentity = isRemote
+    ? `${currentNodeId ?? ""}\u0000${currentProject?.id ?? ""}`
+    : null;
+  const remoteTaskSourceRef = useRef<{
+    identity: string | null;
+    readiness: "ready" | "awaiting-load" | "loading";
+  }>({
+    identity: remoteTaskRequestIdentity,
+    readiness: "ready",
+  });
+  const remoteTaskSource = remoteTaskSourceRef.current;
+  if (remoteTaskSource.identity !== remoteTaskRequestIdentity) {
+    remoteTaskSource.identity = remoteTaskRequestIdentity;
+    remoteTaskSource.readiness = isRemote ? "awaiting-load" : "ready";
+  }
+  if (isRemote && remoteData.loading) {
+    remoteTaskSource.readiness = "loading";
+  } else if (isRemote && !remoteData.error && remoteTaskSource.readiness === "loading") {
+    remoteTaskSource.readiness = "ready";
+  }
+  /*
+  FNXC:TaskSearchSource 2026-09-10-01:08:
+  Remote task rows are authoritative even when the result is empty. A node or project change must first cross the remote hook's loading cycle, so rows retained from the preceding source can never leak into Board, List, the dock, or task-number suggestions.
+  */
+  const boardSourceTasks = !isRemote
+    ? tasks
+    : remoteTaskSource.readiness === "ready" && !remoteData.error
+      ? remoteData.tasks
+      : [];
+  const footerTasks = boardSourceTasks;
   const footerColumnFlagsByTaskId = useMemo(() => {
     const index = new Map<string, ExecutorColumnFlags>();
     // FNXC:ConcurrencyIndicators 2026-08-04-10:00: remote tasks belong to a
@@ -703,7 +731,6 @@ function AppInner() {
     popOutTaskDetail(task, taskView, initialTab);
   }, [isMobile, poppedOutTaskEntries, popOutTaskDetail, pushNav, closePoppedOutTask, taskView]);
 
-  const boardSourceTasks = isRemote && remoteData.tasks.length > 0 ? remoteData.tasks : tasks;
   const [graphWorkflowSelection, setGraphWorkflowSelection] = useState<GraphWorkflowSelection | null>(null);
 
   const [researchReadinessVersion, setResearchReadinessVersion] = useState(0);
@@ -897,16 +924,6 @@ function AppInner() {
     gitHubStarPromptShown: gitHubStarPromptDismissed,
     onStarPrompt: handleStarPrompt,
   });
-
-  const {
-    branchFilter,
-    baseBranchFilter,
-    branchOptions,
-    baseBranchOptions,
-    filteredBoardTasks,
-    onBranchFilterChange: handleBranchFilterChange,
-    onBaseBranchFilterChange: handleBaseBranchFilterChange,
-  } = useBranchTaskFilters({ boardSourceTasks, currentProjectId: currentProject?.id });
 
   const [retryingProjects, setRetryingProjects] = useState(false);
   const [missionResumeSessionId, setMissionResumeSessionId] = useState<string | undefined>(undefined);
@@ -1699,7 +1716,7 @@ function AppInner() {
 
   // Props for the extracted <MainContent> switch (see components/dashboard/MainContent.tsx).
   // Every value is passed by its App name; the switch renders the same subtrees as before.
-  const rightDock = useRightDockController({ active: rightDockActive, projectId: currentProject?.id, addToast, columnFlagsByTaskId: footerColumnFlagsByTaskId, settingsLoaded, researchReadinessVersion, goalAnchorId, tasks: isRemote && remoteData.tasks.length > 0 ? remoteData.tasks : tasks, workflowSteps, subscribePluginEvents, openDetailTask, openTaskPopup: popOutTaskDetailForCurrentView, onOpenSessionInNewWindow: openSessionInNewWindow, openMobileTasksInPopup, openFileInBrowser, onUpdateTask: updateTask, onDeleteTask: deleteTask, onRevertTask: revertTask, onMergeTask: mergeTask, onRetryTask: retryTask, onOpenChatWithPrefill: openChatWithPrefill, onPauseTask: pauseTask, onUnpauseTask: unpauseTask, onBypassReview: bypassReview, onResetTask: resetTask, onDuplicateTask: duplicateTask, onTaskUpdated: (task: Task) => ingestCreatedTasks([task]), openSettings: (section?: string) => openSettingsWithNav(section as SectionId), onOpenUsage: openUsageWithNav, onOpenActivityLog: openActivityLogWithNav, onOpenGitHubImport: openGitHubImportWithNav, onOpenGitManager: openGitManagerWithNav, onOpenSchedules: openSchedulesWithNav, onSendSelectionToTask: modalManager.openNewTaskWithDescription, onCreateTaskFromInsight: handleInsightTaskCreate, onNavigateToMission: handleOpenMission, onTaskCreated: (task: Task) => ingestCreatedTasks([task]), prAuthAvailable, autoMerge, taskDetailChatFirst, visibilityOptions: { experimentalFeatures: { insights: insightsEnabled, memoryView: memoryEnabled, devServerView: devServerEnabled, researchView: researchEnabled, evalsView: evalsEnabled, goalsView: goalsEnabled }, showSkillsTab: skillsEnabled, pluginDashboardViews }, footerVisible: executorFooterVisible });
+  const rightDock = useRightDockController({ active: rightDockActive, projectId: currentProject?.id, addToast, columnFlagsByTaskId: footerColumnFlagsByTaskId, settingsLoaded, researchReadinessVersion, goalAnchorId, tasks: boardSourceTasks, workflowSteps, subscribePluginEvents, openDetailTask, openTaskPopup: popOutTaskDetailForCurrentView, onOpenSessionInNewWindow: openSessionInNewWindow, openMobileTasksInPopup, openFileInBrowser, onUpdateTask: updateTask, onDeleteTask: deleteTask, onRevertTask: revertTask, onMergeTask: mergeTask, onRetryTask: retryTask, onOpenChatWithPrefill: openChatWithPrefill, onPauseTask: pauseTask, onUnpauseTask: unpauseTask, onBypassReview: bypassReview, onResetTask: resetTask, onDuplicateTask: duplicateTask, onTaskUpdated: (task: Task) => ingestCreatedTasks([task]), openSettings: (section?: string) => openSettingsWithNav(section as SectionId), onOpenUsage: openUsageWithNav, onOpenActivityLog: openActivityLogWithNav, onOpenGitHubImport: openGitHubImportWithNav, onOpenGitManager: openGitManagerWithNav, onOpenSchedules: openSchedulesWithNav, onSendSelectionToTask: modalManager.openNewTaskWithDescription, onCreateTaskFromInsight: handleInsightTaskCreate, onNavigateToMission: handleOpenMission, onTaskCreated: (task: Task) => ingestCreatedTasks([task]), prAuthAvailable, autoMerge, taskDetailChatFirst, visibilityOptions: { experimentalFeatures: { insights: insightsEnabled, memoryView: memoryEnabled, devServerView: devServerEnabled, researchView: researchEnabled, evalsView: evalsEnabled, goalsView: goalsEnabled }, showSkillsTab: skillsEnabled, pluginDashboardViews }, footerVisible: executorFooterVisible });
 
   /*
   FNXC:OpenTasksInRightSidebar 2026-06-28-00:00:
@@ -1806,8 +1823,8 @@ function AppInner() {
     graphWorkflowSelection,
     setGraphWorkflowSelection,
     isRemote,
-    remoteData,
-    tasks,
+    remoteData: { ...remoteData, tasks: boardSourceTasks },
+    tasks: boardSourceTasks,
     workflowSteps,
     subscribePluginEvents,
     openDetailTask,
@@ -1864,7 +1881,7 @@ function AppInner() {
     handleGitHubImport,
     devServerEnabled,
     mainPanelDetailTask,
-    filteredBoardTasks,
+    filteredBoardTasks: boardSourceTasks,
     maxConcurrent,
     maxWorktrees,
     showWorktreeGrouping,
@@ -2041,12 +2058,7 @@ function AppInner() {
         showAgentsTab={agentsEnabled}
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
-        branchFilter={branchFilter}
-        baseBranchFilter={baseBranchFilter}
-        branchOptions={branchOptions}
-        baseBranchOptions={baseBranchOptions}
-        onBranchFilterChange={handleBranchFilterChange}
-        onBaseBranchFilterChange={handleBaseBranchFilterChange}
+        taskSearchTasks={boardSourceTasks}
         projects={effectiveProjects}
         currentProject={currentProject}
         onSelectProject={handleSelectProject}

@@ -395,11 +395,7 @@ Recovery flow:
 
 Task cards on the board only surface branch metadata when it is non-default/user-meaningful: they hide the conventional auto-generated working branch (`fusion/<task-id>` and suffixed variants) and hide the default merge target (`main`), while still showing custom working branches and non-default merge targets.
 
-The board header search panel now includes two **board-only** branch filters:
-- **Working branch** filters by `task.branch`
-- **Target branch** filters by `task.baseBranch`
-
-These filters apply only to board rendering (not list view). Each filter supports concrete branch values plus a **No branch** option that matches tasks where `branch` or `baseBranch` is unset. Persisted filter state remains intentionally deferred to follow-up task FN-3426.
+The shared Board/List header search always searches all live tasks in the current project without restricting results by working or base branch. Entering only a task number displays matching IDs from every prefix, and choosing a suggestion applies that exact ID while leaving task branch metadata unchanged.
 
 Task branch fields are intentionally distinct:
 

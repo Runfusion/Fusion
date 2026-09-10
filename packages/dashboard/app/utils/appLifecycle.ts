@@ -8,9 +8,6 @@ import { api, relaunchCliSession } from "../api";
 import type { CliActionId } from "../components/SessionNotificationBanner";
 
 export const SETUP_WARNING_DISMISSED_KEY = "kb-setup-warning-dismissed";
-export const WORKING_BRANCH_FILTER_STORAGE_KEY = "kb-dashboard-working-branch-filter";
-export const BASE_BRANCH_FILTER_STORAGE_KEY = "kb-dashboard-base-branch-filter";
-export const NO_BRANCH_FILTER_VALUE = "__fusion:no-branch__";
 export const APPROVAL_BANNER_DISMISSED_STORAGE_KEY = "fusion:approval-banner-dismissed";
 export const CAPACITY_RISK_DISMISSED_KEY = "kb-capacity-risk-banner-dismissed";
 export const RETRY_WARNING_RATIO = 0.8;

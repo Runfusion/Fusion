@@ -1,13 +1,13 @@
 import { useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { Settings, LayoutGrid, List, Search, X, Activity, MoreHorizontal, Menu, Clock, Folder, History, GitBranch, Monitor, Workflow, Bot, Target, Grid3X3, Mail, MessageSquare, Check, Zap, Sparkles, Brain, Lock, Gauge, Lightbulb, ChevronDown, ChevronRight, PanelRight, Plus, Star } from "lucide-react";
+import { Settings, LayoutGrid, List, Search, Activity, MoreHorizontal, Menu, Clock, Folder, History, GitBranch, Monitor, Workflow, Bot, Target, Grid3X3, Mail, MessageSquare, Check, Zap, Sparkles, Brain, Lock, Gauge, Lightbulb, ChevronDown, ChevronRight, PanelRight, Plus, Star } from "lucide-react";
 import "./Header.css";
 // ProjectSelector styles used by the imported standalone component.
 import "./ProjectSelector.css";
 import { ProjectSelector as StandaloneProjectSelector } from "./ProjectSelector";
 import { useProjectBookmarks } from "../hooks/useProjectBookmarks";
 import type { ProjectInfo } from "../api";
-import type { NodeConfig, ProjectStatus } from "@fusion/core";
+import type { NodeConfig, ProjectStatus, Task } from "@fusion/core";
 import { NodeStatusIndicator } from "./NodeStatusIndicator";
 import { NodeHealthDot } from "./NodeHealthDot";
 import { PluginSlot } from "./PluginSlot";
@@ -17,12 +17,11 @@ import type { TaskView } from "../hooks/useViewState";
 import type { PluginDashboardViewEntry } from "../api";
 import { buildPluginTaskViewId, isPluginViewId } from "../plugins/pluginViewRegistry";
 import { getPluginNavIcon } from "./pluginNavIcon";
+import { TaskSearchInput } from "./TaskSearchInput";
 import type { ShellHostContext } from "../shell-host";
 export { resolveReportContextRefs } from "../utils/reportContextRefs";
 
 export { useViewportMode };
-
-const NO_BRANCH_FILTER_VALUE = "__fusion:no-branch__";
 
 // Status icon config for project selector dropdown
 const PROJECT_STATUS_CONFIG: Record<ProjectStatus, { color: string }> = {
@@ -82,12 +81,7 @@ export interface HeaderProps {
   showAgentsTab?: boolean;
   searchQuery?: string;
   onSearchChange?: (query: string) => void;
-  branchFilter?: string;
-  baseBranchFilter?: string;
-  branchOptions?: string[];
-  baseBranchOptions?: string[];
-  onBranchFilterChange?: (value: string) => void;
-  onBaseBranchFilterChange?: (value: string) => void;
+  taskSearchTasks?: readonly Pick<Task, "id" | "title">[];
   /** Multi-project props */
   projects?: ProjectInfo[];
   currentProject?: ProjectInfo | null;
@@ -150,12 +144,7 @@ export function Header({
   showAgentsTab,
   searchQuery = "",
   onSearchChange,
-  branchFilter = "",
-  baseBranchFilter = "",
-  branchOptions = [],
-  baseBranchOptions = [],
-  onBranchFilterChange,
-  onBaseBranchFilterChange,
+  taskSearchTasks,
   projects = [],
   currentProject,
   onSelectProject,
@@ -209,8 +198,6 @@ export function Header({
   const [isViewOverflowOpen, setIsViewOverflowOpen] = useState(false);
   const overflowButtonRef = useRef<HTMLButtonElement>(null);
   const overflowMenuRef = useRef<HTMLDivElement>(null);
-  const mobileSearchRef = useRef<HTMLDivElement>(null);
-  const mobileSearchInputRef = useRef<HTMLInputElement>(null);
   const nodeSelectorRef = useRef<HTMLDivElement>(null);
   const mobileProjectSwitchRef = useRef<HTMLDivElement>(null);
   const viewOverflowRef = useRef<HTMLDivElement>(null);
@@ -318,7 +305,6 @@ export function Header({
   Closing board/list search must suppress the populated floating panel until App clears searchQuery, then immediately restore the Open search affordance. Keep the explicit-close state out of the empty-query toggle gate so an open-but-empty dismissal cannot strand the header without a search trigger.
   */
   const canShowNonMobileSearchToggle = Boolean(canShowNonMobileSearch && !shouldShowNonMobileSearch && searchQuery.length === 0);
-  const showBoardBranchFilters = view === "board";
 
   // Reset explicit close flag when query becomes empty (so active-query reopen behavior is ready for the next search).
   useEffect(() => {
@@ -673,22 +659,16 @@ export function Header({
          * FNXC:Header 2026-06-21-00:00:
          * Desktop and tablet header search must render after the workflow portal slot so a populated WorkflowSwitcher appears left of the search icon while preserving the mobile search trigger's existing position and behavior.
          */}
-        {showAlphaDesktopSearch && (
-          <div className="header-search header-search--alpha-inline" data-testid="alpha-desktop-header-search">
-            <Search size={14} className="header-search-icon" />
-            <input
-              type="text"
-              placeholder={t("header.searchTasks", "Search tasks...")}
-              value={searchQuery}
-              onChange={(event) => onSearchChange?.(event.target.value)}
-              className="header-search-input"
-            />
-            {searchQuery.length > 0 && (
-              <button className="header-search-clear" onClick={() => onSearchChange?.("")} aria-label={t("header.clearSearch", "Clear search")}>
-                <X size={14} />
-              </button>
-            )}
-          </div>
+        {showAlphaDesktopSearch && onSearchChange && (
+          <TaskSearchInput
+            query={searchQuery}
+            tasks={taskSearchTasks}
+            onSearchChange={onSearchChange}
+            onClose={searchQuery.length > 0 ? () => onSearchChange("") : undefined}
+            closeLabel={t("header.clearSearch", "Clear search")}
+            className="header-search--alpha-inline"
+            testId="alpha-desktop-header-search"
+          />
         )}
 
         {canShowNonMobileSearchToggle && !showAlphaDesktopSearch && (
@@ -1260,130 +1240,29 @@ export function Header({
     </header>
 
     {/* Desktop/Tablet Search - floating below header, in board or list view */}
-    {canShowNonMobileSearch && ((shouldShowNonMobileSearch && !showAlphaDesktopSearch) || (showAlphaDesktopSearch && showBoardBranchFilters)) && (
+    {canShowNonMobileSearch && shouldShowNonMobileSearch && !showAlphaDesktopSearch && (
       <div className="header-floating-search">
-        {!showAlphaDesktopSearch && <div className="header-search">
-          <Search size={14} className="header-search-icon" />
-          <input
-            autoFocus
-            type="text"
-            placeholder={t("header.searchTasks", "Search tasks...")}
-            value={searchQuery}
-            onChange={(e) => onSearchChange(e.target.value)}
-            className="header-search-input"
-          />
-          <button
-            className="header-search-clear"
-            onClick={handleNonMobileSearchClose}
-            aria-label={t("header.closeSearch", "Close search")}
-          >
-            <X size={14} />
-          </button>
-        </div>}
-        {showBoardBranchFilters && (
-          <div className="header-branch-filters" data-testid="header-branch-filters-desktop">
-            <label className="header-branch-filter-label">
-              <span>{t("header.workingBranch", "Working branch")}</span>
-              <select
-                className="header-branch-filter-select"
-                value={branchFilter}
-                onChange={(event) => onBranchFilterChange?.(event.target.value)}
-                data-testid="working-branch-filter"
-              >
-                <option value="">{t("header.allWorkingBranches", "All working branches")}</option>
-                <option value={NO_BRANCH_FILTER_VALUE}>{t("header.noWorkingBranch", "No working branch")}</option>
-                {branchOptions.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="header-branch-filter-label">
-              <span>{t("header.baseBranch", "Base branch")}</span>
-              <select
-                className="header-branch-filter-select"
-                value={baseBranchFilter}
-                onChange={(event) => onBaseBranchFilterChange?.(event.target.value)}
-                data-testid="target-branch-filter"
-              >
-                <option value="">{t("header.allBaseBranches", "All base branches")}</option>
-                <option value={NO_BRANCH_FILTER_VALUE}>{t("header.noBaseBranch", "No base branch")}</option>
-                {baseBranchOptions.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-        )}
+        <TaskSearchInput
+          query={searchQuery}
+          tasks={taskSearchTasks}
+          onSearchChange={onSearchChange}
+          onClose={handleNonMobileSearchClose}
+          autoFocus
+        />
       </div>
     )}
 
     {/* Mobile Search Expanded - floating below header */}
     {onSearchChange && isMobile && shouldShowMobileSearch && (
       <div className="header-floating-search">
-        <div
-          ref={mobileSearchRef}
-          className="header-search mobile-search-expanded"
-        >
-          <Search size={14} className="header-search-icon" />
-          <input
-            ref={mobileSearchInputRef}
-            autoFocus
-            type="text"
-            placeholder={t("header.searchTasks", "Search tasks...")}
-            value={searchQuery}
-            onChange={(e) => onSearchChange(e.target.value)}
-            className="header-search-input"
-          />
-          <button
-            className="header-search-clear"
-            onClick={handleMobileSearchClose}
-            aria-label={t("header.closeSearch", "Close search")}
-          >
-            <X size={14} />
-          </button>
-        </div>
-        {showBoardBranchFilters && (
-          <div className="header-branch-filters" data-testid="header-branch-filters-mobile">
-            <label className="header-branch-filter-label">
-              <span>{t("header.workingBranch", "Working branch")}</span>
-              <select
-                className="header-branch-filter-select"
-                value={branchFilter}
-                onChange={(event) => onBranchFilterChange?.(event.target.value)}
-                data-testid="working-branch-filter-mobile"
-              >
-                <option value="">{t("header.allWorkingBranches", "All working branches")}</option>
-                <option value={NO_BRANCH_FILTER_VALUE}>{t("header.noWorkingBranch", "No working branch")}</option>
-                {branchOptions.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="header-branch-filter-label">
-              <span>{t("header.baseBranch", "Base branch")}</span>
-              <select
-                className="header-branch-filter-select"
-                value={baseBranchFilter}
-                onChange={(event) => onBaseBranchFilterChange?.(event.target.value)}
-                data-testid="target-branch-filter-mobile"
-              >
-                <option value="">{t("header.allBaseBranches", "All base branches")}</option>
-                <option value={NO_BRANCH_FILTER_VALUE}>{t("header.noBaseBranch", "No base branch")}</option>
-                {baseBranchOptions.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-        )}
+        <TaskSearchInput
+          query={searchQuery}
+          tasks={taskSearchTasks}
+          onSearchChange={onSearchChange}
+          onClose={handleMobileSearchClose}
+          autoFocus
+          className="mobile-search-expanded"
+        />
       </div>
     )}
   </div>

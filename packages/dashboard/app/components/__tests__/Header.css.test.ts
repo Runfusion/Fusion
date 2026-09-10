@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import fs from "fs";
-import path from "path";
+import { readAppFile } from "../../test/cssFixture";
 
-const css = fs.readFileSync(path.resolve(__dirname, "../Header.css"), "utf8");
+const css = readAppFile("components/Header.css");
+const taskSearchCss = readAppFile("components/TaskSearchInput.css");
 
 function extractRuleBlock(source: string, selector: string): string {
   const start = source.indexOf(`${selector} {`);
@@ -29,6 +29,18 @@ describe("Header CSS", () => {
 
     expect(block).toContain("background: var(--surface);");
     expect(block).toContain("border-bottom: none;");
+  });
+
+  it("positions task suggestions above content with token-based paint and mobile touch sizing", () => {
+    const suggestions = extractRuleBlock(taskSearchCss, ".task-search-suggestions");
+    const option = extractRuleBlock(taskSearchCss, ".task-search-suggestion");
+
+    expect(suggestions).toContain("position: absolute;");
+    expect(suggestions).toContain("z-index: var(--z-dropdown);");
+    expect(suggestions).toContain("background: var(--surface);");
+    expect(suggestions).toContain("border: var(--btn-border-width) solid var(--border);");
+    expect(option).toContain("min-height: calc(var(--space-xl) + var(--space-md));");
+    expect(taskSearchCss).toMatch(/@media\s*\(max-width:\s*768px\)[\s\S]*?\.task-search-suggestion\s*\{[^}]*min-height:\s*calc\(var\(--space-xl\) \+ var\(--space-xl\)\);/);
   });
 
   it("compacts the workflow portal in the mobile top header", () => {

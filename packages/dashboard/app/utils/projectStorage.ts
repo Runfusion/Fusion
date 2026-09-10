@@ -65,8 +65,6 @@ export const PROJECT_STORAGE_KEYS: string[] = [
   "kb-usage-modal-size",
   "kb-usage-provider-order",
   CHAT_OPEN_SESSION_STORAGE_KEY,
-  "kb-dashboard-working-branch-filter",
-  "kb-dashboard-base-branch-filter",
   "kb-capacity-risk-banner-dismissed",
   "kb-github-setup-warning-missing-since",
   "kb-files-line-numbers",

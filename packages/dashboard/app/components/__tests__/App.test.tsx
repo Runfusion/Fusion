@@ -103,7 +103,7 @@ vi.mock("../../api", async (importOriginal) => {
 
 const mockCreateTask = vi.fn();
 
-const mockUseTasks = vi.fn(() => ({
+const mockUseTasks = vi.fn((_options?: { projectId?: string; searchQuery?: string; sseEnabled?: boolean }) => ({
   tasks: [],
   createTask: mockCreateTask,
   moveTask: vi.fn(),
@@ -125,7 +125,7 @@ const mockUseTasks = vi.fn(() => ({
 // mergeTaskSnapshot from this module, so spread importOriginal instead of replacing the barrel.
 vi.mock("../../hooks/useTasks", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../hooks/useTasks")>()),
-  useTasks: (_options?: { projectId?: string; searchQuery?: string; sseEnabled?: boolean }) => mockUseTasks(),
+  useTasks: (options?: { projectId?: string; searchQuery?: string; sseEnabled?: boolean }) => mockUseTasks(options),
 }));
 
 // Mock useRemoteNodeData
@@ -4598,123 +4598,86 @@ describe("FN-3290: modal keyboard isolation for mobile dashboard layout", () => 
   });
 });
 
-describe("App board branch filters", () => {
-  const WORKING_BRANCH_FILTER_STORAGE_KEY = "kb-dashboard-working-branch-filter";
-  const BASE_BRANCH_FILTER_STORAGE_KEY = "kb-dashboard-base-branch-filter";
-
-  function scopedProjectKey(baseKey: string, projectId: string) {
-    return `kb:${projectId}:${baseKey}`;
-  }
-
-  function makeTask(id: string, title: string, branch?: string, baseBranch?: string) {
+describe("App task search suggestions", () => {
+  function makeSearchTask(id: string, title: string, column = "todo") {
     return {
       id,
       title,
       description: title,
-      column: "todo",
+      column,
       dependencies: [],
       steps: [],
       currentStep: 0,
       log: [],
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
-      ...(branch ? { branch } : {}),
-      ...(baseBranch ? { baseBranch } : {}),
     };
   }
 
-  it("filters board tasks by working and target branch in local mode", async () => {
-    mockUseTasks.mockImplementation(() => ({
-      tasks: [
-        makeTask("FN-1", "Task Alpha", "feature/a", "main"),
-        makeTask("FN-2", "Task Beta", "feature/b", "release"),
-      ],
-      createTask: mockCreateTask,
-      moveTask: vi.fn(),
-      deleteTask: vi.fn(),
-      mergeTask: vi.fn(),
-      retryTask: vi.fn(),
-      updateTask: vi.fn(),
-      duplicateTask: vi.fn(),
-      refreshTasks: vi.fn(),
-    }));
+  function mockLocalSearchTasks(source: ReturnType<typeof makeSearchTask>[]) {
+    mockUseTasks.mockImplementation((options) => {
+      const query = options?.searchQuery?.toLocaleLowerCase();
+      const filtered = query
+        ? source.filter((task) => /^\d+$/.test(query)
+          ? task.id.match(/(\d+)$/)?.[1].startsWith(query)
+          : task.id.toLocaleLowerCase().startsWith(query))
+        : source;
+      return {
+        tasks: filtered,
+        createTask: mockCreateTask,
+        moveTask: vi.fn(),
+        deleteTask: vi.fn(),
+        mergeTask: vi.fn(),
+        retryTask: vi.fn(),
+        updateTask: vi.fn(),
+        duplicateTask: vi.fn(),
+        refreshTasks: vi.fn(),
+      };
+    });
+  }
+
+  it("applies a selected exact ID to the shared Board and List search", async () => {
+    localStorage.setItem("kb-dashboard-view-mode", "project");
+    localStorage.setItem(taskViewStorageKey(), "board");
+    mockLocalSearchTasks([
+      makeSearchTask("FN-331", "Selected task"),
+      makeSearchTask("ERR-331", "Other prefix"),
+      makeSearchTask("FN-332", "Different task"),
+    ]);
 
     render(<App />);
     await waitForAppShell();
-
     fireEvent.click(screen.getByTestId("desktop-header-search-btn"));
-    fireEvent.change(screen.getByTestId("working-branch-filter"), { target: { value: "feature/a" } });
-    fireEvent.change(screen.getByTestId("target-branch-filter"), { target: { value: "main" } });
+    const input = screen.getByRole("combobox", { name: "Search tasks..." });
+    fireEvent.change(input, { target: { value: "331" } });
+    fireEvent.click(screen.getByRole("option", { name: "FN-331: Selected task" }));
 
+    expect(input).toHaveValue("FN-331");
     await waitFor(() => {
-      expect(screen.getByText("Task Alpha")).toBeTruthy();
-      expect(screen.queryByText("Task Beta")).toBeNull();
+      const board = screen.getByTestId("board-keep-alive");
+      expect(within(board).getByText("Selected task")).toBeInTheDocument();
+      expect(within(board).queryByText("Other prefix")).toBeNull();
+    });
+
+    fireEvent.click(screen.getByTestId("sidebar-nav-list"));
+    await waitFor(() => {
+      const list = screen.getByTestId("list-keep-alive");
+      expect(list).not.toHaveAttribute("aria-hidden");
+      expect(within(list).getByText("Selected task")).toBeInTheDocument();
+      expect(within(list).queryByText("Other prefix")).toBeNull();
     });
   });
 
-  it("supports filtering for tasks without working branch values", async () => {
-    mockUseTasks.mockImplementation(() => ({
-      tasks: [
-        makeTask("FN-1", "Unassigned Task"),
-        makeTask("FN-2", "Assigned Task", "feature/a", "main"),
-      ],
-      createTask: mockCreateTask,
-      moveTask: vi.fn(),
-      deleteTask: vi.fn(),
-      mergeTask: vi.fn(),
-      retryTask: vi.fn(),
-      updateTask: vi.fn(),
-      duplicateTask: vi.fn(),
-      refreshTasks: vi.fn(),
-    }));
-
-    render(<App />);
-    await waitForAppShell();
-
-    fireEvent.click(screen.getByTestId("desktop-header-search-btn"));
-    fireEvent.change(screen.getByTestId("working-branch-filter"), { target: { value: "__fusion:no-branch__" } });
-
-    await waitFor(() => {
-      expect(screen.getByText("Unassigned Task")).toBeTruthy();
-      expect(screen.queryByText("Assigned Task")).toBeNull();
-    });
-  });
-
-  it("supports filtering for tasks without base branch values", async () => {
-    mockUseTasks.mockImplementation(() => ({
-      tasks: [
-        makeTask("FN-1", "No Base Branch", "feature/a"),
-        makeTask("FN-2", "Has Base Branch", "feature/a", "main"),
-      ],
-      createTask: mockCreateTask,
-      moveTask: vi.fn(),
-      deleteTask: vi.fn(),
-      mergeTask: vi.fn(),
-      retryTask: vi.fn(),
-      updateTask: vi.fn(),
-      duplicateTask: vi.fn(),
-      refreshTasks: vi.fn(),
-    }));
-
-    render(<App />);
-    await waitForAppShell();
-
-    fireEvent.click(screen.getByTestId("desktop-header-search-btn"));
-    fireEvent.change(screen.getByTestId("target-branch-filter"), { target: { value: "__fusion:no-branch__" } });
-
-    await waitFor(() => {
-      expect(screen.getByText("No Base Branch")).toBeTruthy();
-      expect(screen.queryByText("Has Base Branch")).toBeNull();
-    });
-  });
-
-  it("derives branch filter options from remote task data in remote mode", async () => {
+  it("uses remote tasks exclusively and keeps completed search results eligible", async () => {
+    mockLocalSearchTasks([makeSearchTask("LOCAL-331", "Local task")]);
     mockNodeContextValue.isRemote = true;
     mockNodeContextValue.currentNodeId = "node-1";
-
     const remoteSpy = vi.spyOn(apiNodeModule, "useRemoteNodeData").mockReturnValue({
       projects: [],
-      tasks: [makeTask("FN-3", "Remote Task", "feature/remote", "develop")],
+      tasks: [
+        makeSearchTask("REMOTE-331", "Remote completed task", "done"),
+        makeSearchTask("REMOTE-332", "Remote other task"),
+      ],
       health: null,
       loading: false,
       error: null,
@@ -4723,155 +4686,91 @@ describe("App board branch filters", () => {
 
     render(<App />);
     await waitForAppShell();
-
     fireEvent.click(screen.getByTestId("desktop-header-search-btn"));
-    expect(screen.getByRole("option", { name: "feature/remote" })).toBeTruthy();
-    expect(screen.getByRole("option", { name: "develop" })).toBeTruthy();
+    fireEvent.change(screen.getByRole("combobox", { name: "Search tasks..." }), { target: { value: "331" } });
+
+    expect(screen.getByRole("option", { name: "REMOTE-331: Remote completed task" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /LOCAL-331/ })).toBeNull();
     remoteSpy.mockRestore();
   });
 
-  it("restores saved branch filter selections per project", async () => {
-    const projectId = "project-restore";
-    mockCurrentProjectState.currentProject = {
-      id: projectId,
-      name: "Restore Project",
-      path: "/restore",
-      status: "active",
-      isolationMode: "in-process",
-      createdAt: "",
-      updatedAt: "",
-    };
-    localStorage.setItem(scopedProjectKey(WORKING_BRANCH_FILTER_STORAGE_KEY, projectId), "feature/a");
-    localStorage.setItem(scopedProjectKey(BASE_BRANCH_FILTER_STORAGE_KEY, projectId), "__fusion:no-branch__");
-
-    mockUseTasks.mockImplementation(() => ({
-      tasks: [
-        makeTask("FN-1", "Restore Candidate", "feature/a"),
-        makeTask("FN-2", "Filtered Out", "feature/b", "main"),
-      ],
-      createTask: mockCreateTask,
-      moveTask: vi.fn(),
-      deleteTask: vi.fn(),
-      mergeTask: vi.fn(),
-      retryTask: vi.fn(),
-      updateTask: vi.fn(),
-      duplicateTask: vi.fn(),
-      refreshTasks: vi.fn(),
-    }));
+  it("keeps an empty remote result authoritative instead of suggesting local tasks", async () => {
+    mockLocalSearchTasks([makeSearchTask("LOCAL-331", "Local task")]);
+    mockNodeContextValue.isRemote = true;
+    mockNodeContextValue.currentNodeId = "node-1";
+    const remoteSpy = vi.spyOn(apiNodeModule, "useRemoteNodeData").mockReturnValue({
+      projects: [],
+      tasks: [],
+      health: null,
+      loading: false,
+      error: null,
+      refresh: vi.fn(),
+    });
 
     render(<App />);
     await waitForAppShell();
-
     fireEvent.click(screen.getByTestId("desktop-header-search-btn"));
+    fireEvent.change(screen.getByRole("combobox", { name: "Search tasks..." }), { target: { value: "331" } });
 
-    expect((screen.getByTestId("working-branch-filter") as HTMLSelectElement).value).toBe("feature/a");
-    expect((screen.getByTestId("target-branch-filter") as HTMLSelectElement).value).toBe("__fusion:no-branch__");
+    expect(screen.queryByRole("option", { name: /LOCAL-331/ })).toBeNull();
+    expect(within(screen.getByTestId("board-keep-alive")).queryByText("Local task")).toBeNull();
 
-    await waitFor(() => {
-      expect(screen.getByText("Restore Candidate")).toBeTruthy();
-      expect(screen.queryByText("Filtered Out")).toBeNull();
-    });
+    fireEvent.click(screen.getByTestId("sidebar-nav-list"));
+    const list = screen.getByTestId("list-keep-alive");
+    expect(list).not.toHaveAttribute("aria-hidden");
+    expect(within(list).queryByText("Local task")).toBeNull();
+    remoteSpy.mockRestore();
   });
 
-  it("writes updated filter values to project-scoped storage and isolates between projects", async () => {
-    const projectOneId = "project-one";
-    const projectTwoId = "project-two";
-    mockCurrentProjectState.currentProject = {
-      id: projectOneId,
-      name: "Project One",
-      path: "/one",
-      status: "active",
-      isolationMode: "in-process",
-      createdAt: "",
-      updatedAt: "",
-    };
-
-    mockUseTasks.mockImplementation(() => ({
-      tasks: [makeTask("FN-1", "Alpha Search", "feature/a", "main")],
-      createTask: mockCreateTask,
-      moveTask: vi.fn(),
-      deleteTask: vi.fn(),
-      mergeTask: vi.fn(),
-      retryTask: vi.fn(),
-      updateTask: vi.fn(),
-      duplicateTask: vi.fn(),
-      refreshTasks: vi.fn(),
+  it("withholds retained remote rows until the current node request settles", async () => {
+    mockLocalSearchTasks([makeSearchTask("LOCAL-331", "Local task")]);
+    mockNodeContextValue.isRemote = true;
+    mockNodeContextValue.currentNodeId = "node-1";
+    let remoteTasks = [makeSearchTask("NODE1-331", "First node task")];
+    let remoteLoading = false;
+    let remoteError: string | null = null;
+    const remoteSpy = vi.spyOn(apiNodeModule, "useRemoteNodeData").mockImplementation(() => ({
+      projects: [],
+      tasks: remoteTasks,
+      health: null,
+      loading: remoteLoading,
+      error: remoteError,
+      refresh: vi.fn(),
     }));
 
     const { rerender } = render(<App />);
     await waitForAppShell();
-
     fireEvent.click(screen.getByTestId("desktop-header-search-btn"));
-    fireEvent.change(screen.getByTestId("working-branch-filter"), { target: { value: "feature/a" } });
-    fireEvent.change(screen.getByTestId("target-branch-filter"), { target: { value: "main" } });
-
-    expect(localStorage.getItem(scopedProjectKey(WORKING_BRANCH_FILTER_STORAGE_KEY, projectOneId))).toBe("feature/a");
-    expect(localStorage.getItem(scopedProjectKey(BASE_BRANCH_FILTER_STORAGE_KEY, projectOneId))).toBe("main");
-
-    mockCurrentProjectState.currentProject = {
-      id: projectTwoId,
-      name: "Project Two",
-      path: "/two",
-      status: "active",
-      isolationMode: "in-process",
-      createdAt: "",
-      updatedAt: "",
-    };
-
-    rerender(<App />);
-    await waitForAppShell();
-
-    /*
-     * FNXC:BoardSearch 2026-07-04-13:30: The non-mobile search panel intentionally stays open
-     * across a same-instance rerender (Header's isNonMobileSearchOpen state is not project-scoped),
-     * so the toggle button correctly unmounts once the panel is open (see canShowNonMobileSearchToggle
-     * in Header.tsx) and there is no button left to re-click here. The branch-filter selects remain
-     * rendered while the panel is open, so read them directly instead of re-clicking the toggle.
-     */
-    expect((screen.getByTestId("working-branch-filter") as HTMLSelectElement).value).toBe("");
-    expect((screen.getByTestId("target-branch-filter") as HTMLSelectElement).value).toBe("");
-    expect(localStorage.getItem(scopedProjectKey(WORKING_BRANCH_FILTER_STORAGE_KEY, projectTwoId))).toBeNull();
-    expect(localStorage.getItem(scopedProjectKey(BASE_BRANCH_FILTER_STORAGE_KEY, projectTwoId))).toBeNull();
-  });
-
-  it("composes with search and does not affect list view tasks", async () => {
-    localStorage.setItem("kb-dashboard-view-mode", "project");
-    localStorage.setItem(taskViewStorageKey(), "board");
-    vi.mocked(fetchSettings).mockResolvedValue({ ...defaultSettings });
-    mockUseTasks.mockImplementation(() => ({
-      tasks: [
-        makeTask("FN-4", "Alpha Search", "feature/a", "main"),
-        makeTask("FN-5", "Beta Search", "feature/b", "main"),
-      ],
-      createTask: mockCreateTask,
-      moveTask: vi.fn(),
-      deleteTask: vi.fn(),
-      mergeTask: vi.fn(),
-      retryTask: vi.fn(),
-      updateTask: vi.fn(),
-      duplicateTask: vi.fn(),
-      refreshTasks: vi.fn(),
-    }));
-
-    render(<App />);
-    await waitForAppShell();
-
-    fireEvent.click(screen.getByTestId("desktop-header-search-btn"));
-    fireEvent.change(screen.getByPlaceholderText("Search tasks..."), { target: { value: "Search" } });
-    fireEvent.change(screen.getByTestId("working-branch-filter"), { target: { value: "feature/a" } });
-
-    await waitFor(() => {
-      expect(screen.getByText("Alpha Search")).toBeTruthy();
-      expect(screen.queryByText("Beta Search")).toBeNull();
-    });
-
+    fireEvent.change(screen.getByRole("combobox", { name: "Search tasks..." }), { target: { value: "331" } });
+    expect(screen.getByRole("option", { name: "NODE1-331: First node task" })).toBeInTheDocument();
     fireEvent.click(screen.getByTestId("sidebar-nav-list"));
-    await waitFor(() => {
-      const activeList = screen.getByTestId("list-keep-alive");
-      expect(activeList).not.toHaveAttribute("aria-hidden");
-      expect(within(activeList).getByText("Alpha Search")).toBeTruthy();
-      expect(within(activeList).getByText("Beta Search")).toBeTruthy();
-    });
+    expect(within(screen.getByTestId("list-keep-alive")).getByText("First node task")).toBeInTheDocument();
+
+    mockNodeContextValue.currentNodeId = "node-2";
+    rerender(<App />);
+    expect(screen.queryByRole("option", { name: /NODE1-331/ })).toBeNull();
+    expect(screen.queryByRole("option", { name: /LOCAL-331/ })).toBeNull();
+    const listDuringNodeChange = within(screen.getByTestId("list-keep-alive"));
+    expect(listDuringNodeChange.queryByText("First node task")).toBeNull();
+    expect(listDuringNodeChange.queryByText("Local task")).toBeNull();
+
+    remoteLoading = true;
+    rerender(<App />);
+    remoteLoading = false;
+    remoteError = "Remote node unavailable";
+    rerender(<App />);
+    expect(screen.queryByRole("option", { name: /NODE1-331/ })).toBeNull();
+
+    remoteLoading = true;
+    remoteError = null;
+    rerender(<App />);
+    remoteTasks = [makeSearchTask("NODE2-331", "Second node task")];
+    remoteLoading = false;
+    rerender(<App />);
+
+    expect(screen.getByRole("option", { name: "NODE2-331: Second node task" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /NODE1-331/ })).toBeNull();
+    remoteSpy.mockRestore();
   });
 });
 
