@@ -47,6 +47,7 @@ import {
   workflowEntryArtifacts,
 } from "../execution/required-workflow-artifacts.js";
 import { getActiveNotificationService } from "../util/notifier.js";
+import { revalidatePendingOverlapWaitsAtGraphNode } from "../workflows/overlap-plan-revalidation.js";
 
 export function buildWorkflowGateActivityMetadata(
   result: CoreWorkflowStepResult,
@@ -133,6 +134,7 @@ export type ExecuteWorkflowGraphDeps = {
   /** FNXC:PlanReviewNoOp 2026-08-09-22:10: hold failed/invalid close evidence on the continuation. */
   holdPlanReviewNoOpContinuation: AnyFn;
   runGraphCustomNode: AnyFn;
+  executeWorkflowStep: AnyFn;
   terminateAllChildren: AnyFn;
 };
 
@@ -891,6 +893,64 @@ export async function executeWorkflowGraph(
           );
           if (principalAdmission) return principalAdmission;
           const live = await deps.store.getTask(nodeTask.id);
+          const overlapRevalidation = await revalidatePendingOverlapWaitsAtGraphNode({
+            task: live,
+            store: deps.store,
+            nodeId: node.id,
+            review: async (step) => {
+              const worktreePath = live.worktree;
+              if (!worktreePath) return { success: false, malformed: true, error: "Overlap delta revalidation requires an execution checkout" };
+              return deps.executeWorkflowStep(live, step, worktreePath, settings, undefined, {
+                unattended: deps.graphUnattendedRuns.has(live.id),
+                principalAgentId: typeof context["workflow:principal-agent-id"] === "string" ? context["workflow:principal-agent-id"] : undefined,
+                outputLanguage,
+              });
+            },
+            repair: async ({ invalidatedPromise, feedback }) => {
+              const beforeRepair = await deps.store.getTask(live.id);
+              if (!beforeRepair?.worktree || beforeRepair.paused || beforeRepair.userPaused) return false;
+              const now = new Date().toISOString();
+              /*
+              FNXC:OverlapWaitSynchronization 2026-09-10-04:21:
+              Delta REVISE is repaired by a graph-owned coding prompt at the real resume node. It
+              must use the safe task prompt writer, change only the invalidated promise, and retain
+              the card lane, completed steps, checkpoint, and continuation; identifying it as the
+              ordinary Plan Review gate would incorrectly trigger a general needs-replan bounce.
+              */
+              const repairStep = {
+                id: node.id,
+                name: "Overlap Delta Targeted Plan Repair",
+                description: "Repair only the approved plan promise invalidated by a delivered overlap delta.",
+                mode: "prompt",
+                phase: "pre-merge",
+                gateMode: "gate",
+                prompt: [
+                  "OVERLAP_DELTA_TARGETED_PLAN_REPAIR:",
+                  `Invalidated promise: ${invalidatedPromise}`,
+                  `Reviewer feedback: ${feedback}`,
+                  "Update only the affected promise in PROMPT.md using fn_task_prompt_write.",
+                  "Preserve every completed step, report, checkpoint, current column, and unrelated approved plan section.",
+                  "Do not execute implementation work and do not request a general replan.",
+                ].join("\n\n"),
+                toolMode: "coding",
+                enabled: true,
+                createdAt: now,
+                updatedAt: now,
+              } as const;
+              const outcome = await deps.executeWorkflowStep(beforeRepair, repairStep, beforeRepair.worktree, settings, undefined, {
+                unattended: deps.graphUnattendedRuns.has(beforeRepair.id),
+                principalAgentId: typeof context["workflow:principal-agent-id"] === "string" ? context["workflow:principal-agent-id"] : undefined,
+                outputLanguage,
+              });
+              if (!outcome.success) return false;
+              const afterRepair = await deps.store.getTask(live.id);
+              return Boolean(afterRepair?.prompt && afterRepair.prompt !== beforeRepair.prompt);
+            },
+          });
+          if (overlapRevalidation === "revise") return { outcome: "failure", value: "overlap-plan-revalidation-revise" };
+          if (overlapRevalidation === "unavailable" || overlapRevalidation === "superseded") {
+            return { outcome: "failure", value: `overlap-plan-revalidation-${overlapRevalidation}` };
+          }
           /*
           FNXC:WorkflowReviewSeal 2026-08-25-02:10:
           Structural signals only. The old test also matched `/code review/i` against the display

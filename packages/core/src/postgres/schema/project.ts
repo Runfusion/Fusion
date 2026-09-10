@@ -371,6 +371,37 @@ export const tasks = projectSchema.table("tasks", {
 ]);
 
 /* FNXC:SpecLock 2026-08-09-07:06: plan locks, evidence, and reports omit task FKs so immutable history survives archive cleanup and task tombstones. */
+/*
+FNXC:OverlapWaitSynchronization 2026-09-09-23:53:
+The display blocker is transient, but each observed predecessor edge remains project-scoped until
+freshness, delta analysis, optional revalidation, and context delivery have all been acknowledged.
+Only the waiting task is foreign-keyed; predecessor identity survives its archival or deletion.
+*/
+export const taskOverlapWaits = projectSchema.table("task_overlap_waits", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  taskId: text("task_id").notNull(),
+  episodeId: text("episode_id").notNull().default(sql`md5(random()::text || clock_timestamp()::text)`),
+  blockerTaskId: text("blocker_task_id").notNull(),
+  taskLineageId: text("task_lineage_id"),
+  blockerLineageId: text("blocker_lineage_id"),
+  observedAt: text("observed_at").notNull(),
+  planFingerprint: text("plan_fingerprint"),
+  phase: text("phase").notNull().default("observed"),
+  revision: integer("revision").notNull().default(1),
+  owner: text("owner"),
+  attempt: integer("attempt").notNull().default(0),
+  checkoutEpoch: text("checkout_epoch"),
+  observation: jsonb("observation").notNull().default({}),
+  receipt: jsonb("receipt"),
+  updatedAt: text("updated_at").notNull(),
+}, (t) => [
+  primaryKey({ columns: [t.projectId, t.taskId, t.episodeId] }),
+  foreignKey({ columns: [t.projectId, t.taskId], foreignColumns: [tasks.projectId, tasks.id], name: "fk_task_overlap_wait_owner" }).onDelete("cascade"),
+  check("ck_task_overlap_wait_phase", sql`${t.phase} IN ('observed','analyzing','freshness-pending','revalidation-pending','ready','delivered','cancelled')`),
+  uniqueIndex("uq_task_overlap_wait_open_blocker").on(t.projectId, t.taskId, t.blockerTaskId).where(sql`${t.phase} NOT IN ('delivered', 'cancelled')`),
+  index("idx_task_overlap_wait_unconsumed").on(t.projectId, t.taskId, t.observedAt).where(sql`${t.phase} NOT IN ('delivered', 'cancelled')`),
+]);
+
 export const specLocks = projectSchema.table("spec_locks", {
   projectId: text("project_id").notNull(), taskId: text("task_id").notNull(), version: integer("version").notNull(),
   acceptedAt: text("accepted_at").notNull(), approvalFingerprint: text("approval_fingerprint").notNull(), currentPlanVersion: integer("current_plan_version").notNull(), currentPlanHash: text("current_plan_hash").notNull(),
@@ -2700,5 +2731,5 @@ export const projectTableNames = [
   "task_lifecycle_consumer_cursors", "task_lifecycle_consumer_dead_letters",
   "task_lifecycle_consumer_receipts", "task_lifecycle_consumer_registrations",
   "task_lifecycle_event_seq", "task_lifecycle_events", "task_verification_requests",
-  "unplanned_execution_blocks", "workflow_agent_capacity_leases",
+  "unplanned_execution_blocks", "workflow_agent_capacity_leases", "task_overlap_waits",
 ] as const;

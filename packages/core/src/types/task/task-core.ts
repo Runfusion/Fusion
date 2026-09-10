@@ -166,6 +166,8 @@ export interface MergeDetails {
    * for single-repo tasks.
    */
   workspaceLandedShas?: Record<string, string>;
+  /** Per-repository paths captured before workspace finalization; an empty list proves a no-op repository. */
+  workspaceLandedFiles?: Record<string, string[]>;
 }
 
 /** Represents an agent's checkout lease on a task. */

@@ -238,6 +238,115 @@ describe("fast mode workflow/runtime invariants", () => {
     }
   });
 
+  it("repairs an overlap-delta REVISE inside executeWorkflowGraph before the resumed node", async () => {
+    let liveTask = task({ id: "FN-332-REVALIDATE", worktree: process.cwd(), steps: [{ name: "Completed preparation", status: "done" }], currentStep: 1 });
+    const { store, executor } = makeExecutorForTask(liveTask);
+    const selected = { workflowId: "WF-overlap-revalidate", stepIds: [] };
+    store.getTask.mockImplementation(async () => liveTask);
+    store.getTaskWorkflowSelectionAsync = vi.fn(async () => selected);
+    store.getWorkflowDefinition = vi.fn(async () => ({
+      id: selected.workflowId,
+      name: "Overlap resume",
+      ir: {
+        version: "v1",
+        name: "Overlap resume",
+        columns: [{ id: "in-progress", name: "Work", traits: [] }],
+        nodes: [{ id: "start", kind: "start" }, { id: "resume-node", kind: "prompt", config: { prompt: "Continue implementation" } }, { id: "end", kind: "end" }],
+        edges: [{ from: "start", to: "resume-node" }, { from: "resume-node", to: "end" }],
+      },
+    }));
+    const receipt = {
+      decision: "revalidate", freshness: "proven", commonFiles: ["src/shared.ts"], deliveryProofs: [],
+      decisionFingerprint: "delta-generation", briefing: "FN-A changed src/shared.ts", decidedAt: now,
+    };
+    let episode: any = { projectId: "p", taskId: liveTask.id, episodeId: "episode-delta", blockerTaskId: "FN-A", observedAt: now, phase: "revalidation-pending", revision: 3, owner: "graph-owner", attempt: 1, receipt, updatedAt: now };
+    store.listTaskOverlapWaits = vi.fn(async () => episode.phase === "ready" ? [] : [episode]);
+    store.completeTaskOverlapWait = vi.fn(async (input: any) => {
+      if (input.expectedRevision !== episode.revision) return null;
+      episode = { ...episode, ...input, revision: episode.revision + 1 };
+      return episode;
+    });
+    store.claimTaskOverlapWait = vi.fn(async (input: any) => {
+      if (input.expectedRevision !== episode.revision) return null;
+      episode = { ...episode, phase: "analyzing", revision: episode.revision + 1, observation: { executionIdentity: input.executionIdentity } };
+      return episode;
+    });
+    let deltaReviewCount = 0;
+    const executeStep = vi.spyOn(executor as any, "executeWorkflowStep").mockImplementation(async (_task: any, step: any) => {
+      if (step.name === "Overlap Delta Plan Revalidation" && deltaReviewCount++ === 0) {
+        return { success: false, verdict: "REVISE", notes: "Keep sharedApi compatible." };
+      }
+      if (step.name === "Overlap Delta Targeted Plan Repair") {
+        liveTask = { ...liveTask, prompt: `${liveTask.prompt}\n\n## Targeted repair\nKeep sharedApi compatible.` };
+        return { success: true };
+      }
+      if (step.name === "Overlap Delta Plan Revalidation") return { success: true, verdict: "APPROVE" };
+      return { success: true, output: "ordinary node completed" };
+    });
+
+    await (executor as any).executeWorkflowGraph(liveTask);
+
+    expect(executeStep.mock.calls.map((call: any[]) => call[1].name)).toEqual([
+      "Overlap Delta Plan Revalidation",
+      "Overlap Delta Targeted Plan Repair",
+      "Overlap Delta Plan Revalidation",
+      "resume-node",
+    ]);
+    expect(episode).toMatchObject({ phase: "ready", receipt: { revalidationVerdict: "APPROVE" } });
+    expect(liveTask.column).toBe("in-progress");
+    expect(liveTask.steps[0].status).toBe("done");
+    expect(store.updateTask).not.toHaveBeenCalledWith(liveTask.id, expect.objectContaining({ status: "needs-replan" }), expect.anything());
+  });
+
+  it("retries failed external overlap delivery and sends a later generation through runImplementation", async () => {
+    const externalPath = "/tmp/external-runtime";
+    const episode = (id: string, predecessor: string, revision: number) => ({
+      phase: "ready", episodeId: id, revision, owner: "external-owner",
+      receipt: {
+        decision: "briefing", freshness: "proven", commonFiles: ["src/shared.ts"], deliveryProofs: [],
+        decisionFingerprint: `${id}-generation`, briefing: `OVERLAP_WAIT_CONTEXT:\n${predecessor} delivered src/shared.ts`,
+        decidedAt: now,
+      },
+    });
+    const first = episode("external-overlap-a", "FN-A", 4);
+    const second = episode("external-overlap-c", "FN-C", 8);
+    let pending = first;
+    const liveTask = task({
+      id: "FN-332-EXTERNAL",
+      executionMode: "standard",
+      steps: [{ name: "Implement", status: "pending" }],
+      sourceMetadata: { externalExecutionCheckout: externalPath, externalExecutionBranch: "operator/fn-332" },
+    });
+    const { store, executor } = makeExecutorForTask(liveTask);
+    mockedResolveExternalExecutionCheckoutRoute.mockResolvedValue({
+      configured: true, valid: true, checkoutPath: externalPath, branch: "operator/fn-332",
+    });
+    store.listTaskOverlapWaits = vi.fn(async () => [pending]);
+    store.claimTaskOverlapWait = vi.fn();
+    store.completeTaskOverlapWait = vi.fn(async (input: any) => ({ ...pending, ...input, phase: "delivered", revision: pending.revision + 1 }));
+    store.getSettings.mockResolvedValue({ autoMerge: false, runStepsInNewSessions: false, experimentalFeatures: { workflowGraphExecutor: true } });
+    const failedPrompt = vi.fn(async () => undefined);
+    const retryPrompt = vi.fn(async () => undefined);
+    const nextGenerationPrompt = vi.fn(async () => undefined);
+    mockedCreateFnAgent
+      .mockResolvedValueOnce({ session: { prompt: failedPrompt, dispose: vi.fn(), subscribe: vi.fn(() => () => undefined), state: { errorMessage: "transport failed" } } } as any)
+      .mockResolvedValueOnce({ session: { prompt: retryPrompt, dispose: vi.fn(), subscribe: vi.fn(() => () => undefined), state: {} } } as any)
+      .mockResolvedValueOnce({ session: { prompt: nextGenerationPrompt, dispose: vi.fn(), subscribe: vi.fn(() => () => undefined), state: {} } } as any);
+
+    await (executor as any).runImplementation(liveTask, vi.fn(), vi.fn());
+    expect(store.completeTaskOverlapWait).not.toHaveBeenCalled();
+
+    await (executor as any).runImplementation(liveTask, vi.fn(), vi.fn());
+    expect(retryPrompt).toHaveBeenCalledWith(expect.stringContaining("FN-A delivered src/shared.ts"));
+    expect(store.completeTaskOverlapWait).toHaveBeenCalledWith(expect.objectContaining({ episodeId: "external-overlap-a", phase: "delivered" }));
+
+    pending = second;
+    await (executor as any).runImplementation(liveTask, vi.fn(), vi.fn());
+    expect(nextGenerationPrompt).toHaveBeenCalledWith(expect.stringContaining("FN-C delivered src/shared.ts"));
+    expect(store.completeTaskOverlapWait).toHaveBeenCalledWith(expect.objectContaining({ episodeId: "external-overlap-c", phase: "delivered" }));
+    expect(mockedResolveExternalExecutionCheckoutRoute).toHaveBeenCalledTimes(3);
+  });
+
   it("falls back to standard custom execution when a Fast workflow has no implementation node", async () => {
     const { store, executor } = makeExecutorForTask(task({ executionMode: "fast", worktree: "/tmp/wt" }));
     const executeStep = vi.spyOn(executor as any, "executeWorkflowStep").mockResolvedValue({ success: true });

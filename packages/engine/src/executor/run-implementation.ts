@@ -203,6 +203,9 @@ import { buildStepFailureMessage, emitProactiveStatus, sanitizeFailureReason } f
 import { createRunAuditor, generateSyntheticRunId, type EngineRunContext } from "../util/run-audit.js";
 import { emitBoundedRunAudit } from "./emit-bounded-run-audit.js";
 import { acquireTaskWorktree, acquireWorkspaceTaskWorktrees, WorktreeBaseRefreshError } from "../worktree/worktree-acquisition.js";
+import { acknowledgeOverlapResumeContext, readOverlapResumeContextDelivery, type OverlapResumeContextDelivery } from "../execution/overlap-resume-context.js";
+import { synchronizeOverlapWaitBeforeExecution } from "./overlap-resume-gate.js";
+
 import { resolveWorktreesDir } from "../worktree/worktree-paths.js";
 import {
   RemovalReason,
@@ -213,6 +216,16 @@ import {
   isInsideWorktreesDir,
   removeWorktree,
 } from "../worktree/worktree-pool.js";
+
+export async function finalizeImplementationTransportWithOverlapAck(input: {
+  session: AgentSession;
+  store: Pick<TaskStore, "completeTaskOverlapWait">;
+  taskId: string;
+  delivery?: OverlapResumeContextDelivery;
+}): Promise<void> {
+  checkSessionError(input.session);
+  if (input.delivery) await acknowledgeOverlapResumeContext(input.store, input.taskId, input.delivery);
+}
 
 const MAX_TASK_DONE_SESSION_RETRIES = 3;
 
@@ -805,7 +818,7 @@ export async function runImplementation(
       FNXC:ExternalExecutionCheckout 2026-08-09-23:53:
       Operator-routed external checkouts skip Fusion worktree acquisition and run against the persisted checkout.
       */
-      const acquisition: AcquireTaskWorktreeResult = hasWorkspaceRepos
+      let acquisition: AcquireTaskWorktreeResult = hasWorkspaceRepos
         ? {
             worktreePath: workspaceTaskWorktreeDir!,
             branch: "",
@@ -858,6 +871,22 @@ export async function runImplementation(
           deps.unregisterConfiguredCommandController(task.id, taskCommandAbortController);
         }
       })();
+      if (externalExecutionRoute.configured) {
+        const overlap = await synchronizeOverlapWaitBeforeExecution({
+          task,
+          store: deps.store,
+          worktreePath: acquisition.worktreePath,
+          owner: syntheticRunId,
+          ...(task.checkoutLeaseEpoch != null ? { checkoutEpoch: String(task.checkoutLeaseEpoch) } : {}),
+        });
+        acquisition = {
+          ...acquisition,
+          ...(overlap.context ? {
+            overlapResumeContext: overlap.context,
+            overlapResumeDelivery: await readOverlapResumeContextDelivery(deps.store, task.id),
+          } : {}),
+        };
+      }
       worktreePath = acquisition.worktreePath;
       const sessionBoundary = hasWorkspaceRepos && deps.workspaceConfig
         ? (() => {
@@ -2525,6 +2554,7 @@ export async function runImplementation(
               "If it contains a `## Review Advisory Notes` section, those are non-blocking suggestions — address them only if cheap and clearly correct.",
               "Otherwise continue the task from where you left off.",
               "Review the current state of your worktree, then proceed with the next pending step.",
+              ...(acquisition.overlapResumeContext ? ["", "## Overlap wait synchronization", acquisition.overlapResumeContext] : []),
             ].join("\n"));
           } else {
             const customFieldDefs = await deps.resolveTaskCustomFieldDefs(task.id);
@@ -2539,6 +2569,7 @@ export async function runImplementation(
               deps.workspaceConfig,
               {
                 pluginTaskContributions,
+                overlapResumeContext: acquisition.overlapResumeContext,
               },
             );
             await promptWithFallback(session, agentPrompt);
@@ -2555,7 +2586,7 @@ export async function runImplementation(
           // Re-raise errors that pi-coding-agent swallowed after exhausting retries.
           // session.prompt() resolves normally even when retries are exhausted —
           // the error is stored on session.state.error instead of being thrown.
-          checkSessionError(session);
+          await finalizeImplementationTransportWithOverlapAck({ session, store: deps.store, taskId: task.id, delivery: acquisition.overlapResumeDelivery });
           await deps.persistTokenUsage(task.id, session);
 
           // Check if proactive context compaction is needed based on token cap setting.
@@ -2953,6 +2984,7 @@ export async function runImplementation(
                       deps.workspaceConfig,
                       {
                         pluginTaskContributions: retryPluginTaskContributions,
+                        overlapResumeContext: acquisition.overlapResumeContext,
                       },
                     ),
                   ].join("\n");
@@ -2974,6 +3006,7 @@ export async function runImplementation(
                       deps.workspaceConfig,
                       {
                         pluginTaskContributions: retryPluginTaskContributions,
+                        overlapResumeContext: acquisition.overlapResumeContext,
                       },
                     ),
                   ].join("\n");
@@ -2981,7 +3014,7 @@ export async function runImplementation(
 
                 stuckDetector?.recordActivity(task.id);
                 await promptWithFallback(retrySession, retryPrompt);
-                checkSessionError(retrySession);
+                await finalizeImplementationTransportWithOverlapAck({ session: retrySession, store: deps.store, taskId: task.id, delivery: acquisition.overlapResumeDelivery });
                 await deps.persistTokenUsage(task.id, retrySession);
               } catch (retryError) {
                 deps.deleteActiveSession(task.id);

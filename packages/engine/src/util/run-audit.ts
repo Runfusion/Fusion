@@ -508,6 +508,8 @@ export type DatabaseMutationType =
   | "task:external-block-cleared"
   /** Metadata: { taskId, column, trigger, outcome, completedStepCount } */
   | "task:step-session-abort-contained"
+  /** Metadata: { taskId, blockerTaskIds, episodeCount, commonFileCount, decision, freshness } — paths and prose stay in the transactional receipt. */
+  | "task:overlap-wait-released"
   /** Metadata: { taskId, artifactKeys, owner, source, action, attempt, maxAttempts, nodeId? } */
   | "task:required-artifact-missing"
   /*

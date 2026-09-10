@@ -23,6 +23,7 @@ import { getLiveTaskColumn } from "./async/async-comments-attachments.js";
 import { acquireTaskAdvisoryXactLock } from "./task-advisory-lock.js";
 import { ARCHIVED_SENTINEL_LANES } from "../project-lane-vocabulary.js";
 import * as schema from "../postgres/schema/index.js";
+import { observeOverlapWaitTransitionInTransaction } from "./overlap-wait-ops.js";
 
 export async function runPluginColumnTransitionHooksImpl(store: TaskStore, taskId: string, workflowIr: WorkflowIr, fromColumn: string, toColumn: string,): Promise<void> {
     const registry = getTraitRegistry();
@@ -211,6 +212,13 @@ export async function transitionQueuedEpisodeImpl(
       && (current.overlapBlockedBy ?? null) === transition.overlapBlockedBy
       && (current.queuedLogEpisodeSignature ?? null) === transition.signature
     );
+    const currentTask = store.rowToTask(store.pgRowToTaskRow(current as unknown as Record<string, unknown>));
+    await observeOverlapWaitTransitionInTransaction(tx, {
+      projectId,
+      previous: currentTask,
+      nextOverlapBlockedBy: transition.overlapBlockedBy,
+      observedAt: now,
+    });
     const log = Array.isArray(current.log) ? [...current.log as TaskLogEntry[]] : [];
     if (appended) {
       log.push({

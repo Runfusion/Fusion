@@ -63,6 +63,45 @@ describe("heartbeat worktree cwd", () => {
     );
   });
 
+  it("acknowledges heartbeat overlap context only after success and delivers a later generation", async () => {
+    const episode = (id: string, predecessor: string, revision: number) => ({
+      phase: "ready", episodeId: id, revision, owner: "heartbeat-owner",
+      receipt: {
+        decision: "briefing", freshness: "proven", commonFiles: ["src/shared.ts"], deliveryProofs: [],
+        decisionFingerprint: `${id}-generation`, briefing: `OVERLAP_WAIT_CONTEXT:\n${predecessor} delivered src/shared.ts`,
+        decidedAt: new Date().toISOString(),
+      },
+    });
+    const first = episode("heartbeat-overlap-a", "FN-A", 3);
+    const second = episode("heartbeat-overlap-c", "FN-C", 7);
+    let delivery = { context: first.receipt.briefing, episodes: [first] };
+    const failedPrompt = vi.fn(async () => { throw new Error("transport failed"); });
+    const retryPrompt = vi.fn(async () => undefined);
+    const nextGenerationPrompt = vi.fn(async () => undefined);
+    vi.spyOn(piModule, "createFnAgent")
+      .mockResolvedValueOnce({ session: { prompt: failedPrompt, dispose: vi.fn() } } as any)
+      .mockResolvedValueOnce({ session: { prompt: retryPrompt, dispose: vi.fn() } } as any)
+      .mockResolvedValueOnce({ session: { prompt: nextGenerationPrompt, dispose: vi.fn() } } as any);
+    vi.spyOn(worktreeAcquisition, "acquireTaskWorktree").mockImplementation(async () => ({
+      worktreePath: "/tmp/wt", branch: "fusion/fn-1", source: "existing", hydrated: false, isResume: true,
+      overlapResumeDelivery: delivery,
+    } as any));
+    taskStore.completeTaskOverlapWait = vi.fn(async (input: any) => ({ ...input, phase: "delivered" }));
+
+    const monitor = new HeartbeatMonitor({ store, taskStore, rootDir: "/repo" });
+    await monitor.executeHeartbeat({ agentId: "a1", source: "on_demand" });
+    expect(taskStore.completeTaskOverlapWait).not.toHaveBeenCalled();
+
+    await monitor.executeHeartbeat({ agentId: "a1", source: "on_demand" });
+    expect(retryPrompt).toHaveBeenCalledWith(expect.stringContaining("FN-A delivered src/shared.ts"));
+    expect(taskStore.completeTaskOverlapWait).toHaveBeenCalledWith(expect.objectContaining({ episodeId: "heartbeat-overlap-a", phase: "delivered" }));
+
+    delivery = { context: second.receipt.briefing, episodes: [second] };
+    await monitor.executeHeartbeat({ agentId: "a1", source: "on_demand" });
+    expect(nextGenerationPrompt).toHaveBeenCalledWith(expect.stringContaining("FN-C delivered src/shared.ts"));
+    expect(taskStore.completeTaskOverlapWait).toHaveBeenCalledWith(expect.objectContaining({ episodeId: "heartbeat-overlap-c", phase: "delivered" }));
+  });
+
   it("uses rootDir for no-task runs", async () => {
     store.getAgent.mockResolvedValue({ ...agent, taskId: undefined, soul: "x" });
     const monitor = new HeartbeatMonitor({ store, taskStore, rootDir: "/repo" });

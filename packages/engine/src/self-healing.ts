@@ -6736,6 +6736,11 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       };
 
       let recovered = 0;
+      const committedOverlapReleases = new Map<string, OverlapBlockerRelease>();
+      const recordOverlapRelease = (taskId: string, blockerId: string | null | undefined, committed: boolean): void => {
+        if (!committed || !blockerId) return;
+        committedOverlapReleases.set(taskId, { taskId, blockerId });
+      };
       const recoveredTaskIds = new Set<string>();
       const markRecovered = (taskId: string): void => {
         if (recoveredTaskIds.has(taskId)) return;
@@ -6837,6 +6842,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           const canClearOverlap = await canClearObservedOverlap(task, observedOverlapBlockerId);
           if (canClearOverlap) {
             const overlapCleared = await updateWithOverlapClear(task.id, observedOverlapBlockerId);
+            recordOverlapRelease(task.id, observedOverlapBlockerId, overlapCleared);
             if (overlapCleared) {
               await this.store.logEntry(
                 task.id,
@@ -6944,11 +6950,12 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
                   didRecover = transition.appended;
                 } else {
                   const canClearOverlap = await canClearObservedOverlap(task, observedOverlapBlockerId);
-                  await updateWithOverlapClear(
+                  const overlapCleared = await updateWithOverlapClear(
                     task.id,
                     canClearOverlap ? observedOverlapBlockerId : null,
                     { blockedBy: null, ...clearBlockedStatusOnly(task) },
                   );
+                  recordOverlapRelease(task.id, observedOverlapBlockerId, overlapCleared);
                   await this.store.logEntry(task.id, `Auto-recovered (FN-5488): cleared stale blockedBy — blocker=${blockerId} blockerStatus=${blocker?.status ?? "none"} reason=${reasonCode ?? "unspecified"}; ${reason}`);
                   didRecover = true;
                 }
@@ -6984,11 +6991,12 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
               } else {
                 // FN-5434: routine scheduler↔self-healing queued-status churn should stay silent; keep state cleanup only.
                 const canClearOverlap = await canClearObservedOverlap(task, observedOverlapBlockerId);
-                await updateWithOverlapClear(
+                const overlapCleared = await updateWithOverlapClear(
                   task.id,
                   canClearOverlap ? observedOverlapBlockerId : null,
                   { blockedBy: null, ...clearBlockedStatusOnly(task) },
                 );
+                recordOverlapRelease(task.id, observedOverlapBlockerId, overlapCleared);
               }
             } catch (err: unknown) {
               const errorMessage = err instanceof Error ? err.message : String(err);
@@ -7009,6 +7017,20 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         }
       }
 
+      /*
+      FNXC:OverlapWaitSynchronization 2026-09-10-04:52:
+      Startup and periodic stale-blocker reconciliation are completion catch-up publishers. After
+      their compare-and-set clear commits, they must release the exact durable continuation just like
+      live completion fan-out; clearing the display marker alone cannot strand a restart-era wait.
+      */
+      if (committedOverlapReleases.size > 0) {
+        try {
+          await this.options.onOverlapBlockersReleased?.([...committedOverlapReleases.values()]);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          log.warn(`stale blockedBy post-overlap-release scheduling wake failed: ${message}`);
+        }
+      }
       return recovered;
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : String(err);

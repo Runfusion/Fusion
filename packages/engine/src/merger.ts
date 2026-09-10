@@ -130,7 +130,8 @@ import {
   resolveTaskLifecycleColumns,
   isFusionDeletableBranch,
   classifyTaskBranchOrigin,
-  type WorkflowIr
+  type WorkflowIr,
+  type OverlapWaitLandedPath
 } from "@fusion/core";
 import { evaluateAutoMergeFactProviders } from "./merge/auto-merge-fact-providers.js";
 import { resolveMergePolicy } from "./merge/merge-trait.js";
@@ -5121,6 +5122,34 @@ export interface MergerOptions {
 }
 
 
+export async function captureSingleCommitLandedPaths(
+  rootDir: string,
+  sha: string,
+  repository = ".",
+): Promise<OverlapWaitLandedPath[]> {
+  const { stdout } = await execAsync(`git show --format= --name-status -z ${quoteArg(sha)}`, {
+    cwd: rootDir,
+    encoding: "utf-8",
+    maxBuffer: 2 * 1024 * 1024,
+  });
+  const fields = stdout.split("\0").filter(Boolean);
+  const paths: OverlapWaitLandedPath[] = [];
+  for (let index = 0; index < fields.length;) {
+    const statusToken = fields[index++]!;
+    const code = statusToken[0];
+    if (code === "R" || code === "C") {
+      const previousPath = fields[index++];
+      const path = fields[index++];
+      if (previousPath && path) paths.push({ repository, previousPath, path, status: "renamed" });
+      continue;
+    }
+    const path = fields[index++];
+    if (!path) continue;
+    paths.push({ repository, path, status: code === "A" ? "added" : code === "D" ? "deleted" : "modified" });
+  }
+  return paths;
+}
+
 export async function captureSingleCommitLandedMetadata(
   rootDir: string,
   sha: string,
@@ -9582,6 +9611,21 @@ export async function aiMergeTask(
       mergeDetails,
       modifiedFiles: noOpVerifiedShortCircuit ? undefined : landedFiles && landedFiles.length > 0 ? landedFiles : undefined,
     });
+    if (typeof (store as Partial<TaskStore>).publishTaskOverlapDeliveries === "function") {
+      const currentTask = await store.getTask(taskId);
+      const paths = recordedSha ? await captureSingleCommitLandedPaths(rootDir, recordedSha) : [];
+      await store.publishTaskOverlapDeliveries(taskId, [{
+        blockerTaskId: taskId,
+        blockerLineageId: currentTask?.lineageId,
+        repository: ".",
+        target: mergeTarget.branch,
+        landedSha: recordedSha,
+        paths,
+        noOp: noOpVerifiedShortCircuit === true || mergeWasEmpty,
+        evidence: landedFilesCaptureFallback === "attribution-failed" ? "unavailable" : "merge-details",
+        summary: currentTask?.summary,
+      }]);
+    }
     if (recordedSha) {
       const currentTask = await store.getTask(taskId);
       if (currentTask?.lineageId) {

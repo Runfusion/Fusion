@@ -48,6 +48,7 @@ import {getTaskMergeBlocker} from "../merge/task-merge.js";
 import {resolveRequiredPreMergeStepIds} from "../merge/required-pre-merge-steps.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {readTaskRow as readTaskRowAsync, readTaskRowInTransaction, upsertTaskRowInTransaction} from "./async/async-persistence.js";
+import { observeOverlapWaitTransitionInTransaction } from "./overlap-wait-ops.js";
 import {disposeTaskBeforeMove} from "../tasks/task-move-disposer.js";
 import {resolveTaskSymbolsForTask} from "../tasks/task-symbol-resolution.js";
 
@@ -1204,6 +1205,15 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
       // Upsert the task row (update column + all mutated fields).
       // FNXC:MultiProjectIsolation 2026-07-10: pass the bound projectId (stamped
       // on insert, preserved on update) so partitioning survives moves.
+      const overlapRow = await readTaskRowInTransaction(tx, id, { includeDeleted: true }, layer.projectId);
+      if (overlapRow) {
+        await observeOverlapWaitTransitionInTransaction(tx, {
+          projectId: layer.projectId?.trim() || "__legacy_unscoped__",
+          previous: store.rowToTask(store.pgRowToTaskRow(overlapRow)),
+          nextOverlapBlockedBy: task.overlapBlockedBy,
+          observedAt: movedAt,
+        });
+      }
       await upsertTaskRowInTransaction(tx, task as unknown as Record<string, unknown>, context, layer.projectId);
 
       // U4 (flag-ON) parity with the SQLite branch below: write the

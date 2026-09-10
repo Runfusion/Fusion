@@ -48,6 +48,7 @@ import {
   type WorktreeDependencyReadiness,
 } from "../worktree/worktree-dependency-install.js";
 import { resolveContentReviewInputProof } from "../worktree/review-diff-fingerprint.js";
+import { acknowledgeOverlapResumeContext, readOverlapResumeContextDelivery } from "../execution/overlap-resume-context.js";
 
 const WORKFLOW_THINKING_LEVEL_SET: ReadonlySet<string> = new Set(THINKING_LEVELS);
 const WORKFLOW_STEP_NOT_RUN_REASON_SET: ReadonlySet<string> = new Set(WORKFLOW_STEP_NOT_RUN_REASONS);
@@ -617,10 +618,23 @@ export async function runGraphCustomNode(
       });
       if (dependencyGate) return dependencyGate;
     }
+    const overlapResumeDelivery = writeCapable
+      ? await readOverlapResumeContextDelivery(deps.store, live.id).catch(() => ({ context: undefined, episodes: [] }))
+      : { context: undefined, episodes: [] };
+    const overlapResumeContext = overlapResumeDelivery.context;
+    const acknowledgeCustomContext = () => acknowledgeOverlapResumeContext(deps.store, live.id, overlapResumeDelivery);
     if (isDeterministicVerificationGate) {
-      return runDeterministicVerificationGate({ store: deps.store, getRunContextFor: deps.getRunContextFor }, node, executionTarget, settings, worktreePath);
+      if (overlapResumeContext) {
+        await deps.store.logEntry(live.id, `Workflow node '${node.id}' received overlap synchronization context`, overlapResumeContext, deps.getRunContextFor(live.id));
+      }
+      const result = await runDeterministicVerificationGate({ store: deps.store, getRunContextFor: deps.getRunContextFor }, node, executionTarget, settings, worktreePath);
+      await acknowledgeCustomContext();
+      return result;
     }
     let prompt = typeof cfg.prompt === "string" ? cfg.prompt : "";
+    if (overlapResumeContext) {
+      prompt = [prompt, "", "## Overlap wait synchronization", overlapResumeContext].join("\n");
+    }
     let modelProvider = typeof cfg.modelProvider === "string" && cfg.modelProvider.trim() ? cfg.modelProvider : undefined;
     let modelId = typeof cfg.modelId === "string" && cfg.modelId.trim() ? cfg.modelId : undefined;
 
@@ -745,6 +759,7 @@ export async function runGraphCustomNode(
           worktreePath,
           env,
         );
+        await acknowledgeCustomContext();
         const blocking = node.kind === "gate" || cfg.gateMode === "gate";
         return { outcome: out.success || !blocking ? "success" : "failure", value: out.success ? "passed" : "failed" };
       }
@@ -920,6 +935,7 @@ export async function runGraphCustomNode(
               ...(repoRelPath ? { dispatchLabel: repoRelPath } : {}),
               ...(repoDiffBaseCommitSha ? { diffBaseCommitSha: repoDiffBaseCommitSha } : {}),
             });
+          await acknowledgeCustomContext();
           return toWorkspaceRepoReviewResult(repoOutcome);
         }, { workspaceRepos: workspaceConfig.repos, workspaceRootDir: deps.rootDir, settings });
         /*
@@ -980,18 +996,24 @@ export async function runGraphCustomNode(
     } else {
       const dispatchSingularStep = async (reviewInputFingerprint?: string): Promise<WorkflowStepOutcome> => {
         if (mode === "script") {
+          if (overlapResumeContext) {
+            await deps.store.logEntry(live.id, `Workflow script '${node.id}' received overlap synchronization context`, overlapResumeContext, deps.getRunContextFor(live.id));
+          }
           const scriptOutcome = await deps.executeScriptWorkflowStep(live, step, worktreePath, settings, nodeEnv);
+          await acknowledgeCustomContext();
           return reviewInputFingerprint === undefined
             ? scriptOutcome
             : { ...scriptOutcome, reviewInputFingerprint };
         }
-        return deps.executeWorkflowStep(live, step, worktreePath, settings, nodeEnv, {
+        const workflowOutcome = await deps.executeWorkflowStep(live, step, worktreePath, settings, nodeEnv, {
           unattended,
           principalAgentId,
           outputLanguage,
           ...(nodeSessionBoundary ? { sessionBoundary: nodeSessionBoundary } : {}),
           ...(reviewInputFingerprint !== undefined ? { reviewInputFingerprint } : {}),
         });
+        await acknowledgeCustomContext();
+        return workflowOutcome;
       };
       /*
       FNXC:ReviewInputProof 2026-09-01-11:18:

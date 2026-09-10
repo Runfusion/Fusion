@@ -5,6 +5,15 @@ import { createMockStore, mockedCreateFnAgent, mockedExecSync, mockedExistsSync,
 import * as mergerModule from "../merger.js";
 
 describe("FN-4646 aiMergeTask landedFiles capture", () => {
+  it("captures both sides and the status of a rename for overlap publication", async () => {
+    mockedExecSync.mockImplementation((command: unknown) => String(command).includes("--name-status -z")
+      ? "R100\0before.ts\0after.ts\0"
+      : "");
+
+    await expect(mergerModule.captureSingleCommitLandedPaths("/repo", "landed", "packages/api")).resolves.toEqual([
+      { repository: "packages/api", previousPath: "before.ts", path: "after.ts", status: "renamed" },
+    ]);
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     mockedExistsSync.mockReturnValue(true);
@@ -82,8 +91,9 @@ describe("FN-4646 aiMergeTask landedFiles capture", () => {
     expect(detailsUpdate?.[1].modifiedFiles).toEqual(["packages/engine/src/self-healing.ts"]);
   });
 
-  it("FN-5052 short-circuit variant: zero own commits yields empty landed files and keeps modifiedFiles", async () => {
+  it("FN-5052 short-circuit variant: zero own commits publishes durable no-op evidence", async () => {
     const store = makeStore({ directMergeCommitStrategy: "always-rebase" });
+    (store as any).publishTaskOverlapDeliveries = vi.fn(async () => 1);
     vi.spyOn(attributionModule, "filterFilesToOwnTaskCommits").mockResolvedValue({
       files: [],
       foreignCommits: Array.from({ length: 66 }, (_, i) => ({ sha: `foreign-${i}`, subject: `feat(FN-${5000 + i}): foreign`, attributedTaskId: `FN-${5000 + i}` })),
@@ -112,6 +122,12 @@ describe("FN-4646 aiMergeTask landedFiles capture", () => {
     expect(detailsUpdate?.[1].mergeDetails.landedFiles).toEqual([]);
     expect(detailsUpdate?.[1].mergeDetails.noOpVerifiedShortCircuit).toBe(true);
     expect(detailsUpdate?.[1].modifiedFiles).toBeUndefined();
+    expect((store as any).publishTaskOverlapDeliveries).toHaveBeenCalledWith("FN-4646", [expect.objectContaining({
+      repository: ".",
+      paths: [],
+      noOp: true,
+      evidence: "merge-details",
+    })]);
   });
 
   it.each([

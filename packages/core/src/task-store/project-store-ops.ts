@@ -50,6 +50,7 @@ import {recordRunAuditEvent as recordRunAuditEventAsync} from "../postgres/data-
 import {listGoalCitations as listGoalCitationsAsync} from "./async/async-events.js";
 import type {RunAuditEventRow} from "../task-store/row-types.js";
 import { DuplicateWorkflowSelectionError, resolveDuplicateTargetWorkflowId } from "./duplicate-workflow-selection.js";
+import { observeOverlapWaitTransitionInTransaction } from "./overlap-wait-ops.js";
 
 export async function getOrCreateForProjectImpl(store: typeof TaskStore, projectId?: string, centralCore?: CentralCore, globalSettingsDir?: string, asyncLayer?: AsyncDataLayer, consumerId?: string,): Promise<TaskStore> {
     if (!asyncLayer) {
@@ -178,6 +179,13 @@ export async function atomicWriteTaskJsonWithAuditImpl(store: TaskStore, dir: st
       */
       if (row) {
         const existing = store.pgRowToTaskRow(row);
+        if (layer.projectId) {
+          await observeOverlapWaitTransitionInTransaction(tx, {
+            projectId: layer.projectId,
+            previous: store.rowToTask(existing),
+            nextOverlapBlockedBy: task.overlapBlockedBy,
+          });
+        }
         if (planningInvalidation && !sameDependencySet(
           store.rowToTask(existing).dependencies ?? [],
           planningInvalidation.expectedCurrentDependencies,
@@ -209,6 +217,13 @@ export async function atomicWriteTaskJsonWithAuditImpl(store: TaskStore, dir: st
         // FNXC:MultiProjectIsolation 2026-07-10: preserve the bound projectId partition key.
         const context = store.createTaskPersistSerializationContext(task);
         await upsertTaskRowInTransaction(tx, task as unknown as Record<string, unknown>, context, layer.projectId);
+        if (layer.projectId && task.overlapBlockedBy) {
+          await observeOverlapWaitTransitionInTransaction(tx, {
+            projectId: layer.projectId,
+            previous: { ...task, overlapBlockedBy: undefined },
+            nextOverlapBlockedBy: task.overlapBlockedBy,
+          });
+        }
       }
       if (planningInvalidation) {
         /*

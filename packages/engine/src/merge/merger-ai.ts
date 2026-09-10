@@ -105,6 +105,7 @@ import { createLogger } from "../logger.js";
 import {
   buildAutostashLabel,
   captureSingleCommitLandedMetadata,
+  captureSingleCommitLandedPaths,
   isNonFastForwardPushError,
   isRebaseInProgress,
   parsePushRemoteTarget,
@@ -3308,6 +3309,29 @@ async function finalizeWorkspaceTask(
   const landed = repos.filter((r) => r.status === "landed" && r.landedSha);
   const workspaceLandedShas: Record<string, string> = {};
   for (const r of landed) workspaceLandedShas[r.repo] = r.landedSha!;
+  /*
+  FNXC:OverlapWaitSynchronization 2026-09-10-01:28:
+  Workspace finalization captures each repository's concrete paths before terminal cleanup. Waiting
+  tasks must not depend on the predecessor row or its already-disposed checkout to reconstruct delivery.
+  */
+  const workspaceLandedFiles: Record<string, string[]> = {};
+  const overlapDeliveries = [];
+  for (const repo of repos) {
+    workspaceLandedFiles[repo.repo] = repo.status === "landed" && repo.landedSha
+      ? (await captureSingleCommitLandedMetadata(repo.repoRootDir, repo.landedSha)).landedFiles ?? []
+      : [];
+    overlapDeliveries.push({
+      blockerTaskId: taskId,
+      blockerLineageId: task.lineageId,
+      repository: repo.repo,
+      target: repo.integrationBranch,
+      landedSha: repo.landedSha,
+      paths: repo.status === "landed" && repo.landedSha ? await captureSingleCommitLandedPaths(repo.repoRootDir, repo.landedSha, repo.repo) : [],
+      noOp: repo.status !== "landed",
+      evidence: "workspace-landing" as const,
+      summary: task.summary,
+    });
+  }
   const representative = landed.length > 0 ? landed[0].landedSha : undefined;
   const anyLanded = landed.length > 0;
 
@@ -3330,10 +3354,14 @@ async function finalizeWorkspaceTask(
     ...baseMergeDetails,
     ...(representative ? { commitSha: representative } : {}),
     ...(anyLanded ? { workspaceLandedShas } : {}),
+    workspaceLandedFiles,
     mergeConfirmed: anyLanded,
   };
   fence?.assertOwned("finalization");
   await store.updateTask(taskId, { mergeDetails });
+  if (typeof (store as Partial<TaskStore>).publishTaskOverlapDeliveries === "function") {
+    await store.publishTaskOverlapDeliveries(taskId, overlapDeliveries);
+  }
   task.mergeDetails = mergeDetails;
 
   let worktreeRemoved = false;
@@ -3827,7 +3855,7 @@ export async function pushAfterMergeToRemote(input: {
   }
 }
 
-async function finalizeMerged(
+export async function finalizeMerged(
   store: TaskStore,
   projectRootDir: string,
   taskId: string,
@@ -3881,6 +3909,19 @@ async function finalizeMerged(
     modifiedFiles = landedFiles.length > 0 ? landedFiles : undefined;
     fence?.assertOwned("finalization");
     await store.updateTask(taskId, { mergeDetails, modifiedFiles });
+    if (typeof (store as Partial<TaskStore>).publishTaskOverlapDeliveries === "function") {
+      await store.publishTaskOverlapDeliveries(taskId, [{
+        blockerTaskId: taskId,
+        blockerLineageId: task.lineageId,
+        repository: ".",
+        target: mergeDetails.mergeTargetBranch,
+        landedSha,
+        paths: await captureSingleCommitLandedPaths(projectRootDir, landedSha),
+        noOp: false,
+        evidence: "merge-details",
+        summary: task.summary,
+      }]);
+    }
     task.mergeDetails = mergeDetails;
     task.modifiedFiles = modifiedFiles;
     if (task.lineageId && typeof (store as Partial<TaskStore>).upsertTaskCommitAssociation === "function") {
@@ -3902,6 +3943,24 @@ async function finalizeMerged(
     fence?.assertOwned("finalization");
     await store.updateTask(taskId, { mergeDetails });
     task.mergeDetails = mergeDetails;
+  }
+  if (opts.empty && typeof (store as Partial<TaskStore>).publishTaskOverlapDeliveries === "function") {
+    /*
+    FNXC:OverlapWaitSynchronization 2026-09-10-03:18:
+    A verified no-op is delivery evidence, not missing evidence. Publish its empty snapshot before
+    terminal finalization so dependants remain resumable after the blocker row or worktree is gone.
+    */
+    fence?.assertOwned("finalization");
+    await store.publishTaskOverlapDeliveries(taskId, [{
+      blockerTaskId: taskId,
+      blockerLineageId: task.lineageId,
+      repository: ".",
+      target: mergeTarget?.branch ?? task.mergeDetails?.mergeTargetBranch,
+      paths: [],
+      noOp: true,
+      evidence: "merge-details",
+      summary: task.summary,
+    }]);
   }
   let branchDeleted = false;
   const deleteBranchNormally = async (): Promise<void> => {

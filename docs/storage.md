@@ -4,6 +4,12 @@
 
 See the [2026-07-14 PostgreSQL runtime cutover review](./postgres-migration-review-2026-07-14.md) for the audited authority inventory, exact authorized legacy readers, and deployment/rollback checklist.
 
+## Overlap wait synchronization episodes
+
+File-scope contention keeps its durable synchronization obligation in `project.task_overlap_waits`, independently of the transient `tasks.overlap_blocked_by` display marker. Each row is partitioned by `(project_id, task_id, episode_id)`, snapshots the predecessor identity, and advances through explicit observation, freshness, revalidation, authorization, and context-delivery phases with revision/owner compare-and-set fencing. Clearing or replacing the marker therefore cannot erase an unconsumed predecessor; Reset cancels active generations in the same task-locked publication transaction.
+
+Receipts contain the deterministic decision and delivery/freshness references. They are authoritative after restart; the task log and best-effort run audit are diagnostic projections, not alternate state. The owner task uses a composite foreign key, while predecessor identity intentionally remains after predecessor archival or deletion.
+
 ## SQLite→PostgreSQL cutover status
 
 - During a first-boot cutover, `fn dashboard`, `fn serve`, and `fn daemon --port <port>` keep their known HTTP port available with a migration holding page. Open dashboard tabs poll `/api/health` and show the migration banner with live progress.

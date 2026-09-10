@@ -43,6 +43,7 @@ import {getAllDocuments as getAllDocumentsAsync} from "../task-store/async/async
 import {recordGoalCitations as recordGoalCitationsAsync} from "../task-store/async/async-events.js";
 import type { WorkflowWorkItemRow } from "../task-store/row-types.js";
 import { projectScopeFor, type DbTransaction } from "../postgres/data-layer.js";
+import { observeOverlapWaitTransitionInTransaction } from "./overlap-wait-ops.js";
 
 export async function recordGoalCitationsImpl(store: TaskStore, inputs: GoalCitationInput[]): Promise<GoalCitation[]> {
         const layer = store.asyncLayer!;
@@ -108,10 +109,24 @@ export async function atomicWriteTaskJsonImpl2(
         if (!pgRow) {
           const context = store.createTaskPersistSerializationContext(task);
           await upsertTaskRowInTransaction(tx, task as unknown as Record<string, unknown>, context, layer.projectId);
+          if (layer.projectId && task.overlapBlockedBy) {
+            await observeOverlapWaitTransitionInTransaction(tx, {
+              projectId: layer.projectId,
+              previous: { ...task, overlapBlockedBy: undefined },
+              nextOverlapBlockedBy: task.overlapBlockedBy,
+            });
+          }
         }
         return;
       }
       const existingRow = store.pgRowToTaskRow(pgRow);
+      if (layer.projectId) {
+        await observeOverlapWaitTransitionInTransaction(tx, {
+          projectId: layer.projectId,
+          previous: store.rowToTask(existingRow),
+          nextOverlapBlockedBy: task.overlapBlockedBy,
+        });
+      }
       preserveDurableTaskWedgeInvariants(existingRow, task);
       const deletedAt = store.getSoftDeletedWriteConflict(id, task, existingRow);
       if (deletedAt) {

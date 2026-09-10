@@ -8,6 +8,7 @@ import { readTaskRowInTransaction, upsertTaskRowInTransaction } from "./async/as
 import type { TaskStore } from "../store.js";
 import { createLogger } from "../process/logger.js";
 import { resolveTaskSymbolsForTask } from "../tasks/task-symbol-resolution.js";
+import { cancelTaskOverlapWaitsInTransaction } from "./overlap-wait-ops.js";
 
 const resetLog = createLogger("task-store-reset-lifecycle");
 const ACTIVE_TASK_CONTINUATION_STATES = ["runnable", "running", "held", "retrying"] as const;
@@ -184,7 +185,7 @@ export async function resetTaskPublicationImpl(
   if (!layer) {
     throw new Error("Atomic task reset publication requires the PostgreSQL backend");
   }
-  const projectId = layer.projectId;
+  const projectId = layer.projectId?.trim() || "__legacy_unscoped__";
   const beforeReset = await store.getTask(taskId);
   if (!beforeReset) throw new Error(`Task ${taskId} not found`);
   const symbols = resolveTaskSymbolsForTask(beforeReset);
@@ -237,6 +238,7 @@ export async function resetTaskPublicationImpl(
       await tx.delete(schema.project.taskVerificationRequests).where(and(projectScopeFor(schema.project.taskVerificationRequests.projectId, projectId), eq(schema.project.taskVerificationRequests.taskId, taskId)));
       await tx.delete(schema.project.unplannedExecutionBlocks).where(and(projectScopeFor(schema.project.unplannedExecutionBlocks.projectId, projectId), eq(schema.project.unplannedExecutionBlocks.taskId, taskId)));
       await tx.delete(schema.project.completionHandoffMarkers).where(and(projectScopeFor(schema.project.completionHandoffMarkers.projectId, projectId), eq(schema.project.completionHandoffMarkers.taskId, taskId)));
+      await cancelTaskOverlapWaitsInTransaction(tx, projectId, taskId);
       await tx.delete(schema.project.mergeQueue).where(and(projectScopeFor(schema.project.mergeQueue.projectId, projectId), eq(schema.project.mergeQueue.taskId, taskId)));
       await tx.delete(schema.project.mergeRequests).where(and(projectScopeFor(schema.project.mergeRequests.projectId, projectId), eq(schema.project.mergeRequests.taskId, taskId)));
       /*

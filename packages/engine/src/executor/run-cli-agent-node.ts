@@ -17,6 +17,7 @@ import {
 import { CliConcurrencyLimitError, type CliSessionManager } from "../cli-agent/session-manager.js";
 import type { TelemetryHub } from "../cli-agent/telemetry-hub.js";
 import type { CliAdapterRegistry } from "../cli-agent/adapter.js";
+import { acknowledgeOverlapResumeContext, readOverlapResumeContextDelivery } from "../execution/overlap-resume-context.js";
 
 /** Structural match for TaskExecutor's CliAgentRuntime (avoids circular import). */
 export type CliAgentRuntimeBundle = {
@@ -74,7 +75,11 @@ export async function runCliAgentNode(
     return { outcome: "failure", value: "cli-agent-adapter-missing" };
   }
 
-  const prompt = typeof cfg.prompt === "string" ? cfg.prompt : (live.prompt ?? "");
+  const overlapResumeDelivery = await readOverlapResumeContextDelivery(deps.store, live.id).catch(() => ({ context: undefined, episodes: [] }));
+  const prompt = [
+    typeof cfg.prompt === "string" ? cfg.prompt : (live.prompt ?? ""),
+    ...(overlapResumeDelivery.context ? ["", "## Overlap wait synchronization", overlapResumeDelivery.context] : []),
+  ].join("\n");
 
   // Re-entry: kill any prior LIVE session for this task (RETHINK/replan context
   // reset) before launching fresh.
@@ -95,6 +100,7 @@ export async function runCliAgentNode(
       hookDirRoot: runtime.hookDirRoot,
       log: (msg) => executorLog.log(`[cli-agent] ${msg}`),
     });
+    await acknowledgeOverlapResumeContext(deps.store, live.id, overlapResumeDelivery);
   } catch (err) {
     if (err instanceof CliConcurrencyLimitError) {
       await deps.store.logEntry(

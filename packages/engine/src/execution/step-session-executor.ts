@@ -59,6 +59,7 @@ import {
 } from "../agent-tools.js";
 import { RemovalReason, removeWorktree } from "../worktree/worktree-backend.js";
 import { resolveWorkflowStepRunAgentId } from "./resolve-activity-run-agent-id.js";
+import { acknowledgeOverlapResumeContext, readOverlapResumeContextDelivery } from "./overlap-resume-context.js";
 import { pruneWorktreeAdminEntries } from "../worktree/worktree-prune.js";
 import { activeSessionRegistry } from "../agents/active-session-registry.js";
 
@@ -449,9 +450,10 @@ export function buildStepPrompt(
   rootDir?: string,
   settings?: Settings,
   worktreePath?: string,
+  overlapResumeContext?: string,
 ): string {
   if (isFastExecutionMode(taskDetail)) {
-    return buildFastLanePrompt(taskDetail, rootDir, settings, worktreePath);
+    return buildFastLanePrompt(taskDetail, rootDir, settings, worktreePath, overlapResumeContext);
   }
   const { id, title, attachments } = taskDetail;
   const prompt = scopePromptToWorktree(taskDetail.prompt, rootDir, worktreePath);
@@ -536,6 +538,10 @@ export function buildStepPrompt(
     parts.push(attachmentsSection);
   }
 
+  if (overlapResumeContext) {
+    parts.push("## Overlap wait synchronization", "", overlapResumeContext, "");
+  }
+
   if (steeringSection) {
     parts.push(steeringSection, "");
   }
@@ -581,6 +587,7 @@ export function buildFastLanePrompt(
   rootDir?: string,
   settings?: Settings,
   worktreePath?: string,
+  overlapResumeContext?: string,
 ): string {
   const originalRequest = taskDetail.description || taskDetail.prompt || "";
   const parts = [
@@ -608,6 +615,7 @@ export function buildFastLanePrompt(
     if (settings.buildCommand) parts.push(`- **Build:** \`${settings.buildCommand}\``);
   }
 
+  if (overlapResumeContext) parts.push("", "## Overlap wait synchronization", "", overlapResumeContext);
   const steering = buildStepSteeringCommentsSection(taskDetail.steeringComments);
   if (steering) parts.push("", steering);
 
@@ -761,7 +769,7 @@ function escapeRegex(str: string): string {
  * @param rootDir - Optional project root directory used to render absolute attachment paths.
  * @returns A reduced prompt string focused on the current step only.
  */
-export function buildReducedStepPrompt(taskDetail: TaskDetail, stepIndex: number, rootDir?: string): string {
+export function buildReducedStepPrompt(taskDetail: TaskDetail, stepIndex: number, rootDir?: string, overlapResumeContext?: string): string {
   const { prompt, id, title, attachments } = taskDetail;
 
   // Extract the step-specific section
@@ -782,6 +790,8 @@ export function buildReducedStepPrompt(taskDetail: TaskDetail, stepIndex: number
     hasAttachments
       ? `${attachments?.length ?? 0} attachment(s) available at \`${attachmentDir}\` — read the files there for context. They live at the project root and are readable even when working in a worktree.`
       : "",
+    "",
+    overlapResumeContext ? `OVERLAP WAIT SYNCHRONIZATION (must be preserved in reduced prompts):\n${overlapResumeContext}` : "",
     "",
     steeringSection,
     "",
@@ -1459,14 +1469,16 @@ export class StepSessionExecutor {
       }
     }
 
-    // Build step prompt
+    // Build step prompt from the latest durable overlap receipt. Constructing a prompt does not consume it.
     const promptTaskDetail = this.consumeTaskDetailForStepPrompt();
-    const stepPrompt = buildStepPrompt(promptTaskDetail, stepIndex, this.options.rootDir, settings, worktreePath);
+    const overlapResumeDelivery = await readOverlapResumeContextDelivery(this.store, promptTaskDetail.id).catch(() => ({ context: undefined, episodes: [] }));
+    const overlapResumeContext = overlapResumeDelivery.context;
+    const stepPrompt = buildStepPrompt(promptTaskDetail, stepIndex, this.options.rootDir, settings, worktreePath, overlapResumeContext);
 
     // Fast recovery stays in the same original-request lane instead of restoring step scaffolding.
     const reducedStepPrompt = isFastExecutionMode(promptTaskDetail)
-      ? buildFastLanePrompt(promptTaskDetail, this.options.rootDir, settings, worktreePath)
-      : buildReducedStepPrompt(promptTaskDetail, stepIndex, this.options.rootDir);
+      ? buildFastLanePrompt(promptTaskDetail, this.options.rootDir, settings, worktreePath, overlapResumeContext)
+      : buildReducedStepPrompt(promptTaskDetail, stepIndex, this.options.rootDir, overlapResumeContext);
     const reusePrimarySession = await this.shouldReusePrimarySession(worktreePath);
 
     // Acquire semaphore if provided
@@ -1758,6 +1770,7 @@ Follow instructions precisely and avoid unrelated changes.`,
           // session.prompt() resolves normally even when retries are exhausted —
           // the error is stored on session.state.error instead of being thrown.
           checkSessionError(session);
+          await acknowledgeOverlapResumeContext(this.store, taskDetail.id, overlapResumeDelivery);
 
           const result: StepResult = {
             stepIndex,
@@ -1794,6 +1807,7 @@ Follow instructions precisely and avoid unrelated changes.`,
               stuckTaskDetector?.recordActivity(trackingKey);
               await promptWithAutoRetry(session, reducedStepPrompt);
               checkSessionError(session);
+              await acknowledgeOverlapResumeContext(this.store, taskDetail.id, overlapResumeDelivery);
               stepExecLog.log(`Step ${stepIndex} reduced-prompt recovery succeeded`);
               await this.store.appendAgentLog(
                 taskDetail.id,

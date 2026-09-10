@@ -156,7 +156,7 @@ export function buildExecuteWorkflowGraphDeps(host: any): any {
       "buildParseStepsDeps", "buildStepInstancePersistence", "createAuthoritativeWorkflowPrimitives",
       "createAuthoritativeWorkflowSeams", "finalizeMergeConfirmedWorkflowGraphTask", "handleGraphFailure",
       "isLiveSharedBranchGroupMember", "prepareGraphNodeExecution", "readTaskArtifact", "recoverMissingRequiredArtifacts",
-      "requestPreMergeOptionalStepFix", "runGraphCustomNode", "terminateAllChildren",
+      "requestPreMergeOptionalStepFix", "runGraphCustomNode", "executeWorkflowStep", "terminateAllChildren",
       // FNXC:PlanReviewNoOp 2026-08-09-22:10: CLOSE_NO_OP terminal route + hold (FN-8841).
       "completePlanReviewNoOp", "holdPlanReviewNoOpContinuation",
     ]),

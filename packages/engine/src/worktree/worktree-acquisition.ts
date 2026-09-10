@@ -52,6 +52,8 @@ import { acquireActiveSessionPath, activeSessionRegistry, executingTaskLock, typ
 import { refreshReusedWorktreeBase, type WorktreeBaseRefreshResult } from "../worktree-base-refresh.js";
 import { refreshWorkspaceRepoWorktreeBases } from "./workspace-base-refresh.js";
 import { normalizeWorkspaceTaskRouting } from "../executor/workspace-config-resolver.js";
+import { synchronizeOverlapWaitBeforeExecution } from "../executor/overlap-resume-gate.js";
+import { readOverlapResumeContextDelivery, type OverlapResumeContextDelivery } from "../execution/overlap-resume-context.js";
 import {
   ensureWorktreeDependencies,
   type DependencyCommandRunner,
@@ -121,6 +123,10 @@ export interface AcquireTaskWorktreeResult {
     strandedCommitCount?: number;
   };
   baseRefresh?: WorktreeBaseRefreshResult;
+  /** Durable context from a released overlap wait; prompt builders deliver it without consuming the episode. */
+  overlapResumeContext?: string;
+  /** Exact ready generations represented by overlapResumeContext, used for post-transport acknowledgement. */
+  overlapResumeDelivery?: OverlapResumeContextDelivery;
 }
 
 /** A typed refresh refusal: callers must park before creating a coding session. */
@@ -443,6 +449,19 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
     }
     return refresh;
   };
+  const synchronizePreparedWorktree = async (path: string): Promise<OverlapResumeContextDelivery> => {
+    await synchronizeOverlapWaitBeforeExecution({
+      task,
+      store,
+      worktreePath: path,
+      owner: runContext?.runId ?? `worktree-acquire:${process.pid}:${task.id}`,
+      checkoutEpoch: task.checkoutLeaseEpoch == null ? undefined : String(task.checkoutLeaseEpoch),
+      repository: workspaceContext?.repoRelPath ?? ".",
+      refresh: async () => refreshReusedWorktreeBase({ task, rootDir, worktreePath: path, store, settings, audit, logger }),
+    });
+    return readOverlapResumeContextDelivery(store, task.id);
+  };
+
   const notifyFallback = async (op: WorktrunkOpName, stderr?: string) => {
     await store.logEntry(task.id, `Worktrunk ${op} failed; continuing with native worktree backend (${stderr ?? "no stderr"})`, undefined, runContext);
   };
@@ -797,6 +816,8 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
     // dependency branch was merged and deleted. Refresh fresh acquisitions too so that branch cannot resume
     // from its stale pre-dependency tip.
     const baseRefresh = await refreshExistingWorktree(worktreePath, created.backendKind);
+    const overlapResumeDelivery = await synchronizePreparedWorktree(worktreePath);
+    const overlapResumeContext = overlapResumeDelivery.context;
 
     const cleanup = await removeDesktopBuildArtifacts(worktreePath, logger);
     if (cleanup.removed.length > 0) {
@@ -868,7 +889,7 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
     } catch (err) {
       logger?.warn?.(`${task.id}: secrets-env write failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
     }
-    return { worktreePath, branch, source, hydrated, isResume: false, baseRefresh };
+    return { worktreePath, branch, source, hydrated, isResume: false, baseRefresh, overlapResumeContext, overlapResumeDelivery };
   };
 
   const createFreshWorktreeFromReturnGuard = async (guardedPath: string, source: string): Promise<AcquireTaskWorktreeResult> => {
@@ -902,11 +923,6 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
   const reuseWarmWorktree = async (path: string, resumedBranch: string, source: "existing"): Promise<AcquireTaskWorktreeResult> => {
     // FNXC:EngineDiagnostics 2026-08-03-05:54: warm reuse is the common healthy path; Worktree created stays info.
     if (logger?.debug) logger.debug(`Reusing existing worktree: ${path}`);
-    const cleanup = await removeDesktopBuildArtifacts(path, logger);
-    if (cleanup.removed.length > 0) {
-      await store.logEntry(task.id, `Removed desktop build artifacts from worktree: ${cleanup.removed.join(", ")}`, undefined, runContext);
-    }
-    const hydrated = await hydrate(path);
     await verifyResumeBranchNotMisbound({
       worktreePath: path,
       branchName: resumedBranch,
@@ -918,7 +934,14 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
       runContext,
     });
     const baseRefresh = await refreshExistingWorktree(path, await resolveExistingWorktreeBackendKind(path));
-    return guardAcquisitionReturn({ worktreePath: path, branch: resumedBranch, source, hydrated, isResume: true, baseRefresh });
+    const overlapResumeDelivery = await synchronizePreparedWorktree(path);
+    const overlapResumeContext = overlapResumeDelivery.context;
+    const cleanup = await removeDesktopBuildArtifacts(path, logger);
+    if (cleanup.removed.length > 0) {
+      await store.logEntry(task.id, `Removed desktop build artifacts from worktree: ${cleanup.removed.join(", ")}`, undefined, runContext);
+    }
+    const hydrated = await hydrate(path);
+    return guardAcquisitionReturn({ worktreePath: path, branch: resumedBranch, source, hydrated, isResume: true, baseRefresh, overlapResumeContext, overlapResumeDelivery });
   };
 
   /*
@@ -1149,11 +1172,6 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
   if (task.worktree && isResume) {
     // FNXC:EngineDiagnostics 2026-08-03-05:54: resume reuses the pinned path — expected, not a default-visible event.
     if (logger?.debug) logger.debug(`Reusing existing worktree: ${worktreePath}`);
-    const cleanup = await removeDesktopBuildArtifacts(worktreePath, logger);
-    if (cleanup.removed.length > 0) {
-      await store.logEntry(task.id, `Removed desktop build artifacts from worktree: ${cleanup.removed.join(", ")}`, undefined, runContext);
-    }
-    const hydrated = await hydrate(worktreePath);
     const resumedBranch = task.branch ?? branchName;
     await verifyResumeBranchNotMisbound({
       worktreePath,
@@ -1167,7 +1185,14 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
     });
     // FN-4912: resume path reuses the prior on-disk .env (and its fingerprint sidecar). Rewrite is owned by the next fresh acquisition.
     const baseRefresh = await refreshExistingWorktree(worktreePath, await resolveExistingWorktreeBackendKind(worktreePath));
-    return guardAcquisitionReturn({ worktreePath, branch: resumedBranch, source: "existing", hydrated, isResume: true, baseRefresh });
+    const overlapResumeDelivery = await synchronizePreparedWorktree(worktreePath);
+    const overlapResumeContext = overlapResumeDelivery.context;
+    const cleanup = await removeDesktopBuildArtifacts(worktreePath, logger);
+    if (cleanup.removed.length > 0) {
+      await store.logEntry(task.id, `Removed desktop build artifacts from worktree: ${cleanup.removed.join(", ")}`, undefined, runContext);
+    }
+    const hydrated = await hydrate(worktreePath);
+    return guardAcquisitionReturn({ worktreePath, branch: resumedBranch, source: "existing", hydrated, isResume: true, baseRefresh, overlapResumeContext, overlapResumeDelivery });
   }
 
   // Fresh native acquisition always creates the task-ID-derived path; removal is backend-mediated.

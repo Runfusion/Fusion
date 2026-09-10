@@ -4,6 +4,12 @@
 
 Workflow steps are reusable quality gates that run around task completion.
 
+## Overlap delta plan revalidation
+
+A released file-scope wait can produce a graph-owned delta revalidation before the original node resumes. Its cache identity combines the approved plan with the exact predecessor deliveries and affected-file proof, so an ordinary Plan Review approval cannot satisfy it. The reviewer sees the approved plan, preserved progress, factual delivery references, and only the relevant delta; it must judge whether that delta invalidates an explicit promise rather than reviewing current implementation work.
+
+`APPROVE` preserves the plan, SpecLock, completed steps, checkout, and checkpoint. `REVISE` is accepted only when it names the invalidated promise and enters targeted repair without erasing valid history; unavailable, malformed, timed-out, or cancelled reviews remain retryable and consume no replan verdict. The graph retains the original real node and sole active task continuation throughout, and pause, human approval, capacity, and `autoMerge:false` controls remain authoritative.
+
 ## Workflow overview
 
 <!--

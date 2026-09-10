@@ -2132,7 +2132,7 @@ export class WorkflowGraphExecutor {
            * edge, because temporary principal unavailability must not terminalize
            * the task or convert an operator-visible hold into graph failure.
            */
-          if (preflight.outcome === "failure" && typeof preflight.value === "string" && preflight.value.startsWith("workflow-principal-")) {
+          if (preflight.outcome === "failure" && typeof preflight.value === "string" && (preflight.value.startsWith("workflow-principal-") || preflight.value.startsWith("overlap-plan-revalidation-"))) {
             /*
              * FNXC:WorkflowAgentRouting 2026-08-07-23:05:
              * Carry the refusal REASON out on the shared context. The suspension marker

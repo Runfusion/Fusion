@@ -84,9 +84,9 @@ export function buildExecutionPrompt(
   _pluginRunner?: PluginRunner,
   customFieldDefs?: WorkflowFieldDefinition[],
   workspaceConfig?: WorkspaceConfig | null,
-  options?: { pluginTaskContributions?: string },
+  options?: { pluginTaskContributions?: string; overlapResumeContext?: string },
 ): string {
-  if (isFastExecutionMode(task)) return buildFastLanePrompt(task, rootDir, settings, worktreePath);
+  if (isFastExecutionMode(task)) return buildFastLanePrompt(task, rootDir, settings, worktreePath, options?.overlapResumeContext);
   const prompt = scopePromptToWorktree(task.prompt, rootDir, worktreePath, workspaceConfig);
   const reviewLevel = parseReviewLevelFromPrompt(prompt);
   /*
@@ -238,7 +238,7 @@ ${task.dependencies.length > 0 ? `Dependencies: ${task.dependencies.join(", ")}`
 ## PROMPT.md
 
 ${prompt}
-${attachmentsSection}${commandsSection}${memorySection}${progressSection}${steeringSection}${customFieldsSection}
+${attachmentsSection}${commandsSection}${memorySection}${progressSection}${options?.overlapResumeContext ? `\n## Overlap wait synchronization\n\n${options.overlapResumeContext}\n` : ""}${steeringSection}${customFieldsSection}
 ## Review level: ${reviewLevel}
 
 Workflow review gates are handled by the workflow graph outside this implementation session. Do not request per-step plan review or per-step code review from inside execution; complete the implementation steps and let the graph run enabled Plan Review, Browser Verification, and Code Review nodes at their configured positions.

@@ -94,6 +94,8 @@ FNXC:HeartbeatRecovery 2026-07-15-08:50:
 heartbeat-model-unavailable parks from assignment/on-demand runs were terminal until a human Retry, even when the next attempt succeeds with unchanged credentials (false "model unavailable" / registry / credential-probe blips). Admit those parks to the same bounded heartbeatErrorRecovery budget as error-state recovery so the engine auto-retries like operator Retry, while genuine missing credentials re-park after the budget exhausts.
 */
 import { acquireTaskWorktree, WorktreeBaseRefreshError } from "./worktree/worktree-acquisition.js";
+import { acknowledgeOverlapResumeContext, type OverlapResumeContextDelivery } from "./execution/overlap-resume-context.js";
+
 import { createRunAuditor, generateSyntheticRunId, type DatabaseMutationType, type EngineRunContext } from "./util/run-audit.js";
 import { promptWithFallback } from "./pi.js";
 import { withRateLimitRetry } from "./errors/rate-limit-retry.js";
@@ -109,6 +111,16 @@ import { detectDeicticReference, extractAntecedentCandidates, renderAmbiguityPro
 import { countActiveAgentMembers, decideRoomCoordination, detectTaskFilingIntent, renderRoomCoordinationPromptBlock } from "./triage-domain/room-coordination.js";
 import { evaluateParkedAgentTaskLink, isParkedTaskColumn, type AgentTaskLinkExecutionProof } from "./agents/task-agent-sync.js";
 import { MemoryConsolidationError, MemoryConsolidationService, resolveMemoryConsolidationPorts } from "./memory/index.js";
+
+export async function dispatchHeartbeatTransportWithOverlapAck(input: {
+  send: () => Promise<void>;
+  store: Pick<TaskStore, "completeTaskOverlapWait">;
+  taskId?: string;
+  delivery?: OverlapResumeContextDelivery;
+}): Promise<void> {
+  await input.send();
+  if (input.taskId && input.delivery) await acknowledgeOverlapResumeContext(input.store, input.taskId, input.delivery);
+}
 
 /*
 FNXC:WorkflowLifecycleColumns 2026-07-28-09:25 (U11 conversion):
@@ -3016,6 +3028,7 @@ export class HeartbeatMonitor {
         }
 
         let sessionCwd = rootDir;
+        let overlapResumeDelivery: OverlapResumeContextDelivery | undefined;
         if (!isNoTaskRun && taskDetail) {
           try {
             const acquisition = await acquireTaskWorktree({
@@ -3031,6 +3044,7 @@ export class HeartbeatMonitor {
               refreshStaleBase: true,
             });
             sessionCwd = acquisition.worktreePath;
+            overlapResumeDelivery = acquisition.overlapResumeDelivery;
           } catch (worktreeErr) {
             const detail = worktreeErr instanceof Error ? worktreeErr.message : String(worktreeErr);
             const refreshKind = worktreeErr instanceof WorktreeBaseRefreshError
@@ -3682,6 +3696,10 @@ export class HeartbeatMonitor {
           let rotationEvent: import("./credential-instance-rotation.js").RotationEvent | undefined;
           let rotationDeclined = false;
           let activeInstanceId = heartbeatSessionModels.credentialInstanceId ?? DEFAULT_PROVIDER_INSTANCE_ID;
+          if (overlapResumeDelivery?.context) {
+            executionPrompt = [executionPrompt, "", "## Overlap wait synchronization", overlapResumeDelivery.context].join("\n");
+          }
+
           let dispatchedRotation = false;
           /*
           FNXC:CredentialInstanceRotation 2026-08-01-09:07:
@@ -3691,7 +3709,11 @@ export class HeartbeatMonitor {
           session is then resolved for the offered instance rather than mutating credentials
           on the live session.
           */
-          await withRateLimitRetry(async () => promptWithFallback(session, executionPrompt), {
+          await dispatchHeartbeatTransportWithOverlapAck({
+            store: taskStore,
+            taskId,
+            delivery: overlapResumeDelivery,
+            send: () => withRateLimitRetry(async () => promptWithFallback(session, executionPrompt), {
             signal: heartbeatRetryAbortController.signal,
             rotation: this.credentialRotator && heartbeatSessionModels.defaultProvider ? {
               providerId: heartbeatSessionModels.defaultProvider,
@@ -3767,6 +3789,7 @@ export class HeartbeatMonitor {
               const delaySec = Math.round(delayMs / 1000);
               heartbeatLog.warn(`Agent ${agentId} heartbeat prompt hit retryable provider error — retry ${attempt} in ${delaySec}s: ${retryError.message}`);
             },
+          }),
           });
           if (dispatchedRotation) rotationEvent?.recordOutcome("rotation-succeeded");
 
