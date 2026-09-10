@@ -10,6 +10,7 @@ import {
 import { Header, useViewportMode } from "./components/Header";
 import { TaskDetailContent } from "./components/TaskDetailModal";
 import { FloatingWindow } from "./components/FloatingWindow";
+import { AlphaMobileDrawer } from "./components/AlphaMobileDrawer";
 import { PoppedOutChatWindows } from "./components/PoppedOutChatWindows";
 import { AppModals } from "./components/AppModals";
 import { DashboardLoader, type DashboardLoaderStage } from "./components/DashboardLoader";
@@ -28,6 +29,7 @@ import { LeftSidebarNav } from "./components/LeftSidebarNav";
 import { useRightDockController } from "./components/useRightDockController";
 import { QuickChatFAB } from "./components/QuickChatFAB";
 import { ToastContainer } from "./components/ToastContainer";
+import { ProjectOverview } from "./components/ProjectOverview";
 import { useBackgroundSessions } from "./hooks/useBackgroundSessions";
 import { useGitHubStarPromptState, markGitHubStarPromptShown, refreshGitHubStarPromptDismissal } from "./hooks/useGitHubStarPrompt";
 import { useSessionBannersHidden } from "./hooks/useSessionBannerPref";
@@ -1015,6 +1017,7 @@ function AppInner() {
     refresh: refreshAppSettings,
   } = useAppSettings(currentProject?.id);
   const [alphaMenuOpen, setAlphaMenuOpen] = useState(false);
+  const [alphaProjectsDrawerOpen, setAlphaProjectsDrawerOpen] = useState(false);
 
   const taskPopupsVisibleOnCurrentView = useCallback((originTaskView?: TaskView) => isTaskPopupVisibleForView({
     taskPopupsBoardListOnly,
@@ -1071,6 +1074,26 @@ function AppInner() {
   const ideationEnabled = experimentalFeatures.ideationView === true;
   /* FNXC:AlphaUpdates 2026-09-09-18:24: Resolve the global Alpha boundary once per settings refresh so every shell surface switches together without mutating saved mobile navigation preferences. */
   const alphaUpdatesEnabled = isExperimentalFeatureEnabled({ experimentalFeatures }, ALPHA_UPDATES_FLAG);
+  const alphaMobileDrawerActive = alphaUpdatesEnabled && isMobile && viewMode === "project" && Boolean(currentProject);
+
+  /*
+  FNXC:AlphaMobileDrawer 2026-09-10-04:41:
+  Alpha mobile has one task-detail owner. Clear legacy pop-outs when the presentation boundary activates; every new Board, List, dock, plugin, and pop-out request is routed to the shared main-content drawer below instead of creating a second detail subscription.
+  */
+  useEffect(() => {
+    if (!alphaMobileDrawerActive || poppedOutTaskEntries.length === 0) return;
+    popupNavCloseRef.current.clear();
+    closeAllPoppedOutTasks();
+  }, [alphaMobileDrawerActive, closeAllPoppedOutTasks, poppedOutTaskEntries.length]);
+
+  useEffect(() => {
+    if (!alphaMobileDrawerActive) {
+      delete document.documentElement.dataset.alphaMobileDrawers;
+      return;
+    }
+    document.documentElement.dataset.alphaMobileDrawers = "true";
+    return () => { delete document.documentElement.dataset.alphaMobileDrawers; };
+  }, [alphaMobileDrawerActive, currentProject?.id]);
   /*
   FNXC:Navigation 2026-06-19-00:00:
   Experimental left sidebar navigation replaces the Header view shortcuts with a persistent sidebar on non-mobile project screens, while mobile continues to use the bottom navigation bar as the only primary navigation surface.
@@ -1216,6 +1239,22 @@ function AppInner() {
     // FNXC:GithubStarAsk 2026-08-19-03:59: finishing onboarding is the first moment we ask for a GitHub star.
     onOnboardingCompleted: handleStarPrompt,
   });
+
+  /*
+  FNXC:AlphaMobileDrawer 2026-09-10-05:38:
+  Projects opened from the Alpha mobile pill must remain project-scoped so Board stays mounted behind the shared drawer. Selecting another project closes the drawer before the normal project transition; every non-Alpha entry retains the overview route that clears the current project.
+  */
+  const openProjectsFromMobileNav = useCallback(() => {
+    if (alphaMobileDrawerActive) {
+      setAlphaProjectsDrawerOpen(true);
+      return;
+    }
+    handleViewAllProjects();
+  }, [alphaMobileDrawerActive, handleViewAllProjects]);
+
+  useEffect(() => {
+    if (!alphaMobileDrawerActive) setAlphaProjectsDrawerOpen(false);
+  }, [alphaMobileDrawerActive, currentProject?.id]);
 
   const { handleDetailClose } = useDeepLink({
     projectId: currentProject?.id,
@@ -1367,6 +1406,10 @@ function AppInner() {
   FN-8478 makes every board TaskCard deep-tab action, including files changed, honor Open tasks as popups. Route once to the popup with its requested tab so a click never opens both a FloatingWindow and a main-panel/modal detail surface.
   */
   const handleOpenDetailWithTab = useCallback((task: Task | TaskDetail, initialTab: "changes" | "retries" | "workflow") => {
+    if (alphaMobileDrawerActive) {
+      openTaskDetailInMainPanel(task, initialTab);
+      return;
+    }
     if (openMobileTasksInPopup) {
       popOutTaskDetailForCurrentView(task, initialTab);
       return;
@@ -1377,7 +1420,7 @@ function AppInner() {
     }
     modalManager.openDetailTask(task, initialTab);
     pushNav({ type: "modal", close: modalManager.closeDetailTask });
-  }, [modalManager, openMobileTasksInPopup, openTaskDetailInMainPanel, popOutTaskDetailForCurrentView, pushNav]);
+  }, [alphaMobileDrawerActive, modalManager, openMobileTasksInPopup, openTaskDetailInMainPanel, popOutTaskDetailForCurrentView, pushNav]);
 
   /*
   FNXC:Settings 2026-06-22-00:00:
@@ -1721,7 +1764,7 @@ function AppInner() {
 
   // Props for the extracted <MainContent> switch (see components/dashboard/MainContent.tsx).
   // Every value is passed by its App name; the switch renders the same subtrees as before.
-  const rightDock = useRightDockController({ active: rightDockActive, projectId: currentProject?.id, addToast, columnFlagsByTaskId: footerColumnFlagsByTaskId, settingsLoaded, researchReadinessVersion, goalAnchorId, tasks: boardSourceTasks, workflowSteps, subscribePluginEvents, openDetailTask, openTaskPopup: popOutTaskDetailForCurrentView, onOpenSessionInNewWindow: openSessionInNewWindow, openMobileTasksInPopup, openFileInBrowser, onUpdateTask: updateTask, onDeleteTask: deleteTask, onRevertTask: revertTask, onMergeTask: mergeTask, onRetryTask: retryTask, onOpenChatWithPrefill: openChatWithPrefill, onPauseTask: pauseTask, onUnpauseTask: unpauseTask, onBypassReview: bypassReview, onResetTask: resetTask, onDuplicateTask: duplicateTask, onTaskUpdated: (task: Task) => ingestCreatedTasks([task]), openSettings: (section?: string) => openSettingsWithNav(section as SectionId), onOpenUsage: openUsageWithNav, onOpenActivityLog: openActivityLogWithNav, onOpenGitHubImport: openGitHubImportWithNav, onOpenGitManager: openGitManagerWithNav, onOpenSchedules: openSchedulesWithNav, onSendSelectionToTask: modalManager.openNewTaskWithDescription, onCreateTaskFromInsight: handleInsightTaskCreate, onNavigateToMission: handleOpenMission, onTaskCreated: (task: Task) => ingestCreatedTasks([task]), prAuthAvailable, autoMerge, taskDetailChatFirst, visibilityOptions: { experimentalFeatures: { insights: insightsEnabled, memoryView: memoryEnabled, devServerView: devServerEnabled, researchView: researchEnabled, evalsView: evalsEnabled, goalsView: goalsEnabled }, showSkillsTab: skillsEnabled, pluginDashboardViews }, footerVisible: executorFooterVisible });
+  const rightDock = useRightDockController({ active: rightDockActive, projectId: currentProject?.id, addToast, columnFlagsByTaskId: footerColumnFlagsByTaskId, settingsLoaded, researchReadinessVersion, goalAnchorId, tasks: boardSourceTasks, workflowSteps, subscribePluginEvents, openDetailTask: alphaMobileDrawerActive ? openTaskDetailInMainPanel : openDetailTask, openTaskPopup: alphaMobileDrawerActive ? openTaskDetailInMainPanel : popOutTaskDetailForCurrentView, onOpenSessionInNewWindow: openSessionInNewWindow, openMobileTasksInPopup, openFileInBrowser, onUpdateTask: updateTask, onDeleteTask: deleteTask, onRevertTask: revertTask, onMergeTask: mergeTask, onRetryTask: retryTask, onOpenChatWithPrefill: openChatWithPrefill, onPauseTask: pauseTask, onUnpauseTask: unpauseTask, onBypassReview: bypassReview, onResetTask: resetTask, onDuplicateTask: duplicateTask, onTaskUpdated: (task: Task) => ingestCreatedTasks([task]), openSettings: (section?: string) => openSettingsWithNav(section as SectionId), onOpenUsage: openUsageWithNav, onOpenActivityLog: openActivityLogWithNav, onOpenGitHubImport: openGitHubImportWithNav, onOpenGitManager: openGitManagerWithNav, onOpenSchedules: openSchedulesWithNav, onSendSelectionToTask: modalManager.openNewTaskWithDescription, onCreateTaskFromInsight: handleInsightTaskCreate, onNavigateToMission: handleOpenMission, onTaskCreated: (task: Task) => ingestCreatedTasks([task]), prAuthAvailable, autoMerge, taskDetailChatFirst, visibilityOptions: { experimentalFeatures: { insights: insightsEnabled, memoryView: memoryEnabled, devServerView: devServerEnabled, researchView: researchEnabled, evalsView: evalsEnabled, goalsView: goalsEnabled }, showSkillsTab: skillsEnabled, pluginDashboardViews }, footerVisible: executorFooterVisible });
 
   /*
   FNXC:OpenTasksInRightSidebar 2026-06-28-00:00:
@@ -1731,6 +1774,10 @@ function AppInner() {
   FN-8478 makes board TaskCard deep-tab opens use the all-viewport popup route when enabled, preserving the requested tab. Popup routing remains first so neither dock nor main-panel detail can double-open behind the FloatingWindow.
   */
   const openBoardTaskDetail = useCallback((task: Task | TaskDetail, initialTab?: DetailTaskTab) => {
+    if (alphaMobileDrawerActive) {
+      openTaskDetailInMainPanel(task, initialTab);
+      return;
+    }
     const route = getBoardTaskOpenRoute({
       isMobile,
       openMobileTasksInPopup,
@@ -1750,7 +1797,7 @@ function AppInner() {
     }
 
     openTaskDetailInMainPanel(task, initialTab);
-  }, [isMobile, openMobileTasksInPopup, openTaskDetailInMainPanel, openTasksInRightSidebar, popOutTaskDetailForCurrentView, rightDock, rightDockActive]);
+  }, [alphaMobileDrawerActive, isMobile, openMobileTasksInPopup, openTaskDetailInMainPanel, openTasksInRightSidebar, popOutTaskDetailForCurrentView, rightDock, rightDockActive]);
 
   useEffect(() => {
     if (!openTasksInRightSidebar) {
@@ -1867,7 +1914,7 @@ function AppInner() {
     agentsEnabled,
     agentOnboardingEnabled,
     handleOpenTaskLogs,
-    popOutTaskDetail: popOutTaskDetailForCurrentView,
+    popOutTaskDetail: alphaMobileDrawerActive ? openTaskDetailInMainPanel : popOutTaskDetailForCurrentView,
     selectedPrId,
     insightsEnabled,
     handleInsightTaskCreate,
@@ -1932,6 +1979,8 @@ function AppInner() {
     openCreateWorkflowWithNav,
     sidebarActive,
     isMobile,
+    /* FNXC:AlphaMobileDrawer 2026-09-10-05:38: Drawer pill clearance follows the same live visibility predicate as the Alpha navigation; keyboard or modal suppression must remove the reserve immediately instead of leaving an unusable dead band. */
+    alphaMobileNavVisible: mobileNavVisible && !mobileKeyboardOpen && !modalManager.anyModalOpen,
     mainPanelDetailInitialTab,
     closeTaskDetailMainPanel,
     setMainPanelDetailTask,
@@ -2147,24 +2196,77 @@ function AppInner() {
           className={`project-content${executorFooterVisible && (!isMobile || !mobileKeyboardOpen) ? " project-content--with-footer" : ""}${isMobile && mobileNavVisible && !mobileKeyboardOpen && !alphaUpdatesEnabled ? " project-content--with-mobile-nav" : ""}${isMobile && mobileNavVisible && !mobileKeyboardOpen && !modalManager.anyModalOpen && alphaUpdatesEnabled ? " project-content--with-alpha-nav" : ""}`}
         >
           <MainContent {...mainContentProps} />
+          {alphaMobileDrawerActive && currentProject && (
+            <AlphaMobileDrawer
+              open={alphaProjectsDrawerOpen}
+              title={t("nav.projects", "Projects")}
+              closeLabel={t("common.close", "Close")}
+              onClose={() => setAlphaProjectsDrawerOpen(false)}
+              avoidMobileNav={!mobileKeyboardOpen}
+              testId="alpha-mobile-drawer-projects"
+            >
+              <ProjectOverview
+                projects={projects}
+                loading={projectsLoading}
+                onSelectProject={(project) => {
+                  setAlphaProjectsDrawerOpen(false);
+                  handleSelectProject(project);
+                }}
+                onAddProject={handleAddProject}
+                onPauseProject={handlePauseProject}
+                onResumeProject={handleResumeProject}
+                onRemoveProject={handleRemoveProject}
+                nodes={nodes}
+              />
+            </AlphaMobileDrawer>
+          )}
           {/*
           FNXC:PlanningKeepAlive 2026-07-22-12:30:
           Kept-alive Planning Mode renders as a sibling of the MainContent switch inside .project-content (which is position:relative for the hidden out-of-flow overlay state). Keyed by project id + planningEntryGeneration so project switches and payload-carrying planning entry points remount with fresh-open semantics while plain navigation restores the live instance.
           */}
           {viewMode === "project" && currentProject && planningEverOpenedProjectId === currentProject.id && (
-            <PlanningKeepAlive
-              key={`${currentProject.id}:${modalManager.planningEntryGeneration}`}
-              active={planningViewActive}
-              projectId={currentProject.id}
-              tasks={tasks}
-              bgPlanningSessions={bgPlanningSessions}
-              modalManager={modalManager}
-              handleChangeTaskView={handleTaskViewChange}
-              handlePlanningTaskCreated={handlePlanningTaskCreated}
-              handlePlanningTasksCreated={handlePlanningTasksCreated}
-              openBoardTaskDetail={openBoardTaskDetail}
-              openWorkflowEditorWithNav={openWorkflowEditorWithNav}
-            />
+            alphaUpdatesEnabled && isMobile ? (
+              <AlphaMobileDrawer
+                open={planningViewActive && !modalManager.detailTask}
+                title={t("nav.planning", "Planning")}
+                closeLabel={t("common.close", "Close")}
+                onClose={() => {
+                  modalManager.closePlanning();
+                  handleTaskViewChange("board");
+                }}
+                avoidMobileNav={mobileNavVisible && !mobileKeyboardOpen && !modalManager.anyModalOpen}
+                keepMounted
+                testId="alpha-mobile-drawer-planning"
+              >
+                <PlanningKeepAlive
+                  key={`${currentProject.id}:${modalManager.planningEntryGeneration}`}
+                  active={planningViewActive}
+                  projectId={currentProject.id}
+                  tasks={tasks}
+                  bgPlanningSessions={bgPlanningSessions}
+                  modalManager={modalManager}
+                  handleChangeTaskView={handleTaskViewChange}
+                  handlePlanningTaskCreated={handlePlanningTaskCreated}
+                  handlePlanningTasksCreated={handlePlanningTasksCreated}
+                  openBoardTaskDetail={openBoardTaskDetail}
+                  openWorkflowEditorWithNav={openWorkflowEditorWithNav}
+                />
+              </AlphaMobileDrawer>
+            ) : (
+              <PlanningKeepAlive
+                key={`${currentProject.id}:${modalManager.planningEntryGeneration}`}
+                active={planningViewActive}
+                projectId={currentProject.id}
+                tasks={tasks}
+                bgPlanningSessions={bgPlanningSessions}
+                modalManager={modalManager}
+                handleChangeTaskView={handleTaskViewChange}
+                handlePlanningTaskCreated={handlePlanningTaskCreated}
+                handlePlanningTasksCreated={handlePlanningTasksCreated}
+                openBoardTaskDetail={openBoardTaskDetail}
+                openWorkflowEditorWithNav={openWorkflowEditorWithNav}
+              />
+            )
           )}
         </div>
         {rightDock.dock}
@@ -2240,7 +2342,7 @@ function AppInner() {
         activePlanningSessionCount={bgPlanningSessions.length}
         planningNeedsInput={planningNeedsInput}
         onOpenUsage={() => openUsageWithNav(null)}
-        onViewAllProjects={handleViewAllProjects}
+        onViewAllProjects={openProjectsFromMobileNav}
         onRunScript={runScriptWithNav}
         projectId={currentProject?.id}
         showSkillsTab={skillsEnabled}
@@ -2423,6 +2525,7 @@ function AppInner() {
       })}
       <AppModals
         projectId={currentProject?.id}
+        alphaMobileDrawer={alphaMobileDrawerActive}
         tasks={tasks}
         columnFlagsByTaskId={footerColumnFlagsByTaskId}
         globalPaused={globalPaused}

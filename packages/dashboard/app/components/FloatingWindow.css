@@ -653,3 +653,63 @@ Edge + corner resize handles. touch-action:none keeps the drag from being hijack
 .floating-window__resize-handle--nw { top: 0; left: 0; cursor: nwse-resize; }
 .floating-window__resize-handle--se { bottom: 0; right: 0; cursor: nwse-resize; }
 .floating-window__resize-handle--sw { bottom: 0; left: 0; cursor: nesw-resize; }
+
+/*
+FNXC:AlphaMobileDrawer 2026-09-10-04:41:
+Project-scoped Alpha utilities reuse FloatingWindow's existing content, focus, and portal ownership but replace its phone fullscreen geometry with the same bounded bottom-sheet language as destination drawers. Onboarding classes are excluded in React before these markers are emitted, so setup and blocking pre-shell flows retain their dedicated presentation.
+*/
+html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] .floating-window-overlay--alpha-mobile-drawer {
+  display: flex;
+  align-items: flex-end;
+  inset: 0 var(--icb-right-offset, 0px) 0 0;
+  padding-block-start: calc(env(safe-area-inset-top, 0px) + var(--space-2xl));
+  padding-block-end: var(--mobile-nav-alpha-system-offset);
+  background: color-mix(in srgb, var(--bg) 38%, transparent);
+  pointer-events: auto;
+}
+
+html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] .floating-window--alpha-mobile-drawer {
+  position: relative !important;
+  inset: auto !important;
+  left: auto !important;
+  top: auto !important;
+  display: flex;
+  flex-direction: column;
+  width: 100% !important;
+  height: auto !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  max-width: 100% !important;
+  max-height: calc(100dvh - env(safe-area-inset-top, 0px) - var(--space-2xl) - var(--mobile-nav-alpha-system-offset)) !important;
+  overflow: hidden !important;
+  border: var(--btn-border-width) solid var(--border);
+  border-block-end: 0;
+  border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+  box-shadow: var(--shadow-lg);
+  transform: none !important;
+}
+
+html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] .floating-window--alpha-mobile-drawer::before {
+  content: "";
+  flex: 0 0 auto;
+  align-self: center;
+  width: calc(var(--space-xl) + var(--space-md));
+  height: var(--space-xs);
+  margin-block-start: var(--space-sm);
+  border-radius: var(--radius-pill);
+  background: var(--border-strong);
+}
+
+html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] .floating-window--alpha-mobile-drawer .floating-window__header {
+  flex: 0 0 auto;
+  min-height: var(--touch-target-min-size);
+  touch-action: auto;
+}
+
+html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] .floating-window--alpha-mobile-drawer .floating-window__body {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}

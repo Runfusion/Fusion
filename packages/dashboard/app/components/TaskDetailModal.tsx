@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { Pencil, Bot, X, ChevronDown, ChevronRight, GitBranch, ArrowLeft, Loader2, AlertTriangle, Sparkles, Maximize2, Minimize2, Info, Copy } from "lucide-react";
 import { useViewportMode } from "../hooks/useViewportMode";
+import { AlphaMobileDrawer } from "./AlphaMobileDrawer";
 import { mergeTaskSnapshot } from "../hooks/useTasks";
 import { dismissAiMergeReviewFinding } from "../api/tasks/tasks-lifecycle";
 import { FloatingWindow } from "./FloatingWindow";
@@ -429,6 +430,8 @@ export function deriveCliTabVisibility(
 
 export interface TaskDetailModalProps {
   task: Task | TaskDetail;
+  /** Present the existing detail content in the shared Alpha mobile drawer. */
+  alphaMobileDrawer?: boolean;
   projectId?: string;
   tasks?: Task[];
   /* Per-task lifecycle traits for the blocker fan-out; see the useMemo that consumes it. */
@@ -7354,8 +7357,15 @@ export function TaskDetailContent({
   );
 }
 
-export function TaskDetailModal({ onClose, ...props }: TaskDetailModalProps) {
+export function TaskDetailModal({ onClose, alphaMobileDrawer = false, ...props }: TaskDetailModalProps) {
   const viewportMode = useViewportMode();
+  const closeRequestedRef = useRef(false);
+  useEffect(() => { closeRequestedRef.current = false; }, [props.task.id]);
+  const requestClose = useCallback(() => {
+    if (closeRequestedRef.current) return;
+    closeRequestedRef.current = true;
+    onClose();
+  }, [onClose]);
   useMobileScrollLock(true);
   const dismissOnOutsidePointerDown = useModalDismissPreference();
   /*
@@ -7366,12 +7376,29 @@ export function TaskDetailModal({ onClose, ...props }: TaskDetailModalProps) {
   */
   const isMobileTransition = viewportMode === "mobile";
 
+  if (alphaMobileDrawer && isMobileTransition) {
+    return (
+      <AlphaMobileDrawer
+        open
+        title="Task detail"
+        closeLabel="Close"
+        onClose={requestClose}
+        avoidMobileNav={false}
+        testId="alpha-mobile-drawer-task-detail"
+      >
+        <div className="modal modal-lg task-detail-modal task-detail-modal--alpha-drawer">
+          <TaskDetailContent {...props} onRequestClose={requestClose} />
+        </div>
+      </AlphaMobileDrawer>
+    );
+  }
+
   return (
     <FloatingWindow
       windowKey="task-detail"
       title="Task detail"
       ariaLabelledBy="task-detail-modal-title"
-      onClose={onClose}
+      onClose={requestClose}
       modal
       hideHeader
       dragHandleSelector=".task-detail-content > .modal-header"
@@ -7388,7 +7415,7 @@ export function TaskDetailModal({ onClose, ...props }: TaskDetailModalProps) {
       closeOnOutsidePointerDown={dismissOnOutsidePointerDown}
     >
       <div className={`modal modal-lg task-detail-modal${isMobileTransition ? " task-detail-modal--mobile-transition" : ""}`}>
-        <TaskDetailContent {...props} onRequestClose={onClose} />
+        <TaskDetailContent {...props} onRequestClose={requestClose} />
       </div>
     </FloatingWindow>
   );

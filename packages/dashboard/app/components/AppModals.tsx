@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, lazy, Suspense } from "react";
+import { useTranslation } from "react-i18next";
 import type { ProjectInfo, RevertTaskOptions, RevertTaskResult } from "../api";
 import type { ColorTheme, Column, MergeResult, Task, TaskCreateInput, ThemeMode, GithubIssueAction } from "@fusion/core";
 import type { UseProjectActionsResult } from "../hooks/useProjectActions";
@@ -23,6 +24,7 @@ import { ModelOnboardingModal } from "./ModelOnboardingModal";
 import { ToastContainer } from "./ToastContainer";
 import { GroupTaskModal } from "./GroupTaskModal";
 import { useNavigationHistoryContext } from "../hooks/useNavigationHistory";
+import { AlphaMobileDrawer } from "./AlphaMobileDrawer";
 
 const SetupWizardModal = lazy(() => import("./SetupWizardModal").then((m) => ({ default: m.SetupWizardModal })));
 const SettingsModal = lazy(() => import("./SettingsModal").then((m) => ({ default: m.SettingsModal })));
@@ -43,6 +45,8 @@ function prefetchSettingsModal() {
 
 interface AppModalsProps {
   projectId?: string;
+  /** Applies the shared drawer presentation only inside the Alpha mobile project shell. */
+  alphaMobileDrawer?: boolean;
   tasks: Task[];
   /* Per-task lifecycle traits, forwarded to Task Detail's blocker fan-out. */
   columnFlagsByTaskId?: ReadonlyMap<string, BlockerFanoutColumnFlags>;
@@ -120,6 +124,7 @@ interface AppModalsProps {
 
 export function AppModals({
   projectId,
+  alphaMobileDrawer = false,
   tasks,
   columnFlagsByTaskId,
   globalPaused = false,
@@ -142,6 +147,7 @@ export function AppModals({
   onOpenApprovals,
   agentOnboardingEnabled = false,
 }: AppModalsProps) {
+  const { t } = useTranslation("app");
   const { pushNav, removeNav } = useNavigationHistoryContext();
   const [firstCreatedTask, setFirstCreatedTask] = useState<Task | null>(null);
   const detailNavCloseRef = useRef<(() => void) | null>(null);
@@ -315,6 +321,7 @@ export function AppModals({
         <ModalErrorBoundary>
           <TaskDetailModal
             task={detailTask}
+            alphaMobileDrawer={alphaMobileDrawer}
             projectId={projectId}
             tasks={tasks}
             columnFlagsByTaskId={columnFlagsByTaskId}
@@ -447,12 +454,34 @@ export function AppModals({
         />
       )}
 
-      <UsageIndicator
-        isOpen={modalManager.usageOpen}
-        onClose={closeUsageWithNav}
-        projectId={projectId}
-        anchorRect={modalManager.usageAnchorRect}
-      />
+      {/*
+      FNXC:AlphaMobileDrawer 2026-09-10-05:38:
+      Usage opened from Alpha mobile reuses its embedded content inside the shared bounded drawer. The modal manager remains the single open/close owner, while standard mobile and desktop preserve the existing overlay or anchored popover.
+      */}
+      {alphaMobileDrawer ? (
+        <AlphaMobileDrawer
+          open={modalManager.usageOpen}
+          title={t("nav.usage", "Usage")}
+          closeLabel={t("common.close", "Close")}
+          onClose={closeUsageWithNav}
+          avoidMobileNav={false}
+          testId="alpha-mobile-drawer-usage"
+        >
+          <UsageIndicator
+            isOpen={modalManager.usageOpen}
+            onClose={closeUsageWithNav}
+            projectId={projectId}
+            presentation="embedded"
+          />
+        </AlphaMobileDrawer>
+      ) : (
+        <UsageIndicator
+          isOpen={modalManager.usageOpen}
+          onClose={closeUsageWithNav}
+          projectId={projectId}
+          anchorRect={modalManager.usageAnchorRect}
+        />
+      )}
 
       {modalManager.schedulesOpen && (
         <ScheduledTasksModal

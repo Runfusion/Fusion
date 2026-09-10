@@ -322,6 +322,12 @@ export function FloatingWindow({
   2026-08-17, so no gutter zeroing hangs off this class any more.
   */
   const isTabletViewportMode = viewportMode === "tablet";
+  const alphaDrawerExcluded = Boolean(className && /(?:setup-wizard|onboarding|confirm)/.test(className));
+  const alphaMobileDrawer = viewportMode === "mobile"
+    && typeof document !== "undefined"
+    && document.documentElement.dataset.alphaMobileDrawers === "true"
+    && !alphaDrawerExcluded;
+  const effectiveModal = modal || alphaMobileDrawer;
   const initialGeometry = useRef<{ size: FloatingWindowSize; position: FloatingWindowPosition } | null>(null);
   const cascadeOffsetRef = useRef<FloatingWindowPosition>({ x: 0, y: 0 });
   const cascadeSizeReductionRef = useRef<FloatingWindowSize>({ width: 0, height: 0 });
@@ -331,9 +337,9 @@ export function FloatingWindow({
   landscape phones remain movable FloatingWindows and must restore geometry; Artifact Gallery opts
   into its separate `max-height: 480px` full-screen-sheet CSS breakpoint as well.
   */
-  const geometryPersistenceSuspended = suspendGeometryPersistenceOnMobile && (
+  const geometryPersistenceSuspended = alphaMobileDrawer || (suspendGeometryPersistenceOnMobile && (
     isFullScreenSheetViewport() || (suspendGeometryPersistenceOnShortViewport && isShortViewport())
-  );
+  ));
 
   const applyCascadeOffset = (geometry: { size: FloatingWindowSize; position: FloatingWindowPosition }) => {
     const cascade = geometryPersistenceSuspended
@@ -725,7 +731,7 @@ export function FloatingWindow({
   behavior by default so this does not change existing multi-window surfaces.
   */
   useEffect(() => {
-    if (!modal || hidden || typeof document === "undefined") return;
+    if (!effectiveModal || hidden || typeof document === "undefined") return;
     const panel = panelRef.current;
     const priorFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     panel?.focus();
@@ -742,7 +748,7 @@ export function FloatingWindow({
     };
     document.addEventListener("keydown", onKeyDown);
     return () => { document.removeEventListener("keydown", onKeyDown); priorFocus?.focus(); };
-  }, [hidden, modal]);
+  }, [effectiveModal, hidden]);
 
   const panelStyle = {
     left: `${position.x}px`,
@@ -764,27 +770,32 @@ export function FloatingWindow({
   */
   return createPortal(
     <div
-      className={`floating-window-overlay${modal ? " floating-window-overlay--modal" : ""}${hidden ? " floating-window-overlay--hidden" : ""}`}
+      className={`floating-window-overlay${effectiveModal ? " floating-window-overlay--modal" : ""}${alphaMobileDrawer ? " floating-window-overlay--alpha-mobile-drawer" : ""}${hidden ? " floating-window-overlay--hidden" : ""}`}
       role="dialog"
-      aria-modal={modal ? "true" : "false"}
+      aria-modal={effectiveModal ? "true" : "false"}
       aria-hidden={hidden || undefined}
       aria-label={ariaLabel}
       aria-labelledby={ariaLabelledBy}
       data-testid={testId ?? `floating-window-overlay-${windowKey}`}
-      {...backdropMouseHandlers}
+      onMouseDown={(event) => {
+        backdropMouseHandlers?.onMouseDown?.(event);
+        if (alphaMobileDrawer && event.target === event.currentTarget) onClose();
+      }}
+      onMouseUp={backdropMouseHandlers?.onMouseUp}
+      onClick={backdropMouseHandlers?.onClick}
       // FNXC:ModalTouchGeometry 2026-07-27-12:00: FN-8619 keeps Agent Detail's paired mouse-only backdrop contract at the shared modal backdrop; this deliberately does not alter pointer-down dismissal.
       // FNXC:FloatingWindow 2026-06-22-23:00: The z-index MUST live on the position:fixed overlay (which creates a stacking context), not the panel. A panel z-index is trapped inside the overlay's context and loses to page elements that are stacking contexts in body's context (e.g. the right dock at position:absolute z-index:20). With z on the overlay, the whole window sits at the shared floating band in body's stacking context and reliably paints above page content + tap-to-front reorders correctly.
       style={{ zIndex }}
     >
       <div
         ref={panelRef}
-        className={`floating-window${hideHeader ? " floating-window--headerless" : ""}${hasTabletTouchGeometry ? " floating-window--touch-geometry" : ""}${isTabletViewportMode ? " floating-window--tablet-viewport" : ""}${className ? ` ${className}` : ""}`}
+        className={`floating-window${hideHeader ? " floating-window--headerless" : ""}${hasTabletTouchGeometry ? " floating-window--touch-geometry" : ""}${isTabletViewportMode ? " floating-window--tablet-viewport" : ""}${alphaMobileDrawer ? " floating-window--alpha-mobile-drawer" : ""}${className ? ` ${className}` : ""}`}
         style={panelStyle}
         data-testid={`floating-window-${windowKey}`}
         onPointerDownCapture={bringToFront}
         onPointerDown={handlePanelPointerDown}
         onFocusCapture={bringToFront}
-        tabIndex={modal ? -1 : undefined}
+        tabIndex={effectiveModal ? -1 : undefined}
       >
         {/*
         FNXC:ModalTouchGeometry 2026-07-26-16:54:

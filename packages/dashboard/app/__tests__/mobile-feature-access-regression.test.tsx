@@ -141,12 +141,31 @@ describe("Mobile Feature Access Regression Guard", () => {
     expect(props.onChangeView).toHaveBeenCalledWith("list");
   });
 
-  it("board view is accessible from Tasks on mobile nav bar", () => {
+  it("board view is accessible from Tasks on the standard mobile nav bar", () => {
     const props = createDefaultMobileNavProps();
     render(<MobileNavBar {...props} view="list" />);
 
     fireEvent.click(screen.getByTestId("mobile-nav-tab-tasks"));
     expect(props.onChangeView).toHaveBeenCalledWith("board");
+  });
+
+  it("retire Board de la pill et du hamburger Alpha sans altérer les préférences standard", () => {
+    const props = createDefaultMobileNavProps();
+    const { rerender } = render(
+      <MobileNavBar
+        {...props}
+        alphaUpdatesEnabled
+        alphaMenuOpen
+        mobileNavPrimaryItems={["tasks", "tasks", "not-a-destination"]}
+      />,
+    );
+
+    expect(screen.queryByTestId("mobile-nav-tab-tasks")).toBeNull();
+    expect(screen.queryByTestId("mobile-more-item-tasks")).toBeNull();
+    expect(document.querySelectorAll(".mobile-nav-bar > .mobile-nav-tab")).toHaveLength(4);
+
+    rerender(<MobileNavBar {...props} mobileNavPrimaryItems={["tasks", "tasks", "not-a-destination"]} />);
+    expect(screen.getByTestId("mobile-nav-tab-tasks")).toBeInTheDocument();
   });
 
   it("mobile Header exposes New Task without the retired view toggle", () => {

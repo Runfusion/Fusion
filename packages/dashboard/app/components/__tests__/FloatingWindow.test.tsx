@@ -129,7 +129,30 @@ describe("FloatingWindow", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    delete document.documentElement.dataset.alphaMobileDrawers;
   });
+
+  it("adopte le drawer modal borné pour un utilitaire Alpha mobile", () => {
+    document.documentElement.dataset.alphaMobileDrawers = "true";
+    vi.stubGlobal("matchMedia", vi.fn((query: string) => ({
+      matches: query.includes("max-width"),
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    })));
+    const close = vi.fn();
+    render(<FloatingWindow windowKey="alpha-drawer" title="Files" onClose={close}><div>Files body</div></FloatingWindow>);
+
+    const overlay = screen.getByTestId("floating-window-overlay-alpha-drawer");
+    expect(overlay).toHaveClass("floating-window-overlay--alpha-mobile-drawer", "floating-window-overlay--modal");
+    expect(overlay).toHaveAttribute("aria-modal", "true");
+    expect(screen.getByTestId("floating-window-alpha-drawer")).toHaveClass("floating-window--alpha-mobile-drawer");
+    expect(screen.queryAllByRole("separator", { name: "Resize floating window" })).toHaveLength(0);
+    fireEvent.mouseDown(overlay);
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
   it("renders a non-blocking, click-through transparent overlay with a pointer-events:auto panel", () => {
     render(
       <FloatingWindow windowKey="alpha" title="Alpha" onClose={() => {}}>

@@ -4192,3 +4192,23 @@ and the filed interactive-predictive-back follow-up task.
     animation: none;
   }
 }
+
+/*
+FNXC:AlphaMobileDrawer 2026-09-10-04:41:
+Every Alpha mobile destination and utility must fit the shared narrow drawer without making the viewport its horizontal scroller. Existing responsive components keep their own semantic layout; this cross-component boundary only supplies shrinkability, wrapped headers/actions, local table overflow, and one-column form containment.
+*/
+html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] :is(.alpha-mobile-drawer__body, .floating-window--alpha-mobile-drawer .floating-window__body) {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] :is(.alpha-mobile-drawer__body, .floating-window--alpha-mobile-drawer) :is(.view-header, .modal-header, .modal-actions) {
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+
+html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] :is(.alpha-mobile-drawer__body, .floating-window--alpha-mobile-drawer) :is(table, form, fieldset, .settings-layout, .github-import-content) {
+  min-width: 0;
+  max-width: 100%;
+}

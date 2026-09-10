@@ -1206,6 +1206,49 @@ describe("Alpha Updates production wiring", () => {
     modalRender.unmount();
   });
 
+  it("synchronise la réserve du drawer avec la visibilité clavier de la pill", async () => {
+    mockUseViewportMode.mockReturnValue("mobile");
+    vi.mocked(fetchSettings).mockResolvedValue({
+      ...defaultSettings,
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates: true },
+    });
+
+    const view = render(<App />);
+    fireEvent.click(await screen.findByTestId("mobile-nav-tab-command-center"));
+    const drawer = await screen.findByTestId("alpha-mobile-drawer-main-content");
+    expect(drawer).not.toHaveClass("alpha-mobile-drawer--without-pill");
+
+    mockUseMobileKeyboard.mockReturnValue({ keyboardOverlap: 240, viewportHeight: 400, viewportOffsetTop: 0, keyboardOpen: true });
+    view.rerender(<App />);
+    await waitFor(() => expect(drawer).toHaveClass("alpha-mobile-drawer--without-pill"));
+    expect(document.querySelector(".mobile-nav-bar")).toHaveClass("mobile-nav-bar--keyboard-open");
+  });
+
+  it("ouvre Usage et Projects dans le drawer Alpha sans quitter le Kanban", async () => {
+    mockUseViewportMode.mockReturnValue("mobile");
+    vi.mocked(fetchSettings).mockResolvedValue({
+      ...defaultSettings,
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates: true },
+    });
+
+    render(<App />);
+    const board = await screen.findByTestId("board-keep-alive");
+
+    fireEvent.click(await screen.findByTestId("alpha-mobile-menu-trigger"));
+    fireEvent.click(screen.getByTestId("mobile-more-item-usage"));
+    const usageDrawer = await screen.findByTestId("alpha-mobile-drawer-usage");
+    expect(usageDrawer).toHaveClass("alpha-mobile-drawer--without-pill");
+    expect(board).toBeVisible();
+    expect(mockCurrentProjectState.clearCurrentProject).not.toHaveBeenCalled();
+    fireEvent.click(usageDrawer.querySelector<HTMLButtonElement>(".alpha-mobile-drawer__close")!);
+
+    fireEvent.click(screen.getByTestId("alpha-mobile-menu-trigger"));
+    fireEvent.click(screen.getByTestId("mobile-more-item-projects"));
+    expect(await screen.findByTestId("alpha-mobile-drawer-projects")).toBeInTheDocument();
+    expect(board).toBeVisible();
+    expect(mockCurrentProjectState.clearCurrentProject).not.toHaveBeenCalled();
+  });
+
   it("refreshes the mobile shell on and off without losing configured primary items", async () => {
     mockUseViewportMode.mockReturnValue("mobile");
     const legacySettings = {
@@ -1234,11 +1277,11 @@ describe("Alpha Updates production wiring", () => {
     expect(screen.queryByTestId("mobile-nav-tab-more")).toBeNull();
     expect(Array.from(document.querySelectorAll<HTMLElement>(".mobile-nav-bar > .mobile-nav-tab")).map((tab) => tab.dataset.testid)).toEqual([
       "mobile-nav-tab-command-center",
-      "mobile-nav-tab-tasks",
       "mobile-nav-tab-planning",
       "mobile-nav-tab-chat",
       "mobile-nav-tab-mailbox",
     ]);
+    expect(screen.queryByTestId("mobile-nav-tab-tasks")).toBeNull();
 
     vi.mocked(fetchSettings).mockResolvedValue(legacySettings);
     const alphaTrigger = screen.getByTestId("alpha-mobile-menu-trigger");
@@ -1249,7 +1292,7 @@ describe("Alpha Updates production wiring", () => {
     expect(document.querySelector(".mobile-more-sheet-backdrop")).toBeNull();
     expect(document.querySelector(".mobile-more-sheet-handle")).toBeNull();
     fireEvent.click(screen.getByTestId("mobile-more-item-settings"));
-    fireEvent.click(await screen.findByRole("button", { name: "Close" }));
+    fireEvent.click((await screen.findAllByRole("button", { name: "Close" }))[0]);
 
     await waitFor(() => expect(screen.getByTestId("mobile-nav-tab-more")).toBeInTheDocument());
     expect(screen.getByTestId("mobile-nav-tab-settings")).toBeInTheDocument();

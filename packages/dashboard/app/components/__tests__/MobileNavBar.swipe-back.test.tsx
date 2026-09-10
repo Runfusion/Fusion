@@ -49,7 +49,8 @@ const createDefaultProps = () => ({
 });
 
 function AlphaMenuHarness(props: ReturnType<typeof createDefaultProps>) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
+  useEffect(() => setOpen(true), []);
   return <MobileNavBar {...props} alphaUpdatesEnabled alphaMenuOpen={open} onAlphaMenuOpenChange={setOpen} />;
 }
 

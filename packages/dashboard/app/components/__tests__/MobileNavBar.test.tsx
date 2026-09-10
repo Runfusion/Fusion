@@ -177,11 +177,11 @@ describe("MobileNavBar", () => {
 
     expect(getRenderedMobileTabs(container).map((tab) => tab.dataset.testid)).toEqual([
       "mobile-nav-tab-command-center",
-      "mobile-nav-tab-tasks",
       "mobile-nav-tab-planning",
       "mobile-nav-tab-chat",
       "mobile-nav-tab-mailbox",
     ]);
+    expect(screen.queryByTestId("mobile-nav-tab-tasks")).toBeNull();
     expect(container.querySelectorAll(".mobile-nav-tab-label")).toHaveLength(0);
     expect(screen.queryByTestId("mobile-nav-tab-list")).toBeNull();
     expect(screen.queryByTestId("mobile-nav-tab-more")).toBeNull();
@@ -244,7 +244,7 @@ describe("MobileNavBar", () => {
     const emptyNav = empty.container.querySelector(".mobile-nav-bar");
     expect(emptyNav).toHaveClass("mobile-nav-bar--alpha");
     expect(emptyNav).not.toHaveClass("mobile-nav-bar--with-footer");
-    expect(getRenderedMobileTabs(empty.container)).toHaveLength(5);
+    expect(getRenderedMobileTabs(empty.container)).toHaveLength(4);
     empty.unmount();
 
     const populated = render(
@@ -262,7 +262,7 @@ describe("MobileNavBar", () => {
     const populatedNav = populated.container.querySelector(".mobile-nav-bar");
     expect(populatedNav).toHaveClass("mobile-nav-bar--alpha");
     expect(populatedNav).not.toHaveClass("mobile-nav-bar--with-footer");
-    expect(getRenderedMobileTabs(populated.container)).toHaveLength(5);
+    expect(getRenderedMobileTabs(populated.container)).toHaveLength(4);
     expect(screen.getByTestId("mobile-nav-tab-mailbox").querySelector(".mobile-nav-tab-badge")).toHaveTextContent("87");
     expect(computePublishedMobileNavHeight({ navOffsetHeight: 54, paddingBottom: 4, tabHeights: [44, 44, 44, 44, 44], floatingGap: 8 })).toBe(62);
   });

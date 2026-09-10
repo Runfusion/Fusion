@@ -337,6 +337,34 @@ describe("MainContent main-view keep alive", () => {
     expect(slot.querySelectorAll(".list-workflow-control")).toHaveLength(1);
   });
 
+  it("keeps one active Board visible beneath the Alpha mobile Task Detail drawer", async () => {
+    render(<MainContent {...mainContentProps({
+      taskView: "task-detail",
+      isMobile: true,
+      experimentalFeatures: { alphaUpdates: true },
+      mainPanelDetailTask: taskFixture("FN-ALPHA-DETAIL"),
+    })} />);
+
+    await waitFor(() => expect(document.querySelectorAll("#board")).toHaveLength(1));
+    expect(screen.getByTestId("board-keep-alive")).not.toHaveAttribute("aria-hidden");
+    expect(screen.getByRole("dialog", { name: "Task detail" })).toContainElement(screen.getByTestId("task-detail-back"));
+    expect(document.querySelectorAll("[role='dialog']")).toHaveLength(1);
+  });
+
+  it("keeps retained Chat in one drawer while Board stays active behind it", async () => {
+    configureProductionChat("alpha-chat-message");
+    render(<MainContent {...mainContentProps({
+      taskView: "chat",
+      isMobile: true,
+      experimentalFeatures: { alphaUpdates: true },
+    })} />);
+
+    await waitFor(() => expect(document.querySelectorAll("#board")).toHaveLength(1));
+    expect(screen.getByTestId("board-keep-alive")).not.toHaveAttribute("aria-hidden");
+    expect(screen.getByRole("dialog", { name: "Chat" })).toContainElement(chatRoot());
+    expect(screen.getByTestId("chat-keep-alive")).not.toHaveAttribute("aria-hidden");
+  });
+
   it("uses exactly one retained production Board for the empty task-detail fallback", async () => {
     render(<MainContent {...mainContentProps({ taskView: "task-detail", mainPanelDetailTask: null })} />);
     await waitFor(() => expect(document.querySelectorAll("#board")).toHaveLength(1));

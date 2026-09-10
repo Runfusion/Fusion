@@ -29,6 +29,18 @@ padding, not an inherited reservation.
 }
 
 /*
+FNXC:AlphaMobileDrawer 2026-09-10-04:41:
+Inside the shared Alpha drawer, Task Detail fills only the drawer body and surrenders outer chrome and scrolling to that shell. Existing standard-mobile, tablet, desktop, dock, and floating-window rules remain unchanged because this marker exists only on the Alpha path.
+*/
+.modal.task-detail-modal--alpha-drawer {
+  max-width: 100%;
+  max-height: 100%;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+/*
 FNXC:TaskDetail 2026-06-22-20:00:
 The gray top header band (task id + column badge) was over-padded. Trim its vertical padding for a more compact band, scoped to the task-detail header so the shared global .modal-header (used by other modals) is unaffected. Keep horizontal padding from --modal-padding; only the block padding shrinks.
 */

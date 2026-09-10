@@ -4,6 +4,7 @@ import { CapacityRiskBanner } from "../CapacityRiskBanner";
 import { PageErrorBoundary } from "../ErrorBoundary";
 import { KeepAliveView } from "../KeepAliveView";
 import { ListView } from "../ListView";
+import { AlphaMobileDrawer } from "../AlphaMobileDrawer";
 import type { MainContentProps } from "./types";
 
 /*
@@ -29,6 +30,13 @@ export interface MainViewKeepAliveProps {
   mountedIds: readonly KeepAliveMainViewId[];
   projectKey: string;
   mainContentProps: MainContentProps;
+  alphaMobileDrawer?: {
+    activeId: Exclude<KeepAliveMainViewId, "board"> | null;
+    title: string;
+    closeLabel: string;
+    onClose: () => void;
+    avoidMobileNav: boolean;
+  };
 }
 
 function renderBoardSubtree(props: MainContentProps, active: boolean) {
@@ -169,7 +177,7 @@ function renderBoardSubtree(props: MainContentProps, active: boolean) {
         onOpenWorkflowEditor={openWorkflowEditorWithNav}
         onCreateWorkflow={openCreateWorkflowWithNav}
         workflowControlsInHeader={sidebarActive || isMobile}
-        alphaUpdatesEnabled={experimentalFeatures.alphaUpdates === true}
+        alphaUpdatesEnabled={experimentalFeatures?.alphaUpdates === true}
         onOpenHistory={() => handleChangeTaskView("patchnode")}
         active={active}
       />
@@ -320,15 +328,31 @@ function renderMainViewSubtree(id: KeepAliveMainViewId, props: MainContentProps,
   }
 }
 
-export function MainViewKeepAlive({ activeId, mountedIds, projectKey, mainContentProps }: MainViewKeepAliveProps) {
+export function MainViewKeepAlive({ activeId, mountedIds, projectKey, mainContentProps, alphaMobileDrawer }: MainViewKeepAliveProps) {
   return (
     <>
       {mountedIds.map((id) => {
-        const isActive = activeId === id;
-        return (
+        const isDrawerView = alphaMobileDrawer !== undefined && id !== "board";
+        const isActive = activeId === id || (alphaMobileDrawer !== undefined && id === "board");
+        const subtree = (
           <KeepAliveView key={`${projectKey}:${id}`} hidden={!isActive} testId={`${id}-keep-alive`}>
             {renderMainViewSubtree(id, mainContentProps, isActive)}
           </KeepAliveView>
+        );
+        if (!isDrawerView) return subtree;
+        return (
+          <AlphaMobileDrawer
+            key={`${projectKey}:${id}`}
+            open={alphaMobileDrawer.activeId === id}
+            title={alphaMobileDrawer.title}
+            closeLabel={alphaMobileDrawer.closeLabel}
+            onClose={alphaMobileDrawer.onClose}
+            avoidMobileNav={alphaMobileDrawer.avoidMobileNav}
+            keepMounted
+            testId={`alpha-mobile-drawer-${id}`}
+          >
+            {subtree}
+          </AlphaMobileDrawer>
         );
       })}
     </>

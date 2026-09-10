@@ -163,7 +163,7 @@ Wrap every tab icon in the same token-sized icon slot and keep unread/pending do
 
 /*
 FNXC:AlphaUpdates 2026-09-10-03:16:
-The Alpha five-icon pill stays visually overlaid but must never obscure the final content or system gesture area. Its bottom position uses one shared safe-area/standalone/ICB formula, while the scroller reserves the measured pill border box plus that placement exactly once; tablet and desktop suppress the mobile-only reserve.
+The Alpha four-destination pill stays visually overlaid but must never obscure the final content or system gesture area. Its bottom position uses one shared safe-area/standalone/ICB formula, while the scroller reserves the measured pill border box plus that placement exactly once; tablet and desktop suppress the mobile-only reserve.
 */
 .mobile-nav-bar--alpha {
   --mobile-nav-floating-gap: var(--space-sm);

@@ -139,7 +139,7 @@ export interface MobileNavBarProps {
   shellConnectionControl?: ReactNode;
   /** Ordered quick-action tabs; invalid values resolve to the safe default. */
   mobileNavPrimaryItems?: string[];
-  /** Enables the fixed five-icon Alpha pill and header-owned overflow trigger. */
+  /** Enables the fixed four-destination Alpha pill and header-owned overflow trigger. */
   alphaUpdatesEnabled?: boolean;
   /** App-owned open state for the Alpha navigation popover. */
   alphaMenuOpen?: boolean;
@@ -541,11 +541,15 @@ export function MobileNavBar({
     goals: { icon: <Target />, labelKey: "nav.goals", fallback: "Goals", moreTestId: "mobile-more-item-goals", isActive: view === "goalsView", isAvailable: Boolean(experimentalFeatures?.goalsView), navigate: (surface) => surface === "primary" ? onChangeView("goalsView") : handleMoreAction(() => onChangeView("goalsView")) },
     "dev-server": { icon: <Monitor />, labelKey: "nav.devServer", fallback: "Dev Server", moreTestId: "mobile-more-item-dev-server", isActive: view === "dev-server" || view === "devserver", isAvailable: Boolean(experimentalFeatures?.devServerView), navigate: (surface) => surface === "primary" ? onChangeView("dev-server") : handleMoreAction(() => onChangeView("dev-server")) },
   };
-  const alphaPrimaryItems: MobileNavSelectableItem[] = ["command-center", "tasks", "planning", "chat", "mailbox"];
+  /*
+  FNXC:AlphaMobileDrawer 2026-09-10-04:41:
+  Board is the permanent Alpha mobile background, not a navigation destination. Keep the persisted standard-mobile `tasks` preference intact while excluding Tasks from both Alpha's four direct destinations and its overflow registry.
+  */
+  const alphaPrimaryItems: MobileNavSelectableItem[] = ["command-center", "planning", "chat", "mailbox"];
   const effectivePrimaryItems = (alphaUpdatesEnabled ? alphaPrimaryItems : primaryItems)
     .filter((item) => destinationRegistry[item].isAvailable);
   const effectiveOmittedItems = (alphaUpdatesEnabled
-    ? MOBILE_NAV_SELECTABLE_ITEMS.filter((item) => !alphaPrimaryItems.includes(item) && item !== "patchnode")
+    ? MOBILE_NAV_SELECTABLE_ITEMS.filter((item) => !alphaPrimaryItems.includes(item) && item !== "patchnode" && item !== "tasks")
     : omittedItems)
     .filter((item) => destinationRegistry[item].isAvailable);
   const isMoreActive = effectiveOmittedItems.some((item) => destinationRegistry[item].isActive)

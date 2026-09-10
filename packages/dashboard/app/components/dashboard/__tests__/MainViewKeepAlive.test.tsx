@@ -118,6 +118,24 @@ describe("MainViewKeepAlive", () => {
     expect(screen.getByTestId("chat-child")).toHaveAttribute("data-active", "true");
   });
 
+  it("keeps Board visible and active beneath one Alpha mobile keep-alive drawer", () => {
+    const close = vi.fn();
+    render(
+      <MainViewKeepAlive
+        activeId="chat"
+        mountedIds={["board", "chat"]}
+        projectKey="project-1"
+        mainContentProps={mainContentProps()}
+        alphaMobileDrawer={{ activeId: "chat", title: "Chat", closeLabel: "Close", onClose: close }}
+      />,
+    );
+
+    expect(screen.getByTestId("board-keep-alive")).not.toHaveAttribute("aria-hidden");
+    expect(screen.getByTestId("board-child")).toHaveAttribute("data-active", "true");
+    expect(screen.getByRole("dialog", { name: "Chat" })).toContainElement(screen.getByTestId("chat-child"));
+    expect(screen.getByTestId("chat-child")).toHaveAttribute("data-active", "true");
+  });
+
   it("hides and deactivates every mounted entry when no main view is active", () => {
     const slot = createHeaderSlot();
     activeByView.markRead.mockClear();

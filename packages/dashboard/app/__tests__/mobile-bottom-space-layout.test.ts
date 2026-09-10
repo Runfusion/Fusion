@@ -91,6 +91,19 @@ describe("mobile bottom-space layout invariant", () => {
     expect(footerAndNavRule).not.toContain("100dvh");
   });
 
+  it("compose le drawer Alpha et le dernier contrôle du Kanban avec la même hauteur de pill publiée", () => {
+    const drawerRule = normalizeCss(extractRuleBlock(css, ".alpha-mobile-drawer"));
+    const drawerPanelRule = normalizeCss(extractRuleBlock(css, ".alpha-mobile-drawer__panel"));
+    const alphaContentRule = normalizeCss(extractRuleBlock(css, 'html[data-viewport-mode="mobile"] .project-content--with-alpha-nav'));
+
+    expect(drawerRule).toContain("--alpha-mobile-drawer-bottom-reserve: calc(var(--mobile-nav-height) + var(--mobile-nav-alpha-system-offset))");
+    expect(drawerRule).toContain("padding-block-end: var(--alpha-mobile-drawer-bottom-reserve)");
+    expect(drawerPanelRule).toContain("100dvh");
+    expect(drawerPanelRule).toContain("var(--alpha-mobile-drawer-bottom-reserve)");
+    expect(alphaContentRule).toContain("var(--mobile-nav-height) + var(--mobile-nav-alpha-system-offset)");
+    expect(css.match(/--mobile-nav-height:\s*44px/g)).toHaveLength(1);
+  });
+
   it("keeps board and list content height parent-relative on mobile and desktop", () => {
     const boardRule = extractRuleBlock(css, ".board");
     const listRule = extractRuleBlock(css, ".list-view");

@@ -18,14 +18,17 @@ import { BackendConnectionErrorPage } from "../BackendConnectionErrorPage";
 import { HeaderWorkflowSwitcherSlot } from "../HeaderWorkflowSwitcherSlot";
 import { GraphWorkflowSwitcherSlot, filterTasksByGraphWorkflowSelection } from "../GraphWorkflowSwitcherSlot";
 import { PluginDashboardViewHost } from "../../plugins/PluginDashboardViewHost";
-import { getPluginViewId, isPluginViewId } from "../../plugins/pluginViewRegistry";
+import { buildPluginTaskViewId, getPluginViewId, isPluginViewId } from "../../plugins/pluginViewRegistry";
 import { isNearDuplicateCanonicalInactive } from "../../../../core/src/duplicates/near-duplicate-canonical";
 import { fetchMission, fetchMissions, fetchInsights, fetchTaskDetail, listEvals } from "../../api";
 import { attachNativeStructureRefToDrag } from "../../utils/nativeStructureDrag";
 import type { DetailTaskTab } from "../../hooks/useModalManager";
+import type { TaskView } from "../../hooks/useViewState";
+import type { PluginDashboardViewEntry } from "../../api";
 import type { SectionId } from "../SettingsModal";
 import type { MainContentProps } from "./types";
 import { MainViewKeepAlive, isKeepAliveMainViewId, type KeepAliveMainViewId } from "./MainViewKeepAlive";
+import { AlphaMobileDrawer } from "../AlphaMobileDrawer";
 
 /*
 FNXC:CommandCenterAgentActivity 2026-08-10-01:54:
@@ -33,6 +36,39 @@ A monotonic request id makes repeated clicks for the same agent observable to Ag
 */
 let agentAnchorRequestSeq = 0;
 export function nextAgentAnchorRequestId(): number { return ++agentAnchorRequestSeq; }
+
+const ALPHA_DRAWER_TITLES: Partial<Record<string, string>> = {
+  "command-center": "Dashboard",
+  planning: "Planning",
+  chat: "Chat",
+  mailbox: "Mailbox",
+  list: "List",
+  agents: "Agents",
+  missions: "Missions",
+  notes: "Notes",
+  secrets: "Secrets",
+  skills: "Skills & Snippets",
+  insights: "Insights",
+  memory: "Memory",
+  research: "Research",
+  evals: "Evals",
+  ideation: "Ideation",
+  goalsView: "Goals",
+  "dev-server": "Dev Server",
+  settings: "Settings",
+  workflows: "Workflows",
+  schedules: "Automation",
+  "github-import": "Import from GitHub",
+  patchnode: "History",
+  "task-detail": "Task detail",
+};
+
+export function resolveAlphaMobileDrawerTitle(taskView: TaskView, pluginDashboardViews: PluginDashboardViewEntry[]): string {
+  if (isPluginViewId(taskView)) {
+    return pluginDashboardViews.find((entry) => buildPluginTaskViewId(entry.pluginId, entry.view.viewId) === taskView)?.view.label ?? "Plugin";
+  }
+  return ALPHA_DRAWER_TITLES[taskView] ?? "Workspace";
+}
 
 export function MainContent(props: MainContentProps) {
   const {
@@ -98,6 +134,7 @@ export function MainContent(props: MainContentProps) {
   taskDetailChatFirst,
   chatMessageLayout,
   skillsEnabled,
+  experimentalFeatures,
   mailComposerPrefill,
   onOpenChatWithPrefill,
   setMailboxUnreadCount,
@@ -153,6 +190,7 @@ export function MainContent(props: MainContentProps) {
   openCreateWorkflowWithNav,
   sidebarActive,
   isMobile,
+  alphaMobileNavVisible = true,
   mainPanelDetailInitialTab,
   closeTaskDetailMainPanel,
   setMainPanelDetailTask,
@@ -266,6 +304,7 @@ export function MainContent(props: MainContentProps) {
   }, [handleChangeTaskView, setGoalAnchorId, setMissionTargetId]);
 
   const projectKey = currentProject?.id ?? "all-projects";
+  const alphaMobileDrawerEnabled = experimentalFeatures?.alphaUpdates === true && isMobile && viewMode === "project" && currentProject !== null;
   const selectedKeepAliveId: KeepAliveMainViewId | null = isKeepAliveMainViewId(taskView)
     ? taskView
     : taskView === "task-detail" && mainPanelDetailTask === null
@@ -276,8 +315,15 @@ export function MainContent(props: MainContentProps) {
     () => ({ projectKey, ids: [] }),
   );
   const previousIds = keepAliveViews.projectKey === projectKey ? keepAliveViews.ids : [];
-  const mountedKeepAliveIds = !earlyHidden && selectedKeepAliveId && !previousIds.includes(selectedKeepAliveId)
-    ? [...previousIds, selectedKeepAliveId]
+  const requiredKeepAliveIds = [
+    ...(alphaMobileDrawerEnabled ? ["board" as const] : []),
+    ...(selectedKeepAliveId ? [selectedKeepAliveId] : []),
+  ];
+  const mountedKeepAliveIds = !earlyHidden
+    ? requiredKeepAliveIds.reduce<KeepAliveMainViewId[]>(
+        (ids, id) => ids.includes(id) ? ids : [...ids, id],
+        previousIds,
+      )
     : previousIds;
   if (keepAliveViews.projectKey !== projectKey || mountedKeepAliveIds !== keepAliveViews.ids) {
     setKeepAliveViews({ projectKey, ids: mountedKeepAliveIds });
@@ -290,12 +336,31 @@ export function MainContent(props: MainContentProps) {
   so a hidden Board cannot retain the shared header slot and hidden Chat cannot mark messages read.
   */
   const activeKeepAliveId = earlyHidden ? null : selectedKeepAliveId;
+  const closeAlphaMobileDrawer = () => {
+    if (taskView === "task-detail") {
+      closeTaskDetailMainPanel();
+      return;
+    }
+    if (taskView === "settings") {
+      modalManager.closeSettings();
+      void refreshAppSettings();
+    }
+    handleChangeTaskView("board");
+  };
+  const alphaDrawerTitle = resolveAlphaMobileDrawerTitle(taskView, pluginDashboardViews);
   const mainViewKeepAlive = (
     <MainViewKeepAlive
       activeId={activeKeepAliveId}
       mountedIds={mountedKeepAliveIds}
       projectKey={projectKey}
       mainContentProps={props}
+      alphaMobileDrawer={alphaMobileDrawerEnabled ? {
+        activeId: modalManager.detailTask ? null : taskView === "list" || taskView === "chat" ? taskView : null,
+        title: alphaDrawerTitle,
+        closeLabel: t("common.close", "Close"),
+        onClose: closeAlphaMobileDrawer,
+        avoidMobileNav: alphaMobileNavVisible,
+      } : undefined}
     />
   );
 
@@ -1006,10 +1071,30 @@ export function MainContent(props: MainContentProps) {
   );
   };
 
+  const switchView = renderSwitchView();
+  const switchUsesAlphaDrawer = alphaMobileDrawerEnabled
+    && taskView !== "board"
+    && taskView !== "list"
+    && taskView !== "chat"
+    && taskView !== "planning"
+    && switchView !== null;
+
   return (
     <>
       {mainViewKeepAlive}
-      {renderSwitchView()}
+      {switchUsesAlphaDrawer ? (
+        <AlphaMobileDrawer
+          open={!modalManager.detailTask}
+          title={alphaDrawerTitle}
+          closeLabel={t("common.close", "Close")}
+          onClose={closeAlphaMobileDrawer}
+          avoidMobileNav={alphaMobileNavVisible}
+          keepMounted
+          testId="alpha-mobile-drawer-main-content"
+        >
+          {switchView}
+        </AlphaMobileDrawer>
+      ) : switchView}
     </>
   );
 }
