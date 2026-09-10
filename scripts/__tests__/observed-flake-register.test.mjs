@@ -104,6 +104,14 @@ rescue task FN-9283 under mission M-MTU4YAJI-0001-PAJK. The pinned status text b
 carries the deadline and the named rescue owner so the approaching auto-deletion (44 passing
 tests of FN-6735 merge-node paused-abort coverage) cannot pass silently; update both together
 when the rescue resolves.
+
+FNXC:TestFlakeRegister 2026-09-10-19:28:
+Entry 14 closed 2026-09-09 when the deletion ratchet executed via commit 55912bd665, which
+removed the test file, the quarantine ledger entry, and the engine-reliability exclude in one
+commit. The register record now keeps its historical identity on relabeled File/Exact-test
+lines that no longer match the dangling-path scan (the file no longer exists to drift-check),
+states 3 active records, and names FN-9287 (depends on the still-in-review FN-9283) as the
+coverage-restoration owner.
 */
 test("observed-flake register active count, escalation state, and owners stay synchronized", () => {
   const register = readFileSync(registerPath, "utf8");
@@ -129,10 +137,6 @@ test("observed-flake register active count, escalation state, and owners stay sy
     {
       heading: "13. Handoff-to-review atomicity PostgreSQL setup hook",
       status: "Active first sighting — recorded 2026-08-23, unattributed.",
-    },
-    {
-      heading: "14. Merge-node paused-abort retry sequence",
-      status: "Quarantined 2026-08-29 after a second sequence-only sighting — rescue owner FN-9283 (mission M-MTU4YAJI-0001-PAJK), deletion-ratchet deadline 2026-09-12 (quarantinedAt + 14d).",
     },
   ]);
 });
