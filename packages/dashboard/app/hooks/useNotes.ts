@@ -32,6 +32,8 @@ Selection failures retain the attempted note id so Retry repeats the failed read
 FNXC:ProjectNotes 2026-09-09-23:47:
 A newly created note takes ownership from the selection request that was current when creation started. It invalidates that in-flight read before publishing the new active note, while a selection started later remains authoritative.
 */
+export type UseNotesController = ReturnType<typeof useNotes>;
+
 export function useNotes(projectId?: string) {
   const [state, setState] = useState<NotesState>({ notes: [], selected: null, pendingSelectedId: null, failedSelectionId: null, draftTitle: "", draftContent: "", loading: false, saving: false, error: null, errorOperation: null, conflict: false, dirty: false, search: "" });
   const generation = useRef(0);

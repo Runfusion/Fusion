@@ -1,19 +1,30 @@
 import "./NotesView.css";
-import { useEffect } from "react";
+import { useCallback, useEffect } from "react";
 import { ArrowLeft, Plus, RefreshCw, Save, Search, StickyNote, Trash2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useConfirm } from "../hooks/useConfirm";
-import { useNotes } from "../hooks/useNotes";
+import { useNotes, type UseNotesController } from "../hooks/useNotes";
 import { FileEditor } from "./FileEditor";
 import { ViewHeader } from "./ViewHeader";
+import { FloatingWindow } from "./FloatingWindow";
 
-export interface NotesViewProps { projectId?: string; addToast?: (message: string, type?: "success" | "error" | "info" | "warning") => void; }
+export interface NotesViewProps {
+  projectId?: string;
+  addToast?: (message: string, type?: "success" | "error" | "info" | "warning") => void;
+  controller?: UseNotesController;
+  floating?: { onClose: () => void; onActivate?: () => void; raiseToFrontSignal?: number; registerGuard?: (guard: () => boolean | Promise<boolean>, onAccepted?: () => void) => () => void };
+}
 
-export function NotesView({ projectId, addToast }: NotesViewProps) {
+export function NotesView({ projectId, addToast, controller, floating }: NotesViewProps) {
   const { t } = useTranslation("app");
   const confirm = useConfirm();
-  const notes = useNotes(projectId);
-  const abandon = async () => !notes.dirty || confirm.confirm({ title: t("notes.discardTitle", "Discard changes?"), message: t("notes.discardMessage", "Your unsaved draft will be lost."), confirmLabel: t("notes.discard", "Discard"), danger: true });
+  const ownedNotes = useNotes(controller ? undefined : projectId);
+  const notes = controller ?? ownedNotes;
+  const abandon = useCallback(async () => !notes.dirty || confirm.confirm({ title: t("notes.discardTitle", "Discard changes?"), message: t("notes.discardMessage", "Your unsaved draft will be lost."), confirmLabel: t("notes.discard", "Discard"), danger: true }), [confirm, notes.dirty, t]);
+  const commitFloatingClose = useCallback(() => {
+    if (notes.dirty) notes.clearSelection();
+  }, [notes]);
+  useEffect(() => floating?.registerGuard?.(abandon, commitFloatingClose), [abandon, commitFloatingClose, floating]);
   const handleCreate = async () => { if (await abandon()) await notes.create(); };
   const activeNoteId = notes.pendingSelectedId ?? notes.selected?.id;
   const handleSelect = async (id: string) => {
@@ -44,8 +55,8 @@ export function NotesView({ projectId, addToast }: NotesViewProps) {
     window.addEventListener("keydown", onKeyDown); return () => window.removeEventListener("keydown", onKeyDown);
   });
 
-  return <section className={`notes-view${notes.selected ? " notes-view--detail" : ""}`} aria-label={t("nav.notes", "Notes")}>
-    <ViewHeader icon={StickyNote} title={t("nav.notes", "Notes")} actions={<button className="btn btn-primary" type="button" onClick={() => void handleCreate()} disabled={!projectId || notes.saving}><Plus aria-hidden="true" />{t("notes.new", "New note")}</button>} />
+  const content = <section className={`notes-view${floating ? " notes-view--floating" : ""}${notes.selected ? " notes-view--detail" : ""}`} aria-label={t("nav.notes", "Notes")}>
+    <ViewHeader icon={StickyNote} title={t("nav.notes", "Notes")} onClose={floating?.onClose} actions={<button className="btn btn-primary" type="button" onClick={() => void handleCreate()} disabled={!projectId || notes.saving}><Plus aria-hidden="true" />{t("notes.new", "New note")}</button>} />
     <div className="notes-layout">
       <aside className="notes-list" aria-label={t("notes.list", "Notes list")}>
         <label className="notes-search"><Search aria-hidden="true" /><span className="sr-only">{t("notes.search", "Search notes")}</span><input className="input" type="search" value={notes.search} placeholder={t("notes.search", "Search notes")} onChange={(event) => notes.setSearch(event.target.value)} /></label>
@@ -73,4 +84,6 @@ export function NotesView({ projectId, addToast }: NotesViewProps) {
       </main>
     </div>
   </section>;
+  if (!floating) return content;
+  return <FloatingWindow title={t("nav.notes", "Notes")} ariaLabel={t("nav.notes", "Notes")} onClose={() => void floating.onClose()} windowKey="notes-view" persistGeometryKey="floating-window:notes-view" hideHeader dragHandleSelector=".view-header" minSize={{ width: 360, height: 280 }} cascadeOffsetIndex={1} raiseToFrontSignal={floating.raiseToFrontSignal}><div onPointerDown={floating.onActivate} onFocusCapture={floating.onActivate}>{content}</div></FloatingWindow>;
 }

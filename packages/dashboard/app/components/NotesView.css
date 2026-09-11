@@ -236,3 +236,6 @@ The selected note uses an accent tint and persistent inset marker independently 
     margin-inline-start: auto;
   }
 }
+
+.notes-view--floating { block-size: 100%; background: var(--surface); }
+.notes-view--floating .view-header { cursor: move; }

@@ -1,5 +1,6 @@
 import "./ViewHeader.css";
 import type { ComponentType, ReactNode } from "react";
+import { X } from "lucide-react";
 import type { LucideProps } from "lucide-react";
 
 /*
@@ -13,16 +14,18 @@ export interface ViewHeaderProps {
   actions?: ReactNode;
   /** Optional id for the heading element (for aria-labelledby). */
   titleId?: string;
+  /** Optional close action when this header is the sole chrome of a floating view. */
+  onClose?: () => void;
 }
 
-export function ViewHeader({ icon: Icon, title, actions, titleId }: ViewHeaderProps) {
+export function ViewHeader({ icon: Icon, title, actions, titleId, onClose }: ViewHeaderProps) {
   return (
     <header className="view-header">
       <h2 className="view-header__title" id={titleId}>
         <Icon size={20} aria-hidden="true" />
         <span>{title}</span>
       </h2>
-      {actions ? <div className="view-header__actions">{actions}</div> : null}
+      {actions || onClose ? <div className="view-header__actions">{actions}{onClose ? <button type="button" className="btn btn-icon" aria-label={`Close ${title}`} onClick={onClose}><X aria-hidden="true" /></button> : null}</div> : null}
     </header>
   );
 }

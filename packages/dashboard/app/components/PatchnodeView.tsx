@@ -4,12 +4,14 @@ import { History, RotateCcw, Search } from "lucide-react";
 import type { PatchnodeDay, PatchnodeEntry } from "@fusion/core";
 import { fetchPatchnode } from "../api";
 import { ViewHeader } from "./ViewHeader";
+import { FloatingWindow } from "./FloatingWindow";
 import { useAutoPaginationSentinel } from "../hooks/useAutoPaginationSentinel";
 import "./PatchnodeView.css";
 
 export interface PatchnodeViewProps {
   projectId?: string;
   onOpenTaskDetail?: (taskId: string) => void | Promise<void>;
+  floating?: { onClose: () => void; onActivate?: () => void; raiseToFrontSignal?: number };
 }
 
 const PAGE_SIZE = 50;
@@ -20,7 +22,7 @@ function utcDayOffset(offset: number): string {
   return date.toISOString().slice(0, 10);
 }
 
-export function PatchnodeView({ projectId, onOpenTaskDetail }: PatchnodeViewProps) {
+export function PatchnodeView({ projectId, onOpenTaskDetail, floating }: PatchnodeViewProps) {
   const { t, i18n } = useTranslation("app");
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -104,12 +106,13 @@ export function PatchnodeView({ projectId, onOpenTaskDetail }: PatchnodeViewProp
     }
   };
 
-  return (
-    <section className="patchnode-view" data-testid="patchnode-view" aria-labelledby="patchnode-title">
+  const content = (
+    <section className={`patchnode-view${floating ? " patchnode-view--floating" : ""}`} data-testid="patchnode-view" aria-labelledby="patchnode-title">
       <ViewHeader
         icon={History}
         title={t("patchnode.title", "History")}
         titleId="patchnode-title"
+        onClose={floating?.onClose}
         actions={(
           <label className="patchnode-search" role="search">
             <Search aria-hidden="true" />
@@ -169,4 +172,6 @@ export function PatchnodeView({ projectId, onOpenTaskDetail }: PatchnodeViewProp
       </div>
     </section>
   );
+  if (!floating) return content;
+  return <FloatingWindow title={t("patchnode.title", "History")} ariaLabel={t("patchnode.title", "History")} onClose={() => void floating.onClose()} windowKey="history-view" persistGeometryKey="floating-window:history-view" hideHeader dragHandleSelector=".view-header" minSize={{ width: 360, height: 280 }} raiseToFrontSignal={floating.raiseToFrontSignal}><div onPointerDown={floating.onActivate} onFocusCapture={floating.onActivate}>{content}</div></FloatingWindow>;
 }

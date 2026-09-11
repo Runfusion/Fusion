@@ -19,11 +19,17 @@ The Fusion dashboard is the main control plane for tasks, agents, missions, sett
 
 ## History View
 
-History is the permanent daily delivery history. In standard mode it remains available from the main navigation. With global **Alpha Updates** enabled, its general navigation entries disappear and the History button in every completed workflow-column header opens the same interface, including for empty or custom-named completion columns. It groups entries by UTC day and includes a search field that matches task IDs, titles, and captured completion summaries. Each delivery is a separate record, so reopening and completing the same task later adds another entry on that later day instead of replacing the first.
+History is the permanent daily delivery history. In standard mode it remains available from the main navigation. On phones with **Alpha Updates**, its general navigation entry remains hidden and the History button in every completed workflow-column header opens the same interface. On desktop with **Alpha Updates** and a selected project, History is a labeled action in the floating bottom bar and opens as a non-blocking window above the Board. It groups entries by UTC day and includes a search field that matches task IDs, titles, and captured completion summaries. Each delivery is a separate record, so reopening and completing the same task later adds another entry on that later day instead of replacing the first.
 
 Fusion writes a completion entry in the same database transaction that moves the task into its completion lane. The recorded title and summary are point-in-time snapshots that remain unchanged through later moves, re-summarisation, or task deletion. A revert adds a distinct **Cancelled** entry paired to the specific delivery it cancels and marks that completion as **Reverted** without changing other deliveries of the same task.
 
 Chat reads this same history through the read-only `fn_history_read` tool. Ask for a date range or search phrase to review shipped and cancelled work without opening the History view.
+
+### Desktop Alpha pilot windows
+
+Desktop Alpha keeps the Board mounted as the permanent background and replaces the left sidebar with one floating, labeled action bar. **History** and **Notes** are the only pilot windows: they can coexist, move, resize, overlap, retain separate geometry, and return to front without duplicate loading. A dirty Notes draft is guarded on close, Back, page navigation, and project exit; changing to tablet/mobile or disabling Alpha transfers that same controller to the Notes page without losing draft or conflict state.
+
+Dashboard, Board, List, Planning, Missions, Agents, Chat, and Mailbox remain main pages. New Task remains an existing modal action. Graph and enabled plugins, Skills, Memory, Whiteboard, Goals, Automations, Import Tasks, Workflows, Insights, Research, Ideation, Evals, and Settings remain overflow page/actions with their existing gates. Dev Server, Secrets, Pull Requests, Usage, Activity, Git, Files, Scripts, Terminal, Quick Chat, and task-detail surfaces remain owned by their existing Header/right-dock/modal hosts. Tablet, standard desktop, no-project, and mobile navigation retain their existing presentation.
 
 ## Dashboard Updates
 

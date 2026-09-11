@@ -1,6 +1,9 @@
 /*
 FNXC:DoneColumnGeometry 2026-09-09-00:33:
 The Done scroller owns one normal-flow virtual-content block. Spacer heights and row spacing are therefore physical scroll extent, never shrinkable flex children or unmeasured parent gaps.
+
+FNXC:AlphaDesktopNavigation 2026-09-11-19:35:
+The floating desktop action bar does not reduce Board height. Add clearance only to each column's scroll tail so its final controls can scroll above the bar without recreating a dead shell region.
 */
 .column-body {
   display: block;
@@ -13,6 +16,10 @@ The Done scroller owns one normal-flow virtual-content block. Spacer heights and
 
 .column-virtual-content {
   min-inline-size: 0;
+}
+
+.dashboard-project-stack:has(> .alpha-desktop-action-bar) .column-body {
+  padding-block-end: calc(var(--space-3xl) * 2);
 }
 
 .column-virtual-row {

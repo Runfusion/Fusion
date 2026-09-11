@@ -38,6 +38,7 @@ import type { DetailTaskOpenOptions, DetailTaskTab, ModalManager } from "../../h
 import type { PluginTaskView, TaskView, ViewMode } from "../../hooks/useViewState";
 import type { ToastType } from "../../hooks/useToast";
 import type { QuickChatButtonMode } from "../../hooks/useAppSettings";
+import type { UseNotesController } from "../../hooks/useNotes";
 import type { UseRemoteNodeDataResult } from "../../hooks/useRemoteNodeData";
 import type { SectionId } from "../SettingsModal";
 import type { CliActionId } from "../SessionNotificationBanner";
@@ -258,6 +259,7 @@ export interface MainContentProps {
   lastFetchTimeMs: number | undefined;
   openCreateWorkflowWithNav: () => void;
   sidebarActive: boolean;
+  notesController?: UseNotesController;
   isMobile: boolean;
   /** Whether the measured Alpha pill is currently rendered and needs drawer clearance. */
   mainPanelDetailInitialTab: DetailTaskTab | undefined;

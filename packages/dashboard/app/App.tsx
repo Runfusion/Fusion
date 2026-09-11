@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo, useRef, lazy } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef, lazy, Suspense } from "react";
 import { useTranslation } from "react-i18next";
 import {
   type Task,
@@ -31,6 +31,8 @@ import {
 import type { SectionId } from "./components/SettingsModal";
 import { MobileNavBar } from "./components/MobileNavBar";
 import { LeftSidebarNav } from "./components/LeftSidebarNav";
+import { AlphaDesktopActionBar } from "./components/AlphaDesktopActionBar";
+import { buildDashboardNavigationEntries } from "./components/dashboardNavigationEntries";
 import { useRightDockController } from "./components/useRightDockController";
 import { QuickChatFAB } from "./components/QuickChatFAB";
 import { ToastContainer } from "./components/ToastContainer";
@@ -73,6 +75,8 @@ import { usePluginDashboardViews } from "./hooks/usePluginDashboardViews";
 import { isPluginViewId, isPluginViewRegistered } from "./plugins/pluginViewRegistry";
 import { registerBundledPluginViews } from "./plugins/registerBundledPluginViews";
 import { useProjectActions } from "./hooks/useProjectActions";
+import { useAlphaDesktopViewWindows } from "./hooks/useAlphaDesktopViewWindows";
+import { useNotes } from "./hooks/useNotes";
 import { useTaskHandlers } from "./hooks/useTaskHandlers";
 import { useRemoteNodeData } from "./hooks/useRemoteNodeData";
 import { useRemoteNodeEvents } from "./hooks/useRemoteNodeEvents";
@@ -349,7 +353,7 @@ function AppInner() {
   // Project management hooks - MUST be called before any conditional logic
   const { projects, loading: projectsLoading, error: projectsError, refresh: refreshProjects } = useProjects();
   const hasEverLoadedProjectsRef = useRef(projects.length > 0);
-  const { nodes } = useNodes();
+  const { nodes, loading: nodesLoading } = useNodes();
 
   useEffect(() => {
     if (projects.length > 0) {
@@ -362,6 +366,8 @@ function AppInner() {
 
   // Current project with node-aware persistence
   const { currentProject, setCurrentProject, clearCurrentProject, loading: currentProjectLoading } = useCurrentProject(projects, { nodeId: currentNodeId, projectsLoading });
+  /* FNXC:AlphaDesktopWindows 2026-09-11-19:35: App owns one Notes controller across page/window presentation changes so a dirty draft and conflict cannot be reset by responsive chrome changes. */
+  const notesController = useNotes(currentProject?.id);
 
   const {
     hasAiProvider,
@@ -382,30 +388,14 @@ function AppInner() {
     dismiss: dismissUpdateBanner,
   } = useUpdateCheck();
   
-  // Sync node context with useNodes() results:
-  // - Resolve saved node ID to full NodeConfig when nodes list loads
-  // - Fall back to local if selected node is missing or deleted
+  // Resolve a persisted node identity once its current list response arrives.
+  // Destructive missing-node fallback is intentionally deferred until the
+  // project-scoped Notes guard exists below.
   useEffect(() => {
-    // If we have a saved node ID but no currentNode yet (initial hydration),
-    // resolve it from the nodes list
-    if (currentNodeId && !currentNode && nodes.length > 0) {
-      const foundNode = nodes.find((n) => n.id === currentNodeId);
-      if (foundNode) {
-        setCurrentNode(foundNode);
-        return;
-      }
-    }
-    
-    // If we have a currentNode but the saved ID no longer exists in nodes list,
-    // fall back to local view
-    if (currentNodeId && nodes.length > 0) {
-      const nodeExists = nodes.some((n) => n.id === currentNodeId);
-      if (!nodeExists) {
-        // Selected node was deleted or unregistered - fall back to local
-        clearCurrentNode();
-      }
-    }
-  }, [currentNodeId, currentNode, nodes, setCurrentNode, clearCurrentNode]);
+    if (!currentNodeId || currentNode || nodesLoading) return;
+    const foundNode = nodes.find((node) => node.id === currentNodeId);
+    if (foundNode) setCurrentNode(foundNode);
+  }, [currentNodeId, currentNode, nodes, nodesLoading, setCurrentNode]);
   
   // Search query state - must be defined before useTasks
   const [searchQuery, setSearchQuery] = useState("");
@@ -488,7 +478,7 @@ function AppInner() {
   const isMobile = viewportMode === "mobile";
 
   // Navigation history for browser back button (desktop + mobile).
-  const { pushNav, replaceCurrent, removeNav } = useNavigationHistory({ enabled: true });
+  const { pushNav, replaceCurrent, removeNav, promoteNav } = useNavigationHistory({ enabled: true });
   const viewNavRevertRef = useRef(new Map<TaskView, (() => void)[]>());
 
   // View state must be defined before useTasks since useTasks depends on taskView for SSE gating
@@ -537,7 +527,8 @@ function AppInner() {
   FNXC:DashboardShortcuts 2026-07-16-00:00:
   FN-8069 makes Settings and Command Center shortcuts true toggles. Retain the exact view-revert callback pushed to navigation history so a shortcut can remove that identity-matched entry and restore the captured prior view for shortcut and Header/MobileNavBar opens alike; the callback deletes itself for shortcut close and Browser Back paths (Runfusion/Fusion#2118).
   */
-  const handleTaskViewChange = useCallback((newView: TaskView) => {
+  const alphaPilotRouterRef = useRef<(view: TaskView) => boolean>(() => false);
+  const commitTaskViewChange = useCallback((newView: TaskView) => {
     if (newView === "missions") {
       setMissionResumeSessionId(undefined);
       setMissionTargetId(undefined);
@@ -558,6 +549,9 @@ function AppInner() {
       pushNav({ type: "view", revert });
     }
   }, [handleChangeTaskView, taskView, pushNav]);
+  const handleTaskViewChange = useCallback((newView: TaskView) => {
+    if (!alphaPilotRouterRef.current(newView)) commitTaskViewChange(newView);
+  }, [commitTaskViewChange]);
 
   /*
   FNXC:NativeStructureEmbed 2026-07-19-19:30:
@@ -1120,7 +1114,62 @@ function AppInner() {
     setAlphaMenuOpen(false);
   }, [alphaUpdatesEnabled, currentProject?.id, isMobile, mobileKeyboardOpen, modalManager.anyModalOpen, viewMode]);
   const rightDockActive = rightDockEnabled && !isMobile && projectShellPresent;
-  const sidebarActive = leftSidebarNavEnabled && !isMobile && projectShellPresent;
+  const alphaDesktopNavigationActive = alphaUpdatesEnabled && viewportMode === "desktop" && projectShellPresent;
+  const sidebarActive = leftSidebarNavEnabled && !isMobile && projectShellPresent && !alphaDesktopNavigationActive;
+  const alphaDesktopWindows = useAlphaDesktopViewWindows({
+    enabled: alphaDesktopNavigationActive,
+    projectId: currentProject?.id,
+    navigation: { pushNav, removeNav, promoteNav },
+    showBoard: () => { if (taskView !== "board") handleChangeTaskView("board"); },
+    showNotesPage: () => handleChangeTaskView("notes"),
+    notesDirty: notesController.dirty,
+  });
+  const missingNodeFallbackGenerationRef = useRef(0);
+  const latestNodeScopeRef = useRef({ currentNodeId, nodes, nodesLoading });
+  latestNodeScopeRef.current = { currentNodeId, nodes, nodesLoading };
+  const nodeListIdentity = nodes.map((node) => node.id).join("\u0000");
+  const currentNodeMissing = Boolean(currentNodeId && !nodesLoading && !nodes.some((node) => node.id === currentNodeId));
+  useEffect(() => {
+    const generation = ++missingNodeFallbackGenerationRef.current;
+    if (!currentNodeId || !currentNodeMissing) return;
+    const missingNodeId = currentNodeId;
+
+    /*
+    FNXC:AlphaDesktopWindows 2026-09-11-20:29:
+    A node disappearing from an authoritative list is a project-scope exit, not a harmless local fallback. The pilot owner resolves the dirty-Notes verdict first, then runs this freshness fence before it discards the draft or closes any window, so a node that reappears while confirmation is open leaves the complete prior scope intact.
+    */
+    void alphaDesktopWindows.requestCloseAll(() => {
+      const latest = latestNodeScopeRef.current;
+      return generation === missingNodeFallbackGenerationRef.current
+        && !latest.nodesLoading
+        && latest.currentNodeId === missingNodeId
+        && !latest.nodes.some((node) => node.id === missingNodeId);
+    }).then((accepted) => {
+      if (accepted) clearCurrentNode();
+    });
+
+    return () => {
+      if (missingNodeFallbackGenerationRef.current === generation) {
+        missingNodeFallbackGenerationRef.current += 1;
+      }
+    };
+  }, [alphaDesktopWindows.requestCloseAll, clearCurrentNode, currentNodeId, currentNodeMissing, nodeListIdentity]);
+  alphaPilotRouterRef.current = (target) => {
+    if (!alphaDesktopNavigationActive) return false;
+    if (target === "patchnode" || target === "notes") {
+      alphaDesktopWindows.open(target);
+      return true;
+    }
+    if (alphaDesktopWindows.windows.length === 0) return false;
+    void alphaDesktopWindows.requestCloseAll().then((accepted) => {
+      if (accepted) commitTaskViewChange(target);
+    });
+    return true;
+  };
+  useEffect(() => {
+    if (!alphaDesktopNavigationActive || (taskView !== "patchnode" && taskView !== "notes")) return;
+    alphaDesktopWindows.open(taskView);
+  }, [alphaDesktopNavigationActive, alphaDesktopWindows.open, taskView]);
   const agentOnboardingEnabled = experimentalFeatures.agentOnboarding === true;
   const agentsEnabled = true;
 
@@ -1240,6 +1289,7 @@ function AppInner() {
     closeSetupWizard: modalManager.closeSetupWizard,
     closeModelOnboarding: modalManager.closeModelOnboarding,
     closeProjectScopedModals: closeProjectScopedUi,
+    requestCloseProjectScopedUi: alphaDesktopWindows.requestCloseAll,
     // FNXC:GithubStarAsk 2026-08-19-03:59: finishing onboarding is the first moment we ask for a GitHub star.
     onOnboardingCompleted: handleStarPrompt,
   });
@@ -1436,6 +1486,16 @@ function AppInner() {
     modalManager.closeTerminal();
   }, [modalManager, removeNav]);
 
+  /*
+  FNXC:AlphaDesktopWindows 2026-09-11-20:21:
+  App's Escape authority can close Task Detail before the later-mounted modal host receives the key. Consume the exact navigation callback first and perform the same detail/deep-link cleanup so no phantom modal entry remains above History or Notes.
+  */
+  const closeDetailTaskWithNav = useCallback(() => {
+    removeNav(modalManager.closeDetailTask);
+    modalManager.closeDetailTask();
+    handleDetailClose();
+  }, [handleDetailClose, modalManager, removeNav]);
+
   const toggleTerminalWithNav = useCallback(() => {
     if (!modalManager.terminalOpen) {
       modalManager.toggleTerminal();
@@ -1453,7 +1513,7 @@ function AppInner() {
     FNXC:DashboardShortcuts 2026-07-04-12:02:
     Popped-out tasks are the most recent floating work surface and must close before Quick Chat. This preserves the topmost-popup invariant when a task popout overlays chat, then falls back to Terminal and modal-manager surfaces one layer per Escape.
     */
-    return closeTopmostDashboardPopupForShortcut(
+    const closedHigherPrioritySurface = closeTopmostDashboardPopupForShortcut(
       {
         poppedOutTaskEntries: visiblePoppedOutTaskEntries,
         poppedOutChatEntries,
@@ -1470,7 +1530,7 @@ function AppInner() {
           [modalManager.schedulesOpen, modalManager.closeSchedules],
           [modalManager.githubImportOpen, modalManager.closeGitHubImport],
           [modalManager.settingsOpen, modalManager.closeSettings],
-          [Boolean(modalManager.detailTask), modalManager.closeDetailTask],
+          [Boolean(modalManager.detailTask), closeDetailTaskWithNav],
           [Boolean(modalManager.groupModalGroupId), modalManager.closeGroupModal],
           [modalManager.isPlanningOpen, modalManager.closePlanning],
           [modalManager.newTaskModalOpen, modalManager.closeNewTask],
@@ -1485,7 +1545,16 @@ function AppInner() {
         closeTerminal: closeTerminalWithNav,
       },
     );
-  }, [closePoppedOutChat, closePoppedOutTaskWithNav, closeTerminalWithNav, modalManager, poppedOutChatEntries, quickChatOpen, visiblePoppedOutTaskEntries]);
+    if (closedHigherPrioritySurface) return true;
+    const pilotTopmost = alphaDesktopWindows.topmost;
+    if (!pilotTopmost) return false;
+    /*
+    FNXC:AlphaDesktopWindows 2026-09-11-20:06:
+    Non-modal pilot windows still participate in App's single-surface Escape authority. Existing task/chat/modal owners retain their higher-priority close order; otherwise Escape requests closure of only the topmost pilot and honors the Notes discard guard before touching anything underneath.
+    */
+    void alphaDesktopWindows.requestClose(pilotTopmost);
+    return true;
+  }, [alphaDesktopWindows.requestClose, alphaDesktopWindows.topmost, closeDetailTaskWithNav, closePoppedOutChat, closePoppedOutTaskWithNav, closeTerminalWithNav, modalManager, poppedOutChatEntries, quickChatOpen, visiblePoppedOutTaskEntries]);
 
   const openFilesWithNav = useCallback((workspace?: string, initialFile?: string | null) => {
     modalManager.openFiles(workspace, initialFile);
@@ -1924,6 +1993,7 @@ function AppInner() {
     lastFetchTimeMs,
     openCreateWorkflowWithNav,
     sidebarActive,
+    notesController,
     isMobile,
     mergeTask,
         resetTask,
@@ -2013,6 +2083,31 @@ function AppInner() {
     markGitHubStarPromptShown,
     setShowGitHubStarPrompt,
   };
+  const alphaDesktopNavigationEntries = buildDashboardNavigationEntries({
+    view: taskView,
+    onChangeView: async (target) => {
+      if (!await alphaDesktopWindows.requestCloseAll()) return false;
+      commitTaskViewChange(target);
+      return true;
+    },
+    onOpenPilot: alphaDesktopWindows.open,
+    onNewTask: () => openNewTaskWithNav(),
+    onOpenSettings: async () => {
+      if (!await alphaDesktopWindows.requestCloseAll()) return false;
+      modalManager.setSettingsSection(undefined);
+      commitTaskViewChange("settings");
+      return true;
+    },
+    pluginDashboardViews,
+    showAgents: agentsEnabled,
+    showSkills: skillsEnabled,
+    flags: { memory: memoryEnabled, whiteboard: whiteboardEnabled, goals: goalsEnabled, insights: insightsEnabled, research: researchEnabled, ideation: ideationEnabled, evals: evalsEnabled },
+    mailboxUnreadCount,
+    mailboxPendingApprovalCount,
+    chatHasUnreadResponse,
+    planningNeedsInput,
+  });
+  const alphaDesktopActiveNavigationId = alphaDesktopWindows.topmost ?? taskView;
   return (
     <AlphaProvider enabled={alphaUpdatesEnabled}>
     <ConfirmDialogProvider skipConfirmations={skipConfirmationDialogs}>
@@ -2020,7 +2115,7 @@ function AppInner() {
       <ChatSubmitOnEnterProvider value={chatSubmitOnEnter}>
       <ModalDismissPreferenceProvider enabled={dismissModalsOnOutsideClick}>
         <QuickAddSubmitOnEnterProvider enabled={quickAddSubmitOnEnter}>
-      <NavigationHistoryProvider value={{ pushNav, replaceCurrent, removeNav }}>
+      <NavigationHistoryProvider value={{ pushNav, replaceCurrent, removeNav, promoteNav }}>
         <FileBrowserProvider openFile={openFileInBrowser}>
           <RetryWarningProvider value={maxTotalRetriesBeforeFail * RETRY_WARNING_RATIO}>
             <CostBadgeProvider value={{ enabled: showCostBadgeOnCards, pricingOverrides: modelPricingOverrides }}>
@@ -2066,19 +2161,24 @@ function AppInner() {
         projectId={currentProject?.id}
         mobileNavEnabled={isMobile}
         alphaUpdatesEnabled={alphaUpdatesEnabled}
-        leftSidebarNavActive={sidebarActive}
+        leftSidebarNavActive={sidebarActive || alphaDesktopNavigationActive}
         rightDockAvailable={rightDockActive}
         rightDockOpen={rightDock.open}
         onToggleRightDock={rightDock.toggle}
         // Node switching props
         availableNodes={nodes}
         currentNode={currentNode}
-        onSelectNode={(node) => {
-          if (node === null) {
-            clearCurrentNode();
-          } else {
-            setCurrentNode(node);
-          }
+        onSelectNode={async (node) => {
+          const targetNodeId = node?.id ?? null;
+          if (targetNodeId === currentNodeId) return true;
+          /*
+          FNXC:AlphaDesktopWindows 2026-09-11-20:06:
+          Node changes replace the project scope just like project selection does. The shared pilot-window guard must accept before NodeContext mutates, otherwise a dirty Notes controller can reset before its discard decision; refusal also keeps the selector open for a retry.
+          */
+          if (!await alphaDesktopWindows.requestCloseAll()) return false;
+          if (node === null) clearCurrentNode();
+          else setCurrentNode(node);
+          return true;
         }}
         isRemote={isRemote}
         experimentalFeatures={{
@@ -2213,6 +2313,24 @@ function AppInner() {
         </div>
         {rightDock.dock}
       </div>
+      {alphaDesktopNavigationActive ? <AlphaDesktopActionBar entries={alphaDesktopNavigationEntries} activeId={alphaDesktopActiveNavigationId} /> : null}
+      {alphaDesktopNavigationActive ? alphaDesktopWindows.windows.map((entry) => entry.id === "patchnode" ? (
+        <Suspense fallback={null} key={entry.id}>
+          <PatchnodeView
+            projectId={currentProject?.id}
+            onOpenTaskDetail={async (taskId) => {
+              const task = await fetchTaskDetail(taskId, currentProject?.id);
+              /* FNXC:AlphaDesktopWindows 2026-09-11-20:06: History delegates to the canonical nav-aware Task Detail opener so Browser Back and Escape close the detail layer before either pilot window. */
+              openDetailTask(task);
+            }}
+            floating={{ onClose: () => { void alphaDesktopWindows.requestClose("patchnode"); }, onActivate: () => alphaDesktopWindows.activate("patchnode"), raiseToFrontSignal: entry.raiseToFrontSignal }}
+          />
+        </Suspense>
+      ) : (
+        <Suspense fallback={null} key={entry.id}>
+          <NotesView projectId={currentProject?.id} addToast={addToast} controller={notesController} floating={{ onClose: () => { void alphaDesktopWindows.requestClose("notes"); }, onActivate: () => alphaDesktopWindows.activate("notes"), raiseToFrontSignal: entry.raiseToFrontSignal, registerGuard: (guard, onAccepted) => alphaDesktopWindows.registerGuard("notes", guard, onAccepted) }} />
+        </Suspense>
+      )) : null}
       {/*
       FNXC:Terminal 2026-07-26-11:40:
       Mount the terminal ONLY while it is open. It used to be mounted for the whole session (visibility driven purely by `isOpen`), so a closed terminal still ran `useTerminalSessions` + `useTerminal`: a live PTY WebSocket, its heartbeat interval, and — because xterm is torn down on close, leaving no `onData` subscriber — an UNBOUNDED client-side buffer of every byte the shell emitted while the user was elsewhere. Background timers/sockets are a primary tab-discard signal on iOS Safari and Chrome Android, and the growing buffer is the memory pressure that triggers the discard; together they are why returning to the dashboard after a few minutes costs a full white-splash reload.

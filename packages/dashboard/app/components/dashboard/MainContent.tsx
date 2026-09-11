@@ -249,6 +249,7 @@ export function MainContent(props: MainContentProps) {
   lastFetchTimeMs,
   openCreateWorkflowWithNav,
   sidebarActive,
+  notesController,
   isMobile,
   mainPanelDetailInitialTab,
   closeTaskDetailMainPanel,
@@ -738,7 +739,7 @@ export function MainContent(props: MainContentProps) {
     return (
       <PageErrorBoundary>
         <Suspense fallback={null}>
-          <NotesView projectId={currentProject?.id} addToast={addToast} />
+          <NotesView projectId={currentProject?.id} addToast={addToast} controller={notesController} />
         </Suspense>
       </PageErrorBoundary>
     );

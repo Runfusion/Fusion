@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 import { LeftSidebarNav } from "../LeftSidebarNav";
 import { MobileNavBar } from "../MobileNavBar";
 import { Header } from "../Header";
+import { AlphaDesktopActionBar } from "../AlphaDesktopActionBar";
+import { buildDashboardNavigationEntries } from "../dashboardNavigationEntries";
 
 vi.mock("../../api", () => ({ fetchScripts: vi.fn().mockResolvedValue({}) }));
 
@@ -64,7 +66,7 @@ describe("Patchnode navigation surfaces", () => {
     expect(promoted.onChangeView).toHaveBeenCalledWith("patchnode");
   });
 
-  it("removes every general History surface in Alpha", () => {
+  it("retire History de la navigation mobile Alpha mais l’expose dans la barre desktop Alpha", () => {
     Object.defineProperty(window, "matchMedia", {
       writable: true,
       value: vi.fn().mockImplementation((query: string) => ({
@@ -90,6 +92,11 @@ describe("Patchnode navigation surfaces", () => {
     render(<Header onOpenSettings={vi.fn()} onOpenGitHubImport={vi.fn()} onChangeView={vi.fn()} showSkillsTab alphaUpdatesEnabled />);
     fireEvent.click(screen.getByTestId("view-toggle-overflow-trigger"));
     expect(screen.queryByTestId("view-overflow-patchnode")).toBeNull();
+
+    const onOpenPilot = vi.fn();
+    render(<AlphaDesktopActionBar entries={buildDashboardNavigationEntries({ view: "board", onChangeView: vi.fn(), onOpenPilot })} activeId="board" />);
+    fireEvent.click(screen.getByTestId("alpha-desktop-nav-patchnode"));
+    expect(onOpenPilot).toHaveBeenCalledWith("patchnode");
   });
 
   it("navigates from Header overflow and closes the menu", () => {

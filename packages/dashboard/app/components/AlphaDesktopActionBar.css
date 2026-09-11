@@ -1,0 +1,26 @@
+/*
+FNXC:AlphaDesktopNavigation 2026-09-11-19:35:
+The desktop Alpha bar floats above the existing executor footer without participating in Board height. Its horizontal scroller preserves every labeled keyboard target at constrained desktop widths, while only the Board's scrollable tail receives clearance.
+*/
+.alpha-desktop-action-bar {
+  position: fixed;
+  inset-inline: var(--space-2xl);
+  bottom: calc(var(--executor-footer-height) + var(--space-md));
+  z-index: var(--z-sticky);
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-xs);
+  padding: var(--space-sm);
+  border: var(--btn-border-width) solid var(--border-color);
+  border-radius: var(--radius-xl);
+  background: var(--bg-secondary);
+  box-shadow: var(--shadow-lg);
+}
+.alpha-desktop-action-bar__scroller { display: flex; flex: 1; justify-content: center; gap: var(--space-xs); overflow-x: auto; }
+.alpha-desktop-action-bar__action { position: relative; display: inline-flex; flex: 0 0 auto; min-inline-size: calc(var(--space-xl) * 2); flex-direction: column; align-items: center; justify-content: center; gap: var(--space-xs); padding: var(--space-xs) var(--space-sm); border: 0; border-radius: var(--radius-md); color: var(--text-secondary); background: transparent; font: inherit; cursor: pointer; }
+.alpha-desktop-action-bar__action:hover, .alpha-desktop-action-bar__action--active { color: var(--accent); background: var(--bg-hover); }
+.alpha-desktop-action-bar__action:focus-visible { outline: none; box-shadow: var(--focus-ring-strong); }
+.alpha-desktop-action-bar__icon { position: relative; display: inline-flex; }
+.alpha-desktop-action-bar__icon > svg { inline-size: var(--icon-size-md); block-size: var(--icon-size-md); }
+.alpha-desktop-action-bar__more { position: relative; display: flex; }
+.alpha-desktop-action-bar__menu { position: absolute; inset-inline-end: 0; bottom: calc(100% + var(--space-sm)); display: grid; grid-template-columns: repeat(3, minmax(max-content, 1fr)); gap: var(--space-xs); max-block-size: calc(100vh - var(--space-3xl) * 3); overflow: auto; padding: var(--space-sm); border: var(--btn-border-width) solid var(--border-color); border-radius: var(--radius-lg); background: var(--bg-secondary); box-shadow: var(--shadow-lg); }

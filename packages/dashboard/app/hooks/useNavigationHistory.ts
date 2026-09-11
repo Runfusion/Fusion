@@ -20,8 +20,8 @@ import {
  * auto-close side effect fires before a `popstate` event.
  */
 export type NavEntry =
-  | { type: "modal"; close: () => void }
-  | { type: "view"; revert: () => void };
+  | { type: "modal"; id?: string; close: () => void | boolean | Promise<void | boolean> }
+  | { type: "view"; id?: string; revert: () => void | boolean | Promise<void | boolean> };
 
 export interface UseNavigationHistoryOptions {
   /** Only active on mobile. When false, pushNav/replaceCurrent are no-ops. */
@@ -39,9 +39,11 @@ export interface UseNavigationHistoryResult {
    * replaces the current state for a close-then-navigate transition.
    */
   removeNav: (
-    closeOrRevert: () => void,
+    identity: string | (() => unknown),
     options?: { preserveHistoryPosition?: boolean },
   ) => void;
+  /** Promote a stable entry to the top without increasing browser-history depth. */
+  promoteNav: (id: string) => void;
 }
 
 const SELF_POP_FALLBACK_CLEAR_MS = 1_000;
@@ -75,8 +77,12 @@ export function useNavigationHistoryContext(): UseNavigationHistoryResult {
  * When `enabled` is false, all operations are no-ops and no `popstate`
  * listener is registered.
  */
-function getEntryCallback(entry: NavEntry): () => void {
+function getEntryCallback(entry: NavEntry): () => void | boolean | Promise<void | boolean> {
   return entry.type === "modal" ? entry.close : entry.revert;
+}
+
+function entryMatches(entry: NavEntry, identity: string | (() => unknown)): boolean {
+  return typeof identity === "string" ? entry.id === identity : getEntryCallback(entry) === identity;
 }
 
 export function useNavigationHistory(
@@ -138,7 +144,7 @@ export function useNavigationHistory(
       // top entry still uses the same callback, reconcile it in place instead
       // of silently dropping the reopen and leaving history/stack out of sync.
       const top = stackRef.current[stackRef.current.length - 1];
-      if (top && getEntryCallback(top) === getEntryCallback(entry)) {
+      if (top && ((entry.id && top.id === entry.id) || getEntryCallback(top) === getEntryCallback(entry))) {
         stackRef.current[stackRef.current.length - 1] = entry;
         writeHistoryState("replace", stackRef.current.length);
         return;
@@ -162,12 +168,12 @@ export function useNavigationHistory(
   );
 
   const removeNav = useCallback(
-    (closeOrRevert: () => void, options?: { preserveHistoryPosition?: boolean }) => {
+    (identity: string | (() => unknown), options?: { preserveHistoryPosition?: boolean }) => {
       if (!enabledRef.current) return;
 
       for (let i = stackRef.current.length - 1; i >= 0; i -= 1) {
         const entry = stackRef.current[i];
-        if (getEntryCallback(entry) !== closeOrRevert) continue;
+        if (!entryMatches(entry, identity)) continue;
 
         stackRef.current.splice(i, 1);
 
@@ -199,6 +205,15 @@ export function useNavigationHistory(
     },
     [writeHistoryState],
   );
+
+  const promoteNav = useCallback((id: string) => {
+    if (!enabledRef.current) return;
+    const index = stackRef.current.findIndex((entry) => entry.id === id);
+    if (index < 0 || index === stackRef.current.length - 1) return;
+    const [entry] = stackRef.current.splice(index, 1);
+    stackRef.current.push(entry);
+    writeHistoryState("replace", stackRef.current.length);
+  }, [writeHistoryState]);
 
   // Register popstate listener. Always registers in browser environments but
   // the handler checks enabledRef.current to skip when disabled (desktop).
@@ -253,17 +268,32 @@ export function useNavigationHistory(
 
       isPoppingRef.current = true;
 
-      try {
-        // Pop entries in reverse order (top of stack first)
-        for (let i = 0; i < poppedCount; i++) {
-          const entry = stackRef.current.pop();
-          if (entry) {
-            getEntryCallback(entry)();
+      /*
+      FNXC:AlphaDesktopWindows 2026-09-11-19:35:
+      A guarded floating view must remain on the stack until its asynchronous close verdict accepts. Browser Back therefore evaluates entries serially and restores the current depth when a guard cancels, while existing synchronous callbacks retain the same ordering.
+      */
+      const finish = () => { isPoppingRef.current = false; };
+      const processEntry = (index: number): void => {
+        if (index >= poppedCount) { finish(); return; }
+        const entry = stackRef.current.at(-1);
+        if (!entry) { finish(); return; }
+        const verdict = getEntryCallback(entry)();
+        const accept = (accepted: void | boolean) => {
+          if (accepted === false) {
+            writeHistoryState("replace", stackRef.current.length);
+            finish();
+            return;
           }
+          if (stackRef.current.at(-1) === entry) stackRef.current.pop();
+          processEntry(index + 1);
+        };
+        if (verdict && typeof (verdict as PromiseLike<unknown>).then === "function") {
+          void Promise.resolve(verdict).then(accept, () => accept(false));
+        } else {
+          accept(verdict as void | boolean);
         }
-      } finally {
-        isPoppingRef.current = false;
-      }
+      };
+      processEntry(0);
     };
 
     window.addEventListener(FUSION_NATIVE_BACK_EVENT, handleNativeBack);
@@ -278,5 +308,5 @@ export function useNavigationHistory(
     };
   }, []);
 
-  return { pushNav, replaceCurrent, removeNav };
+  return { pushNav, replaceCurrent, removeNav, promoteNav };
 }

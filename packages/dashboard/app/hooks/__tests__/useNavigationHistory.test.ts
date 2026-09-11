@@ -460,6 +460,7 @@ describe("useNavigationHistory", () => {
       pushNav: vi.fn(),
       replaceCurrent: vi.fn(),
       removeNav: vi.fn(),
+      promoteNav: vi.fn(),
     };
 
     const wrapper = ({ children }: { children: ReactNode }) =>

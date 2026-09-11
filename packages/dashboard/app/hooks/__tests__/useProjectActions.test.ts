@@ -62,11 +62,11 @@ describe("useProjectActions", () => {
 
   it("handleSelectProject sets current project, view mode, and URL project state", () => {
     window.history.replaceState({ preserved: "state" }, "", "/?task=FN-1&view=mailbox#message-1");
-    const options = createOptions();
+    const options = createOptions({ currentProject: null });
     const { result } = renderHook(() => useProjectActions(options));
 
     act(() => {
-      result.current.handleSelectProject(PROJECT);
+      void result.current.handleSelectProject(PROJECT);
     });
 
     expect(options.setCurrentProject).toHaveBeenCalledWith(PROJECT);
@@ -238,6 +238,26 @@ describe("useProjectActions", () => {
     });
 
     expect(options.addToast).toHaveBeenCalledWith("Failed to remove project Demo", "error");
+  });
+
+  it("attend la garde et n’applique aucun effet de portée quand elle refuse", async () => {
+    const guard = vi.fn().mockResolvedValue(false);
+    const options = createOptions({ requestCloseProjectScopedUi: guard });
+    const otherProject = { ...PROJECT, id: "other" };
+    const { result } = renderHook(() => useProjectActions(options));
+
+    await act(async () => {
+      expect(await result.current.handleSelectProject(otherProject)).toBe(false);
+      expect(await result.current.handleViewAllProjects()).toBe(false);
+      await result.current.handleRemoveProject(PROJECT);
+    });
+
+    expect(guard).toHaveBeenCalledTimes(3);
+    expect(options.setCurrentProject).not.toHaveBeenCalled();
+    expect(options.clearCurrentProject).not.toHaveBeenCalled();
+    expect(options.closeProjectScopedModals).not.toHaveBeenCalled();
+    expect(mockUnregisterProject).not.toHaveBeenCalled();
+    expect(new URLSearchParams(window.location.search).get("project")).toBeNull();
   });
 
   it("handleToggleFavorite delegates and shows error toast on failure", async () => {

@@ -35,14 +35,16 @@ interface UseProjectActionsOptions {
   render over the newly selected project.
   */
   closeProjectScopedModals: () => void;
+  /** Guard project-scope destruction before any URL, project, view, or modal mutation. */
+  requestCloseProjectScopedUi?: () => boolean | Promise<boolean>;
 }
 
 export interface UseProjectActionsResult {
-  handleSelectProject: (project: ProjectInfo) => void;
-  handleViewAllProjects: () => void;
+  handleSelectProject: (project: ProjectInfo) => Promise<boolean>;
+  handleViewAllProjects: () => Promise<boolean>;
   handleOpenSettings: () => void;
   handleAddProject: () => void;
-  handleSetupComplete: (project: ProjectInfo) => void;
+  handleSetupComplete: (project: ProjectInfo) => Promise<boolean>;
   handleModelOnboardingComplete: (outcome?: OnboardingCompletionOutcome) => void;
   handlePauseProject: (project: ProjectInfo) => Promise<void>;
   handleResumeProject: (project: ProjectInfo) => Promise<void>;
@@ -69,30 +71,32 @@ export function useProjectActions(options: UseProjectActionsOptions): UseProject
     closeModelOnboarding,
     closeProjectScopedModals,
     onOnboardingCompleted,
+    requestCloseProjectScopedUi,
   } = options;
 
-  const handleSelectProject = useCallback((project: ProjectInfo) => {
+  const handleSelectProject = useCallback(async (project: ProjectInfo) => {
     /*
-    FNXC:ProjectSwitchModalReset 2026-07-23-00:00:
-    Swapping projects must not leave the previous project's modals (task detail, group,
-    git manager, …) rendering over the new project. Re-selecting the already
-    current project is a no-op navigation and must NOT dismiss whatever the user has open.
+    FNXC:AlphaDesktopWindows 2026-09-11-19:35:
+    A project boundary must await the shared destructive-close verdict before changing URL, project, view, or scoped modal state. Re-selecting the current project remains a synchronous-effect-free success.
     */
-    if (project.id !== currentProject?.id) {
-      closeProjectScopedModals();
-    }
+    if (project.id === currentProject?.id) return true;
+    if (requestCloseProjectScopedUi && !await requestCloseProjectScopedUi()) return false;
+    closeProjectScopedModals();
     replaceProjectIdInUrl(project.id);
     setCurrentProject(project);
     setViewMode("project");
-  }, [closeProjectScopedModals, currentProject?.id, setCurrentProject, setViewMode]);
+    return true;
+  }, [closeProjectScopedModals, currentProject?.id, requestCloseProjectScopedUi, setCurrentProject, setViewMode]);
 
-  const handleViewAllProjects = useCallback(() => {
+  const handleViewAllProjects = useCallback(async () => {
+    if (requestCloseProjectScopedUi && !await requestCloseProjectScopedUi()) return false;
     closeProjectScopedModals();
     replaceProjectIdInUrl(null);
     clearCurrentProject();
     setViewMode("overview");
     setTaskView("command-center");
-  }, [clearCurrentProject, closeProjectScopedModals, setViewMode, setTaskView]);
+    return true;
+  }, [clearCurrentProject, closeProjectScopedModals, requestCloseProjectScopedUi, setViewMode, setTaskView]);
 
   const handleOpenSettings = useCallback(() => {
     openSettings();
@@ -102,17 +106,17 @@ export function useProjectActions(options: UseProjectActionsOptions): UseProject
     openSetupWizard();
   }, [openSetupWizard]);
 
-  const handleSetupComplete = useCallback((project: ProjectInfo) => {
+  const handleSetupComplete = useCallback(async (project: ProjectInfo) => {
+    if (project.id !== currentProject?.id && requestCloseProjectScopedUi && !await requestCloseProjectScopedUi()) return false;
     closeSetupWizard();
-    if (project.id !== currentProject?.id) {
-      closeProjectScopedModals();
-    }
+    if (project.id !== currentProject?.id) closeProjectScopedModals();
     replaceProjectIdInUrl(project.id);
     setCurrentProject(project);
     setViewMode("project");
     addToast(t("projects.setup.success", "Project {{name}} registered successfully", { name: project.name }), "success");
     void refreshProjects();
-  }, [closeSetupWizard, closeProjectScopedModals, currentProject?.id, setCurrentProject, setViewMode, addToast, refreshProjects, t]);
+    return true;
+  }, [closeSetupWizard, closeProjectScopedModals, currentProject?.id, requestCloseProjectScopedUi, setCurrentProject, setViewMode, addToast, refreshProjects, t]);
 
   const handleModelOnboardingComplete = useCallback((outcome?: OnboardingCompletionOutcome) => {
     closeModelOnboarding();
@@ -142,6 +146,7 @@ export function useProjectActions(options: UseProjectActionsOptions): UseProject
 
   const handleRemoveProject = useCallback(async (project: ProjectInfo) => {
     try {
+      if (currentProject?.id === project.id && requestCloseProjectScopedUi && !await requestCloseProjectScopedUi()) return;
       await unregisterProject(project.id);
       addToast(t("projects.actions.removeSuccess", "Project {{name}} removed", { name: project.name }), "success");
 
@@ -155,7 +160,7 @@ export function useProjectActions(options: UseProjectActionsOptions): UseProject
     } catch {
       addToast(t("projects.actions.removeError", "Failed to remove project {{name}}", { name: project.name }), "error");
     }
-  }, [currentProject, clearCurrentProject, setViewMode, addToast, refreshProjects, t]);
+  }, [currentProject, requestCloseProjectScopedUi, clearCurrentProject, setViewMode, addToast, refreshProjects, t]);
 
   const handleToggleFavorite = useCallback(async (provider: string) => {
     try {

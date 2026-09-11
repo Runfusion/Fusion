@@ -1,6 +1,9 @@
 /*
 FNXC:PatchnodeView 2026-08-28-12:16:
 Patchnode uses the shared view shell and token-only cards so the permanent daily history remains readable as a single column on desktop and mobile without introducing a parallel visual system.
+
+FNXC:AlphaDesktopWindows 2026-09-11-19:35:
+The floating presentation reuses this exact History body and its request lifecycle; only the shared ViewHeader becomes the drag/close chrome inside one non-modal FloatingWindow.
 */
 .patchnode-view {
   display: flex;
@@ -12,6 +15,8 @@ Patchnode uses the shared view shell and token-only cards so the permanent daily
   min-height: 0;
   overflow-y: auto;
 }
+
+.patchnode-view--floating .view-header { cursor: move; }
 
 .patchnode-view__content {
   display: flex;

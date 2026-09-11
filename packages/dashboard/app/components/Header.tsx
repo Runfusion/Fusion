@@ -109,8 +109,8 @@ export interface HeaderProps {
   availableNodes?: NodeConfig[];
   /** Currently selected node (null for local) */
   currentNode?: NodeConfig | null;
-  /** Callback when a node is selected */
-  onSelectNode?: (node: NodeConfig | null) => void;
+  /** Callback when a node is selected; false keeps the selector open when a project-scoped guard refuses the transition. */
+  onSelectNode?: (node: NodeConfig | null) => void | boolean | Promise<void | boolean>;
   /** Whether the current view is a remote node */
   isRemote?: boolean;
   /** Experimental feature flags controlling visibility of nav items. */
@@ -576,8 +576,9 @@ export function Header({
                     <button
                       className={`node-selector-option${!isRemote ? " node-selector-option--active" : ""}`}
                       onClick={() => {
-                        onSelectNode?.(null);
-                        setIsNodeSelectorOpen(false);
+                        void Promise.resolve(onSelectNode?.(null)).then((accepted) => {
+                          if (accepted !== false) setIsNodeSelectorOpen(false);
+                        });
                       }}
                       role="option"
                       aria-selected={!isRemote}
@@ -593,8 +594,9 @@ export function Header({
                         key={node.id}
                         className={`node-selector-option${currentNode?.id === node.id ? " node-selector-option--active" : ""}`}
                         onClick={() => {
-                          onSelectNode?.(node);
-                          setIsNodeSelectorOpen(false);
+                          void Promise.resolve(onSelectNode?.(node)).then((accepted) => {
+                            if (accepted !== false) setIsNodeSelectorOpen(false);
+                          });
                         }}
                         role="option"
                         aria-selected={currentNode?.id === node.id}
