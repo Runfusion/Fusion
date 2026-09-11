@@ -67,6 +67,8 @@ import {
   createFnAgent as engineCreateFnAgent,
   createResolvedAgentSession as engineCreateResolvedAgentSession,
   promptWithFallback as enginePromptWithFallback,
+  ChatContextOverflowError,
+  ensureContextWithinCompactionThreshold,
   extractRuntimeHint,
   extractRuntimeModel,
   buildSessionSkillContextSync,
@@ -379,6 +381,61 @@ FNXC:ChatCodingTools 2026-07-19-00:00:
 Dashboard Chat sessions intentionally use the project-root coding workspace builtins so direct, room, and task-detail planner Chat can read, write, edit, and investigate with bash. Keep this shared mode unfiltered: permanent-agent action gates still enforce file-write and command-execution policy when a durable agent is bound, while task-planner Chat reaches the same direct-chat session path.
 */
 const CHAT_CODING_TOOLS = "coding" as const;
+
+/*
+FNXC:ChatContextBudget 2026-08-20-11:56:
+User requirement: agent chat must keep working when the selected model has only a
+64K context window. The measured static floor of an agent-bound CEO chat on the
+128K-window qwen38 model was ~124K tokens — made up of the full project long-term
+memory (~65K tokens), the 50K-char agent workspace memory clamp (~14K tokens), the
+86 fn_* host-extension executor tool schemas (~15K+ tokens), and the pi-injected
+AGENTS.md (~15K tokens). That exceeded the 80% compaction threshold (102400) so the
+guard's pre-overflow compaction had no conversation branch left to compress and
+every send failed with ChatContextOverflowError (observed on chat-f7689c06 and
+chat-02c9c9de, 2026-08-19/20).
+
+CHAT_MEMORY_CAP_CHARS bounds the memory sections of the chat system prompt (see
+buildAgentChatPrompt `memoryCapChars`): oversized memory is inlined as a heading
+index and stays reachable through fn_memory_search / fn_memory_get. With the cap,
+the static floor drops to roughly ~35K tokens, which fits a 64K window with
+conversation + output headroom (guard threshold 51200, hard limit 48K).
+*/
+const CHAT_MEMORY_CAP_CHARS = 8_000;
+
+/*
+FNXC:ChatContextBudget 2026-08-20-11:56:
+The dashboard process loads the @runfusion/fusion host extension into every pi
+session, so without a filter the chat session also exposes all 86 executor
+fn_* tools (task delete/bypass, agent create, insights, evals, …) on top of the
+curated chat toolset — a large static schema payload that chat does not need.
+CHAT_CODING_TOOL_ALLOWLIST names the builtin coding tools. The engine applies a
+toolsAllowlist to EVERY registered tool — caller customTools included — so the
+allowlist passed to createResolvedAgentSession must also contain the curated
+chat toolset names (see the call sites), or the custom tools are filtered out
+before the session is created (observed 2026-08-20: chat sessions shrank to the
+7 builtin coding tools only, dropping fn_memory_search / fn_task_show / workflow
+tools). The 86 host-extension executor tools are excluded by pi's session-level
+registry filter because their names are not in the list. The chat surface is
+designed around the curated toolset (action-gate semantics included); losing the
+raw executor tools is intentional. Engine lanes (triage/executor/reviewer/merger)
+do not pass this allowlist and keep the full extension surface.
+*/
+const CHAT_CODING_TOOL_ALLOWLIST = ["read", "bash", "edit", "write", "grep", "find", "ls"] as const;
+
+/**
+ * FNXC:ChatContextBudget 2026-08-20-12:43:
+ * Combine the builtin coding allowlist with the curated chat toolset names.
+ * The engine's toolsAllowlist is a GLOBAL allowlist (builtins + customTools +
+ * host-extension tools are all filtered by name — pi.ts isAllowedByToolAllowlist
+ * also filters caller-supplied customTools), so passing only the builtin names
+ * silently dropped the entire curated chat toolset from chat sessions. The
+ * host-extension executor tools stay hidden because their names are not in the
+ * combined list; pi's session-level tool filter removes them from the registry.
+ */
+export function chatToolAllowlist(customToolNames: string[]): string[] {
+  return [...CHAT_CODING_TOOL_ALLOWLIST, ...customToolNames];
+}
+
 const ROOM_AMBIENT_MAX_RESPONDERS = 5;
 
 type ChatSessionStatsLike = {
@@ -1589,6 +1646,20 @@ export class ChatReplacementError extends Error {
 
 export class ChatManager {
   private agentStoreReady?: Promise<void>;
+  /**
+   * FNXC:ChatContextBudget 2026-09-11-12:51:
+   * Latest settings snapshot used ONLY by the RUFU-135 chat-context-budget kill switch
+   * on the direct-chat send path. Upstream FN-9241 made "sending never waits on
+   * settings" a hard invariant (title work moved into a detached read; pinned by
+   * chat-manager.test "does not wait for title settings before prompting the chat
+   * agent"), which an awaited kill-switch read violates: the pin mock hangs the first
+   * settings read and the awaited read would take that slot, wedging the send. The
+   * switch therefore reads this cache (undefined -> default ON) and refreshes it
+   * fire-and-forget per send AFTER the detached title block, so the refresh never steals
+   * the title operation's first read slot. The hot toggle takes effect from the send
+   * after its read lands, without ever gating a prompt.
+   */
+  private chatBudgetSnapshot?: { chatContextBudgetEnabled?: boolean };
   private generationCounter = 0;
   private inFlightPersistTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private inFlightPersistChains = new Map<string, Promise<void>>();
@@ -2317,6 +2388,13 @@ export class ChatManager {
     await ensureEngineReady();
 
     let systemPrompt = CHAT_SYSTEM_PROMPT;
+    // FNXC:ChatContextBudget 2026-08-20-16:20:
+    // Runtime kill switch for the RUFU-135 chat context budget
+    // (Settings.chatContextBudgetEnabled): false restores the pre-RUFU-135
+    // prompt shape — unbounded memory inlining and the full registered tool
+    // set — so a production regression in the budget is disableable without
+    // a redeploy. Read per reply (hot) like the pre-overflow guard toggle.
+    const roomChatBudgetOn = (await this.getChatModelSettings()).chatContextBudgetEnabled !== false;
     if (buildAgentChatPromptFn) {
       try {
         systemPrompt = await buildAgentChatPromptFn({
@@ -2325,6 +2403,17 @@ export class ChatManager {
           agentStore: this.agentStore,
           basePrompt: CHAT_SYSTEM_PROMPT,
           includeProjectMemory: true,
+          /*
+          FNXC:ChatContextBudget 2026-08-20-11:56:
+          Room responders share the direct-chat context budget: unbounded project +
+          agent memory injection is what pushed agent-bound chat past the 80%
+          compaction threshold on 128K-window models (ChatContextOverflowError
+          dead-end) and made 64K-window models unusable (user requirement: chat
+          must work on 64K-context models). Oversized memory is inlined as a
+          bounded heading index instead; full content stays reachable via
+          fn_memory_search / fn_memory_get.
+          */
+          memoryCapChars: roomChatBudgetOn ? CHAT_MEMORY_CAP_CHARS : undefined,
         });
       } catch (error) {
         diagnostics.warn(`Failed to build chat prompt for room responder ${input.responder.id}: ${error instanceof Error ? error.message : String(error)}`);
@@ -2422,6 +2511,7 @@ export class ChatManager {
       actionGateContext: missionGateContexts.actionGateContext,
     });
 
+    const roomCustomTools = dedupeChatTools([...workflowTools, ...chatFusionTools]);
     const resolvedSession = await createResolvedAgentSession({
       sessionPurpose: "heartbeat",
       pluginRunner: this.pluginRunner,
@@ -2439,9 +2529,18 @@ export class ChatManager {
       cwd: this.rootDir,
       systemPrompt,
       tools: CHAT_CODING_TOOLS,
-      ...(workflowTools.length + chatFusionTools.length > 0
-        ? { customTools: dedupeChatTools([...workflowTools, ...chatFusionTools]) }
-        : {}),
+      /*
+      FNXC:ChatContextBudget 2026-08-20-11:56:
+      Explicit tool-name allowlist: hides the 86 host-extension executor fn_* tools
+      from room-responder sessions (see CHAT_CODING_TOOL_ALLOWLIST) so the static
+      tool-schema payload stays within the chat context budget.
+      FNXC:ChatContextBudget 2026-08-20-12:43:
+      The allowlist is global (the engine also filters caller customTools by it),
+      so it must include the curated room customTools names or they are dropped —
+      only the builtin coding tools would remain.
+      */
+      toolsAllowlist: roomChatBudgetOn ? chatToolAllowlist(roomCustomTools.map((tool) => tool.name)) : undefined,
+      ...(roomCustomTools.length > 0 ? { customTools: roomCustomTools } : {}),
       ...(effectiveModelProvider && effectiveModelId
         ? {
             defaultProvider: effectiveModelProvider,
@@ -2466,6 +2565,21 @@ export class ChatManager {
     });
 
     try {
+      /*
+      FNXC:ChatContextGuard 2026-08-18-18:06:
+      RUFU-118: same deterministic pre-overflow compaction gate as sendMessage, on the room
+      responder seam. tokenCap is the operator's upper bound on the effective threshold;
+      unset means the engine default of 80% of the per-model context window. A
+      ChatContextOverflowError thrown here propagates through the responder catch into
+      responderFailures (and RoomReplyGenerationError → ApiError 502 when every responder
+      fails) — the existing room failure pattern — so the operator sees which responder's
+      context overflowed instead of receiving a doomed 1-token reply.
+      */
+      await ensureContextWithinCompactionThreshold(resolvedSession.session, {
+        tokenCap: chatModelSettings.tokenCap,
+        enabled: chatModelSettings.chatPreOverflowCompactionEnabled !== false,
+      });
+
       await enginePromptWithFallback(
         resolvedSession.session,
         roomPrompt,
@@ -2887,6 +3001,16 @@ export class ChatManager {
       }
 
       let systemPrompt = CHAT_SYSTEM_PROMPT;
+      // FNXC:ChatContextBudget 2026-08-20-16:20:
+      // Runtime kill switch for the RUFU-135 chat context budget
+      // (Settings.chatContextBudgetEnabled): false restores the pre-RUFU-135
+      // prompt shape — unbounded memory inlining and the full registered tool
+      // set — so a production regression in the budget is disableable without
+      // a redeploy. Declared here (function scope) so the session-creation
+      // toolsAllowlist below uses the same value as the prompt build.
+      // FNXC:ChatContextBudget 2026-09-11-12:51: reads the cache snapshot, never an
+      // awaited settings read — the send path must not wait on settings (FN-9241).
+      const directChatBudgetOn = this.chatBudgetSnapshot?.chatContextBudgetEnabled !== false;
       let agent: Agent | null = null;
 
       if (this.agentStore && session.agentId) {
@@ -2908,6 +3032,16 @@ export class ChatManager {
             agentStore: this.agentStore,
             basePrompt: CHAT_SYSTEM_PROMPT,
             includeProjectMemory: true,
+            /*
+            FNXC:ChatContextBudget 2026-08-20-11:56:
+            Chat context budget (see CHAT_MEMORY_CAP_CHARS): the CEO agent's chat
+            measured a ~124K-token static floor (full 228K-char project memory +
+            50K-char agent memory clamp + 86 executor tool schemas + AGENTS.md),
+            which dead-ended every send on 128K-window models and made 64K-window
+            models unusable. With the cap, oversized memory becomes a bounded
+            heading index, keeping the static floor near ~35K tokens.
+            */
+            memoryCapChars: directChatBudgetOn ? CHAT_MEMORY_CAP_CHARS : undefined,
           });
           systemPrompt = `${systemPrompt}\n\n${CHAT_AGENT_MESSAGE_ROUTING_GUIDANCE}`;
         } catch (promptBuildError) {
@@ -2998,6 +3132,13 @@ export class ChatManager {
           }
         })();
       }
+
+      // FNXC:ChatContextBudget 2026-09-11-12:51: per-send kill-switch refresh, fired
+      // AFTER the title block so the detached title read keeps the first settings-read
+      // slot that FN-9241's pin mock relies on. Never awaited — see chatBudgetSnapshot.
+      void this.getChatModelSettings()
+        .then((snapshot) => { this.chatBudgetSnapshot = snapshot; })
+        .catch(() => { /* keep last-known snapshot; default-ON covers cold cache */ });
 
       if (mentions.length > 0) {
         const mentionContext = await this.buildMentionContext(mentions, mentionAgents);
@@ -3205,6 +3346,17 @@ export class ChatManager {
         cwd: this.rootDir,
         systemPrompt,
         tools: CHAT_CODING_TOOLS,
+        /*
+        FNXC:ChatContextBudget 2026-08-20-11:56:
+        Hide the 86 host-extension executor fn_* tools from direct chat/QuickChat
+        sessions (explicit allowlist → pi filters every registered tool to the
+        curated chat toolset + builtin coding tools). See CHAT_CODING_TOOL_ALLOWLIST.
+        FNXC:ChatContextBudget 2026-08-20-12:43:
+        The allowlist is global (the engine also filters caller customTools by it),
+        so the curated chat toolset names must be included or every fn_* chat tool
+        is dropped from the session (observed: chat shrank to the 7 builtin tools).
+        */
+        toolsAllowlist: directChatBudgetOn ? chatToolAllowlist(customTools.map((tool) => tool.name)) : undefined,
         ...(customTools.length > 0 ? { customTools } : {}),
         sessionManager,
         ...(effectiveModelProvider && effectiveModelId
@@ -3332,6 +3484,25 @@ export class ChatManager {
       if (abortController.signal.aborted) {
         throw new Error("Generation cancelled");
       }
+
+      /*
+      FNXC:ChatContextGuard 2026-08-18-18:06:
+      RUFU-118: deterministic pre-overflow compaction gate on the dashboard chat model seam.
+      Re-measure the loaded context and compact BEFORE the prompt so a context that no
+      longer fits the model window never becomes an over-window provider call (pi's own
+      threshold compaction is blind when the provider omits usage — see Step 1 root cause).
+      tokenCap is the operator's upper bound on the effective threshold; unset means the
+      engine default of 80% of the per-model context window. The gate throws
+      ChatContextOverflowError instead of sending a doomed prompt; that error is caught
+      in the dedicated branch below and surfaced through the existing failure pattern.
+      RUFU-118 (2026-08-19-15:05): the gate is an opt-out project option (selectable
+      feature, not always-on) — chatPreOverflowCompactionEnabled === false bypasses it
+      entirely for the project.
+      */
+      await ensureContextWithinCompactionThreshold(agentResult.session, {
+        tokenCap: chatModelSettings.tokenCap,
+        enabled: chatModelSettings.chatPreOverflowCompactionEnabled !== false,
+      });
 
       // Send user message and get response
       await enginePromptWithFallback(
@@ -3541,6 +3712,37 @@ export class ChatManager {
 
       if (abortController.signal.aborted) {
         await this.flushInFlightGenerationPersist(sessionId, null, generationId);
+        return;
+      }
+
+      /*
+      FNXC:ChatContextGuard 2026-08-18-18:06:
+      RUFU-118: the pre-overflow gate's fail-loud error gets a dedicated branch with a
+      descriptive summary instead of the generic "AI processing failed". The prompt was
+      NOT sent. buildChatFailureInfo carries code CHAT_CONTEXT_OVERFLOW and errorClass
+      ChatContextOverflowError so the client can distinguish an overflow from a provider
+      failure; the message persists and broadcasts exactly like the generic failure path.
+      */
+      if (err instanceof ChatContextOverflowError) {
+        const failureInfo = addModelContextToFailureInfo(
+          buildChatFailureInfo(err, "Chat context overflow"),
+          failureContextProvider,
+          failureContextModelId,
+        );
+        diagnostics.error(`Chat context overflow in sendMessage for session ${sessionId}:`, err);
+
+        try {
+          await persistFailureMessage(this.chatStore, sessionId, failureInfo);
+        } catch (persistErr) {
+          diagnostics.error(`Failed to persist context-overflow failure for session ${sessionId}:`, persistErr);
+        }
+
+        this.flushInFlightGenerationPersist(sessionId, null);
+
+        chatStreamManager.broadcast(sessionId, {
+          type: "error",
+          data: failureInfo,
+        }, broadcastOptions);
         return;
       }
 

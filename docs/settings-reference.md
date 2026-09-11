@@ -832,8 +832,8 @@ Database backups work with both external PostgreSQL and Fusion's default embedde
 | `executorSessionCaptureEnabled` | `boolean` | `true` | When the memory backend is Stash, upload the task's `agent-log.jsonl` transcript to Stash as session `fusion-task-<taskId>` when the task terminalizes (done or failed). Off: only the completion/failure anchor event is captured. |
 | `executorSessionCaptureMaxEvents` | `number` | `20000` | Cap on transcript events uploaded per task (UI range 100–100000). The most recent events are kept; the full log remains on disk. |
 | `executorSessionCaptureIncludeStatus` | `boolean` | `false` | Schema-only flag: include `status` entries from the agent log in the uploaded transcript. Deliberately has no Settings UI row. |
-| `tokenCap` | `number` | `undefined` | Proactive token threshold for context compaction. |
 
+| `tokenCap` | `number` | `undefined` | Upper bound on the context compaction threshold. Chat sessions compact at 80% of the model's context window by default (a smaller value compacts earlier; values above the model's hard limit are clamped); executor/agent tasks: empty = no cap (compact only on overflow errors). |
 | `taskTokenBudget` | `{ soft?: number; hard?: number; perSize?: { S?: { soft?: number; hard?: number }; M?: { soft?: number; hard?: number }; L?: { soft?: number; hard?: number } } }` | `undefined` | Per-task token budget policy. Soft cap sends a one-time alert per task; hard cap pauses the task with `pausedReason: "token_budget_exceeded"`. |
 | `runStepsInNewSessions` | `boolean` | `false` | Run each task step in a fresh agent session. |
 | `maxParallelSteps` | `number` | `2` | Max concurrent step sessions when per-step sessions are enabled. |
