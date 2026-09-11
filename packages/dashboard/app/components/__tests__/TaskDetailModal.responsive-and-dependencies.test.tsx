@@ -7,6 +7,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { render, screen, fireEvent, act, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { readAppFile } from "../../test/cssFixture";
 import {
   makeTask,
   noop,
@@ -207,14 +208,15 @@ describe("TaskDetailModal", () => {
 
     it("keeps task-detail outer padding canonical while Planner Chat owns only internal spacing", () => {
       const css = readDashboardStylesSource();
+      const plannerCss = readAppFile("components/TaskPlannerChatTab.css");
       const paddingContractStart = css.indexOf("Task-detail tabs share the `.detail-body` outer content inset");
       expect(paddingContractStart).toBeGreaterThanOrEqual(0);
       const detailBodyBlock = getExactCssRuleBlock(css, ".detail-body");
       const activityBodyBlock = getCssRuleBlock(css, ".detail-body--chat");
       const plannerBodyBlock = getCssRuleBlock(css, ".detail-body--planner-chat");
-      const plannerPanelBlock = getExactCssRuleBlock(css, ".task-planner-chat");
-      const plannerTranscriptBlock = getExactCssRuleBlock(css, ".task-planner-chat-transcript");
-      const plannerComposerBlock = getExactCssRuleBlock(css, ".task-planner-chat-composer");
+      const plannerPanelBlock = getExactCssRuleBlock(plannerCss, ".task-planner-chat");
+      const plannerTranscriptBlock = getExactCssRuleBlock(plannerCss, ".task-planner-chat-transcript");
+      const plannerComposerBlock = getExactCssRuleBlock(plannerCss, ".task-planner-chat-composer");
       const expandedPlannerBodyBlock = getExactCssRuleBlock(css, ".task-detail-content--planner-chat-expanded .detail-body--planner-chat");
       const expandedPlannerSectionBlock = getExactCssRuleBlock(css, ".task-detail-content--planner-chat-expanded .detail-section--planner-chat");
       const mobileBodyBlock = getCssAtRuleBlockContainingExactRule(css, "@media (max-width: 768px)", ".detail-body");
@@ -241,7 +243,7 @@ describe("TaskDetailModal", () => {
       expect(mobileExpandedPlannerBodyBlock).toBe("");
       expect(plannerPanelBlock).toContain("gap: var(--space-md);");
       expect(plannerTranscriptBlock).toContain("padding: var(--space-md);");
-      expect(plannerTranscriptBlock).toContain("gap: var(--space-md);");
+      expect(plannerTranscriptBlock).toContain("gap: 0;");
       expect(plannerComposerBlock).toContain("gap: var(--space-sm);");
       expect(css).not.toMatch(/task-detail-content--planner-chat-expanded[^{]+\.(?:task-planner-chat|task-planner-chat-transcript|task-planner-chat-composer)\s*\{[^}]*(?:padding|margin|gap)\s*:/);
       expect(css).not.toMatch(/task-detail-content--planner-chat-expanded[^{]+\.detail-body--planner-chat\s*\{[^}]*(?:padding|margin|gap)\s*:/);

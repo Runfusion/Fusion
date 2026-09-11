@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { useState } from "react";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { TaskForm } from "../TaskForm";
+import { HeroUIAlphaProvider, HeroUIAlphaSurface } from "../../context/HeroUIAlphaContext";
 import type { Task, Column } from "@fusion/core";
 
 // Mock lucide-react
@@ -65,32 +67,33 @@ function makeTask(id: string): Task {
   };
 }
 
+const renderTaskFormDefaults: React.ComponentProps<typeof TaskForm> = {
+  mode: "create",
+  description: "",
+  onDescriptionChange: vi.fn(),
+  dependencies: [],
+  onDependenciesChange: vi.fn(),
+  executorModel: "",
+  onExecutorModelChange: vi.fn(),
+  validatorModel: "",
+  onValidatorModelChange: vi.fn(),
+  presetMode: "default" as const,
+  onPresetModeChange: vi.fn(),
+  selectedPresetId: "",
+  onSelectedPresetIdChange: vi.fn(),
+  selectedWorkflowId: undefined,
+  onWorkflowIdChange: vi.fn(),
+  pendingImages: [],
+  onImagesChange: vi.fn(),
+  tasks: [],
+  addToast: vi.fn(),
+  isActive: true,
+  reviewLevel: undefined,
+  onReviewLevelChange: vi.fn(),
+};
+
 function renderTaskForm(props: Partial<React.ComponentProps<typeof TaskForm>> = {}) {
-  const defaultProps: React.ComponentProps<typeof TaskForm> = {
-    mode: "create",
-    description: "",
-    onDescriptionChange: vi.fn(),
-    dependencies: [],
-    onDependenciesChange: vi.fn(),
-    executorModel: "",
-    onExecutorModelChange: vi.fn(),
-    validatorModel: "",
-    onValidatorModelChange: vi.fn(),
-    presetMode: "default" as const,
-    onPresetModeChange: vi.fn(),
-    selectedPresetId: "",
-    onSelectedPresetIdChange: vi.fn(),
-    selectedWorkflowId: undefined,
-    onWorkflowIdChange: vi.fn(),
-    pendingImages: [],
-    onImagesChange: vi.fn(),
-    tasks: [],
-    addToast: vi.fn(),
-    isActive: true,
-    reviewLevel: undefined,
-    onReviewLevelChange: vi.fn(),
-  };
-  const mergedProps = { ...defaultProps, ...props };
+  const mergedProps = { ...renderTaskFormDefaults, ...props };
   const result = render(<TaskForm {...mergedProps} />);
   return { ...result, props: mergedProps };
 }
@@ -605,6 +608,80 @@ describe("TaskForm", () => {
     fireEvent.change(screen.getByTestId("task-priority-select"), { target: { value: "urgent" } });
 
     expect(onPriorityChange).toHaveBeenCalledWith("urgent");
+  });
+
+  it.each([false, true])("keeps every adaptive TaskForm select labelled and actionable with Alpha=%s", async (enabled) => {
+    const user = userEvent.setup();
+    const onNodeIdChange = vi.fn();
+    const onBranchModeChange = vi.fn();
+    const onBaseBranchChange = vi.fn();
+    const onPriorityChange = vi.fn();
+    const onExecutionModeChange = vi.fn();
+    const onPresetModeChange = vi.fn();
+    const onPlannerOversightLevelChange = vi.fn();
+    const onReviewLevelChange = vi.fn();
+    const onAutoMergeChange = vi.fn();
+    const { fetchGitBranches } = await import("../../api");
+    vi.mocked(fetchGitBranches).mockResolvedValue([{ name: "main" }] as never);
+
+    render(
+      <HeroUIAlphaProvider enabled={enabled}>
+        <HeroUIAlphaSurface preserveDisabledDom>
+          <TaskForm
+            {...renderTaskFormDefaults}
+            forceMoreOptionsOpen
+            onNodeIdChange={onNodeIdChange}
+            nodeOptions={[{ id: "node-remote", name: "Remote", status: "online" } as never]}
+            branchMode="project-default"
+            onBranchModeChange={onBranchModeChange}
+            baseBranch=""
+            onBaseBranchChange={onBaseBranchChange}
+            priority="normal"
+            onPriorityChange={onPriorityChange}
+            executionMode="standard"
+            onExecutionModeChange={onExecutionModeChange}
+            onPresetModeChange={onPresetModeChange}
+            plannerOversightLevel=""
+            onPlannerOversightLevelChange={onPlannerOversightLevelChange}
+            onReviewLevelChange={onReviewLevelChange}
+            autoMerge={undefined}
+            onAutoMergeChange={onAutoMergeChange}
+          />
+        </HeroUIAlphaSurface>
+      </HeroUIAlphaProvider>,
+    );
+
+    const choose = async (label: string, option: string) => {
+      const control = await screen.findByLabelText(label);
+      if (enabled) {
+        expect(control.tagName).toBe("BUTTON");
+        await user.click(control);
+        await user.click(await screen.findByRole("option", { name: option }));
+      } else {
+        expect(control.tagName).toBe("SELECT");
+        await user.selectOptions(control, option);
+      }
+    };
+
+    await choose("Execution Node Override", "Remote (Online)");
+    await choose("Branch strategy", "Use existing branch");
+    await choose("Merge target / base branch", "main");
+    await choose("Priority", "Urgent");
+    await choose("Execution mode", "Fast");
+    await choose("Preset", "Custom");
+    await choose("Planner oversight", "Autonomous recovery");
+    await choose("Review", "2 — Plan + Code");
+    await choose("Auto-merge", "Enabled");
+
+    expect(onNodeIdChange).toHaveBeenCalledWith("node-remote");
+    expect(onBranchModeChange).toHaveBeenCalledWith("existing");
+    expect(onBaseBranchChange).toHaveBeenCalledWith("main");
+    expect(onPriorityChange).toHaveBeenCalledWith("urgent");
+    expect(onExecutionModeChange).toHaveBeenCalledWith("fast");
+    expect(onPresetModeChange).toHaveBeenCalledWith("custom");
+    expect(onPlannerOversightLevelChange).toHaveBeenCalledWith("autonomous");
+    expect(onReviewLevelChange).toHaveBeenCalledWith(2);
+    expect(onAutoMergeChange).toHaveBeenCalledWith(true);
   });
 
   it("renders working branch input and base branch custom input when no branch options are available", () => {

@@ -116,7 +116,8 @@ vi.mock("../../api", async (importOriginal) => {
 });
 
 // Mock lucide-react icons used by TaskDetailModal, TaskForm, PrPanel, CustomModelDropdown
-vi.mock("lucide-react", () => ({
+vi.mock("lucide-react", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("lucide-react")>()),
   Pencil: () => null,
   Sparkles: (props: any) => React.createElement("svg", { "data-testid": "sparkles-icon", ...props }),
   Globe: () => null,

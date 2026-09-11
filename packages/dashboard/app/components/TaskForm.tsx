@@ -17,6 +17,12 @@ import { ProviderIcon } from "./ProviderIcon";
 import { WorkflowIcon } from "./WorkflowIcon";
 import { PendingAttachmentPreviews } from "./PendingAttachmentPreviews";
 import { restoreOptionalStepsOnFastExit } from "../utils/fastModeOptionalSteps";
+import { AlphaButton, AlphaInput, AlphaSelect, AlphaTextArea } from "./hero-ui";
+
+/*
+FNXC:TaskDetailHeroUI 2026-09-11-03:20:
+TaskForm routes every interactive field and action through adaptive primitives so Task Detail gets native HeroUI controls inside Alpha while create and stable non-Alpha hosts retain their historical DOM and callbacks.
+*/
 
 function getNodeStatusLabel(status: NodeInfo["status"], t: (key: string, defaultValue: string) => string): string {
   if (status === "online") return t("taskForm.nodeStatusOnline", "Online");
@@ -951,7 +957,7 @@ export function TaskForm({
       {mode === "edit" && onTitleChange && (
         <div className="form-group">
           <label htmlFor="task-form-title">{t("taskForm.titleLabel", "Title")}</label>
-          <input
+          <AlphaInput
             ref={titleInputRef}
             autoFocus
             id="task-form-title"
@@ -984,7 +990,7 @@ export function TaskForm({
           {isDescriptionExpanded && (
             <div className="description-fullscreen-header">
               <span>{t("taskForm.editingDescription", "Editing Description")}</span>
-              <button
+              <AlphaButton
                 type="button"
                 className="btn btn-sm description-expand-btn"
                 onClick={handleToggleDescriptionExpand}
@@ -992,10 +998,10 @@ export function TaskForm({
                 title={t("taskForm.collapseDescription", "Collapse description")}
               >
                 <Minimize2 size={14} />
-              </button>
+              </AlphaButton>
             </div>
           )}
-          <textarea
+          <AlphaTextArea
             ref={descTextareaRef}
             autoFocus={mode === "create"}
             id="task-form-description"
@@ -1012,7 +1018,7 @@ export function TaskForm({
             return (
               <>
                 {!isDescriptionExpanded && (
-                  <button
+                  <AlphaButton
                     type="button"
                     className={`btn btn-sm description-expand-btn${showRefineButton ? " description-expand-btn--offset" : " description-expand-btn--flush"}`}
                     onClick={handleToggleDescriptionExpand}
@@ -1020,10 +1026,10 @@ export function TaskForm({
                     title={t("taskForm.expandDescription", "Expand description")}
                   >
                     <Maximize2 size={14} />
-                  </button>
+                  </AlphaButton>
                 )}
                 {showRefineButton && (
-            <button
+            <AlphaButton
               type="button"
               className={`btn btn-sm refine-button ${isRefining ? "refine-button--loading" : ""}`}
               onClick={() => setIsRefineMenuOpen((prev) => !prev)}
@@ -1033,7 +1039,7 @@ export function TaskForm({
             >
               <Sparkles size={12} style={{ verticalAlign: "middle" }} />
               {isRefining ? t("taskForm.refineInProgress", "Refining...") : t("taskForm.refineButton", "Refine")}
-            </button>
+            </AlphaButton>
                 )}
               </>
             );
@@ -1084,7 +1090,7 @@ export function TaskForm({
       {mode === "create" && (
         <div className="task-form-description-actions" data-testid="task-form-description-actions">
           {onCreateSubmit && (
-            <button
+            <AlphaButton
               type="button"
               className="btn btn-primary btn-sm"
               onClick={onCreateSubmit}
@@ -1092,10 +1098,10 @@ export function TaskForm({
               data-testid="task-form-inline-create"
             >
               {createSubmitLabel ?? t("taskForm.createTask", "Create")}
-            </button>
+            </AlphaButton>
           )}
           {onStartSubmit && (
-            <button
+            <AlphaButton
               type="button"
               className="btn btn-sm"
               onClick={onStartSubmit}
@@ -1106,10 +1112,10 @@ export function TaskForm({
             >
               <Zap size={12} className="task-form-action-icon" aria-hidden="true" />
               {startSubmitLabel ?? t("taskForm.startTask", "Start")}
-            </button>
+            </AlphaButton>
           )}
           {onPlanningMode && (
-            <button
+            <AlphaButton
               type="button"
               className="btn btn-sm"
               onClick={() => {
@@ -1125,11 +1131,11 @@ export function TaskForm({
               data-testid="task-form-plan-button"
             >
               {t("taskForm.planButton", "Plan")}
-            </button>
+            </AlphaButton>
           )}
 
           {/* FNXC:NewTask 2026-06-23-00:10: Attach — reuses the Advanced section's hidden file input; programmatic .click() works even while that section is collapsed. */}
-          <button
+          <AlphaButton
             type="button"
             className="btn btn-sm"
             onClick={() => fileInputRef.current?.click()}
@@ -1141,7 +1147,7 @@ export function TaskForm({
             {pendingImages.length > 0
               ? t("taskForm.attachCount", "Attach ({{count}})", { count: pendingImages.length })
               : t("taskForm.attach", "Attach")}
-          </button>
+          </AlphaButton>
 
           {/*
           FNXC:NewTaskDialogAffordances 2026-09-01-05:04:
@@ -1149,7 +1155,7 @@ export function TaskForm({
           */}
           {/* FNXC:NewTask 2026-06-23-00:10: Fast — toggles executionMode standard⇄fast; btn-primary when active, matching QuickEntryBox's fast toggle. */}
           {onExecutionModeChange && executionMode !== undefined && (
-            <button
+            <AlphaButton
               type="button"
               className={`btn btn-sm task-form-inline-icon-btn ${executionMode === "fast" ? "btn-primary" : ""}`}
               onClick={() => handleExecutionModeChange(executionMode === "fast" ? "standard" : "fast")}
@@ -1160,12 +1166,12 @@ export function TaskForm({
               title={inlineFastButtonLabel}
             >
               <Zap size={12} className="task-form-action-icon" aria-hidden="true" />
-            </button>
+            </AlphaButton>
           )}
 
           {/* FNXC:NewTaskDialogAffordances 2026-06-23-21:31: GitHub/workflow/models/node are promoted as visible chips that mutate or focus the same Advanced controls instead of duplicating create-payload state. */}
           {onGithubTrackingEnabledChange && (
-            <button
+            <AlphaButton
               type="button"
               className={`btn btn-sm ${githubTrackingEnabled ? "btn-primary" : ""}`}
               onClick={() => {
@@ -1179,11 +1185,11 @@ export function TaskForm({
             >
               <ProviderIcon provider="github" size="sm" />
               {t("taskForm.githubInline", "GitHub")}
-            </button>
+            </AlphaButton>
           )}
 
           {onWorkflowIdChange && (
-            <button
+            <AlphaButton
               type="button"
               className="btn btn-sm"
               onClick={() => {
@@ -1199,7 +1205,7 @@ export function TaskForm({
                 <WorkflowIcon workflowId={selectedWorkflow.id} icon={selectedWorkflow.icon} className="task-workflow-trigger-icon" decorative />
               ) : null}
               <span className="task-form-inline-workflow-label">{workflowInlineLabel}</span>
-            </button>
+            </AlphaButton>
           )}
 
           {optionalStepsLoading ? (
@@ -1216,7 +1222,7 @@ export function TaskForm({
             />
           )}
 
-          <button
+          <AlphaButton
             type="button"
             className="btn btn-sm"
             onClick={() => revealAdvancedControl("#model-preset, #executor-model")}
@@ -1227,10 +1233,10 @@ export function TaskForm({
           >
             <Brain size={12} className="task-form-action-icon" />
             {modelInlineLabel}
-          </button>
+          </AlphaButton>
 
           {onNodeIdChange && (
-            <button
+            <AlphaButton
               type="button"
               className="btn btn-sm"
               onClick={() => revealAdvancedControl("#task-node-select")}
@@ -1241,13 +1247,13 @@ export function TaskForm({
             >
               {selectedNode ? <NodeHealthDot status={selectedNode.status} compact className="task-form-action-icon" /> : <Server size={12} className="task-form-action-icon" />}
               {nodeInlineLabel}
-            </button>
+            </AlphaButton>
           )}
 
           {/* FNXC:NewTask 2026-06-23-00:10: Priority — cycles TASK_PRIORITIES via onPriorityChange (shared icon-only glyph language, same accessible label shape as QuickEntryBox).
           FNXC:PriorityColorCoding 2026-07-11-00:00: Tint the inline priority glyph from priorityIndicator so the New Task row shares quick-add/card urgency colors without changing button semantics. */}
           {onPriorityChange && (
-            <button
+            <AlphaButton
               type="button"
               className="btn btn-sm task-form-inline-icon-btn"
               onClick={() => {
@@ -1261,7 +1267,7 @@ export function TaskForm({
               title={inlinePriorityButtonLabel}
             >
               <InlinePriorityIcon size={12} className="task-form-action-icon" aria-hidden="true" style={{ color: getPriorityColorVar(inlinePriority) }} />
-            </button>
+            </AlphaButton>
           )}
         </div>
       )}
@@ -1274,7 +1280,7 @@ export function TaskForm({
       FNXC:NewTask 2026-06-23-00:10: The disclosure now reads "Advanced" (was "More options"). It stays collapsed by default and hides only the DEEP options (model selectors, branch/base, node, review level, GitHub tracking, workflow). The common quick-add buttons (Attach/Fast/Priority) live inline next to Plan and are always visible, so they are NOT buried behind this toggle.
       */}
       {!forceMoreOptionsOpen && (
-        <button
+        <AlphaButton
           type="button"
           className="task-form-more-options-toggle"
           onClick={() => setShowMoreOptions((prev) => !prev)}
@@ -1285,7 +1291,7 @@ export function TaskForm({
         >
           <span>{t("taskForm.advancedOptions", "Advanced")}</span>
           {showMoreOptions ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-        </button>
+        </AlphaButton>
       )}
 
       <div
@@ -1305,7 +1311,7 @@ export function TaskForm({
           removeLabel={t("taskForm.removeImage", "Remove image")}
           testIdPrefix="task-form-preview"
         />
-        <input
+        <AlphaInput
           ref={fileInputRef}
           type="file"
           accept="image/*"
@@ -1321,22 +1327,23 @@ export function TaskForm({
           }}
           style={{ display: "none" }}
         />
-        <button
+        <AlphaButton
           type="button"
           className="btn btn-sm"
           onClick={() => fileInputRef.current?.click()}
           disabled={disabled}
         >
           {t("taskForm.attachScreenshot", "Attach Screenshot")}
-        </button>
+        </AlphaButton>
         <small>{t("taskForm.attachHint", "You can also paste images or drag & drop")}</small>
       </div>
 
       {onNodeIdChange && (
         <div className="form-group">
-          <label htmlFor="task-node-select">{t("taskForm.nodeOverrideLabel", "Execution Node Override")}</label>
-          <select
+          <label id="task-node-select-label" htmlFor="task-node-select">{t("taskForm.nodeOverrideLabel", "Execution Node Override")}</label>
+          <AlphaSelect
             id="task-node-select"
+            aria-labelledby="task-node-select-label"
             data-testid="task-node-select"
             className="select"
             value={nodeId ?? ""}
@@ -1349,7 +1356,7 @@ export function TaskForm({
                 {node.name} ({getNodeStatusLabel(node.status, t)})
               </option>
             ))}
-          </select>
+          </AlphaSelect>
           {(() => {
             const selectedNode = (nodeOptions ?? []).find((node) => node.id === nodeId);
             if (!selectedNode) return null;
@@ -1371,17 +1378,17 @@ export function TaskForm({
       <div className="form-group">
         <label>{t("taskForm.dependenciesLabel", "Dependencies")}</label>
         <div className="dep-trigger-wrap" ref={depDropdownRef}>
-          <button
+          <AlphaButton
             type="button"
             className="btn btn-sm dep-trigger"
             onClick={() => setShowDepDropdown((v) => !v)}
             disabled={disabled}
           >
             {dependencies.length > 0 ? t("taskForm.dependenciesSelected", "{{count}} selected", { count: dependencies.length }) : t("taskForm.addDependencies", "Add dependencies")}
-          </button>
+          </AlphaButton>
           {showDepDropdown && (
             <div className="dep-dropdown">
-              <input
+              <AlphaInput
                 className="dep-dropdown-search"
                 placeholder={t("taskForm.searchTasksPlaceholder", "Search tasks…")}
                 autoFocus
@@ -1412,14 +1419,14 @@ export function TaskForm({
             {dependencies.map((depId) => (
               <span key={depId} className="dep-chip">
                 {depId}
-                <button
+                <AlphaButton
                   type="button"
                   className="dep-chip-remove"
                   onClick={() => toggleDep(depId)}
                   disabled={disabled}
                 >
                   ×
-                </button>
+                </AlphaButton>
               </span>
             ))}
           </div>
@@ -1433,9 +1440,10 @@ export function TaskForm({
           <label>{t("taskForm.branchSettingsLabel", "Branch Settings")}</label>
           {onBranchModeChange ? (
             <>
-              <label htmlFor="task-branch-mode" className="model-select-label">{t("taskForm.branchStrategyLabel", "Branch strategy")}</label>
-              <select
+              <label id="task-branch-mode-label" htmlFor="task-branch-mode" className="model-select-label">{t("taskForm.branchStrategyLabel", "Branch strategy")}</label>
+              <AlphaSelect
                 id="task-branch-mode"
+                aria-labelledby="task-branch-mode-label"
                 className="input"
                 value={branchMode ?? "project-default"}
                 onChange={(event) => onBranchModeChange(event.target.value as BranchSelectionMode)}
@@ -1446,7 +1454,7 @@ export function TaskForm({
                 <option value="existing">{t("taskForm.branchModeExisting", "Use existing branch")}</option>
                 <option value="custom-new">{t("taskForm.branchModeCustomNew", "Create custom new branch")}</option>
                 <option value="shared-group">{t("taskForm.branchModeSharedGroup", "Merge into a shared feature branch")}</option>
-              </select>
+              </AlphaSelect>
             </>
           ) : null}
           {onBranchChange && (!onBranchModeChange || branchMode === "existing" || branchMode === "custom-new" || branchMode === "shared-group") && (
@@ -1454,7 +1462,7 @@ export function TaskForm({
               <label htmlFor="task-working-branch" className="model-select-label">
                 {branchMode === "shared-group" ? t("taskForm.sharedFeatureBranchLabel", "Shared feature branch") : (onBranchModeChange ? t("taskForm.branchNameLabel", "Branch name") : t("taskForm.workingBranchLabel", "Working branch"))}
               </label>
-              <input
+              <AlphaInput
                 id="task-working-branch"
                 className="input"
                 value={branch || ""}
@@ -1473,8 +1481,8 @@ export function TaskForm({
                 <div className="form-group" data-testid="jira-derive-branch">
                   <label htmlFor="jira-issue-key" className="model-select-label">{t("taskForm.jiraIssueKey", "JIRA issue key")}</label>
                   <div className="flex-row gap-sm">
-                    <input id="jira-issue-key" className="input" value={jiraKey} onChange={(event) => setJiraKey(event.target.value)} placeholder="PRD-1234" disabled={disabled || jiraDeriving} />
-                    <button type="button" className="btn btn-sm" onClick={() => { void deriveJiraBranch(); }} disabled={disabled || jiraDeriving || !jiraKey.trim()}>{jiraDeriving ? t("taskForm.jiraDeriving", "Deriving…") : t("taskForm.jiraDerive", "Derive")}</button>
+                    <AlphaInput id="jira-issue-key" className="input" value={jiraKey} onChange={(event) => setJiraKey(event.target.value)} placeholder="PRD-1234" disabled={disabled || jiraDeriving} />
+                    <AlphaButton type="button" className="btn btn-sm" onClick={() => { void deriveJiraBranch(); }} disabled={disabled || jiraDeriving || !jiraKey.trim()}>{jiraDeriving ? t("taskForm.jiraDeriving", "Deriving…") : t("taskForm.jiraDerive", "Derive")}</AlphaButton>
                   </div>
                   {jiraError && <div className="form-error">{jiraError}</div>}
                 </div>
@@ -1483,7 +1491,7 @@ export function TaskForm({
           )}
           {onBaseBranchChange && (
             <>
-              <label htmlFor="task-base-branch" className="model-select-label">{t("taskForm.baseBranchLabel", "Merge target / base branch")}</label>
+              <label id="task-base-branch-label" htmlFor="task-base-branch" className="model-select-label">{t("taskForm.baseBranchLabel", "Merge target / base branch")}</label>
               {(() => {
                 const currentValue = baseBranch || "";
                 const valueIsKnown = currentValue.length > 0 && baseBranchOptions.includes(currentValue);
@@ -1491,7 +1499,7 @@ export function TaskForm({
                 if (isCustomMode) {
                   return (
                     <div className="form-inline-group">
-                      <input
+                      <AlphaInput
                         id="task-base-branch"
                         className="input"
                         value={currentValue}
@@ -1500,7 +1508,7 @@ export function TaskForm({
                         disabled={disabled}
                         data-testid="task-base-branch-custom-input"
                       />
-                      <button
+                      <AlphaButton
                         type="button"
                         className="btn-link"
                         onClick={() => {
@@ -1511,14 +1519,15 @@ export function TaskForm({
                         data-testid="task-base-branch-use-dropdown"
                       >
                         {t("taskForm.useDropdown", "Use dropdown")}
-                      </button>
+                      </AlphaButton>
                     </div>
                   );
                 }
 
                 return (
-                  <select
+                  <AlphaSelect
                     id="task-base-branch"
+                    aria-labelledby="task-base-branch-label"
                     className="select"
                     value={currentValue}
                     onChange={(e) => {
@@ -1537,7 +1546,7 @@ export function TaskForm({
                       <option key={name} value={name}>{name}</option>
                     ))}
                     <option value={CUSTOM_BRANCH_OPTION}>{t("taskForm.baseBranchCustom", "Custom…")}</option>
-                  </select>
+                  </AlphaSelect>
                 );
               })()}
             </>
@@ -1550,9 +1559,10 @@ export function TaskForm({
         <label>{t("taskForm.modelConfigLabel", "Model Configuration")}</label>
         {onPriorityChange && (
           <div className="model-select-row">
-            <label htmlFor="task-priority" className="model-select-label">{t("taskForm.priorityLabel", "Priority")}</label>
-            <select
+            <label id="task-priority-label" htmlFor="task-priority" className="model-select-label">{t("taskForm.priorityLabel", "Priority")}</label>
+            <AlphaSelect
               id="task-priority"
+              aria-labelledby="task-priority-label"
               data-testid="task-priority-select"
               value={priority ?? DEFAULT_TASK_PRIORITY}
               onChange={(e) => onPriorityChange(e.target.value as TaskPriority)}
@@ -1563,14 +1573,15 @@ export function TaskForm({
                   {t(`taskForm.priority_${taskPriority}`, taskPriority[0].toUpperCase() + taskPriority.slice(1))}
                 </option>
               ))}
-            </select>
+            </AlphaSelect>
           </div>
         )}
         {onExecutionModeChange && executionMode !== undefined && (
           <div className="model-select-row">
-            <label htmlFor="task-execution-mode" className="model-select-label">{t("taskForm.executionModeLabel", "Execution mode")}</label>
-            <select
+            <label id="task-execution-mode-label" htmlFor="task-execution-mode" className="model-select-label">{t("taskForm.executionModeLabel", "Execution mode")}</label>
+            <AlphaSelect
               id="task-execution-mode"
+              aria-labelledby="task-execution-mode-label"
               data-testid="task-form-execution-mode-select"
               value={executionMode}
               onChange={(e) => handleExecutionModeChange(e.target.value as TaskExecutionModeSelection)}
@@ -1578,7 +1589,7 @@ export function TaskForm({
             >
               <option value="standard">{t("taskForm.executionModeStandard", "Standard")}</option>
               <option value="fast">{t("taskForm.executionModeFast", "Fast")}</option>
-            </select>
+            </AlphaSelect>
           </div>
         )}
         {modelsLoading ? (
@@ -1588,9 +1599,10 @@ export function TaskForm({
         ) : (
           <>
             <div className="model-select-row">
-              <label htmlFor="model-preset" className="model-select-label">{t("taskForm.presetLabel", "Preset")}</label>
-              <select
+              <label id="model-preset-label" htmlFor="model-preset" className="model-select-label">{t("taskForm.presetLabel", "Preset")}</label>
+              <AlphaSelect
                 id="model-preset"
+                aria-labelledby="model-preset-label"
                 value={presetMode === "preset" ? selectedPresetId : presetMode}
                 onChange={(e) => {
                   const value = e.target.value;
@@ -1622,13 +1634,13 @@ export function TaskForm({
                   <option key={preset.id} value={preset.id}>{preset.name}</option>
                 ))}
                 <option value="custom">{t("taskForm.presetCustom", "Custom")}</option>
-              </select>
+              </AlphaSelect>
             </div>
             {presetMode === "preset" && selectedPreset ? (
               <small>{t("taskForm.usingPreset", "Using preset: {{name}}", { name: selectedPreset.name })}</small>
             ) : null}
             {presetMode === "preset" ? (
-              <button
+              <AlphaButton
                 type="button"
                 className="btn btn-sm"
                 onClick={() => {
@@ -1638,7 +1650,7 @@ export function TaskForm({
                 disabled={disabled}
               >
                 {t("taskForm.overridePreset", "Override")}
-              </button>
+              </AlphaButton>
             ) : null}
             <div className="model-select-row">
               <label htmlFor="executor-model" className="model-select-label">{t("taskForm.executorLabel", "Executor")}</label>
@@ -1713,9 +1725,10 @@ export function TaskForm({
             {onPlannerOversightLevelChange && (
               <div className="model-select-row">
                 {/* FNXC:PlannerOversight 2026-07-04-00:00: Per-task override for the workflow-native plannerOversightLevel setting (FN-7508). Empty value inherits the workflow's effective value; the four levels mirror BUILTIN_OVERSIGHT_SETTINGS verbatim. Configuration only — runtime controls are FN-7517. */}
-                <label htmlFor="planner-oversight-level" className="model-select-label">{t("taskForm.plannerOversightLabel", "Planner oversight")}</label>
-                <select
+                <label id="planner-oversight-level-label" htmlFor="planner-oversight-level" className="model-select-label">{t("taskForm.plannerOversightLabel", "Planner oversight")}</label>
+                <AlphaSelect
                   id="planner-oversight-level"
+                  aria-labelledby="planner-oversight-level-label"
                   data-testid="planner-oversight-level-select"
                   value={plannerOversightLevel || ""}
                   onChange={(e) => onPlannerOversightLevelChange(e.target.value)}
@@ -1726,7 +1739,7 @@ export function TaskForm({
                   <option value="observe">{t("taskForm.plannerOversightObserve", "Observe")}</option>
                   <option value="steer">{t("taskForm.plannerOversightSteer", "Steer")}</option>
                   <option value="autonomous">{t("taskForm.plannerOversightAutonomous", "Autonomous recovery")}</option>
-                </select>
+                </AlphaSelect>
               </div>
             )}
             {onReviewLevelChange && (
@@ -1739,9 +1752,10 @@ export function TaskForm({
               level preset (server-side applyReviewLevelPreset).
               */
               <div className="model-select-row">
-                <label htmlFor="review-level" className="model-select-label">{t("taskForm.reviewLabel", "Review")}</label>
-                <select
+                <label id="review-level-label" htmlFor="review-level" className="model-select-label">{t("taskForm.reviewLabel", "Review")}</label>
+                <AlphaSelect
                   id="review-level"
+                  aria-labelledby="review-level-label"
                   value={reviewLevel ?? ""}
                   onChange={(e) => onReviewLevelChange(e.target.value === "" ? undefined : parseInt(e.target.value, 10))}
                   disabled={disabled}
@@ -1751,14 +1765,15 @@ export function TaskForm({
                   <option value="1">{t("taskForm.reviewLevel1", "1 — Code Review")}</option>
                   <option value="2">{t("taskForm.reviewLevel2", "2 — Plan + Code")}</option>
                   <option value="3">{t("taskForm.reviewLevel3", "3 — Plan + Browser + Code")}</option>
-                </select>
+                </AlphaSelect>
               </div>
             )}
             {onAutoMergeChange && (
               <div className="model-select-row">
-                <label htmlFor="task-automerge-select" className="model-select-label">{t("taskForm.autoMergeLabel", "Auto-merge")}</label>
-                <select
+                <label id="task-automerge-select-label" htmlFor="task-automerge-select" className="model-select-label">{t("taskForm.autoMergeLabel", "Auto-merge")}</label>
+                <AlphaSelect
                   id="task-automerge-select"
+                  aria-labelledby="task-automerge-select-label"
                   data-testid="task-automerge-select"
                   value={autoMerge === undefined ? "" : autoMerge ? "on" : "off"}
                   onChange={(e) => {
@@ -1771,7 +1786,7 @@ export function TaskForm({
                   <option value="">{t("taskForm.autoMergeDefault", "Default (Follow project setting)")}</option>
                   <option value="on">{t("taskForm.autoMergeEnabled", "Enabled")}</option>
                   <option value="off">{t("taskForm.autoMergeDisabled", "Disabled")}</option>
-                </select>
+                </AlphaSelect>
                 <small>{t("taskForm.autoMergeHint", "Default follows the project auto-merge setting.")}</small>
               </div>
             )}
@@ -1803,7 +1818,7 @@ export function TaskForm({
               FNXC:NewTaskWorkflowDropdown 2026-06-30-18:31:
               Native selects cannot render the shared workflow identity icons. The create-time workflow selector uses a styled button/listbox while keeping the atomic `workflowId` contract: `__none__` becomes null, undefined still displays inherited default state, and real workflow ids are passed through unchanged.
               */}
-              <button
+              <AlphaButton
                 id="task-workflow-dropdown-trigger"
                 type="button"
                 className="btn dep-trigger task-workflow-dropdown-trigger"
@@ -1829,10 +1844,10 @@ export function TaskForm({
                   <span className="task-workflow-default-badge">{t("taskForm.workflowDefaultBadge", "(default)")}</span>
                 ) : null}
                 <ChevronDown size={12} aria-hidden="true" />
-              </button>
+              </AlphaButton>
               {showWorkflowDropdown && (
                 <div className="dep-dropdown task-workflow-dropdown-menu" role="listbox" data-testid="task-workflow-dropdown-menu">
-                  <button
+                  <AlphaButton
                     type="button"
                     role="option"
                     aria-selected={selectedWorkflowValue === "__none__"}
@@ -1847,12 +1862,12 @@ export function TaskForm({
                     <span className="task-workflow-option-copy">
                       <span className="dep-dropdown-title task-workflow-option-name">{t("taskForm.workflowNone", "No workflow")}</span>
                     </span>
-                  </button>
+                  </AlphaButton>
                   {orderedWorkflowOptions.map((workflow) => {
                     const optionLabel = workflowOptionLabel(workflow);
                     const isSelected = selectedWorkflowValue === workflow.id;
                     return (
-                      <button
+                      <AlphaButton
                         key={workflow.id}
                         type="button"
                         role="option"
@@ -1876,7 +1891,7 @@ export function TaskForm({
                         {workflow.id === defaultWorkflowId ? (
                           <span className="task-workflow-default-badge">{t("taskForm.workflowDefaultBadge", "(default)")}</span>
                         ) : null}
-                      </button>
+                      </AlphaButton>
                     );
                   })}
                 </div>
@@ -1914,7 +1929,7 @@ export function TaskForm({
           <label>{t("taskForm.githubTrackingLabel", "GitHub Tracking")}</label>
           {onGithubTrackingEnabledChange && (
             <label className="checkbox-label" htmlFor="task-github-tracking-enabled">
-              <input
+              <AlphaInput
                 id="task-github-tracking-enabled"
                 type="checkbox"
                 checked={githubTrackingEnabled === true}
@@ -1930,7 +1945,7 @@ export function TaskForm({
           {onGithubRepoOverrideChange && (
             <>
               <label htmlFor="task-github-repo-override" className="model-select-label">{t("taskForm.githubRepoLabel", "Repository (owner/repo)")}</label>
-              <input
+              <AlphaInput
                 id="task-github-repo-override"
                 className="input"
                 value={githubRepoOverride || ""}

@@ -9,7 +9,7 @@ import type { UseTaskHandlersResult } from "../hooks/useTaskHandlers";
 import type { ChatMessageLayout } from "../hooks/useAppSettings";
 import type { Toast, ToastType } from "../hooks/useToast";
 import { ModalErrorBoundary } from "./ErrorBoundary";
-import { TaskDetailModal } from "./TaskDetailModal";
+import { AppModalTaskDetailHost } from "./TaskDetailHostBoundaries";
 import type { BlockerFanoutColumnFlags } from "../hooks/useBlockerFanout";
 import { GitHubImportModal } from "./GitHubImportModal";
 import { ScriptsModal } from "./ScriptsModal";
@@ -199,17 +199,6 @@ export function AppModals({
   FNXC:TaskDetailSwipeBack 2026-06-29-14:20:
   Mobile swipe-back (`popstate`) for modal task detail must step back through nested task-detail opens before dismissing the modal. The latest pushed callback restores the previous task/tab/origin snapshot when one exists, and explicit close falls back to the original first-open callback (`modalManager.closeDetailTask`) so programmatic closes still consume the matching history entry.
   */
-  const closeDetailFromHistory = useCallback(() => {
-    modalManager.closeDetailTask();
-    deepLink.handleDetailClose();
-    detailNavCloseRef.current = null;
-  }, [deepLink, modalManager]);
-
-  const closeDetailWithNav = useCallback(() => {
-    removeNav(detailNavCloseRef.current ?? modalManager.closeDetailTask);
-    closeDetailFromHistory();
-  }, [closeDetailFromHistory, modalManager, removeNav]);
-
   const closeGroupWithNav = useCallback(() => {
     removeNav(modalManager.closeGroupModal);
     modalManager.closeGroupModal();
@@ -350,14 +339,17 @@ export function AppModals({
     <>
       {detailTask && (
         <ModalErrorBoundary>
-          <TaskDetailModal
+          <AppModalTaskDetailHost
             task={detailTask}
             alphaMobileDrawer={alphaMobileDrawer}
             projectId={projectId}
             tasks={tasks}
             columnFlagsByTaskId={columnFlagsByTaskId}
             globalPaused={globalPaused}
-            onClose={closeDetailWithNav}
+            onRemoveNavigation={() => removeNav(detailNavCloseRef.current ?? modalManager.closeDetailTask)}
+            onCloseDetail={modalManager.closeDetailTask}
+            onCleanupDeepLink={deepLink.handleDetailClose}
+            onClosed={() => { detailNavCloseRef.current = null; }}
             onOpenDetail={openDetailTaskWithNav}
             mobileHeaderMode={modalManager.detailTaskOrigin === "list-mobile" ? "back" : "close"}
             /* FNXC:TaskRevert 2026-08-01-20:27: Modal detail must offer the same revision draft recovery as every reverted-task host. */

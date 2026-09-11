@@ -61,6 +61,7 @@ import { PlannerInterventionTimeline } from "./PlannerInterventionTimeline";
 import { TaskComments } from "./TaskComments";
 import { TaskChatTab } from "./TaskChatTab";
 import { HeroUIAlphaSurface } from "../context/HeroUIAlphaContext";
+import { AlphaButton, AlphaDialogBackdrop, AlphaInput, AlphaMenu, AlphaMenuItem, AlphaPortalSurface, AlphaSelect, AlphaSurface, AlphaTextArea } from "./hero-ui";
 import { TaskPlannerChatTab } from "./TaskPlannerChatTab";
 import { TaskReviewTab } from "./TaskReviewTab";
 import { TaskChangesTab } from "./TaskChangesTab";
@@ -148,6 +149,29 @@ type ActivityViewMenuPosition = {
   minWidth: number;
   maxHeight: number;
 };
+
+type TaskDetailTabButtonProps = {
+  selected: boolean;
+  onSelect: () => void;
+  children: React.ReactNode;
+};
+
+/*
+FNXC:TaskDetailHeroUI 2026-09-11-02:41:
+Every dynamic Task Detail destination uses one module-scoped adaptive tab control. This preserves the historical button contract outside Alpha while publishing selected state and HeroUI keyboard semantics consistently across narrow and wide hosts.
+*/
+function TaskDetailTabButton({ selected, onSelect, children }: TaskDetailTabButtonProps) {
+  return (
+    <AlphaButton
+      type="button"
+      aria-pressed={selected}
+      className={`detail-tab${selected ? " detail-tab-active" : ""}`}
+      onClick={onSelect}
+    >
+      {children}
+    </AlphaButton>
+  );
+}
 
 type TaskActivityLogEntry = NonNullable<Parameters<typeof getTaskLogEntryAction>[0]> & {
   timestamp: string;
@@ -1384,7 +1408,7 @@ export function TaskDetailContent({
   }, [displayTitleText, task.id]);
   const [attachments, setAttachments] = useState<TaskAttachment[]>(task.attachments || []);
   const [uploading, setUploading] = useState(false);
-  const [dependencies, setDependencies] = useState<string[]>(task.dependencies || []);
+  const [dependencies, setDependencies] = useState<string[]>(() => [...new Set(task.dependencies || [])]);
   const [showDepDropdown, setShowDepDropdown] = useState(false);
   const [depSearch, setDepSearch] = useState("");
   const [assignedAgent, setAssignedAgent] = useState<Agent | null>(null);
@@ -1792,6 +1816,11 @@ export function TaskDetailContent({
   const [githubRepoOverrideError, setGithubRepoOverrideError] = useState<string | null>(null);
   const [isSavingGithubTracking, setIsSavingGithubTracking] = useState(false);
   const [isCheckingPrStatus, setIsCheckingPrStatus] = useState(false);
+  /*
+  FNXC:TaskDetailHeroUI 2026-09-11-04:19:
+  The duplicated plan-decision controls in the banner and sticky footer represent one operation. A shared pending fence disables every copy while either request is in flight, preventing duplicate or contradictory decisions in both Alpha and stable presentations.
+  */
+  const [isPlanApprovalPending, setIsPlanApprovalPending] = useState(false);
   const activityListRef = useRef<HTMLDivElement>(null);
   const actionsMenuRef = useRef<HTMLDivElement>(null);
   const activityViewDropdownRef = useRef<HTMLDivElement>(null);
@@ -3622,30 +3651,38 @@ export function TaskDetailContent({
   }, [isTaskPaused, onPauseTask, onTaskUpdated, onUnpauseTask, task.id, requestClose, addToast, t]);
 
   const handleApprovePlan = useCallback(async () => {
+    if (isPlanApprovalPending) return;
+    setIsPlanApprovalPending(true);
     try {
       await approvePlan(task.id, projectId);
       addToast(t("taskDetail.plan.approved", "Plan approved — {{id}} moved to Todo", { id: task.id }), "success");
       requestClose();
     } catch (err) {
       addToast(getErrorMessage(err), "error");
+    } finally {
+      setIsPlanApprovalPending(false);
     }
-  }, [task.id, requestClose, addToast]);
+  }, [isPlanApprovalPending, task.id, projectId, requestClose, addToast, t]);
 
   const handleRejectPlan = useCallback(async () => {
+    if (isPlanApprovalPending) return;
     const shouldReject = await confirm({
       title: t("taskDetail.plan.rejectTitle", "Reject Plan"),
       message: t("taskDetail.plan.rejectMessage", "Reject this plan? The specification will be discarded and regenerated."),
       danger: true,
     });
     if (!shouldReject) return;
+    setIsPlanApprovalPending(true);
     try {
       await rejectPlan(task.id, projectId);
       addToast(t("taskDetail.plan.rejected", "Plan rejected — {{id}} returned to Planning for replanning", { id: task.id }), "info");
       requestClose();
     } catch (err) {
       addToast(getErrorMessage(err), "error");
+    } finally {
+      setIsPlanApprovalPending(false);
     }
-  }, [task.id, requestClose, addToast, confirm]);
+  }, [isPlanApprovalPending, task.id, projectId, requestClose, addToast, confirm, t]);
 
   const handleOpenRefineModal = useCallback(() => {
     setShowRefineModal(true);
@@ -4810,12 +4847,9 @@ export function TaskDetailContent({
     }
 
     return createPortal(
-      <div
+      <AlphaPortalSurface
         ref={activityViewMenuRef}
         className="activity-view-menu"
-        role="menu"
-        aria-label={t("taskDetail.activity.menuLabel", "Activity views")}
-        onKeyDown={handleActivityViewMenuKeyDown}
         style={{
           top: activityViewMenuPosition.top,
           left: activityViewMenuPosition.left,
@@ -4823,19 +4857,23 @@ export function TaskDetailContent({
           maxHeight: activityViewMenuPosition.maxHeight,
         }}
       >
-        {activityViewOptions.map((option) => (
-          <button
-            key={option.value}
-            type="button"
-            className="activity-view-menu-item"
-            role="menuitem"
-            aria-current={activitySegment === option.value ? "true" : undefined}
-            onClick={() => selectActivityView(option.value)}
-          >
-            {option.label}
-          </button>
-        ))}
-      </div>,
+        <AlphaMenu
+          aria-label={t("taskDetail.activity.menuLabel", "Activity views")}
+          onKeyDown={handleActivityViewMenuKeyDown}
+        >
+          {activityViewOptions.map((option) => (
+            <AlphaMenuItem
+              key={option.value}
+              id={`activity-${option.value}`}
+              className="activity-view-menu-item"
+              aria-current={activitySegment === option.value ? "true" : undefined}
+              onClick={() => selectActivityView(option.value)}
+            >
+              {option.label}
+            </AlphaMenuItem>
+          ))}
+        </AlphaMenu>
+      </AlphaPortalSurface>,
       document.body,
     );
   };
@@ -4849,7 +4887,7 @@ export function TaskDetailContent({
         FNXC:TaskDetailActivity 2026-07-01-00:00:
         Mobile task-detail tabs intentionally overflow-scroll horizontally, so the Activity view menu must be root-portaled and viewport-positioned instead of rendered inside `.detail-tabs` where overflow clipping can blank adjacent tabs and content.
       */}
-      <button
+      <AlphaButton
         ref={activityViewButtonRef}
         type="button"
         className={`detail-tab detail-tab--activity${activeTab === "chat" ? " detail-tab-active" : ""}`}
@@ -4869,6 +4907,7 @@ export function TaskDetailContent({
           setShowActivityViewMenu(shouldOpen);
         }}
         onKeyDown={handleActivityTabKeyDown}
+        aria-pressed={activeTab === "chat"}
         aria-haspopup="menu"
         aria-expanded={showActivityViewMenu}
         aria-label={t("taskDetail.tabs.activity", "Activity")}
@@ -4876,7 +4915,7 @@ export function TaskDetailContent({
       >
         <span>{t("taskDetail.tabs.activity", "Activity")}</span>
         <ChevronDown className="detail-tab-chevron" aria-hidden="true" />
-      </button>
+      </AlphaButton>
       {renderActivityViewMenu()}
     </div>
   );
@@ -4895,13 +4934,13 @@ export function TaskDetailContent({
                         <>
                           {t("taskDetail.provenance.createdBy", "Created by")}{" "}
                           {provenanceDisplay.sourceAgentId ? (
-                            <button
+                            <AlphaButton
                               type="button"
                               className="detail-provenance-link"
                               onClick={() => setSelectedSourceAgentId(provenanceDisplay.sourceAgentId!)}
                             >
                               {provenanceDisplay.label}
-                            </button>
+                            </AlphaButton>
                           ) : (
                             provenanceDisplay.label
                           )}
@@ -4925,13 +4964,13 @@ export function TaskDetailContent({
                       {provenanceDisplay.parentTaskId && (
                         <>
                           {" "}{t("taskDetail.provenance.parentTaskOf", "of")}{" "}
-                          <button
+                          <AlphaButton
                             type="button"
                             className="detail-provenance-link"
                             onClick={() => handleDepClick(provenanceDisplay.parentTaskId!)}
                           >
                             {provenanceDisplay.parentTaskId}
-                          </button>
+                          </AlphaButton>
                         </>
                       )}
                       {provenanceDisplay.contextInfo ? (
@@ -4965,13 +5004,13 @@ export function TaskDetailContent({
                     <GitBranch aria-hidden="true" />
                     <span>
                       {t("taskDetail.provenance.createdToUndo", "Created to undo")}{" "}
-                      <button
+                      <AlphaButton
                         type="button"
                         className="detail-provenance-link"
                         onClick={() => handleDepClick(revertOfId)}
                       >
                         {revertOfId}
-                      </button>
+                      </AlphaButton>
                     </span>
                   </div>
                 )}
@@ -4980,13 +5019,13 @@ export function TaskDetailContent({
                     <GitBranch aria-hidden="true" />
                     <span>
                       {t("taskDetail.provenance.undoTask", "Undo task")}:{" "}
-                      <button
+                      <AlphaButton
                         type="button"
                         className="detail-provenance-link"
                         onClick={() => handleDepClick(openUndoTask.id)}
                       >
                         {openUndoTask.id}
-                      </button>
+                      </AlphaButton>
                     </span>
                   </div>
                 )}
@@ -5060,13 +5099,13 @@ export function TaskDetailContent({
                 <div className="detail-attachment-meta">
                   {attachment.originalName} ({formatBytes(attachment.size)})
                 </div>
-                <button
+                <AlphaButton
                   className="detail-attachment-delete"
                   onClick={() => handleDeleteAttachment(attachment.filename)}
                   title={t("taskDetail.attachments.deleteTitle", "Delete attachment")}
                 >
                   ×
-                </button>
+                </AlphaButton>
               </div>
             );
           })}
@@ -5074,13 +5113,13 @@ export function TaskDetailContent({
       ) : (
         <div className="detail-empty-inline">{t("taskDetail.attachments.none", "(no attachments)")}</div>
       )}
-      <button
+      <AlphaButton
         className="btn btn-sm"
         onClick={() => fileInputRef.current?.click()}
         disabled={uploading}
       >
         {uploading ? t("taskDetail.attachments.uploading", "Uploading…") : t("taskDetail.attachments.attachBtn", "Attach Screenshot")}
-      </button>
+      </AlphaButton>
     </div>
   );
 
@@ -5155,11 +5194,13 @@ export function TaskDetailContent({
   );
 
   return (
-    <div
-      className={`task-detail-content${embedded ? " task-detail-content--embedded" : ""}${isActivityExpanded ? " task-detail-content--chat-expanded" : ""}${isPlannerChatExpanded ? " task-detail-content--planner-chat-expanded" : ""}`}
-      onDragOver={handleDragOver}
-      onDrop={handleDrop}
-    >
+    <HeroUIAlphaSurface preserveDisabledDom className="task-detail-alpha-boundary">
+      <AlphaSurface
+        className={`task-detail-content${embedded ? " task-detail-content--embedded" : ""}${isActivityExpanded ? " task-detail-content--chat-expanded" : ""}${isPlannerChatExpanded ? " task-detail-content--planner-chat-expanded" : ""}`}
+        data-task-detail-surface="true"
+        onDragOver={handleDragOver}
+        onDrop={handleDrop}
+      >
       <div className="modal-header">
           <div className="detail-title-row">
             <span className="detail-id" id="task-detail-modal-title">{task.id}</span>
@@ -5189,21 +5230,21 @@ export function TaskDetailContent({
           </div>
           <div className="modal-header-actions">
             {!isEditing && canEdit && (
-              <button
+              <AlphaButton
                 className="modal-edit-btn"
                 onClick={enterEditMode}
                 title={t("taskDetail.header.editTask", "Edit task")}
                 aria-label={t("taskDetail.header.editTask", "Edit task")}
               >
                 <Pencil size={14} />
-              </button>
+              </AlphaButton>
             )}
             {/*
             FNXC:FloatingWindow 2026-06-22-20:45 (updated 2026-06-22-18:32):
             "Pop out" affordance opens this task detail in a movable, resizable, non-blocking FloatingWindow. Header action order is edit, then expand/pop-out, then Back to board pinned far right so board-card detail controls read as edit/resize/navigation.
             */}
             {onPopOut && (
-              <button
+              <AlphaButton
                 type="button"
                 className="modal-edit-btn"
                 onClick={() => onPopOut(task)}
@@ -5212,34 +5253,34 @@ export function TaskDetailContent({
                 data-testid="task-detail-pop-out"
               >
                 <Maximize2 size={14} />
-              </button>
+              </AlphaButton>
             )}
             {/*
             FNXC:TaskDetail 2026-06-22-18:40 (updated 2026-06-22-18:32):
             Board-card full-panel "Back to board" must be the far-right header action, after edit and expand/pop-out. margin-left:auto pushes it away from the utility controls while keeping it in the same gray header row. Only rendered when embedded AND onBackToBoard are supplied (board-card detail), never in ListView split-pane or modal usages.
             */}
             {embedded && onBackToBoard && (
-              <button
+              <AlphaButton
                 type="button"
                 className="task-detail-header-back-btn"
                 onClick={onBackToBoard}
               >
                 <ArrowLeft size={14} aria-hidden="true" />
                 <span>{t("app.taskDetail.backToBoard", "Back to board")}</span>
-              </button>
+              </AlphaButton>
             )}
             {embedded && onRequestClose && !onBackToBoard && (
-              <button
+              <AlphaButton
                 className="modal-close task-detail-floating-close"
                 onClick={requestClose}
                 aria-label={t("common.close", "Close")}
                 type="button"
               >
                 <X size={16} aria-hidden="true" />
-              </button>
+              </AlphaButton>
             )}
             {!embedded && mobileHeaderMode === "back" && (
-              <button
+              <AlphaButton
                 className="modal-close task-detail-mobile-back"
                 onClick={requestClose}
                 aria-label={t("taskDetail.header.backToList", "Back to task list")}
@@ -5247,12 +5288,12 @@ export function TaskDetailContent({
               >
                 <ArrowLeft aria-hidden="true" />
                 <span>{t("taskDetail.header.back", "Back")}</span>
-              </button>
+              </AlphaButton>
             )}
             {!embedded && mobileHeaderMode !== "back" && (
-              <button className="modal-close" onClick={requestClose} aria-label={t("common.close", "Close")} type="button">
+              <AlphaButton className="modal-close" onClick={requestClose} aria-label={t("common.close", "Close")} type="button">
                 &times;
-              </button>
+              </AlphaButton>
             )}
           </div>
         </div>
@@ -5318,7 +5359,7 @@ export function TaskDetailContent({
                   <div className="form-group detail-source-edit-group">
                     <label>{t("taskDetail.edit.sourceIssueLabel", "Source Issue")}</label>
                     <div className="detail-source-edit-grid">
-                      <input
+                      <AlphaInput
                         type="text"
                         className="modal-edit-input"
                         placeholder={t("taskDetail.edit.sourceProviderPlaceholder", "Provider (e.g. github)")}
@@ -5327,7 +5368,7 @@ export function TaskDetailContent({
                         disabled={isSaving}
                         data-testid="task-source-provider-input"
                       />
-                      <input
+                      <AlphaInput
                         type="text"
                         className="modal-edit-input"
                         placeholder={t("taskDetail.edit.sourceRepositoryPlaceholder", "Repository (e.g. owner/repo)")}
@@ -5336,7 +5377,7 @@ export function TaskDetailContent({
                         disabled={isSaving}
                         data-testid="task-source-repository-input"
                       />
-                      <input
+                      <AlphaInput
                         type="text"
                         className="modal-edit-input"
                         placeholder={t("taskDetail.edit.sourceExternalIdPlaceholder", "Issue identifier")}
@@ -5345,7 +5386,7 @@ export function TaskDetailContent({
                         disabled={isSaving}
                         data-testid="task-source-external-id-input"
                       />
-                      <input
+                      <AlphaInput
                         type="url"
                         className="modal-edit-input"
                         placeholder={t("taskDetail.edit.sourceUrlPlaceholder", "Issue URL")}
@@ -5377,7 +5418,7 @@ export function TaskDetailContent({
                       {displayTitleText}
                     </span>
                     {titleOverflows || descriptionExpanded ? (
-                      <button
+                      <AlphaButton
                         type="button"
                         className="detail-title-control"
                         aria-expanded={descriptionExpanded}
@@ -5389,7 +5430,7 @@ export function TaskDetailContent({
                     ) : null}
                   </h2>
                   {showSummarizeTitleButton && (
-                    <button
+                    <AlphaButton
                       type="button"
                       className="detail-summarize-title-btn"
                       onClick={() => void handleSummarizeTitle()}
@@ -5398,7 +5439,7 @@ export function TaskDetailContent({
                     >
                       {isSummarizingTitle ? <Loader2 size={14} className="spinner" /> : <Sparkles size={14} />}
                       <span>{t("taskDetail.title.summarize", "Summarize")}</span>
-                    </button>
+                    </AlphaButton>
                   )}
                 </div>
               </>
@@ -5418,7 +5459,7 @@ export function TaskDetailContent({
                   </div>
                   <p className="detail-near-duplicate-banner__copy">
                     {t("taskDetail.nearDuplicate.copy", "This task appears to be a near-duplicate of")}{" "}
-                    <button
+                    <AlphaButton
                       type="button"
                       className="detail-provenance-link"
                       onClick={() => {
@@ -5428,16 +5469,16 @@ export function TaskDetailContent({
                       }}
                     >
                       {nearDuplicateOf}
-                    </button>
+                    </AlphaButton>
                     {". "}{t("taskDetail.nearDuplicate.actions", "Keep it to clear this flag, or delete it if the work is already covered.")}
                   </p>
                   <div className="detail-near-duplicate-banner__actions">
-                    <button type="button" className="btn btn-danger btn-sm" onClick={() => void handleDeleteNearDuplicate()}>
+                    <AlphaButton type="button" className="btn btn-danger btn-sm" onClick={() => void handleDeleteNearDuplicate()}>
                       {t("taskDetail.nearDuplicate.deleteBtn", "Delete")}
-                    </button>
-                    <button type="button" className="btn btn-secondary btn-sm" onClick={() => void handleDismissNearDuplicate()}>
+                    </AlphaButton>
+                    <AlphaButton type="button" className="btn btn-secondary btn-sm" onClick={() => void handleDismissNearDuplicate()}>
                       {t("taskDetail.nearDuplicate.keepBtn", "Keep")}
-                    </button>
+                    </AlphaButton>
                   </div>
                 </div>
               )}
@@ -5487,12 +5528,12 @@ export function TaskDetailContent({
                   */}
                   {workingTask.prompt && (
                     <div className="detail-plan-approval-banner__actions" data-testid="detail-plan-approval-banner-actions">
-                      <button className="btn btn-primary btn-sm" data-testid="detail-plan-approval-banner-approve" onClick={handleApprovePlan}>
+                      <AlphaButton className="btn btn-primary btn-sm" data-testid="detail-plan-approval-banner-approve" disabled={isPlanApprovalPending} onClick={handleApprovePlan}>
                         {t("taskDetail.plan.approveBtn", "Approve Plan")}
-                      </button>
-                      <button className="btn btn-danger btn-sm" data-testid="detail-plan-approval-banner-reject" onClick={handleRejectPlan}>
+                      </AlphaButton>
+                      <AlphaButton className="btn btn-danger btn-sm" data-testid="detail-plan-approval-banner-reject" disabled={isPlanApprovalPending} onClick={handleRejectPlan}>
                         {t("taskDetail.plan.rejectBtn", "Reject Plan")}
-                      </button>
+                      </AlphaButton>
                     </div>
                   )}
                 </div>
@@ -5503,7 +5544,7 @@ export function TaskDetailContent({
                 The paperclip renders on every non-editing tab while task details default
                 to Activity or Summary; a Definition-only input made that control a no-op.
                 */}
-                <input
+                <AlphaInput
                   className="detail-hidden-file-input"
                   ref={fileInputRef}
                   type="file"
@@ -5517,7 +5558,7 @@ export function TaskDetailContent({
                     <section className={`ai-merge-review-reconciliation ${reconciliation.terminal ? "ai-merge-review-reconciliation-terminal" : ""}`} aria-label={t("taskDetail.aiMergeReview.title", "AI merge review reconciliation")}>
                       <h3>{reconciliation.consecutiveCleanApprovals > 0 ? t("taskDetail.aiMergeReview.approvedWithPending", "Approved — {{count}} prior finding(s) unconfirmed", { count: pending.length }) : t("taskDetail.aiMergeReview.title", "AI merge review reconciliation")}</h3>
                       {reconciliation.candidateSha && <p>{t("taskDetail.aiMergeReview.candidate", "Candidate:")} <code>{reconciliation.candidateSha}</code></p>}
-                      {pending.length > 0 && <ul>{pending.map((finding) => <li key={finding.id}>{finding.text}{(reconciliation.terminal || finding.disposition === "still-present") && <button type="button" className="btn btn-secondary" onClick={() => handleDismissAiMergeFinding(finding.id)}>{t("taskDetail.aiMergeReview.dismissFinding", "Dismiss this finding")}</button>}</li>)}</ul>}
+                      {pending.length > 0 && <ul>{pending.map((finding) => <li key={finding.id}>{finding.text}{(reconciliation.terminal || finding.disposition === "still-present") && <AlphaButton type="button" className="btn btn-secondary" onClick={() => handleDismissAiMergeFinding(finding.id)}>{t("taskDetail.aiMergeReview.dismissFinding", "Dismiss this finding")}</AlphaButton>}</li>)}</ul>}
                       {reconciliation.terminal && <p>{t("taskDetail.aiMergeReview.terminalGuidance", "Rebase or re-push the branch, dismiss a finding with justification, or land manually.")}</p>}
                     </section>
                   );
@@ -5553,12 +5594,12 @@ export function TaskDetailContent({
                 {hasPendingRecovery ? <div className="detail-error-hint">{t("taskDetail.retry.pendingAutomaticRecovery", "Automatic recovery is pending. You can Retry now to restart this stage.")}</div> : null}
                 {onRetryTask && isMutableLiveColumn ? (
                   <div className="detail-error-actions">
-                    <button type="button" className="btn btn-sm" onClick={handleRetry}>
+                    <AlphaButton type="button" className="btn btn-sm" onClick={handleRetry}>
                       {t("taskDetail.error.retry", "Retry")}
-                    </button>
-                    <button type="button" className="btn btn-sm" onClick={() => setShowFailureRetryPicker(true)}>
+                    </AlphaButton>
+                    <AlphaButton type="button" className="btn btn-sm" onClick={() => setShowFailureRetryPicker(true)}>
                       {t("taskDetail.error.retryWithModel", "Retry with a different model/node")}
-                    </button>
+                    </AlphaButton>
                   </div>
                 ) : null}
                 {showFailureRetryPicker && onRetryTask && isMutableLiveColumn ? (
@@ -5566,7 +5607,7 @@ export function TaskDetailContent({
                     <label htmlFor={`failure-retry-model-${task.id}`}>
                       {t("taskDetail.error.retryModelLabel", "Executor model")}
                     </label>
-                    <select
+                    <AlphaSelect
                       id={`failure-retry-model-${task.id}`}
                       className="select"
                       value={failureRetryModel}
@@ -5579,11 +5620,11 @@ export function TaskDetailContent({
                           {model.provider}/{model.name || model.id}
                         </option>
                       ))}
-                    </select>
+                    </AlphaSelect>
                     <label htmlFor={`failure-retry-node-${task.id}`}>
                       {t("taskDetail.error.retryNodeLabel", "Execution node")}
                     </label>
-                    <select
+                    <AlphaSelect
                       id={`failure-retry-node-${task.id}`}
                       className="select"
                       value={failureRetryNodeId}
@@ -5594,19 +5635,19 @@ export function TaskDetailContent({
                       {failureRetryNodes.map((node) => (
                         <option key={node.id} value={node.id}>{node.name} ({node.type})</option>
                       ))}
-                    </select>
+                    </AlphaSelect>
                     <div className="detail-error-actions">
-                      <button type="button" className="btn btn-sm" onClick={() => setShowFailureRetryPicker(false)} disabled={isFailureRetrySaving}>
+                      <AlphaButton type="button" className="btn btn-sm" onClick={() => setShowFailureRetryPicker(false)} disabled={isFailureRetrySaving}>
                         {t("common.cancel", "Cancel")}
-                      </button>
-                      <button
+                      </AlphaButton>
+                      <AlphaButton
                         type="button"
                         className="btn btn-sm"
                         onClick={() => void handleRetryWithOverride()}
                         disabled={isFailureRetrySaving || (failureRetryModel === (task.modelProvider && task.modelId ? `${task.modelProvider}/${task.modelId}` : "") && failureRetryNodeId === (task.nodeId ?? ""))}
                       >
                         {t("taskDetail.error.confirmRetry", "Apply and retry")}
-                      </button>
+                      </AlphaButton>
                     </div>
                   </div>
                 ) : null}
@@ -5630,93 +5671,57 @@ export function TaskDetailContent({
             */}
             {taskDetailChatFirst ? (
               <>
-                <button
-                  className={`detail-tab${activeTab === "planner-chat" ? " detail-tab-active" : ""}`}
-                  onClick={() => setActiveTab("planner-chat")}
-                >
+                <TaskDetailTabButton selected={activeTab === "planner-chat"} onSelect={() => setActiveTab("planner-chat")}>
                   {t("taskDetail.tabs.chat", "Chat")}
-                </button>
+                </TaskDetailTabButton>
                 {renderActivityTab()}
               </>
             ) : (
               <>
                 {renderActivityTab()}
-                <button
-                  className={`detail-tab${activeTab === "planner-chat" ? " detail-tab-active" : ""}`}
-                  onClick={() => setActiveTab("planner-chat")}
-                >
+                <TaskDetailTabButton selected={activeTab === "planner-chat"} onSelect={() => setActiveTab("planner-chat")}>
                   {t("taskDetail.tabs.chat", "Chat")}
-                </button>
+                </TaskDetailTabButton>
               </>
             )}
-            <button
-              className={`detail-tab${activeTab === "definition" ? " detail-tab-active" : ""}`}
-              onClick={() => setActiveTab("definition")}
-            >
+            <TaskDetailTabButton selected={activeTab === "definition"} onSelect={() => setActiveTab("definition")}>
               {t("taskDetail.tabs.definition", "Plan")}
-            </button>
+            </TaskDetailTabButton>
             {(isWipColumn || isReviewColumn || isDoneColumn) && (
-              <button
-                className={`detail-tab${activeTab === "changes" ? " detail-tab-active" : ""}`}
-                onClick={() => setActiveTab("changes")}
-              >
+              <TaskDetailTabButton selected={activeTab === "changes"} onSelect={() => setActiveTab("changes")}>
                 {t("taskDetail.tabs.changes", "Changes")}
-              </button>
+              </TaskDetailTabButton>
             )}
-            <button
-              className={`detail-tab${activeTab === "summary" ? " detail-tab-active" : ""}`}
-              onClick={() => setActiveTab("summary")}
-            >
+            <TaskDetailTabButton selected={activeTab === "summary"} onSelect={() => setActiveTab("summary")}>
               {t("taskDetail.tabs.summary", "Summary")}
-            </button>
-            <button
-              className={`detail-tab${activeTab === "stats" ? " detail-tab-active" : ""}`}
-              onClick={() => setActiveTab("stats")}
-            >
+            </TaskDetailTabButton>
+            <TaskDetailTabButton selected={activeTab === "stats"} onSelect={() => setActiveTab("stats")}>
               {t("taskDetail.tabs.stats", "Stats")}
-            </button>
-            <button
-              className={`detail-tab${activeTab === "review" ? " detail-tab-active" : ""}`}
-              onClick={() => setActiveTab("review")}
-            >
+            </TaskDetailTabButton>
+            <TaskDetailTabButton selected={activeTab === "review"} onSelect={() => setActiveTab("review")}>
               {t("taskDetail.tabs.review", "Review")}
-            </button>
+            </TaskDetailTabButton>
             {isReviewColumn && (
-              <button
-                className={`detail-tab${activeTab === "pr" ? " detail-tab-active" : ""}`}
-                onClick={() => setActiveTab("pr")}
-              >
+              <TaskDetailTabButton selected={activeTab === "pr"} onSelect={() => setActiveTab("pr")}>
                 {t("taskDetail.tabs.pullRequest", "Pull Request")}
-              </button>
+              </TaskDetailTabButton>
             )}
-            <button
-              className={`detail-tab${activeTab === "comments" ? " detail-tab-active" : ""}`}
-              onClick={() => setActiveTab("comments")}
-            >
+            <TaskDetailTabButton selected={activeTab === "comments"} onSelect={() => setActiveTab("comments")}>
               {t("taskDetail.tabs.comments", "Comments")}
-            </button>
-            <button className={`detail-tab${activeTab === "dependencies" ? " detail-tab-active" : ""}`} onClick={() => setActiveTab("dependencies")}>
+            </TaskDetailTabButton>
+            <TaskDetailTabButton selected={activeTab === "dependencies"} onSelect={() => setActiveTab("dependencies")}>
               {t("taskDetail.tabs.dependencies", "Dependencies")}
-            </button>
-            <button
-              className={`detail-tab${activeTab === "documents" ? " detail-tab-active" : ""}`}
-              onClick={() => setActiveTab("documents")}
-            >
+            </TaskDetailTabButton>
+            <TaskDetailTabButton selected={activeTab === "documents"} onSelect={() => setActiveTab("documents")}>
               {/* FNXC:ArtifactRegistry 2026-06-21-21:56: Keep the internal "documents" tab id stable for persisted task-modal state while presenting the expanded user-facing tab as Artifacts. */}
               {t("taskDetail.tabs.documents", "Artifacts")}
-            </button>
-            <button
-              className={`detail-tab${activeTab === "model" ? " detail-tab-active" : ""}`}
-              onClick={() => setActiveTab("model")}
-            >
+            </TaskDetailTabButton>
+            <TaskDetailTabButton selected={activeTab === "model"} onSelect={() => setActiveTab("model")}>
               {t("taskDetail.tabs.model", "Model")}
-            </button>
-            <button
-              className={`detail-tab${activeTab === "workflow" ? " detail-tab-active" : ""}`}
-              onClick={() => setActiveTab("workflow")}
-            >
+            </TaskDetailTabButton>
+            <TaskDetailTabButton selected={activeTab === "workflow"} onSelect={() => setActiveTab("workflow")}>
               {t("taskDetail.tabs.workflow", "Workflow")}
-            </button>
+            </TaskDetailTabButton>
             {/*
             FNXC:TaskDetailTabs 2026-08-28-23:05:
             Definition is plan-only. Details owns original prompt, retries, source and agent metadata,
@@ -5724,35 +5729,25 @@ export function TaskDetailContent({
             attachments; Summary owns agent reports and recommendations. Retired deep links resolve
             to those owners rather than restoring duplicate tab buttons.
             */}
-            <button className={`detail-tab${activeTab === "details" ? " detail-tab-active" : ""}`} onClick={() => setActiveTab("details")}>
+            <TaskDetailTabButton selected={activeTab === "details"} onSelect={() => setActiveTab("details")}>
               {t("taskDetail.tabs.details", "Details")}
-            </button>
+            </TaskDetailTabButton>
             {showWorktreeTerminalTab && (
-              <button
-                className={`detail-tab${activeTab === "worktree-terminal" ? " detail-tab-active" : ""}`}
-                onClick={() => setActiveTab("worktree-terminal")}
-              >
+              <TaskDetailTabButton selected={activeTab === "worktree-terminal"} onSelect={() => setActiveTab("worktree-terminal")}>
                 {t("taskDetail.tabs.worktreeTerminal", "Terminal")}
-              </button>
+              </TaskDetailTabButton>
             )}
             {showCliTab && (
-              <button
-                className={`detail-tab${activeTab === "terminal" ? " detail-tab-active" : ""}`}
-                onClick={() => setActiveTab("terminal")}
-              >
+              <TaskDetailTabButton selected={activeTab === "terminal"} onSelect={() => setActiveTab("terminal")}>
                 {t("taskDetail.tabs.terminal", "Session")}
-              </button>
+              </TaskDetailTabButton>
             )}
             {/* Plugin tabs */}
             {pluginTabs.map(({ entry, tabId }) => {
               return (
-                <button
-                  key={`plugin-tab-${entry.pluginId}-${tabId}`}
-                  className={`detail-tab${activeTab === tabId ? " detail-tab-active" : ""}`}
-                  onClick={() => setActiveTab(tabId)}
-                >
+                <TaskDetailTabButton key={`plugin-tab-${entry.pluginId}-${tabId}`} selected={activeTab === tabId} onSelect={() => setActiveTab(tabId)}>
                   {entry.slot.label}
-                </button>
+                </TaskDetailTabButton>
               );
             })}
           </div>
@@ -5884,7 +5879,7 @@ export function TaskDetailContent({
               ) : (
                 <div className="detail-activity" role="tabpanel">
                   <div className="detail-activity-actions">
-                    <button
+                    <AlphaButton
                       type="button"
                       className="btn btn-sm detail-activity-copy"
                       onClick={() => void handleCopyActivityLogs()}
@@ -5895,8 +5890,8 @@ export function TaskDetailContent({
                     >
                       <Copy aria-hidden="true" />
                       {t("taskDetail.logs.copy", "Copy logs")}
-                    </button>
-                    <button
+                    </AlphaButton>
+                    <AlphaButton
                       type="button"
                       className="btn btn-icon btn-sm activity-expand-toggle activity-expand-toggle--overlay"
                       onClick={() => setActivityExpanded((value) => !value)}
@@ -5905,7 +5900,7 @@ export function TaskDetailContent({
                       data-testid="task-chat-expand-toggle"
                     >
                       {isActivityExpanded ? <Minimize2 aria-hidden="true" /> : <Maximize2 aria-hidden="true" />}
-                    </button>
+                    </AlphaButton>
                   </div>
                   <h4>{t("taskDetail.activity.feedHeading", "Feed")}</h4>
                   {(workingTask as typeof workingTask & { activityLogTruncatedCount?: number }).activityLogTruncatedCount ? (
@@ -6021,7 +6016,7 @@ export function TaskDetailContent({
                         <div className="detail-in-review-stall-meta">
                           <span>{t("taskDetail.stall.observed", "Observed")} {formatTimestamp(workingTask.inReviewStall.observedAt)}</span>
                           {logMatch ? (
-                            <button
+                            <AlphaButton
                               type="button"
                               className="btn btn-sm detail-in-review-stall-jump"
                               onClick={() => {
@@ -6031,7 +6026,7 @@ export function TaskDetailContent({
                               }}
                             >
                               {t("taskDetail.stall.viewActivityLog", "View activity log")}
-                            </button>
+                            </AlphaButton>
                           ) : (
                             <span
                               className="detail-in-review-stall-no-log"
@@ -6069,7 +6064,7 @@ export function TaskDetailContent({
                           <span>{t("taskDetail.stall.threshold", "Threshold")} {formatDurationCompact(workingTask.stalePausedReview.thresholdMs)}</span>
                           <span>{t("taskDetail.stall.observed", "Observed")} {formatTimestamp(workingTask.stalePausedReview.observedAt)}</span>
                           {logMatch ? (
-                            <button
+                            <AlphaButton
                               type="button"
                               className="btn btn-sm detail-in-review-stall-jump"
                               onClick={() => {
@@ -6079,7 +6074,7 @@ export function TaskDetailContent({
                               }}
                             >
                               {t("taskDetail.stall.viewActivityLog", "View activity log")}
-                            </button>
+                            </AlphaButton>
                           ) : (
                             <span className="detail-in-review-stall-no-log">{t("taskDetail.stall.noLogEntry", "No log entry yet")}</span>
                           )}
@@ -6212,13 +6207,13 @@ export function TaskDetailContent({
                         <span className="detail-dep-id">{dep}</span>
                         <span className="detail-dep-label">{truncate(depLabel, 40)}</span>
                       </span>
-                      <button
+                      <AlphaButton
                         className="dep-remove-btn"
                         onClick={(e) => handleRemoveDep(e, dep)}
                         title={t("taskDetail.deps.removeTitle", "Remove dependency {{id}}", { id: dep })}
                       >
                         ×
-                      </button>
+                      </AlphaButton>
                     </li>
                   );
                 })}
@@ -6232,14 +6227,14 @@ export function TaskDetailContent({
                   {t("taskDetail.deps.overlapBlocker", "File scope overlap blocker:")} {workingTask.overlapBlockedBy}
                   {!overlapBlockerActive && ` ${t("taskDetail.deps.stale", "(stale)")}`}
                 </span>
-                <button
+                <AlphaButton
                   type="button"
                   className="btn btn-sm"
                   onClick={() => void handleClearOverlapBlocker()}
                   title={t("taskDetail.deps.clearBlockerTitle", "Clear overlap blocker {{id}}", { id: workingTask.overlapBlockedBy })}
                 >
                   {t("taskDetail.deps.clearBtn", "Clear")}
-                </button>
+                </AlphaButton>
               </div>
             )}
             {workingTask.overlapBlockedBy && (
@@ -6265,7 +6260,7 @@ export function TaskDetailContent({
               </div>
             )}
             <div className="dep-trigger-wrap">
-              <button
+              <AlphaButton
                 type="button"
                 className="btn btn-sm dep-trigger"
                 onClick={() => {
@@ -6274,7 +6269,7 @@ export function TaskDetailContent({
                 }}
               >
                 {t("taskDetail.deps.addBtn", "Add Dependency")}
-              </button>
+              </AlphaButton>
               {showDepDropdown && (() => {
                 const term = depSearch.toLowerCase();
                 const filtered = term
@@ -6286,7 +6281,7 @@ export function TaskDetailContent({
                   : availableTasks;
                 return (
                   <div className="dep-dropdown">
-                    <input
+                    <AlphaInput
                       className="dep-dropdown-search"
                       placeholder={t("taskDetail.deps.searchPlaceholder", "Search tasks…")}
                       autoFocus
@@ -6373,7 +6368,7 @@ export function TaskDetailContent({
             <div className="detail-source-header">
               <h4>{t("taskDetail.originalPrompt.heading", "Original prompt")}</h4>
               {hasOriginalTaskPrompt && (
-                <button
+                <AlphaButton
                   type="button"
                   className="detail-source-toggle"
                   aria-expanded={originalPromptExpanded}
@@ -6381,7 +6376,7 @@ export function TaskDetailContent({
                   onClick={() => setOriginalPromptExpanded((expanded) => !expanded)}
                 >
                   <ChevronRight size={16} className={originalPromptExpanded ? "detail-source-chevron--expanded" : undefined} />
-                </button>
+                </AlphaButton>
               )}
             </div>
             {hasOriginalTaskPrompt ? (
@@ -6417,7 +6412,7 @@ export function TaskDetailContent({
                   <span className="detail-source-label">{t("taskDetail.retries.label", "Retries")}</span>
                   <span className="detail-source-number">{retrySummary?.total ?? 0}</span>
                 </div>
-                <button
+                <AlphaButton
                   type="button"
                   className="detail-source-toggle"
                   aria-expanded={retriesExpanded}
@@ -6425,7 +6420,7 @@ export function TaskDetailContent({
                   onClick={() => setRetriesExpanded((expanded) => !expanded)}
                 >
                   <ChevronRight size={16} className={retriesExpanded ? "detail-source-chevron--expanded" : undefined} />
-                </button>
+                </AlphaButton>
               </div>
               {retriesExpanded && (
                 <dl className="detail-source-grid detail-retries-grid">
@@ -6472,7 +6467,7 @@ export function TaskDetailContent({
                     <span className="detail-source-number">{`(#${task.sourceIssue.issueNumber})`}</span>
                   )}
                 </div>
-                <button
+                <AlphaButton
                   type="button"
                   className="detail-source-toggle"
                   aria-expanded={sourceIssueExpanded}
@@ -6483,7 +6478,7 @@ export function TaskDetailContent({
                     size={16}
                     className={sourceIssueExpanded ? "detail-source-chevron--expanded" : undefined}
                   />
-                </button>
+                </AlphaButton>
               </div>
               {sourceIssueExpanded && (
                 <dl className="detail-source-grid">
@@ -6540,16 +6535,16 @@ export function TaskDetailContent({
                   <span className="detail-agent-chip">
                     <Bot size={14} />
                     {assignedAgentLabel}
-                    <button
+                    <AlphaButton
                       className="detail-agent-clear"
                       onClick={() => void handleClearAgent()}
                       title={t("taskDetail.agent.unassignTitle", "Unassign agent")}
                     >
                       <X size={12} />
-                    </button>
+                    </AlphaButton>
                   </span>
                 ) : (
-                  <button
+                  <AlphaButton
                     className="btn btn-sm"
                     onClick={() => {
                       if (showAgentPicker) {
@@ -6560,13 +6555,13 @@ export function TaskDetailContent({
                     }}
                   >
                     {t("taskDetail.agent.assignBtn", "Assign Agent")}
-                  </button>
+                  </AlphaButton>
                 )}
                 {showAgentPicker && (
                   <div className="agent-picker-dropdown">
                     {agentsLoading && <div className="agent-picker-loading"><LoadingSpinner label={t("taskDetail.agent.loadingAgents", "Loading agents...")} /></div>}
                     {!agentsLoading && agents.map((a) => (
-                      <button
+                      <AlphaButton
                         key={a.id}
                         className={`agent-picker-item${task.assignedAgentId === a.id ? " selected" : ""}`}
                         onClick={() => void handleAssignAgent(a.id)}
@@ -6574,7 +6569,7 @@ export function TaskDetailContent({
                         <Bot size={14} />
                         <span className="agent-picker-name">{a.name}</span>
                         <span className="agent-picker-role">{a.role}</span>
-                      </button>
+                      </AlphaButton>
                     ))}
                     {!agentsLoading && agents.length === 0 && (
                       <div className="agent-picker-empty">{t("taskDetail.agent.noAgents", "No agents available")}</div>
@@ -6601,7 +6596,7 @@ export function TaskDetailContent({
                     <span className="detail-source-empty">{t("taskDetail.gitlabTracking.unlinked", "No linked GitLab item")}</span>
                   )}
                 </div>
-                <button
+                <AlphaButton
                   type="button"
                   className="detail-source-toggle"
                   aria-expanded={gitlabTrackingExpanded}
@@ -6609,7 +6604,7 @@ export function TaskDetailContent({
                   onClick={() => setGitlabTrackingExpanded((expanded) => !expanded)}
                 >
                   <ChevronRight size={16} className={gitlabTrackingExpanded ? "detail-source-chevron--expanded" : undefined} />
-                </button>
+                </AlphaButton>
               </div>
               {gitlabTrackingExpanded && (
                 <div className="detail-gitlab-tracking-content">
@@ -6655,7 +6650,7 @@ export function TaskDetailContent({
                     <div className="detail-gitlab-tracking-controls">
                       <a className="btn btn-sm touch-target" href={gitlabTrackedItem.url} target="_blank" rel="noopener noreferrer" aria-label={t("taskDetail.gitlabTracking.openAriaLabel", "Open linked GitLab item")}>{t("taskDetail.gitlabTracking.openBtn", "Open in GitLab")}</a>
                       {canEdit && (
-                        <button className="btn btn-sm btn-danger touch-target" onClick={() => void handleUnlinkGitLabItem()} disabled={isSavingGithubTracking}>{t("taskDetail.gitlabTracking.unlinkBtn", "Unlink GitLab item")}</button>
+                        <AlphaButton className="btn btn-sm btn-danger touch-target" onClick={() => void handleUnlinkGitLabItem()} disabled={isSavingGithubTracking}>{t("taskDetail.gitlabTracking.unlinkBtn", "Unlink GitLab item")}</AlphaButton>
                       )}
                     </div>
                   )}
@@ -6683,7 +6678,7 @@ export function TaskDetailContent({
                   )}
                 </div>
                 {showInlineGithubTrackingEnableButton && (
-                  <button
+                  <AlphaButton
                     type="button"
                     className="btn btn-sm btn-primary detail-github-tracking-enable"
                     aria-label={t("taskDetail.githubTracking.enableAriaLabel", "Enable GitHub tracking")}
@@ -6691,7 +6686,7 @@ export function TaskDetailContent({
                     onClick={() => void handleToggleGithubTracking()}
                   >
                     {t("taskDetail.githubTracking.enableBtn", "Enable")}
-                  </button>
+                  </AlphaButton>
                 )}
                 {showGithubTrackingSpinner && (
                   <span
@@ -6706,7 +6701,7 @@ export function TaskDetailContent({
                     </span>
                   </span>
                 )}
-                <button
+                <AlphaButton
                   type="button"
                   className="detail-source-toggle"
                   aria-expanded={githubTrackingExpanded}
@@ -6717,7 +6712,7 @@ export function TaskDetailContent({
                     size={16}
                     className={githubTrackingExpanded ? "detail-source-chevron--expanded" : undefined}
                   />
-                </button>
+                </AlphaButton>
               </div>
               {githubTrackingExpanded && (
                 <div className="detail-github-tracking-content">
@@ -6748,14 +6743,14 @@ export function TaskDetailContent({
                   <div className="detail-github-tracking-controls">
                     {!githubTrackedIssue && githubTrackingEnabled && (
                       <>
-                        <button
+                        <AlphaButton
                           className="btn btn-sm touch-target"
                           onClick={() => void handleRetryGithubTrackingIssueCreate()}
                           disabled={isSavingGithubTracking || !canCreateTrackingIssue}
                           title={!canCreateTrackingIssue ? t("taskDetail.githubTracking.createIssueDisabledTitle", "Add a title or description so a tracking issue can be created.") : undefined}
                         >
                           {t("taskDetail.githubTracking.createIssueBtn", "Create tracking issue")}
-                        </button>
+                        </AlphaButton>
                         {!canCreateTrackingIssue && (
                           <small className="detail-github-tracking-helper">{t("taskDetail.githubTracking.createIssueHelper", "Tracking issue will be created once this task has a title or description to summarize.")}</small>
                         )}
@@ -6764,7 +6759,7 @@ export function TaskDetailContent({
                     {canEditGithubTracking && (
                       <>
                         <label className="checkbox-label" htmlFor="detail-github-tracking-toggle">
-                          <input
+                          <AlphaInput
                             id="detail-github-tracking-toggle"
                             type="checkbox"
                             checked={githubTrackingEnabled}
@@ -6774,7 +6769,7 @@ export function TaskDetailContent({
                           {t("taskDetail.githubTracking.enableCheckboxLabel", "Enable GitHub tracking")}
                         </label>
                         <div className="detail-github-tracking-repo-row">
-                          <input
+                          <AlphaInput
                             className="input"
                             value={githubRepoOverrideDraft}
                             onChange={(event) => {
@@ -6783,15 +6778,15 @@ export function TaskDetailContent({
                             }}
                             placeholder={effectiveGithubRepoDefault || "owner/repo"}
                           />
-                          <button className="btn btn-sm" onClick={() => void handleSaveGithubRepoOverride()} disabled={isSavingGithubTracking}>
+                          <AlphaButton className="btn btn-sm" onClick={() => void handleSaveGithubRepoOverride()} disabled={isSavingGithubTracking}>
                             {t("common.save", "Save")}
-                          </button>
+                          </AlphaButton>
                         </div>
                         {githubRepoOverrideError && <small className="detail-github-tracking-error">{githubRepoOverrideError}</small>}
                         {githubTrackedIssue && (
-                          <button className="btn btn-sm touch-target" onClick={() => void handleUnlinkGithubIssue()} disabled={isSavingGithubTracking}>
+                          <AlphaButton className="btn btn-sm touch-target" onClick={() => void handleUnlinkGithubIssue()} disabled={isSavingGithubTracking}>
                             {t("taskDetail.githubTracking.unlinkBtn", "Unlink GitHub issue")}
-                          </button>
+                          </AlphaButton>
                         )}
                       </>
                     )}
@@ -6803,7 +6798,7 @@ export function TaskDetailContent({
           <div className="detail-section detail-no-commits-expected-section">
             <div className="form-group">
               <label className="checkbox-label" htmlFor="detail-no-commits-expected-toggle">
-                <input
+                <AlphaInput
                   id="detail-no-commits-expected-toggle"
                   type="checkbox"
                   checked={inlineNoCommitsExpected}
@@ -6820,7 +6815,7 @@ export function TaskDetailContent({
           <div className="detail-section detail-routing-section">
             <div className="detail-source-header">
               <span className="detail-source-label">{t("taskDetail.tabs.routing", "Routing")}</span>
-              <button
+              <AlphaButton
                 type="button"
                 className="detail-source-toggle"
                 aria-expanded={routingExpanded}
@@ -6830,7 +6825,7 @@ export function TaskDetailContent({
                 onClick={() => setRoutingExpanded((expanded) => !expanded)}
               >
                 <ChevronRight size={16} className={routingExpanded ? "detail-source-chevron--expanded" : undefined} />
-              </button>
+              </AlphaButton>
             </div>
             {routingExpanded && (
               <RoutingTab
@@ -6845,7 +6840,7 @@ export function TaskDetailContent({
           <div className="detail-section detail-debug-section">
             <div className="detail-source-header">
               <span className="detail-source-label">{t("taskDetail.tabs.debug", "Debug")}</span>
-              <button
+              <AlphaButton
                 type="button"
                 className="detail-source-toggle"
                 aria-expanded={debugExpanded}
@@ -6855,7 +6850,7 @@ export function TaskDetailContent({
                 onClick={() => setDebugExpanded((expanded) => !expanded)}
               >
                 <ChevronRight size={16} className={debugExpanded ? "detail-source-chevron--expanded" : undefined} />
-              </button>
+              </AlphaButton>
             </div>
             {debugExpanded && renderDebugDetails()}
           </div>
@@ -6895,22 +6890,22 @@ export function TaskDetailContent({
                  * The Plan prompt surfaces must span the task-detail card body in modal and embedded renderings. Keep the scoped wrapper around markdown, no-prompt fallback, inline edit, and AI revision controls so width fixes do not alter unrelated detail sections.
                  */}
                 {fileBrowser && (
-                  <button
+                  <AlphaButton
                     className="btn btn-sm"
                     onClick={openPromptFile}
                     title={t("taskDetail.spec.openPromptTitle", "Open this task's PROMPT.md in the file editor")}
                   >
                     {t("taskDetail.spec.openPromptBtn", "Open PROMPT.md")}
-                  </button>
+                  </AlphaButton>
                 )}
-                <button className="btn btn-sm" onClick={enterSpecEditMode}>
+                <AlphaButton className="btn btn-sm" onClick={enterSpecEditMode}>
                   {t("taskDetail.spec.editBtn", "Edit")}
-                </button>
+                </AlphaButton>
               </div>
             )}
             {isEditingSpec ? (
               <div className="spec-editor-edit-mode">
-                <textarea
+                <AlphaTextArea
                   className="spec-editor-textarea"
                   value={specEditContent}
                   onChange={(e) => setSpecEditContent(e.target.value)}
@@ -6920,20 +6915,20 @@ export function TaskDetailContent({
                   rows={12}
                 />
                 <div className="spec-editor-actions-row">
-                  <button
+                  <AlphaButton
                     className="btn btn-sm"
                     onClick={exitSpecEditMode}
                     disabled={isSavingSpec}
                   >
                     {t("common.cancel", "Cancel")}
-                  </button>
-                  <button
+                  </AlphaButton>
+                  <AlphaButton
                     className="btn btn-primary btn-sm"
                     onClick={() => void handleSaveSpecFromEdit()}
                     disabled={specEditContent === (workingTask.prompt || "") || isSavingSpec}
                   >
                     {isSavingSpec ? t("taskDetail.spec.saving", "Saving…") : t("common.save", "Save")}
-                  </button>
+                  </AlphaButton>
                 </div>
                 <div className="spec-editor-hint">
                   <kbd>Ctrl</kbd>+<kbd>Enter</kbd> {t("taskDetail.spec.hintSave", "to save")} · <kbd>Escape</kbd> {t("taskDetail.spec.hintCancel", "to cancel")}
@@ -6944,7 +6939,7 @@ export function TaskDetailContent({
                   <p className="spec-editor-revision-help">
                     {t("taskDetail.spec.aiReviseHelp", "Provide feedback for the AI to improve this specification. The task will move to planning for replanning.")}
                   </p>
-                  <textarea
+                  <AlphaTextArea
                     className="spec-editor-feedback"
                     value={specFeedback}
                     onChange={(e) => setSpecFeedback(e.target.value)}
@@ -6957,13 +6952,13 @@ export function TaskDetailContent({
                     <span className="spec-editor-char-count">
                       {specFeedback.length}/{MAX_TASK_MESSAGE_LENGTH}
                     </span>
-                    <button
+                    <AlphaButton
                       className="btn btn-primary btn-sm"
                       onClick={() => void handleRequestRevisionFromEdit()}
                       disabled={!specFeedback.trim() || isRequestingRevision}
                     >
                       {isRequestingRevision ? t("taskDetail.spec.requesting", "Requesting…") : t("taskDetail.spec.requestRevisionBtn", "Request AI Revision")}
-                    </button>
+                    </AlphaButton>
                   </div>
                 </div>
               </div>
@@ -6985,7 +6980,7 @@ export function TaskDetailContent({
                   </div>
                   {planSummary.restMarkdown.trim() && (
                     <>
-                      <button
+                      <AlphaButton
                         type="button"
                         className="btn btn-sm touch-target detail-plan-details-toggle"
                         data-testid="task-detail-plan-details-toggle"
@@ -6997,7 +6992,7 @@ export function TaskDetailContent({
                         {planDetailsExpanded
                           ? t("taskDetail.spec.hideDetailsBtn", "Hide details")
                           : t("taskDetail.spec.moreDetailsBtn", "See more details")}
-                      </button>
+                      </AlphaButton>
                       {planDetailsExpanded && (
                         <div className="markdown-body" id={`${workingTask.id}-plan-details`} data-testid="task-detail-plan-details">
                           <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={sharedRehypePlugins} components={markdownLinkifyComponents}>
@@ -7168,20 +7163,20 @@ export function TaskDetailContent({
                 {editAutoSaveStatus === "saving" ? t("taskDetail.edit.autosaving", "Autosaving…") : editAutoSaveStatus === "saved" ? t("taskDetail.edit.saved", "Saved") : editAutoSaveStatus === "error" ? t("taskDetail.edit.saveFailed", "Save failed") : t("taskDetail.edit.autosaveHint", "Changes autosave as you edit")}
               </span>
               <div className="modal-actions-spacer" />
-              <button
+              <AlphaButton
                 className="btn btn-sm"
                 onClick={exitEditMode}
                 disabled={isSaving}
               >
                 {t("common.cancel", "Cancel")}
-              </button>
-              <button
+              </AlphaButton>
+              <AlphaButton
                 className="btn btn-primary btn-sm"
                 onClick={() => void handleSave()}
                 disabled={isSaving}
               >
                 {isSaving ? t("taskDetail.edit.saving", "Saving…") : t("common.save", "Save")}
-              </button>
+              </AlphaButton>
             </>
           ) : (
             <>
@@ -7189,12 +7184,12 @@ export function TaskDetailContent({
                   legacy rows with awaitingApprovalReason === "release-authorization"). */}
               {isAwaitingApproval && workingTask.prompt && (
                 <>
-                  <button className="btn btn-primary btn-sm" data-testid="detail-plan-approval-footer-approve" onClick={handleApprovePlan}>
+                  <AlphaButton className="btn btn-primary btn-sm" data-testid="detail-plan-approval-footer-approve" disabled={isPlanApprovalPending} onClick={handleApprovePlan}>
                     {t("taskDetail.plan.approveBtn", "Approve Plan")}
-                  </button>
-                  <button className="btn btn-danger btn-sm" data-testid="detail-plan-approval-footer-reject" onClick={handleRejectPlan}>
+                  </AlphaButton>
+                  <AlphaButton className="btn btn-danger btn-sm" data-testid="detail-plan-approval-footer-reject" disabled={isPlanApprovalPending} onClick={handleRejectPlan}>
                     {t("taskDetail.plan.rejectBtn", "Reject Plan")}
-                  </button>
+                  </AlphaButton>
                 </>
               )}
 
@@ -7206,8 +7201,8 @@ export function TaskDetailContent({
               */}
               {isTaskReverted(task.sourceMetadata) && (
                 <>
-                  <button className="btn btn-sm btn-danger" onClick={() => void handleDelete()} aria-label={t("taskDetail.reverted.deleteAria", "Delete reverted task")}>{t("taskDetail.delete.btn", "Delete")}</button>
-                  {onReviseTask && <button className="btn btn-sm" onClick={() => { onReviseTask(task); requestClose?.(); }}>{t("taskDetail.revise", "Revise")}</button>}
+                  <AlphaButton className="btn btn-sm btn-danger" onClick={() => void handleDelete()} aria-label={t("taskDetail.reverted.deleteAria", "Delete reverted task")}>{t("taskDetail.delete.btn", "Delete")}</AlphaButton>
+                  {onReviseTask && <AlphaButton className="btn btn-sm" onClick={() => { onReviseTask(task); requestClose?.(); }}>{t("taskDetail.revise", "Revise")}</AlphaButton>}
                 </>
               )}
 
@@ -7220,20 +7215,20 @@ export function TaskDetailContent({
               no landed commit to revert, avoiding an empty button shell.
               */}
               {isDoneColumn && onRevertTask && isRevertable && (
-                <button
+                <AlphaButton
                   className="btn btn-sm"
                   onClick={() => void handleRevertTask()}
                   aria-label={t("tasks.revertTask", "Revert this task's changes")}
                   title={t("tasks.revertTask", "Revert this task's changes")}
                 >
                   {t("tasks.revert", "Revert")}
-                </button>
+                </AlphaButton>
               )}
 
               {/* Actions dropdown — quick controls and less common operations */}
               {(taskActionMenuModel.shouldShowActionsMenu || detailQuickActionItems.length > 0) && (
                 <div className="detail-actions-dropdown" ref={actionsMenuRef}>
-                  <button
+                  <AlphaButton
                     className="btn btn-sm"
                     onClick={() => {
                       setShowActionsMenu((prev) => !prev);
@@ -7245,7 +7240,7 @@ export function TaskDetailContent({
                       {t("taskDetail.actions.menuBtn", "Actions")}
                     </span>
                     <ChevronDown size={12} />
-                  </button>
+                  </AlphaButton>
                   {showActionsMenu && (
                     <>
                       {/*
@@ -7276,13 +7271,13 @@ export function TaskDetailContent({
               its only primary footer button, while lifecycle placement stays workflow-owned.
               */}
               {reviewAction && (
-                <button
+                <AlphaButton
                   className="btn btn-primary btn-sm"
                   onClick={reviewAction.onSelect}
                   disabled={reviewAction.disabled}
                 >
                   <span className="detail-footer-button-label">{reviewAction.label}</span>
-                </button>
+                </AlphaButton>
               )}
             </>
           )}
@@ -7298,25 +7293,24 @@ export function TaskDetailContent({
         />
       )}
       {showRefineModal && (
-          <div
-            className="modal-overlay open detail-refine-overlay"
-            {...refineOverlayDismissProps}
-            role="dialog"
-            aria-modal="true"
+          <AlphaDialogBackdrop
+            overlayClassName="modal-overlay open detail-refine-overlay"
+            labelledBy="task-detail-refine-title"
+            overlayProps={refineOverlayDismissProps}
           >
             <div className="modal detail-refine-modal">
               <div className="modal-header">
-                <h3 className="detail-refine-title">{t("taskDetail.refine.modalTitle", "Refine")}</h3>
-                <button className="modal-close" onClick={handleCloseRefineModal} aria-label={t("common.close", "Close")}>
+                <h3 id="task-detail-refine-title" className="detail-refine-title">{t("taskDetail.refine.modalTitle", "Refine")}</h3>
+                <AlphaButton className="modal-close" onClick={handleCloseRefineModal} aria-label={t("common.close", "Close")}>
                   &times;
-                </button>
+                </AlphaButton>
               </div>
               <div className="detail-body">
                 <div className="detail-body-content">
                   <p className="detail-refine-help">
                     {t("taskDetail.refine.help", "Describe what needs to be refined or improved...")}
                   </p>
-                  <textarea
+                  <AlphaTextArea
                     className="detail-refine-textarea"
                     value={refineFeedback}
                     onChange={(e) => setRefineFeedback(e.target.value)}
@@ -7329,23 +7323,23 @@ export function TaskDetailContent({
                     <div className="detail-refine-char-count">
                       {t("taskDetail.refine.charCount", "{{count}}/{{max}} characters", { count: refineFeedback.length, max: MAX_TASK_MESSAGE_LENGTH })}
                     </div>
-                    <button
+                    <AlphaButton
                       className="btn btn-primary btn-sm"
                       onClick={handleSubmitRefine}
                       disabled={!refineFeedback.trim() || isRefining}
                     >
                       {isRefining ? t("taskDetail.refine.creating", "Creating...") : t("taskDetail.refine.createBtn", "Create Refinement Task")}
-                    </button>
+                    </AlphaButton>
                   </div>
                 </div>
               </div>
               <div className="modal-actions">
-                <button className="btn btn-sm" onClick={handleCloseRefineModal} disabled={isRefining}>
+                <AlphaButton className="btn btn-sm" onClick={handleCloseRefineModal} disabled={isRefining}>
                   {t("common.cancel", "Cancel")}
-                </button>
+                </AlphaButton>
               </div>
             </div>
-          </div>
+          </AlphaDialogBackdrop>
         )}
         {selectedSourceAgentId && (
           <Suspense fallback={null}>
@@ -7358,7 +7352,8 @@ export function TaskDetailContent({
             />
           </Suspense>
         )}
-    </div>
+      </AlphaSurface>
+    </HeroUIAlphaSurface>
   );
 }
 

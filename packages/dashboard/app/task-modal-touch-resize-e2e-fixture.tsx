@@ -6,6 +6,7 @@ import { I18nextProvider, initReactI18next, useTranslation } from "react-i18next
 import "./styles.css";
 import "./components/TaskDetailModal.css";
 import "./components/FloatingWindow.css";
+import "./hero-ui-alpha.css";
 import { FloatingWindow } from "./components/FloatingWindow";
 import { App } from "./App";
 import { TaskDetailContent } from "./components/TaskDetailModal";
@@ -18,6 +19,7 @@ import { NewTaskModal } from "./components/NewTaskModal";
 import { AgentListModal } from "./components/AgentListModal";
 import { SetupWizardModal } from "./components/SetupWizardModal";
 import { ConfirmDialogProvider } from "./hooks/useConfirm";
+import { HeroUIAlphaProvider } from "./context/HeroUIAlphaContext";
 
 const params = new URLSearchParams(window.location.search);
 const surface = params.get("surface") ?? "new-task";
@@ -71,6 +73,10 @@ window.fetch = async (input) => {
         { id: "verify", name: "Verify", flags: {} },
         { id: "done", name: "Done", flags: {} },
       ] : [{ id: "todo", name: "Todo", flags: {} }, { id: "in-progress", name: "In progress", flags: {} }, { id: "in-review", name: "In review", flags: {} }] }] }
+      : pathname === "/api/tasks/page"
+        ? { tasks: [fixtureTask], total: 1, hasMore: false, nextCursor: null }
+        : pathname === "/api/tasks/done"
+          ? { tasks: [], total: 0, hasMore: false, nextCursor: null }
       : url.includes(`/tasks/${fixtureTask.id}/prompt`)
         ? { id: fixtureTask.id, prompt: "" }
         : pathname === `/api/tasks/${fixtureTask.id}`
@@ -93,7 +99,7 @@ window.fetch = async (input) => {
                   ? { goals: [] }
         : url.includes("/models")
           ? { models: [], favoriteProviders: [], favoriteModels: [] }
-          : url.includes("/settings") ? { taskPopupsBoardListOnly: false, openMobileTasksInPopup: params.get("openMobileTasksInPopup") === "true" }
+          : url.includes("/settings") ? { taskPopupsBoardListOnly: false, openMobileTasksInPopup: params.get("openMobileTasksInPopup") === "true", experimentalFeatures: { alphaUpdates: params.get("alpha") === "true" } }
             : url.includes("/agents") || url.includes("/nodes") ? []
               : [];
   return new Response(JSON.stringify(payload), { headers: { "content-type": "application/json" } });
@@ -186,10 +192,6 @@ function TaskDetailTitleDockHarness() {
   const dock = useRightDockController({ active: true, projectId: "fixture", tasks: [fixtureTask], addToast: noop, settingsLoaded: true, researchReadinessVersion: 0, workflowSteps: [], subscribePluginEvents: () => noop, openDetailTask: noop, openTaskPopup: noop, openMobileTasksInPopup: false, openFileInBrowser: noop, onDeleteTask: asyncTask, onMergeTask: asyncMerge, openSettings: noop, onSendSelectionToTask: noop, onCreateTaskFromInsight: noop, onNavigateToMission: noop, onTaskCreated: noop, prAuthAvailable: false, autoMerge: true, taskDetailChatFirst: false, visibilityOptions: {}, footerVisible: false, columnFlagsByTaskId: fixtureColumnFlagsByTaskId });
   React.useEffect(() => { dock.openTaskInDock(fixtureTask); }, []);
   return <div data-testid="title-host-dock" className="fn-8806-constrained-title-host">{dock.dock}</div>;
-}
-
-function TaskDetailTitleFloatingHarness() {
-  return <div data-testid="title-host-floating"><FloatingWindow windowKey="fn-8806-task-floating" title={fixtureTask.id} onClose={noop} hideHeader dragHandleSelector=".task-detail-content--embedded > .modal-header" className="floating-window--task-detail" defaultSize={{ width: 560, height: 480 }} minSize={{ width: 320, height: 240 }} layer="task-detail"><TaskDetailContent {...detailProps} embedded onRequestClose={noop} /></FloatingWindow></div>;
 }
 
 /*
@@ -296,16 +298,22 @@ function GenericFloatingWindowHarness() {
 }
 
 function Fixture() {
+  const appOwnsAlphaBoundary = surface === "task-detail-title-app-floating" || surface === "board-card-click-app";
+  const content = appOwnsAlphaBoundary ? <TaskDetailTitleAppFloatingHarness /> : surface === "agent-list-modal" ? <AgentListModal isOpen onClose={() => undefined} addToast={() => undefined} /> : surface === "setup-wizard-modal" ? <SetupWizardModal onProjectRegistered={() => undefined} onClose={() => undefined} /> : surface === "floating-window" ? <FloatingWindowHarness /> : surface === "floating-window-headerless" ? <HeaderlessFloatingWindowHarness /> : surface === "floating-window-generic" ? <GenericFloatingWindowHarness /> : surface === "task-detail-title-modal" ? <TaskDetailTitleModalHarness /> : surface === "task-detail-title-main-panel" ? <TaskDetailTitleMainPanelHarness /> : surface === "task-detail-title-list" ? <TaskDetailTitleListHarness /> : surface === "task-detail-title-dock" ? <TaskDetailTitleDockHarness /> : surface === "task-detail-title-embedded" ? <TaskDetailTitleEmbeddedHarness /> : surface === "task-detail" ? <TaskDetailResizeHarness /> : <NewTaskModal
+    isOpen
+    tasks={[]}
+    onClose={() => undefined}
+    onCreateTask={async () => ({ id: "FN-E2E" }) as never}
+    addToast={() => undefined}
+  />;
   return <I18nextProvider i18n={i18n}>
-    <ConfirmDialogProvider skipConfirmations>
-      {surface === "task-detail-title-app-floating" || surface === "board-card-click-app" ? <TaskDetailTitleAppFloatingHarness /> : surface === "agent-list-modal" ? <AgentListModal isOpen onClose={() => undefined} addToast={() => undefined} /> : surface === "setup-wizard-modal" ? <SetupWizardModal onProjectRegistered={() => undefined} onClose={() => undefined} /> : surface === "floating-window" ? <FloatingWindowHarness /> : surface === "floating-window-headerless" ? <HeaderlessFloatingWindowHarness /> : surface === "floating-window-generic" ? <GenericFloatingWindowHarness /> : surface === "task-detail-title-modal" ? <TaskDetailTitleModalHarness /> : surface === "task-detail-title-main-panel" ? <TaskDetailTitleMainPanelHarness /> : surface === "task-detail-title-list" ? <TaskDetailTitleListHarness /> : surface === "task-detail-title-dock" ? <TaskDetailTitleDockHarness /> : surface === "task-detail-title-floating" ? <TaskDetailTitleFloatingHarness /> : surface === "task-detail-title-embedded" ? <TaskDetailTitleEmbeddedHarness /> : surface === "task-detail" ? <TaskDetailResizeHarness /> : <NewTaskModal
-        isOpen
-        tasks={[]}
-        onClose={() => undefined}
-        onCreateTask={async () => ({ id: "FN-E2E" }) as never}
-        addToast={() => undefined}
-      />}
-    </ConfirmDialogProvider>
+    {appOwnsAlphaBoundary ? (
+      <ConfirmDialogProvider skipConfirmations>{content}</ConfirmDialogProvider>
+    ) : (
+      <HeroUIAlphaProvider enabled={params.get("alpha") === "true"}>
+        <ConfirmDialogProvider skipConfirmations>{content}</ConfirmDialogProvider>
+      </HeroUIAlphaProvider>
+    )}
   </I18nextProvider>;
 }
 

@@ -144,7 +144,7 @@ async function openProductionTitleHost(page: Page, name: string, hostTestId: str
     if (name === "floating-window") {
       for (let frame = 0; frame < 6 && !document.querySelector("[data-id]"); frame++) await nextFrames();
       const taskCard = document.querySelector<HTMLElement>("[data-id]");
-      if (!taskCard) throw new Error("App fixture did not render its live board task before opening the production pop-out path");
+      if (!taskCard) throw new Error(`App fixture did not render its live board task before opening the production pop-out path: ${document.body.textContent?.slice(0, 500) ?? "empty body"}`);
       taskCard.click();
       for (let frame = 0; frame < 6 && !document.querySelector("[data-testid='task-detail-pop-out']"); frame++) await nextFrames();
       const popOut = document.querySelector<HTMLButtonElement>("[data-testid='task-detail-pop-out']");
@@ -837,6 +837,51 @@ describe.runIf(executablePath)("Task modal tablet touch resize browser regressio
       await page.close();
     }, 30_000);
   }
+
+  /*
+  FNXC:TaskDetailHeroUI 2026-09-11-03:20:
+  The Alpha rollout is credible only when the production modal, mobile drawer, main panel, List split, right dock, and App pop-out each expose one canonical Task Detail surface with usable navigation and no horizontal overflow at their representative breakpoints.
+  */
+  it.each([
+    ["modal", "title-host-modal", "task-detail-title-modal", 1200],
+    ["mobile-drawer", "title-host-modal", "task-detail-title-modal", 390],
+    ["main-panel", "title-host-main-panel", "task-detail-title-main-panel", 768],
+    ["list-split", "title-host-list", "task-detail-title-list", 1200],
+    ["right-dock", "title-host-dock", "task-detail-title-dock", 768],
+    ["floating-window", "floating-window-overlay-task-detail-", "task-detail-title-app-floating", 1200],
+  ] as const)("renders one responsive Alpha Task Detail in the %s production host", async (name, hostTestId, surface, width) => {
+    const page = await browser.newPage({ viewport: { width, height: 844 } });
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send("Emulation.setDeviceMetricsOverride", { width, height: 844, screenWidth: width, screenHeight: 844, deviceScaleFactor: 1, mobile: width === 390 });
+    await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: width <= 768, maxTouchPoints: 1 });
+    await page.goto(`${baseUrl}app/task-modal-touch-resize-e2e-fixture.html?surface=${surface}&alpha=true&reset=1${name === "floating-window" ? "&project=fixture" : ""}`);
+    await openProductionTitleHost(page, name === "mobile-drawer" ? "modal" : name, hostTestId);
+    const result = await page.evaluate(() => {
+      const detail = document.querySelector<HTMLElement>("[data-task-detail-surface='true']");
+      const tabs = detail?.querySelector<HTMLElement>(".detail-tabs");
+      const footer = detail?.querySelector<HTMLElement>(".modal-actions");
+      const body = detail?.querySelector<HTMLElement>(".detail-body");
+      if (!detail || !tabs || !footer || !body) return null;
+      body.scrollTop = body.scrollHeight;
+      return {
+        boundaries: document.querySelectorAll(".task-detail-alpha-boundary[data-heroui-alpha-surface='true']").length,
+        headers: detail.querySelectorAll(".modal-header").length,
+        tabSets: detail.querySelectorAll(".detail-tabs").length,
+        footers: detail.querySelectorAll(".modal-actions").length,
+        noHorizontalOverflow: detail.scrollWidth <= detail.clientWidth + 1,
+        tabsScrollable: tabs.scrollWidth >= tabs.clientWidth,
+        footerReachable: footer.getBoundingClientRect().bottom <= window.innerHeight + 1,
+      };
+    });
+    expect(result?.boundaries).toBe(1);
+    expect(result?.headers).toBe(1);
+    expect(result?.tabSets).toBe(1);
+    expect(result?.footers).toBe(1);
+    expect(result?.noHorizontalOverflow).toBe(true);
+    expect(result?.tabsScrollable).toBe(true);
+    expect(result?.footerReachable).toBe(true);
+    await page.close();
+  }, 30_000);
 
   it("keeps mobile task-card touch activation outside the desktop pan owner", async () => {
     const page = await browser.newPage({ viewport: { width: 390, height: 844 } });

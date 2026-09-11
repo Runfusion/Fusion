@@ -9,7 +9,7 @@ import type { RevertTaskOptions, RevertTaskResult } from "../api";
 import { getScopedItem } from "../utils/projectStorage";
 import { DOCK_FILES_CURRENT_KEY } from "./DockFilesView";
 import { TaskCard } from "./TaskCard";
-import { TaskDetailContent } from "./TaskDetailModal";
+import { RightDockTaskDetailHost } from "./TaskDetailHostBoundaries";
 import { mergeTaskSnapshot } from "../hooks/useTasks";
 import { RightDock, persistRightDockOpen, persistRightDockPinned, readStoredRightDockOpen, readStoredRightDockPinned } from "./RightDock";
 import { RightDockExpandModal } from "./RightDockExpandModal";
@@ -265,12 +265,11 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
     FNXC:OpenTasksInRightSidebar 2026-06-28-00:00:
     Board-routed right-sidebar task detail reuses the embedded TaskDetailContent surface so task actions, dependency links, and pop-out semantics stay aligned with the full-panel and list split-detail hosts. The controller resolves a live task row by id and falls back to the clicked snapshot so revalidation never blanks the dock.
     */
-    <TaskDetailContent
+    <RightDockTaskDetailHost
       task={resolvedDockTask}
       projectId={input.projectId}
       tasks={input.tasks as Task[]}
-      embedded
-      onRequestClose={closeDockTask}
+      onCloseDock={closeDockTask}
       onOpenDetail={(value, initialTab) => input.openDetailTask(value, initialTab ?? "chat")}
       /* FNXC:TaskRevert 2026-08-01-20:27: Right-dock task detail uses the shared New Task draft recovery for reverted tasks. */
       onReviseTask={(task) => input.onSendSelectionToTask(task.description)}

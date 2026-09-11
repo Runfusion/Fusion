@@ -106,13 +106,25 @@ function splitDirectCollectionChildren(children: ReactNode, ItemType: unknown): 
 }
 
 export const AlphaButton = forwardRef<HTMLButtonElement, AlphaButtonProps>(function AlphaButton(
-  { disabled, ...props },
+  { disabled, onClick, ...props },
   ref,
 ) {
   const alpha = useHeroUIAlpha();
-  if (!alpha) return <button ref={ref} disabled={disabled} {...props} />;
+  if (!alpha) return <button ref={ref} disabled={disabled} onClick={onClick} {...props} />;
   const heroProps = props as unknown as ComponentProps<typeof HeroButton>;
-  return <HeroButton ref={ref} isDisabled={disabled} data-heroui-alpha="button" {...heroProps} />;
+  return (
+    <HeroButton
+      ref={ref}
+      isDisabled={disabled}
+      data-heroui-alpha="button"
+      /*
+      FNXC:HeroUIAlpha 2026-09-11-14:42:
+      AlphaButton preserves legacy click callbacks through HeroUI's press lifecycle. PressEvent already stops propagation by default and exposes its trigger as target, so provide the legacy currentTarget and stopPropagation contract instead of dropping callback behavior.
+      */
+      onPress={onClick ? (event) => onClick({ ...event, currentTarget: event.target, stopPropagation: () => undefined } as never) : undefined}
+      {...heroProps}
+    />
+  );
 });
 
 export const AlphaInput = forwardRef<HTMLInputElement, AlphaInputProps>(function AlphaInput(props, ref) {
@@ -252,12 +264,16 @@ export const AlphaSurface = forwardRef<HTMLDivElement, AlphaSurfaceProps>(functi
   return <HeroSurface ref={ref} data-heroui-alpha="surface" {...heroProps} />;
 });
 
+/*
+FNXC:TaskDetailHeroUI 2026-09-11-03:49:
+Adaptive selects must keep the external label attached to the actual HeroUI trigger while forwarding the native select's remaining accessibility and form attributes to the React Aria root. TaskForm intentionally uses `label[for]` rather than duplicating aria-label text, so dropping the trigger id makes every Alpha field anonymous to assistive technology.
+*/
 export const AlphaSelect = forwardRef<HTMLSelectElement, AlphaSelectProps>(function AlphaSelect(
-  { children, disabled, onChange, value, defaultValue, className, "data-testid": testId, ...props },
+  { children, disabled, onChange, value, defaultValue, className, id, required, "data-testid": testId, ...props },
   ref,
 ) {
   const alpha = useHeroUIAlpha();
-  if (!alpha) return <select ref={ref} disabled={disabled} onChange={onChange} value={value} defaultValue={defaultValue} className={className} data-testid={testId} {...props}>{children}</select>;
+  if (!alpha) return <select ref={ref} id={id} required={required} disabled={disabled} onChange={onChange} value={value} defaultValue={defaultValue} className={className} data-testid={testId} {...props}>{children}</select>;
 
   const options = Children.toArray(children).flatMap((child) => {
     if (!isValidElement<{ value?: string; disabled?: boolean; children?: ReactNode }>(child)) return [];
@@ -266,9 +282,11 @@ export const AlphaSelect = forwardRef<HTMLSelectElement, AlphaSelectProps>(funct
   const selectedKey = String(value ?? defaultValue ?? "");
   return (
     <HeroSelect
-      aria-label={props["aria-label"]}
+      {...props as ComponentProps<typeof HeroSelect>}
+      id={id}
       className={className}
       isDisabled={disabled}
+      isRequired={required}
       selectedKey={selectedKey}
       onSelectionChange={(key) => {
         const nextValue = String(key ?? "");
@@ -276,7 +294,7 @@ export const AlphaSelect = forwardRef<HTMLSelectElement, AlphaSelectProps>(funct
       }}
       data-heroui-alpha="select"
     >
-      <HeroSelectTrigger data-testid={testId}>
+      <HeroSelectTrigger id={id} data-testid={testId}>
         <HeroSelectValue />
         <HeroSelectIndicator />
       </HeroSelectTrigger>
@@ -351,13 +369,13 @@ export const AlphaMenuItem = forwardRef<HTMLButtonElement, AlphaMenuItemProps>(f
   return <HeroMenuItem ref={ref as unknown as ComponentProps<typeof HeroMenuItem>["ref"]} id={id} isDisabled={disabled} onClick={onClick as ComponentProps<typeof HeroMenuItem>["onClick"]} data-heroui-alpha="menu-item" {...heroProps}>{children}</HeroMenuItem>;
 });
 
-export function AlphaDialogBackdrop({ children, overlayClassName, onClose }: { children: ReactElement<HTMLAttributes<HTMLElement>>; overlayClassName?: string; onClose?: () => void }) {
+export function AlphaDialogBackdrop({ children, overlayClassName, labelledBy, onClose, overlayProps }: { children: ReactElement<HTMLAttributes<HTMLElement>>; overlayClassName?: string; labelledBy?: string; onClose?: () => void; overlayProps?: HTMLAttributes<HTMLDivElement> }) {
   const alpha = useHeroUIAlpha();
-  if (!alpha) return <div className={overlayClassName} role="presentation">{cloneElement(children, { role: "dialog", "aria-modal": true })}</div>;
+  if (!alpha) return <div className={overlayClassName} role="presentation" {...overlayProps}>{cloneElement(children, { role: "dialog", "aria-modal": true, "aria-labelledby": labelledBy })}</div>;
   return (
-    <HeroModalBackdrop isOpen isDismissable={Boolean(onClose)} onOpenChange={(open) => { if (!open) onClose?.(); }} className={overlayClassName} data-heroui-alpha="dialog-backdrop" data-heroui-alpha-portal="true">
+    <HeroModalBackdrop isOpen isDismissable={Boolean(onClose)} onOpenChange={(open) => { if (!open) onClose?.(); }} className={overlayClassName} data-heroui-alpha="dialog-backdrop" data-heroui-alpha-portal="true" {...overlayProps as ComponentProps<typeof HeroModalBackdrop>}>
       <HeroModalContainer>
-        <HeroModalDialog data-heroui-alpha="dialog">{cloneElement(children, { role: "presentation", "aria-modal": undefined })}</HeroModalDialog>
+        <HeroModalDialog aria-labelledby={labelledBy} data-heroui-alpha="dialog">{cloneElement(children, { role: "presentation", "aria-modal": undefined })}</HeroModalDialog>
       </HeroModalContainer>
     </HeroModalBackdrop>
   );

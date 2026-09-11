@@ -327,7 +327,7 @@ export function buildTaskActionMenuModel(options: BuildTaskActionMenuModelOption
     actions.push({
       id: "bypass-review",
       label: t("taskDetail.bypassReview.btn", "Bypass failed review"),
-      tone: "note",
+      // FNXC:TaskDetailHeroUI 2026-09-11-04:19: Bypass is an audited operator action, not explanatory note copy; keep it keyboard- and pointer-selectable in both menu implementations.
       onSelect: options.onBypassReview,
     });
   }

@@ -10,8 +10,11 @@ import {
 } from "@fusion/core";
 import { Header, useViewportMode } from "./components/Header";
 import { HeroUIAlphaProvider } from "./context/HeroUIAlphaContext";
-import { TaskDetailContent } from "./components/TaskDetailModal";
-import { FloatingWindow } from "./components/FloatingWindow";
+import {
+  AppTaskPopoutWindows,
+  useAppMainPanelTaskDetailState,
+  useAppPoppedOutTaskState,
+} from "./components/TaskDetailHostBoundaries";
 import { AlphaPlanningDrawer, AlphaProjectsDrawer } from "./components/AlphaMobileDrawer";
 import { PoppedOutChatWindows, QuickChatWindow } from "./components/PoppedOutChatWindows";
 import { AppModals } from "./components/AppModals";
@@ -35,7 +38,7 @@ import { ProjectOverview } from "./components/ProjectOverview";
 import { useBackgroundSessions } from "./hooks/useBackgroundSessions";
 import { useGitHubStarPromptState, markGitHubStarPromptShown, refreshGitHubStarPromptDismissal } from "./hooks/useGitHubStarPrompt";
 import { useSessionBannersHidden } from "./hooks/useSessionBannerPref";
-import { mergeTaskSnapshot, useTasks } from "./hooks/useTasks";
+import { useTasks } from "./hooks/useTasks";
 import { useBoardWorkflows } from "./hooks/useBoardWorkflows";
 import type { ExecutorColumnFlags } from "./hooks/useExecutorStats";
 import { useProjects } from "./hooks/useProjects";
@@ -91,9 +94,8 @@ import { useDashboardHealth } from "./hooks/useDashboardHealth";
 import { useAuthTokenRecovery } from "./hooks/useAuthTokenRecovery";
 import { useScopedDismissFlag } from "./hooks/useScopedDismissFlag";
 import { useCapacityRiskBanner } from "./hooks/useCapacityRiskBanner";
-import { useMainPanelTaskDetail } from "./hooks/useMainPanelTaskDetail";
 import { useBoardScrollRestore } from "./hooks/useBoardScrollRestore";
-import { usePoppedOutTasks, type PoppedOutTaskEntry } from "./hooks/usePoppedOutTasks";
+import type { PoppedOutTaskEntry } from "./hooks/usePoppedOutTasks";
 import { usePoppedOutChats, type PoppedOutChatEntry } from "./hooks/usePoppedOutChats";
 import { shouldCloseQuickChatOnOutsideClick, useChatVisibilityToggle } from "./hooks/useChatVisibilityToggle";
 import { NativeShellOnboardingModal } from "./components/NativeShellOnboardingModal";
@@ -126,11 +128,14 @@ export {
 } from "./utils/appLifecycle";
 import { subscribeSse } from "./sse-bus";
 import { AuthTokenRecoveryPage } from "./components/AuthTokenRecoveryPage";
-import { MainContent } from "./components/dashboard/MainContent";
+import {
+  AppMainPanelTaskDetailComposition,
+  type AppMainPanelTaskDetailMainContentProps,
+} from "./components/dashboard/MainContent";
 import { PlanningKeepAlive } from "./components/dashboard/PlanningKeepAlive";
 import { NATIVE_STRUCTURE_OPEN_EVENT, type NativeStructureOpenEventDetail } from "./components/nativeStructureNavigation";
 import { DashboardBanners } from "./components/dashboard/DashboardBanners";
-import type { DashboardBannersProps, MainContentProps } from "./components/dashboard/types";
+import type { DashboardBannersProps } from "./components/dashboard/types";
 import type { GraphWorkflowSelection } from "./components/GraphWorkflowSwitcherSlot";
 
 // ChatView's CSS is imported eagerly so the styles bundle into the main
@@ -688,14 +693,32 @@ function AppInner() {
   FNXC:TaskDetail 2026-06-23-00:41:
   Board task-card secondary actions can deep-link into the inline main-panel task detail. Files-changed must land on the embedded Changes tab instead of reopening the task in the modal path.
   */
-  const { task: mainPanelDetailTask, initialTab: mainPanelDetailInitialTab, setTask: setMainPanelDetailTask, setInitialTab: setMainPanelDetailInitialTab } = useMainPanelTaskDetail();
   const { capture: captureCurrentBoardScrollSnapshot, requestRestore } = useBoardScrollRestore(taskView);
-  const mainPanelDetailNavRevertRef = useRef<(() => void) | null>(null);
+  const mainPanelTaskDetail = useAppMainPanelTaskDetailState({
+    taskView,
+    changeTaskView: handleChangeTaskView,
+    captureBoardScroll: captureCurrentBoardScrollSnapshot,
+    requestBoardScrollRestore: requestRestore,
+    pushNav,
+    removeNav,
+  });
+  const {
+    task: mainPanelDetailTask,
+    open: openTaskDetailInMainPanel,
+    close: closeTaskDetailMainPanel,
+  } = mainPanelTaskDetail;
   /*
   FNXC:FloatingWindow 2026-07-15-15:20:
   FN-8016 identifies a popped-out task detail by task id plus origin view. The same task can therefore coexist in separate view-scoped FloatingWindows while re-opening it on one view refreshes only that entry.
   */
-  const { entries: poppedOutTaskEntries, popOut: popOutTaskDetail, close: closePoppedOutTask, closeAll: closeAllPoppedOutTasks } = usePoppedOutTasks();
+  const poppedOutTasks = useAppPoppedOutTaskState({ taskView, isMobile, pushNav, removeNav });
+  const {
+    entries: poppedOutTaskEntries,
+    open: popOutTaskDetailForCurrentView,
+    close: closePoppedOutTaskWithNav,
+    closeAll: closeAllPoppedOutTasks,
+    clearNavigation: clearPoppedOutTaskNavigation,
+  } = poppedOutTasks;
   const {
     entries: poppedOutChatEntries,
     popOut: popOutChat,
@@ -704,38 +727,6 @@ function AppInner() {
     minimizeAll: minimizeAllPoppedOutChats,
     restoreAll: restoreAllPoppedOutChats,
   } = usePoppedOutChats();
-  const popupNavCloseRef = useRef(new Map<string, () => void>());
-
-  /*
-  FNXC:TaskDetailSwipeBack 2026-07-15-10:32:
-  Mobile task popups keep Board or List visible, but they are still task-detail
-  surfaces. Give each newly opened popup its own navigation callback so browser,
-  iOS swipe, and Android Back dismiss only that popup rather than leaving the
-  Fusion stack empty and allowing Back to skip past the originating task view.
-  */
-  const closePoppedOutTaskWithNav = useCallback((taskId: string, originTaskView?: TaskView) => {
-    const identityKey = taskPopupIdentityKey(taskId, originTaskView);
-    const closeFromHistory = popupNavCloseRef.current.get(identityKey);
-    if (closeFromHistory) {
-      popupNavCloseRef.current.delete(identityKey);
-      removeNav(closeFromHistory);
-    }
-    closePoppedOutTask(taskId, originTaskView);
-  }, [closePoppedOutTask, removeNav]);
-
-  const popOutTaskDetailForCurrentView = useCallback((task: Task | TaskDetail, initialTab?: DetailTaskTab) => {
-    const identityKey = taskPopupIdentityKey(task.id, taskView);
-    const alreadyOpen = poppedOutTaskEntries.some((entry) => entry.task.id === task.id && entry.originTaskView === taskView);
-    if (isMobile && !alreadyOpen) {
-      const closeFromHistory = () => {
-        popupNavCloseRef.current.delete(identityKey);
-        closePoppedOutTask(task.id, taskView);
-      };
-      popupNavCloseRef.current.set(identityKey, closeFromHistory);
-      pushNav({ type: "modal", close: closeFromHistory });
-    }
-    popOutTaskDetail(task, taskView, initialTab);
-  }, [isMobile, poppedOutTaskEntries, popOutTaskDetail, pushNav, closePoppedOutTask, taskView]);
 
   const [graphWorkflowSelection, setGraphWorkflowSelection] = useState<GraphWorkflowSelection | null>(null);
 
@@ -1087,9 +1078,9 @@ function AppInner() {
   */
   useEffect(() => {
     if (!alphaMobileDrawerActive || poppedOutTaskEntries.length === 0) return;
-    popupNavCloseRef.current.clear();
+    clearPoppedOutTaskNavigation();
     closeAllPoppedOutTasks();
-  }, [alphaMobileDrawerActive, closeAllPoppedOutTasks, poppedOutTaskEntries.length]);
+  }, [alphaMobileDrawerActive, clearPoppedOutTaskNavigation, closeAllPoppedOutTasks, poppedOutTaskEntries.length]);
 
   useEffect(() => {
     if (!alphaMobileDrawerActive) {
@@ -1356,63 +1347,6 @@ function AppInner() {
     modalManager.openDetailTask(task, tab, opts);
     pushNav({ type: "modal", close: modalManager.closeDetailTask });
   }, [modalManager, pushNav]);
-
-  /*
-  FNXC:Navigation 2026-06-22-00:00:
-  Board card clicks open task detail as a full main-content view that replaces the board (design: "Full main panel (replaces board)"), instead of the TaskDetailModal overlay. We store a snapshot of the clicked task and navigate to the registered `task-detail` view; renderMainContent renders TaskDetailContent embedded with a Back-to-board button. Only the Board uses this handler — list-view split-detail, right-dock cards, and other openDetail callers keep the modal behavior.
-
-  FNXC:TaskDetailBack 2026-06-25-00:00:
-  Browser and Android Back must close the currently viewed full-panel task detail before leaving the prior dashboard view. The history entry owns an idempotent revert callback that clears stale snapshot state for board/list origins or restores the previous task snapshot for nested task-detail links, and explicit Back-to-board consumes that same entry without pushing a contradictory view entry during popstate.
-  */
-  const openTaskDetailInMainPanel = useCallback((task: Task | TaskDetail, initialTab?: DetailTaskTab) => {
-    const previousView = taskView;
-    const previousDetailTask = mainPanelDetailTask;
-    const previousDetailTab = mainPanelDetailInitialTab;
-
-    if (previousView === "task-detail" && previousDetailTask?.id === task.id && previousDetailTab === initialTab) {
-      setMainPanelDetailTask((current) => current?.id === task.id ? mergeTaskSnapshot(current, task) : task);
-      return;
-    }
-
-    if (previousView !== "task-detail") {
-      captureCurrentBoardScrollSnapshot();
-    }
-
-    const revertMainPanelDetail = () => {
-      if (previousView === "task-detail" && previousDetailTask) {
-        setMainPanelDetailTask(previousDetailTask);
-        setMainPanelDetailInitialTab(previousDetailTab);
-        handleChangeTaskView("task-detail");
-        mainPanelDetailNavRevertRef.current = null;
-        return;
-      }
-
-      requestRestore();
-      setMainPanelDetailTask(null);
-      setMainPanelDetailInitialTab("chat");
-      handleChangeTaskView(previousView);
-      mainPanelDetailNavRevertRef.current = null;
-    };
-
-    setMainPanelDetailTask(task);
-    setMainPanelDetailInitialTab(initialTab);
-    handleChangeTaskView("task-detail");
-    mainPanelDetailNavRevertRef.current = revertMainPanelDetail;
-    pushNav({ type: "view", revert: revertMainPanelDetail });
-  }, [captureCurrentBoardScrollSnapshot, handleChangeTaskView, mainPanelDetailInitialTab, mainPanelDetailTask, pushNav, requestRestore, taskView]);
-
-  // FNXC:Navigation 2026-06-22-00:00: Leaving task-detail clears the snapshot so a stale task never lingers if the view is reopened empty.
-  const closeTaskDetailMainPanel = useCallback(() => {
-    const revert = mainPanelDetailNavRevertRef.current;
-    if (revert) {
-      removeNav(revert);
-      mainPanelDetailNavRevertRef.current = null;
-    }
-    requestRestore();
-    setMainPanelDetailTask(null);
-    setMainPanelDetailInitialTab("chat");
-    handleChangeTaskView("board");
-  }, [handleChangeTaskView, removeNav, requestRestore]);
 
   /*
   FNXC:TaskPopupDeepTabs 2026-07-21-00:00:
@@ -1843,7 +1777,7 @@ function AppInner() {
     () => setQuickChatOpen(false),
   );
 
-  const mainContentProps: MainContentProps = {
+  const mainContentProps: AppMainPanelTaskDetailMainContentProps = {
     showBackendConnectionErrorPage,
     projectsError,
     t,
@@ -1946,7 +1880,6 @@ function AppInner() {
     openWorkflowEditorWithNav,
     handleGitHubImport,
     devServerEnabled,
-    mainPanelDetailTask,
     filteredBoardTasks: boardSourceTasks,
     maxConcurrent,
     maxWorktrees,
@@ -1954,7 +1887,6 @@ function AppInner() {
     moveTask,
     pauseTask,
     openBoardTaskDetail,
-    openTaskDetailInMainPanel,
     openGroupModalWithNav,
     handleBoardQuickCreate,
     openNewTaskWithNav,
@@ -1993,9 +1925,6 @@ function AppInner() {
     openCreateWorkflowWithNav,
     sidebarActive,
     isMobile,
-    mainPanelDetailInitialTab,
-    closeTaskDetailMainPanel,
-    setMainPanelDetailTask,
     mergeTask,
         resetTask,
     duplicateTask,
@@ -2214,7 +2143,10 @@ function AppInner() {
         <div
           className={`project-content${executorFooterVisible && (!isMobile || !mobileKeyboardOpen) ? " project-content--with-footer" : ""}${isMobile && mobileNavVisible && !mobileKeyboardOpen && !alphaUpdatesEnabled ? " project-content--with-mobile-nav" : ""}${isMobile && mobileNavVisible && !mobileKeyboardOpen && !modalManager.anyModalOpen && alphaUpdatesEnabled ? " project-content--with-alpha-nav" : ""}`}
         >
-          <MainContent {...mainContentProps} />
+          <AppMainPanelTaskDetailComposition
+            state={mainPanelTaskDetail}
+            mainContentProps={mainContentProps}
+          />
           {alphaMobileDrawerActive && currentProject && (
             <AlphaProjectsDrawer
               open={alphaProjectsDrawerOpen}
@@ -2450,56 +2382,34 @@ function AppInner() {
       FNXC:TaskPopupViewGating 2026-07-22-13:15:
       FN remount-churn fix R7 supersedes the FN-8016 remount behavior: ALL popped-out entries render, and off-origin-view windows are hidden via FloatingWindow's hidden contract (visibility-based, aria-hidden, effects suspended) instead of being filtered out of the render array. Returning to the origin view is an instant reveal of the live window — the embedded task detail, including an open terminal WebSocket, stays mounted. The `isTaskPopupVisibleForView` predicate and per-origin-view addressability are unchanged; `visiblePoppedOutTaskEntries` still feeds the Escape/nav-shortcut consumer. While hidden, `active={false}` closes the detail's SSE/EventSource channels (R8). Each FloatingWindow key includes its origin so identical task ids never collide across views.
       */}
-      {poppedOutTaskEntries.map(({ task: snapshot, originTaskView, initialTab }) => {
-        const boardTask = tasks.find((candidate) => candidate.id === snapshot.id);
-        const liveTask = boardTask ? mergeTaskSnapshot(snapshot, boardTask) : snapshot;
-        const popupKey = taskPopupIdentityKey(snapshot.id, originTaskView);
-        const close = () => closePoppedOutTaskWithNav(snapshot.id, originTaskView);
-        const popupVisible = taskPopupsVisibleOnCurrentView(originTaskView);
-        return (
-          <FloatingWindow
-            key={popupKey}
-            windowKey={`task-detail-${snapshot.id}-${originTaskView ?? "global"}`}
-            title={liveTask.id}
-            hidden={!popupVisible}
-            onClose={close}
-            hideHeader
-            dragHandleSelector=".task-detail-content--embedded > .modal-header"
-            className="floating-window--task-detail"
-            /* FNXC:ModalGeometryPersistence 2026-07-15-19:30: Task pop-outs are full-screen sheets at ≤768px; preserve the shared desktop geometry record for their next movable reopen. */
-            suspendGeometryPersistenceOnMobile
-            persistGeometryKey={TASK_DETAIL_FLOATING_GEOMETRY_KEY}
-            layer="task-detail"
-          >
-            <TaskDetailContent
-              task={liveTask}
-              initialTab={initialTab}
-              projectId={currentProject?.id}
-              tasks={tasks}
-              globalPaused={globalPaused}
-              active={popupVisible}
-              embedded
-              onOpenDetail={popOutTaskDetailForCurrentView}
-              /* FNXC:TaskRevert 2026-08-01-20:27: Popped-out detail preserves Delete-or-Revise recovery for reverted tasks. */
-              onReviseTask={(task) => modalManager.openNewTaskWithDescription(task.description)}
-              onDeleteTask={deleteTask}
-              onMergeTask={mergeTask}
-              onRetryTask={retryTask}
-              onPauseTask={pauseTask}
-              onUnpauseTask={unpauseTask}
-              onBypassReview={bypassReview}
-              onResetTask={resetTask}
-              onDuplicateTask={duplicateTask}
-              onRefinementCreated={(task) => ingestCreatedTasks([task])}
-              onRequestClose={close}
-              addToast={addToast}
-              prAuthAvailable={prAuthAvailable}
-              autoMergeEnabled={autoMerge}
-              taskDetailChatFirst={taskDetailChatFirst}
-            />
-          </FloatingWindow>
-        );
-      })}
+      <AppTaskPopoutWindows
+        entries={poppedOutTaskEntries}
+        liveTasks={tasks}
+        isVisible={taskPopupsVisibleOnCurrentView}
+        onCloseTask={closePoppedOutTaskWithNav}
+        persistGeometryKey={TASK_DETAIL_FLOATING_GEOMETRY_KEY}
+        windowProps={{
+          projectId: currentProject?.id,
+          tasks,
+          globalPaused,
+          onOpenDetail: popOutTaskDetailForCurrentView,
+          /* FNXC:TaskRevert 2026-08-01-20:27: Popped-out detail preserves Delete-or-Revise recovery for reverted tasks. */
+          onReviseTask: (task) => modalManager.openNewTaskWithDescription(task.description),
+          onDeleteTask: deleteTask,
+          onMergeTask: mergeTask,
+          onRetryTask: retryTask,
+          onPauseTask: pauseTask,
+          onUnpauseTask: unpauseTask,
+          onBypassReview: bypassReview,
+          onResetTask: resetTask,
+          onDuplicateTask: duplicateTask,
+          onRefinementCreated: (task) => ingestCreatedTasks([task]),
+          addToast,
+          prAuthAvailable,
+          autoMergeEnabled: autoMerge,
+          taskDetailChatFirst,
+        }}
+      />
       <AppModals
         projectId={currentProject?.id}
         alphaMobileDrawer={alphaMobileDrawerActive}

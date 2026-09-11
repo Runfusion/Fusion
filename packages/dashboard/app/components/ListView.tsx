@@ -9,7 +9,7 @@ import { resolveEffectiveAutoMerge } from "../../../core/src/merge/task-merge";
 import { useColumnLabel } from "../i18n/labels";
 import { isCompleteColumnRole, isIntakeColumnRole, isPreImplementationColumnRole, isReviewColumnRole, isWipColumnRole } from "../utils/columnRoles";
 import { batchUpdateTaskModels, fetchNodes, fetchTaskDetail, refreshPrStatus, updateTask } from "../api";
-import { TaskDetailContent } from "./TaskDetailModal";
+import { ListSplitTaskDetailHost } from "./TaskDetailHostBoundaries";
 import { ExternalBlockNotice, PlanApprovalNotice } from "./TaskCard";
 import { PrCreateModal } from "./PrCreateModal";
 import { TaskResetDialog } from "./TaskResetDialog";
@@ -3299,15 +3299,13 @@ export function ListView({
                     <p>{t("listView.selectTaskPrompt", "Select a task to view details")}</p>
                   </div>
                 ) : (
-                  <div className="list-split-detail-content" data-testid="list-split-detail-content">
-                    <TaskDetailContent
+                  <ListSplitTaskDetailHost
                       task={selectedTaskSnapshot}
                       projectId={projectId}
                       tasks={tasks}
                       globalPaused={globalPaused}
-                      embedded
                       initialTab={selectedTaskInitialTab}
-                      onRequestClose={closeEmbeddedTaskDetail}
+                      onClearSelection={closeEmbeddedTaskDetail}
                       onOpenDetail={handleEmbeddedOpenDetail}
                       /* FNXC:TaskRevert 2026-08-01-20:27: Split detail receives the list recovery callback so reverted tasks remain revisable here. */
                       onReviseTask={onReviseTask}
@@ -3338,7 +3336,6 @@ export function ListView({
                       autoMergeEnabled={autoMerge}
                       taskDetailChatFirst={taskDetailChatFirst}
                     />
-                  </div>
                 )}
               </div>
             </>
