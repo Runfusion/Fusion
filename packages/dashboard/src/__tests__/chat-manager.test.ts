@@ -1650,7 +1650,16 @@ describe("ChatManager.sendMessage", () => {
       undefined,
       async () => ({ chatContextBudgetEnabled: false }),
     );
+    /*
+    FNXC:ChatContextBudget 2026-09-11-12:51:
+    Upstream FN-9241 made "sending never waits on settings" a hard invariant, so the
+    RUFU-135 kill switch reads a fire-and-forget-refreshed cache snapshot instead of
+    awaiting settings. The switch therefore takes effect from the send AFTER the
+    settings read lands: the first send warms the cache, the second send must omit the
+    allowlist. This is the intended hot-toggle contract, not a stabilization hack.
+    */
     await chatManager.sendMessage("chat-001", "Hello");
+    await chatManager.sendMessage("chat-001", "Hello again");
 
     expect(createOptions.tools).toBe("coding");
     expect(createOptions.toolsAllowlist).toBeUndefined();
