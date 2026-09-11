@@ -9,7 +9,7 @@ import {
   isExperimentalFeatureEnabled,
 } from "@fusion/core";
 import { Header, useViewportMode } from "./components/Header";
-import { HeroUIAlphaProvider } from "./context/HeroUIAlphaContext";
+import { AlphaProvider } from "./context/AlphaContext";
 import {
   AppTaskPopoutWindows,
   useAppMainPanelTaskDetailState,
@@ -2014,7 +2014,7 @@ function AppInner() {
     setShowGitHubStarPrompt,
   };
   return (
-    <HeroUIAlphaProvider enabled={alphaUpdatesEnabled}>
+    <AlphaProvider enabled={alphaUpdatesEnabled}>
     <ConfirmDialogProvider skipConfirmations={skipConfirmationDialogs}>
       <ChatMessageLayoutProvider value={chatMessageLayout}>
       <ChatSubmitOnEnterProvider value={chatSubmitOnEnter}>
@@ -2465,7 +2465,7 @@ function AppInner() {
       </ChatSubmitOnEnterProvider>
       </ChatMessageLayoutProvider>
     </ConfirmDialogProvider>
-    </HeroUIAlphaProvider>
+    </AlphaProvider>
   );
 }
 

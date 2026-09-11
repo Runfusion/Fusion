@@ -1,5 +1,5 @@
 import React, { useCallback, useState, type MouseEvent } from "react";
-import { AlphaButton } from "./hero-ui";
+import { AlphaButton } from "./alpha-ui";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useTranslation } from "react-i18next";

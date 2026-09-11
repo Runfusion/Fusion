@@ -7,7 +7,7 @@ import { loadAllAppCssBaseOnly } from "../../test/cssFixture";
 import { computeMenuWidth, OPTION_DECORATIONS_WIDTH, WorkflowSwitcher } from "../WorkflowSwitcher";
 import { computeWorkflowStatusCounts, type WorkflowStatusCounts } from "../workflowStatusCounts";
 import { readAppFile } from "../../test/cssFixture";
-import { HeroUIAlphaProvider, HeroUIAlphaSurface } from "../../context/HeroUIAlphaContext";
+import { AlphaProvider, AlphaBoundary } from "../../context/AlphaContext";
 
 const workflows: BoardWorkflowDefinition[] = [
   {
@@ -565,7 +565,7 @@ describe("WorkflowSwitcher", () => {
   it("keeps Alpha workflow selection and row editing as separate actions", async () => {
     const onChange = vi.fn();
     const onEdit = vi.fn();
-    render(<HeroUIAlphaProvider enabled><HeroUIAlphaSurface><WorkflowSwitcher workflows={workflows} value="builtin:coding" onChange={onChange} counts={countMap()} onEditWorkflow={onEdit} /></HeroUIAlphaSurface></HeroUIAlphaProvider>);
+    render(<AlphaProvider enabled><AlphaBoundary><WorkflowSwitcher workflows={workflows} value="builtin:coding" onChange={onChange} counts={countMap()} onEditWorkflow={onEdit} /></AlphaBoundary></AlphaProvider>);
     fireEvent.click(screen.getByTestId("workflow-switcher"));
     const firstOption = screen.getByTestId("workflow-switcher-option-builtin:coding");
     const option = screen.getByTestId("workflow-switcher-option-design");

@@ -32,8 +32,8 @@ export interface QuickChatWindowProps extends Pick<ChatViewProps,
 }
 
 /*
-FNXC:HeroUIAlphaChatHosts 2026-09-10-19:40:
-Quick Chat exposes its production window host as a component so integration tests exercise the real FloatingWindow, ChatView, HeroUI controls, and portals together instead of proving only that App forwarded the Alpha flag to a mocked child. It shares the task-detail interaction layer, suspends persisted desktop geometry for mobile and short full-screen sheets, and retains the narrow resizable desktop contract.
+FNXC:AlphaChatHosts 2026-09-10-19:40:
+Quick Chat exposes its production window host as a component so integration tests exercise the real FloatingWindow, ChatView, homemade Alpha controls, and portals together instead of proving only that App forwarded the Alpha flag to a mocked child. It shares the task-detail interaction layer, suspends persisted desktop geometry for mobile and short full-screen sheets, and retains the narrow resizable desktop contract.
 */
 export function QuickChatWindow({
   projectId,

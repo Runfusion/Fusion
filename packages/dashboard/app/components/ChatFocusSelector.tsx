@@ -1,4 +1,4 @@
-import { AlphaButton, AlphaInput, AlphaPopoverSurface } from "./hero-ui";
+import { AlphaButton, AlphaInput, AlphaPopoverSurface } from "./alpha-ui";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { Target } from "lucide-react";
@@ -67,7 +67,7 @@ export function ChatFocusSelector({
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target;
       if (!(target instanceof Node)) return;
-      const insideHeroPopover = target instanceof Element && target.closest('[data-heroui-alpha="popover"]');
+      const insideHeroPopover = target instanceof Element && target.closest('[data-alpha-ui="popover"]');
       if (!rootRef.current?.contains(target) && !insideHeroPopover) setOpen(false);
     };
     document.addEventListener("pointerdown", handlePointerDown);

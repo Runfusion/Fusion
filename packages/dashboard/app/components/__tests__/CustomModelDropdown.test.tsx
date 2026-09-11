@@ -6,7 +6,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import userEvent from "@testing-library/user-event";
 import { loadAllAppCss } from "../../test/cssFixture";
 import { CustomModelDropdown } from "../CustomModelDropdown";
-import { HeroUIAlphaProvider, HeroUIAlphaSurface } from "../../context/HeroUIAlphaContext";
+import { AlphaProvider, AlphaBoundary } from "../../context/AlphaContext";
 
 vi.mock("../ProviderIcon", () => ({
   ProviderIcon: ({ provider }: { provider: string }) => <span data-testid={`provider-icon-${provider}`} />, 
@@ -64,11 +64,12 @@ describe("CustomModelDropdown", () => {
   it("uses one Alpha listbox before provider and favorite actions", async () => {
     const user = userEvent.setup();
     render(
-      <HeroUIAlphaProvider enabled><HeroUIAlphaSurface>
+      <AlphaProvider enabled><AlphaBoundary>
         <CustomModelDropdown label="Model" value="" onChange={vi.fn()} models={MOCK_MODELS} onToggleFavorite={vi.fn()} onToggleModelFavorite={vi.fn()} />
-      </HeroUIAlphaSurface></HeroUIAlphaProvider>,
+      </AlphaBoundary></AlphaProvider>,
     );
     await user.click(screen.getByRole("button", { name: "Model" }));
+    await waitFor(() => expect(screen.getByPlaceholderText("Filter models…")).toHaveFocus());
     const listbox = screen.getByRole("listbox", { name: "Model" });
     const options = within(listbox).getAllByRole("option");
     options[0]?.focus();

@@ -4,6 +4,7 @@ import { loadStylesCss } from "../../test/cssFixture";
 import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Column } from "../Column";
+import { AlphaBoundary, AlphaProvider } from "../../context/AlphaContext";
 import type { Task, Column as ColumnType } from "@fusion/core";
 
 const { rebuildTaskSpecMock } = vi.hoisted(() => ({ rebuildTaskSpecMock: vi.fn() }));
@@ -805,6 +806,46 @@ describe("Column in-progress/in-review bulk actions", () => {
 
 });
 
+describe("Column Alpha menu keyboard access", () => {
+  it("focuses the first action, roves with arrows, activates it, and restores the trigger", async () => {
+    const user = userEvent.setup();
+    const onTogglePlanAutoApprove = vi.fn();
+
+    render(
+      <AlphaProvider enabled>
+        <AlphaBoundary>
+          <Column
+            {...defaultProps}
+            column="triage"
+            tasks={[makeTask("FN-001")]}
+            alphaUpdatesEnabled
+            planAutoApproveEnabled={false}
+            onTogglePlanAutoApprove={onTogglePlanAutoApprove}
+          />
+        </AlphaBoundary>
+      </AlphaProvider>,
+    );
+
+    const trigger = screen.getByRole("button", { name: "Planning column actions" });
+    await user.click(trigger);
+
+    const autoApprove = screen.getByRole("menuitemcheckbox", { name: /Auto-approve plan/i });
+    const replan = screen.getByRole("menuitem", { name: /Replan All/i });
+    expect(autoApprove).toHaveFocus();
+    expect(autoApprove).toHaveAttribute("tabindex", "0");
+
+    await user.keyboard("{ArrowDown}");
+    expect(replan).toHaveFocus();
+    expect(replan).toHaveAttribute("tabindex", "0");
+    expect(autoApprove).toHaveAttribute("tabindex", "-1");
+
+    await user.keyboard("{ArrowUp}{Enter}");
+    expect(onTogglePlanAutoApprove).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(trigger).toHaveFocus();
+  });
+});
+
 describe("Column plan auto-approval action", () => {
   it.each([
     ["workflow", false],
@@ -845,7 +886,7 @@ describe("Column plan auto-approval action", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "Planning column actions" }));
-    await user.click(screen.getByRole("checkbox", { name: "Auto-approve plan" }));
+    await user.click(screen.getByRole("menuitemcheckbox", { name: /Auto-approve plan/i }));
 
     expect(onTogglePlanAutoApprove).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("menu")).toBeNull();

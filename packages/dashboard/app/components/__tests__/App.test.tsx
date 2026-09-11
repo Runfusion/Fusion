@@ -769,7 +769,7 @@ function extractProductionDeclaration(rule: string, property: string): string {
 function installProductionAlphaReserveRule(): HTMLStyleElement {
   const css = readAppFile("components/MobileNavBar.css");
   const selector = 'html[data-viewport-mode="mobile"] .project-content--with-alpha-nav';
-  const boardSelector = 'html[data-viewport-mode="mobile"] [data-heroui-alpha-surface="true"] .project-content--with-alpha-nav :is(.board.board-workflow-columns, .board.board-workflows-skeleton)';
+  const boardSelector = '[data-alpha-surface="true"] .board';
   const boardCss = readAppFile("components/Board.css");
   const style = document.createElement("style");
   style.textContent = `${selector} { ${extractProductionRule(css, selector)} } ${boardSelector} { ${extractProductionRule(boardCss, boardSelector)} }`;
@@ -1332,6 +1332,7 @@ describe("Alpha Updates production wiring", () => {
     document.documentElement.dataset.viewportMode = "mobile";
     document.documentElement.style.setProperty("--mobile-nav-alpha-system-offset", `${layout.systemOffset}px`);
     document.documentElement.style.setProperty("--space-xs", "4px");
+    document.documentElement.style.setProperty("--alpha-density-3", "12px");
     const productionStyle = installProductionAlphaReserveRule();
     const nativeGetComputedStyle = window.getComputedStyle.bind(window);
     const offsetHeight = vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function () {
@@ -1374,7 +1375,7 @@ describe("Alpha Updates production wiring", () => {
       expect(productionPadding).toContain("var(--mobile-nav-height)");
       expect(productionPadding).toContain("var(--mobile-nav-alpha-system-offset)");
       const reserve = resolvePixelCalcFromRoot(productionPadding);
-      expect(productionStyle.textContent).toContain("padding-block-end: var(--space-xs)");
+      expect(productionStyle.textContent).toContain("--board-padding: var(--alpha-density-3)");
       let scrollTop = 0;
       Object.defineProperties(scroller!, {
         clientHeight: { configurable: true, value: layout.viewportHeight },
@@ -1430,6 +1431,7 @@ describe("Alpha Updates production wiring", () => {
       document.documentElement.style.removeProperty("--mobile-nav-alpha-system-offset");
       document.documentElement.style.removeProperty("--mobile-nav-height");
       document.documentElement.style.removeProperty("--space-xs");
+      document.documentElement.style.removeProperty("--alpha-density-3");
       delete document.documentElement.dataset.viewportMode;
     }
   });
@@ -1460,10 +1462,11 @@ describe("Alpha Updates production wiring", () => {
 
     const viewportHeight = 640;
     const systemOffset = 46;
-    const allowedGap = 4;
+    const allowedGap = 12;
     document.documentElement.dataset.viewportMode = "mobile";
     document.documentElement.style.setProperty("--mobile-nav-alpha-system-offset", `${systemOffset}px`);
-    document.documentElement.style.setProperty("--space-xs", `${allowedGap}px`);
+    document.documentElement.style.setProperty("--space-xs", "4px");
+    document.documentElement.style.setProperty("--alpha-density-3", `${allowedGap}px`);
     const productionStyle = installProductionAlphaReserveRule();
     const nativeGetComputedStyle = window.getComputedStyle.bind(window);
     const offsetHeight = vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function () {
@@ -1506,8 +1509,8 @@ describe("Alpha Updates production wiring", () => {
       expect(scroller).not.toBeNull();
       expect(scroller).toHaveClass("project-content--with-alpha-nav");
       const reserve = resolvePixelCalcFromRoot(nativeGetComputedStyle(scroller!).paddingBottom);
-      const boardSelector = 'html[data-viewport-mode="mobile"] [data-heroui-alpha-surface="true"] .project-content--with-alpha-nav :is(.board.board-workflow-columns, .board.board-workflows-skeleton)';
-      const boardPadding = resolvePixelCalcFromRoot(extractProductionDeclaration(extractProductionRule(readAppFile("components/Board.css"), boardSelector), "padding-block-end"));
+      const boardSelector = '[data-alpha-surface="true"] .board';
+      const boardPadding = resolvePixelCalcFromRoot(extractProductionDeclaration(extractProductionRule(readAppFile("components/Board.css"), boardSelector), "--board-padding"));
       const pillTop = viewportHeight - systemOffset - 8 - 54;
       const columnBottom = viewportHeight - reserve - boardPadding;
       pill.getBoundingClientRect = () => ({ x: 0, y: pillTop, top: pillTop, right: 360, bottom: pillTop + 54, left: 0, width: 360, height: 54, toJSON: () => ({}) });
@@ -1528,6 +1531,7 @@ describe("Alpha Updates production wiring", () => {
       document.documentElement.style.removeProperty("--mobile-nav-alpha-system-offset");
       document.documentElement.style.removeProperty("--mobile-nav-height");
       document.documentElement.style.removeProperty("--space-xs");
+      document.documentElement.style.removeProperty("--alpha-density-3");
       delete document.documentElement.dataset.viewportMode;
       sessionStorage.clear();
     }

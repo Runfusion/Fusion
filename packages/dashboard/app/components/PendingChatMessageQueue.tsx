@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { AlphaButton, AlphaInput } from "./hero-ui";
+import { AlphaButton, AlphaInput } from "./alpha-ui";
 import { ArrowDown, ArrowUp, Check, Pencil, Send, Trash2, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import "./PendingChatMessageQueue.css";

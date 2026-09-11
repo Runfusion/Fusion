@@ -19,6 +19,21 @@ const clientDistRoot = path.join(dashboardRoot, "dist", "client");
 const i18nLocalesRoot = path.resolve(dashboardRoot, "..", "i18n", "locales");
 const requireBrowser = process.argv.includes("--require-browser") || process.env.FUSION_BROWSER_SMOKE_REQUIRE === "1";
 const screenshotPath = process.env.FUSION_BROWSER_SMOKE_SCREENSHOT;
+
+/*
+FNXC:AlphaBoardSafeGeometry 2026-09-11-16:14:
+Every Board data state uses the same measurable contract: its border box ends at the shell-owned footer or pill boundary, and each column has equal top and bottom spacing within one pixel. Overflowing populated columns keep vertical scrolling inside the column rather than shortening the Board.
+*/
+export function boardSafeGeometryMatches(layout, tolerance = 1) {
+  const topGaps = layout.columnTops.map((top) => top - layout.boardTop);
+  const bottomGaps = layout.columnBottoms.map((bottom) => layout.lowerBoundary - bottom);
+  return layout.columnBottoms.length > 0
+    && layout.columnHeights.every((height) => height > 0)
+    && Math.abs(layout.boardBottom - layout.lowerBoundary) <= tolerance
+    && Math.abs(layout.boardPaddingTop - layout.boardPaddingBottom) <= tolerance
+    && topGaps.every((gap, index) => Math.abs(gap - bottomGaps[index]) <= tolerance)
+    && (layout.state !== "populated" || layout.columnScrollable.every(Boolean));
+}
 const agentHeartbeatMobileScreenshotPath = process.env.FUSION_AGENT_HEARTBEAT_MOBILE_SCREENSHOT;
 const agentHeartbeatDesktopScreenshotPath = process.env.FUSION_AGENT_HEARTBEAT_DESKTOP_SCREENSHOT;
 const gitManagerBeforeMobileScreenshotPath = process.env.FUSION_GIT_MANAGER_BEFORE_MOBILE_SCREENSHOT;
@@ -79,7 +94,7 @@ export const QUICK_ADD_SAVE_FIXTURE_COUNT = QUICK_ADD_COMPOSER_VARIANTS.length *
 
 export function buildQuickAddSaveFixtures(labels = shippedQuickAddSaveLabels) {
   return QUICK_ADD_COMPOSER_VARIANTS.flatMap(([surface, modifier, width, maxWidth, state]) => validateQuickAddSaveLabels(labels).map(([locale, label]) => `
-    <section class="quick-entry-smoke-fixture" data-smoke="quick-add-save-${surface}-${width}-${locale}" ${surface === "board" ? 'data-heroui-alpha-surface="true"' : ""} style="width: min(${maxWidth}, calc(100vw - 24px)); margin: 0 auto 12px;">
+    <section class="quick-entry-smoke-fixture" data-smoke="quick-add-save-${surface}-${width}-${locale}" ${surface === "board" ? 'data-alpha-surface="true"' : ""} style="width: min(${maxWidth}, calc(100vw - 24px)); margin: 0 auto 12px;">
       <div class="quick-entry-box quick-entry-box--expanded ${modifier}" data-smoke="quick-add-${surface}-composer">
         <div class="quick-entry-actions" data-smoke="quick-add-save-row">
           ${surface === "board" ? '<div class="quick-entry-options-group" data-smoke="quick-add-options"><button class="btn btn-sm" type="button">Workflow</button><button class="btn btn-sm" type="button">Deps</button><button class="btn btn-sm" type="button">Models</button></div>' : ""}
@@ -415,13 +430,9 @@ export function createSmokeHtml(options = {}) {
       <div class="terminal-modal-overlay" data-smoke="alpha-drawer-terminal"><section class="terminal-modal"><header class="terminal-header"><h2>Terminal</h2></header><div class="terminal-body">Terminal content</div><button type="button">Terminal final control</button></section></div>
     </section>
     <section data-smoke="alpha-board-fixture" hidden style="position:fixed;inset:0;display:flex;min-height:0;background:var(--bg);">
-      <div class="dashboard-project-shell" data-heroui-alpha-surface="true">
+      <div class="dashboard-project-shell" data-alpha-surface="true">
         <main class="project-content project-content--with-alpha-nav">
-          <div class="board-workflow-view">
-            <div class="board board-workflow-columns" data-smoke="alpha-board">
-              <section class="column" data-smoke="alpha-board-column"><header class="column-header"><h2>Todo</h2></header><div class="column-body"></div></section>
-            </div>
-          </div>
+          <div class="board-workflow-view" data-smoke="alpha-board-production-root"></div>
         </main>
       </div>
       <nav class="mobile-nav-bar mobile-nav-bar--alpha" data-smoke="alpha-pill" aria-label="Alpha primary navigation">
@@ -431,6 +442,7 @@ export function createSmokeHtml(options = {}) {
         <button class="mobile-nav-tab" type="button">Mailbox</button>
         <button class="alpha-mobile-menu-trigger" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="alpha-mobile-navigation-popover">Menu</button>
       </nav>
+      <footer class="executor-status-bar" data-smoke="alpha-footer">Executor status</footer>
     </section>`;
 
   return `<!doctype html>
@@ -935,11 +947,22 @@ export function createAlphaDrawerProductionFixtureSource() {
     Browser geometry must exercise the exported bridges used by App, MainViewKeepAlive, MainContent, and AppModals rather than reconstructing AlphaMobileDrawer ownership flags. The fixture supplies deterministic transport data only; every provider retains its production shell, header, scroll owner, and controls.
     */
     const session = { id: "smoke-chat-session", title: "Drawer conversation", agentId: "agent-smoke", status: "active", createdAt: "2026-09-10T00:00:00.000Z", updatedAt: "2026-09-10T00:00:00.000Z", lastMessageAt: "2026-09-10T00:00:00.000Z", lastMessagePreview: "Visible message", tags: [] };
+    let boardTransportState = "skeleton";
     const messages = Array.from({ length: 36 }, (_, index) => ({ id: "smoke-message-" + index, sessionId: session.id, role: index % 2 ? "assistant" : "user", content: "Production chat message " + index, createdAt: "2026-09-10T00:00:00.000Z" }));
     const json = (value) => Promise.resolve(new Response(JSON.stringify(value), { status: 200, headers: { "content-type": "application/json" } }));
     globalThis.fetch = (input) => {
       const url = new URL(typeof input === "string" ? input : input.url, location.href);
       const pathname = url.pathname;
+      if (pathname.endsWith("/tasks/board-workflows")) {
+        if (boardTransportState === "skeleton") return new Promise(() => {});
+        if (boardTransportState === "empty") return json({ flagEnabled: true, defaultWorkflowId: null, taskWorkflowIds: {}, workflows: [] });
+        return json({
+          flagEnabled: true,
+          defaultWorkflowId: "smoke-workflow",
+          taskWorkflowIds: Object.fromEntries(createBoardTasks(boardTransportState).map((task) => [task.id, "smoke-workflow"])),
+          workflows: [{ id: "smoke-workflow", name: "Production workflow", columns: [{ id: "todo", name: "Todo", flags: { hold: true } }] }],
+        });
+      }
       if (pathname.endsWith("/chat/sessions/" + session.id + "/messages")) return json({ messages });
       if (pathname.endsWith("/chat/sessions/" + session.id)) return json({ session });
       if (pathname.endsWith("/chat/sessions")) return json({ sessions: [session], nextCursor: null });
@@ -960,6 +983,13 @@ export function createAlphaDrawerProductionFixtureSource() {
 
     const project = { id: "smoke-project", name: "Smoke Project", path: ".", status: "active", createdAt: "2026-09-10T00:00:00.000Z", updatedAt: "2026-09-10T00:00:00.000Z" };
     const task = { id: "FN-SMOKE", title: "Drawer task", description: "A long production task detail used to prove the real scrolling surface. ".repeat(20), column: "todo", status: null, priority: "normal", dependencies: [], steps: [], logs: [], createdAt: "2026-09-10T00:00:00.000Z", updatedAt: "2026-09-10T00:00:00.000Z" };
+    const createBoardTask = (id, title, sourceMetadata) => ({ id, title, description: title, column: "todo", status: null, priority: "normal", dependencies: [], steps: [], logs: [], sourceMetadata, createdAt: "2026-09-10T00:00:00.000Z", updatedAt: "2026-09-10T00:00:00.000Z" });
+    const createBoardTasks = (state) => {
+      if (state === "populated") return Array.from({ length: 24 }, (_, index) => createBoardTask("FN-BOARD-" + index, "Production Alpha task " + index));
+      if (state === "duplicated") return [createBoardTask("FN-DUPLICATE-A", "Duplicate candidate"), createBoardTask("FN-DUPLICATE-B", "Duplicate candidate", { nearDuplicateOf: "FN-DUPLICATE-A" })];
+      if (state === "pagination-error") return [createBoardTask("FN-PAGE-ERROR", "Pagination retry remains reachable")];
+      return [];
+    };
     const noop = () => {};
     const asyncTask = async () => task;
     const modalManager = { closePlanning: noop, clearPlanningInitialPlan: noop, planningInitialPlan: null, planningSourceIssue: null, planningWorkflowId: null, planningResumeSessionId: null };
@@ -992,8 +1022,95 @@ export function createAlphaDrawerProductionFixtureSource() {
       return React.createElement("div", { "data-smoke-provider": activeProvider }, React.createElement(ProductionProvider, { id: activeProvider }));
     }
 
-    const tree = React.createElement(I18nextProvider, { i18n }, React.createElement(NavigationHistoryProvider, { value: navigation }, React.createElement(ConfirmDialogProvider, { skipConfirmations: true }, React.createElement(FileBrowserProvider, { openFile: noop }, React.createElement(Fixture)))));
-    flushSync(() => createRoot(document.querySelector('[data-smoke="alpha-drawer-production-root"]')).render(tree));
+    function ProductionBoardFixture() {
+      const [boardState, setBoardState] = useState("skeleton");
+      useEffect(() => {
+        globalThis.__alphaBoardProductionFixture = {
+          show(nextState) {
+            boardTransportState = nextState;
+            flushSync(() => setBoardState(nextState));
+          },
+        };
+        document.documentElement.dataset.alphaBoardProductionReady = "true";
+      }, []);
+      const boardTasks = createBoardTasks(boardState);
+      const boardProject = { ...project, id: "smoke-board-" + boardState };
+      const boardProps = {
+        showBackendConnectionErrorPage: false,
+        projectsError: null,
+        t: (key, fallback) => fallback || key,
+        retryingProjects: false,
+        handleRetryProjects: async () => {},
+        shellApi: null,
+        taskView: "board",
+        modalManager: { openNewTaskWithDescription: noop },
+        handleChangeTaskView: noop,
+        refreshAppSettings: async () => {},
+        addToast: noop,
+        currentProject: boardProject,
+        ChatView,
+        viewMode: "project",
+        tasks: boardTasks,
+        filteredBoardTasks: boardTasks,
+        workflowSteps: [],
+        remoteData: { tasks: boardTasks },
+        setQuickChatOpen: noop,
+        capacityRiskBannerEnabled: false,
+        capacityRiskDismissed: false,
+        capacityRiskSignal: { level: "low", reasons: [] },
+        maxConcurrent: 2,
+        maxWorktrees: 4,
+        showWorktreeGrouping: false,
+        moveTask: async () => boardTasks[0],
+        pauseTask: async () => boardTasks[0],
+        openBoardTaskDetail: noop,
+        openTaskDetailInMainPanel: noop,
+        openGroupModalWithNav: noop,
+        handleBoardQuickCreate: async () => boardTasks[0],
+        openNewTaskWithNav: noop,
+        toggleAutoMerge: async () => {},
+        togglePlanAutoApprove: async () => {},
+        autoMerge: true,
+        planAutoApproveEnabled: false,
+        mergeStrategy: "direct",
+        globalPaused: false,
+        updateTask: async () => boardTasks[0],
+        retryTask: async () => boardTasks[0],
+        revertTask: async () => ({ task: boardTasks[0] }),
+        deleteTask: async () => boardTasks[0],
+        currentTasksTotal: boardTasks.length,
+        currentTasksHasMore: boardState === "pagination-error",
+        currentTasksPaginationError: boardState === "pagination-error" ? "request-failed" : null,
+        retryCurrentTasksPagination: async () => {},
+        searchQuery: "",
+        availableModels: [],
+        favoriteProviders: [],
+        favoriteModels: [],
+        handleOpenDetailWithTab: noop,
+        handleToggleFavorite: async () => {},
+        handleToggleModelFavorite: async () => {},
+        staleHighFanoutBlockerAgeThresholdMs: 0,
+        prAuthAvailable: false,
+        openWorkflowEditorWithNav: noop,
+        openCreateWorkflowWithNav: noop,
+        sidebarActive: true,
+        isMobile: false,
+        isRemote: false,
+        experimentalFeatures: { alphaUpdates: true },
+        ingestCreatedTasks: noop,
+        openDetailTask: noop,
+        popOutTaskDetail: noop,
+        onOpenChatWithPrefill: noop,
+        closeTaskDetailMainPanel: noop,
+        setMainPanelDetailTask: noop,
+        handleDismissCapacityRisk: noop,
+      };
+      return React.createElement(MainContent, boardProps);
+    }
+
+    const providers = (child) => React.createElement(I18nextProvider, { i18n }, React.createElement(NavigationHistoryProvider, { value: navigation }, React.createElement(ConfirmDialogProvider, { skipConfirmations: true }, React.createElement(FileBrowserProvider, { openFile: noop }, child))));
+    flushSync(() => createRoot(document.querySelector('[data-smoke="alpha-drawer-production-root"]')).render(providers(React.createElement(Fixture))));
+    flushSync(() => createRoot(document.querySelector('[data-smoke="alpha-board-production-root"]')).render(providers(React.createElement(ProductionBoardFixture))));
   `;
 }
 async function buildAlphaDrawerProductionFixture() {
@@ -1608,45 +1725,75 @@ async function runSmokeChecks(page, pageUrl) {
     };
   })()`);
   /*
-  FNXC:AlphaBoardPillGeometry 2026-09-11-02:01:
-  Blink must derive the Board and pill edges from emitted production CSS. The smoke changes only the data state and measured system offset; it never injects a column rectangle or copies the expected bottom into the subject under test.
+  FNXC:AlphaBoardPillGeometry 2026-09-11-16:53:
+  Blink measures the production MainContent → Board tree for loading, no-workflow, populated, duplicate, and pagination-error states. The fixture changes only transport/props and shell reservations; it never replaces Board output with synthetic columns or cards.
   */
-  const collectAlphaBoardLayout = (state, systemOffset) => evaluate(page, `(async () => {
+  const collectAlphaBoardLayout = (state, mode, systemOffset = 0) => evaluate(page, `(async () => {
     const root = document.documentElement;
-    root.dataset.viewportMode = 'mobile';
+    const mode = ${JSON.stringify(String(mode))};
+    const keyboardOpen = mode === 'mobile-keyboard';
+    root.dataset.viewportMode = mode.startsWith('mobile') ? 'mobile' : mode;
     root.style.setProperty('--mobile-nav-alpha-system-offset', ${JSON.stringify(String(systemOffset))} + 'px');
     const fixture = document.querySelector('[data-smoke="alpha-board-fixture"]');
     fixture.hidden = false;
-    const board = fixture.querySelector('[data-smoke="alpha-board"]');
+    const content = fixture.querySelector('.project-content');
+    content.className = mode === 'mobile' ? 'project-content project-content--with-alpha-nav' : keyboardOpen ? 'project-content' : 'project-content project-content--with-footer';
+    const pill = fixture.querySelector('[data-smoke="alpha-pill"]');
+    const footer = fixture.querySelector('[data-smoke="alpha-footer"]');
+    pill.style.display = mode === 'mobile' ? '' : 'none';
+    footer.style.display = mode === 'desktop' || mode === 'tablet' ? '' : 'none';
     const state = ${JSON.stringify(String(state))};
-    if (state === 'skeleton') {
-      board.className = 'board board-workflows-skeleton';
-      board.innerHTML = '<section class="board-workflows-skeleton__column" data-smoke="alpha-board-column"><div class="board-workflows-skeleton__header"></div><div class="board-workflows-skeleton__card"></div></section>';
-    } else {
-      board.className = 'board board-workflow-columns';
-      board.innerHTML = '<section class="column" data-smoke="alpha-board-column"><header class="column-header"><h2>Todo</h2></header><div class="column-body">' + (state === 'populated' ? '<article class="card"><h3 class="card-title">Populated Alpha task</h3></article>' : '') + '</div></section>';
-    }
+    const waitFor = async (read, label) => {
+      for (let attempt = 0; attempt < 120; attempt += 1) {
+        const value = read();
+        if (value) return value;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      throw new Error('Timed out waiting for production Board ' + label);
+    };
+    const controller = await waitFor(() => globalThis.__alphaBoardProductionFixture, 'controller');
+    controller.show(state);
+    const board = await waitFor(() => {
+      const candidate = fixture.querySelector('#board');
+      if (!candidate) return null;
+      if (state === 'skeleton' && candidate.dataset.testid !== 'board-workflows-skeleton') return null;
+      if (state === 'empty' && candidate.dataset.testid !== 'board-workflows-empty') return null;
+      if (!['skeleton', 'empty'].includes(state) && !candidate.classList.contains('board-workflow-columns')) return null;
+      return candidate;
+    }, state);
     const nextFrame = () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     await nextFrame();
-    const pill = fixture.querySelector('[data-smoke="alpha-pill"]');
-    const floatingGap = Number.parseFloat(getComputedStyle(pill).getPropertyValue('--mobile-nav-floating-gap')) || 0;
-    root.style.setProperty('--mobile-nav-height', Math.ceil(pill.getBoundingClientRect().height + floatingGap) + 'px');
-    await nextFrame();
-    const pillRect = pill.getBoundingClientRect();
+    if (mode === 'mobile') {
+      const floatingGap = Number.parseFloat(getComputedStyle(pill).getPropertyValue('--mobile-nav-floating-gap')) || 0;
+      root.style.setProperty('--mobile-nav-height', Math.ceil(pill.getBoundingClientRect().height + floatingGap) + 'px');
+      await nextFrame();
+    } else {
+      root.style.setProperty('--mobile-nav-height', '0px');
+    }
+    const lowerBoundary = mode === 'mobile' ? pill.getBoundingClientRect().top : keyboardOpen ? window.innerHeight : footer.getBoundingClientRect().top;
     const boardRect = board.getBoundingClientRect();
-    const columns = [...board.querySelectorAll('[data-smoke="alpha-board-column"]')].map((column) => {
+    const columns = [...board.querySelectorAll(':scope > .column, :scope > .board-workflows-skeleton__column')].map((column) => {
       const box = column.getBoundingClientRect();
-      return { top: box.top, bottom: box.bottom, height: box.height };
+      const body = column.querySelector('.column-body');
+      return { top: box.top, bottom: box.bottom, height: box.height, scrollable: body ? body.scrollHeight > body.clientHeight && ['auto', 'scroll'].includes(getComputedStyle(body).overflowY) : false };
     });
     return {
       state,
-      pillTop: pillRect.top,
+      mode,
+      lowerBoundary,
+      boardTop: boardRect.top,
       boardBottom: boardRect.bottom,
+      columnTops: columns.map((column) => column.top),
       columnBottoms: columns.map((column) => column.bottom),
       columnHeights: columns.map((column) => column.height),
+      columnScrollable: columns.map((column) => column.scrollable),
+      boardPaddingTop: Number.parseFloat(getComputedStyle(board).paddingTop),
       boardPaddingBottom: Number.parseFloat(getComputedStyle(board).paddingBottom),
-      maximumGap: Number.parseFloat(getComputedStyle(root).getPropertyValue('--space-xs')),
       controlOrder: [...pill.children].map((child) => child.className),
+      productionBoard: board.id === 'board' && (state === 'skeleton' || state === 'empty' || board.querySelectorAll('.card').length > 0),
+      paginationRetryVisible: state !== 'pagination-error' || Boolean(board.querySelector('.column-pagination-error button')),
+      duplicateCardCount: state !== 'duplicated' ? 0 : board.querySelectorAll('.column-body .card').length,
+      keyboardOpen,
       documentOverflowX: document.documentElement.scrollWidth - window.innerWidth,
       fixtureOverflowY: fixture.scrollHeight - fixture.clientHeight,
     };
@@ -1729,24 +1876,25 @@ async function runSmokeChecks(page, pageUrl) {
     delete document.documentElement.dataset.alphaMobileDrawers;
     return true;
   })()`);
-  for (const { name, width, height, systemOffset } of [
-    { name: "portrait safe area", width: 390, height: 844, systemOffset: 24 },
-    { name: "short landscape ICB", width: 844, height: 390, systemOffset: 18 },
-    { name: "reduced keyboard viewport", width: 390, height: 400, systemOffset: 12 },
+  for (const { name, width, height, mode, systemOffset } of [
+    { name: "desktop footer", width: 1200, height: 844, mode: "desktop", systemOffset: 0 },
+    { name: "tablet footer", width: 768, height: 844, mode: "tablet", systemOffset: 0 },
+    { name: "mobile pill", width: 390, height: 844, mode: "mobile", systemOffset: 24 },
+    { name: "mobile landscape pill", width: 844, height: 390, mode: "mobile", systemOffset: 18 },
+    { name: "mobile keyboard viewport", width: 390, height: 400, mode: "mobile-keyboard", systemOffset: 0 },
   ]) {
-    await page.send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 2, mobile: true });
-    for (const state of ["skeleton", "empty", "populated"]) {
-      const layout = await collectAlphaBoardLayout(state, systemOffset);
+    const mobile = mode.startsWith("mobile");
+    await page.send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: mobile ? 2 : 1, mobile });
+    for (const state of ["skeleton", "empty", "populated", "duplicated", "pagination-error"]) {
+      const layout = await collectAlphaBoardLayout(state, mode, systemOffset);
       assertSmokeResult(
-        `Alpha Board ${state} columns nearly meet the floating pill in ${name}`,
-        layout.columnBottoms.length > 0
-          && layout.columnHeights.every((columnHeight) => columnHeight > 0)
-          && layout.columnBottoms.every((bottom) => layout.pillTop - bottom >= 0 && layout.pillTop - bottom <= layout.maximumGap + 1)
-          && Math.abs(layout.boardBottom - layout.pillTop) <= 1
-          && layout.boardPaddingBottom > 0
-          && layout.boardPaddingBottom <= layout.maximumGap
-          && layout.controlOrder.length === 5
-          && layout.controlOrder.at(-1) === 'alpha-mobile-menu-trigger'
+        `Alpha Board ${state} fills the safe height above the ${name}`,
+        boardSafeGeometryMatches(layout)
+          && layout.productionBoard
+          && layout.paginationRetryVisible
+          && (state !== "duplicated" || layout.duplicateCardCount === 2)
+          && (mode !== "mobile" || (layout.controlOrder.length === 5 && layout.controlOrder.at(-1) === 'alpha-mobile-menu-trigger'))
+          && (mode !== "mobile-keyboard" || layout.keyboardOpen)
           && layout.documentOverflowX <= 1
           && layout.fixtureOverflowY <= 1,
         JSON.stringify(layout),
@@ -2207,29 +2355,29 @@ async function runSmokeChecks(page, pageUrl) {
   })()`);
 
   const collectAlphaPalette = () => evaluate(page, `(() => {
-    const root = document.querySelector('[data-heroui-alpha-surface="true"]');
+    const root = document.querySelector('[data-alpha-surface="true"]');
     const style = getComputedStyle(root);
     return ['--alpha-neutral-background', '--alpha-neutral-foreground', '--alpha-neutral-border', '--alpha-neutral-accent']
       .map((name) => style.getPropertyValue(name).trim());
   })()`);
 
   /*
-  FNXC:HeroUIAlphaFocus 2026-09-11-01:04:
+  FNXC:HomemadeAlphaFocus 2026-09-11-01:04:
   The browser smoke focuses production Board, Chat, and portaled Quick Entry control classes and reads their resolved box shadows. This guards the complete-shadow alias contract that DOM emulators cannot validate through `:focus-visible`, including color-theme stability and light/dark palette changes.
   */
   const collectAlphaFocusShadows = () => evaluate(page, `(() => {
     const boardRoot = document.querySelector('[data-smoke="board"]');
     const boardCard = boardRoot.querySelector('.card');
-    boardRoot.setAttribute('data-heroui-alpha-surface', 'true');
+    boardRoot.setAttribute('data-alpha-surface', 'true');
     boardCard.tabIndex = 0;
 
     const chatRoot = document.createElement('section');
-    chatRoot.setAttribute('data-heroui-alpha-surface', 'true');
+    chatRoot.setAttribute('data-alpha-surface', 'true');
     chatRoot.innerHTML = '<button type="button" class="chat-input-stop">Stop</button>';
     document.body.append(chatRoot);
 
     const portalRoot = document.createElement('section');
-    portalRoot.setAttribute('data-heroui-alpha-portal', 'true');
+    portalRoot.setAttribute('data-alpha-portal', 'true');
     portalRoot.innerHTML = '<button type="button" class="quick-entry-toggle">Options</button>';
     document.body.append(portalRoot);
 
@@ -2238,7 +2386,7 @@ async function runSmokeChecks(page, pageUrl) {
       control.focus();
       return getComputedStyle(control).boxShadow;
     });
-    boardRoot.removeAttribute('data-heroui-alpha-surface');
+    boardRoot.removeAttribute('data-alpha-surface');
     chatRoot.remove();
     portalRoot.remove();
     return shadows;
@@ -2450,14 +2598,14 @@ async function runSmokeChecks(page, pageUrl) {
   const lightPurpleAlphaPalette = await collectAlphaPalette();
   const lightPurpleAlphaFocusShadows = await collectAlphaFocusShadows();
   assertSmokeResult(
-    "HeroUI Alpha palette ignores Fusion colors and responds only to light/dark",
+    "homemade Alpha palette ignores Fusion colors and responds only to light/dark",
     darkCozyAlphaPalette.every(Boolean)
       && JSON.stringify(darkCozyAlphaPalette) === JSON.stringify(darkPurpleAlphaPalette)
       && JSON.stringify(lightPurpleAlphaPalette) !== JSON.stringify(darkPurpleAlphaPalette),
     JSON.stringify({ darkCozyAlphaPalette, darkPurpleAlphaPalette, lightPurpleAlphaPalette }),
   );
   assertSmokeResult(
-    "HeroUI Alpha Board, Chat, and portal focus shadows are valid and theme-neutral",
+    "homemade Alpha Board, Chat, and portal focus shadows are valid and theme-neutral",
     darkCozyAlphaFocusShadows.length === 3
       && darkCozyAlphaFocusShadows.every((shadow) => shadow && shadow !== "none")
       && JSON.stringify(darkCozyAlphaFocusShadows) === JSON.stringify(darkPurpleAlphaFocusShadows)

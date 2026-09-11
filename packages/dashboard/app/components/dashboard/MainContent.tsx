@@ -113,7 +113,7 @@ export interface AppMainPanelTaskDetailCompositionProps {
 }
 
 /*
-FNXC:TaskDetailHeroUI 2026-09-11-14:13:
+FNXC:TaskDetailAlpha 2026-09-11-14:13:
 The production MainContent composition owns the final projection of App's task-detail state. Tests mount this component directly so omitting or replacing the authoritative open, close, tab, snapshot, or setter binding breaks the same path App ships.
 */
 export function AppMainPanelTaskDetailComposition({ state, mainContentProps }: AppMainPanelTaskDetailCompositionProps) {

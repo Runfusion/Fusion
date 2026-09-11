@@ -1,5 +1,5 @@
 import { useId, useState, type ReactNode } from "react";
-import { AlphaButton } from "./hero-ui";
+import { AlphaButton } from "./alpha-ui";
 import { useTranslation } from "react-i18next";
 import "./ToolCallDetails.css";
 

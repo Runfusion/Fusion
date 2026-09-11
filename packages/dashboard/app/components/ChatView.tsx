@@ -1,8 +1,8 @@
 // ChatView.css is imported eagerly from App.tsx to avoid a flash of
 // unstyled content when the lazy chunk loads. Do not re-import here.
-import { AlphaButton, AlphaDialogBackdrop, AlphaInput, AlphaListBox, AlphaListBoxItem, AlphaMenu, AlphaMenuItem, AlphaMenuSection, AlphaSelect, AlphaTextArea } from "./hero-ui";
+import { AlphaButton, AlphaDialogBackdrop, AlphaInput, AlphaListBox, AlphaListBoxItem, AlphaMenu, AlphaMenuItem, AlphaMenuSection, AlphaSelect, AlphaTextArea } from "./alpha-ui";
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { HeroUIAlphaSurface } from "../context/HeroUIAlphaContext";
+import { AlphaBoundary } from "../context/AlphaContext";
 import {
   MessageSquare,
   Plus,
@@ -3623,11 +3623,11 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
           ref={contextMenuRef}
           style={{ top: contextMenu.y, left: contextMenu.x }}
           onClick={(e) => e.stopPropagation()}
-          data-heroui-alpha-menu-layout="conversation-actions"
+          data-alpha-menu-layout="conversation-actions"
         >
           {/*
-          FNXC:HeroUIAlphaCollections 2026-09-10-20:43:
-          A conversation owns one sectioned HeroUI menu so arrow keys cross primary actions, every tag assignment, and maintenance actions. Tag editing remains a visibly labelled sibling rail after the collection because its buttons are auxiliary controls rather than competing menu items.
+          FNXC:AlphaCollections 2026-09-10-20:43:
+          A conversation owns one sectioned homemade Alpha menu so arrow keys cross primary actions, every tag assignment, and maintenance actions. Tag editing remains a visibly labelled sibling rail after the collection because its buttons are auxiliary controls rather than competing menu items.
           */}
           <AlphaMenu aria-label={t("chat.conversationActions", "Conversation actions")} className="chat-session-context-menu-section">
           <AlphaMenuSection aria-label={t("chat.conversationPrimaryActions", "Primary conversation actions")}>
@@ -3921,8 +3921,8 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
 
 export function ChatView(props: ChatViewProps) {
   return (
-    <HeroUIAlphaSurface enabled={props.experimentalFeatures?.alphaUpdates === true}>
+    <AlphaBoundary enabled={props.experimentalFeatures?.alphaUpdates === true}>
       <ChatViewContent {...props} />
-    </HeroUIAlphaSurface>
+    </AlphaBoundary>
   );
 }

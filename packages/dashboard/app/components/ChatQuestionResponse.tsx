@@ -1,4 +1,4 @@
-import { AlphaButton, AlphaInput, AlphaTextArea } from "./hero-ui";
+import { AlphaButton, AlphaInput, AlphaTextArea } from "./alpha-ui";
 import "./ChatQuestionResponse.css";
 
 import { useCallback, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject } from "react";

@@ -60,8 +60,8 @@ import { PrCreateModal } from "./PrCreateModal";
 import { PlannerInterventionTimeline } from "./PlannerInterventionTimeline";
 import { TaskComments } from "./TaskComments";
 import { TaskChatTab } from "./TaskChatTab";
-import { HeroUIAlphaSurface } from "../context/HeroUIAlphaContext";
-import { AlphaButton, AlphaDialogBackdrop, AlphaInput, AlphaMenu, AlphaMenuItem, AlphaPortalSurface, AlphaSelect, AlphaSurface, AlphaTextArea } from "./hero-ui";
+import { AlphaBoundary } from "../context/AlphaContext";
+import { AlphaButton, AlphaDialogBackdrop, AlphaInput, AlphaMenu, AlphaMenuItem, AlphaPortalSurface, AlphaSelect, AlphaSurface, AlphaTextArea } from "./alpha-ui";
 import { TaskPlannerChatTab } from "./TaskPlannerChatTab";
 import { TaskReviewTab } from "./TaskReviewTab";
 import { TaskChangesTab } from "./TaskChangesTab";
@@ -157,8 +157,8 @@ type TaskDetailTabButtonProps = {
 };
 
 /*
-FNXC:TaskDetailHeroUI 2026-09-11-02:41:
-Every dynamic Task Detail destination uses one module-scoped adaptive tab control. This preserves the historical button contract outside Alpha while publishing selected state and HeroUI keyboard semantics consistently across narrow and wide hosts.
+FNXC:TaskDetailAlpha 2026-09-11-02:41:
+Every dynamic Task Detail destination uses one module-scoped adaptive tab control. This preserves the historical button contract outside Alpha while publishing selected state and homemade Alpha keyboard semantics consistently across narrow and wide hosts.
 */
 function TaskDetailTabButton({ selected, onSelect, children }: TaskDetailTabButtonProps) {
   return (
@@ -1817,7 +1817,7 @@ export function TaskDetailContent({
   const [isSavingGithubTracking, setIsSavingGithubTracking] = useState(false);
   const [isCheckingPrStatus, setIsCheckingPrStatus] = useState(false);
   /*
-  FNXC:TaskDetailHeroUI 2026-09-11-04:19:
+  FNXC:TaskDetailAlpha 2026-09-11-04:19:
   The duplicated plan-decision controls in the banner and sticky footer represent one operation. A shared pending fence disables every copy while either request is in flight, preventing duplicate or contradictory decisions in both Alpha and stable presentations.
   */
   const [isPlanApprovalPending, setIsPlanApprovalPending] = useState(false);
@@ -5194,7 +5194,7 @@ export function TaskDetailContent({
   );
 
   return (
-    <HeroUIAlphaSurface preserveDisabledDom className="task-detail-alpha-boundary">
+    <AlphaBoundary preserveDisabledDom className="task-detail-alpha-boundary">
       <AlphaSurface
         className={`task-detail-content${embedded ? " task-detail-content--embedded" : ""}${isActivityExpanded ? " task-detail-content--chat-expanded" : ""}${isPlannerChatExpanded ? " task-detail-content--planner-chat-expanded" : ""}`}
         data-task-detail-surface="true"
@@ -5835,7 +5835,7 @@ export function TaskDetailContent({
                 Activity expansion must not reserve a standalone toolbar row. Live uses TaskChatTab's anchored overlay button, Feed renders the same Activity toggle over its feed panel, and Raw keeps AgentLogViewer's fullscreen control so only one Raw expand affordance is reachable.
               */}
               {activitySegment === "current" ? (
-                <HeroUIAlphaSurface>
+                <AlphaBoundary>
                 <TaskChatTab
                   columnFlags={detailColumnFlags}
                   task={workingTask}
@@ -5854,7 +5854,7 @@ export function TaskDetailContent({
                     merger: toTaskChatModelInfo(resolveEffectiveValidator(workingTask, agentLogEntries, assignedAgent, settings, detailColumnFlags)),
                   }}
                 />
-                </HeroUIAlphaSurface>
+                </AlphaBoundary>
               ) : activitySegment === "raw-logs" ? (
                 <AgentLogViewer
                   entries={agentLogEntries}
@@ -7029,7 +7029,7 @@ export function TaskDetailContent({
           {keepAliveForCurrentTask.plannerChat ? (
             <KeepAliveView hidden={activeTab !== "planner-chat"} testId="planner-chat-keep-alive">
               <div className="detail-section detail-section--planner-chat">
-                <HeroUIAlphaSurface>
+                <AlphaBoundary>
                 <TaskPlannerChatTab
                   task={workingTask}
                   /* FNXC:WorkflowResolvedColumns 2026-07-30-23:40: the kept-alive sibling renders the
@@ -7045,7 +7045,7 @@ export function TaskDetailContent({
                   addToast={addToast}
                   onTaskUpdated={onTaskUpdated}
                 />
-                </HeroUIAlphaSurface>
+                </AlphaBoundary>
               </div>
             </KeepAliveView>
           ) : null}
@@ -7353,7 +7353,7 @@ export function TaskDetailContent({
           </Suspense>
         )}
       </AlphaSurface>
-    </HeroUIAlphaSurface>
+    </AlphaBoundary>
   );
 }
 

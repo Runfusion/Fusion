@@ -21,59 +21,59 @@
 }
 
 /*
-FNXC:HeroUIAlphaDensity 2026-09-11-00:30:
+FNXC:AlphaDensity 2026-09-11-00:30:
 All Alpha Chat hosts share one restrained density hierarchy: quiet list chrome, compact headers/actions, readable transcript measure, and a composer that stays visually primary. These boundary-only rules preserve list/detail navigation, virtualization, streaming, dock/floating geometry, and the stable non-Alpha tree.
 */
-[data-heroui-alpha-surface="true"] .chat-sidebar-search-container {
+[data-alpha-surface="true"] .chat-sidebar-search-container {
   padding: var(--alpha-density-2);
   gap: var(--alpha-density-1);
 }
 
-[data-heroui-alpha-surface="true"] .chat-session-list {
+[data-alpha-surface="true"] .chat-session-list {
   padding: var(--alpha-density-1) var(--alpha-density-2);
 }
 
-[data-heroui-alpha-surface="true"] .chat-session-item {
+[data-alpha-surface="true"] .chat-session-item {
   gap: var(--alpha-density-1);
   padding: var(--alpha-density-2) var(--alpha-density-3);
   border-radius: var(--radius-md);
 }
 
-[data-heroui-alpha-surface="true"] .chat-thread-header {
+[data-alpha-surface="true"] .chat-thread-header {
   gap: var(--alpha-density-2);
   padding: var(--alpha-density-2) var(--alpha-density-3);
   background: var(--alpha-neutral-background);
 }
 
-[data-heroui-alpha-surface="true"] .chat-messages {
+[data-alpha-surface="true"] .chat-messages {
   padding: var(--alpha-density-4);
 }
 
-[data-heroui-alpha-surface="true"] .chat-transcript-row {
+[data-alpha-surface="true"] .chat-transcript-row {
   padding-block-end: var(--alpha-density-3);
 }
 
-[data-heroui-alpha-surface="true"] .chat-message {
+[data-alpha-surface="true"] .chat-message {
   padding: var(--alpha-density-2) var(--alpha-density-3);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-sm);
 }
 
-[data-heroui-alpha-surface="true"] :is(.view-header__actions, .chat-thread-header) .btn {
+[data-alpha-surface="true"] :is(.view-header__actions, .chat-thread-header) .btn {
   min-block-size: var(--alpha-control-height);
   padding-block: var(--alpha-density-1);
 }
 
 @media (max-width: 768px) {
-  [data-heroui-alpha-surface="true"] .chat-messages {
+  [data-alpha-surface="true"] .chat-messages {
     padding: var(--alpha-density-2);
   }
 
-  [data-heroui-alpha-surface="true"] .chat-thread-header {
+  [data-alpha-surface="true"] .chat-thread-header {
     padding-inline: var(--alpha-density-2);
   }
 
-  [data-heroui-alpha-surface="true"] :is(.view-header__actions, .chat-thread-header) .btn {
+  [data-alpha-surface="true"] :is(.view-header__actions, .chat-thread-header) .btn {
     min-block-size: var(--alpha-touch-height);
   }
 }
@@ -340,8 +340,8 @@ FN-8191 gives the conversation action menu a token-composed border-box width. Ch
 }
 
 /*
-FNXC:HeroUIAlphaCollections 2026-09-10-20:43:
-Conversation actions use one sectioned HeroUI collection for continuous arrow navigation. The tag-action rail follows as sibling chrome, with visible tag names aligned to its rename/delete buttons.
+FNXC:AlphaCollections 2026-09-10-20:43:
+Conversation actions use one sectioned homemade Alpha collection for continuous arrow navigation. The tag-action rail follows as sibling chrome, with visible tag names aligned to its rename/delete buttons.
 */
 .chat-session-context-menu-section {
   display: contents;

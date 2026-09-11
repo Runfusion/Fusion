@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { AlphaListBox, AlphaListBoxItem } from "./hero-ui";
+import { AlphaListBox, AlphaListBoxItem } from "./alpha-ui";
 import { useTranslation } from "react-i18next";
 import { AgentAvatar } from "./AgentAvatar";
 import "./AgentMentionPopup.css";

@@ -1,5 +1,5 @@
 import "./QuickEntryBox.css";
-import { AlphaButton, AlphaInput, AlphaListBox, AlphaListBoxItem, AlphaMenu, AlphaMenuItem, AlphaPopoverSurface, AlphaTextArea } from "./hero-ui";
+import { AlphaButton, AlphaInput, AlphaListBox, AlphaListBoxItem, AlphaMenu, AlphaMenuItem, AlphaPopoverSurface, AlphaTextArea } from "./alpha-ui";
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { createPortal } from "react-dom";
@@ -27,7 +27,7 @@ import { computeFixedMenuPosition, getLayoutViewportSize } from "../utils/fixedM
 import { isInsidePortaledModelMenu } from "../utils/portalSurfaces";
 import { restoreOptionalStepsOnFastExit } from "../utils/fastModeOptionalSteps";
 import { useQuickAddSubmitOnEnter } from "../hooks/useQuickAddSubmitOnEnter";
-import { useHeroUIAlpha } from "../context/HeroUIAlphaContext";
+import { useAlphaSurface } from "../context/AlphaContext";
 
 const STORAGE_KEY = "kb-quick-entry-text";
 const ALLOWED_TASK_ATTACHMENT_TYPES = new Set([
@@ -162,7 +162,7 @@ function hasMeaningfulNodeChoice(nodes: NodeInfo[]): boolean {
 
 export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], availableModels, workflowId, workflowOptions, defaultWorkflowId, projectId, autoExpand = true, defaultExpanded = true, singleLine = false, submitOnEnter, favoriteProviders: parentFavoriteProviders, favoriteModels: parentFavoriteModels, onToggleFavorite: parentToggleFavorite, onToggleModelFavorite: parentToggleModelFavorite, onOpenTask }: QuickEntryBoxProps) {
   const { t } = useTranslation("app");
-  const alphaActive = useHeroUIAlpha();
+  const alphaActive = useAlphaSurface();
   const contextSubmitOnEnter = useQuickAddSubmitOnEnter();
   const enterSubmits = submitOnEnter ?? contextSubmitOnEnter;
   const [description, setDescription] = useState(() => {
@@ -177,7 +177,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
   const [isExpanded, setIsExpanded] = useState(!singleLine);
   // isDisclosureExpanded controls visibility of advanced options (Deps, Models, etc.).
   /*
-  FNXC:HeroUIAlphaQuickEntry 2026-09-11-00:30:
+  FNXC:AlphaQuickEntry 2026-09-11-00:30:
   Alpha Quick Entry starts with only its compact immediate-action row visible and progressively discloses advanced routing options. List and every non-Alpha host retain the historical defaultExpanded contract; state and callbacks stay in this single composer instance so disclosure never discards the draft.
   */
   const [isDisclosureExpanded, setIsDisclosureExpanded] = useState(alphaActive ? false : defaultExpanded);
@@ -315,7 +315,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
   const isDisabled = !onCreate;
 
   /*
-  FNXC:HeroUIAlphaQuickEntryMode 2026-09-11-00:51:
+  FNXC:AlphaQuickEntryMode 2026-09-11-00:51:
   Alpha can be toggled while Board remains mounted. Adopt progressive disclosure on entry and restore the non-Alpha `defaultExpanded` contract on exit without remounting the composer or clearing its draft.
   */
   useEffect(() => {
@@ -325,7 +325,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
   }, [alphaActive, defaultExpanded]);
 
   /*
-  FNXC:HeroUIAlphaQuickEntryPortals 2026-09-11-00:51:
+  FNXC:AlphaQuickEntryPortals 2026-09-11-00:51:
   Collapsing advanced Alpha controls must close every parent-owned portal state before the triggers disappear. The options subtree is also unmounted below so child-owned workflow-step portals cannot remain visible without an anchor.
   */
   useEffect(() => {

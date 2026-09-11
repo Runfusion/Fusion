@@ -1,6 +1,6 @@
 import "./TaskContextMenu.css";
-import { AlphaMenu, AlphaMenuItem, AlphaMenuSubmenu } from "./hero-ui";
-import { useHeroUIAlpha } from "../context/HeroUIAlphaContext";
+import { AlphaMenu, AlphaMenuItem, AlphaMenuSubmenu } from "./alpha-ui";
+import { useAlphaSurface } from "../context/AlphaContext";
 import type { KeyboardEvent, PointerEvent as ReactPointerEvent, MouseEvent as ReactMouseEvent, ReactNode } from "react";
 import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { TFunction } from "i18next";
@@ -327,7 +327,7 @@ export function buildTaskActionMenuModel(options: BuildTaskActionMenuModelOption
     actions.push({
       id: "bypass-review",
       label: t("taskDetail.bypassReview.btn", "Bypass failed review"),
-      // FNXC:TaskDetailHeroUI 2026-09-11-04:19: Bypass is an audited operator action, not explanatory note copy; keep it keyboard- and pointer-selectable in both menu implementations.
+      // FNXC:TaskDetailAlpha 2026-09-11-04:19: Bypass is an audited operator action, not explanatory note copy; keep it keyboard- and pointer-selectable in both menu implementations.
       onSelect: options.onBypassReview,
     });
   }
@@ -417,7 +417,7 @@ export function TaskContextMenu({
   const touchSelectedActionRef = useRef<{ id: string; at: number } | null>(null);
   const submenuRef = useRef<HTMLDivElement | null>(null);
   const [openSubmenuId, setOpenSubmenuId] = useState<string | null>(null);
-  const heroUIAlpha = useHeroUIAlpha();
+  const alphaSurface = useAlphaSurface();
   const [submenuOpensLeft, setSubmenuOpensLeft] = useState(false);
 
   const selectAction = useCallback((action: TaskMenuActionDescriptor) => {
@@ -513,12 +513,12 @@ export function TaskContextMenu({
     items[nextIndex]?.focus();
   };
 
-  if (heroUIAlpha) {
+  if (alphaSurface) {
     return (
-      <div ref={menuRef} className={className} data-heroui-alpha-menu-layout="task-actions">
+      <div ref={menuRef} className={className} data-alpha-menu-layout="task-actions">
         {/*
-        FNXC:HeroUIAlphaCollections 2026-09-10-20:30:
-        Alpha task actions share one HeroUI menu, and nested groups use HeroUI's SubmenuTrigger. React Aria therefore owns arrow traversal, focus entry, and submenu transitions instead of the historical button-query keyboard loop.
+        FNXC:AlphaCollections 2026-09-10-20:30:
+        Alpha task actions share one homemade Alpha menu, and nested groups use Fusion's SubmenuTrigger. React Aria therefore owns arrow traversal, focus entry, and submenu transitions instead of the historical button-query keyboard loop.
         */}
         <AlphaMenu aria-label="Task actions">
           {actions.filter((item) => !("tone" in item && item.tone === "note")).map((item) => {

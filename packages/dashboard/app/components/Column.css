@@ -43,33 +43,33 @@ The Done scroller owns one normal-flow virtual-content block. Spacer heights and
 }
 
 /*
-FNXC:HeroUIAlphaDensity 2026-09-11-00:30:
+FNXC:AlphaDensity 2026-09-11-00:30:
 Alpha columns use compact header/body rhythm and one subtle elevation without changing virtual rows, pagination extent, or scroll ownership. The stable Board remains untouched outside the explicit boundary.
 */
-[data-heroui-alpha-surface="true"] .column {
+[data-alpha-surface="true"] .column {
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-sm);
 }
 
-[data-heroui-alpha-surface="true"] .column-header {
+[data-alpha-surface="true"] .column-header {
   gap: var(--alpha-density-1);
   padding: var(--alpha-density-3) var(--alpha-density-3) 0;
 }
 
-[data-heroui-alpha-surface="true"] .column-desc {
+[data-alpha-surface="true"] .column-desc {
   padding: var(--alpha-density-1) var(--alpha-density-3) var(--alpha-density-2);
 }
 
-[data-heroui-alpha-surface="true"] .column-body {
+[data-alpha-surface="true"] .column-body {
   padding: var(--alpha-density-1) var(--alpha-density-2) var(--alpha-density-2);
 }
 
-[data-heroui-alpha-surface="true"] .column-pagination-footer {
+[data-alpha-surface="true"] .column-pagination-footer {
   padding-block: var(--alpha-density-1);
 }
 
 @media (max-width: 768px) {
-  [data-heroui-alpha-surface="true"] .column-header {
+  [data-alpha-surface="true"] .column-header {
     padding-inline: var(--alpha-density-2);
   }
 }

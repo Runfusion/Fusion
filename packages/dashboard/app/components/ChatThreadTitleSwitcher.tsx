@@ -1,4 +1,4 @@
-import { AlphaButton, AlphaMenu, AlphaMenuItem } from "./hero-ui";
+import { AlphaButton, AlphaMenu, AlphaMenuItem } from "./alpha-ui";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { ChevronDown, Pin } from "lucide-react";

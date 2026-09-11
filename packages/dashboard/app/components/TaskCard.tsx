@@ -1,5 +1,5 @@
 import "./TaskCard.css";
-import { AlphaButton, AlphaSurface, AlphaTextArea } from "./hero-ui";
+import { AlphaButton, AlphaSurface, AlphaTextArea } from "./alpha-ui";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { memo, useCallback, useState, useRef, useEffect, useLayoutEffect, useMemo, type CSSProperties, type ReactElement } from "react";

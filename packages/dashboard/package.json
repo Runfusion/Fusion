@@ -123,8 +123,6 @@
     "@fusion/core": "workspace:*",
     "@fusion/engine": "workspace:*",
     "@fusion/i18n": "workspace:*",
-    "@heroui/react": "3.2.4",
-    "@heroui/styles": "3.2.4",
     "@types/multer": "^2.1.0",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/addon-search": "^0.16.0",
@@ -153,7 +151,6 @@
     "rehype-raw": "^7.0.0",
     "rehype-sanitize": "^6.0.0",
     "remark-gfm": "^4.0.1",
-    "tailwindcss": "4.1.13",
     "unified": "^11.0.5",
     "ws": "^8.18.0",
     "zod": "^3.25.76"
@@ -162,7 +159,6 @@
     "sherpa-onnx-node": "1.13.4"
   },
   "devDependencies": {
-    "@tailwindcss/vite": "4.1.13",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.5.0",

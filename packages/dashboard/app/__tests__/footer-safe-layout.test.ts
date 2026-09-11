@@ -100,12 +100,17 @@ describe("footer-safe project workspace layout", () => {
   // ── Child views use height: 100% ───────────────────────────────────
 
   describe("child views use height: 100% (not viewport calc)", () => {
-    it(".board uses height: 100%", () => {
-      const boardBlock = css.match(/\.board\s*\{[^}]*\}/)?.[0];
-      expect(boardBlock).toBeTruthy();
+    it(".board and every workflow state fill the parent-defined safe height", () => {
+      const boardBlock = css.match(/\.board\s*\{[^}]*\}/)?.[0] ?? "";
+      const workflowViewBlock = css.match(/\.board-workflow-view\s*\{[^}]*\}/)?.[0] ?? "";
+      const skeletonBlock = css.match(/\.board\.board-workflows-skeleton\s*\{[^}]*\}/)?.[0] ?? "";
       expect(boardBlock).toContain("height: 100%");
-      // Should NOT have viewport-based calc
-      expect(boardBlock).not.toContain("100vh");
+      expect(boardBlock).toContain("min-height: 0");
+      expect(workflowViewBlock).toContain("height: 100%");
+      expect(workflowViewBlock).toContain("min-height: 0");
+      expect(skeletonBlock).toContain("height: 100%");
+      expect(skeletonBlock).toContain("min-height: 0");
+      expect(`${boardBlock}${workflowViewBlock}${skeletonBlock}`).not.toMatch(/100d?vh/);
     });
 
     it(".list-view uses height: 100%", () => {

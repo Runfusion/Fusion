@@ -949,17 +949,17 @@ shared left/right edges and compact gaps. Keep the centered cluster desktop-only
 }
 
 /*
-FNXC:HeroUIAlphaQuickEntry 2026-09-11-00:30:
+FNXC:AlphaQuickEntry 2026-09-11-00:30:
 Alpha Quick Entry is input-first: the immediate attach/status/Save row remains visible, Save stays compact and prominent, and routing options appear as a quiet second row only after disclosure. Visual ordering uses flex order so the established keyboard order and callbacks remain intact; List is outside this boundary and keeps its historical collapsed shell.
 */
-[data-heroui-alpha-surface="true"] .quick-entry-box {
+[data-alpha-surface="true"] .quick-entry-box {
   padding: var(--alpha-density-2);
   margin-bottom: var(--alpha-density-2);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-sm);
 }
 
-[data-heroui-alpha-surface="true"] .quick-entry-input {
+[data-alpha-surface="true"] .quick-entry-input {
   min-height: calc(var(--alpha-control-height) + var(--alpha-density-2));
   max-height: calc(var(--alpha-control-height) * 5);
   padding: var(--alpha-density-2);
@@ -968,23 +968,23 @@ Alpha Quick Entry is input-first: the immediate attach/status/Save row remains v
   background: var(--alpha-neutral-background);
 }
 
-[data-heroui-alpha-surface="true"] .quick-entry-input--expanded {
+[data-alpha-surface="true"] .quick-entry-input--expanded {
   min-height: calc(var(--alpha-control-height) * 2);
 }
 
-[data-heroui-alpha-surface="true"] .quick-entry-controls {
+[data-alpha-surface="true"] .quick-entry-controls {
   margin-top: var(--alpha-density-2);
   gap: var(--alpha-density-2);
 }
 
-[data-heroui-alpha-surface="true"] .quick-entry-actions {
+[data-alpha-surface="true"] .quick-entry-actions {
   flex-direction: column;
   align-items: stretch;
   justify-content: flex-start;
   gap: var(--alpha-density-2);
 }
 
-[data-heroui-alpha-surface="true"] .quick-entry-primary-group {
+[data-alpha-surface="true"] .quick-entry-primary-group {
   order: -1;
   width: 100%;
   flex-wrap: nowrap;
@@ -992,14 +992,14 @@ Alpha Quick Entry is input-first: the immediate attach/status/Save row remains v
   gap: var(--alpha-density-1);
 }
 
-[data-heroui-alpha-surface="true"] .quick-entry-primary-group [data-testid="quick-entry-save"] {
+[data-alpha-surface="true"] .quick-entry-primary-group [data-testid="quick-entry-save"] {
   margin-inline-start: auto;
   min-height: var(--alpha-control-height);
   max-height: var(--alpha-control-height);
   padding-inline: var(--alpha-density-3);
 }
 
-[data-heroui-alpha-surface="true"] .quick-entry-options-group {
+[data-alpha-surface="true"] .quick-entry-options-group {
   width: 100%;
   padding-top: var(--alpha-density-2);
   border-top: var(--border-width) solid var(--alpha-neutral-border);
@@ -1007,39 +1007,39 @@ Alpha Quick Entry is input-first: the immediate attach/status/Save row remains v
   gap: var(--alpha-density-1);
 }
 
-[data-heroui-alpha-surface="true"] .quick-entry-options-group[hidden] {
+[data-alpha-surface="true"] .quick-entry-options-group[hidden] {
   display: none;
 }
 
-[data-heroui-alpha-surface="true"] .quick-entry-actions :is(.btn, .wf-optional-steps-dropdown-trigger) {
+[data-alpha-surface="true"] .quick-entry-actions :is(.btn, .wf-optional-steps-dropdown-trigger) {
   min-height: var(--alpha-control-height);
   max-height: var(--alpha-control-height);
   padding-inline: var(--alpha-density-2);
 }
 
 @media (max-width: 768px) {
-  [data-heroui-alpha-surface="true"] .quick-entry-box {
+  [data-alpha-surface="true"] .quick-entry-box {
     padding: var(--alpha-density-2);
   }
 
-  [data-heroui-alpha-surface="true"] .quick-entry-actions,
-  [data-heroui-alpha-surface="true"] .quick-entry-options-group,
-  [data-heroui-alpha-surface="true"] .quick-entry-primary-group {
+  [data-alpha-surface="true"] .quick-entry-actions,
+  [data-alpha-surface="true"] .quick-entry-options-group,
+  [data-alpha-surface="true"] .quick-entry-primary-group {
     justify-content: flex-start;
     column-gap: var(--alpha-density-1);
   }
 
-  [data-heroui-alpha-surface="true"] .quick-entry-primary-group {
+  [data-alpha-surface="true"] .quick-entry-primary-group {
     flex-wrap: wrap;
   }
 
-  [data-heroui-alpha-surface="true"] .quick-entry-actions :is(.btn, .wf-optional-steps-dropdown-trigger),
-  [data-heroui-alpha-surface="true"] .quick-entry-primary-group [data-testid="quick-entry-save"] {
+  [data-alpha-surface="true"] .quick-entry-actions :is(.btn, .wf-optional-steps-dropdown-trigger),
+  [data-alpha-surface="true"] .quick-entry-primary-group [data-testid="quick-entry-save"] {
     min-height: var(--alpha-touch-height);
     max-height: var(--alpha-touch-height);
   }
 
-  [data-heroui-alpha-surface="true"] .quick-entry-primary-group [data-testid="quick-entry-save"] {
+  [data-alpha-surface="true"] .quick-entry-primary-group [data-testid="quick-entry-save"] {
     margin-inline-start: auto;
   }
 }

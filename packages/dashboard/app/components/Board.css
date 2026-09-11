@@ -3,8 +3,12 @@ FNXC:BoardWorkflows 2026-06-20-09:02:
 The board needs a neutral first-paint shell whenever workflow lanes are enabled but metadata is not ready, so users never see the legacy single-lane board flash before workflow lanes load.
 */
 .board.board-workflows-skeleton {
+  box-sizing: border-box;
   display: flex;
+  flex: 1 1 auto;
   align-items: stretch;
+  height: 100%;
+  min-height: 0;
   gap: var(--column-gap, var(--space-md));
   overflow-x: auto;
   overflow-y: hidden;
@@ -92,21 +96,21 @@ The closed grabbing hand must remain visible across every Board descendant even 
 }
 
 /*
-FNXC:HeroUIAlphaDensity 2026-09-11-00:30:
-Alpha Board uses the boundary density scale for restrained column spacing and quiet chrome. Scope every override to the Alpha surface so List and the stable Board retain their established geometry, while horizontal scrolling, snapping, and drag ownership remain unchanged.
+FNXC:AlphaBoardHeight 2026-09-11-16:14:
+The live Board, loading skeleton, and empty workflow state share the same parent-relative flex height and symmetric block padding. The project shell alone reserves the desktop footer or mobile pill, so columns end one Board padding token above that boundary without viewport calculations or duplicated safe-area terms.
 */
-[data-heroui-alpha-surface="true"] .board {
+[data-alpha-surface="true"] .board {
   --board-padding: var(--alpha-density-3);
   --column-gap: var(--alpha-density-3);
 }
 
-[data-heroui-alpha-surface="true"] .board-workflow-toolbar {
+[data-alpha-surface="true"] .board-workflow-toolbar {
   gap: var(--alpha-density-2);
   padding: var(--alpha-density-2) var(--alpha-density-3);
   background: var(--alpha-neutral-background);
 }
 
-[data-heroui-alpha-surface="true"] .board-workflows-skeleton__column {
+[data-alpha-surface="true"] .board-workflows-skeleton__column {
   gap: var(--alpha-density-2);
   padding: var(--alpha-density-3);
   border-radius: var(--radius-lg);
@@ -114,17 +118,9 @@ Alpha Board uses the boundary density scale for restrained column spacing and qu
 }
 
 @media (max-width: 768px) {
-  [data-heroui-alpha-surface="true"] .board {
+  [data-alpha-surface="true"] .board {
     --board-padding: var(--alpha-density-2);
     --column-gap: var(--alpha-density-2);
-  }
-
-  /*
-  FNXC:AlphaBoardPillGeometry 2026-09-11-15:01:
-  The project-content flex box ends at the measured top edge of the floating Alpha pill. Keep only one extra-small token of visual separation inside the Board so skeleton, empty, and populated columns nearly meet the pill without overlap; the shared shell remains the sole owner of pill/system clearance.
-  */
-  html[data-viewport-mode="mobile"] [data-heroui-alpha-surface="true"] .project-content--with-alpha-nav :is(.board.board-workflow-columns, .board.board-workflows-skeleton) {
-    padding-block-end: var(--space-xs);
   }
 
   .board.board-workflows-skeleton {

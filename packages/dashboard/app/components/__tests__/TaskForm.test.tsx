@@ -3,7 +3,7 @@ import { useState } from "react";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { TaskForm } from "../TaskForm";
-import { HeroUIAlphaProvider, HeroUIAlphaSurface } from "../../context/HeroUIAlphaContext";
+import { AlphaProvider, AlphaBoundary } from "../../context/AlphaContext";
 import type { Task, Column } from "@fusion/core";
 
 // Mock lucide-react
@@ -625,8 +625,8 @@ describe("TaskForm", () => {
     vi.mocked(fetchGitBranches).mockResolvedValue([{ name: "main" }] as never);
 
     render(
-      <HeroUIAlphaProvider enabled={enabled}>
-        <HeroUIAlphaSurface preserveDisabledDom>
+      <AlphaProvider enabled={enabled}>
+        <AlphaBoundary preserveDisabledDom>
           <TaskForm
             {...renderTaskFormDefaults}
             forceMoreOptionsOpen
@@ -647,20 +647,16 @@ describe("TaskForm", () => {
             autoMerge={undefined}
             onAutoMergeChange={onAutoMergeChange}
           />
-        </HeroUIAlphaSurface>
-      </HeroUIAlphaProvider>,
+        </AlphaBoundary>
+      </AlphaProvider>,
     );
 
     const choose = async (label: string, option: string) => {
-      const control = await screen.findByLabelText(label);
-      if (enabled) {
-        expect(control.tagName).toBe("BUTTON");
-        await user.click(control);
-        await user.click(await screen.findByRole("option", { name: option }));
-      } else {
-        expect(control.tagName).toBe("SELECT");
-        await user.selectOptions(control, option);
-      }
+      const control = await screen.findByLabelText<HTMLSelectElement>(label);
+      expect(control.tagName).toBe("SELECT");
+      if (enabled) expect(control).toHaveAttribute("data-alpha-ui", "select");
+      else expect(control).not.toHaveAttribute("data-alpha-ui");
+      await user.selectOptions(control, option);
     };
 
     await choose("Execution Node Override", "Remote (Online)");

@@ -52,13 +52,21 @@ describe("DuplicateWarningModal", () => {
     expect(onProceed).toHaveBeenCalledTimes(1);
   });
 
-  it("calls onCancel for cancel click and Escape", () => {
+  it("calls onCancel once for a cancel click", () => {
     const onCancel = vi.fn();
     render(<DuplicateWarningModal matches={matches} onOpen={vi.fn()} onProceed={vi.fn()} onCancel={onCancel} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("calls onCancel exactly once for one Escape press", () => {
+    const onCancel = vi.fn();
+    render(<DuplicateWarningModal matches={matches} onOpen={vi.fn()} onProceed={vi.fn()} onCancel={onCancel} />);
+
     fireEvent.keyDown(document, { key: "Escape" });
 
-    expect(onCancel).toHaveBeenCalledTimes(2);
+    expect(onCancel).toHaveBeenCalledTimes(1);
   });
 });

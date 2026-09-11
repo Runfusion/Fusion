@@ -1,4 +1,4 @@
-import { AlphaButton, AlphaListBox, AlphaListBoxItem, AlphaPopoverSurface } from "./hero-ui";
+import { AlphaButton, AlphaListBox, AlphaListBoxItem, AlphaPopoverSurface } from "./alpha-ui";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";

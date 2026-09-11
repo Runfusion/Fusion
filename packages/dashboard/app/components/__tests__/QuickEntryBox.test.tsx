@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, act, createEvent } from "@testing-library/react";
 import { QuickEntryBox } from "../QuickEntryBox";
-import { HeroUIAlphaProvider, HeroUIAlphaSurface } from "../../context/HeroUIAlphaContext";
+import { AlphaProvider, AlphaBoundary } from "../../context/AlphaContext";
 import { expectStableTyping } from "./typingStability.test-helpers";
 import { TASK_PRIORITIES, type Task, type TaskPriority } from "@fusion/core";
 import { checkDuplicateTasks, fetchSettings, fetchAgents, uploadAttachment, fetchWorkflowOptionalSteps } from "../../api";
@@ -356,19 +356,19 @@ function renderAlphaQuickEntryBox(props = {}) {
     projectId: TEST_PROJECT_ID,
   };
   const result = render(
-    <HeroUIAlphaProvider enabled>
-      <HeroUIAlphaSurface>
+    <AlphaProvider enabled>
+      <AlphaBoundary>
         <QuickEntryBox {...defaultProps} {...props} />
-      </HeroUIAlphaSurface>
-    </HeroUIAlphaProvider>,
+      </AlphaBoundary>
+    </AlphaProvider>,
   );
   return { ...result, props: { ...defaultProps, ...props } };
 }
 
 function AlphaModeToggleQuickEntryFixture({ enabled }: { enabled: boolean }) {
   return (
-    <HeroUIAlphaProvider enabled={enabled}>
-      <HeroUIAlphaSurface>
+    <AlphaProvider enabled={enabled}>
+      <AlphaBoundary>
         <QuickEntryBox
           onCreate={vi.fn().mockResolvedValue(undefined)}
           addToast={vi.fn()}
@@ -376,8 +376,8 @@ function AlphaModeToggleQuickEntryFixture({ enabled }: { enabled: boolean }) {
           availableModels={MOCK_MODELS}
           projectId={TEST_PROJECT_ID}
         />
-      </HeroUIAlphaSurface>
-    </HeroUIAlphaProvider>
+      </AlphaBoundary>
+    </AlphaProvider>
   );
 }
 

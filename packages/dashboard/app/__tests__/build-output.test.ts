@@ -7,6 +7,14 @@ import {
   ensureDashboardClientBuild,
 } from "./build-output-setup";
 
+function listProductionFiles(root: string): string[] {
+  return readdirSync(root, { withFileTypes: true }).flatMap((entry) => {
+    if (entry.name === "__tests__") return [];
+    const absolute = resolve(root, entry.name);
+    return entry.isDirectory() ? listProductionFiles(absolute) : [absolute];
+  });
+}
+
 describe("mobile build output chunking", () => {
   beforeAll(() => {
     // Clean worktrees and CI often start without dist/client; build explicitly so
@@ -45,12 +53,12 @@ describe("mobile build output chunking", () => {
     expect(indexHtml).toContain('rel="preload"');
   });
 
-  test("compiles HeroUI without leaking its component selectors outside the Alpha scope", () => {
+  test("compiles homemade Alpha without leaking its component selectors outside the Alpha scope", () => {
     const css = readdirSync(dashboardClientAssetsDir)
       .filter((file) => file.endsWith(".css"))
       .map((file) => readFileSync(resolve(dashboardClientAssetsDir, file), "utf8"))
       .join("\n");
-    const scopeStart = css.indexOf("@scope (:where([data-heroui-alpha-surface=true],[data-heroui-alpha-portal=true])){");
+    const scopeStart = css.indexOf('@scope (:where([data-alpha-surface="true"],[data-alpha-portal="true"])){');
     expect(scopeStart).toBeGreaterThanOrEqual(0);
     expect(css).not.toContain("@apply");
     expect(css).not.toContain("@import");
@@ -66,9 +74,35 @@ describe("mobile build output chunking", () => {
       }
     }
     expect(scopeEnd).toBeGreaterThan(scopeStart);
-    const heroSelectorOffsets = [...css.matchAll(/\.list-box-item(?=[,{:])/g)].map((match) => match.index);
-    expect(heroSelectorOffsets.length).toBeGreaterThan(0);
-    expect(heroSelectorOffsets.every((offset) => offset >= scopeStart && offset <= scopeEnd)).toBe(true);
+    const alphaMarkerOffsets = [...css.matchAll(/\[data-alpha-ui\]/g)].map((match) => match.index);
+    expect(alphaMarkerOffsets.length).toBeGreaterThan(0);
+    expect(css).toContain("data-alpha-surface");
+    expect(css.toLowerCase()).not.toContain(["hero", "ui"].join(""));
+    expect(css.toLowerCase()).not.toContain("tailwind");
+    expect(css).not.toContain("@source");
+  });
+
+  test("refuses the retired component pipeline in source, config, manifest, and emitted assets", () => {
+    const retiredBrand = ["hero", "ui"].join("");
+    const productionFiles = [
+      ...listProductionFiles(resolve(import.meta.dirname, "..")),
+      resolve(import.meta.dirname, "../../package.json"),
+      resolve(import.meta.dirname, "../../vite.config.ts"),
+    ].filter((file) => /\.(?:css|tsx?|json)$/.test(file));
+    const productionSource = productionFiles.map((file) => readFileSync(file, "utf8")).join("\n").toLowerCase();
+    const emittedSource = readdirSync(dashboardClientAssetsDir)
+      .filter((file) => /\.(?:css|js)$/.test(file))
+      .map((file) => readFileSync(resolve(dashboardClientAssetsDir, file), "utf8"))
+      .join("\n")
+      .toLowerCase();
+
+    expect(productionSource).not.toContain(retiredBrand);
+    expect(productionSource).not.toContain("tailwindcss");
+    expect(productionSource).not.toContain("@apply");
+    expect(productionSource).not.toContain("@source");
+    expect(emittedSource).not.toContain(retiredBrand);
+    expect(emittedSource).not.toContain("@apply");
+    expect(emittedSource).not.toContain("@source");
   });
 
   test("keeps theme-data stylesheet link after all other stylesheet links in head", () => {

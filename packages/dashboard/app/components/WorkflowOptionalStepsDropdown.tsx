@@ -27,7 +27,7 @@
  * active option; outside-click closes.
  */
 import { useCallback, useEffect, useId, useRef, useState } from "react";
-import { AlphaButton, AlphaInput, AlphaListBox, AlphaListBoxItem, AlphaPopoverSurface } from "./hero-ui";
+import { AlphaButton, AlphaInput, AlphaListBox, AlphaListBoxItem, AlphaPopoverSurface } from "./alpha-ui";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { ChevronDown } from "lucide-react";

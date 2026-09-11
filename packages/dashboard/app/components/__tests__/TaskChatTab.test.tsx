@@ -6,7 +6,7 @@ import { resolve } from "node:path";
 import type { AgentLogEntry, Task } from "@fusion/core";
 import { TaskChatTab } from "../TaskChatTab";
 import { ChatMessageLayoutProvider } from "../../context/ChatMessageLayoutContext";
-import { HeroUIAlphaProvider, HeroUIAlphaSurface } from "../../context/HeroUIAlphaContext";
+import { AlphaProvider, AlphaBoundary } from "../../context/AlphaContext";
 import { isCliSessionLive, type CliSessionSummaryRecord } from "../TaskDetailModal";
 import { useAgentLogs } from "../../hooks/useAgentLogs";
 import { addSteeringComment, fetchGlobalSettings, refineTask, updateGlobalSettings } from "../../api";
@@ -391,21 +391,21 @@ describe("TaskChatTab", () => {
     }
   });
 
-  it("renders its production composer with HeroUI only inside the Alpha surface", () => {
+  it("renders its production composer with homemade Alpha only inside the Alpha surface", () => {
     const view = render(
-      <HeroUIAlphaProvider enabled>
-        <HeroUIAlphaSurface><TaskChatTab task={makeTask()} active addToast={vi.fn()} /></HeroUIAlphaSurface>
-      </HeroUIAlphaProvider>,
+      <AlphaProvider enabled>
+        <AlphaBoundary><TaskChatTab task={makeTask()} active addToast={vi.fn()} /></AlphaBoundary>
+      </AlphaProvider>,
     );
-    expect(screen.getByLabelText("Message active agent session")).toHaveAttribute("data-heroui-alpha", "textarea");
-    expect(view.container.querySelector('[data-heroui-alpha="button"]')).not.toBeNull();
+    expect(screen.getByLabelText("Message active agent session")).toHaveAttribute("data-alpha-ui", "textarea");
+    expect(view.container.querySelector('[data-alpha-ui="button"]')).not.toBeNull();
 
     view.rerender(
-      <HeroUIAlphaProvider enabled={false}>
-        <HeroUIAlphaSurface><TaskChatTab task={makeTask()} active addToast={vi.fn()} /></HeroUIAlphaSurface>
-      </HeroUIAlphaProvider>,
+      <AlphaProvider enabled={false}>
+        <AlphaBoundary><TaskChatTab task={makeTask()} active addToast={vi.fn()} /></AlphaBoundary>
+      </AlphaProvider>,
     );
-    expect(screen.getByLabelText("Message active agent session")).not.toHaveAttribute("data-heroui-alpha");
+    expect(screen.getByLabelText("Message active agent session")).not.toHaveAttribute("data-alpha-ui");
   });
 
   it("subscribes to live agent logs only when active", () => {
@@ -3350,12 +3350,14 @@ describe("TaskChatTab", () => {
   it("keeps List View as the only split-pane host for compact task chat", () => {
     const listSource = readFileSync(resolve(__dirname, "../ListView.tsx"), "utf8");
     const mainContentSource = readFileSync(resolve(__dirname, "../dashboard/MainContent.tsx"), "utf8");
+    const hostSource = readFileSync(resolve(__dirname, "../TaskDetailHostBoundaries.tsx"), "utf8");
 
-    expect(listSource).toContain('className="list-split-detail-content"');
-    expect(listSource).toContain("<TaskDetailContent");
-    expect(listSource).toContain("embedded");
-    expect(mainContentSource).toContain('className="task-detail-main-panel-body"');
-    expect(mainContentSource).toContain("<TaskDetailContent");
+    expect(listSource).toContain("<ListSplitTaskDetailHost");
+    expect(hostSource).toContain('className="list-split-detail-content"');
+    expect(hostSource).toContain("<TaskDetailContent");
+    expect(hostSource).toContain("embedded");
+    expect(mainContentSource).toContain("<MainPanelTaskDetailHost");
+    expect(hostSource).toContain('className="task-detail-main-panel-body"');
   });
 
   it("keeps task detail chat block inner padding tokenized across text, tool, and thinking surfaces", () => {

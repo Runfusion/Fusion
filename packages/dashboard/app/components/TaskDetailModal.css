@@ -3437,14 +3437,14 @@ Operators need the scheduler's matching file pairs directly beside an overlap bl
 }
 
 /*
-FNXC:TaskDetailHeroUI 2026-09-11-02:41:
-Alpha Task Detail is one shared, mobile-first surface in modal, drawer, main-panel, split, right-dock, and pop-out hosts. Neutral HeroUI paint and progressive layout are scoped to the boundary; the stable non-Alpha DOM and every lifecycle/action guard remain unchanged.
+FNXC:TaskDetailAlpha 2026-09-11-02:41:
+Alpha Task Detail is one shared, mobile-first surface in modal, drawer, main-panel, split, right-dock, and pop-out hosts. Neutral homemade Alpha paint and progressive layout are scoped to the boundary; the stable non-Alpha DOM and every lifecycle/action guard remain unchanged.
 */
 .task-detail-alpha-boundary {
   display: contents;
 }
 
-[data-heroui-alpha-surface="true"] > .task-detail-content[data-task-detail-surface="true"] {
+[data-alpha-surface="true"] > .task-detail-content[data-task-detail-surface="true"] {
   background: var(--alpha-neutral-background);
   color: var(--alpha-neutral-foreground);
   border: 0;
@@ -3453,7 +3453,7 @@ Alpha Task Detail is one shared, mobile-first surface in modal, drawer, main-pan
   overflow: hidden;
 }
 
-[data-heroui-alpha-surface="true"] > .task-detail-content > .modal-header {
+[data-alpha-surface="true"] > .task-detail-content > .modal-header {
   min-block-size: var(--alpha-touch-height);
   padding: var(--alpha-density-2) var(--alpha-density-3);
   background: var(--alpha-neutral-surface);
@@ -3461,47 +3461,47 @@ Alpha Task Detail is one shared, mobile-first surface in modal, drawer, main-pan
   gap: var(--alpha-density-2);
 }
 
-[data-heroui-alpha-surface="true"] .detail-title-row {
+[data-alpha-surface="true"] .detail-title-row {
   min-inline-size: 0;
   flex: 1 1 auto;
   flex-wrap: wrap;
   gap: var(--alpha-density-2);
 }
 
-[data-heroui-alpha-surface="true"] .detail-id {
+[data-alpha-surface="true"] .detail-id {
   color: var(--alpha-neutral-foreground);
 }
 
-[data-heroui-alpha-surface="true"] :is(.detail-column-badge, .card-status-badge, .detail-workflow-badge, .badge) {
+[data-alpha-surface="true"] :is(.detail-column-badge, .card-status-badge, .detail-workflow-badge, .badge) {
   border: var(--border-width) solid color-mix(in srgb, currentColor 22%, transparent);
   box-shadow: none;
 }
 
-[data-heroui-alpha-surface="true"] .modal-header-actions {
+[data-alpha-surface="true"] .modal-header-actions {
   margin-inline-start: auto;
   flex: 0 0 auto;
   gap: var(--alpha-density-1);
 }
 
-[data-heroui-alpha-surface="true"] :is(.modal-edit-btn, .modal-close, .task-detail-header-back-btn) {
+[data-alpha-surface="true"] :is(.modal-edit-btn, .modal-close, .task-detail-header-back-btn) {
   min-inline-size: var(--alpha-touch-height);
   min-block-size: var(--alpha-touch-height);
   border-radius: var(--radius-md);
   color: var(--alpha-neutral-muted);
 }
 
-[data-heroui-alpha-surface="true"] :is(.modal-edit-btn, .modal-close, .task-detail-header-back-btn):is(:hover, :focus-visible) {
+[data-alpha-surface="true"] :is(.modal-edit-btn, .modal-close, .task-detail-header-back-btn):is(:hover, :focus-visible) {
   background: var(--alpha-neutral-surface-secondary);
   color: var(--alpha-neutral-foreground);
 }
 
-[data-heroui-alpha-surface="true"] .detail-body-content {
+[data-alpha-surface="true"] .detail-body-content {
   inline-size: 100%;
   max-inline-size: 100%;
   padding: var(--alpha-density-3);
 }
 
-[data-heroui-alpha-surface="true"] .detail-tabs {
+[data-alpha-surface="true"] .detail-tabs {
   position: sticky;
   inset-block-start: 0;
   z-index: var(--z-sticky);
@@ -3514,11 +3514,11 @@ Alpha Task Detail is one shared, mobile-first surface in modal, drawer, main-pan
   scrollbar-width: none;
 }
 
-[data-heroui-alpha-surface="true"] .detail-tabs::-webkit-scrollbar {
+[data-alpha-surface="true"] .detail-tabs::-webkit-scrollbar {
   display: none;
 }
 
-[data-heroui-alpha-surface="true"] .detail-tab {
+[data-alpha-surface="true"] .detail-tab {
   min-block-size: var(--alpha-control-height);
   padding: var(--alpha-density-2) var(--alpha-density-3);
   border: 0;
@@ -3528,18 +3528,18 @@ Alpha Task Detail is one shared, mobile-first surface in modal, drawer, main-pan
   white-space: nowrap;
 }
 
-[data-heroui-alpha-surface="true"] .detail-tab:is(:hover, :focus-visible) {
+[data-alpha-surface="true"] .detail-tab:is(:hover, :focus-visible) {
   background: var(--alpha-neutral-surface-secondary) !important;
   color: var(--alpha-neutral-foreground) !important;
 }
 
-[data-heroui-alpha-surface="true"] .detail-tab-active {
+[data-alpha-surface="true"] .detail-tab-active {
   background: var(--alpha-neutral-foreground) !important;
   color: var(--alpha-neutral-background) !important;
   font-weight: 600;
 }
 
-[data-heroui-alpha-surface="true"] :is(.detail-section, .task-summary-section, .modal-edit-form .form-group) {
+[data-alpha-surface="true"] :is(.detail-section, .task-summary-section, .modal-edit-form .form-group) {
   min-inline-size: 0;
   background: var(--alpha-neutral-surface);
   border-color: var(--alpha-neutral-border);
@@ -3547,11 +3547,11 @@ Alpha Task Detail is one shared, mobile-first surface in modal, drawer, main-pan
   box-shadow: var(--shadow-sm);
 }
 
-[data-heroui-alpha-surface="true"] :is(.detail-title, .detail-section h3, .detail-section h4) {
+[data-alpha-surface="true"] :is(.detail-title, .detail-section h3, .detail-section h4) {
   color: var(--alpha-neutral-foreground);
 }
 
-[data-heroui-alpha-surface="true"] :is(.modal-edit-input, .modal-edit-textarea, .detail-refine-textarea, .task-form input, .task-form textarea, .task-form select) {
+[data-alpha-surface="true"] :is(.modal-edit-input, .modal-edit-textarea, .detail-refine-textarea, .task-form input, .task-form textarea, .task-form select) {
   min-inline-size: 0;
   max-inline-size: 100%;
   background: var(--alpha-neutral-surface);
@@ -3560,22 +3560,22 @@ Alpha Task Detail is one shared, mobile-first surface in modal, drawer, main-pan
   border-radius: var(--radius-md);
 }
 
-[data-heroui-alpha-surface="true"] > .task-detail-content > .modal-actions {
+[data-alpha-surface="true"] > .task-detail-content > .modal-actions {
   gap: var(--alpha-density-2);
   padding: var(--alpha-density-2) var(--alpha-density-3);
   background: var(--alpha-neutral-surface);
   border-block-start: var(--border-width) solid var(--alpha-neutral-border);
 }
 
-[data-heroui-alpha-surface="true"] .detail-actions-menu,
-[data-heroui-alpha-portal="true"].activity-view-menu {
+[data-alpha-surface="true"] .detail-actions-menu,
+[data-alpha-portal="true"].activity-view-menu {
   background: var(--alpha-neutral-surface);
   border-color: var(--alpha-neutral-border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-lg);
 }
 
-[data-heroui-alpha-portal="true"].detail-refine-overlay .detail-refine-modal {
+[data-alpha-portal="true"].detail-refine-overlay .detail-refine-modal {
   background: var(--alpha-neutral-background);
   border-color: var(--alpha-neutral-border);
   border-radius: var(--radius-lg);
@@ -3583,35 +3583,35 @@ Alpha Task Detail is one shared, mobile-first surface in modal, drawer, main-pan
 }
 
 @media (max-width: 48rem) {
-  [data-heroui-alpha-surface="true"] > .task-detail-content > .modal-header {
+  [data-alpha-surface="true"] > .task-detail-content > .modal-header {
     align-items: flex-start;
     padding-inline: var(--alpha-density-3);
   }
 
-  [data-heroui-alpha-surface="true"] .detail-title-row {
+  [data-alpha-surface="true"] .detail-title-row {
     padding-block: var(--alpha-density-1);
   }
 
-  [data-heroui-alpha-surface="true"] .detail-body-content {
+  [data-alpha-surface="true"] .detail-body-content {
     padding: var(--alpha-density-2);
   }
 
-  [data-heroui-alpha-surface="true"] .detail-tabs {
+  [data-alpha-surface="true"] .detail-tabs {
     margin-inline: 0;
     border-inline: 0;
     border-radius: 0;
   }
 
-  [data-heroui-alpha-surface="true"] .detail-tab {
+  [data-alpha-surface="true"] .detail-tab {
     min-block-size: var(--alpha-touch-height);
     padding-inline: var(--alpha-density-3);
   }
 
-  [data-heroui-alpha-surface="true"] :is(.detail-source-grid, .detail-source-edit-grid, .detail-metadata-grid) {
+  [data-alpha-surface="true"] :is(.detail-source-grid, .detail-source-edit-grid, .detail-metadata-grid) {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  [data-heroui-alpha-surface="true"] > .task-detail-content > .modal-actions {
+  [data-alpha-surface="true"] > .task-detail-content > .modal-actions {
     position: sticky;
     inset-block-end: 0;
     min-inline-size: 0;

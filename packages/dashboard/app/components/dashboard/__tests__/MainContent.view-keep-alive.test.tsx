@@ -362,8 +362,8 @@ describe("MainContent main-view keep alive", () => {
 
     await waitFor(() => expect(document.querySelectorAll("#board")).toHaveLength(1));
     expect(screen.getByTestId("board-keep-alive")).not.toHaveAttribute("aria-hidden");
-    expect(boardRoot().closest('[data-heroui-alpha-surface="true"]')).not.toBeNull();
-    expect(boardRoot().querySelector('[data-heroui-alpha="button"]')).not.toBeNull();
+    expect(boardRoot().closest('[data-alpha-surface="true"]')).not.toBeNull();
+    expect(boardRoot().querySelector('[data-alpha-ui="button"]')).not.toBeNull();
     const dialog = screen.getByRole("dialog", { name: "Task detail" });
     expect(dialog).toContainElement(screen.getByTestId("task-detail-back"));
     expect(document.querySelectorAll("[role='dialog']")).toHaveLength(1);
@@ -436,7 +436,7 @@ describe("MainContent main-view keep alive", () => {
     expect(dialog.querySelector(".alpha-mobile-drawer__header")).toBeNull();
     expect(Array.from(dialog.querySelectorAll("h1, h2, h3")).filter((heading) => heading.textContent === "Chat" && !heading.classList.contains("visually-hidden"))).toHaveLength(1);
     expect(screen.getByTestId("chat-keep-alive")).not.toHaveAttribute("aria-hidden");
-    expect(chatRoot().closest('[data-heroui-alpha-surface="true"]')).not.toBeNull();
+    expect(chatRoot().closest('[data-alpha-surface="true"]')).not.toBeNull();
     const input = await openProductionChatComposer();
     input.focus();
     expect(input).toHaveFocus();

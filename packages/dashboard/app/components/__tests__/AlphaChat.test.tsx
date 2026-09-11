@@ -1,10 +1,10 @@
-import "../../hero-ui-alpha.css";
+import "../../alpha-ui.css";
 import { useState } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import { HeroUIAlphaProvider, HeroUIAlphaSurface } from "../../context/HeroUIAlphaContext";
-import { AlphaTextArea } from "../hero-ui";
+import { AlphaProvider, AlphaBoundary } from "../../context/AlphaContext";
+import { AlphaTextArea } from "../alpha-ui";
 import { StandardChatActionButton } from "../StandardChatSurface";
 import { ChatView } from "../ChatView";
 import { PoppedOutChatWindows, QuickChatWindow } from "../PoppedOutChatWindows";
@@ -44,24 +44,24 @@ installChatViewEnv();
 function ChatFixture({ alpha, streaming = false }: { alpha: boolean; streaming?: boolean }) {
   const [draft, setDraft] = useState("bonjour");
   return (
-    <HeroUIAlphaProvider enabled={alpha}>
-      <HeroUIAlphaSurface>
+    <AlphaProvider enabled={alpha}>
+      <AlphaBoundary>
         <AlphaTextArea aria-label="Composer" value={draft} onChange={(event) => setDraft(event.target.value)} />
         <StandardChatActionButton isStreaming={streaming} canSend={draft.trim().length > 0} onSend={vi.fn()} onStop={vi.fn()} showSendText />
-      </HeroUIAlphaSurface>
-    </HeroUIAlphaProvider>
+      </AlphaBoundary>
+    </AlphaProvider>
   );
 }
 
-describe("HeroUI Alpha Chat", () => {
+describe("homemade Alpha Chat", () => {
   it("scopes compact chat and composer density to Alpha at desktop and mobile", () => {
     const chatCss = readAppFile("components/ChatView.css");
     const composeCss = readAppFile("components/ComposeChatPanel.css");
-    expect(chatCss).toContain('[data-heroui-alpha-surface="true"] .chat-session-item');
-    expect(chatCss).toContain('[data-heroui-alpha-surface="true"] .chat-thread-header');
+    expect(chatCss).toContain('[data-alpha-surface="true"] .chat-session-item');
+    expect(chatCss).toContain('[data-alpha-surface="true"] .chat-thread-header');
     expect(chatCss).toContain("min-block-size: var(--alpha-control-height)");
     expect(chatCss).toContain("min-block-size: var(--alpha-touch-height)");
-    expect(composeCss).toContain('[data-heroui-alpha-surface="true"] .compose-chat-panel__actions > .btn');
+    expect(composeCss).toContain('[data-alpha-surface="true"] .compose-chat-panel__actions > .btn');
     expect(composeCss).toContain("flex: 0 1 auto");
   });
 
@@ -101,7 +101,7 @@ describe("HeroUI Alpha Chat", () => {
     try {
       const view = await renderWithAct(<ChatView projectId="project-theme" addToast={vi.fn()} experimentalFeatures={{ alphaUpdates: true }} />);
       const chat = view.container.querySelector<HTMLElement>(".chat-view");
-      const productionButton = view.container.querySelector<HTMLElement>('[data-heroui-alpha="button"]');
+      const productionButton = view.container.querySelector<HTMLElement>('[data-alpha-ui="button"]');
       expect(chat).not.toBeNull();
       expect(productionButton).not.toBeNull();
       const semanticPalette = (element: Element) => {
@@ -132,7 +132,7 @@ describe("HeroUI Alpha Chat", () => {
     ["mobile", "mobile", false, false],
     ["compact dock", "desktop", false, true],
     ["floating", "desktop", true, false],
-  ] as const)("renders the populated production ChatView in %s through HeroUI", async (_host, viewport, floating, compactLayout) => {
+  ] as const)("renders the populated production ChatView in %s through homemade Alpha", async (_host, viewport, floating, compactLayout) => {
     const restoreViewport = mockViewportMode(viewport);
     setupMockChat({
       ...defaultChatState,
@@ -143,14 +143,14 @@ describe("HeroUI Alpha Chat", () => {
     });
     setupMockRooms();
     const view = await renderWithAct(<ChatView projectId="project-alpha" addToast={vi.fn()} experimentalFeatures={{ alphaUpdates: true }} floating={floating} compactLayout={compactLayout} />);
-    expect(view.container.querySelector('[data-heroui-alpha="button"]')).not.toBeNull();
-    expect(view.container.querySelector('[data-heroui-alpha="input"]')).not.toBeNull();
+    expect(view.container.querySelector('[data-alpha-ui="button"]')).not.toBeNull();
+    expect(view.container.querySelector('[data-alpha-ui="input"]')).not.toBeNull();
     expect(screen.getByTestId(`chat-session-${activeSessionFixture.id}`)).toBeInTheDocument();
     restoreViewport();
   });
 
   it.each(["quick-chat", "popped-out", "right-dock", "right-dock-expanded"] as const)(
-    "mounts the real %s host and opens its HeroUI conversation menu",
+    "mounts the real %s host and opens its homemade Alpha conversation menu",
     async (host) => {
       setupMockChat({
         ...defaultChatState,
@@ -195,12 +195,12 @@ describe("HeroUI Alpha Chat", () => {
       }
 
       expect(await screen.findByTestId(`chat-session-${activeSessionFixture.id}`)).toBeInTheDocument();
-      expect(document.querySelector('[data-heroui-alpha="button"]')).not.toBeNull();
+      expect(document.querySelector('[data-alpha-ui="button"]')).not.toBeNull();
       fireEvent.click(screen.getByTestId("chat-session-menu-btn"));
-      expect(await screen.findByRole("menu", { name: "Conversation actions" })).toHaveAttribute("data-heroui-alpha", "menu");
+      expect(await screen.findByRole("menu", { name: "Conversation actions" })).toHaveAttribute("data-alpha-ui", "menu");
       fireEvent.click(screen.getByTestId("chat-context-rename"));
-      expect(await screen.findByRole("dialog")).toHaveAttribute("data-heroui-alpha", "dialog");
-      expect(document.querySelectorAll('[data-heroui-alpha="dialog"]')).toHaveLength(1);
+      expect(await screen.findByRole("dialog", { name: "Rename Conversation" })).toHaveAttribute("data-alpha-ui", "dialog");
+      expect(document.querySelectorAll('[data-alpha-ui="dialog"]')).toHaveLength(1);
     },
   );
 
@@ -248,10 +248,10 @@ describe("HeroUI Alpha Chat", () => {
     fireEvent.click(assignment);
     expect(setSessionTags).toHaveBeenCalledWith(activeSessionFixture.id, ["tag-alpha"]);
     fireEvent.click(rename);
-    expect(await screen.findByRole("dialog")).toHaveAttribute("data-heroui-alpha", "dialog");
+    expect(await screen.findByRole("dialog")).toHaveAttribute("data-alpha-ui", "dialog");
   });
 
-  it("opens a production rename dialog as one HeroUI portal without a historical duplicate shell", async () => {
+  it("opens a production rename dialog as one homemade Alpha portal without a historical duplicate shell", async () => {
     setupMockChat({
       ...defaultChatState,
       sessions: [activeSessionFixture],
@@ -263,9 +263,9 @@ describe("HeroUI Alpha Chat", () => {
     fireEvent.click(screen.getByTestId("chat-session-menu-btn"));
     fireEvent.click(screen.getByTestId("chat-context-rename"));
 
-    expect(await screen.findByRole("dialog")).toHaveAttribute("data-heroui-alpha", "dialog");
-    expect(document.querySelectorAll('[data-heroui-alpha="dialog"]')).toHaveLength(1);
-    expect(document.querySelector('[data-heroui-alpha-portal="true"]')).not.toBeNull();
+    expect(await screen.findByRole("dialog")).toHaveAttribute("data-alpha-ui", "dialog");
+    expect(document.querySelectorAll('[data-alpha-ui="dialog"]')).toHaveLength(1);
+    expect(document.querySelector('[data-alpha-portal="true"]')).not.toBeNull();
   });
 
   it("keeps the empty and loading production ChatView states inside the Alpha boundary", async () => {
@@ -273,22 +273,22 @@ describe("HeroUI Alpha Chat", () => {
     setupMockRooms();
     const view = await renderWithAct(<ChatView projectId="project-alpha" addToast={vi.fn()} experimentalFeatures={{ alphaUpdates: true }} />);
     expect(screen.getByText("Loading...")).toBeInTheDocument();
-    expect(view.container.querySelector('[data-heroui-alpha="input"]')).not.toBeNull();
+    expect(view.container.querySelector('[data-alpha-ui="input"]')).not.toBeNull();
   });
 
   it("switches a mounted composer ON and OFF without losing its draft", () => {
     const view = render(<ChatFixture alpha={false} />);
     fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "brouillon conservé" } });
-    expect(view.container.querySelector("[data-heroui-alpha]")).toBeNull();
+    expect(view.container.querySelector("[data-alpha-ui]")).toBeNull();
 
     view.rerender(<ChatFixture alpha />);
     expect(screen.getByLabelText("Composer")).toHaveValue("brouillon conservé");
-    expect(screen.getByLabelText("Composer")).toHaveAttribute("data-heroui-alpha", "textarea");
-    expect(screen.getByRole("button", { name: /send/i })).toHaveAttribute("data-heroui-alpha", "button");
+    expect(screen.getByLabelText("Composer")).toHaveAttribute("data-alpha-ui", "textarea");
+    expect(screen.getByRole("button", { name: /send/i })).toHaveAttribute("data-alpha-ui", "button");
 
     view.rerender(<ChatFixture alpha={false} />);
     expect(screen.getByLabelText("Composer")).toHaveValue("brouillon conservé");
-    expect(view.container.querySelector("[data-heroui-alpha]")).toBeNull();
+    expect(view.container.querySelector("[data-alpha-ui]")).toBeNull();
   });
 
   it("renders streaming text, thinking, and an errored tool state through the real Alpha chat tree", async () => {
@@ -308,6 +308,6 @@ describe("HeroUI Alpha Chat", () => {
 
     expect(await screen.findByText("Réponse en flux")).toBeInTheDocument();
     expect(view.container.querySelector(".chat-tool-call--error")).not.toBeNull();
-    expect(view.container.querySelector('[data-heroui-alpha="button"]')).not.toBeNull();
+    expect(view.container.querySelector('[data-alpha-ui="button"]')).not.toBeNull();
   });
 });

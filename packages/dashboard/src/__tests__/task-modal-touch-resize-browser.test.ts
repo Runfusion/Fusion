@@ -839,7 +839,7 @@ describe.runIf(executablePath)("Task modal tablet touch resize browser regressio
   }
 
   /*
-  FNXC:TaskDetailHeroUI 2026-09-11-03:20:
+  FNXC:TaskDetailAlpha 2026-09-11-03:20:
   The Alpha rollout is credible only when the production modal, mobile drawer, main panel, List split, right dock, and App pop-out each expose one canonical Task Detail surface with usable navigation and no horizontal overflow at their representative breakpoints.
   */
   it.each([
@@ -864,7 +864,7 @@ describe.runIf(executablePath)("Task modal tablet touch resize browser regressio
       if (!detail || !tabs || !footer || !body) return null;
       body.scrollTop = body.scrollHeight;
       return {
-        boundaries: document.querySelectorAll(".task-detail-alpha-boundary[data-heroui-alpha-surface='true']").length,
+        boundaries: document.querySelectorAll(".task-detail-alpha-boundary[data-alpha-surface='true']").length,
         headers: detail.querySelectorAll(".modal-header").length,
         tabSets: detail.querySelectorAll(".detail-tabs").length,
         footers: detail.querySelectorAll(".modal-actions").length,

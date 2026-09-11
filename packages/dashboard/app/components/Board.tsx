@@ -1,7 +1,7 @@
 import { sortTasksForDisplayColumn, type TaskColumnSortMode, type Task, type TaskDetail, type Column as ColumnType, type ColumnId, type TaskCreateInput, type GithubIssueAction, type MergeResult } from "@fusion/core";
 import { Column } from "./Column";
-import { AlphaSurface } from "./hero-ui";
-import { HeroUIAlphaSurface } from "../context/HeroUIAlphaContext";
+import { AlphaSurface } from "./alpha-ui";
+import { AlphaBoundary } from "../context/AlphaContext";
 import "./Lane.css";
 import "./Board.css";
 import type { ToastType } from "../hooks/useToast";
@@ -1151,8 +1151,8 @@ function BoardContent({ tasks, projectId, maxConcurrent, maxWorktrees, showWorkt
 
 export function Board(props: BoardProps) {
   return (
-    <HeroUIAlphaSurface enabled={props.alphaUpdatesEnabled === true}>
+    <AlphaBoundary enabled={props.alphaUpdatesEnabled === true}>
       <BoardContent {...props} />
-    </HeroUIAlphaSurface>
+    </AlphaBoundary>
   );
 }

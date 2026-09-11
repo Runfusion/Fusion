@@ -47,8 +47,8 @@
 }
 
 /*
-FNXC:HeroUIAlphaCollections 2026-09-10-20:00:
-Alpha task actions use one valid HeroUI menu collection per visual row. The row menu is layout-transparent, while a submenu remains anchored to the row that opened it instead of being moved behind the complete parent collection.
+FNXC:AlphaCollections 2026-09-10-20:00:
+Alpha task actions use one valid homemade Alpha menu collection per visual row. The row menu is layout-transparent, while a submenu remains anchored to the row that opened it instead of being moved behind the complete parent collection.
 */
 .task-context-menu__row-menu {
   display: contents;

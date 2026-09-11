@@ -1,5 +1,5 @@
 import "./DuplicateWarningModal.css";
-import { AlphaButton, AlphaDialog, AlphaSurface } from "./hero-ui";
+import { AlphaButton, AlphaDialog, AlphaSurface } from "./alpha-ui";
 import { useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import type { DuplicateMatch } from "../api";
@@ -27,17 +27,10 @@ export function DuplicateWarningModal({ matches, onOpen, onProceed, onCancel }: 
     cancelButtonRef.current?.focus();
   }, []);
 
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        onCancel();
-      }
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [onCancel]);
-
+  /*
+  FNXC:DuplicateWarning 2026-09-11-16:53:
+  AlphaDialog is the sole Escape-dismissal owner, so one key press produces exactly one cancellation callback while this modal retains its initial Cancel-button focus.
+  */
   return (
     <AlphaDialog overlayClassName="modal-overlay open" className="modal duplicate-warning-modal" labelledBy="duplicate-warning-modal-title" onClose={onCancel}>
         <div className="modal-header">

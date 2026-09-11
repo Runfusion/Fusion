@@ -97,7 +97,8 @@ describe("mobile bottom-space layout invariant", () => {
     const drawerBodyRule = normalizeCss(extractRuleBlock(css, ".alpha-mobile-drawer__body"));
     const navRule = normalizeCss(extractRuleBlock(css, ".mobile-nav-bar"));
     const alphaContentRule = normalizeCss(extractRuleBlock(css, 'html[data-viewport-mode="mobile"] .project-content--with-alpha-nav'));
-    const alphaBoardRule = normalizeCss(extractRuleBlock(css, 'html[data-viewport-mode="mobile"] [data-heroui-alpha-surface="true"] .project-content--with-alpha-nav :is(.board.board-workflow-columns, .board.board-workflows-skeleton)'));
+    const alphaBoardRule = normalizeCss(extractRuleBlock(css, '[data-alpha-surface="true"] .board'));
+    const skeletonRule = normalizeCss(extractRuleBlock(css, ".board.board-workflows-skeleton"));
 
     expect(drawerRule).toContain("inset: 0 var(--icb-right-offset, 0px) 0 0");
     expect(drawerRule).toContain("z-index: var(--z-popover)");
@@ -110,7 +111,10 @@ describe("mobile bottom-space layout invariant", () => {
     expect(navRule).toContain("z-index: 45");
     expect(extractRuleBlock(css, ":root")).toContain("--z-popover: 60");
     expect(alphaContentRule).toContain("var(--mobile-nav-height) + var(--mobile-nav-alpha-system-offset)");
-    expect(alphaBoardRule).toContain("padding-block-end: var(--space-xs)");
+    expect(alphaBoardRule).toContain("--board-padding: var(--alpha-density-3)");
+    expect(skeletonRule).toContain("height: 100%");
+    expect(skeletonRule).toContain("min-height: 0");
+    expect(alphaBoardRule).not.toContain("padding-block-end");
     expect(alphaBoardRule).not.toContain("--mobile-nav-height");
     expect(alphaBoardRule).not.toContain("--mobile-nav-alpha-system-offset");
     expect(alphaBoardRule).not.toContain("env(safe-area-inset-bottom");

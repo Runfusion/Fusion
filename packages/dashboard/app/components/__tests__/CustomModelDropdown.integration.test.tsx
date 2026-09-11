@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { CustomModelDropdown } from "../CustomModelDropdown";
 import type { ModelInfo } from "../../api";
-import { HeroUIAlphaProvider, HeroUIAlphaSurface } from "../../context/HeroUIAlphaContext";
+import { AlphaProvider, AlphaBoundary } from "../../context/AlphaContext";
 
 const MOCK_MODELS: ModelInfo[] = [
   { provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", reasoning: true, contextWindow: 200000 },
@@ -146,7 +146,7 @@ describe("CustomModelDropdown ProviderIcon Integration", () => {
     const onChange = vi.fn();
     const onToggleFavorite = vi.fn();
     const onToggleModelFavorite = vi.fn();
-    render(<HeroUIAlphaProvider enabled><HeroUIAlphaSurface><CustomModelDropdown {...defaultProps} onChange={onChange} onToggleFavorite={onToggleFavorite} onToggleModelFavorite={onToggleModelFavorite} /></HeroUIAlphaSurface></HeroUIAlphaProvider>);
+    render(<AlphaProvider enabled><AlphaBoundary><CustomModelDropdown {...defaultProps} onChange={onChange} onToggleFavorite={onToggleFavorite} onToggleModelFavorite={onToggleModelFavorite} /></AlphaBoundary></AlphaProvider>);
     await user.click(screen.getByLabelText("Test Model"));
     const option = screen.getByRole("option", { name: /GPT-4o/ });
     const favorite = screen.getByRole("button", { name: "Add GPT-4o to favorites" });
@@ -154,6 +154,7 @@ describe("CustomModelDropdown ProviderIcon Integration", () => {
     expect(favorite.closest(".model-combobox-alpha-action-row")).toHaveTextContent("GPT-4o");
     const providerFavorite = screen.getByRole("button", { name: "Add openai to favorites" });
     expect(providerFavorite.closest(".model-combobox-alpha-action-row")).toHaveTextContent("openai");
+    await waitFor(() => expect(screen.getByPlaceholderText("Filter models…")).toHaveFocus());
     const listbox = screen.getByRole("listbox", { name: "Test Model" });
     listbox.focus();
     await user.tab();

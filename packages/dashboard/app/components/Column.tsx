@@ -1,5 +1,5 @@
 import { memo, useMemo, useState, useCallback, useEffect, useRef } from "react";
-import { AlphaButton, AlphaInput, AlphaMenu, AlphaMenuItem, AlphaSurface } from "./hero-ui";
+import { AlphaButton, AlphaInput, AlphaMenu, AlphaMenuItem, AlphaSurface } from "./alpha-ui";
 import { useAutoPaginationSentinel } from "../hooks/useAutoPaginationSentinel";
 import { useVirtualizedList } from "../hooks/useVirtualizedList";
 import { useTranslation } from "react-i18next";

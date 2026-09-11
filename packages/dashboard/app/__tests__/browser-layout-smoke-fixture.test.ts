@@ -3,6 +3,7 @@ import path from "node:path";
 import { SUPPORTED_LOCALES } from "@fusion/core";
 import { describe, expect, it, vi } from "vitest";
 import {
+  boardSafeGeometryMatches,
   buildQuickAddSaveFixtures,
   createAlphaDrawerProductionFixtureSource,
   createSmokeHtml,
@@ -107,8 +108,7 @@ describe("browser layout smoke fixture", () => {
       "alpha-drawer-floating",
       "alpha-drawer-terminal",
       "alpha-board-fixture",
-      "alpha-board",
-      "alpha-board-column",
+      "alpha-board-production-root",
       "alpha-pill",
     ]) {
       expect(html).toContain(`data-smoke="${hook}"`);
@@ -125,6 +125,11 @@ describe("browser layout smoke fixture", () => {
       expect(productionSource).toContain(`React.createElement(${productionComponent}`);
     }
     expect(productionSource).toContain('id: "smoke-chat-session"');
+    expect(productionSource).toContain("function ProductionBoardFixture()");
+    expect(productionSource).toContain("React.createElement(MainContent, boardProps)");
+    expect(productionSource).toContain('currentTasksPaginationError: boardState === "pagination-error"');
+    expect(productionSource).toContain('nearDuplicateOf: "FN-DUPLICATE-A"');
+    expect(productionSource).not.toContain("board.innerHTML");
     expect(productionSource).not.toContain("function Shell(");
     expect(productionSource).not.toContain("contentOwnsHeader:");
     expect(productionSource).not.toContain("contentOwnsScroll:");
@@ -135,8 +140,38 @@ describe("browser layout smoke fixture", () => {
     expect(html).toContain("floating-window--alpha-mobile-drawer");
     expect(html).toContain("terminal-modal-overlay");
     expect(html).toContain("project-content--with-alpha-nav");
-    expect(html).toContain("board-workflow-columns");
+    expect(html).not.toContain('data-smoke="alpha-board-column"');
     expect(html).toContain("mobile-nav-bar--alpha");
+  });
+
+  it.each(["skeleton", "empty", "populated", "duplicated", "pagination-error"])("valide la géométrie symétrique du board pour l’état %s", (state) => {
+    expect(boardSafeGeometryMatches({
+      state,
+      boardTop: 64,
+      boardBottom: 808,
+      lowerBoundary: 808,
+      boardPaddingTop: 12,
+      boardPaddingBottom: 12,
+      columnTops: [76, 76],
+      columnBottoms: [796, 796],
+      columnHeights: [720, 720],
+      columnScrollable: [state === "populated", state === "populated"],
+    })).toBe(true);
+  });
+
+  it("refuse une zone morte ou un espacement asymétrique dans la géométrie du board", () => {
+    expect(boardSafeGeometryMatches({
+      state: "populated",
+      boardTop: 64,
+      boardBottom: 760,
+      lowerBoundary: 808,
+      boardPaddingTop: 12,
+      boardPaddingBottom: 12,
+      columnTops: [76],
+      columnBottoms: [748],
+      columnHeights: [672],
+      columnScrollable: [true],
+    })).toBe(false);
   });
 
   it("includes standalone and embedded Git Manager shell fixtures", () => {    const html = createSmokeHtml();

@@ -6,7 +6,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import { TaskPlannerChatTab } from "../TaskPlannerChatTab";
 import { ChatMessageLayoutProvider } from "../../context/ChatMessageLayoutContext";
-import { HeroUIAlphaProvider, HeroUIAlphaSurface } from "../../context/HeroUIAlphaContext";
+import { AlphaProvider, AlphaBoundary } from "../../context/AlphaContext";
 import { clampChatInputHeight, getChatInputAutomaticMaxHeight, getChatInputBoxMetrics } from "../../utils/chatInputAutosize";
 import { __test_resetChatSnippetsCache } from "../../hooks/useChatSnippetsCache";
 
@@ -241,23 +241,23 @@ describe("TaskPlannerChatTab", () => {
 
   it("renders the real planner composer through the shared Alpha boundary", async () => {
     const view = render(
-      <HeroUIAlphaProvider enabled>
-        <HeroUIAlphaSurface>
+      <AlphaProvider enabled>
+        <AlphaBoundary>
           <TaskPlannerChatTab task={makeTask("FN-7310")} active taskChatModel={{ provider: "anthropic", modelId: "claude-plan" }} addToast={vi.fn()} />
-        </HeroUIAlphaSurface>
-      </HeroUIAlphaProvider>,
+        </AlphaBoundary>
+      </AlphaProvider>,
     );
-    expect(await screen.findByLabelText("Message task chat")).toHaveAttribute("data-heroui-alpha", "textarea");
-    expect(view.container.querySelector('[data-heroui-alpha="button"]')).not.toBeNull();
+    expect(await screen.findByLabelText("Message task chat")).toHaveAttribute("data-alpha-ui", "textarea");
+    expect(view.container.querySelector('[data-alpha-ui="button"]')).not.toBeNull();
 
     view.rerender(
-      <HeroUIAlphaProvider enabled={false}>
-        <HeroUIAlphaSurface>
+      <AlphaProvider enabled={false}>
+        <AlphaBoundary>
           <TaskPlannerChatTab task={makeTask("FN-7310")} active taskChatModel={{ provider: "anthropic", modelId: "claude-plan" }} addToast={vi.fn()} />
-        </HeroUIAlphaSurface>
-      </HeroUIAlphaProvider>,
+        </AlphaBoundary>
+      </AlphaProvider>,
     );
-    expect(screen.getByLabelText("Message task chat")).not.toHaveAttribute("data-heroui-alpha");
+    expect(screen.getByLabelText("Message task chat")).not.toHaveAttribute("data-alpha-ui");
   });
 
   afterEach(() => {

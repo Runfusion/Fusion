@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import type { ConversationMentionItem, FileSearchItem, TaskSearchItem } from "../hooks/useFileMention";
 import { getDisplayDirname } from "../utils/pathDisplay";
 import "./FileMentionPopup.css";
-import { AlphaListBox, AlphaListBoxItem } from "./hero-ui";
+import { AlphaListBox, AlphaListBoxItem } from "./alpha-ui";
 
 import type { ReactNode } from "react";
 

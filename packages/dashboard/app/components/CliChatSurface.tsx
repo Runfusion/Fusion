@@ -19,7 +19,7 @@
 // Rendering of the transcript message list itself stays with ChatView's existing
 // renderer (passed in as `renderTranscript`) so there is no parallel message UI.
 import React, { useState, type ReactNode } from "react";
-import { AlphaButton } from "./hero-ui";
+import { AlphaButton } from "./alpha-ui";
 import { useTranslation } from "react-i18next";
 import { Terminal as TerminalIcon, MessageSquare } from "lucide-react";
 import { SessionTerminal, type SessionTerminalProps } from "./SessionTerminal";

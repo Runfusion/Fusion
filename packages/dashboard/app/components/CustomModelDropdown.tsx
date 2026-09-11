@@ -1,6 +1,6 @@
 import "./CustomModelDropdown.css";
-import { AlphaButton, AlphaInput, AlphaListBox, AlphaListBoxItem, AlphaListBoxRow, AlphaPopoverSurface, AlphaSelect } from "./hero-ui";
-import { useHeroUIAlpha } from "../context/HeroUIAlphaContext";
+import { AlphaButton, AlphaInput, AlphaListBox, AlphaListBoxItem, AlphaListBoxRow, AlphaPopoverSurface, AlphaSelect } from "./alpha-ui";
+import { useAlphaSurface } from "../context/AlphaContext";
 import { useState, useEffect, useCallback, useMemo, useRef, useId } from "react";
 import { THINKING_LEVELS } from "@fusion/core";
 import { useTranslation } from "react-i18next";
@@ -114,7 +114,7 @@ export function CustomModelDropdown({
   credentialInstances,
 }: CustomModelDropdownProps) {
   const { t } = useTranslation("app");
-  const heroUIAlpha = useHeroUIAlpha();
+  const alphaSurface = useAlphaSurface();
   const placeholder = placeholderProp ?? t("model.selectPlaceholder", "Select a model…");
   const noChangeLabel = noChangeLabelProp ?? t("model.noChange", "No change");
   const defaultOptionLabel = defaultOptionLabelProp ?? t("models.useDefault", "Use default");
@@ -680,7 +680,7 @@ export function CustomModelDropdown({
       data-testid="model-combobox-portal"
       data-portal-surface="model-menu"
       data-menu-width={menuWidth}
-      onKeyDown={heroUIAlpha ? undefined : handleKeyDown}
+      onKeyDown={alphaSurface ? undefined : handleKeyDown}
       style={{
         top: dropdownPosition.bottom === null ? `${dropdownPosition.top}px` : "auto",
         bottom: dropdownPosition.bottom === null ? undefined : `${dropdownPosition.bottom}px`,
@@ -766,11 +766,11 @@ export function CustomModelDropdown({
         </div>
       )}
 
-      {heroUIAlpha ? (
+      {alphaSurface ? (
         <div ref={listRef} className="model-combobox-list model-combobox-list--alpha">
           {/*
-          FNXC:HeroUIAlphaCollections 2026-09-10-20:43:
-          Alpha models form one HeroUI listbox so native arrow navigation crosses every selectable row. Provider and model controls follow it in a labelled sibling rail whose visible row labels identify exactly which selection each favorite or collapse action affects.
+          FNXC:AlphaCollections 2026-09-10-20:43:
+          Alpha models form one homemade Alpha listbox so native arrow navigation crosses every selectable row. Provider and model controls follow it in a labelled sibling rail whose visible row labels identify exactly which selection each favorite or collapse action affects.
           */}
           <AlphaListBox aria-label={label} className="model-combobox-alpha-options">
             {optionsList.filter((option) => option.type !== "provider").map((option, index) => {
@@ -951,12 +951,12 @@ export function CustomModelDropdown({
   ) : null;
 
   /*
-  FNXC:HeroUIAlphaKeyboard 2026-09-10-21:03:
-  HeroUI owns keyboard navigation for the Alpha listbox and its sibling action rail. Restrict the historical delegated handler to stable mode so Enter activates focused favorite and provider-collapse buttons instead of selecting the highlighted model.
+  FNXC:AlphaKeyboard 2026-09-10-21:03:
+  homemade Alpha owns keyboard navigation for the Alpha listbox and its sibling action rail. Restrict the historical delegated handler to stable mode so Enter activates focused favorite and provider-collapse buttons instead of selecting the highlighted model.
   */
   return (
     <>
-      <div ref={containerRef} className="model-combobox" onKeyDown={heroUIAlpha ? undefined : handleKeyDown}>
+      <div ref={containerRef} className="model-combobox" onKeyDown={alphaSurface ? undefined : handleKeyDown}>
         <AlphaButton
           ref={triggerRef}
           type="button"

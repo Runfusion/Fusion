@@ -1,5 +1,5 @@
 import type { Agent } from "@fusion/core";
-import { AlphaButton, AlphaTextArea } from "./hero-ui";
+import { AlphaButton, AlphaTextArea } from "./alpha-ui";
 import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import type { Components } from "react-markdown";

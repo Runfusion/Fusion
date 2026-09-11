@@ -24,27 +24,27 @@
 }
 
 /*
-FNXC:HeroUIAlphaDensity 2026-09-11-00:30:
+FNXC:AlphaDensity 2026-09-11-00:30:
 Alpha task cards keep metadata and status behavior intact while reducing persistent visual weight. Compact padding, neutral elevation, and a quiet hover are boundary-only so every stable card host preserves its historical dimensions.
 */
-[data-heroui-alpha-surface="true"] .card {
+[data-alpha-surface="true"] .card {
   padding: var(--alpha-density-3);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-sm);
 }
 
-[data-heroui-alpha-surface="true"] .card:hover {
+[data-alpha-surface="true"] .card:hover {
   border-color: var(--alpha-neutral-muted);
   box-shadow: var(--shadow-md);
 }
 
-[data-heroui-alpha-surface="true"] .card-header {
+[data-alpha-surface="true"] .card-header {
   gap: var(--alpha-density-1);
   margin-bottom: var(--alpha-density-1);
 }
 
 @media (max-width: 768px) {
-  [data-heroui-alpha-surface="true"] .card {
+  [data-alpha-surface="true"] .card {
     padding: var(--alpha-density-2);
   }
 }

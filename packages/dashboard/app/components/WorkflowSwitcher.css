@@ -236,8 +236,8 @@ The workflow listbox is portaled but visually remains the ProjectSelector siblin
 }
 
 /*
-FNXC:HeroUIAlphaCollections 2026-09-10-20:30:
-Alpha keeps all workflow selections in one navigable HeroUI listbox. The aligned edit rail is a sibling collection of auxiliary actions, so options never contain buttons and Tab can leave the listbox for row editing.
+FNXC:AlphaCollections 2026-09-10-20:30:
+Alpha keeps all workflow selections in one navigable homemade Alpha listbox. The aligned edit rail is a sibling collection of auxiliary actions, so options never contain buttons and Tab can leave the listbox for row editing.
 */
 .workflow-switcher-options--alpha {
   display: grid;

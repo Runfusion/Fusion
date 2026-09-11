@@ -1,4 +1,4 @@
-import "../../hero-ui-alpha.css";
+import "../../alpha-ui.css";
 import { fireEvent, render, screen } from "@testing-library/react";
 import type { ComponentProps } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -57,7 +57,7 @@ function board(
   );
 }
 
-describe("HeroUI Alpha Board", () => {
+describe("homemade Alpha Board", () => {
   beforeEach(() => {
     window.sessionStorage.clear();
     writeBoardWorkflowsCache(undefined, lanePayload);
@@ -67,7 +67,7 @@ describe("HeroUI Alpha Board", () => {
     window.sessionStorage.clear();
     const loading = render(board(true));
     expect(screen.getByTestId("board-workflows-skeleton")).toHaveAttribute("aria-busy", "true");
-    expect(loading.container.querySelector('[data-heroui-alpha="surface"]')).not.toBeNull();
+    expect(loading.container.querySelector('[data-alpha-ui="surface"]')).not.toBeNull();
     loading.unmount();
 
     writeBoardWorkflowsCache(undefined, { ...lanePayload, workflows: [], defaultWorkflowId: "" });
@@ -105,10 +105,10 @@ describe("HeroUI Alpha Board", () => {
       expect(screen.getByText("Duplicate of FN-ORIGINAL")).toBeInTheDocument();
       expect(screen.getAllByText("Older tasks could not be loaded.").length).toBeGreaterThan(0);
       const retryButton = screen.getAllByRole("button", { name: "Retry" })[0];
-      expect(retryButton).toHaveAttribute("data-heroui-alpha", "button");
+      expect(retryButton).toHaveAttribute("data-alpha-ui", "button");
       fireEvent.click(retryButton);
       expect(retry).toHaveBeenCalledTimes(1);
-      expect(view.container.querySelector('[data-heroui-alpha-surface="true"]')).not.toBeNull();
+      expect(view.container.querySelector('[data-alpha-surface="true"]')).not.toBeNull();
     } finally {
       Object.defineProperty(window, "innerWidth", { configurable: true, value: previousWidth });
     }
@@ -138,7 +138,7 @@ describe("HeroUI Alpha Board", () => {
       expect(statusBadge).not.toBeNull();
       fireEvent.click(screen.getByRole("button", { name: "Planning column actions" }));
       const portal = screen.getByRole("menu", { name: "Planning column actions" });
-      expect(portal).toHaveAttribute("data-heroui-alpha", "menu");
+      expect(portal).toHaveAttribute("data-alpha-ui", "menu");
 
       const productionPalette = (element: Element) => {
         const style = getComputedStyle(element);
@@ -182,18 +182,18 @@ describe("HeroUI Alpha Board", () => {
     const boardCss = readAppFile("components/Board.css");
     const columnCss = readAppFile("components/Column.css");
     const cardCss = readAppFile("components/TaskCard.css");
-    expect(boardCss).toContain('[data-heroui-alpha-surface="true"] .board');
+    expect(boardCss).toContain('[data-alpha-surface="true"] .board');
     expect(boardCss).toContain("--board-padding: var(--alpha-density-3)");
-    expect(columnCss).toContain('[data-heroui-alpha-surface="true"] .column-header');
-    expect(cardCss).toContain('[data-heroui-alpha-surface="true"] .card');
-    expect(boardCss).not.toContain('[data-heroui-alpha-surface="true"] .board *');
+    expect(columnCss).toContain('[data-alpha-surface="true"] .column-header');
+    expect(cardCss).toContain('[data-alpha-surface="true"] .card');
+    expect(boardCss).not.toContain('[data-alpha-surface="true"] .board *');
     expect(columnCss).not.toContain("overflow-x: visible");
   });
 
-  it("uses HeroUI controls only in Alpha while preserving empty and populated live boards", () => {
+  it("uses homemade Alpha controls only in Alpha while preserving empty and populated live boards", () => {
     const view = render(board(false));
     expect(screen.getByRole("main")).toHaveClass("board");
-    expect(view.container.querySelector("[data-heroui-alpha]")).toBeNull();
+    expect(view.container.querySelector("[data-alpha-ui]")).toBeNull();
 
     view.rerender(board(true, [{
       id: "FN-ALPHA",
@@ -208,13 +208,13 @@ describe("HeroUI Alpha Board", () => {
     } as never]));
     expect(screen.getByRole("main")).toHaveClass("board");
     expect(screen.getByText("Carte Alpha")).toBeInTheDocument();
-    expect(view.container.querySelector('[data-heroui-alpha="button"]')).not.toBeNull();
-    expect(view.container.querySelector('[data-heroui-alpha="surface"]')).not.toBeNull();
+    expect(view.container.querySelector('[data-alpha-ui="button"]')).not.toBeNull();
+    expect(view.container.querySelector('[data-alpha-ui="surface"]')).not.toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Planning column actions" }));
-    expect(screen.getByRole("menu", { name: "Planning column actions" })).toHaveAttribute("data-heroui-alpha", "menu");
+    expect(screen.getByRole("menu", { name: "Planning column actions" })).toHaveAttribute("data-alpha-ui", "menu");
 
     view.rerender(board(false));
-    expect(view.container.querySelector("[data-heroui-alpha]")).toBeNull();
+    expect(view.container.querySelector("[data-alpha-ui]")).toBeNull();
     expect(screen.getByRole("main")).toHaveClass("board");
   });
 });

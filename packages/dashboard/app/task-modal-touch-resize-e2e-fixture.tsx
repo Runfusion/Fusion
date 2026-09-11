@@ -6,7 +6,7 @@ import { I18nextProvider, initReactI18next, useTranslation } from "react-i18next
 import "./styles.css";
 import "./components/TaskDetailModal.css";
 import "./components/FloatingWindow.css";
-import "./hero-ui-alpha.css";
+import "./alpha-ui.css";
 import { FloatingWindow } from "./components/FloatingWindow";
 import { App } from "./App";
 import { TaskDetailContent } from "./components/TaskDetailModal";
@@ -19,7 +19,7 @@ import { NewTaskModal } from "./components/NewTaskModal";
 import { AgentListModal } from "./components/AgentListModal";
 import { SetupWizardModal } from "./components/SetupWizardModal";
 import { ConfirmDialogProvider } from "./hooks/useConfirm";
-import { HeroUIAlphaProvider } from "./context/HeroUIAlphaContext";
+import { AlphaProvider } from "./context/AlphaContext";
 
 const params = new URLSearchParams(window.location.search);
 const surface = params.get("surface") ?? "new-task";
@@ -310,9 +310,9 @@ function Fixture() {
     {appOwnsAlphaBoundary ? (
       <ConfirmDialogProvider skipConfirmations>{content}</ConfirmDialogProvider>
     ) : (
-      <HeroUIAlphaProvider enabled={params.get("alpha") === "true"}>
+      <AlphaProvider enabled={params.get("alpha") === "true"}>
         <ConfirmDialogProvider skipConfirmations>{content}</ConfirmDialogProvider>
-      </HeroUIAlphaProvider>
+      </AlphaProvider>
     )}
   </I18nextProvider>;
 }

@@ -17,11 +17,11 @@ import { ProviderIcon } from "./ProviderIcon";
 import { WorkflowIcon } from "./WorkflowIcon";
 import { PendingAttachmentPreviews } from "./PendingAttachmentPreviews";
 import { restoreOptionalStepsOnFastExit } from "../utils/fastModeOptionalSteps";
-import { AlphaButton, AlphaInput, AlphaSelect, AlphaTextArea } from "./hero-ui";
+import { AlphaButton, AlphaInput, AlphaSelect, AlphaTextArea } from "./alpha-ui";
 
 /*
-FNXC:TaskDetailHeroUI 2026-09-11-03:20:
-TaskForm routes every interactive field and action through adaptive primitives so Task Detail gets native HeroUI controls inside Alpha while create and stable non-Alpha hosts retain their historical DOM and callbacks.
+FNXC:TaskDetailAlpha 2026-09-11-03:20:
+TaskForm routes every interactive field and action through adaptive primitives so Task Detail gets native homemade Alpha controls inside Alpha while create and stable non-Alpha hosts retain their historical DOM and callbacks.
 */
 
 function getNodeStatusLabel(status: NodeInfo["status"], t: (key: string, defaultValue: string) => string): string {

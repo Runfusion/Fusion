@@ -11,7 +11,7 @@ import { registerBundledPluginViews } from "./plugins/registerBundledPluginViews
 import { i18nReady } from "./i18n";
 import "@fontsource/pixelify-sans/400.css";
 import "./styles.css";
-import "./hero-ui-alpha.css";
+import "./alpha-ui.css";
 
 /*
 FNXC:AuthTokenRecovery 2026-09-10-21:28:

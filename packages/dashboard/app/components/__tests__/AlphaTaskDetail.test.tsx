@@ -1,4 +1,4 @@
-import "../../hero-ui-alpha.css";
+import "../../alpha-ui.css";
 import { useState } from "react";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -12,7 +12,7 @@ import {
   noopOpenDetail,
   setupTaskDetailModalHooks,
 } from "./TaskDetailModal.test-helpers";
-import { HeroUIAlphaProvider } from "../../context/HeroUIAlphaContext";
+import { AlphaProvider } from "../../context/AlphaContext";
 import { approvePlan, fetchBoardWorkflows, fetchTaskDetail, fetchWorkflowResults, refineTask, rejectPlan } from "../../api";
 import { readAppFile } from "../../test/cssFixture";
 import { TaskDetailContent } from "../TaskDetailModal";
@@ -49,9 +49,9 @@ const sharedProps = {
 
 function DetailFixture({ enabled, title = "Alpha task" }: { enabled: boolean; title?: string }) {
   return (
-    <HeroUIAlphaProvider enabled={enabled}>
+    <AlphaProvider enabled={enabled}>
       <TaskDetailContent {...sharedProps} embedded task={makeTask({ title })} />
-    </HeroUIAlphaProvider>
+    </AlphaProvider>
   );
 }
 
@@ -175,25 +175,25 @@ function AppPopoutStateHost() {
   );
 }
 
-describe("HeroUI Alpha Task Detail", () => {
+describe("homemade Alpha Task Detail", () => {
   it("keeps the stable Task Detail DOM outside Alpha and owns one surface inside Alpha", () => {
     const view = render(<DetailFixture enabled={false} />);
-    expect(document.querySelector("[data-heroui-alpha-surface='true']")).toBeNull();
-    expect(document.querySelector("[data-task-detail-surface='true']")).not.toHaveAttribute("data-heroui-alpha");
+    expect(document.querySelector("[data-alpha-surface='true']")).toBeNull();
+    expect(document.querySelector("[data-task-detail-surface='true']")).not.toHaveAttribute("data-alpha-ui");
 
     view.rerender(<DetailFixture enabled />);
-    expect(document.querySelectorAll(".task-detail-alpha-boundary[data-heroui-alpha-surface='true']")).toHaveLength(1);
+    expect(document.querySelectorAll(".task-detail-alpha-boundary[data-alpha-surface='true']")).toHaveLength(1);
     expect(document.querySelectorAll("[data-task-detail-surface='true']")).toHaveLength(1);
-    expect(document.querySelector("[data-task-detail-surface='true']")).toHaveAttribute("data-heroui-alpha", "surface");
+    expect(document.querySelector("[data-task-detail-surface='true']")).toHaveAttribute("data-alpha-ui", "surface");
   });
 
   it("retains selected tabs, edit text, focus, and callbacks across live rerenders", async () => {
     const user = userEvent.setup();
     const onPopOut = vi.fn();
     const view = render(
-      <HeroUIAlphaProvider enabled>
+      <AlphaProvider enabled>
         <TaskDetailContent {...sharedProps} embedded task={makeTask({ title: "Initial title", column: "todo" })} onPopOut={onPopOut} />
-      </HeroUIAlphaProvider>,
+      </AlphaProvider>,
     );
 
     await user.click(screen.getByRole("button", { name: "Plan" }));
@@ -205,9 +205,9 @@ describe("HeroUI Alpha Task Detail", () => {
     expect(title).toHaveFocus();
 
     view.rerender(
-      <HeroUIAlphaProvider enabled>
+      <AlphaProvider enabled>
         <TaskDetailContent {...sharedProps} embedded task={makeTask({ title: "Initial title", column: "todo", status: "planning", log: [{ timestamp: "2026-01-01T00:00:01Z", action: "Live update" }] })} onPopOut={onPopOut} />
-      </HeroUIAlphaProvider>,
+      </AlphaProvider>,
     );
 
     expect(screen.getByLabelText("Title")).toHaveValue("Modern task");
@@ -229,7 +229,7 @@ describe("HeroUI Alpha Task Detail", () => {
     }
     const canonical = readAppFile("components/TaskDetailModal.tsx");
     expect(canonical).toContain("<AlphaMobileDrawer");
-    expect(canonical.match(/<HeroUIAlphaSurface preserveDisabledDom/g)).toHaveLength(1);
+    expect(canonical.match(/<AlphaBoundary preserveDisabledDom/g)).toHaveLength(1);
     expect(canonical.match(/data-task-detail-surface=/g)).toHaveLength(1);
   });
 
@@ -239,7 +239,7 @@ describe("HeroUI Alpha Task Detail", () => {
     const cleanupDeepLink = vi.fn();
     const closed = vi.fn();
     render(
-      <HeroUIAlphaProvider enabled>
+      <AlphaProvider enabled>
         <AppModalTaskDetailHost
           {...sharedProps}
           task={makeTask({ id: `FN-HOST-${presentation}` })}
@@ -249,7 +249,7 @@ describe("HeroUI Alpha Task Detail", () => {
           onCleanupDeepLink={cleanupDeepLink}
           onClosed={closed}
         />
-      </HeroUIAlphaProvider>,
+      </AlphaProvider>,
     );
 
     fireEvent.keyDown(document, { key: "Escape" });
@@ -262,7 +262,7 @@ describe("HeroUI Alpha Task Detail", () => {
 
   it("runs MainContent Back through App's production snapshot and navigation owner", async () => {
     const user = userEvent.setup();
-    render(<HeroUIAlphaProvider enabled><MainContentStateHost /></HeroUIAlphaProvider>);
+    render(<AlphaProvider enabled><MainContentStateHost /></AlphaProvider>);
 
     await user.click(screen.getByRole("button", { name: "Open main detail" }));
     expect(screen.getByTestId("main-route")).toHaveTextContent("task-detail");
@@ -314,7 +314,7 @@ describe("HeroUI Alpha Task Detail", () => {
       taskWorkflowIds: { [hostTask.id]: "builtin:coding" },
     });
     localStorage.setItem(scopedKey("kb-dashboard-list-selected-task", "host-project"), hostTask.id);
-    render(<HeroUIAlphaProvider enabled><ListViewStateHost /></HeroUIAlphaProvider>);
+    render(<AlphaProvider enabled><ListViewStateHost /></AlphaProvider>);
 
     const splitDetail = await screen.findByTestId("list-split-detail-content");
     expect(within(splitDetail).getAllByText(hostTask.id).length).toBeGreaterThan(0);
@@ -327,7 +327,7 @@ describe("HeroUI Alpha Task Detail", () => {
 
   it("removes the detail snapshot owned by useRightDockController after Close", async () => {
     const user = userEvent.setup();
-    render(<HeroUIAlphaProvider enabled><RightDockStateHost /></HeroUIAlphaProvider>);
+    render(<AlphaProvider enabled><RightDockStateHost /></AlphaProvider>);
 
     await user.click(screen.getByRole("button", { name: "Open dock task" }));
     expect(await screen.findByText(hostTask.id)).toBeInTheDocument();
@@ -337,7 +337,7 @@ describe("HeroUI Alpha Task Detail", () => {
 
   it("runs FloatingWindow Close through App's production pop-out and navigation owner", async () => {
     const user = userEvent.setup();
-    render(<HeroUIAlphaProvider enabled><AppPopoutStateHost /></HeroUIAlphaProvider>);
+    render(<AlphaProvider enabled><AppPopoutStateHost /></AlphaProvider>);
 
     await user.click(screen.getByRole("button", { name: "Open pop-out task" }));
     expect(screen.getByTestId("popout-count")).toHaveTextContent("1");
@@ -368,7 +368,7 @@ describe("HeroUI Alpha Task Detail", () => {
     };
     vi.mocked(fetchWorkflowResults).mockResolvedValue([failedReview] as never);
     const renderActionHost = (withFailedReview = false) => render(
-      <HeroUIAlphaProvider enabled={enabled}>
+      <AlphaProvider enabled={enabled}>
         <TaskDetailContent
           {...sharedProps}
           embedded
@@ -380,7 +380,7 @@ describe("HeroUI Alpha Task Detail", () => {
           onTaskUpdated={onTaskUpdated}
           onRequestClose={onRequestClose}
         />
-      </HeroUIAlphaProvider>,
+      </AlphaProvider>,
     );
     const chooseAction = async (name: string) => {
       await user.click(screen.getByRole("button", { name: "Actions" }));
@@ -413,7 +413,7 @@ describe("HeroUI Alpha Task Detail", () => {
     const onRevertTask = vi.fn(async () => ({ mode: "git", clean: true, revertCommitSha: "deadbeef" }) as never);
     const onReviseTask = vi.fn();
     const view = render(
-      <HeroUIAlphaProvider enabled={enabled}>
+      <AlphaProvider enabled={enabled}>
         <TaskDetailContent
           {...sharedProps}
           embedded
@@ -422,17 +422,17 @@ describe("HeroUI Alpha Task Detail", () => {
           onRevertTask={onRevertTask}
           onReviseTask={onReviseTask}
         />
-      </HeroUIAlphaProvider>,
+      </AlphaProvider>,
     );
 
     const revert = screen.getByRole("button", { name: "Revert this task's changes" });
-    if (enabled) expect(revert).toHaveAttribute("data-heroui-alpha", "button");
-    else expect(revert).not.toHaveAttribute("data-heroui-alpha");
+    if (enabled) expect(revert).toHaveAttribute("data-alpha-ui", "button");
+    else expect(revert).not.toHaveAttribute("data-alpha-ui");
     await user.click(revert);
     expect(onRevertTask).toHaveBeenCalledTimes(1);
 
     view.rerender(
-      <HeroUIAlphaProvider enabled={enabled}>
+      <AlphaProvider enabled={enabled}>
         <TaskDetailContent
           {...sharedProps}
           embedded
@@ -441,7 +441,7 @@ describe("HeroUI Alpha Task Detail", () => {
           onRevertTask={onRevertTask}
           onReviseTask={onReviseTask}
         />
-      </HeroUIAlphaProvider>,
+      </AlphaProvider>,
     );
     expect(screen.queryByRole("button", { name: "Revert this task's changes" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "Revise" }));
@@ -455,7 +455,7 @@ describe("HeroUI Alpha Task Detail", () => {
     const onTaskUpdated = vi.fn();
 
     render(
-      <HeroUIAlphaProvider enabled={enabled}>
+      <AlphaProvider enabled={enabled}>
         <TaskDetailContent
           {...sharedProps}
           embedded
@@ -464,7 +464,7 @@ describe("HeroUI Alpha Task Detail", () => {
           onRetryTask={onRetryTask}
           onTaskUpdated={onTaskUpdated}
         />
-      </HeroUIAlphaProvider>,
+      </AlphaProvider>,
     );
 
     await user.click(screen.getByRole("button", { name: "Actions" }));
@@ -487,13 +487,13 @@ describe("HeroUI Alpha Task Detail", () => {
     vi.mocked(rejectPlan).mockResolvedValue({} as never);
 
     const approvalView = render(
-      <HeroUIAlphaProvider enabled={enabled}>
+      <AlphaProvider enabled={enabled}>
         <TaskDetailContent
           {...sharedProps}
           embedded
           task={makeTask({ id: "FN-APPROVAL", column: "todo", status: "awaiting-approval", prompt: "# Reviewed plan" })}
         />
-      </HeroUIAlphaProvider>,
+      </AlphaProvider>,
     );
     const approve = screen.getByTestId("detail-plan-approval-footer-approve");
     const reject = screen.getByTestId("detail-plan-approval-footer-reject");
@@ -509,9 +509,9 @@ describe("HeroUI Alpha Task Detail", () => {
 
     const onMergeTask = vi.fn(async () => ({ merged: true }) as never);
     const reviewView = render(
-      <HeroUIAlphaProvider enabled={enabled}>
+      <AlphaProvider enabled={enabled}>
         <TaskDetailContent {...sharedProps} embedded task={makeTask({ id: "FN-REVIEW", column: "in-review" })} onMergeTask={onMergeTask} />
-      </HeroUIAlphaProvider>,
+      </AlphaProvider>,
     );
     const merge = screen.getByRole("button", { name: "Merge & Close" });
     expect(merge).toBeEnabled();
@@ -519,9 +519,9 @@ describe("HeroUI Alpha Task Detail", () => {
     await waitFor(() => expect(onMergeTask).toHaveBeenCalledWith("FN-REVIEW"));
 
     reviewView.rerender(
-      <HeroUIAlphaProvider enabled={enabled}>
+      <AlphaProvider enabled={enabled}>
         <TaskDetailContent {...sharedProps} embedded task={makeTask({ id: "FN-REVIEW", column: "in-review", status: "merging-pr" })} onMergeTask={onMergeTask} />
-      </HeroUIAlphaProvider>,
+      </AlphaProvider>,
     );
     expect(screen.getByRole("button", { name: "Merging PR…" })).toBeDisabled();
     expect(screen.queryByRole("button", { name: "Merge & Close" })).toBeNull();
@@ -533,13 +533,13 @@ describe("HeroUI Alpha Task Detail", () => {
     vi.mocked(rejectPlan).mockReset().mockResolvedValue({} as never);
 
     render(
-      <HeroUIAlphaProvider enabled={enabled}>
+      <AlphaProvider enabled={enabled}>
         <TaskDetailContent
           {...sharedProps}
           embedded
           task={makeTask({ id: "FN-PENDING-APPROVAL", column: "todo", status: "awaiting-approval", prompt: "# Pending plan" })}
         />
-      </HeroUIAlphaProvider>,
+      </AlphaProvider>,
     );
 
     fireEvent.click(screen.getByTestId("detail-plan-approval-footer-approve"));
@@ -562,23 +562,24 @@ describe("HeroUI Alpha Task Detail", () => {
   it("uses adaptive controls for edit fields and keeps a single accessible Refine dialog", async () => {
     const user = userEvent.setup();
     const editView = render(
-      <HeroUIAlphaProvider enabled>
+      <AlphaProvider enabled>
         <TaskDetailContent {...sharedProps} embedded task={makeTask({ column: "todo" })} />
-      </HeroUIAlphaProvider>,
+      </AlphaProvider>,
     );
 
     await user.click(screen.getByRole("button", { name: "Edit task" }));
-    expect(screen.getByLabelText("Title")).toHaveAttribute("data-heroui-alpha", "input");
-    expect(document.querySelector("select:not([tabindex='-1'])")).toBeNull();
-    expect(document.querySelectorAll("[data-heroui-alpha='select']").length).toBeGreaterThan(0);
+    expect(screen.getByLabelText("Title")).toHaveAttribute("data-alpha-ui", "input");
+    const alphaSelects = document.querySelectorAll<HTMLSelectElement>("select[data-alpha-ui='select']");
+    expect(alphaSelects.length).toBeGreaterThan(0);
+    expect(alphaSelects[0]).toBeEnabled();
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     editView.unmount();
 
     // Review owns Refine while the editable hold task above proves TaskForm's adaptive branch.
     render(
-      <HeroUIAlphaProvider enabled>
+      <AlphaProvider enabled>
         <TaskDetailContent {...sharedProps} embedded task={makeTask({ id: "FN-REVIEW", column: "in-review" })} />
-      </HeroUIAlphaProvider>,
+      </AlphaProvider>,
     );
     await user.click(screen.getByRole("button", { name: "Actions" }));
     const actions = await screen.findByRole("menu", { name: "Task actions" });
@@ -597,7 +598,7 @@ describe("HeroUI Alpha Task Detail", () => {
     vi.mocked(refineTask).mockResolvedValue(child);
 
     render(
-      <HeroUIAlphaProvider enabled={enabled}>
+      <AlphaProvider enabled={enabled}>
         <TaskDetailContent
           {...sharedProps}
           embedded
@@ -605,7 +606,7 @@ describe("HeroUI Alpha Task Detail", () => {
           onRefinementCreated={onRefinementCreated}
           onRequestClose={onRequestClose}
         />
-      </HeroUIAlphaProvider>,
+      </AlphaProvider>,
     );
 
     await user.click(screen.getByRole("button", { name: "Actions" }));
@@ -623,15 +624,15 @@ describe("HeroUI Alpha Task Detail", () => {
   it("keeps optional metadata empty, deduplicates dependencies, and preserves the selected tab through hydration", async () => {
     const user = userEvent.setup();
     const view = render(
-      <HeroUIAlphaProvider enabled>
+      <AlphaProvider enabled>
         <TaskDetailContent {...sharedProps} embedded task={makeTask({ title: "A very long mobile-first title ".repeat(12) })} />
-      </HeroUIAlphaProvider>,
+      </AlphaProvider>,
     );
     expect(document.querySelector(".detail-meta-grid:empty")).toBeNull();
     await user.click(screen.getByRole("button", { name: "Plan" }));
 
     view.rerender(
-      <HeroUIAlphaProvider enabled>
+      <AlphaProvider enabled>
         <TaskDetailContent
           {...sharedProps}
           embedded
@@ -642,28 +643,28 @@ describe("HeroUI Alpha Task Detail", () => {
             log: [{ timestamp: "2026-01-01T00:00:00Z", action: "Hydrated" }],
           })}
         />
-      </HeroUIAlphaProvider>,
+      </AlphaProvider>,
     );
     expect(screen.getByRole("button", { name: "Plan" })).toHaveClass("detail-tab-active");
 
     view.unmount();
     render(
-      <HeroUIAlphaProvider enabled>
+      <AlphaProvider enabled>
         <TaskDetailContent {...sharedProps} embedded task={makeTask({ dependencies: ["FN-100", "FN-100"] })} />
-      </HeroUIAlphaProvider>,
+      </AlphaProvider>,
     );
     await user.click(screen.getByRole("button", { name: /^Dependencies/ }));
     expect(screen.getAllByRole("link", { name: /FN-100/ })).toHaveLength(1);
   });
 
-  it("renders the Activity menu as one palette-inheriting HeroUI portal", async () => {
+  it("renders the Activity menu as one palette-inheriting homemade Alpha portal", async () => {
     const user = userEvent.setup();
     document.documentElement.dataset.theme = "dark";
     render(<DetailFixture enabled />);
 
     await user.click(screen.getByRole("button", { name: "Activity" }));
     const menu = await screen.findByRole("menu", { name: "Activity views" });
-    expect(menu.closest("[data-heroui-alpha-portal='true']")).not.toBeNull();
+    expect(menu.closest("[data-alpha-portal='true']")).not.toBeNull();
     expect(screen.getAllByRole("menuitem", { name: "Feed" })).toHaveLength(1);
     await user.click(screen.getByRole("menuitem", { name: "Feed" }));
     await waitFor(() => expect(screen.queryByRole("menu", { name: "Activity views" })).toBeNull());

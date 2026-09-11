@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { AlphaButton, AlphaTextArea } from "./hero-ui";
+import { AlphaButton, AlphaTextArea } from "./alpha-ui";
 import { useTranslation } from "react-i18next";
 import { useComposerDictation } from "../hooks/useComposerDictation";
 import { MicButton } from "./MicButton";

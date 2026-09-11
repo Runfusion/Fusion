@@ -1,13 +1,17 @@
-@reference "tailwindcss/theme.css";
-@reference "tailwindcss/utilities.css";
-@reference "@heroui/styles";
-@source "../node_modules/@heroui/react/dist";
 
 /*
-FNXC:HeroUIAlphaTheme 2026-09-11-00:30:
-HeroUI Alpha has exactly two canonical neutral palettes selected by the resolved `data-theme`. Fusion color themes, custom shadcn values, radii, and shadows must not recolor or reshape Board, Chat, or their body-portaled overlays. Keep the fixed palette on both boundary roots so legacy layout CSS and native HeroUI declarations consume the same neutral values without importing global resets.
+FNXC:HomemadeAlphaLayout 2026-09-11-16:14:
+Alpha boundaries participate in context and token inheritance without creating a box. Board, Chat, and Task Detail therefore retain their canonical flex sizing and scroll owners across feature-flag changes.
 */
-:where([data-theme="light"], :not([data-theme])) :where([data-heroui-alpha-surface="true"], [data-heroui-alpha-portal="true"]) {
+[data-alpha-surface="true"] {
+  display: contents;
+}
+
+/*
+FNXC:HomemadeAlphaTheme 2026-09-11-16:14:
+homemade Alpha has exactly two canonical neutral palettes selected by the resolved `data-theme`. Fusion color themes, custom shadcn values, radii, and shadows must not recolor or reshape Board, Chat, or their body-portaled overlays. Keep the fixed palette on both boundary roots so legacy layout CSS and native homemade Alpha declarations consume the same neutral values without importing global resets.
+*/
+:where([data-theme="light"], :not([data-theme])) :where([data-alpha-surface="true"], [data-alpha-portal="true"]) {
   --alpha-neutral-background: oklch(0.985 0 0);
   --alpha-neutral-surface: oklch(1 0 0);
   --alpha-neutral-surface-secondary: oklch(0.965 0 0);
@@ -30,7 +34,7 @@ HeroUI Alpha has exactly two canonical neutral palettes selected by the resolved
   --alpha-neutral-done: oklch(0.48 0.02 250);
 }
 
-[data-theme="dark"] :where([data-heroui-alpha-surface="true"], [data-heroui-alpha-portal="true"]) {
+[data-theme="dark"] :where([data-alpha-surface="true"], [data-alpha-portal="true"]) {
   --alpha-neutral-background: oklch(0.155 0 0);
   --alpha-neutral-surface: oklch(0.205 0 0);
   --alpha-neutral-surface-secondary: oklch(0.245 0 0);
@@ -54,13 +58,13 @@ HeroUI Alpha has exactly two canonical neutral palettes selected by the resolved
 }
 
 /*
-FNXC:HeroUIAlphaStatusTheme 2026-09-11-00:51:
+FNXC:AlphaStatusTheme 2026-09-11-00:51:
 Keep fixed semantic aliases directly on each boundary root so production descendants and browser computed styles share the same light/dark contract.
 
-FNXC:HeroUIAlphaFocus 2026-09-11-01:04:
-Legacy Board and Chat consumers treat the focus aliases as complete box-shadow values. Keep the HeroUI `--focus` token color-only, but publish valid neutral ring shadows for root and portaled controls so suppressed outlines never remove keyboard focus visibility.
+FNXC:AlphaFocus 2026-09-11-01:04:
+Legacy Board and Chat consumers treat the focus aliases as complete box-shadow values. Keep the homemade Alpha `--focus` token color-only, but publish valid neutral ring shadows for root and portaled controls so suppressed outlines never remove keyboard focus visibility.
 */
-:where([data-heroui-alpha-surface="true"], [data-heroui-alpha-portal="true"]) {
+:where([data-alpha-surface="true"], [data-alpha-portal="true"]) {
   --todo: var(--alpha-neutral-todo);
   --triage: var(--alpha-neutral-triage);
   --in-progress: var(--alpha-neutral-in-progress);
@@ -84,8 +88,7 @@ Legacy Board and Chat consumers treat the focus aliases as complete box-shadow v
   --focus-ring-strong: 0 0 0 0.125rem color-mix(in srgb, var(--alpha-neutral-accent) 38%, transparent);
 }
 
-@scope (:where([data-heroui-alpha-surface="true"], [data-heroui-alpha-portal="true"])) {
-  /* @heroui-alpha-scoped-components */
+@scope (:where([data-alpha-surface="true"], [data-alpha-portal="true"])) {
 
   :scope {
     --background: var(--alpha-neutral-background);
@@ -117,7 +120,7 @@ Legacy Board and Chat consumers treat the focus aliases as complete box-shadow v
     --cursor-disabled: not-allowed;
 
     /*
-    FNXC:HeroUIAlphaStatusTheme 2026-09-11-00:51:
+    FNXC:AlphaStatusTheme 2026-09-11-00:51:
     Board and Chat still consume Fusion's legacy surface, status, badge, and focus aliases. Override every visual alias used by those production trees at the Alpha boundary so a `data-color-theme` change cannot recolor real cards, badges, chat states, or portaled menus; semantic hues remain fixed per light/dark palette.
     */
     --bg: var(--alpha-neutral-background);
@@ -190,19 +193,19 @@ Legacy Board and Chat consumers treat the focus aliases as complete box-shadow v
     color: var(--alpha-neutral-foreground);
   }
 
-  [data-heroui-alpha] {
+  [data-alpha-ui] {
     font: inherit;
   }
 }
 
 @media (max-width: 48rem) {
-  [data-heroui-alpha-surface="true"] {
+  [data-alpha-surface="true"] {
     min-inline-size: 0;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :where([data-heroui-alpha-surface="true"], [data-heroui-alpha-portal="true"]) [data-heroui-alpha] {
+  :where([data-alpha-surface="true"], [data-alpha-portal="true"]) [data-alpha-ui] {
     transition-duration: var(--duration-instant);
   }
 }

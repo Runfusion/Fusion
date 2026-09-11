@@ -260,7 +260,7 @@ FN-8355 requires the portaled list to remain the touch-scroll owner after filter
 }
 
 /*
-FNXC:HeroUIAlphaCollections 2026-09-10-20:43:
+FNXC:AlphaCollections 2026-09-10-20:43:
 Alpha's complete model list precedes a labelled auxiliary-action rail. Each full-width row visibly aligns its provider or model name with the related controls, and the sibling rail gives keyboard users predictable forward and reverse Tab transitions.
 */
 .model-combobox-list--alpha,

@@ -1,20 +1,20 @@
-import "../../hero-ui-alpha.css";
+import "../../alpha-ui.css";
 import "../QuickEntryBox.css";
 import { createPortal } from "react-dom";
 import { useState } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { HeroUIAlphaProvider, HeroUIAlphaSurface } from "../../context/HeroUIAlphaContext";
+import { AlphaProvider, AlphaBoundary } from "../../context/AlphaContext";
 import { listComponentFiles, readAppFile } from "../../test/cssFixture";
-import { AlphaButton, AlphaDialog, AlphaInput, AlphaListBox, AlphaListBoxItem, AlphaMenu, AlphaMenuItem, AlphaPortalSurface } from "../hero-ui";
+import { AlphaButton, AlphaDialog, AlphaInput, AlphaListBox, AlphaListBoxItem, AlphaMenu, AlphaMenuItem, AlphaPortalSurface } from "../alpha-ui";
 
 function Fixture({ enabled }: { enabled: boolean }) {
   const [draft, setDraft] = useState("retained draft");
   return (
-    <HeroUIAlphaProvider enabled={enabled}>
+    <AlphaProvider enabled={enabled}>
       <AlphaButton data-testid="outside">Stable screen</AlphaButton>
-      <HeroUIAlphaSurface>
+      <AlphaBoundary>
         <AlphaInput
           aria-label="Message"
           value={draft}
@@ -25,12 +25,12 @@ function Fixture({ enabled }: { enabled: boolean }) {
         <AlphaMenu aria-label="Actions"><AlphaMenuItem id="open">Open</AlphaMenuItem></AlphaMenu>
         <AlphaDialog labelledBy="alpha-dialog-title"><h2 id="alpha-dialog-title">Alpha dialog</h2></AlphaDialog>
         {createPortal(<AlphaPortalSurface data-testid="portal-surface"><AlphaButton className="quick-entry-toggle" data-testid="portal">Portal action</AlphaButton></AlphaPortalSurface>, document.body)}
-      </HeroUIAlphaSurface>
-    </HeroUIAlphaProvider>
+      </AlphaBoundary>
+    </AlphaProvider>
   );
 }
 
-describe("HeroUI Alpha surface boundary", () => {
+describe("homemade Alpha surface boundary", () => {
   afterEach(() => {
     document.documentElement.removeAttribute("data-theme");
     document.documentElement.removeAttribute("data-color-theme");
@@ -38,27 +38,27 @@ describe("HeroUI Alpha surface boundary", () => {
 
   it("switches Board/Chat primitives without leaking to an outside screen", () => {
     const view = render(<Fixture enabled={false} />);
-    expect(screen.getByTestId("outside")).not.toHaveAttribute("data-heroui-alpha");
-    expect(screen.getByTestId("disabled")).not.toHaveAttribute("data-heroui-alpha");
+    expect(screen.getByTestId("outside")).not.toHaveAttribute("data-alpha-ui");
+    expect(screen.getByTestId("disabled")).not.toHaveAttribute("data-alpha-ui");
 
     fireEvent.change(screen.getByLabelText("Message"), { target: { value: "draft survives" } });
     view.rerender(<Fixture enabled />);
 
     expect(screen.getByLabelText("Message")).toHaveValue("draft survives");
-    expect(screen.getByLabelText("Message")).toHaveAttribute("data-heroui-alpha", "input");
+    expect(screen.getByLabelText("Message")).toHaveAttribute("data-alpha-ui", "input");
     expect(screen.getByTestId("disabled")).toBeDisabled();
-    expect(screen.getByTestId("disabled")).toHaveAttribute("data-heroui-alpha", "button");
-    expect(screen.getByTestId("portal")).toHaveAttribute("data-heroui-alpha", "button");
-    expect(document.querySelector('[data-heroui-alpha="listbox"]')).toHaveAccessibleName("Suggestions");
-    expect(document.querySelector('[data-heroui-alpha="menu"]')).toHaveAccessibleName("Actions");
-    expect(screen.getByRole("dialog", { name: "Alpha dialog" })).toHaveAttribute("data-heroui-alpha", "dialog");
-    expect(screen.getByTestId("portal-surface")).toHaveAttribute("data-heroui-alpha-portal", "true");
-    expect(screen.getByTestId("outside")).not.toHaveAttribute("data-heroui-alpha");
+    expect(screen.getByTestId("disabled")).toHaveAttribute("data-alpha-ui", "button");
+    expect(screen.getByTestId("portal")).toHaveAttribute("data-alpha-ui", "button");
+    expect(document.querySelector('[data-alpha-ui="listbox"]')).toHaveAccessibleName("Suggestions");
+    expect(document.querySelector('[data-alpha-ui="menu"]')).toHaveAccessibleName("Actions");
+    expect(screen.getByRole("dialog", { name: "Alpha dialog" })).toHaveAttribute("data-alpha-ui", "dialog");
+    expect(screen.getByTestId("portal-surface")).toHaveAttribute("data-alpha-portal", "true");
+    expect(screen.getByTestId("outside")).not.toHaveAttribute("data-alpha-ui");
 
     view.rerender(<Fixture enabled={false} />);
     expect(screen.getByLabelText("Message")).toHaveValue("draft survives");
-    expect(screen.getByLabelText("Message")).not.toHaveAttribute("data-heroui-alpha");
-    expect(screen.getByTestId("portal-surface")).not.toHaveAttribute("data-heroui-alpha-portal");
+    expect(screen.getByLabelText("Message")).not.toHaveAttribute("data-alpha-ui");
+    expect(screen.getByTestId("portal-surface")).not.toHaveAttribute("data-alpha-portal");
   });
 
   it("keeps root and portal colors stable across Fusion color themes and distinct across light/dark", () => {
@@ -66,7 +66,7 @@ describe("HeroUI Alpha surface boundary", () => {
     document.documentElement.dataset.colorTheme = "cozy-cartoon";
     render(<Fixture enabled />);
 
-    const surface = document.querySelector<HTMLElement>('[data-heroui-alpha-surface="true"]');
+    const surface = document.querySelector<HTMLElement>('[data-alpha-surface="true"]');
     const portal = screen.getByTestId("portal-surface");
     const palette = (element: Element) => {
       const style = getComputedStyle(element);
@@ -132,15 +132,15 @@ describe("HeroUI Alpha surface boundary", () => {
     const user = userEvent.setup();
     const onAuxiliary = vi.fn();
     render(
-      <HeroUIAlphaProvider enabled>
-        <HeroUIAlphaSurface>
+      <AlphaProvider enabled>
+        <AlphaBoundary>
           <AlphaListBox aria-label="Complex models">
             <AlphaListBoxItem id="model-one" textValue="Model one">Model one</AlphaListBoxItem>
             <AlphaListBoxItem id="model-two" textValue="Model two">Model two</AlphaListBoxItem>
           </AlphaListBox>
           <AlphaButton onClick={onAuxiliary}>Favorite model</AlphaButton>
-        </HeroUIAlphaSurface>
-      </HeroUIAlphaProvider>,
+        </AlphaBoundary>
+      </AlphaProvider>,
     );
 
     const [first, second] = screen.getAllByRole("option");
@@ -188,20 +188,17 @@ describe("HeroUI Alpha surface boundary", () => {
   });
 
   it("keeps theme adaptation scoped and token-only", () => {
-    const css = readAppFile("hero-ui-alpha.css");
+    const css = readAppFile("alpha-ui.css");
     const globalCss = readAppFile("styles.css");
     const viteConfig = readAppFile("../vite.config.ts");
-    expect(css).toContain('[data-heroui-alpha-surface="true"]');
-    expect(css).toContain('[data-heroui-alpha-portal="true"]');
+    expect(css).toContain('[data-alpha-surface="true"]');
+    expect(css).toContain('[data-alpha-portal="true"]');
     expect(css).toContain("@scope");
-    expect(css).toContain("@heroui-alpha-scoped-components");
     expect(globalCss).not.toContain('@import "tailwindcss"');
-    expect(globalCss).not.toContain('@import "@heroui/styles"');
-    expect(viteConfig).toContain("heroUIAlphaScopedStyles()");
-    expect(viteConfig).toContain("tailwindcss()");
-    expect(viteConfig).toContain('components/index.css');
-    expect(css).toContain('@reference "tailwindcss/theme.css"');
-    expect(css).toContain('@reference "@heroui/styles"');
+    expect(css).not.toContain("@reference");
+    expect(css).not.toContain("@source");
+    expect(css).not.toContain("@apply");
+    expect(viteConfig).toContain("react()");
     expect(css).toContain('[data-theme="light"]');
     expect(css).toContain('[data-theme="dark"]');
     expect(css).not.toContain('[data-color-theme');

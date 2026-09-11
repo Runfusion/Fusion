@@ -1,5 +1,5 @@
 import { Mic, MicOff } from "lucide-react";
-import { AlphaButton } from "./hero-ui";
+import { AlphaButton } from "./alpha-ui";
 import { useEffect, useRef, useState, type ComponentProps } from "react";
 import "./MicButton.css";
 

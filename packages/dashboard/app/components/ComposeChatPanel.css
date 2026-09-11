@@ -29,22 +29,22 @@
 }
 
 /*
-FNXC:HeroUIAlphaDensity 2026-09-11-00:30:
+FNXC:AlphaDensity 2026-09-11-00:30:
 Alpha compose panels prioritize the input and keep secondary actions compact rather than stretching them into large blocks. Mobile retains wrapping and accessible height without visually inflating every action to full width.
 */
-[data-heroui-alpha-surface="true"] .compose-chat-panel {
+[data-alpha-surface="true"] .compose-chat-panel {
   gap: var(--alpha-density-2);
   padding: var(--alpha-density-3);
   background: var(--alpha-neutral-surface);
   box-shadow: var(--shadow-sm);
 }
 
-[data-heroui-alpha-surface="true"] .compose-chat-panel__actions {
+[data-alpha-surface="true"] .compose-chat-panel__actions {
   justify-content: flex-end;
   gap: var(--alpha-density-1);
 }
 
-[data-heroui-alpha-surface="true"] .compose-chat-panel__actions > .btn {
+[data-alpha-surface="true"] .compose-chat-panel__actions > .btn {
   min-block-size: var(--alpha-control-height);
   flex: 0 0 auto;
 }
@@ -54,11 +54,11 @@ Alpha compose panels prioritize the input and keep secondary actions compact rat
     flex: 1 1 auto;
   }
 
-  [data-heroui-alpha-surface="true"] .compose-chat-panel {
+  [data-alpha-surface="true"] .compose-chat-panel {
     padding: var(--alpha-density-2);
   }
 
-  [data-heroui-alpha-surface="true"] .compose-chat-panel__actions > .btn {
+  [data-alpha-surface="true"] .compose-chat-panel__actions > .btn {
     min-block-size: var(--alpha-touch-height);
     flex: 0 1 auto;
   }

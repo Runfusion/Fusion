@@ -1,5 +1,5 @@
 import "./TaskResetDialog.css";
-import { AlphaButton, AlphaDialog, AlphaTextArea } from "./hero-ui";
+import { AlphaButton, AlphaDialog, AlphaTextArea } from "./alpha-ui";
 
 import { getErrorMessage } from "@fusion/core";
 import { useRef, useState } from "react";

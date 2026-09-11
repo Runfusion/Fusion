@@ -1,6 +1,6 @@
 import "./WorkflowSwitcher.css";
-import { AlphaButton, AlphaListBox, AlphaListBoxItem, AlphaPopoverSurface } from "./hero-ui";
-import { useHeroUIAlpha } from "../context/HeroUIAlphaContext";
+import { AlphaButton, AlphaListBox, AlphaListBoxItem, AlphaPopoverSurface } from "./alpha-ui";
+import { useAlphaSurface } from "../context/AlphaContext";
 
 import { ChevronDown, Pencil, Plus } from "lucide-react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
@@ -95,7 +95,7 @@ function getWorkflowIconValue(workflow: WorkflowSwitcherAggregateOption | BoardW
  */
 export function WorkflowSwitcher({ workflows, value, onChange, counts, aggregateOption, onOpen, label: labelProp, onEditWorkflow, onCreateWorkflow }: WorkflowSwitcherProps) {
   const { t } = useTranslation("app");
-  const heroUIAlpha = useHeroUIAlpha();
+  const alphaSurface = useAlphaSurface();
   const label = labelProp ?? t("workflowSwitcher.label", "Workflow");
   const planLabel = t("workflowSwitcher.plan", "Plan");
   const progressLabel = t("workflowSwitcher.progress", "Progress");
@@ -337,15 +337,15 @@ export function WorkflowSwitcher({ workflows, value, onChange, counts, aggregate
           maxHeight: dropdownPosition.maxHeight,
         }}
       >
-        {heroUIAlpha ? (
+        {alphaSurface ? (
           <div
             ref={listRef}
             className="workflow-switcher-options workflow-switcher-options--alpha"
             style={{ width: dropdownPosition.width, maxHeight: dropdownPosition.maxHeight }}
           >
             {/*
-            FNXC:HeroUIAlphaCollections 2026-09-10-20:30:
-            Alpha exposes every workflow as one HeroUI listbox so native arrow navigation crosses rows. Edit actions stay in a sibling rail, outside every option, and remain reachable by Tab without creating nested interactive options.
+            FNXC:AlphaCollections 2026-09-10-20:30:
+            Alpha exposes every workflow as one homemade Alpha listbox so native arrow navigation crosses rows. Edit actions stay in a sibling rail, outside every option, and remain reachable by Tab without creating nested interactive options.
             */}
             <AlphaListBox aria-label={label} className="workflow-switcher-option-collection">
               {switcherOptions.map((workflow, index) => {

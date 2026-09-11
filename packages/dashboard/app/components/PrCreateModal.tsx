@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties } from "react";
-import { AlphaButton, AlphaDialogPanel, AlphaInput, AlphaSelect, AlphaSurface, AlphaTextArea } from "./hero-ui";
+import { AlphaButton, AlphaDialogPanel, AlphaInput, AlphaSelect, AlphaSurface, AlphaTextArea } from "./alpha-ui";
 import ReactMarkdown from "react-markdown";
 import { useTranslation } from "react-i18next";
 import { AlertTriangle, CheckCircle2, RefreshCw, Sparkles, X, XCircle } from "lucide-react";
