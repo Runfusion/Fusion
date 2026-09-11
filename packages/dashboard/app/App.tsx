@@ -1113,8 +1113,8 @@ function AppInner() {
   */
   const alphaSharedModalDrawerOpen = alphaMobileDrawerActive && Boolean(modalManager.usageOpen || modalManager.detailTask);
   /*
-  FNXC:AlphaUpdates 2026-09-09-22:14:
-  App owns the Alpha popover's accessible open state so the Header trigger and MobileNavBar surface cannot drift. Any shell boundary that removes either endpoint closes the transient menu; the legacy More drawer remains MobileNavBar-owned.
+  FNXC:AlphaUpdates 2026-09-11-15:01:
+  App remains the sole owner of the Alpha popover's accessible open state while MobileNavBar owns both its trailing pill trigger and canonical menu surface. Any shell boundary that removes the pill closes this transient menu; the legacy More drawer remains MobileNavBar-owned.
   */
   useEffect(() => {
     setAlphaMenuOpen(false);
@@ -2066,8 +2066,6 @@ function AppInner() {
         projectId={currentProject?.id}
         mobileNavEnabled={isMobile}
         alphaUpdatesEnabled={alphaUpdatesEnabled}
-        alphaMenuOpen={alphaMenuOpen}
-        onOpenAlphaMenu={() => setAlphaMenuOpen((open) => !open)}
         leftSidebarNavActive={sidebarActive}
         rightDockAvailable={rightDockActive}
         rightDockOpen={rightDock.open}

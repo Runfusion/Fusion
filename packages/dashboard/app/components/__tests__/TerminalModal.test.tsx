@@ -4950,7 +4950,7 @@ describe("TerminalModal — mobile layout contract", () => {
     }
   });
 
-  it("remplace la croix par la poignée de drag dans le terminal Alpha mobile", async () => {
+  it("ferme le terminal Alpha depuis le corps au bord haut et préserve son scroll", async () => {
     const previousInnerWidth = window.innerWidth;
     Object.defineProperty(window, "innerWidth", { value: 390, configurable: true });
     document.documentElement.dataset.alphaMobileDrawers = "true";
@@ -4959,11 +4959,20 @@ describe("TerminalModal — mobile layout contract", () => {
       render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
       await waitFor(() => expect(screen.getByTestId("terminal-drawer-handle")).toBeInTheDocument());
       expect(screen.queryByTestId("terminal-close-btn")).toBeNull();
-      const handle = screen.getByTestId("terminal-drawer-handle");
-      fireEvent.pointerDown(handle, { pointerId: 1, clientY: 0, button: 0, isPrimary: true });
-      fireEvent.pointerMove(handle, { pointerId: 1, clientY: 200 });
-      fireEvent.pointerUp(handle, { pointerId: 1, clientY: 200 });
+      const modal = screen.getByTestId("terminal-modal");
+      fireEvent.pointerDown(modal, { pointerId: 1, clientY: 0, button: 0, isPrimary: true });
+      fireEvent.pointerMove(modal, { pointerId: 1, clientY: 200 });
+      await waitFor(() => expect(modal.style.transform).toContain("200px"));
+      fireEvent.pointerUp(modal, { pointerId: 1, clientY: 200 });
       expect(mockOnClose).toHaveBeenCalledTimes(1);
+
+      mockOnClose.mockClear();
+      modal.scrollTop = 10;
+      fireEvent.pointerDown(modal, { pointerId: 2, clientY: 0, button: 0, isPrimary: true });
+      fireEvent.pointerMove(modal, { pointerId: 2, clientY: 200 });
+      fireEvent.pointerUp(modal, { pointerId: 2, clientY: 200 });
+      expect(mockOnClose).not.toHaveBeenCalled();
+      expect(modal.style.transform).toBe("");
     } finally {
       delete document.documentElement.dataset.alphaMobileDrawers;
       Object.defineProperty(window, "innerWidth", { value: previousInnerWidth, configurable: true });

@@ -110,9 +110,10 @@ describe("mobile bottom-space layout invariant", () => {
     expect(navRule).toContain("z-index: 45");
     expect(extractRuleBlock(css, ":root")).toContain("--z-popover: 60");
     expect(alphaContentRule).toContain("var(--mobile-nav-height) + var(--mobile-nav-alpha-system-offset)");
-    expect(alphaBoardRule).toContain("padding-block-end: 0");
+    expect(alphaBoardRule).toContain("padding-block-end: var(--space-xs)");
     expect(alphaBoardRule).not.toContain("--mobile-nav-height");
     expect(alphaBoardRule).not.toContain("--mobile-nav-alpha-system-offset");
+    expect(alphaBoardRule).not.toContain("env(safe-area-inset-bottom");
     expect(css.match(/--mobile-nav-height:\s*44px/g)).toHaveLength(1);
   });
 

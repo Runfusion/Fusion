@@ -162,7 +162,8 @@ describe("Mobile Feature Access Regression Guard", () => {
 
     expect(screen.queryByTestId("mobile-nav-tab-tasks")).toBeNull();
     expect(screen.queryByTestId("mobile-more-item-tasks")).toBeNull();
-    expect(document.querySelectorAll(".mobile-nav-bar > .mobile-nav-tab")).toHaveLength(4);
+    expect(document.querySelectorAll(".mobile-nav-bar--alpha > .mobile-nav-tab")).toHaveLength(4);
+    expect(document.querySelector(".mobile-nav-bar--alpha")?.lastElementChild).toBe(screen.getByTestId("alpha-mobile-menu-trigger"));
 
     rerender(<MobileNavBar {...props} mobileNavPrimaryItems={["tasks", "tasks", "not-a-destination"]} />);
     expect(screen.getByTestId("mobile-nav-tab-tasks")).toBeInTheDocument();

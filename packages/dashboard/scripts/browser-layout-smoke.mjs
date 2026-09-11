@@ -425,10 +425,11 @@ export function createSmokeHtml(options = {}) {
         </main>
       </div>
       <nav class="mobile-nav-bar mobile-nav-bar--alpha" data-smoke="alpha-pill" aria-label="Alpha primary navigation">
-        <button class="mobile-nav-tab mobile-nav-tab--active" type="button"><span class="mobile-nav-tab-label">Board</span></button>
-        <button class="mobile-nav-tab" type="button"><span class="mobile-nav-tab-label">Planning</span></button>
-        <button class="mobile-nav-tab" type="button"><span class="mobile-nav-tab-label">Chat</span></button>
-        <button class="mobile-nav-tab" type="button"><span class="mobile-nav-tab-label">Mailbox</span></button>
+        <button class="mobile-nav-tab mobile-nav-tab--active" type="button">Dashboard</button>
+        <button class="mobile-nav-tab" type="button">Planning</button>
+        <button class="mobile-nav-tab" type="button">Chat</button>
+        <button class="mobile-nav-tab" type="button">Mailbox</button>
+        <button class="alpha-mobile-menu-trigger" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="alpha-mobile-navigation-popover">Menu</button>
       </nav>
     </section>`;
 
@@ -1644,6 +1645,8 @@ async function runSmokeChecks(page, pageUrl) {
       columnBottoms: columns.map((column) => column.bottom),
       columnHeights: columns.map((column) => column.height),
       boardPaddingBottom: Number.parseFloat(getComputedStyle(board).paddingBottom),
+      maximumGap: Number.parseFloat(getComputedStyle(root).getPropertyValue('--space-xs')),
+      controlOrder: [...pill.children].map((child) => child.className),
       documentOverflowX: document.documentElement.scrollWidth - window.innerWidth,
       fixtureOverflowY: fixture.scrollHeight - fixture.clientHeight,
     };
@@ -1735,12 +1738,15 @@ async function runSmokeChecks(page, pageUrl) {
     for (const state of ["skeleton", "empty", "populated"]) {
       const layout = await collectAlphaBoardLayout(state, systemOffset);
       assertSmokeResult(
-        `Alpha Board ${state} columns meet the floating pill in ${name}`,
+        `Alpha Board ${state} columns nearly meet the floating pill in ${name}`,
         layout.columnBottoms.length > 0
           && layout.columnHeights.every((columnHeight) => columnHeight > 0)
-          && layout.columnBottoms.every((bottom) => Math.abs(bottom - layout.pillTop) <= 1)
+          && layout.columnBottoms.every((bottom) => layout.pillTop - bottom >= 0 && layout.pillTop - bottom <= layout.maximumGap + 1)
           && Math.abs(layout.boardBottom - layout.pillTop) <= 1
-          && layout.boardPaddingBottom === 0
+          && layout.boardPaddingBottom > 0
+          && layout.boardPaddingBottom <= layout.maximumGap
+          && layout.controlOrder.length === 5
+          && layout.controlOrder.at(-1) === 'alpha-mobile-menu-trigger'
           && layout.documentOverflowX <= 1
           && layout.fixtureOverflowY <= 1,
         JSON.stringify(layout),

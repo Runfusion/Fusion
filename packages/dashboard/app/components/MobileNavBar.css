@@ -163,7 +163,7 @@ Wrap every tab icon in the same token-sized icon slot and keep unread/pending do
 
 /*
 FNXC:AlphaUpdates 2026-09-10-03:16:
-The Alpha four-destination pill stays visually overlaid but must never obscure the final content or system gesture area. Its bottom position uses one shared safe-area/standalone/ICB formula, while the scroller reserves the measured pill border box plus that placement exactly once; tablet and desktop suppress the mobile-only reserve.
+The Alpha pill stays visually overlaid but must never obscure the final content or system gesture area. Its four destinations remain the only tablist children and the trailing hamburger is an equally sized semantic sibling; the scroller reserves the measured pill border box plus its shared system placement exactly once.
 */
 .mobile-nav-bar--alpha {
   --mobile-nav-floating-gap: var(--space-sm);
@@ -193,10 +193,33 @@ html:is([data-viewport-mode="tablet"], [data-viewport-mode="desktop"]) .project-
   padding-bottom: 0;
 }
 
-.mobile-nav-bar--alpha .mobile-nav-tab {
+.mobile-nav-bar--alpha .mobile-nav-tab,
+.mobile-nav-bar--alpha .alpha-mobile-menu-trigger {
+  flex: 1 1 0;
+  min-width: 0;
   min-height: var(--touch-target-min-size);
   padding: 0;
+  border: 0;
   border-radius: var(--radius-xl);
+  background: none;
+  color: var(--text-muted);
+}
+
+.mobile-nav-bar--alpha .alpha-mobile-menu-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.mobile-nav-bar--alpha .alpha-mobile-menu-trigger[aria-expanded="true"] {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.mobile-nav-bar--alpha .alpha-mobile-menu-trigger svg {
+  width: var(--mobile-nav-icon-size);
+  height: var(--mobile-nav-icon-size);
 }
 
 .mobile-nav-tab:active {

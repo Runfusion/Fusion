@@ -20,6 +20,7 @@ import {
   Mail,
   MessageSquare,
   MoreHorizontal,
+  Menu,
   PanelsTopLeft,
   Play,
   Settings,
@@ -141,7 +142,7 @@ export interface MobileNavBarProps {
   shellConnectionControl?: ReactNode;
   /** Ordered quick-action tabs; invalid values resolve to the safe default. */
   mobileNavPrimaryItems?: string[];
-  /** Enables the fixed four-destination Alpha pill and header-owned overflow trigger. */
+  /** Enables the fixed four-destination Alpha pill and its trailing overflow trigger. */
   alphaUpdatesEnabled?: boolean;
   /** App-owned open state for the Alpha navigation popover. */
   alphaMenuOpen?: boolean;
@@ -224,11 +225,12 @@ export function MobileNavBar({
   } | null>(null);
   const dragOffsetRef = useRef(0);
   const menuSurfaceRef = useRef<HTMLDivElement | null>(null);
+  const menuTriggerRef = useRef<HTMLButtonElement | null>(null);
   const isMenuOpen = alphaUpdatesEnabled ? alphaMenuOpen : isMoreOpen;
 
   /*
-  FNXC:AlphaUpdates 2026-09-09-22:14:
-  Alpha uses a controlled header-anchored popover while standard mobile keeps its local drawer state and gesture lifecycle. Shell identity changes close both transient surfaces without coupling which controller owns their next open.
+  FNXC:AlphaUpdates 2026-09-11-15:01:
+  Alpha keeps its popover state controlled by App while the sole trigger is the trailing sibling of the pill's four-destination tablist. Standard mobile keeps its local More drawer; shell identity changes close either transient surface without creating another state owner.
   */
   useEffect(() => {
     setIsMoreOpen(false);
@@ -276,6 +278,7 @@ export function MobileNavBar({
     setHasSheetDragged(false);
     if (alphaUpdatesEnabled) {
       onAlphaMenuOpenChange?.(false);
+      menuTriggerRef.current?.focus();
     } else {
       setIsMoreOpen(false);
     }
@@ -390,8 +393,8 @@ export function MobileNavBar({
       if (event.key === "Escape") dismissMore();
     };
     /*
-    FNXC:AlphaUpdates 2026-09-09-22:40:
-    The Alpha hamburger owns its toggle click. Its preceding pointerdown is inside the popover boundary even though the trigger lives in Header, so outside dismissal must not close and immediately let that click reopen the menu.
+    FNXC:AlphaUpdates 2026-09-11-15:01:
+    The trailing pill hamburger owns its toggle click and remains inside the popover boundary. Escape, Back, and outside dismissal keep the canonical menu lifecycle while non-navigation closes restore focus to this sole trigger.
     */
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target instanceof Element ? event.target : null;
@@ -564,7 +567,7 @@ export function MobileNavBar({
     const destination = destinationRegistry[item];
     const isPrimary = surface === "primary";
     const label = t(destination.labelKey, destination.fallback);
-    if (isPrimary) return <button key={item} type="button" className={`mobile-nav-tab${destination.isActive ? " mobile-nav-tab--active" : ""}`} data-testid={`mobile-nav-tab-${item}`} role="tab" aria-label={label} aria-selected={destination.isActive} onClick={() => destination.navigate("primary")}><span className="mobile-nav-tab-icon-wrapper">{destination.icon}{destination.indicator && <span className="status-dot status-dot--pending mobile-nav-chat-unread-dot" aria-label={destination.indicatorLabel} />}</span>{!alphaUpdatesEnabled && <span className="mobile-nav-tab-label">{label}</span>}{destination.badge && destination.badge > 0 ? <span className="mobile-nav-tab-badge" aria-label={destination.badgeLabel}>{formatCount(destination.badge)}</span> : null}{destination.alpha ? <span className="mobile-nav-tab-badge">{t("common.alpha", "Alpha")}</span> : null}</button>;
+    if (isPrimary) return <button key={item} type="button" className={`mobile-nav-tab${destination.isActive ? " mobile-nav-tab--active" : ""}`} data-testid={`mobile-nav-tab-${item}`} role={alphaUpdatesEnabled ? undefined : "tab"} aria-label={label} aria-current={alphaUpdatesEnabled && destination.isActive ? "page" : undefined} aria-selected={alphaUpdatesEnabled ? undefined : destination.isActive} onClick={() => destination.navigate("primary")}><span className="mobile-nav-tab-icon-wrapper">{destination.icon}{destination.indicator && <span className="status-dot status-dot--pending mobile-nav-chat-unread-dot" aria-label={destination.indicatorLabel} />}</span>{!alphaUpdatesEnabled && <span className="mobile-nav-tab-label">{label}</span>}{destination.badge && destination.badge > 0 ? <span className="mobile-nav-tab-badge" aria-label={destination.badgeLabel}>{formatCount(destination.badge)}</span> : null}{destination.alpha ? <span className="mobile-nav-tab-badge">{t("common.alpha", "Alpha")}</span> : null}</button>;
     return <button key={item} type="button" className="mobile-more-item" data-testid={destination.moreTestId} onClick={() => destination.navigate("more")}><span className="mobile-more-item-icon-wrapper">{destination.icon}{destination.indicator && <span className="status-dot status-dot--pending mobile-more-item-icon-dot" aria-label={destination.indicatorLabel} />}</span><span>{label}</span>{destination.badge && destination.badge > 0 ? <span className="mobile-more-item-badge" aria-label={destination.badgeLabel}>{formatCount(destination.badge)}</span> : null}{destination.alpha ? <span className="mobile-more-item-badge">{t("common.alpha", "Alpha")}</span> : null}</button>;
   };
 
@@ -573,7 +576,7 @@ export function MobileNavBar({
       <nav
         ref={navRef}
         className={`mobile-nav-bar${alphaUpdatesEnabled ? " mobile-nav-bar--alpha" : ""}${footerVisible ? " mobile-nav-bar--with-footer" : ""}${keyboardOpen ? " mobile-nav-bar--keyboard-open" : ""}`}
-        role="tablist"
+        role={alphaUpdatesEnabled ? "navigation" : "tablist"}
         aria-label={t("nav.primaryNavAriaLabel", "Primary navigation")}
       >
         {effectivePrimaryItems.map((item) => renderSelectableItem(item, "primary"))}
@@ -609,6 +612,26 @@ export function MobileNavBar({
             </button>
           );
         })}
+
+        {alphaUpdatesEnabled && (
+          <button
+            ref={menuTriggerRef}
+            className="alpha-mobile-menu-trigger"
+            type="button"
+            onClick={() => {
+              if (alphaMenuOpen) dismissMore();
+              else onAlphaMenuOpenChange?.(true);
+            }}
+            title={t("nav.openMenu", "Open navigation menu")}
+            aria-label={t("nav.openMenu", "Open navigation menu")}
+            aria-haspopup="menu"
+            aria-expanded={alphaMenuOpen}
+            aria-controls="alpha-mobile-navigation-popover"
+            data-testid="alpha-mobile-menu-trigger"
+          >
+            <Menu />
+          </button>
+        )}
 
         {!alphaUpdatesEnabled && <button
           type="button"

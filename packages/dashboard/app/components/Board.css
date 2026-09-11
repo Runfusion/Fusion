@@ -120,11 +120,11 @@ Alpha Board uses the boundary density scale for restrained column spacing and qu
   }
 
   /*
-  FNXC:AlphaBoardPillGeometry 2026-09-11-01:40:
-  The project-content flex box already ends at the measured top edge of the floating Alpha pill. Remove only the Board's trailing block padding so skeleton, empty, and populated columns reach that edge; inline and leading density remain unchanged and the pill/system reserve is never counted twice.
+  FNXC:AlphaBoardPillGeometry 2026-09-11-15:01:
+  The project-content flex box ends at the measured top edge of the floating Alpha pill. Keep only one extra-small token of visual separation inside the Board so skeleton, empty, and populated columns nearly meet the pill without overlap; the shared shell remains the sole owner of pill/system clearance.
   */
   html[data-viewport-mode="mobile"] [data-heroui-alpha-surface="true"] .project-content--with-alpha-nav :is(.board.board-workflow-columns, .board.board-workflows-skeleton) {
-    padding-block-end: 0;
+    padding-block-end: var(--space-xs);
   }
 
   .board.board-workflows-skeleton {

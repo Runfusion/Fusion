@@ -809,7 +809,14 @@ export function FloatingWindow({
         style={panelStyle}
         data-testid={`floating-window-${windowKey}`}
         onPointerDownCapture={bringToFront}
-        onPointerDown={handlePanelPointerDown}
+        onPointerDown={(event) => {
+          if (alphaMobileDrawer) dismissHandleProps.onPointerDown(event);
+          else handlePanelPointerDown(event);
+        }}
+        onPointerMove={alphaMobileDrawer ? dismissHandleProps.onPointerMove : undefined}
+        onPointerUp={alphaMobileDrawer ? dismissHandleProps.onPointerUp : undefined}
+        onPointerCancel={alphaMobileDrawer ? dismissHandleProps.onPointerCancel : undefined}
+        onLostPointerCapture={alphaMobileDrawer ? dismissHandleProps.onLostPointerCapture : undefined}
         onFocusCapture={bringToFront}
         tabIndex={effectiveModal ? -1 : undefined}
       >
@@ -820,7 +827,7 @@ export function FloatingWindow({
         expose no floating-window affordance or touch gesture surface.
         */}
         {alphaMobileDrawer && (
-          <div className="floating-window__drawer-handle-target" aria-hidden="true" {...dismissHandleProps}>
+          <div className="floating-window__drawer-handle-target" aria-hidden="true">
             <span className="floating-window__drawer-handle" />
           </div>
         )}

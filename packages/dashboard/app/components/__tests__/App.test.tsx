@@ -1331,6 +1331,7 @@ describe("Alpha Updates production wiring", () => {
     });
     document.documentElement.dataset.viewportMode = "mobile";
     document.documentElement.style.setProperty("--mobile-nav-alpha-system-offset", `${layout.systemOffset}px`);
+    document.documentElement.style.setProperty("--space-xs", "4px");
     const productionStyle = installProductionAlphaReserveRule();
     const nativeGetComputedStyle = window.getComputedStyle.bind(window);
     const offsetHeight = vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function () {
@@ -1373,7 +1374,7 @@ describe("Alpha Updates production wiring", () => {
       expect(productionPadding).toContain("var(--mobile-nav-height)");
       expect(productionPadding).toContain("var(--mobile-nav-alpha-system-offset)");
       const reserve = resolvePixelCalcFromRoot(productionPadding);
-      expect(Number.parseFloat(nativeGetComputedStyle(board!).paddingBlockEnd)).toBe(0);
+      expect(productionStyle.textContent).toContain("padding-block-end: var(--space-xs)");
       let scrollTop = 0;
       Object.defineProperties(scroller!, {
         clientHeight: { configurable: true, value: layout.viewportHeight },
@@ -1428,7 +1429,107 @@ describe("Alpha Updates production wiring", () => {
       computedStyle.mockRestore();
       document.documentElement.style.removeProperty("--mobile-nav-alpha-system-offset");
       document.documentElement.style.removeProperty("--mobile-nav-height");
+      document.documentElement.style.removeProperty("--space-xs");
       delete document.documentElement.dataset.viewportMode;
+    }
+  });
+
+  it.each([
+    ["skeleton", "board-workflows-skeleton", "board-workflows-skeleton"],
+    ["sans workflow", "board-workflows-skeleton", "board-workflows-empty"],
+    ["colonnes vides", "board-workflow-columns", null],
+    ["colonnes peuplées", "board-workflow-columns", null],
+  ] as const)("mesure le gap colonne/pill du Board de production avec %s", async (boardState, boardClass, expectedBoardTestId) => {
+    sessionStorage.clear();
+    mockUseViewportMode.mockReturnValue("mobile");
+    vi.mocked(fetchSettings).mockResolvedValue({
+      ...defaultSettings,
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates: true },
+    });
+    if (boardState === "skeleton") {
+      vi.mocked(fetchBoardWorkflows).mockImplementation(() => new Promise(() => {}));
+    } else if (boardState === "sans workflow") {
+      vi.mocked(fetchBoardWorkflows).mockResolvedValue({ ...DEFAULT_BOARD_WORKFLOWS, defaultWorkflowId: "", workflows: [] });
+    } else if (boardState === "colonnes peuplées") {
+      const emptyResult = mockUseTasks();
+      mockUseTasks.mockReturnValue({
+        ...emptyResult,
+        tasks: [{ id: "FN-345", title: "Board mobile", description: "x", status: "in-progress", column: "in-progress", dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "", updatedAt: "" }],
+      });
+    }
+
+    const viewportHeight = 640;
+    const systemOffset = 46;
+    const allowedGap = 4;
+    document.documentElement.dataset.viewportMode = "mobile";
+    document.documentElement.style.setProperty("--mobile-nav-alpha-system-offset", `${systemOffset}px`);
+    document.documentElement.style.setProperty("--space-xs", `${allowedGap}px`);
+    const productionStyle = installProductionAlphaReserveRule();
+    const nativeGetComputedStyle = window.getComputedStyle.bind(window);
+    const offsetHeight = vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function () {
+      return this.classList.contains("mobile-nav-bar") ? 54 : 0;
+    });
+    const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function () {
+      const height = this.classList.contains("mobile-nav-tab") ? 44 : 0;
+      return { x: 0, y: 0, top: 0, right: 0, bottom: height, left: 0, width: 0, height, toJSON: () => ({}) };
+    });
+    const computedStyle = vi.spyOn(window, "getComputedStyle").mockImplementation((element) => {
+      if ((element as HTMLElement).classList?.contains("mobile-nav-bar")) {
+        return {
+          paddingBottom: "0px",
+          getPropertyValue: (property: string) => property === "--mobile-nav-floating-gap" ? "8px" : "",
+        } as CSSStyleDeclaration;
+      }
+      return nativeGetComputedStyle(element);
+    });
+
+    try {
+      render(<App />);
+      const pill = await waitFor(() => {
+        const candidate = document.querySelector<HTMLElement>(".mobile-nav-bar--alpha");
+        expect(candidate).not.toBeNull();
+        expect(document.documentElement.style.getPropertyValue("--mobile-nav-height")).toBe("62px");
+        return candidate!;
+      });
+      if (expectedBoardTestId) await screen.findByTestId(expectedBoardTestId);
+      const board = await waitFor(() => {
+        const candidate = document.querySelector<HTMLElement>(`.board.${boardClass}`);
+        expect(candidate).not.toBeNull();
+        return candidate!;
+      });
+      const columns = Array.from(board.querySelectorAll<HTMLElement>(boardClass === "board-workflows-skeleton" ? ".board-workflows-skeleton__column" : ":scope > .column"));
+      expect(columns.length).toBeGreaterThan(0);
+      if (boardState === "colonnes vides") expect(screen.queryByText("Board mobile")).toBeNull();
+      if (boardState === "colonnes peuplées") expect(screen.getByText("Board mobile")).toBeInTheDocument();
+
+      const scroller = screen.getByTestId("dashboard-project-shell").querySelector<HTMLElement>(".project-content");
+      expect(scroller).not.toBeNull();
+      expect(scroller).toHaveClass("project-content--with-alpha-nav");
+      const reserve = resolvePixelCalcFromRoot(nativeGetComputedStyle(scroller!).paddingBottom);
+      const boardSelector = 'html[data-viewport-mode="mobile"] [data-heroui-alpha-surface="true"] .project-content--with-alpha-nav :is(.board.board-workflow-columns, .board.board-workflows-skeleton)';
+      const boardPadding = resolvePixelCalcFromRoot(extractProductionDeclaration(extractProductionRule(readAppFile("components/Board.css"), boardSelector), "padding-block-end"));
+      const pillTop = viewportHeight - systemOffset - 8 - 54;
+      const columnBottom = viewportHeight - reserve - boardPadding;
+      pill.getBoundingClientRect = () => ({ x: 0, y: pillTop, top: pillTop, right: 360, bottom: pillTop + 54, left: 0, width: 360, height: 54, toJSON: () => ({}) });
+      for (const column of columns) {
+        column.getBoundingClientRect = () => ({ x: 0, y: 0, top: 0, right: 300, bottom: columnBottom, left: 0, width: 300, height: columnBottom, toJSON: () => ({}) });
+      }
+
+      for (const column of columns) {
+        const gap = pill.getBoundingClientRect().top - column.getBoundingClientRect().bottom;
+        expect(gap).toBeGreaterThanOrEqual(0);
+        expect(gap).toBeLessThanOrEqual(allowedGap);
+      }
+    } finally {
+      productionStyle.remove();
+      offsetHeight.mockRestore();
+      rect.mockRestore();
+      computedStyle.mockRestore();
+      document.documentElement.style.removeProperty("--mobile-nav-alpha-system-offset");
+      document.documentElement.style.removeProperty("--mobile-nav-height");
+      document.documentElement.style.removeProperty("--space-xs");
+      delete document.documentElement.dataset.viewportMode;
+      sessionStorage.clear();
     }
   });
 
@@ -1656,13 +1757,15 @@ describe("Alpha Updates production wiring", () => {
     expect(screen.getByTestId("dashboard-project-shell").querySelector(".project-content")).toHaveClass("project-content--with-alpha-nav");
     expect(screen.getByTestId("dashboard-project-shell").querySelector(".project-content")).not.toHaveClass("project-content--with-mobile-nav");
     expect(screen.queryByTestId("mobile-nav-tab-more")).toBeNull();
-    expect(Array.from(document.querySelectorAll<HTMLElement>(".mobile-nav-bar > .mobile-nav-tab")).map((tab) => tab.dataset.testid)).toEqual([
+    expect(Array.from(document.querySelectorAll<HTMLElement>(".mobile-nav-bar--alpha > .mobile-nav-tab")).map((tab) => tab.dataset.testid)).toEqual([
       "mobile-nav-tab-command-center",
       "mobile-nav-tab-planning",
       "mobile-nav-tab-chat",
       "mobile-nav-tab-mailbox",
     ]);
     expect(screen.queryByTestId("mobile-nav-tab-tasks")).toBeNull();
+    expect(document.querySelector(".mobile-nav-bar--alpha")?.lastElementChild).toBe(screen.getByTestId("alpha-mobile-menu-trigger"));
+    expect(screen.queryByTestId("alpha-mobile-menu-trigger")?.closest("header")).toBeNull();
 
     vi.mocked(fetchSettings).mockResolvedValue(legacySettings);
     const alphaTrigger = screen.getByTestId("alpha-mobile-menu-trigger");

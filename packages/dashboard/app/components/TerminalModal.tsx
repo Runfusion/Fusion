@@ -2721,9 +2721,10 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
       style={modalStyle}
       role={isBelowMode ? "region" : undefined}
       aria-label={isBelowMode ? t("terminal.belowRegion", "Pinned terminal") : undefined}
+      {...(alphaMobileDrawer ? dismissHandleProps : {})}
     >
         {alphaMobileDrawer && (
-          <div className="terminal-drawer-handle-target" data-testid="terminal-drawer-handle" aria-hidden="true" {...dismissHandleProps}>
+          <div className="terminal-drawer-handle-target" data-testid="terminal-drawer-handle" aria-hidden="true">
             <span className="terminal-drawer-handle" />
           </div>
         )}

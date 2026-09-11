@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { Settings, LayoutGrid, List, Search, Activity, MoreHorizontal, Menu, Clock, Folder, History, GitBranch, Monitor, Workflow, Bot, Target, Grid3X3, Mail, MessageSquare, Check, Zap, Sparkles, Brain, Lock, Gauge, Lightbulb, PanelsTopLeft, ChevronDown, ChevronRight, PanelRight, Plus, Star } from "lucide-react";
+import { Settings, LayoutGrid, List, Search, Activity, MoreHorizontal, Clock, Folder, History, GitBranch, Monitor, Workflow, Bot, Target, Grid3X3, Mail, MessageSquare, Check, Zap, Sparkles, Brain, Lock, Gauge, Lightbulb, PanelsTopLeft, ChevronDown, ChevronRight, PanelRight, Plus, Star } from "lucide-react";
 import "./Header.css";
 // ProjectSelector styles used by the imported standalone component.
 import "./ProjectSelector.css";
@@ -93,10 +93,6 @@ export interface HeaderProps {
   mobileNavEnabled?: boolean;
   /** Enables the Alpha shell variants without changing legacy navigation. */
   alphaUpdatesEnabled?: boolean;
-  /** Whether the App-owned Alpha navigation popover is open. */
-  alphaMenuOpen?: boolean;
-  /** Toggles the canonical MobileNavBar popover from the Alpha hamburger. */
-  onOpenAlphaMenu?: () => void;
   /** When true on non-mobile screens, persistent left sidebar owns primary view navigation. */
   leftSidebarNavActive?: boolean;
   /*
@@ -153,8 +149,6 @@ export function Header({
   shellHost = { kind: "browser" },
   mobileNavEnabled,
   alphaUpdatesEnabled = false,
-  alphaMenuOpen = false,
-  onOpenAlphaMenu,
   leftSidebarNavActive = false,
   rightDockAvailable = false,
   rightDockOpen = false,
@@ -1067,22 +1061,6 @@ export function Header({
           </button>
         )}
 
-        {/* FNXC:AlphaUpdates 2026-09-09-22:14: Mobile Alpha exposes the App-owned popover state from its sole hamburger trigger; legacy mobile retains its independent footer More drawer. */}
-        {isMobile && alphaUpdatesEnabled && mobileNavEnabled && (
-          <button
-            className="btn-icon alpha-mobile-menu-trigger"
-            type="button"
-            onClick={onOpenAlphaMenu}
-            title={t("nav.openMenu", "Open navigation menu")}
-            aria-label={t("nav.openMenu", "Open navigation menu")}
-            aria-haspopup="menu"
-            aria-expanded={alphaMenuOpen}
-            aria-controls="alpha-mobile-navigation-popover"
-            data-testid="alpha-mobile-menu-trigger"
-          >
-            <Menu size={16} />
-          </button>
-        )}
 
         {/* Compact overflow menu trigger (mobile only — tablet uses the right-sidebar toggle above) */}
         {isMobile && !hideFullNav && (

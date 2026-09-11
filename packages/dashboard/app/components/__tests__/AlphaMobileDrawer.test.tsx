@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { AlphaMobileDrawer } from "../AlphaMobileDrawer";
@@ -46,6 +46,37 @@ describe("AlphaMobileDrawer", () => {
 
     expect(screen.queryByRole("dialog", { name: "Task detail" })).not.toBeInTheDocument();
     expect(trigger).toHaveFocus();
+  });
+
+  it("ferme depuis le corps au bord haut mais préserve un corps déjà scrollé", async () => {
+    const onClose = vi.fn();
+    const { rerender } = render(
+      <AlphaMobileDrawer open title="Drawer" onClose={onClose}>
+        <div data-testid="drawer-body-content">Body</div>
+      </AlphaMobileDrawer>,
+    );
+    const dialog = screen.getByRole("dialog", { name: "Drawer" });
+    const body = screen.getByTestId("drawer-body-content");
+    fireEvent.pointerDown(body, { pointerId: 1, clientY: 0, button: 0, isPrimary: true });
+    fireEvent.pointerMove(body, { pointerId: 1, clientY: 200 });
+    await waitFor(() => expect(dialog.style.transform).toContain("200px"));
+    fireEvent.pointerUp(body, { pointerId: 1, clientY: 200 });
+    expect(onClose).toHaveBeenCalledOnce();
+
+    onClose.mockClear();
+    rerender(
+      <AlphaMobileDrawer open title="Drawer" onClose={onClose}>
+        <div data-testid="drawer-body-content">Body</div>
+      </AlphaMobileDrawer>,
+    );
+    const reopenedDialog = screen.getByRole("dialog", { name: "Drawer" });
+    reopenedDialog.scrollTop = 10;
+    const reopenedBody = screen.getByTestId("drawer-body-content");
+    fireEvent.pointerDown(reopenedBody, { pointerId: 2, clientY: 0, button: 0, isPrimary: true });
+    fireEvent.pointerMove(reopenedBody, { pointerId: 2, clientY: 200 });
+    fireEvent.pointerUp(reopenedBody, { pointerId: 2, clientY: 200 });
+    expect(onClose).not.toHaveBeenCalled();
+    expect(reopenedDialog.style.transform).toBe("");
   });
 
   it("piège le focus et peut garder un contenu monté sans shell interactif", async () => {

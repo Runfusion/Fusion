@@ -138,8 +138,9 @@ export function AlphaMobileDrawer({
         aria-modal="true"
         aria-labelledby={`${testId}-title`}
         tabIndex={-1}
+        {...dismissHandleProps}
       >
-        <div className="alpha-mobile-drawer__handle-target" aria-hidden="true" {...dismissHandleProps}>
+        <div className="alpha-mobile-drawer__handle-target" aria-hidden="true">
           <span className="alpha-mobile-drawer__handle" />
         </div>
         {contentOwnsHeader ? (

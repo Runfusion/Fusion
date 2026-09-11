@@ -4,7 +4,6 @@ import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { Header } from "../Header";
 import { computePublishedMobileNavHeight, MobileNavBar } from "../MobileNavBar";
 import { MOBILE_NAV_SELECTABLE_ITEMS } from "../../../../core/src/board/mobile-nav-primary-items";
 import { MOBILE_MEDIA_QUERY } from "../../hooks/useViewportMode";
@@ -45,28 +44,18 @@ function extractRuleBlock(css: string, selector: string): string {
 }
 
 function getRenderedMobileTabs(container: HTMLElement): HTMLElement[] {
-  return Array.from(container.querySelectorAll<HTMLElement>(".mobile-nav-bar > .mobile-nav-tab"));
+  return Array.from(container.querySelectorAll<HTMLElement>(".mobile-nav-bar .mobile-nav-tab"));
 }
 
 function AlphaMobileShellHarness() {
   const [menuOpen, setMenuOpen] = useState(false);
   return (
-    <>
-      <Header
-        view="board"
-        mobileNavEnabled
-        alphaUpdatesEnabled
-        alphaMenuOpen={menuOpen}
-        onOpenAlphaMenu={() => setMenuOpen((open) => !open)}
-        onOpenUsage={() => undefined}
-      />
-      <MobileNavBar
-        {...createDefaultProps()}
-        alphaUpdatesEnabled
-        alphaMenuOpen={menuOpen}
-        onAlphaMenuOpenChange={setMenuOpen}
-      />
-    </>
+    <MobileNavBar
+      {...createDefaultProps()}
+      alphaUpdatesEnabled
+      alphaMenuOpen={menuOpen}
+      onAlphaMenuOpenChange={setMenuOpen}
+    />
   );
 }
 
@@ -165,10 +154,12 @@ describe("MobileNavBar", () => {
     vi.useRealTimers();
   });
 
-  it("renders the fixed icon-only Alpha pill and opens its complementary menu from the header request", () => {
+  it("rend les quatre destinations puis le hamburger comme dernier contrôle de la pill", () => {
+    const onChangeView = vi.fn();
     const { container, rerender } = render(
       <MobileNavBar
         {...createDefaultProps()}
+        onChangeView={onChangeView}
         alphaUpdatesEnabled
         alphaMenuOpen={false}
         mobileNavPrimaryItems={["patchnode", "tasks", "tasks"]}
@@ -185,6 +176,14 @@ describe("MobileNavBar", () => {
     expect(container.querySelectorAll(".mobile-nav-tab-label")).toHaveLength(0);
     expect(screen.queryByTestId("mobile-nav-tab-list")).toBeNull();
     expect(screen.queryByTestId("mobile-nav-tab-more")).toBeNull();
+    const alphaNav = container.querySelector(".mobile-nav-bar--alpha");
+    expect(alphaNav).toHaveAttribute("role", "navigation");
+    expect(alphaNav?.querySelectorAll('[role="tab"]')).toHaveLength(0);
+    expect(screen.getByTestId("mobile-nav-tab-command-center")).not.toHaveAttribute("aria-selected");
+    expect(alphaNav?.lastElementChild).toBe(screen.getByTestId("alpha-mobile-menu-trigger"));
+    expect(screen.getByTestId("alpha-mobile-menu-trigger")).toHaveAttribute("aria-haspopup", "menu");
+    fireEvent.click(screen.getByTestId("mobile-nav-tab-command-center"));
+    expect(onChangeView).toHaveBeenCalledWith("command-center");
 
     rerender(
       <MobileNavBar
@@ -267,7 +266,7 @@ describe("MobileNavBar", () => {
     expect(computePublishedMobileNavHeight({ navOffsetHeight: 54, paddingBottom: 4, tabHeights: [44, 44, 44, 44, 44], floatingGap: 8 })).toBe(62);
   });
 
-  it("toggles the shared Alpha menu through two successive real header hamburger clicks", async () => {
+  it("ouvre et referme le menu contrôlé par deux clics sur le hamburger de pill", async () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 });
     render(<AlphaMobileShellHarness />);
 
@@ -293,10 +292,12 @@ describe("MobileNavBar", () => {
     expect(screen.getByRole("menu", { name: "Navigate" })).toBeInTheDocument();
     fireEvent.keyDown(document, { key: "Escape" });
     expect(screen.queryByRole("menu", { name: "Navigate" })).toBeNull();
+    expect(hamburger).toHaveFocus();
 
     fireEvent.click(hamburger);
     fireEvent.pointerDown(document.body);
     expect(screen.queryByRole("menu", { name: "Navigate" })).toBeNull();
+    expect(hamburger).toHaveFocus();
   });
 
   it.each([
