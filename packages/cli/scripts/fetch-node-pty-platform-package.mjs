@@ -1,5 +1,13 @@
 #!/usr/bin/env node
-/* global console, process */
+/*
+FNXC:Terminal 2026-09-11-14:22:
+Node globals are declared inline here because the ESLint globals block covers only the root
+scripts directory and packages/cli-alias, leaving packages/cli/scripts outside it.
+FN-9295's retry sleep uses `setTimeout`, and omitting it here failed the blocking Lint check on
+every PR based on that main. Keep glob patterns out of this comment: a double star followed by a
+slash is a block-comment terminator.
+*/
+/* global console, process, setTimeout */
 /*
 FNXC:Terminal 2026-09-04-02:00:
 Foreign standalone targets are absent from the script-free workspace install.
