@@ -130,7 +130,7 @@ function hasFreshAgentLogActivitySinceTaskUpdate(
 
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {countLiveTasks, readCompletedTaskPage, readTaskRow, readLiveTaskRows, readTaskRowByProposalClaimId, readTaskRowsBySourceLineage} from "./async/async-persistence.js";
-import {buildTsqueryFragment, liveSearchPredicate, searchTasksTsvector, searchTasksLike} from "./async/async-search.js";
+import {buildTaskSearchPredicate, liveSearchPredicate, searchTasksTsvector} from "./async/async-search.js";
 import {
   listArchivedTasks as listArchivedTaskEntries,
   listArchivedTasksByCreatedOrder,
@@ -663,14 +663,14 @@ export async function listCurrentTasksPageImpl(store: TaskStore, options: { limi
   if (!layer) throw new Error("Task pagination requires the async task backend");
 
   /*
-  FNXC:TaskSearchPagination 2026-09-07-17:38:
-  Dashboard search uses a project-scoped createdAt/id keyset and applies the full-text predicate before LIMIT. The query is embedded in the opaque cursor so a cursor from another search scope is rejected rather than silently skipping matches after a filter change.
+  FNXC:TaskSearchPagination 2026-09-11-22:33:
+  Dashboard search uses the shared project-scoped literal/lexical membership predicate before LIMIT, so suffixes and punctuation behave exactly like shared search. The createdAt/id keyset, exact total, and query-bound opaque cursor remain SQL-owned and cannot drift from membership.
   */
   if (query) {
-    const tsquery = buildTsqueryFragment(query);
-    if (!tsquery) return { tasks: [], total: 0, hasMore: false, nextCursor: null };
+    const textPredicate = buildTaskSearchPredicate(query);
+    if (!textPredicate) return { tasks: [], total: 0, hasMore: false, nextCursor: null };
     const searchPredicate = and(
-      sql`${schema.project.tasks.searchVector} @@ ${tsquery}`,
+      textPredicate,
       liveSearchPredicate(false, layer.projectId, ARCHIVED_SENTINEL_LANES),
       cursor
         ? or(
@@ -680,7 +680,7 @@ export async function listCurrentTasksPageImpl(store: TaskStore, options: { limi
         : undefined,
     );
     const totalPredicate = and(
-      sql`${schema.project.tasks.searchVector} @@ ${tsquery}`,
+      textPredicate,
       liveSearchPredicate(false, layer.projectId, ARCHIVED_SENTINEL_LANES),
     );
     const [countRows, pageRows] = await Promise.all([
@@ -1074,9 +1074,10 @@ export async function searchTasksImpl(store: TaskStore, query: string, options?:
     if (limit !== undefined && Math.max(0, limit) === 0) return [];
     const includeArchived = options?.includeArchived ?? false;
     const slim = options?.slim ?? false;
-    // The tsvector path is the primary search (GIN-backed). The LIKE path is
-    // a fallback if the tsvector query returns no results (e.g., if the search
-    // index is cold).
+    /*
+    FNXC:TaskStoreSearch 2026-09-11-22:52:
+    The shared tsvector query already combines indexed lexical recall with raw literal substring membership. Do not retry an empty result through the legacy tokenized LIKE helper: stripping punctuation there would broaden queries such as `foo*` into `foo` and return text that does not contain what the user typed.
+    */
     const mergedPrefixLimit = includeArchived && limit !== undefined
       ? Math.max(0, offset) + Math.max(0, limit)
       : undefined;
@@ -1088,7 +1089,7 @@ export async function searchTasksImpl(store: TaskStore, query: string, options?:
     reads may explicitly compose cold snapshots, but no workflow archive role participates.
     */
     const searchHistoricalSentinels = ARCHIVED_SENTINEL_LANES;
-    let pgRows = await searchTasksTsvector(layer.db, trimmedQuery, {
+    const pgRows = await searchTasksTsvector(layer.db, trimmedQuery, {
       limit: sourceLimit,
       offset: sourceOffset,
       includeArchived,
@@ -1097,15 +1098,6 @@ export async function searchTasksImpl(store: TaskStore, query: string, options?:
       // (load-bearing for the CREATE-time near-duplicate check via searchTasks).
       projectId: layer.projectId,
     });
-    if (pgRows.length === 0) {
-      pgRows = await searchTasksLike(layer.db, trimmedQuery, {
-        limit: sourceLimit,
-        offset: sourceOffset,
-        includeArchived,
-        archivedColumns: searchHistoricalSentinels,
-        projectId: layer.projectId,
-      });
-    }
     const tasks = await hydrateSearchTaskRows(store, pgRows, slim);
     if (!includeArchived) return tasks;
     /*

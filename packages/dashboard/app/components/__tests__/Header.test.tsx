@@ -59,9 +59,9 @@ function SearchHeaderHarness({ tier }: { tier: ViewportTier }) {
       searchQuery={query}
       onSearchChange={setQuery}
       taskSearchTasks={[
-        { id: "FN-331", title: "Remove branch filters" },
-        { id: "ERR-331", title: "Repair matching task" },
-        { id: "FN-332", title: "Different number" },
+        { id: "FN-352", title: "Dans la barre de recherche" },
+        { id: "FN-901", title: "retire de fichier txt" },
+        { id: "FN-902", title: "Add the bonjour.txt file" },
       ]}
       alphaUpdatesEnabled={tier === "desktop"}
     />
@@ -1126,19 +1126,22 @@ describe("Header", () => {
       expect(container.querySelector(".header-floating-search")).toBeNull();
     });
 
-    it.each(["desktop", "tablet", "mobile"] as const)("suggests and applies numeric task matches on %s", (tier) => {
+    it.each(["desktop", "tablet", "mobile"] as const)("suggests ID suffixes and literal punctuation on %s", (tier) => {
       renderSearchHeader(tier);
       if (tier === "tablet") fireEvent.click(screen.getByTestId("desktop-header-search-btn"));
       if (tier === "mobile") fireEvent.click(screen.getByTestId("mobile-header-search-btn"));
 
       const input = screen.getByRole("combobox");
-      fireEvent.change(input, { target: { value: "331" } });
-      expect(screen.getByRole("option", { name: "FN-331: Remove branch filters" })).toBeInTheDocument();
-      expect(screen.getByRole("option", { name: "ERR-331: Repair matching task" })).toBeInTheDocument();
-      expect(screen.queryByText("FN-332")).toBeNull();
+      fireEvent.change(input, { target: { value: "52" } });
+      fireEvent.click(screen.getByRole("option", { name: "FN-352: Dans la barre de recherche" }));
+      expect(input).toHaveValue("FN-352");
+      expect(screen.queryByRole("listbox")).toBeNull();
 
-      fireEvent.click(screen.getByRole("option", { name: "FN-331: Remove branch filters" }));
-      expect(input).toHaveValue("FN-331");
+      fireEvent.change(input, { target: { value: ".txt" } });
+      expect(screen.getByRole("option", { name: "FN-902: Add the bonjour.txt file" })).toBeInTheDocument();
+      expect(screen.queryByRole("option", { name: "FN-901: retire de fichier txt" })).toBeNull();
+      fireEvent.click(screen.getByRole("option", { name: "FN-902: Add the bonjour.txt file" }));
+      expect(input).toHaveValue("FN-902");
       expect(screen.queryByRole("listbox")).toBeNull();
     });
   });

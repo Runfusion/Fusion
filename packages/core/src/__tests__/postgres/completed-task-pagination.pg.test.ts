@@ -181,6 +181,41 @@ pgDescribe("TaskStore completed-task pagination", () => {
       .rejects.toThrow("Invalid task list cursor");
   });
 
+  it("keeps literal suffix and punctuation membership exact across search pages", async () => {
+    const store = h.store();
+    const suffixRows = Array.from({ length: 12 }, (_, index) => {
+      const id = `SEARCH-${index.toString().padStart(2, "0")}-52`;
+      const timestamp = new Date(Date.UTC(2026, 8, 8, 0, 0, index)).toISOString();
+      return buildTaskInsertValues({
+        id, title: `Suffix result ${index}`, description: "pagination fixture", column: "todo", dependencies: [], steps: [], currentStep: 0, log: [],
+        createdAt: timestamp, updatedAt: timestamp, columnMovedAt: timestamp,
+      }, { lineageId: `lineage-${id}` }, h.layer().projectId);
+    });
+    await h.layer().db.insert(schema.project.tasks).values(suffixRows as never);
+    await store.createTaskWithReservedId(
+      { title: "retire de fichier txt", description: "plain punctuation fixture" },
+      { taskId: "FN-901", applyDefaultWorkflowSteps: false },
+    );
+    await store.createTaskWithReservedId(
+      { title: "Add the bonjour.txt file", description: "literal punctuation fixture" },
+      { taskId: "FN-902", applyDefaultWorkflowSteps: false },
+    );
+
+    const first = await store.listCurrentTasksPage({ limit: 5, query: "52" });
+    const second = await store.listCurrentTasksPage({ limit: 5, query: "52", cursor: first.nextCursor! });
+    const third = await store.listCurrentTasksPage({ limit: 5, query: "52", cursor: second.nextCursor! });
+    const suffixIds = [...first.tasks, ...second.tasks, ...third.tasks].map((task) => task.id);
+    expect(first.total).toBe(12);
+    expect(suffixIds).toHaveLength(12);
+    expect(new Set(suffixIds).size).toBe(12);
+
+    const punctuation = await store.listCurrentTasksPage({ limit: 5, query: ".TXT" });
+    expect(punctuation.total).toBe(1);
+    expect(punctuation.tasks.map((task) => task.id)).toEqual(["FN-902"]);
+    await expect(store.listCurrentTasksPage({ limit: 5, query: "different", cursor: first.nextCursor! }))
+      .rejects.toThrow("Invalid task list cursor");
+  });
+
   it("continues current-task pages by an exclusive created-at and id cursor", async () => {
     const store = h.store();
     const rows = Array.from({ length: 205 }, (_, index) => {

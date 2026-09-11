@@ -194,6 +194,7 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
   return {
     getTask: vi.fn(),
     listTasks: vi.fn().mockResolvedValue([]),
+    listCurrentTasksPage: vi.fn().mockResolvedValue({ tasks: [], total: 0, hasMore: false, nextCursor: null }),
     searchTasks: vi.fn().mockResolvedValue([]),
     findRecentTasksByContentFingerprint: vi.fn().mockResolvedValue([]),
     createTask: vi.fn(),
@@ -411,6 +412,31 @@ describe("GET /tasks", () => {
       slim: true,
       includeArchived: false,
     });
+  });
+
+  it.each(["52", ".txt"])("forwards literal search query %s to shared task search", async (query) => {
+    (store.searchTasks as ReturnType<typeof vi.fn>).mockResolvedValueOnce([FAKE_TASK_DETAIL]);
+
+    const res = await GET(buildApp(), `/api/tasks?q=${encodeURIComponent(query)}`);
+
+    expect(res.status).toBe(200);
+    expect(store.searchTasks).toHaveBeenCalledWith(query, {
+      limit: undefined,
+      offset: undefined,
+      slim: true,
+      includeArchived: false,
+    });
+  });
+
+  it.each(["52", ".txt"])("forwards literal paginated query %s without normalization", async (query) => {
+    (store.listCurrentTasksPage as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      tasks: [FAKE_TASK_DETAIL], total: 1, hasMore: false, nextCursor: null,
+    });
+
+    const res = await GET(buildApp(), `/api/tasks/page?q=${encodeURIComponent(query)}&limit=8`);
+
+    expect(res.status).toBe(200);
+    expect(store.listCurrentTasksPage).toHaveBeenCalledWith({ limit: 8, query });
   });
 
   it("returns tasks for search query with limit", async () => {

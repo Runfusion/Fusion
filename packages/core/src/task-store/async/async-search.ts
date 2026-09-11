@@ -116,21 +116,28 @@ export function liveSearchPredicate(
  * @param tokens The sanitized search tokens.
  * @returns The composed LIKE predicate, or `undefined` if tokens is empty.
  */
+const SEARCHABLE_COLUMN_REFS: SQL[] = [
+  sql`${schema.project.tasks.id}`,
+  sql`${schema.project.tasks.title}`,
+  sql`${schema.project.tasks.description}`,
+  sql`${schema.project.tasks.comments}::text`,
+];
+
+function buildLiteralSubstringPredicate(query: string): SQL | undefined {
+  const literal = query.trim();
+  if (!literal) return undefined;
+  const pattern = `%${literal.replace(/[\\%_]/g, "\\$&")}%`;
+  return or(...SEARCHABLE_COLUMN_REFS.map(
+    (column) => sql`${column} ILIKE ${pattern} ESCAPE '\\'`,
+  )) as SQL;
+}
+
 export function buildLikeSearchPredicate(tokens: readonly string[]): SQL | undefined {
   if (tokens.length === 0) return undefined;
 
-  // The comments column is jsonb in PostgreSQL; cast to text for ILIKE.
-  // The other columns (id, title, description) are already text.
-  const columnRefs: SQL[] = [
-    sql`${schema.project.tasks.id}`,
-    sql`${schema.project.tasks.title}`,
-    sql`${schema.project.tasks.description}`,
-    sql`${schema.project.tasks.comments}::text`,
-  ];
-
   const perTokenClauses: SQL[] = tokens.map((token) => {
     const pattern = `%${token.replace(/[\\%_]/g, "\\$&")}%`;
-    const columnLikes = columnRefs.map(
+    const columnLikes = SEARCHABLE_COLUMN_REFS.map(
       (col) => sql`${col} ILIKE ${pattern} ESCAPE '\\'`,
     );
     return or(...columnLikes) as SQL;
@@ -320,6 +327,24 @@ export function buildTsqueryFragment(query: string): SQL | undefined {
 }
 
 /**
+ * FNXC:TaskStoreSearch 2026-09-11-22:33:
+ * Task membership always includes a case-insensitive literal substring match across ID, title, description, and comments. Lexical queries additionally retain GIN-backed OR/prefix recall, while punctuation-bearing queries such as `.txt`, `%`, and `_` stay literal so tokenization cannot admit rows that omit characters the user typed; LIKE wildcards are escaped before binding.
+ */
+export function buildTaskSearchPredicate(query: string): SQL | undefined {
+  const literalPredicate = buildLiteralSubstringPredicate(query);
+  if (!literalPredicate) return undefined;
+
+  // Punctuation carries user intent (task IDs, paths, extensions). Do not let
+  // tsvector tokenization erase it and broaden membership.
+  if (/[^\p{L}\p{N}\s]/u.test(query.trim())) return literalPredicate;
+
+  const tsquery = buildTsqueryFragment(query);
+  return tsquery
+    ? or(sql`${schema.project.tasks.searchVector} @@ ${tsquery}`, literalPredicate) as SQL
+    : literalPredicate;
+}
+
+/**
  * FNXC:TaskStoreSearch 2026-06-24-13:10:
  * Search tasks via the tsvector/GIN full-text index. This is the PostgreSQL
  * replacement for the SQLite FTS5 search path (VAL-SEARCH-001 search parity,
@@ -346,30 +371,24 @@ export async function searchTasksTsvector(
   query: string,
   options?: { limit?: number; offset?: number; includeArchived?: boolean; projectId?: string; archivedColumns?: ReadonlySet<string> },
 ): Promise<Record<string, unknown>[]> {
-  const tokens = sanitizeSearchTokens(query);
-  if (tokens.length === 0) return [];
-
-  // Re-join sanitized tokens for plainto_tsquery. Sanitization strips FTS5
-  // operators so the tsquery sees clean tokens, matching the membership
-  // semantics of the LIKE fallback (both paths see the same token set).
-  const cleanQuery = tokens.join(" ");
-  const tsquery = buildTsqueryFragment(cleanQuery);
-  if (!tsquery) return [];
+  const searchPredicate = buildTaskSearchPredicate(query);
+  if (!searchPredicate) return [];
 
   const includeArchived = options?.includeArchived ?? false;
   const conditions = [
-    sql`${schema.project.tasks.searchVector} @@ ${tsquery}`,
+    searchPredicate,
     liveSearchPredicate(includeArchived, options?.projectId, options?.archivedColumns),
   ];
+  const tsquery = /[^\p{L}\p{N}\s]/u.test(query.trim()) ? undefined : buildTsqueryFragment(query);
+  const rankOrder = tsquery
+    ? sql`ts_rank(${schema.project.tasks.searchVector}, ${tsquery}) DESC`
+    : sql`length(${schema.project.tasks.id}) * 0`;
 
   const baseQuery = db
     .select()
     .from(schema.project.tasks)
     .where(and(...conditions))
-    .orderBy(
-      sql`ts_rank(${schema.project.tasks.searchVector}, ${tsquery}) DESC`,
-      asc(schema.project.tasks.createdAt),
-    );
+    .orderBy(rankOrder, asc(schema.project.tasks.createdAt));
 
   const rows = options?.limit && options.limit > 0
     ? await baseQuery.limit(options.limit).offset(options.offset ?? 0)
@@ -387,16 +406,12 @@ export async function countSearchTasksTsvector(
   query: string,
   options?: { includeArchived?: boolean; projectId?: string; archivedColumns?: ReadonlySet<string> },
 ): Promise<number> {
-  const tokens = sanitizeSearchTokens(query);
-  if (tokens.length === 0) return 0;
-
-  const cleanQuery = tokens.join(" ");
-  const tsquery = buildTsqueryFragment(cleanQuery);
-  if (!tsquery) return 0;
+  const searchPredicate = buildTaskSearchPredicate(query);
+  if (!searchPredicate) return 0;
 
   const includeArchived = options?.includeArchived ?? false;
   const conditions = [
-    sql`${schema.project.tasks.searchVector} @@ ${tsquery}`,
+    searchPredicate,
     liveSearchPredicate(includeArchived, options?.projectId, options?.archivedColumns),
   ];
   const rows = await db

@@ -27,41 +27,40 @@ export interface TaskSearchInputProps {
 
 const MAX_TASK_SUGGESTIONS = 8;
 
-function numericIdSegment(id: string): string | undefined {
-  return id.match(/(\d+)$/)?.[1];
+function suggestionRank(query: string, task: SearchableTask): number {
+  const normalizedId = task.id.toLocaleLowerCase();
+  if (normalizedId === query) return 0;
+  if (normalizedId.startsWith(query)) return 1;
+  if (normalizedId.includes(query)) return 2;
+  return 3;
 }
 
 function compareSuggestions(query: string, left: SearchableTask, right: SearchableTask): number {
-  const normalizedQuery = query.toLocaleLowerCase();
-  const leftExact = left.id.toLocaleLowerCase() === normalizedQuery;
-  const rightExact = right.id.toLocaleLowerCase() === normalizedQuery;
-  if (leftExact !== rightExact) return leftExact ? -1 : 1;
-  return left.id.localeCompare(right.id, undefined, { numeric: true, sensitivity: "base" })
+  return suggestionRank(query, left) - suggestionRank(query, right)
+    || left.id.localeCompare(right.id, undefined, { numeric: true, sensitivity: "base" })
     || (left.title ?? "").localeCompare(right.title ?? "", undefined, { numeric: true, sensitivity: "base" });
 }
 
 /**
- * FNXC:TaskSearch 2026-09-10-00:19:
- * A number-only dashboard query matches the final numeric segment of every task ID, regardless of prefix. Suggestions remain bounded and derive only from App's active project-scoped task source; this component never starts a competing fetch.
+ * FNXC:TaskSearch 2026-09-11-22:33:
+ * Suggestions match the case-insensitive literal substring the user typed in either task ID or title, including suffixes and punctuation. Exact, prefix, and internal ID matches precede title-only matches deterministically; results remain deduplicated, bounded, and sourced only from App's active project-scoped tasks without a competing fetch.
  */
 function buildTaskSuggestions(tasks: readonly SearchableTask[] | undefined, query: string): SearchableTask[] {
   const trimmedQuery = query.trim();
   if (!trimmedQuery || !tasks?.length) return [];
 
-  const numericQuery = /^\d+$/.test(trimmedQuery);
   const normalizedQuery = trimmedQuery.toLocaleLowerCase();
   const unique = new Map<string, SearchableTask>();
 
   for (const task of tasks) {
     const normalizedId = task.id.toLocaleLowerCase();
-    const matches = numericQuery
-      ? numericIdSegment(task.id)?.startsWith(trimmedQuery) === true
-      : normalizedId.startsWith(normalizedQuery);
+    const normalizedTitle = (task.title ?? "").toLocaleLowerCase();
+    const matches = normalizedId.includes(normalizedQuery) || normalizedTitle.includes(normalizedQuery);
     if (matches && !unique.has(normalizedId)) unique.set(normalizedId, task);
   }
 
   return [...unique.values()]
-    .sort((left, right) => compareSuggestions(trimmedQuery, left, right))
+    .sort((left, right) => compareSuggestions(normalizedQuery, left, right))
     .slice(0, MAX_TASK_SUGGESTIONS);
 }
 

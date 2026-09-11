@@ -36,6 +36,24 @@ describe("TaskSearchInput", () => {
     expect(screen.queryByText("FN-332")).toBeNull();
   });
 
+  it("matches ID suffixes and titles with literal punctuation case-insensitively", () => {
+    render(<ControlledSearch source={[
+      { id: "FN-352", title: "Dans la barre de recherche" },
+      { id: "FN-901", title: "retire de fichier txt" },
+      { id: "FN-902", title: "Add the bonjour.txt file" },
+    ]} />);
+    const input = screen.getByRole("combobox");
+
+    fireEvent.change(input, { target: { value: "52" } });
+    expect(screen.getAllByRole("option")).toHaveLength(1);
+    expect(screen.getByRole("option", { name: "FN-352: Dans la barre de recherche" })).toBeInTheDocument();
+
+    fireEvent.change(input, { target: { value: ".TXT" } });
+    expect(screen.getAllByRole("option")).toHaveLength(1);
+    expect(screen.getByRole("option", { name: "FN-902: Add the bonjour.txt file" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "FN-901: retire de fichier txt" })).toBeNull();
+  });
+
   it("matches prefixed IDs case-insensitively", () => {
     render(<ControlledSearch />);
     fireEvent.change(screen.getByRole("combobox"), { target: { value: "err-3" } });
@@ -43,8 +61,10 @@ describe("TaskSearchInput", () => {
     expect(screen.getByText("ERR-331")).toBeInTheDocument();
   });
 
-  it("sorts an exact ID before longer natural matches", () => {
+  it("ranks exact, prefix, internal ID, then title-only matches", () => {
     render(<ControlledSearch source={[
+      { id: "TITLE-1", title: "Mentions fn-331" },
+      { id: "PRE-FN-331-SUFFIX", title: "Internal" },
       { id: "FN-3310", title: "Longer" },
       { id: "FN-331", title: "Exact" },
     ]} />);
@@ -52,6 +72,8 @@ describe("TaskSearchInput", () => {
     expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual([
       "FN-331Exact",
       "FN-3310Longer",
+      "PRE-FN-331-SUFFIXInternal",
+      "TITLE-1Mentions fn-331",
     ]);
   });
 
@@ -68,6 +90,16 @@ describe("TaskSearchInput", () => {
     render(<TaskSearchInput query={query} tasks={tasks} onSearchChange={vi.fn()} />);
     fireEvent.focus(screen.getByRole("combobox"));
     expect(screen.queryByRole("listbox")).toBeNull();
+  });
+
+  it("does not leave listbox ARIA behind when no task matches", () => {
+    render(<TaskSearchInput query="missing" tasks={tasks} onSearchChange={vi.fn()} />);
+    const input = screen.getByRole("combobox");
+    fireEvent.focus(input);
+    expect(screen.queryByRole("listbox")).toBeNull();
+    expect(input).toHaveAttribute("aria-expanded", "false");
+    expect(input).not.toHaveAttribute("aria-controls");
+    expect(input).not.toHaveAttribute("aria-activedescendant");
   });
 
   it("deduplicates IDs case-insensitively and limits results to eight", () => {

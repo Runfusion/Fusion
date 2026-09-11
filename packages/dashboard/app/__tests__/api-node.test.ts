@@ -171,13 +171,17 @@ describe("api-node", () => {
       expect(result).toEqual(mockTasks);
     });
 
-    it("properly encodes search query with special characters", async () => {
+    it.each([
+      [".txt", ".txt"],
+      ["52", "52"],
+      ["search+query&test", "search%2Bquery%26test"],
+    ])("forwards search query %s without changing its characters", async (query, encodedQuery) => {
       mockProxyApi.mockResolvedValueOnce([]);
 
-      await fetchRemoteNodeTasks("node_abc", "proj_001", "search+query&test");
+      await fetchRemoteNodeTasks("node_abc", "proj_001", query);
 
       expect(mockProxyApi).toHaveBeenCalledWith(
-        "/tasks?projectId=proj_001&q=search%2Bquery%26test",
+        `/tasks?projectId=proj_001&q=${encodedQuery}`,
         { nodeId: "node_abc" },
       );
     });

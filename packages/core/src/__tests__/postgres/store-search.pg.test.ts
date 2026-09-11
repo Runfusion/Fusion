@@ -22,6 +22,7 @@ const pgTest = pgDescribe;
 pgTest("TaskStore.searchTasks facade (PostgreSQL)", () => {
   const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
     prefix: "fusion_search",
+    projectId: "search-project",
   });
 
   beforeAll(h.beforeAll);
@@ -98,5 +99,29 @@ pgTest("TaskStore.searchTasks facade (PostgreSQL)", () => {
     const results = await store.searchTasks("frob");
     expect(results.length).toBe(1);
     expect(results[0].title).toBe("frobnicator install");
+  });
+
+  it("matches an ID suffix and treats punctuation as literal membership", async () => {
+    const store = h.store();
+    await store.createTaskWithReservedId(
+      { title: "Dans la barre de recherche", description: "suffix fixture" },
+      { taskId: "FN-352", applyDefaultWorkflowSteps: false },
+    );
+    await store.createTaskWithReservedId(
+      { title: "retire de fichier txt", description: "plain token fixture" },
+      { taskId: "FN-901", applyDefaultWorkflowSteps: false },
+    );
+    await store.createTaskWithReservedId(
+      { title: "Add the bonjour.txt file", description: "punctuation fixture" },
+      { taskId: "FN-902", applyDefaultWorkflowSteps: false },
+    );
+    await store.createTaskWithReservedId(
+      { title: "foo", description: "metacharacter false-positive fixture" },
+      { taskId: "FN-903", applyDefaultWorkflowSteps: false },
+    );
+
+    expect((await store.searchTasks("52")).map((task) => task.id)).toEqual(["FN-352"]);
+    expect((await store.searchTasks(".TXT")).map((task) => task.id)).toEqual(["FN-902"]);
+    expect(await store.searchTasks("foo*")).toEqual([]);
   });
 });
