@@ -11,7 +11,8 @@ Run the installed linter API against the production root configuration so this r
 Protocol identifiers remain data in the production components; only rendered labels belong in the app catalog.
 */
 describe("production i18n lint baseline", () => {
-  it("keeps the configured shipping inputs free of hardcoded copy", async () => {
+  // FN-9295: The i18n linter can take longer than the 5s default timeout on CI.
+  it("keeps the configured shipping inputs free of hardcoded copy", { timeout: 30000 }, async () => {
     // Vitest package commands run from packages/i18n; the root config's relative
     // globs must be evaluated from the repository root just like pnpm i18n:lint.
     const previousCwd = process.cwd();
