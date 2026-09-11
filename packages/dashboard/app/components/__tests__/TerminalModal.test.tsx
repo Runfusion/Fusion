@@ -4950,6 +4950,26 @@ describe("TerminalModal — mobile layout contract", () => {
     }
   });
 
+  it("remplace la croix par la poignée de drag dans le terminal Alpha mobile", async () => {
+    const previousInnerWidth = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { value: 390, configurable: true });
+    document.documentElement.dataset.alphaMobileDrawers = "true";
+
+    try {
+      render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+      await waitFor(() => expect(screen.getByTestId("terminal-drawer-handle")).toBeInTheDocument());
+      expect(screen.queryByTestId("terminal-close-btn")).toBeNull();
+      const handle = screen.getByTestId("terminal-drawer-handle");
+      fireEvent.pointerDown(handle, { pointerId: 1, clientY: 0, button: 0, isPrimary: true });
+      fireEvent.pointerMove(handle, { pointerId: 1, clientY: 200 });
+      fireEvent.pointerUp(handle, { pointerId: 1, clientY: 200 });
+      expect(mockOnClose).toHaveBeenCalledTimes(1);
+    } finally {
+      delete document.documentElement.dataset.alphaMobileDrawers;
+      Object.defineProperty(window, "innerWidth", { value: previousInnerWidth, configurable: true });
+    }
+  });
+
   it("pins the mobile close button to the top-right corner of the header, not buried in .terminal-actions (FN-7565)", async () => {
     const previousInnerWidth = window.innerWidth;
     Object.defineProperty(window, "innerWidth", { value: 390, configurable: true });

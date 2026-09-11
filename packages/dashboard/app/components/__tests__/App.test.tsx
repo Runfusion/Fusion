@@ -769,8 +769,10 @@ function extractProductionDeclaration(rule: string, property: string): string {
 function installProductionAlphaReserveRule(): HTMLStyleElement {
   const css = readAppFile("components/MobileNavBar.css");
   const selector = 'html[data-viewport-mode="mobile"] .project-content--with-alpha-nav';
+  const boardSelector = 'html[data-viewport-mode="mobile"] [data-heroui-alpha-surface="true"] .project-content--with-alpha-nav :is(.board.board-workflow-columns, .board.board-workflows-skeleton)';
+  const boardCss = readAppFile("components/Board.css");
   const style = document.createElement("style");
-  style.textContent = `${selector} { ${extractProductionRule(css, selector)} }`;
+  style.textContent = `${selector} { ${extractProductionRule(css, selector)} } ${boardSelector} { ${extractProductionRule(boardCss, boardSelector)} }`;
   document.head.append(style);
   return style;
 }
@@ -845,7 +847,16 @@ function expectProductionAlphaDrawerOverlay(drawer: HTMLElement, systemOffset: n
 function expectSingleDrawerHeader(dialog: HTMLElement, headerSelector: string): void {
   expect(dialog.querySelector(".alpha-mobile-drawer__header")).toBeNull();
   expect(dialog.querySelectorAll(headerSelector)).toHaveLength(1);
-  expect(dialog.querySelectorAll(".alpha-mobile-drawer__close")).toHaveLength(1);
+  expect(dialog.querySelectorAll(".alpha-mobile-drawer__close")).toHaveLength(0);
+  expect(dialog.querySelectorAll(".alpha-mobile-drawer__handle-target")).toHaveLength(1);
+}
+
+function dismissAlphaDrawerByHandle(drawer: Element): void {
+  const handle = drawer.querySelector(".alpha-mobile-drawer__handle-target");
+  if (!handle) throw new Error("Alpha drawer handle is missing");
+  fireEvent.pointerDown(handle, { pointerId: 1, clientY: 0, button: 0, isPrimary: true });
+  fireEvent.pointerMove(handle, { pointerId: 1, clientY: 1000 });
+  fireEvent.pointerUp(handle, { pointerId: 1, clientY: 1000 });
 }
 
 function resolvePixelCalcFromRoot(value: string): number {
@@ -1350,7 +1361,11 @@ describe("Alpha Updates production wiring", () => {
       });
       const scroller = screen.getByTestId("dashboard-project-shell").querySelector<HTMLElement>(".project-content");
       const finalControl = await screen.findByTestId("column-history-done");
+      const board = scroller?.querySelector<HTMLElement>(".board.board-workflow-columns");
+      const columns = Array.from(scroller?.querySelectorAll<HTMLElement>(".board.board-workflow-columns > .column") ?? []);
       expect(scroller).not.toBeNull();
+      expect(board).not.toBeNull();
+      expect(columns.length).toBeGreaterThan(0);
       expect(scroller).toHaveClass("project-content--with-alpha-nav");
       expect(scroller!.style.paddingBottom).toBe("");
 
@@ -1358,6 +1373,7 @@ describe("Alpha Updates production wiring", () => {
       expect(productionPadding).toContain("var(--mobile-nav-height)");
       expect(productionPadding).toContain("var(--mobile-nav-alpha-system-offset)");
       const reserve = resolvePixelCalcFromRoot(productionPadding);
+      expect(Number.parseFloat(nativeGetComputedStyle(board!).paddingBlockEnd)).toBe(0);
       let scrollTop = 0;
       Object.defineProperties(scroller!, {
         clientHeight: { configurable: true, value: layout.viewportHeight },
@@ -1381,10 +1397,11 @@ describe("Alpha Updates production wiring", () => {
         height: 44,
         toJSON: () => ({}),
       });
+      const pillTop = layout.viewportHeight - layout.systemOffset - 8 - 54;
       pill.getBoundingClientRect = () => ({
         x: 0,
-        y: layout.viewportHeight - layout.systemOffset - 8 - 54,
-        top: layout.viewportHeight - layout.systemOffset - 8 - 54,
+        y: pillTop,
+        top: pillTop,
         right: 360,
         bottom: layout.viewportHeight - layout.systemOffset - 8,
         left: 0,
@@ -1403,6 +1420,7 @@ describe("Alpha Updates production wiring", () => {
       expect(scroller!.scrollTop).toBeGreaterThan(0);
       expect(document.activeElement).toBe(finalControl);
       expect(finalControl.getBoundingClientRect().bottom).toBeLessThanOrEqual(pill.getBoundingClientRect().top);
+      expect(columns.every((column) => nativeGetComputedStyle(column).minHeight === "0px")).toBe(true);
     } finally {
       productionStyle.remove();
       offsetHeight.mockRestore();
@@ -1496,6 +1514,8 @@ describe("Alpha Updates production wiring", () => {
       view.rerender(<App />);
       await waitFor(() => expect(document.querySelector(".mobile-nav-bar")).toHaveClass("mobile-nav-bar--keyboard-open"));
       expectProductionAlphaDrawerOverlay(drawer, viewport.systemOffset);
+      dismissAlphaDrawerByHandle(drawer);
+      await waitFor(() => expect(screen.queryByTestId("alpha-mobile-drawer-main-content")).toBeNull());
     } finally {
       productionStyle.remove();
       Object.defineProperties(window, {
@@ -1541,10 +1561,24 @@ describe("Alpha Updates production wiring", () => {
     expect(Array.from(dialog.querySelectorAll("h1,h2,h3")).filter((heading) => heading.textContent === "Chat" && !heading.classList.contains("visually-hidden"))).toHaveLength(1);
     expect(within(dialog).getByTestId("chat-new-btn")).toBeEnabled();
     expect(within(dialog).getByTestId("chat-pop-out")).toBeEnabled();
-    expect(within(dialog).getByRole("button", { name: "Close" })).toBeVisible();
+    expect(within(dialog).queryByRole("button", { name: "Close" })).toBeNull();
+    expect(dialog.querySelectorAll(".alpha-mobile-drawer__handle-target")).toHaveLength(1);
     expect(input).toHaveClass("chat-input-textarea");
     expect(input.closest(".alpha-mobile-drawer__panel")).toBe(dialog);
     expect(input).toHaveFocus();
+
+    const chatDrawer = screen.getByTestId("alpha-mobile-drawer-chat");
+    dismissAlphaDrawerByHandle(chatDrawer);
+    await waitFor(() => expect(chatDrawer).toHaveClass("alpha-mobile-drawer--hidden"));
+
+    fireEvent.click(screen.getByTestId("alpha-mobile-menu-trigger"));
+    fireEvent.click(screen.getByTestId("mobile-more-item-list"));
+    const listDrawer = await screen.findByTestId("alpha-mobile-drawer-list");
+    const listDialog = within(listDrawer).getByRole("dialog", { name: "List" });
+    expect(listDialog.querySelectorAll(".alpha-mobile-drawer__close")).toHaveLength(0);
+    expect(listDialog.querySelectorAll(".alpha-mobile-drawer__handle-target")).toHaveLength(1);
+    dismissAlphaDrawerByHandle(listDrawer);
+    await waitFor(() => expect(listDrawer).toHaveClass("alpha-mobile-drawer--hidden"));
   });
 
   it("garde Planning, Usage et Projects sur le même shell avec un seul propriétaire d’en-tête", async () => {
@@ -1567,7 +1601,7 @@ describe("Alpha Updates production wiring", () => {
       expectProductionAlphaDrawerOverlay(planningDrawer, systemOffset);
       expectSingleDrawerHeader(within(planningDrawer).getByRole("dialog", { name: "Planning" }), ".modal-header--embedded");
       canonicalHeights.push(window.getComputedStyle(planningDrawer.querySelector(".alpha-mobile-drawer__panel")!).height);
-      fireEvent.click(planningDrawer.querySelector<HTMLButtonElement>(".alpha-mobile-drawer__close")!);
+      dismissAlphaDrawerByHandle(planningDrawer);
 
       fireEvent.click(await screen.findByTestId("alpha-mobile-menu-trigger"));
       fireEvent.click(screen.getByTestId("mobile-more-item-usage"));
@@ -1576,7 +1610,7 @@ describe("Alpha Updates production wiring", () => {
       expectProductionAlphaDrawerOverlay(usageDrawer, systemOffset);
       expectSingleDrawerHeader(within(usageDrawer).getByRole("dialog", { name: "Usage" }), ".modal-header");
       canonicalHeights.push(window.getComputedStyle(usageDrawer.querySelector(".alpha-mobile-drawer__panel")!).height);
-      fireEvent.click(usageDrawer.querySelector<HTMLButtonElement>(".alpha-mobile-drawer__close")!);
+      dismissAlphaDrawerByHandle(usageDrawer);
 
       fireEvent.click(screen.getByTestId("alpha-mobile-menu-trigger"));
       fireEvent.click(screen.getByTestId("mobile-more-item-projects"));
@@ -1584,6 +1618,8 @@ describe("Alpha Updates production wiring", () => {
       expectProductionAlphaDrawerOverlay(projectsDrawer, systemOffset);
       expectSingleDrawerHeader(within(projectsDrawer).getByRole("dialog", { name: "Projects" }), ".view-header");
       canonicalHeights.push(window.getComputedStyle(projectsDrawer.querySelector(".alpha-mobile-drawer__panel")!).height);
+      dismissAlphaDrawerByHandle(projectsDrawer);
+      await waitFor(() => expect(screen.queryByTestId("alpha-mobile-drawer-projects")).toBeNull());
 
       expect(new Set(canonicalHeights)).toEqual(new Set([canonicalHeights[0]]));
       expect(canonicalHeights[0]).not.toBe("");
@@ -3416,7 +3452,8 @@ describe("App view switching", () => {
     expect(dialog).toContainElement(await screen.findByTestId("dependency-graph"));
     expect(dialog.querySelectorAll(".alpha-mobile-drawer__header")).toHaveLength(1);
     expect(dialog.querySelectorAll(".alpha-mobile-drawer__title")).toHaveLength(1);
-    expect(dialog.querySelectorAll(".alpha-mobile-drawer__close")).toHaveLength(1);
+    expect(dialog.querySelectorAll(".alpha-mobile-drawer__close")).toHaveLength(0);
+    expect(dialog.querySelectorAll(".alpha-mobile-drawer__handle-target")).toHaveLength(1);
     expect(Array.from(dialog.querySelectorAll("h1,h2,h3")).filter((heading) => heading.textContent === "Graph" && !heading.classList.contains("visually-hidden"))).toHaveLength(1);
   });
 

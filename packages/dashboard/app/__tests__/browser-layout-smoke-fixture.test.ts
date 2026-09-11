@@ -106,6 +106,10 @@ describe("browser layout smoke fixture", () => {
       "alpha-drawer-production-root",
       "alpha-drawer-floating",
       "alpha-drawer-terminal",
+      "alpha-board-fixture",
+      "alpha-board",
+      "alpha-board-column",
+      "alpha-pill",
     ]) {
       expect(html).toContain(`data-smoke="${hook}"`);
     }
@@ -124,11 +128,15 @@ describe("browser layout smoke fixture", () => {
     expect(productionSource).not.toContain("function Shell(");
     expect(productionSource).not.toContain("contentOwnsHeader:");
     expect(productionSource).not.toContain("contentOwnsScroll:");
+    expect(productionSource).not.toContain("closeLabel:");
     expect(productionSource).not.toContain('className: "chat-view"');
     expect(productionSource).not.toContain('className: "planning-view open"');
     expect(html).toContain("alpha-drawer-production-fixture.js");
     expect(html).toContain("floating-window--alpha-mobile-drawer");
     expect(html).toContain("terminal-modal-overlay");
+    expect(html).toContain("project-content--with-alpha-nav");
+    expect(html).toContain("board-workflow-columns");
+    expect(html).toContain("mobile-nav-bar--alpha");
   });
 
   it("includes standalone and embedded Git Manager shell fixtures", () => {    const html = createSmokeHtml();

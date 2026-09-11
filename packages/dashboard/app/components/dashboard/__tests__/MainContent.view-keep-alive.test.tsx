@@ -102,6 +102,14 @@ function taskFixture(id = "task-1"): Task {
   } as Task;
 }
 
+function dismissDrawerByHandle(dialog: HTMLElement): void {
+  const handle = dialog.querySelector(".alpha-mobile-drawer__handle-target");
+  if (!handle) throw new Error("Alpha drawer handle is missing");
+  fireEvent.pointerDown(handle, { pointerId: 1, clientY: 0, button: 0, isPrimary: true });
+  fireEvent.pointerMove(handle, { pointerId: 1, clientY: 200 });
+  fireEvent.pointerUp(handle, { pointerId: 1, clientY: 200 });
+}
+
 function mainContentProps(overrides: Partial<MainContentProps> = {}): MainContentProps {
   return {
     showBackendConnectionErrorPage: false,
@@ -343,34 +351,44 @@ describe("MainContent main-view keep alive", () => {
   });
 
   it("keeps one active Board visible beneath the Alpha mobile Task Detail drawer", async () => {
+    const closeTaskDetailMainPanel = vi.fn();
     render(<MainContent {...mainContentProps({
       taskView: "task-detail",
       isMobile: true,
       experimentalFeatures: { alphaUpdates: true },
       mainPanelDetailTask: taskFixture("FN-ALPHA-DETAIL"),
+      closeTaskDetailMainPanel,
     })} />);
 
     await waitFor(() => expect(document.querySelectorAll("#board")).toHaveLength(1));
     expect(screen.getByTestId("board-keep-alive")).not.toHaveAttribute("aria-hidden");
     expect(boardRoot().closest('[data-heroui-alpha-surface="true"]')).not.toBeNull();
     expect(boardRoot().querySelector('[data-heroui-alpha="button"]')).not.toBeNull();
-    expect(screen.getByRole("dialog", { name: "Task detail" })).toContainElement(screen.getByTestId("task-detail-back"));
+    const dialog = screen.getByRole("dialog", { name: "Task detail" });
+    expect(dialog).toContainElement(screen.getByTestId("task-detail-back"));
     expect(document.querySelectorAll("[role='dialog']")).toHaveLength(1);
+    dismissDrawerByHandle(dialog);
+    expect(closeTaskDetailMainPanel).toHaveBeenCalledTimes(1);
   });
 
   it("laisse le shell défiler pour une vue ordinaire qui possède seulement son en-tête", async () => {
+    const handleChangeTaskView = vi.fn();
     render(<MainContent {...mainContentProps({
       taskView: "ideation",
       isMobile: true,
       settingsLoaded: true,
       ideationEnabled: true,
       experimentalFeatures: { alphaUpdates: true },
+      handleChangeTaskView,
     })} />);
 
     const dialog = await screen.findByRole("dialog", { name: "Ideation" });
     expect(dialog).toHaveClass("alpha-mobile-drawer__panel--content-header");
     expect(dialog).not.toHaveClass("alpha-mobile-drawer__panel--content-scroll");
     expect(dialog.querySelector(".alpha-mobile-drawer__body")).not.toBeNull();
+    dismissDrawerByHandle(dialog);
+    expect(handleChangeTaskView).toHaveBeenCalledTimes(1);
+    expect(handleChangeTaskView).toHaveBeenCalledWith("board");
   });
 
   it("donne l’en-tête de secours unique à un plugin réel sans chrome propre", async () => {
@@ -378,6 +396,7 @@ describe("MainContent main-view keep alive", () => {
       default: () => <section data-testid="headerless-plugin"><p>Plugin content</p><button type="button">Plugin final control</button></section>,
     }));
     registerPluginView("fixture", "headerless", PluginWithoutHeader);
+    const handleChangeTaskView = vi.fn();
 
     render(<MainContent {...mainContentProps({
       taskView: "plugin:fixture:headerless" as MainContentProps["taskView"],
@@ -387,13 +406,18 @@ describe("MainContent main-view keep alive", () => {
         pluginId: "fixture",
         view: { viewId: "headerless", label: "Plugin Tool", componentPath: "fixture" },
       }],
+      handleChangeTaskView,
     })} />);
 
     const dialog = await screen.findByRole("dialog", { name: "Plugin Tool" });
     expect(dialog.querySelectorAll(":scope > .alpha-mobile-drawer__header")).toHaveLength(1);
     expect(dialog.querySelectorAll("h1,h2,h3")).toHaveLength(1);
-    expect(dialog.querySelectorAll(":scope > .alpha-mobile-drawer__close")).toHaveLength(1);
+    expect(dialog.querySelectorAll(":scope > .alpha-mobile-drawer__close")).toHaveLength(0);
+    expect(dialog.querySelectorAll(":scope > .alpha-mobile-drawer__handle-target")).toHaveLength(1);
     expect(await screen.findByTestId("headerless-plugin")).toContainElement(screen.getByRole("button", { name: "Plugin final control" }));
+    dismissDrawerByHandle(dialog);
+    expect(handleChangeTaskView).toHaveBeenCalledTimes(1);
+    expect(handleChangeTaskView).toHaveBeenCalledWith("board");
   });
 
   it("keeps retained Chat in one drawer while Board stays active behind it", async () => {

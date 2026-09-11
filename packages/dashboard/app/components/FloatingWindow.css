@@ -658,8 +658,8 @@ Edge + corner resize handles. touch-action:none keeps the drag from being hijack
 FNXC:AlphaMobileDrawer 2026-09-10-16:56:
 Project-scoped Alpha utilities reuse FloatingWindow's existing content, focus, and portal ownership but place their bounded phone drawer at the viewport bottom above the trigger pill. System clearance is padding inside the scrollable surface; onboarding classes remain excluded so setup and blocking pre-shell flows retain their dedicated presentation.
 
-FNXC:AlphaMobileDrawer 2026-09-10-22:24:
-Alpha FloatingWindows consume the shared canonical drawer block-size instead of persisted or content-driven height. Their existing header remains the sole title/close row and their body remains the bounded flex scroll owner.
+FNXC:AlphaMobileDrawer 2026-09-11-01:40:
+Alpha FloatingWindows consume the shared canonical drawer block-size instead of persisted or content-driven height. A real handle owns the shared dismiss gesture, the existing header keeps only title/content actions, and the body remains the bounded flex scroll owner.
 */
 html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] .floating-window-overlay--alpha-mobile-drawer {
   display: flex;
@@ -691,13 +691,24 @@ html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] .floating-wi
   transform: none !important;
 }
 
-html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] .floating-window--alpha-mobile-drawer::before {
-  content: "";
-  flex: 0 0 auto;
-  align-self: center;
+html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] .floating-window__drawer-handle-target {
+  display: flex;
+  flex: 0 0 var(--touch-target-min-size);
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] .floating-window__drawer-handle-target:active {
+  cursor: grabbing;
+}
+
+html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] .floating-window__drawer-handle {
   width: calc(var(--space-xl) + var(--space-md));
   height: var(--space-xs);
-  margin-block-start: var(--space-sm);
   border-radius: var(--radius-pill);
   background: var(--border-strong);
 }

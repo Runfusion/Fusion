@@ -33,7 +33,6 @@ export interface MainViewKeepAliveProps {
   alphaMobileDrawer?: {
     activeId: Exclude<KeepAliveMainViewId, "board"> | null;
     title: string;
-    closeLabel: string;
     onClose: () => void;
   };
 }
@@ -344,7 +343,6 @@ export function MainViewKeepAlive({ activeId, mountedIds, projectKey, mainConten
             key={`${projectKey}:${id}`}
             open={alphaMobileDrawer.activeId === id}
             title={alphaMobileDrawer.title}
-            closeLabel={alphaMobileDrawer.closeLabel}
             onClose={alphaMobileDrawer.onClose}
             keepMounted
             testId={`alpha-mobile-drawer-${id}`}

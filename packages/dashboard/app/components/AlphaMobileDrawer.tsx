@@ -1,12 +1,11 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { X } from "lucide-react";
+import { useDrawerDismissGesture } from "../hooks/useDrawerDismissGesture";
 import "./AlphaMobileDrawer.css";
 
 export interface AlphaMobileDrawerProps {
   open: boolean;
   title: ReactNode;
-  closeLabel: string;
   onClose: () => void;
   children: ReactNode;
   className?: string;
@@ -27,7 +26,6 @@ export interface AlphaMobileDrawerProps {
 interface AlphaAppDrawerBridgeProps {
   open: boolean;
   title: string;
-  closeLabel: string;
   onClose: () => void;
   children: ReactNode;
 }
@@ -36,17 +34,17 @@ interface AlphaAppDrawerBridgeProps {
 FNXC:AlphaMobileDrawer 2026-09-10-23:59:
 Projects and Planning expose their production drawer bridges so browser geometry checks execute the exact ownership flags and mount policy used by App. Keep these bridges as the sole definitions of App-owned Alpha drawer chrome; fixture-only shell copies can drift while remaining green.
 */
-export function AlphaProjectsDrawer({ open, title, closeLabel, onClose, children }: AlphaAppDrawerBridgeProps) {
+export function AlphaProjectsDrawer({ open, title, onClose, children }: AlphaAppDrawerBridgeProps) {
   return (
-    <AlphaMobileDrawer open={open} title={title} closeLabel={closeLabel} onClose={onClose} testId="alpha-mobile-drawer-projects" contentOwnsHeader contentOwnsScroll>
+    <AlphaMobileDrawer open={open} title={title} onClose={onClose} testId="alpha-mobile-drawer-projects" contentOwnsHeader contentOwnsScroll>
       {children}
     </AlphaMobileDrawer>
   );
 }
 
-export function AlphaPlanningDrawer({ open, title, closeLabel, onClose, children }: AlphaAppDrawerBridgeProps) {
+export function AlphaPlanningDrawer({ open, title, onClose, children }: AlphaAppDrawerBridgeProps) {
   return (
-    <AlphaMobileDrawer open={open} title={title} closeLabel={closeLabel} onClose={onClose} keepMounted testId="alpha-mobile-drawer-planning" contentOwnsHeader contentOwnsScroll>
+    <AlphaMobileDrawer open={open} title={title} onClose={onClose} keepMounted testId="alpha-mobile-drawer-planning" contentOwnsHeader contentOwnsScroll>
       {children}
     </AlphaMobileDrawer>
   );
@@ -58,8 +56,8 @@ const FOCUSABLE_SELECTOR = 'button:not([disabled]), [href], input:not([disabled]
 FNXC:AlphaMobileDrawer 2026-09-10-16:56:
 Alpha mobile keeps Board as the permanent project surface and presents every other destination in one bounded modal drawer. The shared shell owns the visible Board reveal, bottom-edge overlay above the trigger pill, internal system-safe clearance, independent scrolling, Escape/backdrop close, focus containment, and trigger-focus restoration so individual destinations do not invent competing mobile sheets.
 
-FNXC:AlphaMobileDrawer 2026-09-10-22:24:
-A hosted view with its own header remains the sole visible title/action row. The shell retains a screen-reader dialog name and an independently accessible close control without reserving a second header row; headerless plugin or fallback content still receives the visible shell title.
+FNXC:AlphaMobileDrawer 2026-09-11-01:40:
+A hosted view with its own header remains the sole visible title/action row. The shell retains a screen-reader dialog name while its real top handle exclusively owns drag-to-dismiss; headerless plugin or fallback content still receives the visible shell title without a close-button reserve.
 
 FNXC:AlphaMobileDrawer 2026-09-10-22:45:
 Visible-header ownership and overflow ownership are independent contracts. Only views with a bounded internal flex scroller may suppress body scrolling; ordinary views such as Ideation keep the drawer body as their reachable vertical scroller even when they render their own heading.
@@ -67,7 +65,6 @@ Visible-header ownership and overflow ownership are independent contracts. Only 
 export function AlphaMobileDrawer({
   open,
   title,
-  closeLabel,
   onClose,
   children,
   className,
@@ -79,6 +76,12 @@ export function AlphaMobileDrawer({
   const panelRef = useRef<HTMLElement | null>(null);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
+  const dismissHandleProps = useDrawerDismissGesture({
+    enabled: open,
+    open,
+    panelRef,
+    onDismiss: onClose,
+  });
 
   useEffect(() => {
     if (!open) return;
@@ -136,7 +139,9 @@ export function AlphaMobileDrawer({
         aria-labelledby={`${testId}-title`}
         tabIndex={-1}
       >
-        <div className="alpha-mobile-drawer__handle" aria-hidden="true" />
+        <div className="alpha-mobile-drawer__handle-target" aria-hidden="true" {...dismissHandleProps}>
+          <span className="alpha-mobile-drawer__handle" />
+        </div>
         {contentOwnsHeader ? (
           <h2 id={`${testId}-title`} className="alpha-mobile-drawer__accessible-title visually-hidden">{title}</h2>
         ) : (
@@ -144,9 +149,6 @@ export function AlphaMobileDrawer({
             <h2 id={`${testId}-title`} className="alpha-mobile-drawer__title">{title}</h2>
           </header>
         )}
-        <button type="button" className="alpha-mobile-drawer__close" onClick={onClose} aria-label={closeLabel}>
-          <X aria-hidden="true" />
-        </button>
         <div className="alpha-mobile-drawer__body">{children}</div>
       </section>
     </div>,

@@ -36,6 +36,7 @@ import { useTerminal } from "../hooks/useTerminal";
 import { useTerminalSessions } from "../hooks/useTerminalSessions";
 import { useWorkspaces } from "../hooks/useWorkspaces";
 import { getViewportMode, isMobileViewport } from "../hooks/useViewportMode";
+import { useDrawerDismissGesture } from "../hooks/useDrawerDismissGesture";
 import { FloatingWindow, FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT } from "./FloatingWindow";
 import { currentFloatingZ, nextFloatingZ } from "./floatingWindowStack";
 import { useConfirm } from "../hooks/useConfirm";
@@ -545,6 +546,15 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
   
   const terminalRef = useRef<HTMLDivElement>(null);
   const modalRef = useRef<HTMLDivElement>(null);
+  const alphaMobileDrawer = isMobileTerminal
+    && !embedded
+    && typeof document !== "undefined"
+    && document.documentElement.dataset.alphaMobileDrawers === "true";
+  const dismissHandleProps = useDrawerDismissGesture({
+    enabled: alphaMobileDrawer,
+    panelRef: modalRef,
+    onDismiss: onClose,
+  });
   const terminalTabRegionRef = useRef<HTMLDivElement>(null);
   const terminalTabsMeasureRef = useRef<HTMLDivElement>(null);
   const terminalWorkspacePickerRef = useRef<HTMLDivElement>(null);
@@ -2712,6 +2722,11 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
       role={isBelowMode ? "region" : undefined}
       aria-label={isBelowMode ? t("terminal.belowRegion", "Pinned terminal") : undefined}
     >
+        {alphaMobileDrawer && (
+          <div className="terminal-drawer-handle-target" data-testid="terminal-drawer-handle" aria-hidden="true" {...dismissHandleProps}>
+            <span className="terminal-drawer-handle" />
+          </div>
+        )}
         {!embedded && (isDockedMode || isBelowMode) && (
           <div
             className={isBelowMode ? "terminal-below-resize-handle" : "terminal-docked-resize-handle"}
@@ -2889,7 +2904,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
           */}
           {!embedded && !isMobileTerminal && terminalDisplayModeControls}
 
-          {!embedded && (
+          {!embedded && !alphaMobileDrawer && (
             <button
               className={`terminal-close${isMobileTerminal ? " terminal-close--corner" : ""}`}
               onClick={onClose}

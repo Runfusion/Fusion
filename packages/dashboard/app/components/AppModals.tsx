@@ -33,7 +33,6 @@ const WorkflowNodeEditor = lazy(() => import("./WorkflowNodeEditor").then((m) =>
 interface AlphaUsageDrawerProps {
   open: boolean;
   title: string;
-  closeLabel: string;
   onClose: () => void;
   projectId?: string;
 }
@@ -42,12 +41,11 @@ interface AlphaUsageDrawerProps {
 FNXC:AlphaMobileDrawer 2026-09-10-23:59:
 Usage browser checks must mount AppModals' production bridge rather than duplicate its shell flags. This exported bridge remains the single Alpha usage composition while the ordinary popover path stays owned by AppModals.
 */
-export function AlphaUsageDrawer({ open, title, closeLabel, onClose, projectId }: AlphaUsageDrawerProps) {
+export function AlphaUsageDrawer({ open, title, onClose, projectId }: AlphaUsageDrawerProps) {
   return (
     <AlphaMobileDrawer
       open={open}
       title={title}
-      closeLabel={closeLabel}
       onClose={onClose}
       testId="alpha-mobile-drawer-usage"
       contentOwnsHeader
@@ -495,7 +493,6 @@ export function AppModals({
         <AlphaUsageDrawer
           open={modalManager.usageOpen}
           title={t("nav.usage", "Usage")}
-          closeLabel={t("common.close", "Close")}
           onClose={closeUsageWithNav}
           projectId={projectId}
         />

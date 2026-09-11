@@ -413,6 +413,23 @@ export function createSmokeHtml(options = {}) {
       <div data-smoke="alpha-drawer-production-root"></div>
       <div class="floating-window-overlay floating-window-overlay--modal floating-window-overlay--alpha-mobile-drawer" data-smoke="alpha-drawer-floating"><section class="floating-window floating-window--alpha-mobile-drawer"><header class="floating-window__header"><h2>Floating</h2></header><div class="floating-window__body"><button type="button">Floating final control</button></div></section></div>
       <div class="terminal-modal-overlay" data-smoke="alpha-drawer-terminal"><section class="terminal-modal"><header class="terminal-header"><h2>Terminal</h2></header><div class="terminal-body">Terminal content</div><button type="button">Terminal final control</button></section></div>
+    </section>
+    <section data-smoke="alpha-board-fixture" hidden style="position:fixed;inset:0;display:flex;min-height:0;background:var(--bg);">
+      <div class="dashboard-project-shell" data-heroui-alpha-surface="true">
+        <main class="project-content project-content--with-alpha-nav">
+          <div class="board-workflow-view">
+            <div class="board board-workflow-columns" data-smoke="alpha-board">
+              <section class="column" data-smoke="alpha-board-column"><header class="column-header"><h2>Todo</h2></header><div class="column-body"></div></section>
+            </div>
+          </div>
+        </main>
+      </div>
+      <nav class="mobile-nav-bar mobile-nav-bar--alpha" data-smoke="alpha-pill" aria-label="Alpha primary navigation">
+        <button class="mobile-nav-tab mobile-nav-tab--active" type="button"><span class="mobile-nav-tab-label">Board</span></button>
+        <button class="mobile-nav-tab" type="button"><span class="mobile-nav-tab-label">Planning</span></button>
+        <button class="mobile-nav-tab" type="button"><span class="mobile-nav-tab-label">Chat</span></button>
+        <button class="mobile-nav-tab" type="button"><span class="mobile-nav-tab-label">Mailbox</span></button>
+      </nav>
     </section>`;
 
   return `<!doctype html>
@@ -947,7 +964,7 @@ export function createAlphaDrawerProductionFixtureSource() {
     const modalManager = { closePlanning: noop, clearPlanningInitialPlan: noop, planningInitialPlan: null, planningSourceIssue: null, planningWorkflowId: null, planningResumeSessionId: null };
     const navigation = { pushNav: noop, replaceCurrent: noop, removeNav: noop };
 
-    const drawerProps = (title) => ({ open: true, title, closeLabel: "Close " + title, onClose: noop });
+    const drawerProps = (title) => ({ open: true, title, onClose: noop });
     const chatMainContentProps = {
       ChatView,
       currentProject: project,
@@ -965,7 +982,7 @@ export function createAlphaDrawerProductionFixtureSource() {
       if (id === "usage") return React.createElement(AlphaUsageDrawer, { ...drawerProps("Usage"), projectId: project.id });
       if (id === "task-detail" || id === "long") return React.createElement(TaskDetailModal, { task, projectId: project.id, alphaMobileDrawer: true, onClose: noop, onOpenDetail: noop, onDeleteTask: asyncTask, onMergeTask: async () => ({ success: true }), addToast: noop });
       if (id === "plugin") return React.createElement(AlphaMainContentDrawer, { ...drawerProps("Todo"), taskView: "plugin:fusion-plugin-todos:todos" }, React.createElement(Suspense, { fallback: null }, React.createElement(PluginDashboardViewHost, { taskView: "plugin:fusion-plugin-todos:todos", context: { projectId: project.id, tasks: [], workflowSteps: [], openTaskDetail: noop } })));
-      return React.createElement(MainViewKeepAlive, { activeId: "chat", mountedIds: ["chat"], projectKey: project.id, mainContentProps: chatMainContentProps, alphaMobileDrawer: { activeId: "chat", title: "Chat", closeLabel: "Close Chat", onClose: noop } });
+      return React.createElement(MainViewKeepAlive, { activeId: "chat", mountedIds: ["chat"], projectKey: project.id, mainContentProps: chatMainContentProps, alphaMobileDrawer: { activeId: "chat", title: "Chat", onClose: noop } });
     }
 
     function Fixture() {
@@ -1560,6 +1577,7 @@ async function runSmokeChecks(page, pageUrl) {
         panel: panelRect,
         headerCount: visibleHeaderRows.length,
         closeCount: panel.querySelectorAll(':scope > .alpha-mobile-drawer__close').length,
+        handleCount: panel.querySelectorAll(':scope > .alpha-mobile-drawer__handle-target').length,
         finalReachable: controlRect.top >= panelRect.top - 1 && controlRect.bottom <= panelRect.bottom + 1,
         inputFocusable: config.id === 'chat' ? !finalControl.disabled && finalControl.tabIndex >= 0 : undefined,
         visibleChatTitles,
@@ -1588,6 +1606,49 @@ async function runSmokeChecks(page, pageUrl) {
       horizontalOverflow: Math.max(...panels.map((panel) => panel.right - window.innerWidth), 0),
     };
   })()`);
+  /*
+  FNXC:AlphaBoardPillGeometry 2026-09-11-02:01:
+  Blink must derive the Board and pill edges from emitted production CSS. The smoke changes only the data state and measured system offset; it never injects a column rectangle or copies the expected bottom into the subject under test.
+  */
+  const collectAlphaBoardLayout = (state, systemOffset) => evaluate(page, `(async () => {
+    const root = document.documentElement;
+    root.dataset.viewportMode = 'mobile';
+    root.style.setProperty('--mobile-nav-alpha-system-offset', ${JSON.stringify(String(systemOffset))} + 'px');
+    const fixture = document.querySelector('[data-smoke="alpha-board-fixture"]');
+    fixture.hidden = false;
+    const board = fixture.querySelector('[data-smoke="alpha-board"]');
+    const state = ${JSON.stringify(String(state))};
+    if (state === 'skeleton') {
+      board.className = 'board board-workflows-skeleton';
+      board.innerHTML = '<section class="board-workflows-skeleton__column" data-smoke="alpha-board-column"><div class="board-workflows-skeleton__header"></div><div class="board-workflows-skeleton__card"></div></section>';
+    } else {
+      board.className = 'board board-workflow-columns';
+      board.innerHTML = '<section class="column" data-smoke="alpha-board-column"><header class="column-header"><h2>Todo</h2></header><div class="column-body">' + (state === 'populated' ? '<article class="card"><h3 class="card-title">Populated Alpha task</h3></article>' : '') + '</div></section>';
+    }
+    const nextFrame = () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    await nextFrame();
+    const pill = fixture.querySelector('[data-smoke="alpha-pill"]');
+    const floatingGap = Number.parseFloat(getComputedStyle(pill).getPropertyValue('--mobile-nav-floating-gap')) || 0;
+    root.style.setProperty('--mobile-nav-height', Math.ceil(pill.getBoundingClientRect().height + floatingGap) + 'px');
+    await nextFrame();
+    const pillRect = pill.getBoundingClientRect();
+    const boardRect = board.getBoundingClientRect();
+    const columns = [...board.querySelectorAll('[data-smoke="alpha-board-column"]')].map((column) => {
+      const box = column.getBoundingClientRect();
+      return { top: box.top, bottom: box.bottom, height: box.height };
+    });
+    return {
+      state,
+      pillTop: pillRect.top,
+      boardBottom: boardRect.bottom,
+      columnBottoms: columns.map((column) => column.bottom),
+      columnHeights: columns.map((column) => column.height),
+      boardPaddingBottom: Number.parseFloat(getComputedStyle(board).paddingBottom),
+      documentOverflowX: document.documentElement.scrollWidth - window.innerWidth,
+      fixtureOverflowY: fixture.scrollHeight - fixture.clientHeight,
+    };
+  })()`);
+
   const collectAgentsOverviewScrollLayout = () => evaluate(page, `(() => {
     document.querySelector('[data-smoke="show-agents-overview-scroll"]').click();
     const section = document.querySelector('[data-smoke="agents-overview-scroll"]');
@@ -1651,7 +1712,7 @@ async function runSmokeChecks(page, pageUrl) {
         && layout.productionReady
         && layout.panels.every((panel) => Math.abs(panel.height - expectedHeight) <= 1)
         && layout.productionProviderCount === 7
-        && layout.providerResults.every((provider) => provider.headerCount === 1 && provider.closeCount === 1 && provider.finalReachable)
+        && layout.providerResults.every((provider) => provider.headerCount === 1 && provider.closeCount === 0 && provider.handleCount === 1 && provider.finalReachable)
         && layout.inputVisible
         && layout.inputFocusable
         && layout.visibleChatTitles === 1
@@ -1663,6 +1724,33 @@ async function runSmokeChecks(page, pageUrl) {
     document.querySelector('[data-smoke="alpha-drawer-fixtures"]').hidden = true;
     delete document.documentElement.dataset.alphaDrawerFixturesVisible;
     delete document.documentElement.dataset.alphaMobileDrawers;
+    return true;
+  })()`);
+  for (const { name, width, height, systemOffset } of [
+    { name: "portrait safe area", width: 390, height: 844, systemOffset: 24 },
+    { name: "short landscape ICB", width: 844, height: 390, systemOffset: 18 },
+    { name: "reduced keyboard viewport", width: 390, height: 400, systemOffset: 12 },
+  ]) {
+    await page.send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 2, mobile: true });
+    for (const state of ["skeleton", "empty", "populated"]) {
+      const layout = await collectAlphaBoardLayout(state, systemOffset);
+      assertSmokeResult(
+        `Alpha Board ${state} columns meet the floating pill in ${name}`,
+        layout.columnBottoms.length > 0
+          && layout.columnHeights.every((columnHeight) => columnHeight > 0)
+          && layout.columnBottoms.every((bottom) => Math.abs(bottom - layout.pillTop) <= 1)
+          && Math.abs(layout.boardBottom - layout.pillTop) <= 1
+          && layout.boardPaddingBottom === 0
+          && layout.documentOverflowX <= 1
+          && layout.fixtureOverflowY <= 1,
+        JSON.stringify(layout),
+      );
+    }
+  }
+  await evaluate(page, `(() => {
+    document.querySelector('[data-smoke="alpha-board-fixture"]').hidden = true;
+    document.documentElement.style.removeProperty('--mobile-nav-alpha-system-offset');
+    document.documentElement.style.removeProperty('--mobile-nav-height');
     delete document.documentElement.dataset.viewportMode;
     return true;
   })()`);

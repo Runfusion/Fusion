@@ -2096,8 +2096,8 @@ rect (inline left/bottom) and stacked with nextFloatingZ so it clears pinned/pop
 FNXC:AlphaMobileDrawer 2026-09-10-16:56:
 The mobile terminal keeps its PTY and keyboard-overlap lifecycle while its bounded Alpha drawer reaches the viewport bottom above the trigger pill and absorbs system clearance inside the panel. Standard mobile remains governed by the earlier fullscreen rules because this selector requires the App-published Alpha project-shell marker.
 
-FNXC:AlphaMobileDrawer 2026-09-10-22:24:
-The Alpha terminal consumes the same canonical drawer block-size as shared and FloatingWindow shells. PTY content continues to flex within that fixed outer geometry while its toolbar and keyboard-aware input remain reachable.
+FNXC:AlphaMobileDrawer 2026-09-11-01:40:
+The Alpha terminal consumes the same canonical drawer block-size and shared handle gesture as the other drawer owners. Its close button is absent only under that contract; PTY content, Escape/backdrop recovery, and keyboard-aware input remain reachable.
 */
 html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] .terminal-modal-overlay:not(.terminal-modal-overlay--docked) {
   align-items: flex-end;
@@ -2119,4 +2119,26 @@ html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] .terminal-mo
   border-block-end: 0;
   border-radius: var(--radius-xl) var(--radius-xl) 0 0;
   box-shadow: var(--shadow-lg);
+}
+
+html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] .terminal-drawer-handle-target {
+  display: flex;
+  flex: 0 0 var(--touch-target-min-size);
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] .terminal-drawer-handle-target:active {
+  cursor: grabbing;
+}
+
+html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] .terminal-drawer-handle {
+  width: calc(var(--space-xl) + var(--space-md));
+  height: var(--space-xs);
+  border-radius: var(--radius-pill);
+  background: var(--border-strong);
 }

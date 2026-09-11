@@ -43,11 +43,24 @@ Body overflow is disabled only when a provider declares a complete internal scro
   box-shadow: var(--shadow-lg);
 }
 
+.alpha-mobile-drawer__handle-target {
+  display: flex;
+  flex: 0 0 var(--touch-target-min-size);
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.alpha-mobile-drawer__handle-target:active {
+  cursor: grabbing;
+}
+
 .alpha-mobile-drawer__handle {
-  flex: 0 0 auto;
   width: calc(var(--space-xl) + var(--space-md));
   height: var(--space-xs);
-  margin: var(--space-sm) auto 0;
   border-radius: var(--radius-pill);
   background: var(--border-strong);
 }
@@ -72,31 +85,6 @@ Body overflow is disabled only when a provider declares a complete internal scro
   white-space: nowrap;
 }
 
-.alpha-mobile-drawer__close {
-  position: absolute;
-  z-index: 1;
-  inset-block-start: calc((var(--space-sm) * 2) + var(--space-xs));
-  inset-inline-end: var(--space-md);
-  display: inline-flex;
-  flex: 0 0 var(--touch-target-min-size);
-  align-items: center;
-  justify-content: center;
-  width: var(--touch-target-min-size);
-  height: var(--touch-target-min-size);
-  padding: 0;
-  color: var(--text-muted);
-  background: transparent;
-  border: 0;
-  border-radius: var(--radius-md);
-  cursor: pointer;
-}
-
-.alpha-mobile-drawer__close:hover,
-.alpha-mobile-drawer__close:focus-visible {
-  color: var(--text);
-  background: var(--surface-hover);
-}
-
 .alpha-mobile-drawer__body {
   display: flex;
   flex: 1 1 auto;
@@ -116,9 +104,4 @@ Body overflow is disabled only when a provider declares a complete internal scro
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
-}
-
-/* Keep the shell close target beside, never over, a caller-owned action row. */
-.alpha-mobile-drawer__panel--content-header .alpha-mobile-drawer__body :is(.view-header, .modal-header, .cc-header):first-child {
-  padding-inline-end: calc(var(--touch-target-min-size) + (var(--space-md) * 2));
 }

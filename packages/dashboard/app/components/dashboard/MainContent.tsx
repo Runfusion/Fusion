@@ -74,7 +74,6 @@ interface AlphaMainContentDrawerProps {
   taskView: TaskView;
   open: boolean;
   title: string;
-  closeLabel: string;
   onClose: () => void;
   children: ReactNode;
 }
@@ -83,12 +82,11 @@ interface AlphaMainContentDrawerProps {
 FNXC:AlphaMobileDrawer 2026-09-10-23:59:
 Ordinary and plugin destinations share this production bridge so header ownership is derived from the routed task view in one place. Browser smoke mounts this same bridge, preventing fixture copies from silently disagreeing with MainContent.
 */
-export function AlphaMainContentDrawer({ taskView, open, title, closeLabel, onClose, children }: AlphaMainContentDrawerProps) {
+export function AlphaMainContentDrawer({ taskView, open, title, onClose, children }: AlphaMainContentDrawerProps) {
   return (
     <AlphaMobileDrawer
       open={open}
       title={title}
-      closeLabel={closeLabel}
       onClose={onClose}
       keepMounted
       testId="alpha-mobile-drawer-main-content"
@@ -388,7 +386,6 @@ export function MainContent(props: MainContentProps) {
       alphaMobileDrawer={alphaMobileDrawerEnabled ? {
         activeId: modalManager.detailTask ? null : taskView === "list" || taskView === "chat" ? taskView : null,
         title: alphaDrawerTitle,
-        closeLabel: t("common.close", "Close"),
         onClose: closeAlphaMobileDrawer,
       } : undefined}
     />
@@ -1128,7 +1125,6 @@ export function MainContent(props: MainContentProps) {
           taskView={taskView}
           open={!modalManager.detailTask}
           title={alphaDrawerTitle}
-          closeLabel={t("common.close", "Close")}
           onClose={closeAlphaMobileDrawer}
         >
           {switchView}

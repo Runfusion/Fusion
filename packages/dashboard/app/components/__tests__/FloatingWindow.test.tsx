@@ -147,9 +147,32 @@ describe("FloatingWindow", () => {
     const overlay = screen.getByTestId("floating-window-overlay-alpha-drawer");
     expect(overlay).toHaveClass("floating-window-overlay--alpha-mobile-drawer", "floating-window-overlay--modal");
     expect(overlay).toHaveAttribute("aria-modal", "true");
-    expect(screen.getByTestId("floating-window-alpha-drawer")).toHaveClass("floating-window--alpha-mobile-drawer");
+    const panel = screen.getByTestId("floating-window-alpha-drawer");
+    expect(panel).toHaveClass("floating-window--alpha-mobile-drawer");
     expect(screen.queryAllByRole("separator", { name: "Resize floating window" })).toHaveLength(0);
-    fireEvent.mouseDown(overlay);
+    expect(screen.queryByTestId("floating-window-close-alpha-drawer")).toBeNull();
+    const handle = panel.querySelector(".floating-window__drawer-handle-target")!;
+    fireEvent.pointerDown(handle, { pointerId: 1, clientY: 0, button: 0, isPrimary: true });
+    fireEvent.pointerMove(handle, { pointerId: 1, clientY: 200 });
+    fireEvent.pointerUp(handle, { pointerId: 1, clientY: 200 });
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it("ferme exactement une fois le vrai FloatingWindow Alpha avec Escape", () => {
+    document.documentElement.dataset.alphaMobileDrawers = "true";
+    vi.stubGlobal("matchMedia", vi.fn((query: string) => ({
+      matches: query.includes("max-width"),
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    })));
+    const close = vi.fn();
+    render(<FloatingWindow windowKey="alpha-escape" title="Files" onClose={close}><div>Files body</div></FloatingWindow>);
+
+    expect(screen.queryByTestId("floating-window-close-alpha-escape")).toBeNull();
+    fireEvent.keyDown(document, { key: "Escape" });
+
     expect(close).toHaveBeenCalledTimes(1);
   });
 

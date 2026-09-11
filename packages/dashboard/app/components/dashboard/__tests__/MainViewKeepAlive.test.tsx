@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { createPortal } from "react-dom";
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { listComponentFiles, readAppFile } from "../../../test/cssFixture";
 import type { MainContentProps } from "../types";
 import { KEEP_ALIVE_MAIN_VIEW_IDS, MainViewKeepAlive } from "../MainViewKeepAlive";
@@ -118,22 +118,30 @@ describe("MainViewKeepAlive", () => {
     expect(screen.getByTestId("chat-child")).toHaveAttribute("data-active", "true");
   });
 
-  it("keeps Board visible and active beneath one Alpha mobile keep-alive drawer", () => {
+  it.each(["chat", "list"] as const)("keeps Board visible beneath the Alpha mobile %s drawer and closes it once by handle drag", (activeId) => {
     const close = vi.fn();
     render(
       <MainViewKeepAlive
-        activeId="chat"
-        mountedIds={["board", "chat"]}
+        activeId={activeId}
+        mountedIds={["board", activeId]}
         projectKey="project-1"
         mainContentProps={mainContentProps()}
-        alphaMobileDrawer={{ activeId: "chat", title: "Chat", closeLabel: "Close", onClose: close }}
+        alphaMobileDrawer={{ activeId, title: activeId === "chat" ? "Chat" : "List", onClose: close }}
       />,
     );
 
     expect(screen.getByTestId("board-keep-alive")).not.toHaveAttribute("aria-hidden");
     expect(screen.getByTestId("board-child")).toHaveAttribute("data-active", "true");
-    expect(screen.getByRole("dialog", { name: "Chat" })).toContainElement(screen.getByTestId("chat-child"));
-    expect(screen.getByTestId("chat-child")).toHaveAttribute("data-active", "true");
+    const dialog = screen.getByRole("dialog", { name: activeId === "chat" ? "Chat" : "List" });
+    expect(dialog).toContainElement(screen.getByTestId(`${activeId}-child`));
+    expect(dialog.querySelector(".alpha-mobile-drawer__close")).toBeNull();
+    const handle = dialog.querySelector(".alpha-mobile-drawer__handle-target")!;
+    fireEvent.pointerDown(handle, { pointerId: 1, clientY: 0, button: 0, isPrimary: true });
+    fireEvent.pointerMove(handle, { pointerId: 1, clientY: 200 });
+    fireEvent.pointerUp(handle, { pointerId: 1, clientY: 200 });
+
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId(`${activeId}-child`)).toHaveAttribute("data-active", "true");
   });
 
   it("hides and deactivates every mounted entry when no main view is active", () => {

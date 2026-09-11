@@ -2219,7 +2219,6 @@ function AppInner() {
             <AlphaProjectsDrawer
               open={alphaProjectsDrawerOpen}
               title={t("nav.projects", "Projects")}
-              closeLabel={t("common.close", "Close")}
               onClose={() => setAlphaProjectsDrawerOpen(false)}
             >
               <ProjectOverview
@@ -2246,7 +2245,6 @@ function AppInner() {
               <AlphaPlanningDrawer
                 open={planningViewActive && !modalManager.detailTask}
                 title={t("nav.planning", "Planning")}
-                closeLabel={t("common.close", "Close")}
                 onClose={() => {
                   modalManager.closePlanning();
                   handleTaskViewChange("board");

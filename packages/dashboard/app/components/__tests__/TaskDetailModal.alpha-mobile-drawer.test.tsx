@@ -42,10 +42,33 @@ describe("TaskDetailModal Alpha mobile drawer", () => {
     expect(dialog.querySelector(".task-detail-modal--alpha-drawer .task-detail-content")).toBeInTheDocument();
     expect(dialog.querySelectorAll(":scope > .alpha-mobile-drawer__header")).toHaveLength(0);
     expect(dialog.querySelectorAll(".task-detail-content > .modal-header")).toHaveLength(1);
-    expect(dialog.querySelectorAll(":scope > .alpha-mobile-drawer__close")).toHaveLength(1);
+    expect(dialog.querySelectorAll(":scope > .alpha-mobile-drawer__close")).toHaveLength(0);
+    expect(dialog.querySelectorAll(":scope > .alpha-mobile-drawer__handle-target")).toHaveLength(1);
     expect(document.querySelector(".floating-window--task-detail")).toBeNull();
 
     fireEvent.keyDown(document, { key: "Escape" });
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it("ferme exactement une fois le Task Detail Alpha par drag de poignée", () => {
+    const close = vi.fn();
+    render(
+      <TaskDetailModal
+        task={makeTask({ id: "FN-DRAWER-DRAG" })}
+        alphaMobileDrawer
+        onClose={close}
+        onOpenDetail={noopOpenDetail}
+        onDeleteTask={noopDelete}
+        onMergeTask={noopMerge}
+        addToast={noop}
+      />,
+    );
+
+    const dialog = screen.getByRole("dialog", { name: "Task detail" });
+    const handle = dialog.querySelector(".alpha-mobile-drawer__handle-target")!;
+    fireEvent.pointerDown(handle, { pointerId: 1, clientY: 0, button: 0, isPrimary: true });
+    fireEvent.pointerMove(handle, { pointerId: 1, clientY: 200 });
+    fireEvent.pointerUp(handle, { pointerId: 1, clientY: 200 });
     expect(close).toHaveBeenCalledTimes(1);
   });
 

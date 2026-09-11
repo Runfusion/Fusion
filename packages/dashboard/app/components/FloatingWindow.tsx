@@ -13,6 +13,7 @@ import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { isFullScreenSheetViewport, isShortViewport, isTabletTouchViewport, useViewportMode } from "../hooks/useViewportMode";
+import { useDrawerDismissGesture } from "../hooks/useDrawerDismissGesture";
 import { currentFloatingZ, currentTaskDetailFloatingZ, nextFloatingZ, nextTaskDetailFloatingZ } from "./floatingWindowStack";
 import { isInsidePortalSafeSurface } from "../utils/portalSurfaces";
 import "./FloatingWindow.css";
@@ -407,6 +408,12 @@ export function FloatingWindow({
   */
   const [zIndex, setZIndex] = useState<number>(() => claimFrontZ());
   const panelRef = useRef<HTMLDivElement | null>(null);
+  const dismissHandleProps = useDrawerDismissGesture({
+    enabled: alphaMobileDrawer && !hidden,
+    open: !hidden,
+    panelRef,
+    onDismiss: onClose,
+  });
 
   /*
   FNXC:FloatingWindow 2026-06-22-20:45:
@@ -736,6 +743,15 @@ export function FloatingWindow({
     const priorFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     panel?.focus();
     const onKeyDown = (event: KeyboardEvent) => {
+      /*
+      FNXC:AlphaMobileDrawer 2026-09-11-02:01:
+      An Alpha mobile FloatingWindow has no close button, so its modal keyboard boundary must retain Escape as a secondary recovery path alongside handle drag and backdrop dismissal.
+      */
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+        return;
+      }
       if (event.key !== "Tab" || !panel) return;
       const focusable = Array.from(panel.querySelectorAll<HTMLElement>(
         'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
@@ -748,7 +764,7 @@ export function FloatingWindow({
     };
     document.addEventListener("keydown", onKeyDown);
     return () => { document.removeEventListener("keydown", onKeyDown); priorFocus?.focus(); };
-  }, [effectiveModal, hidden]);
+  }, [effectiveModal, hidden, onClose]);
 
   const panelStyle = {
     left: `${position.x}px`,
@@ -803,6 +819,11 @@ export function FloatingWindow({
         handles with CSS there: removing them from the accessibility tree ensures those sheets
         expose no floating-window affordance or touch gesture surface.
         */}
+        {alphaMobileDrawer && (
+          <div className="floating-window__drawer-handle-target" aria-hidden="true" {...dismissHandleProps}>
+            <span className="floating-window__drawer-handle" />
+          </div>
+        )}
         {!geometryPersistenceSuspended && RESIZE_DIRECTIONS.map((direction) => (
           <div
             key={direction}
@@ -822,15 +843,17 @@ export function FloatingWindow({
             onPointerDown={handleDragPointerDown}
           >
             <div className="floating-window__title">{title}</div>
-            <button
-              type="button"
-              className="floating-window__close"
-              onClick={onClose}
-              aria-label={t("floatingWindow.close", "Close floating window")}
-              data-testid={`floating-window-close-${windowKey}`}
-            >
-              <X size={18} />
-            </button>
+            {!alphaMobileDrawer && (
+              <button
+                type="button"
+                className="floating-window__close"
+                onClick={onClose}
+                aria-label={t("floatingWindow.close", "Close floating window")}
+                data-testid={`floating-window-close-${windowKey}`}
+              >
+                <X size={18} />
+              </button>
+            )}
           </div>
         )}
         <div className="floating-window__body" data-testid={`floating-window-body-${windowKey}`}>
