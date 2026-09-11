@@ -2,7 +2,7 @@ import "./TaskDetailModal.css";
 import React, { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import { Pencil, Bot, X, ChevronDown, ChevronRight, GitBranch, ArrowLeft, Loader2, AlertTriangle, Sparkles, Maximize2, Minimize2, Info, Copy } from "lucide-react";
+import { Pencil, Bot, X, ChevronDown, ChevronRight, GitBranch, ArrowLeft, Loader2, AlertTriangle, Sparkles, Maximize2, Minimize2, Info, Copy, RotateCcw, Trash2, Pause, Play, RefreshCcw, MoreHorizontal } from "lucide-react";
 import { useViewportMode } from "../hooks/useViewportMode";
 import { AlphaMobileDrawer } from "./AlphaMobileDrawer";
 import { mergeTaskSnapshot } from "../hooks/useTasks";
@@ -155,6 +155,25 @@ type TaskDetailTabButtonProps = {
   onSelect: () => void;
   children: React.ReactNode;
 };
+
+const TASK_DETAIL_DIRECT_ACTION_IDS = new Set(["duplicate", "retry", "delete", "pause", "unpause", "reset"]);
+const TASK_DETAIL_DIRECT_ACTION_ORDER = ["duplicate", "retry", "delete", "pause", "unpause", "reset"] as const;
+
+/*
+FNXC:TaskDetailHeaderActions 2026-09-11-17:35:
+Task Detail exposes Duplicate, Retry, Delete, Pause/Unpause, and Reset as icon-only header actions while retaining the canonical action model as the sole source of lifecycle eligibility and callbacks. Secondary actions remain in one keyboard-accessible header overflow, so removing the footer trigger never removes an operator capability.
+*/
+function renderTaskDetailActionIcon(actionId: string): React.ReactNode {
+  switch (actionId) {
+    case "duplicate": return <Copy aria-hidden="true" />;
+    case "retry": return <RotateCcw aria-hidden="true" />;
+    case "delete": return <Trash2 aria-hidden="true" />;
+    case "pause": return <Pause aria-hidden="true" />;
+    case "unpause": return <Play aria-hidden="true" />;
+    case "reset": return <RefreshCcw aria-hidden="true" />;
+    default: return null;
+  }
+}
 
 /*
 FNXC:TaskDetailAlpha 2026-09-11-02:41:
@@ -3698,7 +3717,7 @@ export function TaskDetailContent({
     handleOpenRefineModal();
   }, [handleOpenRefineModal, initialAction?.action, initialAction?.requestId]);
 
-  // Helper to close the retained footer Actions menu after an action.
+  // Helper to close the retained header Actions overflow after an action.
   const closeMenus = useCallback(() => {
     setShowActionsMenu(false);
   }, []);
@@ -4239,7 +4258,7 @@ export function TaskDetailContent({
   const showStopOverseer = !oversightIsOff;
   /*
   FNXC:PlannerOversight 2026-09-05-23:27:
-  Compute the disabled reason once for the footer Actions note. Prefer the human-control explanation when suppression is active even if the overseer is also inactive, because it gives the operator the actionable cause.
+  Compute the disabled reason once for the header Actions note. Prefer the human-control explanation when suppression is active even if the overseer is also inactive, because it gives the operator the actionable cause.
   */
   const nudgeDisabledReason = overseerHumanControlSuppressed
     ? t("taskDetail.oversight.nudgeSuppressedTitle", "Nudge is paused while this task is under manual control.")
@@ -4306,7 +4325,13 @@ export function TaskDetailContent({
     onOpenRefine: handleOpenRefineModal,
     onRetry: handleRetry,
     onReset: handleReset,
-    onTogglePause: handleTogglePause,
+    /*
+    FNXC:TaskDetailHeaderActions 2026-09-11-18:16:
+    Pause and Unpause are direct header actions only when the operation required by the current snapshot is wired. Omitting the descriptor prevents an interactive icon from silently doing nothing in partially capable Task Detail hosts.
+    */
+    onTogglePause: isTaskPaused
+      ? onUnpauseTask ? handleTogglePause : undefined
+      : onPauseTask ? handleTogglePause : undefined,
     onMerge: handleMergeMenuItemClick,
     onStartPrReview: handleStartPrReviewMenuItemClick,
     onCheckPrStatus: handleCheckPrStatus,
@@ -4329,6 +4354,9 @@ export function TaskDetailContent({
     handleRetry,
     handleReset,
     handleTogglePause,
+    isTaskPaused,
+    onPauseTask,
+    onUnpauseTask,
     handleMergeMenuItemClick,
     handleStartPrReviewMenuItemClick,
     handleCheckPrStatus,
@@ -4337,7 +4365,7 @@ export function TaskDetailContent({
 
   /*
   FNXC:TaskDetailFooterActions 2026-09-05-23:27:
-  Task Detail keeps Quick Add's attach → GitHub → Oversight → Priority → Fast order, but contributes those controls as labeled items to the existing flat footer Actions menu. Every actionable selection follows the menu's one close path before the retained persistence handler runs; the existing toast supplies completion feedback, and opening focuses the first enabled action (normally Attach file) instead of introducing a second toggle-menu behavior.
+  Task Detail keeps Quick Add's attach → GitHub → Oversight → Priority → Fast order, but contributes those controls as labeled items to the flat header Actions overflow. Every actionable selection follows the menu's one close path before the retained persistence handler runs; the existing toast supplies completion feedback, and opening focuses the first enabled action (normally Attach file) instead of introducing a second toggle-menu behavior.
   */
   const detailQuickActionItems = useMemo<TaskMenuItemDescriptor[]>(() => {
     const items: TaskMenuItemDescriptor[] = [
@@ -4520,6 +4548,31 @@ export function TaskDetailContent({
     t,
   ]);
   const reviewAction = taskActionMenuModel.reviewAction;
+  const showTaskDetailFooter = isEditing || Boolean(isAwaitingApproval && workingTask.prompt) || Boolean(reviewAction);
+  const directHeaderActions = TASK_DETAIL_DIRECT_ACTION_ORDER
+    .map((id) => taskActionMenuModel.actions.find((action) => action.id === id))
+    .filter((action): action is NonNullable<typeof action> => Boolean(action));
+  const secondaryHeaderActions = useMemo<TaskMenuItemDescriptor[]>(() => {
+    const actions: TaskMenuItemDescriptor[] = [
+      ...detailQuickActionItems,
+      ...taskActionMenuModel.actions.filter((action) => !TASK_DETAIL_DIRECT_ACTION_IDS.has(action.id)),
+    ];
+    if (isTaskReverted(task.sourceMetadata) && onReviseTask) {
+      actions.push({
+        id: "revise",
+        label: t("taskDetail.revise", "Revise"),
+        onSelect: () => { onReviseTask(task); requestClose(); },
+      });
+    }
+    if (isDoneColumn && onRevertTask && isRevertable) {
+      actions.push({
+        id: "revert",
+        label: t("tasks.revert", "Revert"),
+        onSelect: () => void handleRevertTask(),
+      });
+    }
+    return actions;
+  }, [detailQuickActionItems, taskActionMenuModel.actions, task, onReviseTask, requestClose, isDoneColumn, onRevertTask, isRevertable, handleRevertTask, t]);
 
   const closeActivityViewMenuAndFocusTrigger = useCallback(() => {
     activityViewMenuViewportGuardUntilRef.current = 0;
@@ -5229,6 +5282,45 @@ export function TaskDetailContent({
             )}
           </div>
           <div className="modal-header-actions">
+            {!isEditing && directHeaderActions.map((action) => (
+              <AlphaButton
+                key={action.id}
+                type="button"
+                className={`btn btn-icon btn-sm task-detail-header-action${action.tone === "danger" ? " task-detail-header-action--danger" : ""}`}
+                aria-label={action.label}
+                title={action.label}
+                disabled={action.disabled}
+                data-testid={`task-detail-header-action-${action.id}`}
+                onClick={() => action.onSelect?.()}
+              >
+                {renderTaskDetailActionIcon(action.id)}
+              </AlphaButton>
+            ))}
+            {!isEditing && secondaryHeaderActions.length > 0 && (
+              <div className="detail-actions-dropdown detail-actions-dropdown--header" ref={actionsMenuRef}>
+                <AlphaButton
+                  type="button"
+                  className="btn btn-icon btn-sm task-detail-header-action"
+                  onClick={() => setShowActionsMenu((previous) => !previous)}
+                  aria-label={t("taskDetail.actions.menuBtn", "Actions")}
+                  title={t("taskDetail.actions.menuBtn", "Actions")}
+                  aria-haspopup="menu"
+                  aria-expanded={showActionsMenu}
+                >
+                  <MoreHorizontal aria-hidden="true" />
+                </AlphaButton>
+                {showActionsMenu && (
+                  <TaskContextMenu
+                    actions={secondaryHeaderActions}
+                    className="detail-actions-menu detail-actions-menu--header"
+                    itemClassName="detail-actions-menu-item"
+                    dangerItemClassName="detail-actions-menu-item-danger"
+                    noteItemClassName="detail-actions-menu-note"
+                    onActionSelect={() => closeMenus()}
+                  />
+                )}
+              </div>
+            )}
             {!isEditing && canEdit && (
               <AlphaButton
                 className="modal-edit-btn"
@@ -5297,6 +5389,96 @@ export function TaskDetailContent({
             )}
           </div>
         </div>
+        {!isEditing && (
+        <div className="detail-tabs">
+          {/*
+            FNXC:TaskDetailActivityFirst 2026-06-30-23:59:
+            Activity is first/default for omitted non-done task opens unless the project setting taskDetailChatFirst is true. Keep both stable ids (`chat` for Activity, `planner-chat` for Chat) so explicit deep links and plugin callers retain their destinations.
+          */}
+          {taskDetailChatFirst ? (
+            <>
+              <TaskDetailTabButton selected={activeTab === "planner-chat"} onSelect={() => setActiveTab("planner-chat")}>
+                {t("taskDetail.tabs.chat", "Chat")}
+              </TaskDetailTabButton>
+              {renderActivityTab()}
+            </>
+          ) : (
+            <>
+              {renderActivityTab()}
+              <TaskDetailTabButton selected={activeTab === "planner-chat"} onSelect={() => setActiveTab("planner-chat")}>
+                {t("taskDetail.tabs.chat", "Chat")}
+              </TaskDetailTabButton>
+            </>
+          )}
+          <TaskDetailTabButton selected={activeTab === "definition"} onSelect={() => setActiveTab("definition")}>
+            {t("taskDetail.tabs.definition", "Plan")}
+          </TaskDetailTabButton>
+          {(isWipColumn || isReviewColumn || isDoneColumn) && (
+            <TaskDetailTabButton selected={activeTab === "changes"} onSelect={() => setActiveTab("changes")}>
+              {t("taskDetail.tabs.changes", "Changes")}
+            </TaskDetailTabButton>
+          )}
+          <TaskDetailTabButton selected={activeTab === "summary"} onSelect={() => setActiveTab("summary")}>
+            {t("taskDetail.tabs.summary", "Summary")}
+          </TaskDetailTabButton>
+          <TaskDetailTabButton selected={activeTab === "stats"} onSelect={() => setActiveTab("stats")}>
+            {t("taskDetail.tabs.stats", "Stats")}
+          </TaskDetailTabButton>
+          <TaskDetailTabButton selected={activeTab === "review"} onSelect={() => setActiveTab("review")}>
+            {t("taskDetail.tabs.review", "Review")}
+          </TaskDetailTabButton>
+          {isReviewColumn && (
+            <TaskDetailTabButton selected={activeTab === "pr"} onSelect={() => setActiveTab("pr")}>
+              {t("taskDetail.tabs.pullRequest", "Pull Request")}
+            </TaskDetailTabButton>
+          )}
+          <TaskDetailTabButton selected={activeTab === "comments"} onSelect={() => setActiveTab("comments")}>
+            {t("taskDetail.tabs.comments", "Comments")}
+          </TaskDetailTabButton>
+          <TaskDetailTabButton selected={activeTab === "dependencies"} onSelect={() => setActiveTab("dependencies")}>
+            {t("taskDetail.tabs.dependencies", "Dependencies")}
+          </TaskDetailTabButton>
+          <TaskDetailTabButton selected={activeTab === "documents"} onSelect={() => setActiveTab("documents")}>
+            {/* FNXC:ArtifactRegistry 2026-06-21-21:56: Keep the internal "documents" tab id stable for persisted task-modal state while presenting the expanded user-facing tab as Artifacts. */}
+            {t("taskDetail.tabs.documents", "Artifacts")}
+          </TaskDetailTabButton>
+          <TaskDetailTabButton selected={activeTab === "model"} onSelect={() => setActiveTab("model")}>
+            {t("taskDetail.tabs.model", "Model")}
+          </TaskDetailTabButton>
+          <TaskDetailTabButton selected={activeTab === "workflow"} onSelect={() => setActiveTab("workflow")}>
+            {t("taskDetail.tabs.workflow", "Workflow")}
+          </TaskDetailTabButton>
+          {/*
+          FNXC:TaskDetailTabs 2026-08-28-23:05:
+          Definition is plan-only. Details owns original prompt, retries, source and agent metadata,
+          tracking, no-commits, routing, and diagnostics; Artifacts owns registered artifacts and
+          attachments; Summary owns agent reports and recommendations. Retired deep links resolve
+          to those owners rather than restoring duplicate tab buttons.
+          */}
+          <TaskDetailTabButton selected={activeTab === "details"} onSelect={() => setActiveTab("details")}>
+            {t("taskDetail.tabs.details", "Details")}
+          </TaskDetailTabButton>
+          {showWorktreeTerminalTab && (
+            <TaskDetailTabButton selected={activeTab === "worktree-terminal"} onSelect={() => setActiveTab("worktree-terminal")}>
+              {t("taskDetail.tabs.worktreeTerminal", "Terminal")}
+            </TaskDetailTabButton>
+          )}
+          {showCliTab && (
+            <TaskDetailTabButton selected={activeTab === "terminal"} onSelect={() => setActiveTab("terminal")}>
+              {t("taskDetail.tabs.terminal", "Session")}
+            </TaskDetailTabButton>
+          )}
+          {/* Plugin tabs */}
+          {pluginTabs.map(({ entry, tabId }) => {
+            return (
+              <TaskDetailTabButton key={`plugin-tab-${entry.pluginId}-${tabId}`} selected={activeTab === tabId} onSelect={() => setActiveTab(tabId)}>
+                {entry.slot.label}
+              </TaskDetailTabButton>
+            );
+          })}
+        </div>
+
+        )}
         <div className={`detail-body${activeTab === "chat" && activitySegment === "feed" && !isActivityExpanded && !isEditing ? " detail-body--feed" : ""}${activeTab === "chat" && activitySegment === "raw-logs" && !isEditing ? " detail-body--agent-log" : ""}${activeTab === "chat" && (activitySegment === "current" || isActivityExpanded) && !isEditing ? " detail-body--chat" : ""}${activeTab === "planner-chat" && !isEditing ? " detail-body--planner-chat" : ""}`}>
           <div className="detail-body-content">
           {isEditing ? (
@@ -5664,93 +5846,6 @@ export function TaskDetailContent({
           )}
           {!isEditing && (
             <>
-          <div className="detail-tabs">
-            {/*
-              FNXC:TaskDetailActivityFirst 2026-06-30-23:59:
-              Activity is first/default for omitted non-done task opens unless the project setting taskDetailChatFirst is true. Keep both stable ids (`chat` for Activity, `planner-chat` for Chat) so explicit deep links and plugin callers retain their destinations.
-            */}
-            {taskDetailChatFirst ? (
-              <>
-                <TaskDetailTabButton selected={activeTab === "planner-chat"} onSelect={() => setActiveTab("planner-chat")}>
-                  {t("taskDetail.tabs.chat", "Chat")}
-                </TaskDetailTabButton>
-                {renderActivityTab()}
-              </>
-            ) : (
-              <>
-                {renderActivityTab()}
-                <TaskDetailTabButton selected={activeTab === "planner-chat"} onSelect={() => setActiveTab("planner-chat")}>
-                  {t("taskDetail.tabs.chat", "Chat")}
-                </TaskDetailTabButton>
-              </>
-            )}
-            <TaskDetailTabButton selected={activeTab === "definition"} onSelect={() => setActiveTab("definition")}>
-              {t("taskDetail.tabs.definition", "Plan")}
-            </TaskDetailTabButton>
-            {(isWipColumn || isReviewColumn || isDoneColumn) && (
-              <TaskDetailTabButton selected={activeTab === "changes"} onSelect={() => setActiveTab("changes")}>
-                {t("taskDetail.tabs.changes", "Changes")}
-              </TaskDetailTabButton>
-            )}
-            <TaskDetailTabButton selected={activeTab === "summary"} onSelect={() => setActiveTab("summary")}>
-              {t("taskDetail.tabs.summary", "Summary")}
-            </TaskDetailTabButton>
-            <TaskDetailTabButton selected={activeTab === "stats"} onSelect={() => setActiveTab("stats")}>
-              {t("taskDetail.tabs.stats", "Stats")}
-            </TaskDetailTabButton>
-            <TaskDetailTabButton selected={activeTab === "review"} onSelect={() => setActiveTab("review")}>
-              {t("taskDetail.tabs.review", "Review")}
-            </TaskDetailTabButton>
-            {isReviewColumn && (
-              <TaskDetailTabButton selected={activeTab === "pr"} onSelect={() => setActiveTab("pr")}>
-                {t("taskDetail.tabs.pullRequest", "Pull Request")}
-              </TaskDetailTabButton>
-            )}
-            <TaskDetailTabButton selected={activeTab === "comments"} onSelect={() => setActiveTab("comments")}>
-              {t("taskDetail.tabs.comments", "Comments")}
-            </TaskDetailTabButton>
-            <TaskDetailTabButton selected={activeTab === "dependencies"} onSelect={() => setActiveTab("dependencies")}>
-              {t("taskDetail.tabs.dependencies", "Dependencies")}
-            </TaskDetailTabButton>
-            <TaskDetailTabButton selected={activeTab === "documents"} onSelect={() => setActiveTab("documents")}>
-              {/* FNXC:ArtifactRegistry 2026-06-21-21:56: Keep the internal "documents" tab id stable for persisted task-modal state while presenting the expanded user-facing tab as Artifacts. */}
-              {t("taskDetail.tabs.documents", "Artifacts")}
-            </TaskDetailTabButton>
-            <TaskDetailTabButton selected={activeTab === "model"} onSelect={() => setActiveTab("model")}>
-              {t("taskDetail.tabs.model", "Model")}
-            </TaskDetailTabButton>
-            <TaskDetailTabButton selected={activeTab === "workflow"} onSelect={() => setActiveTab("workflow")}>
-              {t("taskDetail.tabs.workflow", "Workflow")}
-            </TaskDetailTabButton>
-            {/*
-            FNXC:TaskDetailTabs 2026-08-28-23:05:
-            Definition is plan-only. Details owns original prompt, retries, source and agent metadata,
-            tracking, no-commits, routing, and diagnostics; Artifacts owns registered artifacts and
-            attachments; Summary owns agent reports and recommendations. Retired deep links resolve
-            to those owners rather than restoring duplicate tab buttons.
-            */}
-            <TaskDetailTabButton selected={activeTab === "details"} onSelect={() => setActiveTab("details")}>
-              {t("taskDetail.tabs.details", "Details")}
-            </TaskDetailTabButton>
-            {showWorktreeTerminalTab && (
-              <TaskDetailTabButton selected={activeTab === "worktree-terminal"} onSelect={() => setActiveTab("worktree-terminal")}>
-                {t("taskDetail.tabs.worktreeTerminal", "Terminal")}
-              </TaskDetailTabButton>
-            )}
-            {showCliTab && (
-              <TaskDetailTabButton selected={activeTab === "terminal"} onSelect={() => setActiveTab("terminal")}>
-                {t("taskDetail.tabs.terminal", "Session")}
-              </TaskDetailTabButton>
-            )}
-            {/* Plugin tabs */}
-            {pluginTabs.map(({ entry, tabId }) => {
-              return (
-                <TaskDetailTabButton key={`plugin-tab-${entry.pluginId}-${tabId}`} selected={activeTab === tabId} onSelect={() => setActiveTab(tabId)}>
-                  {entry.slot.label}
-                </TaskDetailTabButton>
-              );
-            })}
-          </div>
           {activeTab === "workflow" ? (
             <div className="detail-section">
               <WorkflowResultsTab
@@ -7099,6 +7194,35 @@ export function TaskDetailContent({
               </div>
             </KeepAliveView>
           ) : null}
+          {!isEditing && overseerExplainOpen && (
+            <div className="detail-overseer-explain-panel" data-testid="detail-overseer-explain-panel" role="region" aria-live="polite">
+              {isLoadingOverseerExplain ? (
+                <span className="detail-overseer-explain-panel__loading">
+                  <Loader2 className="spin" aria-hidden="true" />
+                  {t("taskDetail.oversight.explainLoading", "Loading overseer state…")}
+                </span>
+              ) : overseerExplainSnapshot ? (
+                <dl className="detail-overseer-explain-panel__grid">
+                  <dt>{t("taskDetail.oversight.explainStage", "Watched stage")}</dt>
+                  <dd>{overseerExplainSnapshot.watchedStage ?? t("taskDetail.oversight.explainUnknown", "Unknown")}</dd>
+                  <dt>{t("taskDetail.oversight.explainReason", "Reason")}</dt>
+                  <dd>{overseerExplainSnapshot.reason ?? t("taskDetail.oversight.explainUnknown", "Unknown")}</dd>
+                  <dt>{t("taskDetail.oversight.explainLastAction", "Last action")}</dt>
+                  <dd>{overseerExplainSnapshot.lastAction ?? t("taskDetail.oversight.explainNone", "None yet")}</dd>
+                  <dt>{t("taskDetail.oversight.explainAttempts", "Attempts")}</dt>
+                  <dd>
+                    {overseerExplainSnapshot.attemptCount ?? 0}
+                    {" / "}
+                    {overseerExplainSnapshot.attemptLimit ?? "—"}
+                  </dd>
+                </dl>
+              ) : (
+                <span className="detail-overseer-explain-panel__empty">
+                  {t("taskDetail.oversight.explainEmpty", "The overseer is not currently watching this task.")}
+                </span>
+              )}
+            </div>
+          )}
         </div>
       </div>
       {isReviewColumn && (
@@ -7127,36 +7251,8 @@ export function TaskDetailContent({
         lost binding is handled automatically by self-healing's reconcileInReviewBranchRebind, which
         runs event-driven on the move-to-in-review and on its sweep — no manual user action needed.
         */}
-        {!isEditing && overseerExplainOpen && (
-          <div className="detail-overseer-explain-panel" data-testid="detail-overseer-explain-panel" role="region" aria-live="polite">
-            {isLoadingOverseerExplain ? (
-              <span className="detail-overseer-explain-panel__loading">
-                <Loader2 className="spin" aria-hidden="true" />
-                {t("taskDetail.oversight.explainLoading", "Loading overseer state…")}
-              </span>
-            ) : overseerExplainSnapshot ? (
-              <dl className="detail-overseer-explain-panel__grid">
-                <dt>{t("taskDetail.oversight.explainStage", "Watched stage")}</dt>
-                <dd>{overseerExplainSnapshot.watchedStage ?? t("taskDetail.oversight.explainUnknown", "Unknown")}</dd>
-                <dt>{t("taskDetail.oversight.explainReason", "Reason")}</dt>
-                <dd>{overseerExplainSnapshot.reason ?? t("taskDetail.oversight.explainUnknown", "Unknown")}</dd>
-                <dt>{t("taskDetail.oversight.explainLastAction", "Last action")}</dt>
-                <dd>{overseerExplainSnapshot.lastAction ?? t("taskDetail.oversight.explainNone", "None yet")}</dd>
-                <dt>{t("taskDetail.oversight.explainAttempts", "Attempts")}</dt>
-                <dd>
-                  {overseerExplainSnapshot.attemptCount ?? 0}
-                  {" / "}
-                  {overseerExplainSnapshot.attemptLimit ?? "—"}
-                </dd>
-              </dl>
-            ) : (
-              <span className="detail-overseer-explain-panel__empty">
-                {t("taskDetail.oversight.explainEmpty", "The overseer is not currently watching this task.")}
-              </span>
-            )}
-          </div>
-        )}
-        <div className="modal-actions">
+        {showTaskDetailFooter && (
+          <div className="modal-actions" data-testid="task-detail-contextual-footer">
           {isEditing ? (
             <>
               <span className="modal-edit-hint">
@@ -7193,76 +7289,6 @@ export function TaskDetailContent({
                 </>
               )}
 
-              {/*
-              FNXC:TaskRevert 2026-08-01-19:51:
-              A reverted task remains accessible for provenance, but cannot present as ordinary
-              completed work. Detail therefore retains guarded Delete and routes Revise through
-              the shared New Task draft callback with the original description.
-              */}
-              {isTaskReverted(task.sourceMetadata) && (
-                <>
-                  <AlphaButton className="btn btn-sm btn-danger" onClick={() => void handleDelete()} aria-label={t("taskDetail.reverted.deleteAria", "Delete reverted task")}>{t("taskDetail.delete.btn", "Delete")}</AlphaButton>
-                  {onReviseTask && <AlphaButton className="btn btn-sm" onClick={() => { onReviseTask(task); requestClose?.(); }}>{t("taskDetail.revise", "Revise")}</AlphaButton>}
-                </>
-              )}
-
-              {/*
-              FNXC:TaskRevert 2026-07-05-00:00 (FN-7525):
-              Detail-view Revert button for workflow Complete tasks, mirroring the
-              standalone triage Delete button above. Rendered (not just menu-only)
-              because the detail view is the primary surface for reviewing a
-              completed task's outcome. Omitted — not disabled — when the task has
-              no landed commit to revert, avoiding an empty button shell.
-              */}
-              {isDoneColumn && onRevertTask && isRevertable && (
-                <AlphaButton
-                  className="btn btn-sm"
-                  onClick={() => void handleRevertTask()}
-                  aria-label={t("tasks.revertTask", "Revert this task's changes")}
-                  title={t("tasks.revertTask", "Revert this task's changes")}
-                >
-                  {t("tasks.revert", "Revert")}
-                </AlphaButton>
-              )}
-
-              {/* Actions dropdown — quick controls and less common operations */}
-              {(taskActionMenuModel.shouldShowActionsMenu || detailQuickActionItems.length > 0) && (
-                <div className="detail-actions-dropdown" ref={actionsMenuRef}>
-                  <AlphaButton
-                    className="btn btn-sm"
-                    onClick={() => {
-                      setShowActionsMenu((prev) => !prev);
-                    }}
-                    aria-haspopup="menu"
-                    aria-expanded={showActionsMenu}
-                  >
-                    <span className="detail-footer-button-label">
-                      {t("taskDetail.actions.menuBtn", "Actions")}
-                    </span>
-                    <ChevronDown size={12} />
-                  </AlphaButton>
-                  {showActionsMenu && (
-                    <>
-                      {/*
-                      FNXC:TaskPauseControls 2026-06-21-00:00:
-                      Users may pause or unpause agent-assigned and agent-paused tasks at any time from the detail Actions menu. The Paused by agent note remains informational context, not a substitute for the actionable unpause control.
-                      */}
-                      <TaskContextMenu
-                        actions={[...detailQuickActionItems, ...taskActionMenuModel.actions]}
-                        className="detail-actions-menu"
-                        itemClassName="detail-actions-menu-item"
-                        dangerItemClassName="detail-actions-menu-item-danger"
-                        noteItemClassName="detail-actions-menu-note"
-                        onActionSelect={(action) => {
-                          closeMenus();
-                          if (action.tone === "note") return;
-                        }}
-                      />
-                    </>
-                  )}
-                </div>
-              )}
-
               <div className="modal-actions-spacer" />
 
               {/*
@@ -7281,7 +7307,8 @@ export function TaskDetailContent({
               )}
             </>
           )}
-      </div>
+          </div>
+        )}
       {showResetDialog && onResetTask && (
         <TaskResetDialog
           taskId={task.id}

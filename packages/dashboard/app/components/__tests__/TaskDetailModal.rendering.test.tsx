@@ -3,7 +3,7 @@ FNXC:TaskDetailTabs 2026-06-17-08:20:
 FN-7306 labels the stable internal `chat` tab as Activity and keeps it as the default TaskDetailModal tab. Tests that assert Definition-only sections must opt into `initialTab="definition"` so they verify the intended surface instead of the Activity landing state.
 
 FNXC:TaskDetailFooterActions 2026-09-05-23:27:
-FN-300 keeps one footer Actions trigger and moves Quick Add controls into its labeled list. Match the trigger by its exact accessible name so action items with descriptive labels cannot make menu-opening queries ambiguous.
+FN-300 keeps one header Actions trigger and moves Quick Add controls into its labeled list. Match the trigger by its exact accessible name so action items with descriptive labels cannot make menu-opening queries ambiguous.
 */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, act, waitFor, cleanup, within } from "@testing-library/react";
@@ -1755,7 +1755,7 @@ describe("TaskDetailModal", () => {
     const actionsBtn = screen.getByRole("button", { name: "Actions" });
     fireEvent.click(actionsBtn);
 
-    expect(screen.getByRole("menuitem", { name: "Retry" })).toBeTruthy();
+    expect(screen.getByTestId("task-detail-header-action-retry")).toBeTruthy();
   });
 
   it("renders Retry for a live task even when its status is not failed", () => {
@@ -1775,7 +1775,7 @@ describe("TaskDetailModal", () => {
 
     const actionsBtn = screen.getByRole("button", { name: "Actions" });
     fireEvent.click(actionsBtn);
-    expect(screen.getByRole("menuitem", { name: "Retry" })).toBeInTheDocument();
+    expect(screen.getByTestId("task-detail-header-action-retry")).toBeInTheDocument();
   });
 
   it("does NOT render Retry button when onRetryTask is not provided", () => {
@@ -1817,10 +1817,10 @@ describe("TaskDetailModal", () => {
 
     expect(screen.getByRole("alert")).toHaveTextContent("Transient provider error");
     expect(screen.getByText("Automatic recovery is pending. You can Retry now to restart this stage.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    expect(screen.getByTestId("task-detail-header-action-retry")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Retry with a different model/node" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Actions" }));
-    expect(screen.getByRole("menuitem", { name: "Retry" })).toBeInTheDocument();
+    expect(screen.getByTestId("task-detail-header-action-retry")).toBeInTheDocument();
   });
 
   describe("retry action uniqueness for in-review failed tasks", () => {
@@ -1847,7 +1847,7 @@ describe("TaskDetailModal", () => {
       const actionsBtn = screen.getByRole("button", { name: "Actions" });
       fireEvent.click(actionsBtn);
 
-      const retryButtons = screen.getAllByRole("menuitem", { name: "Retry" });
+      const retryButtons = screen.getAllByTestId("task-detail-header-action-retry");
       expect(retryButtons).toHaveLength(1);
     });
 
@@ -1869,7 +1869,7 @@ describe("TaskDetailModal", () => {
       const actionsBtn = screen.getByRole("button", { name: "Actions" });
       fireEvent.click(actionsBtn);
 
-      const retryButtons = screen.getAllByRole("menuitem", { name: "Retry" });
+      const retryButtons = screen.getAllByTestId("task-detail-header-action-retry");
       expect(retryButtons).toHaveLength(1);
     });
 
@@ -1897,7 +1897,7 @@ describe("TaskDetailModal", () => {
         fireEvent.click(actionsBtn);
       });
 
-      const retryBtn = screen.getByRole("menuitem", { name: "Retry" });
+      const retryBtn = screen.getByTestId("task-detail-header-action-retry");
       await act(async () => {
         fireEvent.click(retryBtn);
       });
@@ -1933,7 +1933,7 @@ describe("TaskDetailModal", () => {
         fireEvent.click(actionsBtn);
       });
 
-      const retryBtn = screen.getByRole("menuitem", { name: "Retry" });
+      const retryBtn = screen.getByTestId("task-detail-header-action-retry");
       await act(async () => {
         fireEvent.click(retryBtn);
       });
@@ -1973,7 +1973,7 @@ describe("TaskDetailModal", () => {
         fireEvent.click(actionsBtn);
       });
 
-      const retryBtn = screen.getByRole("menuitem", { name: "Retry" });
+      const retryBtn = screen.getByTestId("task-detail-header-action-retry");
       await act(async () => {
         fireEvent.click(retryBtn);
       });
@@ -3097,7 +3097,7 @@ describe("TaskDetailModal", () => {
     );
 
     expect(screen.queryByText("Potential duplicate detected")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Delete duplicate task" })).toBeNull();
     expect(screen.queryByRole("button", { name: /keep/i })).toBeNull();
     expect(screen.queryByRole("button", { name: "Mark the duplicate flag for FN-1234 as read" })).toBeNull();
   });
@@ -3120,7 +3120,8 @@ describe("TaskDetailModal", () => {
       />,
     );
 
-    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+    const duplicateBanner = screen.getByText("Potential duplicate detected").closest(".detail-near-duplicate-banner")!;
+    await userEvent.click(within(duplicateBanner).getByRole("button", { name: "Delete" }));
 
     await waitFor(() => {
       expect(onDeleteTask).toHaveBeenCalledWith("FN-099", { removeLineageReferences: true });
@@ -3146,7 +3147,8 @@ describe("TaskDetailModal", () => {
     );
 
     expect(screen.getByRole("status")).toHaveTextContent("Keep it to clear this flag, or delete it if the work is already covered.");
-    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+    const duplicateBanner = screen.getByText("Potential duplicate detected").closest(".detail-near-duplicate-banner")!;
+    await userEvent.click(within(duplicateBanner).getByRole("button", { name: "Delete" }));
 
     await waitFor(() => {
       expect(onDeleteTask).toHaveBeenCalledWith("FN-099", { removeLineageReferences: true });

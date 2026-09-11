@@ -1,6 +1,6 @@
 /*
 FNXC:TaskDetailFooterActions 2026-09-05-23:27:
-FN-300 keeps one footer Actions trigger and moves Quick Add controls into its labeled list. Match the trigger by its exact accessible name so action items with descriptive labels cannot make menu-opening queries ambiguous.
+FN-300 keeps one header Actions trigger and moves Quick Add controls into its labeled list. Match the trigger by its exact accessible name so action items with descriptive labels cannot make menu-opening queries ambiguous.
 */
 import { useState } from "react";
 import { describe, it, expect, vi } from "vitest";
@@ -28,6 +28,7 @@ import { MAX_TASK_MESSAGE_LENGTH, type Task } from "@fusion/core";
 function PauseDetailHarness({ mobileHeaderMode }: { mobileHeaderMode?: "back" }) {
   const [task, setTask] = useState(() => makeTask({ id: "FN-UNPAUSE", column: "todo", paused: true, userPaused: true }));
   const onUnpauseTask = vi.fn(async () => ({ ...task, paused: false, userPaused: false } as Task));
+  const onPauseTask = vi.fn(async () => ({ ...task, paused: true, userPaused: true } as Task));
 
   return (
     <TaskDetailContent
@@ -38,6 +39,7 @@ function PauseDetailHarness({ mobileHeaderMode }: { mobileHeaderMode?: "back" })
       onDeleteTask={noopDelete}
       onMergeTask={noopMerge}
       onOpenDetail={noopOpenDetail}
+      onPauseTask={onPauseTask}
       onUnpauseTask={onUnpauseTask}
       onTaskUpdated={setTask}
       addToast={noop}
@@ -834,7 +836,7 @@ describe("TaskDetailModal", () => {
       const actionsBtn = screen.getByRole("button", { name: "Actions" });
       fireEvent.click(actionsBtn);
 
-      expect(screen.getByRole("menuitem", { name: "Duplicate" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Duplicate" })).toBeTruthy();
     });
 
     it("does NOT render Duplicate button when onDuplicateTask is not provided", () => {
@@ -853,7 +855,7 @@ describe("TaskDetailModal", () => {
       // Open Actions dropdown - Duplicate should not be there
       const actionsBtn = screen.getByRole("button", { name: "Actions" });
       fireEvent.click(actionsBtn);
-      expect(screen.queryByRole("menuitem", { name: "Duplicate" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Duplicate" })).toBeNull();
     });
 
     it("clicking Duplicate shows confirmation dialog", async () => {
@@ -876,7 +878,7 @@ describe("TaskDetailModal", () => {
       const actionsBtn = screen.getByRole("button", { name: "Actions" });
       fireEvent.click(actionsBtn);
 
-      fireEvent.click(screen.getByRole("menuitem", { name: "Duplicate" }));
+      fireEvent.click(screen.getByRole("button", { name: "Duplicate" }));
 
       await waitFor(() => expect(mockConfirm).toHaveBeenCalledWith({
         title: "Duplicate Task",
@@ -908,7 +910,7 @@ describe("TaskDetailModal", () => {
       const actionsBtn = screen.getByRole("button", { name: "Actions" });
       fireEvent.click(actionsBtn);
 
-      fireEvent.click(screen.getByRole("menuitem", { name: "Duplicate" }));
+      fireEvent.click(screen.getByRole("button", { name: "Duplicate" }));
 
       await waitFor(() => {
         expect(mockDuplicate).toHaveBeenCalledWith("FN-001", undefined);
@@ -945,12 +947,41 @@ describe("TaskDetailModal", () => {
       );
 
       fireEvent.click(screen.getByRole("button", { name: "Actions" }));
-      fireEvent.click(screen.getByRole("menuitem", { name: "Duplicate" }));
+      fireEvent.click(screen.getByRole("button", { name: "Duplicate" }));
 
       await waitFor(() => expect(onDuplicateTask).toHaveBeenCalledWith("FN-001", { workflowId: "wf-b" }));
       expect(mockConfirmWithSelect).toHaveBeenCalledWith(expect.objectContaining({
         select: expect.objectContaining({ defaultValue: "wf-a" }),
       }));
+    });
+
+    it.each([
+      {
+        name: "Pause",
+        task: makeTask({ id: "FN-ACTIVE-NO-PAUSE", column: "todo", paused: false, userPaused: false }),
+        props: { onUnpauseTask: vi.fn() },
+      },
+      {
+        name: "Unpause",
+        task: makeTask({ id: "FN-PAUSED-NO-UNPAUSE", column: "todo", paused: true, userPaused: true }),
+        props: { onPauseTask: vi.fn() },
+      },
+    ])("omits $name when the lifecycle handler required by the current state is absent", ({ name, task, props }) => {
+      render(
+        <TaskDetailContent
+          task={task}
+          initialTab="definition"
+          embedded
+          onRequestClose={noop}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+          {...props}
+        />,
+      );
+
+      expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
     });
 
     it("mobile task popup Actions menu selects the shared pause callback once and dismisses", async () => {
@@ -971,10 +1002,9 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(screen.getByRole("button", { name: "Actions" }));
-      const pauseItem = screen.getByRole("menuitem", { name: "Pause" });
+      const pauseItem = screen.getByRole("button", { name: "Pause" });
 
-      fireEvent.pointerUp(pauseItem, { pointerType: "touch", pointerId: 1 });
+      fireEvent.click(pauseItem);
 
       await waitFor(() => expect(onPauseTask).toHaveBeenCalledWith("FN-001"));
       expect(onPauseTask).toHaveBeenCalledTimes(1);
@@ -1005,7 +1035,7 @@ describe("TaskDetailModal", () => {
       const actionsBtn = screen.getByRole("button", { name: "Actions" });
       fireEvent.click(actionsBtn);
 
-      fireEvent.click(screen.getByRole("menuitem", { name: "Duplicate" }));
+      fireEvent.click(screen.getByRole("button", { name: "Duplicate" }));
 
       await waitFor(() => {
         expect(addToast).toHaveBeenCalledWith("Duplicated FN-001 → FN-002", "success");
@@ -1035,7 +1065,7 @@ describe("TaskDetailModal", () => {
       const actionsBtn = screen.getByRole("button", { name: "Actions" });
       fireEvent.click(actionsBtn);
 
-      fireEvent.click(screen.getByRole("menuitem", { name: "Duplicate" }));
+      fireEvent.click(screen.getByRole("button", { name: "Duplicate" }));
 
       expect(mockDuplicate).not.toHaveBeenCalled();
 
@@ -1064,7 +1094,7 @@ describe("TaskDetailModal", () => {
       const actionsBtn = screen.getByRole("button", { name: "Actions" });
       fireEvent.click(actionsBtn);
 
-      fireEvent.click(screen.getByRole("menuitem", { name: "Duplicate" }));
+      fireEvent.click(screen.getByRole("button", { name: "Duplicate" }));
 
       await waitFor(() => {
         expect(addToast).toHaveBeenCalledWith("Duplicate failed", "error");
@@ -1128,7 +1158,7 @@ describe("TaskDetailModal", () => {
       expect(screen.getByRole("button", { name: "Actions" })).toBeTruthy();
     });
 
-    it("renders Unpause button for a paused triage task", () => {
+    it("omits Unpause for a paused triage task without an unpause handler", () => {
       render(
         <TaskDetailModal
           task={makeTask({ column: "triage", paused: true })}
@@ -1141,9 +1171,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(screen.getByRole("button", { name: "Actions" }));
-
-      expect(screen.getByRole("menuitem", { name: "Unpause" })).toBeTruthy();
+      expect(screen.queryByRole("button", { name: "Unpause" })).toBeNull();
     });
 
     it("renders Unpause for userPaused-only tasks and calls the shared lifecycle once", async () => {
@@ -1163,7 +1191,7 @@ describe("TaskDetailModal", () => {
       );
 
       await userEvent.click(screen.getByRole("button", { name: "Actions" }));
-      await userEvent.click(screen.getByRole("menuitem", { name: "Unpause" }));
+      await userEvent.click(screen.getByRole("button", { name: "Unpause" }));
 
       await waitFor(() => {
         expect(onUnpauseTask).toHaveBeenCalledTimes(1);
@@ -1176,11 +1204,11 @@ describe("TaskDetailModal", () => {
       render(<PauseDetailHarness mobileHeaderMode={mobileHeaderMode} />);
 
       await user.click(screen.getByRole("button", { name: "Actions" }));
-      await user.click(screen.getByRole("menuitem", { name: "Unpause" }));
+      await user.click(screen.getByRole("button", { name: "Unpause" }));
 
-      await waitFor(() => expect(screen.queryByRole("menuitem", { name: "Unpause" })).toBeNull());
+      await waitFor(() => expect(screen.queryByRole("button", { name: "Unpause" })).toBeNull());
       await user.click(screen.getByRole("button", { name: "Actions" }));
-      expect(screen.getByRole("menuitem", { name: "Pause" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Pause" })).toBeTruthy();
     });
 
     it("renders actionable Unpause button for agent-assigned paused tasks", async () => {
@@ -1207,7 +1235,7 @@ describe("TaskDetailModal", () => {
       });
 
       await userEvent.click(screen.getByRole("button", { name: "Actions" }));
-      await userEvent.click(screen.getByRole("menuitem", { name: "Unpause" }));
+      await userEvent.click(screen.getByRole("button", { name: "Unpause" }));
 
       await waitFor(() => {
         expect(onUnpauseTask).toHaveBeenCalledTimes(1);
@@ -1215,7 +1243,7 @@ describe("TaskDetailModal", () => {
       });
     });
 
-    it("shows paused-by-agent indicator alongside actionable Unpause for agent-paused tasks", async () => {
+    it("shows the paused-by-agent indicator without an unwired Unpause action", async () => {
       const { fetchAgent } = await import("../../api");
       const mockFetchAgent = vi.mocked(fetchAgent);
       mockFetchAgent.mockResolvedValue({ id: "agent-1", name: "Agent 1", role: "executor", state: "paused" } as any);
@@ -1238,7 +1266,7 @@ describe("TaskDetailModal", () => {
 
       await userEvent.click(screen.getByRole("button", { name: "Actions" }));
 
-      expect(screen.getByRole("menuitem", { name: "Unpause" })).toBeTruthy();
+      expect(screen.queryByRole("button", { name: "Unpause" })).toBeNull();
       expect(await screen.findByText("Paused by agent")).toBeTruthy();
     });
 
@@ -1266,7 +1294,7 @@ describe("TaskDetailModal", () => {
       });
 
       await userEvent.click(screen.getByRole("button", { name: "Actions" }));
-      await userEvent.click(screen.getByRole("menuitem", { name: "Pause" }));
+      await userEvent.click(screen.getByRole("button", { name: "Pause" }));
 
       await waitFor(() => {
         expect(onPauseTask).toHaveBeenCalledTimes(1);
@@ -1292,13 +1320,13 @@ describe("TaskDetailModal", () => {
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}
+          onPauseTask={async (id) => makeTask({ id, paused: true, userPaused: true }) as Task}
+          onUnpauseTask={async (id) => makeTask({ id, paused: false, userPaused: false }) as Task}
           addToast={noop}
         />,
       );
 
-      await userEvent.click(screen.getByRole("button", { name: "Actions" }));
-
-      expect(screen.getByRole("menuitem", { name: expectedLabel })).toBeTruthy();
+      expect(screen.getByRole("button", { name: expectedLabel })).toBeTruthy();
     });
 
     it.each(["done"])("hides Pause/Unpause button for %s tasks", async (column) => {
@@ -1316,8 +1344,8 @@ describe("TaskDetailModal", () => {
 
       await userEvent.click(screen.getByRole("button", { name: "Actions" }));
 
-      expect(screen.queryByRole("menuitem", { name: "Pause" })).toBeNull();
-      expect(screen.queryByRole("menuitem", { name: "Unpause" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Pause" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Unpause" })).toBeNull();
     });
 
     it("renders the stage-aware Actions dropdown for a mutable triage task", async () => {

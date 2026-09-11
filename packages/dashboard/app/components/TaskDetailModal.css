@@ -432,7 +432,7 @@ Task provenance, undo and PR context, timestamps, and workflow identity live tog
 
 /*
 FNXC:TaskDetail 2026-09-05-23:27:
-The edit-form priority select retains the shared tokenized focus ring after its read-mode picker moved into the footer Actions list. Keep this form control independently keyboard-visible without reviving removed popover selectors.
+The edit-form priority select retains the shared tokenized focus ring after its read-mode picker moved into the header Actions overflow. Keep this form control independently keyboard-visible without reviving removed popover selectors.
 */
 .detail-priority-select:focus-visible {
   outline: none;
@@ -1295,7 +1295,7 @@ Expanded Planner Chat reserves the narrow task-detail surface for the conversati
   flex: 1;
 }
 
-/* Detail modal footer Actions dropdown. */
+/* Task Detail header overflow anchor. */
 .detail-actions-dropdown {
   position: relative;
 }
@@ -1561,10 +1561,12 @@ FNXC:TaskDetail 2026-06-22-18:40:
   background: var(--card-hover);
 }
 
-/* Embedded footer Actions menus open upward to remain inside the panel. */
-.task-detail-content--embedded .detail-actions-menu {
-  bottom: calc(100% + var(--space-xs));
-  top: auto;
+/* Embedded header overflow opens below its trigger, matching every Task Detail host. */
+.task-detail-content--embedded .detail-actions-menu--header {
+  top: calc(100% + var(--space-xs));
+  right: 0;
+  bottom: auto;
+  left: auto;
 }
 
 .detail-refine-title {
@@ -2397,10 +2399,43 @@ stretches it on touch layouts, preserving a clear tap target without creating a 
 
 /* === Modal Edit Mode Styles === */
 
+/*
+FNXC:TaskDetailHeaderActions 2026-09-11-17:35:
+The canonical Task Detail header keeps lifecycle actions, secondary overflow, host utilities, and close/back controls in one non-draggable, wrapping group. Icon-only actions use the shared button geometry and accessible names; danger actions retain a distinct border treatment in addition to their glyph and color.
+*/
 .modal-header-actions {
   display: flex;
   align-items: center;
-  gap: var(--space-sm);
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  min-width: 0;
+  gap: var(--space-xs);
+}
+
+.task-detail-header-action {
+  flex: 0 0 auto;
+  touch-action: manipulation;
+}
+
+.task-detail-header-action svg {
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
+}
+
+.task-detail-header-action--danger {
+  border-style: double;
+  color: var(--color-error);
+}
+
+.detail-actions-dropdown--header {
+  flex: 0 0 auto;
+}
+
+.detail-actions-menu--header {
+  top: calc(100% + var(--space-xs));
+  right: 0;
+  bottom: auto;
+  left: auto;
 }
 
 .task-detail-mobile-back {
@@ -2560,9 +2595,13 @@ Task-detail tabs must remain reachable as a one-row horizontal scroller on mobil
 
 FNXC:TaskDetailTabs 2026-06-26-00:35:
 `touch-action` is not inherited, so the tab buttons must also opt into pan-x because they are the real touch targets. A container-only opt-in leaves touches that start on a `.detail-tab` under the global mobile `* { touch-action: pan-y; }` lock and blocks horizontal swipes.
+
+FNXC:TaskDetailShell 2026-09-11-17:35:
+The tab strip is a fixed shell zone immediately below the canonical header, outside the scrolling body. The body alone owns ordinary content scrolling, while contextual edit, approval, and review controls render as the optional final fixed footer.
 */
 .detail-tabs {
   display: flex;
+  flex: 0 0 auto;
   gap: 0;
   width: 100%;
   max-inline-size: 100%;
@@ -2573,7 +2612,8 @@ FNXC:TaskDetailTabs 2026-06-26-00:35:
   touch-action: pan-x pan-y;
   -webkit-overflow-scrolling: touch;
   scrollbar-width: thin;
-  margin-bottom: var(--space-md);
+  margin: 0;
+  padding-inline: var(--modal-padding);
 }
 
 .detail-tab {
@@ -2920,8 +2960,8 @@ Feed's copy and expansion actions share one tokenized overlay group so the bound
   Merge/review control on one row from 320 CSS px through the 768px mobile
   breakpoint without horizontal overflow. `nowrap` alone only trades wrapping
   for overflow, so scoped tokenized packing, flex shrink guards, and label
-  ellipsis let every text-bearing footer control yield while upward menus stay
-  unclipped.
+  ellipsis let every text-bearing contextual footer control yield without
+  clipping.
 
   FNXC:TaskDetailModalResponsive 2026-07-22-17:12:
   FN-8501 requires the flexible spacer—not the Move dropdown wrapper—to absorb

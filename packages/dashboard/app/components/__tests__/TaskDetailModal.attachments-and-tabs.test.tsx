@@ -1010,14 +1010,14 @@ describe("TaskDetailModal", () => {
       expect(content).not.toHaveClass("task-detail-content--chat-expanded");
       expect(titleRow).toHaveTextContent("FN-099");
       expect(container.querySelector(".detail-tabs")).toBeTruthy();
-      expect(container.querySelector(".modal-actions")).toBeTruthy();
+      expect(container.querySelector(".modal-actions")).toBeNull();
 
       fireEvent.click(screen.getByTestId("task-chat-expand-toggle"));
       expect(content).toHaveClass("task-detail-content--chat-expanded");
       expect(titleRow).toHaveTextContent("FN-099");
       expect(titleRow).toHaveTextContent("In Progress");
       expect(container.querySelector(".detail-tabs")).toBeTruthy();
-      expect(container.querySelector(".modal-actions")).toBeTruthy();
+      expect(container.querySelector(".modal-actions")).toBeNull();
       expect(screen.getByTestId("task-chat-expand-toggle")).toHaveAttribute("aria-label", "Collapse activity");
       expect(screen.getByTestId("task-chat-expand-toggle")).toHaveAttribute("aria-pressed", "true");
 
@@ -1025,7 +1025,7 @@ describe("TaskDetailModal", () => {
       expect(content).not.toHaveClass("task-detail-content--chat-expanded");
       expect(titleRow).toHaveTextContent("FN-099");
       expect(container.querySelector(".detail-tabs")).toBeTruthy();
-      expect(container.querySelector(".modal-actions")).toBeTruthy();
+      expect(container.querySelector(".modal-actions")).toBeNull();
       expect(screen.getByTestId("task-chat-expand-toggle")).toHaveAttribute("aria-label", "Expand activity to full modal");
       expect(screen.getByTestId("task-chat-expand-toggle")).toHaveAttribute("aria-pressed", "false");
     });
@@ -1187,7 +1187,7 @@ describe("TaskDetailModal", () => {
       expect(titleRow).toHaveTextContent("FN-099");
       expect(titleRow).toHaveTextContent("In Progress");
       expect(container.querySelector(".detail-tabs")).toBeTruthy();
-      expect(container.querySelector(".modal-actions")).toBeTruthy();
+      expect(container.querySelector(".modal-actions")).toBeNull();
     });
 
     it("FN-6370 resets expanded Activity when the active tab changes", () => {

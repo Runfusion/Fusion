@@ -128,7 +128,7 @@ describe("Task Detail metadata relocation", () => {
     const reconciliation = screen.getByRole("region", { name: "AI merge review reconciliation" });
     const tabs = document.querySelector<HTMLElement>(".detail-tabs");
     expect(tabs?.contains(reconciliation)).toBe(false);
-    expect(reconciliation.compareDocumentPosition(tabs!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(tabs!.compareDocumentPosition(reconciliation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("preserves the distinct agent metadata row in Details", async () => {
@@ -280,7 +280,7 @@ describe("Task Detail metadata and footer CSS", () => {
     }
   });
 
-  it("keeps metadata responsive and constrains the long footer menu at its base rule", () => {
+  it("keeps metadata responsive and constrains the long header overflow at its base rule", () => {
     const css = readDashboardStylesSource();
     const metadata = css.match(/\.detail-section--task-metadata\s*\{([^}]*)\}/)?.[1] ?? "";
     const actions = css.match(/^\.detail-actions-menu\s*\{([^}]*)\}/m)?.[1] ?? "";

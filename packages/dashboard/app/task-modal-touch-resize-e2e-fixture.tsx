@@ -25,6 +25,53 @@ const params = new URLSearchParams(window.location.search);
 const surface = params.get("surface") ?? "new-task";
 const titleMode = params.get("titleMode") ?? "overflow";
 const boardCardClickSurface = surface === "board-card-click-app";
+const preserveDesktopHostDuringViewportProbe = params.get("preserveDesktopHost") === "true";
+if (preserveDesktopHostDuringViewportProbe) {
+  /*
+  FNXC:TaskDetailChatGeometry 2026-09-11-18:42:
+  List split, right dock, and pop-out are desktop-only navigation owners, but their mounted Task Detail shell still needs real narrow-viewport CSS coverage. Freeze only the fixture's JavaScript host admission after its 1200px mount so CDP can resize the actual viewport through 768, 390, and 320px without routing away from the host under measurement; CSS media and container queries continue to use the real resized viewport.
+  */
+  Object.defineProperty(window, "innerWidth", { configurable: true, get: () => 1200 });
+  const nativeMatchMedia = window.matchMedia.bind(window);
+  const stableMediaMatches = new Map<string, boolean>();
+  window.matchMedia = (query: string): MediaQueryList => {
+    if (!stableMediaMatches.has(query)) stableMediaMatches.set(query, nativeMatchMedia(query).matches);
+    const initial = nativeMatchMedia(query);
+    return {
+      matches: stableMediaMatches.get(query) ?? false,
+      media: initial.media,
+      onchange: null,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+      addListener: () => undefined,
+      removeListener: () => undefined,
+      dispatchEvent: () => true,
+    };
+  };
+  const NativeResizeObserver = window.ResizeObserver;
+  window.ResizeObserver = class StableHostResizeObserver implements ResizeObserver {
+    private readonly observer: ResizeObserver;
+    constructor(callback: ResizeObserverCallback) {
+      let delivered = false;
+      this.observer = new NativeResizeObserver((entries, observer) => {
+        if (delivered) return;
+        delivered = true;
+        callback(entries, observer);
+      });
+    }
+    observe(target: Element, options?: ResizeObserverOptions) { this.observer.observe(target, options); }
+    unobserve(target: Element) { this.observer.unobserve(target); }
+    disconnect() { this.observer.disconnect(); }
+  };
+}
+/*
+FNXC:TaskDetailChatGeometry 2026-09-11-18:16:
+The browser fixture drives the real Task Detail hosts through both chat surfaces and deterministic empty, loading, populated, and streaming-shaped responses. This lets Chromium prove that the transcript owns overflow while the in-flow composer remains at the usable body edge with or without a contextual footer.
+*/
+const chatKind = params.get("chatKind") === "planner" ? "planner" : "activity";
+const chatState = params.get("chatState") ?? "empty";
+const showContextualFooter = params.get("footer") === "true";
+const taskDetailChatFirst = chatKind === "planner";
 if (params.has("reset")) localStorage.clear();
 
 /*
@@ -58,7 +105,47 @@ geometry before each committed screenshot is captured.
 window.fetch = async (input) => {
   const url = input instanceof Request ? input.url : String(input);
   const pathname = new URL(url, window.location.href).pathname;
-  const payload = url.includes("/projects/across-nodes")
+  if (chatState === "loading" && (pathname.endsWith(`/tasks/${fixtureTask.id}/logs`) || (pathname === "/api/chat/sessions" && url.includes("lookup=resume")))) {
+    return await new Promise<Response>(() => undefined);
+  }
+  const activityEntries = chatState === "empty" || chatKind !== "activity" ? [] : Array.from({ length: chatState === "populated" ? 120 : 8 }, (_, index) => ({
+    type: "text",
+    text: `${chatState === "streaming" ? "Streaming output" : "Recorded output"} ${index + 1} ${"fills the production transcript. ".repeat(6)}`,
+    timestamp: new Date(Date.UTC(2026, 8, 11, 12, index)).toISOString(),
+    role: "executor",
+  }));
+  const plannerSession = {
+    id: "chat-fn-349",
+    agentId: `task-planner:${fixtureTask.id}`,
+    title: "Task Detail geometry",
+    status: "active",
+    projectId: "fixture",
+    modelProvider: "mock",
+    modelId: "scripted",
+    createdAt: "2026-09-11T12:00:00.000Z",
+    updatedAt: "2026-09-11T12:01:00.000Z",
+    cliSessionFile: null,
+    cliExecutorAdapterId: null,
+    inFlightGeneration: null,
+  };
+  const plannerMessages = chatState === "empty" || chatKind !== "planner" ? [] : Array.from({ length: chatState === "populated" ? 120 : 4 }, (_, index) => ({
+    id: chatState === "streaming" && index === 3 ? "streaming-assistant" : `planner-message-${index}`,
+    sessionId: plannerSession.id,
+    role: index % 2 === 0 ? "user" : "assistant",
+    content: `${chatState === "streaming" ? "Streaming plan" : "Persisted plan"} ${index + 1} ${"fills the production transcript. ".repeat(6)}`,
+    thinkingOutput: null,
+    metadata: null,
+    createdAt: new Date(Date.UTC(2026, 8, 11, 13, index)).toISOString(),
+  }));
+  const payload = pathname.endsWith(`/tasks/${fixtureTask.id}/logs`)
+    ? activityEntries
+    : pathname === "/api/chat/sessions" && url.includes("lookup=resume")
+      ? { sessions: chatState === "empty" ? [] : [plannerSession] }
+      : pathname === `/api/chat/sessions/${plannerSession.id}/messages`
+        ? { messages: plannerMessages }
+        : pathname === `/api/chat/sessions/${plannerSession.id}`
+          ? { session: plannerSession }
+        : url.includes("/projects/across-nodes")
     ? [{ id: "fixture", name: "Fixture", path: "/fixture", status: "active" }]
     : url.includes("/tasks/board-workflows")
       ? { flagEnabled: true, defaultWorkflowId: "fixture-workflow", taskWorkflowIds: { [fixtureTask.id]: "fixture-workflow" }, workflows: [{ id: "fixture-workflow", name: "Fixture", columns: boardCardClickSurface ? [
@@ -99,7 +186,7 @@ window.fetch = async (input) => {
                   ? { goals: [] }
         : url.includes("/models")
           ? { models: [], favoriteProviders: [], favoriteModels: [] }
-          : url.includes("/settings") ? { taskPopupsBoardListOnly: false, openMobileTasksInPopup: params.get("openMobileTasksInPopup") === "true", experimentalFeatures: { alphaUpdates: params.get("alpha") === "true" } }
+          : url.includes("/settings") ? { taskPopupsBoardListOnly: false, openMobileTasksInPopup: params.get("openMobileTasksInPopup") === "true", taskDetailChatFirst, experimentalFeatures: { alphaUpdates: params.get("alpha") === "true" } }
             : url.includes("/agents") || url.includes("/nodes") ? []
               : [];
   return new Response(JSON.stringify(payload), { headers: { "content-type": "application/json" } });
@@ -115,7 +202,7 @@ const fixtureTask = {
   id: titleMode === "id" ? "FN-8806" : "FN-TITLE-FLICKER",
   title: fixtureTitle,
   description: fixtureDescription,
-  column: "todo",
+  column: showContextualFooter ? "in-review" : "todo",
   status: "pending",
   prompt: "",
   steps: [],
@@ -174,24 +261,24 @@ function TaskDetailTitleModalHarness() {
     openNewTaskWithDescription: noop,
     openWorkflowEditor: noop,
   };
-  return <div data-testid="title-host-modal"><NavigationHistoryProvider value={{ pushNav: noop, replaceCurrent: noop, removeNav: noop }}><AppModals projectId="fixture" tasks={[fixtureTask]} projects={[]} currentProject={null} addToast={noop} toasts={[]} removeToast={noop} modalManager={modalManager as never} projectActions={{} as never} taskHandlers={{} as never} taskOperations={{ moveTask: asyncTask, deleteTask: asyncTask, mergeTask: asyncMerge, retryTask: asyncTask, pauseTask: asyncTask, unpauseTask: asyncTask, resetTask: asyncTask, duplicateTask: asyncTask }} deepLink={{ handleDetailClose: noop }} settings={{ prAuthAvailable: false, autoMerge: true, openTasksInRightSidebar: false, openMobileTasksInPopup: false, taskPopupsBoardListOnly: true, showCostBadgeOnCards: false, taskDetailChatFirst: false, chatMessageLayout: "bubbles", themeMode: "system", colorTheme: "default", dashboardFontScalePct: 100, shadcnCustomColors: {}, resolvedThemeMode: "light", setThemeMode: noop, setColorTheme: noop, setDashboardFontScalePct: noop, setShadcnCustomColors: noop, setQuickChatButtonModeImmediate: noop, setChatMessageLayoutImmediate: noop, setOpenTasksInRightSidebarImmediate: noop, setOpenMobileTasksInPopupImmediate: noop, setTaskPopupsBoardListOnlyImmediate: noop, setShowCostBadgeOnCardsImmediate: noop, setTaskDetailChatFirstImmediate: noop, setMobileNavPrimaryItemsImmediate: noop }} /></NavigationHistoryProvider></div>;
+  return <div data-testid="title-host-modal"><NavigationHistoryProvider value={{ pushNav: noop, replaceCurrent: noop, removeNav: noop }}><AppModals projectId="fixture" tasks={[fixtureTask]} projects={[]} currentProject={null} addToast={noop} toasts={[]} removeToast={noop} modalManager={modalManager as never} projectActions={{} as never} taskHandlers={{} as never} taskOperations={{ moveTask: asyncTask, deleteTask: asyncTask, mergeTask: asyncMerge, retryTask: asyncTask, pauseTask: asyncTask, unpauseTask: asyncTask, resetTask: asyncTask, duplicateTask: asyncTask }} deepLink={{ handleDetailClose: noop }} settings={{ prAuthAvailable: false, autoMerge: true, openTasksInRightSidebar: false, openMobileTasksInPopup: false, taskPopupsBoardListOnly: true, showCostBadgeOnCards: false, taskDetailChatFirst, chatMessageLayout: "bubbles", themeMode: "system", colorTheme: "default", dashboardFontScalePct: 100, shadcnCustomColors: {}, resolvedThemeMode: "light", setThemeMode: noop, setColorTheme: noop, setDashboardFontScalePct: noop, setShadcnCustomColors: noop, setQuickChatButtonModeImmediate: noop, setChatMessageLayoutImmediate: noop, setOpenTasksInRightSidebarImmediate: noop, setOpenMobileTasksInPopupImmediate: noop, setTaskPopupsBoardListOnlyImmediate: noop, setShowCostBadgeOnCardsImmediate: noop, setTaskDetailChatFirstImmediate: noop, setMobileNavPrimaryItemsImmediate: noop }} /></NavigationHistoryProvider></div>;
 }
 
 function TaskDetailTitleMainPanelHarness() {
-  return <div data-testid="title-host-main-panel" className="fn-8806-constrained-title-host"><MainContent {...{ taskView: "task-detail", mainPanelDetailTask: fixtureTask, tasks: [fixtureTask], currentProject: null, addToast: noop, moveTask: asyncTask, deleteTask: asyncTask, mergeTask: asyncMerge, retryTask: asyncTask, pauseTask: asyncTask, unpauseTask: asyncTask, resetTask: asyncTask, duplicateTask: asyncTask, closeTaskDetailMainPanel: noop, setMainPanelDetailTask: noop, openTaskDetailInMainPanel: noop, popOutTaskDetail: noop, modalManager: { openNewTaskWithDescription: noop }, globalPaused: false, prAuthAvailable: false, autoMerge: true, taskDetailChatFirst: false } as unknown as React.ComponentProps<typeof MainContent>} /></div>;
+  return <div data-testid="title-host-main-panel" className="fn-8806-constrained-title-host" style={{ height: "100vh", minHeight: 0, overflow: "hidden" }}><MainContent {...{ taskView: "task-detail", mainPanelDetailTask: fixtureTask, tasks: [fixtureTask], currentProject: null, addToast: noop, moveTask: asyncTask, deleteTask: asyncTask, mergeTask: asyncMerge, retryTask: asyncTask, pauseTask: asyncTask, unpauseTask: asyncTask, resetTask: asyncTask, duplicateTask: asyncTask, closeTaskDetailMainPanel: noop, setMainPanelDetailTask: noop, openTaskDetailInMainPanel: noop, popOutTaskDetail: noop, modalManager: { openNewTaskWithDescription: noop }, globalPaused: false, prAuthAvailable: false, autoMerge: true, taskDetailChatFirst } as unknown as React.ComponentProps<typeof MainContent>} /></div>;
 }
 
 function TaskDetailTitleListHarness() {
   localStorage.setItem("kb:fixture:kb-dashboard-list-selected-task", fixtureTask.id);
-  return <div data-testid="title-host-list"><ListView {...{ tasks: [fixtureTask], projectId: "fixture", onMoveTask: asyncTask, onDeleteTask: asyncTask, onMergeTask: asyncMerge, addToast: noop, onOpenDetail: noop, onNewTask: noop, onQuickCreate: noop, availableModels: [], autoMerge: true, columnFlagsByTaskId: fixtureColumnFlagsByTaskId } as unknown as React.ComponentProps<typeof ListView>} /></div>;
+  return <div data-testid="title-host-list" style={{ height: "100vh", minHeight: 0, overflow: "hidden" }}><ListView {...{ tasks: [fixtureTask], projectId: "fixture", onMoveTask: asyncTask, onDeleteTask: asyncTask, onMergeTask: asyncMerge, addToast: noop, onOpenDetail: noop, onNewTask: noop, onQuickCreate: noop, availableModels: [], autoMerge: true, taskDetailChatFirst, columnFlagsByTaskId: fixtureColumnFlagsByTaskId } as unknown as React.ComponentProps<typeof ListView>} /></div>;
 }
 
 function TaskDetailTitleDockHarness() {
   localStorage.setItem("fusion:right-dock-open", "true");
   localStorage.setItem("fusion:right-dock-view", "tasks");
-  const dock = useRightDockController({ active: true, projectId: "fixture", tasks: [fixtureTask], addToast: noop, settingsLoaded: true, researchReadinessVersion: 0, workflowSteps: [], subscribePluginEvents: () => noop, openDetailTask: noop, openTaskPopup: noop, openMobileTasksInPopup: false, openFileInBrowser: noop, onDeleteTask: asyncTask, onMergeTask: asyncMerge, openSettings: noop, onSendSelectionToTask: noop, onCreateTaskFromInsight: noop, onNavigateToMission: noop, onTaskCreated: noop, prAuthAvailable: false, autoMerge: true, taskDetailChatFirst: false, visibilityOptions: {}, footerVisible: false, columnFlagsByTaskId: fixtureColumnFlagsByTaskId });
+  const dock = useRightDockController({ active: true, projectId: "fixture", tasks: [fixtureTask], addToast: noop, settingsLoaded: true, researchReadinessVersion: 0, workflowSteps: [], subscribePluginEvents: () => noop, openDetailTask: noop, openTaskPopup: noop, openMobileTasksInPopup: false, openFileInBrowser: noop, onDeleteTask: asyncTask, onMergeTask: asyncMerge, openSettings: noop, onSendSelectionToTask: noop, onCreateTaskFromInsight: noop, onNavigateToMission: noop, onTaskCreated: noop, prAuthAvailable: false, autoMerge: true, taskDetailChatFirst, visibilityOptions: {}, footerVisible: false, columnFlagsByTaskId: fixtureColumnFlagsByTaskId });
   React.useEffect(() => { dock.openTaskInDock(fixtureTask); }, []);
-  return <div data-testid="title-host-dock" className="fn-8806-constrained-title-host">{dock.dock}</div>;
+  return <div data-testid="title-host-dock" className="fn-8806-constrained-title-host" style={{ height: "100vh", minHeight: 0, overflow: "hidden" }}>{dock.dock}</div>;
 }
 
 /*

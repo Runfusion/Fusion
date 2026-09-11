@@ -348,7 +348,11 @@ export function buildTaskActionMenuModel(options: BuildTaskActionMenuModelOption
     destructiveActions.push({ id: "reset", label: t("taskDetail.reset.btn", "Reset"), tone: "danger", onSelect: options.onReset });
   }
 
-  if (isMutableLiveColumn(task.column, currentColumnFlags)) {
+  /*
+  FNXC:TaskDetailHeaderActions 2026-09-11-18:16:
+  A mutable task exposes Pause or Unpause only when its host wires the matching lifecycle operation. The shared model omits unwired actions rather than producing an interactive-looking no-op in Task Detail, Board, or List menus.
+  */
+  if (options.onTogglePause && isMutableLiveColumn(task.column, currentColumnFlags)) {
     actions.push({
       id: isTaskPaused ? "unpause" : "pause",
       label: isTaskPaused ? t("taskDetail.pause.unpauseBtn", "Unpause") : t("taskDetail.pause.pauseBtn", "Pause"),

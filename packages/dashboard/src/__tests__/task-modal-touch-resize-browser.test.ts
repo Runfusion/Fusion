@@ -42,6 +42,7 @@ const floatingWindowScreenshots = path.resolve(process.cwd(), "e2e/__screenshots
 const fn8607Screenshots = path.resolve(process.cwd(), "e2e/__screenshots__/fn-8607");
 const fn8806Screenshots = path.resolve(process.cwd(), "e2e/__screenshots__/fn-8806");
 const fn115Screenshots = path.resolve(process.cwd(), "e2e/__screenshots__/fn-115");
+const fn349Screenshots = path.resolve(process.cwd(), "e2e/__screenshots__/fn-349");
 
 async function touchDrag(cdp: Cdp, point: Point, delta = { x: 48, y: 36 }) {
   await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: point.x, y: point.y, id: 1 }] });
@@ -138,7 +139,7 @@ async function openProductionTitleHost(page: Page, name: string, hostTestId: str
     };
     await nextFrames();
     if (name === "list-split") {
-      document.querySelector<HTMLElement>("tr[data-id]")?.click();
+      document.querySelector<HTMLElement>("[data-id]")?.click();
       await nextFrames();
     }
     if (name === "floating-window") {
@@ -859,29 +860,164 @@ describe.runIf(executablePath)("Task modal tablet touch resize browser regressio
     const result = await page.evaluate(() => {
       const detail = document.querySelector<HTMLElement>("[data-task-detail-surface='true']");
       const tabs = detail?.querySelector<HTMLElement>(".detail-tabs");
-      const footer = detail?.querySelector<HTMLElement>(".modal-actions");
       const body = detail?.querySelector<HTMLElement>(".detail-body");
-      if (!detail || !tabs || !footer || !body) return null;
+      if (!detail || !tabs || !body) return null;
       body.scrollTop = body.scrollHeight;
+      const shellZones = Array.from(detail.children)
+        .filter((child) => child.matches(".modal-header, .detail-tabs, .detail-body, .modal-actions"))
+        .map((child) => child.classList.contains("modal-header") ? "header" : child.classList.contains("detail-tabs") ? "tabs" : child.classList.contains("detail-body") ? "content" : "footer");
       return {
         boundaries: document.querySelectorAll(".task-detail-alpha-boundary[data-alpha-surface='true']").length,
-        headers: detail.querySelectorAll(".modal-header").length,
-        tabSets: detail.querySelectorAll(".detail-tabs").length,
-        footers: detail.querySelectorAll(".modal-actions").length,
+        headers: detail.querySelectorAll(":scope > .modal-header").length,
+        tabSets: detail.querySelectorAll(":scope > .detail-tabs").length,
+        footers: detail.querySelectorAll(":scope > .modal-actions").length,
+        shellZones,
+        bodyFillsRemainder: body.getBoundingClientRect().bottom <= detail.getBoundingClientRect().bottom + 1,
         noHorizontalOverflow: detail.scrollWidth <= detail.clientWidth + 1,
         tabsScrollable: tabs.scrollWidth >= tabs.clientWidth,
-        footerReachable: footer.getBoundingClientRect().bottom <= window.innerHeight + 1,
       };
     });
     expect(result?.boundaries).toBe(1);
     expect(result?.headers).toBe(1);
     expect(result?.tabSets).toBe(1);
-    expect(result?.footers).toBe(1);
+    expect(result?.footers).toBe(0);
+    expect(result?.shellZones).toEqual(["header", "tabs", "content"]);
+    expect(result?.bodyFillsRemainder).toBe(true);
     expect(result?.noHorizontalOverflow).toBe(true);
     expect(result?.tabsScrollable).toBe(true);
-    expect(result?.footerReachable).toBe(true);
+    if (name === "modal" || name === "mobile-drawer") {
+      await mkdir(fn349Screenshots, { recursive: true });
+      await page.screenshot({ path: path.join(fn349Screenshots, name === "modal" ? "task-detail-desktop.png" : "task-detail-mobile.png") });
+    }
     await page.close();
   }, 30_000);
+
+  /*
+  FNXC:TaskDetailChatGeometry 2026-09-11-18:16:
+  Activity Live and Planner Chat must preserve one flex-owned transcript and an in-flow composer at the usable body edge in every production Task Detail host. Exercise empty, loading, populated, and streaming-shaped data while the viewport matrix reaches the 320px minimum; alternate the real plan-approval footer so both shell endings are measured without multiplying equivalent browser cases.
+
+  FNXC:TaskDetailChatGeometry 2026-09-11-18:42:
+  Every host must be opened under the viewport being asserted so its real media queries participate in the geometry proof. The chat panel must fill the entire body and its composer must meet that body's usable lower edge; containment alone cannot reject a short panel with a mid-body composer.
+  */
+  for (const [name, hostTestId, surface] of [
+    ["modal", "title-host-modal", "task-detail-title-modal"],
+    ["mobile-drawer", "title-host-modal", "task-detail-title-modal"],
+    ["main-panel", "title-host-main-panel", "task-detail-title-main-panel"],
+    ["list-split", "title-host-list", "task-detail-title-list"],
+    ["right-dock", "title-host-dock", "task-detail-title-dock"],
+    ["floating-window", "floating-window-overlay-task-detail-", "task-detail-title-app-floating"],
+  ] as const) {
+    for (const chatKind of ["activity", "planner"] as const) {
+      it(`keeps ${chatKind} transcript and composer geometry in the ${name} production host`, async () => {
+        for (const [width, chatState, footer] of [
+          [1200, "empty", false],
+          [768, "loading", true],
+          [390, "populated", false],
+          [320, "streaming", true],
+        ] as const) {
+          const preservesDesktopOnlyHost = name === "floating-window" || name === "list-split" || name === "right-dock";
+          const admissionWidth = preservesDesktopOnlyHost ? 1200 : width;
+          const page = await browser.newPage({ viewport: { width: admissionWidth, height: 844 } });
+          const cdp = await page.context().newCDPSession(page);
+          await cdp.send("Emulation.setDeviceMetricsOverride", { width: admissionWidth, height: 844, screenWidth: admissionWidth, screenHeight: 844, deviceScaleFactor: 1, mobile: admissionWidth <= 390 });
+          await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: admissionWidth <= 768, maxTouchPoints: 1 });
+          const query = new URLSearchParams({
+            surface,
+            alpha: "true",
+            reset: "1",
+            chatKind,
+            chatState,
+            footer: String(footer),
+            ...(preservesDesktopOnlyHost ? { preserveDesktopHost: "true" } : {}),
+            ...(name === "floating-window" ? { project: "fixture" } : {}),
+          });
+          await page.goto(`${baseUrl}app/task-modal-touch-resize-e2e-fixture.html?${query.toString()}`);
+          await openProductionTitleHost(page, name === "mobile-drawer" ? "modal" : name, hostTestId);
+          if (admissionWidth !== width) {
+            await cdp.send("Emulation.setDeviceMetricsOverride", { width, height: 844, screenWidth: width, screenHeight: 844, deviceScaleFactor: 1, mobile: false });
+            await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: false });
+            await page.evaluate(({ name, width }) => {
+              if (name === "list-split") {
+                const layout = document.querySelector<HTMLElement>(".list-split-layout");
+                const sidebar = document.querySelector<HTMLElement>(".list-split-sidebar");
+                if (!layout || !sidebar) throw new Error("Cannot preserve the mounted List split host");
+                layout.style.gridTemplateColumns = "0 0 minmax(0, 1fr)";
+                sidebar.style.inlineSize = "0";
+                sidebar.style.visibility = "hidden";
+              } else if (name === "right-dock") {
+                const dock = document.querySelector<HTMLElement>(".right-dock");
+                if (!dock) throw new Error("Cannot preserve the mounted right dock host");
+                dock.style.display = "flex";
+                dock.style.inlineSize = `${width}px`;
+                dock.style.minInlineSize = "0";
+                dock.style.maxInlineSize = "100vw";
+              }
+            }, { name, width });
+          }
+          await page.waitForTimeout(chatState === "loading" && chatKind === "activity" ? 400 : 100);
+          const result = await page.evaluate(({ chatKind, chatState, footer }) => {
+            const detail = document.querySelector<HTMLElement>("[data-task-detail-surface='true']");
+            const body = detail?.querySelector<HTMLElement>(chatKind === "planner" ? ".detail-body--planner-chat" : ".detail-body--chat");
+            const bodyContent = body?.querySelector<HTMLElement>(":scope > .detail-body-content");
+            const panel = bodyContent?.querySelector<HTMLElement>(chatKind === "planner" ? ".task-planner-chat" : ".task-chat-tab");
+            const transcript = panel?.querySelector<HTMLElement>(chatKind === "planner" ? ".task-planner-chat-transcript" : ".task-chat-transcript");
+            const composer = panel?.querySelector<HTMLElement>(chatKind === "planner" ? ".task-planner-chat-composer" : ".task-chat-composer");
+            const header = detail?.querySelector<HTMLElement>(":scope > .modal-header");
+            const tabs = detail?.querySelector<HTMLElement>(":scope > .detail-tabs");
+            const contextualFooter = detail?.querySelector<HTMLElement>(":scope > .modal-actions");
+            if (!detail || !body || !bodyContent || !panel || !transcript || !composer || !header || !tabs) return {
+              missingGeometry: { detail: Boolean(detail), body: Boolean(body), bodyContent: Boolean(bodyContent), panel: Boolean(panel), transcript: Boolean(transcript), composer: Boolean(composer), header: Boolean(header), tabs: Boolean(tabs), viewportMode: document.documentElement.dataset.viewportMode ?? null, innerWidth: window.innerWidth, mobileQuery: window.matchMedia("(max-width: 768px)").matches },
+            };
+            const before = { header: header.getBoundingClientRect().top, tabs: tabs.getBoundingClientRect().top, footer: contextualFooter?.getBoundingClientRect().top ?? null };
+            transcript.scrollTop = transcript.scrollHeight;
+            const after = { header: header.getBoundingClientRect().top, tabs: tabs.getBoundingClientRect().top, footer: contextualFooter?.getBoundingClientRect().top ?? null };
+            const bodyRect = body.getBoundingClientRect();
+            const bodyContentRect = bodyContent.getBoundingClientRect();
+            const bodyContentStyle = getComputedStyle(bodyContent);
+            const paddedBodyBottom = bodyContentRect.bottom - Number.parseFloat(bodyContentStyle.paddingBlockEnd);
+            const usableBodyBottomCandidates = [paddedBodyBottom, bodyContentRect.bottom];
+            const reachesUsableBodyBottom = (bottom: number) => usableBodyBottomCandidates.some((candidate) => Math.abs(bottom - candidate) <= 1);
+            const panelRect = panel.getBoundingClientRect();
+            const transcriptRect = transcript.getBoundingClientRect();
+            const composerRect = composer.getBoundingClientRect();
+            return {
+              stateRendered: chatState === "loading"
+                ? Boolean(panel.querySelector("[role='status']"))
+                : chatState === "empty"
+                  ? Boolean(panel.querySelector(chatKind === "planner" ? "[data-testid='task-planner-chat-empty']" : ".task-chat-empty"))
+                  : transcript.children.length > 0,
+              footerRendered: Boolean(contextualFooter),
+              expectedFooter: footer,
+              shellStayedFixed: before.header === after.header && before.tabs === after.tabs && before.footer === after.footer,
+              transcriptBeforeComposer: transcript.compareDocumentPosition(composer) === Node.DOCUMENT_POSITION_FOLLOWING,
+              transcriptOwnsScroll: ["auto", "scroll"].includes(getComputedStyle(transcript).overflowY),
+              populatedTranscriptOverflows: chatState !== "populated" || transcript.scrollHeight > transcript.clientHeight,
+              transcriptScrollHeight: transcript.scrollHeight,
+              transcriptClientHeight: transcript.clientHeight,
+              bodyContentFillsBody: Math.abs(bodyContentRect.top - bodyRect.top) <= 1 && Math.abs(bodyContentRect.bottom - bodyRect.bottom) <= 1,
+              panelFillsBodyToBottom: reachesUsableBodyBottom(panelRect.bottom),
+              composerAtUsableBodyBottom: reachesUsableBodyBottom(composerRect.bottom),
+              transcriptWithinPanel: transcriptRect.top >= panelRect.top - 1 && transcriptRect.bottom <= composerRect.top + 1,
+              noHorizontalOverflow: detail.scrollWidth <= detail.clientWidth + 1,
+            };
+          }, { chatKind, chatState, footer });
+          expect(result, `${name}/${chatKind}/${width}/${chatState}`).not.toBeNull();
+          expect(result?.stateRendered, `${name}/${chatKind}/${width}/${chatState} geometry ${JSON.stringify(result)}`).toBe(true);
+          expect(result?.footerRendered).toBe(result?.expectedFooter);
+          expect(result?.shellStayedFixed).toBe(true);
+          expect(result?.transcriptBeforeComposer).toBe(true);
+          expect(result?.transcriptOwnsScroll).toBe(true);
+          expect(result?.populatedTranscriptOverflows, `${name}/${chatKind}/${width}/${chatState} geometry ${JSON.stringify(result)}`).toBe(true);
+          expect(result?.bodyContentFillsBody, `${name}/${chatKind}/${width}/${chatState} geometry ${JSON.stringify(result)}`).toBe(true);
+          expect(result?.panelFillsBodyToBottom, `${name}/${chatKind}/${width}/${chatState} geometry ${JSON.stringify(result)}`).toBe(true);
+          expect(result?.composerAtUsableBodyBottom, `${name}/${chatKind}/${width}/${chatState} geometry ${JSON.stringify(result)}`).toBe(true);
+          expect(result?.transcriptWithinPanel).toBe(true);
+          expect(result?.noHorizontalOverflow, `${name}/${chatKind}/${width}/${chatState} geometry ${JSON.stringify(result)}`).toBe(true);
+          await page.close();
+        }
+      }, 60_000);
+    }
+  }
 
   it("keeps mobile task-card touch activation outside the desktop pan owner", async () => {
     const page = await browser.newPage({ viewport: { width: 390, height: 844 } });

@@ -1,6 +1,6 @@
 /*
 FNXC:TaskDetailFooterActions 2026-09-05-23:27:
-FN-300 places oversight levels, the advisor toggle, and overseer controls in the shared footer Actions menu at every viewport. These tests keep the mobile and desktop contracts aligned: one menu, labeled state, unchanged mutation handlers, no inactive control shells, and Attach file as the first focused action.
+FN-300 places oversight levels, the advisor toggle, and overseer controls in the shared header Actions menu at every viewport. These tests keep the mobile and desktop contracts aligned: one menu, labeled state, unchanged mutation handlers, no inactive control shells, and Attach file as the first focused action.
 */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
@@ -156,7 +156,7 @@ describe("TaskDetailModal oversight controls — mobile overflow menu", () => {
     expect(screen.getByTestId("detail-session-advisor-toggle")).toHaveAttribute("aria-pressed", "false");
   });
 
-  it("renders one footer Actions trigger with the labeled Oversight group", async () => {
+  it("renders one header Actions trigger with the labeled Oversight group", async () => {
     render(
       <TaskDetailModal
         task={makeTask({ id: "FN-200", column: "in-progress", plannerOversightLevel: "autonomous", plannerOverseerState: activeSnapshot })}
@@ -227,7 +227,7 @@ describe("TaskDetailModal oversight controls — mobile overflow menu", () => {
       />,
     );
 
-    // Keep the footer menu open so this absence assertion proves the group is withheld,
+    // Keep the header overflow open so this absence assertion proves the group is withheld,
     // rather than passing vacuously because all menu content is closed.
     await openTaskDetailActionsMenu();
     await waitFor(() => {
@@ -508,7 +508,7 @@ describe("TaskDetailModal oversight controls — mobile overflow menu", () => {
     expect(screen.getAllByRole("menu")).toHaveLength(1);
   });
 
-  it("the footer Actions menu renders identically at a desktop viewport", async () => {
+  it("the header Actions menu renders identically at a desktop viewport", async () => {
     setViewportWidth(DESKTOP_WIDTH);
 
     render(
@@ -522,7 +522,7 @@ describe("TaskDetailModal oversight controls — mobile overflow menu", () => {
       />,
     );
 
-    // FNXC:TaskDetailFooterActions 2026-09-05-23:27: The same footer Actions menu stays closed by default and exposes the same oversight items at desktop and mobile widths.
+    // FNXC:TaskDetailFooterActions 2026-09-05-23:27: The same header Actions menu stays closed by default and exposes the same oversight items at desktop and mobile widths.
     const trigger = await screen.findByRole("button", { name: "Actions" });
     expect(trigger).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();

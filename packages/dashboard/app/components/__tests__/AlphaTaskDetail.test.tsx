@@ -383,6 +383,10 @@ describe("homemade Alpha Task Detail", () => {
       </AlphaProvider>,
     );
     const chooseAction = async (name: string) => {
+      if (name === "Duplicate" || name === "Delete") {
+        await user.click(screen.getByRole("button", { name }));
+        return;
+      }
       await user.click(screen.getByRole("button", { name: "Actions" }));
       await user.click(within(await screen.findByRole("menu", { name: "Task actions" })).getByRole("menuitem", { name }));
     };
@@ -425,9 +429,8 @@ describe("homemade Alpha Task Detail", () => {
       </AlphaProvider>,
     );
 
-    const revert = screen.getByRole("button", { name: "Revert this task's changes" });
-    if (enabled) expect(revert).toHaveAttribute("data-alpha-ui", "button");
-    else expect(revert).not.toHaveAttribute("data-alpha-ui");
+    await user.click(screen.getByRole("button", { name: "Actions" }));
+    const revert = within(await screen.findByRole("menu", { name: "Task actions" })).getByRole("menuitem", { name: "Revert" });
     await user.click(revert);
     expect(onRevertTask).toHaveBeenCalledTimes(1);
 
@@ -444,7 +447,8 @@ describe("homemade Alpha Task Detail", () => {
       </AlphaProvider>,
     );
     expect(screen.queryByRole("button", { name: "Revert this task's changes" })).toBeNull();
-    await user.click(screen.getByRole("button", { name: "Revise" }));
+    await user.click(screen.getByRole("button", { name: "Actions" }));
+    await user.click(within(await screen.findByRole("menu", { name: "Task actions" })).getByRole("menuitem", { name: "Revise" }));
     expect(onReviseTask).toHaveBeenCalledTimes(1);
   });
 
@@ -467,15 +471,11 @@ describe("homemade Alpha Task Detail", () => {
       </AlphaProvider>,
     );
 
-    await user.click(screen.getByRole("button", { name: "Actions" }));
-    let actions = await screen.findByRole("menu", { name: "Task actions" });
-    await user.click(within(actions).getByRole("menuitem", { name: "Pause" }));
+    await user.click(screen.getByRole("button", { name: "Pause" }));
     await waitFor(() => expect(onPauseTask).toHaveBeenCalledWith("FN-WIP"));
     expect(onTaskUpdated).toHaveBeenCalledWith(expect.objectContaining({ paused: true }));
 
-    await user.click(screen.getByRole("button", { name: "Actions" }));
-    actions = await screen.findByRole("menu", { name: "Task actions" });
-    await user.click(within(actions).getByRole("menuitem", { name: "Retry" }));
+    await user.click(screen.getByRole("button", { name: "Retry" }));
     await waitFor(() => expect(onRetryTask).toHaveBeenCalledWith("FN-WIP"));
   });
 

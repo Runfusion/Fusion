@@ -67,7 +67,7 @@ function openActivityViewMenu() {
   if (!existingMenu) {
     fireEvent.click(screen.getByRole("button", { name: "Activity" }));
   }
-  return screen.getByRole("menu", { name: "Activity views" });
+  return screen.getByRole("menu", { name: "Activity views" }).closest<HTMLElement>(".activity-view-menu")!;
 }
 
 function activityViewLabels(): string[] {
@@ -201,9 +201,9 @@ describe("TaskDetailModal Activity and planner Chat tab integration", () => {
     expect(feedContent).not.toBeNull();
     expect(feedSection).not.toBeNull();
     expect(feedList).not.toBeNull();
-    expect(footer).not.toBeNull();
-    expect(feedBody?.parentElement).toBe(footer?.parentElement);
-    expect(feedBody).not.toContainElement(footer);
+    expect(footer).toBeNull();
+    expect(feedBody?.parentElement).toBe(detailRoot);
+    expect(feedBody?.querySelector(".modal-actions")).toBeNull();
     expect(feedList).toContainElement(screen.getByText("Repeated Feed entry 80"));
     expect(screen.getByTestId("task-chat-expand-toggle")).toBeVisible();
 
@@ -348,13 +348,13 @@ describe("TaskDetailModal Activity and planner Chat tab integration", () => {
       const activityButton = screen.getByRole("button", { name: "Activity" });
 
       fireEvent.click(activityButton);
-      let menu = screen.getByRole("menu", { name: "Activity views" });
+      let menu = screen.getByRole("menu", { name: "Activity views" }).closest<HTMLElement>(".activity-view-menu")!;
       performanceNowSpy.mockReturnValue(120);
       act(() => {
         visualViewport.dispatchEvent(new Event("resize"));
         visualViewport.dispatchEvent(new Event("scroll"));
       });
-      menu = screen.getByRole("menu", { name: "Activity views" });
+      menu = screen.getByRole("menu", { name: "Activity views" }).closest<HTMLElement>(".activity-view-menu")!;
 
       expect(menu.parentElement).toBe(document.body);
       expect(document.querySelector(".detail-tabs")).not.toContainElement(menu);
@@ -581,7 +581,7 @@ describe("TaskDetailModal Activity and planner Chat tab integration", () => {
       const activityButton = screen.getByRole("button", { name: "Activity" });
       fireEvent.click(activityButton);
       expect(screen.getByRole("menu", { name: "Activity views" })).toBeInTheDocument();
-      const menu = screen.getByRole("menu", { name: "Activity views" });
+      const menu = screen.getByRole("menu", { name: "Activity views" }).closest<HTMLElement>(".activity-view-menu")!;
       expect(menu.parentElement).toBe(document.body);
 
       // Same-gesture echo inside the popup host: must reposition, not close.

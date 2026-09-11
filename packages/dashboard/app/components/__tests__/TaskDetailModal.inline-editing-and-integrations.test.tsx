@@ -2179,16 +2179,11 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      // Should NOT be in edit mode — no edit hint, no Save/Cancel in footer
-      const modalActions = document.querySelector(".modal-actions");
-      expect(modalActions!.querySelector(".modal-edit-hint")).toBeNull();
-
-      const footerButtons = modalActions!.querySelectorAll("button");
-      const buttonTexts = Array.from(footerButtons).map((b) => b.textContent);
-      expect(buttonTexts).not.toContain("Save");
-      expect(buttonTexts).not.toContain("Cancel");
-      // The retained footer exposes Actions without a destination-column control.
-      expect(buttonTexts).toContain("Actions");
+      // A standard task has no empty footer; lifecycle controls live in the canonical header.
+      expect(document.querySelector(".modal-actions")).toBeNull();
+      expect(screen.getByRole("button", { name: "Actions" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
       expect(container.querySelector(".detail-move-dropdown, .detail-move-btn, .detail-move-menu")).toBeNull();
     });
   });

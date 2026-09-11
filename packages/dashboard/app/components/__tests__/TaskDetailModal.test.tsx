@@ -170,7 +170,7 @@ describe("TaskDetailModal reset dialog", () => {
 
     expect(screen.getByTestId("task-detail-status-badge")).toHaveTextContent(/executing/i);
     fireEvent.click(screen.getByRole("button", { name: "Actions" }));
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Reset" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Reset" }));
     expect(screen.getByTestId("task-reset-description")).toHaveValue("Original detail request");
     fireEvent.change(screen.getByTestId("task-reset-description"), { target: { value: "Corrected detail request" } });
     fireEvent.click(screen.getByTestId("task-reset-submit"));
@@ -204,7 +204,7 @@ describe("TaskDetailModal reset dialog", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Actions" }));
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Reset" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Reset" }));
     fireEvent.click(await screen.findByTestId("task-reset-submit"));
 
     await waitFor(() => expect(onResetTask).toHaveBeenCalledWith("FN-001"));
@@ -227,7 +227,7 @@ describe("TaskDetailModal reset dialog", () => {
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: "Actions" }));
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Reset" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Reset" }));
     fireEvent.click(await screen.findByTestId("task-reset-submit"));
     await waitFor(() => expect(addToast).toHaveBeenCalledWith("partial cleanup; retry Reset", "error"));
     expect(addToast).not.toHaveBeenCalledWith(expect.stringContaining("fresh run will be allocated"), "success");
@@ -455,7 +455,7 @@ describe("TaskDetailModal planner Chat tab", () => {
     expect(screen.getByText("Task Failed")).toBeInTheDocument();
     expect(screen.getByText("The task failed before it could complete.")).toBeInTheDocument();
     expect(document.querySelector(".detail-error-message")?.textContent).not.toBe("");
-    await userEvent.setup().click(screen.getByRole("button", { name: "Retry" }));
+    await userEvent.setup().click(screen.getByTestId("task-detail-header-action-retry"));
     expect(onRetryTask).toHaveBeenCalledWith("FN-099");
 
     rerender(
@@ -680,7 +680,7 @@ describe("TaskDetailModal summarize title action", () => {
     const backButton = screen.getByRole("button", { name: /back to board/i });
 
     // FNXC:TaskDetail 2026-06-22-18:32: Board task-detail action order is edit, expand/pop-out, then Back to board pinned far right.
-    expect(Array.from(actions!.children)).toEqual([editButton, popOutButton, backButton]);
+    expect(Array.from(actions!.children).slice(-3)).toEqual([editButton, popOutButton, backButton]);
   });
 
   it("renders when the task is editable and has a description", () => {
@@ -1484,7 +1484,7 @@ describe("TaskDetailModal branch group surfacing", () => {
 describe("TaskDetailModal delete affordance", () => {
   async function selectDelete(user: ReturnType<typeof userEvent.setup>) {
     await user.click(screen.getByRole("button", { name: "Actions" }));
-    await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
+    await user.click(await screen.findByRole("button", { name: "Delete" }));
   }
   function dependencyConflictError(dependentIds: string[]) {
     const error = new Error("Task has dependents");

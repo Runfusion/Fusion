@@ -34,7 +34,7 @@ describe("TaskDetailModal allowResurrection delete flow", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "Actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Delete" }));
+    await user.click(screen.getByRole("button", { name: "Delete" }));
 
     await waitFor(() => {
       expect(onDeleteTask).toHaveBeenCalledWith("FN-099", { allowResurrection: true });
@@ -58,7 +58,7 @@ describe("TaskDetailModal allowResurrection delete flow", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "Actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Delete" }));
+    await user.click(screen.getByRole("button", { name: "Delete" }));
 
     await waitFor(() => {
       expect(onDeleteTask).toHaveBeenCalledWith("FN-099", { allowResurrection: false });
@@ -88,7 +88,7 @@ describe("TaskDetailModal allowResurrection delete flow", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "Actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Delete" }));
+    await user.click(screen.getByRole("button", { name: "Delete" }));
 
     await waitFor(() => {
       expect(onDeleteTask).toHaveBeenNthCalledWith(2, "FN-099", {

@@ -714,7 +714,7 @@ describe("TaskDetailModal", () => {
       );
       expect(container.querySelector(".modal.modal-lg")).toBeTruthy();
       expect(container.querySelector("[data-testid='floating-window-overlay-task-detail']")).toBeTruthy();
-      expect(container.querySelector(".modal-actions .modal-actions-spacer")).toBeTruthy();
+      expect(container.querySelector(".modal-actions")).toBeNull();
       expect(container.querySelector(".detail-body")).toBeTruthy();
       expect(container.querySelector(".detail-timestamps")).toBeTruthy();
       expect(container.querySelectorAll(".detail-timestamp-item").length).toBe(2);
@@ -798,7 +798,8 @@ describe("TaskDetailModal", () => {
       const inReviewFooter = container.querySelector(".modal-actions");
 
       expect(inReviewFooter).toBeTruthy();
-      expect(inReviewFooter?.contains(screen.getByRole("button", { name: "Actions" }))).toBe(true);
+      expect(inReviewFooter?.contains(screen.getByRole("button", { name: "Actions" }))).toBe(false);
+      expect(container.querySelector(".modal-header")?.contains(screen.getByRole("button", { name: "Actions" }))).toBe(true);
       expect(inReviewFooter?.contains(screen.getByRole("button", { name: "Merge & Close" }))).toBe(true);
       expect(inReviewFooter?.querySelector(".detail-move-dropdown, .detail-move-btn, .detail-move-menu")).toBeNull();
 
@@ -817,15 +818,9 @@ describe("TaskDetailModal", () => {
       );
       const standardFooter = standard.baseElement.querySelector(".modal-actions");
 
-      expect(standardFooter).toBeTruthy();
-      expect(standardFooter?.contains(screen.getByRole("button", { name: "Actions" }))).toBe(true);
-      const footerChildren = Array.from(standardFooter?.children ?? []);
-      const actionsIndex = footerChildren.findIndex((child) => child.classList.contains("detail-actions-dropdown"));
-      const spacerIndex = footerChildren.findIndex((child) => child.classList.contains("modal-actions-spacer"));
-
-      expect(actionsIndex).toBeGreaterThanOrEqual(0);
-      expect(spacerIndex).toBeGreaterThan(actionsIndex);
-      expect(standardFooter?.querySelector(".detail-move-dropdown, .detail-move-btn, .detail-move-menu")).toBeNull();
+      expect(standardFooter).toBeNull();
+      expect(standard.baseElement.querySelector(".modal-header")?.contains(screen.getByRole("button", { name: "Actions" }))).toBe(true);
+      expect(standard.baseElement.querySelector(".detail-move-dropdown, .detail-move-btn, .detail-move-menu")).toBeNull();
     });
 
     it("keeps the triage footer recoverable through Actions", () => {
@@ -844,16 +839,15 @@ describe("TaskDetailModal", () => {
       );
       const footer = container.querySelector(".modal-actions");
 
-      expect(footer?.querySelector(".detail-actions-dropdown")).toBeTruthy();
-      expect(footer?.querySelector(".modal-actions-spacer")).toBeTruthy();
-      expect(footer?.querySelector(".detail-move-dropdown, .detail-move-btn, .detail-move-menu")).toBeNull();
-      fireEvent.click(screen.getByRole("button", { name: "Actions" }));
-      expect(screen.getByRole("menuitem", { name: "Retry" })).toBeTruthy();
-      expect(screen.getByRole("menuitem", { name: "Reset" })).toBeTruthy();
-      expect(screen.getAllByRole("menuitem", { name: "Delete" })).toHaveLength(1);
+      expect(footer).toBeNull();
+      expect(container.querySelector(".modal-header .detail-actions-dropdown")).toBeTruthy();
+      expect(container.querySelector(".detail-move-dropdown, .detail-move-btn, .detail-move-menu")).toBeNull();
+      expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Reset" })).toBeTruthy();
+      expect(screen.getAllByRole("button", { name: "Delete" })).toHaveLength(1);
     });
 
-    it("modal-actions contains Delete and Pause buttons for non-done tasks (via Actions dropdown)", () => {
+    it("header actions contain Delete and a wired Pause control for mutable tasks", () => {
       render(
         <TaskDetailModal
           initialTab="definition"
@@ -862,12 +856,13 @@ describe("TaskDetailModal", () => {
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}
+          onPauseTask={async (id) => makeTask({ id, paused: true }) as Task}
           addToast={noop}
         />,
       );
 
-      // Actions are now in a dropdown - open it first.
-      // FNXC:PlannerOversight 2026-07-05-00:00: FN-7604 — the footer "Actions"
+      // Secondary actions remain in the header overflow while direct lifecycle controls are adjacent.
+      // FNXC:PlannerOversight 2026-07-05-00:00: FN-7604 — the header "Actions"
       // dropdown button name must be matched EXACTLY (not `/actions/i`) because
       // the now-universal Oversight overflow trigger's aria-label is "Oversight
       // actions", which also matches a loose /actions/i regex and made this
@@ -876,8 +871,8 @@ describe("TaskDetailModal", () => {
       fireEvent.click(actionsBtn);
 
       // Now the dropdown items should be visible
-      expect(screen.getByRole("menuitem", { name: "Delete" })).toBeTruthy();
-      expect(screen.getByRole("menuitem", { name: "Pause" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Delete" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Pause" })).toBeTruthy();
     });
 
     it("passes githubIssueAction for tracked tasks", async () => {
@@ -911,7 +906,7 @@ describe("TaskDetailModal", () => {
       );
 
       fireEvent.click(screen.getByRole("button", { name: "Actions" }));
-      fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
+      fireEvent.click(screen.getByRole("button", { name: "Delete" }));
 
       await waitFor(() => {
         expect(onDeleteTask).toHaveBeenCalledWith("FN-099", { githubIssueAction: "close", allowResurrection: false });
@@ -937,7 +932,7 @@ describe("TaskDetailModal", () => {
       );
 
       fireEvent.click(screen.getByRole("button", { name: "Actions" }));
-      fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
+      fireEvent.click(screen.getByRole("button", { name: "Delete" }));
 
       await waitFor(() => {
         expect(onDeleteTask).toHaveBeenCalledWith("FN-099", { githubIssueAction: "delete", allowResurrection: false });
@@ -963,7 +958,7 @@ describe("TaskDetailModal", () => {
       );
 
       fireEvent.click(screen.getByRole("button", { name: "Actions" }));
-      fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
+      fireEvent.click(screen.getByRole("button", { name: "Delete" }));
 
       await waitFor(() => {
         expect(onDeleteTask).toHaveBeenCalledWith("FN-099", { githubIssueAction: "leave", allowResurrection: false });
@@ -987,7 +982,7 @@ describe("TaskDetailModal", () => {
       );
 
       fireEvent.click(screen.getByRole("button", { name: "Actions" }));
-      fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
+      fireEvent.click(screen.getByRole("button", { name: "Delete" }));
 
       await waitFor(() => {
         expect(onDeleteTask).toHaveBeenCalledWith("FN-099", { allowResurrection: false });
@@ -1025,7 +1020,7 @@ describe("TaskDetailModal", () => {
       );
 
       fireEvent.click(screen.getByRole("button", { name: "Actions" }));
-      fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
+      fireEvent.click(screen.getByRole("button", { name: "Delete" }));
 
       await waitFor(() => {
         expect(mockConfirm).toHaveBeenNthCalledWith(1, {
@@ -1086,7 +1081,7 @@ describe("TaskDetailModal", () => {
       );
 
       fireEvent.click(screen.getByRole("button", { name: "Actions" }));
-      fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
+      fireEvent.click(screen.getByRole("button", { name: "Delete" }));
 
       await waitFor(() => {
         expect(mockConfirm).toHaveBeenCalledTimes(1);
@@ -1122,7 +1117,7 @@ describe("TaskDetailModal", () => {
       );
 
       fireEvent.click(screen.getByRole("button", { name: "Actions" }));
-      fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
+      fireEvent.click(screen.getByRole("button", { name: "Delete" }));
 
       await waitFor(() => {
         expect(mockConfirm).toHaveBeenCalledTimes(2);
@@ -1158,7 +1153,7 @@ describe("TaskDetailModal", () => {
       );
 
       fireEvent.click(screen.getByRole("button", { name: "Actions" }));
-      fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
+      fireEvent.click(screen.getByRole("button", { name: "Delete" }));
 
       await waitFor(() => {
         expect(onDeleteTask).toHaveBeenNthCalledWith(2, "FN-099", {
@@ -1200,7 +1195,7 @@ describe("TaskDetailModal", () => {
       );
 
       fireEvent.click(screen.getByRole("button", { name: "Actions" }));
-      fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
+      fireEvent.click(screen.getByRole("button", { name: "Delete" }));
 
       await waitFor(() => {
         expect(onDeleteTask).toHaveBeenNthCalledWith(2, "FN-099", {

@@ -260,7 +260,7 @@ describe("browser layout smoke fixture", () => {
     expect(html).toContain("pr-checks__details-link");
   });
 
-  it("includes Task Detail footer Actions menu fixtures for all optional-control variants", () => {
+  it("includes Task Detail header Actions overflow fixtures for all optional-control variants", () => {
     const html = createSmokeHtml();
     expect(html).toContain('data-smoke="task-detail-actions-menu-fixtures"');
     for (const variant of ["full", "without-github", "without-oversight", "without-optionals"]) {

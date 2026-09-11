@@ -1,6 +1,6 @@
 /*
 FNXC:TaskDetailFooterActions 2026-09-05-23:27:
-FN-300 moves task-level oversight choices and controls into the existing footer Actions menu on every viewport. This suite preserves the effective-policy states, enablement rules, persistence handlers, selected-state semantics, and absence of inactive control shells without relying on the removed toolbar trigger or nested popover.
+FN-300 moves task-level oversight choices and controls into the existing header Actions menu on every viewport. This suite preserves the effective-policy states, enablement rules, persistence handlers, selected-state semantics, and absence of inactive control shells without relying on the removed toolbar trigger or nested popover.
 */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
@@ -37,7 +37,7 @@ const activeSnapshot: PlannerOverseerRuntimeSnapshot = {
 
 /*
 FNXC:TaskDetailFooterActions 2026-09-05-23:27:
-Oversight assertions open the shared footer menu first because its flat items are intentionally absent from the closed DOM. Actions close that menu before invoking their existing handler, so tests reopen it before checking a resulting selected or disabled state.
+Oversight assertions open the shared header overflow first because its flat items are intentionally absent from the closed DOM. Actions close that menu before invoking their existing handler, so tests reopen it before checking a resulting selected or disabled state.
 */
 async function openOversightMenu() {
   return openTaskDetailActionsMenu();
@@ -57,7 +57,7 @@ populated advisor field from that equal-clock response, leaving the visible Over
 mocks in this suite must advance the clock so they model a real server response.
 */
 describe("TaskDetailModal oversight controls", () => {
-  it("names the combined oversight state in the footer Actions group heading", async () => {
+  it("names the combined oversight state in the header Actions group heading", async () => {
     render(
       <TaskDetailModal
         task={makeTask({ id: "FN-8194", column: "in-progress", plannerOversightLevel: "observe" })}
@@ -744,7 +744,7 @@ sites pass a slim `Task` (no `prompt` key) that never carries
 tests reproduce that exact path: a slim task prop with NO snapshot, plus a
 mocked `fetchTaskDetail` resolving a full TaskDetail WITH an active snapshot,
 and assert Nudge enables (helper absent) once the fetched detail lands —
-inside the shared footer Actions menu at both desktop and narrow viewport widths.
+inside the shared header Actions menu at both desktop and narrow viewport widths.
 */
 describe("TaskDetailModal oversight controls — snapshot delivered via fetched full detail (FN-7600)", () => {
   const originalInnerWidth = window.innerWidth;
@@ -865,9 +865,9 @@ describe("TaskDetailModal oversight controls — snapshot delivered via fetched 
 
 /*
 FNXC:TaskDetailFooterActions 2026-09-05-23:27:
-The footer Actions menu is the universal oversight surface. Keep a narrow-width regression lane so the same flat menu items, handlers, and inactive-state omissions remain usable without reviving viewport-specific branches or nested popovers.
+The header Actions menu is the universal oversight surface. Keep a narrow-width regression lane so the same flat menu items, handlers, and inactive-state omissions remain usable without reviving viewport-specific branches or nested popovers.
 */
-describe("TaskDetailModal oversight controls — narrow-viewport footer Actions regression", () => {
+describe("TaskDetailModal oversight controls — narrow-viewport header Actions regression", () => {
   const originalInnerWidth = window.innerWidth;
 
   beforeEach(async () => {
@@ -879,7 +879,7 @@ describe("TaskDetailModal oversight controls — narrow-viewport footer Actions 
     vi.mocked(api.nudgeOverseer).mockResolvedValue({ applied: false, reason: "oversight-off" });
     vi.mocked(api.stopOverseer).mockResolvedValue({ applied: true, reason: "stopped" });
     vi.mocked(api.explainOverseer).mockResolvedValue({ snapshot: null });
-    // Exercise the shared footer menu under the mobile breakpoint without selecting a separate JS branch.
+    // Exercise the shared header overflow under the mobile breakpoint without selecting a separate JS branch.
     Object.defineProperty(window, "innerWidth", { value: 375, configurable: true });
   });
 
@@ -889,7 +889,7 @@ describe("TaskDetailModal oversight controls — narrow-viewport footer Actions 
 
   // Reuses the shared `openOversightMenu()` helper defined at file scope.
 
-  it("renders level choices in the footer menu and writes on change", async () => {
+  it("renders level choices in the header overflow and writes on change", async () => {
     const api = await import("../../api");
     const mockUpdate = vi.fn().mockResolvedValue(makeTask({ id: "FN-201", plannerOversightLevel: "steer" }));
     vi.mocked(api.updateTask).mockImplementation(mockUpdate as any);
@@ -934,7 +934,7 @@ describe("TaskDetailModal oversight controls — narrow-viewport footer Actions 
     expect(await screen.findByTestId("detail-overseer-explain")).toBeTruthy();
   });
 
-  it("shows the periodic-observation copy in the footer menu at a narrow viewport", async () => {
+  it("shows the periodic-observation copy in the header overflow at a narrow viewport", async () => {
     render(
       <TaskDetailModal
         task={makeTask({ id: "FN-216", column: "in-progress", plannerOversightLevel: "autonomous" })}
@@ -991,7 +991,7 @@ and (d) selecting Interventions then losing oversight falls back to Live
 with no blank panel.
 
 FNXC:TaskDetailFooterActions 2026-09-05-23:27:
-These tests use the Oversight heading inside the opened footer Actions menu as their policy-resolution sync point. Intervention Timeline remains owned by the Activity dropdown and never moves into the footer menu.
+These tests use the Oversight heading inside the opened header Actions menu as their policy-resolution sync point. Intervention Timeline remains owned by the Activity dropdown and never moves into the header overflow.
 */
 describe("Intervention Timeline relocation into the Activity dropdown (FN-7571)", () => {
   beforeEach(async () => {

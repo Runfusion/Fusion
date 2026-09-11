@@ -30,9 +30,10 @@ function actionIds(task: Task, overrides: Partial<Parameters<typeof buildTaskAct
 describe("TaskContextMenu shared task action model", () => {
   it("mirrors Retry, Reset, and Delete availability across lifecycle states", () => {
     const onRetry = vi.fn();
-    expect(actionIds(makeTask({ column: "triage" }), { onRetry })).toEqual(["retry", "pause", "delete"]);
-    expect(buildTaskActionMenuModel({ task: makeTask({ column: "triage" }), t, onRetry }).shouldShowActionsMenu).toBe(true);
-    expect(actionIds(makeTask({ column: "in-review" }), { onRetry, onReset: vi.fn(), onOpenRefine: vi.fn() })).toEqual(["refine", "retry", "pause", "reset", "delete"]);
+    const onTogglePause = vi.fn();
+    expect(actionIds(makeTask({ column: "triage" }), { onRetry, onTogglePause })).toEqual(["retry", "pause", "delete"]);
+    expect(buildTaskActionMenuModel({ task: makeTask({ column: "triage" }), t, onRetry, onTogglePause }).shouldShowActionsMenu).toBe(true);
+    expect(actionIds(makeTask({ column: "in-review" }), { onRetry, onReset: vi.fn(), onOpenRefine: vi.fn(), onTogglePause })).toEqual(["refine", "retry", "pause", "reset", "delete"]);
     expect(actionIds(makeTask({ column: "done" }), { onRetry, onReset: vi.fn(), onOpenRefine: vi.fn() })).toEqual(["refine", "delete"]);
   });
 
@@ -65,6 +66,7 @@ describe("TaskContextMenu shared task action model", () => {
       t,
       onRetry: vi.fn(),
       onReset: vi.fn(),
+      onTogglePause: vi.fn(),
     });
     expect(supported.actions.map((action) => action.id)).toEqual(["retry", "pause", "reset", "delete"]);
   });
@@ -72,8 +74,9 @@ describe("TaskContextMenu shared task action model", () => {
   it("offers Retry for every mutable live column, including pending recovery", () => {
     const onRetry = vi.fn();
     const onReset = vi.fn();
+    const onTogglePause = vi.fn();
     for (const task of [makeTask(), makeTask({ status: null as any, nextRecoveryAt: new Date(Date.now() + 60_000).toISOString() })]) {
-      expect(actionIds(task, { onRetry, onReset })).toEqual(["retry", "pause", "reset", "delete"]);
+      expect(actionIds(task, { onRetry, onReset, onTogglePause })).toEqual(["retry", "pause", "reset", "delete"]);
     }
     expect(actionIds(makeTask({ column: "done" }), { onRetry, onReset })).toEqual(["delete"]);
   });
@@ -138,7 +141,7 @@ describe("TaskContextMenu shared task action model", () => {
     const noCallback = buildTaskActionMenuModel({ task: makeTask(), t });
 
     expect(untracked.actions.find((action) => action.id === "enable-github-tracking")?.label).toBe("Enable GitHub tracking");
-    expect(untracked.actions.map((action) => action.id)).toEqual(["enable-github-tracking", "pause", "delete"]);
+    expect(untracked.actions.map((action) => action.id)).toEqual(["enable-github-tracking", "delete"]);
     expect(disabled.actions.map((action) => action.id)).toContain("enable-github-tracking");
     expect(enabled.actions.map((action) => action.id)).not.toContain("enable-github-tracking");
     expect(linked.actions.map((action) => action.id)).not.toContain("enable-github-tracking");
@@ -148,15 +151,16 @@ describe("TaskContextMenu shared task action model", () => {
     expect(onEnableGithubTracking).toHaveBeenCalledTimes(1);
   });
 
-  it("exposes pause, unpause, and paused-by-agent note with detail labels", () => {
-    const active = buildTaskActionMenuModel({ task: makeTask(), t });
+  it("exposes wired pause, unpause, and paused-by-agent note with detail labels", () => {
+    const onTogglePause = vi.fn();
+    const active = buildTaskActionMenuModel({ task: makeTask(), t, onTogglePause });
     expect(active.actions.map((action) => action.id)).toEqual(["pause", "delete"]);
     expect(active.actions.find((action) => action.id === "pause")?.label).toBe("Pause");
 
     const paused = buildTaskActionMenuModel({
       task: makeTask({ paused: true, pausedByAgentId: "agent-1" } as Partial<Task>),
       t,
-
+      onTogglePause,
     });
     expect(paused.actions.map((action) => [action.id, action.label, action.tone])).toContainEqual([
       "unpause",
