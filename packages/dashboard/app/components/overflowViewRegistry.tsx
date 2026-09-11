@@ -8,6 +8,7 @@ import {
   Lock,
   MessageSquare,
   Monitor,
+  StickyNote,
   type LucideProps,
 } from "lucide-react";
 import type { GithubIssueAction, Task, TaskDetail, WorkflowStep } from "@fusion/core";
@@ -33,6 +34,9 @@ const DevServerView = lazy(() => import("./DevServerView").then((m) => ({ defaul
 const SecretsView = lazy(() => import("./SecretsView").then((m) => ({ default: m.SecretsView })));
 const PullRequestView = lazy(() => import("./PullRequestView").then((m) => ({ default: m.PullRequestView })));
 const ChatView = lazy(() => import("./ChatView").then((m) => ({ default: m.ChatView })));
+const NotesView = lazy(() => import("./NotesView").then((m) => ({ default: m.NotesView })));
+
+export type OverflowViewHostMode = "standard" | "alpha-desktop";
 
 export type OverflowViewKey =
   | "usage"
@@ -41,6 +45,7 @@ export type OverflowViewKey =
   | "tasks"
   | "files"
   | "chat"
+  | "notes"
   | "devserver"
   | "secrets"
   | "pull-requests"
@@ -58,6 +63,8 @@ export interface OverflowViewFeatureState {
 
 export interface OverflowViewRenderProps {
   projectId?: string;
+  /** Explicit host contract; shared consumers default to standard behavior. */
+  hostMode?: OverflowViewHostMode;
   experimentalFeatures?: OverflowViewFeatureState;
   /** Per-task resolved column traits, threaded from App via useRightDockController. */
   columnFlagsByTaskId?: ReadonlyMap<string, { complete?: boolean; countsTowardWip?: boolean; mergeBlocker?: boolean; humanReview?: boolean; intake?: boolean; hold?: boolean }>;
@@ -102,6 +109,8 @@ export interface OverflowViewRenderProps {
   onOpenGitHubImport?: () => void;
   onOpenGitManager?: () => void;
   onOpenSchedules?: () => void;
+  notesController?: import("../hooks/useNotes").UseNotesController;
+  registerNotesGuard?: (guard: () => boolean | Promise<boolean>, onAccepted?: () => void) => () => void;
 }
 
 export interface OverflowViewEntry {
@@ -112,10 +121,12 @@ export interface OverflowViewEntry {
   render?: (props: OverflowViewRenderProps) => ReactNode;
   onActivate?: (props: OverflowViewRenderProps) => void;
   isVisible?: (options: OverflowViewVisibilityOptions) => boolean;
+  isExpandable?: (options: OverflowViewVisibilityOptions) => boolean;
 }
 
 export interface OverflowViewVisibilityOptions {
   experimentalFeatures?: OverflowViewFeatureState;
+  hostMode?: OverflowViewHostMode;
   showSkillsTab?: boolean;
   pluginDashboardViews?: PluginDashboardViewEntry[];
 }
@@ -206,19 +217,40 @@ export const STATIC_OVERFLOW_VIEW_ENTRIES: readonly OverflowViewEntry[] = [
   FNXC:Navigation 2026-06-27-00:00:
   The right dock hosts the full ChatView as an always-visible inline tool so the compact dock body and the floating expand modal reuse the same conversational surface without adding another navigation destination.
   */
+  /*
+  FNXC:AlphaDesktopRightDock 2026-09-11-21:48:
+  Only the explicit Alpha desktop host turns Chat into a list-only window launcher and disables generic expansion. Standard tablet, desktop, floating, and absent-host callers retain the existing list/detail contract.
+  */
   {
     key: "chat",
     label: "Chat",
     icon: MessageSquare,
     testId: "right-dock-tab-chat",
+    isExpandable: (options) => options.hostMode !== "alpha-desktop",
     render: (props) => wrapOverflowView(
       <ChatView
         projectId={props.projectId}
         addToast={props.addToast}
         experimentalFeatures={{ ...(props.experimentalFeatures ?? {}) }}
         onOpenSessionInNewWindow={props.onOpenSessionInNewWindow}
+        listOnly={props.hostMode === "alpha-desktop"}
         compactLayout={props.surface === "dock" && (props.dockWidth ?? RIGHT_DOCK_CHAT_COMPACT_MAX_WIDTH) <= RIGHT_DOCK_CHAT_COMPACT_MAX_WIDTH}
       />,
+    ),
+  },
+  /*
+  FNXC:AlphaDesktopRightDock 2026-09-11-21:48:
+  Notes is an inline, non-expandable tool only in the explicit Alpha desktop dock. Standard docks exclude it entirely, preventing stale stored selections from creating a hidden or modal Notes owner.
+  */
+  {
+    key: "notes",
+    label: "Notes",
+    icon: StickyNote,
+    testId: "right-dock-tab-notes",
+    isVisible: (options) => options.hostMode === "alpha-desktop",
+    isExpandable: () => false,
+    render: (props) => wrapOverflowView(
+      <NotesView projectId={props.projectId} addToast={props.addToast} controller={props.notesController} registerGuard={props.registerNotesGuard} compact />,
     ),
   },
   {
@@ -335,4 +367,8 @@ export function findOverflowViewEntry(key: OverflowViewKey, options: OverflowVie
 
 export function isOverflowViewKeyVisible(key: string, options: OverflowViewVisibilityOptions = {}): key is OverflowViewKey {
   return getVisibleOverflowViewEntries(options).some((entry) => entry.key === key);
+}
+
+export function isOverflowViewEntryExpandable(entry: OverflowViewEntry | undefined, options: OverflowViewVisibilityOptions = {}): boolean {
+  return Boolean(entry?.render && (entry.isExpandable?.(options) ?? true));
 }

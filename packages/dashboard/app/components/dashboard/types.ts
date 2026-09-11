@@ -260,6 +260,7 @@ export interface MainContentProps {
   openCreateWorkflowWithNav: () => void;
   sidebarActive: boolean;
   notesController?: UseNotesController;
+  registerNotesGuard?: (guard: () => boolean | Promise<boolean>, onAccepted?: () => void) => () => void;
   isMobile: boolean;
   /** Whether the measured Alpha pill is currently rendered and needs drawer clearance. */
   mainPanelDetailInitialTab: DetailTaskTab | undefined;

@@ -42,7 +42,8 @@ describe("overflowViewRegistry", () => {
       showSkillsTab: true,
     }).map((entry) => entry.key);
 
-    expect(keys).toEqual(STATIC_OVERFLOW_VIEW_ENTRIES.map((entry) => entry.key));
+    expect(keys).toEqual(STATIC_OVERFLOW_VIEW_ENTRIES.filter((entry) => entry.key !== "notes").map((entry) => entry.key));
+    expect(keys).not.toContain("notes");
     for (const key of removedKeys) expect(keys).not.toContain(key);
     for (const key of ["secrets", "pull-requests", "devserver"]) expect(keys).toContain(key);
   });

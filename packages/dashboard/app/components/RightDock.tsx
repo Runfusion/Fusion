@@ -6,6 +6,7 @@ import {
   findOverflowViewEntry,
   getVisibleOverflowViewEntries,
   isOverflowViewKeyVisible,
+  isOverflowViewEntryExpandable,
   type OverflowViewKey,
   type OverflowViewRenderProps,
   type OverflowViewVisibilityOptions,
@@ -337,7 +338,7 @@ export function RightDock({
             >
               <ArrowLeft size={16} />
             </button>
-          ) : open && selectedEntry.render ? (
+          ) : open && isOverflowViewEntryExpandable(selectedEntry, visibilityOptions) ? (
             <button
               type="button"
               className="btn-icon right-dock__expand"

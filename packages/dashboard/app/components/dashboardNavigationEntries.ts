@@ -1,13 +1,13 @@
 import type { ComponentType } from "react";
 import type { LucideProps } from "lucide-react";
-import { Bot, Brain, Clock, Gauge, History, Lightbulb, LayoutGrid, List, Mail, MessageSquare, PanelsTopLeft, Plus, Search, Settings, Sparkles, StickyNote, Target, Workflow, Zap } from "lucide-react";
+import { Bot, Brain, Clock, Gauge, Lightbulb, LayoutGrid, List, Mail, PanelsTopLeft, Plus, Search, Settings, Sparkles, Target, Workflow, Zap } from "lucide-react";
 import type { PluginDashboardViewEntry } from "../api";
 import type { TaskView } from "../hooks/useViewState";
 import { buildPluginTaskViewId } from "../plugins/pluginViewRegistry";
 import { getPluginDashboardViewNavIcon } from "./pluginNavIcon";
 import { GithubIcon } from "./GithubIcon";
 
-export type DashboardNavigationKind = "pilot-window" | "main-page" | "existing-action" | "external-owner";
+export type DashboardNavigationKind = "main-page" | "existing-action" | "external-owner";
 export type DashboardNavigationPlacement = "direct" | "overflow" | "external";
 
 export interface DashboardNavigationEntry {
@@ -26,7 +26,6 @@ export interface DashboardNavigationEntry {
 export interface DashboardNavigationRegistryOptions {
   view: TaskView;
   onChangeView: (view: TaskView) => void | boolean | Promise<void | boolean>;
-  onOpenPilot?: (view: "patchnode" | "notes") => void;
   onNewTask?: () => void;
   onOpenSettings?: () => void | boolean | Promise<void | boolean>;
   pluginDashboardViews?: PluginDashboardViewEntry[];
@@ -40,23 +39,19 @@ export interface DashboardNavigationRegistryOptions {
 }
 
 /*
-FNXC:AlphaDesktopNavigation 2026-09-11-19:35:
-Every desktop Alpha destination is explicitly classified before rendering. Only History and Notes are pilot windows; ordinary pages keep their current TaskView owner, New Task keeps its modal owner, and right-dock destinations remain external so no fallback can silently turn a destination into a window.
+FNXC:AlphaDesktopNavigation 2026-09-11-21:48:
+The desktop Alpha footer owns primary navigation only. History remains on complete-column headers, while Chat and Notes belong to the explicit Alpha desktop right-dock host; removing those three footer entries prevents duplicate navigation owners without changing standard hosts.
 */
 export function buildDashboardNavigationEntries(options: DashboardNavigationRegistryOptions): DashboardNavigationEntry[] {
   const page = (id: string, label: string, view: TaskView, icon: ComponentType<LucideProps>, placement: DashboardNavigationPlacement = "overflow"): DashboardNavigationEntry => ({ id, label, view, icon, kind: "main-page", placement, testId: `alpha-desktop-nav-${id}`, onSelect: () => options.onChangeView(view) });
-  const pilot = (id: "patchnode" | "notes", label: string, icon: ComponentType<LucideProps>): DashboardNavigationEntry => ({ id, label, view: id, icon, kind: "pilot-window", placement: "direct", testId: `alpha-desktop-nav-${id}`, onSelect: () => options.onOpenPilot?.(id) });
   const direct = [
     page("command-center", "Dashboard", "command-center", Gauge, "direct"),
     page("board", "Board", "board", LayoutGrid, "direct"),
     page("list", "List", "list", List, "direct"),
-    pilot("patchnode", "History", History),
     page("planning", "Planning", "planning", Lightbulb, "direct"),
     page("missions", "Missions", "missions", Target, "direct"),
     ...(options.showAgents ? [page("agents", "Agents", "agents", Bot, "direct")] : []),
-    { ...page("chat", "Chat", "chat", MessageSquare, "direct"), dot: options.chatHasUnreadResponse && options.view !== "chat" ? "pending" as const : undefined },
     { ...page("mailbox", "Mailbox", "mailbox", Mail, "direct"), badge: options.mailboxUnreadCount, dot: options.view !== "mailbox" && (options.mailboxPendingApprovalCount ?? 0) > 0 ? "pending" as const : undefined },
-    pilot("notes", "Notes", StickyNote),
     { id: "new-task", label: "New Task", icon: Plus, kind: "existing-action" as const, placement: "direct" as const, testId: "alpha-desktop-nav-new-task", onSelect: options.onNewTask },
   ];
   const plugins = [...(options.pluginDashboardViews ?? [])].sort((a, b) => (a.view.order ?? Number.MAX_SAFE_INTEGER) - (b.view.order ?? Number.MAX_SAFE_INTEGER)).map((entry) => {

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { UseNavigationHistoryResult } from "./useNavigationHistory";
 
-export type AlphaDesktopPilotView = "patchnode" | "notes";
+export type AlphaDesktopPilotView = "patchnode";
+export type AlphaDesktopGuardTarget = AlphaDesktopPilotView | "notes";
 export type PilotCloseGuard = () => boolean | Promise<boolean>;
 export type PilotCloseAccepted = () => void;
 
@@ -21,14 +22,14 @@ interface UseAlphaDesktopViewWindowsOptions {
 
 /*
 FNXC:AlphaDesktopWindows 2026-09-11-19:35:
-Desktop Alpha keeps Board as the permanent main surface while History and Notes are stable, non-modal window identities. Reopening or focusing a pilot promotes the existing identity without adding browser depth; every destructive close coalesces through one asynchronous guard before navigation state is removed.
+Desktop Alpha keeps Board as the permanent main surface while History is the sole stable pilot window. Notes is inline in the right dock but registers with the same scope-exit guard registry, so its draft remains protected without retaining a second floating-window identity.
 */
 export function useAlphaDesktopViewWindows({ enabled, projectId, navigation, showBoard, showNotesPage, notesDirty = false }: UseAlphaDesktopViewWindowsOptions) {
   const { pushNav, removeNav, promoteNav } = navigation;
   const [windows, setWindows] = useState<AlphaDesktopWindowState[]>([]);
-  const guardsRef = useRef(new Map<AlphaDesktopPilotView, PilotCloseGuard>());
-  const closeAcceptedCallbacksRef = useRef(new Map<AlphaDesktopPilotView, PilotCloseAccepted>());
-  const pendingGuardRef = useRef(new Map<AlphaDesktopPilotView, Promise<boolean>>());
+  const guardsRef = useRef(new Map<AlphaDesktopGuardTarget, PilotCloseGuard>());
+  const closeAcceptedCallbacksRef = useRef(new Map<AlphaDesktopGuardTarget, PilotCloseAccepted>());
+  const pendingGuardRef = useRef(new Map<AlphaDesktopGuardTarget, Promise<boolean>>());
   const pendingCloseRef = useRef(new Map<AlphaDesktopPilotView, Promise<boolean>>());
   const windowsRef = useRef(windows);
   windowsRef.current = windows;
@@ -53,7 +54,7 @@ export function useAlphaDesktopViewWindows({ enabled, projectId, navigation, sho
     removeNav(`alpha-pilot:${id}`, { preserveHistoryPosition });
   }, [removeNav]);
 
-  const requestGuardVerdict = useCallback((id: AlphaDesktopPilotView) => {
+  const requestGuardVerdict = useCallback((id: AlphaDesktopGuardTarget) => {
     const existing = pendingGuardRef.current.get(id);
     if (existing) return existing;
     const request = Promise.resolve(guardsRef.current.get(id)?.() ?? true)
@@ -62,7 +63,7 @@ export function useAlphaDesktopViewWindows({ enabled, projectId, navigation, sho
     return request;
   }, []);
 
-  const commitAcceptedClose = useCallback((id: AlphaDesktopPilotView) => {
+  const commitAcceptedClose = useCallback((id: AlphaDesktopGuardTarget) => {
     closeAcceptedCallbacksRef.current.get(id)?.();
   }, []);
 
@@ -100,14 +101,16 @@ export function useAlphaDesktopViewWindows({ enabled, projectId, navigation, sho
 
   const requestCloseAll = useCallback(async (isStillValid: () => boolean = () => true) => {
     const snapshot = [...windowsRef.current];
+    const guardedIds = [...guardsRef.current.keys()].filter((id) => !snapshot.some((entry) => entry.id === id));
     /*
     FNXC:AlphaDesktopWindows 2026-09-11-20:29:
     Scope-changing callers need a two-phase close: resolve every user guard without mutating drafts, revalidate the scope synchronously, then commit draft disposal and window removal together. A stale automatic node fallback must therefore leave Notes and every window intact even when the user accepted the now-obsolete confirmation.
     */
-    for (const entry of [...snapshot].reverse()) {
-      if (!await requestGuardVerdict(entry.id)) return false;
+    for (const id of [...snapshot.map((entry) => entry.id), ...guardedIds].reverse()) {
+      if (!await requestGuardVerdict(id)) return false;
     }
     if (!isStillValid()) return false;
+    for (const id of guardedIds) commitAcceptedClose(id);
     for (const entry of snapshot) {
       if (windowsRef.current.some((current) => current.id === entry.id)) {
         commitAcceptedClose(entry.id);
@@ -117,7 +120,7 @@ export function useAlphaDesktopViewWindows({ enabled, projectId, navigation, sho
     return true;
   }, [closeAccepted, commitAcceptedClose, requestGuardVerdict]);
 
-  const registerGuard = useCallback((id: AlphaDesktopPilotView, guard: PilotCloseGuard, onAccepted?: PilotCloseAccepted) => {
+  const registerGuard = useCallback((id: AlphaDesktopGuardTarget, guard: PilotCloseGuard, onAccepted?: PilotCloseAccepted) => {
     guardsRef.current.set(id, guard);
     if (onAccepted) closeAcceptedCallbacksRef.current.set(id, onAccepted);
     return () => {
@@ -126,10 +129,19 @@ export function useAlphaDesktopViewWindows({ enabled, projectId, navigation, sho
     };
   }, []);
 
+  const clearGuard = useCallback((id: AlphaDesktopGuardTarget) => {
+    /*
+    FNXC:AlphaDesktopRightDock 2026-09-11-22:22:
+    A sticky inline Notes guard belongs only to the Alpha desktop dock incarnation. Responsive or feature-mode transitions must retire that closure before the standard Notes page becomes authoritative, otherwise a saved page draft can still be blocked or cleared by stale dock state.
+    */
+    guardsRef.current.delete(id);
+    closeAcceptedCallbacksRef.current.delete(id);
+    pendingGuardRef.current.delete(id);
+  }, []);
+
   useEffect(() => {
     if (enabled) return;
-    const notesOpen = windowsRef.current.some((entry) => entry.id === "notes");
-    if (notesOpen && notesDirty) showNotesPage();
+    if (notesDirty) showNotesPage();
     for (const entry of windowsRef.current) closeAccepted(entry.id, true);
   }, [closeAccepted, enabled, notesDirty, showNotesPage]);
 
@@ -147,5 +159,6 @@ export function useAlphaDesktopViewWindows({ enabled, projectId, navigation, sho
     requestClose,
     requestCloseAll,
     registerGuard,
-  }), [activate, open, registerGuard, requestClose, requestCloseAll, windows]);
+    clearGuard,
+  }), [activate, clearGuard, open, registerGuard, requestClose, requestCloseAll, windows]);
 }

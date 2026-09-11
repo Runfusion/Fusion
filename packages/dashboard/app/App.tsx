@@ -1095,11 +1095,13 @@ function AppInner() {
   /* FNXC:Navigation 2026-06-22-18:00: The right dock panel is no longer experimental or user-toggleable; tablet/desktop project screens always support it regardless of any stale persisted `rightDock` setting. */
   const rightDockEnabled = true;
   const projectShellPresent = viewMode === "project" && !!currentProject;
+  const alphaDesktopNavigationActive = alphaUpdatesEnabled && viewportMode === "desktop" && projectShellPresent;
   /*
-  FNXC:AlphaUpdates 2026-09-10-22:00:
-  Alpha removes the executor footer only on mobile, where the navigation pill owns the bottom edge. Desktop and tablet must retain the shared footer, including Terminal and Quick Chat launchers, and every shell reservation must derive from this single visibility decision.
+  FNXC:AlphaDesktopNavigation 2026-09-11-21:48:
+  Desktop Alpha replaces ExecutorStatusBar with the full-width navigation footer. Tablet Alpha and every standard desktop retain ExecutorStatusBar, while the shared shell reservation remains active for whichever single footer owns the bottom edge.
   */
-  const executorFooterVisible = projectShellPresent && (!alphaUpdatesEnabled || viewportMode !== "mobile");
+  const executorFooterVisible = projectShellPresent && !alphaDesktopNavigationActive && (!alphaUpdatesEnabled || viewportMode !== "mobile");
+  const shellFooterVisible = executorFooterVisible || alphaDesktopNavigationActive;
   const mobileNavVisible = projectShellPresent;
   /*
   FNXC:AlphaMobileDrawer 2026-09-10-17:16:
@@ -1114,7 +1116,6 @@ function AppInner() {
     setAlphaMenuOpen(false);
   }, [alphaUpdatesEnabled, currentProject?.id, isMobile, mobileKeyboardOpen, modalManager.anyModalOpen, viewMode]);
   const rightDockActive = rightDockEnabled && !isMobile && projectShellPresent;
-  const alphaDesktopNavigationActive = alphaUpdatesEnabled && viewportMode === "desktop" && projectShellPresent;
   const sidebarActive = leftSidebarNavEnabled && !isMobile && projectShellPresent && !alphaDesktopNavigationActive;
   const alphaDesktopWindows = useAlphaDesktopViewWindows({
     enabled: alphaDesktopNavigationActive,
@@ -1156,7 +1157,7 @@ function AppInner() {
   }, [alphaDesktopWindows.requestCloseAll, clearCurrentNode, currentNodeId, currentNodeMissing, nodeListIdentity]);
   alphaPilotRouterRef.current = (target) => {
     if (!alphaDesktopNavigationActive) return false;
-    if (target === "patchnode" || target === "notes") {
+    if (target === "patchnode") {
       alphaDesktopWindows.open(target);
       return true;
     }
@@ -1167,7 +1168,7 @@ function AppInner() {
     return true;
   };
   useEffect(() => {
-    if (!alphaDesktopNavigationActive || (taskView !== "patchnode" && taskView !== "notes")) return;
+    if (!alphaDesktopNavigationActive || taskView !== "patchnode") return;
     alphaDesktopWindows.open(taskView);
   }, [alphaDesktopNavigationActive, alphaDesktopWindows.open, taskView]);
   const agentOnboardingEnabled = experimentalFeatures.agentOnboarding === true;
@@ -1780,7 +1781,32 @@ function AppInner() {
 
   // Props for the extracted <MainContent> switch (see components/dashboard/MainContent.tsx).
   // Every value is passed by its App name; the switch renders the same subtrees as before.
-  const rightDock = useRightDockController({ active: rightDockActive, projectId: currentProject?.id, addToast, columnFlagsByTaskId: footerColumnFlagsByTaskId, settingsLoaded, researchReadinessVersion, goalAnchorId, tasks: boardSourceTasks, workflowSteps, subscribePluginEvents, openDetailTask: alphaMobileDrawerActive ? openTaskDetailInMainPanel : openDetailTask, openTaskPopup: alphaMobileDrawerActive ? openTaskDetailInMainPanel : popOutTaskDetailForCurrentView, onOpenSessionInNewWindow: openSessionInNewWindow, openMobileTasksInPopup, openFileInBrowser, onUpdateTask: updateTask, onDeleteTask: deleteTask, onRevertTask: revertTask, onMergeTask: mergeTask, onRetryTask: retryTask, onOpenChatWithPrefill: openChatWithPrefill, onPauseTask: pauseTask, onUnpauseTask: unpauseTask, onBypassReview: bypassReview, onResetTask: resetTask, onDuplicateTask: duplicateTask, onTaskUpdated: (task: Task) => ingestCreatedTasks([task]), openSettings: (section?: string) => openSettingsWithNav(section as SectionId), onOpenUsage: openUsageWithNav, onOpenActivityLog: openActivityLogWithNav, onOpenGitHubImport: openGitHubImportWithNav, onOpenGitManager: openGitManagerWithNav, onOpenSchedules: openSchedulesWithNav, onSendSelectionToTask: modalManager.openNewTaskWithDescription, onCreateTaskFromInsight: handleInsightTaskCreate, onNavigateToMission: handleOpenMission, onTaskCreated: (task: Task) => ingestCreatedTasks([task]), prAuthAvailable, autoMerge, taskDetailChatFirst, visibilityOptions: { experimentalFeatures: { insights: insightsEnabled, memoryView: memoryEnabled, devServerView: devServerEnabled, researchView: researchEnabled, evalsView: evalsEnabled, goalsView: goalsEnabled }, showSkillsTab: skillsEnabled, pluginDashboardViews }, footerVisible: executorFooterVisible });
+  const notesDirtyRef = useRef(notesController.dirty);
+  notesDirtyRef.current = notesController.dirty;
+  const alphaDesktopNavigationActiveRef = useRef(alphaDesktopNavigationActive);
+  alphaDesktopNavigationActiveRef.current = alphaDesktopNavigationActive;
+  const registerAlphaDesktopNotesGuard = useCallback((guard: () => boolean | Promise<boolean>, onAccepted?: () => void) => {
+    /*
+    FNXC:AlphaDesktopRightDock 2026-09-11-22:51:
+    The compact dock may retain its mounted content after a responsive transition, but it must never overwrite the standard Notes page guard. Keep its last Alpha-desktop guard sticky only while Alpha desktop owns Notes; the standard page installs its own live closure after the handoff.
+    */
+    if (!alphaDesktopNavigationActiveRef.current) return () => {};
+    alphaDesktopWindows.registerGuard(
+      "notes",
+      () => !notesDirtyRef.current || guard(),
+      () => { if (notesDirtyRef.current) onAccepted?.(); },
+    );
+    return () => {};
+  }, [alphaDesktopWindows.registerGuard]);
+  const registerStandardNotesGuard = useCallback((guard: () => boolean | Promise<boolean>, onAccepted?: () => void) => {
+    if (alphaDesktopNavigationActiveRef.current) return () => {};
+    return alphaDesktopWindows.registerGuard(
+      "notes",
+      () => !notesDirtyRef.current || guard(),
+      () => { if (notesDirtyRef.current) onAccepted?.(); },
+    );
+  }, [alphaDesktopWindows.registerGuard]);
+  const rightDock = useRightDockController({ active: rightDockActive, projectId: currentProject?.id, addToast, columnFlagsByTaskId: footerColumnFlagsByTaskId, settingsLoaded, researchReadinessVersion, goalAnchorId, tasks: boardSourceTasks, workflowSteps, subscribePluginEvents, openDetailTask: alphaMobileDrawerActive ? openTaskDetailInMainPanel : openDetailTask, openTaskPopup: alphaMobileDrawerActive ? openTaskDetailInMainPanel : popOutTaskDetailForCurrentView, onOpenSessionInNewWindow: openSessionInNewWindow, notesController, registerNotesGuard: registerAlphaDesktopNotesGuard, openMobileTasksInPopup, openFileInBrowser, onUpdateTask: updateTask, onDeleteTask: deleteTask, onRevertTask: revertTask, onMergeTask: mergeTask, onRetryTask: retryTask, onOpenChatWithPrefill: openChatWithPrefill, onPauseTask: pauseTask, onUnpauseTask: unpauseTask, onBypassReview: bypassReview, onResetTask: resetTask, onDuplicateTask: duplicateTask, onTaskUpdated: (task: Task) => ingestCreatedTasks([task]), openSettings: (section?: string) => openSettingsWithNav(section as SectionId), onOpenUsage: openUsageWithNav, onOpenActivityLog: openActivityLogWithNav, onOpenGitHubImport: openGitHubImportWithNav, onOpenGitManager: openGitManagerWithNav, onOpenSchedules: openSchedulesWithNav, onSendSelectionToTask: modalManager.openNewTaskWithDescription, onCreateTaskFromInsight: handleInsightTaskCreate, onNavigateToMission: handleOpenMission, onTaskCreated: (task: Task) => ingestCreatedTasks([task]), prAuthAvailable, autoMerge, taskDetailChatFirst, visibilityOptions: { hostMode: alphaDesktopNavigationActive ? "alpha-desktop" : "standard", experimentalFeatures: { insights: insightsEnabled, memoryView: memoryEnabled, devServerView: devServerEnabled, researchView: researchEnabled, evalsView: evalsEnabled, goalsView: goalsEnabled }, showSkillsTab: skillsEnabled, pluginDashboardViews }, footerVisible: shellFooterVisible });
 
   /*
   FNXC:OpenTasksInRightSidebar 2026-06-28-00:00:
@@ -1994,6 +2020,7 @@ function AppInner() {
     openCreateWorkflowWithNav,
     sidebarActive,
     notesController,
+    registerNotesGuard: registerStandardNotesGuard,
     isMobile,
     mergeTask,
         resetTask,
@@ -2090,7 +2117,6 @@ function AppInner() {
       commitTaskViewChange(target);
       return true;
     },
-    onOpenPilot: alphaDesktopWindows.open,
     onNewTask: () => openNewTaskWithNav(),
     onOpenSettings: async () => {
       if (!await alphaDesktopWindows.requestCloseAll()) return false;
@@ -2239,7 +2265,7 @@ function AppInner() {
           />
         )}
         <div
-          className={`project-content${executorFooterVisible && (!isMobile || !mobileKeyboardOpen) ? " project-content--with-footer" : ""}${isMobile && mobileNavVisible && !mobileKeyboardOpen && !alphaUpdatesEnabled ? " project-content--with-mobile-nav" : ""}${isMobile && mobileNavVisible && !mobileKeyboardOpen && !modalManager.anyModalOpen && alphaUpdatesEnabled ? " project-content--with-alpha-nav" : ""}`}
+          className={`project-content${shellFooterVisible && (!isMobile || !mobileKeyboardOpen) ? " project-content--with-footer" : ""}${isMobile && mobileNavVisible && !mobileKeyboardOpen && !alphaUpdatesEnabled ? " project-content--with-mobile-nav" : ""}${isMobile && mobileNavVisible && !mobileKeyboardOpen && !modalManager.anyModalOpen && alphaUpdatesEnabled ? " project-content--with-alpha-nav" : ""}`}
         >
           <AppMainPanelTaskDetailComposition
             state={mainPanelTaskDetail}
@@ -2314,7 +2340,7 @@ function AppInner() {
         {rightDock.dock}
       </div>
       {alphaDesktopNavigationActive ? <AlphaDesktopActionBar entries={alphaDesktopNavigationEntries} activeId={alphaDesktopActiveNavigationId} /> : null}
-      {alphaDesktopNavigationActive ? alphaDesktopWindows.windows.map((entry) => entry.id === "patchnode" ? (
+      {alphaDesktopNavigationActive ? alphaDesktopWindows.windows.filter((entry) => entry.id === "patchnode").map((entry) => (
         <Suspense fallback={null} key={entry.id}>
           <PatchnodeView
             projectId={currentProject?.id}
@@ -2325,10 +2351,6 @@ function AppInner() {
             }}
             floating={{ onClose: () => { void alphaDesktopWindows.requestClose("patchnode"); }, onActivate: () => alphaDesktopWindows.activate("patchnode"), raiseToFrontSignal: entry.raiseToFrontSignal }}
           />
-        </Suspense>
-      ) : (
-        <Suspense fallback={null} key={entry.id}>
-          <NotesView projectId={currentProject?.id} addToast={addToast} controller={notesController} floating={{ onClose: () => { void alphaDesktopWindows.requestClose("notes"); }, onActivate: () => alphaDesktopWindows.activate("notes"), raiseToFrontSignal: entry.raiseToFrontSignal, registerGuard: (guard, onAccepted) => alphaDesktopWindows.registerGuard("notes", guard, onAccepted) }} />
         </Suspense>
       )) : null}
       {/*
@@ -2348,7 +2370,7 @@ function AppInner() {
           initialCommand={modalManager.terminalInitialCommand}
           initialCommandGeneration={modalManager.terminalInitialCommandGeneration}
           projectId={currentProject.id}
-          footerVisible={executorFooterVisible}
+          footerVisible={shellFooterVisible}
         />
       )}
       </div>

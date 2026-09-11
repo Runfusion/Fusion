@@ -250,6 +250,7 @@ export function MainContent(props: MainContentProps) {
   openCreateWorkflowWithNav,
   sidebarActive,
   notesController,
+  registerNotesGuard,
   isMobile,
   mainPanelDetailInitialTab,
   closeTaskDetailMainPanel,
@@ -739,7 +740,8 @@ export function MainContent(props: MainContentProps) {
     return (
       <PageErrorBoundary>
         <Suspense fallback={null}>
-          <NotesView projectId={currentProject?.id} addToast={addToast} controller={notesController} />
+          {/* FNXC:AlphaDesktopRightDock 2026-09-11-22:51: The standard Notes page must replace any retained compact-dock guard after a desktop-to-tablet transition. Its live dirty-state closure remains authoritative when the draft becomes dirty only after the transition. */}
+          <NotesView projectId={currentProject?.id} addToast={addToast} controller={notesController} registerGuard={registerNotesGuard} />
         </Suspense>
       </PageErrorBoundary>
     );

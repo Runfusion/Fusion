@@ -1251,7 +1251,7 @@ describe("Alpha Updates production wiring", () => {
   it.each([
     ["tablet", "empty"],
     ["desktop", "populated"],
-  ] as const)("keeps the Alpha footer and every reservation in %s with %s tasks", async (mode, taskState) => {
+  ] as const)("keeps one reserved footer in Alpha %s with %s tasks", async (mode, taskState) => {
     mockUseViewportMode.mockReturnValue(mode);
     if (taskState === "populated") {
       const emptyResult = mockUseTasks();
@@ -1268,7 +1268,8 @@ describe("Alpha Updates production wiring", () => {
 
     render(<App />);
 
-    await waitFor(() => expect(document.querySelector(".executor-status-bar")).not.toBeNull());
+    await waitFor(() => expect(screen.getByTestId("dashboard-project-shell")).toBeInTheDocument());
+    expect(Boolean(document.querySelector(".executor-status-bar"))).toBe(mode === "tablet");
     const shell = screen.getByTestId("dashboard-project-shell");
     const content = shell.querySelector(".project-content");
     const sidebar = mode === "tablet" ? await screen.findByTestId("left-sidebar-nav") : null;
@@ -1289,13 +1290,37 @@ describe("Alpha Updates production wiring", () => {
     }
     expect(rightDock).toHaveClass("right-dock--with-footer");
     expect(shell).toHaveClass("dashboard-project-shell--with-right-dock");
-    expect(screen.getByTestId("executor-terminal-launcher-segment")).toBeInTheDocument();
+    if (mode === "tablet") expect(screen.getByTestId("executor-terminal-launcher-segment")).toBeInTheDocument();
+    else expect(screen.queryByTestId("executor-terminal-launcher-segment")).toBeNull();
     expect(document.querySelector(".mobile-nav-bar")).toBeNull();
+  });
 
-    if (mode === "desktop") {
-      fireEvent.click(screen.getByTestId("terminal-toggle-btn"));
-      expect(await screen.findByTestId("terminal-modal")).toHaveAttribute("data-footer-visible", "true");
-    }
+  it.each([
+    ["Alpha tablette", "tablet", true],
+    ["desktop non-Alpha", "desktop", false],
+  ] as const)("conserve Chat liste/détail extensible et exclut Notes sur %s", async (_label, mode, alphaUpdates) => {
+    mockUseViewportMode.mockReturnValue(mode);
+    configureProductionAppChat();
+    localStorage.setItem("fusion:right-dock-open", "true");
+    vi.mocked(fetchSettings).mockResolvedValue({
+      ...defaultSettings,
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates },
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByTestId("right-dock-tab-chat"));
+    const dock = screen.getByTestId("right-dock");
+    expect(within(dock).queryByTestId("right-dock-tab-notes")).toBeNull();
+    expect(within(dock).getByTestId("right-dock-expand")).toBeInTheDocument();
+
+    fireEvent.click(await within(dock).findByTestId(`chat-session-${appChatSession.id}`));
+    expect(await within(dock).findByText("Bonjour")).toBeInTheDocument();
+    expect(dock.querySelector(".chat-thread")).not.toBeNull();
+    expect(screen.queryByTestId(`floating-window-overlay-chat-window-${DEFAULT_PROJECT_ID}-${appChatSession.id}`)).toBeNull();
+
+    fireEvent.click(within(dock).getByTestId("right-dock-expand"));
+    const expandedChat = await screen.findByTestId("right-dock-expand-modal");
+    expect(expandedChat.querySelector(".chat-view")).not.toBeNull();
   });
 
   it("removes the Alpha footer and all footer reservations only on mobile", async () => {
@@ -1809,97 +1834,36 @@ describe("Alpha Updates production wiring", () => {
     expect(screen.queryByTestId("alpha-mobile-menu-trigger")).toBeNull();
   });
 
-  it("opens History and Notes together above one persistent Board without duplicates", async () => {
+  it("remplace les deux barres et héberge Chat liste-seule et Notes inline", async () => {
+    configureProductionAppChat();
+    localStorage.setItem("fusion:right-dock-open", "true");
+    const note = { id: "note-alpha", title: "Note Alpha", content: "Initial", revision: 1, createdAt: "2026-09-11", updatedAt: "2026-09-11" };
+    mockNotesApi.fetchNotes.mockReset().mockResolvedValue({ notes: [note] });
+    mockNotesApi.fetchNote.mockReset().mockResolvedValue(note);
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
       experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates: true },
     });
-    render(<App />);
-    fireEvent.click(await screen.findByTestId("alpha-desktop-nav-patchnode"));
-    fireEvent.click(screen.getByTestId("alpha-desktop-nav-notes"));
-    expect(await screen.findByRole("dialog", { name: "History" })).toHaveAttribute("aria-modal", "false");
-    expect(await screen.findByRole("dialog", { name: "Notes" })).toHaveAttribute("aria-modal", "false");
-    expect(document.querySelectorAll(".board")).toHaveLength(1);
-    fireEvent.click(screen.getByTestId("alpha-desktop-nav-patchnode"));
-    expect(screen.getAllByRole("dialog", { name: "History" })).toHaveLength(1);
-  });
-
-  it("inscrit Task Detail ouvert depuis History au-dessus des deux fenêtres pilotes", async () => {
-    window.history.replaceState(null, "", "/");
-    vi.mocked(fetchSettings).mockResolvedValue({
-      ...defaultSettings,
-      experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates: true },
-    });
-    vi.mocked(fetchPatchnode).mockResolvedValue({
-      days: [{
-        day: "2026-09-11",
-        completedCount: 1,
-        revertedCount: 0,
-        entries: [{ entryId: "completed:FN-HISTORY:1", taskId: "FN-HISTORY", kind: "completed", occurrenceKey: "1", day: "2026-09-11", occurredAt: "2026-09-11T12:00:00Z", title: "Livraison", body: "Détail" }],
-      }],
-      totalEntries: 1,
-      hasMore: false,
-    });
 
     render(<App />);
-    fireEvent.click(await screen.findByTestId("alpha-desktop-nav-notes"));
-    fireEvent.click(screen.getByTestId("alpha-desktop-nav-patchnode"));
-    fireEvent.click(await screen.findByTestId("patchnode-entry-completed:FN-HISTORY:1"));
-    await waitFor(() => expect(fetchTaskDetail).toHaveBeenCalledWith("FN-HISTORY", DEFAULT_PROJECT_ID));
-    expect(screen.getByRole("dialog", { name: /Task FN-HISTORY/ })).toBeInTheDocument();
+    expect(await screen.findByTestId("alpha-desktop-action-bar")).toBeInTheDocument();
+    expect(document.querySelector(".executor-status-bar")).toBeNull();
+    expect(screen.queryByTestId("alpha-desktop-nav-patchnode")).toBeNull();
+    expect(screen.queryByTestId("alpha-desktop-nav-chat")).toBeNull();
+    expect(screen.queryByTestId("alpha-desktop-nav-notes")).toBeNull();
 
-    await act(async () => {
-      window.history.back();
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: /Task FN-HISTORY/ })).toBeNull());
-    expect(screen.getByRole("dialog", { name: "History" })).toBeInTheDocument();
-    expect(screen.getByRole("dialog", { name: "Notes" })).toBeInTheDocument();
+    fireEvent.click(await screen.findByTestId("right-dock-tab-chat"));
+    expect(screen.queryByTestId("right-dock-expand")).toBeNull();
+    fireEvent.click(await within(screen.getByTestId("right-dock")).findByTestId(`chat-session-${appChatSession.id}`));
+    const chatWindow = await screen.findByTestId(`floating-window-overlay-chat-window-${DEFAULT_PROJECT_ID}-${appChatSession.id}`);
+    fireEvent.click(within(screen.getByTestId("right-dock")).getByTestId(`chat-session-${appChatSession.id}`));
+    expect(screen.getAllByTestId(`floating-window-overlay-chat-window-${DEFAULT_PROJECT_ID}-${appChatSession.id}`)).toEqual([chatWindow]);
 
-    fireEvent.click(screen.getByTestId("patchnode-entry-completed:FN-HISTORY:1"));
-    expect(await screen.findByRole("dialog", { name: /Task FN-HISTORY/ })).toBeInTheDocument();
-    fireEvent.keyDown(document, { key: "Escape" });
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: /Task FN-HISTORY/ })).toBeNull());
-    expect(screen.getByRole("dialog", { name: "History" })).toBeInTheDocument();
-    expect(screen.getByRole("dialog", { name: "Notes" })).toBeInTheDocument();
-
-    fireEvent.keyDown(document, { key: "Escape" });
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "History" })).toBeNull());
-    expect(screen.getByRole("dialog", { name: "Notes" })).toBeInTheDocument();
-  });
-
-  it("ferme par Escape la fenêtre pilote supérieure et respecte Cancel puis Discard pour Notes", async () => {
-    vi.mocked(fetchSettings).mockResolvedValue({
-      ...defaultSettings,
-      experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates: true },
-    });
-    const note = { id: "note-escape", title: "Escape", content: "Initial", revision: 1, createdAt: "2026-09-11", updatedAt: "2026-09-11" };
-    mockNotesApi.fetchNotes.mockResolvedValue({ notes: [note] });
-    mockNotesApi.fetchNote.mockResolvedValue(note);
-
-    render(<App />);
-    fireEvent.click(await screen.findByTestId("alpha-desktop-nav-patchnode"));
-    fireEvent.keyDown(document, { key: "Escape" });
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "History" })).toBeNull());
-
-    fireEvent.click(screen.getByTestId("alpha-desktop-nav-notes"));
-    expect(await screen.findByRole("dialog", { name: "Notes" })).toBeInTheDocument();
-    fireEvent.keyDown(document, { key: "Escape" });
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Notes" })).toBeNull());
-
-    fireEvent.click(screen.getByTestId("alpha-desktop-nav-notes"));
-    fireEvent.click(await screen.findByRole("button", { name: /Escape/ }));
-    fireEvent.change(await screen.findByLabelText("Note title"), { target: { value: "Escape modifié" } });
-    fireEvent.keyDown(document, { key: "Escape" });
-    expect(await screen.findByRole("dialog", { name: "Discard changes?" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Discard changes?" })).toBeNull());
-    expect(screen.getByRole("dialog", { name: "Notes" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Note title")).toHaveValue("Escape modifié");
-
-    fireEvent.keyDown(document, { key: "Escape" });
-    fireEvent.click(await screen.findByRole("button", { name: "Discard" }));
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Notes" })).toBeNull());
+    fireEvent.click(screen.getByTestId("right-dock-tab-notes"));
+    expect(screen.queryByTestId("right-dock-expand")).toBeNull();
+    expect(await within(screen.getByTestId("right-dock")).findByText("Note Alpha")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Notes" })).toBeNull();
+    expect(document.querySelector(".right-dock .notes-view--compact")).not.toBeNull();
   });
 
   it.each([
@@ -4818,6 +4782,125 @@ describe("App footer-safe project layout", () => {
 });
 
 describe("App node mode switching", () => {
+  it.each([
+    ["sans ouverture préalable du dock", false],
+    ["après une note propre dans le dock", true],
+  ] as const)("protège un brouillon devenu sale sur la page tablette %s", async (_label, openCleanDockNote) => {
+    const project2 = { ...DEFAULT_PROJECT, id: "proj_456", name: "Second Project", path: "/second" };
+    mockProjectsState.projects = [{ ...DEFAULT_PROJECT }, project2];
+    vi.mocked(fetchSettings).mockResolvedValue({
+      ...defaultSettings,
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates: true },
+    });
+    const note = { id: "note-transition", title: "Transition", content: "Initial", revision: 1, createdAt: "2026-09-11", updatedAt: "2026-09-11" };
+    mockNotesApi.fetchNotes.mockResolvedValue({ notes: [note] });
+    mockNotesApi.fetchNote.mockResolvedValue(note);
+    if (openCleanDockNote) localStorage.setItem("fusion:right-dock-open", "true");
+
+    const view = render(<App />);
+    if (openCleanDockNote) {
+      fireEvent.click(await screen.findByTestId("right-dock-tab-notes"));
+      fireEvent.click(await within(screen.getByTestId("right-dock")).findByRole("button", { name: /Transition/ }));
+      await waitFor(() => expect(within(screen.getByTestId("right-dock")).getByLabelText("Note title")).toHaveValue("Transition"));
+    }
+
+    mockUseViewportMode.mockReturnValue("tablet");
+    view.rerender(<App />);
+    fireEvent.click(await screen.findByTestId("sidebar-nav-notes"));
+    if (!openCleanDockNote) {
+      fireEvent.click(await screen.findByRole("button", { name: /Transition/ }));
+    }
+    const title = await screen.findByLabelText("Note title");
+    await waitFor(() => expect(title).toHaveValue("Transition"));
+    fireEvent.change(title, { target: { value: "Sale après transition" } });
+    const projectChangesBeforeGuard = mockCurrentProjectState.setCurrentProject.mock.calls.length;
+
+    fireEvent.click(screen.getByTestId("project-selector-trigger"));
+    fireEvent.click(await screen.findByTestId(`project-selector-item-${project2.id}`));
+    expect(await screen.findByRole("dialog", { name: "Discard changes?" })).toBeInTheDocument();
+    expect(mockCurrentProjectState.setCurrentProject).toHaveBeenCalledTimes(projectChangesBeforeGuard);
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Discard changes?" })).toBeNull());
+    expect(mockCurrentProjectState.setCurrentProject).toHaveBeenCalledTimes(projectChangesBeforeGuard);
+    expect(screen.getByLabelText("Note title")).toHaveValue("Sale après transition");
+
+    fireEvent.click(screen.getByTestId("project-selector-trigger"));
+    fireEvent.click(await screen.findByTestId(`project-selector-item-${project2.id}`));
+    fireEvent.click(await screen.findByRole("button", { name: "Discard" }));
+    await waitFor(() => expect(mockCurrentProjectState.setCurrentProject).toHaveBeenCalledWith(project2));
+  });
+
+  it("transfère la garde du brouillon Notes vers la page tablette avant le changement de projet", async () => {
+    const project2 = { ...DEFAULT_PROJECT, id: "proj_456", name: "Second Project", path: "/second" };
+    mockProjectsState.projects = [{ ...DEFAULT_PROJECT }, project2];
+    vi.mocked(fetchSettings).mockResolvedValue({
+      ...defaultSettings,
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates: true },
+    });
+    const note = { id: "note-transition", title: "Transition", content: "Initial", revision: 1, createdAt: "2026-09-11", updatedAt: "2026-09-11" };
+    mockNotesApi.fetchNotes.mockResolvedValue({ notes: [note] });
+    mockNotesApi.fetchNote.mockResolvedValue(note);
+    localStorage.setItem("fusion:right-dock-open", "true");
+
+    const view = render(<App />);
+    fireEvent.click(await screen.findByTestId("right-dock-tab-notes"));
+    fireEvent.click(await screen.findByRole("button", { name: /Transition/ }));
+    fireEvent.change(await screen.findByLabelText("Note title"), { target: { value: "Transition non sauvegardée" } });
+
+    mockUseViewportMode.mockReturnValue("tablet");
+    view.rerender(<App />);
+    await waitFor(() => expect(document.querySelector(".notes-view:not(.notes-view--compact)")).not.toBeNull());
+    expect(screen.getByLabelText("Note title")).toHaveValue("Transition non sauvegardée");
+    const projectChangesBeforeGuard = mockCurrentProjectState.setCurrentProject.mock.calls.length;
+
+    fireEvent.click(screen.getByTestId("project-selector-trigger"));
+    fireEvent.click(await screen.findByTestId(`project-selector-item-${project2.id}`));
+    expect(await screen.findByRole("dialog", { name: "Discard changes?" })).toBeInTheDocument();
+    expect(mockCurrentProjectState.setCurrentProject).toHaveBeenCalledTimes(projectChangesBeforeGuard);
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Discard changes?" })).toBeNull());
+    expect(mockCurrentProjectState.setCurrentProject).toHaveBeenCalledTimes(projectChangesBeforeGuard);
+    expect(screen.getByLabelText("Note title")).toHaveValue("Transition non sauvegardée");
+
+    fireEvent.click(screen.getByTestId("project-selector-trigger"));
+    fireEvent.click(await screen.findByTestId(`project-selector-item-${project2.id}`));
+    fireEvent.click(await screen.findByRole("button", { name: "Discard" }));
+    await waitFor(() => expect(mockCurrentProjectState.setCurrentProject).toHaveBeenCalledWith(project2));
+  });
+
+  it("n’applique pas l’ancien état sale du dock après sauvegarde sur la page tablette", async () => {
+    const project2 = { ...DEFAULT_PROJECT, id: "proj_456", name: "Second Project", path: "/second" };
+    mockProjectsState.projects = [{ ...DEFAULT_PROJECT }, project2];
+    vi.mocked(fetchSettings).mockResolvedValue({
+      ...defaultSettings,
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates: true },
+    });
+    const note = { id: "note-transition", title: "Transition", content: "Initial", revision: 1, createdAt: "2026-09-11", updatedAt: "2026-09-11" };
+    mockNotesApi.fetchNotes.mockResolvedValue({ notes: [note] });
+    mockNotesApi.fetchNote.mockResolvedValue(note);
+    mockNotesApi.updateNote.mockResolvedValue({ ...note, title: "Transition sauvegardée", revision: 2 });
+    localStorage.setItem("fusion:right-dock-open", "true");
+
+    const view = render(<App />);
+    fireEvent.click(await screen.findByTestId("right-dock-tab-notes"));
+    fireEvent.click(await screen.findByRole("button", { name: /Transition/ }));
+    fireEvent.change(await screen.findByLabelText("Note title"), { target: { value: "Transition sauvegardée" } });
+
+    mockUseViewportMode.mockReturnValue("tablet");
+    view.rerender(<App />);
+    await waitFor(() => expect(document.querySelector(".notes-view:not(.notes-view--compact)")).not.toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: /^Save$/ }));
+    await waitFor(() => expect(mockNotesApi.updateNote).toHaveBeenCalledTimes(1));
+    expect(screen.getByText("Saved")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("project-selector-trigger"));
+    fireEvent.click(await screen.findByTestId(`project-selector-item-${project2.id}`));
+    await waitFor(() => expect(mockCurrentProjectState.setCurrentProject).toHaveBeenCalledWith(project2));
+    expect(screen.queryByRole("dialog", { name: "Discard changes?" })).toBeNull();
+  });
+
   it("attend la garde Notes avant de changer de nœud et conserve la portée sur Cancel", async () => {
     const { useNodes } = await import("../../hooks/useNodes");
     const remoteNode = {
@@ -4840,9 +4923,10 @@ describe("App node mode switching", () => {
     const note = { id: "note-1", title: "Brouillon", content: "Initial", revision: 1, createdAt: "2026-09-11", updatedAt: "2026-09-11" };
     mockNotesApi.fetchNotes.mockResolvedValue({ notes: [note] });
     mockNotesApi.fetchNote.mockResolvedValue(note);
+    localStorage.setItem("fusion:right-dock-open", "true");
 
     render(<App />);
-    fireEvent.click(await screen.findByTestId("alpha-desktop-nav-notes"));
+    fireEvent.click(await screen.findByTestId("right-dock-tab-notes"));
     fireEvent.click(await screen.findByRole("button", { name: /Brouillon/ }));
     const title = await screen.findByLabelText("Note title");
     fireEvent.change(title, { target: { value: "Brouillon modifié" } });
@@ -4901,9 +4985,10 @@ describe("App node mode switching", () => {
     const note = { id: "note-node-fallback", title: "Portée", content: "Initial", revision: 1, createdAt: "2026-09-11", updatedAt: "2026-09-11" };
     mockNotesApi.fetchNotes.mockResolvedValue({ notes: [note] });
     mockNotesApi.fetchNote.mockResolvedValue(note);
+    localStorage.setItem("fusion:right-dock-open", "true");
 
     const { rerender } = render(<App />);
-    fireEvent.click(await screen.findByTestId("alpha-desktop-nav-notes"));
+    fireEvent.click(await screen.findByTestId("right-dock-tab-notes"));
     fireEvent.click(await screen.findByRole("button", { name: /Portée/ }));
     fireEvent.change(await screen.findByLabelText("Note title"), { target: { value: "Portée modifiée" } });
 
@@ -4928,7 +5013,7 @@ describe("App node mode switching", () => {
     fireEvent.click(screen.getByRole("button", { name: "Discard" }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Discard changes?" })).toBeNull());
     expect(mockNodeContextValue.clearCurrentNode).not.toHaveBeenCalled();
-    expect(screen.getByRole("dialog", { name: "Notes" })).toBeInTheDocument();
+    expect(document.querySelector(".right-dock .notes-view--compact")).not.toBeNull();
     expect(screen.getByLabelText("Note title")).toHaveValue("Portée modifiée");
 
     vi.mocked(useNodes).mockReturnValue(nodesResult([survivingNode]));

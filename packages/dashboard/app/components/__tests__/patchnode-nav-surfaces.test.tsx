@@ -93,10 +93,8 @@ describe("Patchnode navigation surfaces", () => {
     fireEvent.click(screen.getByTestId("view-toggle-overflow-trigger"));
     expect(screen.queryByTestId("view-overflow-patchnode")).toBeNull();
 
-    const onOpenPilot = vi.fn();
-    render(<AlphaDesktopActionBar entries={buildDashboardNavigationEntries({ view: "board", onChangeView: vi.fn(), onOpenPilot })} activeId="board" />);
-    fireEvent.click(screen.getByTestId("alpha-desktop-nav-patchnode"));
-    expect(onOpenPilot).toHaveBeenCalledWith("patchnode");
+    render(<AlphaDesktopActionBar entries={buildDashboardNavigationEntries({ view: "board", onChangeView: vi.fn() })} activeId="board" />);
+    expect(screen.queryByTestId("alpha-desktop-nav-patchnode")).toBeNull();
   });
 
   it("navigates from Header overflow and closes the menu", () => {

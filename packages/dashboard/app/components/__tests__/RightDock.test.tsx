@@ -673,6 +673,33 @@ describe("RightDock", () => {
     expect(screen.queryByTestId("right-dock-tab-todos")).toBeNull();
   });
 
+  it("shows non-expandable Notes only in the explicit Alpha desktop host", () => {
+    const { rerender } = render(<TestRightDock open renderProps={{ ...renderProps, hostMode: "standard" }} visibilityOptions={{ hostMode: "standard" }} />);
+    expect(screen.queryByTestId("right-dock-tab-notes")).toBeNull();
+
+    rerender(<TestRightDock open renderProps={{ ...renderProps, hostMode: "alpha-desktop" }} visibilityOptions={{ hostMode: "alpha-desktop" }} />);
+    fireEvent.click(screen.getByTestId("right-dock-tab-notes"));
+    expect(screen.getByTestId("right-dock-tab-notes")).toHaveAttribute("aria-selected", "true");
+    expect(screen.queryByTestId("right-dock-expand")).toBeNull();
+    expect(screen.getByTestId("right-dock-body")).toBeInTheDocument();
+  });
+
+  it("disables Chat expansion only for the explicit Alpha desktop host", () => {
+    window.localStorage.setItem(RIGHT_DOCK_VIEW_STORAGE_KEY, "chat");
+    const onExpand = vi.fn();
+    const { rerender } = render(<TestRightDock open renderProps={{ ...renderProps, hostMode: "alpha-desktop" }} visibilityOptions={{ hostMode: "alpha-desktop" }} onExpand={onExpand} />);
+    expect(screen.getByTestId("right-dock-tab-chat")).toHaveAttribute("aria-selected", "true");
+    expect(screen.queryByTestId("right-dock-expand")).toBeNull();
+
+    rerender(<TestRightDock open renderProps={{ ...renderProps, hostMode: "standard" }} visibilityOptions={{ hostMode: "standard" }} onExpand={onExpand} />);
+    fireEvent.click(screen.getByTestId("right-dock-expand"));
+    expect(onExpand).toHaveBeenCalledWith("chat");
+
+    const modal = render(<RightDockExpandModal viewKey="chat" renderProps={{ ...renderProps, hostMode: "alpha-desktop" }} visibilityOptions={{ hostMode: "alpha-desktop" }} onClose={vi.fn()} />);
+    expect(screen.queryByTestId("right-dock-expand-modal")).toBeNull();
+    modal.unmount();
+  });
+
   it("clicking an inline tool tab switches the dock body and selection, and Files returns home", () => {
     /*
     FNXC:Navigation 2026-06-22-16:00:

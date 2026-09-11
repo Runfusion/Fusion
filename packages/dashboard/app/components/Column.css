@@ -18,10 +18,6 @@ The floating desktop action bar does not reduce Board height. Add clearance only
   min-inline-size: 0;
 }
 
-.dashboard-project-stack:has(> .alpha-desktop-action-bar) .column-body {
-  padding-block-end: calc(var(--space-3xl) * 2);
-}
-
 .column-virtual-row {
   box-sizing: border-box;
   padding-block-end: var(--space-xs);

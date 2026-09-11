@@ -15,7 +15,7 @@ export function AlphaDesktopActionBar({ entries, activeId }: AlphaDesktopActionB
   const renderButton = (entry: DashboardNavigationEntry, inOverflow = false) => {
     const Icon = entry.icon;
     const active = entry.id === activeId;
-    return <button key={entry.id} type="button" className={`alpha-desktop-action-bar__action${active ? " alpha-desktop-action-bar__action--active" : ""}`} aria-label={entry.label} aria-current={active && entry.kind === "main-page" ? "page" : undefined} aria-pressed={entry.kind === "pilot-window" ? active : undefined} data-testid={entry.testId} onClick={() => {
+    return <button key={entry.id} type="button" className={`alpha-desktop-action-bar__action${active ? " alpha-desktop-action-bar__action--active" : ""}`} aria-label={entry.label} aria-current={active && entry.kind === "main-page" ? "page" : undefined} data-testid={entry.testId} onClick={() => {
       const result = entry.onSelect?.();
       if (inOverflow) void Promise.resolve(result).then((accepted) => { if (accepted !== false) setOverflowOpen(false); });
     }}>

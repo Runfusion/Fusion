@@ -142,6 +142,8 @@ export interface ChatViewProps {
   The right dock can host ChatView in a 360px sidebar while the browser viewport remains desktop-sized. Let dock callers force the same narrow list/detail layout used by mobile/resized floating chat without passing floating chrome callbacks.
   */
   compactLayout?: boolean;
+  /** Keeps this host on the conversation list and delegates every open/create to a chat window. */
+  listOnly?: boolean;
   onPopOut?: () => void;
   onMaximize?: () => void;
   onClose?: () => void;
@@ -382,7 +384,7 @@ function ChatDialogBackdrop({ children, onClose }: { children: React.ReactElemen
 
 type CopyFeedbackState = "success" | "error" | null;
 
-function ChatViewContent({ projectId, addToast, floating = false, compactLayout = false, findActive = true, active = true, onPopOut, onMaximize, onClose, onOpenSessionInNewWindow, initialDirectSession, initialDirectSessionNonce, persistChatPreferences = true, chatCommandContext, initialComposerDraft, initialComposerDraftNonce, onSendAsReport }: ChatViewProps) {
+function ChatViewContent({ projectId, addToast, floating = false, compactLayout = false, listOnly = false, findActive = true, active = true, onPopOut, onMaximize, onClose, onOpenSessionInNewWindow, initialDirectSession, initialDirectSessionNonce, persistChatPreferences = true, chatCommandContext, initialComposerDraft, initialComposerDraftNonce, onSendAsReport }: ChatViewProps) {
   const { t } = useTranslation("app");
   const chatMessageLayout = useChatMessageLayout();
   const enterSubmits = useChatEnterSubmits();
@@ -808,7 +810,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
   const [dockedSidebarWidth, setDockedSidebarWidth] = useState(() => readChatDockedSidebarWidth(persistChatPreferences));
   const [dockedSidebarOpen, setDockedSidebarOpen] = useState(() => readChatDockedSidebarOpen(persistChatPreferences));
   const resizeTeardownRef = useRef<(() => void) | null>(null);
-  const dockedSidebarEligible = !floating && !isChatMobile;
+  const dockedSidebarEligible = !listOnly && !floating && !isChatMobile;
   const dockedSidebarVisible = dockedSidebarEligible && dockedSidebarOpen;
 
   useEffect(() => {
@@ -1670,7 +1672,11 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
   open in this host. The plain path intentionally retains the existing in-place selection behavior.
   */
   const handleNewChat = useCallback((event?: React.MouseEvent<HTMLButtonElement>) => {
-    const openInNewWindow = Boolean((event?.ctrlKey || event?.metaKey) && onOpenSessionInNewWindow);
+    /*
+    FNXC:AlphaDesktopRightDock 2026-09-11-21:48:
+    The Alpha desktop dock is a list owner, never a transcript owner. New Chat therefore preserves the host selection and opens the returned identity immediately; standard hosts keep plain-click in-place creation and modifier-click pop-out.
+    */
+    const openInNewWindow = Boolean(onOpenSessionInNewWindow && (listOnly || event?.ctrlKey || event?.metaKey));
     if (chatDefaultTarget?.kind === "agent") {
       const input = { agentId: chatDefaultTarget.agentId };
       void (openInNewWindow ? handleCreateSession(input, { openInNewWindow: true }) : handleCreateSession(input));
@@ -1687,7 +1693,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
       return;
     }
     addToast(t("chat.noDefaultModelConfigured", "Configure a default chat model in Settings before creating a conversation."), "error");
-  }, [addToast, chatDefaultTarget, defaultModel, handleCreateSession, onOpenSessionInNewWindow, t]);
+  }, [addToast, chatDefaultTarget, defaultModel, handleCreateSession, listOnly, onOpenSessionInNewWindow, t]);
 
   const resizeComposer = useCallback(() => {
     inputAutosizeRef.current?.resize();
@@ -2572,10 +2578,14 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
     (id: string) => {
       const selectedSession = filteredSessions.find((session) => session.id === id);
       markRead("direct", id, selectedSession?.lastMessageAt ?? selectedSession?.updatedAt);
+      if (listOnly) {
+        if (selectedSession) onOpenSessionInNewWindow?.(selectedSession);
+        return;
+      }
       selectSession(id);
       setDetailOpen(true);
     },
-    [filteredSessions, markRead, selectSession],
+    [filteredSessions, listOnly, markRead, onOpenSessionInNewWindow, selectSession],
   );
 
   const handleBack = useCallback(() => {
@@ -2637,7 +2647,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
   const activeModelTag = formatModelTag(activeResolvedModel?.provider, activeResolvedModel?.modelId);
   const activeModelProvider = activeResolvedModel?.provider ?? null;
   const hasThreadInView = Boolean(activeSession || isStreaming || messages.length > 0);
-  const hasDetailSelection = detailOpen && hasThreadInView;
+  const hasDetailSelection = !listOnly && detailOpen && hasThreadInView;
   // ── CLI-backed chat mount (U12) ──────────────────────────────────────────
   // When the active chat session selects a cli-agent executor, the message-pane
   // + composer region is delegated to <CliChatSurface> (transcript + raw-terminal

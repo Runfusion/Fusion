@@ -3,15 +3,17 @@ import { describe, expect, it, vi } from "vitest";
 import { AlphaDesktopActionBar } from "../AlphaDesktopActionBar";
 import { buildDashboardNavigationEntries } from "../dashboardNavigationEntries";
 
-function entries(onChangeView = vi.fn()) { return buildDashboardNavigationEntries({ view: "board", onChangeView, onOpenPilot: vi.fn(), onNewTask: vi.fn(), onOpenSettings: vi.fn(), showAgents: true }); }
+function entries(onChangeView = vi.fn()) { return buildDashboardNavigationEntries({ view: "board", onChangeView, onNewTask: vi.fn(), onOpenSettings: vi.fn(), showAgents: true }); }
 
 describe("AlphaDesktopActionBar", () => {
-  it("affiche les actions directes avec libellés et état actif", () => {
-    render(<AlphaDesktopActionBar entries={entries()} activeId="patchnode" />);
+  it("affiche le footer principal sans les destinations du dock ou de Done", () => {
+    render(<AlphaDesktopActionBar entries={entries()} activeId="board" />);
     expect(screen.getByTestId("alpha-desktop-action-bar")).toBeInTheDocument();
-    expect(screen.getByTestId("alpha-desktop-nav-patchnode")).toHaveTextContent("History");
-    expect(screen.getByTestId("alpha-desktop-nav-patchnode")).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByTestId("alpha-desktop-nav-board")).toHaveAttribute("aria-current", "page");
     expect(screen.getByTestId("alpha-desktop-nav-new-task")).toHaveAccessibleName("New Task");
+    expect(screen.queryByTestId("alpha-desktop-nav-patchnode")).toBeNull();
+    expect(screen.queryByTestId("alpha-desktop-nav-chat")).toBeNull();
+    expect(screen.queryByTestId("alpha-desktop-nav-notes")).toBeNull();
   });
 
   it("garde l’overflow ouvert quand la garde refuse puis le ferme après acceptation", async () => {

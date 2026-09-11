@@ -12,10 +12,12 @@ export interface NotesViewProps {
   projectId?: string;
   addToast?: (message: string, type?: "success" | "error" | "info" | "warning") => void;
   controller?: UseNotesController;
+  compact?: boolean;
+  registerGuard?: (guard: () => boolean | Promise<boolean>, onAccepted?: () => void) => () => void;
   floating?: { onClose: () => void; onActivate?: () => void; raiseToFrontSignal?: number; registerGuard?: (guard: () => boolean | Promise<boolean>, onAccepted?: () => void) => () => void };
 }
 
-export function NotesView({ projectId, addToast, controller, floating }: NotesViewProps) {
+export function NotesView({ projectId, addToast, controller, compact = false, registerGuard, floating }: NotesViewProps) {
   const { t } = useTranslation("app");
   const confirm = useConfirm();
   const ownedNotes = useNotes(controller ? undefined : projectId);
@@ -24,7 +26,7 @@ export function NotesView({ projectId, addToast, controller, floating }: NotesVi
   const commitFloatingClose = useCallback(() => {
     if (notes.dirty) notes.clearSelection();
   }, [notes]);
-  useEffect(() => floating?.registerGuard?.(abandon, commitFloatingClose), [abandon, commitFloatingClose, floating]);
+  useEffect(() => (registerGuard ?? floating?.registerGuard)?.(abandon, commitFloatingClose), [abandon, commitFloatingClose, floating, registerGuard]);
   const handleCreate = async () => { if (await abandon()) await notes.create(); };
   const activeNoteId = notes.pendingSelectedId ?? notes.selected?.id;
   const handleSelect = async (id: string) => {
@@ -55,7 +57,7 @@ export function NotesView({ projectId, addToast, controller, floating }: NotesVi
     window.addEventListener("keydown", onKeyDown); return () => window.removeEventListener("keydown", onKeyDown);
   });
 
-  const content = <section className={`notes-view${floating ? " notes-view--floating" : ""}${notes.selected ? " notes-view--detail" : ""}`} aria-label={t("nav.notes", "Notes")}>
+  const content = <section className={`notes-view${floating ? " notes-view--floating" : ""}${compact ? " notes-view--compact" : ""}${notes.selected ? " notes-view--detail" : ""}`} aria-label={t("nav.notes", "Notes")}>
     <ViewHeader icon={StickyNote} title={t("nav.notes", "Notes")} onClose={floating?.onClose} actions={<button className="btn btn-primary" type="button" onClick={() => void handleCreate()} disabled={!projectId || notes.saving}><Plus aria-hidden="true" />{t("notes.new", "New note")}</button>} />
     <div className="notes-layout">
       <aside className="notes-list" aria-label={t("notes.list", "Notes list")}>

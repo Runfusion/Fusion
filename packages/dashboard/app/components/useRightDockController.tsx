@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react
 import type { GithubIssueAction, MergeResult, Task, TaskDetail, WorkflowStep } from "@fusion/core";
 import { isNearDuplicateCanonicalInactive } from "../../../core/src/duplicates/near-duplicate-canonical";
 import type { ToastType } from "../hooks/useToast";
+import type { UseNotesController } from "../hooks/useNotes";
 import type { ChatSessionInfo } from "../hooks/useChat";
 import type { DetailTaskTab } from "../hooks/useModalManager";
 import { fetchTaskDetail } from "../api";
@@ -36,6 +37,8 @@ export interface RightDockControllerInput {
   openDetailTask: (task: Task | TaskDetail, initialTab?: DetailTaskTab) => void;
   openTaskPopup: (task: Task | TaskDetail) => void;
   onOpenSessionInNewWindow?: (session: ChatSessionInfo) => void;
+  notesController?: UseNotesController;
+  registerNotesGuard?: (guard: () => boolean | Promise<boolean>, onAccepted?: () => void) => () => void;
   openMobileTasksInPopup: boolean;
   openFileInBrowser: (path: string, opts?: { workspace?: string; line?: number; col?: number }) => void;
   onUpdateTask?: (id: string, updates: { title?: string; description?: string; dependencies?: string[]; dismissNearDuplicate?: boolean; githubTracking?: { enabled?: boolean } }) => Promise<Task>;
@@ -204,6 +207,7 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
 
   const renderProps = useMemo<OverflowViewRenderProps>(() => ({
     projectId: input.projectId,
+    hostMode: input.visibilityOptions.hostMode ?? "standard",
     experimentalFeatures: input.visibilityOptions.experimentalFeatures,
     addToast: input.addToast,
     settingsLoaded: input.settingsLoaded,
@@ -250,6 +254,8 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
     onOpenChatWithPrefill: input.onOpenChatWithPrefill,
     onOpenDetail: input.openDetailTask,
     onOpenSessionInNewWindow: input.onOpenSessionInNewWindow,
+    notesController: input.notesController,
+    registerNotesGuard: input.registerNotesGuard,
     onSendSelectionToTask: input.onSendSelectionToTask,
     onCreateTaskFromInsight: input.onCreateTaskFromInsight,
     onNavigateToMission: input.onNavigateToMission,
