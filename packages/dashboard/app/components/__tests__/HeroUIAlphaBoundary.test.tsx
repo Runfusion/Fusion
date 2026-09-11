@@ -1,8 +1,10 @@
+import "../../hero-ui-alpha.css";
+import "../QuickEntryBox.css";
 import { createPortal } from "react-dom";
 import { useState } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { HeroUIAlphaProvider, HeroUIAlphaSurface } from "../../context/HeroUIAlphaContext";
 import { listComponentFiles, readAppFile } from "../../test/cssFixture";
 import { AlphaButton, AlphaDialog, AlphaInput, AlphaListBox, AlphaListBoxItem, AlphaMenu, AlphaMenuItem, AlphaPortalSurface } from "../hero-ui";
@@ -22,13 +24,18 @@ function Fixture({ enabled }: { enabled: boolean }) {
         <AlphaListBox aria-label="Suggestions"><AlphaListBoxItem id="one" textValue="One">One</AlphaListBoxItem></AlphaListBox>
         <AlphaMenu aria-label="Actions"><AlphaMenuItem id="open">Open</AlphaMenuItem></AlphaMenu>
         <AlphaDialog labelledBy="alpha-dialog-title"><h2 id="alpha-dialog-title">Alpha dialog</h2></AlphaDialog>
-        {createPortal(<AlphaPortalSurface data-testid="portal-surface"><AlphaButton data-testid="portal">Portal action</AlphaButton></AlphaPortalSurface>, document.body)}
+        {createPortal(<AlphaPortalSurface data-testid="portal-surface"><AlphaButton className="quick-entry-toggle" data-testid="portal">Portal action</AlphaButton></AlphaPortalSurface>, document.body)}
       </HeroUIAlphaSurface>
     </HeroUIAlphaProvider>
   );
 }
 
 describe("HeroUI Alpha surface boundary", () => {
+  afterEach(() => {
+    document.documentElement.removeAttribute("data-theme");
+    document.documentElement.removeAttribute("data-color-theme");
+  });
+
   it("switches Board/Chat primitives without leaking to an outside screen", () => {
     const view = render(<Fixture enabled={false} />);
     expect(screen.getByTestId("outside")).not.toHaveAttribute("data-heroui-alpha");
@@ -52,6 +59,73 @@ describe("HeroUI Alpha surface boundary", () => {
     expect(screen.getByLabelText("Message")).toHaveValue("draft survives");
     expect(screen.getByLabelText("Message")).not.toHaveAttribute("data-heroui-alpha");
     expect(screen.getByTestId("portal-surface")).not.toHaveAttribute("data-heroui-alpha-portal");
+  });
+
+  it("keeps root and portal colors stable across Fusion color themes and distinct across light/dark", () => {
+    document.documentElement.dataset.theme = "light";
+    document.documentElement.dataset.colorTheme = "cozy-cartoon";
+    render(<Fixture enabled />);
+
+    const surface = document.querySelector<HTMLElement>('[data-heroui-alpha-surface="true"]');
+    const portal = screen.getByTestId("portal-surface");
+    const palette = (element: Element) => {
+      const style = getComputedStyle(element);
+      return [
+        style.getPropertyValue("--alpha-neutral-background"),
+        style.getPropertyValue("--alpha-neutral-foreground"),
+        style.getPropertyValue("--alpha-neutral-border"),
+        style.getPropertyValue("--alpha-neutral-accent"),
+        style.getPropertyValue("--todo"),
+        style.getPropertyValue("--triage"),
+        style.getPropertyValue("--in-progress"),
+        style.getPropertyValue("--in-review"),
+        style.getPropertyValue("--done"),
+        style.getPropertyValue("--status-todo-bg"),
+        style.getPropertyValue("--status-error-bg"),
+        style.getPropertyValue("--color-info"),
+        style.getPropertyValue("--color-success"),
+      ];
+    };
+    const lightRoot = palette(surface!);
+    const lightPortal = palette(portal);
+    expect(lightRoot.every(Boolean)).toBe(true);
+    expect(lightPortal).toEqual(lightRoot);
+
+    document.documentElement.dataset.colorTheme = "shadcn-purple";
+    expect(palette(surface!)).toEqual(lightRoot);
+    expect(palette(portal)).toEqual(lightPortal);
+
+    document.documentElement.dataset.theme = "dark";
+    const darkRoot = palette(surface!);
+    expect(darkRoot).not.toEqual(lightRoot);
+    expect(palette(portal)).toEqual(darkRoot);
+
+    document.documentElement.dataset.colorTheme = "default";
+    expect(palette(surface!)).toEqual(darkRoot);
+    expect(palette(portal)).toEqual(darkRoot);
+    expect(getComputedStyle(screen.getByTestId("outside")).getPropertyValue("--alpha-neutral-background")).toBe("");
+  });
+
+  it("renders a valid neutral focus shadow on a portaled production control", () => {
+    document.documentElement.dataset.theme = "light";
+    document.documentElement.dataset.colorTheme = "cozy-cartoon";
+    render(<Fixture enabled />);
+
+    const portalControl = screen.getByTestId("portal");
+    portalControl.focus();
+    expect(portalControl).toHaveFocus();
+    const lightStyle = getComputedStyle(portalControl);
+    const lightRing = lightStyle.getPropertyValue("--focus-ring-strong");
+    const lightAccent = lightStyle.getPropertyValue("--alpha-neutral-accent");
+    expect(lightRing).toMatch(/^\s*0 0 0 0\.125rem color-mix\(/);
+
+    document.documentElement.dataset.colorTheme = "shadcn-purple";
+    expect(getComputedStyle(portalControl).getPropertyValue("--focus-ring-strong")).toBe(lightRing);
+
+    document.documentElement.dataset.theme = "dark";
+    const darkStyle = getComputedStyle(portalControl);
+    expect(darkStyle.getPropertyValue("--focus-ring-strong")).toBe(lightRing);
+    expect(darkStyle.getPropertyValue("--alpha-neutral-accent")).not.toBe(lightAccent);
   });
 
   it("keeps one navigable collection before sibling auxiliary actions", async () => {
@@ -128,10 +202,13 @@ describe("HeroUI Alpha surface boundary", () => {
     expect(viteConfig).toContain('components/index.css');
     expect(css).toContain('@reference "tailwindcss/theme.css"');
     expect(css).toContain('@reference "@heroui/styles"');
-    expect(css).not.toContain("--border: var(--border)");
-    expect(css).not.toContain("--accent: var(--accent)");
-    expect(css).toContain("var(--color-error)");
-    expect(css).toContain("var(--color-warning)");
+    expect(css).toContain('[data-theme="light"]');
+    expect(css).toContain('[data-theme="dark"]');
+    expect(css).not.toContain('[data-color-theme');
+    expect(css).not.toContain("--background: var(--bg)");
+    expect(css).not.toContain("--focus: var(--accent)");
+    expect(css).toContain("--danger: var(--alpha-neutral-danger)");
+    expect(css).toContain("--warning: var(--alpha-neutral-warning)");
     expect(css).not.toMatch(/#[0-9a-f]{3,8}\b|rgba?\(/i);
     expect(css).not.toMatch(/\d+px\b/);
   });

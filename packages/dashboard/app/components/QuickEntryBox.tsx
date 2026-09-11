@@ -27,6 +27,7 @@ import { computeFixedMenuPosition, getLayoutViewportSize } from "../utils/fixedM
 import { isInsidePortaledModelMenu } from "../utils/portalSurfaces";
 import { restoreOptionalStepsOnFastExit } from "../utils/fastModeOptionalSteps";
 import { useQuickAddSubmitOnEnter } from "../hooks/useQuickAddSubmitOnEnter";
+import { useHeroUIAlpha } from "../context/HeroUIAlphaContext";
 
 const STORAGE_KEY = "kb-quick-entry-text";
 const ALLOWED_TASK_ATTACHMENT_TYPES = new Set([
@@ -161,6 +162,7 @@ function hasMeaningfulNodeChoice(nodes: NodeInfo[]): boolean {
 
 export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], availableModels, workflowId, workflowOptions, defaultWorkflowId, projectId, autoExpand = true, defaultExpanded = true, singleLine = false, submitOnEnter, favoriteProviders: parentFavoriteProviders, favoriteModels: parentFavoriteModels, onToggleFavorite: parentToggleFavorite, onToggleModelFavorite: parentToggleModelFavorite, onOpenTask }: QuickEntryBoxProps) {
   const { t } = useTranslation("app");
+  const alphaActive = useHeroUIAlpha();
   const contextSubmitOnEnter = useQuickAddSubmitOnEnter();
   const enterSubmits = submitOnEnter ?? contextSubmitOnEnter;
   const [description, setDescription] = useState(() => {
@@ -173,9 +175,13 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
   // isExpanded controls textarea height styling (auto-resize)
   // FNXC:QuickEntry 2026-06-22-19:25: singleLine (List view) starts collapsed so the textarea is one line, not the tall 80px variant.
   const [isExpanded, setIsExpanded] = useState(!singleLine);
-  // isDisclosureExpanded controls visibility of the controls panel (Deps, Models, etc.)
-  // Starts expanded by default — controls visible immediately
-  const [isDisclosureExpanded, setIsDisclosureExpanded] = useState(defaultExpanded);
+  // isDisclosureExpanded controls visibility of advanced options (Deps, Models, etc.).
+  /*
+  FNXC:HeroUIAlphaQuickEntry 2026-09-11-00:30:
+  Alpha Quick Entry starts with only its compact immediate-action row visible and progressively discloses advanced routing options. List and every non-Alpha host retain the historical defaultExpanded contract; state and callbacks stay in this single composer instance so disclosure never discards the draft.
+  */
+  const [isDisclosureExpanded, setIsDisclosureExpanded] = useState(alphaActive ? false : defaultExpanded);
+  const previousAlphaActiveRef = useRef(alphaActive);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const dictation = useComposerDictation({ textareaRef, value: description, onChange: setDescription, projectId });
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -307,6 +313,38 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
 
   // If onCreate is not provided, the component is disabled
   const isDisabled = !onCreate;
+
+  /*
+  FNXC:HeroUIAlphaQuickEntryMode 2026-09-11-00:51:
+  Alpha can be toggled while Board remains mounted. Adopt progressive disclosure on entry and restore the non-Alpha `defaultExpanded` contract on exit without remounting the composer or clearing its draft.
+  */
+  useEffect(() => {
+    if (previousAlphaActiveRef.current === alphaActive) return;
+    previousAlphaActiveRef.current = alphaActive;
+    setIsDisclosureExpanded(alphaActive ? false : defaultExpanded);
+  }, [alphaActive, defaultExpanded]);
+
+  /*
+  FNXC:HeroUIAlphaQuickEntryPortals 2026-09-11-00:51:
+  Collapsing advanced Alpha controls must close every parent-owned portal state before the triggers disappear. The options subtree is also unmounted below so child-owned workflow-step portals cannot remain visible without an anchor.
+  */
+  useEffect(() => {
+    if (!alphaActive || isDisclosureExpanded) return;
+    agentPickerOpenTokenRef.current += 1;
+    setShowDeps(false);
+    setDepDropdownPosition(null);
+    setShowAgentPicker(false);
+    setAgentPickerPosition(null);
+    setShowNodePicker(false);
+    setNodePickerPosition(null);
+    setShowPriorityPicker(false);
+    setPriorityPickerPosition(null);
+    setShowWorkflowPicker(false);
+    setWorkflowPickerPosition(null);
+    setIsModelMenuOpen(false);
+    setModelMenuPosition(null);
+    setActiveModelSubmenu(null);
+  }, [alphaActive, isDisclosureExpanded]);
 
   // Fetch models if not provided by parent
   useEffect(() => {
@@ -1711,9 +1749,13 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
   const priorityLabel = getPriorityLabel(priority);
   const priorityButtonLabel = t("tasks.quickEntryPriorityLabel", "Priority: {{priority}}", { priority: priorityLabel });
   const fastToggleLabel = t("tasks.toggleFastMode", "Toggle fast execution mode");
+  const disclosureLabel = isDisclosureExpanded
+    ? t("tasks.hideAdvancedOptions", "Hide advanced options")
+    : t("tasks.showAdvancedOptions", "Show advanced options");
 
-  // Show expanded controls based on disclosure state (user preference), not textarea focus
+  // Alpha keeps immediate actions available while disclosure controls advanced routing options only.
   const showExpandedControls = isDisclosureExpanded;
+  const showActionRow = alphaActive || showExpandedControls;
 
   const toggleExpanded = useCallback(() => {
     setIsDisclosureExpanded((prev) => {
@@ -1768,7 +1810,8 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
             aria-expanded={isDisclosureExpanded}
             aria-controls="quick-entry-controls"
             data-testid="quick-entry-toggle"
-            title={isDisclosureExpanded ? t("tasks.collapse", "Collapse") : t("tasks.expand", "Expand")}
+            title={alphaActive ? disclosureLabel : (isDisclosureExpanded ? t("tasks.collapse", "Collapse") : t("tasks.expand", "Expand"))}
+            aria-label={alphaActive ? disclosureLabel : (isDisclosureExpanded ? t("tasks.collapse", "Collapse") : t("tasks.expand", "Expand"))}
           >
             {isDisclosureExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
           </AlphaButton>
@@ -1777,11 +1820,11 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
       <div
         id="quick-entry-controls"
         className="quick-entry-controls"
-        hidden={!showExpandedControls}
-        aria-hidden={!showExpandedControls}
+        hidden={!showActionRow}
+        aria-hidden={!showActionRow}
       >
-        {/* All quick-create actions behind single disclosure toggle */}
-        {showExpandedControls && !isSubmitting && (
+        {/* Alpha keeps immediate actions visible and progressively discloses advanced options. */}
+        {showActionRow && !isSubmitting && (
           <div
             className="quick-entry-actions"
             data-testid="quick-entry-actions"
@@ -1816,7 +1859,11 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
             up/high, down/low, flag/normal, alert/urgent glyph helper, and Fast uses Zap while retaining
             title/aria-label/test-id semantics.
             */}
-            <div className="quick-entry-options-group" data-testid="quick-entry-options-group">
+            {(!alphaActive || showExpandedControls) && (
+            <div
+              className="quick-entry-options-group"
+              data-testid="quick-entry-options-group"
+            >
             {showWorkflowSelector && (
               <div className="quick-entry-workflow-wrap" ref={workflowPickerRef}>
                 <AlphaButton
@@ -2242,6 +2289,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
               </AlphaButton>
             )}
             </div>
+            )}
 
             {/*
             FNXC:BoardComposer 2026-07-10-12:00:
@@ -2427,7 +2475,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
           removeLabel={t("tasks.removeAttachment", "Remove image")}
           testIdPrefix="quick-entry-preview"
         />
-        {isModelMenuOpen && portalRoot && modelMenuPosition && createPortal(
+        {(!alphaActive || showExpandedControls) && isModelMenuOpen && portalRoot && modelMenuPosition && createPortal(
             <AlphaPopoverSurface
               ref={modelMenuPortalRef}
               onClose={() => setIsModelMenuOpen(false)}

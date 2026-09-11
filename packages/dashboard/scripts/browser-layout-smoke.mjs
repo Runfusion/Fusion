@@ -79,9 +79,10 @@ export const QUICK_ADD_SAVE_FIXTURE_COUNT = QUICK_ADD_COMPOSER_VARIANTS.length *
 
 export function buildQuickAddSaveFixtures(labels = shippedQuickAddSaveLabels) {
   return QUICK_ADD_COMPOSER_VARIANTS.flatMap(([surface, modifier, width, maxWidth, state]) => validateQuickAddSaveLabels(labels).map(([locale, label]) => `
-    <section class="quick-entry-smoke-fixture" data-smoke="quick-add-save-${surface}-${width}-${locale}" style="width: min(${maxWidth}, calc(100vw - 24px)); margin: 0 auto 12px;">
+    <section class="quick-entry-smoke-fixture" data-smoke="quick-add-save-${surface}-${width}-${locale}" ${surface === "board" ? 'data-heroui-alpha-surface="true"' : ""} style="width: min(${maxWidth}, calc(100vw - 24px)); margin: 0 auto 12px;">
       <div class="quick-entry-box quick-entry-box--expanded ${modifier}" data-smoke="quick-add-${surface}-composer">
         <div class="quick-entry-actions" data-smoke="quick-add-save-row">
+          ${surface === "board" ? '<div class="quick-entry-options-group" data-smoke="quick-add-options"><button class="btn btn-sm" type="button">Workflow</button><button class="btn btn-sm" type="button">Deps</button><button class="btn btn-sm" type="button">Models</button></div>' : ""}
           <div class="quick-entry-primary-group">
             <button class="btn btn-icon btn-sm" data-testid="quick-entry-attach" type="button" aria-label="Attach"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M3 7h8"/></svg></button>
             <button class="btn btn-icon btn-sm" data-testid="quick-entry-github-toggle" type="button" aria-label="GitHub"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M3 7h8"/></svg></button>
@@ -2097,13 +2098,56 @@ async function runSmokeChecks(page, pageUrl) {
         locale: save.dataset.locale,
         label: save.textContent.trim(),
         saveWidth: rect.width,
+        saveHeight: rect.height,
         saveOverflow: save.scrollWidth - save.clientWidth,
+        optionOverflow: (() => {
+          const options = fixture.querySelector('[data-smoke="quick-add-options"]');
+          return options ? options.scrollWidth - options.clientWidth : 0;
+        })(),
         rowOverflow: row.scrollWidth - row.clientWidth,
         composerOverflow: composer.scrollWidth - composer.clientWidth,
         saveRight: rect.right,
         composerRight: composer.getBoundingClientRect().right,
       };
     });
+  })()`);
+
+  const collectAlphaPalette = () => evaluate(page, `(() => {
+    const root = document.querySelector('[data-heroui-alpha-surface="true"]');
+    const style = getComputedStyle(root);
+    return ['--alpha-neutral-background', '--alpha-neutral-foreground', '--alpha-neutral-border', '--alpha-neutral-accent']
+      .map((name) => style.getPropertyValue(name).trim());
+  })()`);
+
+  /*
+  FNXC:HeroUIAlphaFocus 2026-09-11-01:04:
+  The browser smoke focuses production Board, Chat, and portaled Quick Entry control classes and reads their resolved box shadows. This guards the complete-shadow alias contract that DOM emulators cannot validate through `:focus-visible`, including color-theme stability and light/dark palette changes.
+  */
+  const collectAlphaFocusShadows = () => evaluate(page, `(() => {
+    const boardRoot = document.querySelector('[data-smoke="board"]');
+    const boardCard = boardRoot.querySelector('.card');
+    boardRoot.setAttribute('data-heroui-alpha-surface', 'true');
+    boardCard.tabIndex = 0;
+
+    const chatRoot = document.createElement('section');
+    chatRoot.setAttribute('data-heroui-alpha-surface', 'true');
+    chatRoot.innerHTML = '<button type="button" class="chat-input-stop">Stop</button>';
+    document.body.append(chatRoot);
+
+    const portalRoot = document.createElement('section');
+    portalRoot.setAttribute('data-heroui-alpha-portal', 'true');
+    portalRoot.innerHTML = '<button type="button" class="quick-entry-toggle">Options</button>';
+    document.body.append(portalRoot);
+
+    const controls = [boardCard, chatRoot.querySelector('.chat-input-stop'), portalRoot.querySelector('.quick-entry-toggle')];
+    const shadows = controls.map((control) => {
+      control.focus();
+      return getComputedStyle(control).boxShadow;
+    });
+    boardRoot.removeAttribute('data-heroui-alpha-surface');
+    chatRoot.remove();
+    portalRoot.remove();
+    return shadows;
   })()`);
 
   const collectTaskDetailActionsMenuLayout = () => evaluate(page, `(() => {
@@ -2302,6 +2346,32 @@ async function runSmokeChecks(page, pageUrl) {
     }
   }
 
+  await evaluate(page, "document.body.dataset.theme = 'dark'; document.body.dataset.colorTheme = 'cozy-cartoon'; true");
+  const darkCozyAlphaPalette = await collectAlphaPalette();
+  const darkCozyAlphaFocusShadows = await collectAlphaFocusShadows();
+  await evaluate(page, "document.body.dataset.colorTheme = 'shadcn-purple'; true");
+  const darkPurpleAlphaPalette = await collectAlphaPalette();
+  const darkPurpleAlphaFocusShadows = await collectAlphaFocusShadows();
+  await evaluate(page, "document.body.dataset.theme = 'light'; true");
+  const lightPurpleAlphaPalette = await collectAlphaPalette();
+  const lightPurpleAlphaFocusShadows = await collectAlphaFocusShadows();
+  assertSmokeResult(
+    "HeroUI Alpha palette ignores Fusion colors and responds only to light/dark",
+    darkCozyAlphaPalette.every(Boolean)
+      && JSON.stringify(darkCozyAlphaPalette) === JSON.stringify(darkPurpleAlphaPalette)
+      && JSON.stringify(lightPurpleAlphaPalette) !== JSON.stringify(darkPurpleAlphaPalette),
+    JSON.stringify({ darkCozyAlphaPalette, darkPurpleAlphaPalette, lightPurpleAlphaPalette }),
+  );
+  assertSmokeResult(
+    "HeroUI Alpha Board, Chat, and portal focus shadows are valid and theme-neutral",
+    darkCozyAlphaFocusShadows.length === 3
+      && darkCozyAlphaFocusShadows.every((shadow) => shadow && shadow !== "none")
+      && JSON.stringify(darkCozyAlphaFocusShadows) === JSON.stringify(darkPurpleAlphaFocusShadows)
+      && JSON.stringify(lightPurpleAlphaFocusShadows) !== JSON.stringify(darkPurpleAlphaFocusShadows),
+    JSON.stringify({ darkCozyAlphaFocusShadows, darkPurpleAlphaFocusShadows, lightPurpleAlphaFocusShadows }),
+  );
+  await evaluate(page, `document.body.dataset.theme = ${JSON.stringify(smokeTheme)}; true`);
+
   await page.send("Emulation.setDeviceMetricsOverride", {
     width: 412,
     height: 915,
@@ -2320,6 +2390,8 @@ async function runSmokeChecks(page, pageUrl) {
       && frenchMobileWidth === widestMobileWidth
       && mobileQuickAddSaveLayout.length === QUICK_ADD_SAVE_FIXTURE_COUNT
       && mobileQuickAddSaveLayout.every((layout) => layout.saveOverflow <= 1
+        && layout.saveHeight <= 44
+        && layout.optionOverflow <= 1
         && layout.rowOverflow <= 1
         && layout.composerOverflow <= 1
         && layout.saveRight <= layout.composerRight + 1),
@@ -2384,6 +2456,8 @@ async function runSmokeChecks(page, pageUrl) {
       && frenchDesktopWidth === widestDesktopWidth
       && desktopQuickAddSaveLayout.length === QUICK_ADD_SAVE_FIXTURE_COUNT
       && desktopQuickAddSaveLayout.every((layout) => layout.saveOverflow <= 1
+        && layout.saveHeight <= 32
+        && layout.optionOverflow <= 1
         && layout.rowOverflow <= 1
         && layout.composerOverflow <= 1
         && layout.saveRight <= layout.composerRight + 1),

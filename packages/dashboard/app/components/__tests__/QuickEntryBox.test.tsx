@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, act, createEvent } from "@testing-library/react";
 import { QuickEntryBox } from "../QuickEntryBox";
+import { HeroUIAlphaProvider, HeroUIAlphaSurface } from "../../context/HeroUIAlphaContext";
 import { expectStableTyping } from "./typingStability.test-helpers";
 import { TASK_PRIORITIES, type Task, type TaskPriority } from "@fusion/core";
 import { checkDuplicateTasks, fetchSettings, fetchAgents, uploadAttachment, fetchWorkflowOptionalSteps } from "../../api";
@@ -346,6 +347,40 @@ function renderQuickEntryBox(props = {}, { startExpanded = false } = {}) {
   return { ...result, props: { ...defaultProps, ...props } };
 }
 
+function renderAlphaQuickEntryBox(props = {}) {
+  const defaultProps = {
+    onCreate: vi.fn().mockResolvedValue(undefined),
+    addToast: vi.fn(),
+    tasks: mockTasks,
+    availableModels: MOCK_MODELS,
+    projectId: TEST_PROJECT_ID,
+  };
+  const result = render(
+    <HeroUIAlphaProvider enabled>
+      <HeroUIAlphaSurface>
+        <QuickEntryBox {...defaultProps} {...props} />
+      </HeroUIAlphaSurface>
+    </HeroUIAlphaProvider>,
+  );
+  return { ...result, props: { ...defaultProps, ...props } };
+}
+
+function AlphaModeToggleQuickEntryFixture({ enabled }: { enabled: boolean }) {
+  return (
+    <HeroUIAlphaProvider enabled={enabled}>
+      <HeroUIAlphaSurface>
+        <QuickEntryBox
+          onCreate={vi.fn().mockResolvedValue(undefined)}
+          addToast={vi.fn()}
+          tasks={mockTasks}
+          availableModels={MOCK_MODELS}
+          projectId={TEST_PROJECT_ID}
+        />
+      </HeroUIAlphaSurface>
+    </HeroUIAlphaProvider>
+  );
+}
+
 function expectQuickEntryHintAbsent(container: HTMLElement) {
   expect(container.querySelector(".quick-entry-hint")).toBeNull();
   expect(screen.queryByText("Enter to create · Esc to cancel")).toBeNull();
@@ -582,6 +617,74 @@ describe("QuickEntryBox", () => {
     renderQuickEntryBox({});
     const textarea = screen.getByTestId("quick-entry-input") as HTMLTextAreaElement;
     await expectStableTyping(textarea, "ship it", () => screen.getByTestId("quick-entry-input"));
+  });
+
+  it("keeps Alpha immediate actions visible while advanced options progressively disclose without remounting", async () => {
+    renderAlphaQuickEntryBox();
+    const textarea = screen.getByTestId("quick-entry-input") as HTMLTextAreaElement;
+    const save = screen.getByTestId("quick-entry-save");
+    const toggle = screen.getByTestId("quick-entry-toggle");
+
+    expect(save).toBeVisible();
+    expect(screen.queryByTestId("quick-entry-options-group")).toBeNull();
+    expect(toggle).toHaveAccessibleName("Show advanced options");
+    await expectStableTyping(textarea, "tâche sobre", () => screen.getByTestId("quick-entry-input"));
+
+    fireEvent.click(toggle);
+    expect(screen.getByTestId("quick-entry-options-group")).toBeVisible();
+    expect(toggle).toHaveAccessibleName("Hide advanced options");
+    expect(screen.getByTestId("quick-entry-input")).toBe(textarea);
+    expect(textarea).toHaveValue("tâche sobre");
+    expect(save).toBeVisible();
+  });
+
+  it("closes advanced portals when Alpha disclosure collapses", () => {
+    renderAlphaQuickEntryBox({
+      workflowId: "workflow-one",
+      defaultWorkflowId: "workflow-one",
+      workflowOptions: [
+        { id: "workflow-one", name: "Workflow one", columns: [] },
+        { id: "workflow-two", name: "Workflow two", columns: [] },
+      ],
+    });
+    const toggle = screen.getByTestId("quick-entry-toggle");
+
+    fireEvent.click(toggle);
+    openDepsMenu();
+    expect(document.querySelector(".dep-dropdown--portal")).not.toBeNull();
+    fireEvent.click(toggle);
+    expect(document.querySelector(".dep-dropdown--portal")).toBeNull();
+    expect(screen.queryByTestId("quick-entry-options-group")).toBeNull();
+
+    fireEvent.click(toggle);
+    fireEvent.click(screen.getByTestId("quick-entry-workflow-trigger"));
+    expect(screen.getByTestId("quick-entry-workflow-menu")).toBeInTheDocument();
+    fireEvent.click(toggle);
+    expect(screen.queryByTestId("quick-entry-workflow-menu")).toBeNull();
+
+    fireEvent.click(toggle);
+    openPriorityMenu();
+    expect(screen.getByTestId("quick-entry-priority-option-normal")).toBeInTheDocument();
+    fireEvent.click(toggle);
+    expect(screen.queryByTestId("quick-entry-priority-option-normal")).toBeNull();
+  });
+
+  it("synchronizes progressive disclosure across hot Alpha mode changes without remounting", async () => {
+    const view = render(<AlphaModeToggleQuickEntryFixture enabled={false} />);
+    const textarea = screen.getByTestId("quick-entry-input") as HTMLTextAreaElement;
+    const composer = screen.getByTestId("quick-entry-box");
+    await expectStableTyping(textarea, "brouillon conservé", () => screen.getByTestId("quick-entry-input"));
+    expect(screen.getByTestId("quick-entry-options-group")).toBeVisible();
+
+    view.rerender(<AlphaModeToggleQuickEntryFixture enabled />);
+    await waitFor(() => expect(screen.queryByTestId("quick-entry-options-group")).toBeNull());
+    expect(screen.getByTestId("quick-entry-box")).toBe(composer);
+    expect(screen.getByTestId("quick-entry-input")).toHaveValue("brouillon conservé");
+
+    view.rerender(<AlphaModeToggleQuickEntryFixture enabled={false} />);
+    await waitFor(() => expect(screen.getByTestId("quick-entry-options-group")).toBeVisible());
+    expect(screen.getByTestId("quick-entry-box")).toBe(composer);
+    expect(screen.getByTestId("quick-entry-input")).toHaveValue("brouillon conservé");
   });
 
   it("renders textarea with placeholder", () => {

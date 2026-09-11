@@ -24,6 +24,32 @@
 }
 
 /*
+FNXC:HeroUIAlphaDensity 2026-09-11-00:30:
+Alpha task cards keep metadata and status behavior intact while reducing persistent visual weight. Compact padding, neutral elevation, and a quiet hover are boundary-only so every stable card host preserves its historical dimensions.
+*/
+[data-heroui-alpha-surface="true"] .card {
+  padding: var(--alpha-density-3);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+}
+
+[data-heroui-alpha-surface="true"] .card:hover {
+  border-color: var(--alpha-neutral-muted);
+  box-shadow: var(--shadow-md);
+}
+
+[data-heroui-alpha-surface="true"] .card-header {
+  gap: var(--alpha-density-1);
+  margin-bottom: var(--alpha-density-1);
+}
+
+@media (max-width: 768px) {
+  [data-heroui-alpha-surface="true"] .card {
+    padding: var(--alpha-density-2);
+  }
+}
+
+/*
 FNXC:TaskCardCursor 2026-08-28-13:18 (FN-229):
 A board task tile is a clickable surface that opens task detail, so its root and every non-disabled descendant show the pointing hand at rest. Inline editing is form work rather than tile activation: the editing branch inherits its normal form cursor, while enabled text-entry controls retain the native caret and disabled controls retain their busy or unavailable cursor.
 

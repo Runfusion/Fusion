@@ -4,41 +4,190 @@
 @source "../node_modules/@heroui/react/dist";
 
 /*
-FNXC:HeroUIAlphaTheme 2026-09-10-18:49:
-Tailwind and HeroUI are compile-time references only, so their resets, root theme, and utilities never become global dashboard CSS. HeroUI component declarations are expanded and compiled inside the active Board/Chat scope, while portaled overlays receive the same scoped paint contract.
+FNXC:HeroUIAlphaTheme 2026-09-11-00:30:
+HeroUI Alpha has exactly two canonical neutral palettes selected by the resolved `data-theme`. Fusion color themes, custom shadcn values, radii, and shadows must not recolor or reshape Board, Chat, or their body-portaled overlays. Keep the fixed palette on both boundary roots so legacy layout CSS and native HeroUI declarations consume the same neutral values without importing global resets.
 */
+:where([data-theme="light"], :not([data-theme])) :where([data-heroui-alpha-surface="true"], [data-heroui-alpha-portal="true"]) {
+  --alpha-neutral-background: oklch(0.985 0 0);
+  --alpha-neutral-surface: oklch(1 0 0);
+  --alpha-neutral-surface-secondary: oklch(0.965 0 0);
+  --alpha-neutral-surface-tertiary: oklch(0.935 0 0);
+  --alpha-neutral-foreground: oklch(0.205 0 0);
+  --alpha-neutral-muted: oklch(0.475 0 0);
+  --alpha-neutral-dim: oklch(0.58 0 0);
+  --alpha-neutral-border: oklch(0.865 0 0);
+  --alpha-neutral-accent: oklch(0.31 0 0);
+  --alpha-neutral-accent-foreground: oklch(0.985 0 0);
+  --alpha-neutral-danger: oklch(0.54 0.2 25);
+  --alpha-neutral-danger-strong: oklch(0.45 0.18 25);
+  --alpha-neutral-warning: oklch(0.62 0.14 75);
+  --alpha-neutral-success: oklch(0.48 0.14 150);
+  --alpha-neutral-info: oklch(0.5 0.14 250);
+  --alpha-neutral-triage: oklch(0.57 0.13 75);
+  --alpha-neutral-todo: oklch(0.5 0.13 250);
+  --alpha-neutral-in-progress: oklch(0.49 0.12 215);
+  --alpha-neutral-in-review: oklch(0.5 0.13 300);
+  --alpha-neutral-done: oklch(0.48 0.02 250);
+}
+
+[data-theme="dark"] :where([data-heroui-alpha-surface="true"], [data-heroui-alpha-portal="true"]) {
+  --alpha-neutral-background: oklch(0.155 0 0);
+  --alpha-neutral-surface: oklch(0.205 0 0);
+  --alpha-neutral-surface-secondary: oklch(0.245 0 0);
+  --alpha-neutral-surface-tertiary: oklch(0.285 0 0);
+  --alpha-neutral-foreground: oklch(0.94 0 0);
+  --alpha-neutral-muted: oklch(0.72 0 0);
+  --alpha-neutral-dim: oklch(0.62 0 0);
+  --alpha-neutral-border: oklch(0.36 0 0);
+  --alpha-neutral-accent: oklch(0.88 0 0);
+  --alpha-neutral-accent-foreground: oklch(0.18 0 0);
+  --alpha-neutral-danger: oklch(0.68 0.18 25);
+  --alpha-neutral-danger-strong: oklch(0.76 0.15 25);
+  --alpha-neutral-warning: oklch(0.78 0.14 75);
+  --alpha-neutral-success: oklch(0.72 0.14 150);
+  --alpha-neutral-info: oklch(0.72 0.13 250);
+  --alpha-neutral-triage: oklch(0.78 0.12 75);
+  --alpha-neutral-todo: oklch(0.72 0.12 250);
+  --alpha-neutral-in-progress: oklch(0.74 0.11 215);
+  --alpha-neutral-in-review: oklch(0.72 0.12 300);
+  --alpha-neutral-done: oklch(0.7 0.02 250);
+}
+
+/*
+FNXC:HeroUIAlphaStatusTheme 2026-09-11-00:51:
+Keep fixed semantic aliases directly on each boundary root so production descendants and browser computed styles share the same light/dark contract.
+
+FNXC:HeroUIAlphaFocus 2026-09-11-01:04:
+Legacy Board and Chat consumers treat the focus aliases as complete box-shadow values. Keep the HeroUI `--focus` token color-only, but publish valid neutral ring shadows for root and portaled controls so suppressed outlines never remove keyboard focus visibility.
+*/
+:where([data-heroui-alpha-surface="true"], [data-heroui-alpha-portal="true"]) {
+  --todo: var(--alpha-neutral-todo);
+  --triage: var(--alpha-neutral-triage);
+  --in-progress: var(--alpha-neutral-in-progress);
+  --in-review: var(--alpha-neutral-in-review);
+  --done: var(--alpha-neutral-done);
+  --status-triage-bg: color-mix(in srgb, var(--alpha-neutral-triage) 15%, transparent);
+  --status-triage-bg-deep: color-mix(in srgb, var(--alpha-neutral-triage) 20%, transparent);
+  --status-todo-bg: color-mix(in srgb, var(--alpha-neutral-todo) 15%, transparent);
+  --status-in-progress-bg: color-mix(in srgb, var(--alpha-neutral-in-progress) 15%, transparent);
+  --status-in-review-bg: color-mix(in srgb, var(--alpha-neutral-in-review) 15%, transparent);
+  --status-done-bg: color-mix(in srgb, var(--alpha-neutral-done) 15%, transparent);
+  --status-done-bg-deep: color-mix(in srgb, var(--alpha-neutral-done) 20%, transparent);
+  --status-error-bg: color-mix(in srgb, var(--alpha-neutral-danger-strong) 15%, transparent);
+  --status-error-bg-deep: color-mix(in srgb, var(--alpha-neutral-danger-strong) 20%, transparent);
+  --color-error: var(--alpha-neutral-danger);
+  --color-error-dark: var(--alpha-neutral-danger-strong);
+  --color-warning: var(--alpha-neutral-warning);
+  --color-success: var(--alpha-neutral-success);
+  --color-info: var(--alpha-neutral-info);
+  --focus-ring: 0 0 0 0.125rem color-mix(in srgb, var(--alpha-neutral-accent) 18%, transparent);
+  --focus-ring-strong: 0 0 0 0.125rem color-mix(in srgb, var(--alpha-neutral-accent) 38%, transparent);
+}
+
 @scope (:where([data-heroui-alpha-surface="true"], [data-heroui-alpha-portal="true"])) {
   /* @heroui-alpha-scoped-components */
 
   :scope {
-    --background: var(--bg);
-    --foreground: var(--text);
-    --surface-foreground: var(--text);
-    --surface-secondary: var(--bg-secondary);
-    --surface-secondary-foreground: var(--text);
-    --surface-tertiary: var(--bg-tertiary);
-    --surface-tertiary-foreground: var(--text);
-    --overlay: var(--card);
-    --overlay-foreground: var(--text);
-    --muted: var(--text-muted);
-    --default: var(--bg-secondary);
-    --default-foreground: var(--text);
-    --accent-foreground: var(--bg);
-    --field-background: var(--surface);
-    --field-foreground: var(--text);
-    --field-placeholder: var(--text-muted);
-    --field-border: var(--border);
-    --danger: var(--color-error);
-    --warning: var(--color-warning);
-    --focus: var(--accent);
-    --radius: var(--radius-md);
-    --field-radius: var(--radius-md);
-    --border-width: var(--btn-border-width);
-    --field-border-width: var(--btn-border-width);
+    --background: var(--alpha-neutral-background);
+    --foreground: var(--alpha-neutral-foreground);
+    --surface-foreground: var(--alpha-neutral-foreground);
+    --surface-secondary: var(--alpha-neutral-surface-secondary);
+    --surface-secondary-foreground: var(--alpha-neutral-foreground);
+    --surface-tertiary: var(--alpha-neutral-surface-tertiary);
+    --surface-tertiary-foreground: var(--alpha-neutral-foreground);
+    --overlay: var(--alpha-neutral-surface);
+    --overlay-foreground: var(--alpha-neutral-foreground);
+    --muted: var(--alpha-neutral-muted);
+    --default: var(--alpha-neutral-surface-secondary);
+    --default-foreground: var(--alpha-neutral-foreground);
+    --accent-foreground: var(--alpha-neutral-accent-foreground);
+    --field-background: var(--alpha-neutral-surface);
+    --field-foreground: var(--alpha-neutral-foreground);
+    --field-placeholder: var(--alpha-neutral-muted);
+    --field-border: var(--alpha-neutral-border);
+    --danger: var(--alpha-neutral-danger);
+    --warning: var(--alpha-neutral-warning);
+    --focus: var(--alpha-neutral-accent);
+    --radius: 0.5rem;
+    --field-radius: 0.5rem;
+    --border-width: 0.0625rem;
+    --field-border-width: 0.0625rem;
     --disabled-opacity: 0.5;
     --cursor-interactive: pointer;
     --cursor-disabled: not-allowed;
-    color: var(--text);
+
+    /*
+    FNXC:HeroUIAlphaStatusTheme 2026-09-11-00:51:
+    Board and Chat still consume Fusion's legacy surface, status, badge, and focus aliases. Override every visual alias used by those production trees at the Alpha boundary so a `data-color-theme` change cannot recolor real cards, badges, chat states, or portaled menus; semantic hues remain fixed per light/dark palette.
+    */
+    --bg: var(--alpha-neutral-background);
+    --bg-primary: var(--alpha-neutral-background);
+    --bg-secondary: var(--alpha-neutral-surface-secondary);
+    --bg-tertiary: var(--alpha-neutral-surface-tertiary);
+    --surface: var(--alpha-neutral-surface);
+    --surface-1: var(--alpha-neutral-surface);
+    --surface-2: var(--alpha-neutral-surface-secondary);
+    --surface-secondary: var(--alpha-neutral-surface-secondary);
+    --surface-hover: var(--alpha-neutral-surface-secondary);
+    --surface-muted: var(--alpha-neutral-surface-secondary);
+    --surface-subtle: var(--alpha-neutral-surface-tertiary);
+    --card: var(--alpha-neutral-surface);
+    --card-hover: var(--alpha-neutral-surface-secondary);
+    --border: var(--alpha-neutral-border);
+    --text: var(--alpha-neutral-foreground);
+    --text-primary: var(--alpha-neutral-foreground);
+    --text-muted: var(--alpha-neutral-muted);
+    --text-dim: var(--alpha-neutral-dim);
+    --accent: var(--alpha-neutral-accent);
+    --focus-ring: 0 0 0 0.125rem color-mix(in srgb, var(--alpha-neutral-accent) 18%, transparent);
+    --focus-ring-strong: 0 0 0 0.125rem color-mix(in srgb, var(--alpha-neutral-accent) 38%, transparent);
+    --cta-bg: var(--alpha-neutral-accent);
+    --cta-bg-hover: color-mix(in srgb, var(--alpha-neutral-accent) 88%, var(--alpha-neutral-background));
+    --cta-border: var(--alpha-neutral-accent);
+    --cta-border-hover: var(--alpha-neutral-accent);
+    --cta-text: var(--alpha-neutral-accent-foreground);
+    --color-error: var(--alpha-neutral-danger);
+    --color-error-dark: var(--alpha-neutral-danger-strong);
+    --color-warning: var(--alpha-neutral-warning);
+    --color-success: var(--alpha-neutral-success);
+    --color-info: var(--alpha-neutral-info);
+    --triage: var(--alpha-neutral-triage);
+    --todo: var(--alpha-neutral-todo);
+    --in-progress: var(--alpha-neutral-in-progress);
+    --in-review: var(--alpha-neutral-in-review);
+    --done: var(--alpha-neutral-done);
+    --status-triage-bg: color-mix(in srgb, var(--alpha-neutral-triage) 15%, transparent);
+    --status-triage-bg-deep: color-mix(in srgb, var(--alpha-neutral-triage) 20%, transparent);
+    --status-todo-bg: color-mix(in srgb, var(--alpha-neutral-todo) 15%, transparent);
+    --status-in-progress-bg: color-mix(in srgb, var(--alpha-neutral-in-progress) 15%, transparent);
+    --status-in-review-bg: color-mix(in srgb, var(--alpha-neutral-in-review) 15%, transparent);
+    --status-done-bg: color-mix(in srgb, var(--alpha-neutral-done) 15%, transparent);
+    --status-done-bg-deep: color-mix(in srgb, var(--alpha-neutral-done) 20%, transparent);
+    --status-error-bg: color-mix(in srgb, var(--alpha-neutral-danger-strong) 15%, transparent);
+    --status-error-bg-deep: color-mix(in srgb, var(--alpha-neutral-danger-strong) 20%, transparent);
+    --badge-mission-bg: color-mix(in srgb, var(--alpha-neutral-info) 15%, transparent);
+    --badge-mission-bg-hover: color-mix(in srgb, var(--alpha-neutral-info) 22%, transparent);
+    --badge-mission-text: var(--alpha-neutral-info);
+    --badge-mission-text-hover: var(--alpha-neutral-info);
+    --provider-icon-color: var(--alpha-neutral-foreground);
+    --provider-icon-contrast: var(--alpha-neutral-background);
+    --ws-warning: var(--alpha-neutral-warning);
+    --radius-xs: 0.25rem;
+    --radius-sm: 0.375rem;
+    --radius-md: 0.5rem;
+    --radius-lg: 0.75rem;
+    --radius-pill: 999rem;
+    --shadow-sm: 0 0.0625rem 0.125rem color-mix(in srgb, var(--alpha-neutral-foreground) 8%, transparent);
+    --shadow-md: 0 0.25rem 0.75rem color-mix(in srgb, var(--alpha-neutral-foreground) 10%, transparent);
+    --shadow-lg: 0 0.75rem 2rem color-mix(in srgb, var(--alpha-neutral-foreground) 14%, transparent);
+    --accent-text: var(--alpha-neutral-accent-foreground);
+    --alpha-density-1: 0.25rem;
+    --alpha-density-2: 0.5rem;
+    --alpha-density-3: 0.75rem;
+    --alpha-density-4: 1rem;
+    --alpha-control-height: 2rem;
+    --alpha-touch-height: 2.75rem;
+    color: var(--alpha-neutral-foreground);
   }
 
   [data-heroui-alpha] {

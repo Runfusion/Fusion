@@ -1,8 +1,10 @@
+import "../../hero-ui-alpha.css";
 import { fireEvent, render, screen } from "@testing-library/react";
 import type { ComponentProps } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Board } from "../Board";
 import { writeBoardWorkflowsCache } from "../../utils/boardWorkflowsCache";
+import { readAppFile } from "../../test/cssFixture";
 
 vi.mock("../../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../api")>();
@@ -110,6 +112,82 @@ describe("HeroUI Alpha Board", () => {
     } finally {
       Object.defineProperty(window, "innerWidth", { configurable: true, value: previousWidth });
     }
+  });
+
+  it("keeps production card status and portal styles stable across Fusion color themes", () => {
+    document.documentElement.dataset.theme = "dark";
+    document.documentElement.dataset.colorTheme = "cozy-cartoon";
+    const task = {
+      id: "FN-THEME",
+      title: "Carte de statut",
+      description: "Palette fixe",
+      column: "todo",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      status: "queued",
+      createdAt: "2026-09-10T00:00:00.000Z",
+      updatedAt: "2026-09-10T00:00:00.000Z",
+    } as never;
+
+    try {
+      const view = render(board(true, [task], { onDeleteTask: vi.fn() }));
+      const card = view.container.querySelector<HTMLElement>(".card");
+      const statusBadge = view.container.querySelector<HTMLElement>(".card-status-badge--todo");
+      expect(card).not.toBeNull();
+      expect(statusBadge).not.toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "Planning column actions" }));
+      const portal = screen.getByRole("menu", { name: "Planning column actions" });
+      expect(portal).toHaveAttribute("data-heroui-alpha", "menu");
+
+      const productionPalette = (element: Element) => {
+        const style = getComputedStyle(element);
+        return [
+          style.getPropertyValue("--todo"),
+          style.getPropertyValue("--status-todo-bg"),
+          style.getPropertyValue("--color-info"),
+          style.getPropertyValue("--color-error"),
+          style.getPropertyValue("--focus-ring"),
+        ];
+      };
+      const cardTheme = productionPalette(card!);
+      expect(cardTheme).toEqual(Array.from({ length: 5 }, () => expect.stringMatching(/\S/)));
+      expect(productionPalette(statusBadge!)).toEqual(cardTheme);
+      expect(productionPalette(portal!)).toEqual(cardTheme);
+
+      card!.focus();
+      expect(card).toHaveFocus();
+      const darkCardStyle = getComputedStyle(card!);
+      const darkFocusRing = darkCardStyle.getPropertyValue("--focus-ring-strong");
+      const darkAccent = darkCardStyle.getPropertyValue("--alpha-neutral-accent");
+      expect(darkFocusRing).toMatch(/^\s*0 0 0 0\.125rem color-mix\(/);
+
+      document.documentElement.dataset.colorTheme = "shadcn-purple";
+      expect(productionPalette(card!)).toEqual(cardTheme);
+      expect(productionPalette(statusBadge!)).toEqual(cardTheme);
+      expect(productionPalette(portal!)).toEqual(cardTheme);
+      expect(getComputedStyle(card!).getPropertyValue("--focus-ring-strong")).toBe(darkFocusRing);
+
+      document.documentElement.dataset.theme = "light";
+      const lightCardStyle = getComputedStyle(card!);
+      expect(lightCardStyle.getPropertyValue("--focus-ring-strong")).toBe(darkFocusRing);
+      expect(lightCardStyle.getPropertyValue("--alpha-neutral-accent")).not.toBe(darkAccent);
+    } finally {
+      document.documentElement.removeAttribute("data-theme");
+      document.documentElement.removeAttribute("data-color-theme");
+    }
+  });
+
+  it("keeps compact density scoped to Alpha without replacing Board interaction geometry", () => {
+    const boardCss = readAppFile("components/Board.css");
+    const columnCss = readAppFile("components/Column.css");
+    const cardCss = readAppFile("components/TaskCard.css");
+    expect(boardCss).toContain('[data-heroui-alpha-surface="true"] .board');
+    expect(boardCss).toContain("--board-padding: var(--alpha-density-3)");
+    expect(columnCss).toContain('[data-heroui-alpha-surface="true"] .column-header');
+    expect(cardCss).toContain('[data-heroui-alpha-surface="true"] .card');
+    expect(boardCss).not.toContain('[data-heroui-alpha-surface="true"] .board *');
+    expect(columnCss).not.toContain("overflow-x: visible");
   });
 
   it("uses HeroUI controls only in Alpha while preserving empty and populated live boards", () => {

@@ -91,7 +91,34 @@ The closed grabbing hand must remain visible across every Board descendant even 
   }
 }
 
+/*
+FNXC:HeroUIAlphaDensity 2026-09-11-00:30:
+Alpha Board uses the boundary density scale for restrained column spacing and quiet chrome. Scope every override to the Alpha surface so List and the stable Board retain their established geometry, while horizontal scrolling, snapping, and drag ownership remain unchanged.
+*/
+[data-heroui-alpha-surface="true"] .board {
+  --board-padding: var(--alpha-density-3);
+  --column-gap: var(--alpha-density-3);
+}
+
+[data-heroui-alpha-surface="true"] .board-workflow-toolbar {
+  gap: var(--alpha-density-2);
+  padding: var(--alpha-density-2) var(--alpha-density-3);
+  background: var(--alpha-neutral-background);
+}
+
+[data-heroui-alpha-surface="true"] .board-workflows-skeleton__column {
+  gap: var(--alpha-density-2);
+  padding: var(--alpha-density-3);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
 @media (max-width: 768px) {
+  [data-heroui-alpha-surface="true"] .board {
+    --board-padding: var(--alpha-density-2);
+    --column-gap: var(--alpha-density-2);
+  }
+
   .board.board-workflows-skeleton {
     gap: var(--space-sm);
     padding: var(--space-sm);

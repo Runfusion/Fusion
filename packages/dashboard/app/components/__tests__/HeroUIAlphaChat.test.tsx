@@ -1,3 +1,4 @@
+import "../../hero-ui-alpha.css";
 import { useState } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -8,6 +9,7 @@ import { StandardChatActionButton } from "../StandardChatSurface";
 import { ChatView } from "../ChatView";
 import { PoppedOutChatWindows, QuickChatWindow } from "../PoppedOutChatWindows";
 import { STATIC_OVERFLOW_VIEW_ENTRIES } from "../overflowViewRegistry";
+import { readAppFile } from "../../test/cssFixture";
 import {
   activeSessionFixture,
   defaultChatState,
@@ -39,19 +41,92 @@ vi.mock("../../api", async (importOriginal) => ({
 
 installChatViewEnv();
 
-function ChatFixture({ alpha }: { alpha: boolean }) {
+function ChatFixture({ alpha, streaming = false }: { alpha: boolean; streaming?: boolean }) {
   const [draft, setDraft] = useState("bonjour");
   return (
     <HeroUIAlphaProvider enabled={alpha}>
       <HeroUIAlphaSurface>
         <AlphaTextArea aria-label="Composer" value={draft} onChange={(event) => setDraft(event.target.value)} />
-        <StandardChatActionButton isStreaming={false} canSend={draft.trim().length > 0} onSend={vi.fn()} showSendText />
+        <StandardChatActionButton isStreaming={streaming} canSend={draft.trim().length > 0} onSend={vi.fn()} onStop={vi.fn()} showSendText />
       </HeroUIAlphaSurface>
     </HeroUIAlphaProvider>
   );
 }
 
 describe("HeroUI Alpha Chat", () => {
+  it("scopes compact chat and composer density to Alpha at desktop and mobile", () => {
+    const chatCss = readAppFile("components/ChatView.css");
+    const composeCss = readAppFile("components/ComposeChatPanel.css");
+    expect(chatCss).toContain('[data-heroui-alpha-surface="true"] .chat-session-item');
+    expect(chatCss).toContain('[data-heroui-alpha-surface="true"] .chat-thread-header');
+    expect(chatCss).toContain("min-block-size: var(--alpha-control-height)");
+    expect(chatCss).toContain("min-block-size: var(--alpha-touch-height)");
+    expect(composeCss).toContain('[data-heroui-alpha-surface="true"] .compose-chat-panel__actions > .btn');
+    expect(composeCss).toContain("flex: 0 1 auto");
+  });
+
+  it("keeps a production Chat focus shadow valid, theme-neutral, and light/dark responsive", () => {
+    document.documentElement.dataset.theme = "light";
+    document.documentElement.dataset.colorTheme = "cozy-cartoon";
+    render(<ChatFixture alpha streaming />);
+
+    const stopButton = screen.getByRole("button", { name: "Stop generation" });
+    stopButton.focus();
+    expect(stopButton).toHaveFocus();
+    const lightStyle = getComputedStyle(stopButton);
+    const lightRing = lightStyle.getPropertyValue("--focus-ring-strong");
+    const lightAccent = lightStyle.getPropertyValue("--alpha-neutral-accent");
+    expect(lightRing).toMatch(/^\s*0 0 0 0\.125rem color-mix\(/);
+
+    document.documentElement.dataset.colorTheme = "shadcn-purple";
+    expect(getComputedStyle(stopButton).getPropertyValue("--focus-ring-strong")).toBe(lightRing);
+
+    document.documentElement.dataset.theme = "dark";
+    const darkStyle = getComputedStyle(stopButton);
+    expect(darkStyle.getPropertyValue("--focus-ring-strong")).toBe(lightRing);
+    expect(darkStyle.getPropertyValue("--alpha-neutral-accent")).not.toBe(lightAccent);
+  });
+
+  it("keeps production Chat semantic styles independent from Fusion color themes", async () => {
+    document.documentElement.dataset.theme = "light";
+    document.documentElement.dataset.colorTheme = "cozy-cartoon";
+    setupMockChat({
+      ...defaultChatState,
+      sessions: [activeSessionFixture],
+      filteredSessions: [activeSessionFixture],
+      activeSession: activeSessionFixture,
+    });
+    setupMockRooms();
+
+    try {
+      const view = await renderWithAct(<ChatView projectId="project-theme" addToast={vi.fn()} experimentalFeatures={{ alphaUpdates: true }} />);
+      const chat = view.container.querySelector<HTMLElement>(".chat-view");
+      const productionButton = view.container.querySelector<HTMLElement>('[data-heroui-alpha="button"]');
+      expect(chat).not.toBeNull();
+      expect(productionButton).not.toBeNull();
+      const semanticPalette = (element: Element) => {
+        const style = getComputedStyle(element);
+        return [
+          style.getPropertyValue("--color-info"),
+          style.getPropertyValue("--color-warning"),
+          style.getPropertyValue("--color-error"),
+          style.getPropertyValue("--color-success"),
+          style.getPropertyValue("--todo"),
+        ];
+      };
+      const initial = semanticPalette(chat!);
+      expect(initial).toEqual(Array.from({ length: 5 }, () => expect.stringMatching(/\S/)));
+      expect(semanticPalette(productionButton!)).toEqual(initial);
+
+      document.documentElement.dataset.colorTheme = "shadcn-purple";
+      expect(semanticPalette(chat!)).toEqual(initial);
+      expect(semanticPalette(productionButton!)).toEqual(initial);
+    } finally {
+      document.documentElement.removeAttribute("data-theme");
+      document.documentElement.removeAttribute("data-color-theme");
+    }
+  });
+
   it.each([
     ["desktop", "desktop", false, false],
     ["mobile", "mobile", false, false],

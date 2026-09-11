@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/* global console, process */
+/* global console, process, setTimeout */
 /*
 FNXC:Terminal 2026-09-04-02:00:
 Foreign standalone targets are absent from the script-free workspace install.
