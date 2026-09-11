@@ -38,8 +38,11 @@ describe("TaskDetailModal Alpha mobile drawer", () => {
     );
 
     const dialog = screen.getByRole("dialog", { name: "Task detail" });
-    expect(dialog).toHaveClass("alpha-mobile-drawer__panel");
+    expect(dialog).toHaveClass("alpha-mobile-drawer__panel", "alpha-mobile-drawer__panel--content-header", "alpha-mobile-drawer__panel--content-scroll");
     expect(dialog.querySelector(".task-detail-modal--alpha-drawer .task-detail-content")).toBeInTheDocument();
+    expect(dialog.querySelectorAll(":scope > .alpha-mobile-drawer__header")).toHaveLength(0);
+    expect(dialog.querySelectorAll(".task-detail-content > .modal-header")).toHaveLength(1);
+    expect(dialog.querySelectorAll(":scope > .alpha-mobile-drawer__close")).toHaveLength(1);
     expect(document.querySelector(".floating-window--task-detail")).toBeNull();
 
     fireEvent.keyDown(document, { key: "Escape" });

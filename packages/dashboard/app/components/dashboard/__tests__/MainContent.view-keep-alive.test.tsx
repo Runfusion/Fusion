@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { lazy, useState } from "react";
 import type { Task } from "@fusion/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -12,6 +12,7 @@ import {
 } from "../../__tests__/ChatView.test-harness";
 import { MainContent } from "../MainContent";
 import type { MainContentProps } from "../types";
+import { __test_clearPluginViewRegistry, registerPluginView } from "../../../plugins/pluginViewRegistry";
 
 const { markRead } = vi.hoisted(() => ({ markRead: vi.fn() }));
 
@@ -49,7 +50,10 @@ vi.mock("../../../hooks/useNavigationHistory", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../../hooks/useNavigationHistory")>()),
   useNavigationHistoryContext: () => ({ pushNav: vi.fn(), replaceCurrent: vi.fn() }),
 }));
-vi.mock("../../ErrorBoundary", () => ({ PageErrorBoundary: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
+vi.mock("../../ErrorBoundary", () => ({
+  PageErrorBoundary: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  ErrorBoundary: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}));
 vi.mock("../../CapacityRiskBanner", () => ({ CapacityRiskBanner: () => null }));
 vi.mock("../../BackendConnectionErrorPage", () => ({ BackendConnectionErrorPage: () => <output data-testid="connection-error" /> }));
 vi.mock("../../ProjectOverview", () => ({ ProjectOverview: () => <output data-testid="project-overview" /> }));
@@ -257,6 +261,7 @@ describe("MainContent main-view keep alive", () => {
   });
 
   afterEach(() => {
+    __test_clearPluginViewRegistry();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
     document.getElementById("header-workflow-slot")?.remove();
@@ -353,6 +358,44 @@ describe("MainContent main-view keep alive", () => {
     expect(document.querySelectorAll("[role='dialog']")).toHaveLength(1);
   });
 
+  it("laisse le shell défiler pour une vue ordinaire qui possède seulement son en-tête", async () => {
+    render(<MainContent {...mainContentProps({
+      taskView: "ideation",
+      isMobile: true,
+      settingsLoaded: true,
+      ideationEnabled: true,
+      experimentalFeatures: { alphaUpdates: true },
+    })} />);
+
+    const dialog = await screen.findByRole("dialog", { name: "Ideation" });
+    expect(dialog).toHaveClass("alpha-mobile-drawer__panel--content-header");
+    expect(dialog).not.toHaveClass("alpha-mobile-drawer__panel--content-scroll");
+    expect(dialog.querySelector(".alpha-mobile-drawer__body")).not.toBeNull();
+  });
+
+  it("donne l’en-tête de secours unique à un plugin réel sans chrome propre", async () => {
+    const PluginWithoutHeader = lazy(async () => ({
+      default: () => <section data-testid="headerless-plugin"><p>Plugin content</p><button type="button">Plugin final control</button></section>,
+    }));
+    registerPluginView("fixture", "headerless", PluginWithoutHeader);
+
+    render(<MainContent {...mainContentProps({
+      taskView: "plugin:fixture:headerless" as MainContentProps["taskView"],
+      isMobile: true,
+      experimentalFeatures: { alphaUpdates: true },
+      pluginDashboardViews: [{
+        pluginId: "fixture",
+        view: { viewId: "headerless", label: "Plugin Tool", componentPath: "fixture" },
+      }],
+    })} />);
+
+    const dialog = await screen.findByRole("dialog", { name: "Plugin Tool" });
+    expect(dialog.querySelectorAll(":scope > .alpha-mobile-drawer__header")).toHaveLength(1);
+    expect(dialog.querySelectorAll("h1,h2,h3")).toHaveLength(1);
+    expect(dialog.querySelectorAll(":scope > .alpha-mobile-drawer__close")).toHaveLength(1);
+    expect(await screen.findByTestId("headerless-plugin")).toContainElement(screen.getByRole("button", { name: "Plugin final control" }));
+  });
+
   it("keeps retained Chat in one drawer while Board stays active behind it", async () => {
     configureProductionChat("alpha-chat-message");
     render(<MainContent {...mainContentProps({
@@ -363,10 +406,21 @@ describe("MainContent main-view keep alive", () => {
 
     await waitFor(() => expect(document.querySelectorAll("#board")).toHaveLength(1));
     expect(screen.getByTestId("board-keep-alive")).not.toHaveAttribute("aria-hidden");
-    expect(screen.getByRole("dialog", { name: "Chat" })).toContainElement(chatRoot());
+    const dialog = screen.getByRole("dialog", { name: "Chat" });
+    expect(dialog).toContainElement(chatRoot());
+    expect(dialog).toHaveClass("alpha-mobile-drawer__panel--content-scroll");
+    expect(dialog.querySelector(".alpha-mobile-drawer__header")).toBeNull();
+    expect(Array.from(dialog.querySelectorAll("h1, h2, h3")).filter((heading) => heading.textContent === "Chat" && !heading.classList.contains("visually-hidden"))).toHaveLength(1);
     expect(screen.getByTestId("chat-keep-alive")).not.toHaveAttribute("aria-hidden");
     expect(chatRoot().closest('[data-heroui-alpha-surface="true"]')).not.toBeNull();
-    expect(chatRoot().querySelector('[data-heroui-alpha="input"]')).not.toBeNull();
+    const input = await openProductionChatComposer();
+    input.focus();
+    expect(input).toHaveFocus();
+    expect(input.closest(".alpha-mobile-drawer__panel")).toBe(dialog);
+    expect(screen.getByTestId("chat-new-btn")).toBeVisible();
+    expect(screen.getByTestId("chat-pop-out")).toBeVisible();
+    expect(input).toBeVisible();
+    expect(input).not.toBeDisabled();
   });
 
   it("uses exactly one retained production Board for the empty task-detail fallback", async () => {

@@ -12,6 +12,44 @@ export interface AlphaMobileDrawerProps {
   className?: string;
   keepMounted?: boolean;
   testId?: string;
+  /**
+   * When true, the hosted view owns the visible heading row and the drawer only
+   * contributes an accessible dialog name plus its close control.
+   */
+  contentOwnsHeader?: boolean;
+  /**
+   * When true, the hosted view provides its own bounded central scroller. Keep
+   * false for ordinary or headerless content so the drawer body remains scrollable.
+   */
+  contentOwnsScroll?: boolean;
+}
+
+interface AlphaAppDrawerBridgeProps {
+  open: boolean;
+  title: string;
+  closeLabel: string;
+  onClose: () => void;
+  children: ReactNode;
+}
+
+/*
+FNXC:AlphaMobileDrawer 2026-09-10-23:59:
+Projects and Planning expose their production drawer bridges so browser geometry checks execute the exact ownership flags and mount policy used by App. Keep these bridges as the sole definitions of App-owned Alpha drawer chrome; fixture-only shell copies can drift while remaining green.
+*/
+export function AlphaProjectsDrawer({ open, title, closeLabel, onClose, children }: AlphaAppDrawerBridgeProps) {
+  return (
+    <AlphaMobileDrawer open={open} title={title} closeLabel={closeLabel} onClose={onClose} testId="alpha-mobile-drawer-projects" contentOwnsHeader contentOwnsScroll>
+      {children}
+    </AlphaMobileDrawer>
+  );
+}
+
+export function AlphaPlanningDrawer({ open, title, closeLabel, onClose, children }: AlphaAppDrawerBridgeProps) {
+  return (
+    <AlphaMobileDrawer open={open} title={title} closeLabel={closeLabel} onClose={onClose} keepMounted testId="alpha-mobile-drawer-planning" contentOwnsHeader contentOwnsScroll>
+      {children}
+    </AlphaMobileDrawer>
+  );
 }
 
 const FOCUSABLE_SELECTOR = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -19,6 +57,12 @@ const FOCUSABLE_SELECTOR = 'button:not([disabled]), [href], input:not([disabled]
 /*
 FNXC:AlphaMobileDrawer 2026-09-10-16:56:
 Alpha mobile keeps Board as the permanent project surface and presents every other destination in one bounded modal drawer. The shared shell owns the visible Board reveal, bottom-edge overlay above the trigger pill, internal system-safe clearance, independent scrolling, Escape/backdrop close, focus containment, and trigger-focus restoration so individual destinations do not invent competing mobile sheets.
+
+FNXC:AlphaMobileDrawer 2026-09-10-22:24:
+A hosted view with its own header remains the sole visible title/action row. The shell retains a screen-reader dialog name and an independently accessible close control without reserving a second header row; headerless plugin or fallback content still receives the visible shell title.
+
+FNXC:AlphaMobileDrawer 2026-09-10-22:45:
+Visible-header ownership and overflow ownership are independent contracts. Only views with a bounded internal flex scroller may suppress body scrolling; ordinary views such as Ideation keep the drawer body as their reachable vertical scroller even when they render their own heading.
 */
 export function AlphaMobileDrawer({
   open,
@@ -29,6 +73,8 @@ export function AlphaMobileDrawer({
   className,
   keepMounted = false,
   testId = "alpha-mobile-drawer",
+  contentOwnsHeader = false,
+  contentOwnsScroll = false,
 }: AlphaMobileDrawerProps) {
   const panelRef = useRef<HTMLElement | null>(null);
   const onCloseRef = useRef(onClose);
@@ -84,19 +130,23 @@ export function AlphaMobileDrawer({
     >
       <section
         ref={panelRef}
-        className="alpha-mobile-drawer__panel"
+        className={`alpha-mobile-drawer__panel${contentOwnsHeader ? " alpha-mobile-drawer__panel--content-header" : ""}${contentOwnsScroll ? " alpha-mobile-drawer__panel--content-scroll" : ""}`}
         role="dialog"
         aria-modal="true"
         aria-labelledby={`${testId}-title`}
         tabIndex={-1}
       >
         <div className="alpha-mobile-drawer__handle" aria-hidden="true" />
-        <header className="alpha-mobile-drawer__header">
-          <h2 id={`${testId}-title`} className="alpha-mobile-drawer__title">{title}</h2>
-          <button type="button" className="alpha-mobile-drawer__close" onClick={onClose} aria-label={closeLabel}>
-            <X aria-hidden="true" />
-          </button>
-        </header>
+        {contentOwnsHeader ? (
+          <h2 id={`${testId}-title`} className="alpha-mobile-drawer__accessible-title visually-hidden">{title}</h2>
+        ) : (
+          <header className="alpha-mobile-drawer__header">
+            <h2 id={`${testId}-title`} className="alpha-mobile-drawer__title">{title}</h2>
+          </header>
+        )}
+        <button type="button" className="alpha-mobile-drawer__close" onClick={onClose} aria-label={closeLabel}>
+          <X aria-hidden="true" />
+        </button>
         <div className="alpha-mobile-drawer__body">{children}</div>
       </section>
     </div>,

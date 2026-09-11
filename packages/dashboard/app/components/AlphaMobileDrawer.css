@@ -1,6 +1,12 @@
 /*
 FNXC:AlphaMobileDrawer 2026-09-10-16:56:
 The Alpha mobile drawer reaches the viewport bottom in a layer above the trigger pill. Canonical safe-area, standalone, and ICB clearance stays inside the panel, while the token-based top reveal and dynamic viewport cap keep short landscape and keyboard-resized viewports locally scrollable.
+
+FNXC:AlphaMobileDrawer 2026-09-10-22:24:
+Every Alpha mobile drawer uses the same dynamic-viewport block size regardless of child length. The shell and its direct utility adaptations share this token so short content cannot collapse the panel and central flex regions absorb overflow without pushing persistent input controls below the visible edge.
+
+FNXC:AlphaMobileDrawer 2026-09-10-22:45:
+Body overflow is disabled only when a provider declares a complete internal scroll chain. Header ownership alone cannot imply that capability because long ordinary views must remain reachable through the shell scroller.
 */
 .alpha-mobile-drawer {
   position: fixed;
@@ -20,12 +26,14 @@ The Alpha mobile drawer reaches the viewport bottom in a layer above the trigger
 }
 
 .alpha-mobile-drawer__panel {
+  position: relative;
   display: flex;
   flex-direction: column;
   width: 100%;
   max-width: 100%;
-  max-height: calc(100dvh - env(safe-area-inset-top, 0px) - var(--space-2xl));
+  height: var(--alpha-mobile-drawer-block-size);
   min-height: 0;
+  max-height: var(--alpha-mobile-drawer-block-size);
   overflow: hidden;
   color: var(--text);
   background: var(--surface);
@@ -65,6 +73,10 @@ The Alpha mobile drawer reaches the viewport bottom in a layer above the trigger
 }
 
 .alpha-mobile-drawer__close {
+  position: absolute;
+  z-index: 1;
+  inset-block-start: calc((var(--space-sm) * 2) + var(--space-xs));
+  inset-inline-end: var(--space-md);
   display: inline-flex;
   flex: 0 0 var(--touch-target-min-size);
   align-items: center;
@@ -96,8 +108,17 @@ The Alpha mobile drawer reaches the viewport bottom in a layer above the trigger
   overscroll-behavior: contain;
 }
 
+.alpha-mobile-drawer__panel--content-scroll .alpha-mobile-drawer__body {
+  overflow: hidden;
+}
+
 .alpha-mobile-drawer__body > * {
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
+}
+
+/* Keep the shell close target beside, never over, a caller-owned action row. */
+.alpha-mobile-drawer__panel--content-header .alpha-mobile-drawer__body :is(.view-header, .modal-header, .cc-header):first-child {
+  padding-inline-end: calc(var(--touch-target-min-size) + (var(--space-md) * 2));
 }

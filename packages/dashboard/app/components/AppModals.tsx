@@ -30,6 +30,39 @@ const SetupWizardModal = lazy(() => import("./SetupWizardModal").then((m) => ({ 
 const SettingsModal = lazy(() => import("./SettingsModal").then((m) => ({ default: m.SettingsModal })));
 const WorkflowNodeEditor = lazy(() => import("./WorkflowNodeEditor").then((m) => ({ default: m.WorkflowNodeEditor })));
 
+interface AlphaUsageDrawerProps {
+  open: boolean;
+  title: string;
+  closeLabel: string;
+  onClose: () => void;
+  projectId?: string;
+}
+
+/*
+FNXC:AlphaMobileDrawer 2026-09-10-23:59:
+Usage browser checks must mount AppModals' production bridge rather than duplicate its shell flags. This exported bridge remains the single Alpha usage composition while the ordinary popover path stays owned by AppModals.
+*/
+export function AlphaUsageDrawer({ open, title, closeLabel, onClose, projectId }: AlphaUsageDrawerProps) {
+  return (
+    <AlphaMobileDrawer
+      open={open}
+      title={title}
+      closeLabel={closeLabel}
+      onClose={onClose}
+      testId="alpha-mobile-drawer-usage"
+      contentOwnsHeader
+      contentOwnsScroll
+    >
+      <UsageIndicator
+        isOpen={open}
+        onClose={onClose}
+        projectId={projectId}
+        presentation="embedded"
+      />
+    </AlphaMobileDrawer>
+  );
+}
+
 function prefetchSettingsModal() {
   const idle: (cb: () => void, opts?: { timeout?: number }) => number =
     (typeof window !== "undefined" &&
@@ -459,20 +492,13 @@ export function AppModals({
       Usage opened from Alpha mobile reuses its embedded content inside the shared bottom-edge drawer above the trigger pill. The modal manager remains the single open/close owner, while standard mobile and desktop preserve the existing overlay or anchored popover.
       */}
       {alphaMobileDrawer ? (
-        <AlphaMobileDrawer
+        <AlphaUsageDrawer
           open={modalManager.usageOpen}
           title={t("nav.usage", "Usage")}
           closeLabel={t("common.close", "Close")}
           onClose={closeUsageWithNav}
-          testId="alpha-mobile-drawer-usage"
-        >
-          <UsageIndicator
-            isOpen={modalManager.usageOpen}
-            onClose={closeUsageWithNav}
-            projectId={projectId}
-            presentation="embedded"
-          />
-        </AlphaMobileDrawer>
+          projectId={projectId}
+        />
       ) : (
         <UsageIndicator
           isOpen={modalManager.usageOpen}

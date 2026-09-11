@@ -12,7 +12,7 @@ import { Header, useViewportMode } from "./components/Header";
 import { HeroUIAlphaProvider } from "./context/HeroUIAlphaContext";
 import { TaskDetailContent } from "./components/TaskDetailModal";
 import { FloatingWindow } from "./components/FloatingWindow";
-import { AlphaMobileDrawer } from "./components/AlphaMobileDrawer";
+import { AlphaPlanningDrawer, AlphaProjectsDrawer } from "./components/AlphaMobileDrawer";
 import { PoppedOutChatWindows, QuickChatWindow } from "./components/PoppedOutChatWindows";
 import { AppModals } from "./components/AppModals";
 import { DashboardLoader, type DashboardLoaderStage } from "./components/DashboardLoader";
@@ -2216,12 +2216,11 @@ function AppInner() {
         >
           <MainContent {...mainContentProps} />
           {alphaMobileDrawerActive && currentProject && (
-            <AlphaMobileDrawer
+            <AlphaProjectsDrawer
               open={alphaProjectsDrawerOpen}
               title={t("nav.projects", "Projects")}
               closeLabel={t("common.close", "Close")}
               onClose={() => setAlphaProjectsDrawerOpen(false)}
-              testId="alpha-mobile-drawer-projects"
             >
               <ProjectOverview
                 projects={projects}
@@ -2236,7 +2235,7 @@ function AppInner() {
                 onRemoveProject={handleRemoveProject}
                 nodes={nodes}
               />
-            </AlphaMobileDrawer>
+            </AlphaProjectsDrawer>
           )}
           {/*
           FNXC:PlanningKeepAlive 2026-07-22-12:30:
@@ -2244,7 +2243,7 @@ function AppInner() {
           */}
           {viewMode === "project" && currentProject && planningEverOpenedProjectId === currentProject.id && (
             alphaUpdatesEnabled && isMobile ? (
-              <AlphaMobileDrawer
+              <AlphaPlanningDrawer
                 open={planningViewActive && !modalManager.detailTask}
                 title={t("nav.planning", "Planning")}
                 closeLabel={t("common.close", "Close")}
@@ -2252,8 +2251,6 @@ function AppInner() {
                   modalManager.closePlanning();
                   handleTaskViewChange("board");
                 }}
-                keepMounted
-                testId="alpha-mobile-drawer-planning"
               >
                 <PlanningKeepAlive
                   key={`${currentProject.id}:${modalManager.planningEntryGeneration}`}
@@ -2268,7 +2265,7 @@ function AppInner() {
                   openBoardTaskDetail={openBoardTaskDetail}
                   openWorkflowEditorWithNav={openWorkflowEditorWithNav}
                 />
-              </AlphaMobileDrawer>
+              </AlphaPlanningDrawer>
             ) : (
               <PlanningKeepAlive
                 key={`${currentProject.id}:${modalManager.planningEntryGeneration}`}

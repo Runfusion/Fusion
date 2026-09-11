@@ -657,6 +657,9 @@ Edge + corner resize handles. touch-action:none keeps the drag from being hijack
 /*
 FNXC:AlphaMobileDrawer 2026-09-10-16:56:
 Project-scoped Alpha utilities reuse FloatingWindow's existing content, focus, and portal ownership but place their bounded phone drawer at the viewport bottom above the trigger pill. System clearance is padding inside the scrollable surface; onboarding classes remain excluded so setup and blocking pre-shell flows retain their dedicated presentation.
+
+FNXC:AlphaMobileDrawer 2026-09-10-22:24:
+Alpha FloatingWindows consume the shared canonical drawer block-size instead of persisted or content-driven height. Their existing header remains the sole title/close row and their body remains the bounded flex scroll owner.
 */
 html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] .floating-window-overlay--alpha-mobile-drawer {
   display: flex;
@@ -675,11 +678,11 @@ html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] .floating-wi
   display: flex;
   flex-direction: column;
   width: 100% !important;
-  height: auto !important;
+  height: var(--alpha-mobile-drawer-block-size) !important;
   min-width: 0 !important;
   min-height: 0 !important;
   max-width: 100% !important;
-  max-height: calc(100dvh - env(safe-area-inset-top, 0px) - var(--space-2xl)) !important;
+  max-height: var(--alpha-mobile-drawer-block-size) !important;
   overflow: hidden !important;
   border: var(--btn-border-width) solid var(--border);
   border-block-end: 0;

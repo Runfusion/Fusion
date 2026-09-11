@@ -2,7 +2,7 @@
 FNXC:MainContent 2026-06-24-00:00:
 MainContent is the dashboard main-content router extracted from AppInner's render path. Its hook-free switch still owns every ordinary destination, while Board, List, and Chat yield to MainViewKeepAlive so visited project views preserve local state without remaining active behind another route. The lazy view chunks (and their leading-underscore inventory convention) stay declared in App.tsx per the docs guard and are threaded in as props; the eager ChatView.css import remains in App.tsx so the styles bundle into the main CSS file.
 */
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState, type ReactNode } from "react";
 import type { NativeStructurePreviewResult, NativeStructureRef, Task, TaskDetail } from "@fusion/core";
 import { TaskCard } from "../TaskCard";
 import { ListView } from "../ListView";
@@ -68,6 +68,36 @@ export function resolveAlphaMobileDrawerTitle(taskView: TaskView, pluginDashboar
     return pluginDashboardViews.find((entry) => buildPluginTaskViewId(entry.pluginId, entry.view.viewId) === taskView)?.view.label ?? "Plugin";
   }
   return ALPHA_DRAWER_TITLES[taskView] ?? "Workspace";
+}
+
+interface AlphaMainContentDrawerProps {
+  taskView: TaskView;
+  open: boolean;
+  title: string;
+  closeLabel: string;
+  onClose: () => void;
+  children: ReactNode;
+}
+
+/*
+FNXC:AlphaMobileDrawer 2026-09-10-23:59:
+Ordinary and plugin destinations share this production bridge so header ownership is derived from the routed task view in one place. Browser smoke mounts this same bridge, preventing fixture copies from silently disagreeing with MainContent.
+*/
+export function AlphaMainContentDrawer({ taskView, open, title, closeLabel, onClose, children }: AlphaMainContentDrawerProps) {
+  return (
+    <AlphaMobileDrawer
+      open={open}
+      title={title}
+      closeLabel={closeLabel}
+      onClose={onClose}
+      keepMounted
+      testId="alpha-mobile-drawer-main-content"
+      contentOwnsHeader={!isPluginViewId(taskView)}
+      contentOwnsScroll={false}
+    >
+      {children}
+    </AlphaMobileDrawer>
+  );
 }
 
 export function MainContent(props: MainContentProps) {
@@ -1094,16 +1124,15 @@ export function MainContent(props: MainContentProps) {
     <>
       {mainViewKeepAlive}
       {switchUsesAlphaDrawer ? (
-        <AlphaMobileDrawer
+        <AlphaMainContentDrawer
+          taskView={taskView}
           open={!modalManager.detailTask}
           title={alphaDrawerTitle}
           closeLabel={t("common.close", "Close")}
           onClose={closeAlphaMobileDrawer}
-          keepMounted
-          testId="alpha-mobile-drawer-main-content"
         >
           {switchView}
-        </AlphaMobileDrawer>
+        </AlphaMainContentDrawer>
       ) : switchView}
     </>
   );

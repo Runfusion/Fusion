@@ -4,6 +4,7 @@ import { SUPPORTED_LOCALES } from "@fusion/core";
 import { describe, expect, it, vi } from "vitest";
 import {
   buildQuickAddSaveFixtures,
+  createAlphaDrawerProductionFixtureSource,
   createSmokeHtml,
   prepareBrowserSmoke,
   QUICK_ADD_SAVE_FIXTURE_COUNT,
@@ -96,8 +97,41 @@ describe("browser layout smoke fixture", () => {
     }
   });
 
-  it("includes standalone and embedded Git Manager shell fixtures", () => {
+  it("monte les composants de production pour la matrice de drawers Alpha", () => {
     const html = createSmokeHtml();
+    const productionSource = createAlphaDrawerProductionFixtureSource();
+
+    for (const hook of [
+      "alpha-drawer-fixtures",
+      "alpha-drawer-production-root",
+      "alpha-drawer-floating",
+      "alpha-drawer-terminal",
+    ]) {
+      expect(html).toContain(`data-smoke="${hook}"`);
+    }
+    for (const productionComponent of [
+      "AlphaProjectsDrawer",
+      "AlphaPlanningDrawer",
+      "AlphaUsageDrawer",
+      "AlphaMainContentDrawer",
+      "MainViewKeepAlive",
+      "TaskDetailModal",
+    ]) {
+      expect(productionSource).toContain(productionComponent);
+      expect(productionSource).toContain(`React.createElement(${productionComponent}`);
+    }
+    expect(productionSource).toContain('id: "smoke-chat-session"');
+    expect(productionSource).not.toContain("function Shell(");
+    expect(productionSource).not.toContain("contentOwnsHeader:");
+    expect(productionSource).not.toContain("contentOwnsScroll:");
+    expect(productionSource).not.toContain('className: "chat-view"');
+    expect(productionSource).not.toContain('className: "planning-view open"');
+    expect(html).toContain("alpha-drawer-production-fixture.js");
+    expect(html).toContain("floating-window--alpha-mobile-drawer");
+    expect(html).toContain("terminal-modal-overlay");
+  });
+
+  it("includes standalone and embedded Git Manager shell fixtures", () => {    const html = createSmokeHtml();
     for (const hook of [
       "git-manager-standalone",
       "git-manager-standalone-body",

@@ -1452,9 +1452,14 @@ User messages in direct (model-loop) chat carry a compact edit affordance inline
   font-size: var(--font-size-sm);
 }
 
-/* Input area */
+/*
+FNXC:AlphaMobileDrawer 2026-09-10-22:24:
+Chat's transcript is the shrinking scroll owner inside the canonical Alpha drawer height. The composer remains a non-shrinking flex child so short landscape and keyboard-resized layouts cannot push the real input below the panel's internal system clearance.
+*/
 .chat-input-area {
   position: relative;
+  flex: 0 0 auto;
+  min-width: 0;
   padding: var(--space-md) var(--space-lg);
   border-top: 1px solid var(--border);
   display: flex;

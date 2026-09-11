@@ -348,6 +348,8 @@ export function MainViewKeepAlive({ activeId, mountedIds, projectKey, mainConten
             onClose={alphaMobileDrawer.onClose}
             keepMounted
             testId={`alpha-mobile-drawer-${id}`}
+            contentOwnsHeader
+            contentOwnsScroll
           >
             {subtree}
           </AlphaMobileDrawer>

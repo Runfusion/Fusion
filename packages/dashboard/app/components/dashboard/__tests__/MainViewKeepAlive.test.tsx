@@ -174,7 +174,7 @@ describe("MainViewKeepAlive", () => {
       .filter((file) => readAppFile(file).includes("<ChatView"))
       .sort();
     expect(chatHosts).toEqual([
-      "App.tsx",
+      "components/ChatView.tsx",
       "components/PoppedOutChatWindows.tsx",
       "components/dashboard/MainViewKeepAlive.tsx",
       "components/overflowViewRegistry.tsx",
@@ -194,6 +194,6 @@ describe("MainViewKeepAlive", () => {
     ]);
 
     const quickChatHost = readAppFile("App.tsx");
-    expect(quickChatHost).toContain("active={quickChatOpen}");
+    expect(quickChatHost).toContain("hidden={!quickChatOpen}");
   });
 });

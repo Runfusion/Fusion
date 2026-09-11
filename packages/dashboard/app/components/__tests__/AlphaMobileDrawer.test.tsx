@@ -58,6 +58,34 @@ describe("AlphaMobileDrawer", () => {
     expect(close).toHaveFocus();
   });
 
+  it("laisse le contenu propriétaire du seul en-tête visible sans perdre le nom ou la fermeture", () => {
+    render(
+      <AlphaMobileDrawer open title="Chat" closeLabel="Close chat" onClose={vi.fn()} contentOwnsHeader>
+        <header className="view-header"><h1>Chat</h1><button type="button">New Chat</button></header>
+      </AlphaMobileDrawer>,
+    );
+
+    const dialog = screen.getByRole("dialog", { name: "Chat" });
+    expect(dialog.querySelector(".alpha-mobile-drawer__header")).not.toBeInTheDocument();
+    expect(screen.getAllByText("Chat").filter((element) => !element.classList.contains("visually-hidden"))).toHaveLength(1);
+    expect(screen.getByRole("heading", { name: "Chat", level: 1 })).toBeVisible();
+    expect(screen.getByRole("button", { name: "New Chat" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Close chat" })).toBeVisible();
+    expect(dialog).not.toHaveClass("alpha-mobile-drawer__panel--content-scroll");
+  });
+
+  it("désactive le scroll du shell uniquement pour une chaîne interne explicitement bornée", () => {
+    render(
+      <AlphaMobileDrawer open title="Chat" closeLabel="Close chat" onClose={vi.fn()} contentOwnsHeader contentOwnsScroll>
+        <div className="chat-view"><div className="chat-messages">Messages</div></div>
+      </AlphaMobileDrawer>,
+    );
+
+    const dialog = screen.getByRole("dialog", { name: "Chat" });
+    expect(dialog).toHaveClass("alpha-mobile-drawer__panel--content-header", "alpha-mobile-drawer__panel--content-scroll");
+    expect(dialog.querySelector(".alpha-mobile-drawer__body")).toContainElement(screen.getByText("Messages"));
+  });
+
   it("utilise un contrat géométrique unique avec un enfant minimal", () => {
     render(
       <AlphaMobileDrawer open title="Drawer" closeLabel="Close" onClose={vi.fn()}>

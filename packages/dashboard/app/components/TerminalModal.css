@@ -2095,6 +2095,9 @@ rect (inline left/bottom) and stacked with nextFloatingZ so it clears pinned/pop
 /*
 FNXC:AlphaMobileDrawer 2026-09-10-16:56:
 The mobile terminal keeps its PTY and keyboard-overlap lifecycle while its bounded Alpha drawer reaches the viewport bottom above the trigger pill and absorbs system clearance inside the panel. Standard mobile remains governed by the earlier fullscreen rules because this selector requires the App-published Alpha project-shell marker.
+
+FNXC:AlphaMobileDrawer 2026-09-10-22:24:
+The Alpha terminal consumes the same canonical drawer block-size as shared and FloatingWindow shells. PTY content continues to flex within that fixed outer geometry while its toolbar and keyboard-aware input remain reachable.
 */
 html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] .terminal-modal-overlay:not(.terminal-modal-overlay--docked) {
   align-items: flex-end;
@@ -2106,11 +2109,11 @@ html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] .terminal-mo
   position: relative;
   inset: auto;
   width: 100%;
-  height: min(calc(var(--space-2xl) * 14), calc(100dvh - env(safe-area-inset-top, 0px) - var(--space-2xl)));
+  height: var(--alpha-mobile-drawer-block-size);
   min-width: 0;
   min-height: 0;
   max-width: 100%;
-  max-height: calc(100dvh - env(safe-area-inset-top, 0px) - var(--space-2xl));
+  max-height: var(--alpha-mobile-drawer-block-size);
   padding-block-end: var(--mobile-nav-alpha-system-offset);
   border: var(--btn-border-width) solid var(--border);
   border-block-end: 0;

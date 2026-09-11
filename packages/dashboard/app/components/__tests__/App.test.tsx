@@ -1,5 +1,8 @@
+import { useState } from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, act, within } from "@testing-library/react";
+import type { UseChatReturn, ChatSessionInfo } from "../../hooks/useChat";
+import type { UseChatRoomsResult } from "../../hooks/useChatRooms";
 import userEvent from "@testing-library/user-event";
 import type { NodeConfig, Settings } from "@fusion/core";
 import type { AiSessionSummary, ProjectInfo } from "../../api";
@@ -41,8 +44,11 @@ const mockAgentStats = {
   idleNonEphemeralCount: 1,
 };
 
-const { mockDashboardLoaderRender } = vi.hoisted(() => ({
+const { mockDashboardLoaderRender, appChatTestControl, mockAppUseChat, mockAppUseChatRooms } = vi.hoisted(() => ({
   mockDashboardLoaderRender: vi.fn(),
+  appChatTestControl: { renderProductionView: false, renderProductionPlanningView: false },
+  mockAppUseChat: vi.fn(),
+  mockAppUseChatRooms: vi.fn(),
 }));
 
 const mockSubscribeSse = vi.fn((..._args: any[]) => vi.fn());
@@ -326,20 +332,24 @@ vi.mock("../../components/GitHubImportModal", () => ({
     ) : null,
 }));
 
-vi.mock("../../components/PlanningModeModal", () => ({
-  PlanningModeModal: ({ isOpen, onClose, presentation = "modal", resumeSessionId }: { isOpen: boolean; onClose: () => void; presentation?: "modal" | "embedded"; resumeSessionId?: string }) =>
-    isOpen ? (
-      <div className={presentation === "embedded" ? "planning-view open" : "modal-overlay open"} data-testid={presentation === "embedded" ? "planning-view" : undefined} data-resume-session-id={resumeSessionId ?? ""}>
-        <button type="button" aria-label="Close" onClick={onClose}>
-          Close
-        </button>
-        <h2>Planning Mode</h2>
-        <p>Transform your idea into a detailed task</p>
-        <input placeholder="e.g., Build a user authentication system with login" />
-        <button type="button">Start Planning</button>
-      </div>
-    ) : null,
-}));
+vi.mock("../../components/PlanningModeModal", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../components/PlanningModeModal")>();
+  return {
+    PlanningModeModal: (props: Parameters<typeof actual.PlanningModeModal>[0]) => {
+      if (appChatTestControl.renderProductionPlanningView) return <actual.PlanningModeModal {...props} />;
+      const { isOpen, onClose, presentation = "modal", resumeSessionId } = props;
+      return isOpen ? (
+        <div className={presentation === "embedded" ? "planning-view open" : "modal-overlay open"} data-testid={presentation === "embedded" ? "planning-view" : undefined} data-resume-session-id={resumeSessionId ?? ""}>
+          <button type="button" aria-label="Close" onClick={onClose}>Close</button>
+          <div className={presentation === "embedded" ? "modal-header modal-header--embedded" : "modal-header"}><h2>Planning Mode</h2></div>
+          <p>Transform your idea into a detailed task</p>
+          <input placeholder="e.g., Build a user authentication system with login" />
+          <button type="button">Start Planning</button>
+        </div>
+      ) : null;
+    },
+  };
+});
 
 vi.mock("../../components/ScriptsModal", () => ({
   ScriptsModal: ({
@@ -447,13 +457,36 @@ vi.mock("../../components/GoalsView", () => ({
   GoalsView: () => <div data-testid="goals-view">Goals View</div>,
 }));
 
-vi.mock("../../components/ChatView", () => ({
-  ChatView: ({ experimentalFeatures, floating }: { experimentalFeatures?: { alphaUpdates?: boolean }; floating?: boolean }) => (
-    <div data-testid={floating ? "quick-chat-host" : "main-chat-host"} data-alpha={String(experimentalFeatures?.alphaUpdates === true)}>
-      <FileBrowserProbe testId="fb-probe-chat" />
-    </div>
-  ),
+vi.mock("../../hooks/useChat", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../hooks/useChat")>()),
+  useChat: (...args: unknown[]) => mockAppUseChat(...args),
 }));
+
+vi.mock("../../hooks/useChatRooms", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../hooks/useChatRooms")>()),
+  useChatRooms: (...args: unknown[]) => mockAppUseChatRooms(...args),
+}));
+
+vi.mock("../../hooks/useChatUnread", () => ({
+  useChatUnread: () => ({ isUnread: () => false, markRead: vi.fn() }),
+}));
+
+vi.mock("../../components/ChatView", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../components/ChatView")>();
+  return {
+    ChatView: (props: Parameters<typeof actual.ChatView>[0]) => {
+      if (appChatTestControl.renderProductionView) return <actual.ChatView {...props} />;
+      return (
+        <div className="chat-view" data-testid={props.floating ? "quick-chat-host" : "main-chat-host"} data-alpha={String(props.experimentalFeatures?.alphaUpdates === true)}>
+          <header className="view-header"><h2>Chat</h2><button type="button">New Chat</button><button type="button" aria-label="Pop out chat">Pop out</button></header>
+          <button type="button" data-testid="app-chat-session-fixture">Conversation fixture</button>
+          <textarea className="chat-input" data-testid="chat-input" aria-label="Message" />
+          <FileBrowserProbe testId="fb-probe-chat" />
+        </div>
+      );
+    },
+  };
+});
 
 vi.mock("../../components/DashboardLoader", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../components/DashboardLoader")>();
@@ -747,6 +780,7 @@ function installProductionAlphaDrawerRules(systemOffset: number): HTMLStyleEleme
   const navCss = readAppFile("components/MobileNavBar.css");
   const tokenCss = readAppFile("styles.css");
   const drawerRule = extractProductionRule(drawerCss, ".alpha-mobile-drawer");
+  const panelRule = extractProductionRule(drawerCss, ".alpha-mobile-drawer__panel");
   const bodyRule = extractProductionRule(drawerCss, ".alpha-mobile-drawer__body");
   const navRule = extractProductionRule(navCss, ".mobile-nav-bar");
   const inset = extractProductionDeclaration(drawerRule, "inset");
@@ -781,6 +815,7 @@ function installProductionAlphaDrawerRules(systemOffset: number): HTMLStyleEleme
       align-items: ${extractProductionDeclaration(drawerRule, "align-items")};
       pointer-events: auto;
     }
+    .alpha-mobile-drawer__panel { height: ${extractProductionDeclaration(panelRule, "height")}; }
     .alpha-mobile-drawer__body { padding-block-end: ${systemOffset}px; }
   `;
   document.head.append(style);
@@ -804,6 +839,13 @@ function expectProductionAlphaDrawerOverlay(drawer: HTMLElement, systemOffset: n
   expect(drawerStyle.pointerEvents).not.toBe("none");
   expect(Number(drawerStyle.zIndex)).toBeGreaterThan(Number(navStyle.zIndex));
   expect(window.getComputedStyle(body!).paddingBlockEnd).toBe(`${systemOffset}px`);
+  expect(window.getComputedStyle(panel!).height).not.toBe("auto");
+}
+
+function expectSingleDrawerHeader(dialog: HTMLElement, headerSelector: string): void {
+  expect(dialog.querySelector(".alpha-mobile-drawer__header")).toBeNull();
+  expect(dialog.querySelectorAll(headerSelector)).toHaveLength(1);
+  expect(dialog.querySelectorAll(".alpha-mobile-drawer__close")).toHaveLength(1);
 }
 
 function resolvePixelCalcFromRoot(value: string): number {
@@ -818,6 +860,68 @@ function resolvePixelCalcFromRoot(value: string): number {
     if (!match) throw new Error(`Unsupported production padding term: ${term.trim()}`);
     return total + Number(match[1]);
   }, 0);
+}
+
+const appChatSession: ChatSessionInfo = {
+  id: "fn-342-app-chat",
+  agentId: "agent-fn-342",
+  status: "active",
+  title: "Conversation Alpha",
+  createdAt: "2026-09-10T00:00:00.000Z",
+  updatedAt: "2026-09-10T00:00:00.000Z",
+};
+
+function configureProductionAppChat(): void {
+  appChatTestControl.renderProductionView = true;
+  mockAppUseChat.mockImplementation(() => {
+    const [activeSession, setActiveSession] = useState<ChatSessionInfo | null>(null);
+    return {
+      sessions: [appChatSession],
+      activeSession,
+      sessionsLoading: false,
+      messages: activeSession ? [{ id: "message-fn-342", role: "assistant", content: "Bonjour", createdAt: "2026-09-10T00:01:00.000Z" }] : [],
+      messagesLoading: false,
+      isStreaming: false,
+      streamingText: "",
+      streamingThinking: "",
+      streamingToolCalls: [],
+      selectSession: (sessionId: string) => setActiveSession(sessionId === appChatSession.id ? appChatSession : null),
+      createSession: vi.fn().mockResolvedValue(appChatSession),
+      archiveSession: vi.fn(),
+      archivedSessions: [],
+      refreshArchivedSessions: vi.fn().mockResolvedValue(undefined),
+      unarchiveSession: vi.fn().mockResolvedValue(undefined),
+      renameSession: vi.fn(),
+      setSessionThinkingLevel: vi.fn(),
+      deleteSession: vi.fn(),
+      sendMessage: vi.fn(),
+      editMessageAndResend: vi.fn(),
+      stopStreaming: vi.fn().mockResolvedValue(undefined),
+      pendingMessages: [],
+      clearPendingMessage: vi.fn(),
+      loadMoreMessages: vi.fn(),
+      hasMoreMessages: false,
+      searchQuery: "",
+      setSearchQuery: vi.fn(),
+      filteredSessions: [appChatSession],
+      refreshSessions: vi.fn(),
+      agentsMap: new Map(),
+    } satisfies UseChatReturn;
+  });
+  mockAppUseChatRooms.mockReturnValue({
+    rooms: [],
+    roomsLoading: false,
+    roomsError: null,
+    activeRoom: null,
+    activeRoomMembers: [],
+    messages: [],
+    messagesLoading: false,
+    selectRoom: vi.fn(),
+    createRoom: vi.fn(),
+    deleteRoom: vi.fn(),
+    sendRoomMessage: vi.fn(),
+    refreshRooms: vi.fn(),
+  } satisfies UseChatRoomsResult);
 }
 
 async function waitForAppShell(): Promise<void> {
@@ -940,6 +1044,10 @@ describe("FN-8698 retained Board and List task popups", () => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  appChatTestControl.renderProductionView = false;
+  appChatTestControl.renderProductionPlanningView = false;
+  mockAppUseChat.mockReset();
+  mockAppUseChatRooms.mockReset();
   __test_clearDashboardViewsCache();
   /*
    * FNXC:DashboardTests 2026-06-22-03:47:
@@ -1397,8 +1505,51 @@ describe("Alpha Updates production wiring", () => {
     }
   });
 
-  it("ouvre Usage et Projects par le hamburger au-dessus de la pill sans quitter le Kanban", async () => {
+  it.each([
+    ["portrait", { width: 390, height: 844, keyboardOverlap: 0 }],
+    ["paysage court avec clavier", { width: 844, height: 390, keyboardOverlap: 156 }],
+  ] as const)("route la pill vers le vrai Chat et garde son composeur rendu en %s", async (_name, geometry) => {
+    /*
+    FNXC:AlphaMobileDrawer 2026-09-10-23:02:
+    The symptom regression must cross App's shipped pill into the production ChatView, select a real hook-backed conversation, and measure the resulting composer against the drawer. A component stand-in can prove routing but cannot protect ChatView's own header, selection, or flex chain.
+    */
     mockUseViewportMode.mockReturnValue("mobile");
+    configureProductionAppChat();
+    vi.mocked(fetchSettings).mockResolvedValue({
+      ...defaultSettings,
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates: true },
+    });
+    mockUseMobileKeyboard.mockReturnValue({
+      keyboardOverlap: geometry.keyboardOverlap,
+      viewportHeight: geometry.height,
+      viewportOffsetTop: 0,
+      keyboardOpen: geometry.keyboardOverlap > 0,
+    });
+    Object.defineProperties(window, {
+      innerWidth: { configurable: true, value: geometry.width },
+      innerHeight: { configurable: true, value: geometry.height },
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByTestId("mobile-nav-tab-chat"));
+    const dialog = await screen.findByRole("dialog", { name: "Chat" });
+    fireEvent.click(await within(dialog).findByTestId(`chat-session-${appChatSession.id}`));
+    const input = await within(dialog).findByTestId("chat-input");
+    input.focus();
+
+    expect(dialog).toContainElement(document.querySelector(".chat-view"));
+    expect(Array.from(dialog.querySelectorAll("h1,h2,h3")).filter((heading) => heading.textContent === "Chat" && !heading.classList.contains("visually-hidden"))).toHaveLength(1);
+    expect(within(dialog).getByTestId("chat-new-btn")).toBeEnabled();
+    expect(within(dialog).getByTestId("chat-pop-out")).toBeEnabled();
+    expect(within(dialog).getByRole("button", { name: "Close" })).toBeVisible();
+    expect(input).toHaveClass("chat-input-textarea");
+    expect(input.closest(".alpha-mobile-drawer__panel")).toBe(dialog);
+    expect(input).toHaveFocus();
+  });
+
+  it("garde Planning, Usage et Projects sur le même shell avec un seul propriétaire d’en-tête", async () => {
+    mockUseViewportMode.mockReturnValue("mobile");
+    appChatTestControl.renderProductionPlanningView = true;
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
       experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates: true },
@@ -1409,20 +1560,33 @@ describe("Alpha Updates production wiring", () => {
     try {
       render(<App />);
       const board = await screen.findByTestId("board-keep-alive");
+      const canonicalHeights: string[] = [];
+
+      fireEvent.click(await screen.findByTestId("mobile-nav-tab-planning"));
+      const planningDrawer = await screen.findByTestId("alpha-mobile-drawer-planning");
+      expectProductionAlphaDrawerOverlay(planningDrawer, systemOffset);
+      expectSingleDrawerHeader(within(planningDrawer).getByRole("dialog", { name: "Planning" }), ".modal-header--embedded");
+      canonicalHeights.push(window.getComputedStyle(planningDrawer.querySelector(".alpha-mobile-drawer__panel")!).height);
+      fireEvent.click(planningDrawer.querySelector<HTMLButtonElement>(".alpha-mobile-drawer__close")!);
 
       fireEvent.click(await screen.findByTestId("alpha-mobile-menu-trigger"));
       fireEvent.click(screen.getByTestId("mobile-more-item-usage"));
       const usageDrawer = await screen.findByTestId("alpha-mobile-drawer-usage");
       expect(usageDrawer.className).toBe("alpha-mobile-drawer alpha-mobile-drawer--open");
       expectProductionAlphaDrawerOverlay(usageDrawer, systemOffset);
-      expect(board).toBeVisible();
-      expect(mockCurrentProjectState.clearCurrentProject).not.toHaveBeenCalled();
+      expectSingleDrawerHeader(within(usageDrawer).getByRole("dialog", { name: "Usage" }), ".modal-header");
+      canonicalHeights.push(window.getComputedStyle(usageDrawer.querySelector(".alpha-mobile-drawer__panel")!).height);
       fireEvent.click(usageDrawer.querySelector<HTMLButtonElement>(".alpha-mobile-drawer__close")!);
 
       fireEvent.click(screen.getByTestId("alpha-mobile-menu-trigger"));
       fireEvent.click(screen.getByTestId("mobile-more-item-projects"));
       const projectsDrawer = await screen.findByTestId("alpha-mobile-drawer-projects");
       expectProductionAlphaDrawerOverlay(projectsDrawer, systemOffset);
+      expectSingleDrawerHeader(within(projectsDrawer).getByRole("dialog", { name: "Projects" }), ".view-header");
+      canonicalHeights.push(window.getComputedStyle(projectsDrawer.querySelector(".alpha-mobile-drawer__panel")!).height);
+
+      expect(new Set(canonicalHeights)).toEqual(new Set([canonicalHeights[0]]));
+      expect(canonicalHeights[0]).not.toBe("");
       expect(board).toBeVisible();
       expect(mockCurrentProjectState.clearCurrentProject).not.toHaveBeenCalled();
     } finally {
@@ -3231,6 +3395,31 @@ describe("App view switching", () => {
     localStorage.removeItem("kb-dashboard-view-mode");
   });
 
+  it("héberge un plugin sans en-tête dans le drawer Alpha avec le seul titre de secours", async () => {
+    mockUseViewportMode.mockReturnValue("mobile");
+    localStorage.setItem("kb-dashboard-view-mode", "project");
+    localStorage.setItem(taskViewStorageKey(), "plugin:fusion-plugin-dependency-graph:graph");
+    vi.mocked(fetchSettings).mockResolvedValue({
+      ...defaultSettings,
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates: true },
+    });
+    vi.mocked(fetchPluginDashboardViews).mockResolvedValue([
+      {
+        pluginId: "fusion-plugin-dependency-graph",
+        view: { viewId: "graph", label: "Graph", componentPath: "./GraphView", placement: "more" },
+      },
+    ]);
+
+    render(<App />);
+
+    const dialog = await screen.findByRole("dialog", { name: "Graph" });
+    expect(dialog).toContainElement(await screen.findByTestId("dependency-graph"));
+    expect(dialog.querySelectorAll(".alpha-mobile-drawer__header")).toHaveLength(1);
+    expect(dialog.querySelectorAll(".alpha-mobile-drawer__title")).toHaveLength(1);
+    expect(dialog.querySelectorAll(".alpha-mobile-drawer__close")).toHaveLength(1);
+    expect(Array.from(dialog.querySelectorAll("h1,h2,h3")).filter((heading) => heading.textContent === "Graph" && !heading.classList.contains("visually-hidden"))).toHaveLength(1);
+  });
+
   it("renders plugin-hosted dashboard view from persisted task view id", async () => {
     localStorage.setItem("kb-dashboard-view-mode", "project");
     localStorage.setItem(taskViewStorageKey(), "plugin:fusion-plugin-dependency-graph:graph");
@@ -4895,7 +5084,6 @@ describe("App auth token recovery page", () => {
 
   beforeEach(() => {
     clearAuthToken();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- production fetch installation sentinel reset for cold-start integration coverage
     delete (window as any).__fnAuthFetchInstalled;
     window.fetch = originalFetch;
     reloadSpy = vi.fn();
@@ -4908,7 +5096,6 @@ describe("App auth token recovery page", () => {
   afterEach(() => {
     clearAuthToken();
     window.fetch = originalFetch;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- restore the production fetch installation sentinel between tests
     delete (window as any).__fnAuthFetchInstalled;
     Object.defineProperty(window, "location", {
       configurable: true,
