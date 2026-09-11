@@ -130,6 +130,55 @@ describe("footer-safe project workspace layout", () => {
     });
   });
 
+  // ── Footer-height token consumers outside the declaring scope ──────
+
+  /*
+  FNXC:DashboardFooterLayout 2026-09-11-23:41:
+  `:root` floors --executor-footer-height at 0px (styles.css) and only
+  .dashboard-project-shell / .project-content--with-footer raise it to 36px.
+  A bottom-edge surface rendered OUTSIDE those scopes therefore inherits 0px.
+  That silently collapsed the Alpha desktop navigation footer to zero height:
+  mounted and focusable, but invisible, after it had already replaced the left
+  sidebar. Assert the general invariant rather than that one bar — any rule that
+  sizes its own box from the token must declare the token in the same block.
+  */
+  describe("--executor-footer-height consumers that size themselves", () => {
+    // Comments carry braces and at-rule prose, so strip them before parsing rules.
+    const baseCss = loadAllAppCssBaseOnly().replace(/\/\*[\s\S]*?\*\//g, "");
+    const ruleBlocks = [...baseCss.matchAll(/(^|\})\s*([^{}@]+?)\s*\{([^{}]*)\}/g)].map((match) => ({
+      selector: match[2].trim(),
+      body: match[3],
+    }));
+
+    it("floors the token at 0px on :root, which is what makes redeclaration mandatory", () => {
+      expect(baseCss).toMatch(/:root\s*\{[^}]*--executor-footer-height:\s*0px/);
+    });
+
+    it("every rule sizing its own box from the token also declares the token", () => {
+      const selfSizing = ruleBlocks.filter((rule) =>
+        /(?:^|;|\s)(?:block-size|height):\s*var\(--executor-footer-height\b/.test(rule.body),
+      );
+      expect(selfSizing.length).toBeGreaterThan(0);
+      const collapsingToZero = selfSizing
+        .filter((rule) => !/--executor-footer-height:\s*(?!0px)[^;]+;/.test(rule.body))
+        .map((rule) => rule.selector);
+      expect(collapsingToZero).toEqual([]);
+    });
+
+    it("gives the Alpha desktop navigation footer a non-zero height outside the shell scope", () => {
+      const bar = ruleBlocks.find((rule) => rule.selector === ".alpha-desktop-action-bar");
+      expect(bar).toBeTruthy();
+      expect(bar!.body).toContain("--executor-footer-height: 36px");
+      expect(bar!.body).toContain("block-size: var(--executor-footer-height)");
+    });
+
+    it("keeps the sibling pinned-terminal host redeclaring the token for the same reason", () => {
+      const host = ruleBlocks.find((rule) => rule.selector === ".terminal-below-host--with-footer");
+      expect(host).toBeTruthy();
+      expect(host!.body).toContain("--executor-footer-height: 36px");
+    });
+  });
+
   // ── ExecutorStatusBar remains fixed ────────────────────────────────
 
   describe("ExecutorStatusBar fixed footer preserved", () => {

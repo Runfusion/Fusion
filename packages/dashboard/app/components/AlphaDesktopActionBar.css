@@ -2,7 +2,12 @@
 FNXC:AlphaDesktopNavigation 2026-09-11-21:48:
 Desktop Alpha has one edge-to-edge footer instead of a floating navigation panel above ExecutorStatusBar. The shared executor-footer height remains the single shell reservation, and horizontal overflow preserves every labeled keyboard target on constrained desktop widths.
 */
+/*
+FNXC:AlphaDesktopNavigation 2026-09-11-23:41:
+The bar renders as a sibling of .dashboard-project-shell inside .dashboard-project-stack (App.tsx), and the stack does NOT declare --executor-footer-height. Only .dashboard-project-shell and .project-content--with-footer do, so the bar inherited the :root floor of 0px and sized itself to zero height: the whole desktop navigation footer was mounted, focusable in the a11y tree, and invisible, while alphaDesktopNavigationActive had already removed the left sidebar. Redeclare the token at this consumer exactly as .terminal-below-host--with-footer does for the same sibling-of-shell reason. The bar is desktop-only (viewportMode === "desktop"), so it takes the desktop 36px value and never the mobile touch-safe override.
+*/
 .alpha-desktop-action-bar {
+  --executor-footer-height: 36px;
   position: fixed;
   inset-inline: 0;
   bottom: 0;
