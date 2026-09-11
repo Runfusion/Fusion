@@ -2272,7 +2272,9 @@ export async function getTerminalTaskEvidence(
   const task = taskRows[0];
   const hasArchiveSnapshot = archiveRows.length > 0;
 
-  /* Complete is workflow-resolved; the literal fallback is only for degraded built-in reads. */
+  /* Complete is workflow-resolved; the literal fallback is only for degraded built-in reads.
+     DELIBERATE-LITERAL: the `column === "done"` is intentional as the degraded fallback when the
+     workflow column resolver is unavailable — `done` is the built-in Complete column id. */
   const isComplete = (column: string) =>
     terminalColumns?.complete ? terminalColumns.complete.has(column) : column === "done";
   /* DELIBERATE-LITERAL — same fallback arm as `isComplete` above; see the note there. */

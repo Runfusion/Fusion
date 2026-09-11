@@ -72,6 +72,9 @@ function collectCommitSummary(task: TaskDetail): DeterministicSignals["commitSum
 /*
 FNXC:TaskArchiveRemoval 2026-09-04-10:36:
 Evaluation records classify completed task evidence as Done. Deleted tasks are absent from evaluation intake rather than represented as a second terminal column.
+
+DELIBERATE-LITERAL: the `column: "done"` in the returned signal record is intentional — evaluation
+signals classify completed task evidence under the built-in Done column id by design.
 */
 export function collectDeterministicSignals(
   task: TaskDetail,

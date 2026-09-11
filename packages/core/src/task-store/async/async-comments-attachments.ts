@@ -112,6 +112,10 @@ function rowToArtifact(row: ArtifactRow): Artifact {
  * Return a task's live column, `null` for absence, or the stable historical sentinel for a
  * soft-deleted/pre-reintegration row. Document, comment, log, and artifact writes share this
  * project-scoped gate so deleted history stays read-only.
+ *
+ * DELIBERATE-LITERAL: the `row.column === "archived"` fallback below is intentional — when the
+ * caller does not provide the resolved historical sentinel column set, the built-in `archived`
+ * sentinel id is the correct degraded fallback.
  */
 export async function getLiveTaskColumn(
   db: AsyncDataLayer["db"] | DbTransaction,

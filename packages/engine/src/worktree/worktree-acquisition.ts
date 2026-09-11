@@ -1637,6 +1637,10 @@ export async function acquireWorkspaceRepoWorktree(
               const value = Reflect.get(target, property, target);
               if (typeof value !== "function") return value;
               if (property === "getTask") return value.bind(target);
+              // FN-9295: listTaskOverlapWaits is a read-only method needed by the overlap resume
+              // context during worktree acquisition. It does not mutate state, so it is safe to
+              // forward while the task lock is held.
+              if (property === "listTaskOverlapWaits") return value.bind(target);
               /*
               FNXC:WorkspaceWorktree 2026-08-20-07:02:
               The acquisition callback holds a non-reentrant task lock. Forwarding a newly added

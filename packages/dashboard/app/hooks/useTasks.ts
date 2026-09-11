@@ -1121,6 +1121,8 @@ export function useTasks(options?: UseTasksOptions) {
     && completedSortModeRef.current === request.sort
   ), [projectId]);
 
+  /* DELIBERATE-LITERAL: the `column === "done"` below is intentional as the degraded fallback when the
+     workflow column resolver is unavailable — `done` is the built-in Complete column id. */
   const mergeCompletedPage = useCallback((page: Task[], requestLiveMutationVersion: number) => {
     const normalizedPage = page.map(normalizeNonBoardTask);
     const knownIds = new Set(completedTasksRef.current.map((task) => task.id));
@@ -1481,6 +1483,8 @@ export function useTasks(options?: UseTasksOptions) {
       tasksRef.current = nextTasks;
       setTasks(nextTasks);
     };
+    /* DELIBERATE-LITERAL: the `column === "done"` below is intentional as the degraded fallback when the
+       workflow column resolver is unavailable — `done` is the built-in Complete column id. */
     const isCompletedTask = (task: Task, column: ColumnId = task.column): boolean => (
       resolveColumnFlagsRef.current?.({ ...task, column })?.complete === true || column === "done"
     );

@@ -18,6 +18,10 @@ FINISHED canonical stops holding a near-duplicate flag open. Keyed on the litera
 canonical on a renamed board still read as ACTIVE, so the flag never cleared and the flagged task
 stayed parked behind a user decision that could never arrive — the exact stranding the FNXC note
 above says this function was written to prevent.
+
+DELIBERATE-LITERAL: the `column === "archived"` below is intentional — historical pre-reintegration
+rows in the sentinel column are inactive evidence, not a workflow terminal role, so they must be
+excluded by the literal sentinel id.
 */
 export function isActiveNearDuplicateColumn(
   column: ColumnId | null | undefined,

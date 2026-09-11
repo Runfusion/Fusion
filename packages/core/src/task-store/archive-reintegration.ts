@@ -87,7 +87,9 @@ export interface ArchivedTaskHistoryInspection {
   malformedColdEntryIds: string[];
 }
 
-/** Read every historical carrier without mutating either source. */
+/** Read every historical carrier without mutating either source.
+DELIBERATE-LITERAL: the `column: "archived"` query filter is intentional here — this function
+specifically reads the historical sentinel column to inspect archived task history. */
 export async function inspectArchivedTaskHistory(store: TaskStore): Promise<ArchivedTaskHistoryInspection> {
   const layer = store.asyncLayer;
   if (!layer?.projectId?.trim()) throw new Error("Archive history inspection requires an exact project identity");
@@ -150,6 +152,11 @@ async function mirrorReintegratedTask(store: TaskStore, taskId: string): Promise
  * across maintenance cycles. Paused or repeatedly failing rows therefore consume neither every live
  * page nor the cold-storage opportunity forever. Failed rows yield after the caller's shared
  * starvation budget, then retry on a later traversal so transient repairs remain recoverable.
+ *
+ * DELIBERATE-LITERAL: the `archived` literals are intentional here — this pass specifically
+ * operates on the historical sentinel column: the `column: "archived"` query filter reads live
+ * archived rows, and the `live.column === "archived"` guards ensure the move predicate and
+ * survivor counting only apply to rows still in the historical sentinel column.
  */
 export async function reconcileArchivedTasksIntoDonePass(
   store: TaskStore,

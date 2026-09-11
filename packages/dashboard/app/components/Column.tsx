@@ -264,6 +264,8 @@ function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeG
   */
   const resolvedColumnDescription = columnDescription?.trim() ? columnDescription : COLUMN_DESCRIPTIONS[column];
   const menuRef = useRef<HTMLDivElement | null>(null);
+  /* DELIBERATE-LITERAL: the `column === "done"` is intentional as the degraded fallback when not in
+     workflow mode and the column flags resolver is unavailable — `done` is the built-in Complete id. */
   const isCompleteColumn = columnFlags?.complete === true || (!workflowMode && column === "done");
   const displayedTaskCount = totalTaskCount ?? tasks.length;
   const countFlashing = useFlashOnIncrease(displayedTaskCount);

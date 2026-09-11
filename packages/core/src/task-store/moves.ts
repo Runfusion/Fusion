@@ -346,6 +346,9 @@ export async function handoffToReviewImpl(store: TaskStore, taskId: string, opts
       the review-target resolution below; no archive role exists in live workflow metadata.
       */
       const handoffIr = await resolveWorkflowIrForTask(store, taskId).catch(() => undefined);
+      /* DELIBERATE-LITERAL: the `task.column === "archived"` is intentional — hand-off refuses
+         historical-sentinel rows, and the sentinel column id is the correct check here since no
+         archive role exists in live workflow metadata. */
       const taskIsHistorical = task.column === "archived";
       if (taskIsHistorical || task.deletedAt != null) {
         throw new HandoffInvariantViolationError(

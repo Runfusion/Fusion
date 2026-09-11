@@ -377,6 +377,8 @@ export async function restoreTaskFromArchive(
     ).values;
 
     if (existing && !existing.deletedAt) {
+      /* DELIBERATE-LITERAL: the `existing.column === "archived"` is intentional — this checks whether
+         the live row is in the historical sentinel column to determine if it was moved from archive. */
       const moved = existing.column === "archived" && options.targetColumn !== undefined;
       /*
       FNXC:TaskArchiveReintegration 2026-09-06-08:39:
