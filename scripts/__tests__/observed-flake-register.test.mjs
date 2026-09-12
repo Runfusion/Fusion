@@ -16,11 +16,18 @@ const agentsPath = resolve(rootDir, "AGENTS.md");
 const testingPath = resolve(rootDir, "docs/testing.md");
 
 function readRegisterEntries(register) {
-  const entries = [...register.matchAll(/- \*\*File:\*\* `([^`]+)`\n- \*\*Exact test:\*\* `([^`]+)`/g)].map(
-    ([, file, fullName]) => ({ file, fullName }),
-  );
+  /*
+  FNXC:TestFlakeRegister 2026-09-09-13:51:
+  Active entries must name live test files so the escalation surface cannot drift. Archived records
+  may deliberately retain the path of a deleted ratchet file as historical evidence, so validating
+  the full document would reject an intentional deletion.
+  */
+  const entries = readActiveRecordSections(register).flatMap(({ body }) =>
+    [...body.matchAll(/- \*\*File:\*\* `([^`]+)`\n- \*\*Exact test:\*\* `([^`]+)`/g)].map(
+      ([, file, fullName]) => ({ file, fullName }),
+    ));
 
-  assert.ok(entries.length > 0, "Expected the observed-flake register to name at least one test");
+  assert.ok(entries.length > 0, "Expected active observed-flake records to name at least one test");
   return entries;
 }
 
@@ -98,12 +105,10 @@ The register now records that evidence owner FN-9146 was archived on 2026-09-03 
 successor, so active records 1 and 2 are unowned pending their next sighting. The pinned status
 texts below track that archived-owner annotation; do not strip it without re-homing the records.
 
-FNXC:TestFlakeRegister 2026-09-09-10:31:
-Entry 14's quarantine reaches its 14-day deletion-ratchet deadline on 2026-09-12, now owned by
-rescue task FN-9283 under mission M-MTU4YAJI-0001-PAJK. The pinned status text below therefore
-carries the deadline and the named rescue owner so the approaching auto-deletion (44 passing
-tests of FN-6735 merge-node paused-abort coverage) cannot pass silently; update both together
-when the rescue resolves.
+FNXC:TestFlakeRegister 2026-09-09-13:51:
+FN-9283 closed entry 14 by deleting stale FN-6735 coverage that asserted FN-217-removed automatic
+review-to-WIP recovery. The active inventory must exclude the archived record, so a future quarantine
+is never mistaken for an unresolved deletion-ratchet obligation.
 
 FNXC:TestFlakeRegister 2026-09-10-19:28:
 Entry 14 closed 2026-09-09 when the deletion ratchet executed via commit 55912bd665, which
