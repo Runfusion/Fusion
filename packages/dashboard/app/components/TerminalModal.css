@@ -2098,6 +2098,9 @@ The mobile terminal keeps its PTY and keyboard-overlap lifecycle while its bound
 
 FNXC:AlphaMobileDrawer 2026-09-11-01:40:
 The Alpha terminal consumes the same canonical drawer block-size and shared handle gesture as the other drawer owners. Its close button is absent only under that contract; PTY content, Escape/backdrop recovery, and keyboard-aware input remain reachable.
+
+FNXC:MobileDrawerMotion 2026-09-12-20:37:
+The Alpha terminal applies the shared bottom-edge entry to its outer modal only. Reduced motion suppresses that animation while PTY state, keyboard geometry, backdrop, Escape, and drag dismissal remain unchanged.
 */
 html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] .terminal-modal-overlay:not(.terminal-modal-overlay--docked) {
   align-items: flex-end;
@@ -2119,6 +2122,13 @@ html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] .terminal-mo
   border-block-end: 0;
   border-radius: var(--radius-xl) var(--radius-xl) 0 0;
   box-shadow: var(--shadow-lg);
+  animation: alpha-mobile-drawer-rise-in var(--duration-normal) ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] .terminal-modal-overlay:not(.terminal-modal-overlay--docked) > .terminal-modal {
+    animation: none;
+  }
 }
 
 html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] .terminal-drawer-handle-target {

@@ -7,6 +7,9 @@ Every Alpha mobile drawer uses the same dynamic-viewport block size regardless o
 
 FNXC:AlphaMobileDrawer 2026-09-10-22:45:
 Body overflow is disabled only when a provider declares a complete internal scroll chain. Header ownership alone cannot imply that capability because long ordinary views must remain reachable through the shell scroller.
+
+FNXC:AlphaMobileDrawer 2026-09-12-20:37:
+Every opened mobile drawer animates only its outer panel from below through the shared rise keyframes. The individual translate property keeps the entry motion independent from transform-based drag dismissal, while reduced-motion removes the animation without changing geometry or close behavior.
 */
 .alpha-mobile-drawer {
   position: fixed;
@@ -41,6 +44,16 @@ Body overflow is disabled only when a provider declares a complete internal scro
   border-block-end: 0;
   border-radius: var(--radius-xl) var(--radius-xl) 0 0;
   box-shadow: var(--shadow-lg);
+}
+
+.alpha-mobile-drawer--open .alpha-mobile-drawer__panel {
+  animation: alpha-mobile-drawer-rise-in var(--duration-normal) ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .alpha-mobile-drawer--open .alpha-mobile-drawer__panel {
+    animation: none;
+  }
 }
 
 .alpha-mobile-drawer__handle-target {

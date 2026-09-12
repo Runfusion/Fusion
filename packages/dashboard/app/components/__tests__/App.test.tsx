@@ -314,8 +314,8 @@ vi.mock("../../components/TaskDetailModal", () => ({
   ),
   TaskDetailContent: ({ task, onBackToBoard, onOpenDetail, onRequestClose }: { task: { id: string; title?: string }; onBackToBoard?: () => void; onOpenDetail?: (task: { id: string; title?: string }) => void; onRequestClose?: () => void }) => (
     <section data-testid="main-panel-task-detail">
-      <button type="button" onClick={onBackToBoard}>Back to board</button>
-      {onRequestClose && <button type="button" aria-label="Close" onClick={onRequestClose}>Close</button>}
+      {onBackToBoard && <button type="button" onClick={onBackToBoard}>Back to board</button>}
+      {onRequestClose && !onBackToBoard && <button type="button" aria-label="Close" onClick={onRequestClose}>Close</button>}
       <h2>{task.title ?? task.id}</h2>
       <button type="button" onClick={() => onOpenDetail?.({ id: "FN-6965", title: "Nested task" })}>Open nested task</button>
     </section>

@@ -58,7 +58,7 @@ function DetailFixture({ enabled, title = "Alpha task" }: { enabled: boolean; ti
 const hostTask = makeTask({ id: "FN-HOST-STATE", title: "State-owned task detail" });
 const asyncHostTask = async () => hostTask;
 
-function MainContentStateHost() {
+function MainContentStateHost({ mobileAlpha = false }: { mobileAlpha?: boolean }) {
   const [taskView, setTaskView] = useState<TaskView>("board");
   const [navEntries, setNavEntries] = useState<NavEntry[]>([]);
   const [restoreCount, setRestoreCount] = useState(0);
@@ -77,6 +77,9 @@ function MainContentStateHost() {
     tasks: [hostTask],
     filteredBoardTasks: [hostTask],
     currentProject: { id: "host-project" },
+    viewMode: "project",
+    isMobile: mobileAlpha,
+    experimentalFeatures: mobileAlpha ? { alphaUpdates: true } : {},
     modalManager: {},
     globalPaused: false,
     t: (_key: string, fallback?: string) => fallback ?? _key,
@@ -260,7 +263,7 @@ describe("homemade Alpha Task Detail", () => {
     expect(document.querySelectorAll("[data-task-detail-surface='true']")).toHaveLength(1);
   });
 
-  it("runs MainContent Back through App's production snapshot and navigation owner", async () => {
+  it("conserve Back to board dans le panneau desktop et restaure son état", async () => {
     const user = userEvent.setup();
     render(<AlphaProvider enabled><MainContentStateHost /></AlphaProvider>);
 
@@ -277,6 +280,27 @@ describe("homemade Alpha Task Detail", () => {
     expect(screen.getByTestId("main-nav-count")).toHaveTextContent("0");
     expect(screen.getByTestId("main-restore-count")).toHaveTextContent("1");
     expect(document.querySelector("[data-task-detail-surface='true']")).toBeNull();
+  });
+
+  it("retire Back to board du drawer mobile et restaure Board par sa fermeture unique", async () => {
+    const user = userEvent.setup();
+    render(<AlphaProvider enabled><MainContentStateHost mobileAlpha /></AlphaProvider>);
+
+    await user.click(screen.getByRole("button", { name: "Open main detail" }));
+    const drawer = screen.getByRole("dialog", { name: "Task detail" });
+    expect(drawer.querySelector("[data-task-detail-surface='true']")).toBeInTheDocument();
+    expect(within(drawer).queryByRole("button", { name: "Back to board" })).toBeNull();
+    expect(within(drawer).queryByText("Back to board")).toBeNull();
+    expect(drawer.querySelector(".task-detail-header-back-btn")).toBeNull();
+    expect(within(drawer).getAllByRole("button", { name: "Close" })).toHaveLength(1);
+
+    await user.click(within(drawer).getByRole("button", { name: "Close" }));
+    expect(screen.getByTestId("main-route")).toHaveTextContent("board");
+    expect(screen.getByTestId("main-snapshot")).toHaveTextContent("empty");
+    expect(screen.getByTestId("main-tab")).toHaveTextContent("chat");
+    expect(screen.getByTestId("main-nav-count")).toHaveTextContent("0");
+    expect(screen.getByTestId("main-restore-count")).toHaveTextContent("1");
+    expect(screen.queryByRole("dialog", { name: "Task detail" })).toBeNull();
   });
 
   it("clears ListView's real persisted split selection after Close", async () => {
@@ -485,13 +509,16 @@ describe("homemade Alpha Task Detail", () => {
     vi.mocked(rejectPlan).mockReset();
     vi.mocked(approvePlan).mockResolvedValue({} as never);
     vi.mocked(rejectPlan).mockResolvedValue({} as never);
+    const approvalTask = makeTask({ id: "FN-APPROVAL", column: "todo", status: "awaiting-approval", prompt: "# Reviewed plan" });
+    vi.mocked(fetchTaskDetail).mockResolvedValue(approvalTask);
 
     const approvalView = render(
       <AlphaProvider enabled={enabled}>
         <TaskDetailContent
           {...sharedProps}
           embedded
-          task={makeTask({ id: "FN-APPROVAL", column: "todo", status: "awaiting-approval", prompt: "# Reviewed plan" })}
+          initialTab="definition"
+          task={approvalTask}
         />
       </AlphaProvider>,
     );
@@ -510,7 +537,7 @@ describe("homemade Alpha Task Detail", () => {
     const onMergeTask = vi.fn(async () => ({ merged: true }) as never);
     const reviewView = render(
       <AlphaProvider enabled={enabled}>
-        <TaskDetailContent {...sharedProps} embedded task={makeTask({ id: "FN-REVIEW", column: "in-review" })} onMergeTask={onMergeTask} />
+        <TaskDetailContent {...sharedProps} embedded initialTab="review" task={makeTask({ id: "FN-REVIEW", column: "in-review" })} onMergeTask={onMergeTask} />
       </AlphaProvider>,
     );
     const merge = screen.getByRole("button", { name: "Merge & Close" });
@@ -520,7 +547,7 @@ describe("homemade Alpha Task Detail", () => {
 
     reviewView.rerender(
       <AlphaProvider enabled={enabled}>
-        <TaskDetailContent {...sharedProps} embedded task={makeTask({ id: "FN-REVIEW", column: "in-review", status: "merging-pr" })} onMergeTask={onMergeTask} />
+        <TaskDetailContent {...sharedProps} embedded initialTab="review" task={makeTask({ id: "FN-REVIEW", column: "in-review", status: "merging-pr" })} onMergeTask={onMergeTask} />
       </AlphaProvider>,
     );
     expect(screen.getByRole("button", { name: "Merging PR…" })).toBeDisabled();
@@ -531,13 +558,16 @@ describe("homemade Alpha Task Detail", () => {
     const approval = deferred<Record<string, never>>();
     vi.mocked(approvePlan).mockReset().mockReturnValue(approval.promise as never);
     vi.mocked(rejectPlan).mockReset().mockResolvedValue({} as never);
+    const approvalTask = makeTask({ id: "FN-PENDING-APPROVAL", column: "todo", status: "awaiting-approval", prompt: "# Pending plan" });
+    vi.mocked(fetchTaskDetail).mockResolvedValue(approvalTask);
 
     render(
       <AlphaProvider enabled={enabled}>
         <TaskDetailContent
           {...sharedProps}
           embedded
-          task={makeTask({ id: "FN-PENDING-APPROVAL", column: "todo", status: "awaiting-approval", prompt: "# Pending plan" })}
+          initialTab="definition"
+          task={approvalTask}
         />
       </AlphaProvider>,
     );

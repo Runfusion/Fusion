@@ -149,6 +149,9 @@ describe("FloatingWindow", () => {
     expect(overlay).toHaveAttribute("aria-modal", "true");
     const panel = screen.getByTestId("floating-window-alpha-drawer");
     expect(panel).toHaveClass("floating-window--alpha-mobile-drawer");
+    expect(floatingWindowCss).toMatch(/\.floating-window--alpha-mobile-drawer\s*\{[^}]*animation: alpha-mobile-drawer-rise-in/);
+    expect(floatingWindowCss).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.floating-window--alpha-mobile-drawer\s*\{[^}]*animation: none/);
+    expect(cssRuleContaining(floatingWindowCss, ".floating-window--alpha-mobile-drawer", "animation:")).not.toContain("translateX");
     expect(screen.queryAllByRole("separator", { name: "Resize floating window" })).toHaveLength(0);
     expect(screen.queryByTestId("floating-window-close-alpha-drawer")).toBeNull();
     const body = screen.getByText("Files body");

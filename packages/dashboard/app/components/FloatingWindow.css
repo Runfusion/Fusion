@@ -643,6 +643,9 @@ Project-scoped Alpha utilities reuse FloatingWindow's existing content, focus, a
 
 FNXC:AlphaMobileDrawer 2026-09-11-01:40:
 Alpha FloatingWindows consume the shared canonical drawer block-size instead of persisted or content-driven height. A real handle owns the shared dismiss gesture, the existing header keeps only title/content actions, and the body remains the bounded flex scroll owner.
+
+FNXC:MobileDrawerMotion 2026-09-12-20:37:
+An Alpha FloatingWindow enters through the shared bottom-edge animation on its geometry-owning panel. Individual translate animation composes with the explicit transform reset and runtime drag transform instead of replacing either contract.
 */
 html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] .floating-window-overlay--alpha-mobile-drawer {
   display: flex;
@@ -672,6 +675,13 @@ html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] .floating-wi
   border-radius: var(--radius-xl) var(--radius-xl) 0 0;
   box-shadow: var(--shadow-lg);
   transform: none !important;
+  animation: alpha-mobile-drawer-rise-in var(--duration-normal) ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] .floating-window--alpha-mobile-drawer {
+    animation: none;
+  }
 }
 
 html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] .floating-window__drawer-handle-target {

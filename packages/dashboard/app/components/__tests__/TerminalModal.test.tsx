@@ -4958,6 +4958,8 @@ describe("TerminalModal — mobile layout contract", () => {
     try {
       render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
       await waitFor(() => expect(screen.getByTestId("terminal-drawer-handle")).toBeInTheDocument());
+      expect(terminalModalCss).toMatch(/\.terminal-modal-overlay:not\(\.terminal-modal-overlay--docked\) > \.terminal-modal\s*\{[^}]*animation: alpha-mobile-drawer-rise-in/);
+      expect(terminalModalCss).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.terminal-modal-overlay:not\(\.terminal-modal-overlay--docked\) > \.terminal-modal\s*\{[^}]*animation: none/);
       expect(screen.queryByTestId("terminal-close-btn")).toBeNull();
       const modal = screen.getByTestId("terminal-modal");
       fireEvent.pointerDown(modal, { pointerId: 1, clientY: 0, button: 0, isPrimary: true });

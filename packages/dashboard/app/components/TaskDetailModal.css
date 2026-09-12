@@ -1417,34 +1417,18 @@ that boundary drag and resize, so its inner panel must fill the floating host ra
 }
 
 /*
-FNXC:TaskDetailSwipeBack 2026-07-05-12:30:
-FN-7587 — non-interactive predictive-back polish: a short slide/fade enter animation for the
-mobile list/modal/nested task-detail surface, layered purely on top of the unchanged
-FN-7583/FN-7586 dismissal routing (popstate / fusion:native-back / useNavigationHistory stack).
-Gated to mobile via `.task-detail-modal--mobile-transition` (TaskDetailModal.tsx local resize
-listener); desktop never receives this class. A true finger-tracked interactive predictive-back
-is not feasible from a Capacitor single-page WebView today — see task FN-7587 notes.
+FNXC:MobileDrawerMotion 2026-09-12-20:37:
+Standard mobile Task Detail shares the bottom-edge rise used by Alpha drawers, while the Alpha Task Detail composition leaves motion to its outer shell. The viewport class gate and reduced-motion override preserve desktop, tablet, and motion-sensitive presentations without changing dismissal routing.
+
+FNXC:MobileDrawerMotion 2026-09-12-21:02:
+The canonical viewport-mode attribute keeps standard Task Detail animated on phone-class landscape screens whose CSS width exceeds the portrait breakpoint. Reduced motion remains authoritative for every mobile orientation.
 */
-@media (max-width: 768px) {
-  .task-detail-modal--mobile-transition {
-    animation: task-detail-modal-mobile-slide-fade-in var(--duration-normal) ease-out;
-  }
-}
-
-@keyframes task-detail-modal-mobile-slide-fade-in {
-  from {
-    opacity: 0;
-    transform: translateX(var(--space-xl, 24px));
-  }
-
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
+html[data-viewport-mode="mobile"] .task-detail-modal--mobile-transition {
+  animation: alpha-mobile-drawer-rise-in var(--duration-normal) ease-out;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .task-detail-modal--mobile-transition {
+  html[data-viewport-mode="mobile"] .task-detail-modal--mobile-transition {
     animation: none;
   }
 }
@@ -1520,8 +1504,8 @@ Embedded in the full-width board-card panel the detail content must be width-bou
 }
 
 /*
-FNXC:TaskDetail 2026-06-22-18:40:
-"Back to board" affordance inside the gray header. margin-left:auto pushes it to the far right (across from the task id on the left); it shares the header-actions row but stays pinned right and wraps when space is tight. Theme tokens only.
+FNXC:TaskDetailDrawerNavigation 2026-09-12-20:37:
+The desktop Board-panel Back to board affordance sits at the far right of the gray header and wraps when space is tight. Alpha mobile omits the element entirely, so these token-only styles cannot leave an empty shell.
 */
 .task-detail-header-back-btn {
   display: inline-flex;

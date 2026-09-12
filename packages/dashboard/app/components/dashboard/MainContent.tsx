@@ -1025,12 +1025,10 @@ export function MainContent(props: MainContentProps) {
     return (
       <PageErrorBoundary>
         {/*
-        FNXC:TaskDetailSwipeBack 2026-07-05-12:30:
-        FN-7587 — presentation-only predictive-back polish layered on top of the unchanged
-        FN-7583/FN-7586 dismissal routing (popstate / fusion:native-back / useNavigationHistory
-        stack). The `--mobile-transition` modifier only adds a CSS enter animation gated to the
-        existing `isMobile` prop; it never defers or reorders when onRequestClose/onBackToBoard
-        fire, and honors prefers-reduced-motion (see styles.css).
+        FNXC:MobileDrawerMotion 2026-09-12-20:37:
+        Standard mobile Task Detail owns its bottom-edge transition here. Under Alpha, the shared
+        drawer shell is the sole animated surface, preventing nested content from moving twice;
+        dismissal and navigation callbacks remain synchronous and unchanged.
         */}
         <MainPanelTaskDetailHost
               task={liveDetailTask}
@@ -1039,11 +1037,12 @@ export function MainContent(props: MainContentProps) {
               globalPaused={globalPaused}
               initialTab={mainPanelDetailInitialTab}
               /*
-              FNXC:TaskDetail 2026-06-22-18:40:
-              Board-card detail (full main panel) renders its "Back to board" affordance inside TaskDetailContent's gray header (far right, across from the task id) instead of a separate back-row above the content. The prop only renders the header back button when both embedded and onBackToBoard are present, so ListView split-pane and modal usages stay unaffected.
+              FNXC:TaskDetailDrawerNavigation 2026-09-12-20:37:
+              The desktop Board panel retains Back to board. Alpha mobile declares its drawer presentation explicitly so the shared host exposes only Close there; both actions still call the same navigation owner that restores Board state and history.
               */
               onNavigateToBoard={closeTaskDetailMainPanel}
-              mobileTransition={isMobile}
+              presentation={alphaMobileDrawerEnabled ? "drawer" : "panel"}
+              mobileTransition={isMobile && !alphaMobileDrawerEnabled}
               /* FNXC:FloatingWindow 2026-06-22-21:10: Popping out from the board's full-panel detail also returns the main panel to the board, so the board (not the emptied detail) sits behind the floating window. */
               onPopOut={(task) => { popOutTaskDetail(task); closeTaskDetailMainPanel(); }}
               onOpenDetail={(value, initialTab) => openTaskDetailInMainPanel(value, initialTab ?? "chat")}

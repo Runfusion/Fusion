@@ -34,13 +34,23 @@ export function AppModalTaskDetailHost({ onRemoveNavigation, onCloseDetail, onCl
 export interface MainPanelTaskDetailHostProps extends Omit<TaskDetailContentProps, "embedded" | "onBackToBoard" | "onRequestClose"> {
   onNavigateToBoard: () => void;
   mobileTransition?: boolean;
+  presentation?: "panel" | "drawer";
 }
 
-export function MainPanelTaskDetailHost({ onNavigateToBoard, mobileTransition = false, ...props }: MainPanelTaskDetailHostProps) {
+/*
+FNXC:TaskDetailDrawerNavigation 2026-09-12-20:37:
+The Board main-panel host keeps one navigation owner in both presentations. Desktop panel chrome receives Back to board, while the Alpha mobile drawer receives only the canonical close action wired to that same owner, avoiding a duplicate affordance without changing Board scroll, tab, snapshot, or history restoration.
+*/
+export function MainPanelTaskDetailHost({ onNavigateToBoard, mobileTransition = false, presentation = "panel", ...props }: MainPanelTaskDetailHostProps) {
   return (
     <div className={`task-detail-main-panel${mobileTransition ? " task-detail-main-panel--mobile-transition" : ""}`}>
       <div className="task-detail-main-panel-body">
-        <TaskDetailContent {...props} embedded onBackToBoard={onNavigateToBoard} onRequestClose={onNavigateToBoard} />
+        <TaskDetailContent
+          {...props}
+          embedded
+          onBackToBoard={presentation === "panel" ? onNavigateToBoard : undefined}
+          onRequestClose={onNavigateToBoard}
+        />
       </div>
     </div>
   );

@@ -4117,8 +4117,8 @@ Toast text must contrast its status background across every dashboard theme and 
 FNXC:Navigation 2026-06-22-00:00:
 Board card clicks open task detail as a full main-content view that replaces the board ("Full main panel" design). This layout fills the main content area with a scrollable embedded TaskDetailContent body. Theme tokens only; mobile shell renders it unchanged because the panel just fills its host.
 
-FNXC:TaskDetail 2026-06-22-18:40:
-The panel and its body must be width-bounded (width:100%; min-width:0; max-width:100%) so the embedded detail content cannot exceed the full-width host and get clipped on the right; the body scrolls vertically only (overflow-x:hidden). The separate back-row was removed; "Back to board" now lives inside TaskDetailContent's gray header (see .task-detail-header-back-btn).
+FNXC:TaskDetailDrawerNavigation 2026-09-12-20:37:
+The panel and its body remain width-bounded so embedded detail cannot exceed the full-width host; the body scrolls vertically only. Desktop Board presentation keeps Back to board inside the TaskDetailContent header, while Alpha mobile uses its canonical Close action instead.
 */
 .task-detail-main-panel {
   display: flex;
@@ -4141,36 +4141,30 @@ The panel and its body must be width-bounded (width:100%; min-width:0; max-width
 }
 
 /*
-FNXC:TaskDetailSwipeBack 2026-07-05-12:30:
-FN-7587 — non-interactive predictive-back polish: a short slide/fade enter animation for the
-mobile full-panel task detail, layered purely on top of the unchanged FN-7583/FN-7586 dismissal
-routing (popstate / fusion:native-back / useNavigationHistory stack). Mobile-only (gated by the
-existing `isMobile` prop in MainContent.tsx); desktop never receives this class. A true
-finger-tracked interactive predictive-back is not feasible from a Capacitor single-page WebView
-on either platform today (WKWebView exposes no interactive-progress callback to JS; Android's
-system predictive-back preview is not driveable from the in-page DOM) — see task FN-7587 notes
-and the filed interactive-predictive-back follow-up task.
-*/
-@media (max-width: 768px) {
-  .task-detail-main-panel--mobile-transition {
-    animation: task-detail-mobile-slide-fade-in var(--duration-normal) ease-out;
-  }
-}
+FNXC:MobileDrawerMotion 2026-09-12-20:37:
+All mobile drawer presentations share one bottom-edge entry contract. Animate the individual translate property so FloatingWindow geometry and drag-dismiss transforms remain independent; nested Task Detail content opts out when the Alpha shell already owns this motion. The mobile gate and reduced-motion override preserve desktop, tablet, and motion-sensitive presentations.
 
-@keyframes task-detail-mobile-slide-fade-in {
+FNXC:MobileDrawerMotion 2026-09-12-21:02:
+Task Detail motion follows the canonical viewport-mode attribute rather than the width breakpoint. A phone-class physical screen remains mobile in a short landscape viewport wider than 768 CSS pixels and must retain the same bottom-edge entry.
+*/
+@keyframes alpha-mobile-drawer-rise-in {
   from {
     opacity: 0;
-    transform: translateX(var(--space-xl, 24px));
+    translate: 0 var(--space-xl);
   }
 
   to {
     opacity: 1;
-    transform: translateX(0);
+    translate: 0 0;
   }
 }
 
+html[data-viewport-mode="mobile"] .task-detail-main-panel--mobile-transition {
+  animation: alpha-mobile-drawer-rise-in var(--duration-normal) ease-out;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .task-detail-main-panel--mobile-transition {
+  html[data-viewport-mode="mobile"] .task-detail-main-panel--mobile-transition {
     animation: none;
   }
 }

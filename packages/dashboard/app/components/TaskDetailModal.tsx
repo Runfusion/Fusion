@@ -540,8 +540,8 @@ export type TaskDetailContentProps = Omit<TaskDetailModalProps, "onClose"> & {
   */
   onRequestClose?: () => void;
   /*
-  FNXC:TaskDetail 2026-06-22-18:40:
-  onBackToBoard powers the board-card full-panel "Back to board" affordance rendered in the gray header (far right). It is only honored when embedded is also true, so ListView split-pane and modal usages never show it.
+  FNXC:TaskDetailDrawerNavigation 2026-09-12-20:37:
+  onBackToBoard powers the desktop Board-panel action when its host requests it. It is honored only for embedded content; the Alpha mobile drawer deliberately omits it and supplies onRequestClose to the same Board navigation owner instead.
   */
   onBackToBoard?: () => void;
   /*
@@ -5390,8 +5390,8 @@ export function TaskDetailContent({
               </AlphaButton>
             )}
             {/*
-            FNXC:TaskDetail 2026-06-22-18:40 (updated 2026-06-22-18:32):
-            Board-card full-panel "Back to board" must be the far-right header action, after edit and expand/pop-out. margin-left:auto pushes it away from the utility controls while keeping it in the same gray header row. Only rendered when embedded AND onBackToBoard are supplied (board-card detail), never in ListView split-pane or modal usages.
+            FNXC:TaskDetailDrawerNavigation 2026-09-12-20:37:
+            The desktop Board-panel Back to board action remains the far-right header action after edit and expand/pop-out. Rendering still requires embedded plus onBackToBoard, so the Alpha drawer can omit the redundant action and render its one canonical Close control through onRequestClose instead.
             */}
             {embedded && onBackToBoard && (
               <AlphaButton

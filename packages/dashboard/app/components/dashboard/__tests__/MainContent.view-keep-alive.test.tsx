@@ -1,7 +1,7 @@
 import { lazy, useState } from "react";
 import type { Task } from "@fusion/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { ChatView } from "../../ChatView";
 import { useBoardScrollRestore } from "../../../hooks/useBoardScrollRestore";
 import {
@@ -58,8 +58,10 @@ vi.mock("../../CapacityRiskBanner", () => ({ CapacityRiskBanner: () => null }));
 vi.mock("../../BackendConnectionErrorPage", () => ({ BackendConnectionErrorPage: () => <output data-testid="connection-error" /> }));
 vi.mock("../../ProjectOverview", () => ({ ProjectOverview: () => <output data-testid="project-overview" /> }));
 vi.mock("../../TaskDetailModal", () => ({
-  TaskDetailContent: ({ onBackToBoard }: { onBackToBoard?: () => void }) => (
-    <button type="button" data-testid="task-detail-back" onClick={onBackToBoard}>Back to board</button>
+  TaskDetailContent: ({ onBackToBoard, onRequestClose }: { onBackToBoard?: () => void; onRequestClose?: () => void }) => (
+    onBackToBoard
+      ? <button type="button" data-testid="task-detail-back" onClick={onBackToBoard}>Back to board</button>
+      : <button type="button" data-testid="task-detail-close" onClick={onRequestClose}>Close</button>
   ),
 }));
 vi.mock("../../../api", () => ({
@@ -365,7 +367,8 @@ describe("MainContent main-view keep alive", () => {
     expect(boardRoot().closest('[data-alpha-surface="true"]')).not.toBeNull();
     expect(boardRoot().querySelector('[data-alpha-ui="button"]')).not.toBeNull();
     const dialog = screen.getByRole("dialog", { name: "Task detail" });
-    expect(dialog).toContainElement(screen.getByTestId("task-detail-back"));
+    expect(within(dialog).queryByTestId("task-detail-back")).toBeNull();
+    expect(within(dialog).getAllByTestId("task-detail-close")).toHaveLength(1);
     expect(document.querySelectorAll("[role='dialog']")).toHaveLength(1);
     dismissDrawerByHandle(dialog);
     expect(closeTaskDetailMainPanel).toHaveBeenCalledTimes(1);

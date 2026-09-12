@@ -62,6 +62,15 @@ describe("dashboard guide coverage for lazy-loaded views", () => {
     expect(guide).toContain("Non-Alpha Quick Entry retains its text Save button and separate Start action");
   });
 
+  it("documents bottom-entering mobile drawers and Task Detail close ownership", () => {
+    const guide = readDashboardGuide();
+
+    expect(guide).toContain("every mobile drawer rises vertically from below with no lateral movement");
+    expect(guide).toContain("when reduced motion is requested, it appears without that transition");
+    expect(guide).toContain("The drawer omits the redundant **Back to board** action");
+    expect(guide).toContain("Desktop Board panels retain **Back to board**");
+  });
+
   it("documents canonical Task Detail tabs with mouse drag-to-scroll and native touch", () => {
     const guide = readDashboardGuide();
 
