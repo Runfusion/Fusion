@@ -1,12 +1,55 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { canonicalizePlan, createCurrentPlanEvidence, evaluateSpecDrift, type DriftReport, type SpecLock, type Task } from "@fusion/core";
-import { createStoreSpecDriftRepository, SpecDriftReconciler } from "../spec-drift-reconciler.js";
+import { createStoreSpecDriftRepository, RETRY_BASE_DELAY_MS, RETRY_MAX_DELAY_MS, SpecDriftReconciler } from "../spec-drift-reconciler.js";
 
 const prompt = "## Mission\n\nBuild widget\n\n## File Scope\n\n- src/widget.ts\n";
 const evidence = createCurrentPlanEvidence({ version: 1, sourceRevision: 1, capturedAt: "2026-08-09T07:06:00.000Z", prompt });
 const lock = { version: 1, acceptedAt: "2026-08-09T07:06:00.000Z", approvalFingerprint: "approved", currentPlanVersion: 1, currentPlanHash: evidence.plan.contentHash!, plan: evidence.plan };
 
+const backoffForGap = (gap: number) => Math.min(RETRY_MAX_DELAY_MS, RETRY_BASE_DELAY_MS * 2 ** (gap - 1));
+
+async function driveExactBackoffSchedule({
+  random,
+  attempts,
+  onGapReached,
+}: {
+  random: () => number;
+  attempts: { count: number };
+  onGapReached?: (gap: number, expected: number) => void;
+}): Promise<number[]> {
+  const draws: number[] = [];
+  const reconciler = new SpecDriftReconciler({
+    snapshot: async () => ({ latestLock: lock, currentPlan: evidence, approvedPlanFingerprint: "approved" }),
+    persist: async () => { attempts.count += 1; throw new Error("persistent outage"); },
+  }, { random: () => { const draw = random(); draws.push(draw); return draw; } });
+
+  try {
+    await expect(reconciler.reconcile("FN-BACKOFF")).rejects.toThrow("persistent outage");
+    expect(attempts.count).toBe(1);
+    const gaps: number[] = [];
+    for (let gap = 1; gap <= 8; gap += 1) {
+      const backoff = backoffForGap(gap);
+      const expected = backoff * (1 + draws[gap - 1]!) / 2;
+      gaps.push(expected);
+      onGapReached?.(gap, expected);
+      /* FNXC:SpecDrift 2026-09-12-23:41: JavaScript timeout delays are integer-millisecond values, so fake timers execute a fractional delay at its floor. Assert the final whole millisecond before that actual scheduler boundary without rounding the product delay. */
+      const schedulerFiringInstant = Math.floor(expected);
+      await vi.advanceTimersByTimeAsync(schedulerFiringInstant - 1);
+      expect(attempts.count).toBe(gap);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(attempts.count).toBe(gap + 1);
+    }
+    return gaps;
+  } finally {
+    reconciler.stop();
+  }
+}
+
 describe("SpecDriftReconciler", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
   it("persists a deterministic out-of-scope finding without moving the task", async () => {
     const persisted: unknown[] = [];
     const reconciler = new SpecDriftReconciler({ snapshot: async () => ({ latestLock: lock, currentPlan: evidence, approvedPlanFingerprint: "approved", modifiedFiles: ["src/outside.ts"] }), persist: async (_taskId, report) => { persisted.push(report); } });
@@ -172,28 +215,132 @@ describe("SpecDriftReconciler", () => {
     release?.();
   });
 
+  /*
+  FNXC:SpecDrift 2026-08-10-18:32 (connection-exhaustion incident):
+  A shared database outage cannot retry every task in a one-second lockstep. This suite pins and
+  observes each jittered delay exactly, including the two ceiling gaps that prove retries saturate.
+  */
   it("backs a persistent outage off exponentially instead of re-firing every second", async () => {
+    vi.useFakeTimers();
+    const sources = [
+      () => 0,
+      () => 0.5,
+      () => 0.998,
+      (() => { const draws = [0, 0.5, 0.998, 0, 0.5, 0.998, 0.998, 0.998]; let index = 0; return () => draws[index++ % draws.length]!; })(),
+    ];
+
+    for (const random of sources) {
+      const attempts = { count: 0 };
+      const gaps = await driveExactBackoffSchedule({ random, attempts });
+      expect(gaps.slice(0, 6).map((_gap, index) => backoffForGap(index + 1))).toEqual([
+        RETRY_BASE_DELAY_MS, RETRY_BASE_DELAY_MS * 2, RETRY_BASE_DELAY_MS * 4,
+        RETRY_BASE_DELAY_MS * 8, RETRY_BASE_DELAY_MS * 16, RETRY_BASE_DELAY_MS * 32,
+      ]);
+      expect(backoffForGap(7)).toBe(RETRY_MAX_DELAY_MS);
+      expect(backoffForGap(8)).toBe(RETRY_MAX_DELAY_MS);
+      expect(gaps[6]).toBe(gaps[7]);
+      expect(gaps.every((gap) => gap <= RETRY_MAX_DELAY_MS)).toBe(true);
+    }
+  });
+
+  it("holds the exact backoff schedule for arbitrary unpinned jitter draws", async () => {
+    vi.useFakeTimers();
+    const draws: number[] = [];
+    const attempts = { count: 0 };
+    const gaps = await driveExactBackoffSchedule({
+      random: () => { const draw = Math.random(); draws.push(draw); return draw; },
+      attempts,
+    });
+    const replay = `recorded draws: ${JSON.stringify(draws)}`;
+    /* FNXC:SpecDrift 2026-09-12-23:19: Attempt nine arms an unused successor before helper cleanup, so retain its draw in replay evidence while asserting the eight observed gaps. */
+    expect(draws, replay).toHaveLength(9);
+    for (const [index, draw] of draws.slice(0, 8).entries()) {
+      const backoff = backoffForGap(index + 1);
+      expect(draw, replay).toBeGreaterThanOrEqual(0);
+      expect(draw, replay).toBeLessThan(1);
+      expect(gaps[index]!, replay).toBeGreaterThanOrEqual(backoff / 2);
+      expect(gaps[index]!, replay).toBeLessThan(backoff);
+    }
+  });
+
+  it("keeps the exact backoff schedule when unrelated timers and microtasks are interleaved", async () => {
+    vi.useFakeTimers();
+    const attempts = { count: 0 };
+    let ambient = 0;
+    const interval = setInterval(() => { ambient += 1; queueMicrotask(() => { ambient += 1; }); void Promise.resolve().then(() => { ambient += 1; }); }, 25);
+    try {
+      await driveExactBackoffSchedule({
+        random: () => 0,
+        attempts,
+        onGapReached: (_gap, expected) => {
+          for (const offset of [expected / 3, expected / 2]) {
+            setTimeout(() => { ambient += 1; queueMicrotask(() => { ambient += 1; }); void Promise.resolve().then(() => { ambient += 1; }); }, offset);
+          }
+        },
+      });
+      expect(ambient).toBeGreaterThan(0);
+    } finally {
+      clearInterval(interval);
+    }
+  });
+
+  it("resets backoff after a successful retry", async () => {
     vi.useFakeTimers();
     let attempts = 0;
     const reconciler = new SpecDriftReconciler({
       snapshot: async () => ({ latestLock: lock, currentPlan: evidence, approvedPlanFingerprint: "approved" }),
-      persist: async () => { attempts += 1; throw new Error("persistent outage"); },
-    });
-    await expect(reconciler.reconcile("FN-BACKOFF")).rejects.toThrow("persistent outage");
+      persist: async () => { attempts += 1; if (attempts !== 3) throw new Error("outage"); },
+    }, { random: () => 0 });
+    try {
+      await expect(reconciler.reconcile("FN-RESET")).rejects.toThrow("outage");
+      await vi.advanceTimersByTimeAsync(500);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(attempts).toBe(3);
+      await expect(reconciler.reconcile("FN-RESET")).rejects.toThrow("outage");
+      await vi.advanceTimersByTimeAsync(499);
+      expect(attempts).toBe(4);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(attempts).toBe(5);
+    } finally {
+      reconciler.stop();
+    }
+  });
+
+  it("does not double-arm a retry already pending for the same task", async () => {
+    vi.useFakeTimers();
+    let attempts = 0;
+    const reconciler = new SpecDriftReconciler({
+      snapshot: async () => ({ latestLock: lock, currentPlan: evidence, approvedPlanFingerprint: "approved" }),
+      persist: async () => { attempts += 1; throw new Error("outage"); },
+    }, { random: () => 0 });
+    try {
+      await expect(reconciler.reconcile("FN-DUPLICATE")).rejects.toThrow("outage");
+      await expect(reconciler.reconcile("FN-DUPLICATE")).rejects.toThrow("outage");
+      expect(attempts).toBe(2);
+      await vi.advanceTimersByTimeAsync(499);
+      expect(attempts).toBe(2);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(attempts).toBe(3);
+      await vi.advanceTimersByTimeAsync(999);
+      expect(attempts).toBe(3);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(attempts).toBe(4);
+    } finally {
+      reconciler.stop();
+    }
+  });
+
+  it("cancels a pending retry when stopped", async () => {
+    vi.useFakeTimers();
+    let attempts = 0;
+    const reconciler = new SpecDriftReconciler({
+      snapshot: async () => ({ latestLock: lock, currentPlan: evidence, approvedPlanFingerprint: "approved" }),
+      persist: async () => { attempts += 1; throw new Error("outage"); },
+    }, { random: () => 0 });
+    await expect(reconciler.reconcile("FN-STOP")).rejects.toThrow("outage");
+    reconciler.stop();
+    await vi.advanceTimersByTimeAsync(RETRY_MAX_DELAY_MS * 2);
     expect(attempts).toBe(1);
-
-    // First retry lands inside the base window (jittered to 0.5-1x).
-    await vi.advanceTimersByTimeAsync(1_000);
-    expect(attempts).toBe(2);
-
-    // The second must NOT fire at another flat 1s — that lockstep re-fire is what kept the
-    // connection pool exhausted once every task started failing for the same shared reason.
-    await vi.advanceTimersByTimeAsync(1_000);
-    expect(attempts).toBe(2);
-
-    await vi.advanceTimersByTimeAsync(2_000);
-    expect(attempts).toBe(3);
-    vi.useRealTimers();
   });
 
   it("does not leak queued writes after stop", async () => {
