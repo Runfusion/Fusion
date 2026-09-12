@@ -6005,7 +6005,10 @@ describe("App task search suggestions", () => {
     expect(board.getByText("Completed Alpha task")).toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId("alpha-desktop-header-search-btn"));
+    const inlineSearch = screen.getByTestId("alpha-desktop-header-search-input");
+    expect(inlineSearch.parentElement).toBe(document.querySelector(".header-actions"));
     fireEvent.change(screen.getByRole("combobox", { name: "Search tasks..." }), { target: { value: "353" } });
+    expect(screen.queryByRole("dialog", { name: "Search tasks..." })).toBeNull();
     fireEvent.click(screen.getByRole("option", { name: "FN-353: Completed Alpha task" }));
 
     expect(screen.queryByTestId("alpha-task-search-overlay")).toBeNull();
@@ -6050,16 +6053,18 @@ describe("App task search suggestions", () => {
     expect(board.queryByText("Local task")).toBeNull();
 
     fireEvent.click(screen.getByTestId("alpha-desktop-header-search-btn"));
+    expect(screen.getByTestId("alpha-desktop-header-search-input").parentElement).toBe(document.querySelector(".header-actions"));
     fireEvent.change(screen.getByRole("combobox", { name: "Search tasks..." }), { target: { value: "353" } });
     fireEvent.click(screen.getByRole("option", { name: "REMOTE-353: Remote completed Alpha task" }));
 
+    expect(screen.queryByTestId("alpha-task-search-overlay")).toBeNull();
     expect(screen.getAllByRole("dialog", { name: "Remote completed Alpha task" })).toHaveLength(1);
     expect(board.getByText("Remote completed Alpha task")).toBeInTheDocument();
     expect(remoteQueries.every((query) => query === undefined)).toBe(true);
     remoteSpy.mockRestore();
   });
 
-  it("ferme l’overlay Alpha par backdrop ou Escape et réinitialise sa requête", async () => {
+  it("ferme le champ Alpha inline par la croix ou Escape et réinitialise sa requête", async () => {
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
       experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates: true },
@@ -6068,18 +6073,16 @@ describe("App task search suggestions", () => {
 
     render(<App />);
     await waitForAppShell();
-    const trigger = screen.getByTestId("alpha-desktop-header-search-btn");
-    fireEvent.click(trigger);
+    fireEvent.click(screen.getByTestId("alpha-desktop-header-search-btn"));
     fireEvent.change(screen.getByRole("combobox", { name: "Search tasks..." }), { target: { value: "353" } });
-    fireEvent.mouseDown(screen.getByTestId("alpha-task-search-overlay"));
-    expect(screen.queryByTestId("alpha-task-search-overlay")).toBeNull();
-    await waitFor(() => expect(trigger).toHaveFocus());
+    fireEvent.click(screen.getByRole("button", { name: "Close search" }));
+    await waitFor(() => expect(screen.getByTestId("alpha-desktop-header-search-btn")).toHaveFocus());
 
-    fireEvent.click(trigger);
+    fireEvent.click(screen.getByTestId("alpha-desktop-header-search-btn"));
     expect(screen.getByRole("combobox", { name: "Search tasks..." })).toHaveValue("");
-    fireEvent.keyDown(document, { key: "Escape" });
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "Search tasks..." }), { key: "Escape" });
+    await waitFor(() => expect(screen.getByTestId("alpha-desktop-header-search-btn")).toHaveFocus());
     expect(screen.queryByTestId("alpha-task-search-overlay")).toBeNull();
-    await waitFor(() => expect(trigger).toHaveFocus());
     expect(screen.queryByRole("dialog", { name: "Alpha task" })).toBeNull();
   });
 
