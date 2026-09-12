@@ -107,7 +107,6 @@ describe("projectStorage", () => {
         "kb-usage-hidden-windows",
         "kb-usage-modal-size",
         "kb-usage-provider-order",
-        "kb-task-detail-tab-order",
         "kb-chat-active-session",
         "kb-capacity-risk-banner-dismissed",
         "kb-github-setup-warning-missing-since",
@@ -117,11 +116,7 @@ describe("projectStorage", () => {
         "fusion-plugin-dependency-graph:positions",
       ]),
     );
-    /*
-    FNXC:ProjectStorage 2026-09-12-02:34:
-    Keep PROJECT_STORAGE_KEYS length lockstep with the source array, including project-isolated Task Detail tab order.
-    */
-    expect(PROJECT_STORAGE_KEYS).toHaveLength(32);
+    expect(PROJECT_STORAGE_KEYS).toHaveLength(31);
   });
 
   it("getScopedItem returns null when localStorage.getItem is unavailable", () => {

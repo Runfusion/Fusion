@@ -8351,7 +8351,6 @@
       "model": "Modelo",
       "pullRequest": "Pull Request",
       "review": "Revisão",
-      "reordered": "{{label}} movido para a posição {{position}} de {{count}}",
       "routing": "Roteamento",
       "stats": "Estatísticas",
       "summary": "Resumo",

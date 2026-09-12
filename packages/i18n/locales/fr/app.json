@@ -8327,7 +8327,6 @@
       "model": "Modèle",
       "pullRequest": "Pull Request",
       "review": "Révision",
-      "reordered": "{{label}} déplacé en position {{position}} sur {{count}}",
       "routing": "Routage",
       "stats": "Statistiques",
       "terminal": "Session",

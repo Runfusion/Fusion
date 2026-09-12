@@ -62,6 +62,17 @@ describe("dashboard guide coverage for lazy-loaded views", () => {
     expect(guide).toContain("Non-Alpha Quick Entry retains its text Save button and separate Start action");
   });
 
+  it("documents canonical Task Detail tabs with mouse drag-to-scroll and native touch", () => {
+    const guide = readDashboardGuide();
+
+    expect(guide).toContain("drag it horizontally with the left mouse button to scroll without using the wheel");
+    expect(guide).toContain("a stationary click still selects its tab or opens the Activity menu");
+    expect(guide).toContain("Tab order always remains canonical");
+    expect(guide).toContain("Touch and pen input keep the browser's native horizontal pan and tap behavior");
+    expect(guide).not.toContain("drag a tab with the mouse to reorder it");
+    expect(guide).not.toContain("Alt+ArrowLeft");
+  });
+
   it("documents permanent Planning sessions off phone and compact phone navigation", () => {
     const guide = readDashboardGuide();
     const planningBody = getSectionBody(guide, "Planning Mode");

@@ -8308,7 +8308,6 @@
       "model": "模型",
       "pullRequest": "拉取請求",
       "review": "審查",
-      "reordered": "已將 {{label}} 移至第 {{position}} 個位置，共 {{count}} 個",
       "routing": "路由",
       "stats": "統計",
       "terminal": "工作階段",

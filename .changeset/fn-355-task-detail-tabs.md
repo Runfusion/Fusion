@@ -2,6 +2,6 @@
 "@runfusion/fusion": minor
 ---
 
-summary: Add reorderable Task Detail tabs and tab-owned chat footers.
+summary: Add canonical Task Detail tabs and tab-owned chat footers.
 category: feature
-dev: Persists tab order per project and shares the Content/Footer shell across every Task Detail host.
+dev: Shares the Content/Footer shell across every Task Detail host and keeps overflowing tabs horizontally scrollable.

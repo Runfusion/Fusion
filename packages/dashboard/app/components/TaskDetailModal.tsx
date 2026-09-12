@@ -83,7 +83,6 @@ import { ProviderIcon } from "./ProviderIcon";
 import { LoadingSpinner } from "./LoadingSpinner";
 import { KeepAliveView } from "./KeepAliveView";
 import { TaskDetailTabStrip, type TaskDetailTabStripItem } from "./TaskDetailTabStrip";
-import { hasSavedTaskDetailTabOrder, loadTaskDetailTabOrder, reconcileTaskDetailTabOrder, saveTaskDetailTabOrder } from "../utils/taskDetailTabOrder";
 import { subscribeSse } from "../sse-bus";
 import type { SessionTerminalMode, SessionTerminalPosture } from "./SessionTerminal";
 import { usePluginUiSlots } from "../hooks/usePluginUiSlots";
@@ -5011,39 +5010,9 @@ export function TaskDetailContent({
       node: <TaskDetailTabButton selected={activeTab === tabId} onSelect={() => setActiveTab(tabId)}>{entry.slot.label}</TaskDetailTabButton>,
     })),
   ];
-  const canonicalTabIds = canonicalTabItems.map((item) => item.id);
-  const canonicalTabSignature = canonicalTabIds.join("\u0000");
-  const [tabOrderState, setTabOrderState] = useState(() => ({
-    projectId,
-    canonicalSignature: canonicalTabSignature,
-    customized: hasSavedTaskDetailTabOrder(projectId),
-    order: loadTaskDetailTabOrder(projectId, canonicalTabIds),
-  }));
-  const renderedTabOrder = tabOrderState.projectId !== projectId
-    ? loadTaskDetailTabOrder(projectId, canonicalTabIds)
-    : tabOrderState.canonicalSignature !== canonicalTabSignature && !tabOrderState.customized
-      ? loadTaskDetailTabOrder(projectId, canonicalTabIds)
-      : reconcileTaskDetailTabOrder(tabOrderState.order, canonicalTabIds);
+  const canonicalTabSignature = canonicalTabItems.map((item) => item.id).join("\u0000");
   useEffect(() => {
-    setTabOrderState((current) => {
-      const sameProject = current.projectId === projectId;
-      const customized = sameProject ? current.customized : hasSavedTaskDetailTabOrder(projectId);
-      return {
-        projectId,
-        canonicalSignature: canonicalTabSignature,
-        customized,
-        order: sameProject && customized
-          ? reconcileTaskDetailTabOrder(current.order, canonicalTabIds)
-          : loadTaskDetailTabOrder(projectId, canonicalTabIds),
-      };
-    });
-  }, [projectId, canonicalTabSignature]);
-  const handleTabOrderChange = useCallback((order: string[]) => {
-    setTabOrderState({ projectId, canonicalSignature: canonicalTabSignature, customized: true, order });
-    saveTaskDetailTabOrder(projectId, order);
-  }, [canonicalTabSignature, projectId]);
-  useEffect(() => {
-    if (!canonicalTabIds.includes(activeTab)) setActiveTab("definition");
+    if (!canonicalTabItems.some((item) => item.id === activeTab)) setActiveTab("definition");
   }, [activeTab, canonicalTabSignature]);
 
   /*
@@ -5462,13 +5431,6 @@ export function TaskDetailContent({
             items={canonicalTabItems}
             activeId={activeTab}
             ariaLabel={t("taskDetail.tabs.label", "Task detail tabs")}
-            order={renderedTabOrder}
-            onOrderChange={handleTabOrderChange}
-            reorderAnnouncement={(label, position, count) => t(
-              "taskDetail.tabs.reordered",
-              "{{label}} moved to position {{position}} of {{count}}",
-              { label, position, count },
-            )}
           />
         )}
         <main className={`detail-body${activeTab === "chat" && activitySegment === "feed" && !isActivityExpanded && !isEditing ? " detail-body--feed" : ""}${activeTab === "chat" && activitySegment === "raw-logs" && !isEditing ? " detail-body--agent-log" : ""}${activeTab === "chat" && (activitySegment === "current" || isActivityExpanded) && !isEditing ? " detail-body--chat" : ""}${activeTab === "planner-chat" && !isEditing ? " detail-body--planner-chat" : ""}`} data-testid="task-detail-tab-content">

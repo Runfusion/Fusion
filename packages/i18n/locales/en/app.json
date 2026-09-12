@@ -8385,7 +8385,6 @@
       "model": "Model",
       "pullRequest": "Pull Request",
       "review": "Review",
-      "reordered": "{{label}} moved to position {{position}} of {{count}}",
       "routing": "Routing",
       "stats": "Stats",
       "summary": "Summary",

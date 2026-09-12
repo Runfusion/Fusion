@@ -39,6 +39,8 @@ describe("TaskDetailModal CSS contract", () => {
     expect(css).toMatch(/\.detail-tabs\s*\{[^}]*overflow-x\s*:\s*auto\s*;/);
     expect(css).toMatch(/\.detail-tabs\s*\{[^}]*touch-action\s*:\s*pan-x\s+pan-y\s*;/);
     expect(css).toMatch(/\.detail-tab\s*\{[^}]*flex-shrink\s*:\s*0\s*;/);
+    expect(css).toMatch(/\.detail-tabs\.is-mouse-panning[\s\S]*?cursor\s*:\s*grabbing\s*!important\s*;/);
+    expect(css).toMatch(/\.detail-tabs\.is-mouse-panning[\s\S]*?user-select\s*:\s*none\s*;/);
   });
 
   /* FNXC:TaskDetailPadding 2026-09-12-03:19: The active tab now renders directly in the single `.detail-body` scroller, which owns the canonical inset without a generic child wrapper. */

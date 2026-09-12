@@ -169,7 +169,7 @@ The grep-backed [dashboard modal inventory](./dashboard-modal-inventory.md) is t
 
 Task Detail uses the same four-zone shell in its modal, Board panel, List split view, right dock, and pop-out: header, tab strip, active content, then an optional footer owned by that tab. The task title appears only in **Definition**. **Chat** and **Activity → Live** keep the transcript as the scrollable content and pin their composer in the footer; read-only destinations such as Activity Feed and Raw do not reserve an empty footer.
 
-On desktop, drag a tab with the mouse to reorder it, or focus it and press `Alt+ArrowLeft` / `Alt+ArrowRight`. Fusion saves this order for the current project and reconciles conditional and plugin tabs when they appear. On touch devices, native drag is disabled so the one-row strip remains horizontally scrollable; tapping still selects a tab normally.
+When the one-row tab strip overflows, drag it horizontally with the left mouse button to scroll without using the wheel. The gesture starts only after a clear horizontal movement, so a stationary click still selects its tab or opens the Activity menu, while a completed pan does neither. Tab order always remains canonical across built-in, conditional, and plugin destinations. Touch and pen input keep the browser's native horizontal pan and tap behavior.
 
 ### Task modal resizing on tablets
 

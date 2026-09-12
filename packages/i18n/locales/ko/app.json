@@ -8308,7 +8308,6 @@
       "model": "모델",
       "pullRequest": "풀 리퀘스트",
       "review": "검토",
-      "reordered": "{{label}} 탭을 {{count}}개 중 {{position}}번째 위치로 이동했습니다",
       "routing": "라우팅",
       "stats": "통계",
       "terminal": "세션",

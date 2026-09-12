@@ -8651,7 +8651,6 @@ export default interface Resources {
         "model": "Model",
         "pullRequest": "Pull Request",
         "recommendations": "Recommendations",
-        "reordered": "{{label}} moved to position {{position}} of {{count}}",
         "review": "Review",
         "routing": "Routing",
         "stats": "Stats",
