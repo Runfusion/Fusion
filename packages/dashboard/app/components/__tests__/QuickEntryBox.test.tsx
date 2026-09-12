@@ -5524,7 +5524,7 @@ describe("QuickEntryBox", () => {
 
     const completePointerHold = async (save: HTMLElement, pointerId = 7, pointerType = "mouse") => {
       fireEvent.pointerDown(save, { pointerId, pointerType, button: 0, isPrimary: true });
-      await act(async () => vi.advanceTimersByTime(1_200));
+      await act(async () => vi.advanceTimersByTime(800));
     };
 
     const setup = (props = {}) => {
@@ -5534,20 +5534,90 @@ describe("QuickEntryBox", () => {
       return { ...rendered, onCreate, save: screen.getByTestId("quick-entry-save") };
     };
 
-    it.each(["mouse", "touch", "pen"])("starts exactly once after a 1,200ms %s hold", async (pointerType) => {
+    it.each(["mouse", "touch", "pen"])("starts exactly once at the 800ms %s boundary and resets before late events", async (pointerType) => {
       const { onCreate, save } = setup();
       expect(save).toHaveAccessibleName("Save task; hold to start");
       expect(save).not.toHaveTextContent("Save");
+      expect(save).toHaveStyle({ "--quick-entry-alpha-hold-duration": "800ms" });
+      expect(save.querySelectorAll("button")).toHaveLength(0);
+      expect(save.querySelectorAll("svg")).toHaveLength(2);
+      expect(save.querySelector(".quick-entry-alpha-save-icon--save")).toHaveAttribute("aria-hidden", "true");
+      expect(save.querySelector(".quick-entry-alpha-save-progress")).toHaveAttribute("aria-hidden", "true");
       expect(screen.queryByTestId("quick-entry-save-start")).toBeNull();
 
       fireEvent.pointerDown(save, { pointerId: 7, pointerType, button: 0, isPrimary: true });
       expect(save).toHaveAttribute("data-hold-state", "holding");
-      await act(async () => vi.advanceTimersByTime(1_200));
+      expect(save).toHaveAccessibleName("Release to save; keep holding to start");
+      expect(screen.getByRole("status")).toHaveTextContent("Keep holding to start");
+      expect(screen.getByRole("status")).not.toHaveTextContent("Starting task");
+      await act(async () => vi.advanceTimersByTime(800));
+
+      expect(save).toHaveAttribute("data-hold-state", "idle");
+      expect(save).toHaveAccessibleName("Save task; hold to start");
       fireEvent.pointerUp(save, { pointerId: 7, pointerType });
       fireEvent.click(save);
 
       await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
       expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({ workflowId: ideasWorkflow.id, column: "todo" }));
+    });
+
+    it("does not let a late cancellation event suppress the next independent Save", async () => {
+      const { onCreate, save } = setup();
+      await completePointerHold(save, 21, "pen");
+      fireEvent.pointerUp(save, { pointerId: 21, pointerType: "pen" });
+      fireEvent.click(save);
+      await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(screen.getByTestId("quick-entry-input")).toHaveValue(""));
+
+      fireEvent.lostPointerCapture(save, { pointerId: 21, pointerType: "pen" });
+      fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Independent Save" } });
+      fireEvent.click(screen.getByTestId("quick-entry-save"));
+
+      await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(2));
+      expect(onCreate.mock.calls[1]![0]).not.toHaveProperty("column");
+    });
+
+    it("retains the completed gesture barrier when Start succeeds before pointer release", async () => {
+      const { onCreate, save } = setup();
+
+      await completePointerHold(save);
+      await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(screen.getByTestId("quick-entry-input")).toHaveValue(""));
+
+      fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Draft entered before release" } });
+      fireEvent.pointerUp(save, { pointerId: 7, pointerType: "mouse" });
+      fireEvent.click(save);
+      await act(async () => Promise.resolve());
+
+      expect(onCreate).toHaveBeenCalledTimes(1);
+      expect(screen.getByTestId("quick-entry-input")).toHaveValue("Draft entered before release");
+
+      fireEvent.click(save);
+      await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(2));
+      expect(onCreate.mock.calls[1]![0]).not.toHaveProperty("column");
+    });
+
+    it("keeps the visual gesture reset when Start creation rejects", async () => {
+      const addToast = vi.fn();
+      const onCreate = vi.fn().mockRejectedValue(new Error("start failed"));
+      renderAlphaQuickEntryBox({ addToast, onCreate, workflowId: ideasWorkflow.id, workflowOptions: [ideasWorkflow] });
+      fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Rejected Alpha task" } });
+      const save = screen.getByTestId("quick-entry-save");
+
+      await completePointerHold(save);
+
+      expect(save).toHaveAttribute("data-hold-state", "idle");
+      expect(save).toHaveAccessibleName("Save task; hold to start");
+      await waitFor(() => expect(addToast).toHaveBeenCalledWith("start failed", "error"));
+      expect(onCreate).toHaveBeenCalledTimes(1);
+      expect(onCreate.mock.calls[0]![0]).toHaveProperty("column", "todo");
+
+      fireEvent.pointerUp(save, { pointerId: 7, pointerType: "mouse" });
+      fireEvent.click(save);
+      await act(async () => Promise.resolve());
+
+      expect(onCreate).toHaveBeenCalledTimes(1);
+      expect(screen.getByTestId("quick-entry-input")).toHaveValue("Rejected Alpha task");
     });
 
     it.each([
@@ -5557,17 +5627,20 @@ describe("QuickEntryBox", () => {
     ])("ignores a hold from the %s", async (_label, pointerInit) => {
       const { onCreate, save } = setup();
       fireEvent.pointerDown(save, { pointerId: 12, ...pointerInit });
-      await act(async () => vi.advanceTimersByTime(1_200));
+      await act(async () => vi.advanceTimersByTime(800));
 
       expect(save).toHaveAttribute("data-hold-state", "idle");
       expect(onCreate).not.toHaveBeenCalled();
     });
 
-    it.each(["Enter", " "])("supports a single keyboard hold with %s and ignores repeat", async (key) => {
+    it.each(["Enter", " "])("supports a single keyboard hold at 800ms with %s and ignores repeat", async (key) => {
       const { onCreate, save } = setup();
       fireEvent.keyDown(save, { key });
       fireEvent.keyDown(save, { key, repeat: true });
-      await act(async () => vi.advanceTimersByTime(1_200));
+      await act(async () => vi.advanceTimersByTime(800));
+
+      expect(save).toHaveAttribute("data-hold-state", "idle");
+      expect(save).toHaveAccessibleName("Save task; hold to start");
       fireEvent.keyUp(save, { key });
       fireEvent.click(save);
 
@@ -5575,15 +5648,28 @@ describe("QuickEntryBox", () => {
       expect(onCreate.mock.calls[0]![0]).toHaveProperty("column", "todo");
     });
 
-    it("uses an early pointer release as one ordinary Save", async () => {
+    it.each(["Enter", " "])("uses a 799ms keyboard release with %s as one ordinary Save", async (key) => {
       const { onCreate, save } = setup();
-      fireEvent.pointerDown(save, { pointerId: 4, pointerType: "mouse", button: 0, isPrimary: true });
-      await act(async () => vi.advanceTimersByTime(600));
-      fireEvent.pointerUp(save, { pointerId: 4, pointerType: "mouse" });
+      fireEvent.keyDown(save, { key });
+      await act(async () => vi.advanceTimersByTime(799));
+      fireEvent.keyUp(save, { key });
       fireEvent.click(save);
 
       await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
       expect(onCreate.mock.calls[0]![0]).not.toHaveProperty("column");
+      expect(screen.getByTestId("quick-entry-save")).toHaveAttribute("data-hold-state", "idle");
+    });
+
+    it.each(["mouse", "touch", "pen"])("uses a 799ms %s release as one ordinary Save", async (pointerType) => {
+      const { onCreate, save } = setup();
+      fireEvent.pointerDown(save, { pointerId: 4, pointerType, button: 0, isPrimary: true });
+      await act(async () => vi.advanceTimersByTime(799));
+      fireEvent.pointerUp(save, { pointerId: 4, pointerType });
+      fireEvent.click(save);
+
+      await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+      expect(onCreate.mock.calls[0]![0]).not.toHaveProperty("column");
+      expect(screen.getByTestId("quick-entry-save")).toHaveAttribute("data-hold-state", "idle");
     });
 
     it.each(["pointerCancel", "pointerLeave", "lostPointerCapture", "blur", "escape"])("cancels without saving on %s", async (cancellation) => {
@@ -5594,7 +5680,7 @@ describe("QuickEntryBox", () => {
       if (cancellation === "lostPointerCapture") fireEvent.lostPointerCapture(save, { pointerId: 9, pointerType: "touch" });
       if (cancellation === "blur") fireEvent.blur(save);
       if (cancellation === "escape") fireEvent.keyDown(save, { key: "Escape" });
-      await act(async () => vi.advanceTimersByTime(1_200));
+      await act(async () => vi.advanceTimersByTime(800));
       expect(onCreate).not.toHaveBeenCalled();
       expect(save).toHaveAttribute("data-hold-state", "idle");
     });
@@ -5606,7 +5692,7 @@ describe("QuickEntryBox", () => {
       fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Alpha task" } });
       fireEvent.pointerDown(screen.getByTestId("quick-entry-save"), { pointerId: 3, pointerType: "pen", button: 0, isPrimary: true });
       rerender(<AlphaProvider enabled><AlphaBoundary><QuickEntryBox onCreate={onCreate} addToast={vi.fn()} workflowId={replacement.id} workflowOptions={[ideasWorkflow, replacement]} /></AlphaBoundary></AlphaProvider>);
-      await act(async () => vi.advanceTimersByTime(1_200));
+      await act(async () => vi.advanceTimersByTime(800));
       expect(onCreate).not.toHaveBeenCalled();
       expect(screen.getByTestId("quick-entry-save")).toHaveAttribute("data-hold-state", "idle");
     });
@@ -5615,7 +5701,7 @@ describe("QuickEntryBox", () => {
       const { onCreate, save, unmount } = setup();
       fireEvent.pointerDown(save, { pointerId: 5, pointerType: "touch", button: 0, isPrimary: true });
       unmount();
-      await act(async () => vi.advanceTimersByTime(1_200));
+      await act(async () => vi.advanceTimersByTime(800));
       expect(onCreate).not.toHaveBeenCalled();
     });
 
@@ -5661,13 +5747,20 @@ describe("QuickEntryBox", () => {
       const save = screen.getByTestId("quick-entry-save");
 
       await completePointerHold(save);
-      fireEvent.click(save);
       expect(await screen.findByText("Possible duplicates")).toBeInTheDocument();
       fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
       expect(onCreate).not.toHaveBeenCalled();
 
       await waitFor(() => expect(screen.getByTestId("quick-entry-save")).not.toBeDisabled());
+      const releasedSave = screen.getByTestId("quick-entry-save");
+      fireEvent.pointerUp(releasedSave, { pointerId: 7, pointerType: "mouse" });
+      fireEvent.click(releasedSave);
+      await act(async () => vi.advanceTimersByTime(0));
+      expect(onCreate).not.toHaveBeenCalled();
+      expect(screen.getByTestId("quick-entry-input")).toHaveValue("Cancel duplicate Start");
+
       fireEvent.click(screen.getByTestId("quick-entry-save"));
+      await waitFor(() => expect(checkDuplicateTasks).toHaveBeenCalledTimes(2));
       await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
       expect(onCreate.mock.calls[0]![0]).not.toHaveProperty("column");
     });
@@ -5700,7 +5793,7 @@ describe("QuickEntryBox", () => {
       const save = screen.getByTestId("quick-entry-save");
 
       fireEvent.pointerDown(save, { pointerId: 14, pointerType: "mouse", button: 0, isPrimary: true });
-      await act(async () => vi.advanceTimersByTime(1_200));
+      await act(async () => vi.advanceTimersByTime(800));
       expect(save).toHaveAttribute("data-hold-state", "idle");
       expect(onCreate).not.toHaveBeenCalled();
       fireEvent.pointerUp(save, { pointerId: 14, pointerType: "mouse", button: 0, isPrimary: true });
@@ -5729,6 +5822,8 @@ describe("QuickEntryBox", () => {
     it("keeps legacy Save text and its separate Start action", () => {
       renderQuickEntryBox({ workflowId: ideasWorkflow.id, workflowOptions: [ideasWorkflow], onMoveTask: vi.fn() });
       expect(screen.getByTestId("quick-entry-save")).toHaveTextContent("Save");
+      expect(screen.getByTestId("quick-entry-save")).not.toHaveClass("quick-entry-alpha-save");
+      expect(screen.getByTestId("quick-entry-save").querySelector(".quick-entry-alpha-save-icons")).toBeNull();
       expect(screen.getByTestId("quick-entry-save-start")).toHaveTextContent("Start");
     });
   });

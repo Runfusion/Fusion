@@ -107,18 +107,22 @@ describe("QuickEntryBox.css — Save button is never clipped (mobile report)", (
     }
   });
 
-  it("keeps the Alpha icon-only hold fill inside fixed token-sized desktop and mobile targets", () => {
+  it("keeps the Alpha icon-only hold mask inside fixed token-sized desktop and mobile targets", () => {
     const { body } = ruleBody('[data-alpha-surface="true"] .quick-entry-primary-group [data-testid="quick-entry-save"]');
     expect(body).toMatch(/min-width:\s*var\(--alpha-control-height\)/);
     expect(body).toMatch(/width:\s*var\(--alpha-control-height\)/);
     expect(body).toMatch(/overflow:\s*hidden/);
     expect(body).toMatch(/padding:\s*0/);
 
-    const progress = ruleBody('[data-alpha-surface="true"] .quick-entry-alpha-save-progress').body;
-    expect(progress).toMatch(/inset:\s*0/);
+    const progress = ruleBody('[data-alpha-surface="true"] .quick-entry-alpha-save > .quick-entry-alpha-save-icons > .quick-entry-alpha-save-progress').body;
+    expect(css).toMatch(/\.quick-entry-alpha-save-progress\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?inset:\s*0/);
     expect(progress).toMatch(/background:\s*var\(--color-warning\)/);
-    expect(progress).toMatch(/transform:\s*scaleX\(0\)/);
-    expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*\.quick-entry-alpha-save\[data-hold-state="holding"\]/);
+    expect(progress).toMatch(/clip-path:\s*inset\(100% 0 0 0\)/);
+    expect(progress).toMatch(/transform-origin:\s*bottom/);
+    expect(css).toMatch(/animation:\s*quick-entry-alpha-hold-progress var\(--quick-entry-alpha-hold-duration\) linear forwards/);
+    expect(css).toMatch(/@keyframes quick-entry-alpha-hold-progress\s*\{[\s\S]*clip-path:\s*inset\(0 0 0 0\)/);
+    expect(css).not.toMatch(/scale[XY]\(/);
+    expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*animation:\s*none[\s\S]*clip-path:\s*inset\(50% 0 0 0\)/);
     expect(css).toMatch(/@media \(max-width: 768px\)[\s\S]*min-width:\s*var\(--alpha-touch-height\)/);
   });
 

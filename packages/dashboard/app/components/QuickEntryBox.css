@@ -949,8 +949,8 @@ shared left/right edges and compact gaps. Keep the centered cluster desktop-only
 }
 
 /*
-FNXC:AlphaQuickEntry 2026-09-12-00:36:
-Alpha Quick Entry is input-first: the immediate attach/status/icon-only Save row remains visible, and routing options appear as a quiet second row only after disclosure. The Save control keeps fixed icon-button metrics while a contained token-colored fill communicates the 1,200ms Start hold without changing row width; List and legacy surfaces retain their existing shells.
+FNXC:AlphaQuickEntry 2026-09-12-21:10:
+Alpha Quick Entry is input-first: the immediate attach/status/icon-only Save row remains visible, and routing options appear as a quiet second row only after disclosure. During the 800ms Start hold, a warning-colored mask rises from the bottom, covers the corresponding portion of Save, and reveals an undistorted Play icon. The fixed button metrics, List host, legacy controls, and reduced-motion timing remain unchanged.
 */
 [data-alpha-surface="true"] .quick-entry-box {
   padding: var(--alpha-density-2);
@@ -1004,40 +1004,40 @@ Alpha Quick Entry is input-first: the immediate attach/status/icon-only Save row
   isolation: isolate;
 }
 
-[data-alpha-surface="true"] .quick-entry-alpha-save > svg {
-  position: relative;
-  z-index: 1;
-}
-
+[data-alpha-surface="true"] .quick-entry-alpha-save-icons,
+[data-alpha-surface="true"] .quick-entry-alpha-save-icon,
 [data-alpha-surface="true"] .quick-entry-alpha-save-progress {
   position: absolute;
   inset: 0;
-  background: var(--color-warning);
-  opacity: 0;
-  transform: scaleX(0);
-  transform-origin: left;
+  display: grid;
+  place-items: center;
   pointer-events: none;
 }
 
-[data-alpha-surface="true"] .quick-entry-alpha-save[data-hold-state="holding"] .quick-entry-alpha-save-progress {
-  opacity: 1;
-  animation: quick-entry-alpha-hold-progress 1200ms linear forwards;
+[data-alpha-surface="true"] .quick-entry-alpha-save-icon--save {
+  z-index: 1;
 }
 
-[data-alpha-surface="true"] .quick-entry-alpha-save[data-hold-state="confirmed"] .quick-entry-alpha-save-progress {
-  opacity: 1;
-  transform: scaleX(1);
+[data-alpha-surface="true"] .quick-entry-alpha-save > .quick-entry-alpha-save-icons > .quick-entry-alpha-save-progress {
+  z-index: 2;
+  background: var(--color-warning);
+  color: var(--provider-icon-contrast);
+  clip-path: inset(100% 0 0 0);
+  transform-origin: bottom;
+}
+
+[data-alpha-surface="true"] .quick-entry-alpha-save[data-hold-state="holding"] .quick-entry-alpha-save-progress {
+  animation: quick-entry-alpha-hold-progress var(--quick-entry-alpha-hold-duration) linear forwards;
 }
 
 @keyframes quick-entry-alpha-hold-progress {
-  to { transform: scaleX(1); }
+  to { clip-path: inset(0 0 0 0); }
 }
 
 @media (prefers-reduced-motion: reduce) {
   [data-alpha-surface="true"] .quick-entry-alpha-save[data-hold-state="holding"] .quick-entry-alpha-save-progress {
     animation: none;
-    opacity: 0.45;
-    transform: scaleX(1);
+    clip-path: inset(50% 0 0 0);
   }
 }
 
