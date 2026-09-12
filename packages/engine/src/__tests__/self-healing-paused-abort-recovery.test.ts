@@ -13,7 +13,6 @@ vi.mock("../logger.js", () => ({
 }));
 
 vi.mock("../worktree/worktree-pool.js", () => ({
-  WorktreePool: vi.fn(),
   RemovalReason: {},
   scanIdleWorktrees: vi.fn().mockResolvedValue([]),
   cleanupOrphanedWorktrees: vi.fn().mockResolvedValue(0),
@@ -135,7 +134,7 @@ describe("recoverPausedAbortFailures", () => {
     expect(store.moveTask).toHaveBeenCalledWith(
       "FN-7001",
       "todo",
-      { preserveProgress: true, preserveWorktree: true, moveSource: "engine", recoveryRehome: true },
+      { preserveProgress: true, preserveWorktree: true, moveSource: "engine", lifecycleReason: "self-healing-session-recovery", recoveryRehome: true },
     );
     expect(store.updateTask).toHaveBeenNthCalledWith(2, "FN-7001", {
       workflowTransitionNotification: {

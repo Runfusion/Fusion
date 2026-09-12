@@ -347,15 +347,10 @@ export const PIPELINE_SCENARIO_DRIVERS = {
   s11Arrange: driver("create a task for production worktree recovery", async (context) => {
     await arrangeTask(context, `S11-${context.variant ?? "default"}`);
   }),
-  s11Act: driver("exercise each real WorktreePool acquisition disruption", async (context) => {
+  s11Act: driver("exercise each shipped worktree acquisition recovery disruption", async (context) => {
     const task = taskFor(context);
     const variant = context.variant;
-    if (
-      variant !== "pool-saturated"
-      && variant !== "recycled"
-      && variant !== "absent"
-      && variant !== "vanished-mid-step"
-    ) {
+    if (variant !== "absent" && variant !== "vanished-mid-step") {
       throw new Error(`S11 requires a declared worktree variant, received ${String(variant)}.`);
     }
     await context.harness.arrangeWorktreeRecoveryVariant(task.id, variant);

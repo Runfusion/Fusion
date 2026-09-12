@@ -76,7 +76,6 @@ vi.mock("../worktree/worktree-pool.js", async () => {
   const { existsSync: fsExistsSync } = await import("node:fs");
   const { join: joinPath, resolve: resolvePath } = await import("node:path");
   return {
-  WorktreePool: vi.fn(),
   // FN-4811: Must mirror the production `RemovalReason` const in worktree-backend.ts
   // exactly — every key referenced as `RemovalReason.X` in production code (self-healing,
   // executor, merger) needs to resolve here, otherwise removeWorktree({ reason: undefined })
