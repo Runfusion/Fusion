@@ -732,21 +732,16 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   const isMobile = viewportMode === "mobile";
   /*
   FNXC:PlanningModeMobileTablet 2026-07-20-09:30:
-  Active interviews use progressive disclosure below desktop, plus every short CSS shell viewport.
-  `viewportMode === "mobile"` preserves the phone-class short-landscape contract from
-  isMobileViewport(); isShortViewport additionally guards non-phone short shells so CSS never
-  collapses three panes while JavaScript leaves their controls inaccessible. This is intentionally
-  temporary while a keyboard is open, rather than a global viewport-mode change.
+  Tablet and phone keep compact interview controls, while short shells retain their keyboard-safe internal adaptations.
+
+  FNXC:PlanningSidebar 2026-09-12-05:41:
+  Compact interview controls are independent from session navigation. Desktop and tablet always render the resizable session sidebar beside detail; only phone uses the exclusive list/detail destination and Back control.
   */
   const isCompactInterview = viewportMode !== "desktop" || isShortViewport();
-  /*
-  FNXC:PlanningModeMobile 2026-07-20-10:30:
-  FN-8427 makes the saved-session list a real destination. Back enters this mode and unmounts
-  the active interview plan so it cannot consume flex height beneath session rows.
-  */
-  const isSessionListMode = showSessionList || (isCompactInterview && !mobileShowDetail);
-  // FNXC:PlanningSessionBack 2026-07-21-11:15: Back covers selected details on every viewport and drafts whenever saved sessions exist; list mode removes it instead of leaving an orphaned control.
-  const canReturnToSessionList = !isSessionListMode
+  const isSessionListMode = isMobile && (showSessionList || !mobileShowDetail);
+  const shouldRenderSessionSidebar = !isMobile || isSessionListMode;
+  const canReturnToSessionList = isMobile
+    && !isSessionListMode
     && (selectedSessionId !== null || planningSessions.length > 0);
   const [isRefineMenuOpen, setIsRefineMenuOpen] = useState(false);
   const [mobileWorkspaceTab, setMobileWorkspaceTab] = useState<"question" | "plan">("question");
@@ -3604,8 +3599,8 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     (
       <div className={isEmbedded ? "modal modal-lg planning-modal planning-modal--embedded" : "modal modal-lg planning-modal"} ref={modalRef}>
         {/*
-        FNXC:PlanningMode 2026-06-22-00:00:
-        Embedded planning is a main-content destination, not a dialog: it drops the modal close button and renders a plain common title (modal-header--embedded) matching other embedded views like Command Center. The session-list Back affordance stays because it navigates within Planning, not away from the view.
+        FNXC:PlanningMode 2026-09-12-05:41:
+        Embedded planning is a main-content destination, not a dialog: it drops the modal close button and matches other embedded view headers. Desktop/tablet navigate through the permanent sidebar; only phone keeps Back for its exclusive list/detail flow.
         */}
         <div className={isEmbedded ? "modal-header modal-header--embedded" : "modal-header"}>
           <div className="detail-title-row">
@@ -3718,7 +3713,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
               </section>
             </div>
           )}
-          {isSessionListMode && (
+          {shouldRenderSessionSidebar && (
           <PlanningSessionList
             sessions={planningSessions}
             loading={sessionsLoading}
@@ -3736,7 +3731,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           />
           )}
 
-          {isSessionListMode && viewportMode === "desktop" && !isShortViewport() && (
+          {!isMobile && (
             <div
               className="planning-sidebar-resize-handle"
               role="separator"

@@ -758,13 +758,12 @@ describe("PlanningModeModal sequential flow", () => {
   });
 
   /*
-  FNXC:PlanningSessionBack 2026-07-21-11:15:
-  Session detail navigation has one invariant across desktop and compact layouts: Back is the
-  only route to the saved-session list. The former Sessions toggle must not survive as a second
-  affordance, and list mode must not retain an orphaned Back target.
+  FNXC:PlanningSidebar 2026-09-12-05:41:
+  Desktop and tablet keep saved sessions and detail mounted together; only phone exposes Back and exclusive list/detail navigation.
   */
-  it.each(["desktop", "tablet", "mobile"] as const)("uses only Back to return to sessions on %s", async (viewport) => {
+  it.each(["desktop", "tablet"] as const)("keeps the session sidebar, resize handle, and selected detail visible on %s", async (viewport) => {
     mockViewportMode.mockReturnValue(viewport);
+    mockFetchAiSessions.mockResolvedValue([{ ...base, type: "planning", status: "awaiting_input", preview: "Saved plan" }]);
     mockFetchAiSession.mockResolvedValue({
       ...base,
       status: "awaiting_input",
@@ -775,35 +774,61 @@ describe("PlanningModeModal sequential flow", () => {
 
     renderSession();
 
-    const backButton = await screen.findByRole("button", { name: "Back to sessions" });
-    const modalBody = document.querySelector(".planning-modal-body");
-    expect(screen.queryByRole("button", { name: "Sessions" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "History" }));
-    expect(screen.getByRole("region", { name: "Question and answer history" })).toBeInTheDocument();
-    fireEvent.click(backButton);
-
-    expect(modalBody).toHaveClass("planning-modal-body--show-list");
+    expect(await screen.findByText("What should happen next?")).toBeInTheDocument();
+    const sidebar = screen.getByRole("complementary", { name: "Planning sessions" });
+    expect(screen.getByRole("separator", { name: "Resize planning sidebar" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Back to sessions" })).toBeNull();
-    expect(screen.queryByRole("region", { name: "Question and answer history" })).toBeNull();
-    expect(screen.getByRole("complementary", { name: "Planning sessions" })).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: /Secure plan/ }));
+    expect(screen.getByRole("complementary", { name: "Planning sessions" })).toBe(sidebar);
+    expect(screen.getByText("What should happen next?")).toBeInTheDocument();
   });
 
-  it.each(["desktop", "tablet", "mobile"] as const)("keeps Back available from a new-session draft with saved sessions on %s", async (viewport) => {
-    mockViewportMode.mockReturnValue(viewport);
-    mockFetchAiSessions.mockResolvedValue([{
+  it("keeps Back as the phone-only route from detail to the session list", async () => {
+    mockViewportMode.mockReturnValue("mobile");
+    mockFetchAiSessions.mockResolvedValue([{ ...base, type: "planning", status: "awaiting_input", preview: "Saved plan" }]);
+    mockFetchAiSession.mockResolvedValue({
       ...base,
-      type: "planning",
       status: "awaiting_input",
-      preview: "Saved plan",
-    }]);
+      currentQuestion: JSON.stringify({ id: "q-current", type: "text", question: "What should happen next?" }),
+      result: JSON.stringify(summaryWithRefinements),
+      inputPayload: "{}",
+    });
+
+    renderSession();
+
+    expect(await screen.findByText("What should happen next?")).toBeInTheDocument();
+    expect(screen.queryByRole("complementary", { name: "Planning sessions" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Back to sessions" }));
+    expect(document.querySelector(".planning-modal-body")).toHaveClass("planning-modal-body--show-list");
+    expect(screen.getByRole("complementary", { name: "Planning sessions" })).toBeInTheDocument();
+    expect(screen.queryByRole("separator", { name: "Resize planning sidebar" })).toBeNull();
+  });
+
+  it.each(["desktop", "tablet"] as const)("keeps the populated sidebar mounted when starting a new session on %s", async (viewport) => {
+    mockViewportMode.mockReturnValue(viewport);
+    mockFetchAiSessions.mockResolvedValue([{ ...base, type: "planning", status: "awaiting_input", preview: "Saved plan" }]);
 
     render(<PlanningModeModal isOpen onClose={vi.fn()} onTaskCreated={vi.fn()} onTasksCreated={vi.fn()} tasks={mockTasks} projectId="project-1" />);
 
-    if (viewport !== "desktop") {
-      fireEvent.click(await screen.findByRole("button", { name: "New session" }));
-    }
-    expect(await screen.findByRole("button", { name: "Back to sessions" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Sessions" })).toBeNull();
+    const sidebar = await screen.findByRole("complementary", { name: "Planning sessions" });
+    fireEvent.click(screen.getByRole("button", { name: "New session" }));
+    expect(screen.getByRole("complementary", { name: "Planning sessions" })).toBe(sidebar);
+    expect(screen.getByRole("separator", { name: "Resize planning sidebar" })).toBeInTheDocument();
+    expect(screen.getByText("Transform your idea into a detailed task")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Back to sessions" })).toBeNull();
+  });
+
+  it("keeps the phone sidebar exclusive when starting and leaving a new session", async () => {
+    mockViewportMode.mockReturnValue("mobile");
+    mockFetchAiSessions.mockResolvedValue([{ ...base, type: "planning", status: "awaiting_input", preview: "Saved plan" }]);
+
+    render(<PlanningModeModal isOpen onClose={vi.fn()} onTaskCreated={vi.fn()} onTasksCreated={vi.fn()} tasks={mockTasks} projectId="project-1" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "New session" }));
+    expect(screen.queryByRole("complementary", { name: "Planning sessions" })).toBeNull();
+    expect(screen.getByText("Transform your idea into a detailed task")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Back to sessions" }));
+    expect(screen.getByRole("complementary", { name: "Planning sessions" })).toBeInTheDocument();
   });
 
   it("creates the task directly and offers task and session-list handoffs", async () => {
