@@ -112,6 +112,15 @@ commit. The register record now keeps its historical identity on relabeled File/
 lines that no longer match the dangling-path scan (the file no longer exists to drift-check),
 states 3 active records, and names FN-9287 (depends on the still-in-review FN-9283) as the
 coverage-restoration owner.
+
+FNXC:TestFlakeRegister 2026-09-12-04:32:
+Entry 1 closed 2026-09-12: FN-9131's structural harness connection-budget fix (ae507afc37,
+merged 2026-08-16) resolved its reproduced project-identity timeout with loaded re-measurement
+green, and no sighting has occurred since. The status line now starts with "Closed", so the
+active list drops to entries 2 and 13 and the stated count drops to 2. Entry 1's record and
+its FN-9146 campaign table stay physically in the active section (readActiveRecordSections
+does not filter by status), so the campaign-evidence assertion below still reads entry 1 in
+place — keep it in expectedSubjectResults exactly like the closed-in-place entry 7.
 */
 test("observed-flake register active count, escalation state, and owners stay synchronized", () => {
   const register = readFileSync(registerPath, "utf8");
@@ -126,10 +135,6 @@ test("observed-flake register active count, escalation state, and owners stay sy
   );
 
   assert.deepEqual(activeEntries, [
-    {
-      heading: "1. Project identity returns no stored identity",
-      status: "Active reproduced-but-unattributed observation — evidence owner FN-9146 (archived 2026-09-03; record unowned pending next sighting).",
-    },
     {
       heading: "2. Schema applier retains registered dependents",
       status: "Active first sighting — evidence owner FN-9146 (archived 2026-09-03; record unowned pending next sighting).",
