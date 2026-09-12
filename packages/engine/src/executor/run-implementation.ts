@@ -1990,29 +1990,77 @@ export async function runImplementation(
       runner (which acquires withVerificationSlot); no chat-side subprocess exists.
       */
       let verificationRequestInFlight = false;
+      /*
+      FNXC:VerificationWriteAhead 2026-08-31-00:00 (EXAM-010):
+      Resolve the end-to-end watchdog ceiling once per session from project settings.
+      0 disables it. Mirrors the value wired into the fn_run_verification tool below
+      so the chat-pickup path and the agent tool path share the same bound.
+      */
+      const verificationWatchdogMs =
+        typeof settings.verificationWatchdogTimeoutMs === "number" && settings.verificationWatchdogTimeoutMs > 0
+          ? settings.verificationWatchdogTimeoutMs
+          : 0;
       const runPendingTaskVerification = async (): Promise<void> => {
         if (verificationRequestInFlight) return;
         const pendingVerification = await deps.store.getTaskVerificationRequestAsync(task.id);
-        if (pendingVerification?.status !== "requested") return;
+        if (pendingVerification?.status !== "requested") {
+          /*
+          FNXC:VerificationWriteAhead 2026-08-31-00:00 (EXAM-010):
+          Stale-`running` takeover. A killed run used to leave this row at `running`
+          forever: the pickup only claimed `requested` and createTaskVerificationRequest
+          refused new rows while requested|running, so every follow-up verification on
+          the task failed with "already in flight" until an operator restarted the agent.
+          When the row has been running longer than the watchdog ceiling, reclaim it
+          (CAS on requestId + startedAt inside the store — a live executor is never
+          stolen) and let the next 1s tick pick the task up cleanly.
+          */
+          if (pendingVerification?.status === "running" && verificationWatchdogMs > 0 && pendingVerification.startedAt) {
+            const runningForMs = Date.now() - Date.parse(pendingVerification.startedAt);
+            if (Number.isFinite(runningForMs) && runningForMs > verificationWatchdogMs) {
+              try {
+                const reclaimed = await deps.store.reclaimStaleTaskVerificationRequest(task.id, pendingVerification.requestId, verificationWatchdogMs);
+                if (reclaimed) {
+                  executorLog.warn(`${task.id}: reclaimed stale running verification request ${pendingVerification.requestId} (no completion for ${Math.round(runningForMs / 1000)}s)`);
+                }
+              } catch (error) {
+                executorLog.warn(`${task.id}: stale verification reclaim failed: ${error instanceof Error ? error.message : String(error)}`);
+              }
+            }
+          }
+          return;
+        }
         verificationRequestInFlight = true;
         try {
           const claimedVerification = await deps.store.claimTaskVerificationRequest(task.id, pendingVerification.requestId);
           if (!claimedVerification) return;
           const startedAt = Date.now();
+          const commandTimeoutMs = settings.verificationCommandTimeoutMs ?? 300_000;
+          /*
+          FNXC:VerificationWriteAhead 2026-08-31-00:00 (EXAM-010):
+          Bracket the pickup run with the stuck detector (previously missing here — only
+          the tool path bracketed) and bound it end-to-end by the watchdog ceiling, so
+          detector suppression stays deadline-bounded and a never-settling subprocess
+          cannot wedge this pickup loop forever. onVerificationEnd fires from finally on
+          every settle path.
+          */
+          stuckDetector?.beginVerification(task.id, commandTimeoutMs);
           try {
             const verificationResult = await runTaskVerificationCommand({
               command: claimedVerification.command,
               cwd: worktreePath,
-              timeoutMs: settings.verificationCommandTimeoutMs ?? 300_000,
+              timeoutMs: commandTimeoutMs,
               onHeartbeat: () => stuckDetector?.recordActivity(task.id),
+              ...(verificationWatchdogMs > 0 ? { watchdogTimeoutMs: verificationWatchdogMs } : {}),
             });
             await deps.store.finishTaskVerificationRequest(task.id, claimedVerification.requestId, verificationResult.success ? "passed" : "failed", {
               success: verificationResult.success, exitCode: verificationResult.exitCode,
               durationMs: Date.now() - startedAt, timedOut: verificationResult.timedOut ?? false,
               stdoutTail: verificationResult.stdout.slice(-8_000), stderrTail: verificationResult.stderr.slice(-8_000),
-            });
+            }, verificationResult.success ? undefined : (verificationResult.stderr.trim().slice(0, 500) || `verification failed (exit=${verificationResult.exitCode ?? "signal"})`));
           } catch (error) {
             await deps.store.finishTaskVerificationRequest(task.id, claimedVerification.requestId, "failed", undefined, error instanceof Error ? error.message.slice(0, 1_000) : "Verification runner failed");
+          } finally {
+            stuckDetector?.endVerification(task.id);
           }
         } finally {
           verificationRequestInFlight = false;
@@ -2119,6 +2167,19 @@ export async function runImplementation(
           taskId: task.id,
           recordActivity: () => stuckDetector?.recordActivity(task.id),
           verificationCommandTimeoutMs: settings.verificationCommandTimeoutMs,
+          /*
+          FNXC:VerificationWriteAhead 2026-08-31-00:00 (EXAM-010):
+          Write-ahead persistence + end-to-end watchdog ceiling for the agent tool path.
+          The store handle is in scope here; the narrow callbacks keep the tool unit-testable.
+          */
+          verificationWatchdogTimeoutMs: verificationWatchdogMs,
+          verificationPersistence: {
+            upsert: (input) => deps.store.upsertExecutorVerificationRequest(input),
+            finish: (taskId, requestId, status, result, rejectionReason) =>
+              deps.store.finishTaskVerificationRequest(taskId, requestId, status, result, rejectionReason),
+            reclaimStale: (taskId, requestId, olderThanMs, reason) =>
+              deps.store.reclaimStaleTaskVerificationRequest(taskId, requestId, olderThanMs, reason),
+          },
           onVerificationStart: (timeoutMs) => stuckDetector?.beginVerification(task.id, timeoutMs),
           onVerificationEnd: () => stuckDetector?.endVerification(task.id),
           log: {

@@ -1799,6 +1799,16 @@ export interface ProjectSettings {
    */
   verificationCommandTimeoutMs?: number;
   /**
+   * FNXC:VerificationWriteAhead 2026-08-31-00:00 (EXAM-010):
+   * End-to-end watchdog ceiling in milliseconds for one verification call — slot-queue
+   * wait plus subprocess run combined. On expiry the queued acquisition is aborted, the
+   * child is SIGTERM→SIGKILL escalated, the tool settles with an explicit timedOut
+   * failure, and a terminal `failed` verification record is persisted. Default: 600000
+   * (10 min). Floor 1000. Set to 0 to disable. This is a plain project setting (not a
+   * moved workflow key) mirroring verificationCommandTimeoutMs.
+   */
+  verificationWatchdogTimeoutMs?: number;
+  /**
    * FNXC:Verification 2026-06-25-00:00:
    * When true (default), merge/executor verification is narrowed to ONLY the
    * test files implicated by the task's branch diff — changed `*.test`/`*.spec`

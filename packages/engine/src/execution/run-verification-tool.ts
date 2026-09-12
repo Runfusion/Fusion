@@ -20,6 +20,7 @@
 
 import { superviseSpawn, type SupervisedChild } from "@fusion/core";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { isAbsolute, join, relative } from "node:path";
 import { Type, type Static } from "@earendil-works/pi-ai";
 import type { SandboxBackend, SandboxPolicy, SandboxStreamingResult } from "../sandbox/types.js";
@@ -634,6 +635,14 @@ export interface RunVerificationOptions {
   bypassVerificationSlot?: boolean;
   /** Optional abort signal — cancels while queued for a verification slot and during the command. */
   signal?: AbortSignal;
+  /**
+   * FNXC:VerificationWriteAhead 2026-08-31-00:00 (EXAM-010):
+   * Optional end-to-end watchdog ceiling in milliseconds covering slot-queue wait PLUS
+   * subprocess run. On expiry the (provided or internal) signal is aborted, the child is
+   * killed, and the returned result is an explicit timedOut failure instead of an
+   * unbounded hang. Values <= 0 disable the watchdog.
+   */
+  watchdogTimeoutMs?: number;
   /** Explicit task-lane backend; native preserves the supervisor path. */
   sandboxBackend?: SandboxBackend;
   sandboxPolicy?: SandboxPolicy;
@@ -656,10 +665,76 @@ export interface RunVerificationOptions {
 export async function runVerificationCommand(
   opts: RunVerificationOptions,
 ): Promise<VerificationResult> {
-  if (opts.bypassVerificationSlot) {
-    return runVerificationCommandUnlocked(opts);
+  /*
+  FNXC:VerificationWriteAhead 2026-08-31-00:00 (EXAM-010):
+  End-to-end watchdog. Before this, the slot-queue wait was unbounded and a child whose
+  `close` never fired left the resolve-only subprocess promise unsettled forever while the
+  60s synthetic-heartbeat loop suppressed the stuck detector — the executor run wedged
+  (observed 51+ min). The watchdog covers queue wait PLUS subprocess: on expiry it aborts
+  a controller linked to the caller's signal, which (a) rejects a queued
+  withVerificationSlot acquisition via the existing AbortSignal path and (b) kills and
+  settles the in-flight child via the abort listener below. Every path resolves with an
+  explicit timedOut failure; nothing hangs and nothing needs the run to be restarted.
+  */
+  const watchdogMs = opts.watchdogTimeoutMs ?? 0;
+  if (watchdogMs <= 0) {
+    if (opts.bypassVerificationSlot) {
+      return runVerificationCommandUnlocked(opts);
+    }
+    return withVerificationSlot(() => runVerificationCommandUnlocked(opts), opts.signal);
   }
-  return withVerificationSlot(() => runVerificationCommandUnlocked(opts), opts.signal);
+
+  const callerSignal = opts.signal;
+  const controller = new AbortController();
+  const onCallerAbort = () => controller.abort(callerSignal?.reason);
+  callerSignal?.addEventListener("abort", onCallerAbort, { once: true });
+
+  let watchdogTimer: ReturnType<typeof setTimeout> | null = null;
+  let watchdogFired = false;
+  const clearWatchdog = () => {
+    if (watchdogTimer) {
+      clearTimeout(watchdogTimer);
+      watchdogTimer = null;
+    }
+  };
+
+  try {
+    return await new Promise<VerificationResult>((resolve, reject) => {
+      watchdogTimer = setTimeout(() => {
+        watchdogFired = true;
+        controller.abort(new Error(`verification watchdog expired after ${watchdogMs}ms`));
+      }, watchdogMs);
+      watchdogTimer.unref?.();
+
+      const optsWithWatchdog: RunVerificationOptions = { ...opts, signal: controller.signal };
+      const run = opts.bypassVerificationSlot
+        ? runVerificationCommandUnlocked(optsWithWatchdog)
+        : withVerificationSlot(() => runVerificationCommandUnlocked(optsWithWatchdog), controller.signal);
+      run.then(resolve, (error: unknown) => {
+        if (!watchdogFired) {
+          reject(error);
+          return;
+        }
+        // Watchdog expiry: settle explicitly instead of surfacing a bare AbortError.
+        const message = error instanceof Error ? error.message : String(error);
+        resolve({
+          success: false,
+          exitCode: null,
+          durationMs: watchdogMs,
+          stdout: "",
+          stderr: message,
+          timedOut: true,
+          killed: true,
+          command: opts.command,
+          cwd: opts.cwd,
+          warnings: [`verification watchdog expired after ${Math.round(watchdogMs / 1000)}s (queue wait + subprocess budget)`],
+        });
+      });
+    });
+  } finally {
+    clearWatchdog();
+    callerSignal?.removeEventListener("abort", onCallerAbort);
+  }
 }
 
 async function runVerificationCommandUnlocked(
@@ -696,6 +771,61 @@ async function runVerificationCommandUnlocked(
     let timedOut = false;
     let killed = false;
     let settled = false;
+
+    const settleAborted = (): void => {
+      if (settled) return;
+      settled = true;
+      killed = true;
+      clearInterval(quietTimer);
+      clearTimeout(hardTimer);
+      if (killTimer) clearTimeout(killTimer);
+      const durationMs = Date.now() - startMs;
+      /*
+      FNXC:VerificationWriteAhead 2026-08-31-00:00 (EXAM-010):
+      Distinguish a WATCHDOG-driven abort (timedOut: true, warning names the ceiling)
+      from an external caller abort (timedOut: false) so the tool result and the
+      persisted terminal record both say why the call died.
+      */
+      const abortReason = opts.signal?.reason;
+      const watchdogAbort =
+        abortReason instanceof Error && abortReason.message.includes("verification watchdog expired");
+      resolve({
+        success: false,
+        exitCode: null,
+        durationMs,
+        stdout: flattenBuffer(stdoutBuf),
+        stderr: flattenBuffer(stderrBuf),
+        timedOut: watchdogAbort,
+        killed: true,
+        command,
+        cwd,
+        warnings: [
+          watchdogAbort
+            ? `verification watchdog expired mid-run: ${abortReason instanceof Error ? abortReason.message : "ceiling exceeded"}`
+            : "verification aborted mid-run",
+        ],
+      });
+    };
+
+    /*
+    FNXC:VerificationWriteAhead 2026-08-31-00:00 (EXAM-010):
+    The non-sandbox path previously honored `signal` only while QUEUED for the slot;
+    once the child was spawned an abort had no listener, so the run stayed blocked on
+    a `close` that might never arrive. Wire mid-run abort to an explicit
+    SIGTERM -> SIGKILL escalation plus a resolve-on-all-paths settle. The sandbox
+    branch already honors signal inside runStreaming.
+    */
+    const onAbortRun = (): void => {
+      executorLog.warn(`[fn_run_verification] abort signal fired mid-run — killing: ${command}`);
+      killVerificationProcess(supervised, "SIGTERM");
+      const forceKill = setTimeout(() => killVerificationProcess(supervised, "SIGKILL"), SIGKILL_GRACE_MS);
+      forceKill.unref?.();
+      settleAborted();
+    };
+    if (opts.signal) {
+      if (opts.signal.aborted) onAbortRun();
+      else opts.signal.addEventListener("abort", onAbortRun, { once: true });
+    }
 
     // ── Quiet-interval synthetic heartbeat ──────────────────────────────────
     let lastLineMs = Date.now();
@@ -766,6 +896,7 @@ async function runVerificationCommandUnlocked(
 
     // ── Process exit ─────────────────────────────────────────────────────────
     child.on("close", (code, signal) => {
+      opts.signal?.removeEventListener("abort", onAbortRun);
       if (settled) return;
       settled = true;
       clearInterval(quietTimer);
@@ -810,6 +941,7 @@ async function runVerificationCommandUnlocked(
     });
 
     child.on("error", (err) => {
+      opts.signal?.removeEventListener("abort", onAbortRun);
       if (settled) return;
       settled = true;
       clearInterval(quietTimer);
@@ -874,6 +1006,39 @@ async function runSandboxedVerificationCommand(opts: Pick<RunVerificationOptions
 // Tool factory
 // ---------------------------------------------------------------------------
 
+/**
+ * FNXC:VerificationWriteAhead 2026-08-31-00:00 (EXAM-010):
+ * Narrow seam over the TaskStore verification-request surface so the tool can
+ * persist without importing a full store handle (keeps unit tests trivially fake-able).
+ * Mirrors store.upsertExecutorVerificationRequest / finishTaskVerificationRequest /
+ * reclaimStaleTaskVerificationRequest.
+ */
+export interface RunVerificationPersistence {
+  /** Write-ahead: record the request before dispatch. Returns the live record and whether this caller owns it. */
+  upsert: (input: { taskId: string; requestId: string; profile: "test-command"; command: string; scope: "package" | "workspace"; requestedBy: string }) =>
+    Promise<{ claimed: boolean; request: { requestId: string; status: string; startedAt?: string }; reason?: "in-flight" }>;
+  /** Terminal write: passed/failed/rejected with a result summary or rejection reason. */
+  finish: (taskId: string, requestId: string, status: "passed" | "failed" | "rejected",
+    result?: { success: boolean; exitCode: number | null; durationMs: number; timedOut: boolean; stdoutTail: string; stderrTail: string },
+    rejectionReason?: string) => Promise<unknown>;
+  /** CAS stale-`running` reclaim: only a row matching requestId AND older than the ceiling is reaped. */
+  reclaimStale: (taskId: string, requestId: string, olderThanMs: number, reason?: string) => Promise<unknown>;
+}
+
+function summarizeForRejection(result: VerificationResult): string {
+  const firstWarning = result.warnings[0];
+  if (result.timedOut) return `verification failed: timed out after ${Math.round(result.durationMs / 1000)}s${firstWarning ? ` (${firstWarning})` : ""}`;
+  if (result.stderr.trim().length > 0) return `verification failed: ${result.stderr.trim().slice(0, 500)}`;
+  return `verification failed (exit=${result.exitCode ?? "signal"})${firstWarning ? `: ${firstWarning}` : ""}`;
+}
+
+function resolveVerificationWatchdogMs(configured?: number): number {
+  if (typeof configured !== "number" || configured <= 0) return 0;
+  // Any positive value is honored (tests scale it down); the ceiling is the same
+  // 1800s hard cap as the per-command subprocess timeout.
+  return Math.min(Math.max(Math.ceil(configured), 1), MAX_TIMEOUT_SEC * 1_000);
+}
+
 export interface CreateRunVerificationToolOpts {
   /** Root of the task's git worktree — used as the default cwd. */
   worktreePath: string;
@@ -891,6 +1056,23 @@ export interface CreateRunVerificationToolOpts {
   recordActivity: () => void;
   /** Project-level default timeout budget in milliseconds. Values <= 0 disable the override and preserve legacy per-scope defaults. */
   verificationCommandTimeoutMs?: number;
+  /**
+   * FNXC:VerificationWriteAhead 2026-08-31-00:00 (EXAM-010):
+   * Project-level end-to-end watchdog ceiling in milliseconds (slot-queue wait +
+   * subprocess). On expiry the call fails explicitly with a persisted terminal record
+   * instead of wedging the executor run indefinitely. Values <= 0 disable the watchdog.
+   */
+  verificationWatchdogTimeoutMs?: number;
+  /**
+   * FNXC:VerificationWriteAhead 2026-08-31-00:00 (EXAM-010):
+   * Narrow persistence callbacks for the task_verification_requests record. The
+   * executor path previously persisted NOTHING (only the chat-queue path wrote a
+   * row), so fn_task_verification_status spuriously reported "No verification
+   * request exists" and a killed run left no inspectable record. Every tool
+   * invocation now write-ahead persists BEFORE dispatch and writes a terminal
+   * record on every settle path.
+   */
+  verificationPersistence?: RunVerificationPersistence;
   /**
    * FNXC:Reliability 2026-06-17-16:12:
    * FN-6598 brackets fn_run_verification subprocesses so the stuck detector treats bounded, actively running verification as progress instead of no-progress loop churn.
@@ -929,6 +1111,8 @@ export function createRunVerificationTool(
     taskId,
     recordActivity,
     verificationCommandTimeoutMs,
+    verificationWatchdogTimeoutMs,
+    verificationPersistence,
     onVerificationStart,
     onVerificationEnd,
     log,
@@ -1071,23 +1255,81 @@ export function createRunVerificationTool(
         `[fn_run_verification] ${taskId}: repo=${selectedRepo?.repo ?? "default"} scope=${scope} timeout=${timeoutSec}s cwd=${resolvedCwd} cmd=${effectiveCommand}`,
       );
 
+      /*
+      FNXC:VerificationWriteAhead 2026-08-31-00:00 (EXAM-010):
+      Write-ahead persistence: the request record is created BEFORE slot acquisition or
+      subprocess spawn (ordering invariant — a killed run leaves an inspectable row).
+      A store failure here is logged and the call proceeds untracked rather than
+      re-wedging the run on a persistence hiccup.
+      */
+      const requestId = randomUUID();
+      const watchdogMs = resolveVerificationWatchdogMs(verificationWatchdogTimeoutMs);
+      let persistedRequestId: string | null = null;
+      if (verificationPersistence) {
+        try {
+          const wal = await verificationPersistence.upsert({
+            taskId,
+            requestId,
+            profile: "test-command",
+            command: effectiveCommand,
+            scope,
+            requestedBy: "executor",
+          });
+          persistedRequestId = wal.request.requestId;
+          if (!wal.claimed) {
+            log.warn(`[fn_run_verification] ${taskId}: verification record ${wal.request.requestId} is already in-flight (status=${wal.request.status}); proceeding untracked.`);
+          }
+        } catch (error) {
+          log.warn(`[fn_run_verification] ${taskId}: write-ahead persistence failed (${error instanceof Error ? error.message : String(error)}); proceeding untracked.`);
+        }
+      }
+      const finishPersisted = async (result: VerificationResult): Promise<void> => {
+        if (!verificationPersistence || !persistedRequestId) return;
+        try {
+          await verificationPersistence.finish(
+            taskId,
+            persistedRequestId,
+            result.success ? "passed" : "failed",
+            {
+              success: result.success,
+              exitCode: result.exitCode,
+              durationMs: result.durationMs,
+              timedOut: result.timedOut,
+              stdoutTail: result.stdout.slice(-8_000),
+              stderrTail: result.stderr.slice(-8_000),
+            },
+            result.success ? undefined : summarizeForRejection(result),
+          );
+        } catch (error) {
+          log.warn(`[fn_run_verification] ${taskId}: terminal verification record write failed (${error instanceof Error ? error.message : String(error)}).`);
+        }
+      };
+
       // ── Run ───────────────────────────────────────────────────────────────
       onVerificationStart?.(timeoutMs);
-      const result = await (async () => {
-        try {
-          return await runVerificationCommand({
-            command: effectiveCommand,
-            cwd: resolvedCwd,
-            timeoutMs,
-            expectFailure,
-            onHeartbeat: recordActivity,
-            sandboxBackend,
-            sandboxPolicy,
-          });
-        } finally {
-          onVerificationEnd?.();
-        }
-      })();
+      let result: VerificationResult;
+      try {
+        result = await runVerificationCommand({
+          command: effectiveCommand,
+          cwd: resolvedCwd,
+          timeoutMs,
+          expectFailure,
+          onHeartbeat: recordActivity,
+          sandboxBackend,
+          sandboxPolicy,
+          ...(watchdogMs > 0 ? { watchdogTimeoutMs: watchdogMs } : {}),
+        });
+      } catch (error) {
+        // Runner threw (spawn race, store error, etc.) — persist terminal failed, rethrow.
+        await finishPersisted({
+          success: false, exitCode: null, durationMs: 0, stdout: "", stderr: error instanceof Error ? error.message : String(error),
+          timedOut: false, killed: false, command: effectiveCommand, cwd: resolvedCwd, warnings: [],
+        });
+        throw error;
+      } finally {
+        onVerificationEnd?.();
+      }
+      await finishPersisted(result);
 
       // ── Merge warnings from auto-bootstrap / scope check ─────────────────
       const allWarnings = [...warnings, ...result.warnings];
