@@ -364,6 +364,8 @@ export function useAppAlphaDesktopRightDockComposition({
 }: AppAlphaDesktopRightDockCompositionInput) {
   const rightDock = useRightDockController({
     ...controllerInput,
+    // FNXC:WorkflowResolvedColumns 2026-09-12-23:37: Expose the forwarded task-trait index explicitly so the lane-wiring census can verify this composition boundary without following object spreads.
+    columnFlagsByTaskId: controllerInput.columnFlagsByTaskId,
     projectId,
     onOpenSessionInNewWindow: owner.openSessionInNewWindow,
     openChatWindows: owner.openChatWindows,
