@@ -64,6 +64,7 @@ export const PROJECT_STORAGE_KEYS: string[] = [
   "kb-usage-hidden-windows",
   "kb-usage-modal-size",
   "kb-usage-provider-order",
+  "kb-task-detail-tab-order",
   CHAT_OPEN_SESSION_STORAGE_KEY,
   "kb-capacity-risk-banner-dismissed",
   "kb-github-setup-warning-missing-since",

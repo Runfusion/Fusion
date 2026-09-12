@@ -107,6 +107,7 @@ describe("projectStorage", () => {
         "kb-usage-hidden-windows",
         "kb-usage-modal-size",
         "kb-usage-provider-order",
+        "kb-task-detail-tab-order",
         "kb-chat-active-session",
         "kb-capacity-risk-banner-dismissed",
         "kb-github-setup-warning-missing-since",
@@ -117,10 +118,10 @@ describe("projectStorage", () => {
       ]),
     );
     /*
-    FNXC:ProjectStorage 2026-07-14-19:20:
-    Keep PROJECT_STORAGE_KEYS length lockstep with the source array (todo hide-done, github import state, github setup warning dismissals).
+    FNXC:ProjectStorage 2026-09-12-02:34:
+    Keep PROJECT_STORAGE_KEYS length lockstep with the source array, including project-isolated Task Detail tab order.
     */
-    expect(PROJECT_STORAGE_KEYS).toHaveLength(31);
+    expect(PROJECT_STORAGE_KEYS).toHaveLength(32);
   });
 
   it("getScopedItem returns null when localStorage.getItem is unavailable", () => {

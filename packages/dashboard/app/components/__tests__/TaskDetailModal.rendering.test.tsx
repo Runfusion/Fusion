@@ -2431,7 +2431,7 @@ describe("TaskDetailModal", () => {
       expectNoStandaloneTitleToggle();
     });
 
-    it("keeps the clamp available in chat-expanded layout", async () => {
+    it("keeps the title out of expanded Activity and available in Definition", async () => {
       render(
         <TaskDetailContent
           task={makeTask({
@@ -2451,8 +2451,12 @@ describe("TaskDetailModal", () => {
       await userEvent.click(screen.getByRole("button", { name: "Expand activity to full modal" }));
 
       expect(document.querySelector(".task-detail-content--chat-expanded")).toBeInTheDocument();
+      expect(document.querySelector("h2.detail-title")).toBeNull();
+      expect(screen.queryByRole("button", { name: "Expand task title" })).toBeNull();
+
+      await userEvent.click(screen.getByRole("button", { name: "Plan" }));
       expect(document.querySelector("h2.detail-title")).toHaveClass("detail-title--collapsed");
-      expect(await screen.findByRole("button", { name: "Expand task title" })).toBeInTheDocument();
+      expect(screen.getByText(/Chat expanded title/)).toBeInTheDocument();
       expectNoStandaloneTitleToggle();
     });
 

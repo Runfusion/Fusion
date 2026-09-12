@@ -142,7 +142,7 @@ describe("TaskDetailModal Activity and planner Chat tab integration", () => {
     expect(screen.queryByRole("form", { name: "Task activity composer" })).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Feed" })).toBeInTheDocument();
     expect(screen.getByText("Posted update")).toBeInTheDocument();
-    expect(screen.queryByText("Existing steering guidance")).not.toBeInTheDocument();
+    expect(screen.getByText("Existing steering guidance")).not.toBeVisible();
     expect(screen.queryByTestId("agent-log-viewer")).not.toBeInTheDocument();
 
     selectActivityView("raw-logs");
@@ -151,7 +151,39 @@ describe("TaskDetailModal Activity and planner Chat tab integration", () => {
     expect(screen.queryByRole("form", { name: "Task activity composer" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Feed" })).not.toBeInTheDocument();
     expect(screen.getByTestId("agent-log-viewer")).toBeInTheDocument();
-    expect(screen.getByText("raw executor line")).toBeInTheDocument();
+    expect(screen.getAllByText("raw executor line").some((node) => node.closest('[aria-hidden="true"]') == null)).toBe(true);
+  });
+
+  it("conserve le brouillon et le transcript Live à travers Feed, Raw et un autre onglet", async () => {
+    const user = userEvent.setup();
+    mockRawLogs([
+      { timestamp: "2026-06-30T20:03:00.000Z", taskId: "FN-7315", type: "text", agent: "executor", text: "stream conservé" },
+    ] as AgentLogEntry[]);
+    renderModal({ initialTab: "chat" });
+
+    const transcript = screen.getByTestId("task-chat-transcript");
+    const input = screen.getByRole("textbox", { name: "Message active agent session" });
+    await user.type(input, "brouillon persistant");
+
+    selectActivityView("feed");
+    expect(screen.queryByRole("textbox", { name: "Message active agent session" })).toBeNull();
+    expect(transcript).not.toBeVisible();
+    expect(screen.getByTestId("activity-live-keep-alive")).toHaveAttribute("aria-hidden", "true");
+
+    selectActivityView("raw-logs");
+    expect(screen.getByTestId("agent-log-viewer")).toBeInTheDocument();
+    expect(transcript).not.toBeVisible();
+
+    selectActivityView("current");
+    expect(screen.getByTestId("task-chat-transcript")).toBe(transcript);
+    expect(screen.getByRole("textbox", { name: "Message active agent session" })).toHaveValue("brouillon persistant");
+
+    fireEvent.click(screen.getByRole("button", { name: "Plan" }));
+    expect(transcript).not.toBeVisible();
+    expect(screen.queryByRole("textbox", { name: "Message active agent session" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Activity" }));
+    expect(screen.getByTestId("task-chat-transcript")).toBe(transcript);
+    expect(screen.getByRole("textbox", { name: "Message active agent session" })).toHaveValue("brouillon persistant");
   });
 
   it("FN-8779: keeps Feed scrolling separate from the shared action footer across Feed states and switches", async () => {
@@ -190,28 +222,26 @@ describe("TaskDetailModal Activity and planner Chat tab integration", () => {
     }));
     const long = renderModal({ task: makeTask({ id: "FN-8779-long", log: longLog }), initialTab: "logs" });
     const feedBody = long.baseElement.querySelector<HTMLElement>(".detail-body--feed");
-    const feedContent = feedBody?.querySelector<HTMLElement>(".detail-body-content");
-    const feedSection = feedContent?.querySelector<HTMLElement>(".detail-section--feed");
+    const feedSection = feedBody?.querySelector<HTMLElement>(":scope > .detail-activity");
     const feedList = feedSection?.querySelector<HTMLElement>(".detail-activity-list");
     const detailRoot = feedBody?.closest<HTMLElement>(".task-detail-content");
     const footer = detailRoot?.querySelector<HTMLElement>(":scope > .modal-actions");
 
     expect(screen.getByText("Repeated Feed entry 80")).toBeInTheDocument();
     expect(feedBody).not.toBeNull();
-    expect(feedContent).not.toBeNull();
     expect(feedSection).not.toBeNull();
     expect(feedList).not.toBeNull();
     expect(footer).toBeNull();
     expect(feedBody?.parentElement).toBe(detailRoot);
     expect(feedBody?.querySelector(".modal-actions")).toBeNull();
     expect(feedList).toContainElement(screen.getByText("Repeated Feed entry 80"));
-    expect(screen.getByTestId("task-chat-expand-toggle")).toBeVisible();
+    expect(screen.getAllByTestId("task-chat-expand-toggle").some((button) => button.closest('[aria-hidden="true"]') == null)).toBe(true);
 
     selectActivityView("current");
     expect(long.baseElement.querySelector(".detail-body--feed")).toBeNull();
     selectActivityView("feed");
     expect(long.baseElement.querySelector(".detail-body--feed")).not.toBeNull();
-    expect(screen.getByTestId("task-chat-expand-toggle")).toBeVisible();
+    expect(screen.getAllByTestId("task-chat-expand-toggle").some((button) => button.closest('[aria-hidden="true"]') == null)).toBe(true);
 
     vi.mocked(fetchTaskDetail).mockResolvedValue(makeTask());
   });
@@ -304,7 +334,7 @@ describe("TaskDetailModal Activity and planner Chat tab integration", () => {
 
       selectActivityView("raw-logs");
       expect(screen.getByTestId("agent-log-viewer")).toBeInTheDocument();
-      expect(screen.getByText("raw executor line")).toBeInTheDocument();
+      expect(screen.getAllByText("raw executor line").some((node) => node.closest("[aria-hidden=\"true\"]") == null)).toBe(true);
 
       selectActivityView("current");
       expect(screen.getByText("Existing steering guidance")).toBeInTheDocument();
@@ -379,7 +409,7 @@ describe("TaskDetailModal Activity and planner Chat tab integration", () => {
 
       selectActivityView("raw-logs");
       expect(screen.getByTestId("agent-log-viewer")).toBeInTheDocument();
-      expect(screen.getByText("raw executor line")).toBeInTheDocument();
+      expect(screen.getAllByText("raw executor line").some((node) => node.closest("[aria-hidden=\"true\"]") == null)).toBe(true);
 
       selectActivityView("current");
       expect(screen.getByText("Existing steering guidance")).toBeInTheDocument();

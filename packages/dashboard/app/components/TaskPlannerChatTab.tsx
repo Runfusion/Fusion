@@ -2,7 +2,8 @@ import type { ChatInFlightGenerationState, ChatMessage, ChatSnippet, ResolvedMod
 import { AlphaButton, AlphaListBox, AlphaListBoxItem, AlphaTextArea } from "./alpha-ui";
 import { isWipColumnRole } from "../utils/columnRoles";
 import { getErrorMessage, isExperimentalFeatureEnabled, CHAT_FOCUS_FLAG } from "@fusion/core";
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { Loader2, Maximize2, Minimize2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { ToastType } from "../hooks/useToast";
@@ -42,6 +43,15 @@ interface TaskPlannerChatTabProps {
   taskChatModel: ResolvedModelSelection & { thinkingLevel?: string };
   addToast: (msg: string, type?: ToastType) => void;
   onTaskUpdated?: (task: Task) => void;
+  footerTarget?: HTMLElement | null;
+}
+
+/*
+FNXC:TaskDetailPlannerChat 2026-09-12-02:34:
+Le propriétaire d'état du Chat reste monté dans le Content pour préserver session, brouillon et stream, mais ses contrôles sont portalisés dans le Footer direct fourni par le shell. Sans cible (tests ou hôte autonome), le rendu en place conserve la compatibilité du composant.
+*/
+function PlannerChatFooterPortal({ target, children }: { target?: HTMLElement | null; children: ReactNode }) {
+  return target ? createPortal(children, target) : children;
 }
 
 type ComposerState = "idle" | "sending";
@@ -341,7 +351,7 @@ function buildPlannerQuestionRenderStates(messages: readonly ChatMessage[]): Map
   return states;
 }
 
-export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expanded = false, onExpandedChange, taskChatModel, addToast, onTaskUpdated }: TaskPlannerChatTabProps) {
+export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expanded = false, onExpandedChange, taskChatModel, addToast, onTaskUpdated, footerTarget }: TaskPlannerChatTabProps) {
   const { t } = useTranslation("app");
   const chatMessageLayout = useChatMessageLayout();
   const enterSubmits = useChatEnterSubmits();
@@ -1731,6 +1741,7 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
         )}
       </div>
 
+      <PlannerChatFooterPortal target={footerTarget}>
       <PendingChatMessageQueue
         messages={pendingMessages}
         disabled={queueActionPending}
@@ -1877,6 +1888,7 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
           showStopText={false}
         />
       </div>
+      </PlannerChatFooterPortal>
     </section>
   );
 }

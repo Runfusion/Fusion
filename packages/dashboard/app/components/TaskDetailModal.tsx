@@ -82,6 +82,8 @@ import { PluginSlot } from "./PluginSlot";
 import { ProviderIcon } from "./ProviderIcon";
 import { LoadingSpinner } from "./LoadingSpinner";
 import { KeepAliveView } from "./KeepAliveView";
+import { TaskDetailTabStrip, type TaskDetailTabStripItem } from "./TaskDetailTabStrip";
+import { hasSavedTaskDetailTabOrder, loadTaskDetailTabOrder, reconcileTaskDetailTabOrder, saveTaskDetailTabOrder } from "../utils/taskDetailTabOrder";
 import { subscribeSse } from "../sse-bus";
 import type { SessionTerminalMode, SessionTerminalPosture } from "./SessionTerminal";
 import { usePluginUiSlots } from "../hooks/usePluginUiSlots";
@@ -926,14 +928,17 @@ export function TaskDetailContent({
   const [activitySegment, setActivitySegment] = useState<ActivitySegment>(() => resolveDefaultActivitySegment(initialTab));
   const [activityExpanded, setActivityExpanded] = useState(false);
   const [plannerChatExpanded, setPlannerChatExpanded] = useState(false);
+  const [tabFooterTarget, setTabFooterTarget] = useState<HTMLDivElement | null>(null);
 
   /*
   FNXC:TaskDetailTabKeepAlive 2026-07-22-12:55:
   FN remount-churn fix R6: the Terminal, Worktree-terminal, and Planner-chat tab bodies previously lived in the mutually-exclusive activeTab ternary, so every tab flip disposed the xterm instance, closed the terminal WebSocket, and discarded the planner composer/scroll. After a tab's first open (per-tab latch, mirroring Quick Chat's everOpened gate) its body stays mounted as a hidden KeepAliveView sibling of the ternary. The latches are scoped to one task id: switching tasks (or closing the detail) resets them so terminals fully unmount and dispose exactly as before — keep-alive covers tab switching within ONE open task detail only (R10).
   */
-  const [keepAliveTabs, setKeepAliveTabs] = useState({ taskId: task.id, plannerChat: false, terminal: false, worktreeTerminal: false });
+  const [keepAliveTabs, setKeepAliveTabs] = useState({ taskId: task.id, activityLive: false, plannerChat: false, terminal: false, worktreeTerminal: false });
   if (keepAliveTabs.taskId !== task.id) {
-    setKeepAliveTabs({ taskId: task.id, plannerChat: false, terminal: false, worktreeTerminal: false });
+    setKeepAliveTabs({ taskId: task.id, activityLive: false, plannerChat: false, terminal: false, worktreeTerminal: false });
+  } else if (activeTab === "chat" && activitySegment === "current" && !keepAliveTabs.activityLive) {
+    setKeepAliveTabs({ ...keepAliveTabs, activityLive: true });
   } else if (activeTab === "planner-chat" && !keepAliveTabs.plannerChat) {
     setKeepAliveTabs({ ...keepAliveTabs, plannerChat: true });
   } else if (activeTab === "terminal" && !keepAliveTabs.terminal) {
@@ -941,7 +946,7 @@ export function TaskDetailContent({
   } else if (activeTab === "worktree-terminal" && !keepAliveTabs.worktreeTerminal) {
     setKeepAliveTabs({ ...keepAliveTabs, worktreeTerminal: true });
   }
-  const keepAliveForCurrentTask = keepAliveTabs.taskId === task.id ? keepAliveTabs : { taskId: task.id, plannerChat: false, terminal: false, worktreeTerminal: false };
+  const keepAliveForCurrentTask = keepAliveTabs.taskId === task.id ? keepAliveTabs : { taskId: task.id, activityLive: false, plannerChat: false, terminal: false, worktreeTerminal: false };
 
   // ── CLI agent session (U11) ────────────────────────────────────────────────
   const [cliSession, setCliSession] = useState<CliSessionSummaryRecord | null>(null);
@@ -4549,7 +4554,9 @@ export function TaskDetailContent({
     t,
   ]);
   const reviewAction = taskActionMenuModel.reviewAction;
-  const showTaskDetailFooter = isEditing || Boolean(isAwaitingApproval && workingTask.prompt) || Boolean(reviewAction);
+  const showTaskDetailFooter = isEditing
+    || (activeTab === "definition" && Boolean(isAwaitingApproval && workingTask.prompt))
+    || (activeTab === "review" && Boolean(reviewAction));
   const directHeaderActions = TASK_DETAIL_DIRECT_ACTION_ORDER
     .map((id) => taskActionMenuModel.actions.find((action) => action.id === id))
     .filter((action): action is NonNullable<typeof action> => Boolean(action));
@@ -4974,6 +4981,71 @@ export function TaskDetailContent({
     </div>
   );
 
+  const canonicalTabItems: TaskDetailTabStripItem[] = [
+    ...(taskDetailChatFirst
+      ? [
+          { id: "planner-chat", label: t("taskDetail.tabs.chat", "Chat"), node: <TaskDetailTabButton selected={activeTab === "planner-chat"} onSelect={() => setActiveTab("planner-chat")}>{t("taskDetail.tabs.chat", "Chat")}</TaskDetailTabButton> },
+          { id: "chat", label: t("taskDetail.tabs.activity", "Activity"), node: renderActivityTab() },
+        ]
+      : [
+          { id: "chat", label: t("taskDetail.tabs.activity", "Activity"), node: renderActivityTab() },
+          { id: "planner-chat", label: t("taskDetail.tabs.chat", "Chat"), node: <TaskDetailTabButton selected={activeTab === "planner-chat"} onSelect={() => setActiveTab("planner-chat")}>{t("taskDetail.tabs.chat", "Chat")}</TaskDetailTabButton> },
+        ]),
+    { id: "definition", label: t("taskDetail.tabs.definition", "Plan"), node: <TaskDetailTabButton selected={activeTab === "definition"} onSelect={() => setActiveTab("definition")}>{t("taskDetail.tabs.definition", "Plan")}</TaskDetailTabButton> },
+    ...((isWipColumn || isReviewColumn || isDoneColumn) ? [{ id: "changes", label: t("taskDetail.tabs.changes", "Changes"), node: <TaskDetailTabButton selected={activeTab === "changes"} onSelect={() => setActiveTab("changes")}>{t("taskDetail.tabs.changes", "Changes")}</TaskDetailTabButton> }] : []),
+    { id: "summary", label: t("taskDetail.tabs.summary", "Summary"), node: <TaskDetailTabButton selected={activeTab === "summary"} onSelect={() => setActiveTab("summary")}>{t("taskDetail.tabs.summary", "Summary")}</TaskDetailTabButton> },
+    { id: "stats", label: t("taskDetail.tabs.stats", "Stats"), node: <TaskDetailTabButton selected={activeTab === "stats"} onSelect={() => setActiveTab("stats")}>{t("taskDetail.tabs.stats", "Stats")}</TaskDetailTabButton> },
+    { id: "review", label: t("taskDetail.tabs.review", "Review"), node: <TaskDetailTabButton selected={activeTab === "review"} onSelect={() => setActiveTab("review")}>{t("taskDetail.tabs.review", "Review")}</TaskDetailTabButton> },
+    ...(isReviewColumn ? [{ id: "pr", label: t("taskDetail.tabs.pullRequest", "Pull Request"), node: <TaskDetailTabButton selected={activeTab === "pr"} onSelect={() => setActiveTab("pr")}>{t("taskDetail.tabs.pullRequest", "Pull Request")}</TaskDetailTabButton> }] : []),
+    { id: "comments", label: t("taskDetail.tabs.comments", "Comments"), node: <TaskDetailTabButton selected={activeTab === "comments"} onSelect={() => setActiveTab("comments")}>{t("taskDetail.tabs.comments", "Comments")}</TaskDetailTabButton> },
+    { id: "dependencies", label: t("taskDetail.tabs.dependencies", "Dependencies"), node: <TaskDetailTabButton selected={activeTab === "dependencies"} onSelect={() => setActiveTab("dependencies")}>{t("taskDetail.tabs.dependencies", "Dependencies")}</TaskDetailTabButton> },
+    { id: "documents", label: t("taskDetail.tabs.documents", "Artifacts"), node: <TaskDetailTabButton selected={activeTab === "documents"} onSelect={() => setActiveTab("documents")}>{t("taskDetail.tabs.documents", "Artifacts")}</TaskDetailTabButton> },
+    { id: "model", label: t("taskDetail.tabs.model", "Model"), node: <TaskDetailTabButton selected={activeTab === "model"} onSelect={() => setActiveTab("model")}>{t("taskDetail.tabs.model", "Model")}</TaskDetailTabButton> },
+    { id: "workflow", label: t("taskDetail.tabs.workflow", "Workflow"), node: <TaskDetailTabButton selected={activeTab === "workflow"} onSelect={() => setActiveTab("workflow")}>{t("taskDetail.tabs.workflow", "Workflow")}</TaskDetailTabButton> },
+    { id: "details", label: t("taskDetail.tabs.details", "Details"), node: <TaskDetailTabButton selected={activeTab === "details"} onSelect={() => setActiveTab("details")}>{t("taskDetail.tabs.details", "Details")}</TaskDetailTabButton> },
+    ...(showWorktreeTerminalTab ? [{ id: "worktree-terminal", label: t("taskDetail.tabs.worktreeTerminal", "Terminal"), node: <TaskDetailTabButton selected={activeTab === "worktree-terminal"} onSelect={() => setActiveTab("worktree-terminal")}>{t("taskDetail.tabs.worktreeTerminal", "Terminal")}</TaskDetailTabButton> }] : []),
+    ...(showCliTab ? [{ id: "terminal", label: t("taskDetail.tabs.terminal", "Session"), node: <TaskDetailTabButton selected={activeTab === "terminal"} onSelect={() => setActiveTab("terminal")}>{t("taskDetail.tabs.terminal", "Session")}</TaskDetailTabButton> }] : []),
+    ...pluginTabs.map(({ entry, tabId }) => ({
+      id: tabId,
+      label: entry.slot.label,
+      node: <TaskDetailTabButton selected={activeTab === tabId} onSelect={() => setActiveTab(tabId)}>{entry.slot.label}</TaskDetailTabButton>,
+    })),
+  ];
+  const canonicalTabIds = canonicalTabItems.map((item) => item.id);
+  const canonicalTabSignature = canonicalTabIds.join("\u0000");
+  const [tabOrderState, setTabOrderState] = useState(() => ({
+    projectId,
+    canonicalSignature: canonicalTabSignature,
+    customized: hasSavedTaskDetailTabOrder(projectId),
+    order: loadTaskDetailTabOrder(projectId, canonicalTabIds),
+  }));
+  const renderedTabOrder = tabOrderState.projectId !== projectId
+    ? loadTaskDetailTabOrder(projectId, canonicalTabIds)
+    : tabOrderState.canonicalSignature !== canonicalTabSignature && !tabOrderState.customized
+      ? loadTaskDetailTabOrder(projectId, canonicalTabIds)
+      : reconcileTaskDetailTabOrder(tabOrderState.order, canonicalTabIds);
+  useEffect(() => {
+    setTabOrderState((current) => {
+      const sameProject = current.projectId === projectId;
+      const customized = sameProject ? current.customized : hasSavedTaskDetailTabOrder(projectId);
+      return {
+        projectId,
+        canonicalSignature: canonicalTabSignature,
+        customized,
+        order: sameProject && customized
+          ? reconcileTaskDetailTabOrder(current.order, canonicalTabIds)
+          : loadTaskDetailTabOrder(projectId, canonicalTabIds),
+      };
+    });
+  }, [projectId, canonicalTabSignature]);
+  const handleTabOrderChange = useCallback((order: string[]) => {
+    setTabOrderState({ projectId, canonicalSignature: canonicalTabSignature, customized: true, order });
+    saveTaskDetailTabOrder(projectId, order);
+  }, [canonicalTabSignature, projectId]);
+  useEffect(() => {
+    if (!canonicalTabIds.includes(activeTab)) setActiveTab("definition");
+  }, [activeTab, canonicalTabSignature]);
+
   /*
   FNXC:TaskDetailMeta 2026-09-05-23:27:
   Provenance, undo and PR context, timestamps, and workflow identity belong at the top of Details instead of occupying permanent space above every task tab. Preserve the existing nodes and conditions as one metadata section so modal and embedded hosts expose the same information without duplicate header chrome.
@@ -5386,97 +5458,20 @@ export function TaskDetailContent({
           </div>
         </div>
         {!isEditing && (
-        <div className="detail-tabs">
-          {/*
-            FNXC:TaskDetailActivityFirst 2026-06-30-23:59:
-            Activity is first/default for omitted non-done task opens unless the project setting taskDetailChatFirst is true. Keep both stable ids (`chat` for Activity, `planner-chat` for Chat) so explicit deep links and plugin callers retain their destinations.
-          */}
-          {taskDetailChatFirst ? (
-            <>
-              <TaskDetailTabButton selected={activeTab === "planner-chat"} onSelect={() => setActiveTab("planner-chat")}>
-                {t("taskDetail.tabs.chat", "Chat")}
-              </TaskDetailTabButton>
-              {renderActivityTab()}
-            </>
-          ) : (
-            <>
-              {renderActivityTab()}
-              <TaskDetailTabButton selected={activeTab === "planner-chat"} onSelect={() => setActiveTab("planner-chat")}>
-                {t("taskDetail.tabs.chat", "Chat")}
-              </TaskDetailTabButton>
-            </>
-          )}
-          <TaskDetailTabButton selected={activeTab === "definition"} onSelect={() => setActiveTab("definition")}>
-            {t("taskDetail.tabs.definition", "Plan")}
-          </TaskDetailTabButton>
-          {(isWipColumn || isReviewColumn || isDoneColumn) && (
-            <TaskDetailTabButton selected={activeTab === "changes"} onSelect={() => setActiveTab("changes")}>
-              {t("taskDetail.tabs.changes", "Changes")}
-            </TaskDetailTabButton>
-          )}
-          <TaskDetailTabButton selected={activeTab === "summary"} onSelect={() => setActiveTab("summary")}>
-            {t("taskDetail.tabs.summary", "Summary")}
-          </TaskDetailTabButton>
-          <TaskDetailTabButton selected={activeTab === "stats"} onSelect={() => setActiveTab("stats")}>
-            {t("taskDetail.tabs.stats", "Stats")}
-          </TaskDetailTabButton>
-          <TaskDetailTabButton selected={activeTab === "review"} onSelect={() => setActiveTab("review")}>
-            {t("taskDetail.tabs.review", "Review")}
-          </TaskDetailTabButton>
-          {isReviewColumn && (
-            <TaskDetailTabButton selected={activeTab === "pr"} onSelect={() => setActiveTab("pr")}>
-              {t("taskDetail.tabs.pullRequest", "Pull Request")}
-            </TaskDetailTabButton>
-          )}
-          <TaskDetailTabButton selected={activeTab === "comments"} onSelect={() => setActiveTab("comments")}>
-            {t("taskDetail.tabs.comments", "Comments")}
-          </TaskDetailTabButton>
-          <TaskDetailTabButton selected={activeTab === "dependencies"} onSelect={() => setActiveTab("dependencies")}>
-            {t("taskDetail.tabs.dependencies", "Dependencies")}
-          </TaskDetailTabButton>
-          <TaskDetailTabButton selected={activeTab === "documents"} onSelect={() => setActiveTab("documents")}>
-            {/* FNXC:ArtifactRegistry 2026-06-21-21:56: Keep the internal "documents" tab id stable for persisted task-modal state while presenting the expanded user-facing tab as Artifacts. */}
-            {t("taskDetail.tabs.documents", "Artifacts")}
-          </TaskDetailTabButton>
-          <TaskDetailTabButton selected={activeTab === "model"} onSelect={() => setActiveTab("model")}>
-            {t("taskDetail.tabs.model", "Model")}
-          </TaskDetailTabButton>
-          <TaskDetailTabButton selected={activeTab === "workflow"} onSelect={() => setActiveTab("workflow")}>
-            {t("taskDetail.tabs.workflow", "Workflow")}
-          </TaskDetailTabButton>
-          {/*
-          FNXC:TaskDetailTabs 2026-08-28-23:05:
-          Definition is plan-only. Details owns original prompt, retries, source and agent metadata,
-          tracking, no-commits, routing, and diagnostics; Artifacts owns registered artifacts and
-          attachments; Summary owns agent reports and recommendations. Retired deep links resolve
-          to those owners rather than restoring duplicate tab buttons.
-          */}
-          <TaskDetailTabButton selected={activeTab === "details"} onSelect={() => setActiveTab("details")}>
-            {t("taskDetail.tabs.details", "Details")}
-          </TaskDetailTabButton>
-          {showWorktreeTerminalTab && (
-            <TaskDetailTabButton selected={activeTab === "worktree-terminal"} onSelect={() => setActiveTab("worktree-terminal")}>
-              {t("taskDetail.tabs.worktreeTerminal", "Terminal")}
-            </TaskDetailTabButton>
-          )}
-          {showCliTab && (
-            <TaskDetailTabButton selected={activeTab === "terminal"} onSelect={() => setActiveTab("terminal")}>
-              {t("taskDetail.tabs.terminal", "Session")}
-            </TaskDetailTabButton>
-          )}
-          {/* Plugin tabs */}
-          {pluginTabs.map(({ entry, tabId }) => {
-            return (
-              <TaskDetailTabButton key={`plugin-tab-${entry.pluginId}-${tabId}`} selected={activeTab === tabId} onSelect={() => setActiveTab(tabId)}>
-                {entry.slot.label}
-              </TaskDetailTabButton>
-            );
-          })}
-        </div>
-
+          <TaskDetailTabStrip
+            items={canonicalTabItems}
+            activeId={activeTab}
+            ariaLabel={t("taskDetail.tabs.label", "Task detail tabs")}
+            order={renderedTabOrder}
+            onOrderChange={handleTabOrderChange}
+            reorderAnnouncement={(label, position, count) => t(
+              "taskDetail.tabs.reordered",
+              "{{label}} moved to position {{position}} of {{count}}",
+              { label, position, count },
+            )}
+          />
         )}
-        <div className={`detail-body${activeTab === "chat" && activitySegment === "feed" && !isActivityExpanded && !isEditing ? " detail-body--feed" : ""}${activeTab === "chat" && activitySegment === "raw-logs" && !isEditing ? " detail-body--agent-log" : ""}${activeTab === "chat" && (activitySegment === "current" || isActivityExpanded) && !isEditing ? " detail-body--chat" : ""}${activeTab === "planner-chat" && !isEditing ? " detail-body--planner-chat" : ""}`}>
-          <div className="detail-body-content">
+        <main className={`detail-body${activeTab === "chat" && activitySegment === "feed" && !isActivityExpanded && !isEditing ? " detail-body--feed" : ""}${activeTab === "chat" && activitySegment === "raw-logs" && !isEditing ? " detail-body--agent-log" : ""}${activeTab === "chat" && (activitySegment === "current" || isActivityExpanded) && !isEditing ? " detail-body--chat" : ""}${activeTab === "planner-chat" && !isEditing ? " detail-body--planner-chat" : ""}`} data-testid="task-detail-tab-content">
           {isEditing ? (
             <div className="modal-edit-form">
               <TaskForm
@@ -5581,10 +5576,11 @@ export function TaskDetailContent({
             </div>
           ) : (
             <>
-              <>
+              {activeTab === "definition" && (
+                <>
                 {/*
-                FNXC:TaskDetail 2026-06-22-20:00:
-                Summarize-as-title renders inline with the title inside .detail-heading-row and is positioned (CSS) to the far bottom-right as an in-field affordance, not a separate full-width row. Markup order is preserved; only layout changed.
+                FNXC:TaskDetailShell 2026-09-12-02:34:
+                Le titre et sa synthèse appartiennent exclusivement au contenu Définition. Les autres destinations commencent directement par leur propre contenu, sans espace de titre global.
                 */}
                 <div className="detail-heading-row">
                   {/*
@@ -5620,8 +5616,9 @@ export function TaskDetailContent({
                     </AlphaButton>
                   )}
                 </div>
-              </>
-              {customFieldDefs && customFieldDefs.length > 0 ? (
+                </>
+              )}
+              {activeTab === "definition" && customFieldDefs && customFieldDefs.length > 0 ? (
                 <TaskFieldsSection
                   fieldDefs={customFieldDefs}
                   customFields={customFieldValues}
@@ -5629,7 +5626,7 @@ export function TaskDetailContent({
                   error={customFieldError}
                 />
               ) : null}
-              {showNearDuplicateWarning && (
+              {activeTab === "definition" && showNearDuplicateWarning && (
                 <div className="detail-near-duplicate-banner" role="status" aria-live="polite">
                   <div className="detail-near-duplicate-banner__header">
                     <AlertTriangle aria-hidden="true" />
@@ -5666,7 +5663,7 @@ export function TaskDetailContent({
               clicks Approve/Reject. Replan-cap escalations get a stronger, distinct reason;
               ordinary require-all / workflow manual gates get a clear pre-execution gate note.
               */}
-              {isAwaitingApproval && (
+              {activeTab === "definition" && isAwaitingApproval && (
                 <div
                   className={`detail-plan-approval-banner${isPlanReviewReplanCapApproval ? " detail-plan-approval-banner--replan-cap" : ""}`}
                   role="status"
@@ -5729,7 +5726,7 @@ export function TaskDetailContent({
                   accept="image/*"
                   onChange={handleUpload}
                 />
-                {task.aiMergeReviewReconciliation && (() => {
+                {activeTab === "definition" && task.aiMergeReviewReconciliation && (() => {
                   const reconciliation = task.aiMergeReviewReconciliation;
                   const pending = reconciliation.findings.filter((finding) => finding.disposition === "pending" || finding.disposition === "still-present");
                   return (
@@ -5742,8 +5739,8 @@ export function TaskDetailContent({
                   );
                 })()}
               {/* FNXC:TaskVerificationStatus 2026-07-19-12:00: Verification status moved below metadata controls per UX feedback — empty state "No chat verification requested" was appearing too prominently near the top of the card. */}
-              <TaskVerificationStatus request={verificationRequest} />
-              {shouldShowBranchGroupCard && task.branchContext?.groupId && (
+              {activeTab === "definition" && <TaskVerificationStatus request={verificationRequest} />}
+              {activeTab === "definition" && shouldShowBranchGroupCard && task.branchContext?.groupId && (
                 /* FNXC:BranchGroupDetails 2026-06-30-00:00: Task-detail branch groups must return to their compact collapsed default when users switch tasks, including between members of the same shared branch group. Key by task and group so a manual expansion never leaks into the next task detail view. */
                 <BranchGroupCard
                   key={`${task.id}:${task.branchContext.groupId}`}
@@ -5756,8 +5753,8 @@ export function TaskDetailContent({
               )}
             </>
           )}
-          <ExternalBlockNotice task={task as Task} variant="detail" onOpenChatWithPrefill={onOpenChatWithPrefill} onRetryTask={onRetryTask} addToast={addToast} />
-          {shouldShowTaskFailureAlert && (
+          {activeTab === "definition" && <ExternalBlockNotice task={task as Task} variant="detail" onOpenChatWithPrefill={onOpenChatWithPrefill} onRetryTask={onRetryTask} addToast={addToast} />}
+          {activeTab === "definition" && shouldShowTaskFailureAlert && (
             <div className="detail-error-alert" role="alert">
               <span className="detail-error-icon">⚠</span>
               <div className="detail-error-content">
@@ -5832,7 +5829,7 @@ export function TaskDetailContent({
               </div>
             </div>
           )}
-          {task.pausedReason === "worktrunk_operation_failed" && (
+          {activeTab === "definition" && task.pausedReason === "worktrunk_operation_failed" && (
             <div className="task-pause-reason" role="status" aria-live="polite">
               <div className="task-pause-reason-label">{t("taskDetail.pause.worktrunkFailed", "Worktrunk operation failed")}</div>
               {task.worktrunkFailure?.stderr && (
@@ -5911,7 +5908,7 @@ export function TaskDetailContent({
             /* FNXC:TaskDetailTabKeepAlive 2026-07-22-12:55: body renders from the kept-alive sibling below the ternary; null here prevents fall-through to Definition. */
             null
           ) : activeTab === "chat" ? (
-            <div className={`detail-section detail-section--activity${activitySegment === "feed" && !isActivityExpanded ? " detail-section--feed" : ""}${activitySegment === "current" || isActivityExpanded ? " detail-section--chat" : ""}${activitySegment === "raw-logs" ? " detail-section--agent-log" : ""}`}>
+            <>
               {/*
                 FNXC:TaskDetailPlannerChat 2026-08-28-23:05:
                 Activity owns steering/current view, Feed, raw agent logs, and Interventions inside one compact selector. The stable Activity tab id remains `chat`, legacy `logs` callers land on Feed, and Raw is the only selector option that enables raw agent-log fetching. Detailed stage reports belong only to Summary; planner-model conversation belongs to the separate `planner-chat` tab and must not route into steering comments.
@@ -5925,28 +5922,7 @@ export function TaskDetailContent({
                 FNXC:TaskDetailActivity 2026-07-01-00:00:
                 Activity expansion must not reserve a standalone toolbar row. Live uses TaskChatTab's anchored overlay button, Feed renders the same Activity toggle over its feed panel, and Raw keeps AgentLogViewer's fullscreen control so only one Raw expand affordance is reachable.
               */}
-              {activitySegment === "current" ? (
-                <AlphaBoundary>
-                <TaskChatTab
-                  columnFlags={detailColumnFlags}
-                  task={workingTask}
-                  projectId={projectId}
-                  active={active && activeTab === "chat" && activitySegment === "current"}
-                  addToast={addToast}
-                  sessionLive={isCliSessionLive(cliSession)}
-                  onTaskUpdated={handleChatTaskUpdated}
-                  onRefinementCreated={onRefinementCreated}
-                  expanded={isActivityExpanded}
-                  onToggleExpanded={() => setActivityExpanded((value) => !value)}
-                  effectiveModels={{
-                    triage: toTaskChatModelInfo(resolveEffectivePlanning(workingTask, agentLogEntries, settings)),
-                    executor: toTaskChatModelInfo(resolveEffectiveExecutor(workingTask, agentLogEntries, assignedAgent, settings, detailColumnFlags)),
-                    reviewer: toTaskChatModelInfo(resolveEffectiveValidator(workingTask, agentLogEntries, assignedAgent, settings, detailColumnFlags)),
-                    merger: toTaskChatModelInfo(resolveEffectiveValidator(workingTask, agentLogEntries, assignedAgent, settings, detailColumnFlags)),
-                  }}
-                />
-                </AlphaBoundary>
-              ) : activitySegment === "raw-logs" ? (
+              {activitySegment === "current" ? null : activitySegment === "raw-logs" ? (
                 <AgentLogViewer
                   entries={agentLogEntries}
                   loading={agentLogLoading}
@@ -6057,7 +6033,7 @@ export function TaskDetailContent({
                   )}
                 </div>
               )}
-            </div>
+            </>
           ) : activeTab === "changes" ? (
             <TaskChangesTab taskId={task.id} worktree={task.worktree} projectId={projectId} column={task.column} columnFlags={detailColumnFlags} mergeDetails={task.mergeDetails} modifiedFiles={task.modifiedFiles} isWorkspace={isWorkspaceTask(workingTask)} />
           ) : activeTab === "review" ? (
@@ -7112,14 +7088,43 @@ export function TaskDetailContent({
           {/*
           FNXC:TaskDetailTabKeepAlive 2026-07-22-12:55:
           Kept-alive tab bodies (mounted after each tab's first open for this task, hidden via KeepAliveView's out-of-flow visibility contract while another tab is active):
+          - Activity Live keeps its draft, optimistic messages, and transcript while Feed, Raw, or another top-level tab owns the visible content; `active` suspends providers and interactions while hidden.
           - Planner chat keeps its composer draft and scroll; `active` closes its useAgentLogs EventSource while hidden (R8).
           - Terminal keeps the WebSocket and xterm scrollback alive intentionally; `active` drives SessionTerminal's reveal refit + dead-socket recovery (R9).
           - Worktree terminal keeps the embedded TerminalModal shell session alive across tab flips.
           Task switch or modal close resets the latches, so terminals dispose exactly as before keep-alive (R10).
+
+          FNXC:TaskDetailActivity 2026-09-12-03:19:
+          Activity Live reste monté par identité de tâche après sa première ouverture. Feed, Raw et les autres onglets masquent cette surface via KeepAliveView et retirent sa cible de footer, sans réinitialiser le brouillon ni les messages optimistes.
           */}
+          {keepAliveForCurrentTask.activityLive ? (
+            <KeepAliveView hidden={isEditing || activeTab !== "chat" || activitySegment !== "current"} className="task-detail-activity-keep-alive" testId="activity-live-keep-alive">
+              <AlphaBoundary>
+                <TaskChatTab
+                  columnFlags={detailColumnFlags}
+                  task={workingTask}
+                  projectId={projectId}
+                  active={active && !isEditing && activeTab === "chat" && activitySegment === "current"}
+                  addToast={addToast}
+                  sessionLive={isCliSessionLive(cliSession)}
+                  onTaskUpdated={handleChatTaskUpdated}
+                  onRefinementCreated={onRefinementCreated}
+                  footerTarget={!isEditing && activeTab === "chat" && activitySegment === "current" ? tabFooterTarget : null}
+                  footerVisible={!isEditing && activeTab === "chat" && activitySegment === "current"}
+                  expanded={isActivityExpanded}
+                  onToggleExpanded={() => setActivityExpanded((value) => !value)}
+                  effectiveModels={{
+                    triage: toTaskChatModelInfo(resolveEffectivePlanning(workingTask, agentLogEntries, settings)),
+                    executor: toTaskChatModelInfo(resolveEffectiveExecutor(workingTask, agentLogEntries, assignedAgent, settings, detailColumnFlags)),
+                    reviewer: toTaskChatModelInfo(resolveEffectiveValidator(workingTask, agentLogEntries, assignedAgent, settings, detailColumnFlags)),
+                    merger: toTaskChatModelInfo(resolveEffectiveValidator(workingTask, agentLogEntries, assignedAgent, settings, detailColumnFlags)),
+                  }}
+                />
+              </AlphaBoundary>
+            </KeepAliveView>
+          ) : null}
           {keepAliveForCurrentTask.plannerChat ? (
-            <KeepAliveView hidden={activeTab !== "planner-chat"} testId="planner-chat-keep-alive">
-              <div className="detail-section detail-section--planner-chat">
+            <KeepAliveView hidden={activeTab !== "planner-chat"} className="task-detail-planner-keep-alive" testId="planner-chat-keep-alive">
                 <AlphaBoundary>
                 <TaskPlannerChatTab
                   task={workingTask}
@@ -7135,9 +7140,9 @@ export function TaskDetailContent({
                   taskChatModel={resolveEffectiveTaskChat(settings)}
                   addToast={addToast}
                   onTaskUpdated={onTaskUpdated}
+                  footerTarget={activeTab === "planner-chat" ? tabFooterTarget : null}
                 />
                 </AlphaBoundary>
-              </div>
             </KeepAliveView>
           ) : null}
           {keepAliveForCurrentTask.terminal ? (
@@ -7219,8 +7224,14 @@ export function TaskDetailContent({
               )}
             </div>
           )}
-        </div>
-      </div>
+      </main>
+      {!isEditing && (activeTab === "planner-chat" || (activeTab === "chat" && activitySegment === "current")) && (
+        <div
+          ref={setTabFooterTarget}
+          className="modal-actions task-detail-chat-footer"
+          data-testid="task-detail-chat-footer"
+        />
+      )}
       {isReviewColumn && (
           <PrCreateModal
             open={prCreateOpen}
@@ -7327,7 +7338,6 @@ export function TaskDetailContent({
                 <ModalCloseButton onClick={handleCloseRefineModal} aria-label={t("common.close", "Close")} />
               </div>
               <div className="detail-body">
-                <div className="detail-body-content">
                   <p className="detail-refine-help">
                     {t("taskDetail.refine.help", "Describe what needs to be refined or improved...")}
                   </p>
@@ -7352,7 +7362,6 @@ export function TaskDetailContent({
                       {isRefining ? t("taskDetail.refine.creating", "Creating...") : t("taskDetail.refine.createBtn", "Create Refinement Task")}
                     </AlphaButton>
                   </div>
-                </div>
               </div>
               <div className="modal-actions">
                 <AlphaButton className="btn btn-sm" onClick={handleCloseRefineModal} disabled={isRefining}>

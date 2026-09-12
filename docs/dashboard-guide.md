@@ -164,6 +164,12 @@ Movable dashboard pop-outs remember their last desktop location and size, while 
 
 The grep-backed [dashboard modal inventory](./dashboard-modal-inventory.md) is the canonical migration plan for every dashboard modal surface, including explicit static-dialog opt-outs.
 
+### Task Detail tabs and content
+
+Task Detail uses the same four-zone shell in its modal, Board panel, List split view, right dock, and pop-out: header, tab strip, active content, then an optional footer owned by that tab. The task title appears only in **Definition**. **Chat** and **Activity → Live** keep the transcript as the scrollable content and pin their composer in the footer; read-only destinations such as Activity Feed and Raw do not reserve an empty footer.
+
+On desktop, drag a tab with the mouse to reorder it, or focus it and press `Alt+ArrowLeft` / `Alt+ArrowRight`. Fusion saves this order for the current project and reconciles conditional and plugin tabs when they appear. On touch devices, native drag is disabled so the one-row strip remains horizontally scrollable; tapping still selects a tab normally.
+
 ### Task modal resizing on tablets
 
 Task Detail and New Task remain resizable on known touch tablets, including a 768px-wide tablet viewport. Task Detail exposes its accessible bottom-right resize grip; New Task keeps its draggable header and edge/corner resize controls. On that tablet-touch surface, the painted control remains compact but its explicit resize hit target is at least 44px, sits outside the panel content, and owns touch gestures with pointer capture. The touch target is hit-area-only: task-modal headers and bodies retain desktop density without a visible tablet padding band. Their geometry stays within the viewport and is restored from browser storage on later tablet or desktop opens. True phones, narrow folded panes, and desktop coarse-pointer devices do not receive the enlarged target: phones remain full-screen sheets and desktop preserves cursor-sized resize chrome.

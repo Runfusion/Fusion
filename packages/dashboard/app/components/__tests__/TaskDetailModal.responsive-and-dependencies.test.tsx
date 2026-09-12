@@ -197,7 +197,7 @@ describe("TaskDetailModal", () => {
 
       const detailCss = readDashboardStylesSource();
       expectBaseRule(detailCss, ".detail-body--planner-chat", "overflow-y: hidden;");
-      expectBaseRule(detailCss, ".detail-section--planner-chat", "min-height: 0;");
+      expectBaseRule(detailCss, ".task-detail-planner-keep-alive", "min-height: 0;");
       expect(detailCss).toContain(".task-detail-content--planner-chat-expanded .modal-actions");
       expect(detailCss).toContain(".task-detail-content--planner-chat-expanded .detail-tabs");
       expect(detailCss).toContain(".task-detail-content--planner-chat-expanded .detail-overseer-explain-panel");
@@ -218,19 +218,16 @@ describe("TaskDetailModal", () => {
       const plannerTranscriptBlock = getExactCssRuleBlock(plannerCss, ".task-planner-chat-transcript");
       const plannerComposerBlock = getExactCssRuleBlock(plannerCss, ".task-planner-chat-composer");
       const expandedPlannerBodyBlock = getExactCssRuleBlock(css, ".task-detail-content--planner-chat-expanded .detail-body--planner-chat");
-      const expandedPlannerSectionBlock = getExactCssRuleBlock(css, ".task-detail-content--planner-chat-expanded .detail-section--planner-chat");
+      const expandedPlannerSectionBlock = getExactCssRuleBlock(css, ".task-detail-content--planner-chat-expanded .task-detail-planner-keep-alive");
       const mobileBodyBlock = getCssAtRuleBlockContainingExactRule(css, "@media (max-width: 768px)", ".detail-body");
       const mobileDetailBodyBlock = getExactCssRuleBlock(mobileBodyBlock, ".detail-body");
-      const detailBodyContentBlock = getExactCssRuleBlock(css, ".detail-body-content");
-      const mobileDetailBodyContentBlock = getExactCssRuleBlock(mobileBodyBlock, ".detail-body-content");
+
       const mobilePlannerBlock = getCssAtRuleBlockContaining(css, "@media (max-width: 768px)", ".detail-body--chat");
       const mobilePlannerBodyBlock = getStandaloneCssRuleBlock(mobilePlannerBlock, ".detail-body--planner-chat");
       const mobileExpandedPlannerBodyBlock = getExactCssRuleBlock(mobilePlannerBlock, ".task-detail-content--planner-chat-expanded .detail-body--planner-chat");
 
-      expect(detailBodyBlock).toContain("padding: 0;");
-      expect(detailBodyContentBlock).toContain("padding: calc(var(--space-lg) + var(--space-xs));");
-      expect(mobileDetailBodyBlock).toContain("padding: 0;");
-      expect(mobileDetailBodyContentBlock).toContain("padding: calc(var(--space-md) + var(--space-xs) / 2);");
+      expect(detailBodyBlock).toContain("padding: calc(var(--space-lg) + var(--space-xs));");
+      expect(mobileDetailBodyBlock).toContain("padding: calc(var(--space-md) + var(--space-xs) / 2);");
       expectNoSpacingOverrides(activityBodyBlock, "desktop Activity body modifier");
       expectNoSpacingOverrides(plannerBodyBlock, "desktop planner body modifier");
       expect(expandedPlannerBodyBlock).toContain("flex: 1;");
@@ -393,11 +390,10 @@ describe("TaskDetailModal", () => {
       const feedBodyBlock = getExactCssRuleBlock(css, ".detail-body--feed,\n.detail-body--agent-log");
       const feedContentBlock = getExactCssRuleBlock(
         css,
-        ".detail-body--feed > .detail-body-content,\n.detail-body--agent-log > .detail-body-content,\n.detail-body--chat > .detail-body-content,\n.detail-body--planner-chat > .detail-body-content",
+        ".detail-body--feed > *,\n.detail-body--agent-log > *,\n.detail-body--chat > *,\n.detail-body--planner-chat > *",
       );
-      const feedSectionBlock = getExactCssRuleBlock(css, ".detail-section--feed,\n.detail-section--agent-log");
-      const feedActivityBlock = getExactCssRuleBlock(css, ".detail-section--feed > .detail-activity");
-      const feedListBlock = getExactCssRuleBlock(css, ".detail-section--feed .detail-activity-list");
+      const feedActivityBlock = getExactCssRuleBlock(css, ".detail-body--feed > .detail-activity");
+      const feedListBlock = getExactCssRuleBlock(css, ".detail-body--feed > .detail-activity .detail-activity-list");
       const footerBlock = getExactCssRuleBlock(css, ".task-detail-content > .modal-actions");
       const mobileBlock = getCssAtRuleBlockContainingExactRule(css, "@media (max-width: 768px)", ".detail-body");
       const mobileDetailBodyBlock = getExactCssRuleBlock(mobileBlock, ".detail-body");
@@ -416,8 +412,6 @@ describe("TaskDetailModal", () => {
       expect(feedBodyBlock).toContain("overflow-y: hidden;");
       expect(feedContentBlock).toContain("flex: 1;");
       expect(feedContentBlock).toContain("min-height: 0;");
-      expect(feedSectionBlock).toContain("flex: 1;");
-      expect(feedSectionBlock).toContain("min-height: 0;");
       expect(feedActivityBlock).toContain("flex: 1;");
       expect(feedActivityBlock).toContain("min-height: 0;");
       expect(feedListBlock).toContain("flex: 1;");
@@ -482,7 +476,6 @@ describe("TaskDetailModal", () => {
       This contract covers modal, pop-out, embedded, and mobile task-detail surfaces.
       */
       const mobileDetailBodyBlock = getExactCssRuleBlock(mobileBlock, ".detail-body");
-      const mobileDetailBodyContentBlock = getExactCssRuleBlock(mobileBlock, ".detail-body-content");
       const baseInterventionsBlock = getExactCssRuleBlock(css, ".detail-activity--interventions");
       const mobilePrBlock = getExactCssRuleBlock(
         getCssAtRuleBlockContainingExactRule(css, "@media (max-width: 768px)", ".detail-pr-tab"),
@@ -494,8 +487,7 @@ describe("TaskDetailModal", () => {
       );
       const allMobileCss = getCssAtRuleBlocks(css, "@media (max-width: 768px)").join("\n");
 
-      expect(mobileDetailBodyBlock).toContain("padding: 0;");
-      expect(mobileDetailBodyContentBlock).toContain("padding: calc(var(--space-md) + var(--space-xs) / 2);");
+      expect(mobileDetailBodyBlock).toContain("padding: calc(var(--space-md) + var(--space-xs) / 2);");
       expect(mobileDetailBodyBlock).toContain("overflow-x: hidden;");
       expect(baseInterventionsBlock).toContain("padding-inline-end: 0;");
       expect(mobileBlock).toContain(".detail-activity:not(.detail-activity--interventions) > h4,");
@@ -533,7 +525,6 @@ describe("TaskDetailModal", () => {
       const baseScrollbarBlock = getExactCssRuleBlock(css, ".detail-body::-webkit-scrollbar");
       const mobileBlock = getCssAtRuleBlockContainingExactRule(css, "@media (max-width: 768px)", ".detail-body");
       const mobileDetailBodyBlock = getExactCssRuleBlock(mobileBlock, ".detail-body");
-      const mobileDetailBodyContentBlock = getExactCssRuleBlock(mobileBlock, ".detail-body-content");
       const mobileScrollbarBlock = getExactCssRuleBlock(mobileBlock, ".detail-body::-webkit-scrollbar");
       const mobileActivityBlock = getExactCssRuleBlock(mobileBlock, ".detail-activity");
       const mobileInterventionsBlock = getExactCssRuleBlock(mobileBlock, ".detail-activity--interventions");
@@ -550,8 +541,7 @@ describe("TaskDetailModal", () => {
 
       expect(baseDetailBodyBlock).toContain("scrollbar-width: thin;");
       expect(baseScrollbarBlock).toContain("width: 6px;");
-      expect(mobileDetailBodyBlock).toContain("padding: 0;");
-      expect(mobileDetailBodyContentBlock).toContain("padding: calc(var(--space-md) + var(--space-xs) / 2);");
+      expect(mobileDetailBodyBlock).toContain("padding: calc(var(--space-md) + var(--space-xs) / 2);");
       expect(mobileDetailBodyBlock).toContain("overflow-x: hidden;");
       expect(mobileDetailBodyBlock).toContain("overflow-y: auto;");
       expect(mobileDetailBodyBlock).toContain("scrollbar-width: none;");
@@ -752,7 +742,7 @@ describe("TaskDetailModal", () => {
       const buttonBlock = getExactCssRuleBlock(mobileBlock, ".task-detail-content .modal-actions .btn");
       const labelBlock = getExactCssRuleBlock(mobileBlock, ".task-detail-content .detail-footer-button-label");
       const dropdownBlock = getExactCssRuleBlock(mobileBlock, ".task-detail-content .detail-actions-dropdown");
-      const expandedChatBlock = getExactCssRuleBlock(css, ".task-detail-content--chat-expanded .modal-actions");
+      const expandedChatBlock = getExactCssRuleBlock(css, ".task-detail-content--chat-expanded .modal-actions:not(.task-detail-chat-footer),\n.task-detail-content--chat-expanded .detail-overseer-explain-panel");
 
       /*
       FNXC:TaskDetailModalResponsive 2026-07-22-00:00:
@@ -780,13 +770,13 @@ describe("TaskDetailModal", () => {
       expect(labelBlock).toContain("overflow: hidden;");
       expect(labelBlock).toContain("text-overflow: ellipsis;");
       expect(expandedChatBlock).toContain("display: none;");
-      expect(css).toMatch(/\.task-detail-content--planner-chat-expanded \.modal-actions,[\s\S]*?\{\s*display:\s*none;/);
+      expect(css).toMatch(/\.task-detail-content--planner-chat-expanded \.modal-actions:not\(\.task-detail-chat-footer\),[\s\S]*?\{\s*display:\s*none;/);
     });
 
     it("keeps dense in-review and standard task controls in their shared footer", () => {
       const { baseElement: container, unmount } = render(
         <TaskDetailModal
-          initialTab="definition"
+          initialTab="review"
           task={makeTask({ column: "in-review" as Column })}
           onClose={noop}
           onDeleteTask={noopDelete}
@@ -1213,7 +1203,7 @@ describe("TaskDetailModal", () => {
     it("keeps the in-review Merge & Close action in the footer without relocation controls", () => {
       render(
         <TaskDetailModal
-          initialTab="definition"
+          initialTab="review"
           task={makeTask({ column: "in-review" as Column })}
           onClose={noop}
           onDeleteTask={noopDelete}
@@ -1239,7 +1229,7 @@ describe("TaskDetailModal", () => {
 
       render(
         <TaskDetailModal
-          initialTab="definition"
+          initialTab="review"
           task={makeTask({ column: "in-review" as Column })}
           onClose={noop}
           onDeleteTask={noopDelete}
@@ -1268,7 +1258,7 @@ describe("TaskDetailModal", () => {
 
       render(
         <TaskDetailModal
-          initialTab="definition"
+          initialTab="review"
           task={makeTask({ column: "in-review" as Column })}
           onClose={noop}
           onDeleteTask={noopDelete}
@@ -1313,7 +1303,7 @@ describe("TaskDetailModal", () => {
 
       render(
         <TaskDetailModal
-          initialTab="definition"
+          initialTab="review"
           task={makeTask({
             column: "in-review" as Column,
             prInfo: {
@@ -1362,7 +1352,7 @@ describe("TaskDetailModal", () => {
 
       render(
         <TaskDetailModal
-          initialTab="definition"
+          initialTab="review"
           task={makeTask({
             column: "in-review" as Column,
             prInfo: {
@@ -1408,7 +1398,7 @@ describe("TaskDetailModal", () => {
 
       render(
         <TaskDetailModal
-          initialTab="definition"
+          initialTab="review"
           task={makeTask({
             column: "in-review" as Column,
             prInfo: {
@@ -1488,7 +1478,7 @@ describe("TaskDetailModal", () => {
 
       render(
         <TaskDetailModal
-          initialTab="definition"
+          initialTab="review"
           task={task}
           onClose={noop}
           onDeleteTask={noopDelete}
@@ -1504,7 +1494,7 @@ describe("TaskDetailModal", () => {
     it("shows PR automation waiting label instead of Merge & Close when awaiting PR checks", () => {
       render(
         <TaskDetailModal
-          initialTab="definition"
+          initialTab="review"
           task={makeTask({ column: "in-review" as Column, status: "awaiting-pr-checks", prInfo: {
             url: "https://github.com/owner/repo/pull/42",
             number: 42,
@@ -1530,7 +1520,7 @@ describe("TaskDetailModal", () => {
     it("shows Creating PR label while PR-first automation is creating a PR", () => {
       render(
         <TaskDetailModal
-          initialTab="definition"
+          initialTab="review"
           task={makeTask({ column: "in-review" as Column, status: "creating-pr" })}
           onClose={noop}
           onDeleteTask={noopDelete}

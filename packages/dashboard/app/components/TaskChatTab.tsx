@@ -1,7 +1,8 @@
 import type { AgentLogEntry, AgentRole, ChatSnippet, SteeringComment, Task, TaskDetail } from "@fusion/core";
 import { AlphaButton, AlphaListBox, AlphaListBoxItem, AlphaTextArea } from "./alpha-ui";
 import { isCompleteColumnRole, isWipColumnRole } from "../utils/columnRoles";
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { AlertTriangle, ChevronDown, Cpu, Loader2, Maximize2, Minimize2, Send } from "lucide-react";
@@ -50,6 +51,17 @@ interface TaskChatTabProps {
   expanded?: boolean;
   onToggleExpanded?: () => void;
   effectiveModels?: Partial<Record<"triage" | "executor" | "reviewer" | "merger", TaskChatModelInfo | null>>;
+  footerTarget?: HTMLElement | null;
+  /** Keeps the state owner mounted while withholding its composer from an inactive shell footer. */
+  footerVisible?: boolean;
+}
+
+/*
+FNXC:TaskDetailActivity 2026-09-12-02:34:
+Activity Live conserve son transcript et son état dans le Content, tandis que steering/refinement et leurs menus sont portalisés dans le Footer direct du shell. Feed et Raw ne fournissent aucune cible et ne créent donc aucun footer vide.
+*/
+function TaskChatFooterPortal({ target, children }: { target?: HTMLElement | null; children: ReactNode }) {
+  return target ? createPortal(children, target) : children;
 }
 
 type AgentLogRole = AgentRole | undefined;
@@ -702,7 +714,7 @@ function TaskChatUserMessage({ message }: { message: UserChatMessage }) {
   );
 }
 
-export function TaskChatTab({ task, columnFlags, projectId, active, addToast, onTaskUpdated, onRefinementCreated, expanded = false, onToggleExpanded, effectiveModels }: TaskChatTabProps) {
+export function TaskChatTab({ task, columnFlags, projectId, active, addToast, onTaskUpdated, onRefinementCreated, expanded = false, onToggleExpanded, effectiveModels, footerTarget, footerVisible = true }: TaskChatTabProps) {
   const { t } = useTranslation("app");
   const chatMessageLayout = useChatMessageLayout();
   const enterSubmits = useChatEnterSubmits();
@@ -1259,6 +1271,7 @@ export function TaskChatTab({ task, columnFlags, projectId, active, addToast, on
         ) : null}
       </div>
 
+      {footerVisible ? <TaskChatFooterPortal target={footerTarget}>
       <form className="task-chat-composer" onSubmit={handleSubmit} aria-label={composerFormLabel}>
         {showSnippetMenu && filteredSnippets.length > 0 ? (
           <AlphaListBox className="chat-skill-menu task-chat-snippet-menu" data-testid="task-chat-snippet-menu" aria-label={t("chat.snippetSuggestions", "Snippet suggestions")}>
@@ -1307,6 +1320,7 @@ export function TaskChatTab({ task, columnFlags, projectId, active, addToast, on
           </AlphaButton>
         </div>
       </form>
+      </TaskChatFooterPortal> : null}
     </div>
   );
 }

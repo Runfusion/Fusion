@@ -20,6 +20,19 @@ describe("TaskDetailModal CSS contract", () => {
     expect(css).toMatch(/\.detail-source-header\s*\{[^}]*align-items\s*:\s*flex-start\s*;/);
   });
 
+  it("garde la barre d'onglets plane et matérialise uniquement la sélection", async () => {
+    const css = await loadAllAppCssBaseOnly();
+    const strip = getCssRuleBlock(css, '[data-alpha-surface="true"] .detail-tabs');
+    const tab = getCssRuleBlock(css, '[data-alpha-surface="true"] .detail-tab');
+    const active = getCssRuleBlock(css, '[data-alpha-surface="true"] .detail-tab-active');
+
+    expect(strip).toContain("border: 0;");
+    expect(strip).toContain("background: transparent;");
+    expect(tab).toContain("background: transparent !important;");
+    expect(active).toContain("border-block-end-color: var(--alpha-accent-background);");
+    expect(active).not.toContain("background: var(--alpha-neutral-foreground)");
+  });
+
   it("FN-5879/FN-6864 keeps the base detail tab strip horizontally scrollable and touch-pannable without shrinking tabs", async () => {
     const css = await loadAllAppCssBaseOnly();
 
@@ -28,20 +41,14 @@ describe("TaskDetailModal CSS contract", () => {
     expect(css).toMatch(/\.detail-tab\s*\{[^}]*flex-shrink\s*:\s*0\s*;/);
   });
 
-  /*
-  FNXC:TaskDetailPadding 2026-08-01-03:20:
-  FN-8634 moved the canonical tab inset from the scrolling `.detail-body` to its
-  `.detail-body-content` child so scrollbar tracks remain outside the content inset.
-  FN-7408 must assert that visual contract at the owning element while chat and
-  planner variants remain forbidden from introducing competing outer padding.
-  */
+  /* FNXC:TaskDetailPadding 2026-09-12-03:19: The active tab now renders directly in the single `.detail-body` scroller, which owns the canonical inset without a generic child wrapper. */
   it("FN-7408 keeps task-detail tab body padding canonical across Activity, planner Chat, and Plan surfaces", async () => {
     const css = await loadAllAppCssBaseOnly();
-    const detailBodyContentBlock = getCssRuleBlock(css, ".detail-body-content");
+    const detailBodyBlock = getCssRuleBlock(css, ".detail-body");
     const rawBodyBlock = getCssRuleBlock(css, ".detail-body--agent-log");
     const planBlock = getCssRuleBlock(css, ".detail-section--plan-prompt");
 
-    expect(detailBodyContentBlock).toContain("padding: calc(var(--space-lg) + var(--space-xs));");
+    expect(detailBodyBlock).toContain("padding: calc(var(--space-lg) + var(--space-xs));");
     expectNoOuterPaddingOverride(css, ".detail-body--chat");
     expectNoOuterPaddingOverride(css, ".detail-body--planner-chat");
     expectNoOuterPaddingOverride(css, ".task-detail-content--chat-expanded .detail-body--chat");
@@ -54,22 +61,22 @@ describe("TaskDetailModal CSS contract", () => {
   it("FN-8787 uses a reduced shared title inset while preserving task-detail side and bottom insets on desktop and mobile", async () => {
     const baseCss = await loadAllAppCssBaseOnly();
     const css = await loadAllAppCss();
-    const baseDetailBodyContentBlock = getCssRuleBlock(baseCss, ".detail-body-content");
+    const baseDetailBodyBlock = getCssRuleBlock(baseCss, ".detail-body");
     const taskDetailCss = css.slice(css.indexOf("/* === Detail Modal === */"));
     const mobileCss = taskDetailCss.slice(taskDetailCss.indexOf("@media (max-width: 768px)"));
-    const mobileDetailBodyContentBlock = getCssRuleBlock(mobileCss, ".detail-body-content");
+    const mobileDetailBodyBlock = getCssRuleBlock(mobileCss, ".detail-body");
     const basePadding = "padding: calc(var(--space-lg) + var(--space-xs));";
     const mobilePadding = "padding: calc(var(--space-md) + var(--space-xs) / 2);";
 
-    expect(baseDetailBodyContentBlock).toContain(basePadding);
-    expect(baseDetailBodyContentBlock).toContain("padding-block-start: var(--space-md);");
-    expect(baseDetailBodyContentBlock.indexOf(basePadding)).toBeLessThan(
-      baseDetailBodyContentBlock.indexOf("padding-block-start: var(--space-md);"),
+    expect(baseDetailBodyBlock).toContain(basePadding);
+    expect(baseDetailBodyBlock).toContain("padding-block-start: var(--space-md);");
+    expect(baseDetailBodyBlock.indexOf(basePadding)).toBeLessThan(
+      baseDetailBodyBlock.indexOf("padding-block-start: var(--space-md);"),
     );
-    expect(mobileDetailBodyContentBlock).toContain(mobilePadding);
-    expect(mobileDetailBodyContentBlock).toContain("padding-block-start: var(--space-sm);");
-    expect(mobileDetailBodyContentBlock.indexOf(mobilePadding)).toBeLessThan(
-      mobileDetailBodyContentBlock.indexOf("padding-block-start: var(--space-sm);"),
+    expect(mobileDetailBodyBlock).toContain(mobilePadding);
+    expect(mobileDetailBodyBlock).toContain("padding-block-start: var(--space-sm);");
+    expect(mobileDetailBodyBlock.indexOf(mobilePadding)).toBeLessThan(
+      mobileDetailBodyBlock.indexOf("padding-block-start: var(--space-sm);"),
     );
   });
 

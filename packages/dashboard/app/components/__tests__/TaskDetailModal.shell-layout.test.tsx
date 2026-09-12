@@ -73,6 +73,64 @@ describe("Task Detail canonical shell", () => {
     }
   });
 
+  it("attribue le titre à Définition et le compositeur au footer direct de Chat", () => {
+    const view = render(<TaskDetailContent {...sharedProps} embedded onRequestClose={noop} initialTab="planner-chat" />);
+    const surface = view.container.querySelector<HTMLElement>(".task-detail-content")!;
+    const content = screen.getByTestId("task-detail-tab-content");
+    const chatFooter = screen.getByTestId("task-detail-chat-footer");
+
+    expect(surface.querySelector(":scope > .task-detail-chat-footer")).toBe(chatFooter);
+    expect(chatFooter.querySelector(".task-planner-chat-composer")).toBeInTheDocument();
+    expect(content.querySelector(".task-planner-chat-composer")).toBeNull();
+    expect(content.querySelector(".detail-heading-row")).toBeNull();
+    expect(content.querySelector(".detail-body-content")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Plan" }));
+    expect(screen.queryByTestId("task-detail-chat-footer")).toBeNull();
+    expect(content.querySelector(".detail-heading-row h2")).toBeInTheDocument();
+    expect(surface.querySelectorAll(".detail-heading-row h2")).toHaveLength(1);
+  });
+
+  it("laisse Chat direct même lorsque Définition possède des données globales", () => {
+    const task = makeTask({
+      id: "FN-355-populated",
+      column: "in-progress",
+      customFields: { owner: "alice" },
+    });
+    render(
+      <TaskDetailContent
+        {...sharedProps}
+        task={task}
+        embedded
+        onRequestClose={noop}
+        initialTab="planner-chat"
+        workflowFieldDefs={[{ id: "owner", name: "Owner", type: "string", render: { placement: "detail" } }]}
+      />,
+    );
+
+    const content = screen.getByTestId("task-detail-tab-content");
+    const plannerSurface = screen.getByTestId("planner-chat-keep-alive");
+    expect(plannerSurface.parentElement).toBe(content);
+    expect(content.querySelector(".detail-content, .detail-body-content")).toBeNull();
+    expect(screen.queryByTestId("task-fields-section")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Plan" }));
+    expect(screen.getByTestId("task-fields-section")).toBeInTheDocument();
+  });
+
+  it("monte le footer uniquement pour Activity Live, jamais pour Feed", () => {
+    render(<TaskDetailContent {...sharedProps} embedded onRequestClose={noop} initialTab="chat" />);
+    const content = screen.getByTestId("task-detail-tab-content");
+    const liveFooter = screen.getByTestId("task-detail-chat-footer");
+    expect(liveFooter.querySelector(".task-chat-composer")).toBeInTheDocument();
+    expect(content.querySelector(".task-chat-composer")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Activity" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Feed" }));
+    expect(screen.queryByTestId("task-detail-chat-footer")).toBeNull();
+    expect(content.querySelector(".task-chat-composer")).toBeNull();
+  });
+
   it("keeps the edit footer fixed as the final shell zone", () => {
     const view = render(<TaskDetailModal {...sharedProps} task={makeTask({ column: "todo" })} onClose={noop} />);
     fireEvent.click(screen.getByRole("button", { name: "Edit task" }));
