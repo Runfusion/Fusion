@@ -51,5 +51,14 @@ export function pasteWhiteboardClipboard(state: WhiteboardEditorState, idFactory
   const relations = state.clipboard.relations.map((relation) => ({ ...clone(relation), id: idFactory(), sourceId: remap.get(relation.sourceId) ?? "", branches: relation.branches.filter((branch) => remap.has(branch.targetId)).map((branch) => ({ ...branch, id: idFactory(), targetId: remap.get(branch.targetId)! })) })).filter((relation) => relation.sourceId && relation.branches.length);
   doc.frames.push(...frames); doc.texts.push(...texts); doc.relations.push(...relations); return commit(state, doc, [...frames, ...texts].map((item) => item.id));
 }
-export function setWhiteboardSelection(state: WhiteboardEditorState, ids: string[]): WhiteboardEditorState { const valid = objectIds(state.document); return { ...state, selectedIds: [...new Set(ids.filter((id) => valid.has(id) || state.document.relations.some((r) => r.id === id || r.branches.some((b) => b.id === id))))] }; }
+export function setWhiteboardSelection(state: WhiteboardEditorState, ids: string[]): WhiteboardEditorState {
+  const valid = objectIds(state.document);
+  for (const relation of state.document.relations) {
+    valid.add(relation.id);
+    for (const branch of relation.branches) valid.add(branch.id);
+  }
+  const selectedIds = [...new Set(ids.filter((id) => valid.has(id)))];
+  if (selectedIds.length === state.selectedIds.length && selectedIds.every((id, index) => id === state.selectedIds[index])) return state;
+  return { ...state, selectedIds };
+}
 export function setWhiteboardViewport(state: WhiteboardEditorState, zoom: number, pan: { x: number; y: number }): WhiteboardEditorState { return { ...state, zoom: Math.min(4, Math.max(.1, zoom)), pan }; }

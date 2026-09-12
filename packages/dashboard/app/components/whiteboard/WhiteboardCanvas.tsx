@@ -70,6 +70,12 @@ const nodeTypes = { whiteboardText: EditableTextNode };
 /*
 FNXC:WhiteboardCanvasEditing 2026-09-10-07:17:
 The production canvas must expose every structural v1 operation without requiring JSON edits. Text is editable in-place, a selected relation can accept additional targets, junctions remain draggable, and the inspector owns frame sizing, text membership, and relation or branch annotations on desktop and mobile.
+
+FNXC:WhiteboardCanvasEditing 2026-09-12-02:03:
+XYFlow may rerun its selection listener when the callback identity changes. Keep that bridge stable and make equivalent normalized selection notifications referential no-ops so adding or editing an item always settles without publishing transient selection state.
+
+FNXC:WhiteboardCanvasEditing 2026-09-12-02:19:
+The canonical editor selection must be projected back onto XYFlow nodes and edges so its selection listener echoes the same text, frame, relation, or branch identity instead of clearing newly added items. Junction nodes and trunk edges represent their relation ID, while branch edges represent their branch ID.
 */
 function Canvas({ document, onChange }: WhiteboardCanvasProps) {
   const { t } = useTranslation("app");
@@ -95,14 +101,25 @@ function Canvas({ document, onChange }: WhiteboardCanvasProps) {
   const editText = useCallback((id: string, text: string) => command({ type: "edit-text", id, text }), [command]);
 
   const baseProjection = useMemo(() => projectWhiteboardToFlow(editor.document), [editor.document]);
-  const projection = useMemo(() => ({
-    ...baseProjection,
-    nodes: baseProjection.nodes.map((node) => node.data.kind === "text" ? {
-      ...node,
-      type: "whiteboardText",
-      data: { ...node.data, textId: node.id, onTextChange: editText },
-    } : node),
-  }), [baseProjection, editText]);
+  const projection = useMemo(() => {
+    const selectedIds = new Set(editor.selectedIds);
+    return {
+      ...baseProjection,
+      nodes: baseProjection.nodes.map((node) => {
+        const canonicalId = node.data.kind === "junction" ? node.id.slice("junction:".length) : node.id;
+        return node.data.kind === "text" ? {
+          ...node,
+          selected: selectedIds.has(canonicalId),
+          type: "whiteboardText",
+          data: { ...node.data, textId: node.id, onTextChange: editText },
+        } : { ...node, selected: selectedIds.has(canonicalId) };
+      }),
+      edges: baseProjection.edges.map((edge) => ({
+        ...edge,
+        selected: selectedIds.has(edge.data?.segment === "trunk" ? String(edge.data.relationId) : edge.id),
+      })),
+    };
+  }, [baseProjection, editText, editor.selectedIds]);
 
   const addFrame = (type: WhiteboardFrameType) => command({ type: "add-frame", frame: { id: uid("frame"), type, x: 80, y: 80, width: 320, height: 220, title: t(`whiteboard.frame.${type}`, type) } });
   const addText = (role: WhiteboardTextRole) => command({ type: "add-text", text: { id: uid("text"), role, text: t(`whiteboard.text.${role}`, role), x: 120, y: 120, width: 180, height: 64 } });
@@ -141,13 +158,13 @@ function Canvas({ document, onChange }: WhiteboardCanvasProps) {
     const source = projection.nodes.find((item) => item.id === node.id);
     if (source) command({ type: "move", ids: [node.id], dx: node.position.x - source.position.x, dy: node.position.y - source.position.y });
   };
-  const onSelectionChange = ({ nodes, edges }: { nodes: Node[]; edges: Array<{ id: string; data?: Record<string, unknown> }> }) => {
+  const onSelectionChange = useCallback(({ nodes, edges }: { nodes: Node[]; edges: Array<{ id: string; data?: Record<string, unknown> }> }) => {
     const ids = [
       ...nodes.map((node) => node.id.startsWith("junction:") ? node.id.slice("junction:".length) : node.id),
       ...edges.map((edge) => edge.data?.segment === "trunk" ? String(edge.data.relationId) : edge.id),
     ];
     setEditor((current) => setWhiteboardSelection(current, ids));
-  };
+  }, []);
 
   const selectedText = editor.document.texts.find((item) => editor.selectedIds.includes(item.id));
   const selectedFrame = editor.document.frames.find((item) => editor.selectedIds.includes(item.id));
