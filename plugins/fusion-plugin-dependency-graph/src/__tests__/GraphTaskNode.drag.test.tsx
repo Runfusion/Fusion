@@ -35,8 +35,6 @@ function props(overrides: Partial<React.ComponentProps<typeof GraphTaskNode>> = 
     onOpenDetail: vi.fn(),
     addToast: vi.fn(),
     onUpdateTask: vi.fn(),
-    onArchiveTask: vi.fn(),
-    onUnarchiveTask: vi.fn(),
     onDeleteTask: vi.fn(),
     onRetryTask: vi.fn(),
     onOpenDetailWithTab: vi.fn(),

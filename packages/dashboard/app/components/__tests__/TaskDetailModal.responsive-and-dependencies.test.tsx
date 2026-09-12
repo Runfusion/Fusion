@@ -216,6 +216,8 @@ describe("TaskDetailModal", () => {
       const plannerBodyBlock = getCssRuleBlock(css, ".detail-body--planner-chat");
       const plannerPanelBlock = getExactCssRuleBlock(plannerCss, ".task-planner-chat");
       const plannerTranscriptBlock = getExactCssRuleBlock(plannerCss, ".task-planner-chat-transcript");
+      // FNXC:PlannerChat 2026-09-12-04:54: Preserve the virtualized row-spacing guard after planner styles moved to their component stylesheet.
+      const plannerTranscriptRowBlock = getExactCssRuleBlock(plannerCss, ".task-planner-chat-transcript-row");
       const plannerComposerBlock = getExactCssRuleBlock(plannerCss, ".task-planner-chat-composer");
       const expandedPlannerBodyBlock = getExactCssRuleBlock(css, ".task-detail-content--planner-chat-expanded .detail-body--planner-chat");
       const expandedPlannerSectionBlock = getExactCssRuleBlock(css, ".task-detail-content--planner-chat-expanded .task-detail-planner-keep-alive");
@@ -241,6 +243,7 @@ describe("TaskDetailModal", () => {
       expect(plannerPanelBlock).toContain("gap: var(--space-md);");
       expect(plannerTranscriptBlock).toContain("padding: var(--space-md);");
       expect(plannerTranscriptBlock).toContain("gap: 0;");
+      expect(plannerTranscriptRowBlock).toContain("padding-block-end: var(--space-md);");
       expect(plannerComposerBlock).toContain("gap: var(--space-sm);");
       expect(css).not.toMatch(/task-detail-content--planner-chat-expanded[^{]+\.(?:task-planner-chat|task-planner-chat-transcript|task-planner-chat-composer)\s*\{[^}]*(?:padding|margin|gap)\s*:/);
       expect(css).not.toMatch(/task-detail-content--planner-chat-expanded[^{]+\.detail-body--planner-chat\s*\{[^}]*(?:padding|margin|gap)\s*:/);

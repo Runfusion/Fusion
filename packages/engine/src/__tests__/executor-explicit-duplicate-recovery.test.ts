@@ -26,13 +26,14 @@ function task(overrides: Partial<Task> = {}): Task {
 }
 
 /*
-FNXC:DuplicateIntake 2026-08-09-01:54:
+FNXC:DuplicateIntake 2026-09-10-20:58:
 FN-8840 must recover an already-admitted title-only redirect at the graph failure boundary.
 This fixture deliberately keeps PROMPT.md executable-looking, proving the title—not a prompt marker—
-routes parse failure to replan before generic retry/terminal failure handling can run.
+routes parse failure to in-place repair before generic retry/terminal failure handling can run.
+Lifecycle containment preserves the execution lane; the audit entry must describe retention, not a backward move.
 */
 describe("executor explicit duplicate redirect parse recovery", () => {
-  it("rebounds a title-only custom-prefix redirect after a parse failure", async () => {
+  it("retains a title-only custom-prefix redirect in its execution lane after a parse failure", async () => {
     resetExecutorMocks();
     const tasksDir = await mkdtemp(join(tmpdir(), "fusion-duplicate-parse-"));
     const store = createMockStore();
@@ -61,7 +62,7 @@ describe("executor explicit duplicate redirect parse recovery", () => {
       }, undefined);
       expect(store.logEntry).toHaveBeenCalledWith(
         liveTask.id,
-        "Parse node failed on duplicate redirect — rebounded to todo for re-specification",
+        "Parse node failed on duplicate redirect — retained in the current execution lane for repair",
         expect.stringContaining("task title"),
         undefined,
       );

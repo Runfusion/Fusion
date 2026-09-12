@@ -113,9 +113,9 @@ function rowToArtifact(row: ArtifactRow): Artifact {
  * soft-deleted/pre-reintegration row. Document, comment, log, and artifact writes share this
  * project-scoped gate so deleted history stays read-only.
  *
- * DELIBERATE-LITERAL: the `row.column === "archived"` fallback below is intentional — when the
- * caller does not provide the resolved historical sentinel column set, the built-in `archived`
- * sentinel id is the correct degraded fallback.
+ * FNXC:TaskArchiveRemoval 2026-09-06-00:46:
+ * DELIBERATE-LITERAL: `archived` is the stable protocol sentinel returned for historical rows when
+ * callers provide no custom sentinel set. It is not a live workflow lane or terminal role.
  */
 export async function getLiveTaskColumn(
   db: AsyncDataLayer["db"] | DbTransaction,

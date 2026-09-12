@@ -1113,6 +1113,32 @@ describe("useTasks", () => {
       expect(doneTasks).toHaveLength(1);
       expect(doneTasks[0].id).toBe("FN-001");
     });
+
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-09-06-01:01:
+    When workflow metadata explicitly marks the built-in `done` id as non-complete, SSE membership
+    must honor that resolved role instead of reviving the legacy literal fallback.
+    */
+    it("keeps a resolved non-complete done lane out of completed membership", async () => {
+      const initialTask = createMockTask({ id: "FN-001", column: "in-progress" as Column });
+      mockFetchTasks.mockResolvedValueOnce([initialTask]);
+
+      const { result } = renderHook(() => useTasks({
+        resolveColumnFlags: (task) => ({ complete: task.column === "finished" }),
+      }));
+      await waitFor(() => expect(result.current.tasks).toHaveLength(1));
+
+      act(() => {
+        MockEventSource.instances[0]._emit("task:moved", {
+          task: createMockTask({ id: "FN-001", column: "in-progress" }),
+          from: "in-progress" as Column,
+          to: "done" as Column,
+        });
+      });
+
+      expect(result.current.tasks[0].column).toBe("done");
+      expect(result.current.completedTotal).toBe(0);
+    });
   });
 
   it("closes the SSE connection on unmount", async () => {

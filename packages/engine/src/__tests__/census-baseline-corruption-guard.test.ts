@@ -83,17 +83,17 @@ describe("the census fails readably on a corrupt baseline", () => {
 
   it("still succeeds against the repo's real baseline", () => {
     /*
-    FNXC:LifecycleColumnCensus 2026-07-30-16:30:
+    FNXC:LifecycleColumnCensus 2026-09-10-20:58:
     ASSERTS A HEALTHY OUTCOME, NOT PERMANENT EXACT SYNC.
 
     This required "every file matches its baseline exactly", which demands the COMMITTED baseline be
     byte-in-step with the tree at all times. It is not: a conversion that removes guards leaves the
     tree holding FEWER than the baseline allows, and the CLI treats that as the good case — it
-    tightens the pin and exits 0. So every legitimate conversion that did not also re-record turned
+    reports that the pin can be tightened and exits 0 without writing. Every conversion without a re-record turned
     this test red on main (measured: four separate main reds in one day).
 
     This guard's job is narrower — prove the CORRUPTION diagnosis does not fire on a healthy file —
-    and a tightened baseline IS healthy. It therefore asserts a zero exit (execFileSync throws
+    and an available baseline tightening IS healthy. It therefore asserts a zero exit (execFileSync throws
     otherwise, so a RISE still fails: real debt stays loud), no corruption diagnosis, and one of the
     two healthy outcome shapes.
 
@@ -114,7 +114,7 @@ describe("the census fails readably on a corrupt baseline", () => {
     expect(result).not.toContain("is not valid JSON");
     expect(result).not.toContain("could not be read");
     const healthy = result.includes("every file matches its baseline exactly")
-      || result.includes("baseline TIGHTENED");
+      || result.includes("baseline CAN BE TIGHTENED");
     expect(healthy, `census reported neither healthy outcome:\n${result}`).toBe(true);
   });
 });

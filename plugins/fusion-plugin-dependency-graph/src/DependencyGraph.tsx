@@ -26,8 +26,6 @@ export interface DependencyGraphProps {
   addToast?: (message: string, type?: "success" | "error" | "info" | "warning") => void;
   globalPaused?: boolean;
   onUpdateTask?: (id: string, updates: { title?: string; description?: string; dependencies?: string[] }) => Promise<Task>;
-  onArchiveTask?: (id: string) => Promise<Task>;
-  onUnarchiveTask?: (id: string) => Promise<Task>;
   onDeleteTask?: (id: string, options?: { removeDependencyReferences?: boolean }) => Promise<Task>;
   onRetryTask?: (id: string) => Promise<Task>;
   onOpenDetailWithTab?: (task: Task, initialTab: "changes") => void;
@@ -47,8 +45,6 @@ export function DependencyGraph({
   addToast,
   globalPaused,
   onUpdateTask,
-  onArchiveTask,
-  onUnarchiveTask,
   onDeleteTask,
   onRetryTask,
   onOpenDetailWithTab,
@@ -493,8 +489,6 @@ export function DependencyGraph({
                     addToast={addToast ?? (() => {})}
                     globalPaused={globalPaused}
                     onUpdateTask={onUpdateTask}
-                    onArchiveTask={onArchiveTask}
-                    onUnarchiveTask={onUnarchiveTask}
                     onDeleteTask={onDeleteTask}
                     onRetryTask={onRetryTask}
                     onOpenDetailWithTab={onOpenDetailWithTab}

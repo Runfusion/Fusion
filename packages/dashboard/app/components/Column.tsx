@@ -265,8 +265,11 @@ function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeG
   */
   const resolvedColumnDescription = columnDescription?.trim() ? columnDescription : COLUMN_DESCRIPTIONS[column];
   const menuRef = useRef<HTMLDivElement | null>(null);
-  /* DELIBERATE-LITERAL: the `column === "done"` is intentional as the degraded fallback when not in
-     workflow mode and the column flags resolver is unavailable — `done` is the built-in Complete id. */
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-09-06-00:46:
+  DELIBERATE-LITERAL: resolved workflow flags define completion in workflow mode. `done` is retained
+  only as the built-in fallback for legacy boards rendered without workflow metadata.
+  */
   const isCompleteColumn = columnFlags?.complete === true || (!workflowMode && column === "done");
   const displayedTaskCount = totalTaskCount ?? tasks.length;
   const countFlashing = useFlashOnIncrease(displayedTaskCount);

@@ -353,6 +353,10 @@ export async function supplementTaskHistoryFromEvidence(
  * lifecycle mutations. A surviving live row wins a collision, a legacy soft-deleted row is revived,
  * and a snapshot whose project row was physically removed is recreated from `taskRecord`; only then
  * is the cold row deleted. User-paused rows retain both representations for a later maintenance pass.
+ *
+ * FNXC:TaskArchiveRemoval 2026-09-06-00:46:
+ * DELIBERATE-LITERAL: `archived` is the physical pre-reintegration sentinel used to detect whether a
+ * surviving row must move. It does not represent a configurable workflow role.
  */
 export async function restoreTaskFromArchive(
   layer: AsyncDataLayer,
