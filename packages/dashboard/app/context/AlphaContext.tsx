@@ -35,13 +35,13 @@ export function AlphaBoundary({
   );
 
   /*
-  FNXC:AlphaBoundaryLayout 2026-09-11-16:14:
-  Shared Alpha hosts keep their canonical flex and scroll owners. The boundary is layout-transparent, so toggling Alpha never inserts a height-constraining wrapper or remounts the host's stateful content.
+  FNXC:AlphaBoundaryLayout 2026-09-12-17:34:
+  Shared Alpha hosts keep their canonical flex and scroll owners in both feature states. Every rendered boundary publishes an explicit true/false state so the shared display:contents rule stays layout-transparent in standard mode as well as Alpha; preserveDisabledDom remains the no-wrapper escape hatch for surfaces whose disabled DOM identity is contractual.
   */
   if (!resolvedEnabled && preserveDisabledDom) return <>{children}</>;
   return (
     <AlphaContext.Provider value={value}>
-      <div className={className} data-alpha-surface={value.surfaceActive ? "true" : undefined}>{children}</div>
+      <div className={className} data-alpha-surface={value.surfaceActive ? "true" : "false"}>{children}</div>
     </AlphaContext.Provider>
   );
 }

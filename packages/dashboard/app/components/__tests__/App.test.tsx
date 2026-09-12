@@ -1248,6 +1248,104 @@ describe("Alpha Updates production wiring", () => {
     expect(await screen.findByTestId("quick-chat-host")).toHaveAttribute("data-alpha", "true");
   });
 
+  /*
+  FNXC:StandardBoardHeight 2026-09-12-19:19:
+  App's jsdom lane proves production composition and the exact absent/disabled Alpha routing without inventing layout metrics. The browser smoke owns rectangle, overflow, and scroll assertions against the emitted App because only a rendering engine can make those measurements meaningful.
+  */
+  it.each([
+    ["absent", undefined],
+    ["disabled", false],
+  ] as const)("keeps every production Board state on the standard App shell when Alpha is %s", async (_flagState, alphaUpdates) => {
+    const states = ["skeleton", "sans-workflow", "selection-vide", "selection-debordante", "aggregate-debordant"] as const;
+    const overflowTasks = Array.from({ length: 3 }, (_, index) => ({
+      id: `FN-362-${index}`,
+      title: index < 2 ? "Carte dupliquée" : `Carte ${index}`,
+      description: "Vérification de la hauteur sûre du Board standard.",
+      status: "in-progress",
+      column: "in-progress",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: "2026-09-12T00:00:00.000Z",
+      updatedAt: "2026-09-12T00:00:00.000Z",
+    }));
+
+    for (const state of states) {
+      localStorage.removeItem(scopedKey(BOARD_WORKFLOW_SELECTION_STORAGE_KEY, DEFAULT_PROJECT_ID));
+      const experimentalFeatures = { ...defaultSettings.experimentalFeatures };
+      delete experimentalFeatures.alphaUpdates;
+      if (alphaUpdates !== undefined) experimentalFeatures.alphaUpdates = alphaUpdates;
+      vi.mocked(fetchSettings).mockResolvedValue({ ...defaultSettings, experimentalFeatures });
+      if (state === "skeleton") {
+        vi.mocked(fetchBoardWorkflows).mockImplementation(() => new Promise(() => {}));
+      } else if (state === "sans-workflow") {
+        vi.mocked(fetchBoardWorkflows).mockResolvedValue({ ...DEFAULT_BOARD_WORKFLOWS, defaultWorkflowId: "", workflows: [] });
+      } else {
+        vi.mocked(fetchBoardWorkflows).mockResolvedValue({
+          ...DEFAULT_BOARD_WORKFLOWS,
+          taskWorkflowIds: Object.fromEntries(overflowTasks.map((task) => [task.id, "builtin:coding"])),
+        });
+      }
+      const tasks = state.endsWith("debordante") || state.endsWith("debordant") ? overflowTasks : [];
+      mockUseTasks.mockReturnValue({
+        tasks,
+        isStale: false,
+        createTask: mockCreateTask,
+        moveTask: vi.fn(),
+        pauseTask: vi.fn(),
+        unpauseTask: vi.fn(),
+        deleteTask: vi.fn(),
+        mergeTask: vi.fn(),
+        retryTask: vi.fn(),
+        resetTask: vi.fn(),
+        updateTask: vi.fn(),
+        duplicateTask: vi.fn(),
+        refreshTasks: vi.fn(),
+        ingestCreatedTasks: vi.fn(),
+        lastFetchTimeMs: Date.now(),
+      });
+
+      const view = render(<App />);
+      const keepAlive = await screen.findByTestId("board-keep-alive");
+      const board = await waitFor(() => {
+        const candidate = keepAlive.querySelector<HTMLElement>(".board");
+        expect(candidate).not.toBeNull();
+        return candidate!;
+      });
+      if (state === "aggregate-debordant") {
+        fireEvent.click(screen.getByTestId("workflow-switcher"));
+        fireEvent.click(await screen.findByTestId(`workflow-switcher-option-${ALL_WORKFLOWS_BOARD_VIEW_ID}`));
+      }
+
+      const shell = screen.getByTestId("dashboard-project-shell");
+      const content = shell.querySelector<HTMLElement>(".project-content");
+      expect(shell.parentElement).toHaveClass("dashboard-project-stack");
+      expect(content).toHaveClass("project-content--with-footer");
+      expect(content?.contains(keepAlive)).toBe(true);
+      expect(keepAlive.contains(board)).toBe(true);
+      expect(board.closest("[data-alpha-surface]")).toHaveAttribute("data-alpha-surface", "false");
+      expect(document.querySelector(".executor-status-bar")).toBeInTheDocument();
+      expect(document.querySelector(".mobile-nav-bar--alpha")).not.toBeInTheDocument();
+
+      if (state === "skeleton") expect(screen.getByTestId("board-workflows-skeleton")).toBe(board);
+      if (state === "sans-workflow") expect(screen.getByTestId("board-workflows-empty")).toBe(board);
+      if (state.startsWith("selection") || state.startsWith("aggregate")) {
+        expect(board.closest(".board-workflow-view")).not.toBeNull();
+        expect(board).toHaveClass("board-workflow-columns");
+      }
+      if (state === "selection-vide") expect(board.querySelectorAll(".empty-column").length).toBeGreaterThan(0);
+      if (state === "selection-debordante" || state === "aggregate-debordant") {
+        expect(screen.getAllByText("Carte dupliquée")).toHaveLength(2);
+        expect(board.querySelector("[data-column='in-progress'] .column-body")).not.toBeNull();
+        expect(screen.getByTestId("workflow-switcher").getAttribute("aria-label")).toContain(
+          state === "aggregate-debordant" ? "All workflows" : "Coding",
+        );
+      }
+      view.unmount();
+    }
+  }, 30_000);
+
   it.each([
     ["tablet", "empty"],
     ["desktop", "populated"],

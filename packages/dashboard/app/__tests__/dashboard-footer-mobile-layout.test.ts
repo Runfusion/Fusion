@@ -1,7 +1,5 @@
 import { describe, it, expect } from "vitest";
 import { loadAllAppCss } from "../test/cssFixture";
-import { readFileSync } from "fs";
-import { resolve } from "path";
 
 /**
  * Stylesheet regression test for FN-824: Mobile footer-safe layout.
@@ -103,5 +101,17 @@ describe("dashboard-footer-mobile-layout", () => {
     expect(desktopMatch).not.toBeNull();
     const value = desktopMatch![1];
     expect(value).not.toBe("0px");
+  });
+
+  it("standard mobile reserves footer and navigation exactly once at the shell", () => {
+    const footerBlock = [...cssContent.matchAll(/\.project-content--with-footer\s*\{[^}]*\}/g)]
+      .map((match) => match[0])
+      .find((block) => block.includes("padding-bottom: var(--executor-footer-height)")) ?? "";
+    const combinedMobileBlock = cssContent.match(/\.project-content--with-footer\.project-content--with-mobile-nav\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(footerBlock).toContain("padding-bottom: var(--executor-footer-height)");
+    expect(combinedMobileBlock).toContain("var(--executor-footer-height)");
+    expect(combinedMobileBlock).toContain("var(--mobile-nav-height)");
+    expect(`${footerBlock}${combinedMobileBlock}`).not.toMatch(/100d?vh/);
+    expect(mobileCss.match(/\.board\s*\{[^}]*padding-bottom\s*:/g)).toHaveLength(1);
   });
 });

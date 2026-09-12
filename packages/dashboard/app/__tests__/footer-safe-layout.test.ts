@@ -1,7 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { loadAllAppCss, loadAllAppCssBaseOnly } from "../test/cssFixture";
-import { readFileSync } from "fs";
-import { resolve } from "path";
+import { loadAllAppCss, loadAllAppCssBaseOnly, readAppFile } from "../test/cssFixture";
 
 /**
  * Stylesheet regression tests for the footer-safe project workspace layout.
@@ -99,6 +97,24 @@ describe("footer-safe project workspace layout", () => {
 
   // ── Child views use height: 100% ───────────────────────────────────
 
+  describe("Board boundary and scroll ownership", () => {
+    const alphaCss = readAppFile("alpha-ui.css");
+
+    it("keeps both Alpha boundary states layout-transparent", () => {
+      expect(alphaCss).toMatch(/\[data-alpha-surface\]\s*\{[^}]*display:\s*contents/);
+      expect(alphaCss).not.toMatch(/\[data-alpha-surface="true"\]\s*\{[^}]*display:\s*contents/);
+    });
+
+    it("keeps horizontal overflow on Board and vertical overflow in column bodies", () => {
+      const boardBlock = css.match(/\.board\s*\{[^}]*\}/)?.[0] ?? "";
+      const bodyBlock = css.match(/\.column-body\s*\{[^}]*\}/)?.[0] ?? "";
+      expect(boardBlock).toContain("overflow-x: auto");
+      expect(boardBlock).toContain("overflow-y: hidden");
+      expect(bodyBlock).toContain("overflow-y: auto");
+      expect(bodyBlock).toContain("overflow-x: hidden");
+    });
+  });
+
   describe("child views use height: 100% (not viewport calc)", () => {
     it(".board and every workflow state fill the parent-defined safe height", () => {
       const boardBlock = css.match(/\.board\s*\{[^}]*\}/)?.[0] ?? "";
@@ -173,9 +189,9 @@ describe("footer-safe project workspace layout", () => {
     });
 
     it("keeps the sibling pinned-terminal host redeclaring the token for the same reason", () => {
-      const host = ruleBlocks.find((rule) => rule.selector === ".terminal-below-host--with-footer");
-      expect(host).toBeTruthy();
-      expect(host!.body).toContain("--executor-footer-height: 36px");
+      const terminalCss = readAppFile("components/TerminalModal.css").replace(/\/\*[\s\S]*?\*\//g, "");
+      const host = terminalCss.match(/\.terminal-below-host--with-footer\s*\{([^{}]*)\}/)?.[1] ?? "";
+      expect(host).toContain("--executor-footer-height: 36px");
     });
   });
 

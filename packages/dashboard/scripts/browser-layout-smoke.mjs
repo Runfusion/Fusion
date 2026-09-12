@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/* global WebSocket, URL, fetch, console, setTimeout, clearTimeout */
+/* global WebSocket, URL, URLSearchParams, fetch, console, setTimeout, clearTimeout */
 
 import { Buffer } from "node:buffer";
 import { spawn } from "node:child_process";
@@ -21,8 +21,8 @@ const requireBrowser = process.argv.includes("--require-browser") || process.env
 const screenshotPath = process.env.FUSION_BROWSER_SMOKE_SCREENSHOT;
 
 /*
-FNXC:AlphaBoardSafeGeometry 2026-09-11-16:14:
-Every Board data state uses the same measurable contract: its border box ends at the shell-owned footer or pill boundary, and each column has equal top and bottom spacing within one pixel. Overflowing populated columns keep vertical scrolling inside the column rather than shortening the Board.
+FNXC:BoardSafeGeometry 2026-09-12-17:34:
+Every Board data state and Alpha mode uses the same measurable contract: its border box ends at the shell-owned footer or pill boundary, each column has equal top and bottom spacing within one pixel, and the document never owns vertical overflow. Overflowing populated columns keep vertical scrolling inside the column and expose their last card rather than shortening the Board.
 */
 export function boardSafeGeometryMatches(layout, tolerance = 1) {
   const topGaps = layout.columnTops.map((top) => top - layout.boardTop);
@@ -32,7 +32,8 @@ export function boardSafeGeometryMatches(layout, tolerance = 1) {
     && Math.abs(layout.boardBottom - layout.lowerBoundary) <= tolerance
     && Math.abs(layout.boardPaddingTop - layout.boardPaddingBottom) <= tolerance
     && topGaps.every((gap, index) => Math.abs(gap - bottomGaps[index]) <= tolerance)
-    && (layout.state !== "populated" || layout.columnScrollable.every(Boolean));
+    && layout.documentScrollable === false
+    && (layout.state !== "populated" || (layout.columnScrollable.every(Boolean) && layout.lastCardsReachable.every(Boolean)));
 }
 const agentHeartbeatMobileScreenshotPath = process.env.FUSION_AGENT_HEARTBEAT_MOBILE_SCREENSHOT;
 const agentHeartbeatDesktopScreenshotPath = process.env.FUSION_AGENT_HEARTBEAT_DESKTOP_SCREENSHOT;
@@ -430,7 +431,7 @@ export function createSmokeHtml(options = {}) {
       <div class="terminal-modal-overlay" data-smoke="alpha-drawer-terminal"><section class="terminal-modal"><header class="terminal-header"><h2>Terminal</h2></header><div class="terminal-body">Terminal content</div><button type="button">Terminal final control</button></section></div>
     </section>
     <section data-smoke="alpha-board-fixture" hidden style="position:fixed;inset:0;display:flex;min-height:0;background:var(--bg);">
-      <div class="dashboard-project-shell" data-alpha-surface="true">
+      <div class="dashboard-project-shell">
         <main class="project-content project-content--with-alpha-nav">
           <div class="board-workflow-view" data-smoke="alpha-board-production-root"></div>
         </main>
@@ -1023,18 +1024,19 @@ export function createAlphaDrawerProductionFixtureSource() {
     }
 
     function ProductionBoardFixture() {
-      const [boardState, setBoardState] = useState("skeleton");
+      const [fixtureState, setFixtureState] = useState({ boardState: "skeleton", alphaUpdates: true });
       useEffect(() => {
         globalThis.__alphaBoardProductionFixture = {
-          show(nextState) {
+          show(nextState, alphaUpdates = true) {
             boardTransportState = nextState;
-            flushSync(() => setBoardState(nextState));
+            flushSync(() => setFixtureState({ boardState: nextState, alphaUpdates }));
           },
         };
         document.documentElement.dataset.alphaBoardProductionReady = "true";
       }, []);
+      const { boardState, alphaUpdates } = fixtureState;
       const boardTasks = createBoardTasks(boardState);
-      const boardProject = { ...project, id: "smoke-board-" + boardState };
+      const boardProject = { ...project, id: "smoke-board-" + boardState + "-" + alphaUpdates };
       const boardProps = {
         showBackendConnectionErrorPage: false,
         projectsError: null,
@@ -1096,7 +1098,7 @@ export function createAlphaDrawerProductionFixtureSource() {
         sidebarActive: true,
         isMobile: false,
         isRemote: false,
-        experimentalFeatures: { alphaUpdates: true },
+        experimentalFeatures: { alphaUpdates },
         ingestCreatedTasks: noop,
         openDetailTask: noop,
         popOutTaskDetail: noop,
@@ -1159,10 +1161,131 @@ async function buildAlphaDrawerProductionFixture() {
   return chunk.code;
 }
 
+const STANDARD_BOARD_SMOKE_PROJECT_ID = "fn-362-layout";
+const STANDARD_BOARD_SMOKE_WORKFLOW = {
+  id: "builtin:coding",
+  name: "Coding",
+  columns: [
+    { id: "todo", name: "Todo", flags: { hold: true, intake: true } },
+    { id: "in-progress", name: "In Progress", flags: { countsTowardWip: true } },
+    { id: "in-review", name: "In Review", flags: { countsTowardWip: true, mergeBlocker: true, mergeOrchestration: true, humanReview: true } },
+    { id: "done", name: "Done", flags: { complete: true } },
+  ],
+};
+
+function parseStandardBoardSmokeScenario(url) {
+  return {
+    alpha: url.searchParams.get("smokeAlpha") ?? "absent",
+    state: url.searchParams.get("smokeState") ?? "populated",
+    projectId: url.searchParams.get("project") ?? STANDARD_BOARD_SMOKE_PROJECT_ID,
+  };
+}
+
+function standardBoardSmokeTasks(state) {
+  if (state !== "populated" && state !== "duplicated") return [];
+  return Array.from({ length: 18 }, (_, index) => ({
+    id: `FN-362-${index}`,
+    title: state === "duplicated" && index < 2 ? "Carte dupliquée" : `Carte ${index + 1}`,
+    description: "Real App browser geometry fixture",
+    status: "in-progress",
+    column: "in-progress",
+    dependencies: [],
+    steps: [],
+    currentStep: 0,
+    log: [],
+    createdAt: "2026-09-12T00:00:00.000Z",
+    updatedAt: "2026-09-12T00:00:00.000Z",
+  }));
+}
+
+/*
+FNXC:StandardBoardHeight 2026-09-12-19:19:
+The non-Alpha geometry regression must render the emitted production App, consume HTTP API states, and let Chromium compute every rectangle and scroll metric. The static CSS fixture remains broad smoke coverage, but it cannot substitute for this App-shell proof or predefine the values under assertion.
+*/
+function handleStandardBoardSmokeApi(req, res, scenario) {
+  const requestUrl = new URL(req.url, "http://127.0.0.1");
+  const pathname = requestUrl.pathname;
+  const tasks = standardBoardSmokeTasks(scenario.state);
+  let payload;
+  if (pathname === "/api/projects" || pathname === "/api/projects/across-nodes") {
+    payload = [{ id: scenario.projectId, name: "FN-362 Layout", path: "/fixture", status: "active", isolationMode: "in-process", createdAt: "", updatedAt: "" }];
+  } else if (pathname === "/api/settings") {
+    payload = scenario.alpha === "false" ? { experimentalFeatures: { alphaUpdates: false } } : { experimentalFeatures: {} };
+  } else if (pathname === "/api/config") {
+    payload = { maxConcurrent: 2, rootDir: "/fixture" };
+  } else if (pathname === "/api/tasks/board-workflows") {
+    if (scenario.state === "skeleton") {
+      setTimeout(() => {
+        if (res.writableEnded || res.destroyed) return;
+        res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+        res.end(JSON.stringify({ flagEnabled: true, defaultWorkflowId: STANDARD_BOARD_SMOKE_WORKFLOW.id, workflows: [STANDARD_BOARD_SMOKE_WORKFLOW], taskWorkflowIds: {} }));
+      }, 1_000);
+      return true;
+    }
+    payload = scenario.state === "no-workflow"
+      ? { flagEnabled: true, defaultWorkflowId: "", workflows: [], taskWorkflowIds: {} }
+      : { flagEnabled: true, defaultWorkflowId: STANDARD_BOARD_SMOKE_WORKFLOW.id, workflows: [STANDARD_BOARD_SMOKE_WORKFLOW], taskWorkflowIds: Object.fromEntries(tasks.map((task) => [task.id, STANDARD_BOARD_SMOKE_WORKFLOW.id])) };
+  } else if (pathname === "/api/tasks") {
+    payload = tasks;
+  } else if (pathname === "/api/tasks/page") {
+    payload = { tasks, total: tasks.length, hasMore: false, nextCursor: null };
+  } else if (pathname === "/api/tasks/completed" || pathname === "/api/tasks/done") {
+    payload = { tasks: [], total: 0, hasMore: false, nextCursor: null, counts: { byColumn: {}, byWorkflow: {} } };
+  } else if (pathname === "/api/health") {
+    payload = { status: "ok", version: "smoke", uptime: 1, engine: { available: true }, database: { healthy: true, corruptionDetected: false, corruptionErrors: [], lastCheckedAt: null, isRunning: false }, taskIdIntegrity: { status: "ok", checkedAt: "2026-09-12T00:00:00.000Z", anomalies: [], recommendedAction: null } };
+  } else if (pathname === "/api/executor/stats") {
+    payload = { globalPause: false, enginePaused: false, maxConcurrent: 2, lastActivityAt: "2026-09-12T00:00:00.000Z" };
+  } else if (pathname === "/api/agents/stats") {
+    payload = { todoTaskCount: 0, idleNonEphemeralCount: 1 };
+  } else if (pathname.startsWith("/api/events")) {
+    res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
+    res.write(": connected\n\n");
+    return true;
+  } else {
+    payload = pathname.includes("count") ? { unreadCount: 0 } : [];
+  }
+  res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+  res.end(JSON.stringify(payload));
+  return true;
+}
+
 async function startFixtureServer() {
-  const [css, alphaDrawerScript] = await Promise.all([loadDashboardCss(), buildAlphaDrawerProductionFixture()]);
+  const [css, alphaDrawerScript, productionIndexHtml] = await Promise.all([
+    loadDashboardCss(),
+    buildAlphaDrawerProductionFixture(),
+    readFile(path.join(clientDistRoot, "index.html"), "utf8"),
+  ]);
   const html = createSmokeHtml();
-  const server = createServer((req, res) => {
+  let activeStandardBoardScenario = null;
+  const server = createServer(async (req, res) => {
+    const requestUrl = new URL(req.url, "http://127.0.0.1");
+    if (requestUrl.pathname === "/production-app/") {
+      activeStandardBoardScenario = parseStandardBoardSmokeScenario(requestUrl);
+    }
+    const scenario = activeStandardBoardScenario;
+    if (scenario && process.env.FUSION_BROWSER_SMOKE_STANDARD_BOARD_ONLY === "1") log(`production App request: ${req.url}`);
+    if (scenario && req.url?.startsWith("/api/")) {
+      handleStandardBoardSmokeApi(req, res, scenario);
+      return;
+    }
+    if (requestUrl.pathname === "/production-app/") {
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      res.end(productionIndexHtml);
+      return;
+    }
+    if (req.url?.startsWith("/assets/")) {
+      const assetPath = path.join(clientDistRoot, req.url.split("?")[0].replace(/^\//, ""));
+      try {
+        const body = await readFile(assetPath);
+        const contentType = assetPath.endsWith(".css") ? "text/css" : assetPath.endsWith(".js") ? "text/javascript" : "application/octet-stream";
+        res.writeHead(200, { "content-type": contentType });
+        res.end(body);
+      } catch {
+        res.writeHead(404);
+        res.end();
+      }
+      return;
+    }
     if (req.url === "/app.css") {
       res.writeHead(200, { "content-type": "text/css; charset=utf-8" });
       res.end(css);
@@ -1268,7 +1391,7 @@ async function launchBrowser(executable) {
     "about:blank",
   ], {
     stdio: ["ignore", "pipe", "pipe"],
-    maxLifetimeMs: 60_000,
+    maxLifetimeMs: process.env.FUSION_BROWSER_SMOKE_STANDARD_BOARD_ONLY === "1" ? 180_000 : 60_000,
   });
   const browser = supervised.child;
 
@@ -1417,6 +1540,25 @@ async function createPage(browserWsUrl) {
   return cdpConnect(target.webSocketDebuggerUrl);
 }
 
+async function createIsolatedPage(browserWsUrl) {
+  const browser = await cdpConnect(browserWsUrl);
+  const { browserContextId } = await browser.send("Target.createBrowserContext");
+  const { targetId } = await browser.send("Target.createTarget", { url: "about:blank", browserContextId });
+  const browserEndpoint = new URL(browserWsUrl);
+  const targets = await fetch(new URL("/json/list", `http://127.0.0.1:${browserEndpoint.port}`)).then((response) => response.json());
+  const target = targets.find((candidate) => candidate.id === targetId);
+  if (!target?.webSocketDebuggerUrl) fail("Unable to resolve isolated browser target.");
+  const page = await cdpConnect(target.webSocketDebuggerUrl);
+  return {
+    page,
+    close: async () => {
+      page.close();
+      await browser.send("Target.disposeBrowserContext", { browserContextId });
+      browser.close();
+    },
+  };
+}
+
 async function evaluate(page, expression) {
   const result = await page.send("Runtime.evaluate", {
     expression,
@@ -1424,7 +1566,7 @@ async function evaluate(page, expression) {
     returnByValue: true,
   });
   if (result.exceptionDetails) {
-    fail(result.exceptionDetails.text ?? "Browser evaluation failed");
+    fail(result.exceptionDetails.exception?.description ?? result.exceptionDetails.text ?? "Browser evaluation failed");
   }
   return result.result.value;
 }
@@ -1544,7 +1686,7 @@ function commandCenterChartsPass(layout) {
       && empty.overflowY !== "scroll");
 }
 
-async function runSmokeChecks(page, pageUrl) {
+async function runSmokeChecks(page, pageUrl, browserWsUrl) {
   await page.send("Page.enable");
   await page.send("Runtime.enable");
   await page.send("Emulation.setDeviceMetricsOverride", {
@@ -1558,6 +1700,10 @@ async function runSmokeChecks(page, pageUrl) {
   await page.send("Page.navigate", { url: pageUrl });
   await loaded;
   await evaluate(page, "document.fonts ? document.fonts.ready.then(() => true) : true");
+  if (process.env.FUSION_BROWSER_SMOKE_STANDARD_BOARD_ONLY === "1") {
+    await runProductionAppBoardChecks(page, pageUrl, browserWsUrl);
+    return;
+  }
 
   const collectAgentHeartbeatControlLayout = () => evaluate(page, `(() => {
     const fixture = document.querySelector('[data-smoke="agent-heartbeat-controls"]');
@@ -1728,20 +1874,24 @@ async function runSmokeChecks(page, pageUrl) {
   FNXC:AlphaBoardPillGeometry 2026-09-11-16:53:
   Blink measures the production MainContent → Board tree for loading, no-workflow, populated, duplicate, and pagination-error states. The fixture changes only transport/props and shell reservations; it never replaces Board output with synthetic columns or cards.
   */
-  const collectAlphaBoardLayout = (state, mode, systemOffset = 0) => evaluate(page, `(async () => {
+  const collectBoardLayout = (state, mode, systemOffset = 0, alphaUpdates = true) => evaluate(page, `(async () => {
     const root = document.documentElement;
     const mode = ${JSON.stringify(String(mode))};
+    const alphaUpdates = ${JSON.stringify(Boolean(alphaUpdates))};
     const keyboardOpen = mode === 'mobile-keyboard';
     root.dataset.viewportMode = mode.startsWith('mobile') ? 'mobile' : mode;
     root.style.setProperty('--mobile-nav-alpha-system-offset', ${JSON.stringify(String(systemOffset))} + 'px');
     const fixture = document.querySelector('[data-smoke="alpha-board-fixture"]');
     fixture.hidden = false;
     const content = fixture.querySelector('.project-content');
-    content.className = mode === 'mobile' ? 'project-content project-content--with-alpha-nav' : keyboardOpen ? 'project-content' : 'project-content project-content--with-footer';
+    content.className = alphaUpdates
+      ? (mode === 'mobile' ? 'project-content project-content--with-alpha-nav' : keyboardOpen ? 'project-content' : 'project-content project-content--with-footer')
+      : ('project-content project-content--with-footer' + (mode === 'mobile' ? ' project-content--with-mobile-nav' : ''));
     const pill = fixture.querySelector('[data-smoke="alpha-pill"]');
     const footer = fixture.querySelector('[data-smoke="alpha-footer"]');
+    pill.className = alphaUpdates ? 'mobile-nav-bar mobile-nav-bar--alpha' : 'mobile-nav-bar';
     pill.style.display = mode === 'mobile' ? '' : 'none';
-    footer.style.display = mode === 'desktop' || mode === 'tablet' ? '' : 'none';
+    footer.style.display = !alphaUpdates || mode === 'desktop' || mode === 'tablet' ? '' : 'none';
     const state = ${JSON.stringify(String(state))};
     const waitFor = async (read, label) => {
       for (let attempt = 0; attempt < 120; attempt += 1) {
@@ -1752,7 +1902,7 @@ async function runSmokeChecks(page, pageUrl) {
       throw new Error('Timed out waiting for production Board ' + label);
     };
     const controller = await waitFor(() => globalThis.__alphaBoardProductionFixture, 'controller');
-    controller.show(state);
+    controller.show(state, alphaUpdates);
     const board = await waitFor(() => {
       const candidate = fixture.querySelector('#board');
       if (!candidate) return null;
@@ -1770,12 +1920,18 @@ async function runSmokeChecks(page, pageUrl) {
     } else {
       root.style.setProperty('--mobile-nav-height', '0px');
     }
-    const lowerBoundary = mode === 'mobile' ? pill.getBoundingClientRect().top : keyboardOpen ? window.innerHeight : footer.getBoundingClientRect().top;
+    const lowerBoundary = alphaUpdates && mode === 'mobile' ? pill.getBoundingClientRect().top : keyboardOpen && alphaUpdates ? window.innerHeight : footer.getBoundingClientRect().top;
     const boardRect = board.getBoundingClientRect();
     const columns = [...board.querySelectorAll(':scope > .column, :scope > .board-workflows-skeleton__column')].map((column) => {
       const box = column.getBoundingClientRect();
       const body = column.querySelector('.column-body');
-      return { top: box.top, bottom: box.bottom, height: box.height, scrollable: body ? body.scrollHeight > body.clientHeight && ['auto', 'scroll'].includes(getComputedStyle(body).overflowY) : false };
+      const scrollable = body ? body.scrollHeight > body.clientHeight && ['auto', 'scroll'].includes(getComputedStyle(body).overflowY) : false;
+      if (scrollable) body.scrollTop = body.scrollHeight - body.clientHeight;
+      const lastCard = body?.querySelector('.card:last-of-type');
+      const bodyBox = body?.getBoundingClientRect();
+      const lastCardBox = lastCard?.getBoundingClientRect();
+      const lastCardReachable = !scrollable || Boolean(bodyBox && lastCardBox && lastCardBox.bottom <= bodyBox.bottom + 1);
+      return { top: box.top, bottom: box.bottom, height: box.height, scrollable, lastCardReachable };
     });
     return {
       state,
@@ -1787,6 +1943,8 @@ async function runSmokeChecks(page, pageUrl) {
       columnBottoms: columns.map((column) => column.bottom),
       columnHeights: columns.map((column) => column.height),
       columnScrollable: columns.map((column) => column.scrollable),
+      lastCardsReachable: columns.map((column) => column.lastCardReachable),
+      documentScrollable: document.documentElement.scrollHeight > document.documentElement.clientHeight + 1,
       boardPaddingTop: Number.parseFloat(getComputedStyle(board).paddingTop),
       boardPaddingBottom: Number.parseFloat(getComputedStyle(board).paddingBottom),
       controlOrder: [...pill.children].map((child) => child.className),
@@ -1886,7 +2044,7 @@ async function runSmokeChecks(page, pageUrl) {
     const mobile = mode.startsWith("mobile");
     await page.send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: mobile ? 2 : 1, mobile });
     for (const state of ["skeleton", "empty", "populated", "duplicated", "pagination-error"]) {
-      const layout = await collectAlphaBoardLayout(state, mode, systemOffset);
+      const layout = await collectBoardLayout(state, mode, systemOffset, true);
       assertSmokeResult(
         `Alpha Board ${state} fills the safe height above the ${name}`,
         boardSafeGeometryMatches(layout)
@@ -1895,6 +2053,28 @@ async function runSmokeChecks(page, pageUrl) {
           && (state !== "duplicated" || layout.duplicateCardCount === 2)
           && (mode !== "mobile" || (layout.controlOrder.length === 5 && layout.controlOrder.at(-1) === 'alpha-mobile-menu-trigger'))
           && (mode !== "mobile-keyboard" || layout.keyboardOpen)
+          && layout.documentOverflowX <= 1
+          && layout.fixtureOverflowY <= 1,
+        JSON.stringify(layout),
+      );
+    }
+  }
+  for (const { name, width, height, mode } of [
+    { name: "desktop footer", width: 1200, height: 844, mode: "desktop" },
+    { name: "tablet footer", width: 768, height: 844, mode: "tablet" },
+    { name: "mobile footer", width: 390, height: 844, mode: "mobile" },
+    { name: "short landscape footer", width: 844, height: 390, mode: "mobile" },
+  ]) {
+    const mobile = mode === "mobile";
+    await page.send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: mobile ? 2 : 1, mobile });
+    for (const state of ["skeleton", "empty", "populated", "duplicated", "pagination-error"]) {
+      const layout = await collectBoardLayout(state, mode, 0, false);
+      assertSmokeResult(
+        `Standard Board ${state} fills the safe height above the ${name}`,
+        boardSafeGeometryMatches(layout)
+          && layout.productionBoard
+          && layout.paginationRetryVisible
+          && (state !== "duplicated" || layout.duplicateCardCount === 2)
           && layout.documentOverflowX <= 1
           && layout.fixtureOverflowY <= 1,
         JSON.stringify(layout),
@@ -2792,6 +2972,191 @@ async function runSmokeChecks(page, pageUrl) {
     ),
     JSON.stringify(chatComposerLayout),
   );
+
+  await runProductionAppBoardChecks(page, pageUrl, browserWsUrl);
+
+}
+
+const PRODUCTION_APP_BOARD_VIEWPORTS = [
+  { name: "desktop", width: 1200, height: 844, expectedMode: "desktop", touch: false, screenWidth: 1200, screenHeight: 844 },
+  { name: "tablet", width: 768, height: 844, expectedMode: "tablet", touch: true, screenWidth: 768, screenHeight: 1024 },
+  { name: "mobile portrait", width: 390, height: 844, expectedMode: "mobile", touch: true, screenWidth: 390, screenHeight: 844 },
+  { name: "mobile short landscape", width: 844, height: 390, expectedMode: "mobile", touch: true, screenWidth: 844, screenHeight: 390 },
+];
+const PRODUCTION_APP_BOARD_STATES = ["skeleton", "no-workflow", "empty", "populated", "duplicated"];
+
+/*
+FNXC:StandardBoardHeight 2026-09-12-20:20:
+The production App smoke must cross every non-Alpha settings shape, Board data state, and supported viewport instead of distributing states across misleading viewport labels. Tablet proof uses a touch-capable physical screen and asserts App's published viewport mode; every workflow-bearing state exercises both selected and aggregate Board render paths, while the no-workflow state has no aggregate destination by definition.
+*/
+export function createProductionAppBoardScenarios() {
+  return ["absent", "false"].flatMap((alpha) =>
+    PRODUCTION_APP_BOARD_VIEWPORTS.flatMap((viewport) =>
+      PRODUCTION_APP_BOARD_STATES.flatMap((state) =>
+        (state === "no-workflow" ? [false] : [false, true]).map((aggregate) => ({
+          alpha,
+          state,
+          aggregate,
+          ...viewport,
+        })),
+      ),
+    ),
+  );
+}
+
+async function runProductionAppBoardChecks(page, pageUrl, browserWsUrl) {
+  let activePage = page;
+  let closeActivePage = null;
+  const productionAppUrl = new URL("production-app/", pageUrl);
+  const loadProductionBoard = async ({ alpha, state, width, height, expectedMode, touch, screenWidth, screenHeight, aggregate }) => {
+    if (process.env.FUSION_BROWSER_SMOKE_STANDARD_BOARD_ONLY === "1") log(`production App scenario: ${alpha}/${state}/${width}x${height}/${expectedMode}/${aggregate ? "aggregate" : "selected"}`);
+    await activePage.send("Emulation.setDeviceMetricsOverride", {
+      width,
+      height,
+      deviceScaleFactor: touch ? 2 : 1,
+      mobile: touch,
+      screenWidth,
+      screenHeight,
+    });
+    await activePage.send("Emulation.setTouchEmulationEnabled", { enabled: touch, maxTouchPoints: touch ? 5 : 1 });
+    const projectId = `${STANDARD_BOARD_SMOKE_PROJECT_ID}-${alpha}-${state}-${expectedMode}-${aggregate ? "aggregate" : "selected"}`;
+    productionAppUrl.search = new URLSearchParams({
+      project: projectId,
+      smokeAlpha: alpha,
+      smokeState: state,
+    }).toString();
+    await evaluate(activePage, `(() => {
+      localStorage.setItem(${JSON.stringify(`kb:${projectId}:kb-dashboard-task-view`)}, 'board');
+      localStorage.setItem('kb-dashboard-task-view', 'board');
+      sessionStorage.setItem(${JSON.stringify(`kb:${projectId}:kb-dashboard-task-view-session`)}, 'board');
+      return true;
+    })()`);
+    const appLoaded = activePage.once("Page.loadEventFired");
+    await activePage.send("Page.navigate", { url: productionAppUrl.href });
+    await appLoaded;
+    await evaluate(activePage, `new Promise((resolve, reject) => {
+      const deadline = performance.now() + 10000;
+      const poll = () => {
+        const boardTab = document.querySelector('[data-testid="mobile-nav-tab-tasks"]')
+          ?? [...document.querySelectorAll('button')].find((button) => ['Tasks', 'Board'].includes(button.textContent.trim()));
+        if (!document.querySelector('.dashboard-project-stack .project-content .board') && boardTab?.getAttribute('aria-selected') !== 'true') boardTab?.click();
+        const board = document.querySelector('.dashboard-project-stack .project-content .board');
+        const cards = board?.querySelectorAll('[data-virtual-task-row]') ?? [];
+        const duplicateCount = [...cards].filter((card) => card.textContent.includes('Carte dupliquée')).length;
+        const expectedState = ${JSON.stringify(String(state))};
+        const dataReady = expectedState === 'populated' ? cards.length >= 1
+          : expectedState === 'duplicated' ? duplicateCount === 2
+          : expectedState === 'skeleton' ? board?.classList.contains('board-workflows-skeleton')
+          : expectedState === 'no-workflow' ? board?.matches('[data-testid="board-workflows-empty"]')
+          : board?.classList.contains('board-workflow-columns') && cards.length === 0;
+        if (board && document.querySelector('.executor-status-bar') && dataReady) return resolve(true);
+        if (performance.now() >= deadline) return reject(new Error('Timed out waiting for emitted App Board: ' + document.body.innerText.slice(0, 500)));
+        setTimeout(poll, 25);
+      };
+      poll();
+    })`);
+    if (aggregate) {
+      await evaluate(activePage, `(() => {
+        const trigger = document.querySelector('[data-testid="workflow-switcher"]');
+        if (!trigger) throw new Error('Missing production workflow switcher');
+        trigger.click();
+        return true;
+      })()`);
+      await evaluate(activePage, `new Promise((resolve, reject) => {
+        const deadline = performance.now() + 5000;
+        const poll = () => {
+          const option = document.querySelector('[data-testid="workflow-switcher-option-__all_workflows__"]');
+          if (option) { option.click(); return resolve(true); }
+          if (performance.now() >= deadline) return reject(new Error('Timed out waiting for aggregate workflow option'));
+          setTimeout(poll, 25);
+        };
+        poll();
+      })`);
+    }
+    return evaluate(activePage, `(() => {
+      const board = document.querySelector('.dashboard-project-stack .project-content .board');
+      const footer = document.querySelector('.executor-status-bar');
+      const nav = document.querySelector('.mobile-nav-bar');
+      const workflowSwitcher = document.querySelector('[data-testid="workflow-switcher"]');
+      if (!board || !footer) throw new Error('Emitted App did not render the standard Board/footer shell');
+      const boardRect = board.getBoundingClientRect();
+      const footerRect = footer.getBoundingClientRect();
+      const columns = [...board.querySelectorAll('.column, .board-workflows-skeleton__column')];
+      const bodies = columns.map((column) => column.querySelector('.column-body')).filter(Boolean);
+      for (const body of bodies) body.scrollTop = body.scrollHeight;
+      const lastCards = bodies.map((body) => body.querySelector('[data-virtual-task-row]:last-of-type'));
+      return {
+        alphaSurface: board.closest('[data-alpha-surface]')?.getAttribute('data-alpha-surface'),
+        viewportMode: document.documentElement.dataset.viewportMode,
+        boardTop: boardRect.top,
+        boardBottom: boardRect.bottom,
+        lowerBoundary: footerRect.top,
+        columnTops: columns.map((column) => column.getBoundingClientRect().top),
+        columnBottoms: columns.map((column) => column.getBoundingClientRect().bottom),
+        columnHeights: columns.map((column) => column.getBoundingClientRect().height),
+        columnScrollable: bodies.map((body) => body.scrollHeight > body.clientHeight && ['auto', 'scroll'].includes(getComputedStyle(body).overflowY)),
+        lastCardsReachable: bodies.map((body, index) => !lastCards[index] || lastCards[index].getBoundingClientRect().bottom <= body.getBoundingClientRect().bottom + 1),
+        documentScrollable: document.documentElement.scrollHeight > document.documentElement.clientHeight + 1 || document.body.scrollHeight > document.body.clientHeight + 1,
+        boardPaddingTop: Number.parseFloat(getComputedStyle(board).paddingTop),
+        boardPaddingBottom: Number.parseFloat(getComputedStyle(board).paddingBottom),
+        footerVisible: footerRect.height > 0 && footerRect.bottom <= window.innerHeight + 1,
+        navVisible: !nav || nav.getBoundingClientRect().height > 0,
+        selectedBranch: ${JSON.stringify(String(state))} === 'no-workflow'
+          ? !workflowSwitcher
+          : ${JSON.stringify(Boolean(aggregate))}
+            ? workflowSwitcher?.getAttribute('aria-label')?.includes('All workflows') === true
+            : Boolean(workflowSwitcher) && workflowSwitcher?.getAttribute('aria-label')?.includes('All workflows') === false,
+        duplicateCount: [...board.querySelectorAll('[data-virtual-task-row]')].filter((card) => card.textContent.includes('Carte dupliquée')).length,
+        boardClass: board.className,
+      };
+    })()`);
+  };
+
+  const scenarios = createProductionAppBoardScenarios();
+  const requestedScenarioIndex = Number.parseInt(process.env.FUSION_BROWSER_SMOKE_STANDARD_BOARD_SCENARIO ?? "", 10);
+  const selectedScenarios = Number.isInteger(requestedScenarioIndex) ? [scenarios[requestedScenarioIndex]].filter(Boolean) : scenarios;
+  for (const [scenarioIndex, scenario] of selectedScenarios.entries()) {
+    if (scenarioIndex > 0 && browserWsUrl) {
+      if (closeActivePage) {
+        await closeActivePage();
+      } else {
+        const previousPageStopped = activePage.once("Page.loadEventFired");
+        await activePage.send("Page.navigate", { url: "about:blank" });
+        await previousPageStopped;
+      }
+      const isolated = await createIsolatedPage(browserWsUrl);
+      activePage = isolated.page;
+      closeActivePage = isolated.close;
+      await activePage.send("Page.enable");
+      await activePage.send("Runtime.enable");
+      const fixtureLoaded = activePage.once("Page.loadEventFired");
+      await activePage.send("Page.navigate", { url: pageUrl });
+      await fixtureLoaded;
+    }
+    const layout = await loadProductionBoard(scenario);
+    if (process.env.FUSION_BROWSER_SMOKE_STANDARD_BOARD_ONLY === "1") log(`production App layout: ${JSON.stringify(layout)}`);
+    const hasColumns = layout.columnHeights.length > 0;
+    const populated = scenario.state === "populated" || scenario.state === "duplicated";
+    const topGaps = layout.columnTops.map((top) => top - layout.boardTop);
+    const bottomGaps = layout.columnBottoms.map((bottom) => layout.lowerBoundary - bottom);
+    const geometryMatches = Math.abs(layout.boardBottom - layout.lowerBoundary) <= 1
+      && Math.abs(layout.boardPaddingTop - layout.boardPaddingBottom) <= 1
+      && (!hasColumns || (layout.columnHeights.every((height) => height > 0)
+        && topGaps.every((gap, index) => Math.abs(gap - bottomGaps[index]) <= 1)))
+      && (!populated || (layout.columnScrollable.some(Boolean) && layout.lastCardsReachable.every(Boolean)));
+    assertSmokeResult(
+      `Emitted App ${scenario.aggregate ? "aggregate" : "selected"} Board ${scenario.state} (${scenario.alpha}) uses real safe geometry on ${scenario.name}`,
+      layout.alphaSurface === "false"
+        && layout.viewportMode === scenario.expectedMode
+        && geometryMatches
+        && layout.footerVisible
+        && layout.navVisible
+        && layout.selectedBranch
+        && !layout.documentScrollable
+        && (scenario.state !== "duplicated" || layout.duplicateCount === 2),
+      JSON.stringify(layout),
+    );
+  }
 }
 
 async function main() {
@@ -2818,15 +3183,18 @@ async function main() {
   try {
     ({ fixture, launched } = await prepareBrowserSmoke(executable));
     page = await createPage(launched.wsUrl);
-    await runSmokeChecks(page, fixture.url);
+    await runSmokeChecks(page, fixture.url, launched.wsUrl);
   } finally {
     page?.close();
+    // FNXC:StandardBoardHeight 2026-09-12-19:19: The emitted App keeps SSE connections open; stop their browser owner before awaiting server.close().
+    if (launched) {
+      await stopBrowser(launched.browser);
+    }
     if (fixture) {
       await closeServer(fixture.server);
     }
     if (launched) {
-      await stopBrowser(launched.browser);
-      await rm(launched.userDataDir, { recursive: true, force: true });
+      await rm(launched.userDataDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   }
 }

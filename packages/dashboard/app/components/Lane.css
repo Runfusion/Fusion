@@ -45,6 +45,18 @@
 }
 
 
+/*
+FNXC:StandardBoardHeight 2026-09-12-19:19:
+The standard Board's horizontal scrollbar must not consume block-size between its symmetric padding edges. Keep the Board as the horizontal scroll owner and preserve wheel, trackpad, drag-pan, and touch scrolling, but render its scrollbar without a layout track so columns end one padding token above the shell-owned footer; Alpha keeps its existing scrollbar paint.
+*/
+[data-alpha-surface="false"] .board {
+  scrollbar-width: none;
+}
+
+[data-alpha-surface="false"] .board::-webkit-scrollbar {
+  height: 0;
+}
+
 .board.board-workflow-columns {
   flex: 1 1 auto;
   display: flex;
