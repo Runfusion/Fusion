@@ -19,7 +19,7 @@ tags:
 
 # Observed suite-only flakes register
 
-This register has **3 active observation records** (entries 1, 2, and 13): **2 active first sightings** and **1 reproduced-but-unattributed observation**. Entries 7 and 14 below are closed and retained for cross-reference only. It also has **1 merge-gate eviction record** (entry 6) and **8 archived closed records**. Only the active section drives quarantine and escalation decisions; the other sections preserve historical evidence.
+This register has **2 active observation records** (entries 2 and 13), both **active first sightings**. Entry 1 closed on 2026-09-12: FN-9131's structural harness connection-budget fix (merged 2026-08-16 as `ae507afc37`) resolved its reproduced timeout, and no sighting has occurred since the fix landed; the record stays in place below for its campaign evidence. Entries 7 and 14 below are closed and retained for cross-reference only. It also has **1 merge-gate eviction record** (entry 6) and **8 archived closed records**. Only the active section drives quarantine and escalation decisions; the other sections preserve historical evidence.
 
 <!--
 FNXC:TestFlakeRegister 2026-08-19-11:14:
@@ -36,11 +36,22 @@ pending-next-sighting state. The pinned validator assertions in
 scripts/__tests__/observed-flake-register.test.mjs were updated in the same change.
 -->
 
+<!--
+FNXC:TestFlakeRegister 2026-09-12-04:32:
+Entry 1's reproduced 15s project-identity timeout was structurally fixed by FN-9131 (queueing
+admission in the shared PostgreSQL harness connection budget, wait hoisted off the test budget,
+loaded 27-worker re-measurement green; merged 2026-08-16 as ae507afc37). No sighting in the
+~4 weeks since. Closing the record — leaving it active would name an archived owner and deny
+the landed fix, the same lie-about-ownership failure FN-9146's note fixed for FN-9146. The
+record stays physically in the active section because the pinned campaign-evidence test reads
+its per-run table in place, mirroring the entry 7 precedent.
+-->
+
 ## Active observation records
 
 ### 1. Project identity returns no stored identity
 
-- **Status:** Active reproduced-but-unattributed observation — evidence owner FN-9146 (archived 2026-09-03; record unowned pending next sighting).
+- **Status:** Closed 2026-09-12 — structurally resolved by FN-9131 (queueing admission in the shared PostgreSQL harness connection budget; merged 2026-08-16 as `ae507afc37`; loaded 27-worker re-measurement green). No sighting since the fix landed; a new sighting re-opens normal escalation.
 
 - **File:** `packages/core/src/__tests__/postgres/project-identity.test.ts`
 - **Exact test:** `project-identity async (PostgreSQL integration) > returns null when no identity is stored`
@@ -60,6 +71,8 @@ scripts/__tests__/observed-flake-register.test.mjs were updated in the same chan
 |---|---|
 | full core ×3, 6 workers | subject passed; unrelated settings-revision-attribution failure |
 | PostgreSQL directory, 12 workers | subject passed; unrelated satellite-store ordering failure |
+
+**Closed 2026-09-12 (FN-9131):** The reproduced subject is no longer active. FN-9131 diagnosed the mechanism behind the A02–A04 captures — the shared harness sized connections from constants and never asked the cluster how many backends exist or how many participants compete for them, so at 27 forks demand more than doubled `max_connections` and the first test in a file (`project-identity.test.ts:41:3`) consumed its whole 15s budget waiting — and shipped the structural fix in `packages/core/src/__test-utils__/pg-connection-budget.ts`: over-subscription became queueing (a participant that cannot be admitted waits holding zero backends, and admission exhaustion never throws into a test or hook), the first admission window moved to the shared per-worker setup module off the test budget, and the per-participant footprint shrank until the measured wait fit the R9 bound. The loaded acceptance — the exact 27-worker reproduction completing with the subject passing and no wall-time regression against the 177–203s pre-fix band, peak backends below `max_connections`, and the concurrent `pnpm test:gate` shape holding the same bound — is recorded done in FN-9131's step 6. The fix has been on main since 2026-08-16 with no further sighting of this identity in the register's own later updates (2026-09-03, 2026-09-10) or any task. Core PostgreSQL quarantine was never needed. A new sighting of this identity re-opens normal escalation from an unowned state.
 
 **Second sighting — reproduced 2026-08-16 (FN-9126):** A credential-free, sterile-environment PostgreSQL-directory pass at 27 workers reproduced the registered assertion as a timeout at `packages/core/src/__tests__/postgres/project-identity.test.ts:41:3` on `3c235ce275b626a73da4fe508ac76fd6f5fbd686`. The typed, executor-authored per-run evidence is durable in task FN-9126, document key `evidence`; it records the 100-connection server ceiling and all run counters without retaining runner output. This is an escalation, not a resolution: core-config quarantine remains policy-forbidden by the gate-policy assertion, so FN-9131 owns root-cause diagnosis and a structural fix.
 
@@ -245,7 +258,7 @@ The failure remains sequence-only evidence, not an attribution to FN-249: its ch
 
 ### Common shape and investigated result
 
-FN-9125 established that former entry 3 was not PostgreSQL-suite-adjacent: `plugin-runner.test.ts` used an in-memory mocked TaskStore and had no PostgreSQL/harness import. FN-9135 did not identify a root cause, but FN-9141's completed shuffled worker-reuse campaign reproduced and structurally fixed the logger mock-history fixture defect; the suite and its renamed-complete-lane dispatch coverage remain active. Entries 2 and 13 remain active, unreproduced PostgreSQL observations; entry 7 was closed on 2026-08-23 when the whole file was quarantined on a second sighting of a different test; entry 14 was closed on 2026-09-09 when its quarantine reached the deletion ratchet (see above). FN-9146 completed the later A×4/B×3/C×3 campaign without the entry 2 or entry 13 exact identities failing. Entry 1 reproduced under FN-9126 and again under FN-9146's A02–A04 lanes, but remains unattributed rather than structurally fixed. The golden-template/advisory-lock lifecycle and schema-applier's inline baseline path are concrete architecture facts, not a demonstrated cause of these assertions. Core policy forbids inline PG quarantine: FN-9146's retained evidence for entries 1, 2, and 13 is durable, but FN-9146 was archived on 2026-09-03 without a named successor, so those records are presently unowned; the next sighting follows normal escalation from an unowned state. entry 7 was closed on 2026-08-23 (see above). No source or fan-out change is justified before a diagnostic names a causal lifecycle seam. Entry 13 is a further unreproduced instance of that same 15s setup-hook mode, narrowed to the capped four-fork gate lane on a cold cluster. Entry 6 instead records a merge-gate eviction after a loaded-lane setup-hook timeout; `FNXC:PgTestTemplateDb 2026-07-19-17:20` and `FNXC:PgTestWorkerCap 2026-07-18-18:00` are already-landed mitigations for that mode, not new diagnoses to re-open. The Planning Mode entries are separate frontend timing observations.
+FN-9125 established that former entry 3 was not PostgreSQL-suite-adjacent: `plugin-runner.test.ts` used an in-memory mocked TaskStore and had no PostgreSQL/harness import. FN-9135 did not identify a root cause, but FN-9141's completed shuffled worker-reuse campaign reproduced and structurally fixed the logger mock-history fixture defect; the suite and its renamed-complete-lane dispatch coverage remain active. Entries 2 and 13 remain active, unreproduced PostgreSQL observations; entry 7 was closed on 2026-08-23 when the whole file was quarantined on a second sighting of a different test; entry 14 was closed on 2026-09-09 when its quarantine reached the deletion ratchet (see above). FN-9146 completed the later A×4/B×3/C×3 campaign without the entry 2 or entry 13 exact identities failing. Entry 1 reproduced under FN-9126 and again under FN-9146's A02–A04 lanes, then FN-9131 attributed the mechanism (harness demand scales with fan-out against a fixed cluster supply; the first test in a file eats the 15s budget) and shipped the structural queueing-admission fix, closing the record on 2026-09-12. The golden-template/advisory-lock lifecycle and schema-applier's inline baseline path are concrete architecture facts, not a demonstrated cause of these assertions. Core policy forbids inline PG quarantine: FN-9146's retained evidence for entries 2 and 13 is durable, but FN-9146 was archived on 2026-09-03 without a named successor, so those records are presently unowned; the next sighting follows normal escalation from an unowned state. entry 7 was closed on 2026-08-23 (see above). No source or fan-out change is justified before a diagnostic names a causal lifecycle seam. Entry 13 is a further unreproduced instance of that same 15s setup-hook mode, narrowed to the capped four-fork gate lane on a cold cluster. Entry 6 instead records a merge-gate eviction after a loaded-lane setup-hook timeout; `FNXC:PgTestTemplateDb 2026-07-19-17:20` and `FNXC:PgTestWorkerCap 2026-07-18-18:00` are already-landed mitigations for that mode, not new diagnoses to re-open. The Planning Mode entries are separate frontend timing observations.
 
 
 
