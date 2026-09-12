@@ -61,6 +61,66 @@ pgDescribe("overlap wait persistence", () => {
     expect((await h.store().getTask(waiting.id)).log?.filter((entry) => entry.dedupeKey?.startsWith("overlap-wait-release:"))).toHaveLength(1);
   });
 
+  /*
+  FNXC:OverlapWaitSynchronization 2026-09-12-17:20:
+  The nominal path: a task WITH a plan, claiming and publishing a complete unchanged execution identity, must
+  be released. This case was absent, and the identity fence was consequently never exercised end to end — the
+  positive test below passes NO identity (short-circuiting the comparison) and the negative tests expect a
+  refusal, which the defect produced for the wrong reason. FN-359/FN-362 were refused 122 times each because
+  publication compared the caller's prompt hash against `sha256(row.prompt)` on a table with no `prompt` column.
+  */
+  it("releases a planned task whose execution identity is unchanged between claim and publication", async () => {
+    const blocker = await h.store().createTask({ description: "holder" });
+    const waiting = await h.store().createTask({ description: "waiting" });
+    await h.store().updateTask(waiting.id, { prompt: "## Mission\nUse `sharedApi`", worktree: "/work/waiting", branch: "fusion/waiting", branchWriteOrigin: "engine", checkoutLeaseEpoch: 3 });
+    await h.store().transitionQueuedEpisode(waiting.id, overlap(blocker.id));
+    const observed = (await h.store().listTaskOverlapWaits(waiting.id))[0]!;
+    const live = await h.store().getTask(waiting.id);
+    const identity = {
+      taskLineageId: live.lineageId,
+      planFingerprint: createHash("sha256").update(live.prompt!).digest("hex"),
+      checkoutEpoch: "3",
+      worktree: "/work/waiting",
+      branch: "fusion/waiting",
+      headSha: "head-1",
+      repository: ".",
+    };
+    const claim = await h.store().claimTaskOverlapWait({
+      taskId: waiting.id, episodeId: observed.episodeId, expectedRevision: observed.revision,
+      owner: "executor-1", checkoutEpoch: "3", executionIdentity: identity,
+    });
+    expect(claim).toMatchObject({ phase: "analyzing", planFingerprint: identity.planFingerprint });
+
+    const completed = await h.store().completeTaskOverlapWait({
+      taskId: waiting.id, episodeId: observed.episodeId, expectedRevision: claim!.revision, owner: "executor-1",
+      executionIdentity: identity,
+      receipt: { decision: "briefing", freshness: "proven", commonFiles: ["src/shared.ts"], deliveryProofs: [], decisionFingerprint: "decision-1", decidedAt: new Date().toISOString() },
+    });
+    expect(completed).toMatchObject({ phase: "ready" });
+  });
+
+  /*
+  FNXC:OverlapWaitSynchronization 2026-09-12-17:20:
+  A claim must never erase the durable plan fingerprint. `revalidatePendingOverlapWaitsAtGraphNode` decides
+  whether a targeted repair produced a genuinely new plan by comparing against this column; a null-wipe on
+  claim made every repair look like a plan change.
+  */
+  it("preserves the durable plan fingerprint across a claim that supplies no identity", async () => {
+    const blocker = await h.store().createTask({ description: "holder" });
+    const waiting = await h.store().createTask({ description: "waiting" });
+    await h.store().transitionQueuedEpisode(waiting.id, overlap(blocker.id));
+    const observed = (await h.store().listTaskOverlapWaits(waiting.id))[0]!;
+    const first = await h.store().claimTaskOverlapWait({
+      taskId: waiting.id, episodeId: observed.episodeId, expectedRevision: observed.revision,
+      owner: "executor-1", executionIdentity: { planFingerprint: "plan-1" },
+    });
+    expect(first?.planFingerprint).toBe("plan-1");
+    const reclaimed = await h.store().claimTaskOverlapWait({
+      taskId: waiting.id, episodeId: observed.episodeId, expectedRevision: first!.revision, owner: "executor-2",
+    });
+    expect(reclaimed?.planFingerprint).toBe("plan-1");
+  });
+
   it("rejects a completion after the claimed plan or checkout identity changes", async () => {
     const blocker = await h.store().createTask({ description: "holder" });
     const waiting = await h.store().createTask({ description: "waiting" });
@@ -132,12 +192,14 @@ pgDescribe("overlap wait persistence", () => {
     await h.store().updateTask(waiting.id, { checkoutLeaseEpoch: 1, checkoutNodeId: "execute" });
     await h.store().transitionQueuedEpisode(waiting.id, overlap(blocker.id));
     const observed = (await h.store().listTaskOverlapWaits(waiting.id))[0]!;
-    const identity = { taskLineageId: waiting.lineageId, headSha: "head-1", repository: "repo-a", target: "main", nodeId: "execute", nodeInstanceId: "instance-1", checkoutEpoch: "1" };
+    const identity = { taskLineageId: waiting.lineageId, planFingerprint: "plan-1", headSha: "head-1", repository: "repo-a", target: "main", nodeId: "execute", nodeInstanceId: "instance-1", checkoutEpoch: "1" };
     const claim = await h.store().claimTaskOverlapWait({ taskId: waiting.id, episodeId: observed.episodeId, expectedRevision: observed.revision, owner: "executor-1", checkoutEpoch: "1", executionIdentity: identity });
     expect(claim).not.toBeNull();
     for (const patch of [
       { headSha: "head-2" }, { repository: "repo-b" }, { target: "release" },
       { nodeId: "verify" }, { nodeInstanceId: "instance-2" }, { checkoutEpoch: "2" },
+      // A plan revision landing mid-analysis must still refuse publication.
+      { planFingerprint: "plan-2" },
     ]) {
       await expect(h.store().completeTaskOverlapWait({
         taskId: waiting.id, episodeId: observed.episodeId, expectedRevision: claim!.revision, owner: "executor-1",

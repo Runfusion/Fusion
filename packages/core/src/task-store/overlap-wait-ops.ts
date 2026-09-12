@@ -196,10 +196,26 @@ function sameExecutionIdentity(left: OverlapWaitExecutionIdentity | undefined, r
   return EXECUTION_IDENTITY_KEYS.every((key) => left[key] === right[key]);
 }
 
-function executionIdentityMatches(task: Task, actualPlanFingerprint: string | undefined, expected: OverlapWaitExecutionIdentity | undefined): boolean {
+/*
+FNXC:OverlapWaitSynchronization 2026-09-12-17:20:
+FN-332 fences a publication against a plan revision that lands mid-analysis, and `durablePlanFingerprint`
+is the ONLY admissible source for that comparison: it is the episode row's own `plan_fingerprint` column,
+written at observation and re-stamped at claim, so BOTH sides of the fence read the same durable value.
+
+Do not reintroduce `sha256(task.prompt)` here. The spec text is not a column of `project.tasks` — it lives in
+PROMPT.md — so a raw task row read inside this transaction always yields `prompt: undefined`. The original
+implementation compared that permanently-absent value against a caller-supplied prompt hash, so the equality
+could never hold for ANY task carrying a spec: every overlap wait with a plan was refused publication forever.
+Measured 2026-09-12: FN-359 and FN-362 each burned 122 dispatches over ten hours (fresh worktree every cycle)
+because the refusal is shaped like a lost race, so the executor retried it indefinitely.
+
+Invariant: a fence field must be re-derivable from the same durable source at claim and at publication. A field
+one side structurally cannot read is a defect, never a mismatch.
+*/
+function executionIdentityMatches(task: Task, durablePlanFingerprint: string | undefined, expected: OverlapWaitExecutionIdentity | undefined): boolean {
   if (!expected) return true;
   return (expected.taskLineageId === undefined || task.lineageId === expected.taskLineageId)
-    && (expected.planFingerprint === undefined || actualPlanFingerprint === expected.planFingerprint)
+    && (expected.planFingerprint === undefined || durablePlanFingerprint === expected.planFingerprint)
     && (expected.worktree === undefined || task.worktree === expected.worktree)
     && (expected.branch === undefined || task.branch === expected.branch)
     && (expected.checkoutEpoch === undefined || String(task.checkoutLeaseEpoch) === expected.checkoutEpoch)
@@ -217,17 +233,28 @@ export async function claimTaskOverlapWaitImpl(store: TaskStore, claim: OverlapW
     )).limit(1);
     const live = taskRows[0] as unknown as Task | undefined;
     if (!live || live.paused || live.userPaused) return null;
-    const livePlanFingerprint = live.prompt ? await sha256(live.prompt) : undefined;
     if (claim.executionIdentity?.taskLineageId !== undefined && live.lineageId !== claim.executionIdentity.taskLineageId) return null;
-    const currentRows = await tx.select({ observation: schema.project.taskOverlapWaits.observation }).from(schema.project.taskOverlapWaits).where(and(
+    const currentRows = await tx.select({
+      observation: schema.project.taskOverlapWaits.observation,
+      planFingerprint: schema.project.taskOverlapWaits.planFingerprint,
+    }).from(schema.project.taskOverlapWaits).where(and(
       eq(schema.project.taskOverlapWaits.projectId, projectId), eq(schema.project.taskOverlapWaits.taskId, claim.taskId),
       eq(schema.project.taskOverlapWaits.episodeId, claim.episodeId), eq(schema.project.taskOverlapWaits.revision, claim.expectedRevision),
     )).limit(1);
     if (!currentRows[0]) return null;
+    /*
+    FNXC:OverlapWaitSynchronization 2026-09-12-17:20:
+    The claimant holds the hydrated task, so it owns the plan fingerprint; the store persists it and later
+    verifies publication against this stored value. Falling back to the observation-time column keeps a claim
+    that supplies no identity from ERASING the plan identity: the null-wipe that used to happen here also broke
+    `revalidatePendingOverlapWaitsAtGraphNode`, whose repair path compares a repaired plan against this column
+    and saw `null` after every claim.
+    */
+    const durablePlanFingerprint = claim.executionIdentity?.planFingerprint ?? currentRows[0].planFingerprint ?? undefined;
     const executionIdentity: OverlapWaitExecutionIdentity = {
       ...claim.executionIdentity,
       ...(live.lineageId ? { taskLineageId: live.lineageId } : {}),
-      ...(livePlanFingerprint ? { planFingerprint: livePlanFingerprint } : {}),
+      ...(durablePlanFingerprint ? { planFingerprint: durablePlanFingerprint } : {}),
       ...(live.worktree ? { worktree: live.worktree } : {}),
       ...(live.branch ? { branch: live.branch } : {}),
       ...(claim.checkoutEpoch ? { checkoutEpoch: claim.checkoutEpoch } : {}),
@@ -237,7 +264,7 @@ export async function claimTaskOverlapWaitImpl(store: TaskStore, claim: OverlapW
       phase: "analyzing",
       owner: claim.owner,
       checkoutEpoch: claim.checkoutEpoch ?? null,
-      planFingerprint: livePlanFingerprint ?? null,
+      planFingerprint: durablePlanFingerprint ?? null,
       observation,
       attempt: sql`${schema.project.taskOverlapWaits.attempt} + 1`,
       revision: sql`${schema.project.taskOverlapWaits.revision} + 1`,
@@ -274,11 +301,18 @@ export async function completeTaskOverlapWaitImpl(
     )).limit(1);
     const live = taskRows[0] as unknown as Task | undefined;
     if (!live || live.paused || live.userPaused) return null;
-    const livePlanFingerprint = live.prompt ? await sha256(live.prompt) : undefined;
+    /*
+    FNXC:OverlapWaitSynchronization 2026-09-12-17:20:
+    Read the plan identity the claim persisted, never a value recomputed from a column that does not exist.
+    A plan revision landing mid-analysis is still fenced, by the `sameExecutionIdentity` comparison below:
+    the caller recomputes its fingerprint from the hydrated task at publication time, so a rewritten spec no
+    longer equals what it claimed with.
+    */
+    const durablePlanFingerprint = rows[0].planFingerprint ?? undefined;
     const storedIdentity = ((rows[0].observation ?? {}) as { executionIdentity?: OverlapWaitExecutionIdentity }).executionIdentity;
     const expectedIdentity = input.executionIdentity ?? storedIdentity;
     if (expectedIdentity?.checkoutEpoch !== undefined && rows[0].checkoutEpoch !== expectedIdentity.checkoutEpoch) return null;
-    if (!executionIdentityMatches(live, livePlanFingerprint, expectedIdentity)) return null;
+    if (!executionIdentityMatches(live, durablePlanFingerprint, expectedIdentity)) return null;
     // The caller must recapture Git/session identity at publication time; equality with the claim
     // fences HEAD, repository/target, node incarnation and checkout generation changes during I/O.
     if (input.executionIdentity && !sameExecutionIdentity(input.executionIdentity, storedIdentity)) return null;
