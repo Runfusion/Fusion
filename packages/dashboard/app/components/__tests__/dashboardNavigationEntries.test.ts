@@ -8,8 +8,9 @@ describe("dashboardNavigationEntries", () => {
     const entries = buildDashboardNavigationEntries(base);
     expect(entries.every((entry) => ["main-page", "existing-action", "external-owner"].includes(entry.kind))).toBe(true);
     expect(entries.map((entry) => entry.id)).not.toEqual(expect.arrayContaining(["patchnode", "chat", "notes"]));
-    expect(entries.filter((entry) => entry.placement === "direct").map((entry) => entry.id)).toEqual(["command-center", "board", "list", "planning", "missions", "agents", "mailbox", "new-task"]);
+    expect(entries.filter((entry) => entry.placement === "direct").map((entry) => entry.id)).toEqual(["command-center", "board", "list", "planning", "missions", "agents", "mailbox"]);
     expect(entries.filter((entry) => entry.kind === "external-owner").map((entry) => entry.id)).toEqual(["dev-server", "secrets", "pull-requests"]);
+    expect(entries.find((entry) => entry.id === "settings")?.placement).toBe("external");
     expect(entries.filter((entry) => entry.placement !== "external").every((entry) => typeof entry.onSelect === "function")).toBe(true);
   });
 
@@ -17,8 +18,8 @@ describe("dashboardNavigationEntries", () => {
     const entries = buildDashboardNavigationEntries({ ...base, showAgents: false, showSkills: false, flags: {} });
     expect(entries.some((entry) => entry.id === "agents" || entry.id === "skills" || entry.id === "memory")).toBe(false);
     entries.find((entry) => entry.id === "planning")?.onSelect?.();
-    entries.find((entry) => entry.id === "new-task")?.onSelect?.();
+    expect(entries.find((entry) => entry.id === "new-task")).toBeUndefined();
     expect(base.onChangeView).toHaveBeenCalledWith("planning");
-    expect(base.onNewTask).toHaveBeenCalledTimes(1);
+    expect(base.onNewTask).not.toHaveBeenCalled();
   });
 });

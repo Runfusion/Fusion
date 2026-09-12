@@ -132,13 +132,12 @@ describe("AppearanceSection", () => {
     FNXC:MobileTaskPopups 2026-07-15-17:35:
     Help text must state which click targets route to the popup.
 
-    FNXC:DashboardTests 2026-07-22-18:20:
-    AppearanceSection.tsx t() fallback (and FN-8478) documents board task-card deep-tab chips
-    plus List row/card and right-dock Tasks-list → movable task popup. Assert the live help body.
+    FNXC:DashboardTests 2026-09-12-01:35:
+    Popup help names the remaining Board and List task-open surfaces after the duplicate dock task list was removed.
     */
     expect(
       screen.getByText(
-        /board task-card clicks including Changes, Retries, and Workflow chips, plus ordinary List row\/card and right-dock Tasks-list clicks, open the existing movable task popup/,
+        /board task-card clicks including Changes, Retries, and Workflow chips, plus ordinary List row\/card clicks, open the existing movable task popup/,
       ),
     ).toBeInTheDocument();
     expect(screen.getByText(/Other task opens keep their current behavior/)).toBeInTheDocument();

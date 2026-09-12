@@ -1,6 +1,6 @@
 import type { ComponentType } from "react";
 import type { LucideProps } from "lucide-react";
-import { Bot, Brain, Clock, Gauge, Lightbulb, LayoutGrid, List, Mail, PanelsTopLeft, Plus, Search, Settings, Sparkles, Target, Workflow, Zap } from "lucide-react";
+import { Bot, Brain, Clock, Gauge, Lightbulb, LayoutGrid, List, Mail, PanelsTopLeft, Search, Settings, Sparkles, Target, Workflow, Zap } from "lucide-react";
 import type { PluginDashboardViewEntry } from "../api";
 import type { TaskView } from "../hooks/useViewState";
 import { buildPluginTaskViewId } from "../plugins/pluginViewRegistry";
@@ -52,7 +52,6 @@ export function buildDashboardNavigationEntries(options: DashboardNavigationRegi
     page("missions", "Missions", "missions", Target, "direct"),
     ...(options.showAgents ? [page("agents", "Agents", "agents", Bot, "direct")] : []),
     { ...page("mailbox", "Mailbox", "mailbox", Mail, "direct"), badge: options.mailboxUnreadCount, dot: options.view !== "mailbox" && (options.mailboxPendingApprovalCount ?? 0) > 0 ? "pending" as const : undefined },
-    { id: "new-task", label: "New Task", icon: Plus, kind: "existing-action" as const, placement: "direct" as const, testId: "alpha-desktop-nav-new-task", onSelect: options.onNewTask },
   ];
   const plugins = [...(options.pluginDashboardViews ?? [])].sort((a, b) => (a.view.order ?? Number.MAX_SAFE_INTEGER) - (b.view.order ?? Number.MAX_SAFE_INTEGER)).map((entry) => {
     const view = entry.pluginId === "fusion-plugin-dependency-graph" && entry.view.viewId === "graph" ? "graph" : buildPluginTaskViewId(entry.pluginId, entry.view.viewId);
@@ -71,7 +70,7 @@ export function buildDashboardNavigationEntries(options: DashboardNavigationRegi
     ...(options.flags?.research ? [page("research", "Research", "research", Search)] : []),
     ...(options.flags?.ideation ? [page("ideation", "Ideation", "ideation", Lightbulb)] : []),
     ...(options.flags?.evals ? [page("evals", "Evals", "evals", Target)] : []),
-    { id: "settings", label: "Settings", icon: Settings, kind: "existing-action" as const, placement: "overflow" as const, view: "settings" as TaskView, testId: "alpha-desktop-nav-settings", onSelect: options.onOpenSettings },
+    { id: "settings", label: "Settings", icon: Settings, kind: "existing-action" as const, placement: "external" as const, view: "settings" as TaskView, testId: "alpha-desktop-nav-settings", onSelect: options.onOpenSettings },
   ];
   const external: DashboardNavigationEntry[] = [
     { id: "dev-server", label: "Dev Server", icon: PanelsTopLeft, kind: "external-owner", placement: "external", view: "devserver", testId: "right-dock-dev-server" },

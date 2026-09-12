@@ -94,7 +94,7 @@ export function AppearanceSection({ form, setForm, themeMode, colorTheme, dashbo
         descriptor={{
           key: "openMobileTasksInPopup",
           label: t("settings.appearance.openMobileTasksInPopup", "Open tasks as popups"),
-          help: t("settings.appearance.openMobileTasksInPopupHelp", "When enabled, board task-card clicks including Changes, Retries, and Workflow chips, plus ordinary List row/card and right-dock Tasks-list clicks, open the existing movable task popup so the board or list remains visible. Other task opens keep their current behavior. Default: disabled."),
+          help: t("settings.appearance.openMobileTasksInPopupHelp", "When enabled, board task-card clicks including Changes, Retries, and Workflow chips, plus ordinary List row/card clicks, open the existing movable task popup so the board or list remains visible. Other task opens keep their current behavior. Default: disabled."),
           scope: "project",
         }}
         value={form.openMobileTasksInPopup ?? openMobileTasksInPopup === true}

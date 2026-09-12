@@ -20,7 +20,21 @@ The bar renders as a sibling of .dashboard-project-shell inside .dashboard-proje
   border-block-start: var(--btn-border-width) solid var(--border-color);
   background: var(--bg-secondary);
 }
-.alpha-desktop-action-bar__scroller { display: flex; flex: 1; justify-content: center; gap: var(--space-xs); overflow-x: auto; }
+.alpha-desktop-action-bar__capacity, .alpha-desktop-action-bar__settings { display: flex; flex: 0 0 auto; align-items: stretch; }
+.alpha-desktop-action-bar__center { display: flex; flex: 1 1 auto; min-inline-size: 0; justify-content: center; gap: var(--space-xs); }
+.alpha-desktop-action-bar__scroller { display: flex; justify-content: center; gap: var(--space-xs); overflow-x: auto; }
+.alpha-desktop-action-bar__capacity .engine-control-menu__trigger--text { block-size: 100%; min-inline-size: calc(var(--space-xl) * 2); border: 0; background: transparent; }
+/*
+FNXC:AlphaDesktopCapacity 2026-09-12-02:04:
+The capacity trigger sits against the footer's inline-start edge, so its shared control panel must open toward the viewport instead of inheriting the standard footer's inline-end anchor. Reassert the viewport-sized floor against `.card` here because this host does not use the ExecutorStatusBar segment that normally protects the panel from collapsing to the trigger width.
+*/
+.alpha-desktop-action-bar__capacity .engine-control-menu > .engine-control-menu__popover.card {
+  inset-inline-start: 0;
+  inset-inline-end: auto;
+  min-inline-size: min(24rem, calc(100vw - (var(--space-lg) * 2)));
+  max-inline-size: calc(100vw - (var(--space-lg) * 2));
+}
+.alpha-desktop-action-bar__settings { margin-inline-start: auto; }
 .alpha-desktop-action-bar__action { position: relative; display: inline-flex; flex: 0 0 auto; min-inline-size: calc(var(--space-xl) * 2); align-items: center; justify-content: center; gap: var(--space-xs); padding: var(--space-xs) var(--space-sm); border: 0; border-radius: var(--radius-md); color: var(--text-secondary); background: transparent; font: inherit; cursor: pointer; }
 .alpha-desktop-action-bar__action:hover, .alpha-desktop-action-bar__action--active { color: var(--accent); background: var(--bg-hover); }
 .alpha-desktop-action-bar__action:focus-visible { outline: none; box-shadow: var(--focus-ring-strong); }

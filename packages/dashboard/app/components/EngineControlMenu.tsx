@@ -1,5 +1,5 @@
 import "./EngineControlMenu.css";
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState, type CSSProperties } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { DEFAULT_PROJECT_SETTINGS } from "@fusion/core";
 import { resolveEffectiveConcurrency } from "../../../core/src/workflows/workflow-capacity.js";
@@ -18,6 +18,9 @@ export interface EngineControlMenuHandle {
 
 export interface EngineControlMenuProps {
   projectId?: string;
+  /** Optional truthful text trigger used by the Alpha desktop footer. */
+  triggerContent?: ReactNode;
+  triggerLabel?: string;
 }
 
 type AsyncState<T> =
@@ -100,7 +103,7 @@ FN-6862 requires the footer popover chrome to stay opaque across themes. Its CSS
 FNXC:EngineControls 2026-06-21-00:00:
 FN-6863 raises the footer concurrency sliders' base drag ceiling to 50 for max tasks, triage, and worktrees. Keep getConcurrencySliderMax value-aware so already-persisted settings above 50 expand the slider instead of hiding or clamping the truthful readout.
 */
-export const EngineControlMenu = forwardRef<EngineControlMenuHandle, EngineControlMenuProps>(function EngineControlMenu({ projectId }, ref) {
+export const EngineControlMenu = forwardRef<EngineControlMenuHandle, EngineControlMenuProps>(function EngineControlMenu({ projectId, triggerContent, triggerLabel }, ref) {
   const { t } = useTranslation("app");
   const { confirm } = useConfirm();
   const menuRef = useRef<HTMLDivElement>(null);
@@ -342,15 +345,15 @@ export const EngineControlMenu = forwardRef<EngineControlMenuHandle, EngineContr
     <div className="engine-control-menu" ref={menuRef}>
       <button
         type="button"
-        className={`btn-icon engine-control-menu__trigger${open ? " btn-icon--active" : ""}`}
+        className={`${triggerContent ? "btn engine-control-menu__trigger--text" : "btn-icon"} engine-control-menu__trigger${open ? " btn-icon--active" : ""}`}
         onClick={toggleMenu}
-        title={t("executor.engineControls", "Engine controls")}
-        aria-label={t("executor.engineControls", "Engine controls")}
+        title={triggerLabel ?? t("executor.engineControls", "Engine controls")}
+        aria-label={triggerLabel ?? t("executor.engineControls", "Engine controls")}
         aria-haspopup="menu"
         aria-expanded={open}
         data-testid="engine-control-menu-trigger"
       >
-        <SlidersHorizontal size={14} aria-hidden="true" />
+        {triggerContent ?? <SlidersHorizontal size={14} aria-hidden="true" />}
       </button>
 
       {open && (

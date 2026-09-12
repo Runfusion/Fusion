@@ -26,20 +26,17 @@ export interface RightDockControllerInput {
   tasks: Array<Task | TaskDetail>;
   /*
   FNXC:WorkflowResolvedColumns 2026-07-30-04:00 (batch-dashboard-app — the dock-wide fix):
-  Per-task column traits for every view the dock hosts. The registry's render props carried none, so
-  DockTaskList and DevServerView's dock surface both had no parent to resolve from and stayed on
-  legacy ids — sized as blocked in two separate places. This is the single change that closes both.
-  Reuses the map App already builds for the footer; no new resolution.
+  Per-task column traits for every view the dock hosts. DevServerView and plugin task cards consume
+  this shared index rather than falling back to legacy column ids. Reuse the map App already builds
+  for the footer; no new resolution.
   */
   columnFlagsByTaskId?: ReadonlyMap<string, { complete?: boolean; countsTowardWip?: boolean; mergeBlocker?: boolean; humanReview?: boolean; intake?: boolean; hold?: boolean }>;
   workflowSteps: WorkflowStep[];
   subscribePluginEvents: (pluginId: string, onEvent: (event: { event: string; payload: unknown }) => void) => () => void;
   openDetailTask: (task: Task | TaskDetail, initialTab?: DetailTaskTab) => void;
-  openTaskPopup: (task: Task | TaskDetail) => void;
   onOpenSessionInNewWindow?: (session: ChatSessionInfo) => void;
   notesController?: UseNotesController;
   registerNotesGuard?: (guard: () => boolean | Promise<boolean>, onAccepted?: () => void) => () => void;
-  openMobileTasksInPopup: boolean;
   openFileInBrowser: (path: string, opts?: { workspace?: string; line?: number; col?: number }) => void;
   onUpdateTask?: (id: string, updates: { title?: string; description?: string; dependencies?: string[]; dismissNearDuplicate?: boolean; githubTracking?: { enabled?: boolean } }) => Promise<Task>;
   onDeleteTask: (id: string, options?: { removeDependencyReferences?: boolean; removeLineageReferences?: boolean; githubIssueAction?: GithubIssueAction; allowResurrection?: boolean }) => Promise<Task>;
@@ -97,36 +94,32 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
   */
   const [pinned, setPinned] = useState(readStoredRightDockPinned);
   const [expandedView, setExpandedView] = useState<OverflowViewKey | null>(null);
-  const [dockTaskSnapshot, setDockTaskSnapshot] = useState<Task | TaskDetail | null>(null);
+  const [dockTaskSnapshot, setDockTaskSnapshot] = useState<{
+    projectId: string | undefined;
+    task: Task | TaskDetail;
+  } | null>(null);
 
   const closeDockTask = useCallback(() => {
     setDockTaskSnapshot(null);
   }, []);
 
   const openTaskInDock = useCallback((task: Task | TaskDetail) => {
-    setDockTaskSnapshot(task);
+    setDockTaskSnapshot({ projectId: input.projectId, task });
     setOpen(true);
     persistRightDockOpen(true);
-  }, []);
-
-  /*
-  FNXC:RightDockTaskPopup 2026-07-03-00:00:
-  Ordinary task opens from the right-dock Tasks list must honor the task-popup setting before creating an embedded dock-detail snapshot. Keep `openTaskInDock` intact for setting-off routing, board right-sidebar routing, and the Tasks-tab back/list detail lifecycle.
-  */
-  const openTaskFromDockList = useCallback((task: Task | TaskDetail) => {
-    if (input.openMobileTasksInPopup === true) {
-      input.openTaskPopup(task);
-      return;
-    }
-
-    openTaskInDock(task);
-  }, [input, openTaskInDock]);
+  }, [input.projectId]);
 
   const resolvedDockTask = useMemo(() => {
-    if (!dockTaskSnapshot) return null;
-    const liveTask = input.tasks.find((candidate) => candidate.id === dockTaskSnapshot.id);
-    return liveTask ? mergeTaskSnapshot(dockTaskSnapshot, liveTask) : dockTaskSnapshot;
-  }, [dockTaskSnapshot, input.tasks]);
+    /*
+    FNXC:RightDockTaskDetail 2026-09-12-02:18:
+    A project-switch render happens before the cleanup effect commits. Fence the transient snapshot by
+    its capture-time project identity so Task Detail cannot mount or run effects against the next project.
+    */
+    if (!dockTaskSnapshot || dockTaskSnapshot.projectId !== input.projectId) return null;
+    const snapshotTask = dockTaskSnapshot.task;
+    const liveTask = input.tasks.find((candidate) => candidate.id === snapshotTask.id);
+    return liveTask ? mergeTaskSnapshot(snapshotTask, liveTask) : snapshotTask;
+  }, [dockTaskSnapshot, input.projectId, input.tasks]);
 
   const toggle = useCallback(() => {
     setOpen((current) => {
@@ -173,11 +166,13 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
   }, [input]);
 
   useEffect(() => {
-    if (!input.active) {
-      setExpandedView(null);
-      setDockTaskSnapshot(null);
-    }
-  }, [input.active]);
+    /*
+    FNXC:RightDockTaskDetail 2026-09-12-02:04:
+    Temporary task detail is project-scoped even when the dock remains active across a direct project switch. Clear both transient surfaces whenever project identity changes so an equal task id in the next project cannot merge with or display the previous project's snapshot.
+    */
+    setExpandedView(null);
+    setDockTaskSnapshot(null);
+  }, [input.active, input.projectId]);
 
   const renderTaskCard = useCallback((task: Task | TaskDetail) => (
     <TaskCard
@@ -239,11 +234,6 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
         .catch((error) => input.addToast(error instanceof Error ? error.message : "Failed to open task detail", "error"));
     },
     /*
-    FNXC:RightDockTasks 2026-06-28-17:05:
-    DockTaskList rows must open through the controller's ordinary right-dock task route, not TaskCard's canonical full task modal. Thread one controller-level handler into registry render props so both compact and expanded Tasks lists share popup-setting routing and setting-off dock-detail behavior.
-    */
-    onOpenTaskInDock: openTaskFromDockList,
-    /*
     FNXC:TaskRevert 2026-08-01-20:06:
     Dock resolution uses the same New Task prefill owner as every other surface.
     Keeping this callback in registry props lets compact and expanded dock hosts revise
@@ -264,7 +254,7 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
     renderTaskCard,
     subscribePluginEvents: input.subscribePluginEvents,
     openFile: input.openFileInBrowser,
-  }), [input, openTaskFromDockList, renderTaskCard]);
+  }), [input, renderTaskCard]);
 
   const dockTaskContent = resolvedDockTask ? (
     /*

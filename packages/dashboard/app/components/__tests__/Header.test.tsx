@@ -63,7 +63,7 @@ function SearchHeaderHarness({ tier }: { tier: ViewportTier }) {
         { id: "FN-901", title: "retire de fichier txt" },
         { id: "FN-902", title: "Add the bonjour.txt file" },
       ]}
-      alphaUpdatesEnabled={tier === "desktop"}
+      alphaUpdatesEnabled={false}
     />
   );
 }
@@ -117,18 +117,21 @@ describe("Header", () => {
     expect(screen.getByText("Fusion")).toBeInTheDocument();
   });
 
-  it("keeps Alpha desktop Board search inline and clears without removing it", () => {
+  it("opens Alpha desktop task navigation in a centered overlay without changing the board filter", () => {
     const onSearchChange = vi.fn();
-    const { rerender } = renderHeader({ view: "board", alphaUpdatesEnabled: true, searchQuery: "alpha", onSearchChange }, "desktop");
+    const onSelectSearchTask = vi.fn();
+    renderHeader({ view: "board", alphaUpdatesEnabled: true, searchQuery: "alpha", onSearchChange, onSelectSearchTask, taskSearchTasks: [{ id: "FN-353", title: "Alpha shell" }] }, "desktop");
     expect(screen.queryByTestId("desktop-header-search-btn")).toBeNull();
-    expect(screen.getByTestId("alpha-desktop-header-search")).toBeInTheDocument();
-    expect(screen.getByPlaceholderText("Search tasks...")).toHaveValue("alpha");
-    fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
-    expect(onSearchChange).toHaveBeenCalledWith("");
-
-    rerender(<Header onOpenSettings={noop} onOpenGitHubImport={noop} view="board" alphaUpdatesEnabled searchQuery="" onSearchChange={onSearchChange} />);
-    expect(screen.getByTestId("alpha-desktop-header-search")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Clear search" })).toBeNull();
+    const trigger = screen.getByTestId("alpha-desktop-header-search-btn");
+    expect(screen.queryByPlaceholderText("Search tasks...")).toBeNull();
+    fireEvent.click(trigger);
+    const input = screen.getByPlaceholderText("Search tasks...");
+    expect(input).toHaveFocus();
+    fireEvent.change(input, { target: { value: "353" } });
+    fireEvent.click(screen.getByRole("option", { name: "FN-353: Alpha shell" }));
+    expect(onSelectSearchTask).toHaveBeenCalledOnce();
+    expect(onSearchChange).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("alpha-task-search-overlay")).toBeNull();
   });
 
   it.each(["desktop", "tablet", "mobile"] as const)("ne rend jamais le hamburger Alpha dans le Header sur %s", (tier) => {
@@ -1138,15 +1141,16 @@ describe("Header", () => {
       expect(screen.queryByTestId("header-branch-filters-mobile")).toBeNull();
     });
 
-    it("does not leave an empty floating panel beside the Alpha desktop inline search", () => {
+    it("does not leave an inline or floating field beside the Alpha desktop search icon", () => {
       const { container } = renderHeader({ onSearchChange: vi.fn(), view: "board", alphaUpdatesEnabled: true }, "desktop");
-      expect(screen.getByTestId("alpha-desktop-header-search")).toBeInTheDocument();
+      expect(screen.getByTestId("alpha-desktop-header-search-btn")).toBeInTheDocument();
+      expect(screen.queryByPlaceholderText("Search tasks...")).toBeNull();
       expect(container.querySelector(".header-floating-search")).toBeNull();
     });
 
     it.each(["desktop", "tablet", "mobile"] as const)("suggests ID suffixes and literal punctuation on %s", (tier) => {
       renderSearchHeader(tier);
-      if (tier === "tablet") fireEvent.click(screen.getByTestId("desktop-header-search-btn"));
+      if (tier === "desktop" || tier === "tablet") fireEvent.click(screen.getByTestId("desktop-header-search-btn"));
       if (tier === "mobile") fireEvent.click(screen.getByTestId("mobile-header-search-btn"));
 
       const input = screen.getByRole("combobox");

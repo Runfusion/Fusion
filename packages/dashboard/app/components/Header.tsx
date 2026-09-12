@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { Settings, LayoutGrid, List, Search, Activity, MoreHorizontal, Clock, Folder, History, GitBranch, Monitor, Workflow, Bot, Target, Grid3X3, Mail, MessageSquare, Check, Zap, Sparkles, Brain, Lock, Gauge, Lightbulb, PanelsTopLeft, ChevronDown, ChevronRight, PanelRight, Plus, Star } from "lucide-react";
 import "./Header.css";
@@ -82,6 +83,8 @@ export interface HeaderProps {
   searchQuery?: string;
   onSearchChange?: (query: string) => void;
   taskSearchTasks?: readonly Pick<Task, "id" | "title">[];
+  /** Alpha desktop search navigates to Task Detail without changing board filters. */
+  onSelectSearchTask?: (task: Pick<Task, "id" | "title">) => void;
   /** Multi-project props */
   projects?: ProjectInfo[];
   currentProject?: ProjectInfo | null;
@@ -141,6 +144,7 @@ export function Header({
   searchQuery = "",
   onSearchChange,
   taskSearchTasks,
+  onSelectSearchTask,
   projects = [],
   currentProject,
   onSelectProject,
@@ -183,6 +187,9 @@ export function Header({
   The right dock is persistent and owns its own collapse control, so Header must not render a duplicate right-dock toggle or repurpose the More views overflow trigger on tablet/desktop.
   */
   const [isMobileSearchOpen, setIsMobileSearchOpen] = useState(false);
+  const [isAlphaSearchOpen, setIsAlphaSearchOpen] = useState(false);
+  const [alphaSearchQuery, setAlphaSearchQuery] = useState("");
+  const alphaSearchTriggerRef = useRef<HTMLButtonElement>(null);
   const [isNonMobileSearchOpen, setIsNonMobileSearchOpen] = useState(false);
   // Track when user has explicitly closed the search (used for toggle visibility)
   const [isNonMobileSearchExplicitlyClosed, setIsNonMobileSearchExplicitlyClosed] = useState(false);
@@ -293,6 +300,20 @@ export function Header({
 
   const canShowNonMobileSearch = (view === "board" || view === "list") && !isMobile && onSearchChange;
   const showAlphaDesktopSearch = Boolean(alphaUpdatesEnabled && mode === "desktop" && canShowNonMobileSearch);
+  const closeAlphaSearch = useCallback(() => {
+    setIsAlphaSearchOpen(false);
+    setAlphaSearchQuery("");
+    window.setTimeout(() => alphaSearchTriggerRef.current?.focus(), 0);
+  }, []);
+
+  useEffect(() => {
+    if (!isAlphaSearchOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") closeAlphaSearch();
+    };
+    document.addEventListener("keydown", closeOnEscape, true);
+    return () => document.removeEventListener("keydown", closeOnEscape, true);
+  }, [closeAlphaSearch, isAlphaSearchOpen]);
   // Non-mobile search: toggled open OR has active query, but not if explicitly closed.
   const shouldShowNonMobileSearch = (isNonMobileSearchOpen || searchQuery.length > 0) && !isNonMobileSearchExplicitlyClosed;
   /*
@@ -657,15 +678,18 @@ export function Header({
          * Desktop and tablet header search must render after the workflow portal slot so a populated WorkflowSwitcher appears left of the search icon while preserving the mobile search trigger's existing position and behavior.
          */}
         {showAlphaDesktopSearch && onSearchChange && (
-          <TaskSearchInput
-            query={searchQuery}
-            tasks={taskSearchTasks}
-            onSearchChange={onSearchChange}
-            onClose={searchQuery.length > 0 ? () => onSearchChange("") : undefined}
-            closeLabel={t("header.clearSearch", "Clear search")}
-            className="header-search--alpha-inline"
-            testId="alpha-desktop-header-search"
-          />
+          <button
+            ref={alphaSearchTriggerRef}
+            type="button"
+            className="btn-icon"
+            onClick={() => setIsAlphaSearchOpen(true)}
+            title={t("header.openSearch", "Open search")}
+            aria-label={t("header.openSearch", "Open search")}
+            aria-expanded={isAlphaSearchOpen}
+            data-testid="alpha-desktop-header-search-btn"
+          >
+            <Search size={16} />
+          </button>
         )}
 
         {canShowNonMobileSearchToggle && !showAlphaDesktopSearch && (
@@ -1226,6 +1250,28 @@ export function Header({
         )}
       </div>
     </header>
+
+    {/*
+    FNXC:AlphaTaskSearch 2026-09-12-01:35:
+    Alpha desktop replaces the filtering field with one Search icon. Its portaled, centered search selects a project-scoped task into the canonical detail route, while backdrop/Escape/selection close and clear transient input without touching Board or remote query state.
+    */}
+    {showAlphaDesktopSearch && isAlphaSearchOpen && typeof document !== "undefined" ? createPortal(
+      <div className="alpha-task-search-overlay" role="presentation" data-testid="alpha-task-search-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) closeAlphaSearch(); }}>
+        <div className="alpha-task-search-overlay__panel" role="dialog" aria-modal="true" aria-label={t("header.searchTasks", "Search tasks...")}>
+          <TaskSearchInput
+            query={alphaSearchQuery}
+            tasks={taskSearchTasks}
+            onSearchChange={setAlphaSearchQuery}
+            onSelectTask={(task) => {
+              const selected = taskSearchTasks?.find((candidate) => candidate.id.toLocaleLowerCase() === task.id.toLocaleLowerCase());
+              if (selected) onSelectSearchTask?.(selected);
+              closeAlphaSearch();
+            }}
+            autoFocus
+            className="alpha-task-search-overlay__search"
+          />
+        </div>
+      </div>, document.body) : null}
 
     {/* Desktop/Tablet Search - floating below header, in board or list view */}
     {canShowNonMobileSearch && shouldShowNonMobileSearch && !showAlphaDesktopSearch && (

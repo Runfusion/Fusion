@@ -1,7 +1,6 @@
 import { Suspense, lazy, type ComponentType, type ReactNode } from "react";
 import {
   Folder,
-  ListTodo,
   GitBranch,
   GitPullRequest,
   History,
@@ -23,7 +22,6 @@ import { PageErrorBoundary } from "./ErrorBoundary";
 import { getPluginNavIcon } from "./pluginNavIcon";
 import { ActivityLogModal } from "./ActivityLogModal";
 import { GitManagerModal } from "./GitManagerModal";
-import { DockTaskList } from "./DockTaskList";
 import { attachNativeStructureRefToDrag } from "../utils/nativeStructureDrag";
 
 /*
@@ -42,7 +40,6 @@ export type OverflowViewKey =
   | "usage"
   | "activity-log"
   | "git-manager"
-  | "tasks"
   | "files"
   | "chat"
   | "notes"
@@ -88,7 +85,6 @@ export interface OverflowViewRenderProps {
   pluginContext?: PluginDashboardViewContext;
   onOpenSettings?: (section?: string) => void;
   onOpenTaskDetail?: (taskId: string) => void;
-  onOpenTaskInDock?: (task: Task | TaskDetail) => void;
   onOpenSessionInNewWindow?: (session: ChatSessionInfo) => void;
   /** Opens New Task with a reverted source task's original description. */
   onReviseTask?: (task: Task | TaskDetail) => void;
@@ -161,32 +157,11 @@ FN-6882 makes the right dock a tools rail for Activity, Activity Log, GitHub Imp
 FNXC:Navigation 2026-06-22-00:00:
 Right-dock tools render INLINE inside the dock container, not as popup modals: usage, activity-log, and git-manager use each modal's `presentation="embedded"` mode instead of launching an overlay. (github-import and automation remain launcher actions here only until their left-sidebar/main destinations land, then they leave the dock.)
 */
+/*
+FNXC:RightDockTasks 2026-09-12-01:35:
+Tasks is not a dock destination: Board and List already own task browsing. Programmatic task detail remains a temporary layer over the selected tool, so legacy stored "tasks" falls back through the ordinary Files default without leaving a tab, title, or expanded modal.
+*/
 export const STATIC_OVERFLOW_VIEW_ENTRIES: readonly OverflowViewEntry[] = [
-  /*
-  FNXC:RightDockTasks 2026-06-28-16:45:
-  Tasks is the leading right-dock inline view, but the persisted/default selection remains Files. It hosts the compact task list on both dock and expand surfaces; the dock-only detail surface is selected by RightDock when a task snapshot exists.
-  */
-  {
-    key: "tasks",
-    label: "Tasks",
-    icon: ListTodo,
-    testId: "right-dock-tab-tasks",
-    render: (props) => wrapOverflowView(
-      <DockTaskList
-        tasks={props.tasks ?? []}
-        columnFlagsByTaskId={props.columnFlagsByTaskId}
-        projectId={props.projectId}
-        onOpenTask={props.onOpenTaskInDock}
-        onReviseTask={props.onReviseTask}
-        onUpdateTask={props.onUpdateTask}
-        onDeleteTask={props.onDeleteTask}
-        onOpenChatWithPrefill={props.onOpenChatWithPrefill}
-        addToast={props.addToast}
-        prAuthAvailable={false}
-        autoMergeEnabled={false}
-      />,
-    ),
-  },
   /* FNXC:Navigation 2026-06-22-00:20: Files remains the default right-dock tool when no valid stored view exists. */
   {
     key: "files",

@@ -51,6 +51,37 @@ non-notched devices, so this is a no-op there. Pair with viewport-fit=cover (ind
   max-width: none;
 }
 
+.alpha-task-search-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  display: grid;
+  place-items: center;
+  padding: var(--space-xl);
+  background: color-mix(in srgb, var(--bg) 78%, transparent);
+}
+
+.alpha-task-search-overlay__panel {
+  inline-size: min(calc(var(--space-3xl) * 10), 100%);
+  padding: var(--space-lg);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+}
+
+.alpha-task-search-overlay__search {
+  inline-size: 100%;
+}
+
+.alpha-task-search-overlay__search .header-search-input {
+  inline-size: 100%;
+}
+
+@media (max-width: 768px) {
+  .alpha-task-search-overlay { display: none; }
+}
+
 .header-left {
   display: flex;
   align-items: center;

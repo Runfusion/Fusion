@@ -21,7 +21,7 @@ describe("overflowViewRegistry", () => {
     const keys = entries.map((entry) => entry.key);
 
     expect(keys).toEqual([
-      "tasks", "files", "chat", "activity-log", "git-manager", "devserver", "secrets", "pull-requests",
+      "files", "chat", "activity-log", "git-manager", "devserver", "secrets", "pull-requests",
     ]);
     expect(entries.filter((entry) => entry.render).map((entry) => entry.key)).toEqual(keys);
     expect(entries.filter((entry) => entry.onActivate)).toEqual([]);
@@ -29,14 +29,14 @@ describe("overflowViewRegistry", () => {
 
   it("hides flag-gated static dock tools", () => {
     const keys = getVisibleOverflowViewEntries().map((entry) => entry.key);
-    expect(keys).toEqual(["tasks", "files", "chat", "activity-log", "git-manager", "secrets", "pull-requests"]);
+    expect(keys).toEqual(["files", "chat", "activity-log", "git-manager", "secrets", "pull-requests"]);
     expect(keys).not.toContain("devserver");
     expect(keys).not.toContain("todos");
     expect(keys).not.toContain("usage");
   });
 
   it("does not expose left-sidebar content views or removed dock tools in the registry", () => {
-    const removedKeys = ["documents", "recommendations", "research", "insights", "skills", "memory", "stash-recovery", "evals", "goalsView", "github-import", "automation", "usage", "todos"];
+    const removedKeys = ["tasks", "documents", "recommendations", "research", "insights", "skills", "memory", "stash-recovery", "evals", "goalsView", "github-import", "automation", "usage", "todos"];
     const keys = getVisibleOverflowViewEntries({
       experimentalFeatures: { insights: true, memoryView: true, devServerView: true, researchView: true, evalsView: true, goalsView: true },
       showSkillsTab: true,
@@ -58,7 +58,7 @@ describe("overflowViewRegistry", () => {
 
     const entries = getVisibleOverflowViewEntries({ experimentalFeatures: { devServerView: true }, pluginDashboardViews });
     expect(entries.map((entry) => entry.key)).toEqual([
-      "tasks", "files", "chat", "activity-log", "git-manager", "devserver", "secrets", "pull-requests",
+      "files", "chat", "activity-log", "git-manager", "devserver", "secrets", "pull-requests",
       "plugin:plugin-b:audit", "plugin:plugin-a:tools", "plugin:fusion-plugin-todos:todos",
     ]);
     expect(entries.some((entry) => entry.key === "plugin:plugin-a:primary")).toBe(false);

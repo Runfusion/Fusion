@@ -40,7 +40,7 @@ export const appearanceSearchEntries: SettingsSearchEntry[] = [
     labelFallback: "Open tasks as popups",
     helpKey: "settings.appearance.openMobileTasksInPopupHelp",
     helpFallback:
-      "When enabled, ordinary board task-card, List row/card, and right-dock Tasks-list clicks open the existing movable task popup so the board or list remains visible. Deep-tab and other task opens keep their current behavior. Default: disabled.",
+      "When enabled, ordinary board task-card and List row/card clicks open the existing movable task popup so the board or list remains visible. Deep-tab and other task opens keep their current behavior. Default: disabled.",
     /*
     FNXC:SettingsSearch 2026-07-15-17:35:
     "mobile" is indexed as a keyword rather than left to the copy: the stored key is `openMobileTasksInPopup` and the setting was mobile-only until FN-7945 made it all-viewport, so operators and older docs still call it the mobile popup setting even though the label no longer says it.

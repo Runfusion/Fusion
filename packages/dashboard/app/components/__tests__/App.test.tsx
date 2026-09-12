@@ -5833,6 +5833,116 @@ describe("App task search suggestions", () => {
     });
   }
 
+  it("ouvre une tâche locale terminée depuis la recherche Alpha sans filtrer Board ou List", async () => {
+    vi.mocked(fetchSettings).mockResolvedValue({
+      ...defaultSettings,
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates: true },
+    });
+    const source = [
+      makeSearchTask("FN-351", "Active Alpha task"),
+      makeSearchTask("FN-353", "Completed Alpha task", "done"),
+    ];
+    const observedQueries: Array<string | undefined> = [];
+    mockUseTasks.mockImplementation((options) => {
+      observedQueries.push(options?.searchQuery);
+      return {
+        tasks: options?.searchQuery ? [] : source,
+        createTask: mockCreateTask,
+        moveTask: vi.fn(),
+        deleteTask: vi.fn(),
+        mergeTask: vi.fn(),
+        retryTask: vi.fn(),
+        updateTask: vi.fn(),
+        duplicateTask: vi.fn(),
+        refreshTasks: vi.fn(),
+      };
+    });
+
+    render(<App />);
+    await waitForAppShell();
+    const board = within(screen.getByTestId("board-keep-alive"));
+    expect(board.getByText("Active Alpha task")).toBeInTheDocument();
+    expect(board.getByText("Completed Alpha task")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("alpha-desktop-header-search-btn"));
+    fireEvent.change(screen.getByRole("combobox", { name: "Search tasks..." }), { target: { value: "353" } });
+    fireEvent.click(screen.getByRole("option", { name: "FN-353: Completed Alpha task" }));
+
+    expect(screen.queryByTestId("alpha-task-search-overlay")).toBeNull();
+    expect(screen.getAllByRole("dialog", { name: "Completed Alpha task" })).toHaveLength(1);
+    expect(board.getByText("Active Alpha task")).toBeInTheDocument();
+    expect(board.getByText("Completed Alpha task")).toBeInTheDocument();
+    expect(observedQueries.every((query) => query === undefined)).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    fireEvent.click(screen.getByTestId("alpha-desktop-nav-list"));
+    await waitFor(() => expect(screen.getByTestId("list-keep-alive")).not.toHaveAttribute("aria-hidden"));
+    const list = within(screen.getByTestId("list-keep-alive"));
+    expect(list.getByText("Active Alpha task")).toBeInTheDocument();
+    expect(list.getByText("Completed Alpha task")).toBeInTheDocument();
+  });
+
+  it("ouvre une tâche distante autoritative depuis Alpha sans propager la requête transitoire", async () => {
+    vi.mocked(fetchSettings).mockResolvedValue({
+      ...defaultSettings,
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates: true },
+    });
+    mockLocalSearchTasks([makeSearchTask("LOCAL-353", "Local task")]);
+    mockNodeContextValue.isRemote = true;
+    mockNodeContextValue.currentNodeId = "node-alpha";
+    const remoteQueries: Array<string | undefined> = [];
+    const remoteSpy = vi.spyOn(apiNodeModule, "useRemoteNodeData").mockImplementation((_nodeId, options) => {
+      remoteQueries.push(options?.searchQuery);
+      return {
+        projects: [],
+        tasks: [makeSearchTask("REMOTE-353", "Remote completed Alpha task", "done")],
+        health: null,
+        loading: false,
+        error: null,
+        refresh: vi.fn(),
+      };
+    });
+
+    render(<App />);
+    await waitForAppShell();
+    const board = within(screen.getByTestId("board-keep-alive"));
+    expect(board.getByText("Remote completed Alpha task")).toBeInTheDocument();
+    expect(board.queryByText("Local task")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("alpha-desktop-header-search-btn"));
+    fireEvent.change(screen.getByRole("combobox", { name: "Search tasks..." }), { target: { value: "353" } });
+    fireEvent.click(screen.getByRole("option", { name: "REMOTE-353: Remote completed Alpha task" }));
+
+    expect(screen.getAllByRole("dialog", { name: "Remote completed Alpha task" })).toHaveLength(1);
+    expect(board.getByText("Remote completed Alpha task")).toBeInTheDocument();
+    expect(remoteQueries.every((query) => query === undefined)).toBe(true);
+    remoteSpy.mockRestore();
+  });
+
+  it("ferme l’overlay Alpha par backdrop ou Escape et réinitialise sa requête", async () => {
+    vi.mocked(fetchSettings).mockResolvedValue({
+      ...defaultSettings,
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates: true },
+    });
+    mockLocalSearchTasks([makeSearchTask("FN-353", "Alpha task")]);
+
+    render(<App />);
+    await waitForAppShell();
+    const trigger = screen.getByTestId("alpha-desktop-header-search-btn");
+    fireEvent.click(trigger);
+    fireEvent.change(screen.getByRole("combobox", { name: "Search tasks..." }), { target: { value: "353" } });
+    fireEvent.mouseDown(screen.getByTestId("alpha-task-search-overlay"));
+    expect(screen.queryByTestId("alpha-task-search-overlay")).toBeNull();
+    await waitFor(() => expect(trigger).toHaveFocus());
+
+    fireEvent.click(trigger);
+    expect(screen.getByRole("combobox", { name: "Search tasks..." })).toHaveValue("");
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByTestId("alpha-task-search-overlay")).toBeNull();
+    await waitFor(() => expect(trigger).toHaveFocus());
+    expect(screen.queryByRole("dialog", { name: "Alpha task" })).toBeNull();
+  });
+
   it("applies a selected exact ID to the shared Board and List search", async () => {
     localStorage.setItem("kb-dashboard-view-mode", "project");
     localStorage.setItem(taskViewStorageKey(), "board");

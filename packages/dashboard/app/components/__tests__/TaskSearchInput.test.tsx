@@ -136,6 +136,16 @@ describe("TaskSearchInput", () => {
     expect(screen.getAllByRole("option").at(-1)).toHaveAttribute("aria-selected", "true");
   });
 
+  it("routes a navigation selection without rewriting the filter query", () => {
+    const onSearchChange = vi.fn();
+    const onSelectTask = vi.fn();
+    render(<TaskSearchInput query="331" tasks={tasks} onSearchChange={onSearchChange} onSelectTask={onSelectTask} />);
+    fireEvent.focus(screen.getByRole("combobox"));
+    fireEvent.click(screen.getByRole("option", { name: "FN-331: Remove branch filters" }));
+    expect(onSelectTask).toHaveBeenCalledWith(tasks[0]);
+    expect(onSearchChange).not.toHaveBeenCalled();
+  });
+
   it("selects a suggestion by mouse interaction", () => {
     const onSearchChange = vi.fn();
     render(<TaskSearchInput query="331" tasks={tasks} onSearchChange={onSearchChange} />);

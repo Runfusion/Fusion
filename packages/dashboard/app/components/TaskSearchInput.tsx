@@ -11,12 +11,14 @@ import { useTranslation } from "react-i18next";
 import type { Task } from "@fusion/core";
 import "./TaskSearchInput.css";
 
-type SearchableTask = Pick<Task, "id" | "title">;
+export type SearchableTask = Pick<Task, "id" | "title">;
 
 export interface TaskSearchInputProps {
   query: string;
   tasks?: readonly SearchableTask[];
   onSearchChange: (query: string) => void;
+  /** Navigation mode selects the task without rewriting the caller's filter query. */
+  onSelectTask?: (task: SearchableTask) => void;
   onClose?: () => void;
   autoFocus?: boolean;
   inputRef?: Ref<HTMLInputElement>;
@@ -68,6 +70,7 @@ export function TaskSearchInput({
   query,
   tasks,
   onSearchChange,
+  onSelectTask,
   onClose,
   autoFocus,
   inputRef,
@@ -99,7 +102,8 @@ export function TaskSearchInput({
   const selectSuggestion = (task: SearchableTask) => {
     setIsOpen(false);
     setActiveIndex(-1);
-    onSearchChange(task.id);
+    if (onSelectTask) onSelectTask(task);
+    else onSearchChange(task.id);
   };
 
   return (
