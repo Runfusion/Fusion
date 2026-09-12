@@ -17,6 +17,8 @@ interface VirtualListOptions {
   maxRenderedRows?: number;
   initialAlign?: "start" | "end";
   preservePrependAnchor?: boolean;
+  /** Keep a viewport already at the start pinned there when new keys are prepended. */
+  followStartOnPrepend?: boolean;
 }
 
 interface VirtualListAnchor {
@@ -96,6 +98,9 @@ export function calculateVirtualListRange(args: {
 /*
 FNXC:ListVirtualization 2026-09-06-13:40:
 Dynamic dashboard lists keep every loaded row in data but mount only the viewport window plus bounded overscan. Stable row keys retain variable-height measurements; collection changes disconnect observers and discard measurements so late callbacks cannot contaminate another collection, while deterministic estimates cover zero-size test viewports and browsers without ResizeObserver.
+
+FNXC:ListVirtualization 2026-09-12-22:25:
+Complete board columns may opt into following the start when a real prepend arrives. A viewport within one CSS pixel of the start stays at zero so the new row appears immediately; a user-owned position below that threshold keeps the existing height compensation and visible anchor.
 */
 export function useVirtualizedList(options: VirtualListOptions): VirtualizedList {
   const {
@@ -107,6 +112,7 @@ export function useVirtualizedList(options: VirtualListOptions): VirtualizedList
     maxRenderedRows = DEFAULT_MAX_RENDERED_ROWS,
     initialAlign = "end",
     preservePrependAnchor = true,
+    followStartOnPrepend = false,
   } = options;
   const measurementsRef = useRef(new Map<string, number>());
   const observerRef = useRef<ResizeObserver | null>(null);
@@ -183,12 +189,18 @@ export function useVirtualizedList(options: VirtualListOptions): VirtualizedList
     const prefixCount = keys.length - previous.keys.length;
     const isPrepend = prefixCount > 0 && previous.keys.every((key, index) => keys[index + prefixCount] === key);
     if (container && preservePrependAnchor && isPrepend && Number.isFinite(geometry.scrollTop)) {
-      const addedHeight = keys.slice(0, prefixCount).reduce((sum, key) => sum + (measurementsRef.current.get(key) ?? estimateHeight), 0);
-      container.scrollTop += addedHeight;
-      setGeometry((current) => ({ ...current, scrollTop: current.scrollTop + addedHeight }));
+      const followsStart = followStartOnPrepend && container.scrollTop <= 1;
+      if (followsStart) {
+        container.scrollTop = 0;
+        setGeometry((current) => current.scrollTop === 0 ? current : { ...current, scrollTop: 0 });
+      } else {
+        const addedHeight = keys.slice(0, prefixCount).reduce((sum, key) => sum + (measurementsRef.current.get(key) ?? estimateHeight), 0);
+        container.scrollTop += addedHeight;
+        setGeometry((current) => ({ ...current, scrollTop: current.scrollTop + addedHeight }));
+      }
     }
     previousRef.current = { collectionKey, keys: [...keys], totalHeight: range.totalHeight };
-  }, [estimateHeight, geometry.scrollTop, initialAlign, keys, preservePrependAnchor, range.totalHeight, scrollRef, collectionKey]);
+  }, [estimateHeight, followStartOnPrepend, geometry.scrollTop, initialAlign, keys, preservePrependAnchor, range.totalHeight, scrollRef, collectionKey]);
 
   const publishMeasurement = useCallback((key: string, height: number, generation: number) => {
     if (generation !== generationRef.current || height <= 0 || measurementsRef.current.get(key) === height) return;

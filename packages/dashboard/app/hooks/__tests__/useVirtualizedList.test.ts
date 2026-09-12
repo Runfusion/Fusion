@@ -155,6 +155,102 @@ describe("useVirtualizedList", () => {
     expect(result.current.totalHeight).toBe(5_000);
   });
 
+  it("follows the start only for opted-in real prepends at or within the threshold", () => {
+    const container = document.createElement("div");
+    Object.defineProperties(container, {
+      clientHeight: { configurable: true, value: 200 },
+      scrollHeight: { configurable: true, value: 10_000 },
+      scrollTop: { configurable: true, writable: true, value: 0 },
+    });
+    const ref = { current: container };
+    const { result, rerender } = renderHook(
+      ({ rows }) => useVirtualizedList({
+        collectionKey: "done",
+        keys: rows,
+        scrollRef: ref,
+        estimateHeight: 50,
+        initialAlign: "start",
+        followStartOnPrepend: true,
+      }),
+      { initialProps: { rows: [] as string[] } },
+    );
+
+    rerender({ rows: ["existing"] });
+    expect(container.scrollTop).toBe(0);
+    expect(result.current.visibleKeys).toContain("existing");
+
+    rerender({ rows: ["new-at-zero", "existing"] });
+    expect(container.scrollTop).toBe(0);
+    expect(result.current.visibleKeys).toContain("new-at-zero");
+
+    container.scrollTop = 1;
+    act(() => result.current.onScroll());
+    rerender({ rows: ["new-at-threshold", "new-at-zero", "existing"] });
+    expect(container.scrollTop).toBe(0);
+    expect(result.current.visibleKeys).toContain("new-at-threshold");
+  });
+
+  it("preserves a lower anchor for opted-in prepends and retains the default policy", () => {
+    const optedInContainer = document.createElement("div");
+    const defaultContainer = document.createElement("div");
+    for (const container of [optedInContainer, defaultContainer]) {
+      Object.defineProperties(container, {
+        clientHeight: { configurable: true, value: 200 },
+        scrollHeight: { configurable: true, value: 10_000 },
+        scrollTop: { configurable: true, writable: true, value: 2 },
+      });
+    }
+    const initial = ["a", "b", "c"];
+    const optedInRef = { current: optedInContainer };
+    const optedIn = renderHook(
+      ({ rows }) => useVirtualizedList({ collectionKey: "done", keys: rows, scrollRef: optedInRef, estimateHeight: 50, initialAlign: "start", followStartOnPrepend: true }),
+      { initialProps: { rows: initial } },
+    );
+    optedInContainer.scrollTop = 2;
+    act(() => optedIn.result.current.onScroll());
+    optedIn.rerender({ rows: ["new", ...initial] });
+    expect(optedInContainer.scrollTop).toBe(52);
+
+    defaultContainer.scrollTop = 0;
+    const defaultRef = { current: defaultContainer };
+    const ordinary = renderHook(
+      ({ rows }) => useVirtualizedList({ collectionKey: "ordinary", keys: rows, scrollRef: defaultRef, estimateHeight: 50, initialAlign: "start" }),
+      { initialProps: { rows: initial } },
+    );
+    defaultContainer.scrollTop = 0;
+    act(() => ordinary.result.current.onScroll());
+    ordinary.rerender({ rows: ["new", ...initial] });
+    expect(defaultContainer.scrollTop).toBe(50);
+  });
+
+  it("does not invent prepend compensation for stable, duplicate, appended, reordered, or replaced keys", () => {
+    const container = document.createElement("div");
+    Object.defineProperties(container, {
+      clientHeight: { configurable: true, value: 200 },
+      scrollHeight: { configurable: true, value: 10_000 },
+      scrollTop: { configurable: true, writable: true, value: 25 },
+    });
+    const ref = { current: container };
+    const { result, rerender } = renderHook(
+      ({ collectionKey, rows }) => useVirtualizedList({ collectionKey, keys: rows, scrollRef: ref, estimateHeight: 50, initialAlign: "start", followStartOnPrepend: true }),
+      { initialProps: { collectionKey: "done", rows: ["a", "a", "b"] } },
+    );
+    container.scrollTop = 25;
+    act(() => result.current.onScroll());
+
+    rerender({ collectionKey: "done", rows: ["a", "a", "b"] });
+    expect(container.scrollTop).toBe(25);
+    rerender({ collectionKey: "done", rows: ["a", "a", "b", "c"] });
+    expect(container.scrollTop).toBe(25);
+    rerender({ collectionKey: "done", rows: ["b", "a", "a", "c"] });
+    expect(container.scrollTop).toBe(25);
+    rerender({ collectionKey: "done", rows: ["replacement", "b", "a", "c"] });
+    expect(container.scrollTop).toBe(25);
+
+    rerender({ collectionKey: "other", rows: ["new"] });
+    expect(container.scrollTop).toBe(0);
+  });
+
   it("keeps non-zero row registrations stable across a measured 60-row rerender", async () => {
     let resizeCallback: ResizeObserverCallback | undefined;
     class Observer {

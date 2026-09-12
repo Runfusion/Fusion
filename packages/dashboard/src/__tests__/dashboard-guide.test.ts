@@ -51,6 +51,15 @@ describe("dashboard guide coverage for lazy-loaded views", () => {
     expect(piBody).toContain("Settings → Plugins → Pi Extensions");
   });
 
+  it("documents completed-column arrival anchoring separately from history pagination", () => {
+    const guide = readDashboardGuide();
+    const completedColumnsBody = getSectionBody(guide, "Board completed columns");
+
+    expect(completedColumnsBody).toContain("the column stays at the top and shows that task immediately");
+    expect(completedColumnsBody).toContain("Fusion preserves your reading position");
+    expect(completedColumnsBody).toContain("separate from automatic history pagination");
+  });
+
   it("documents the responsive Alpha Header and Quick Entry hold contract", () => {
     const guide = readDashboardGuide();
 

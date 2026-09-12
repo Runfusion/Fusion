@@ -17,6 +17,10 @@ Discussion filing uses the same scrub-before-egress report pipeline as Issues. F
 
 The Fusion dashboard is the main control plane for tasks, agents, missions, settings, logs, and repository operations.
 
+## Board completed columns
+
+When a newly completed task arrives while a completed column is already at the top, the column stays at the top and shows that task immediately. If you have scrolled farther down, Fusion preserves your reading position instead of pulling you back to the newest task. This arrival behavior is separate from automatic history pagination: reaching the bottom can continue loading older completed tasks without changing which content you were reading.
+
 ## History View
 
 History is the permanent daily delivery history. In standard mode it remains available from the main navigation. With **Alpha Updates**, its general navigation entry remains hidden and the History button in every completed workflow-column header opens the same interface. On desktop Alpha, History is not duplicated in the footer. It groups entries by UTC day and includes a search field that matches task IDs, titles, and captured completion summaries. Each delivery is a separate record, so reopening and completing the same task later adds another entry on that later day instead of replacing the first. The History header remains fixed while its day list scrolls; Quick Chat and detached conversations use the same fixed-header/content-background shell and canonical close control without changing their saved geometry or conversation state.

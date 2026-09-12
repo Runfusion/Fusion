@@ -426,6 +426,7 @@ function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeG
     estimateHeight: 320,
     maxRenderedRows: 40,
     initialAlign: "start",
+    followStartOnPrepend: isCompleteColumn,
   });
   const visibleTasks = showWorktreeGroups
     ? tasks
