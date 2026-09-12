@@ -309,6 +309,24 @@ The recorded failing shape was always the single whole-file `engine-reliability`
 | unique-task-id whole-file diagnostic | **13 failed / 44 passed** |
 | four-file derived neighbour probe | subject 13 failed; unrelated sibling baseline failures also present |
 
+<!-- FNXC:TestFlakeRegister 2026-09-12-23:17: Keep the archived deletion decision and the independently verified replacement coverage together; restored lifecycle-safe tests do not reopen the old flake obligation. -->
+**Replacement coverage in PR #3578:** The deletion decision above records FN-9283's historical disposition, not the current test inventory. This PR restores `merge-node-paused-abort-retryable.test.ts` with lifecycle-safe expectations and a production fix for qualified stale manual-hold recovery. It does not restore automatic review-to-WIP authority. The record remains archived; the replacement file is not quarantined.
+
+The PR's original whole-file reproduction on `a8b29f77fa` found 13 failures: 12 obsolete backward-move assertions and one valid stale manual-hold recovery blocked by the earlier durable merger-park guard. Its expanded negative control failed all 16 stale-hold cases across eight merge aliases and default/renamed review lanes, while 304 pause/cancel/blocker and lifecycle cases passed. With the production ordering fix, all 320 cases passed; three adjacent suites passed 38 tests. Later follow-ups added classifier-error and completion-suppression coverage. These are separate root-fix results, not a reinterpretation of every historical sequence failure or evidence that the deletion decision restored this coverage.
+
+Reproduce the replacement whole-file gate from the repository root. Set disposable `HOME` and `TMPDIR` inside `pnpm exec` so pnpm retains its installed package-manager routing and the test process retains its executable `PATH`:
+
+```sh
+(
+  set -eu
+  sandbox=$(mktemp -d "$PWD/node_modules/.merge-hold-repro.XXXXXX")
+  trap 'rm -rf "$sandbox"' EXIT
+  mkdir -p "$sandbox/home" "$sandbox/tmp"
+  pnpm --filter @fusion/engine exec env HOME="$sandbox/home" TMPDIR="$sandbox/tmp" \
+    vitest run --project engine-reliability src/__tests__/reliability-interactions/merge-node-paused-abort-retryable.test.ts
+)
+```
+
 ### 3. Plugin runner complete-lane lifecycle hook
 
 - **Status:** Closed 2026-08-17 by FN-9141 — rescued (fixture defect).
