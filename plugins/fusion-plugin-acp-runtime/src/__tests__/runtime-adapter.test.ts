@@ -70,6 +70,85 @@ describe("AcpRuntimeAdapter (U3)", () => {
     }
   });
 
+  it("maps bare Fusion tool instructions to namespaced MCP schemas", async () => {
+    const promptSpy = vi.spyOn(provider, "promptAcpSession").mockResolvedValue("end_turn");
+    const adapter = makeAdapter();
+    const session = {
+      connection: {},
+      sessionId: "bridge-session",
+      fusionToolBridgeActive: true,
+      fusionToolBridgeToolNames: ["fn_task_prompt_write", "fn_task_list"],
+      resetTurn: vi.fn(),
+    } as unknown as AcpSession;
+
+    try {
+      await adapter.promptWithFallback(session, "Persist with fn_task_prompt_write.");
+      const blocks = promptSpy.mock.calls[0]?.[2] ?? [];
+      expect(blocks).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          type: "text",
+          text: expect.stringContaining("mcp__fusion_custom_tools__fn_task_prompt_write"),
+        }),
+      ]));
+
+      await adapter.promptWithFallback(
+        session,
+        "List with fn_task_list, then call fn_task_list again.",
+      );
+      const repeatedText = (promptSpy.mock.calls[1]?.[2]?.[0] as { text?: string })?.text ?? "";
+      expect(repeatedText.match(/mcp__fusion_custom_tools__fn_task_list/g)).toHaveLength(1);
+
+      await adapter.promptWithFallback(session, "A bridged prompt without a Fusion tool name.");
+      const bridgedPlainBlocks = promptSpy.mock.calls[2]?.[2] ?? [];
+      expect(bridgedPlainBlocks).toEqual([
+        expect.objectContaining({ type: "text", text: "A bridged prompt without a Fusion tool name." }),
+      ]);
+
+      await adapter.promptWithFallback(
+        { ...session, fusionToolBridgeActive: false },
+        "A plain ACP prompt.",
+      );
+      const plainBlocks = promptSpy.mock.calls[3]?.[2] ?? [];
+      expect(plainBlocks).toEqual([
+        expect.objectContaining({ type: "text", text: "A plain ACP prompt." }),
+      ]);
+
+      // Greptile P1 (maps unavailable Fusion tools): a prompt may mention a
+      // fn_* tool that the session's bridge never registered (executor policy
+      // omits it on purpose). Guidance must only map names that exist in the
+      // session; an unregistered name must not be advertised as an MCP schema.
+      const partialSession = {
+        ...session,
+        fusionToolBridgeToolNames: ["fn_task_list"],
+      } as unknown as AcpSession;
+      await adapter.promptWithFallback(
+        partialSession,
+        "Call fn_task_list, but never call fn_task_create.",
+      );
+      const partialText = (promptSpy.mock.calls[4]?.[2]?.[0] as { text?: string })?.text ?? "";
+      expect(partialText).toContain("fn_task_list → mcp__fusion_custom_tools__fn_task_list");
+      expect(partialText).not.toContain("mcp__fusion_custom_tools__fn_task_create");
+      // All mentioned names missing from the session → prompt stays unchanged.
+      await adapter.promptWithFallback(
+        { ...session, fusionToolBridgeToolNames: ["fn_other"] } as unknown as AcpSession,
+        "Do not use fn_task_create here.",
+      );
+      expect((promptSpy.mock.calls[5]?.[2]?.[0] as { text?: string })?.text)
+        .toBe("Do not use fn_task_create here.");
+      // CodeRabbit (negated registered tool): guidance must be conditional —
+      // a registered tool mentioned in negation must not read as an order to call it.
+      await adapter.promptWithFallback(
+        { ...session, fusionToolBridgeToolNames: ["fn_task_create"] } as unknown as AcpSession,
+        "Do not call fn_task_create in this step.",
+      );
+      const negatedText = (promptSpy.mock.calls[6]?.[2]?.[0] as { text?: string })?.text ?? "";
+      expect(negatedText).toContain("If you need to call a mapped tool, call the visible full MCP schema directly.");
+      expect(negatedText).not.toMatch(/^Do not call fn_task_create in this step\.\n\nACP TOOL BRIDGE: .+\. Call the visible/);
+    } finally {
+      promptSpy.mockRestore();
+    }
+  });
+
   /*
   FNXC:GrokAcp 2026-07-12-07:15:
   Chat image attachments must arrive as ACP image ContentBlocks on session/prompt.
