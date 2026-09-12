@@ -6,7 +6,12 @@ import { Header } from "../Header";
 import { AlphaDesktopActionBar } from "../AlphaDesktopActionBar";
 import { buildDashboardNavigationEntries } from "../dashboardNavigationEntries";
 
-vi.mock("../../api", () => ({ fetchScripts: vi.fn().mockResolvedValue({}) }));
+vi.mock("../../api", async (importOriginal) => {
+  const { createDashboardApiMock } = await import("../../test/mockApi");
+  return createDashboardApiMock(() => importOriginal<typeof import("../../api")>(), {
+    fetchScripts: vi.fn().mockResolvedValue({}),
+  });
+});
 
 function mobileProps() {
   return {
@@ -93,7 +98,7 @@ describe("Patchnode navigation surfaces", () => {
     fireEvent.click(screen.getByTestId("view-toggle-overflow-trigger"));
     expect(screen.queryByTestId("view-overflow-patchnode")).toBeNull();
 
-    render(<AlphaDesktopActionBar entries={buildDashboardNavigationEntries({ view: "board", onChangeView: vi.fn() })} activeId="board" />);
+    render(<AlphaDesktopActionBar entries={buildDashboardNavigationEntries({ view: "board", onChangeView: vi.fn() })} activeId="board" tasks={[]} />);
     expect(screen.queryByTestId("alpha-desktop-nav-patchnode")).toBeNull();
   });
 

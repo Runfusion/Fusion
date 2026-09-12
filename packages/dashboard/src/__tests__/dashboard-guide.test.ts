@@ -62,6 +62,14 @@ describe("dashboard guide coverage for lazy-loaded views", () => {
     expect(guide).toContain("Non-Alpha Quick Entry retains its text Save button and separate Start action");
   });
 
+  it("documents the ascending single-column Alpha desktop More menu", () => {
+    const guide = readDashboardGuide();
+
+    expect(guide).toContain("More** opens above its trigger as a compact single vertical column");
+    expect(guide).toContain("one destination per row and vertical scrolling when the list grows beyond the viewport");
+    expect(guide).toContain("leaving the combined trigger-menu region closes it");
+  });
+
   it("documents bottom-entering mobile drawers and Task Detail close ownership", () => {
     const guide = readDashboardGuide();
 
