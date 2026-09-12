@@ -1082,9 +1082,10 @@ beforeEach(() => {
    * leaked auth/settings Once value made App render an auto-opened modal surface instead of the
    * board. mockReset each once-queue-prone API mock here, then re-apply its default below.
    */
-  for (const onceProneApiMock of [fetchSettings, updateSettings, fetchGlobalSettings, fetchDashboardHealth, fetchAuthStatus, fetchModels, fetchScripts, runScript, fetchBoardWorkflows, fetchPluginDashboardViews]) {
+  for (const onceProneApiMock of [fetchSettings, updateSettings, fetchGlobalSettings, fetchDashboardHealth, fetchAuthStatus, fetchModels, fetchScripts, runScript, fetchBoardWorkflows, fetchPluginDashboardViews, fetchPatchnode]) {
     vi.mocked(onceProneApiMock).mockReset();
   }
+  vi.mocked(fetchPatchnode).mockResolvedValue({ days: [], totalEntries: 0, hasMore: false });
   vi.mocked(fetchPluginDashboardViews).mockResolvedValue([]);
   vi.mocked(fetchSettings).mockResolvedValue({ ...defaultSettings });
   vi.mocked(updateSettings).mockResolvedValue({ ...defaultSettings });
@@ -2019,9 +2020,12 @@ describe("Alpha Updates production wiring", () => {
   });
 
   it.each([
-    ["selected", undefined],
-    ["aggregate", ALL_WORKFLOWS_BOARD_VIEW_ID],
-  ] as const)("routes complete-column History through the %s Board production chain", async (_mode, selection) => {
+    ["selected", "desktop", 1200, undefined, "loading"],
+    ["aggregate", "desktop", 1200, ALL_WORKFLOWS_BOARD_VIEW_ID, "empty"],
+    ["selected", "mobile", 600, undefined, "error"],
+    ["aggregate", "mobile", 600, ALL_WORKFLOWS_BOARD_VIEW_ID, "populated"],
+  ] as const)("routes complete-column History through the %s Board production chain on %s", async (_mode, viewport, width, selection, historyState) => {
+    mockUseViewportMode.mockReturnValue(viewport);
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
       experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates: true },
@@ -2029,15 +2033,92 @@ describe("Alpha Updates production wiring", () => {
     if (selection) {
       localStorage.setItem(scopedKey(BOARD_WORKFLOW_SELECTION_STORAGE_KEY, DEFAULT_PROJECT_ID), selection);
     }
+    const emptyTasks = mockUseTasks();
+    mockUseTasks.mockReturnValue({
+      ...emptyTasks,
+      tasks: [{
+        id: "FN-371-HISTORY",
+        title: "History render invariant",
+        description: "Keep the populated Board mounted while History opens.",
+        status: "done",
+        column: "done",
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: "2026-09-12T00:00:00.000Z",
+        updatedAt: "2026-09-12T00:00:00.000Z",
+      }],
+    });
+    const populatedFeed = {
+      days: [{
+        day: "2026-09-12",
+        completedCount: 1,
+        revertedCount: 0,
+        entries: [{
+          entryId: "completed:FN-371-HISTORY:1",
+          taskId: "FN-371-HISTORY",
+          kind: "completed" as const,
+          occurrenceKey: "1",
+          day: "2026-09-12",
+          occurredAt: "2026-09-12T00:00:00.000Z",
+          title: "History render invariant",
+          body: "History loaded without replacing the Board.",
+        }],
+      }],
+      totalEntries: 1,
+      hasMore: false,
+    };
+    if (historyState === "loading") {
+      vi.mocked(fetchPatchnode).mockImplementation(() => new Promise(() => undefined));
+    } else if (historyState === "error") {
+      vi.mocked(fetchPatchnode).mockRejectedValue(new Error("History unavailable"));
+    } else if (historyState === "populated") {
+      vi.mocked(fetchPatchnode).mockResolvedValue(populatedFeed);
+    }
+    const originalWidth = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
 
-    render(<App />);
+    try {
+      render(<App />);
 
-    const historyButton = await screen.findByTestId("column-history-done");
-    expect(screen.queryByTestId("sidebar-nav-patchnode")).toBeNull();
-    fireEvent.click(historyButton);
-    expect(await screen.findByRole("dialog", { name: "History" })).toHaveAttribute("aria-modal", "false");
-    expect(localStorage.getItem(taskViewStorageKey())).toBe("board");
-    expect(document.querySelectorAll(".board")).toHaveLength(1);
+      const historyButton = await screen.findByTestId("column-history-done");
+      const boardBefore = document.querySelector(".board");
+      const columnsBefore = Array.from(document.querySelectorAll(".board > .column"));
+      expect(boardBefore).not.toBeNull();
+      expect(screen.queryByTestId("sidebar-nav-patchnode")).toBeNull();
+
+      fireEvent.click(historyButton);
+      const historyDialog = await screen.findByRole("dialog", { name: "History" });
+      expect(historyDialog).toHaveAttribute("aria-modal", viewport === "desktop" ? "false" : "true");
+      expect(document.querySelector(".board")).toBe(boardBefore);
+      expect(Array.from(document.querySelectorAll(".board > .column"))).toEqual(columnsBefore);
+      expect(document.querySelectorAll(".board")).toHaveLength(1);
+      if (viewport === "desktop") {
+        expect(localStorage.getItem(taskViewStorageKey())).toBe("board");
+      } else {
+        expect(screen.getByTestId("alpha-mobile-drawer-main-content")).toContainElement(historyDialog);
+        expect(screen.getByTestId("board-keep-alive")).not.toHaveAttribute("aria-hidden");
+      }
+
+      fireEvent.click(historyButton);
+      expect(screen.getAllByRole("dialog", { name: "History" })).toHaveLength(1);
+      expect(document.querySelector(".board")).toBe(boardBefore);
+
+      if (historyState === "loading") {
+        expect(screen.getByText("Loading History…")).toBeInTheDocument();
+      } else if (historyState === "error") {
+        expect(await screen.findByText("History could not be loaded.")).toBeInTheDocument();
+      } else if (historyState === "empty") {
+        expect(await screen.findByTestId("patchnode-empty")).toBeInTheDocument();
+      } else {
+        expect(await screen.findByText("History loaded without replacing the Board.")).toBeInTheDocument();
+      }
+      expect(document.querySelector(".board")).toBe(boardBefore);
+      expect(Array.from(document.querySelectorAll(".board > .column"))).toEqual(columnsBefore);
+    } finally {
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth });
+    }
   });
 });
 

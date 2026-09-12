@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { memo, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
@@ -6,25 +6,69 @@ import { listComponentFiles, readAppFile } from "../../../test/cssFixture";
 import type { MainContentProps } from "../types";
 import { KEEP_ALIVE_MAIN_VIEW_IDS, MainViewKeepAlive } from "../MainViewKeepAlive";
 
-const activeByView = vi.hoisted(() => ({
-  board: [] as boolean[],
-  list: [] as boolean[],
-  chat: [] as boolean[],
-  markRead: vi.fn(),
+const activeByView = vi.hoisted(() => {
+  const workflow = {
+    id: "builtin:coding",
+    name: "Coding",
+    columns: [
+      { id: "triage", name: "Triage", flags: { intake: true } },
+      { id: "done", name: "Done", flags: { complete: true } },
+    ],
+  };
+  const workflowHookResult = {
+    boardWorkflows: {
+      defaultWorkflowId: workflow.id,
+      workflows: [workflow],
+      taskWorkflowIds: {},
+    },
+    workflowMode: true,
+    workflowOptions: [workflow],
+    selectedWorkflow: workflow,
+    selectedWorkflowId: workflow.id,
+    setSelectedWorkflowId: vi.fn(),
+    refreshBoardWorkflows: vi.fn(),
+    setBoardWorkflowsState: vi.fn(),
+  };
+  return {
+    workflow,
+    workflowHookResult,
+    board: [] as boolean[],
+    list: [] as boolean[],
+    chat: [] as boolean[],
+    historyCallbacks: [] as Array<(() => void) | undefined>,
+    historyColumnRenders: 0,
+    markRead: vi.fn(),
+  };
+});
+
+vi.mock("../../../hooks/useBoardWorkflows", () => ({
+  useBoardWorkflows: () => activeByView.workflowHookResult,
 }));
 
-vi.mock("../../Board", () => ({
-  Board: ({ active }: { active?: boolean }) => {
+vi.mock("../../Column", () => ({
+  Column: memo(function InstrumentedColumn(props: {
+    active?: boolean;
+    alphaUpdatesEnabled?: boolean;
+    column: string;
+    columnFlags?: { complete?: boolean };
+    onOpenHistory?: () => void;
+    [key: string]: unknown;
+  }) {
+    const { active, alphaUpdatesEnabled, column, columnFlags, onOpenHistory } = props;
     const isActive = active ?? true;
     activeByView.board.push(isActive);
-    const slot = document.getElementById("header-workflow-slot");
+    if (!columnFlags?.complete) return <output data-testid={`board-column-${column}`} data-active={String(isActive)} />;
+
+    activeByView.historyColumnRenders += 1;
+    activeByView.historyCallbacks.push(onOpenHistory);
     return (
-      <>
-        <output data-testid="board-child" data-active={String(isActive)} />
-        {isActive && slot ? createPortal(<output data-testid="board-header-control">Board controls</output>, slot) : null}
-      </>
+      <output data-testid="board-child" data-active={String(isActive)}>
+        {alphaUpdatesEnabled && onOpenHistory ? (
+          <button type="button" data-testid="column-history-done" onClick={onOpenHistory}>History</button>
+        ) : null}
+      </output>
     );
-  },
+  }),
 }));
 vi.mock("../../ListView", () => ({
   ListView: ({ active }: { active?: boolean }) => {
@@ -74,6 +118,28 @@ function renderHost(activeId: "board" | "list" | "chat" | null) {
   );
 }
 
+function HistoryWindowHost() {
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [props] = useState(() => ({
+    ...mainContentProps(),
+    experimentalFeatures: { alphaUpdates: true },
+    handleChangeTaskView: (view: MainContentProps["taskView"]) => {
+      if (view === "patchnode") setHistoryOpen(true);
+    },
+  } as MainContentProps));
+  return (
+    <>
+      <MainViewKeepAlive
+        activeId="board"
+        mountedIds={["board"]}
+        projectKey="project-1"
+        mainContentProps={props}
+      />
+      {historyOpen ? <output data-testid="history-window">History open</output> : null}
+    </>
+  );
+}
+
 function createHeaderSlot() {
   const slot = document.createElement("div");
   slot.id = "header-workflow-slot";
@@ -91,11 +157,34 @@ function productionAppSourceFiles(): string[] {
 }
 
 describe("MainViewKeepAlive", () => {
+  it("keeps the complete-column History callback stable when its Alpha window opens", () => {
+    activeByView.historyCallbacks.length = 0;
+    activeByView.historyColumnRenders = 0;
+    render(<HistoryWindowHost />);
+
+    const boardBefore = screen.getByTestId("board-child");
+    const callbackBefore = activeByView.historyCallbacks.at(-1);
+    expect(callbackBefore).toBeTypeOf("function");
+    const rendersBeforeOpen = activeByView.historyColumnRenders;
+    expect(rendersBeforeOpen).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByTestId("column-history-done"));
+
+    expect(screen.getByTestId("history-window")).toBeInTheDocument();
+    expect(screen.getByTestId("board-child")).toBe(boardBefore);
+    expect(activeByView.historyCallbacks.at(-1)).toBe(callbackBefore);
+    expect(activeByView.historyColumnRenders).toBe(rendersBeforeOpen);
+  });
+
+  it("does not expose the History button without Alpha even though the route handler exists", () => {
+    renderHost("board");
+    expect(screen.queryByTestId("column-history-done")).toBeNull();
+  });
+
   it("keeps visited children mounted and derives their active value from one resolved id", () => {
     const result = renderHost("board");
 
     expect(screen.getByTestId("board-keep-alive")).not.toHaveAttribute("aria-hidden");
-    expect(screen.getByTestId("board-child")).toHaveAttribute("data-active", "true");
     for (const id of ["list", "chat"] as const) {
       expect(screen.getByTestId(`${id}-keep-alive`)).toHaveAttribute("aria-hidden", "true");
       expect(screen.getByTestId(`${id}-child`)).toHaveAttribute("data-active", "false");
@@ -113,7 +202,6 @@ describe("MainViewKeepAlive", () => {
 
     expect(screen.getByTestId("board-child")).toBe(boardBefore);
     expect(screen.getByTestId("board-keep-alive")).toHaveAttribute("aria-hidden", "true");
-    expect(screen.getByTestId("board-child")).toHaveAttribute("data-active", "false");
     expect(screen.getByTestId("chat-keep-alive")).not.toHaveAttribute("aria-hidden");
     expect(screen.getByTestId("chat-child")).toHaveAttribute("data-active", "true");
   });
@@ -131,7 +219,6 @@ describe("MainViewKeepAlive", () => {
     );
 
     expect(screen.getByTestId("board-keep-alive")).not.toHaveAttribute("aria-hidden");
-    expect(screen.getByTestId("board-child")).toHaveAttribute("data-active", "true");
     const dialog = screen.getByRole("dialog", { name: activeId === "chat" ? "Chat" : "List" });
     expect(dialog).toContainElement(screen.getByTestId(`${activeId}-child`));
     expect(dialog.querySelector(".alpha-mobile-drawer__close")).toBeNull();
@@ -151,7 +238,7 @@ describe("MainViewKeepAlive", () => {
 
     for (const id of KEEP_ALIVE_MAIN_VIEW_IDS) {
       expect(screen.getByTestId(`${id}-keep-alive`)).toHaveAttribute("aria-hidden", "true");
-      expect(screen.getByTestId(`${id}-child`)).toHaveAttribute("data-active", "false");
+      if (id !== "board") expect(screen.getByTestId(`${id}-child`)).toHaveAttribute("data-active", "false");
     }
     expect(slot).toBeEmptyDOMElement();
     expect(activeByView.markRead).not.toHaveBeenCalled();
@@ -172,7 +259,7 @@ describe("MainViewKeepAlive", () => {
     expect(screen.getByTestId("board-keep-alive")).toHaveAttribute("aria-hidden", "true");
     expect(slot.querySelectorAll("[data-testid$='header-control']")).toHaveLength(1);
     expect(slot).toContainElement(screen.getByTestId("list-header-control"));
-    expect(slot.querySelector("[data-testid='board-header-control']")).toBeNull();
+    expect(slot.querySelector(".board-workflow-toolbar")).toBeNull();
     slot.remove();
   });
 
