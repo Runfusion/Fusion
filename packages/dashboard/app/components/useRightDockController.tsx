@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import type { GithubIssueAction, MergeResult, Task, TaskDetail, WorkflowStep } from "@fusion/core";
+import type { GithubIssueAction, MergeResult, ProjectNoteSummary, Task, TaskDetail, WorkflowStep } from "@fusion/core";
 import { isNearDuplicateCanonicalInactive } from "../../../core/src/duplicates/near-duplicate-canonical";
 import type { ToastType } from "../hooks/useToast";
 import type { UseNotesController } from "../hooks/useNotes";
@@ -7,8 +7,6 @@ import type { ChatSessionInfo } from "../hooks/useChat";
 import type { DetailTaskTab } from "../hooks/useModalManager";
 import { fetchTaskDetail } from "../api";
 import type { RevertTaskOptions, RevertTaskResult } from "../api";
-import { getScopedItem } from "../utils/projectStorage";
-import { DOCK_FILES_CURRENT_KEY } from "./DockFilesView";
 import { TaskCard } from "./TaskCard";
 import { RightDockTaskDetailHost } from "./TaskDetailHostBoundaries";
 import { mergeTaskSnapshot } from "../hooks/useTasks";
@@ -35,7 +33,9 @@ export interface RightDockControllerInput {
   subscribePluginEvents: (pluginId: string, onEvent: (event: { event: string; payload: unknown }) => void) => () => void;
   openDetailTask: (task: Task | TaskDetail, initialTab?: DetailTaskTab) => void;
   onOpenSessionInNewWindow?: (session: ChatSessionInfo) => void;
+  openChatWindows?: ReadonlyMap<string, "open" | "minimized">;
   notesController?: UseNotesController;
+  onOpenNote?: (note: ProjectNoteSummary) => void;
   registerNotesGuard?: (guard: () => boolean | Promise<boolean>, onAccepted?: () => void) => () => void;
   openFileInBrowser: (path: string, opts?: { workspace?: string; line?: number; col?: number }) => void;
   onUpdateTask?: (id: string, updates: { title?: string; description?: string; dependencies?: string[]; dismissNearDuplicate?: boolean; githubTracking?: { enabled?: boolean } }) => Promise<Task>;
@@ -143,21 +143,6 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
   Popping a view out CLOSES the right dock but KEEPS the floating modal open. The modal is independent of dock open state (see expandedView note above), so collapsing the dock on pop-out gives the user the full-width app behind the movable, non-blocking modal. Clearing the pop-out (viewKey null) leaves the dock as-is.
   */
   const handleExpand = useCallback((viewKey: OverflowViewKey | null) => {
-    /*
-    FNXC:RightDockFiles 2026-06-23-23:38:
-    If Files is showing an individual file, Expand should open the existing FileBrowserModal at that file instead of the generic right-dock expanded panel. The file modal is the shared movable/resizable file surface and keeps its transparent, non-blurring FloatingWindow backdrop; an empty Files view still expands to the two-pane browser.
-    */
-    if (viewKey === "files") {
-      const currentFile = getScopedItem(DOCK_FILES_CURRENT_KEY, input.projectId);
-      if (currentFile) {
-        input.openFileInBrowser(currentFile, { workspace: "project" });
-        setOpen(false);
-        persistRightDockOpen(false);
-        setExpandedView(null);
-        return;
-      }
-    }
-
     setExpandedView(viewKey);
     if (viewKey) {
       setOpen(false);
@@ -244,7 +229,9 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
     onOpenChatWithPrefill: input.onOpenChatWithPrefill,
     onOpenDetail: input.openDetailTask,
     onOpenSessionInNewWindow: input.onOpenSessionInNewWindow,
+    openChatWindows: input.openChatWindows,
     notesController: input.notesController,
+    onOpenNote: input.onOpenNote,
     registerNotesGuard: input.registerNotesGuard,
     onSendSelectionToTask: input.onSendSelectionToTask,
     onCreateTaskFromInsight: input.onCreateTaskFromInsight,

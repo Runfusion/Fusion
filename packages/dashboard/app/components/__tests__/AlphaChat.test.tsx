@@ -195,9 +195,18 @@ describe("homemade Alpha Chat", () => {
         })}</>);
       }
 
+      if (host === "popped-out") {
+        expect(screen.queryByTestId(`chat-session-${activeSessionFixture.id}`)).toBeNull();
+        expect(document.querySelector(".chat-sidebar")).toBeNull();
+        expect(screen.queryByTestId("chat-back-btn")).toBeNull();
+        expect(screen.queryByTestId("chat-new-btn")).toBeNull();
+        expect(screen.queryByTestId("chat-thread-title-switcher")).toBeNull();
+        expect(screen.getByTestId("chat-modal-close")).toBeInTheDocument();
+        return;
+      }
       expect(await screen.findByTestId(`chat-session-${activeSessionFixture.id}`)).toBeInTheDocument();
       expect(document.querySelector('[data-alpha-ui="button"]')).not.toBeNull();
-      if (host === "quick-chat" || host === "popped-out") {
+      if (host === "quick-chat") {
         const floatingChat = document.querySelector(".floating-window--chat .chat-view--floating");
         expect(floatingChat?.children[0]).toHaveClass("view-header");
         expect(floatingChat?.children[1]).toHaveClass("chat-view__body");
@@ -229,11 +238,12 @@ describe("homemade Alpha Chat", () => {
   ] as const)("keeps the real %s History-style shell in %s for %s content", async (host, viewport, state) => {
     const restoreViewport = mockViewportMode(viewport);
     const populated = state !== "empty";
+    const dedicated = host === "popped-out";
     setupMockChat({
       ...defaultChatState,
-      sessions: populated ? [activeSessionFixture] : [],
-      filteredSessions: populated ? [activeSessionFixture] : [],
-      activeSession: populated ? activeSessionFixture : null,
+      sessions: populated || dedicated ? [activeSessionFixture] : [],
+      filteredSessions: populated || dedicated ? [activeSessionFixture] : [],
+      activeSession: populated || dedicated ? activeSessionFixture : null,
       isStreaming: state === "streaming",
       streamingText: state === "streaming" ? "Réponse en cours" : "",
     });
@@ -275,13 +285,17 @@ describe("homemade Alpha Chat", () => {
         expect(window.innerWidth).toBe(375);
         expect(floatingChat).toHaveClass("chat-view--floating");
       }
-      if (!populated) {
+      if (dedicated) {
+        expect(document.querySelector(".chat-sidebar")).toBeNull();
+        expect(screen.queryByTestId(`chat-session-${activeSessionFixture.id}`)).toBeNull();
+        expect(document.querySelector(".chat-thread")).toBeInTheDocument();
+      } else if (!populated) {
         expect(screen.getByText("No conversations yet")).toBeInTheDocument();
       } else {
         expect(screen.getByTestId(`chat-session-${activeSessionFixture.id}`)).toBeInTheDocument();
       }
       if (state === "streaming") {
-        await openFirstConversation();
+        if (!dedicated) await openFirstConversation();
         expect(await screen.findByTestId("chat-message-__streaming__")).toHaveTextContent("Réponse en cours");
       }
     } finally {

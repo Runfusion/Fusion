@@ -4,6 +4,7 @@ import { closeTopmostDashboardPopupForShortcut } from "../App";
 import { useDashboardKeyboardShortcuts } from "../hooks/useDashboardKeyboardShortcuts";
 import { useNavigationHistory } from "../hooks/useNavigationHistory";
 import { usePoppedOutChats } from "../hooks/usePoppedOutChats";
+import { usePoppedOutNotes } from "../hooks/usePoppedOutNotes";
 import { closeViewShortcut, retainViewNavRevert } from "../utils/dashboardShortcutToggles";
 
 function baseHandlers() {
@@ -279,6 +280,21 @@ describe("App dashboard keyboard shortcuts", () => {
       { closePoppedOutTask: vi.fn(), closePoppedOutChat, closeQuickChat: vi.fn(), closeTerminal: vi.fn() },
     )).toBe(true);
     expect(closePoppedOutChat).toHaveBeenCalledWith("project", "b");
+  });
+
+  it("ferme par Escape la note réactivée au premier plan", () => {
+    const { result } = renderHook(() => usePoppedOutNotes());
+    const note = (id: string) => ({ id, title: id, createdAt: "2026-09-12T00:00:00.000Z", updatedAt: "2026-09-12T00:00:00.000Z" });
+    act(() => result.current.popOut("project", note("a")));
+    act(() => result.current.popOut("project", note("b")));
+    act(() => result.current.popOut("project", note("a")));
+
+    const closePoppedOutNote = vi.fn();
+    expect(closeTopmostDashboardPopupForShortcut(
+      { poppedOutTaskEntries: [], poppedOutChatEntries: [], poppedOutNoteEntries: result.current.entries, quickChatOpen: false, terminalOpen: false, modalClosers: [] },
+      { closePoppedOutTask: vi.fn(), closePoppedOutChat: vi.fn(), closePoppedOutNote, closeQuickChat: vi.fn(), closeTerminal: vi.fn() },
+    )).toBe(true);
+    expect(closePoppedOutNote).toHaveBeenCalledWith("project", "a");
   });
 
   it("prevents Escape only when the App shell closes a popup", () => {

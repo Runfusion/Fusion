@@ -52,6 +52,16 @@ describe("NotesView", () => {
     window.dispatchEvent(new Event("resize"));
   });
 
+  it("garde le dock en liste et délègue l’ouverture sans charger le détail", async () => {
+    const onOpenNote = vi.fn();
+    render(<ConfirmDialogProvider><NotesView projectId="p" compact listOnly onOpenNote={onOpenNote} /></ConfirmDialogProvider>);
+    fireEvent.click(await screen.findByRole("button", { name: /Commande/ }));
+    expect(onOpenNote).toHaveBeenCalledWith(expect.objectContaining({ id: "n" }));
+    expect(api.fetchNote).not.toHaveBeenCalled();
+    expect(document.querySelector(".notes-detail")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Back" })).toBeNull();
+  });
+
   it("fills the host with an edge-to-edge extensible split", async () => {
     renderNotes();
     await screen.findByRole("button", { name: /Commande/ });
@@ -96,7 +106,7 @@ describe("NotesView", () => {
     const loading = deferred<{ notes: typeof note[] }>();
     api.fetchNotes.mockReturnValueOnce(loading.promise);
     const view = renderNotes();
-    expect(await screen.findByText("Loading…")).toBeInTheDocument();
+    expect((await screen.findAllByText("Loading…")).length).toBeGreaterThan(0);
     loading.resolve({ notes: [note] });
     await screen.findByRole("button", { name: /Commande/ });
     view.unmount();

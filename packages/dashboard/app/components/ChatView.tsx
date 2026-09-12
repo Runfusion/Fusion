@@ -144,6 +144,10 @@ export interface ChatViewProps {
   compactLayout?: boolean;
   /** Keeps this host on the conversation list and delegates every open/create to a chat window. */
   listOnly?: boolean;
+  /** Project-scoped state of dedicated windows, keyed by conversation id. */
+  openChatWindows?: ReadonlyMap<string, "open" | "minimized">;
+  /** Locks this host to initialDirectSession and removes every cross-conversation navigation control. */
+  dedicatedConversation?: boolean;
   onPopOut?: () => void;
   onMaximize?: () => void;
   onClose?: () => void;
@@ -384,7 +388,7 @@ function ChatDialogBackdrop({ children, onClose }: { children: React.ReactElemen
 
 type CopyFeedbackState = "success" | "error" | null;
 
-function ChatViewContent({ projectId, addToast, floating = false, compactLayout = false, listOnly = false, findActive = true, active = true, onPopOut, onMaximize, onClose, onOpenSessionInNewWindow, initialDirectSession, initialDirectSessionNonce, persistChatPreferences = true, chatCommandContext, initialComposerDraft, initialComposerDraftNonce, onSendAsReport }: ChatViewProps) {
+function ChatViewContent({ projectId, addToast, floating = false, compactLayout = false, listOnly = false, openChatWindows, dedicatedConversation = false, findActive = true, active = true, onPopOut, onMaximize, onClose, onOpenSessionInNewWindow, initialDirectSession, initialDirectSessionNonce, persistChatPreferences = true, chatCommandContext, initialComposerDraft, initialComposerDraftNonce, onSendAsReport }: ChatViewProps) {
   const { t } = useTranslation("app");
   const chatMessageLayout = useChatMessageLayout();
   const enterSubmits = useChatEnterSubmits();
@@ -810,7 +814,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
   const [dockedSidebarWidth, setDockedSidebarWidth] = useState(() => readChatDockedSidebarWidth(persistChatPreferences));
   const [dockedSidebarOpen, setDockedSidebarOpen] = useState(() => readChatDockedSidebarOpen(persistChatPreferences));
   const resizeTeardownRef = useRef<(() => void) | null>(null);
-  const dockedSidebarEligible = !listOnly && !floating && !isChatMobile;
+  const dockedSidebarEligible = !listOnly && !dedicatedConversation && !floating && !isChatMobile;
   const dockedSidebarVisible = dockedSidebarEligible && dockedSidebarOpen;
 
   useEffect(() => {
@@ -2605,6 +2609,18 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
 
   // Render empty state (no active session)
   const renderEmptyState = () => {
+    /*
+    FNXC:ChatWindows 2026-09-12-04:56:
+    Une fenêtre dédiée dont la conversation vient d’être supprimée reste bornée à cette identité et ne propose jamais de créer ou sélectionner une autre conversation. Les hôtes ordinaires conservent leur état vide avec l’action New Chat.
+    */
+    if (dedicatedConversation) {
+      return (
+        <div className="chat-empty-state" data-testid="chat-dedicated-session-unavailable">
+          <MessageSquare size={48} strokeWidth={1.5} />
+          <h2>{t("chat.conversationDeleted", "Conversation deleted")}</h2>
+        </div>
+      );
+    }
     return (
       <div className="chat-empty-state">
         <MessageSquare size={48} strokeWidth={1.5} />
@@ -2647,7 +2663,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
   const activeModelTag = formatModelTag(activeResolvedModel?.provider, activeResolvedModel?.modelId);
   const activeModelProvider = activeResolvedModel?.provider ?? null;
   const hasThreadInView = Boolean(activeSession || isStreaming || messages.length > 0);
-  const hasDetailSelection = !listOnly && detailOpen && hasThreadInView;
+  const hasDetailSelection = !listOnly && detailOpen && (hasThreadInView || dedicatedConversation);
   // ── CLI-backed chat mount (U12) ──────────────────────────────────────────
   // When the active chat session selects a cli-agent executor, the message-pane
   // + composer region is delegated to <CliChatSurface> (transcript + raw-terminal
@@ -2826,7 +2842,9 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
   FNXC:ChatNavigation 2026-08-20-05:25:
   FN-068 makes the saved conversation title the direct-thread identity for every host. Model metadata remains secondary, and titleless legacy sessions use a stable label rather than promoting a model name into the title slot.
   */
-  const threadHeaderTitle = activeSession?.title?.trim() || t("chat.untitledConversation", "Untitled conversation");
+  const threadHeaderTitle = activeSession?.title?.trim()
+    || (dedicatedConversation ? initialDirectSession?.title?.trim() : "")
+    || t("chat.untitledConversation", "Untitled conversation");
 
   const showThreadHeaderModelTag = Boolean(activeModelTag);
   const showThreadHeaderContextWindow = !isChatMobile && hasThreadInView && chatContextUsage !== null;
@@ -3386,7 +3404,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
     <div ref={chatViewRef} className={`chat-view${floating ? " chat-view--floating" : ""}${isChatMobile ? " chat-view--narrow" : ""}${hasDetailSelection ? " chat-view--detail" : ""}${dockedSidebarVisible ? " chat-view--docked-list" : ""}${chatMessageLayout === "full-width" ? " chat-view--full-width" : ""}`}>
       <ViewHeader
         icon={MessageSquare}
-        title={t("chat.title", "Chat")}
+        title={dedicatedConversation ? threadHeaderTitle : t("chat.title", "Chat")}
         onClose={floating ? onClose : undefined}
         closeButtonProps={floating ? {
           "aria-label": t("chat.closeChat", "Close chat"),
@@ -3406,7 +3424,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
               </AlphaButton>
             ) : null}
 
-            <AlphaButton
+            {!dedicatedConversation ? <AlphaButton
               className="btn btn-sm btn-primary chat-view-header-new-chat"
               onClick={handleNewChat}
               data-testid="chat-new-btn"
@@ -3414,7 +3432,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
             >
               <Plus size={14} />
               {t("chat.newChat", "New Chat")}
-            </AlphaButton>
+            </AlphaButton> : null}
             {!floating && onPopOut ? (
               <AlphaButton
                 type="button"
@@ -3444,7 +3462,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
       />
       <div className="chat-view__body">
       {/* Sidebar */}
-      <div
+      {!dedicatedConversation ? <div
         className={`chat-sidebar${hasDetailSelection && !dockedSidebarVisible ? " chat-sidebar--hidden" : ""}${dockedSidebarVisible ? " chat-sidebar--docked" : ""}`}
         style={dockedSidebarVisible ? { width: dockedSidebarWidth, minWidth: dockedSidebarWidth } : undefined}
       >
@@ -3533,6 +3551,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
                   );
                   const sessionModelTag = formatModelTag(sessionResolvedModel?.provider, sessionResolvedModel?.modelId) ?? "Fusion";
                   const sessionTitle = session.title || t("chat.untitledSession", "Untitled");
+                  const windowState = !showArchivedSessions ? openChatWindows?.get(session.id) : undefined;
 
                   return (
                     <div
@@ -3579,6 +3598,9 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
                           />
                         ) : null}
                       </div>
+                      {windowState ? <span className="chat-session-window-state" data-testid={`chat-session-window-state-${session.id}`}>
+                        {windowState === "minimized" ? t("chat.windowMinimized", "Minimized") : t("chat.windowOpen", "Open")}
+                      </span> : null}
                       <div className="chat-session-preview">
                         {session.lastMessagePreview || t("chat.noMessages", "No messages")}
                       </div>
@@ -3617,7 +3639,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
           aria-label={t("chat.resizeSidebar", "Resize chat sidebar")} data-testid="chat-sidebar-resize-handle"
           onPointerDown={handleDockedResizeStart} onKeyDown={handleDockedResizeKeyDown} /> : null}
 
-      </div>
+      </div> : null}
 
 
 
@@ -3841,7 +3863,11 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
             button (desktop `.chat-thread-header-render-toggle` and the mobile
             floating `--floating` variant) was removed per FN-7541. Chat now
             always renders Markdown (forcePlain is hardcoded to false). */}
-        {hasThreadInView && (
+        {/*
+        FNXC:ChatWindows 2026-09-12-04:06:
+        Une fenêtre de conversation dédiée affiche son titre non interactif dans le ViewHeader et ne monte ni Back, ni ChatThreadTitleSwitcher, ni liste, ni New Chat. Le transcript, la recherche interne et le composer restent ceux du ChatView partagé.
+        */}
+        {hasThreadInView && !dedicatedConversation && (
           <div className="chat-thread-header">
             {!dockedSidebarVisible ? <AlphaButton
               type="button"

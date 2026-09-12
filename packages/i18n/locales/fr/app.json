@@ -1256,6 +1256,8 @@
     "clearConversationFailed": "Échec de l'effacement de la conversation",
     "closeQuickChat": "Fermer le chat rapide",
     "openInNewWindow": "Ouvrir dans une nouvelle fenêtre",
+    "windowOpen": "Ouvert",
+    "windowMinimized": "Réduit",
     "conversationArchived": "Conversation archivée",
     "conversationDeleted": "Conversation supprimée",
     "conversationName": "",

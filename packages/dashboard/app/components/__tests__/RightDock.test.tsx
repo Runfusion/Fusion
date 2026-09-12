@@ -13,8 +13,6 @@ import {
 } from "../RightDock";
 import { RightDockExpandModal } from "../RightDockExpandModal";
 import { useRightDockController, type RightDockControllerInput } from "../useRightDockController";
-import { DOCK_FILES_CURRENT_KEY } from "../DockFilesView";
-import { setScopedItem } from "../../utils/projectStorage";
 
 const taskDetailRenderSpy = vi.hoisted(() => vi.fn());
 
@@ -149,20 +147,16 @@ describe("RightDock", () => {
     expect(screen.getByTestId("right-dock-tab-git-manager")).toHaveAttribute("aria-selected", "true");
   });
 
-  /*
-  FNXC:RightDockFiles 2026-06-23-00:50:
-  Deterministic dock two-pane decision: the dock threads its measured width to the Files registry render as `dockWidth`, and the Files entry forces DockFilesView layout="two-pane" once that width crosses 640px (no @container gate). A narrow dock (default 360px) stays layout="auto" (stacked single-panel). Assert both via the data-layout attribute the view exposes.
-  */
-  it("forces the Files two-pane layout when the dock is dragged wide, and stays stacked when narrow", () => {
-    // Narrow default width (360px) -> stacked single-panel.
+  it("conserve Files comme liste unique aux largeurs étroite et large", () => {
     const { unmount } = render(<TestRightDock open={true} renderProps={renderProps} />);
-    expect(screen.getByTestId("right-dock-files-view")).toHaveAttribute("data-layout", "auto");
+    expect(screen.getByTestId("right-dock-files-view")).toBeInTheDocument();
+    expect(screen.queryByTestId("right-dock-files-viewer")).toBeNull();
     unmount();
 
-    // Wide persisted width (>= 640px) -> deterministic LEFT|RIGHT two-pane.
     window.localStorage.setItem(RIGHT_DOCK_WIDTH_STORAGE_KEY, "900");
     render(<TestRightDock open={true} renderProps={renderProps} />);
-    expect(screen.getByTestId("right-dock-files-view")).toHaveAttribute("data-layout", "two-pane");
+    expect(screen.getByTestId("right-dock-files-view")).toBeInTheDocument();
+    expect(screen.queryByTestId("right-dock-files-viewer")).toBeNull();
   });
 
   it("falls back to Files when storage points at a removed right-dock view", () => {
@@ -185,6 +179,8 @@ describe("RightDock", () => {
     expect(screen.getByTestId("right-dock-pin")).toHaveAttribute("aria-pressed", "false");
     expect(screen.getByTestId("right-dock-expand")).toHaveAttribute("aria-label", "Expand Files");
     expect(screen.getByTestId("right-dock-expand")).toHaveAttribute("title", "Expand Files");
+    expect(screen.getByRole("tabpanel", { name: "Files" })).toBeInTheDocument();
+    expect(document.querySelector(".right-dock__header")).toBeNull();
     expect(screen.queryByTestId("right-dock-collapse-toggle")).toBeNull();
   });
 
@@ -274,7 +270,7 @@ describe("RightDock", () => {
 
     fireEvent.click(screen.getByTestId("close-dock-task"));
     expect(screen.queryByTestId("dock-task-detail")).toBeNull();
-    expect(screen.getByText("Git Manager")).toBeInTheDocument();
+    expect(screen.getByRole("tabpanel", { name: "Git Manager" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId("open-first"));
     expect(screen.getByTestId("dock-task-detail")).toHaveTextContent("First task");
@@ -283,7 +279,7 @@ describe("RightDock", () => {
     expect(screen.queryByTestId("dock-task-detail")).toBeNull();
     expect(screen.queryByText("Same ID in second project")).toBeNull();
     expect(taskDetailRenderSpy).not.toHaveBeenCalled();
-    expect(screen.getByText("Git Manager")).toBeInTheDocument();
+    expect(screen.getByRole("tabpanel", { name: "Git Manager" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId("open-first"));
     expect(screen.getByTestId("dock-task-detail")).toHaveTextContent("First task");
@@ -291,7 +287,7 @@ describe("RightDock", () => {
     expect(screen.queryByTestId("right-dock")).toBeNull();
     rerender(<Harness active={true} projectId="project-2" />);
     expect(screen.queryByTestId("dock-task-detail")).toBeNull();
-    expect(screen.getByText("Git Manager")).toBeInTheDocument();
+    expect(screen.getByRole("tabpanel", { name: "Git Manager" })).toBeInTheDocument();
   });
 
   it("renders the pin affordance for both states and delegates the toggle", () => {
@@ -742,9 +738,8 @@ describe("RightDock", () => {
     expect(screen.queryByTestId("right-dock-expand-modal")).toBeNull();
   });
 
-  it("routes Files expand to the file browser modal when an individual file is selected", () => {
+  it("développe la liste Files sans rouvrir une sélection inline obsolète", () => {
     const openFileInBrowser = vi.fn();
-    setScopedItem(DOCK_FILES_CURRENT_KEY, "readme.md", "project-1");
     const controllerInput = {
       active: true,
       projectId: "project-1",
@@ -781,7 +776,10 @@ describe("RightDock", () => {
 
     fireEvent.click(screen.getByTestId("right-dock-expand"));
 
-    expect(openFileInBrowser).toHaveBeenCalledWith("readme.md", { workspace: "project" });
-    expect(screen.queryByTestId("right-dock-expand-modal")).toBeNull();
+    expect(openFileInBrowser).not.toHaveBeenCalled();
+    const modal = screen.getByTestId("right-dock-expand-modal");
+    expect(modal).toBeInTheDocument();
+    expect(modal).toContainElement(screen.getByTestId("right-dock-files-view"));
+    expect(screen.queryByTestId("right-dock-files-viewer")).toBeNull();
   });
 });

@@ -69,6 +69,39 @@ describe("ChatView direct-only UI contract", () => {
 });
 
 describe("ChatView popped-out conversation contract", () => {
+  it("verrouille une fenêtre dédiée sur son transcript sans navigation concurrente", async () => {
+    setupMockChat({ activeSession: activeSessionFixture, sessions: [activeSessionFixture], filteredSessions: [activeSessionFixture] });
+    await renderWithAct(<ChatView {...popOutProps} dedicatedConversation />);
+
+    expect(document.querySelector(".chat-thread")).toBeInTheDocument();
+    expect(document.querySelector(".chat-sidebar")).toBeNull();
+    expect(screen.queryByTestId("chat-back-btn")).toBeNull();
+    expect(screen.queryByTestId("chat-thread-title-switcher")).toBeNull();
+    expect(screen.queryByTestId("chat-new-btn")).toBeNull();
+    expect(screen.getByText(activeSessionFixture.title)).toBeInTheDocument();
+  });
+
+  it("ne propose aucune navigation si la conversation dédiée disparaît", async () => {
+    setupMockChat({ activeSession: null, sessions: [], filteredSessions: [], messages: [] });
+    await renderWithAct(<ChatView {...popOutProps} dedicatedConversation />);
+
+    expect(screen.getByTestId("chat-dedicated-session-unavailable")).toHaveTextContent("Conversation deleted");
+    expect(screen.getByText(activeSessionFixture.title)).toBeInTheDocument();
+    expect(screen.queryByTestId("chat-new-btn-empty")).toBeNull();
+    expect(screen.queryByTestId("chat-new-btn")).toBeNull();
+    expect(screen.queryByTestId("chat-back-btn")).toBeNull();
+    expect(document.querySelector(".chat-sidebar")).toBeNull();
+  });
+
+  it("affiche l’état ouvert ou minimisé dans la liste Alpha", async () => {
+    setupMockChat({ activeSession: null, sessions: [activeSessionFixture], filteredSessions: [activeSessionFixture] });
+    const { rerender } = await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} listOnly openChatWindows={new Map([[activeSessionFixture.id, "open"]])} />);
+    expect(screen.getByTestId(`chat-session-window-state-${activeSessionFixture.id}`)).toHaveTextContent("Open");
+
+    rerender(<ChatView projectId="proj-123" addToast={vi.fn()} listOnly openChatWindows={new Map([[activeSessionFixture.id, "minimized"]])} />);
+    expect(screen.getByTestId(`chat-session-window-state-${activeSessionFixture.id}`)).toHaveTextContent("Minimized");
+  });
+
   it("opens the requested thread on desktop-wide, narrow floating, mobile, and compact hosts", async () => {
     const rectSpy = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
       x: 0, y: 0, width: 1200, height: 800, top: 0, right: 1200, bottom: 800, left: 0, toJSON: () => ({}),

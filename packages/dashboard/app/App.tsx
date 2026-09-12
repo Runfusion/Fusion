@@ -17,6 +17,7 @@ import {
 } from "./components/TaskDetailHostBoundaries";
 import { AlphaPlanningDrawer, AlphaProjectsDrawer } from "./components/AlphaMobileDrawer";
 import { PoppedOutChatWindows, QuickChatWindow } from "./components/PoppedOutChatWindows";
+import { PoppedOutNoteWindows } from "./components/PoppedOutNoteWindows";
 import { AppModals } from "./components/AppModals";
 import { DashboardLoader, type DashboardLoaderStage } from "./components/DashboardLoader";
 import { TopProgressBar } from "./components/TopProgressBar";
@@ -33,7 +34,7 @@ import { MobileNavBar } from "./components/MobileNavBar";
 import { LeftSidebarNav } from "./components/LeftSidebarNav";
 import { AlphaDesktopActionBar } from "./components/AlphaDesktopActionBar";
 import { buildDashboardNavigationEntries } from "./components/dashboardNavigationEntries";
-import { useRightDockController } from "./components/useRightDockController";
+import { useRightDockController, type RightDockControllerInput } from "./components/useRightDockController";
 import { QuickChatFAB } from "./components/QuickChatFAB";
 import { ToastContainer } from "./components/ToastContainer";
 import { ProjectOverview } from "./components/ProjectOverview";
@@ -101,6 +102,7 @@ import { useCapacityRiskBanner } from "./hooks/useCapacityRiskBanner";
 import { useBoardScrollRestore } from "./hooks/useBoardScrollRestore";
 import type { PoppedOutTaskEntry } from "./hooks/usePoppedOutTasks";
 import { usePoppedOutChats, type PoppedOutChatEntry } from "./hooks/usePoppedOutChats";
+import { usePoppedOutNotes } from "./hooks/usePoppedOutNotes";
 import { shouldCloseQuickChatOnOutsideClick, useChatVisibilityToggle } from "./hooks/useChatVisibilityToggle";
 import { NativeShellOnboardingModal } from "./components/NativeShellOnboardingModal";
 import { NativeShellConnectionManager } from "./components/NativeShellConnectionManager";
@@ -271,6 +273,7 @@ export function getBoardTaskOpenRoute(options: {
 export interface DashboardShortcutPopupState {
   poppedOutTaskEntries: Array<Pick<PoppedOutTaskEntry, "task" | "originTaskView">>;
   poppedOutChatEntries: Array<Pick<PoppedOutChatEntry, "projectId" | "session" | "minimized">>;
+  poppedOutNoteEntries?: Array<{ projectId: string; note: { id: string } }>;
   quickChatOpen: boolean;
   terminalOpen: boolean;
   modalClosers: Array<[boolean, () => void]>;
@@ -279,6 +282,7 @@ export interface DashboardShortcutPopupState {
 export interface DashboardShortcutPopupHandlers {
   closePoppedOutTask: (taskId: string, originTaskView?: TaskView) => void;
   closePoppedOutChat: (projectId: string, sessionId: string) => void;
+  closePoppedOutNote?: (projectId: string, noteId: string) => void;
   closeQuickChat: () => void;
   closeTerminal: () => void;
 }
@@ -301,6 +305,91 @@ export function taskPopupIdentityKey(taskId: string, originTaskView?: TaskView):
 }
 
 /*
+FNXC:AlphaDesktopRightDock 2026-09-12-04:56:
+App reste l’unique propriétaire des fenêtres lancées depuis les listes Chat et Notes du dock Alpha. Cette frontière lie l’identité du projet courant aux ouvertures, déduplique via les hooks de fenêtres existants et projette seulement les conversations du projet courant vers les badges ouvert/minimisé; elle est partagée par le shell réel et sa régression d’intégration.
+*/
+export function useAppAlphaDesktopRightDockWindows(projectId?: string) {
+  const chats = usePoppedOutChats();
+  const notes = usePoppedOutNotes();
+  const openSessionInNewWindow = useCallback((session: import("./hooks/useChat").ChatSessionInfo) => {
+    if (projectId) chats.popOut(projectId, session);
+  }, [chats.popOut, projectId]);
+  const openNoteInWindow = useCallback((note: import("@fusion/core").ProjectNoteSummary) => {
+    if (projectId) notes.popOut(projectId, note);
+  }, [notes.popOut, projectId]);
+  const openChatWindows = useMemo(() => {
+    const states = new Map<string, "open" | "minimized">();
+    if (!projectId) return states;
+    for (const entry of chats.entries) {
+      if (entry.projectId === projectId) states.set(entry.session.id, entry.minimized ? "minimized" : "open");
+    }
+    return states;
+  }, [chats.entries, projectId]);
+
+  return { chats, notes, openSessionInNewWindow, openNoteInWindow, openChatWindows };
+}
+
+export interface AppAlphaDesktopRightDockCompositionInput {
+  projectId?: string;
+  owner: ReturnType<typeof useAppAlphaDesktopRightDockWindows>;
+  controllerInput: Omit<RightDockControllerInput,
+    | "projectId"
+    | "onOpenSessionInNewWindow"
+    | "openChatWindows"
+    | "onOpenNote"
+  >;
+  chatWindowProps: Omit<import("./components/PoppedOutChatWindows").PoppedOutChatWindowsProps,
+    | "entries"
+    | "projectId"
+    | "onClose"
+    | "onOpenSessionInNewWindow"
+  >;
+  noteWindowProps: Omit<import("./components/PoppedOutNoteWindows").PoppedOutNoteWindowsProps,
+    | "entries"
+    | "projectId"
+    | "onClose"
+  >;
+}
+
+/*
+FNXC:AlphaDesktopRightDock 2026-09-12-05:14:
+Le shell App et la régression d’intégration doivent appeler la même frontière de composition. Elle câble elle-même les callbacks Chat/Notes dans le vrai contrôleur du dock et produit les fenêtres correspondantes, afin qu’une omission dans ce chemin de production fasse échouer le test au lieu de rester masquée par un harness qui réassemble les pièces.
+*/
+export function useAppAlphaDesktopRightDockComposition({
+  projectId,
+  owner,
+  controllerInput,
+  chatWindowProps,
+  noteWindowProps,
+}: AppAlphaDesktopRightDockCompositionInput) {
+  const rightDock = useRightDockController({
+    ...controllerInput,
+    projectId,
+    onOpenSessionInNewWindow: owner.openSessionInNewWindow,
+    openChatWindows: owner.openChatWindows,
+    onOpenNote: owner.openNoteInWindow,
+  });
+  const windows = projectId ? (
+    <>
+      <PoppedOutNoteWindows
+        {...noteWindowProps}
+        entries={owner.notes.entries}
+        projectId={projectId}
+        onClose={owner.notes.close}
+      />
+      <PoppedOutChatWindows
+        {...chatWindowProps}
+        entries={owner.chats.entries}
+        projectId={projectId}
+        onClose={owner.chats.close}
+        onOpenSessionInNewWindow={owner.openSessionInNewWindow}
+      />
+    </>
+  ) : null;
+  return { rightDock, windows };
+}
+
+/*
 FNXC:DashboardShortcuts 2026-07-04-12:02:
 The App-level Escape close order is factored into a pure helper so regression tests can prove the real dashboard shell ordering without rendering every lazy dashboard surface. The helper must close exactly one surface and return false when no popup is open so component-local Escape handlers remain authoritative.
 
@@ -314,6 +403,11 @@ export function closeTopmostDashboardPopupForShortcut(
   const lastPoppedOutTask = state.poppedOutTaskEntries[state.poppedOutTaskEntries.length - 1];
   if (lastPoppedOutTask) {
     handlers.closePoppedOutTask(lastPoppedOutTask.task.id, lastPoppedOutTask.originTaskView);
+    return true;
+  }
+  const lastPoppedOutNote = state.poppedOutNoteEntries?.at(-1);
+  if (lastPoppedOutNote && handlers.closePoppedOutNote) {
+    handlers.closePoppedOutNote(lastPoppedOutNote.projectId, lastPoppedOutNote.note.id);
     return true;
   }
   const lastPoppedOutChat = [...state.poppedOutChatEntries].reverse().find((entry) => !entry.minimized);
@@ -713,14 +807,20 @@ function AppInner() {
     closeAll: closeAllPoppedOutTasks,
     clearNavigation: clearPoppedOutTaskNavigation,
   } = poppedOutTasks;
+  const appRightDockWindows = useAppAlphaDesktopRightDockWindows(currentProject?.id);
   const {
     entries: poppedOutChatEntries,
-    popOut: popOutChat,
     close: closePoppedOutChat,
     closeAll: closeAllPoppedOutChats,
     minimizeAll: minimizeAllPoppedOutChats,
     restoreAll: restoreAllPoppedOutChats,
-  } = usePoppedOutChats();
+  } = appRightDockWindows.chats;
+  const {
+    entries: poppedOutNoteEntries,
+    close: closePoppedOutNote,
+    closeAll: closeAllPoppedOutNotes,
+  } = appRightDockWindows.notes;
+  const { openSessionInNewWindow } = appRightDockWindows;
 
   const [graphWorkflowSelection, setGraphWorkflowSelection] = useState<GraphWorkflowSelection | null>(null);
 
@@ -779,15 +879,6 @@ function AppInner() {
     minimizeAllPoppedOutChats,
     restoreAllPoppedOutChats,
   });
-  /*
-  FNXC:ChatWindows 2026-08-27-09:23:
-  FN-193 requires a newly created conversation to open beside its origin only inside a resolved project. Chat hosts are unreachable before project resolution, but this callback still refuses a missing id so it cannot create an unowned pop-out entry after the server session already exists.
-  */
-  const openSessionInNewWindow = useCallback((session: import("./hooks/useChat").ChatSessionInfo) => {
-    const projectId = currentProject?.id;
-    if (!projectId) return;
-    popOutChat(projectId, session);
-  }, [currentProject?.id, popOutChat]);
   const [chatComposerPrefill, setChatComposerPrefill] = useState<{ text: string; nonce: number } | null>(null);
   const [quickChatEverOpenedProjectId, setQuickChatEverOpenedProjectId] = useState<string | null>(null);
   const quickChatProjectIdRef = useRef<string | undefined>(undefined);
@@ -1518,6 +1609,7 @@ function AppInner() {
       {
         poppedOutTaskEntries: visiblePoppedOutTaskEntries,
         poppedOutChatEntries,
+        poppedOutNoteEntries,
         quickChatOpen,
         terminalOpen: modalManager.terminalOpen,
         modalClosers: [
@@ -1542,6 +1634,7 @@ function AppInner() {
       {
         closePoppedOutTask: closePoppedOutTaskWithNav,
         closePoppedOutChat,
+        closePoppedOutNote: (projectId, noteId) => { void alphaDesktopWindows.requestGuardedClose(`note:${projectId}:${noteId}`); },
         closeQuickChat: () => setQuickChatOpen(false),
         closeTerminal: closeTerminalWithNav,
       },
@@ -1555,7 +1648,7 @@ function AppInner() {
     */
     void alphaDesktopWindows.requestClose(pilotTopmost);
     return true;
-  }, [alphaDesktopWindows.requestClose, alphaDesktopWindows.topmost, closeDetailTaskWithNav, closePoppedOutChat, closePoppedOutTaskWithNav, closeTerminalWithNav, modalManager, poppedOutChatEntries, quickChatOpen, visiblePoppedOutTaskEntries]);
+  }, [alphaDesktopWindows.requestClose, alphaDesktopWindows.requestGuardedClose, alphaDesktopWindows.topmost, closeDetailTaskWithNav, closePoppedOutChat, closePoppedOutTaskWithNav, closeTerminalWithNav, modalManager, poppedOutChatEntries, poppedOutNoteEntries, quickChatOpen, visiblePoppedOutTaskEntries]);
 
   const openFilesWithNav = useCallback((workspace?: string, initialFile?: string | null) => {
     modalManager.openFiles(workspace, initialFile);
@@ -1806,7 +1899,20 @@ function AppInner() {
       () => { if (notesDirtyRef.current) onAccepted?.(); },
     );
   }, [alphaDesktopWindows.registerGuard]);
-  const rightDock = useRightDockController({ active: rightDockActive, projectId: currentProject?.id, addToast, columnFlagsByTaskId: footerColumnFlagsByTaskId, settingsLoaded, researchReadinessVersion, goalAnchorId, tasks: boardSourceTasks, workflowSteps, subscribePluginEvents, openDetailTask: alphaMobileDrawerActive ? openTaskDetailInMainPanel : openDetailTask, onOpenSessionInNewWindow: openSessionInNewWindow, notesController, registerNotesGuard: registerAlphaDesktopNotesGuard, openFileInBrowser, onUpdateTask: updateTask, onDeleteTask: deleteTask, onRevertTask: revertTask, onMergeTask: mergeTask, onRetryTask: retryTask, onOpenChatWithPrefill: openChatWithPrefill, onPauseTask: pauseTask, onUnpauseTask: unpauseTask, onBypassReview: bypassReview, onResetTask: resetTask, onDuplicateTask: duplicateTask, onTaskUpdated: (task: Task) => ingestCreatedTasks([task]), openSettings: (section?: string) => openSettingsWithNav(section as SectionId), onOpenUsage: openUsageWithNav, onOpenActivityLog: openActivityLogWithNav, onOpenGitHubImport: openGitHubImportWithNav, onOpenGitManager: openGitManagerWithNav, onOpenSchedules: openSchedulesWithNav, onSendSelectionToTask: modalManager.openNewTaskWithDescription, onCreateTaskFromInsight: handleInsightTaskCreate, onNavigateToMission: handleOpenMission, onTaskCreated: (task: Task) => ingestCreatedTasks([task]), prAuthAvailable, autoMerge, taskDetailChatFirst, visibilityOptions: { hostMode: alphaDesktopNavigationActive ? "alpha-desktop" : "standard", experimentalFeatures: { insights: insightsEnabled, memoryView: memoryEnabled, devServerView: devServerEnabled, researchView: researchEnabled, evalsView: evalsEnabled, goalsView: goalsEnabled }, showSkillsTab: skillsEnabled, pluginDashboardViews }, footerVisible: shellFooterVisible });
+  const { rightDock, windows: alphaDesktopRightDockWindows } = useAppAlphaDesktopRightDockComposition({
+    projectId: currentProject?.id,
+    owner: appRightDockWindows,
+    controllerInput: { active: rightDockActive, addToast, columnFlagsByTaskId: footerColumnFlagsByTaskId, settingsLoaded, researchReadinessVersion, goalAnchorId, tasks: boardSourceTasks, workflowSteps, subscribePluginEvents, openDetailTask: alphaMobileDrawerActive ? openTaskDetailInMainPanel : openDetailTask, notesController, registerNotesGuard: registerAlphaDesktopNotesGuard, openFileInBrowser, onUpdateTask: updateTask, onDeleteTask: deleteTask, onRevertTask: revertTask, onMergeTask: mergeTask, onRetryTask: retryTask, onOpenChatWithPrefill: openChatWithPrefill, onPauseTask: pauseTask, onUnpauseTask: unpauseTask, onBypassReview: bypassReview, onResetTask: resetTask, onDuplicateTask: duplicateTask, onTaskUpdated: (task: Task) => ingestCreatedTasks([task]), openSettings: (section?: string) => openSettingsWithNav(section as SectionId), onOpenUsage: openUsageWithNav, onOpenActivityLog: openActivityLogWithNav, onOpenGitHubImport: openGitHubImportWithNav, onOpenGitManager: openGitManagerWithNav, onOpenSchedules: openSchedulesWithNav, onSendSelectionToTask: modalManager.openNewTaskWithDescription, onCreateTaskFromInsight: handleInsightTaskCreate, onNavigateToMission: handleOpenMission, onTaskCreated: (task: Task) => ingestCreatedTasks([task]), prAuthAvailable, autoMerge, taskDetailChatFirst, visibilityOptions: { hostMode: alphaDesktopNavigationActive ? "alpha-desktop" : "standard", experimentalFeatures: { insights: insightsEnabled, memoryView: memoryEnabled, devServerView: devServerEnabled, researchView: researchEnabled, evalsView: evalsEnabled, goalsView: goalsEnabled }, showSkillsTab: skillsEnabled, pluginDashboardViews }, footerVisible: shellFooterVisible },
+    chatWindowProps: { addToast, experimentalFeatures },
+    noteWindowProps: {
+      addToast,
+      onChanged: () => void notesController.loadList(notesController.search),
+      registerGuard: (projectId, noteId, guard, onAccepted) => alphaDesktopWindows.registerGuard(`note:${projectId}:${noteId}`, guard, () => {
+        onAccepted?.();
+        closePoppedOutNote(projectId, noteId);
+      }),
+    },
+  });
 
   /*
   FNXC:OpenTasksInRightSidebar 2026-06-28-00:00:
@@ -1859,6 +1965,7 @@ function AppInner() {
     modalManager.closeProjectScopedModals();
     closeAllPoppedOutTasks();
     closeAllPoppedOutChats();
+    closeAllPoppedOutNotes();
     resetChatVisibilityToggle();
     if (mainPanelDetailTask) {
       closeTaskDetailMainPanel();
@@ -2496,16 +2603,7 @@ function AppInner() {
           onClose={() => setQuickChatOpen(false)}
         />
       )}
-      {currentProject ? (
-        <PoppedOutChatWindows
-          entries={poppedOutChatEntries}
-          projectId={currentProject.id}
-          addToast={addToast}
-          experimentalFeatures={experimentalFeatures}
-          onClose={closePoppedOutChat}
-          onOpenSessionInNewWindow={openSessionInNewWindow}
-        />
-      ) : null}
+      {alphaDesktopRightDockWindows}
       {/*
       FNXC:FloatingWindow 2026-06-22-20:45:
       One movable, resizable, non-blocking FloatingWindow per popped-out task. Each hosts the same embedded TaskDetailContent List/Board use, wired to the same App task handlers. Live row preferred by id; falls back to the snapshot. Terminal/destructive actions and the window close button both remove the entry. Multiple entries → multiple coexisting windows; FloatingWindow's per-window z-counter handles focus-to-front so the clicked one comes on top.

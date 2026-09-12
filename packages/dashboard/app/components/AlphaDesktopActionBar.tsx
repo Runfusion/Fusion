@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState, type FocusEvent, type KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { ChevronUp } from "lucide-react";
 import type { Task } from "@fusion/core";
@@ -20,7 +20,20 @@ export function AlphaDesktopActionBar({ entries, activeId, tasks, projectId, col
   /* FNXC:AlphaNavigation 2026-09-12-00:36: Alpha navigation labels, including its overflow trigger and landmark, must use the shared locale catalog rather than English-only literals. */
   const { t } = useTranslation("app");
   const [overflowOpen, setOverflowOpen] = useState(false);
+  const overflowRef = useRef<HTMLDivElement>(null);
   const { stats, loading, error } = useExecutorStats(tasks, projectId, columnFlagsByTaskId);
+  /*
+  FNXC:AlphaDesktopNavigation 2026-09-12-04:06:
+  Le menu Plus du footer Alpha desktop est un seul périmètre trigger + menu : le survol ou le focus l’ouvre, une sortie complète du pointeur ou du focus le ferme, et Escape conserve une fermeture clavier explicite. Un clic sur le trigger ouvre sans toggler afin qu’une activation ne referme jamais un menu déjà ouvert au hover.
+  */
+  const closeAfterFocusLeaves = (event: FocusEvent<HTMLDivElement>) => {
+    if (!event.relatedTarget || !event.currentTarget.contains(event.relatedTarget as Node)) setOverflowOpen(false);
+  };
+  const handleOverflowKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "Escape") return;
+    event.preventDefault();
+    setOverflowOpen(false);
+  };
   const direct = entries.filter((entry) => entry.placement === "direct");
   const overflow = entries.filter((entry) => entry.placement === "overflow");
   const settings = entries.find((entry) => entry.id === "settings");
@@ -44,8 +57,16 @@ export function AlphaDesktopActionBar({ entries, activeId, tasks, projectId, col
   return <nav className="alpha-desktop-action-bar" aria-label={t("nav.primaryNavAriaLabel", "Primary navigation")} data-testid="alpha-desktop-action-bar">
     <div className="alpha-desktop-action-bar__capacity"><EngineControlMenu projectId={projectId} triggerContent={<span data-testid="alpha-desktop-capacity-count">{capacityText}</span>} triggerLabel={capacityLabel} /></div>
     <div className="alpha-desktop-action-bar__center"><div className="alpha-desktop-action-bar__scroller">{direct.map((entry) => renderButton(entry))}</div>
-    {overflow.length ? <div className="alpha-desktop-action-bar__more">
-      <button type="button" className="alpha-desktop-action-bar__action" aria-label={t("header.moreViews", "More views")} aria-haspopup="menu" aria-expanded={overflowOpen} data-testid="alpha-desktop-nav-more" onClick={() => setOverflowOpen((value) => !value)}><ChevronUp aria-hidden="true" /><span>{t("nav.more", "More")}</span></button>
+    {overflow.length ? <div
+      ref={overflowRef}
+      className="alpha-desktop-action-bar__more"
+      onPointerEnter={() => setOverflowOpen(true)}
+      onPointerLeave={() => setOverflowOpen(false)}
+      onFocusCapture={() => setOverflowOpen(true)}
+      onBlurCapture={closeAfterFocusLeaves}
+      onKeyDown={handleOverflowKeyDown}
+    >
+      <button type="button" className="alpha-desktop-action-bar__action" aria-label={t("header.moreViews", "More views")} aria-haspopup="menu" aria-expanded={overflowOpen} data-testid="alpha-desktop-nav-more" onClick={() => setOverflowOpen(true)}><ChevronUp aria-hidden="true" /><span>{t("nav.more", "More")}</span></button>
       {overflowOpen ? <div className="alpha-desktop-action-bar__menu" role="menu">{overflow.map((entry) => renderButton(entry, true))}</div> : null}
     </div> : null}</div>
     <div className="alpha-desktop-action-bar__settings">{settings ? renderButton(settings) : null}</div>

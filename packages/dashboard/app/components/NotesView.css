@@ -199,39 +199,19 @@ The selected note uses an accent tint and persistent inset marker independently 
 }
 
 /*
-FNXC:AlphaDesktopRightDock 2026-09-11-21:48:
-Compact Notes always drills list-to-detail according to its host contract, independent of viewport width. The same layout primitives remain shared with narrow/short page hosts, so dock resizing cannot unexpectedly reveal a second pane.
+FNXC:AlphaDesktopRightDock 2026-09-12-04:06:
+Compact/list-only Notes garde toujours la liste dans le dock; chaque détail appartient à sa fenêtre dédiée et ne peut donc pas remplacer cette liste à une largeur quelconque.
 */
-.notes-view--compact .notes-layout {
+.notes-view--compact .notes-layout,
+.notes-view--list-only .notes-layout {
   display: block;
 }
 
 .notes-view--compact .notes-list,
-.notes-view--compact .notes-detail {
+.notes-view--list-only .notes-list {
   inline-size: 100%;
   block-size: 100%;
   border: 0;
-}
-
-.notes-view--compact.notes-view--detail .notes-list,
-.notes-view--compact:not(.notes-view--detail) .notes-detail {
-  display: none;
-}
-
-.notes-view--compact .notes-back {
-  display: inline-flex;
-}
-
-.notes-view--compact :is(.notes-detail-toolbar, .notes-conflict, .notes-error) {
-  flex-wrap: wrap;
-}
-
-.notes-view--compact .notes-title {
-  flex-basis: calc(100% - var(--space-3xl));
-}
-
-.notes-view--compact .notes-save-state {
-  margin-inline-start: auto;
 }
 
 @media (max-width: 768px), (max-height: 480px) {
@@ -243,6 +223,30 @@ Compact Notes always drills list-to-detail according to its host contract, indep
   .notes-detail-toolbar, .notes-conflict, .notes-error { flex-wrap: wrap; }
   .notes-title { flex-basis: calc(100% - var(--space-3xl)); }
   .notes-save-state { margin-inline-start: auto; }
+}
+
+.notes-view--dedicated .notes-layout,
+.notes-view--dedicated .notes-detail {
+  display: block;
+  inline-size: 100%;
+  block-size: 100%;
+  border: 0;
+}
+
+.notes-view--dedicated .notes-back {
+  display: none;
+}
+
+.notes-view--dedicated :is(.notes-detail-toolbar, .notes-conflict, .notes-error) {
+  flex-wrap: wrap;
+}
+
+.notes-view--dedicated .notes-title {
+  flex-basis: calc(100% - var(--space-3xl));
+}
+
+.notes-view--dedicated .notes-save-state {
+  margin-inline-start: auto;
 }
 
 .notes-view--floating { block-size: 100%; background: var(--surface); }

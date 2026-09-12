@@ -1256,6 +1256,8 @@
     "clearConversationFailed": "清除对话失败",
     "closeQuickChat": "关闭快速聊天",
     "openInNewWindow": "",
+    "windowOpen": "已打开",
+    "windowMinimized": "已最小化",
     "conversationArchived": "对话已归档",
     "conversationDeleted": "对话已删除",
     "conversationName": "",
