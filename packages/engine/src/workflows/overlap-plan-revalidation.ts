@@ -209,24 +209,34 @@ export async function revalidatePendingOverlapWaitsAtGraphNode(input: {
     });
     if (result.verdict === "UNAVAILABLE") return "unavailable";
     const liveForCompletion = await input.store.getTask(input.task.id);
+    /*
+    FNXC:OverlapWaitSynchronization 2026-09-12-20:30:
+    Settle on the identity the episode was CLAIMED with. This node runs at pre-merge, so the claim it is
+    settling was taken by the pre-execution resume gate: between the two, the task legitimately commits its
+    work and its spec may be rewritten. Recapturing `headSha` and re-hashing the live prompt here therefore
+    guaranteed a compare-and-set mismatch for any task that actually did something — the store rejected the
+    write, this function reported `superseded`, the node failed without recording a step result, and stranded
+    -completed recovery re-dispatched the whole review. Measured 2026-09-12 on FN-359/FN-362: the reviewer
+    returned APPROVE on every pass while `headSha` moved 175a23486 -> bff6bb6a2 and the plan hash moved
+    63ca92d6 -> 812f7948, so the verdict was discarded and the pair looped for hours.
+
+    The fences that matter at this stage are intact: `completeTaskOverlapWait` still checks the live row's
+    lineage, worktree, branch, checkout epoch and node incarnation against the claim, the revision/owner CAS
+    still rejects another generation, and `readCurrentIdentity` above still aborts when the episode moves
+    DURING the review. Only the two facts the task's own progress is expected to change were removed.
+
+    The repair branch above keeps its recapture, because it re-CLAIMS a new generation: there the recaptured
+    HEAD becomes the stored identity, so publication still compares like with like.
+    */
     const claimedIdentity = episode.observation?.executionIdentity as import("@fusion/core").OverlapWaitExecutionIdentity | undefined;
-    let completionIdentity = claimedIdentity;
+    const completionIdentity = claimedIdentity;
     if (claimedIdentity && liveForCompletion?.worktree) {
-      let headSha: string;
+      // Liveness probe only: a vanished execution checkout is a real supersession, not a settleable review.
       try {
-        headSha = (await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: liveForCompletion.worktree, encoding: "utf8" })).stdout.trim();
+        await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: liveForCompletion.worktree, encoding: "utf8" });
       } catch {
         return "superseded";
       }
-      completionIdentity = {
-        ...claimedIdentity,
-        ...(liveForCompletion.lineageId ? { taskLineageId: liveForCompletion.lineageId } : {}),
-        ...(liveForCompletion.prompt ? { planFingerprint: createHash("sha256").update(liveForCompletion.prompt).digest("hex") } : {}),
-        ...(liveForCompletion.checkoutLeaseEpoch != null ? { checkoutEpoch: String(liveForCompletion.checkoutLeaseEpoch) } : {}),
-        ...(liveForCompletion.worktree ? { worktree: liveForCompletion.worktree } : {}),
-        ...(liveForCompletion.branch ? { branch: liveForCompletion.branch } : {}),
-        headSha,
-      };
     }
     if (result.verdict === "REVISE") {
       /*
