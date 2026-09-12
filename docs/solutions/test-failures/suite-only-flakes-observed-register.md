@@ -572,28 +572,16 @@ not mention the rescue — the evidence is in the test-file diff.
 
 ---
 
-## Entry: `spec-drift-reconciler` exponential-backoff case (quarantined 2026-09-09)
+## Entry: `spec-drift-reconciler` exponential-backoff case (rescued 2026-09-12, FN-9290)
 
-- **Status:** Quarantined 2026-09-09 after a second timer-driven sighting — FN-9272's selected engine test command observed three persistence attempts after the second 1-second fake-timer advance where the test expects two; rescue owner FN-9290 (mission M-MTUBET2I-000C-BE8J), deletion-ratchet deadline 2026-09-23 (quarantinedAt + 14d).
+- **Status:** Rescued and closed 2026-09-12 by FN-9290. The quarantine-ledger row and matching `engine-default` Vitest exclude were removed together with the root-cause fix.
 - **File:** `packages/engine/src/__tests__/spec-drift-reconciler.test.ts`
 - **Exact test:** `SpecDriftReconciler > backs a persistent outage off exponentially instead of re-firing every second`
-- **Observed tree/SHA:** `a97aa84a20`, full `@fusion/engine` suite run.
-- **Observed frequency:** once in a full-suite run; also failed once when run in the same command as `self-healing-pending-wedge-notification.test.ts`, and passes deterministically alone (10/10) and in other pairings.
-
-Verbatim observed failure context:
-
-```
-FAIL  |engine-default| src/__tests__/spec-drift-reconciler.test.ts > SpecDriftReconciler > backs a persistent outage off exponentially instead of re-firing every second
-```
-
-Both this and the quarantined `self-healing-pending-wedge-notification` case are timer-driven
-reconciler tests that fail only alongside other suites, which points at shared fake-timer or
-cross-file state rather than a product defect. No timeout was widened, no retry added, and no
-assertion relaxed. A SECOND sighting is an ordinary on-sight quarantine with no further discretion,
-per the standing rule in AGENTS.md. That second sighting occurred 2026-09-09 during FN-9272
-verification (a parser-only change that does not touch the reconciler), so the file is quarantined
-in `scripts/lib/test-quarantine.json` with the matching `engine-default` exclude under the deletion
-ratchet; rescue requires a root-cause fix proving the reconciler coverage is stable.
+- **Root cause:** The test advanced coarse absolute 1s/1s/2s windows even though retries chain jittered delays from the prior firing. With d1 in [500,1000) and d2 in [1000,2000), the third attempt lands before 2000ms when d1 + d2 < 2000: a 25% probability. Minimum jitter deterministically reproduced `expected 3 to be 2`; this was neither load-dependent nor a product scheduler race.
+- **Repair and coverage:** The reconciler now exposes its existing delay constants plus a default-identical random seam. The rescued test checks exact retry instants across eight gaps for four pinned draw sources, including two consecutive 60s-clamped ceiling gaps; a companion records arbitrary real `Math.random` draws and checks their exact schedule and ranges. Another companion keeps unrelated timeouts, an interval, microtasks, and promise chains active in every gap while checking no retry fires early. Additional tests cover success reset, duplicate retry-arm suppression, and `stop()` cancellation.
+- **Mutation evidence:** Flattening delay and removing the ceiling clamp both fail the pinned and unpinned-random schedule guards. Removing the success reset fails the reset guard, and removing the pending-timer duplicate-arm guard fails the duplicate-arm guard.
+- **Stability evidence:** 50 consecutive selected-file runs completed with zero failures, representing at least 50 independent asserted real-random samples rather than an assertion-free repetition loop.
+- **Policy evidence:** No timeout was widened, retry added, assertion relaxed, or test skipped. The shared-harness cross-check found no timer fixture imported by both this file and `self-healing-pending-wedge-notification`; that separate quarantine record remains unchanged.
 
 ---
 
