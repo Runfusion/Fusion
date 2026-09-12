@@ -51,6 +51,15 @@ describe("dashboard guide coverage for lazy-loaded views", () => {
     expect(piBody).toContain("Settings → Plugins → Pi Extensions");
   });
 
+  it("documents the Alpha global task action and Quick Entry hold contract", () => {
+    const guide = readDashboardGuide();
+
+    expect(guide).toContain("rightmost global Header action on Alpha desktop, tablet, and mobile");
+    expect(guide).toContain("icon-only Save button");
+    expect(guide).toContain("hold continuously for 1,200 ms");
+    expect(guide).toContain("Non-Alpha Quick Entry retains its text Save button and separate Start action");
+  });
+
   it("documents the selectable Liquid Glass web contract without claiming native parity", () => {
     const guide = readDashboardGuide();
 

@@ -949,8 +949,8 @@ shared left/right edges and compact gaps. Keep the centered cluster desktop-only
 }
 
 /*
-FNXC:AlphaQuickEntry 2026-09-11-00:30:
-Alpha Quick Entry is input-first: the immediate attach/status/Save row remains visible, Save stays compact and prominent, and routing options appear as a quiet second row only after disclosure. Visual ordering uses flex order so the established keyboard order and callbacks remain intact; List is outside this boundary and keeps its historical collapsed shell.
+FNXC:AlphaQuickEntry 2026-09-12-00:36:
+Alpha Quick Entry is input-first: the immediate attach/status/icon-only Save row remains visible, and routing options appear as a quiet second row only after disclosure. The Save control keeps fixed icon-button metrics while a contained token-colored fill communicates the 1,200ms Start hold without changing row width; List and legacy surfaces retain their existing shells.
 */
 [data-alpha-surface="true"] .quick-entry-box {
   padding: var(--alpha-density-2);
@@ -994,9 +994,51 @@ Alpha Quick Entry is input-first: the immediate attach/status/Save row remains v
 
 [data-alpha-surface="true"] .quick-entry-primary-group [data-testid="quick-entry-save"] {
   margin-inline-start: auto;
+  min-width: var(--alpha-control-height);
+  width: var(--alpha-control-height);
   min-height: var(--alpha-control-height);
   max-height: var(--alpha-control-height);
-  padding-inline: var(--alpha-density-3);
+  padding: 0;
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+[data-alpha-surface="true"] .quick-entry-alpha-save > svg {
+  position: relative;
+  z-index: 1;
+}
+
+[data-alpha-surface="true"] .quick-entry-alpha-save-progress {
+  position: absolute;
+  inset: 0;
+  background: var(--color-warning);
+  opacity: 0;
+  transform: scaleX(0);
+  transform-origin: left;
+  pointer-events: none;
+}
+
+[data-alpha-surface="true"] .quick-entry-alpha-save[data-hold-state="holding"] .quick-entry-alpha-save-progress {
+  opacity: 1;
+  animation: quick-entry-alpha-hold-progress 1200ms linear forwards;
+}
+
+[data-alpha-surface="true"] .quick-entry-alpha-save[data-hold-state="confirmed"] .quick-entry-alpha-save-progress {
+  opacity: 1;
+  transform: scaleX(1);
+}
+
+@keyframes quick-entry-alpha-hold-progress {
+  to { transform: scaleX(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-alpha-surface="true"] .quick-entry-alpha-save[data-hold-state="holding"] .quick-entry-alpha-save-progress {
+    animation: none;
+    opacity: 0.45;
+    transform: scaleX(1);
+  }
 }
 
 [data-alpha-surface="true"] .quick-entry-options-group {
@@ -1041,6 +1083,8 @@ Alpha Quick Entry is input-first: the immediate attach/status/Save row remains v
 
   [data-alpha-surface="true"] .quick-entry-primary-group [data-testid="quick-entry-save"] {
     margin-inline-start: auto;
+    min-width: var(--alpha-touch-height);
+    width: var(--alpha-touch-height);
   }
 }
 

@@ -131,6 +131,19 @@ describe("Column Alpha History", () => {
   });
 });
 
+describe("Column New Task placement", () => {
+  it("removes the complete column action shell only in Alpha", () => {
+    const onNewTask = vi.fn();
+    const { rerender } = render(<Column {...defaultProps} tasks={[]} onNewTask={onNewTask} />);
+    fireEvent.click(screen.getByRole("button", { name: "+ New Task" }));
+    expect(onNewTask).toHaveBeenCalledOnce();
+
+    rerender(<Column {...defaultProps} tasks={[]} onNewTask={onNewTask} alphaUpdatesEnabled />);
+    expect(screen.queryByRole("button", { name: "+ New Task" })).toBeNull();
+    expect(screen.queryByText("+ New Task")).toBeNull();
+  });
+});
+
 describe("Column count-flash", () => {
   it("does not apply count-flash class on initial render", () => {
     const tasks = [makeTask("FN-001")];

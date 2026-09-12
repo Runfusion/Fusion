@@ -30,6 +30,8 @@ import { useQuickAddSubmitOnEnter } from "../hooks/useQuickAddSubmitOnEnter";
 import { useAlphaSurface } from "../context/AlphaContext";
 
 const STORAGE_KEY = "kb-quick-entry-text";
+const ALPHA_START_HOLD_DURATION_MS = 1_200;
+type AlphaSaveGesture = { kind: "pointer"; pointerId: number } | { kind: "keyboard"; key: " " | "Enter" };
 const ALLOWED_TASK_ATTACHMENT_TYPES = new Set([
   "image/png",
   "image/jpeg",
@@ -187,6 +189,12 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
   const fileInputRef = useRef<HTMLInputElement>(null);
   const touchButtonRef = useRef<HTMLButtonElement | null>(null);
   const startIntentRef = useRef<ValidatedQuickAddWorkflow | null>(null);
+  const alphaSaveButtonRef = useRef<HTMLButtonElement | null>(null);
+  const alphaSaveGestureRef = useRef<AlphaSaveGesture | null>(null);
+  const alphaSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const alphaSaveSuppressClickRef = useRef(false);
+  const alphaStartWorkflowRef = useRef<ValidatedQuickAddWorkflow | null>(null);
+  const [alphaSaveState, setAlphaSaveState] = useState<"idle" | "holding" | "confirmed">("idle");
   const justResetRef = useRef(false);
   const draftPersistenceWarningShownRef = useRef(false);
   const previousProjectIdRef = useRef(projectId);
@@ -431,13 +439,12 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
   const startInitialColumn = validatedStartWorkflow ? resolveQuickAddStartInitialColumn(validatedStartWorkflow) : null;
   const startWorkflowTarget = validatedStartWorkflow ? resolveQuickAddStartWorkflowTarget(validatedStartWorkflow) : null;
   /*
-  FNXC:QuickAddStart 2026-07-31-23:51:
-  Start is a VISIBLE button in the quick-add action row for eligible workflows only, replacing the hidden
-  long-press/right-click Save menu that operators could not discover. Eligibility is `workflowSupportsQuickAddStart`:
-  Coding (Ideas), or any workflow whose first visible lane is a server-derived manual-intake/"waiting" column.
-  A provable target is still required (`startInitialColumn` for the create-time column override, or `onMoveTask`
-  for the follow-up move). Workflows without a waiting lane render no Start button at all — Save stays the single
-  create affordance there.
+  FNXC:QuickAddStart 2026-09-12-00:36:
+  Alpha exposes Start through a continuous 1,200ms hold on its single icon-only Save action; legacy surfaces retain
+  the explicit Start chip. Eligibility remains `workflowSupportsQuickAddStart`: Coding (Ideas), or a workflow whose
+  first visible lane is a server-derived manual-intake/"waiting" column. A provable target is still required
+  (`startInitialColumn` for the create-time column override, or `onMoveTask` for the follow-up move), so malformed or
+  ineligible workflows never turn Save into an inferred transition.
   */
   const canQuickAddStart = Boolean(validatedStartWorkflow && workflowSupportsQuickAddStart(validatedStartWorkflow) && startWorkflowTarget && (startInitialColumn || onMoveTask));
   const canQuickAddStartNow = canQuickAddStart && Boolean(description.trim()) && !isSubmitting;
@@ -1083,11 +1090,12 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
 
   const handleDuplicateCancel = useCallback(() => {
     /*
-    FNXC:QuickAddStart 2026-07-22-16:10:
-    Cancelling duplicate confirmation discards the saved Start intent. A later ordinary Save
-    must remain create-only rather than reusing a promotion snapshot from the cancelled action.
+    FNXC:QuickAddStart 2026-09-12-01:00:
+    Cancelling duplicate confirmation discards both the saved Start intent and any synthetic-click suppression
+    left by the now-finished hold. A later ordinary Save must remain create-only and respond on its first click.
     */
     startIntentRef.current = null;
+    alphaSaveSuppressClickRef.current = false;
     setDuplicateMatches(null);
     submitInFlightRef.current = false;
     setIsSubmitting(false);
@@ -1655,11 +1663,63 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
   path as Save. The snapshot (not live state) is what `submitCreateTask` reads, so a workflow list refreshed
   mid-duplicate-confirmation cannot retarget an in-flight Start.
   */
-  const handleStartClick = useCallback(() => {
-    if (!canQuickAddStartNow || !validatedStartWorkflow) return;
-    startIntentRef.current = validatedStartWorkflow;
-    handleSubmit();
+  const handleStartClick = useCallback((workflowSnapshot: ValidatedQuickAddWorkflow | null = validatedStartWorkflow) => {
+    if (!canQuickAddStartNow || !workflowSnapshot) return;
+    startIntentRef.current = workflowSnapshot;
+    void handleSubmit();
   }, [canQuickAddStartNow, handleSubmit, validatedStartWorkflow]);
+
+  const cancelAlphaSaveGesture = useCallback((suppressClick = false) => {
+    if (alphaSaveTimerRef.current) clearTimeout(alphaSaveTimerRef.current);
+    alphaSaveTimerRef.current = null;
+    alphaSaveGestureRef.current = null;
+    alphaStartWorkflowRef.current = null;
+    alphaSaveSuppressClickRef.current = suppressClick;
+    setAlphaSaveState("idle");
+  }, []);
+
+  const beginAlphaSaveGesture = useCallback((gesture: AlphaSaveGesture) => {
+    if (!alphaActive || !canQuickAddStartNow || !validatedStartWorkflow || alphaSaveGestureRef.current) return false;
+    alphaSaveGestureRef.current = gesture;
+    alphaStartWorkflowRef.current = validatedStartWorkflow;
+    alphaSaveSuppressClickRef.current = false;
+    setAlphaSaveState("holding");
+    alphaSaveTimerRef.current = setTimeout(() => {
+      const workflowSnapshot = alphaStartWorkflowRef.current;
+      alphaSaveTimerRef.current = null;
+      alphaSaveGestureRef.current = null;
+      alphaStartWorkflowRef.current = null;
+      alphaSaveSuppressClickRef.current = true;
+      setAlphaSaveState("confirmed");
+      handleStartClick(workflowSnapshot);
+    }, ALPHA_START_HOLD_DURATION_MS);
+    return true;
+  }, [alphaActive, canQuickAddStartNow, handleStartClick, validatedStartWorkflow]);
+
+  const completeAlphaSaveGesture = useCallback((gesture: AlphaSaveGesture) => {
+    const active = alphaSaveGestureRef.current;
+    const matches = active?.kind === gesture.kind && (active.kind === "pointer"
+      ? active.pointerId === (gesture as Extract<AlphaSaveGesture, { kind: "pointer" }>).pointerId
+      : active.key === (gesture as Extract<AlphaSaveGesture, { kind: "keyboard" }>).key);
+    if (!matches) return;
+    cancelAlphaSaveGesture(true);
+    void handleSubmit();
+  }, [cancelAlphaSaveGesture, handleSubmit]);
+
+  /*
+  FNXC:AlphaQuickEntry 2026-09-12-01:00:
+  Pointer and keyboard holds share one timer and one captured workflow snapshot. Only a primary pointer using its
+  primary button may begin a hold, so right-click, middle-click, secondary pen buttons, and non-primary contacts
+  cannot start work. Explicit cancellation never saves; an ordinary early release saves exactly once, while
+  confirmed holds suppress the synthetic click and run the existing Start submission path exactly once. Workflow
+  changes, submission, disablement, blur, Escape, capture loss, and unmount all invalidate the pending gesture.
+  */
+  useEffect(() => cancelAlphaSaveGesture, [cancelAlphaSaveGesture]);
+  useEffect(() => {
+    if (alphaSaveGestureRef.current && (!alphaActive || isSubmitting || isDisabled || !canQuickAddStartNow || alphaStartWorkflowRef.current !== validatedStartWorkflow)) {
+      cancelAlphaSaveGesture(true);
+    }
+  }, [alphaActive, canQuickAddStartNow, cancelAlphaSaveGesture, isDisabled, isSubmitting, validatedStartWorkflow]);
 
   const truncate = (s: string, len: number) =>
     s.length > len ? s.slice(0, len) + "…" : s;
@@ -2274,11 +2334,11 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
             DISABLED (matching Save) so the affordance does not appear and vanish as the operator types; the whole
             action row still unmounts while a create is in flight.
             */}
-            {canQuickAddStart && (
+            {!alphaActive && canQuickAddStart && (
               <AlphaButton
                 type="button"
                 className="btn btn-sm quick-entry-start-button"
-                onClick={handleStartClick}
+                onClick={() => handleStartClick()}
                 onMouseDown={(e) => e.preventDefault()}
                 disabled={!canQuickAddStartNow}
                 data-testid="quick-entry-save-start"
@@ -2453,17 +2513,63 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
               </AlphaButton>
 
               <AlphaButton
+                ref={alphaSaveButtonRef}
                 type="button"
-                className="btn btn-task-create btn-sm"
-                onClick={handleSubmit}
+                className={`btn btn-task-create btn-sm${alphaActive ? " btn-icon quick-entry-alpha-save" : ""}`}
+                onClick={() => {
+                  if (alphaSaveSuppressClickRef.current) {
+                    alphaSaveSuppressClickRef.current = false;
+                    return;
+                  }
+                  if (!alphaSaveGestureRef.current) void handleSubmit();
+                }}
                 onMouseDown={(e) => e.preventDefault()}
+                onPointerDown={(event) => {
+                  if (event.button !== 0 || event.isPrimary === false) return;
+                  if (!beginAlphaSaveGesture({ kind: "pointer", pointerId: event.pointerId })) return;
+                  event.currentTarget.setPointerCapture?.(event.pointerId);
+                }}
+                onPointerUp={(event) => {
+                  completeAlphaSaveGesture({ kind: "pointer", pointerId: event.pointerId });
+                  if (event.currentTarget.hasPointerCapture?.(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+                }}
+                onPointerCancel={() => cancelAlphaSaveGesture(true)}
+                onPointerLeave={() => cancelAlphaSaveGesture(true)}
+                onLostPointerCapture={() => cancelAlphaSaveGesture(true)}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") {
+                    cancelAlphaSaveGesture(true);
+                    return;
+                  }
+                  if ((event.key === " " || event.key === "Enter") && !event.repeat) {
+                    event.preventDefault();
+                    beginAlphaSaveGesture({ kind: "keyboard", key: event.key });
+                  }
+                }}
+                onKeyUp={(event) => {
+                  if (event.key === " " || event.key === "Enter") {
+                    event.preventDefault();
+                    completeAlphaSaveGesture({ kind: "keyboard", key: event.key });
+                  }
+                }}
+                onBlur={() => cancelAlphaSaveGesture(true)}
                 disabled={!description.trim() || isSubmitting}
                 data-testid="quick-entry-save"
-                title={t("tasks.createTaskTitle", "Create task")}
+                data-hold-state={alphaActive ? alphaSaveState : undefined}
+                aria-label={alphaActive
+                  ? (alphaSaveState === "holding" ? t("tasks.releaseToSaveHoldToStart", "Release to save; keep holding to start") : alphaSaveState === "confirmed" ? t("tasks.startingTask", "Starting task") : t("tasks.saveHoldToStart", "Save task; hold to start"))
+                  : undefined}
+                title={alphaActive ? t("tasks.saveHoldToStart", "Save task; hold to start") : t("tasks.createTaskTitle", "Create task")}
               >
-                <Save size={12} style={{ verticalAlign: "middle", marginRight: 4 }} />
-                {t("tasks.save", "Save")}
+                {alphaActive && <span className="quick-entry-alpha-save-progress" aria-hidden="true" />}
+                {alphaActive && alphaSaveState !== "idle" ? <Play size={12} aria-hidden="true" /> : <Save size={12} aria-hidden="true" />}
+                {!alphaActive && <>{t("tasks.save", "Save")}</>}
               </AlphaButton>
+              {alphaActive && (
+                <span className="visually-hidden" role="status" aria-live="polite">
+                  {alphaSaveState === "holding" ? t("tasks.holdToStartProgress", "Keep holding to start") : alphaSaveState === "confirmed" ? t("tasks.startingTask", "Starting task") : ""}
+                </span>
+              )}
             </div>
           </div>
         )}

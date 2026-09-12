@@ -5501,6 +5501,238 @@ describe("QuickEntryBox", () => {
     });
   });
 
+  describe("Alpha Save hold-to-Start", () => {
+    const ideasWorkflow = {
+      id: "builtin:coding-ideas-v2",
+      name: "Coding (Ideas)",
+      columns: [
+        { id: "ideas", name: "Ideas", flags: { hold: true } },
+        { id: "todo", name: "Todo", flags: {} },
+        { id: "done", name: "Done", flags: { complete: true } },
+      ],
+    };
+
+    const holdFirstWorkflow = {
+      id: "custom:alpha-waiting",
+      name: "Alpha waiting first",
+      columns: [
+        { id: "waiting", name: "Waiting", flags: { intake: true, hold: true, manualIntake: true } },
+        { id: "working", name: "Working", flags: {} },
+        { id: "done", name: "Done", flags: { complete: true } },
+      ],
+    };
+
+    const completePointerHold = async (save: HTMLElement, pointerId = 7, pointerType = "mouse") => {
+      fireEvent.pointerDown(save, { pointerId, pointerType, button: 0, isPrimary: true });
+      await act(async () => vi.advanceTimersByTime(1_200));
+    };
+
+    const setup = (props = {}) => {
+      const onCreate = vi.fn().mockResolvedValue({ ...CREATED_TASK, id: "FN-alpha", column: "todo", workflowId: ideasWorkflow.id });
+      const rendered = renderAlphaQuickEntryBox({ onCreate, workflowId: ideasWorkflow.id, workflowOptions: [ideasWorkflow], ...props });
+      fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Alpha task" } });
+      return { ...rendered, onCreate, save: screen.getByTestId("quick-entry-save") };
+    };
+
+    it.each(["mouse", "touch", "pen"])("starts exactly once after a 1,200ms %s hold", async (pointerType) => {
+      const { onCreate, save } = setup();
+      expect(save).toHaveAccessibleName("Save task; hold to start");
+      expect(save).not.toHaveTextContent("Save");
+      expect(screen.queryByTestId("quick-entry-save-start")).toBeNull();
+
+      fireEvent.pointerDown(save, { pointerId: 7, pointerType, button: 0, isPrimary: true });
+      expect(save).toHaveAttribute("data-hold-state", "holding");
+      await act(async () => vi.advanceTimersByTime(1_200));
+      fireEvent.pointerUp(save, { pointerId: 7, pointerType });
+      fireEvent.click(save);
+
+      await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+      expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({ workflowId: ideasWorkflow.id, column: "todo" }));
+    });
+
+    it.each([
+      ["right mouse button", { button: 2, isPrimary: true, pointerType: "mouse" }],
+      ["middle mouse button", { button: 1, isPrimary: true, pointerType: "mouse" }],
+      ["non-primary pointer", { button: 0, isPrimary: false, pointerType: "pen" }],
+    ])("ignores a hold from the %s", async (_label, pointerInit) => {
+      const { onCreate, save } = setup();
+      fireEvent.pointerDown(save, { pointerId: 12, ...pointerInit });
+      await act(async () => vi.advanceTimersByTime(1_200));
+
+      expect(save).toHaveAttribute("data-hold-state", "idle");
+      expect(onCreate).not.toHaveBeenCalled();
+    });
+
+    it.each(["Enter", " "])("supports a single keyboard hold with %s and ignores repeat", async (key) => {
+      const { onCreate, save } = setup();
+      fireEvent.keyDown(save, { key });
+      fireEvent.keyDown(save, { key, repeat: true });
+      await act(async () => vi.advanceTimersByTime(1_200));
+      fireEvent.keyUp(save, { key });
+      fireEvent.click(save);
+
+      await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+      expect(onCreate.mock.calls[0]![0]).toHaveProperty("column", "todo");
+    });
+
+    it("uses an early pointer release as one ordinary Save", async () => {
+      const { onCreate, save } = setup();
+      fireEvent.pointerDown(save, { pointerId: 4, pointerType: "mouse", button: 0, isPrimary: true });
+      await act(async () => vi.advanceTimersByTime(600));
+      fireEvent.pointerUp(save, { pointerId: 4, pointerType: "mouse" });
+      fireEvent.click(save);
+
+      await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+      expect(onCreate.mock.calls[0]![0]).not.toHaveProperty("column");
+    });
+
+    it.each(["pointerCancel", "pointerLeave", "lostPointerCapture", "blur", "escape"])("cancels without saving on %s", async (cancellation) => {
+      const { onCreate, save } = setup();
+      fireEvent.pointerDown(save, { pointerId: 9, pointerType: "touch", button: 0, isPrimary: true });
+      if (cancellation === "pointerCancel") fireEvent.pointerCancel(save, { pointerId: 9, pointerType: "touch" });
+      if (cancellation === "pointerLeave") fireEvent.pointerLeave(save, { pointerId: 9, pointerType: "touch" });
+      if (cancellation === "lostPointerCapture") fireEvent.lostPointerCapture(save, { pointerId: 9, pointerType: "touch" });
+      if (cancellation === "blur") fireEvent.blur(save);
+      if (cancellation === "escape") fireEvent.keyDown(save, { key: "Escape" });
+      await act(async () => vi.advanceTimersByTime(1_200));
+      expect(onCreate).not.toHaveBeenCalled();
+      expect(save).toHaveAttribute("data-hold-state", "idle");
+    });
+
+    it("cancels a hold when the selected workflow changes to another eligible workflow", async () => {
+      const onCreate = vi.fn().mockResolvedValue(undefined);
+      const replacement = { ...ideasWorkflow, id: "custom:other-ideas", name: "Other Ideas", columns: [{ id: "other-ideas", name: "Other Ideas", flags: { intake: true, hold: true, manualIntake: true } }, ...ideasWorkflow.columns.slice(1)] };
+      const { rerender } = renderAlphaQuickEntryBox({ onCreate, workflowId: ideasWorkflow.id, workflowOptions: [ideasWorkflow, replacement] });
+      fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Alpha task" } });
+      fireEvent.pointerDown(screen.getByTestId("quick-entry-save"), { pointerId: 3, pointerType: "pen", button: 0, isPrimary: true });
+      rerender(<AlphaProvider enabled><AlphaBoundary><QuickEntryBox onCreate={onCreate} addToast={vi.fn()} workflowId={replacement.id} workflowOptions={[ideasWorkflow, replacement]} /></AlphaBoundary></AlphaProvider>);
+      await act(async () => vi.advanceTimersByTime(1_200));
+      expect(onCreate).not.toHaveBeenCalled();
+      expect(screen.getByTestId("quick-entry-save")).toHaveAttribute("data-hold-state", "idle");
+    });
+
+    it("cleans up a pending hold on unmount", async () => {
+      const { onCreate, save, unmount } = setup();
+      fireEvent.pointerDown(save, { pointerId: 5, pointerType: "touch", button: 0, isPrimary: true });
+      unmount();
+      await act(async () => vi.advanceTimersByTime(1_200));
+      expect(onCreate).not.toHaveBeenCalled();
+    });
+
+    it("uses the Alpha hold with create-then-move workflows", async () => {
+      const onCreate = vi.fn().mockResolvedValue({ ...CREATED_TASK, id: "FN-alpha-move", column: "waiting", workflowId: holdFirstWorkflow.id });
+      const onMoveTask = vi.fn().mockResolvedValue({});
+      renderAlphaQuickEntryBox({ onCreate, onMoveTask, workflowId: holdFirstWorkflow.id, workflowOptions: [holdFirstWorkflow] });
+      fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Move after create" } });
+
+      await completePointerHold(screen.getByTestId("quick-entry-save"));
+
+      await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+      expect(onCreate.mock.calls[0]![0]).not.toHaveProperty("column");
+      await waitFor(() => expect(onMoveTask).toHaveBeenCalledWith("FN-alpha-move", "working"));
+    });
+
+    it("preserves the Alpha Start intent when duplicate creation is confirmed", async () => {
+      const onCreate = vi.fn().mockResolvedValue({ ...CREATED_TASK, id: "FN-alpha-duplicate", column: "todo", workflowId: ideasWorkflow.id });
+      vi.mocked(checkDuplicateTasks).mockResolvedValueOnce([
+        { id: "FN-existing", title: "Existing", description: "Existing", column: "ideas", score: 0.9 },
+      ]);
+      renderAlphaQuickEntryBox({ onCreate, workflowId: ideasWorkflow.id, workflowOptions: [ideasWorkflow] });
+      fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Confirm duplicate Start" } });
+
+      await completePointerHold(screen.getByTestId("quick-entry-save"));
+      expect(await screen.findByText("Possible duplicates")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Create anyway" }));
+
+      await waitFor(() => expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({
+        acknowledgedDuplicates: ["FN-existing"],
+        column: "todo",
+        workflowId: ideasWorkflow.id,
+      })));
+    });
+
+    it("discards the Alpha Start intent when duplicate creation is cancelled", async () => {
+      const onCreate = vi.fn().mockResolvedValue({ ...CREATED_TASK, id: "FN-alpha-save", column: "ideas", workflowId: ideasWorkflow.id });
+      vi.mocked(checkDuplicateTasks).mockResolvedValueOnce([
+        { id: "FN-existing", title: "Existing", description: "Existing", column: "ideas", score: 0.9 },
+      ]);
+      renderAlphaQuickEntryBox({ onCreate, workflowId: ideasWorkflow.id, workflowOptions: [ideasWorkflow] });
+      fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Cancel duplicate Start" } });
+      const save = screen.getByTestId("quick-entry-save");
+
+      await completePointerHold(save);
+      fireEvent.click(save);
+      expect(await screen.findByText("Possible duplicates")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      expect(onCreate).not.toHaveBeenCalled();
+
+      await waitFor(() => expect(screen.getByTestId("quick-entry-save")).not.toBeDisabled());
+      fireEvent.click(screen.getByTestId("quick-entry-save"));
+      await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+      expect(onCreate.mock.calls[0]![0]).not.toHaveProperty("column");
+    });
+
+    it.each([
+      ["void", undefined],
+      ["missing id", { ...CREATED_TASK, id: "", column: "waiting", workflowId: holdFirstWorkflow.id }],
+      ["wrong workflow", { ...CREATED_TASK, id: "FN-wrong-workflow", column: "waiting", workflowId: "other" }],
+      ["terminal column", { ...CREATED_TASK, id: "FN-terminal", column: "done", workflowId: holdFirstWorkflow.id }],
+    ])("does not move after an Alpha hold when create returns %s", async (_label, created) => {
+      const onCreate = vi.fn().mockResolvedValue(created);
+      const onMoveTask = vi.fn().mockResolvedValue({});
+      renderAlphaQuickEntryBox({ onCreate, onMoveTask, workflowId: holdFirstWorkflow.id, workflowOptions: [holdFirstWorkflow] });
+      fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Invalid create result" } });
+
+      await completePointerHold(screen.getByTestId("quick-entry-save"));
+
+      await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+      expect(onMoveTask).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["ineligible", { id: "builtin:coding", name: "Coding", columns: [{ id: "planning", name: "Planning", flags: { intake: true, hold: true } }, { id: "todo", name: "Todo", flags: {} }] }],
+      ["malformed", { ...ideasWorkflow, columns: [] }],
+    ])("keeps a long press as ordinary Save for %s Alpha workflow metadata", async (_label, workflow) => {
+      const onCreate = vi.fn().mockResolvedValue({ ...CREATED_TASK, id: "FN-alpha-save-only", workflowId: workflow.id });
+      const onMoveTask = vi.fn();
+      renderAlphaQuickEntryBox({ onCreate, onMoveTask, workflowId: workflow.id, workflowOptions: [workflow] });
+      fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Save only" } });
+      const save = screen.getByTestId("quick-entry-save");
+
+      fireEvent.pointerDown(save, { pointerId: 14, pointerType: "mouse", button: 0, isPrimary: true });
+      await act(async () => vi.advanceTimersByTime(1_200));
+      expect(save).toHaveAttribute("data-hold-state", "idle");
+      expect(onCreate).not.toHaveBeenCalled();
+      fireEvent.pointerUp(save, { pointerId: 14, pointerType: "mouse", button: 0, isPrimary: true });
+      fireEvent.click(save);
+
+      await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+      expect(onCreate.mock.calls[0]![0]).not.toHaveProperty("column");
+      expect(onMoveTask).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["desktop", mockDesktopViewport],
+      ["mobile", mockMobileViewport],
+    ])("runs hold-to-Start from the compact singleLine List host on %s", async (_label, mockViewport) => {
+      mockViewport();
+      const onCreate = vi.fn().mockResolvedValue({ ...CREATED_TASK, id: "FN-alpha-list", column: "todo", workflowId: ideasWorkflow.id });
+      renderAlphaQuickEntryBox({ onCreate, workflowId: ideasWorkflow.id, workflowOptions: [ideasWorkflow], singleLine: true, defaultExpanded: false });
+      fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "List Alpha task" } });
+
+      expect(screen.getByTestId("quick-entry-box")).toHaveClass("quick-entry--single-line");
+      await completePointerHold(screen.getByTestId("quick-entry-save"), 18, "touch");
+
+      await waitFor(() => expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({ column: "todo", workflowId: ideasWorkflow.id })));
+    });
+
+    it("keeps legacy Save text and its separate Start action", () => {
+      renderQuickEntryBox({ workflowId: ideasWorkflow.id, workflowOptions: [ideasWorkflow], onMoveTask: vi.fn() });
+      expect(screen.getByTestId("quick-entry-save")).toHaveTextContent("Save");
+      expect(screen.getByTestId("quick-entry-save-start")).toHaveTextContent("Start");
+    });
+  });
+
   describe("quota-safe draft persistence (FN-9160)", () => {
     it("evicts an over-cap Quick Add draft and warns only once", () => {
       const addToast = vi.fn();

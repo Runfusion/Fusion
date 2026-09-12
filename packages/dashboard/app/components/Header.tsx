@@ -1210,10 +1210,10 @@ export function Header({
         FNXC:MobileTaskNavigation 2026-08-20-05:47:
         Issue #2226 moves mobile Board/List navigation to the footer so Header can expose App's single full-task modal entry point from every active project view. The Planning column keeps its separate quick-entry composer.
 
-        FNXC:MobileTaskNavigation 2026-09-03-04:56:
-        The header create-task control must remain the last child of the action cluster so it renders at the far right. Header actions deliberately have no order or row-reverse override, making DOM order the position contract.
+        FNXC:MobileTaskNavigation 2026-09-12-00:36:
+        The App-owned create-task control is the single global Alpha entry point on desktop, tablet, and mobile; legacy mobile retains the same control when bottom navigation is active. It must remain the last child of the action cluster so it renders at the far right without duplicating the column action.
         */}
-        {isMobile && mobileNavEnabled && projectId && onNewTask && (
+        {(alphaUpdatesEnabled || (isMobile && mobileNavEnabled)) && projectId && onNewTask && (
           <button
             className="btn-icon"
             onClick={onNewTask}

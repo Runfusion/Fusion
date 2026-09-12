@@ -33,10 +33,9 @@ It would happily pass on CSS that does not actually lay out correctly — do not
 here as evidence the button renders. Re-verify in a browser when touching this row.
 */
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "fs";
-import { resolve } from "path";
+import { readAppFile } from "../test/cssFixture";
 
-const css = readFileSync(resolve(__dirname, "../components/QuickEntryBox.css"), "utf8");
+const css = readAppFile("components/QuickEntryBox.css");
 
 /** Extract a top-level rule body, asserting it is not nested inside an @media block. */
 function ruleBody(selector: string): { body: string; index: number } {
@@ -106,6 +105,21 @@ describe("QuickEntryBox.css — Save button is never clipped (mobile report)", (
       const { index } = ruleBody(selector);
       expect(isInsideMediaQuery(index), `${selector} must not be breakpoint-scoped`).toBe(false);
     }
+  });
+
+  it("keeps the Alpha icon-only hold fill inside fixed token-sized desktop and mobile targets", () => {
+    const { body } = ruleBody('[data-alpha-surface="true"] .quick-entry-primary-group [data-testid="quick-entry-save"]');
+    expect(body).toMatch(/min-width:\s*var\(--alpha-control-height\)/);
+    expect(body).toMatch(/width:\s*var\(--alpha-control-height\)/);
+    expect(body).toMatch(/overflow:\s*hidden/);
+    expect(body).toMatch(/padding:\s*0/);
+
+    const progress = ruleBody('[data-alpha-surface="true"] .quick-entry-alpha-save-progress').body;
+    expect(progress).toMatch(/inset:\s*0/);
+    expect(progress).toMatch(/background:\s*var\(--color-warning\)/);
+    expect(progress).toMatch(/transform:\s*scaleX\(0\)/);
+    expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*\.quick-entry-alpha-save\[data-hold-state="holding"\]/);
+    expect(css).toMatch(/@media \(max-width: 768px\)[\s\S]*min-width:\s*var\(--alpha-touch-height\)/);
   });
 
   it("keeps the icon touch-target floor the fix must not claw width back from", () => {

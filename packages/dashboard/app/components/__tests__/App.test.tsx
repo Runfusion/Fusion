@@ -1607,6 +1607,21 @@ describe("Alpha Updates production wiring", () => {
     }
   });
 
+  it("ouvre Nouvelle tâche depuis le Header Alpha desktop sans action de colonne", async () => {
+    mockUseViewportMode.mockReturnValue("desktop");
+    vi.mocked(fetchSettings).mockResolvedValue({
+      ...defaultSettings,
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates: true },
+    });
+
+    render(<App />);
+
+    const action = await screen.findByTestId("mobile-header-new-task");
+    expect(screen.queryByRole("button", { name: "+ New Task" })).toBeNull();
+    fireEvent.click(action);
+    expect(await screen.findByRole("heading", { name: "New Task" })).toBeInTheDocument();
+  });
+
   it("retire la réserve de contenu Alpha avec le clavier et les modales", async () => {
     mockUseViewportMode.mockReturnValue("mobile");
     vi.mocked(fetchSettings).mockResolvedValue({

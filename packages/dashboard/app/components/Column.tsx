@@ -639,7 +639,8 @@ function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeG
             <span className="toggle-label">{t("column.autoMerge", "Auto-merge")}</span>
           </label>
         )}
-        {onNewTask && (
+        {/* FNXC:AlphaQuickEntry 2026-09-12-00:36: Alpha owns one global New Task action in Header, so column headers must not retain a duplicate button or click shell; legacy columns keep their existing action. */}
+        {!alphaUpdatesEnabled && onNewTask && (
           <AlphaButton className="btn btn-task-create btn-sm" onClick={() => onNewTask()}>
             + {t("column.newTask", "New Task")}
           </AlphaButton>

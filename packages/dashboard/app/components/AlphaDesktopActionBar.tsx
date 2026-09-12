@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { ChevronUp } from "lucide-react";
 import type { DashboardNavigationEntry } from "./dashboardNavigationEntries";
 import "./AlphaDesktopActionBar.css";
@@ -9,6 +10,8 @@ export interface AlphaDesktopActionBarProps {
 }
 
 export function AlphaDesktopActionBar({ entries, activeId }: AlphaDesktopActionBarProps) {
+  /* FNXC:AlphaNavigation 2026-09-12-00:36: Alpha navigation labels, including its overflow trigger and landmark, must use the shared locale catalog rather than English-only literals. */
+  const { t } = useTranslation("app");
   const [overflowOpen, setOverflowOpen] = useState(false);
   const direct = entries.filter((entry) => entry.placement === "direct");
   const overflow = entries.filter((entry) => entry.placement === "overflow");
@@ -23,10 +26,10 @@ export function AlphaDesktopActionBar({ entries, activeId }: AlphaDesktopActionB
       <span>{entry.label}</span>
     </button>;
   };
-  return <nav className="alpha-desktop-action-bar" aria-label="Primary navigation" data-testid="alpha-desktop-action-bar">
+  return <nav className="alpha-desktop-action-bar" aria-label={t("nav.primaryNavAriaLabel", "Primary navigation")} data-testid="alpha-desktop-action-bar">
     <div className="alpha-desktop-action-bar__scroller">{direct.map((entry) => renderButton(entry))}</div>
     {overflow.length ? <div className="alpha-desktop-action-bar__more">
-      <button type="button" className="alpha-desktop-action-bar__action" aria-label="More views" aria-haspopup="menu" aria-expanded={overflowOpen} data-testid="alpha-desktop-nav-more" onClick={() => setOverflowOpen((value) => !value)}><ChevronUp aria-hidden="true" /><span>More</span></button>
+      <button type="button" className="alpha-desktop-action-bar__action" aria-label={t("header.moreViews", "More views")} aria-haspopup="menu" aria-expanded={overflowOpen} data-testid="alpha-desktop-nav-more" onClick={() => setOverflowOpen((value) => !value)}><ChevronUp aria-hidden="true" /><span>{t("nav.more", "More")}</span></button>
       {overflowOpen ? <div className="alpha-desktop-action-bar__menu" role="menu">{overflow.map((entry) => renderButton(entry, true))}</div> : null}
     </div> : null}
   </nav>;

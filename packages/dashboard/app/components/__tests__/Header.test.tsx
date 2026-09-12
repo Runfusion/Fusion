@@ -296,8 +296,26 @@ describe("Header", () => {
       expect(actions?.firstElementChild?.querySelector("svg")).not.toBeNull();
     });
 
-    it.each(["desktop", "tablet"] as const)("does not render the mobile New Task action at the %s tier", (tier) => {
+    it.each(["desktop", "tablet"] as const)("does not render the legacy mobile New Task action at the %s tier", (tier) => {
       renderHeader({ mobileNavEnabled: true, projectId: "project-1", onNewTask: vi.fn() }, tier);
+      expect(screen.queryByTestId("mobile-header-new-task")).toBeNull();
+    });
+
+    it.each(["desktop", "tablet", "mobile"] as const)("renders one functional Alpha New Task action last at the %s tier", (tier) => {
+      const onNewTask = vi.fn();
+      const { container } = renderHeader({ alphaUpdatesEnabled: true, projectId: "project-1", onNewTask }, tier);
+      const action = screen.getByTestId("mobile-header-new-task");
+      expect(container.querySelector(".header-actions")?.lastElementChild).toBe(action);
+      expect(screen.getAllByRole("button", { name: "New Task" })).toHaveLength(1);
+      fireEvent.click(action);
+      expect(onNewTask).toHaveBeenCalledOnce();
+    });
+
+    it.each(["desktop", "tablet", "mobile"] as const)("omits the Alpha New Task action without project or callback at the %s tier", (tier) => {
+      const rendered = renderHeader({ alphaUpdatesEnabled: true, onNewTask: vi.fn() }, tier);
+      expect(screen.queryByTestId("mobile-header-new-task")).toBeNull();
+      rendered.unmount();
+      renderHeader({ alphaUpdatesEnabled: true, projectId: "project-1" }, tier);
       expect(screen.queryByTestId("mobile-header-new-task")).toBeNull();
     });
 
