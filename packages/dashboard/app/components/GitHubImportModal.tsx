@@ -1,3 +1,4 @@
+import { ModalCloseButton } from "./ModalCloseButton";
 import "./GitHubImportModal.css";
 import { useState, useEffect, useCallback, useContext, useRef, useMemo } from "react";
 import { useTranslation } from "react-i18next";
@@ -1621,9 +1622,7 @@ export function GitHubImportModal({ isOpen, onClose, onImport, onPlanningMode, o
               {t("git.importSubtitle", "Choose a detected remote, load open issues or pull requests, and import one into the board.")}
             </p>
           </div>
-          <button className="modal-close" onClick={onClose} aria-label={t("git.closeModalAriaLabel", "Close import modal")}>
-            &times;
-          </button>
+          <ModalCloseButton onClick={onClose} aria-label={t("git.closeModalAriaLabel", "Close import modal")} />
         </div>
       )}
 

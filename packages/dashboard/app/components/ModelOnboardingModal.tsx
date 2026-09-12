@@ -1,7 +1,8 @@
+import { ModalCloseButton } from "./ModalCloseButton";
 import "./ModelOnboardingModal.css";
 import "./SetupWizardModal.css";
 import { lazy, Suspense, useState, useEffect, useCallback, useRef, useMemo, type KeyboardEvent, type ReactNode } from "react";
-import { X, Loader2, CheckCircle, Key, Zap, GitPullRequest, Rocket, Plus, Sparkles, UserRound } from "lucide-react";
+import { Loader2, CheckCircle, Key, Zap, GitPullRequest, Rocket, Plus, Sparkles, UserRound } from "lucide-react";
 import { getErrorMessage, type Task } from "@fusion/core";
 import type { AuthProvider, ManualOAuthCodeInfo, ModelInfo, CustomProvider, CustomProviderConfig, OAuthDeviceCodeInfo } from "../api";
 import {
@@ -2653,14 +2654,11 @@ export function ModelOnboardingModal({
             )}
           </h2>
           {step !== "complete" && (
-            <button
-              className="modal-close"
+            <ModalCloseButton
               onClick={handleDismiss}
               aria-label={t("setup.skipOnboardingAriaLabel", "Skip onboarding")}
               title={t("setup.skipForNow", "Skip for now")}
-            >
-              <X size={20} />
-            </button>
+             />
           )}
         </div>
 

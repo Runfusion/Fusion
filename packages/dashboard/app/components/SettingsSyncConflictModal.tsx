@@ -1,3 +1,4 @@
+import { ModalCloseButton } from "./ModalCloseButton";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import "./SettingsSyncConflictModal.css";
@@ -225,9 +226,7 @@ export function SettingsSyncConflictModal({
       >
         <div className="modal-header">
           <h3>{t("settings.conflictModalTitle", "Resolve Settings Conflicts")}</h3>
-          <button className="modal-close" onClick={onClose} aria-label={t("settings.closeModal", "Close conflict modal")}>
-            &times;
-          </button>
+          <ModalCloseButton onClick={onClose} aria-label={t("settings.closeModal", "Close conflict modal")} />
         </div>
 
         <div className="modal-body">

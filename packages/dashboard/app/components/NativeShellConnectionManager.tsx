@@ -1,3 +1,4 @@
+import { ModalCloseButton } from "./ModalCloseButton";
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { FusionShellApi, ShellConnectionProfile, ShellConnectionState } from "../types/native-shell";
@@ -120,9 +121,7 @@ export function NativeShellConnectionManager({ open, shellApi, shellState, onClo
       <div className="modal native-shell-connection-manager" role="dialog" aria-label={t("shell.connectionManagerLabel", "Connection Manager")}>
         <div className="modal-header">
           <h2>{t("shell.connectionManager", "Connection Manager")}</h2>
-          <button type="button" className="modal-close" onClick={onClose} aria-label={t("actions.close", "Close")}>
-            ×
-          </button>
+          <ModalCloseButton onClick={onClose} aria-label={t("actions.close", "Close")} />
         </div>
 
         <div className="native-shell-connection-manager__profiles">

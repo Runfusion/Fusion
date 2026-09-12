@@ -1,3 +1,4 @@
+import { ModalCloseButton } from "./ModalCloseButton";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
@@ -123,9 +124,7 @@ export function ConfirmDialog({
       >
         <div className="modal-header">
           <h3>{options.title}</h3>
-          <button className="modal-close" onClick={onCancel} aria-label={t("confirm.closeDialog", "Close confirmation dialog")}>
-            &times;
-          </button>
+          <ModalCloseButton onClick={onCancel} aria-label={t("confirm.closeDialog", "Close confirmation dialog")} />
         </div>
 
         <div className="confirm-dialog__body">{options.message}</div>

@@ -1,6 +1,7 @@
+import { ModalCloseButton } from "./ModalCloseButton";
 import "./SetupWizardModal.css";
 import { lazy, Suspense, useState, useCallback, useMemo, useRef, useEffect, type KeyboardEvent } from "react";
-import { X, Loader2, CheckCircle, ChevronRight, Sparkles } from "lucide-react";
+import { Loader2, CheckCircle, ChevronRight, Sparkles } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { AgentOnboardingSummary, ProjectInfo, ProjectCreateInput } from "../api";
 import { createAgent, registerProject, detectWorkspace, fetchAuthStatus } from "../api";
@@ -492,13 +493,10 @@ export function SetupWizardModal({
             </h2>
           </div>
           {state.step !== "complete" && state.step !== "agent" && (
-            <button
-              className="modal-close"
+            <ModalCloseButton
               onClick={handleClose}
               aria-label={t("setup.closeWizard", "Close wizard")}
-            >
-              <X size={20} />
-            </button>
+             />
           )}
         </div>
 

@@ -1,10 +1,10 @@
+import { ModalCloseButton } from "./ModalCloseButton";
 import { useState, useEffect, useCallback } from "react";
 import { isCompleteColumnRole } from "../utils/columnRoles";
 import { useTranslation } from "react-i18next";
 import { FloatingWindow } from "./FloatingWindow";
 import { useModalDismissPreference } from "../hooks/useOverlayDismiss";
 import {
-  X,
   FileCode,
   ChevronLeft,
   ChevronRight,
@@ -196,9 +196,7 @@ export function ChangesDiffModal({ columnFlags,
                 {t("actions.refresh", "Refresh")}
               </button>
             )}
-            <button className="modal-close" onClick={onClose} aria-label={t("actions.close", "Close")}>
-              <X size={20} />
-            </button>
+            <ModalCloseButton onClick={onClose} aria-label={t("actions.close", "Close")} />
           </div>
         </div>
 

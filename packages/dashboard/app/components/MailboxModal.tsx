@@ -1,10 +1,10 @@
+import { ModalCloseButton } from "./ModalCloseButton";
 import "./MailboxModal.css";
 import { FloatingWindow } from "./FloatingWindow";
 import { useState, useEffect, useCallback, useMemo, useRef, type CSSProperties } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import {
-  X,
   Mail,
   Send,
   Inbox as InboxIcon,
@@ -911,15 +911,12 @@ export function MailboxModal({
             >
               {isLoading ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />}
             </button>
-            <button
-              className="modal-close"
+            <ModalCloseButton
               onClick={onClose}
               aria-label={t("mailbox.closeAriaLabel", "Close")}
               title={t("mailbox.closeTitle", "Close")}
               data-testid="mailbox-close"
-            >
-              <X size={16} />
-            </button>
+             />
           </div>
         </div>
 

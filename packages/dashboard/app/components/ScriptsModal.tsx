@@ -1,3 +1,4 @@
+import { ModalCloseButton } from "./ModalCloseButton";
 import "./ScriptsModal.css";
 import { useState, useEffect, useCallback } from "react";
 import { useTranslation } from "react-i18next";
@@ -191,9 +192,7 @@ export function ScriptsModal({ isOpen, onClose, addToast, projectId, onRunScript
             <Terminal size={18} style={{ marginRight: "8px", verticalAlign: "middle" }} />
             {t("scriptsModal.title", "Scripts")}
           </h2>
-          <button className="modal-close" onClick={onClose} aria-label={t("actions.close", "Close")}>
-            &times;
-          </button>
+          <ModalCloseButton onClick={onClose} aria-label={t("actions.close", "Close")} />
         </div>
 
         <div className="modal-body scripts-modal-body">

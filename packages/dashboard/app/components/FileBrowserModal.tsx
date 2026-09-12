@@ -1,7 +1,8 @@
+import { ModalCloseButton } from "./ModalCloseButton";
 import "./FileBrowser.css";
 import { useState, useCallback, useEffect, useMemo, useId, useLayoutEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import { X, Save, RotateCcw, Folder, FileType, ArrowLeft, ChevronDown, ChevronUp } from "lucide-react";
+import { Save, RotateCcw, Folder, FileType, ArrowLeft, ChevronDown, ChevronUp } from "lucide-react";
 import { useWorkspaceFileBrowser } from "../hooks/useWorkspaceFileBrowser";
 import { useWorkspaceFileEditor } from "../hooks/useWorkspaceFileEditor";
 import { useAutoSavePreference } from "../hooks/useAutoSavePreference";
@@ -404,9 +405,7 @@ export function FileBrowserModal({
               workspaces={workspaces}
               onSelect={handleWorkspaceSelect}
             />
-            <button className="modal-close" onClick={onClose} aria-label={t("actions.close", "Close")}>
-              <X size={20} />
-            </button>
+            <ModalCloseButton onClick={onClose} aria-label={t("actions.close", "Close")} />
           </div>
         </div>
 

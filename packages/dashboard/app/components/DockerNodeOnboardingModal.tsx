@@ -1,3 +1,4 @@
+import { ModalCloseButton } from "./ModalCloseButton";
 import { ChevronDown, Plus, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -217,9 +218,7 @@ export function DockerNodeOnboardingModal({ isOpen, onClose, onSubmit, addToast:
       <div className="modal docker-onboarding">
         <div className="modal-header">
           <h3>{t("docker.titles.provisionNode", "Provision Docker Node")}</h3>
-          <button className="modal-close" onClick={closeModal} disabled={submitting} aria-label={t("docker.ariaLabels.closeModal", "Close onboarding modal")}>
-            &times;
-          </button>
+          <ModalCloseButton onClick={closeModal} disabled={submitting} aria-label={t("docker.ariaLabels.closeModal", "Close onboarding modal")} />
         </div>
 
         <div className="modal-body docker-onboarding__body">

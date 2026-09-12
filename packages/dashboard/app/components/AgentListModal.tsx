@@ -1,3 +1,4 @@
+import { ModalCloseButton } from "./ModalCloseButton";
 import "./AgentListModal.css";
 // AgentListModal renders agent cards using .agent-board-*, .agent-icon, .agent-state-filter
 // rules that live in AgentsView.css. The modal is eager but AgentsView is lazy, so we
@@ -324,9 +325,7 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
             >
               <RefreshCw size={16} className={isLoading ? "spin" : ""} />
             </button>
-            <button className="modal-close" onClick={onClose} aria-label={t("agents.close", "Close")}>
-              &times;
-            </button>
+            <ModalCloseButton onClick={onClose} aria-label={t("agents.close", "Close")} />
           </div>
         </div>
 

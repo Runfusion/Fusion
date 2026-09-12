@@ -1,3 +1,4 @@
+import { ModalCloseButton } from "./ModalCloseButton";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../api";
@@ -124,9 +125,7 @@ export function StashRecoveryView() {
           <div className="modal stash-recovery-diff-modal" role="dialog" aria-modal="true" aria-label={t("stashRecovery.diffDialogLabel", "Diff for {{sha}}", { sha: diffState.sha })} onClick={(event) => event.stopPropagation()}>
             <div className="modal-header">
               <h3>{t("stashRecovery.diffHeader", "Diff for {{sha}}", { sha: diffState.sha.slice(0, 7) })}</h3>
-              <button className="modal-close" onClick={() => setDiffState(null)} aria-label={t("stashRecovery.closeDiffDialog", "Close diff dialog")}>
-                &times;
-              </button>
+              <ModalCloseButton onClick={() => setDiffState(null)} aria-label={t("stashRecovery.closeDiffDialog", "Close diff dialog")} />
             </div>
             {diffState.loading && <p><LoadingSpinner label={t("stashRecovery.loadingDiff", "Loading diff…")} /></p>}
             {diffState.error && <div className="form-error">{diffState.error}</div>}

@@ -556,23 +556,6 @@ Reintroducing flex here (e.g. to lay out an element title) re-breaks truncation 
   white-space: nowrap;
 }
 
-.floating-window__close {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--space-xs);
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-}
-
-.floating-window__close:hover {
-  background: var(--status-todo-bg, var(--surface));
-  color: var(--text);
-}
-
 /*
 FNXC:FloatingWindow 2026-06-22-20:45:
 Body is a flex host that lets its single child stretch to the full panel width/height (min-width/min-height:0 so a wide child cannot collapse the flex line, and the child's own overflow can engage).

@@ -1,3 +1,4 @@
+import { ModalCloseButton } from "./ModalCloseButton";
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import type { PlanningQuestion, Settings, ThinkingLevel } from "@fusion/core";
@@ -844,9 +845,7 @@ export function MissionInterviewModal({
                 <Minimize2 size={16} />
               </button>
             )}
-            <button className="modal-close" onClick={handleClose} aria-label={t("actions.close", "Close")}>
-              <X size={20} />
-            </button>
+            <ModalCloseButton onClick={handleClose} aria-label={t("actions.close", "Close")} />
           </div>
         </div>
 

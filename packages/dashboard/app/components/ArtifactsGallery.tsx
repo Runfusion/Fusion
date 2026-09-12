@@ -1,3 +1,4 @@
+import { ModalCloseButton } from "./ModalCloseButton";
 import "./ArtifactsGallery.css";
 import { useCallback, useContext, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
@@ -12,7 +13,6 @@ import {
   Package,
   Pencil,
   Video,
-  X,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -506,9 +506,7 @@ function ViewerHeader({ title, onClose, t, actions, closeRef }: { title: string;
       <h3 className="artifacts-gallery-viewer-title">{title}</h3>
       <div className="artifacts-gallery-viewer-actions">
         {actions}
-        <button ref={closeRef} className="modal-close" onClick={onClose} aria-label={t("documents.closeLightbox", "Close artifact preview")}>
-          <X size={20} />
-        </button>
+        <ModalCloseButton ref={closeRef}  onClick={onClose} aria-label={t("documents.closeLightbox", "Close artifact preview")} />
       </div>
     </div>
   );

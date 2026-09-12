@@ -1,3 +1,4 @@
+import { ModalCloseButton } from "./ModalCloseButton";
 import "@xyflow/react/dist/style.css";
 import "./WorkflowNodeEditor.css";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -18,7 +19,7 @@ import {
 } from "@xyflow/react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import { X, Plus, Trash2, Save, MessageSquare, Terminal, Shield, GitMerge, Loader2, HelpCircle, PauseCircle, Split, Merge, Repeat, ToggleRight, ClipboardCheck, ListChecks, Code2, Bell, LayoutGrid, Workflow, Download, Upload, ChevronDown, ChevronRight, ChevronLeft, Library, Sparkles, Maximize2, Minimize2, DoorOpen } from "lucide-react";
+import { Plus, Trash2, Save, MessageSquare, Terminal, Shield, GitMerge, Loader2, HelpCircle, PauseCircle, Split, Merge, Repeat, ToggleRight, ClipboardCheck, ListChecks, Code2, Bell, LayoutGrid, Workflow, Download, Upload, ChevronDown, ChevronRight, ChevronLeft, Library, Sparkles, Maximize2, Minimize2, DoorOpen } from "lucide-react";
 import type { WorkflowDefinition, WorkflowIrColumn, TraitViolation, WorkflowStepTemplate, WorkflowIrNodeKind } from "@fusion/core";
 import { getErrorMessage, analyzeWorkflowLifecycle } from "@fusion/core";
 import type { WorkflowLifecycleWarning, WorkflowLifecycleWarningCode } from "@fusion/core";
@@ -615,14 +616,10 @@ function CreateWorkflowDialog({
       >
         <div className="modal-header">
           <h3>{t("workflows.createTitle", "New workflow")}</h3>
-          <button
-            type="button"
-            className="modal-close"
+          <ModalCloseButton
             onClick={onClose}
             aria-label={t("actions.close", "Close")}
-          >
-            <X size={16} />
-          </button>
+           />
         </div>
         <form onSubmit={handleSubmit}>
           <div className="modal-body">
@@ -2844,9 +2841,7 @@ function InnerEditor({
           {/* FNXC:WorkflowEditorEmbedding 2026-06-22-00:00: embedded views keep a
               Command Center-style header title but drop the modal X close button. */}
           {!isEmbedded ? (
-            <button className="wf-editor-close" onClick={requestClose} aria-label={t("workflows.closeEditor", "Close workflow editor")}>
-              <X size={18} />
-            </button>
+            <ModalCloseButton className="wf-editor-close" onClick={requestClose} aria-label={t("workflows.closeEditor", "Close workflow editor")} />
           ) : null}
         </header>
 

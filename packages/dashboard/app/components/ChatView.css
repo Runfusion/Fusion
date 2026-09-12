@@ -1,5 +1,9 @@
 /* ── Chat View ─────────────────────────────────────────────────────────────── */
 
+/*
+FNXC:ModalChrome 2026-09-11-23:35:
+FN-351 gives Quick Chat and detached conversations the History shell contract: one fixed shared header followed by a flex body painted with the same content-background token. Internal list, thread, streaming, and composer surfaces retain their own semantics.
+*/
 .chat-view {
   container: chat-view / inline-size;
   display: flex;
@@ -18,6 +22,10 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+}
+
+.chat-view--floating .chat-view__body {
+  background: var(--bg-primary);
 }
 
 /*

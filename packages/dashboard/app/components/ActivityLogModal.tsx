@@ -1,3 +1,4 @@
+import { ModalCloseButton } from "./ModalCloseButton";
 // Base ActivityLogModal styles (.activity-log-*, .activity-icon, etc.) currently live
 // in ScriptsModal.css. Until fully extracted, import that file so this eager modal is styled.
 import "./ScriptsModal.css";
@@ -135,12 +136,12 @@ export function ActivityLogModal({
   const [filteredProjectId, setFilteredProjectId] = useState<string | "all">(projectId || "all");
   const [taskIdSearch, setTaskIdSearch] = useState("");
   const [showConfirmClear, setShowConfirmClear] = useState(false);
-  
+
   // Sync with external projectId prop
   useEffect(() => {
     setFilteredProjectId(projectId || "all");
   }, [projectId]);
-  
+
   // Convert filters to the format expected by useActivityLog
   const activityType = filteredType === "all" ? undefined : filteredType;
   const activeProjectId = filteredProjectId === "all" ? undefined : filteredProjectId;
@@ -150,7 +151,7 @@ export function ActivityLogModal({
   undefined so it restores unfiltered history; normalization makes operator casing irrelevant without broad search.
   */
   const taskId = taskIdSearch.trim().toUpperCase() || undefined;
-  
+
   // Determine data source:
   // - In project view (currentProject set): use per-project activity log (/api/activity)
   //   which is always populated with task lifecycle events for the current project.
@@ -161,15 +162,15 @@ export function ActivityLogModal({
   const useCentralFeed = !currentProject && projects.length > 0;
 
   // Use the hook for data fetching
-  const { 
-    entries, 
-    loading: isLoading, 
-    error, 
+  const {
+    entries,
+    loading: isLoading,
+    error,
     refresh,
     hasMore,
     loadMore,
-  } = useActivityLog({ 
-    projectId: activeProjectId, 
+  } = useActivityLog({
+    projectId: activeProjectId,
     type: activityType,
     taskId,
     limit: 100,
@@ -330,15 +331,12 @@ export function ActivityLogModal({
           {/* Close button — uses shared modal-close for consistent sizing and alignment.
               FNXC:RightDockEmbedded 2026-06-22-00:00: Dropped in embedded mode; the dock provides its own close. */}
           {!isEmbedded && (
-            <button
-              className="modal-close"
+            <ModalCloseButton
               onClick={onClose}
               aria-label={t("actions.close", "Close")}
               title={t("actions.close", "Close")}
               data-testid="activity-close"
-            >
-              ×
-            </button>
+             />
           )}
         </div>
 

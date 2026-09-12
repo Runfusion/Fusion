@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PatchnodeFeed } from "@fusion/core";
+import { readAppFile } from "../../test/cssFixture";
 
 const { fetchPatchnode } = vi.hoisted(() => ({ fetchPatchnode: vi.fn() }));
 vi.mock("../../api", () => ({ fetchPatchnode }));
@@ -36,6 +37,7 @@ describe("PatchnodeView", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.unstubAllGlobals();
   });
 
   it("renders History copy in the title, search, and loading state", () => {
@@ -59,12 +61,60 @@ describe("PatchnodeView", () => {
     expect(screen.queryByTestId(/patchnode-day-/)).toBeNull();
   });
 
-  it("renders a populated multi-day feed in server order", async () => {
-    render(<PatchnodeView />);
+  it("keeps the fixed header outside the populated multi-day scroll body", async () => {
+    const css = readAppFile("components/PatchnodeView.css");
+    expect(css).toMatch(/\.patchnode-view\s*\{[^}]*overflow:\s*hidden;/s);
+    expect(css).toMatch(/\.patchnode-view__content\s*\{[^}]*overflow-y:\s*auto;/s);
+
+    const { container } = render(<PatchnodeView floating={{ onClose: vi.fn() }} />);
     expect(await screen.findByTestId("patchnode-day-2026-08-28")).toBeInTheDocument();
     expect(screen.getByTestId("patchnode-day-2026-08-27")).toBeInTheDocument();
+    const view = screen.getByTestId("patchnode-view");
+    const header = view.querySelector(":scope > .view-header");
+    const scrollBody = view.querySelector(":scope > .patchnode-view__content");
+    expect(header).toBeInTheDocument();
+    expect(scrollBody).toBeInTheDocument();
+    expect(scrollBody?.contains(header)).toBe(false);
+    expect(view.children[0]).toBe(header);
+    expect(view.children[1]).toBe(scrollBody);
+    expect(screen.getAllByRole("button", { name: "Close History" })).toHaveLength(1);
+    expect(container.querySelector(".floating-window__close")).toBeNull();
     const older = screen.getByTestId("patchnode-day-2026-08-27");
     expect(older.querySelectorAll(".patchnode-entry")[0]).toHaveTextContent("Cancelled delivery");
+  });
+
+  it("paginates through the sentinel rooted in the History scroll body", async () => {
+    let observerCallback: IntersectionObserverCallback | undefined;
+    let observerRoot: Element | Document | null | undefined;
+    class TestIntersectionObserver {
+      constructor(callback: IntersectionObserverCallback, options?: IntersectionObserverInit) {
+        observerCallback = callback;
+        observerRoot = options?.root;
+      }
+      observe() {}
+      disconnect() {}
+      unobserve() {}
+      takeRecords() { return []; }
+      root = null;
+      rootMargin = "";
+      thresholds = [];
+    }
+    vi.stubGlobal("IntersectionObserver", TestIntersectionObserver);
+    fetchPatchnode
+      .mockResolvedValueOnce({ ...feed, hasMore: true })
+      .mockResolvedValueOnce({ days: [], totalEntries: 3, hasMore: false });
+
+    render(<PatchnodeView />);
+    const scrollBody = await screen.findByTestId("patchnode-auto-pagination-sentinel").then((sentinel) => sentinel.parentElement);
+    await waitFor(() => expect(observerCallback).toBeTypeOf("function"));
+    expect(scrollBody).toHaveClass("patchnode-view__content");
+    expect(observerRoot).toBe(scrollBody);
+
+    await act(async () => {
+      observerCallback?.([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver);
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(fetchPatchnode).toHaveBeenLastCalledWith(expect.objectContaining({ limit: 50, offset: 3 }), undefined));
   });
 
   it("re-queries after the search debounce", async () => {

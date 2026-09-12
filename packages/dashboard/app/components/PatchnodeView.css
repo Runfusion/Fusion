@@ -4,6 +4,9 @@ Patchnode uses the shared view shell and token-only cards so the permanent daily
 
 FNXC:AlphaDesktopWindows 2026-09-11-19:35:
 The floating presentation reuses this exact History body and its request lifecycle; only the shared ViewHeader becomes the drag/close chrome inside one non-modal FloatingWindow.
+
+FNXC:ModalChrome 2026-09-11-23:35:
+FN-351 keeps the History header outside the scrolling region in every host. The content body alone owns overflow and pagination so the shared header remains visible while day headings stay sticky within that body.
 */
 .patchnode-view {
   display: flex;
@@ -13,17 +16,21 @@ The floating presentation reuses this exact History body and its request lifecyc
   height: 100%;
   min-width: 0;
   min-height: 0;
-  overflow-y: auto;
+  overflow: hidden;
 }
 
 .patchnode-view--floating .view-header { cursor: move; }
 
 .patchnode-view__content {
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: var(--space-xl);
   min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
   padding: var(--space-xl);
+  background: var(--bg-primary);
 }
 
 .patchnode-search {

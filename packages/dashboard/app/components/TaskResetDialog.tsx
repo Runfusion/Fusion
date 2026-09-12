@@ -1,3 +1,4 @@
+import { ModalCloseButton } from "./ModalCloseButton";
 import "./TaskResetDialog.css";
 import { AlphaButton, AlphaDialog, AlphaTextArea } from "./alpha-ui";
 
@@ -73,15 +74,11 @@ export function TaskResetDialog({
       <div data-testid="task-reset-dialog">
         <div className="modal-header">
           <h3 id={titleId}>{t("taskDetail.reset.confirmTitle", "Reset this task?")}</h3>
-          <AlphaButton
-            type="button"
-            className="modal-close"
+          <ModalCloseButton
             onClick={onClose}
             disabled={isSubmitting}
             aria-label={t("common.close", "Close")}
-          >
-            &times;
-          </AlphaButton>
+           />
         </div>
         <div className="task-reset-dialog__body">
           <p className="task-reset-dialog__warning">

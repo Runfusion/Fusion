@@ -1,3 +1,4 @@
+import { ModalCloseButton } from "./ModalCloseButton";
 import "./AgentImportModal.css";
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useTranslation } from "react-i18next";
@@ -477,9 +478,7 @@ export function AgentImportModal({ isOpen, onClose, onImported, projectId, initi
         {/* Header */}
         <div className="agent-dialog-header">
           <span className="agent-dialog-header-title">{t("agents.importAgents", "Import Agents")}</span>
-          <button className="modal-close" onClick={handleClose} aria-label={t("agents.close", "Close")}>
-            &times;
-          </button>
+          <ModalCloseButton onClick={handleClose} aria-label={t("agents.close", "Close")} />
         </div>
 
         {/* Body */}

@@ -1,3 +1,4 @@
+import { ModalCloseButton } from "./ModalCloseButton";
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import type { AgentGenerationSpec } from "../api";
@@ -168,13 +169,10 @@ export function AgentGenerationModal({
             <span className="agent-dialog-header-sparkle">✨</span>
             {t("agents.generation.title", "Generate Agent")}
           </span>
-          <button
-            className="modal-close"
+          <ModalCloseButton
             onClick={handleCancel}
             aria-label={t("actions.close", "Close")}
-          >
-            &times;
-          </button>
+           />
         </div>
 
         {/* Body */}

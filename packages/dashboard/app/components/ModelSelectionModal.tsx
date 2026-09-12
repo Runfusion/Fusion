@@ -1,3 +1,4 @@
+import { ModalCloseButton } from "./ModalCloseButton";
 import { useCallback, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
@@ -5,7 +6,7 @@ import type { ModelPreset, ThinkingLevel } from "@fusion/core";
 import type { ModelInfo } from "../api";
 import { applyPresetToSelection } from "../utils/modelPresets";
 import { CustomModelDropdown } from "./CustomModelDropdown";
-import { Brain, X } from "lucide-react";
+import { Brain } from "lucide-react";
 import { LoadingSpinner } from "./LoadingSpinner";
 import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
 
@@ -213,9 +214,7 @@ export function ModelSelectionModal({
             <Brain size={20} style={{ color: "var(--todo)" }} />
             <h3>{t("modelSelection.title", "Select Models")}</h3>
           </div>
-          <button className="modal-close" onClick={onClose} aria-label={t("actions.close", "Close")} data-testid="model-selection-close">
-            <X size={20} />
-          </button>
+          <ModalCloseButton onClick={onClose} aria-label={t("actions.close", "Close")} data-testid="model-selection-close" />
         </div>
 
         <div className="planning-modal-body">

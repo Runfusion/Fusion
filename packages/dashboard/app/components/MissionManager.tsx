@@ -1,3 +1,4 @@
+import { ModalCloseButton } from "./ModalCloseButton";
 import "./MissionManager.css";
 import { useState, useEffect, useCallback, useRef, useMemo, type MouseEvent, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
@@ -5653,15 +5654,12 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
           </h2>
         </div>
         {!isInline && (
-          <button
-            className="modal-close"
+          <ModalCloseButton
             onClick={onClose}
             title={t("missions.close", "Close")}
             aria-label={t("missions.closeMissionManager", "Close Mission Manager")}
             data-testid="mission-close-btn"
-          >
-            <X size={18} />
-          </button>
+           />
         )}
       </div>
 

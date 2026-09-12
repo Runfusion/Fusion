@@ -1,10 +1,11 @@
+import { ModalCloseButton } from "./ModalCloseButton";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getDevServerState, saveDevServerState } from "../hooks/modalPersistence";
 import { isWipColumnRole } from "../utils/columnRoles";
 import type { RefObject } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
-import { AlertTriangle, ExternalLink, Eye, Loader2, Monitor, Play, RefreshCw, RotateCw, ShieldAlert, Square, X } from "lucide-react";
+import { AlertTriangle, ExternalLink, Eye, Loader2, Monitor, Play, RefreshCw, RotateCw, ShieldAlert, Square } from "lucide-react";
 import type { Task, TaskDetail } from "@fusion/core";
 import "./DevServerView.css";
 import type { DetectedDevServerCommand } from "../api";
@@ -1011,15 +1012,12 @@ export function DevServerView({ addToast, projectId, tasks, columnFlagsByTaskId 
           >
             <div className="devserver-preview-modal__titlebar">
               <h2 id="devserver-preview-modal-title">{t("devserver.preview", "Preview")}</h2>
-              <button
-                type="button"
+              <ModalCloseButton
                 className="btn btn-sm btn-icon"
                 onClick={closePreviewModal}
                 aria-label={t("devserver.closePreviewModal", "Close preview modal")}
                 data-testid="devserver-preview-modal-close"
-              >
-                <X />
-              </button>
+               />
             </div>
             <div className="devserver-preview-modal__body">
               {renderPreviewContent()}

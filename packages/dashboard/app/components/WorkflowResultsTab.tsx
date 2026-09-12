@@ -1,3 +1,4 @@
+import { ModalCloseButton } from "./ModalCloseButton";
 import "@xyflow/react/dist/style.css";
 import { isCompleteColumnRole, isReviewColumnRole } from "../utils/columnRoles";
 import "./WorkflowResultsTab.css";
@@ -1367,15 +1368,12 @@ export function WorkflowResultsTab({
                   >
                     {renderMode === "markdown" ? t("app:workflow.markdown", "Markdown") : t("app:workflow.plain", "Plain")}
                   </button>
-                  <button
-                    type="button"
+                  <ModalCloseButton
                     className="btn btn-icon btn-sm workflow-output-modal-close"
                     onClick={closeExpandedView}
                     data-testid="workflow-output-modal-close"
                     aria-label={t("actions.close", "Close")}
-                  >
-                    <X size={16} />
-                  </button>
+                   />
                 </div>
               </div>
               <div className="workflow-output-modal-body">

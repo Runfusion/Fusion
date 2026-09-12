@@ -1,0 +1,8 @@
+/*
+FNXC:ModalChrome 2026-09-11-23:35:
+The shared modal close button uses the existing button and modal tokens; its icon must never contribute a second accessible name or distort constrained modal headers.
+*/
+.modal-close > svg {
+  flex-shrink: 0;
+  pointer-events: none;
+}

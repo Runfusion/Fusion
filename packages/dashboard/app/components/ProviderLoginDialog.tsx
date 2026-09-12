@@ -1,7 +1,8 @@
+import { ModalCloseButton } from "./ModalCloseButton";
 import { useLayoutEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { createPortal } from "react-dom";
-import { CheckCircle2, ExternalLink, Loader2, X } from "lucide-react";
+import { CheckCircle2, ExternalLink, Loader2 } from "lucide-react";
 import { OAuthManualCodeForm } from "./OAuthManualCodeForm";
 import { LoginInstructions } from "./LoginInstructions";
 import { nextFloatingZ } from "./floatingWindowStack";
@@ -111,9 +112,7 @@ export function ProviderLoginDialog({
       <div className="modal provider-login-dialog" role="dialog" aria-modal="true" aria-label={t("providerLogin.signingInTo", "Signing in to {{provider}}", { provider: providerName })}>
         <div className="modal-header">
           <h3>{t("providerLogin.signingInTo", "Signing in to {{provider}}", { provider: providerName })}</h3>
-          <button className="modal-close" onClick={onCancel} aria-label={t("providerLogin.cancel", "Cancel login")} title={t("providerLogin.cancel", "Cancel login")}>
-            <X size={18} />
-          </button>
+          <ModalCloseButton onClick={onCancel} aria-label={t("providerLogin.cancel", "Cancel login")} title={t("providerLogin.cancel", "Cancel login")} />
         </div>
 
         <div className="provider-login-dialog__body">

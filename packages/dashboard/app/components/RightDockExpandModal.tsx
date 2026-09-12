@@ -1,5 +1,6 @@
+import { ModalCloseButton } from "./ModalCloseButton";
 import { useCallback, useEffect, type RefObject } from "react";
-import { Maximize2, X } from "lucide-react";
+import { Maximize2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { FloatingWindow } from "./FloatingWindow";
 import { findOverflowViewEntry, isOverflowViewEntryExpandable, type OverflowViewEntry, type OverflowViewKey, type OverflowViewRenderProps, type OverflowViewVisibilityOptions } from "./overflowViewRegistry";
@@ -90,9 +91,7 @@ export function RightDockExpandModal({
           <Icon size={16} />
           <span>{entry.label}</span>
         </div>
-        <button className="modal-close" onClick={closeAndRestoreFocus} aria-label={t("rightDock.closeExpandedView", "Close expanded right dock view")} data-testid="right-dock-expand-close">
-          <X size={20} />
-        </button>
+        <ModalCloseButton onClick={closeAndRestoreFocus} aria-label={t("rightDock.closeExpandedView", "Close expanded right dock view")} data-testid="right-dock-expand-close" />
       </div>
       <div className="right-dock-expand-modal__body" data-testid="right-dock-expand-body">
         {entry.render({ ...renderProps, surface: "expand" })}

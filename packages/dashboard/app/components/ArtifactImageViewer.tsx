@@ -1,6 +1,7 @@
+import { ModalCloseButton } from "./ModalCloseButton";
 import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { useTranslation } from "react-i18next";
-import { Minimize2, X, ZoomIn, ZoomOut } from "lucide-react";
+import { Minimize2, ZoomIn, ZoomOut } from "lucide-react";
 import { FloatingWindow } from "./FloatingWindow";
 import { useArtifactImageBlob } from "../hooks/useArtifactImageBlob";
 import "./ArtifactImageViewer.css";
@@ -312,9 +313,7 @@ export function ArtifactImageViewer({ artifactId, title, projectId, taskId, onOp
         <header className="artifact-image-viewer__header">
           <h3 className="artifact-image-viewer__title">{title}</h3>
           {taskId && onOpenTask && <button className="btn btn-sm" type="button" onClick={() => onOpenTask(taskId)}>{t("artifactImageViewer.openTask", "Open task")}</button>}
-          <button ref={closeRef} className="modal-close" type="button" onClick={onClose} aria-label={t("artifactImageViewer.close", "Close artifact preview")}>
-            <X size={20} />
-          </button>
+          <ModalCloseButton ref={closeRef}  onClick={onClose} aria-label={t("artifactImageViewer.close", "Close artifact preview")} />
         </header>
         <div className="artifact-image-viewer__content" aria-live="polite">
           {loading && <p>{t("artifactImageViewer.loading", "Loading image artifact…")}</p>}

@@ -43,6 +43,16 @@ sync. A headerless window using `hideHeader` plus `dragHandleSelector` must put 
 contract on its resolved delegated handle. `closeOnOutsidePointerDown` defaults **off**, so a
 modal intended to dismiss on outside pointer-down must opt in explicitly.
 
+### Canonical close affordance
+
+`ModalCloseButton` is the sole primitive for a true modal-close cross, including delegated
+`ViewHeader` and native `FloatingWindow` chrome. Each host still supplies its translated accessible
+label, close guard, disabled state, ref, positioning class, and test hook; the primitive supplies
+button semantics and the decorative `X`. Search-clear, tag removal, banner dismissal, destructive
+remove actions, and Task Detail's mobile **Back** navigation are not modal closure and remain
+explicit exemptions. A headerless `FloatingWindow` must delegate exactly one close control to its
+content header rather than rendering native and delegated controls together.
+
 ## Classifications
 
 | Surface | Class | Evidence (all at `main` SHA above) | Target | Owning subtask | Risk notes | Opt-out justification |

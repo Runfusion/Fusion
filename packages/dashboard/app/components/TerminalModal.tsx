@@ -15,7 +15,6 @@ import {
 import { useTranslation } from "react-i18next";
 import { getErrorMessage } from "@fusion/core";
 import {
-  X,
   Trash2,
   Terminal as TerminalIcon,
   RefreshCw,
@@ -38,6 +37,7 @@ import { useWorkspaces } from "../hooks/useWorkspaces";
 import { getViewportMode, isMobileViewport } from "../hooks/useViewportMode";
 import { useDrawerDismissGesture } from "../hooks/useDrawerDismissGesture";
 import { FloatingWindow, FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT } from "./FloatingWindow";
+import { ModalCloseButton } from "./ModalCloseButton";
 import { currentFloatingZ, nextFloatingZ } from "./floatingWindowStack";
 import { useConfirm } from "../hooks/useConfirm";
 import { getPathBasename } from "../utils/pathDisplay";
@@ -2906,15 +2906,13 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
           {!embedded && !isMobileTerminal && terminalDisplayModeControls}
 
           {!embedded && !alphaMobileDrawer && (
-            <button
+            <ModalCloseButton
               className={`terminal-close${isMobileTerminal ? " terminal-close--corner" : ""}`}
               onClick={onClose}
               data-testid="terminal-close-btn"
               title={t("terminal.closeTerminal", "Close terminal")}
               aria-label={t("terminal.closeTerminal", "Close terminal")}
-            >
-              <X size={20} />
-            </button>
+            />
           )}
         </div>
 

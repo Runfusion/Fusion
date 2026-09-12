@@ -1,3 +1,4 @@
+import { ModalCloseButton } from "./ModalCloseButton";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
@@ -261,9 +262,7 @@ export function AddNodeModal({ isOpen, onClose, onSubmit, onDiscoverRemoteProjec
       <div className="modal modal-md add-node-modal">
         <div className="modal-header">
           <h3>{t("nodes.addNode", "Add Node")}</h3>
-          <button className="modal-close" onClick={closeModal} disabled={isSubmitting} aria-label={t("nodes.closeNodeModal", "Close add node modal")}>
-            &times;
-          </button>
+          <ModalCloseButton onClick={closeModal} disabled={isSubmitting} aria-label={t("nodes.closeNodeModal", "Close add node modal")} />
         </div>
 
         <div className="modal-body add-node-modal__body">

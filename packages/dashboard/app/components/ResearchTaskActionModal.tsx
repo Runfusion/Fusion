@@ -1,3 +1,4 @@
+import { ModalCloseButton } from "./ModalCloseButton";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { Task, TaskPriority } from "@fusion/core";
@@ -103,7 +104,7 @@ export function ResearchTaskActionModal({ open, mode, run, finding, projectId, o
       <div className="modal modal-lg research-task-action-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
         <div className="modal-header">
           <h3>{mode === "create" ? t("research.createTaskTitle", "Create task from finding") : t("research.enrichTaskTitle", "Enrich existing task")}</h3>
-          <button className="modal-close" type="button" aria-label={t("actions.close", "Close")} onClick={onClose}>×</button>
+          <ModalCloseButton aria-label={t("actions.close", "Close")} onClick={onClose} />
         </div>
 
         <div className="research-task-action-modal__body">

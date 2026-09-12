@@ -1,7 +1,7 @@
+import { ModalCloseButton } from "../../ModalCloseButton";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { MouseEvent } from "react";
 import { useTranslation } from "react-i18next";
-import { X } from "lucide-react";
 import type { ModelPricing, ModelPricingOverrides } from "@fusion/core";
 import { api } from "../../../api";
 import { SettingsHelpTip } from "../SettingsHelpTip";
@@ -178,9 +178,7 @@ export function ModelPricingSection({ form, setForm, addToast, projectId }: Mode
                 {t("settings.modelPricing.saveHint", "Manual edits are saved with the rest of Global settings.")}
               </p>
             </div>
-            <button type="button" className="modal-close" onClick={closeTable} aria-label={t("actions.close", "Close")} data-testid="model-pricing-close">
-              <X size={20} />
-            </button>
+            <ModalCloseButton onClick={closeTable} aria-label={t("actions.close", "Close")} data-testid="model-pricing-close" />
           </div>
 
           <div className="model-pricing-modal__body">

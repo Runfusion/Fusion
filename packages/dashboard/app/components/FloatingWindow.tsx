@@ -10,13 +10,13 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
-import { X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { isFullScreenSheetViewport, isShortViewport, isTabletTouchViewport, useViewportMode } from "../hooks/useViewportMode";
 import { useDrawerDismissGesture } from "../hooks/useDrawerDismissGesture";
 import { currentFloatingZ, currentTaskDetailFloatingZ, nextFloatingZ, nextTaskDetailFloatingZ } from "./floatingWindowStack";
 import { isInsidePortalSafeSurface } from "../utils/portalSurfaces";
 import "./FloatingWindow.css";
+import { ModalCloseButton } from "./ModalCloseButton";
 
 /*
 FNXC:FloatingWindow 2026-06-22-20:45:
@@ -851,15 +851,11 @@ export function FloatingWindow({
           >
             <div className="floating-window__title">{title}</div>
             {!alphaMobileDrawer && (
-              <button
-                type="button"
-                className="floating-window__close"
+              <ModalCloseButton
                 onClick={onClose}
                 aria-label={t("floatingWindow.close", "Close floating window")}
                 data-testid={`floating-window-close-${windowKey}`}
-              >
-                <X size={18} />
-              </button>
+              />
             )}
           </div>
         )}

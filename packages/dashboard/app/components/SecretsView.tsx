@@ -1,3 +1,4 @@
+import { ModalCloseButton } from "./ModalCloseButton";
 import "./SecretsView.css";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -473,7 +474,7 @@ export const SecretsView = ({ addToast, projectId }: SecretsViewProps) => {
           <div className="modal" role="dialog" aria-modal="true" aria-label={syncPassphraseConfigured ? t("secrets.rotateSyncPassphraseModalTitle", "Rotate sync passphrase") : t("secrets.setSyncPassphraseModalTitle", "Set sync passphrase")}>
             <div className="modal-header">
               <h3>{syncPassphraseConfigured ? t("secrets.rotateSyncPassphraseModalTitle", "Rotate sync passphrase") : t("secrets.setSyncPassphraseModalTitle", "Set sync passphrase")}</h3>
-              <button className="modal-close" onClick={closeSyncModal} aria-label={t("secrets.closeAriaLabel", "Close")}>×</button>
+              <ModalCloseButton onClick={closeSyncModal} aria-label={t("secrets.closeAriaLabel", "Close")} />
             </div>
             <div className="secrets-modal-body">
               <div className="form-group"><label>{t("secrets.passphraseLabel", "Passphrase")}</label><input aria-label={t("secrets.passphraseLabel", "Passphrase")} className="input" type="password" autoComplete="new-password" value={syncPassphrase} onChange={(e) => setSyncPassphrase(e.target.value)} /></div>
@@ -490,7 +491,7 @@ export const SecretsView = ({ addToast, projectId }: SecretsViewProps) => {
           <div className="modal" role="dialog" aria-modal="true" aria-label={editing ? t("secrets.editSecretModalTitle", "Edit secret") : t("secrets.addSecretModalTitle", "Add secret")}>
             <div className="modal-header">
               <h3>{editing ? t("secrets.editSecretModalTitle", "Edit secret") : t("secrets.addSecretModalTitle", "Add secret")}</h3>
-              <button className="modal-close" onClick={() => setShowModal(false)} aria-label={t("secrets.closeAriaLabel", "Close")}>×</button>
+              <ModalCloseButton onClick={() => setShowModal(false)} aria-label={t("secrets.closeAriaLabel", "Close")} />
             </div>
             <div className="secrets-modal-body">
               <div className="form-group"><label>{t("secrets.keyLabel", "Key")}</label><input className="input" value={form.key} onChange={(e) => setForm((c) => ({ ...c, key: e.target.value }))} /></div>

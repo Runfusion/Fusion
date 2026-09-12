@@ -1,3 +1,4 @@
+import { ModalCloseButton } from "./ModalCloseButton";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
@@ -172,9 +173,7 @@ export function ConnectNodeModal({ open, onClose, onConnected, addToast, onSubmi
       <div className="modal modal-md connect-node-modal">
         <div className="modal-header">
           <h3>{t("nodes.modal.title", "Connect to Node")}</h3>
-          <button className="modal-close" onClick={onClose} disabled={isSubmitting} aria-label={t("nodes.modal.closeButton", "Close connect node modal")}>
-            &times;
-          </button>
+          <ModalCloseButton onClick={onClose} disabled={isSubmitting} aria-label={t("nodes.modal.closeButton", "Close connect node modal")} />
         </div>
 
         <div className="modal-body connect-node-form">

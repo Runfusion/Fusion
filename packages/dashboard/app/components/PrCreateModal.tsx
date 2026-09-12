@@ -1,3 +1,4 @@
+import { ModalCloseButton } from "./ModalCloseButton";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties } from "react";
 import { AlphaButton, AlphaDialogPanel, AlphaInput, AlphaSelect, AlphaSurface, AlphaTextArea } from "./alpha-ui";
 import ReactMarkdown from "react-markdown";
@@ -574,9 +575,7 @@ export function PrCreateModal({
       >
         <div className="modal-header pr-create-modal__drag-handle">
           <h2 id={headingId}>{t("pr.createTitle", "Create Pull Request")}</h2>
-          <AlphaButton type="button" className="modal-close" onClick={onClose} aria-label={t("actions.close", "Close")}>
-            <X size={20} />
-          </AlphaButton>
+          <ModalCloseButton onClick={onClose} aria-label={t("actions.close", "Close")} />
         </div>
 
         <div className="pr-create-modal__body">

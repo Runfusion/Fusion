@@ -1,3 +1,4 @@
+import { ModalCloseButton } from "./ModalCloseButton";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -445,7 +446,7 @@ export function NodeDetailModal({
       >
         <div className="modal-header">
           <h3>{t("nodes.modalTitle", "Node Details")}</h3>
-          <button className="modal-close" onClick={onClose} aria-label={t("nodes.closeModalAriaLabel", "Close node detail modal")}>&times;</button>
+          <ModalCloseButton onClick={onClose} aria-label={t("nodes.closeModalAriaLabel", "Close node detail modal")} />
         </div>
 
         <div className="modal-body node-detail-modal__body">

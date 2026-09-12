@@ -1448,24 +1448,6 @@ Medieval modal chrome must follow the generic modal shorthand reset so its borde
   letter-spacing: 0.3px;
 }
 
-.modal-close {
-  background: none;
-  border: none;
-  color: var(--text-muted);
-  font-size: 22px;
-  cursor: pointer;
-  padding: 0 4px;
-  line-height: 1;
-}
-.modal-close:hover {
-  color: var(--text);
-}
-.modal-close:focus-visible {
-  box-shadow: var(--focus-ring-strong);
-  outline: none;
-  border-radius: var(--radius-sm);
-}
-
 .modal-send-to-background {
   width: 28px;
   height: 28px;

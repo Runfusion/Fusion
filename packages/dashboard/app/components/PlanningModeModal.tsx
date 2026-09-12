@@ -1,3 +1,4 @@
+import { ModalCloseButton } from "./ModalCloseButton";
 import "./PlanningModeModal.css";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
@@ -3668,9 +3669,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           )}
           {!isEmbedded && (
             <div className="modal-header-actions">
-              <button className="modal-close" onClick={handleClose} aria-label={t("common.close", "Close")}>
-                <X size={20} />
-              </button>
+              <ModalCloseButton onClick={handleClose} aria-label={t("common.close", "Close")} />
             </div>
           )}
         </div>
@@ -3697,15 +3696,11 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
                       <p>{t("planning.historyHint", "Questions, answers, and AI reasoning for each plan update.")}</p>
                     </div>
                   </div>
-                  <button
+                  <ModalCloseButton
                     ref={historyCloseRef}
-                    type="button"
-                    className="btn-icon"
                     aria-label={t("planning.closeHistory", "Close history")}
                     onClick={closeHistory}
-                  >
-                    <X size={18} />
-                  </button>
+                  />
                 </div>
                 <div className="planning-history-scroll">
                   <PlanningSessionPrompt prompt={activePlanPrompt} testId="planning-history-initial-prompt" />

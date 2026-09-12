@@ -3387,6 +3387,13 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
       <ViewHeader
         icon={MessageSquare}
         title={t("chat.title", "Chat")}
+        onClose={floating ? onClose : undefined}
+        closeButtonProps={floating ? {
+          "aria-label": t("chat.closeChat", "Close chat"),
+          title: t("chat.closeChat", "Close chat"),
+          className: "chat-view-header-icon",
+          "data-testid": "chat-modal-close",
+        } : undefined}
         actions={
           <>
             {dockedSidebarEligible ? (
@@ -3430,18 +3437,6 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
                 data-testid="chat-modal-maximize"
               >
                 <Maximize2 size={16} />
-              </AlphaButton>
-            ) : null}
-            {floating && onClose ? (
-              <AlphaButton
-                type="button"
-                className="btn-icon chat-view-header-icon"
-                onClick={onClose}
-                aria-label={t("chat.closeChat", "Close chat")}
-                title={t("chat.closeChat", "Close chat")}
-                data-testid="chat-modal-close"
-              >
-                <X size={16} />
               </AlphaButton>
             ) : null}
           </>

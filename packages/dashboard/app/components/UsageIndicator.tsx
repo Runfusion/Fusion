@@ -1,7 +1,8 @@
+import { ModalCloseButton } from "./ModalCloseButton";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import type { CSSProperties, DragEvent } from "react";
-import { X, RefreshCw, Activity, TrendingUp, CheckCircle, AlertTriangle, Eye, GripVertical, ChevronUp, ChevronDown } from "lucide-react";
+import { RefreshCw, Activity, TrendingUp, CheckCircle, AlertTriangle, Eye, GripVertical, ChevronUp, ChevronDown } from "lucide-react";
 import type { ProviderUsage, UsageWindow } from "../api";
 import { useUsageData } from "../hooks/useUsageData";
 import { ProviderIcon } from "./ProviderIcon";
@@ -673,7 +674,7 @@ export function UsageIndicator({ isOpen, onClose, projectId, anchorRect, present
         refresh();
       }
     }
-    
+
     // Update ref for next render
     wasOpenRef.current = isOpen;
   }, [isOpen, lastUpdated, refresh]);
@@ -942,14 +943,11 @@ export function UsageIndicator({ isOpen, onClose, projectId, anchorRect, present
             {/* FNXC:UsageIndicator 2026-06-22-00:00: embedded presentation drops the
                 modal close button; the right-dock owns dismissal. */}
             {!isEmbedded && (
-              <button
-                className="modal-close"
+              <ModalCloseButton
                 onClick={onClose}
                 aria-label={t("actions.closeModal", "Close usage modal")}
                 data-testid="usage-modal-close"
-              >
-                <X size={20} />
-              </button>
+               />
             )}
           </div>
         </div>

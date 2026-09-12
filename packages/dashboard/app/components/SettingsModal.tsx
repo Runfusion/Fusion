@@ -1,3 +1,4 @@
+import { ModalCloseButton } from "./ModalCloseButton";
 import { useState, useEffect, useCallback, useMemo, useRef, type CSSProperties, type Dispatch, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type SetStateAction } from "react";
 import { Globe, Folder, GitBranch, Power, RefreshCw, Star, Settings as SettingsIcon, Search, X as SearchToggleCloseIcon } from "lucide-react";
 import {
@@ -2968,10 +2969,10 @@ export function SettingsModal({
   const handleExport = useCallback(async () => {
     try {
       // Default scope based on active section
-      const scope = activeSectionScope === "global" ? "global" : 
+      const scope = activeSectionScope === "global" ? "global" :
                     activeSectionScope === "project" ? "project" : "both";
       const data = await exportSettings(scope, projectId);
-      
+
       // Create and download the JSON file
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
       const url = URL.createObjectURL(blob);
@@ -2983,7 +2984,7 @@ export function SettingsModal({
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
-      
+
       const scopeLabel = scope === "global"
         ? t("settings.importExport.scopeLabel.global", "global")
         : scope === "project"
@@ -2998,10 +2999,10 @@ export function SettingsModal({
   const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    
+
     setImportFile(file);
     setImportLoading(true);
-    
+
     try {
       const text = await file.text();
       const data = JSON.parse(text) as SettingsExportData;
@@ -3017,7 +3018,7 @@ export function SettingsModal({
 
   const handleImport = useCallback(async () => {
     if (!importPreview) return;
-    
+
     setImportLoading(true);
     try {
       const result = await importSettings(importPreview, { scope: importScope, merge: importMerge }, projectId);
@@ -4747,9 +4748,7 @@ export function SettingsModal({
             </a>
           </div>
           {!isEmbedded && (
-            <button className="modal-close" onClick={() => void requestClose()} aria-label={t("actions.close", "Close")}>
-              &times;
-            </button>
+            <ModalCloseButton onClick={() => void requestClose()} aria-label={t("actions.close", "Close")} />
           )}
           {/*
             FNXC:Settings 2026-07-07-00:00:
@@ -4760,13 +4759,11 @@ export function SettingsModal({
             modal presentation keeps its own `!isEmbedded` `modal-close` button above, untouched and byte-identical.
           */}
           {isEmbedded && viewportMode === "mobile" && (
-            <button
-              className="modal-close settings-embedded-mobile-close"
+            <ModalCloseButton
+              className="settings-embedded-mobile-close"
               onClick={() => void requestClose()}
               aria-label={t("actions.close", "Close")}
-            >
-              &times;
-            </button>
+             />
           )}
         </div>
         {loading ? (
@@ -5152,9 +5149,7 @@ export function SettingsModal({
           <div className="modal modal-lg settings-overlap-path-picker-modal" onClick={(event) => event.stopPropagation()}>
             <div className="modal-header">
               <h3>{t("settings.scheduling.selectIgnoredOverlapPath", "Select ignored overlap path")}</h3>
-              <button className="modal-close" onClick={closeOverlapPathPicker} aria-label={t("actions.close", "Close")}>
-                &times;
-              </button>
+              <ModalCloseButton onClick={closeOverlapPathPicker} aria-label={t("actions.close", "Close")} />
             </div>
             <div className="modal-body settings-overlap-path-picker-body">
               <p className="settings-overlap-path-picker-note">
@@ -5206,9 +5201,7 @@ export function SettingsModal({
           <div className="modal modal-lg settings-overlap-path-picker-modal" onClick={(event) => event.stopPropagation()}>
             <div className="modal-header">
               <h3>{t("settings.worktrees.selectWorktreesDir", "Select worktrees directory")}</h3>
-              <button className="modal-close" onClick={closeWorktreesDirPicker} aria-label={t("actions.close", "Close")}>
-                &times;
-              </button>
+              <ModalCloseButton onClick={closeWorktreesDirPicker} aria-label={t("actions.close", "Close")} />
             </div>
             <div className="modal-body settings-overlap-path-picker-body">
               <p className="settings-overlap-path-picker-note">
@@ -5256,9 +5249,7 @@ export function SettingsModal({
           <div className="modal modal-lg settings-overlap-path-picker-modal" onClick={(event) => event.stopPropagation()}>
             <div className="modal-header">
               <h3>{t("settings.worktrees.selectCopyFile", "Select file to copy")}</h3>
-              <button className="modal-close" onClick={closeWorktreeCopyFilePicker} aria-label={t("actions.close", "Close")}>
-                &times;
-              </button>
+              <ModalCloseButton onClick={closeWorktreeCopyFilePicker} aria-label={t("actions.close", "Close")} />
             </div>
             <div className="modal-body settings-overlap-path-picker-body">
               <p className="settings-overlap-path-picker-note">
@@ -5291,20 +5282,18 @@ export function SettingsModal({
           </div>
         </div>
       )}
-      
+
       {/* Import Confirmation Dialog */}
       {importDialogOpen && importPreview && (
         <div className="modal-overlay open" onClick={(e) => e.target === e.currentTarget && setImportDialogOpen(false)} role="dialog" aria-modal="true">
           <div className="modal modal-md">
             <div className="modal-header">
               <h3>{t("settings.importExport.importTitle", "Import Settings")}</h3>
-              <button className="modal-close" onClick={() => setImportDialogOpen(false)} aria-label={t("actions.close", "Close")}>
-                &times;
-              </button>
+              <ModalCloseButton onClick={() => setImportDialogOpen(false)} aria-label={t("actions.close", "Close")} />
             </div>
             <div className="modal-body">
               <p>{t("settings.importExport.reviewPrompt", "Review the settings to be imported:")}</p>
-              
+
               {importPreview.global && Object.keys(importPreview.global).length > 0 && (
                 <div className="form-group">
                   <strong>{t("settings.importExport.globalSettings", "Global Settings:")}</strong>
@@ -5317,7 +5306,7 @@ export function SettingsModal({
                   </ul>
                 </div>
               )}
-              
+
               {importPreview.project && Object.keys(importPreview.project).length > 0 && (
                 <div className="form-group">
                   <strong>{t("settings.importExport.projectSettings", "Project Settings:")}</strong>
@@ -5330,7 +5319,7 @@ export function SettingsModal({
                   </ul>
                 </div>
               )}
-              
+
               <div className="form-group">
                 <label htmlFor="import-scope">{t("settings.importExport.importScope", "Import Scope:")}</label>
                 <select
@@ -5343,7 +5332,7 @@ export function SettingsModal({
                   <option value="project">{t("settings.importExport.scopeProject", "Project settings only")}</option>
                 </select>
               </div>
-              
+
               <div className="form-group">
                 {/* FNXC:SettingsHelp 2026-07-16-12:45: Inline help moved behind the shared "?" affordance — operator requirement: no inline description paragraphs in Settings. */}
                 <div className="settings-field-label-row">
@@ -5396,9 +5385,7 @@ export function SettingsModal({
           <div className="modal modal-md settings-reset-dialog" onClick={(event) => event.stopPropagation()}>
             <div className="modal-header">
               <h3>{t("settings.reset.dialogTitle", "Reset Settings")}</h3>
-              <button className="modal-close" onClick={closeResetDialog} aria-label={t("actions.close", "Close")}>
-                &times;
-              </button>
+              <ModalCloseButton onClick={closeResetDialog} aria-label={t("actions.close", "Close")} />
             </div>
             <div className="modal-body">
               <p>{t("settings.reset.dialogBody", "Choose what to reset to its defaults. This cannot be undone.")}</p>

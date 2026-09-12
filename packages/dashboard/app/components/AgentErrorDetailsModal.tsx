@@ -1,3 +1,4 @@
+import { ModalCloseButton } from "./ModalCloseButton";
 import "./AgentErrorDetailsModal.css";
 import { useMemo, useState } from "react";
 import { AlertCircle, Check, Copy, ExternalLink } from "lucide-react";
@@ -69,7 +70,7 @@ export function AgentErrorDetailsModal({ open, onClose, errorText, issueContext 
             <AlertCircle size={16} />
             {t("agentError.title", "Agent Error Details")}
           </h2>
-          <button className="modal-close" onClick={onClose} aria-label={t("common.close", "Close")}>&times;</button>
+          <ModalCloseButton onClick={onClose} aria-label={t("common.close", "Close")} />
         </div>
         <div className="agent-error-modal__content">
           <pre className="agent-error-modal__error">{errorText}</pre>

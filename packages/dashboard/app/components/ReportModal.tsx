@@ -1,3 +1,4 @@
+import { ModalCloseButton } from "./ModalCloseButton";
 import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -77,7 +78,7 @@ setResult(await reportFile({ actionType, targetType, report: result.report, endo
     } finally { setBusy(false); }
   };
   return <div className="report-modal-backdrop" role="presentation"><section className="card report-modal" role="dialog" aria-modal="true" aria-label={`${actionType} report`}>
-    <button className="btn-icon report-modal__close" type="button" aria-label={t("report.close", "Close report")} onClick={onClose}>×</button>
+    <ModalCloseButton className="btn-icon report-modal__close" aria-label={t("report.close", "Close report")} onClick={onClose} />
     {error && <p className="report-modal__error" role="alert">{error}</p>}
     {!result && <><h2>{actionType[0].toUpperCase() + actionType.slice(1)}</h2><label htmlFor="report-prompt">{prompts[actionType]}</label><textarea id="report-prompt" className="input" value={prompt} onChange={(event) => setPrompt(event.target.value)} maxLength={4000} />
       {/* FNXC:ReportPipeline 2026-07-19-10:00: Screenshot storage is opt-in and

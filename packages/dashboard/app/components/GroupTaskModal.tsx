@@ -1,7 +1,8 @@
+import { ModalCloseButton } from "./ModalCloseButton";
 import "./GroupTaskModal.css";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { CheckCircle2, CircleDashed, ExternalLink, Loader2, X } from "lucide-react";
+import { CheckCircle2, CircleDashed, ExternalLink, Loader2 } from "lucide-react";
 import { apiAbandonBranchGroup, apiGetBranchGroup, apiPromoteBranchGroup, type BranchGroupSummary } from "../api";
 import { subscribeSse } from "../sse-bus";
 import { BRANCH_GROUP_REFRESH_TASK_EVENTS, shouldRefreshBranchGroupForTaskEvent } from "../utils/branchGroupSse";
@@ -108,9 +109,7 @@ export function GroupTaskModal({ isOpen, onClose, groupId, projectId, onOpenMemb
       <div className="modal modal-lg group-task-modal">
         <div className="modal-header">
           <h2>{t("groupTask.title", "Branch Group {{id}}", { id: groupId })}</h2>
-          <button type="button" className="modal-close" onClick={onClose} aria-label={t("actions.closeModal", "Close modal")}>
-            <X />
-          </button>
+          <ModalCloseButton onClick={onClose} aria-label={t("actions.closeModal", "Close modal")} />
         </div>
         <div className="modal-body group-task-modal-body">
           {loading && (

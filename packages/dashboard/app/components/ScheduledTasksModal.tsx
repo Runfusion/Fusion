@@ -1,9 +1,10 @@
+import { ModalCloseButton } from "./ModalCloseButton";
 // ScheduledTasksModal renders schedule/routine cards using .scheduling-*, .routine-*,
 // .schedule-form classes that live in ScriptsModal.css. Both modals share that file.
 import "./ScriptsModal.css";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import { Plus, Zap, Globe, Folder, X } from "lucide-react";
+import { Plus, Zap, Globe, Folder } from "lucide-react";
 import type { Routine, RoutineCreateInput } from "@fusion/core";
 import { getErrorMessage } from "@fusion/core";
 import {
@@ -587,9 +588,7 @@ export function ScheduledTasksModal({ onClose, addToast, projectId, presentation
             <Zap size={20} className="icon-triage" />
             <h3 id="schedules-modal-title">{t("schedule.title", "Automations")}</h3>
           </div>
-          <button className="modal-close" onClick={onClose} aria-label={t("common.close", "Close")}>
-            <X size={20} />
-          </button>
+          <ModalCloseButton onClick={onClose} aria-label={t("common.close", "Close")} />
         </div>
 
         {toolbar}

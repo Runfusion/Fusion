@@ -9,6 +9,7 @@ import { CustomModelDropdown } from "./CustomModelDropdown";
 import { LoadingSpinner } from "./LoadingSpinner";
 import { ProviderIcon } from "./ProviderIcon";
 import { AgentGenerationModal } from "./AgentGenerationModal";
+import { ModalCloseButton } from "./ModalCloseButton";
 import { AGENT_PRESETS, type AgentPreset } from "./agent-presets";
 import {
   buildAgentCreatePayload,
@@ -429,13 +430,7 @@ export function NewAgentDialog({
         {/* Header */}
         <div className="agent-dialog-header">
           <span className="agent-dialog-header-title">{t("agents.dialogTitle", "New Agent")}</span>
-          <button
-            className="btn-icon"
-            onClick={handleClose}
-            aria-label={t("agents.closeAriaLabel", "Close")}
-          >
-            ×
-          </button>
+          <ModalCloseButton onClick={handleClose} aria-label={t("agents.closeAriaLabel", "Close")} />
         </div>
 
         {/* Step indicator */}

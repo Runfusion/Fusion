@@ -1,3 +1,4 @@
+import { ModalCloseButton } from "./ModalCloseButton";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { ThinkingLevel } from "@fusion/core";
@@ -197,7 +198,7 @@ export function AgentOnboardingModal({ isOpen, onClose, onCreated, addToast, pro
       <div className="modal modal-lg agent-onboarding-modal">
         <div className="modal-header">
           <h3>{t("agents.onboarding.title", "Agent Onboarding")}</h3>
-          <button className="modal-close" onClick={() => void handleClose()} aria-label={t("common.close", "Close")}>×</button>
+          <ModalCloseButton onClick={() => void handleClose()} aria-label={t("common.close", "Close")} />
         </div>
 
         {history.length > 0 && <ConversationHistory entries={history} />}

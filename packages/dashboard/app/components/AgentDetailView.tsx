@@ -38,6 +38,7 @@ import { useDiscoveredSkillsCache } from "../hooks/useDiscoveredSkillsCache";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { useConfirm } from "../hooks/useConfirm";
 import { FloatingWindow } from "./FloatingWindow";
+import { ModalCloseButton } from "./ModalCloseButton";
 import { AgentAvatar } from "./AgentAvatar";
 import { FileEditor } from "./FileEditor";
 import { AgentErrorIndicator } from "./AgentErrorDetailsModal";
@@ -1129,9 +1130,7 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
                 <RefreshCw size={16} />
               </button>
               {!inline && (
-                <button className="btn-icon" onClick={onClose} aria-label={t("common.close", "Close")} title={t("common.close", "Close")}>
-                  <X size={20} />
-                </button>
+                <ModalCloseButton onClick={onClose} aria-label={t("common.close", "Close")} title={t("common.close", "Close")} />
               )}
             </div>
           </div>

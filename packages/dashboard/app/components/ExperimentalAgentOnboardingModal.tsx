@@ -1,3 +1,4 @@
+import { ModalCloseButton } from "./ModalCloseButton";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { Agent, AgentOnboardingSummary, ConversationHistoryEntry, ExistingAgentOnboardingConfig, OnboardingMode } from "../api";
@@ -190,7 +191,7 @@ export function ExperimentalAgentOnboardingModal({
       <div className="modal modal-lg experimental-agent-onboarding-modal">
         <div className="modal-header">
           <h3>{t("agents.onboarding.title", "AI Interview")}</h3>
-          <button className="modal-close" onClick={() => void handleClose()} aria-label={t("common.closeAriaLabel", "Close")}>×</button>
+          <ModalCloseButton onClick={() => void handleClose()} aria-label={t("common.closeAriaLabel", "Close")} />
         </div>
 
         {history.length > 0 && <ConversationHistory entries={history} />}

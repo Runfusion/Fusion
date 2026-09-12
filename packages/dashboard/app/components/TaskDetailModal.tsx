@@ -1,3 +1,4 @@
+import { ModalCloseButton } from "./ModalCloseButton";
 import "./TaskDetailModal.css";
 import React, { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -5362,14 +5363,11 @@ export function TaskDetailContent({
               </AlphaButton>
             )}
             {embedded && onRequestClose && !onBackToBoard && (
-              <AlphaButton
-                className="modal-close task-detail-floating-close"
+              <ModalCloseButton
+                className="task-detail-floating-close"
                 onClick={requestClose}
                 aria-label={t("common.close", "Close")}
-                type="button"
-              >
-                <X size={16} aria-hidden="true" />
-              </AlphaButton>
+               />
             )}
             {!embedded && mobileHeaderMode === "back" && (
               <AlphaButton
@@ -5383,9 +5381,7 @@ export function TaskDetailContent({
               </AlphaButton>
             )}
             {!embedded && mobileHeaderMode !== "back" && (
-              <AlphaButton className="modal-close" onClick={requestClose} aria-label={t("common.close", "Close")} type="button">
-                &times;
-              </AlphaButton>
+              <ModalCloseButton onClick={requestClose} aria-label={t("common.close", "Close")} />
             )}
           </div>
         </div>
@@ -7328,9 +7324,7 @@ export function TaskDetailContent({
             <div className="modal detail-refine-modal">
               <div className="modal-header">
                 <h3 id="task-detail-refine-title" className="detail-refine-title">{t("taskDetail.refine.modalTitle", "Refine")}</h3>
-                <AlphaButton className="modal-close" onClick={handleCloseRefineModal} aria-label={t("common.close", "Close")}>
-                  &times;
-                </AlphaButton>
+                <ModalCloseButton onClick={handleCloseRefineModal} aria-label={t("common.close", "Close")} />
               </div>
               <div className="detail-body">
                 <div className="detail-body-content">

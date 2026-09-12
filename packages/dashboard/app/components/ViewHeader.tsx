@@ -1,7 +1,7 @@
 import "./ViewHeader.css";
 import type { ComponentType, ReactNode } from "react";
-import { X } from "lucide-react";
 import type { LucideProps } from "lucide-react";
+import { ModalCloseButton, type ModalCloseButtonProps } from "./ModalCloseButton";
 
 /*
 FNXC:Navigation 2026-06-22-01:00:
@@ -16,16 +16,18 @@ export interface ViewHeaderProps {
   titleId?: string;
   /** Optional close action when this header is the sole chrome of a floating view. */
   onClose?: () => void;
+  /** Host-specific accessible label, title, classes, and test hooks for the canonical close control. */
+  closeButtonProps?: Omit<ModalCloseButtonProps, "onClick">;
 }
 
-export function ViewHeader({ icon: Icon, title, actions, titleId, onClose }: ViewHeaderProps) {
+export function ViewHeader({ icon: Icon, title, actions, titleId, onClose, closeButtonProps }: ViewHeaderProps) {
   return (
     <header className="view-header">
       <h2 className="view-header__title" id={titleId}>
         <Icon size={20} aria-hidden="true" />
         <span>{title}</span>
       </h2>
-      {actions || onClose ? <div className="view-header__actions">{actions}{onClose ? <button type="button" className="btn btn-icon" aria-label={`Close ${title}`} onClick={onClose}><X aria-hidden="true" /></button> : null}</div> : null}
+      {actions || onClose ? <div className="view-header__actions">{actions}{onClose ? <ModalCloseButton aria-label={`Close ${title}`} {...closeButtonProps} onClick={onClose} /> : null}</div> : null}
     </header>
   );
 }

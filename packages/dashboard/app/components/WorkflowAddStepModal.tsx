@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { X, Search, Puzzle, ToggleRight } from "lucide-react";
+import { Search, Puzzle, ToggleRight } from "lucide-react";
 import type { WorkflowDefinition, WorkflowStepTemplate } from "@fusion/core";
 import type { WorkflowEditorNodeKind } from "./nodes/WorkflowNodeTypes";
 import { nodeHelpFor } from "./nodes/node-help";
 import { FloatingWindow } from "./FloatingWindow";
+import { ModalCloseButton } from "./ModalCloseButton";
 import "./WorkflowAddStepModal.css";
 
 /*
@@ -159,14 +160,7 @@ export function WorkflowAddStepModal({
       <div className="wf-add-step-dialog">
         <header className="wf-add-step-header">
           <h3>{t("workflowNodes.addStepTitle", "Add a step")}</h3>
-          <button
-            type="button"
-            className="btn-icon wf-add-step-close"
-            aria-label={t("common.close", "Close")}
-            onClick={onClose}
-          >
-            <X size={16} />
-          </button>
+          <ModalCloseButton className="wf-add-step-close" aria-label={t("common.close", "Close")} onClick={onClose} />
         </header>
         <div className="wf-add-step-search">
           <Search size={14} aria-hidden />

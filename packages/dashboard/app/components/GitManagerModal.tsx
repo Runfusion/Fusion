@@ -1,3 +1,4 @@
+import { ModalCloseButton } from "./ModalCloseButton";
 import "./ScriptsModal.css";
 import { useState, useEffect, useCallback, useRef, useMemo, type CSSProperties } from "react";
 import { useTranslation, Trans } from "react-i18next";
@@ -1407,9 +1408,7 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
             {t("git.modalTitle", "Git Manager")}
           </h3>
           <div className="gm-header-actions">
-            <button className="modal-close" onClick={handleClose} aria-label={t("git.close", "Close")}>
-              <X size={18} />
-            </button>
+            <ModalCloseButton onClick={handleClose} aria-label={t("git.close", "Close")} />
           </div>
         </div>
 

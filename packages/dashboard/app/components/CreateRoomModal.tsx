@@ -1,3 +1,4 @@
+import { ModalCloseButton } from "./ModalCloseButton";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { fetchAgents } from "../api";
@@ -211,7 +212,7 @@ export function CreateRoomModal({ isOpen, onClose, onCreate, projectId, existing
       <div ref={modalRef} className="modal create-room-modal">
         <div className="modal-header">
           <h3>{t("createRoom.title", "Create room")}</h3>
-          <button type="button" className="modal-close" aria-label={t("actions.close", "Close")} onClick={onClose}>×</button>
+          <ModalCloseButton aria-label={t("actions.close", "Close")} onClick={onClose} />
         </div>
 
         <div className="form-group create-room-modal-name-group">

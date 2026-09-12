@@ -1,3 +1,4 @@
+import { ModalCloseButton } from "./ModalCloseButton";
 import "./NewTaskModal.css";
 import { useState, useCallback, useEffect, useRef, type ChangeEvent } from "react";
 import { createPortal } from "react-dom";
@@ -1189,9 +1190,7 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
         data-testid="new-task-drag-handle"
       >
       <h3>{t("newTaskModal.title", "New Task")}</h3>
-      <button className="modal-close" onClick={handleClose} disabled={isSubmitting} aria-label={t("actions.close", "Close")}>
-        &times;
-      </button>
+      <ModalCloseButton onClick={handleClose} disabled={isSubmitting} aria-label={t("actions.close", "Close")} />
         </div>
 
         <div className="modal-body">
