@@ -8,7 +8,6 @@ vi.mock("../logger.js", () => ({
 }));
 
 vi.mock("../worktree/worktree-pool.js", () => ({
-  WorktreePool: vi.fn(),
   RemovalReason: {},
   scanIdleWorktrees: vi.fn().mockResolvedValue([]),
   cleanupOrphanedWorktrees: vi.fn().mockResolvedValue(0),

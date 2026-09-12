@@ -4,7 +4,6 @@ import { TaskExecutor } from "../../executor.js";
 import { activeSessionRegistry } from "../../agents/active-session-registry.js";
 import { ActiveSessionWorktreeRemovalError, RemovalReason } from "../../worktree/worktree-backend.js";
 import { executorLog } from "../../logger.js";
-import { WorktreePool } from "../../worktree/worktree-pool.js";
 import * as worktreePoolModule from "../../worktree/worktree-pool.js";
 import { createMockStore, mockedExistsSync, resetExecutorMocks } from "../executor-test-helpers.js";
 
@@ -112,20 +111,6 @@ describe("FN-5346 reliability interactions: post-completion stale self-owned bin
     expect(removeSpy).toHaveBeenCalledTimes(2);
   });
 
-  it("preserves FN-4954 pool lease bookkeeping while reconciling stale registry", async () => {
-    const pool = new WorktreePool();
-    pool.rehydrate([PATH]);
-    expect(pool.acquire(TASK_ID)).toBe(PATH);
-    const beforeLeased = new Map(pool.getLeasedPaths());
+  // FNXC:PipelineSmoke 2026-09-12-22:57: FN-9291 retires the FN-4954 recycling assertion because the product no longer ships a recycle cache; the stale-registry behavior above remains covered.
 
-    const store = createMockStore();
-    const executor = new TaskExecutor(store, ROOT);
-    (executor as any).addActiveWorktree(TASK_ID, PATH);
-    activeSessionRegistry.registerPath(PATH, { taskId: TASK_ID, kind: "executor", ownerKey: TASK_ID });
-    vi.spyOn(worktreePoolModule, "removeWorktree").mockResolvedValue(undefined);
-
-    await executor.cleanup(TASK_ID);
-
-    expect(new Map(pool.getLeasedPaths())).toEqual(beforeLeased);
-  });
 });

@@ -152,7 +152,7 @@ export const PIPELINE_SCENARIOS: readonly PipelineScenario[] = [
     title: "Worktree acquisition disruptions recover",
     workflows: ["builtin:coding-ideas-v2"],
     expectedTerminal: "merged-done",
-    variants: ["pool-saturated", "recycled", "absent", "vanished-mid-step"],
+    variants: ["absent", "vanished-mid-step"],
     arrange: PIPELINE_SCENARIO_DRIVERS.s11Arrange,
     act: PIPELINE_SCENARIO_DRIVERS.s11Act,
     invariants: ["each acquisition variant converges without wedge"],
@@ -266,7 +266,7 @@ export const PIPELINE_SCENARIOS: readonly PipelineScenario[] = [
     recoveryExpectedTerminal: "parked",
     invariants: [
       "five commits and completed steps remain retained while blocked",
-      "worktree capacity remains leased across repeated observations",
+      "the externally blocked task worktree binding survives repeated recovery observations",
       "Retry resumes the interrupted Testing and Verification node",
     ],
   },

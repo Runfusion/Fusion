@@ -474,6 +474,9 @@ and `engine-core` so it cannot expand `pnpm test` or the merge gate. The non-blo
 `fetch-depth: 0` and a PostgreSQL service; never add it to `pr-checks.yml`, branch
 protection, or the engine-core allow-list.
 
+<!-- FNXC:PipelineSmoke 2026-09-12-22:57: FN-9291 keeps the opt-in lane observable from the ordinary engine test project without making its Git/PostgreSQL composition part of the merge gate. -->
+**Import-integrity ratchet:** Engine TypeScript configuration excludes `src/__tests__/**/*`, and this opt-in project is excluded from `engine-default`. Consequently, a test-only named import of a deleted engine export can evade typecheck, build, `verify:fast`, and the merge gate until the full smoke lane runs. `pipeline-smoke-import-integrity.test.ts` runs in `engine-default` and resolves each non-type named relative import from pipeline-smoke modules against its runtime module namespace, failing with the importer, specifier, and missing binding. When product behavior is removed, delete the tests that assert that retired behavior in the same change rather than restoring a compatibility stub.
+
 <!-- FNXC:PipelineSmoke 2026-08-23-20:49: The completed production-chain drivers measured 53,378ms and 60,459ms, so the declared budget is rounded to 70 seconds from current observed execution rather than the earlier seeded-row measurement. -->
 <!--
 FNXC:PipelineSmoke 2026-08-24-04:10:

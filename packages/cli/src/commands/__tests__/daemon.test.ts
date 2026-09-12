@@ -641,11 +641,6 @@ vi.mock("@fusion/engine", async (importOriginal) => {
   TaskExecutor: mocks.executorCtor,
   Scheduler: mocks.schedulerCtor,
   AgentSemaphore: mocks.agentSemaphoreCtor,
-  WorktreePool: vi.fn().mockImplementation(function () {
-    return {
-      rehydrate: vi.fn(),
-    };
-  }),
   aiMergeTask: vi.fn().mockResolvedValue({ merged: true }),
   UsageLimitPauser: vi.fn().mockImplementation(function () {
     return {};

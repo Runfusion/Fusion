@@ -22,7 +22,6 @@ import { ProjectEngine } from "../../project-engine.js";
 import { TaskExecutor } from "../../executor.js";
 import { activeSessionRegistry, executingTaskLock } from "../../agents/active-session-registry.js";
 import { resetMockScripts } from "../../providers/mock-provider.js";
-import { WorktreePool } from "../../worktree/worktree-pool.js";
 import { acquireTaskWorktree, type AcquireTaskWorktreeResult } from "../../worktree/worktree-acquisition.js";
 import { runHoldReleaseSweep } from "../../execution/hold-release.js";
 import { SelfHealingManager } from "../../self-healing.js";
@@ -64,7 +63,7 @@ export type PipelineMergeOutcome = {
   readonly error?: Error;
 };
 
-export type PipelineWorktreeRecoveryVariant = "pool-saturated" | "recycled" | "absent" | "vanished-mid-step";
+export type PipelineWorktreeRecoveryVariant = "absent" | "vanished-mid-step";
 
 export type PipelineRestartObservation = {
   readonly before: Task;
@@ -201,7 +200,6 @@ export class PipelineSmokeHarness {
   readonly fixture: PipelineGitFixture;
   readonly clock: PipelineClock;
   readonly guard: PipelineNoAiGuard;
-  readonly pool = new WorktreePool();
   engine: ProjectEngine;
   readonly agentStore: AgentStore;
   readonly centralCore: CentralCore;
@@ -215,6 +213,7 @@ export class PipelineSmokeHarness {
   private readonly createdTaskIds = new Set<string>();
   /** Newest non-empty branch per task; a workspace row only gains one at acquisition. */
   private readonly scriptedBranches = new Map<string, string>();
+  private readonly externalBlockBindings = new Map<string, { holders: Array<{ taskId: string; worktreePath: string }>; worktree?: string; branch?: string }>();
 
   private constructor(
     readonly pg: SharedPgTaskStoreHarness,
@@ -379,7 +378,7 @@ export class PipelineSmokeHarness {
     if (originalOn) eventedStore.on = () => eventedStore;
     let executor: PipelineGraphExecutor;
     try {
-      executor = new PipelineGraphExecutor(this.store, this.fixture.repoDir, { pool: this.pool, agentStore: this.agentStore });
+      executor = new PipelineGraphExecutor(this.store, this.fixture.repoDir, { agentStore: this.agentStore });
     } finally {
       if (originalOn) eventedStore.on = originalOn;
     }
@@ -619,19 +618,18 @@ export class PipelineSmokeHarness {
     }
     if (dispatchCount !== 0) throw new Error("S21: scheduler dispatched the externally blocked task.");
 
+    const executor = this.wireExecutor();
+    const before = await this.freshTask(taskId);
+    this.externalBlockBindings.set(taskId, {
+      holders: executor.listWorktreeHolders().filter((holder) => holder.taskId === taskId),
+      worktree: before.worktree,
+      branch: before.branch,
+    });
     const manager = new SelfHealingManager(this.store, {
       rootDir: this.fixture.repoDir,
       getExecutingTaskIds: () => new Set<string>(),
-      listWorktreeHolders: () => [...this.pool.getLeasedPaths()].map(([worktreePath, holderTaskId]) => ({
-        taskId: holderTaskId,
-        worktreePath,
-      })),
-      clearPhantomExecutorBinding: (holderTaskId) => {
-        for (const [worktreePath, currentHolder] of this.pool.getLeasedPaths()) {
-          if (currentHolder === holderTaskId) this.pool.release(worktreePath, holderTaskId);
-        }
-        return true;
-      },
+      listWorktreeHolders: () => executor.listWorktreeHolders(),
+      clearPhantomExecutorBinding: (holderTaskId, options) => executor.clearPhantomExecutorBinding(holderTaskId, options),
     });
     try {
       if (options.startup) await manager.runStartupRecovery();
@@ -650,8 +648,16 @@ export class PipelineSmokeHarness {
     if (live.steps.slice(0, 6).some((step) => step.status !== "done") || live.steps[6]?.status !== "in-progress" || live.currentStep !== 6) {
       throw new Error("S21: completed or interrupted step progress changed across external block recovery.");
     }
-    if (this.pool.getLeasedPaths().get(worktree) !== task.id) {
-      throw new Error("S21: the production worktree pool released the blocked task lease.");
+    const before = this.externalBlockBindings.get(task.id);
+    if (!before) throw new Error("S21: missing pre-recovery worktree binding snapshot.");
+    const holders = this.wireExecutor().listWorktreeHolders().filter((holder) => holder.taskId === task.id);
+    if (
+      JSON.stringify(holders) !== JSON.stringify(before.holders)
+      || live.worktree !== before.worktree
+      || live.branch !== before.branch
+      || !existsSync(worktree)
+    ) {
+      throw new Error("S21: external block recovery detached the task worktree binding.");
     }
     if (expectedStatus === "blocked") {
       if (live.status !== "blocked" || live.externalBlock?.code !== "ENOSPC") throw new Error("S21: external obstacle is not durably readable.");
@@ -675,7 +681,6 @@ export class PipelineSmokeHarness {
       rootDir: this.fixture.repoDir,
       store: this.store,
       settings: await this.store.getSettings(),
-      pool: this.pool,
       runInitCommand: false,
     });
   }
@@ -699,67 +704,11 @@ export class PipelineSmokeHarness {
     return persisted;
   }
 
-  private async createPoolOccupant(workflowId: PipelineWorkflowId): Promise<{ task: PipelineTaskSeed; acquisition: AcquireTaskWorktreeResult }> {
-    const holder = await this.createPipelineTask(workflowId, {
-      idPrefix: "S11-POOL-HOLDER",
-      codeReview: false,
-    });
-    const acquisition = await this.acquirePipelineTaskWorktree(holder.id);
-    await this.assertDurableAcquisition(holder.id, acquisition, "fresh");
-    return { task: holder, acquisition };
-  }
-
-  private leasePoolOccupant(path: string, holderTaskId: string): void {
-    this.pool.rehydrate([path]);
-    if (!this.pool.has(path)) throw new Error(`S11: real pool did not retain ${path} as an idle worktree.`);
-    if (this.pool.acquire(holderTaskId) !== path) {
-      throw new Error(`S11: real pool did not lease its prepared occupant ${path}.`);
-    }
-  }
-
-  /**
-   * FNXC:PipelineSmoke 2026-08-23-21:45:
-   * S11 acquires every disruption through the production WorktreePool and acquisition primitive.
-   * A fresh durable task-row assignment is the observable contract: pool saturation falls back to
-   * a distinct checkout, while recycling rebinds the exact released checkout to the successor.
-   */
+  /*
+  FNXC:PipelineSmoke 2026-09-12-22:57:
+  Recycling coverage is retired because the product removed recycleWorktrees, worktreeNaming, the recycled acquisition source, and its cache. S11 now covers only durable recovery paths that remain part of shipped acquisition.
+  */
   async arrangeWorktreeRecoveryVariant(taskId: string, variant: PipelineWorktreeRecoveryVariant): Promise<void> {
-    if (variant === "pool-saturated" || variant === "recycled") {
-      await this.store.updateSettings({ recycleWorktrees: true });
-      const task = await this.freshTask(taskId);
-      const selected = await this.store.getTaskWorkflowSelectionAsync(taskId);
-      if (!selected?.workflowId) throw new Error(`S11: ${taskId} has no selected workflow for pool setup.`);
-      const holder = await this.createPoolOccupant(selected.workflowId);
-      this.leasePoolOccupant(holder.acquisition.worktreePath, holder.task.id);
-
-      if (variant === "pool-saturated") {
-        const acquisition = await this.acquirePipelineTaskWorktree(task.id);
-        const persisted = await this.assertDurableAcquisition(task.id, acquisition, "fresh");
-        if (
-          persisted.worktree === holder.acquisition.worktreePath
-          || this.pool.getLeasedPaths().get(holder.acquisition.worktreePath) !== holder.task.id
-        ) {
-          throw new Error("S11: a saturated real pool reused its still-leased worktree.");
-        }
-        return;
-      }
-
-      this.pool.release(holder.acquisition.worktreePath, holder.task.id);
-      if (!this.pool.has(holder.acquisition.worktreePath)) {
-        throw new Error("S11: released real pool worktree was not available for recycling.");
-      }
-      const acquisition = await this.acquirePipelineTaskWorktree(task.id);
-      const persisted = await this.assertDurableAcquisition(task.id, acquisition, "pool");
-      if (
-        persisted.worktree !== holder.acquisition.worktreePath
-        || this.pool.getLeasedPaths().get(holder.acquisition.worktreePath) !== task.id
-      ) {
-        throw new Error("S11: recycled acquisition did not durably rebind the released checkout.");
-      }
-      return;
-    }
-
-    await this.store.updateSettings({ recycleWorktrees: false });
     if (variant === "absent") {
       const initial = await this.acquirePipelineTaskWorktree(taskId);
       await this.assertDurableAcquisition(taskId, initial, "fresh");
