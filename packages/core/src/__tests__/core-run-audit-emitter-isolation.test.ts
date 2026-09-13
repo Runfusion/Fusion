@@ -17,11 +17,15 @@ const awaitedClassifications = {
   "task-store/project-store-ops.ts:recordRunAuditEventImpl": "permanent-sink",
 } as const;
 
+/*
+ * FN-295 (2026-09-04): removing task archiving deleted the transactional audit writer in
+ * task-store/async/async-comments-attachments.ts, so it is no longer a transactional boundary.
+ */
 const transactionalSourceBoundaries = [
   "task-store/moves.ts", "task-store/symbol-locks.ts", "task-store/async/async-merge-coordination.ts",
   "task-store/lifecycle-ops.ts", "task-store/task-creation.ts", "task-store/project-store-ops.ts",
   "task-store/task-artifacts-ops.ts", "task-store/task-lifecycle-consumer-registry.ts",
-  "task-store/async/async-comments-attachments.ts", "task-store/async/async-workflow-workitems.ts",
+  "task-store/async/async-workflow-workitems.ts",
   "task-store/archive-lifecycle-2.ts",
 ] as const;
 

@@ -47,6 +47,7 @@ import {
   workflowEntryArtifacts,
 } from "../execution/required-workflow-artifacts.js";
 import { getActiveNotificationService } from "../util/notifier.js";
+import { holdWorkflowAdmission, workflowAdmissionHoldReason } from "./workflow-admission-hold.js";
 
 export function buildWorkflowGateActivityMetadata(
   result: CoreWorkflowStepResult,
@@ -378,9 +379,17 @@ type PersistWorkflowStepResultDeps = Pick<ExecuteWorkflowGraphDeps, "store" | "g
   & Partial<Pick<ExecuteWorkflowGraphDeps, "workflowGateActivityPrincipals" | "activeWorkflowPrincipals">>;
 
 /** The graph needs durable acceptance separately from the scope-CAS edge-admission result. */
+/*
+FNXC:AuthoritativeGateResult 2026-09-12-22:54:
+Routing must consume the row that durable persistence accepted, not the optimistic result supplied by
+an executing reviewer. A refused or unavailable write has a named disposition so callers can hold a
+required gate without fabricating a reviewer verdict.
+*/
 export type WorkflowStepResultPersistOutcome = {
   scopeCurrent: boolean;
   persisted: boolean;
+  disposition: "applied" | "fence-refused" | "scope-superseded" | "aborted" | "no-writer" | "error";
+  persistedResult?: CoreWorkflowStepResult;
 };
 
 /**
@@ -407,8 +416,8 @@ export async function persistWorkflowStepResultWithOutcome(
   result: CoreWorkflowStepResult,
   fence: WorkflowStepResultPersistFence = {},
 ): Promise<WorkflowStepResultPersistOutcome> {
-  if (typeof deps.store.updateTask !== "function") return { scopeCurrent: true, persisted: false };
-  if (fence.signal?.aborted) return { scopeCurrent: true, persisted: false };
+  if (typeof deps.store.updateTask !== "function") return { scopeCurrent: true, persisted: false, disposition: "no-writer" };
+  if (fence.signal?.aborted) return { scopeCurrent: true, persisted: false, disposition: "aborted" };
 
   try {
     const live = await deps.store.getTask(taskId);
@@ -503,8 +512,8 @@ export async function persistWorkflowStepResultWithOutcome(
       if (!written.applied) fenceRefused = true;
     }
 
-    if (scopeSuperseded) return { scopeCurrent: false, persisted: false };
-    if (fenceRefused) return { scopeCurrent: true, persisted: false };
+    if (scopeSuperseded) return { scopeCurrent: false, persisted: false, disposition: "scope-superseded" };
+    if (fenceRefused) return { scopeCurrent: true, persisted: false, disposition: fence.signal?.aborted ? "aborted" : "fence-refused" };
 
     const persistedResult = activityResults?.find((entry) => entry.workflowStepId === result.workflowStepId) ?? activityResult;
     const approvalDowngraded = result.status === "passed"
@@ -549,10 +558,10 @@ export async function persistWorkflowStepResultWithOutcome(
         executorLog.warn(`[agent-activity] ${taskId}: failed to record workflow gate activity: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
-    return { scopeCurrent: true, persisted: true };
+    return { scopeCurrent: true, persisted: true, disposition: "applied", persistedResult };
   } catch (error) {
     executorLog.warn(`[agent-activity] ${taskId}: failed to persist workflow step result: ${error instanceof Error ? error.message : String(error)}`);
-    return { scopeCurrent: true, persisted: false };
+    return { scopeCurrent: true, persisted: false, disposition: fence.signal?.aborted ? "aborted" : "error" };
   }
 }
 
@@ -1159,9 +1168,7 @@ export async function executeWorkflowGraph(
         });
         return;
       }
-      const principalHoldReason = Object.values(result.context ?? {}).find((value): value is string =>
-        typeof value === "string" && value.startsWith("workflow-principal-"),
-      );
+      const principalHoldReason = workflowAdmissionHoldReason(result);
       /*
        * FNXC:WorkflowAgentRouting 2026-08-07-07:45:
        * Principal availability is a recoverable continuation hold, not a graph
@@ -1191,17 +1198,11 @@ export async function executeWorkflowGraph(
           }
           await deps.store.logEntry(task.id, `Workflow stage held — ${principalHoldReason}`).catch(() => undefined);
         }
-        if (
-          continuation
-          && typeof deps.store.transitionWorkflowWorkItem === "function"
-          && !directWorkflowPrincipalHeldWorkItemIds.has(continuation.id)
-        ) {
-          await deps.store.transitionWorkflowWorkItem(continuation.id, "held", {
-            leaseOwner: null,
-            leaseExpiresAt: null,
-            lastError: principalHoldReason,
-            blockedReason: principalHoldReason,
-          }).catch(() => undefined);
+        if (typeof deps.store.transitionWorkflowWorkItem === "function") {
+          await holdWorkflowAdmission(
+            deps.store, principalHoldReason, continuation?.id,
+            directWorkflowPrincipalWorkItemIds, directWorkflowPrincipalHeldWorkItemIds,
+          );
         }
         return;
       }
