@@ -48,6 +48,8 @@ import {
   type WorktreeDependencyReadiness,
 } from "../worktree/worktree-dependency-install.js";
 import { resolveContentReviewInputProof } from "../worktree/review-diff-fingerprint.js";
+import { parkDependencyConfigurationBlock } from "../worktree/dependency-configuration-block.js";
+import { WORKFLOW_DEPENDENCY_CONFIGURATION_BLOCK_VALUE } from "../workflows/workflow-graph-executor.js";
 import { acknowledgeOverlapResumeContext, readOverlapResumeContextDelivery } from "../execution/overlap-resume-context.js";
 
 const WORKFLOW_THINKING_LEVEL_SET: ReadonlySet<string> = new Set(THINKING_LEVELS);
@@ -161,11 +163,19 @@ export function resolveWorkspaceReadOnlyGateRepositoryContext(input: {
     : { resolved: true };
 }
 
+/*
+FNXC:WorktreeDependencies 2026-09-13-08:58:
+A dependency configuration block must retain the executing Plan Review graph node, not an inferred
+or stale task node. Retry publishes a successor at this node, so preserving it prevents an
+operator-configured recovery from resuming an unrelated workflow step.
+*/
 export interface PlanReviewDependencyGateInput {
   task: TaskDetail;
   settings: Settings;
   workspaceConfig: WorkspaceConfig | null | undefined;
   worktreePath: string;
+  /** The executing Plan Review graph node; Retry must resume this exact node. */
+  nodeId: string;
   store: TaskStore;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
   runConfiguredCommand: DependencyCommandRunner;
@@ -177,6 +187,10 @@ interface DependencyGateTarget {
 }
 
 function dependencyGateDetails(target: DependencyGateTarget, readiness: WorktreeDependencyReadiness): string {
+  if (readiness.readiness === "config-blocked" && readiness.deterministicStop) {
+    const stop = readiness.deterministicStop;
+    return `${target.repository}: command \`${stop.command}\` exited with code ${stop.exitCode ?? "unknown"} (${stop.failureCode}); ${stop.diagnostic}. Correct worktreeInitCommand and select Retry.`;
+  }
   if (readiness.readiness === "unrecognized") {
     return `${target.repository}: unrecognized dependency evidence (${readiness.evidence.join(", ")}); resolve it with fn_install_worktree_dependencies.`;
   }
@@ -236,7 +250,7 @@ export async function runPlanReviewDependencyGate(
         taskEnv: process.env,
         logger: executorLog,
       });
-      if (readiness.readiness === "unresolved" || readiness.readiness === "unrecognized") {
+      if (readiness.readiness === "unresolved" || readiness.readiness === "unrecognized" || readiness.readiness === "config-blocked") {
         blocking.push({ target, readiness });
       }
     } catch (error) {
@@ -250,6 +264,21 @@ export async function runPlanReviewDependencyGate(
     }
   }
   if (blocking.length === 0) return null;
+
+  const configurationBlocked = blocking.find(({ readiness }) => readiness.readiness === "config-blocked" && readiness.deterministicStop);
+  if (configurationBlocked?.readiness.deterministicStop) {
+    const stop = configurationBlocked.readiness.deterministicStop;
+    const output = await parkDependencyConfigurationBlock(input.store, {
+      taskId: input.task.id, repository: configurationBlocked.target.repository, command: stop.command,
+      exitCode: stop.exitCode, failureCode: stop.failureCode, diagnostic: stop.diagnostic,
+      nodeId: input.nodeId,
+      getRunContextFor: input.getRunContextFor,
+    });
+    return { outcome: "failure", value: WORKFLOW_DEPENDENCY_CONFIGURATION_BLOCK_VALUE, contextPatch: {
+      output, notes: "Plan Review is suspended until the dependency configuration changes or the operator selects Retry.",
+      findings: [{ severity: "high", title: "Dependency configuration blocked", body: output }],
+    } };
+  }
 
   const lines = ["Dependencies are not installed.", ...blocking.map(({ target, readiness }) => `- ${dependencyGateDetails(target, readiness)}`)];
   const output = lines.join("\n");
@@ -607,11 +636,21 @@ export async function runGraphCustomNode(
     compatibility probe remains only for replans that already retain an execution checkout.
     */
     if (isPlanReviewNode) {
+      /*
+      FNXC:WorktreeDependencies 2026-09-13-09:05:
+      A dependency stop raised inside an optional Plan Review template must resume the owning
+      top-level group, not its template child. Only top-level IR nodes are legal continuation
+      targets, so persisting the child would make the operator Retry action unrecoverable.
+      */
+      const dependencyGateNodeId = typeof graphContext?.[WORKFLOW_OPTIONAL_GROUP_CONTEXT_KEY] === "string"
+        ? graphContext[WORKFLOW_OPTIONAL_GROUP_CONTEXT_KEY]
+        : node.id;
       const dependencyGate = await runPlanReviewDependencyGate({
         task: executionTarget,
         settings,
         workspaceConfig,
         worktreePath,
+        nodeId: dependencyGateNodeId,
         store: deps.store,
         getRunContextFor: deps.getRunContextFor,
         runConfiguredCommand: deps.runConfiguredCommand,

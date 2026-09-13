@@ -19,6 +19,18 @@ const IR = {
   ],
   nodes: [
     { id: "start", kind: "start" },
+    {
+      id: "plan-review",
+      kind: "optional-group",
+      column: "review",
+      config: {
+        name: "Plan Review",
+        template: {
+          nodes: [{ id: "plan-review-step", kind: "prompt", config: { name: "Plan Review" } }],
+          edges: [],
+        },
+      },
+    },
     { id: "implement", kind: "execute", column: "building" },
     { id: "code-review", kind: "prompt", column: "review" },
   ],
@@ -120,6 +132,23 @@ async function createPrompt(root: string) {
 afterEach(() => vi.restoreAllMocks());
 
 describe("external-block Retry", () => {
+  it("resumes the top-level optional Plan Review group recorded by a dependency configuration block", async () => {
+    const row = blockedTask();
+    row.externalBlock = {
+      ...row.externalBlock!,
+      origin: "project-configuration",
+      source: "dependency-readiness",
+      // FNXC:WorktreeDependencies 2026-09-13-09:05: A dependency stop from the template resumes its legal owning IR node.
+      resume: { ...row.externalBlock!.resume, nodeId: "plan-review" },
+    };
+    const { store, items } = createStore(row);
+
+    const result = await resumeExternallyBlockedTask({ store: store as never, taskId: row.id });
+
+    expect(result).toMatchObject({ kind: "resumed", nodeId: "plan-review" });
+    expect(items).toEqual([expect.objectContaining({ nodeId: "plan-review", state: "runnable" })]);
+  });
+
   it("resumes the recorded node without changing completed work or implementation artifacts", async () => {
     const root = await mkdtemp(join(tmpdir(), "fusion-external-block-resume-"));
     const promptPath = await createPrompt(root);

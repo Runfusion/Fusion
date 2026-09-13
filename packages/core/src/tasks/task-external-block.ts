@@ -8,9 +8,15 @@ export type TaskExternalBlockOrigin =
   | "model-provider"
   | "credentials"
   | "network"
-  | "third-party-service";
+  | "third-party-service"
+  | "project-configuration";
 
 /*
+FNXC:ExternalBlock 2026-09-13-06:25:
+A proven-repeating dependency-init failure against an unchanged worktree is operator-recoverable
+project configuration state. It deliberately bypasses narrow message-sniffing classification because
+its durable engine evidence, not diagnostic prose, authorizes the freeze.
+
 FNXC:ExternalBlock 2026-08-28-03:48:
 An obstacle outside the worktree freezes the task at its exact durable resume point. The patch must
 retain column, steps, current step, worktree, and branch, and must not write userPaused because an
@@ -20,7 +26,7 @@ export interface TaskExternalBlock {
   origin: TaskExternalBlockOrigin;
   code: string;
   message: string;
-  source: "agent-declaration" | "session-failure";
+  source: "agent-declaration" | "session-failure" | "dependency-readiness";
   blockedAt: string;
   resume: {
     column: string;

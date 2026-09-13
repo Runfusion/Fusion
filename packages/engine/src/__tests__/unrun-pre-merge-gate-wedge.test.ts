@@ -33,6 +33,7 @@ function deps(transitions: ReturnType<typeof vi.fn>, handleGraphFailure: ReturnT
     getSettings: vi.fn(async () => ({})),
     getTaskWorkflowSelection: vi.fn(() => ({ workflowId: "builtin:coding", stepIds: [] })),
     getTask: vi.fn(async () => task),
+    logEntry: vi.fn(async () => undefined),
     listWorkflowWorkItemsForTask: vi.fn(async () => [{ id: "continuation-1", taskId: task.id, nodeId: "security-review", kind: "task", state: "running", leaseOwner: "executor:FN-9243" }]),
     transitionWorkflowWorkItem: transitions,
   };
@@ -169,5 +170,27 @@ describe("unrun pre-merge gate wedge regression", () => {
       leaseOwner: null, leaseExpiresAt: null, lastError: "workflow-continuation-failed",
     });
     expect(handleGraphFailure).toHaveBeenCalledWith(task, expect.objectContaining({ disposition: "failed", reason: "interpreter-error: Cannot move" }));
+  });
+
+  it("holds the dispatched continuation when dependency configuration blocks Plan Review", async () => {
+    run.mockResolvedValueOnce({
+      disposition: "suspended",
+      outcome: "failure",
+      visitedNodeIds: ["plan-review"],
+      context: { "node:plan-review:dependency-configuration-block": "diagnostic intentionally remains on the task" },
+      suspension: { reason: "pause", nodeId: "plan-review", fromColumn: "in-review", toColumn: "in-review", irHash: "dependency-configuration-block" },
+    });
+    const transitions = vi.fn(async (id: string, state: string, patch: object) => ({ id, state, ...patch }));
+    const handleGraphFailure = vi.fn(async () => undefined);
+
+    await executeWorkflowGraph(deps(transitions, handleGraphFailure), task, { alreadyClaimed: true });
+
+    expect(transitions).toHaveBeenCalledWith("continuation-1", "held", {
+      leaseOwner: null,
+      leaseExpiresAt: null,
+      lastError: "dependency-configuration-blocked",
+      blockedReason: "dependency-configuration-blocked",
+    });
+    expect(handleGraphFailure).not.toHaveBeenCalled();
   });
 });

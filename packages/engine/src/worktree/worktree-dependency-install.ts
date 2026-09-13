@@ -1,5 +1,7 @@
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { promisify } from "node:util";
 import { delimiter, join } from "node:path";
 import type { RunMutationContext, Settings, TaskStore } from "@fusion/core";
 import {
@@ -9,7 +11,16 @@ import {
   isOutdatedLockfileError,
 } from "../merge/merge-dependency-sync.js";
 import { analyzeUvDependencySelection, uvCommandSelectsOptionalDependencies } from "./python-uv-inference.js";
+import {
+  classifyDependencyInstallFailure,
+  dependencyFailureRepeatsWithoutChange,
+  dependencyFailureSignature,
+  DEPENDENCY_WORKTREE_STATE_INDETERMINATE,
+  normalizeDependencyDiagnostic,
+} from "./dependency-failure-classifier.js";
 import { resolveWorktreePrivateGitDir } from "./worktree-paths.js";
+
+const execFileAsync = promisify(execFile);
 
 export const DEPENDENCY_INSTALL_RECORD_FILENAME = "fusion-dependency-install.json";
 export const DEPENDENCY_INSTALL_COMMAND_TIMEOUT_MS = 300_000;
@@ -26,6 +37,7 @@ export type DependencyInstallOutcome =
 
 export type WorktreeDependencyReadinessValue =
   | "unresolved"
+  | "config-blocked"
   | "unrecognized"
   | "satisfied"
   | "not-needed";
@@ -48,6 +60,36 @@ export interface DependencyInstallEntry {
   fingerprint: string;
   reason?: string;
   rationale?: string;
+  failureClass?: "deterministic" | "transient";
+  failureCode?: string;
+  failureSignature?: string;
+  exitCode?: number | null;
+  diagnostic?: string;
+  worktreeState?: string;
+}
+
+export interface DependencyFailureHistoryEntry {
+  ecosystem: string;
+  command: string;
+  exitCode: number | null;
+  failureClass: "deterministic" | "transient";
+  failureCode: string;
+  signature: string;
+  worktreeState: string;
+  at: string;
+}
+
+export interface DependencyDeterministicStop {
+  ecosystem: string;
+  fingerprint: string;
+  signature: string;
+  worktreeState: string;
+  failureCode: string;
+  command: string;
+  exitCode: number | null;
+  diagnostic: string;
+  repository?: string;
+  raisedAt: string;
 }
 
 export interface DependencyInstallRecord {
@@ -55,6 +97,10 @@ export interface DependencyInstallRecord {
   completedAt: string;
   evidence: string[];
   entries: DependencyInstallEntry[];
+  failures?: DependencyFailureHistoryEntry[];
+  deterministicStop?: DependencyDeterministicStop;
+  /** A Retry establishes a new repeat-detection window while retaining history. */
+  retryAfter?: string;
 }
 
 export interface WorktreeDependencyReadiness {
@@ -64,6 +110,7 @@ export interface WorktreeDependencyReadiness {
   evidence: string[];
   /** Matrix rows which still need a deterministic retry or planner intervention. */
   unresolvedRepos: DependencyPlanEntry[];
+  deterministicStop?: DependencyDeterministicStop;
 }
 
 export interface DependencyCommandResult {
@@ -100,6 +147,8 @@ export interface EnsureWorktreeDependenciesOptions {
   configuredInitResult?: DependencyCommandResult;
   /** Injectable clock keeps budget tests deterministic without changing production timing. */
   now?: () => number;
+  /** Test seam; production captures the state once before any command spawn. */
+  resolveWorktreeState?: (worktreePath: string, planFingerprints: string[]) => Promise<string> | string;
 }
 
 export interface PlannerDependencyResolutionInput {
@@ -354,6 +403,29 @@ export function dependencyEvidenceFingerprint(rootDir: string, evidence: readonl
   return fingerprintFiles(rootDir, evidence);
 }
 
+function digest(values: readonly string[]): string {
+  return createHash("sha256").update([...values].sort().join("\0")).digest("hex");
+}
+
+/** Capture only tracked repository state and plan inputs before install side effects. */
+export async function resolveWorktreeDependencyStateToken(worktreePath: string, planFingerprints: string[]): Promise<string> {
+  try {
+    const [head, status] = await Promise.all([
+      execFileAsync("git", ["-C", worktreePath, "rev-parse", "HEAD"], { encoding: "utf8", timeout: 10_000 }),
+      execFileAsync("git", ["-C", worktreePath, "status", "--porcelain=v1", "--untracked-files=normal"], { encoding: "utf8", timeout: 10_000 }),
+    ]);
+    return `git:${digest([head.stdout.trim(), ...status.stdout.split(/\r?\n/).filter(Boolean), ...planFingerprints])}`;
+  } catch (error) {
+    const stderr = String((error as { stderr?: unknown }).stderr ?? "");
+    // FNXC:WorktreeDependencies 2026-09-13-08:49:
+    // Git uses exit code 128 for corrupt repositories and unreadable worktrees as well as a non-repository path.
+    // Only its explicit non-repository diagnostic can use the deterministic plan-only fallback; every other probe
+    // failure is indeterminate so an unprovable worktree state can never authorize an operator-facing freeze.
+    if (/not a git repository/i.test(stderr)) return `plan-only:${digest(planFingerprints)}`;
+    return DEPENDENCY_WORKTREE_STATE_INDETERMINATE;
+  }
+}
+
 export function readDependencyInstallRecord(worktreePath: string): DependencyInstallRecord | null {
   const privateGitDir = resolveWorktreePrivateGitDir(worktreePath);
   if (!privateGitDir) return null;
@@ -368,11 +440,30 @@ export function readDependencyInstallRecord(worktreePath: string): DependencyIns
       && typeof entry.outcome === "string"
       && typeof entry.fingerprint === "string",
     );
+    const failures = Array.isArray(parsed.failures)
+      ? parsed.failures.filter((failure): failure is DependencyFailureHistoryEntry => typeof failure === "object" && failure !== null
+        && typeof failure.ecosystem === "string" && typeof failure.command === "string"
+        && (typeof failure.exitCode === "number" || failure.exitCode === null)
+        && (failure.failureClass === "deterministic" || failure.failureClass === "transient")
+        && typeof failure.failureCode === "string" && typeof failure.signature === "string"
+        && typeof failure.worktreeState === "string" && typeof failure.at === "string").slice(-20)
+      : undefined;
+    const stop = parsed.deterministicStop;
+    const deterministicStop = typeof stop === "object" && stop !== null
+      && typeof stop.ecosystem === "string" && typeof stop.fingerprint === "string"
+      && typeof stop.signature === "string" && typeof stop.worktreeState === "string"
+      && typeof stop.failureCode === "string" && typeof stop.command === "string"
+      && (typeof stop.exitCode === "number" || stop.exitCode === null)
+      && typeof stop.diagnostic === "string" && typeof stop.raisedAt === "string"
+      ? stop as DependencyDeterministicStop : undefined;
     return {
       version: 1,
       completedAt: typeof parsed.completedAt === "string" ? parsed.completedAt : "",
       evidence: parsed.evidence.filter((entry): entry is string => typeof entry === "string"),
       entries,
+      ...(failures ? { failures } : {}),
+      ...(deterministicStop ? { deterministicStop } : {}),
+      ...(typeof parsed.retryAfter === "string" ? { retryAfter: parsed.retryAfter } : {}),
     };
   } catch {
     return null;
@@ -387,6 +478,16 @@ export function writeDependencyInstallRecord(worktreePath: string, record: Depen
   } catch {
     // A missing or read-only private git directory only disables memoization; readiness still runs.
   }
+}
+
+/** Clear a user-retry stop without discarding the forensic install history. */
+export function clearWorktreeDependencyDeterministicStop(worktreePath: string): boolean {
+  const record = readDependencyInstallRecord(worktreePath);
+  if (!record?.deterministicStop) return false;
+  delete record.deterministicStop;
+  record.retryAfter = new Date().toISOString();
+  writeDependencyInstallRecord(worktreePath, record);
+  return true;
 }
 
 function matchingEntry(
@@ -428,6 +529,13 @@ function resolveReadiness(
       ? [matchingEntry(record, "planner", dependencyEvidenceFingerprint(worktreePath, evidence))].filter((entry): entry is DependencyInstallEntry => Boolean(entry))
       : []),
   ];
+  const stop = record?.deterministicStop;
+  const liveStop = stop && plan.some((item) => item.ecosystem === stop.ecosystem
+    && planFingerprint(worktreePath, item) === stop.fingerprint
+    && !isSuccessful(matchingEntry(record, item.ecosystem, stop.fingerprint))) ? stop : undefined;
+  if (liveStop) {
+    return { readiness: "config-blocked", entries, plan: [...plan], evidence: [...evidence], unresolvedRepos: unresolved, deterministicStop: liveStop };
+  }
   if (unresolved.length > 0) {
     return { readiness: "unresolved", entries, plan: [...plan], evidence: [...evidence], unresolvedRepos: unresolved };
   }
@@ -455,6 +563,9 @@ function makeRecord(previous: DependencyInstallRecord | null, evidence: readonly
     completedAt: new Date().toISOString(),
     evidence: [...evidence],
     entries: [...(previous?.entries ?? [])],
+    ...(previous?.failures ? { failures: [...previous.failures] } : {}),
+    ...(previous?.deterministicStop ? { deterministicStop: previous.deterministicStop } : {}),
+    ...(previous?.retryAfter ? { retryAfter: previous.retryAfter } : {}),
   };
 }
 
@@ -546,7 +657,10 @@ function entryForPlan(
   worktreePath: string,
   plan: DependencyPlanEntry,
   outcome: DependencyInstallOutcome,
-  options: { command?: string; reason?: string } = {},
+  options: { command?: string; reason?: string; failure?: {
+    failureClass: "deterministic" | "transient"; failureCode: string; failureSignature: string;
+    exitCode: number | null; diagnostic: string; worktreeState: string;
+  } } = {},
 ): DependencyInstallEntry {
   return {
     ecosystem: plan.ecosystem,
@@ -556,7 +670,38 @@ function entryForPlan(
     fingerprint: planFingerprint(worktreePath, plan),
     ...(options.reason ? { reason: options.reason } : {}),
     ...(plan.rationale ? { rationale: plan.rationale } : {}),
+    ...(options.failure ?? {}),
   };
+}
+
+function recordCommandFailure(
+  record: DependencyInstallRecord,
+  worktreePath: string,
+  plan: DependencyPlanEntry,
+  command: string,
+  result: DependencyCommandResult,
+  worktreeState: string,
+): void {
+  const classification = classifyDependencyInstallFailure(result);
+  const diagnostic = normalizeDependencyDiagnostic(commandDetails(result));
+  const exitCode = result.exitCode ?? null;
+  const failureSignature = dependencyFailureSignature({ command, exitCode, diagnostic });
+  const current = { signature: failureSignature, worktreeState };
+  const prior = [...(record.failures ?? [])].reverse().find((failure) => failure.ecosystem === plan.ecosystem
+    && failure.failureClass === "deterministic"
+    && (!record.retryAfter || failure.at > record.retryAfter));
+  const failure = { failureClass: classification.failureClass, failureCode: classification.failureCode, failureSignature, exitCode, diagnostic, worktreeState } as const;
+  upsertEntry(record, entryForPlan(worktreePath, plan, "install-failed", { command, reason: commandFailureReason(result), failure }));
+  record.failures = [...(record.failures ?? []), {
+    ecosystem: plan.ecosystem, command, exitCode, failureClass: classification.failureClass,
+    failureCode: classification.failureCode, signature: failureSignature, worktreeState, at: new Date().toISOString(),
+  }].slice(-20);
+  if (classification.failureClass === "deterministic" && dependencyFailureRepeatsWithoutChange(prior, current)) {
+    record.deterministicStop = {
+      ecosystem: plan.ecosystem, fingerprint: planFingerprint(worktreePath, plan), signature: failureSignature,
+      worktreeState, failureCode: classification.failureCode, command, exitCode, diagnostic, raisedAt: new Date().toISOString(),
+    };
+  }
 }
 
 /**
@@ -570,6 +715,18 @@ export async function ensureWorktreeDependencies(
   const env = options.taskEnv ?? process.env;
   const scan = scanWorktreeDependencies(options.worktreePath, options.settings, env);
   const record = makeRecord(readDependencyInstallRecord(options.worktreePath), scan.evidence);
+  const planFingerprints = scan.plan.map((plan) => planFingerprint(options.worktreePath, plan));
+  // Capture once before any spawn so an auto-heal's lockfile write belongs to the next pass.
+  const worktreeState = await (options.resolveWorktreeState ?? resolveWorktreeDependencyStateToken)(options.worktreePath, planFingerprints);
+  if (record.deterministicStop) {
+    const currentPlan = scan.plan.find((plan) => plan.ecosystem === record.deterministicStop!.ecosystem);
+    if (!currentPlan || planFingerprint(options.worktreePath, currentPlan) !== record.deterministicStop.fingerprint
+      || record.deterministicStop.worktreeState !== worktreeState
+      || worktreeState === DEPENDENCY_WORKTREE_STATE_INDETERMINATE
+      || record.deterministicStop.worktreeState === DEPENDENCY_WORKTREE_STATE_INDETERMINATE) {
+      delete record.deterministicStop;
+    }
+  }
   const now = options.now ?? Date.now;
   const startedAt = now();
 
@@ -578,6 +735,7 @@ export async function ensureWorktreeDependencies(
     const fingerprint = planFingerprint(options.worktreePath, plan);
     const previous = matchingEntry(record, plan.ecosystem, fingerprint);
     if (previous?.outcome === "installed") continue;
+    if (record.deterministicStop?.ecosystem === plan.ecosystem && record.deterministicStop.fingerprint === fingerprint) continue;
 
     if (plan.refusal) {
       upsertEntry(record, entryForPlan(options.worktreePath, plan, plan.refusal, { reason: plan.rationale }));
@@ -586,12 +744,11 @@ export async function ensureWorktreeDependencies(
     }
 
     if (plan.ecosystem === "configured-init-command" && options.configuredInitResult) {
-      upsertEntry(record, entryForPlan(
-        options.worktreePath,
-        plan,
-        commandSucceeded(options.configuredInitResult) ? "installed" : "install-failed",
-        { reason: commandSucceeded(options.configuredInitResult) ? undefined : commandFailureReason(options.configuredInitResult) },
-      ));
+      if (commandSucceeded(options.configuredInitResult)) {
+        upsertEntry(record, entryForPlan(options.worktreePath, plan, "installed"));
+      } else {
+        recordCommandFailure(record, options.worktreePath, plan, plan.command, options.configuredInitResult, worktreeState);
+      }
       continue;
     }
 
@@ -636,13 +793,12 @@ export async function ensureWorktreeDependencies(
         }));
         continue;
       }
-      upsertEntry(record, entryForPlan(options.worktreePath, plan, "install-failed", {
-        command: retryCommand,
-        reason: commandFailureReason(retryResult),
-      }));
+      if (retryResult) recordCommandFailure(record, options.worktreePath, plan, retryCommand, retryResult, worktreeState);
+      else upsertEntry(record, entryForPlan(options.worktreePath, plan, "install-failed", { command: retryCommand, reason: "No engine-observed command result" }));
       continue;
     }
-    upsertEntry(record, entryForPlan(options.worktreePath, plan, "install-failed", { reason: commandFailureReason(result) }));
+    if (result) recordCommandFailure(record, options.worktreePath, plan, plan.command, result, worktreeState);
+    else upsertEntry(record, entryForPlan(options.worktreePath, plan, "install-failed", { reason: "No engine-observed command result" }));
   }
 
   const readiness = resolveReadiness(options.worktreePath, scan.plan, scan.evidence, record);

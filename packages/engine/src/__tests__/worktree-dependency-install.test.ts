@@ -8,10 +8,12 @@ import {
   DEPENDENCY_INSTALL_RECORD_FILENAME,
   dependencyEvidenceFingerprint,
   detectUnrecognizedDependencyEvidence,
+  clearWorktreeDependencyDeterministicStop,
   ensureWorktreeDependencies,
   readDependencyInstallRecord,
   recordPlannerDependencyResolution,
   resolveWorktreeDependencyReadiness,
+  resolveWorktreeDependencyStateToken,
 } from "../worktree/worktree-dependency-install.js";
 
 const temporaryRoots: string[] = [];
@@ -55,6 +57,39 @@ afterEach(() => {
 });
 
 describe("worktree dependency installation", () => {
+  it("blocks only the second deterministic failure at unchanged state and permits explicit retry", async () => {
+    const root = fixture();
+    const run = vi.fn().mockResolvedValue(failure("No interpreter found for Python >=3.13"));
+    const base = { ...options(root, availableEnv("uv"), run), settings: { worktreeInitCommand: "uv sync --frozen" }, resolveWorktreeState: () => "plan-only:stable" };
+    expect((await ensureWorktreeDependencies(base)).readiness).toBe("unresolved");
+    expect((await ensureWorktreeDependencies(base)).readiness).toBe("config-blocked");
+    const before = run.mock.calls.length;
+    expect((await ensureWorktreeDependencies(base)).readiness).toBe("config-blocked");
+    expect(run).toHaveBeenCalledTimes(before);
+    expect(clearWorktreeDependencyDeterministicStop(root)).toBe(true);
+    expect((await ensureWorktreeDependencies(base)).readiness).toBe("unresolved");
+    expect(readDependencyInstallRecord(root)?.failures).toHaveLength(3);
+  });
+
+  it("does not block for indeterminate or changed worktree state", async () => {
+    const root = fixture();
+    const run = vi.fn().mockResolvedValue(failure("No interpreter found for Python >=3.13"));
+    const base = { ...options(root, availableEnv("uv"), run), settings: { worktreeInitCommand: "uv sync" } };
+    expect((await ensureWorktreeDependencies({ ...base, resolveWorktreeState: () => "indeterminate" })).readiness).toBe("unresolved");
+    expect((await ensureWorktreeDependencies({ ...base, resolveWorktreeState: () => "indeterminate" })).readiness).toBe("unresolved");
+    expect((await ensureWorktreeDependencies({ ...base, resolveWorktreeState: () => "state-one" })).readiness).toBe("unresolved");
+    expect((await ensureWorktreeDependencies({ ...base, resolveWorktreeState: () => "state-two" })).readiness).toBe("unresolved");
+  });
+
+  it("uses plan-only state only for Git's explicit non-repository diagnostic", async () => {
+    const nonRepository = fixture();
+    expect(await resolveWorktreeDependencyStateToken(nonRepository, ["plan-a"])).toMatch(/^plan-only:/);
+
+    const corruptRepository = mkdtempSync(join(tmpdir(), "fn-9294-corrupt-git-"));
+    temporaryRoots.push(corruptRepository);
+    writeFileSync(join(corruptRepository, ".git"), "this is not a valid gitfile");
+    expect(await resolveWorktreeDependencyStateToken(corruptRepository, ["plan-a"])).toBe("indeterminate");
+  });
   it("records a static site as not-needed without spawning a command", async () => {
     const root = fixture({ "index.html": "<!doctype html>" });
     const runner = vi.fn();

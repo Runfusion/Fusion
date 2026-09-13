@@ -163,6 +163,8 @@ export type WorkflowNodeAbortKind = "engine-pause";
 export const WORKFLOW_INTERRUPTED_NODE_ID_CONTEXT_KEY = "workflow:interruptedNodeId";
 export const WORKFLOW_INTERRUPTED_NODE_ABORT_KIND_CONTEXT_KEY = "workflow:interruptedNodeAbortKind";
 export const WORKFLOW_OPTIONAL_GROUP_CONTEXT_KEY = "workflow:optionalGroupActive";
+/** Failure value consumed as a graph suspension before the Plan Review replan edge. */
+export const WORKFLOW_DEPENDENCY_CONFIGURATION_BLOCK_VALUE = "dependency-configuration-blocked";
 /** Explicit parent marker for template execution; never inferred from template labels or output. */
 export const WORKFLOW_REVIEW_KIND_CONTEXT_KEY = "workflow:reviewKind";
 export const WORKFLOW_NODE_ENGINE_PAUSE_ABORT_KIND: WorkflowNodeAbortKind = "engine-pause";
@@ -2252,6 +2254,11 @@ export class WorkflowGraphExecutor {
           if (this.isAbortNodeResult(projected)) {
             return this.withEnginePauseAbortContext(node, projected);
           }
+          if (projected.value === WORKFLOW_DEPENDENCY_CONFIGURATION_BLOCK_VALUE) {
+            if (progressRecord) await this.discardWorkflowStepLease(task.id, node.id, progressRecord.result.startedAt!);
+            context[`node:${node.id}:dependency-configuration-block`] = String(projected.contextPatch?.output ?? projected.value);
+            throw new WorkflowGraphSuspended({ reason: "pause", nodeId: node.id, fromColumn: task.column, toColumn: task.column, irHash: "dependency-configuration-block" });
+          }
           const terminalResult = progressRecord
             ? await this.recordNodeProgressFinish(task.id, node, progressRecord, projected)
             : undefined;
@@ -2273,6 +2280,12 @@ export class WorkflowGraphExecutor {
         }
         if (this.isAbortNodeResult(projected)) {
           return this.withEnginePauseAbortContext(node, projected);
+        }
+        /* FNXC:WorktreeDependencies 2026-09-13-06:25: Proven repeated configuration failures suspend before Plan Review can consume a replan edge. */
+        if (projected.value === WORKFLOW_DEPENDENCY_CONFIGURATION_BLOCK_VALUE) {
+          if (progressRecord) await this.discardWorkflowStepLease(task.id, node.id, progressRecord.result.startedAt!);
+          context[`node:${node.id}:dependency-configuration-block`] = String(projected.contextPatch?.output ?? projected.value);
+          throw new WorkflowGraphSuspended({ reason: "pause", nodeId: node.id, fromColumn: task.column, toColumn: task.column, irHash: "dependency-configuration-block" });
         }
         const terminalResult = progressRecord
           ? await this.recordNodeProgressFinish(task.id, node, progressRecord, projected)

@@ -247,17 +247,20 @@ export function buildPlanningDependencyInstallationInstruction(
   targets: readonly PlanningDependencyInstructionTarget[],
 ): string {
   const blocking = targets.filter((target) =>
-    target.readiness.readiness === "unresolved" || target.readiness.readiness === "unrecognized",
+    target.readiness.readiness === "unresolved" || target.readiness.readiness === "unrecognized" || target.readiness.readiness === "config-blocked",
   );
   if (blocking.length === 0) return "";
   const lines = [
     "## Dependency installation",
     "",
-    "This task already holds an execution checkout from prior work. Resolve every item below through `fn_install_worktree_dependencies`; fresh checkout-free planning defers dependency readiness to execution acquisition.",
+    "This task already holds an execution checkout from prior work. Resolve unresolved installation items through `fn_install_worktree_dependencies`; configuration-blocked items require an operator configuration change and Retry. Fresh checkout-free planning defers dependency readiness to execution acquisition.",
   ];
   for (const target of blocking) {
     const { readiness } = target;
-    if (readiness.readiness === "unresolved") {
+    if (readiness.readiness === "config-blocked" && readiness.deterministicStop) {
+      const stop = readiness.deterministicStop;
+      lines.push(`- \`${target.repository}\`: command \`${stop.command}\` is a proven-repeating configuration failure (${stop.failureCode}). The planner cannot fix it; correct \`worktreeInitCommand\` and use Retry after the environment or configuration changes.`);
+    } else if (readiness.readiness === "unresolved") {
       for (const row of readiness.unresolvedRepos) {
         const entry = readiness.entries.find((candidate) => candidate.ecosystem === row.ecosystem);
         const outcome = entry?.outcome ?? "not yet installed";
