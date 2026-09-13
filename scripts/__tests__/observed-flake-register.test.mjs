@@ -115,8 +115,12 @@ Entry 14 closed 2026-09-09 when the deletion ratchet executed via commit 55912bd
 removed the test file, the quarantine ledger entry, and the engine-reliability exclude in one
 commit. The register record now keeps its historical identity on relabeled File/Exact-test
 lines that no longer match the dangling-path scan (the file no longer exists to drift-check),
-states 3 active records, and names FN-9287 (depends on the still-in-review FN-9283) as the
-coverage-restoration owner.
+states 3 active records, and identifies the required successor without making the archived path active.
+
+FNXC:TestFlakeRegister 2026-09-13-10:38:
+FN-9297 replaces the ghost FN-9287 hand-off and delivers deterministic FN-6735 unit coverage in
+merge-pause-abort-recovery.test.ts. The archived entry remains outside active-record validation,
+while its successor reference makes the deletion-ratchet closure auditable.
 
 FNXC:TestFlakeRegister 2026-09-12-04:32:
 Entry 1 closed 2026-09-12: FN-9131's structural harness connection-budget fix (ae507afc37,

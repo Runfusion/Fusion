@@ -46,6 +46,7 @@ import {
   graphFailureValue,
   graphRunReportedPendingReview,
   isMergeGraphFailure,
+  isStalePauseAbortParkFailure,
   latestFailedPreMergeWorkflowStep,
   isSessionContentionGraphFailure,
   isWorkspacePreparationGraphFailure,
@@ -287,22 +288,8 @@ export async function handleGraphFailure(
       remains in review. Honor that precise merger park when it carries a hard blocking status;
       requiring only the historical hold lane would let graph teardown overwrite it with a generic
       failure. The review lane already consumes no WIP capacity, so this branch performs no move.
+
       */
-      const parkedMergeNode = result.visitedNodeIds[result.visitedNodeIds.length - 1];
-      if (
-        live.error != null &&
-        (live.column === failureLanes.hold
-          || (live.column === failureLanes.review && live.status === "failed")) &&
-        isMergeGraphFailure(parkedMergeNode)
-      ) {
-        deps.clearPausedAborted(task.id);
-        deps.activeWorktrees.delete(task.id);
-        const mergerParkHonored = `Workflow graph run ended after merger parked task with blocker (${live.error}) — honoring park, not retrying or resuming merge`;
-        executorLog.log(`${task.id}: ${mergerParkHonored}`);
-        await deps.store.logEntry(task.id, mergerParkHonored, undefined, deps.getRunContextFor(task.id));
-        await deps.persistTokenUsage(task.id);
-        return;
-      }
       /*
       FNXC:WorkflowIrPin 2026-07-19-21:10 (KTD-3 drift park, PR #2342):
       A graph run that exited on the drift guard carries WORKFLOW_DRIFT_PARK_CONTEXT_KEY
@@ -611,6 +598,43 @@ export async function handleGraphFailure(
       creating this memo for the classifiers — so the classifiers read the board and the branches around
       them read the default names.
       */
+      /*
+      FNXC:ManualMergeHoldPauseAbort 2026-09-13-11:01:
+      Evaluate the narrow auto-merge-off manual-hold recovery before honoring a merger park. A
+      matching stale pause-abort failure may clear only in place; every other parked merge error,
+      including an auto-merge-on stale row, remains merger-owned and cannot reach retry routing.
+      A user-paused stale row instead continues to the user-pause guard below, which must retain
+      operator control rather than treating a former engine park as a merger decision.
+      */
+      if (genuinePauseAbort && await deps.isBenignManualMergeHoldPauseAbort(live, result, abortProvenance, pausedAborted, resumeLanesMemo)) {
+        deps.clearPausedAborted(task.id);
+        deps.activeWorktrees.delete(task.id);
+        const manualHoldBenign = "Workflow graph run ended at manual merge hold with auto-merge off — benign, in-review manual-hold state preserved for Merge & Close";
+        executorLog.log(`${task.id}: ${manualHoldBenign}`);
+        await deps.store.logEntry(task.id, manualHoldBenign, undefined, deps.getRunContextFor(task.id));
+        if (live.status != null || live.error != null) {
+          await deps.store.logEntry(task.id, "Auto-recovered: cleared stale auto-merge-off manual merge hold pause-abort failure — failure notification suppressed", undefined, deps.getRunContextFor(task.id));
+          await deps.store.updateTask(task.id, { status: null, error: null }, deps.getRunContextFor(task.id));
+        }
+        await deps.persistTokenUsage(task.id);
+        return;
+      }
+      const parkedMergeNode = result.visitedNodeIds[result.visitedNodeIds.length - 1];
+      if (
+        live.error != null &&
+        (!isStalePauseAbortParkFailure(live, parkedMergeNode) || live.userPaused !== true) &&
+        (live.column === failureLanes.hold
+          || (live.column === failureLanes.review && live.status === "failed")) &&
+        isMergeGraphFailure(parkedMergeNode)
+      ) {
+        deps.clearPausedAborted(task.id);
+        deps.activeWorktrees.delete(task.id);
+        const mergerParkHonored = `Workflow graph run ended after merger parked task with blocker (${live.error}) — honoring park, not retrying or resuming merge`;
+        executorLog.log(`${task.id}: ${mergerParkHonored}`);
+        await deps.store.logEntry(task.id, mergerParkHonored, undefined, deps.getRunContextFor(task.id));
+        await deps.persistTokenUsage(task.id);
+        return;
+      }
       if (genuinePauseAbort && await deps.isReentrantPausedAbortedInFlightNode(live, result, abortProvenance, pausedAborted, deps.userCanceledTaskIds.has(task.id), resumeLanesMemo)) {
         if (await deps.reenterPausedAbortedWorkflowNode(live, result, abortProvenance, resumeLanesMemo)) {
           return;
@@ -638,23 +662,6 @@ export async function handleGraphFailure(
         if (await deps.routeGraphMergeFailureToRetry(live, result, abortProvenance)) {
           return;
         }
-      }
-      if (genuinePauseAbort && await deps.isBenignManualMergeHoldPauseAbort(live, result, abortProvenance, pausedAborted, resumeLanesMemo)) {
-        /*
-        FNXC:WorkflowLifecycle 2026-07-09-14:56:
-        FN-7749 / Runfusion#1979: auto-merge-off manual merge hold is terminal-until-human-merged, not an executor failure. Preserve the `in-review` row for Merge & Close, do not invoke merge retry, and clear only stale pause-abort status/error so FN-5147's no-backward-move/no-reenqueue contract stays intact.
-        */
-        deps.clearPausedAborted(task.id);
-        deps.activeWorktrees.delete(task.id);
-        const manualHoldBenign = "Workflow graph run ended at manual merge hold with auto-merge off — benign, in-review manual-hold state preserved for Merge & Close";
-        executorLog.log(`${task.id}: ${manualHoldBenign}`);
-        await deps.store.logEntry(task.id, manualHoldBenign, undefined, deps.getRunContextFor(task.id));
-        if (live.status != null || live.error != null) {
-          await deps.store.logEntry(task.id, "Auto-recovered: cleared stale auto-merge-off manual merge hold pause-abort failure — failure notification suppressed", undefined, deps.getRunContextFor(task.id));
-          await deps.store.updateTask(task.id, { status: null, error: null }, deps.getRunContextFor(task.id));
-        }
-        await deps.persistTokenUsage(task.id);
-        return;
       }
       if (genuinePauseAbort && isBenignInReviewPauseAbort(live, result, abortProvenance, pausedAborted, deps.userCanceledTaskIds.has(task.id), failureLanes.review)) {
         deps.clearPausedAborted(task.id);
