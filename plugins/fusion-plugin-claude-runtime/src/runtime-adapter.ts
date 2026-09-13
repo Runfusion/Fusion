@@ -74,6 +74,38 @@ interface TurnAccum {
   text: string;
 }
 
+
+/**
+ * Fusion custom tools reach MCP-capable ACP clients only through the
+ * "fusion-custom-tools" MCP server, and many clients (Claude-style) surface
+ * them under namespaced schemas (e.g. `mcp__fusion-custom-tools__fn_x`).
+ * Fusion prompts reference bare `fn_*` names, so bridge-backed sessions get
+ * an explicit mapping instead of leaving the agent to hunt for substitutes.
+ * The namespaced spelling is presented as the commonly visible form, not as
+ * a guaranteed schema name: clients that expose the bare name natively can
+ * still call it (see PR #3597 review, Devin bug 2).
+ */
+function addFusionToolNamingGuidance(
+  prompt: string,
+  bridgeActive: boolean,
+  registeredToolNames?: ReadonlyArray<string>,
+): string {
+  if (!bridgeActive) return prompt;
+  const registered = new Set(registeredToolNames ?? []);
+  // FNXC:ClaudeAcp 2026-09-13-02:18: Match complete MCP-valid fn_* tokens, including casing and hyphens.
+  const names = [...new Set(prompt.match(/(?<![A-Za-z0-9_-])fn_[A-Za-z0-9_-]+(?![A-Za-z0-9_-])/g) ?? [])].filter((name) =>
+    registered.has(name),
+  );
+  if (names.length === 0) return prompt;
+  const mappings = names
+    .map(
+      (name) =>
+        `${name} is available through the "fusion-custom-tools" MCP server (schema commonly visible as mcp__fusion-custom-tools__${name})`,
+    )
+    .join("; ");
+  return `${prompt}\n\nACP TOOL BRIDGE: ${mappings}. If you need to call a mapped tool, call the schema this client actually lists for it. Do not search for CLI, REST, source-code, or filesystem substitutes merely because the unprefixed alias is absent.`;
+}
+
 interface SessionResources {
   toolBridge?: FusionToolBridge | null;
   toolBridgeFailure?: "mcp-schema-server-missing" | "bridge-start-failed";
@@ -394,7 +426,13 @@ export class ClaudeRuntimeAdapter implements AgentRuntime {
     }
 
     try {
-      const result = await acp!.promptWithFallback(session, prompt, options);
+      const bridge = (session as SessionWithExtras)[SESSION_RESOURCES]?.toolBridge ?? null;
+      const effectivePrompt = addFusionToolNamingGuidance(
+        prompt,
+        bridge !== null,
+        bridge?.toolNames,
+      );
+      const result = await acp!.promptWithFallback(session, effectivePrompt, options);
       const assistantText = getTurnAccum(claudeSession).text;
       if (assistantText.length > 0) {
         appendMessage(claudeSession, "assistant", assistantText);
