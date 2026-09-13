@@ -8715,7 +8715,7 @@
     "createPrTitle": "為此任務建立 PR",
     "createTaskTitle": "建立任務",
     "saveHoldToStart": "儲存任務；長按以開始",
-    "releaseToSaveHoldToStart": "放開以儲存；繼續長按以開始",
+    "releaseToCancelHoldToStart": "放開以取消；繼續長按以開始",
     "holdToStartProgress": "繼續長按以開始",
     "startingTask": "正在開始任務",
     "creating": "建立中……",

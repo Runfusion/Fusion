@@ -146,6 +146,10 @@ function renderQuickEntryBox(props: Record<string, unknown> = {}) {
   return render(<QuickEntryBox {...defaultProps} {...props} />);
 }
 
+function cssDeclarationValue(ruleBody: string, property: string) {
+  return ruleBody.match(new RegExp(`(?:^|;)\\s*${property}\\s*:\\s*([^;]+);`))?.[1].trim() ?? null;
+}
+
 describe("quick-entry action row height parity (FN-7680)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -204,6 +208,37 @@ describe("quick-entry action row height parity (FN-7680)", () => {
     );
     expect(mobileBlockMatch).not.toBeNull();
     expect(mobileBlockMatch![1].trim()).toBe("var(--quick-entry-action-row-height-mobile)");
+  });
+
+  it("gives every Alpha mobile primary icon one token-sized square without sizing text options", () => {
+    const cssContent = loadAllAppCss();
+    const alphaBaseStart = cssContent.indexOf('[data-alpha-surface="true"] .quick-entry-box {');
+    const mobileStart = cssContent.indexOf("@media (max-width: 768px)", alphaBaseStart);
+    const mobileEnd = cssContent.indexOf("\n@media", mobileStart + 1);
+    expect(alphaBaseStart).toBeGreaterThan(-1);
+    expect(mobileStart).toBeGreaterThan(alphaBaseStart);
+    expect(mobileEnd).toBeGreaterThan(mobileStart);
+    const mobileSection = cssContent.slice(mobileStart, mobileEnd);
+
+    const selector = '[data-alpha-surface="true"] .quick-entry-primary-group .btn-icon';
+    const squareRule = mobileSection.match(
+      /\[data-alpha-surface="true"\] \.quick-entry-primary-group \.btn-icon\s*\{([^}]*)\}/,
+    );
+    expect(squareRule).not.toBeNull();
+    for (const property of ["width", "min-width", "max-width", "height", "min-height", "max-height"] as const) {
+      expect(cssDeclarationValue(squareRule![1], property), `${property} must use the shared Alpha touch token`).toBe("var(--alpha-touch-height)");
+    }
+    expect(cssDeclarationValue(squareRule![1], "flex")).toBe("0 0 var(--alpha-touch-height)");
+    expect(cssDeclarationValue(squareRule![1], "padding")).toBe("0");
+    expect(cssDeclarationValue(squareRule![1], "align-items")).toBe("center");
+    expect(cssDeclarationValue(squareRule![1], "justify-content")).toBe("center");
+    expect(squareRule![1]).not.toMatch(/\d+(?:\.\d+)?px/);
+
+    const baseOnlyCss = loadAllAppCssBaseOnly();
+    expect(baseOnlyCss).not.toContain(`${selector} {`);
+    expect(mobileSection).not.toMatch(
+      /\.quick-entry-options-group[^{}]*\{[^}]*(?:width|min-width|max-width):\s*var\(--alpha-touch-height\)/,
+    );
   });
 
   it("keeps options-group glyphs intrinsic while sizing only mobile primary controls", () => {

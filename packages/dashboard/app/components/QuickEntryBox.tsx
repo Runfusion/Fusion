@@ -30,7 +30,7 @@ import { useQuickAddSubmitOnEnter } from "../hooks/useQuickAddSubmitOnEnter";
 import { useAlphaSurface } from "../context/AlphaContext";
 
 const STORAGE_KEY = "kb-quick-entry-text";
-const ALPHA_START_HOLD_DURATION_MS = 800;
+const ALPHA_START_HOLD_DURATION_MS = 500;
 type AlphaSaveGesture = { kind: "pointer"; pointerId: number } | { kind: "keyboard"; key: " " | "Enter" };
 const ALLOWED_TASK_ATTACHMENT_TYPES = new Set([
   "image/png",
@@ -440,12 +440,13 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
   const startInitialColumn = validatedStartWorkflow ? resolveQuickAddStartInitialColumn(validatedStartWorkflow) : null;
   const startWorkflowTarget = validatedStartWorkflow ? resolveQuickAddStartWorkflowTarget(validatedStartWorkflow) : null;
   /*
-  FNXC:QuickAddStart 2026-09-12-21:10:
-  Alpha exposes Start through an 800ms hold on its single icon-only Save action; legacy surfaces retain the explicit
-  Start chip. Eligibility remains `workflowSupportsQuickAddStart`: Coding (Ideas), or a workflow whose first visible
-  lane is a server-derived manual-intake/"waiting" column. A provable target is still required (`startInitialColumn`
-  for the create-time column override, or `onMoveTask` for the follow-up move), so malformed or ineligible workflows
-  never turn Save into an inferred transition.
+  FNXC:QuickAddStart 2026-09-13-15:11:
+  Alpha exposes Start through a 500ms hold on its single icon-only Save action; releasing before the threshold is
+  inert rather than falling back to Save. Legacy surfaces retain the explicit Start chip. Eligibility remains
+  `workflowSupportsQuickAddStart`: Coding (Ideas), or a workflow whose first visible lane is a server-derived
+  manual-intake/"waiting" column. A provable target is still required (`startInitialColumn` for the create-time
+  column override, or `onMoveTask` for the follow-up move), so malformed or ineligible workflows never turn Save
+  into an inferred transition.
   */
   const canQuickAddStart = Boolean(validatedStartWorkflow && workflowSupportsQuickAddStart(validatedStartWorkflow) && startWorkflowTarget && (startInitialColumn || onMoveTask));
   const canQuickAddStartNow = canQuickAddStart && Boolean(description.trim()) && !isSubmitting;
@@ -1712,17 +1713,16 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
       : active.key === (gesture as Extract<AlphaSaveGesture, { kind: "keyboard" }>).key);
     if (!matches) return;
     cancelAlphaSaveGesture(true);
-    void handleSubmit();
-  }, [cancelAlphaSaveGesture, handleSubmit]);
+  }, [cancelAlphaSaveGesture]);
 
   /*
-  FNXC:AlphaQuickEntry 2026-09-12-21:10:
-  Pointer and keyboard holds share one 800ms timer and one captured workflow snapshot. Only a primary pointer using
-  its primary button may begin a hold. Explicit cancellation never saves; an early release consumes the gesture and
-  saves exactly once. Reaching the threshold consumes Start exactly once, arms suppression for its late synthetic
-  release/click events, and resets the visual state to Save immediately rather than tying protection to rendered
-  confirmation state. Workflow changes, submission, disablement, blur, Escape, capture loss, and unmount invalidate
-  a pending gesture.
+  FNXC:AlphaQuickEntry 2026-09-13-15:11:
+  Pointer and keyboard holds share one 500ms timer and one captured workflow snapshot. Only a primary pointer using
+  its primary button may begin a hold. Explicit cancellation and release before the threshold never save or start;
+  they consume the gesture and its synthetic click. Reaching the threshold consumes Start exactly once, arms
+  suppression for late release/click events, and resets the visual state to Save immediately rather than tying
+  protection to rendered confirmation state. Workflow changes, submission, disablement, blur, Escape, capture loss,
+  and unmount invalidate a pending gesture.
 
   FNXC:AlphaQuickEntry 2026-09-12-21:38:
   A completed Start hold owns its synthetic-click barrier until the trailing click is consumed, independently of
@@ -2583,7 +2583,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
                 data-testid="quick-entry-save"
                 data-hold-state={alphaActive ? alphaSaveState : undefined}
                 aria-label={alphaActive
-                  ? (alphaSaveState === "holding" ? t("tasks.releaseToSaveHoldToStart", "Release to save; keep holding to start") : t("tasks.saveHoldToStart", "Save task; hold to start"))
+                  ? (alphaSaveState === "holding" ? t("tasks.releaseToCancelHoldToStart", "Release to cancel; keep holding to start") : t("tasks.saveHoldToStart", "Save task; hold to start"))
                   : undefined}
                 title={alphaActive ? t("tasks.saveHoldToStart", "Save task; hold to start") : t("tasks.createTaskTitle", "Create task")}
               >

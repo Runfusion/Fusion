@@ -483,6 +483,11 @@ const QUICK_ENTRY_PRIMARY_ICON_BUTTON_IDS = [
   "quick-entry-fast-toggle",
 ] as const;
 
+const ALPHA_QUICK_ENTRY_PRIMARY_ICON_BUTTON_IDS = [
+  ...QUICK_ENTRY_PRIMARY_ICON_BUTTON_IDS,
+  "quick-entry-save",
+] as const;
+
 const QUICK_ENTRY_PRIORITY_ICON_CLASS: Record<TaskPriority, string> = {
   low: "lucide-arrow-down",
   normal: "lucide-flag",
@@ -519,6 +524,19 @@ function expectQuickEntryPrimaryIconCluster() {
     const button = screen.getByTestId(testId);
     expect(button).toHaveClass("btn-icon");
     expect(button.querySelector("svg")).not.toBeNull();
+  }
+}
+
+function expectAlphaQuickEntryPrimaryIconCluster() {
+  const group = screen.getByTestId("quick-entry-primary-group");
+  const renderedIds = Array.from(group.querySelectorAll<HTMLButtonElement>("button[data-testid]"))
+    .map((button) => button.dataset.testid);
+  expect(renderedIds).toEqual(ALPHA_QUICK_ENTRY_PRIMARY_ICON_BUTTON_IDS);
+  for (const testId of ALPHA_QUICK_ENTRY_PRIMARY_ICON_BUTTON_IDS) {
+    const button = screen.getByTestId(testId);
+    expect(group).toContainElement(button);
+    expect(button).toHaveClass("btn-icon");
+    expect(button.querySelector("svg"), `${testId} must not render an empty icon shell`).not.toBeNull();
   }
 }
 
@@ -669,20 +687,23 @@ describe("QuickEntryBox", () => {
     expect(screen.queryByTestId("quick-entry-priority-option-normal")).toBeNull();
   });
 
-  it("synchronizes progressive disclosure across hot Alpha mode changes without remounting", async () => {
+  it("keeps official Alpha disclosure and draft state stable across stale enabled prop changes", async () => {
     const view = render(<AlphaModeToggleQuickEntryFixture enabled={false} />);
     const textarea = screen.getByTestId("quick-entry-input") as HTMLTextAreaElement;
     const composer = screen.getByTestId("quick-entry-box");
     await expectStableTyping(textarea, "brouillon conservé", () => screen.getByTestId("quick-entry-input"));
+    expect(screen.queryByTestId("quick-entry-options-group")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("quick-entry-toggle"));
     expect(screen.getByTestId("quick-entry-options-group")).toBeVisible();
 
     view.rerender(<AlphaModeToggleQuickEntryFixture enabled />);
-    await waitFor(() => expect(screen.queryByTestId("quick-entry-options-group")).toBeNull());
+    expect(screen.getByTestId("quick-entry-options-group")).toBeVisible();
     expect(screen.getByTestId("quick-entry-box")).toBe(composer);
     expect(screen.getByTestId("quick-entry-input")).toHaveValue("brouillon conservé");
 
     view.rerender(<AlphaModeToggleQuickEntryFixture enabled={false} />);
-    await waitFor(() => expect(screen.getByTestId("quick-entry-options-group")).toBeVisible());
+    expect(screen.getByTestId("quick-entry-options-group")).toBeVisible();
     expect(screen.getByTestId("quick-entry-box")).toBe(composer);
     expect(screen.getByTestId("quick-entry-input")).toHaveValue("brouillon conservé");
   });
@@ -5524,7 +5545,7 @@ describe("QuickEntryBox", () => {
 
     const completePointerHold = async (save: HTMLElement, pointerId = 7, pointerType = "mouse") => {
       fireEvent.pointerDown(save, { pointerId, pointerType, button: 0, isPrimary: true });
-      await act(async () => vi.advanceTimersByTime(800));
+      await act(async () => vi.advanceTimersByTime(500));
     };
 
     const setup = (props = {}) => {
@@ -5534,11 +5555,34 @@ describe("QuickEntryBox", () => {
       return { ...rendered, onCreate, save: screen.getByTestId("quick-entry-save") };
     };
 
-    it.each(["mouse", "touch", "pen"])("starts exactly once at the 800ms %s boundary and resets before late events", async (pointerType) => {
+    it.each([
+      ["Board desktop", mockDesktopViewport, false],
+      ["Board mobile", mockMobileViewport, false],
+      ["List desktop", mockDesktopViewport, true],
+      ["List mobile", mockMobileViewport, true],
+    ])("keeps the complete Alpha primary icon set shared in the %s host", (_label, mockViewport, singleLine) => {
+      mockViewport();
+      setup({ singleLine, defaultExpanded: !singleLine });
+
+      expectAlphaQuickEntryPrimaryIconCluster();
+      if (singleLine) {
+        expect(screen.getByTestId("quick-entry-box")).toHaveClass("quick-entry--single-line");
+      } else {
+        expect(screen.getByTestId("quick-entry-box")).not.toHaveClass("quick-entry--single-line");
+      }
+      if (_label.includes("mobile")) expect(window.innerWidth).toBe(375);
+
+      fireEvent.click(screen.getByTestId("quick-entry-session-advisor-toggle"));
+      fireEvent.click(screen.getByTestId("quick-entry-github-toggle"));
+      fireEvent.click(screen.getByTestId("quick-entry-fast-toggle"));
+      expectAlphaQuickEntryPrimaryIconCluster();
+    });
+
+    it.each(["mouse", "touch", "pen"])("starts exactly once at the 500ms %s boundary and resets before late events", async (pointerType) => {
       const { onCreate, save } = setup();
       expect(save).toHaveAccessibleName("Save task; hold to start");
       expect(save).not.toHaveTextContent("Save");
-      expect(save).toHaveStyle({ "--quick-entry-alpha-hold-duration": "800ms" });
+      expect(save).toHaveStyle({ "--quick-entry-alpha-hold-duration": "500ms" });
       expect(save.querySelectorAll("button")).toHaveLength(0);
       expect(save.querySelectorAll("svg")).toHaveLength(2);
       expect(save.querySelector(".quick-entry-alpha-save-icon--save")).toHaveAttribute("aria-hidden", "true");
@@ -5547,10 +5591,10 @@ describe("QuickEntryBox", () => {
 
       fireEvent.pointerDown(save, { pointerId: 7, pointerType, button: 0, isPrimary: true });
       expect(save).toHaveAttribute("data-hold-state", "holding");
-      expect(save).toHaveAccessibleName("Release to save; keep holding to start");
+      expect(save).toHaveAccessibleName("Release to cancel; keep holding to start");
       expect(screen.getByRole("status")).toHaveTextContent("Keep holding to start");
       expect(screen.getByRole("status")).not.toHaveTextContent("Starting task");
-      await act(async () => vi.advanceTimersByTime(800));
+      await act(async () => vi.advanceTimersByTime(500));
 
       expect(save).toHaveAttribute("data-hold-state", "idle");
       expect(save).toHaveAccessibleName("Save task; hold to start");
@@ -5627,17 +5671,17 @@ describe("QuickEntryBox", () => {
     ])("ignores a hold from the %s", async (_label, pointerInit) => {
       const { onCreate, save } = setup();
       fireEvent.pointerDown(save, { pointerId: 12, ...pointerInit });
-      await act(async () => vi.advanceTimersByTime(800));
+      await act(async () => vi.advanceTimersByTime(500));
 
       expect(save).toHaveAttribute("data-hold-state", "idle");
       expect(onCreate).not.toHaveBeenCalled();
     });
 
-    it.each(["Enter", " "])("supports a single keyboard hold at 800ms with %s and ignores repeat", async (key) => {
+    it.each(["Enter", " "])("supports a single keyboard hold at 500ms with %s and ignores repeat", async (key) => {
       const { onCreate, save } = setup();
       fireEvent.keyDown(save, { key });
       fireEvent.keyDown(save, { key, repeat: true });
-      await act(async () => vi.advanceTimersByTime(800));
+      await act(async () => vi.advanceTimersByTime(500));
 
       expect(save).toHaveAttribute("data-hold-state", "idle");
       expect(save).toHaveAccessibleName("Save task; hold to start");
@@ -5648,28 +5692,50 @@ describe("QuickEntryBox", () => {
       expect(onCreate.mock.calls[0]![0]).toHaveProperty("column", "todo");
     });
 
-    it.each(["Enter", " "])("uses a 799ms keyboard release with %s as one ordinary Save", async (key) => {
-      const { onCreate, save } = setup();
+    it.each(["Enter", " "])("cancels a 499ms keyboard release with %s and consumes its synthetic click", async (key) => {
+      const onMoveTask = vi.fn();
+      const { onCreate, save } = setup({ onMoveTask });
       fireEvent.keyDown(save, { key });
-      await act(async () => vi.advanceTimersByTime(799));
+      await act(async () => vi.advanceTimersByTime(499));
+      expect(save).toHaveAccessibleName("Release to cancel; keep holding to start");
+
       fireEvent.keyUp(save, { key });
       fireEvent.click(save);
+      await act(async () => Promise.resolve());
 
+      expect(onCreate).not.toHaveBeenCalled();
+      expect(onMoveTask).not.toHaveBeenCalled();
+      expect(checkDuplicateTasks).not.toHaveBeenCalled();
+      expect(screen.queryByText("Possible duplicates")).toBeNull();
+      expect(save).toHaveAttribute("data-hold-state", "idle");
+
+      fireEvent.click(save);
       await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
       expect(onCreate.mock.calls[0]![0]).not.toHaveProperty("column");
-      expect(screen.getByTestId("quick-entry-save")).toHaveAttribute("data-hold-state", "idle");
+      expect(onMoveTask).not.toHaveBeenCalled();
     });
 
-    it.each(["mouse", "touch", "pen"])("uses a 799ms %s release as one ordinary Save", async (pointerType) => {
-      const { onCreate, save } = setup();
+    it.each(["mouse", "touch", "pen"])("cancels a 499ms %s release and consumes its synthetic click", async (pointerType) => {
+      const onMoveTask = vi.fn();
+      const { onCreate, save } = setup({ onMoveTask });
       fireEvent.pointerDown(save, { pointerId: 4, pointerType, button: 0, isPrimary: true });
-      await act(async () => vi.advanceTimersByTime(799));
+      await act(async () => vi.advanceTimersByTime(499));
+      expect(save).toHaveAccessibleName("Release to cancel; keep holding to start");
+
       fireEvent.pointerUp(save, { pointerId: 4, pointerType });
       fireEvent.click(save);
+      await act(async () => Promise.resolve());
 
+      expect(onCreate).not.toHaveBeenCalled();
+      expect(onMoveTask).not.toHaveBeenCalled();
+      expect(checkDuplicateTasks).not.toHaveBeenCalled();
+      expect(screen.queryByText("Possible duplicates")).toBeNull();
+      expect(save).toHaveAttribute("data-hold-state", "idle");
+
+      fireEvent.click(save);
       await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
       expect(onCreate.mock.calls[0]![0]).not.toHaveProperty("column");
-      expect(screen.getByTestId("quick-entry-save")).toHaveAttribute("data-hold-state", "idle");
+      expect(onMoveTask).not.toHaveBeenCalled();
     });
 
     it.each(["pointerCancel", "pointerLeave", "lostPointerCapture", "blur", "escape"])("cancels without saving on %s", async (cancellation) => {
@@ -5680,7 +5746,7 @@ describe("QuickEntryBox", () => {
       if (cancellation === "lostPointerCapture") fireEvent.lostPointerCapture(save, { pointerId: 9, pointerType: "touch" });
       if (cancellation === "blur") fireEvent.blur(save);
       if (cancellation === "escape") fireEvent.keyDown(save, { key: "Escape" });
-      await act(async () => vi.advanceTimersByTime(800));
+      await act(async () => vi.advanceTimersByTime(500));
       expect(onCreate).not.toHaveBeenCalled();
       expect(save).toHaveAttribute("data-hold-state", "idle");
     });
@@ -5692,7 +5758,7 @@ describe("QuickEntryBox", () => {
       fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Alpha task" } });
       fireEvent.pointerDown(screen.getByTestId("quick-entry-save"), { pointerId: 3, pointerType: "pen", button: 0, isPrimary: true });
       rerender(<AlphaProvider enabled><AlphaBoundary><QuickEntryBox onCreate={onCreate} addToast={vi.fn()} workflowId={replacement.id} workflowOptions={[ideasWorkflow, replacement]} /></AlphaBoundary></AlphaProvider>);
-      await act(async () => vi.advanceTimersByTime(800));
+      await act(async () => vi.advanceTimersByTime(500));
       expect(onCreate).not.toHaveBeenCalled();
       expect(screen.getByTestId("quick-entry-save")).toHaveAttribute("data-hold-state", "idle");
     });
@@ -5701,7 +5767,7 @@ describe("QuickEntryBox", () => {
       const { onCreate, save, unmount } = setup();
       fireEvent.pointerDown(save, { pointerId: 5, pointerType: "touch", button: 0, isPrimary: true });
       unmount();
-      await act(async () => vi.advanceTimersByTime(800));
+      await act(async () => vi.advanceTimersByTime(500));
       expect(onCreate).not.toHaveBeenCalled();
     });
 
@@ -5791,9 +5857,11 @@ describe("QuickEntryBox", () => {
       renderAlphaQuickEntryBox({ onCreate, onMoveTask, workflowId: workflow.id, workflowOptions: [workflow] });
       fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Save only" } });
       const save = screen.getByTestId("quick-entry-save");
+      expectAlphaQuickEntryPrimaryIconCluster();
+      expect(screen.queryByTestId("quick-entry-save-start")).toBeNull();
 
       fireEvent.pointerDown(save, { pointerId: 14, pointerType: "mouse", button: 0, isPrimary: true });
-      await act(async () => vi.advanceTimersByTime(800));
+      await act(async () => vi.advanceTimersByTime(500));
       expect(save).toHaveAttribute("data-hold-state", "idle");
       expect(onCreate).not.toHaveBeenCalled();
       fireEvent.pointerUp(save, { pointerId: 14, pointerType: "mouse", button: 0, isPrimary: true });

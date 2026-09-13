@@ -126,6 +126,28 @@ describe("QuickEntryBox.css — Save button is never clipped (mobile report)", (
     expect(css).toMatch(/@media \(max-width: 768px\)[\s\S]*min-width:\s*var\(--alpha-touch-height\)/);
   });
 
+  it("keeps every Alpha primary icon in the same mobile touch square while desktop remains unchanged", () => {
+    const selector = '[data-alpha-surface="true"] .quick-entry-primary-group .btn-icon';
+    const { body, index } = ruleBody(selector);
+    expect(isInsideMediaQuery(index)).toBe(true);
+
+    for (const property of ["width", "min-width", "max-width", "height", "min-height", "max-height"] as const) {
+      expect(body).toMatch(new RegExp(`(?:^|\\n)\\s*${property}:\\s*var\\(--alpha-touch-height\\);`));
+    }
+    expect(body).toMatch(/flex:\s*0\s+0\s+var\(--alpha-touch-height\)/);
+    expect(body).toMatch(/padding:\s*0/);
+    expect(body).toMatch(/align-items:\s*center/);
+    expect(body).toMatch(/justify-content:\s*center/);
+    expect(body).not.toMatch(/\d+(?:\.\d+)?px/);
+
+    const desktopSave = ruleBody('[data-alpha-surface="true"] .quick-entry-primary-group [data-testid="quick-entry-save"]').body;
+    expect(desktopSave).toMatch(/width:\s*var\(--alpha-control-height\)/);
+    expect(desktopSave).not.toContain("--alpha-touch-height");
+    expect(css).not.toMatch(
+      /\[data-alpha-surface="true"\] \.quick-entry-options-group[^{}]*\{[^}]*(?:width|min-width|max-width):\s*var\(--alpha-touch-height\)/,
+    );
+  });
+
   it("keeps the icon touch-target floor the fix must not claw width back from", () => {
     // If a later change drops these, Save stops being the only shrinkable item and the
     // measured premise of this fix silently changes.

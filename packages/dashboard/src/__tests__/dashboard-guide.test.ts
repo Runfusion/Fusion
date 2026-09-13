@@ -67,7 +67,10 @@ describe("dashboard guide coverage for lazy-loaded views", () => {
     expect(guide).toContain("tablet and mobile retain the rightmost compact Header action");
     expect(guide).toContain("one non-wrapping row; long workflow names truncate before the Search icon moves");
     expect(guide).toContain("icon-only Save button");
-    expect(guide).toContain("hold continuously for 1,200 ms");
+    expect(guide).toContain("continuous 500 ms hold");
+    expect(guide).toContain("Releasing before the threshold, leaving, or cancelling the gesture creates nothing");
+    expect(guide).toContain("every visible icon-only action in the primary row uses the same token-sized square");
+    expect(guide).toContain("text option controls retain their content-sized width");
     expect(guide).toContain("Historical alphaUpdates values never select another layout");
   });
 

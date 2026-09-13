@@ -15,6 +15,7 @@ import { PrCreateModal } from "./PrCreateModal";
 import { TaskResetDialog } from "./TaskResetDialog";
 import type { BoardWorkflowColumn, BoardWorkflowsPayload, ModelInfo, NodeInfo, RevertTaskOptions, RevertTaskResult } from "../api";
 import { QuickEntryBox } from "./QuickEntryBox";
+import { AlphaBoundary } from "../context/AlphaContext";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { NodeHealthDot } from "./NodeHealthDot";
 import { hasPendingAutomaticRecovery } from "../utils/taskRecovery";
@@ -2688,15 +2689,20 @@ export function ListView({
                 {bulkEditEnabled && selectedTaskIds.size > 0 ? renderBulkEditToolbars() : null}
               </aside>
             )}
-            <div className="list-quick-entry-above-table">
-              <QuickEntryBox 
+            {/*
+            FNXC:AlphaQuickEntry 2026-09-13-15:44:
+            List owns an Alpha boundary at the real Quick Entry mount so both the retained MainViewKeepAlive route
+            and MainContent fallback expose the same icon-only 500ms Save-to-Start gesture and mobile button squares.
+            */}
+            <AlphaBoundary className="list-quick-entry-above-table">
+              <QuickEntryBox
                 onCreate={handleListQuickCreate}
                 onMoveTask={onMoveTask}
                 addToast={addToast}
                 tasks={tasks}
                 availableModels={availableModels}
                 onPlanningMode={onPlanningMode}
-                                workflowId={listQuickEntryWorkflowId}
+                workflowId={listQuickEntryWorkflowId}
                 workflowOptions={workflowMode ? workflowOptions : undefined}
                 defaultWorkflowId={workflowMode ? createTargetWorkflowId ?? boardWorkflows?.defaultWorkflowId ?? null : undefined}
                 projectId={projectId}
@@ -2718,7 +2724,7 @@ export function ListView({
                   }
                 }}
               />
-            </div>
+            </AlphaBoundary>
         {filteredCount === 0 ? (
           <div className="list-empty">
             {searchQuery ? t("listView.noTasksMatch", "No tasks match your filter") : t("listView.noTasksYet", "No tasks yet")}
