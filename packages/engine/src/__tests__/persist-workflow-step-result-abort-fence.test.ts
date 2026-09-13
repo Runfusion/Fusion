@@ -137,7 +137,7 @@ describe("persistWorkflowStepResult abort and reset fence", () => {
       task.id,
       result("attempt-a"),
       { requireAttemptStartedAtOrAbsent: "attempt-a" },
-    )).resolves.toEqual({ scopeCurrent: true, persisted: false });
+    )).resolves.toEqual({ scopeCurrent: true, persisted: false, disposition: "fence-refused" });
 
     expect(updateTask).not.toHaveBeenCalled();
     expect(task.workflowStepResults).toEqual([pending("code-review", "attempt-b")]);
@@ -216,7 +216,12 @@ describe("persistWorkflowStepResult abort and reset fence", () => {
       task.id,
       { ...result(), workflowStepId: "plan-review", workflowStepName: "Plan Review", verdict: "APPROVE" },
       { requireAttemptStartedAt: "attempt-a" },
-    )).resolves.toEqual({ scopeCurrent: true, persisted: true });
+    )).resolves.toMatchObject({
+      scopeCurrent: true,
+      persisted: true,
+      disposition: "applied",
+      persistedResult: expect.objectContaining({ status: "failed" }),
+    });
 
     expect(updateTask).toHaveBeenCalledOnce();
     expect(task.approvedPlanFingerprint).toBeUndefined();

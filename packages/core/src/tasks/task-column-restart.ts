@@ -1,6 +1,7 @@
 import type { Task } from "../types.js";
 import type { WorkflowIr, WorkflowIrV2 } from "../workflows/workflow-ir-types.js";
 import { resolveColumnFlags } from "../workflows/trait-registry.js";
+import { resolveRequiredPreMergeStepIds } from "../merge/required-pre-merge-steps.js";
 import { workflowDeclaresColumnModel } from "../workflows/workflow-transitions.js";
 import { buildManualRetryResetPatch } from "./manual-retry-reset.js";
 
@@ -98,21 +99,23 @@ export function planTaskColumnRestart(input: {
   const columnNodeIds = ir.nodes.filter((node) => node.column === task.column).map((node) => node.id);
   const columnNodeIdSet = new Set(columnNodeIds);
   const declaredNodeIds = new Set(ir.nodes.map((node) => node.id));
-  const workflowStepResults = (task.workflowStepResults ?? []).filter((result) => {
-    const postMerge = (result.phase ?? "pre-merge") === "post-merge";
-    if (postMerge) return true;
-    if (columnNodeIdSet.has(result.workflowStepId)) return false;
-    if (scope === "review" && !declaredNodeIds.has(result.workflowStepId)
-      && (result.status === "failed" || result.status === "pending")) return false;
-    return true;
-  });
+  const requiredPreMergeStepIds = resolveRequiredPreMergeStepIds(ir, task.enabledWorkflowSteps, task);
+  /*
+  FNXC:BlockingGateRetry 2026-09-12-22:54:
+  A review Retry clears a failed or pending enabled required gate from an earlier column only to make
+  it missing. The merge door still refuses missing evidence, while the in-place FN-9243 reseed reruns
+  the real gate without a backward lifecycle move or implementation replay.
+  */
+  const shouldDiscard = (result: NonNullable<Task["workflowStepResults"]>[number]): boolean => {
+    if ((result.phase ?? "pre-merge") === "post-merge" || result.bypassedBy) return false;
+    if (columnNodeIdSet.has(result.workflowStepId)) return true;
+    return scope === "review"
+      && (result.status === "failed" || result.status === "pending")
+      && (!declaredNodeIds.has(result.workflowStepId) || requiredPreMergeStepIds.has(result.workflowStepId));
+  };
+  const workflowStepResults = (task.workflowStepResults ?? []).filter((result) => !shouldDiscard(result));
   // Keep the discard predicate separate so duplicate workflow-step attempts stay observable.
-  const discarded = (task.workflowStepResults ?? []).filter((result) => {
-    if ((result.phase ?? "pre-merge") === "post-merge") return false;
-    return columnNodeIdSet.has(result.workflowStepId)
-      || (scope === "review" && !declaredNodeIds.has(result.workflowStepId)
-        && (result.status === "failed" || result.status === "pending"));
-  });
+  const discarded = (task.workflowStepResults ?? []).filter(shouldDiscard);
   const now = input.now ?? new Date().toISOString();
   const patch: Partial<Task> = {
     ...buildManualRetryResetPatch({ resetMergeRetries: true }),
