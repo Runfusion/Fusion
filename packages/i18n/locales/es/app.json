@@ -8716,7 +8716,7 @@
     "createPrTitle": "Crear una PR para esta tarea",
     "createTaskTitle": "Crear tarea",
     "saveHoldToStart": "Guardar tarea; mantén pulsado para iniciar",
-    "releaseToCancelHoldToStart": "Suelta para cancelar; mantén pulsado para iniciar",
+    "releaseToSaveHoldToStart": "Suelta para guardar; mantén pulsado para iniciar",
     "holdToStartProgress": "Mantén pulsado para iniciar",
     "startingTask": "Iniciando tarea",
     "creating": "Creando...",

@@ -8821,7 +8821,7 @@
     "createPrTitle": "Create a PR for this task",
     "createTaskTitle": "Create task",
     "saveHoldToStart": "Save task; hold to start",
-    "releaseToCancelHoldToStart": "Release to cancel; keep holding to start",
+    "releaseToSaveHoldToStart": "Release to save; keep holding to start",
     "holdToStartProgress": "Keep holding to start",
     "startingTask": "Starting task",
     "creating": "Creating...",

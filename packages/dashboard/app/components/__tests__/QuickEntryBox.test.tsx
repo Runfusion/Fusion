@@ -5578,6 +5578,24 @@ describe("QuickEntryBox", () => {
       expectAlphaQuickEntryPrimaryIconCluster();
     });
 
+    it.each([
+      ["Board desktop", mockDesktopViewport, false, "mouse"],
+      ["Board mobile", mockMobileViewport, false, "touch"],
+      ["List desktop", mockDesktopViewport, true, "mouse"],
+      ["List mobile", mockMobileViewport, true, "touch"],
+    ])("creates exactly one task from a single Save click in the %s host", async (_label, mockViewport, singleLine, pointerType) => {
+      mockViewport();
+      const { onCreate, save } = setup({ singleLine, defaultExpanded: !singleLine });
+
+      fireEvent.pointerDown(save, { pointerId: 31, pointerType, button: 0, isPrimary: true });
+      fireEvent.pointerUp(save, { pointerId: 31, pointerType, button: 0, isPrimary: true });
+      fireEvent.click(save);
+
+      await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+      expect(onCreate.mock.calls[0]![0]).not.toHaveProperty("column");
+      expect(screen.getByTestId("quick-entry-input")).toHaveValue("");
+    });
+
     it.each(["mouse", "touch", "pen"])("starts exactly once at the 500ms %s boundary and resets before late events", async (pointerType) => {
       const { onCreate, save } = setup();
       expect(save).toHaveAccessibleName("Save task; hold to start");
@@ -5591,7 +5609,7 @@ describe("QuickEntryBox", () => {
 
       fireEvent.pointerDown(save, { pointerId: 7, pointerType, button: 0, isPrimary: true });
       expect(save).toHaveAttribute("data-hold-state", "holding");
-      expect(save).toHaveAccessibleName("Release to cancel; keep holding to start");
+      expect(save).toHaveAccessibleName("Release to save; keep holding to start");
       expect(screen.getByRole("status")).toHaveTextContent("Keep holding to start");
       expect(screen.getByRole("status")).not.toHaveTextContent("Starting task");
       await act(async () => vi.advanceTimersByTime(500));
@@ -5692,50 +5710,40 @@ describe("QuickEntryBox", () => {
       expect(onCreate.mock.calls[0]![0]).toHaveProperty("column", "todo");
     });
 
-    it.each(["Enter", " "])("cancels a 499ms keyboard release with %s and consumes its synthetic click", async (key) => {
+    it.each(["Enter", " "])("uses a 499ms keyboard release with %s as one ordinary Save", async (key) => {
       const onMoveTask = vi.fn();
       const { onCreate, save } = setup({ onMoveTask });
       fireEvent.keyDown(save, { key });
       await act(async () => vi.advanceTimersByTime(499));
-      expect(save).toHaveAccessibleName("Release to cancel; keep holding to start");
+      expect(save).toHaveAccessibleName("Release to save; keep holding to start");
 
       fireEvent.keyUp(save, { key });
       fireEvent.click(save);
-      await act(async () => Promise.resolve());
 
-      expect(onCreate).not.toHaveBeenCalled();
-      expect(onMoveTask).not.toHaveBeenCalled();
-      expect(checkDuplicateTasks).not.toHaveBeenCalled();
-      expect(screen.queryByText("Possible duplicates")).toBeNull();
-      expect(save).toHaveAttribute("data-hold-state", "idle");
-
-      fireEvent.click(save);
       await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
       expect(onCreate.mock.calls[0]![0]).not.toHaveProperty("column");
       expect(onMoveTask).not.toHaveBeenCalled();
+      expect(checkDuplicateTasks).toHaveBeenCalledTimes(1);
+      expect(screen.queryByText("Possible duplicates")).toBeNull();
+      expect(screen.getByTestId("quick-entry-save")).toHaveAttribute("data-hold-state", "idle");
     });
 
-    it.each(["mouse", "touch", "pen"])("cancels a 499ms %s release and consumes its synthetic click", async (pointerType) => {
+    it.each(["mouse", "touch", "pen"])("uses a 499ms %s release as one ordinary Save", async (pointerType) => {
       const onMoveTask = vi.fn();
       const { onCreate, save } = setup({ onMoveTask });
       fireEvent.pointerDown(save, { pointerId: 4, pointerType, button: 0, isPrimary: true });
       await act(async () => vi.advanceTimersByTime(499));
-      expect(save).toHaveAccessibleName("Release to cancel; keep holding to start");
+      expect(save).toHaveAccessibleName("Release to save; keep holding to start");
 
       fireEvent.pointerUp(save, { pointerId: 4, pointerType });
       fireEvent.click(save);
-      await act(async () => Promise.resolve());
 
-      expect(onCreate).not.toHaveBeenCalled();
-      expect(onMoveTask).not.toHaveBeenCalled();
-      expect(checkDuplicateTasks).not.toHaveBeenCalled();
-      expect(screen.queryByText("Possible duplicates")).toBeNull();
-      expect(save).toHaveAttribute("data-hold-state", "idle");
-
-      fireEvent.click(save);
       await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
       expect(onCreate.mock.calls[0]![0]).not.toHaveProperty("column");
       expect(onMoveTask).not.toHaveBeenCalled();
+      expect(checkDuplicateTasks).toHaveBeenCalledTimes(1);
+      expect(screen.queryByText("Possible duplicates")).toBeNull();
+      expect(screen.getByTestId("quick-entry-save")).toHaveAttribute("data-hold-state", "idle");
     });
 
     it.each(["pointerCancel", "pointerLeave", "lostPointerCapture", "blur", "escape"])("cancels without saving on %s", async (cancellation) => {
