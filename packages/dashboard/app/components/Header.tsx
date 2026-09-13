@@ -649,7 +649,22 @@ export function Header({
           </button>
         )}
 
-        {/* FNXC:OfficialDashboardDesign 2026-09-13-00:38: Usage has one canonical mobile home in the shared navigation menu, never a duplicate Header shortcut. */}
+        {/*
+        FNXC:MobileUsage 2026-09-13-22:47:
+        The mobile project header keeps a one-tap Usage shortcut so AI quota status is reachable without opening the shared navigation menu. Show it only while mobile navigation owns the primary destinations; the legacy compact header retains its existing Usage entry in the overflow menu.
+        */}
+        {isMobile && hideFullNav && onOpenUsage && (
+          <button
+            className="btn-icon"
+            onClick={(event) => onOpenUsage(event.currentTarget.getBoundingClientRect())}
+            title={t("header.viewUsage", "View usage")}
+            aria-label={t("header.viewUsage", "View usage")}
+            data-testid="mobile-header-usage-btn"
+          >
+            <Activity size={16} />
+          </button>
+        )}
+
         {hideHeaderViewNav && (
           <div
             id="header-workflow-slot"

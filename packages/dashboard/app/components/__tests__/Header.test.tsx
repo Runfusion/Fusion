@@ -339,11 +339,12 @@ describe("Header", () => {
       const actions = container.querySelector(".header-actions");
       const newTask = screen.getByTestId("mobile-header-new-task");
       const search = screen.getByTestId("mobile-header-search-btn");
+      const usage = screen.getByTestId("mobile-header-usage-btn");
       const children = Array.from(actions?.children ?? []);
 
       expect(actions?.lastElementChild).toBe(newTask);
       expect(children.indexOf(search)).toBeLessThan(children.indexOf(newTask));
-      expect(screen.queryByTestId("mobile-header-usage-btn")).toBeNull();
+      expect(children.indexOf(usage)).toBeLessThan(children.indexOf(newTask));
       expect(screen.getAllByTestId("mobile-header-new-task")).toHaveLength(1);
       expect(actions?.firstElementChild).not.toBe(newTask);
       expect(actions?.firstElementChild?.matches("button.btn-icon")).toBe(true);
@@ -797,9 +798,9 @@ describe("Header", () => {
       expect(onOpenUsage).toHaveBeenCalledWith(mockRect);
     });
 
-    it("does not render usage button inline on mobile when onOpenUsage is provided", () => {
+    it("keeps usage in the legacy mobile overflow when bottom navigation is inactive", () => {
       renderHeader({ onOpenUsage: vi.fn() }, "mobile");
-      // Button should NOT be inline on mobile (it's in overflow menu)
+      expect(screen.queryByTestId("mobile-header-usage-btn")).toBeNull();
       expect(screen.queryByTitle("View usage")).toBeNull();
       expect(screen.queryByTestId("desktop-header-usage-btn")).toBeNull();
     });
@@ -810,13 +811,30 @@ describe("Header", () => {
       expect(screen.getByTestId("overflow-usage-btn")).toBeDefined();
     });
 
-    it("removes the direct mobile Usage shortcut from the Alpha header", () => {
+    it("opens Usage with button bounds from the official mobile header shortcut", () => {
+      const onOpenUsage = vi.fn();
       renderHeader({
         mobileNavEnabled: true,
-        onOpenUsage: vi.fn(),
+        onOpenUsage,
       }, "mobile");
 
-      expect(screen.queryByTestId("mobile-header-usage-btn")).toBeNull();
+      const usageButton = screen.getByTestId("mobile-header-usage-btn") as HTMLButtonElement;
+      const mockRect = {
+        top: 10,
+        bottom: 42,
+        left: 200,
+        right: 232,
+        width: 32,
+        height: 32,
+        x: 200,
+        y: 10,
+        toJSON: () => ({}),
+      } as DOMRect;
+      usageButton.getBoundingClientRect = vi.fn(() => mockRect);
+
+      expect(usageButton).toHaveAccessibleName("View usage");
+      fireEvent.click(usageButton);
+      expect(onOpenUsage).toHaveBeenCalledWith(mockRect);
       expect(screen.queryByTestId("alpha-mobile-menu-trigger")).toBeNull();
     });
 
