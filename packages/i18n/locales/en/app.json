@@ -3581,7 +3581,9 @@
     "viewTaskLabel": "View task",
     "taskCompletion": "Task completion",
     "completionImages": "Completion images",
-    "completionImage": "Completion image"
+    "completionImage": "Completion image",
+    "suggestedRecommendations": "Suggested recommendations",
+    "noSuggestedRecommendations": "No follow-up recommendations were suggested."
   },
   "memory": {
     "auditChecksTitle": "Audit Checks",

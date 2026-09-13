@@ -3572,7 +3572,9 @@
     "recommendationsUnavailableTaskReason": "",
     "taskCompletion": "任務完成",
     "completionImages": "任務完成圖片",
-    "completionImage": "任務完成圖片"
+    "completionImage": "任務完成圖片",
+    "suggestedRecommendations": "建議的後續事項",
+    "noSuggestedRecommendations": "未提出後續建議。"
   },
   "memory": {
     "auditChecksTitle": "稽核檢查",

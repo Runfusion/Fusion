@@ -1,7 +1,44 @@
+/*
+FNXC:MailboxTaskCompletion 2026-09-13-03:42:
+The completion recap is one reflowable reading surface, so summary, recommendations, images, and the
+source-task action share a tokenized container instead of appearing as adjacent message attachments.
+*/
 .mailbox-task-completion {
+  background: var(--surface);
+  border: var(--btn-border-width) solid var(--border-subtle);
+  border-radius: var(--radius-lg);
   display: grid;
-  gap: var(--space-md);
+  gap: var(--space-lg);
   margin-block-start: var(--space-md);
+  min-inline-size: 0;
+  padding: var(--space-lg);
+}
+
+.mailbox-task-completion__summary {
+  min-inline-size: 0;
+}
+
+.mailbox-task-completion__recommendations {
+  display: grid;
+  gap: var(--space-sm);
+  min-inline-size: 0;
+}
+
+.mailbox-task-completion__recommendations > h3 {
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-tight);
+  margin: 0;
+}
+
+.mailbox-task-completion__recommendations .mailbox-task-recommendations,
+.mailbox-task-completion__recommendations .mailbox-task-recommendations__unavailable {
+  margin-block: 0;
+}
+
+.mailbox-task-completion__empty {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  margin: 0;
 }
 
 .mailbox-task-completion__images {
@@ -11,7 +48,16 @@
 }
 
 @media (max-width: 768px) {
+  .mailbox-task-completion {
+    gap: var(--space-md);
+    padding: var(--space-md);
+  }
+
   .mailbox-task-completion__images {
     grid-template-columns: 1fr;
+  }
+
+  .mailbox-task-completion > .mailbox-related-work-link {
+    inline-size: 100%;
   }
 }

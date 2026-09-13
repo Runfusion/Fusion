@@ -1045,11 +1045,15 @@ export function MailboxModal({
                             env={replyContextEnv}
                           />
                         )}
-                        <MailboxMessageContent
-                          content={msg.content}
-                          className="mailbox-conversation-msg-body"
-                          onOpenTask={onOpenTask}
-                        />
+                        {isTaskCompletionNotice(msg.metadata) ? (
+                          <MailboxTaskCompletion content={msg.content} metadata={msg.metadata} projectId={projectId} onOpenTask={onOpenTask} />
+                        ) : (
+                          <MailboxMessageContent
+                            content={msg.content}
+                            className="mailbox-conversation-msg-body"
+                            onOpenTask={onOpenTask}
+                          />
+                        )}
                         <MailboxStructuralItem metadata={msg.metadata} projectId={projectId} onOpenTask={onOpenTask} addToast={addToast} onDecided={() => { void loadInbox(); }} />
                         {!isTaskCompletionNotice(msg.metadata) && <MailboxRelatedWorkLink
                           metadata={msg.metadata}
@@ -1068,7 +1072,6 @@ export function MailboxModal({
                         />
                         <MailboxNativeStructureEmbeds message={msg} projectId={projectId} onOpen={onOpenNativeStructure} />
                         <MailboxTaskProposal messageId={msg.id} metadata={msg.metadata} projectId={projectId} onOpenTask={onOpenTask} />
-                        <MailboxTaskCompletion metadata={msg.metadata} projectId={projectId} onOpenTask={onOpenTask} />
                         {!isTaskCompletionNotice(msg.metadata) && <MailboxTaskRecommendations metadata={msg.metadata} projectId={projectId} onOpenTask={onOpenTask} />}
                       </div>
                     );
@@ -1088,12 +1091,16 @@ export function MailboxModal({
                       env={replyContextEnv}
                     />
                   )}
-                  <MailboxMessageContent
-                    content={selectedMessage.content}
-                    className="mailbox-message-body"
-                    testId="mailbox-message-body"
-                    onOpenTask={onOpenTask}
-                  />
+                  {isTaskCompletionNotice(selectedMessage.metadata) ? (
+                    <MailboxTaskCompletion content={selectedMessage.content} metadata={selectedMessage.metadata} projectId={projectId} onOpenTask={onOpenTask} />
+                  ) : (
+                    <MailboxMessageContent
+                      content={selectedMessage.content}
+                      className="mailbox-message-body"
+                      testId="mailbox-message-body"
+                      onOpenTask={onOpenTask}
+                    />
+                  )}
                   <MailboxStructuralItem metadata={selectedMessage.metadata} projectId={projectId} onOpenTask={onOpenTask} addToast={addToast} onDecided={() => { void loadInbox(); }} />
                   {!isTaskCompletionNotice(selectedMessage.metadata) && <MailboxRelatedWorkLink
                     metadata={selectedMessage.metadata}
@@ -1112,7 +1119,6 @@ export function MailboxModal({
                   />
                   <MailboxNativeStructureEmbeds message={selectedMessage} projectId={projectId} onOpen={onOpenNativeStructure} />
                   <MailboxTaskProposal messageId={selectedMessage.id} metadata={selectedMessage.metadata} projectId={projectId} onOpenTask={onOpenTask} />
-                  <MailboxTaskCompletion metadata={selectedMessage.metadata} projectId={projectId} onOpenTask={onOpenTask} />
                   {!isTaskCompletionNotice(selectedMessage.metadata) && <MailboxTaskRecommendations metadata={selectedMessage.metadata} projectId={projectId} onOpenTask={onOpenTask} />}
                 </>
               )}

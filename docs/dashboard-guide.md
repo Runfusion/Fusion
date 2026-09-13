@@ -873,6 +873,12 @@ Ordinary Markdown links in Direct Chat, Chat Rooms, Quick Chat, floating/dock Ch
 <!-- FNXC:ChatComposerDocs 2026-08-20-19:25: FN-076 makes every dashboard chat textarea automatic-only so mouse resizing cannot leave a shortened or cleared draft enlarged. -->
 Every dashboard chat textarea—Primary Chat, Rooms, Activity, task Planner Chat, message correction, question responses, and Compose Chat—grows automatically through five rendered lines and scrolls additional text inside the input. It shrinks as content is removed and returns to its minimum height when cleared. Mouse resizing is unavailable on desktop, tablet, and mobile.
 
+## Mailbox task completion recap
+
+<!-- FNXC:MailboxTaskCompletionDocs 2026-09-13-03:42: Each completion episode appears as one Mailbox message that keeps the delivered-work summary, suggested follow-ups, optional images, and source-task navigation together; historical standalone recommendation notices remain readable only from archived mail. -->
+
+When a task reaches a completion column, Mailbox shows one completion recap rather than separate completion and recommendation messages. Open it to read the delivered-work summary, review suggested follow-ups (or the explicit empty state), inspect any completion images, and use the single source-task button to open Task Detail. Older standalone recommendation notices remain available in **Archived**, but new completions do not create them.
+
 ## Mailbox archive
 
 Mailbox Inbox, Outbox, and agent lists exclude archived correspondence and unread badges ignore it. Select **Archived** to review archived messages and restore them; Archive is the default removal action and Delete remains available as an explicit destructive action.

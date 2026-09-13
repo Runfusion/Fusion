@@ -3573,7 +3573,9 @@
     "recommendationsUnavailableTaskReason": "",
     "taskCompletion": "Finalización de tarea",
     "completionImages": "Imágenes de finalización",
-    "completionImage": "Imagen de finalización"
+    "completionImage": "Imagen de finalización",
+    "suggestedRecommendations": "Recomendaciones sugeridas",
+    "noSuggestedRecommendations": "No se sugirió ninguna recomendación de seguimiento."
   },
   "memory": {
     "auditChecksTitle": "Comprobaciones de auditoría",

@@ -3572,7 +3572,9 @@
     "recommendationsUnavailableTaskReason": "",
     "taskCompletion": "任务完成",
     "completionImages": "任务完成图片",
-    "completionImage": "任务完成图片"
+    "completionImage": "任务完成图片",
+    "suggestedRecommendations": "建议的后续事项",
+    "noSuggestedRecommendations": "未提出后续建议。"
   },
   "memory": {
     "auditChecksTitle": "审计检查",

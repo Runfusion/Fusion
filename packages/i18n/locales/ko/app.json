@@ -3572,7 +3572,9 @@
     "recommendationsUnavailableTaskReason": "",
     "taskCompletion": "작업 완료",
     "completionImages": "작업 완료 이미지",
-    "completionImage": "작업 완료 이미지"
+    "completionImage": "작업 완료 이미지",
+    "suggestedRecommendations": "제안된 권장 사항",
+    "noSuggestedRecommendations": "제안된 후속 권장 사항이 없습니다."
   },
   "memory": {
     "auditChecksTitle": "감사 검사",
