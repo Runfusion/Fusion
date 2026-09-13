@@ -95,11 +95,37 @@ describe("useHorizontalMousePan", () => {
     down(button);
     move(button, 140);
     up(button);
-    fireEvent.click(button);
+    fireEvent.click(button, { detail: 1 });
     fireEvent.click(button);
 
     expect(onClick).toHaveBeenCalledTimes(1);
   });
+
+  it.each(["keyboard", "rejected target", "no overflow", "touch", "pen"])(
+    "does not consume a later %s activation when a pan produces no click",
+    (activation) => {
+      const onClick = vi.fn();
+      const { scroller, getByTestId } = renderHarness({
+        onClick,
+        canStartFrom: (target) => activation !== "rejected target" || (target instanceof Element && !target.closest("button")),
+      });
+      const surface = getByTestId("surface");
+      const button = getByTestId("button");
+      down(surface);
+      move(surface, 140);
+      up(surface);
+      if (activation === "no overflow") {
+        Object.defineProperty(scroller, "scrollWidth", { configurable: true, value: 200 });
+      }
+      if (activation !== "keyboard") {
+        const pointerType = activation === "touch" || activation === "pen" ? activation : "mouse";
+        down(button, 100, 50, 2, pointerType);
+        up(button, 2, pointerType);
+      }
+      fireEvent.click(button, { detail: activation === "keyboard" ? 0 : 1 });
+      expect(onClick).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it("reste inerte sans overflow ou quand le consommateur refuse la cible", () => {
     const canStartFrom = vi.fn((target) => target instanceof Element && !target.closest("button"));
