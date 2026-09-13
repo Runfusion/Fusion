@@ -506,13 +506,12 @@ describe("MilestoneSliceInterviewModal", () => {
         }
       });
 
-      // Give React time to update
-      await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 100));
+      // FNXC:MissionInterview 2026-09-11-00:04: poll for the summary render with
+      // waitFor instead of a fixed 100ms sleep so the assertion resolves as soon
+      // as React flushes the onSummary update (faster, and never masks slowness).
+      await waitFor(() => {
+        expect(screen.getByText("Refined Scope")).toBeDefined();
       });
-
-      // Summary should show Refined Scope header
-      expect(screen.getByText("Refined Scope")).toBeDefined();
     });
   });
 

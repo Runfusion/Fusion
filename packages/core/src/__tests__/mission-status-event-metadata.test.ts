@@ -15,7 +15,9 @@ describe("mission status event metadata", () => {
     expect(FEATURE_LOOP_TRANSITIONS.passed).toEqual([]);
     expect(FEATURE_LOOP_REPAIR_TRANSITIONS.blocked).toEqual(["idle", "implementing"]);
     expect(FEATURE_LOOP_REPAIR_TRANSITIONS.needs_fix).toEqual(["idle", "implementing"]);
-    expect(FEATURE_LOOP_REPAIR_TRANSITIONS.passed).toEqual([]);
+    // FNXC:Missions 2026-09-05-22:07: explicit repair may return a fabricated unvalidated
+    // passed marker to idle (issue #3574), so passed exposes exactly the idle repair edge.
+    expect(FEATURE_LOOP_REPAIR_TRANSITIONS.passed).toEqual(["idle"]);
     expect(Object.values(FEATURE_LOOP_REPAIR_TRANSITIONS).flat()).not.toContain("validating");
   });
 
