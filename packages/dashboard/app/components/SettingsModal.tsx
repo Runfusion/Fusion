@@ -502,8 +502,6 @@ export const SETTINGS_SECTIONS: SettingsSection[] = SETTINGS_SECTION_METADATA.ma
  *  IMPORTANT: Dev Server is canonically keyed by `devServerView`; `devServer`
  *  is treated as a legacy alias and must never render as a second row. */
 const KNOWN_EXPERIMENTAL_FEATURES: Record<string, string> = {
-  /* FNXC:AlphaUpdates 2026-09-09-18:24: Expose exactly one global, default-off switch as the boundary for every UI explicitly designated Alpha. */
-  alphaUpdates: "Alpha Updates",
   /* FNXC:WhiteboardAlpha 2026-09-10-05:42: The workspace has its own explicit global default-off toggle so enabling unrelated Alpha chrome never exposes Whiteboard. */
   whiteboardView: "Whiteboard Alpha",
   insights: "Insights",
@@ -548,7 +546,9 @@ Chat Rooms, Goals, Memory, Insights, Skills, and Todo graduated from Experimenta
 FNXC:SettingsExperimental 2026-06-26-00:00:
 Remote Access graduated from Experimental — section is always available; stale persisted `remoteAccess` flags are hidden so upgrades cannot disable it.
 */
+/* FNXC:OfficialDashboardDesign 2026-09-13-00:38: Alpha chrome is Fusion's official dashboard design. Keep stale alphaUpdates values persisted but hidden and inert while Whiteboard remains an independent experiment. */
 const HIDDEN_EXPERIMENTAL_FEATURE_KEYS = new Set<string>([
+  "alphaUpdates",
   "chatRooms",
   "goalsView",
   "insights",

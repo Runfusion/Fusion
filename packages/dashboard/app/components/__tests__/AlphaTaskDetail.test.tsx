@@ -79,7 +79,7 @@ function MainContentStateHost({ mobileAlpha = false }: { mobileAlpha?: boolean }
     currentProject: { id: "host-project" },
     viewMode: "project",
     isMobile: mobileAlpha,
-    experimentalFeatures: mobileAlpha ? { alphaUpdates: true } : {},
+    experimentalFeatures: {},
     modalManager: {},
     globalPaused: false,
     t: (_key: string, fallback?: string) => fallback ?? _key,
@@ -179,10 +179,10 @@ function AppPopoutStateHost() {
 }
 
 describe("homemade Alpha Task Detail", () => {
-  it("keeps the stable Task Detail DOM outside Alpha and owns one surface inside Alpha", () => {
+  it("keeps one official Task Detail surface across historical provider values", () => {
     const view = render(<DetailFixture enabled={false} />);
-    expect(document.querySelector("[data-alpha-surface='true']")).toBeNull();
-    expect(document.querySelector("[data-task-detail-surface='true']")).not.toHaveAttribute("data-alpha-ui");
+    expect(document.querySelectorAll(".task-detail-alpha-boundary[data-alpha-surface='true']")).toHaveLength(1);
+    expect(document.querySelector("[data-task-detail-surface='true']")).toHaveAttribute("data-alpha-ui", "surface");
 
     view.rerender(<DetailFixture enabled />);
     expect(document.querySelectorAll(".task-detail-alpha-boundary[data-alpha-surface='true']")).toHaveLength(1);

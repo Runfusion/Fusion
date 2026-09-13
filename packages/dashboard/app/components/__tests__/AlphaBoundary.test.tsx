@@ -36,18 +36,17 @@ describe("homemade Alpha surface boundary", () => {
     document.documentElement.removeAttribute("data-color-theme");
   });
 
-  it("switches Board/Chat primitives without leaking to an outside screen", () => {
+  it("keeps official Board/Chat primitives active without leaking to an outside screen", () => {
     const view = render(<Fixture enabled={false} />);
     expect(screen.getByTestId("outside")).not.toHaveAttribute("data-alpha-ui");
-    expect(screen.getByTestId("disabled")).not.toHaveAttribute("data-alpha-ui");
+    expect(screen.getByLabelText("Message")).toHaveAttribute("data-alpha-ui", "input");
+    expect(screen.getByTestId("disabled")).toBeDisabled();
+    expect(screen.getByTestId("disabled")).toHaveAttribute("data-alpha-ui", "button");
 
     fireEvent.change(screen.getByLabelText("Message"), { target: { value: "draft survives" } });
     view.rerender(<Fixture enabled />);
 
     expect(screen.getByLabelText("Message")).toHaveValue("draft survives");
-    expect(screen.getByLabelText("Message")).toHaveAttribute("data-alpha-ui", "input");
-    expect(screen.getByTestId("disabled")).toBeDisabled();
-    expect(screen.getByTestId("disabled")).toHaveAttribute("data-alpha-ui", "button");
     expect(screen.getByTestId("portal")).toHaveAttribute("data-alpha-ui", "button");
     expect(document.querySelector('[data-alpha-ui="listbox"]')).toHaveAccessibleName("Suggestions");
     expect(document.querySelector('[data-alpha-ui="menu"]')).toHaveAccessibleName("Actions");
@@ -57,8 +56,8 @@ describe("homemade Alpha surface boundary", () => {
 
     view.rerender(<Fixture enabled={false} />);
     expect(screen.getByLabelText("Message")).toHaveValue("draft survives");
-    expect(screen.getByLabelText("Message")).not.toHaveAttribute("data-alpha-ui");
-    expect(screen.getByTestId("portal-surface")).not.toHaveAttribute("data-alpha-portal");
+    expect(screen.getByLabelText("Message")).toHaveAttribute("data-alpha-ui", "input");
+    expect(screen.getByTestId("portal-surface")).toHaveAttribute("data-alpha-portal", "true");
   });
 
   it("keeps root and portal colors stable across Fusion color themes and distinct across light/dark", () => {

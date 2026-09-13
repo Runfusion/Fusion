@@ -48,13 +48,12 @@ vi.mock("../../../hooks/useBoardWorkflows", () => ({
 vi.mock("../../Column", () => ({
   Column: memo(function InstrumentedColumn(props: {
     active?: boolean;
-    alphaUpdatesEnabled?: boolean;
     column: string;
     columnFlags?: { complete?: boolean };
     onOpenHistory?: () => void;
     [key: string]: unknown;
   }) {
-    const { active, alphaUpdatesEnabled, column, columnFlags, onOpenHistory } = props;
+    const { active, column, columnFlags, onOpenHistory } = props;
     const isActive = active ?? true;
     activeByView.board.push(isActive);
     if (!columnFlags?.complete) return <output data-testid={`board-column-${column}`} data-active={String(isActive)} />;
@@ -63,7 +62,7 @@ vi.mock("../../Column", () => ({
     activeByView.historyCallbacks.push(onOpenHistory);
     return (
       <output data-testid="board-child" data-active={String(isActive)}>
-        {alphaUpdatesEnabled && onOpenHistory ? (
+        {onOpenHistory ? (
           <button type="button" data-testid="column-history-done" onClick={onOpenHistory}>History</button>
         ) : null}
       </output>
@@ -122,7 +121,6 @@ function HistoryWindowHost() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [props] = useState(() => ({
     ...mainContentProps(),
-    experimentalFeatures: { alphaUpdates: true },
     handleChangeTaskView: (view: MainContentProps["taskView"]) => {
       if (view === "patchnode") setHistoryOpen(true);
     },
@@ -176,9 +174,9 @@ describe("MainViewKeepAlive", () => {
     expect(activeByView.historyColumnRenders).toBe(rendersBeforeOpen);
   });
 
-  it("does not expose the History button without Alpha even though the route handler exists", () => {
+  it("exposes History whenever the official complete lane has a route handler", () => {
     renderHost("board");
-    expect(screen.queryByTestId("column-history-done")).toBeNull();
+    expect(screen.getByTestId("column-history-done")).toBeInTheDocument();
   });
 
   it("keeps visited children mounted and derives their active value from one resolved id", () => {

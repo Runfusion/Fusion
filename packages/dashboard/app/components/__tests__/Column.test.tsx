@@ -113,32 +113,22 @@ const defaultProps = {
 };
 
 describe("Column Alpha History", () => {
-  it("opens History from an empty custom complete lane only in Alpha", () => {
+  it("opens History from an empty custom complete lane in the official design", () => {
     const onOpenHistory = vi.fn();
-    const { rerender } = render(
-      <Column {...defaultProps} column={"shipped" as ColumnType} workflowMode columnDisplayName="Shipped" columnFlags={{ complete: true }} tasks={[]} onOpenHistory={onOpenHistory} />,
-    );
-    expect(screen.queryByRole("button", { name: "Open History" })).toBeNull();
-
-    rerender(<Column {...defaultProps} column={"shipped" as ColumnType} workflowMode columnDisplayName="Shipped" columnFlags={{ complete: true }} tasks={[]} alphaUpdatesEnabled onOpenHistory={onOpenHistory} />);
+    render(<Column {...defaultProps} column={"shipped" as ColumnType} workflowMode columnDisplayName="Shipped" columnFlags={{ complete: true }} tasks={[]} onOpenHistory={onOpenHistory} />);
     fireEvent.click(screen.getByRole("button", { name: "Open History" }));
     expect(onOpenHistory).toHaveBeenCalledOnce();
   });
 
   it("does not render History for a non-complete Alpha lane", () => {
-    render(<Column {...defaultProps} tasks={[]} workflowMode columnFlags={{ complete: false }} alphaUpdatesEnabled onOpenHistory={vi.fn()} />);
+    render(<Column {...defaultProps} tasks={[]} workflowMode columnFlags={{ complete: false }} onOpenHistory={vi.fn()} />);
     expect(screen.queryByRole("button", { name: "Open History" })).toBeNull();
   });
 });
 
 describe("Column New Task placement", () => {
-  it("removes the complete column action shell only in Alpha", () => {
-    const onNewTask = vi.fn();
-    const { rerender } = render(<Column {...defaultProps} tasks={[]} onNewTask={onNewTask} />);
-    fireEvent.click(screen.getByRole("button", { name: "+ New Task" }));
-    expect(onNewTask).toHaveBeenCalledOnce();
-
-    rerender(<Column {...defaultProps} tasks={[]} onNewTask={onNewTask} alphaUpdatesEnabled />);
+  it("removes the complete column New Task action shell", () => {
+    render(<Column {...defaultProps} tasks={[]} />);
     expect(screen.queryByRole("button", { name: "+ New Task" })).toBeNull();
     expect(screen.queryByText("+ New Task")).toBeNull();
   });
@@ -831,7 +821,6 @@ describe("Column Alpha menu keyboard access", () => {
             {...defaultProps}
             column="triage"
             tasks={[makeTask("FN-001")]}
-            alphaUpdatesEnabled
             planAutoApproveEnabled={false}
             onTogglePlanAutoApprove={onTogglePlanAutoApprove}
           />

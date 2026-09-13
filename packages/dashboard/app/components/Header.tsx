@@ -93,8 +93,6 @@ export interface HeaderProps {
   shellHost?: ShellHostContext;
   /** When true, the mobile bottom nav bar handles primary navigation and header nav controls are hidden. */
   mobileNavEnabled?: boolean;
-  /** Enables the Alpha shell variants without changing legacy navigation. */
-  alphaUpdatesEnabled?: boolean;
   /** When true on non-mobile screens, persistent left sidebar owns primary view navigation. */
   leftSidebarNavActive?: boolean;
   /*
@@ -151,7 +149,6 @@ export function Header({
   projectId,
   shellHost = { kind: "browser" },
   mobileNavEnabled,
-  alphaUpdatesEnabled = false,
   leftSidebarNavActive = false,
   rightDockAvailable = false,
   rightDockOpen = false,
@@ -298,7 +295,7 @@ export function Header({
   const shouldShowMobileSearch = isMobileSearchOpen || searchQuery.length > 0;
 
   const canShowNonMobileSearch = (view === "board" || view === "list") && !isMobile && onSearchChange;
-  const showAlphaDesktopSearch = Boolean(alphaUpdatesEnabled && mode === "desktop" && canShowNonMobileSearch);
+  const showAlphaDesktopSearch = Boolean(mode === "desktop" && canShowNonMobileSearch);
   const closeAlphaSearch = useCallback(() => {
     setIsAlphaSearchOpen(false);
     setAlphaSearchQuery("");
@@ -473,7 +470,7 @@ export function Header({
               fill="currentColor"
             />
           </svg>
-          {!(isMobile && alphaUpdatesEnabled) && <h1 className="logo">{t("appName", "Fusion")}</h1>}
+          {!isMobile && <h1 className="logo">{t("appName", "Fusion")}</h1>}
         </div>
 
         {/* Mobile Project Switch - dropdown trigger next to logo when at least one project exists (mobile only) */}
@@ -652,18 +649,7 @@ export function Header({
           </button>
         )}
 
-        {/* FNXC:AlphaUpdates 2026-09-09-19:11: Alpha gives Usage one canonical mobile home in the shared hamburger menu; the legacy shell retains its direct header shortcut. */}
-        {isMobile && hideFullNav && !alphaUpdatesEnabled && onOpenUsage && (
-          <button
-            className="btn-icon"
-            onClick={(event) => onOpenUsage(event.currentTarget.getBoundingClientRect())}
-            title={t("header.viewUsage", "View usage")}
-            data-testid="mobile-header-usage-btn"
-          >
-            <Activity size={16} />
-          </button>
-        )}
-
+        {/* FNXC:OfficialDashboardDesign 2026-09-13-00:38: Usage has one canonical mobile home in the shared navigation menu, never a duplicate Header shortcut. */}
         {hideHeaderViewNav && (
           <div
             id="header-workflow-slot"
@@ -970,18 +956,6 @@ export function Header({
                       <Lock size={14} />
                       <span>{t("header.secretsView", "Secrets")}</span>
                     </button>
-                    {!alphaUpdatesEnabled && <button
-                      className={`view-toggle-overflow-item${view === "patchnode" ? " active" : ""}`}
-                      onClick={() => {
-                        onChangeView("patchnode");
-                        setIsViewOverflowOpen(false);
-                      }}
-                      role="menuitem"
-                      data-testid="view-overflow-patchnode"
-                    >
-                      <History size={14} />
-                      <span>{t("nav.patchnode", "History")}</span>
-                    </button>}
                     {experimentalFeatures?.devServerView && (
                       <button
                         className={`view-toggle-overflow-item${view === "dev-server" || view === "devserver" ? " active" : ""}`}
@@ -1256,7 +1230,7 @@ export function Header({
         FNXC:MobileTaskNavigation 2026-09-12-05:41:
         The App-owned create-task control stays in the Header only on tablet/mobile Alpha and on legacy mobile when bottom navigation is active. Desktop creation remains available through its dedicated surfaces and shortcuts without leaving a duplicate Header button or shell; retained compact controls stay last in the action cluster.
         */}
-        {((alphaUpdatesEnabled && mode !== "desktop") || (isMobile && mobileNavEnabled)) && projectId && onNewTask && (
+        {mode !== "desktop" && projectId && onNewTask && (
           <button
             className="btn-icon"
             onClick={onNewTask}

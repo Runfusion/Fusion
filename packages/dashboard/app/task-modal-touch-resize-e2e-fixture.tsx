@@ -18,6 +18,7 @@ import { NavigationHistoryProvider } from "./hooks/useNavigationHistory";
 import { NewTaskModal } from "./components/NewTaskModal";
 import { AgentListModal } from "./components/AgentListModal";
 import { SetupWizardModal } from "./components/SetupWizardModal";
+import { SettingsModal } from "./components/SettingsModal";
 import { ConfirmDialogProvider } from "./hooks/useConfirm";
 import { AlphaProvider } from "./context/AlphaContext";
 
@@ -187,7 +188,9 @@ window.fetch = async (input) => {
                   ? { goals: [] }
         : url.includes("/models")
           ? { models: [], favoriteProviders: [], favoriteModels: [] }
-          : url.includes("/settings") ? { taskPopupsBoardListOnly: false, openMobileTasksInPopup: params.get("openMobileTasksInPopup") === "true", taskDetailChatFirst, experimentalFeatures: { alphaUpdates: params.get("alpha") === "true" } }
+          : pathname === "/api/settings/scopes" ? { global: { experimentalFeatures: {} }, project: {} }
+          : pathname === "/api/settings/global" ? { experimentalFeatures: {} }
+          : url.includes("/settings") ? { taskPopupsBoardListOnly: false, openMobileTasksInPopup: params.get("openMobileTasksInPopup") === "true", taskDetailChatFirst, experimentalFeatures: {} }
             : url.includes("/agents") || url.includes("/nodes") ? []
               : [];
   return new Response(JSON.stringify(payload), { headers: { "content-type": "application/json" } });
@@ -400,7 +403,7 @@ function GenericFloatingWindowHarness() {
 
 function Fixture() {
   const appOwnsAlphaBoundary = surface === "task-detail-title-app-floating" || surface === "board-card-click-app";
-  const content = appOwnsAlphaBoundary ? <TaskDetailTitleAppFloatingHarness /> : surface === "agent-list-modal" ? <AgentListModal isOpen onClose={() => undefined} addToast={() => undefined} /> : surface === "setup-wizard-modal" ? <SetupWizardModal onProjectRegistered={() => undefined} onClose={() => undefined} /> : surface === "floating-window" ? <FloatingWindowHarness /> : surface === "floating-window-headerless" ? <HeaderlessFloatingWindowHarness /> : surface === "floating-window-generic" ? <GenericFloatingWindowHarness /> : surface === "task-detail-title-modal" ? <TaskDetailTitleModalHarness /> : surface === "task-detail-title-main-panel" ? <TaskDetailTitleMainPanelHarness /> : surface === "task-detail-title-list" ? <TaskDetailTitleListHarness /> : surface === "task-detail-title-dock" ? <TaskDetailTitleDockHarness /> : surface === "task-detail-title-embedded" ? <TaskDetailTitleEmbeddedHarness /> : surface === "task-detail" ? <TaskDetailResizeHarness /> : <NewTaskModal
+  const content = appOwnsAlphaBoundary ? <TaskDetailTitleAppFloatingHarness /> : surface === "settings-official" ? <SettingsModal onClose={() => undefined} addToast={() => undefined} initialSection="experimental" /> : surface === "agent-list-modal" ? <AgentListModal isOpen onClose={() => undefined} addToast={() => undefined} /> : surface === "setup-wizard-modal" ? <SetupWizardModal onProjectRegistered={() => undefined} onClose={() => undefined} /> : surface === "floating-window" ? <FloatingWindowHarness /> : surface === "floating-window-headerless" ? <HeaderlessFloatingWindowHarness /> : surface === "floating-window-generic" ? <GenericFloatingWindowHarness /> : surface === "task-detail-title-modal" ? <TaskDetailTitleModalHarness /> : surface === "task-detail-title-main-panel" ? <TaskDetailTitleMainPanelHarness /> : surface === "task-detail-title-list" ? <TaskDetailTitleListHarness /> : surface === "task-detail-title-dock" ? <TaskDetailTitleDockHarness /> : surface === "task-detail-title-embedded" ? <TaskDetailTitleEmbeddedHarness /> : surface === "task-detail" ? <TaskDetailResizeHarness /> : <NewTaskModal
     isOpen
     tasks={[]}
     onClose={() => undefined}

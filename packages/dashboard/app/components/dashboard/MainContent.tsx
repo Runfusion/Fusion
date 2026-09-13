@@ -193,7 +193,7 @@ export function MainContent(props: MainContentProps) {
   taskDetailChatFirst,
   chatMessageLayout,
   skillsEnabled,
-  experimentalFeatures,
+  experimentalFeatures: _experimentalFeatures,
   mailComposerPrefill,
   onOpenChatWithPrefill,
   setMailboxUnreadCount,
@@ -248,7 +248,7 @@ export function MainContent(props: MainContentProps) {
   handleToggleModelFavorite,
   lastFetchTimeMs,
   openCreateWorkflowWithNav,
-  sidebarActive,
+  sidebarActive: _sidebarActive,
   notesController,
   registerNotesGuard,
   isMobile,
@@ -366,7 +366,7 @@ export function MainContent(props: MainContentProps) {
   }, [handleChangeTaskView, setGoalAnchorId, setMissionTargetId]);
 
   const projectKey = currentProject?.id ?? "all-projects";
-  const alphaMobileDrawerEnabled = experimentalFeatures?.alphaUpdates === true && isMobile && viewMode === "project" && currentProject !== null;
+  const alphaMobileDrawerEnabled = isMobile && viewMode === "project" && currentProject !== null;
   const selectedKeepAliveId: KeepAliveMainViewId | null = isKeepAliveMainViewId(taskView)
     ? taskView
     : taskView === "task-detail" && mainPanelDetailTask === null
@@ -1128,7 +1128,7 @@ export function MainContent(props: MainContentProps) {
         mergeStrategy={mergeStrategy}
         onOpenWorkflowEditor={openWorkflowEditorWithNav}
         onCreateWorkflow={openCreateWorkflowWithNav}
-        workflowControlsInHeader={sidebarActive || isMobile || experimentalFeatures?.alphaUpdates === true}
+        workflowControlsInHeader={true}
       />
     </PageErrorBoundary>
   );

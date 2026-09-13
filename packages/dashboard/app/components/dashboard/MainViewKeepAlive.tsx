@@ -107,15 +107,9 @@ function renderBoardSubtree(
     prAuthAvailable,
     openWorkflowEditorWithNav,
     openCreateWorkflowWithNav,
-    sidebarActive,
-    isMobile,
-    experimentalFeatures,
   } = props;
-  /*
-  FNXC:WorkflowControls 2026-09-12-05:41:
-  Alpha desktop replaces the navigation sidebar with a footer but still owns the Header workflow slot. Board and List must portal their selector beside Search whenever Alpha is active, while retained inactive views continue to release that shared slot.
-  */
-  const workflowControlsInHeader = sidebarActive || isMobile || experimentalFeatures?.alphaUpdates === true;
+  /* FNXC:OfficialDashboardDesign 2026-09-13-00:38: Board and List always own the Header workflow slot in the official desktop shell. */
+  const workflowControlsInHeader = true;
 
   return (
     <PageErrorBoundary>
@@ -183,7 +177,6 @@ function renderBoardSubtree(
         onOpenWorkflowEditor={openWorkflowEditorWithNav}
         onCreateWorkflow={openCreateWorkflowWithNav}
         workflowControlsInHeader={workflowControlsInHeader}
-        alphaUpdatesEnabled={experimentalFeatures?.alphaUpdates === true}
         onOpenHistory={onOpenHistory}
         active={active}
       />
@@ -236,11 +229,8 @@ function renderListSubtree(props: MainContentProps, active: boolean) {
     mergeStrategy,
     openWorkflowEditorWithNav,
     openCreateWorkflowWithNav,
-    sidebarActive,
-    isMobile,
-    experimentalFeatures,
   } = props;
-  const workflowControlsInHeader = sidebarActive || isMobile || experimentalFeatures?.alphaUpdates === true;
+  const workflowControlsInHeader = true;
 
   return (
     <PageErrorBoundary>

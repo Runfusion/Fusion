@@ -357,7 +357,7 @@ describe("MainContent main-view keep alive", () => {
     render(<MainContent {...mainContentProps({
       taskView: "task-detail",
       isMobile: true,
-      experimentalFeatures: { alphaUpdates: true },
+      experimentalFeatures: {},
       mainPanelDetailTask: taskFixture("FN-ALPHA-DETAIL"),
       closeTaskDetailMainPanel,
     })} />);
@@ -381,7 +381,7 @@ describe("MainContent main-view keep alive", () => {
       isMobile: true,
       settingsLoaded: true,
       ideationEnabled: true,
-      experimentalFeatures: { alphaUpdates: true },
+      experimentalFeatures: {},
       handleChangeTaskView,
     })} />);
 
@@ -404,7 +404,7 @@ describe("MainContent main-view keep alive", () => {
     render(<MainContent {...mainContentProps({
       taskView: "plugin:fixture:headerless" as MainContentProps["taskView"],
       isMobile: true,
-      experimentalFeatures: { alphaUpdates: true },
+      experimentalFeatures: {},
       pluginDashboardViews: [{
         pluginId: "fixture",
         view: { viewId: "headerless", label: "Plugin Tool", componentPath: "fixture" },
@@ -428,7 +428,7 @@ describe("MainContent main-view keep alive", () => {
     render(<MainContent {...mainContentProps({
       taskView: "chat",
       isMobile: true,
-      experimentalFeatures: { alphaUpdates: true },
+      experimentalFeatures: {},
     })} />);
 
     await waitFor(() => expect(document.querySelectorAll("#board")).toHaveLength(1));

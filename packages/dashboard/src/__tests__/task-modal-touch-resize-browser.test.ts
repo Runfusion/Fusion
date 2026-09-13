@@ -8,7 +8,7 @@ import path from "node:path";
 const requireFromEngine = createRequire(new URL("../../../engine/package.json", import.meta.url));
 const { chromium } = requireFromEngine("playwright-core") as { chromium: { launch(options: { executablePath: string; headless: boolean; args?: string[] }): Promise<Browser> } };
 type Browser = { newPage(options: { viewport: { width: number; height: number } }): Promise<Page>; close(): Promise<void> };
-type Page = { goto(url: string): Promise<unknown>; evaluate<T, Arg = undefined>(fn: (arg: Arg) => T, arg?: Arg): Promise<T>; locator(selector: string): Locator; mouse: { move(x: number, y: number): Promise<void>; down(): Promise<void>; up(): Promise<void> }; waitForTimeout(ms: number): Promise<void>; screenshot(options: { path: string }): Promise<void>; close(): Promise<void>; context(): { newCDPSession(page: Page): Promise<Cdp> }; on(event: "console" | "pageerror", listener: (message: { text?(): string; message?: string }) => void): void };
+type Page = { goto(url: string): Promise<unknown>; evaluate<T, Arg = undefined>(fn: (arg: Arg) => T, arg?: Arg): Promise<T>; locator(selector: string): Locator; waitForSelector(selector: string, options?: { timeout?: number }): Promise<unknown>; mouse: { move(x: number, y: number): Promise<void>; down(): Promise<void>; up(): Promise<void> }; waitForTimeout(ms: number): Promise<void>; screenshot(options: { path: string }): Promise<void>; close(): Promise<void>; context(): { newCDPSession(page: Page): Promise<Cdp> }; on(event: "console" | "pageerror", listener: (message: { text?(): string; message?: string }) => void): void };
 type Locator = { boundingBox(): Promise<{ x: number; y: number; width: number; height: number } | null> };
 type Cdp = { send(method: string, params: Record<string, unknown>): Promise<unknown> };
 type Point = { x: number; y: number };
@@ -43,6 +43,7 @@ const fn8607Screenshots = path.resolve(process.cwd(), "e2e/__screenshots__/fn-86
 const fn8806Screenshots = path.resolve(process.cwd(), "e2e/__screenshots__/fn-8806");
 const fn115Screenshots = path.resolve(process.cwd(), "e2e/__screenshots__/fn-115");
 const fn349Screenshots = path.resolve(process.cwd(), "e2e/__screenshots__/fn-349");
+const fn367Artifacts = path.resolve(process.cwd(), "../../artifacts/FN-367");
 
 async function touchDrag(cdp: Cdp, point: Point, delta = { x: 48, y: 36 }) {
   await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: point.x, y: point.y, id: 1 }] });
@@ -586,7 +587,6 @@ describe.runIf(executablePath)("Task modal tablet touch resize browser regressio
     ["main-panel", "title-host-main-panel", "task-detail-title-main-panel", 720],
     ["list-split", "title-host-list", "task-detail-title-list", 820],
     ["right-dock", "title-host-dock", "task-detail-title-dock", 820],
-    ["floating-window", "floating-window-overlay-task-detail-", "task-detail-title-app-floating", 720],
   ] as const)("keeps the %s production title host %s via %s stable at %dpx after one activation", async (name, hostTestId, surface, width) => {
     const page = await browser.newPage({ viewport: { width, height: 844 } });
     page.on("pageerror", (message) => console.error(`[task-title-${name}] ${message.message ?? ""}\n${(message as { stack?: string }).stack ?? ""}`));
@@ -697,7 +697,6 @@ describe.runIf(executablePath)("Task modal tablet touch resize browser regressio
     ["main-panel", "title-host-main-panel", "task-detail-title-main-panel", 720],
     ["list-split", "title-host-list", "task-detail-title-list", 820],
     ["right-dock", "title-host-dock", "task-detail-title-dock", 820],
-    ["floating-window", "floating-window-overlay-task-detail-", "task-detail-title-app-floating", 720],
   ] as const;
 
   for (const [titleMode, expectedText, expectsControl] of [
@@ -1038,10 +1037,31 @@ describe.runIf(executablePath)("Task modal tablet touch resize browser regressio
     await page.waitForTimeout(350);
     const card = await targetCenter(page, ".card[data-id='FN-TITLE-FLICKER'] .card-title");
     await touchTap(cdp, card);
-    await page.waitForTimeout(100);
-    expect(await page.evaluate(() => Boolean(document.querySelector(".floating-window--task-detail")))).toBe(true);
+    await page.waitForSelector(".task-detail-content", { timeout: 3_000 });
+    expect(await page.evaluate(() => ({
+      detail: Boolean(document.querySelector(".task-detail-content")),
+      floating: Boolean(document.querySelector(".floating-window--task-detail")),
+    }))).toEqual({ detail: true, floating: false });
     await page.close();
   }, 30_000);
+
+  it("captures the official desktop and mobile Settings experience", async () => {
+    await mkdir(fn367Artifacts, { recursive: true });
+    for (const [name, width, height] of [["desktop", 1280, 900], ["mobile", 390, 844]] as const) {
+      const page = await browser.newPage({ viewport: { width, height } });
+      await page.goto(`${baseUrl}app/task-modal-touch-resize-e2e-fixture.html?surface=settings-official&reset=1`);
+      await page.evaluate(() => localStorage.setItem("fusion:settings:show-advanced", "true"));
+      await page.goto(`${baseUrl}app/task-modal-touch-resize-e2e-fixture.html?surface=settings-official`);
+      await page.waitForSelector("body");
+      await page.waitForTimeout(2_000);
+      expect(await page.evaluate(() => ({
+        alpha: document.body.textContent?.includes("Alpha Updates") ?? false,
+        whiteboard: document.body.textContent?.includes("Whiteboard Alpha") ?? false,
+      }))).toEqual({ alpha: false, whiteboard: true });
+      await page.screenshot({ path: path.join(fn367Artifacts, `official-design-${name}.png`) });
+      await page.close();
+    }
+  }, 60_000);
 
   it("keeps the true-phone sheet free of active resize targets", async () => {
     const page = await browser.newPage({ viewport: { width: 390, height: 844 } });

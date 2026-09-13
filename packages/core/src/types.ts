@@ -1633,7 +1633,7 @@ FNXC:ChatMemoryFocus 2026-08-24-04:21:
 Dashboard client imports resolve @fusion/core to this browser-safe leaf, so expose the pure
 experimental flag reader here. Its Settings dependency is type-only and introduces no browser runtime cycle.
 */
-export { isExperimentalFeatureEnabled, CHAT_FOCUS_FLAG, ALPHA_UPDATES_FLAG, WHITEBOARD_VIEW_FLAG } from "./config/experimental-features.js";
+export { isExperimentalFeatureEnabled, CHAT_FOCUS_FLAG, WHITEBOARD_VIEW_FLAG } from "./config/experimental-features.js";
 export { createEmptyWhiteboardDocument, validateWhiteboardDocument, validateWhiteboardTitle, WhiteboardValidationError, WhiteboardRevisionConflictError, WhiteboardNotFoundError } from "./whiteboards/whiteboard-types.js";
 export type { WhiteboardDocumentV1, WhiteboardDocument, WhiteboardFrame, WhiteboardText, WhiteboardRelation, WhiteboardRelationBranch, ProjectWhiteboard, ProjectWhiteboardSummary, WhiteboardRevision } from "./whiteboards/whiteboard-types.js";
 export {

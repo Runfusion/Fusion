@@ -1711,12 +1711,11 @@ The `experimentalFeatures` setting provides a first-class mechanism for managing
 ### Dashboard UI
 
 The Experimental Features section in Settings shows:
-- Feature name and enabled/disabled toggle for each configured feature
+- Feature name and enabled/disabled toggle for each configured feature; the retired `alphaUpdates` key is hidden, preserved only for compatibility, and has no effect on the official dashboard design
 - Global scope indicator (features are shared across projects)
 - Description explaining the purpose of experimental features
 
 Common built-in dashboard/runtime flags include:
-- `alphaUpdates` (global et désactivé par défaut) active le shell de navigation Alpha. Toute fonctionnalité qualifiée d’« Alpha » doit conserver le comportement courant lorsque cette frontière est absente ou fausse, et ne basculer vers sa variante Alpha que lorsqu’elle vaut `true`.
 - `insights`
 - `roadmap`
 - `memoryView`

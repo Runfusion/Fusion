@@ -49,7 +49,6 @@ export type OverflowViewKey =
   | `plugin:${string}:${string}`;
 
 export interface OverflowViewFeatureState {
-  alphaUpdates?: boolean;
   insights?: boolean;
   memoryView?: boolean;
   devServerView?: boolean;

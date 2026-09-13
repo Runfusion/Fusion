@@ -13,7 +13,6 @@ import {
   ChevronRight,
   Clock,
   Gauge,
-  History,
   Lightbulb,
   LayoutGrid,
   List,
@@ -133,8 +132,6 @@ export interface LeftSidebarNavProps {
   onSelectProject?: (project: ProjectInfo) => void;
   onViewAllProjects?: () => void;
   footerVisible?: boolean;
-  /** Removes general History navigation when Alpha relocates it to complete columns. */
-  alphaUpdatesEnabled?: boolean;
 }
 
 function formatCount(count: number): string {
@@ -179,7 +176,6 @@ export function LeftSidebarNav({
   showAgentsTab = false,
   showSkillsTab = false,
   footerVisible = false,
-  alphaUpdatesEnabled = false,
 }: LeftSidebarNavProps) {
   const { t } = useTranslation("app");
   const [sidebarWidth, setSidebarWidth] = useState(readStoredSidebarWidth);
@@ -331,15 +327,6 @@ export function LeftSidebarNav({
       testId: "sidebar-nav-list",
       onSelect: () => onChangeView("list"),
     },
-    ...(!alphaUpdatesEnabled ? [{
-      id: "patchnode",
-      label: t("nav.patchnode", getDashboardViewLabel("patchnode")),
-      view: "patchnode" as TaskView,
-      isActive: view === "patchnode",
-      icon: History,
-      testId: "sidebar-nav-patchnode",
-      onSelect: () => onChangeView("patchnode"),
-    }] : []),
     ...(graphPluginEntry ? [mapPluginEntry(graphPluginEntry)] : []),
     /*
     FNXC:Navigation 2026-06-23-01:30:

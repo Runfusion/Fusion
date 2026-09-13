@@ -5,21 +5,19 @@ interface AlphaState {
   surfaceActive: boolean;
 }
 
-const AlphaContext = createContext<AlphaState>({ enabled: false, surfaceActive: false });
+const AlphaContext = createContext<AlphaState>({ enabled: true, surfaceActive: false });
 
 /*
-FNXC:HomemadeAlpha 2026-09-11-16:14:
-Alpha presentation is owned by Fusion's native React and HTML controls. The provider publishes the resolved feature flag without adding a layout box, while explicit boundaries keep shared controls outside Board, Chat, and Task Detail unchanged.
+FNXC:OfficialDashboardDesign 2026-09-13-00:38:
+Fusion's native Alpha presentation is now the official dashboard design. The provider keeps boundaries layout-transparent while every Board, Chat, and Task Detail boundary remains active regardless of stale persisted alphaUpdates values.
 */
-export function AlphaProvider({ enabled, children }: { enabled: boolean; children: ReactNode }) {
-  const value = useMemo(() => ({ enabled, surfaceActive: false }), [enabled]);
+export function AlphaProvider({ children }: { children: ReactNode; enabled?: boolean }) {
+  const value = useMemo(() => ({ enabled: true, surfaceActive: false }), []);
   return <AlphaContext.Provider value={value}>{children}</AlphaContext.Provider>;
 }
 
 export function AlphaBoundary({
   children,
-  enabled,
-  preserveDisabledDom = false,
   className,
 }: {
   children: ReactNode;
@@ -27,21 +25,12 @@ export function AlphaBoundary({
   preserveDisabledDom?: boolean;
   className?: string;
 }) {
-  const parent = useContext(AlphaContext);
-  const resolvedEnabled = enabled ?? parent.enabled;
-  const value = useMemo(
-    () => ({ enabled: resolvedEnabled, surfaceActive: resolvedEnabled }),
-    [resolvedEnabled],
-  );
+  const value = useMemo(() => ({ enabled: true, surfaceActive: true }), []);
 
-  /*
-  FNXC:AlphaBoundaryLayout 2026-09-12-17:34:
-  Shared Alpha hosts keep their canonical flex and scroll owners in both feature states. Every rendered boundary publishes an explicit true/false state so the shared display:contents rule stays layout-transparent in standard mode as well as Alpha; preserveDisabledDom remains the no-wrapper escape hatch for surfaces whose disabled DOM identity is contractual.
-  */
-  if (!resolvedEnabled && preserveDisabledDom) return <>{children}</>;
+  /* FNXC:OfficialDashboardDesign 2026-09-13-00:38: Official-design boundaries always publish the active marker and retain their canonical flex and scroll owners. */
   return (
     <AlphaContext.Provider value={value}>
-      <div className={className} data-alpha-surface={value.surfaceActive ? "true" : "false"}>{children}</div>
+      <div className={className} data-alpha-surface="true">{children}</div>
     </AlphaContext.Provider>
   );
 }

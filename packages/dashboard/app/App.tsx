@@ -4,7 +4,6 @@ import {
   type Task,
   type TaskDetail,
   type WorkflowStep,
-  ALPHA_UPDATES_FLAG,
   WHITEBOARD_VIEW_FLAG,
   isExperimentalFeatureEnabled,
 } from "@fusion/core";
@@ -1069,7 +1068,6 @@ function AppInner() {
     taskDetailChatFirst,
     chatMessageLayout,
     quickChatButtonMode,
-    mobileNavPrimaryItems,
     quickChatCloseOnOutsideClick,
     dashboardKeyboardShortcuts,
     dismissModalsOnOutsideClick,
@@ -1153,9 +1151,8 @@ function AppInner() {
   const evalsEnabled = experimentalFeatures.evalsView === true;
   const ideationEnabled = experimentalFeatures.ideationView === true;
   const whiteboardEnabled = isExperimentalFeatureEnabled({ experimentalFeatures }, WHITEBOARD_VIEW_FLAG);
-  /* FNXC:AlphaUpdates 2026-09-09-18:24: Resolve the global Alpha boundary once per settings refresh so every shell surface switches together without mutating saved mobile navigation preferences. */
-  const alphaUpdatesEnabled = isExperimentalFeatureEnabled({ experimentalFeatures }, ALPHA_UPDATES_FLAG);
-  const alphaMobileDrawerActive = alphaUpdatesEnabled && isMobile && viewMode === "project" && Boolean(currentProject);
+  /* FNXC:OfficialDashboardDesign 2026-09-13-00:38: The former Alpha shell is Fusion's unconditional dashboard design; historical alphaUpdates settings never participate in production composition. */
+  const alphaMobileDrawerActive = isMobile && viewMode === "project" && Boolean(currentProject);
 
   /*
   FNXC:AlphaMobileDrawer 2026-09-10-04:41:
@@ -1186,12 +1183,12 @@ function AppInner() {
   /* FNXC:Navigation 2026-06-22-18:00: The right dock panel is no longer experimental or user-toggleable; tablet/desktop project screens always support it regardless of any stale persisted `rightDock` setting. */
   const rightDockEnabled = true;
   const projectShellPresent = viewMode === "project" && !!currentProject;
-  const alphaDesktopNavigationActive = alphaUpdatesEnabled && viewportMode === "desktop" && projectShellPresent;
+  const alphaDesktopNavigationActive = viewportMode === "desktop" && projectShellPresent;
   /*
   FNXC:AlphaDesktopNavigation 2026-09-11-21:48:
   Desktop Alpha replaces ExecutorStatusBar with the full-width navigation footer. Tablet Alpha and every standard desktop retain ExecutorStatusBar, while the shared shell reservation remains active for whichever single footer owns the bottom edge.
   */
-  const executorFooterVisible = projectShellPresent && !alphaDesktopNavigationActive && (!alphaUpdatesEnabled || viewportMode !== "mobile");
+  const executorFooterVisible = projectShellPresent && !alphaDesktopNavigationActive && viewportMode !== "mobile";
   const shellFooterVisible = executorFooterVisible || alphaDesktopNavigationActive;
   const mobileNavVisible = projectShellPresent;
   /*
@@ -1205,7 +1202,7 @@ function AppInner() {
   */
   useEffect(() => {
     setAlphaMenuOpen(false);
-  }, [alphaUpdatesEnabled, currentProject?.id, isMobile, mobileKeyboardOpen, modalManager.anyModalOpen, viewMode]);
+  }, [currentProject?.id, isMobile, mobileKeyboardOpen, modalManager.anyModalOpen, viewMode]);
   const rightDockActive = rightDockEnabled && !isMobile && projectShellPresent;
   const sidebarActive = leftSidebarNavEnabled && !isMobile && projectShellPresent && !alphaDesktopNavigationActive;
   const alphaDesktopWindows = useAlphaDesktopViewWindows({
@@ -2242,7 +2239,7 @@ function AppInner() {
   });
   const alphaDesktopActiveNavigationId = alphaDesktopWindows.topmost ?? taskView;
   return (
-    <AlphaProvider enabled={alphaUpdatesEnabled}>
+    <AlphaProvider>
     <ConfirmDialogProvider skipConfirmations={skipConfirmationDialogs}>
       <ChatMessageLayoutProvider value={chatMessageLayout}>
       <ChatSubmitOnEnterProvider value={chatSubmitOnEnter}>
@@ -2297,7 +2294,6 @@ function AppInner() {
         onViewAllProjects={handleViewAllProjects}
         projectId={currentProject?.id}
         mobileNavEnabled={isMobile}
-        alphaUpdatesEnabled={alphaUpdatesEnabled}
         leftSidebarNavActive={sidebarActive || alphaDesktopNavigationActive}
         rightDockAvailable={rightDockActive}
         rightDockOpen={rightDock.open}
@@ -2372,11 +2368,10 @@ function AppInner() {
             onSelectProject={handleSelectProject}
             onViewAllProjects={handleViewAllProjects}
             footerVisible={executorFooterVisible}
-            alphaUpdatesEnabled={alphaUpdatesEnabled}
           />
         )}
         <div
-          className={`project-content${shellFooterVisible && (!isMobile || !mobileKeyboardOpen) ? " project-content--with-footer" : ""}${isMobile && mobileNavVisible && !mobileKeyboardOpen && !alphaUpdatesEnabled ? " project-content--with-mobile-nav" : ""}${isMobile && mobileNavVisible && !mobileKeyboardOpen && !modalManager.anyModalOpen && alphaUpdatesEnabled ? " project-content--with-alpha-nav" : ""}`}
+          className={`project-content${shellFooterVisible && (!isMobile || !mobileKeyboardOpen) ? " project-content--with-footer" : ""}${isMobile && mobileNavVisible && !mobileKeyboardOpen && !modalManager.anyModalOpen ? " project-content--with-alpha-nav" : ""}`}
         >
           <AppMainPanelTaskDetailComposition
             state={mainPanelTaskDetail}
@@ -2408,7 +2403,7 @@ function AppInner() {
           Kept-alive Planning Mode renders as a sibling of the MainContent switch inside .project-content (which is position:relative for the hidden out-of-flow overlay state). Keyed by project id + planningEntryGeneration so project switches and payload-carrying planning entry points remount with fresh-open semantics while plain navigation restores the live instance.
           */}
           {viewMode === "project" && currentProject && planningEverOpenedProjectId === currentProject.id && (
-            alphaUpdatesEnabled && isMobile ? (
+            isMobile ? (
               <AlphaPlanningDrawer
                 open={planningViewActive && !modalManager.detailTask}
                 title={t("nav.planning", "Planning")}
@@ -2512,8 +2507,6 @@ function AppInner() {
         hidden={!mobileNavVisible}
         modalOpen={modalManager.anyModalOpen && !alphaSharedModalDrawerOpen}
         keyboardOpen={mobileNavKeyboardOpen}
-        mobileNavPrimaryItems={mobileNavPrimaryItems}
-        alphaUpdatesEnabled={alphaUpdatesEnabled}
         alphaMenuOpen={alphaMenuOpen}
         onAlphaMenuOpenChange={setAlphaMenuOpen}
         onOpenSettings={openSettingsWithNav}

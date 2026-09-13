@@ -136,12 +136,8 @@ describe("LeftSidebarNav", () => {
     expect(onChangeView).toHaveBeenCalledWith("whiteboard");
   });
 
-  it("removes the general History entry only while Alpha is enabled", () => {
-    const legacy = renderSidebar();
-    expect(screen.getByTestId("sidebar-nav-patchnode")).toBeInTheDocument();
-    legacy.unmount();
-
-    renderSidebar({ alphaUpdatesEnabled: true });
+  it("keeps general History out after the official design promotion", () => {
+    renderSidebar();
     expect(screen.queryByTestId("sidebar-nav-patchnode")).toBeNull();
   });
 
@@ -238,7 +234,6 @@ describe("LeftSidebarNav", () => {
     for (const testId of [
       "sidebar-nav-board",
       "sidebar-nav-list",
-      "sidebar-nav-patchnode",
       "sidebar-nav-command-center",
       "sidebar-nav-agents",
       "sidebar-nav-chat",
@@ -301,7 +296,6 @@ describe("LeftSidebarNav", () => {
       "sidebar-nav-command-center",
       "sidebar-nav-board",
       "sidebar-nav-list",
-      "sidebar-nav-patchnode",
       "sidebar-nav-planning",
       "sidebar-nav-missions",
       "sidebar-nav-agents",
@@ -322,8 +316,7 @@ describe("LeftSidebarNav", () => {
     expect(orderedIndices).toEqual([...orderedIndices].sort((a, b) => a - b));
     expect(orderedIndices.every((index) => index >= 0)).toBe(true);
     expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-command-center"))).toBeLessThan(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-agents")));
-    expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-patchnode"))).toBe(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-list")) + 1);
-    expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-planning"))).toBe(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-patchnode")) + 1);
+    expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-planning"))).toBe(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-list")) + 1);
     expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-missions"))).toBe(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-planning")) + 1);
     expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-agents"))).toBe(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-missions")) + 1);
     expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-skills"))).toBe(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-mailbox")) + 1);

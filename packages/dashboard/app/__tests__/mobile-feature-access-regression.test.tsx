@@ -133,40 +133,22 @@ describe("Mobile Feature Access Regression Guard", () => {
     document.documentElement.style.removeProperty("--mobile-nav-height");
   });
 
-  it("list view is independently accessible via mobile nav bar", () => {
+  it("keeps List accessible from the official mobile navigation menu", () => {
     const props = createDefaultMobileNavProps();
-    render(<MobileNavBar {...props} view="board" />);
+    render(<MobileNavBar {...props} view="board" alphaMenuOpen />);
 
-    fireEvent.click(screen.getByTestId("mobile-nav-tab-list"));
+    fireEvent.click(screen.getByTestId("mobile-more-item-list"));
     expect(props.onChangeView).toHaveBeenCalledWith("list");
   });
 
-  it("board view is accessible from Tasks on the standard mobile nav bar", () => {
+  it("keeps Board as the permanent background without duplicate navigation", () => {
     const props = createDefaultMobileNavProps();
-    render(<MobileNavBar {...props} view="list" />);
-
-    fireEvent.click(screen.getByTestId("mobile-nav-tab-tasks"));
-    expect(props.onChangeView).toHaveBeenCalledWith("board");
-  });
-
-  it("retire Board de la pill et du hamburger Alpha sans altérer les préférences standard", () => {
-    const props = createDefaultMobileNavProps();
-    const { rerender } = render(
-      <MobileNavBar
-        {...props}
-        alphaUpdatesEnabled
-        alphaMenuOpen
-        mobileNavPrimaryItems={["tasks", "tasks", "not-a-destination"]}
-      />,
-    );
+    render(<MobileNavBar {...props} view="list" alphaMenuOpen />);
 
     expect(screen.queryByTestId("mobile-nav-tab-tasks")).toBeNull();
     expect(screen.queryByTestId("mobile-more-item-tasks")).toBeNull();
     expect(document.querySelectorAll(".mobile-nav-bar--alpha > .mobile-nav-tab")).toHaveLength(4);
     expect(document.querySelector(".mobile-nav-bar--alpha")?.lastElementChild).toBe(screen.getByTestId("alpha-mobile-menu-trigger"));
-
-    rerender(<MobileNavBar {...props} mobileNavPrimaryItems={["tasks", "tasks", "not-a-destination"]} />);
-    expect(screen.getByTestId("mobile-nav-tab-tasks")).toBeInTheDocument();
   });
 
   it("mobile Header exposes New Task without the retired view toggle", () => {
@@ -178,11 +160,11 @@ describe("Mobile Feature Access Regression Guard", () => {
     expect(onNewTask).toHaveBeenCalledOnce();
   });
 
-  it("agents view is accessible via mobile nav bar", () => {
+  it("agents view is accessible via the mobile navigation menu", () => {
     const props = createDefaultMobileNavProps();
-    render(<MobileNavBar {...props} />);
+    render(<MobileNavBar {...props} alphaMenuOpen />);
 
-    fireEvent.click(screen.getByTestId("mobile-nav-tab-agents"));
+    fireEvent.click(screen.getByTestId("mobile-more-item-agents"));
     expect(props.onChangeView).toHaveBeenCalledWith("agents");
   });
 
@@ -212,17 +194,15 @@ describe("Mobile Feature Access Regression Guard", () => {
     expect(onViewAllProjects).toHaveBeenCalledOnce();
   });
 
-  it("more sheet provides access to secondary mobile features", () => {
-    render(<MobileNavBar {...createDefaultMobileNavProps()} />);
-
-    fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
+  it("official menu provides access to secondary mobile features", () => {
+    render(<MobileNavBar {...createDefaultMobileNavProps()} alphaMenuOpen />);
 
     expect(screen.getByTestId("mobile-nav-tab-mailbox")).toBeDefined();
     expect(screen.queryByTestId("mobile-more-item-mailbox")).toBeNull();
     expect(screen.getByTestId("mobile-more-item-git")).toBeDefined();
     expect(screen.getByTestId("mobile-more-item-terminal")).toBeDefined();
     expect(screen.getByTestId("mobile-more-item-files")).toBeDefined();
-    expect(screen.getByTestId("mobile-more-item-planning")).toBeDefined();
+    expect(screen.queryByTestId("mobile-more-item-planning")).toBeNull();
     expect(screen.getByTestId("mobile-more-item-workflow")).toBeDefined();
     expect(screen.getByTestId("mobile-more-item-schedules")).toBeDefined();
     expect(screen.getByTestId("mobile-more-item-github")).toBeDefined();
@@ -233,21 +213,8 @@ describe("Mobile Feature Access Regression Guard", () => {
     expect(screen.getByTestId("mobile-more-item-settings")).toBeDefined();
   });
 
-  it("keeps every configurable destination reachable when a custom footer omits one", () => {
-    render(
-      <MobileNavBar
-        {...createDefaultMobileNavProps()}
-        mobileNavPrimaryItems={["command-center", "tasks", "agents", "planning", "chat", "mailbox", "skills"]}
-        showSkillsTab={false}
-        experimentalFeatures={{ insights: false, memoryView: false }}
-      />,
-    );
-
-    expect(screen.queryByTestId("mobile-nav-tab-missions")).toBeNull();
-    expect(screen.queryByTestId("mobile-nav-tab-skills")).toBeNull();
-    expect(screen.getByTestId("mobile-nav-tab-more")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
+  it("keeps enabled official destinations reachable without persisted footer customization", () => {
+    render(<MobileNavBar {...createDefaultMobileNavProps()} alphaMenuOpen showSkillsTab={false} experimentalFeatures={{ insights: false, memoryView: false }} />);
     expect(screen.getByTestId("mobile-more-item-missions")).toBeInTheDocument();
     expect(screen.queryByTestId("mobile-more-item-skills")).toBeNull();
   });
@@ -256,7 +223,6 @@ describe("Mobile Feature Access Regression Guard", () => {
     const props = createDefaultMobileNavProps();
     render(<MobileNavBar {...props} />);
 
-    fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
     expect(screen.queryByTestId("mobile-more-item-reliability")).toBeNull();
 
     fireEvent.click(screen.getByTestId("mobile-nav-tab-command-center"));
@@ -267,7 +233,6 @@ describe("Mobile Feature Access Regression Guard", () => {
     const props = createDefaultMobileNavProps();
     render(<MobileNavBar {...props} />);
 
-    fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
     expect(screen.queryByTestId("mobile-more-item-nodes")).toBeNull();
 
     fireEvent.click(screen.getByTestId("mobile-nav-tab-command-center"));
@@ -281,7 +246,6 @@ describe("Mobile Feature Access Regression Guard", () => {
     fireEvent.click(screen.getByTestId("mobile-nav-tab-chat"));
     expect(props.onChangeView).toHaveBeenCalledWith("chat");
 
-    fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
     expect(screen.queryByTestId("mobile-more-item-chat")).toBeNull();
   });
 
@@ -492,13 +456,13 @@ describe("Mobile Feature Access Regression Guard", () => {
         {...createDefaultMobileNavProps()}
         view="missions"
         onChangeView={mobileNavOnChangeView}
+        alphaMenuOpen
       />,
     );
 
-    fireEvent.click(screen.getByTestId("mobile-nav-tab-tasks"));
-
-    expect(mobileNavOnChangeView).toHaveBeenCalledWith("board");
-    fireEvent.click(screen.getByTestId("mobile-nav-tab-agents"));
+    fireEvent.click(screen.getByTestId("mobile-more-item-list"));
+    expect(mobileNavOnChangeView).toHaveBeenCalledWith("list");
+    fireEvent.click(screen.getByTestId("mobile-more-item-agents"));
     expect(mobileNavOnChangeView).toHaveBeenCalledWith("agents");
 
     mobileNav.unmount();

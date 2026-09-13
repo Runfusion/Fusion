@@ -140,7 +140,6 @@ interface ColumnProps {
   onOpenGroupModal?: (groupId: string) => void;
   addToast: (message: string, type?: ToastType) => void;
   onQuickCreate?: (input: TaskCreateInput) => Promise<Task | void>;
-  onNewTask?: (workflowId?: string | null) => void;
   autoMerge?: boolean;
   /** Project merge strategy for Task Detail-equivalent card context actions. */
   mergeStrategy?: string;
@@ -235,13 +234,11 @@ interface ColumnProps {
   workflowContextMenuColumns?: readonly TaskContextMenuColumnMetadata[];
   /** Per-task workflow columns for aggregate Board cards whose tasks come from different workflows. */
   taskContextMenuColumnsByTaskId?: ReadonlyMap<string, readonly TaskContextMenuColumnMetadata[]>;
-  /** Alpha boundary for relocating History to complete-lane headers. */
-  alphaUpdatesEnabled?: boolean;
   /** Opens the existing History route. */
   onOpenHistory?: () => void;
 }
 
-function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeGrouping, alphaUpdatesEnabled = false, onOpenHistory, onMoveTask, onPauseTask, onUnpauseTask, onResetTask, onDuplicateTask, onMergeTask, onOpenDetail, onOpenRefine, onOpenGroupModal, addToast, onQuickCreate, onNewTask, autoMerge, mergeStrategy = "direct", onToggleAutoMerge, planAutoApproveEnabled, onTogglePlanAutoApprove, globalPaused, onUpdateTask, onRetryTask, onOpenChatWithPrefill, onRevertTask, onReviseTask, onDeleteTask, sortMode, onSortModeChange, doneSortMode, onDoneSortModeChange, totalTaskCount, serverHasMore, serverLoadingMore, serverPaginationError, serverProgressKey, paginationCollectionKey, paginationActive = true, onLoadMoreServer, onRetryServer, allTasks, availableModels, onPlanningMode, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, isSearchActive, onOpenMission, lastFetchTimeMs, taskCardFieldDefs, taskWorkflowBadges, blockerFanoutMap, prAuthAvailable, holdTaskIds, workflowMode, workflowId, workflowOptions, defaultWorkflowId, columnDisplayName, columnDescription, columnFlags, workflowContextMenuColumns, taskContextMenuColumnsByTaskId }: ColumnProps) {
+function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeGrouping, onOpenHistory, onMoveTask, onPauseTask, onUnpauseTask, onResetTask, onDuplicateTask, onMergeTask, onOpenDetail, onOpenRefine, onOpenGroupModal, addToast, onQuickCreate, autoMerge, mergeStrategy = "direct", onToggleAutoMerge, planAutoApproveEnabled, onTogglePlanAutoApprove, globalPaused, onUpdateTask, onRetryTask, onOpenChatWithPrefill, onRevertTask, onReviseTask, onDeleteTask, sortMode, onSortModeChange, doneSortMode, onDoneSortModeChange, totalTaskCount, serverHasMore, serverLoadingMore, serverPaginationError, serverProgressKey, paginationCollectionKey, paginationActive = true, onLoadMoreServer, onRetryServer, allTasks, availableModels, onPlanningMode, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, isSearchActive, onOpenMission, lastFetchTimeMs, taskCardFieldDefs, taskWorkflowBadges, blockerFanoutMap, prAuthAvailable, holdTaskIds, workflowMode, workflowId, workflowOptions, defaultWorkflowId, columnDisplayName, columnDescription, columnFlags, workflowContextMenuColumns, taskContextMenuColumnsByTaskId }: ColumnProps) {
   const { t } = useTranslation("app");
   // Anchor the board.rejection.* catalog keys for the i18next extractor (it
   // scopes `t` to the useTranslation binding, so the shared translateRejection
@@ -612,7 +609,7 @@ function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeG
             : <><span>{activeTaskCount}</span>/<span>{displayedTaskCount}</span></>}
         </span>
         {/* FNXC:AlphaUpdates 2026-09-09-18:24: Every resolved complete lane, including custom empty lanes, owns the sole Alpha History entry point. */}
-        {alphaUpdatesEnabled && isCompleteColumn && onOpenHistory && (
+        {isCompleteColumn && onOpenHistory && (
           <AlphaButton
             type="button"
             className="btn btn-icon btn-sm column-history-button"
@@ -640,13 +637,7 @@ function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeG
             <span className="toggle-label">{t("column.autoMerge", "Auto-merge")}</span>
           </label>
         )}
-        {/* FNXC:AlphaQuickEntry 2026-09-12-00:36: Alpha owns one global New Task action in Header, so column headers must not retain a duplicate button or click shell; legacy columns keep their existing action. */}
-        {!alphaUpdatesEnabled && onNewTask && (
-          <AlphaButton className="btn btn-task-create btn-sm" onClick={() => onNewTask()}>
-            + {t("column.newTask", "New Task")}
-          </AlphaButton>
-        )}
-
+        {/* FNXC:OfficialDashboardDesign 2026-09-13-00:38: The Header owns the sole New Task action, so column headers retain no duplicate button or click shell. */}
         {hasColumnMenu && (
           <div className="column-menu" ref={menuRef}>
             <AlphaButton

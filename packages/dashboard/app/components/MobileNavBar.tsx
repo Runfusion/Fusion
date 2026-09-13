@@ -42,7 +42,7 @@ import { NavigationHistoryContext } from "../hooks/useNavigationHistory";
 import type { TaskView } from "../hooks/useViewState";
 import { buildPluginTaskViewId, isPluginViewId } from "../plugins/pluginViewRegistry";
 import { getPluginDashboardViewNavIcon } from "./pluginNavIcon";
-import { MOBILE_NAV_SELECTABLE_ITEMS, resolveMobileNavPrimaryItems, type MobileNavSelectableItem } from "../../../core/src/board/mobile-nav-primary-items";
+import { MOBILE_NAV_SELECTABLE_ITEMS, type MobileNavSelectableItem } from "../../../core/src/board/mobile-nav-primary-items";
 
 export interface PublishedMobileNavHeightInput {
   navOffsetHeight: number;
@@ -140,10 +140,6 @@ export interface MobileNavBarProps {
   };
   pluginDashboardViews?: PluginDashboardViewEntry[];
   shellConnectionControl?: ReactNode;
-  /** Ordered quick-action tabs; invalid values resolve to the safe default. */
-  mobileNavPrimaryItems?: string[];
-  /** Enables the fixed four-destination Alpha pill and its trailing overflow trigger. */
-  alphaUpdatesEnabled?: boolean;
   /** App-owned open state for the Alpha navigation popover. */
   alphaMenuOpen?: boolean;
   /** Updates the App-owned Alpha popover state. */
@@ -200,8 +196,6 @@ export function MobileNavBar({
   experimentalFeatures,
   pluginDashboardViews = [],
   shellConnectionControl,
-  mobileNavPrimaryItems,
-  alphaUpdatesEnabled = false,
   alphaMenuOpen = false,
   onAlphaMenuOpenChange,
 }: MobileNavBarProps) {
@@ -226,7 +220,8 @@ export function MobileNavBar({
   const dragOffsetRef = useRef(0);
   const menuSurfaceRef = useRef<HTMLDivElement | null>(null);
   const menuTriggerRef = useRef<HTMLButtonElement | null>(null);
-  const isMenuOpen = alphaUpdatesEnabled ? alphaMenuOpen : isMoreOpen;
+  const officialDesignEnabled = true;
+  const isMenuOpen = alphaMenuOpen;
 
   /*
   FNXC:AlphaUpdates 2026-09-11-15:01:
@@ -236,7 +231,7 @@ export function MobileNavBar({
     setIsMoreOpen(false);
     setIsScriptsSubmenuOpen(false);
     onAlphaMenuOpenChange?.(false);
-  }, [alphaUpdatesEnabled, mode, onAlphaMenuOpenChange, projectId]);
+  }, [mode, onAlphaMenuOpenChange, projectId]);
 
   const scriptEntries = useMemo(
     () => [...scripts].sort((a, b) => a.name.localeCompare(b.name)),
@@ -276,13 +271,9 @@ export function MobileNavBar({
   const closeMore = useCallback(() => {
     resetSheetDrag();
     setHasSheetDragged(false);
-    if (alphaUpdatesEnabled) {
-      onAlphaMenuOpenChange?.(false);
-      menuTriggerRef.current?.focus();
-    } else {
-      setIsMoreOpen(false);
-    }
-  }, [alphaUpdatesEnabled, onAlphaMenuOpenChange, resetSheetDrag]);
+    onAlphaMenuOpenChange?.(false);
+    menuTriggerRef.current?.focus();
+  }, [onAlphaMenuOpenChange, resetSheetDrag]);
 
   /*
   FNXC:MobileNav 2026-07-16-14:30:
@@ -312,7 +303,7 @@ export function MobileNavBar({
   */
   useEffect(() => {
     const sheet = sheetRef.current;
-    if (alphaUpdatesEnabled || !isMoreOpen || !sheet) return;
+    if (officialDesignEnabled || !isMoreOpen || !sheet) return;
 
     const onTouchMove = (event: TouchEvent) => {
       const drag = sheetDragRef.current;
@@ -332,7 +323,7 @@ export function MobileNavBar({
 
     sheet.addEventListener("touchmove", onTouchMove, { passive: false });
     return () => sheet.removeEventListener("touchmove", onTouchMove);
-  }, [alphaUpdatesEnabled, isMoreOpen]);
+  }, [isMoreOpen, officialDesignEnabled]);
 
   const handleSheetTouchStart = useCallback((event: React.TouchEvent<HTMLDivElement>) => {
     const sheet = sheetRef.current;
@@ -385,9 +376,7 @@ export function MobileNavBar({
   useEffect(() => {
     if (!isMenuOpen) return;
 
-    if (alphaUpdatesEnabled) {
-      menuSurfaceRef.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
-    }
+    menuSurfaceRef.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") dismissMore();
@@ -399,7 +388,7 @@ export function MobileNavBar({
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target instanceof Element ? event.target : null;
       if (
-        !alphaUpdatesEnabled
+        !officialDesignEnabled
         || menuSurfaceRef.current?.contains(event.target as Node)
         || target?.closest(".alpha-mobile-menu-trigger")
       ) return;
@@ -412,7 +401,7 @@ export function MobileNavBar({
       document.removeEventListener("keydown", onKeyDown);
       document.removeEventListener("pointerdown", onPointerDown);
     };
-  }, [alphaUpdatesEnabled, dismissMore, isMenuOpen]);
+  }, [dismissMore, isMenuOpen, officialDesignEnabled]);
 
   useLayoutEffect(() => {
     /*
@@ -460,7 +449,7 @@ export function MobileNavBar({
       observer?.disconnect();
       document.documentElement.style.removeProperty("--mobile-nav-height");
     };
-  }, [alphaUpdatesEnabled, hidden, modalOpen, mode]);
+  }, [hidden, modalOpen, mode]);
 
   if (mode !== "mobile" || modalOpen || hidden) {
     return null;
@@ -490,7 +479,6 @@ export function MobileNavBar({
     .filter((entry) => !topLevelPluginViewKeys.has(`${entry.pluginId}:${entry.view.viewId}`))
     .sort((a, b) => (a.view.order ?? Number.MAX_SAFE_INTEGER) - (b.view.order ?? Number.MAX_SAFE_INTEGER));
 
-  const { primaryItems, omittedItems } = resolveMobileNavPrimaryItems({ mobileNavPrimaryItems });
   /*
   FNXC:Navigation 2026-07-17-00:00:
   Selectable mobile destinations use one registry so an available destination is rendered exactly once:
@@ -553,11 +541,9 @@ export function MobileNavBar({
   Board is the permanent Alpha mobile background, not a navigation destination. Keep the persisted standard-mobile `tasks` preference intact while excluding Tasks from both Alpha's four direct destinations and its overflow registry.
   */
   const alphaPrimaryItems: MobileNavSelectableItem[] = ["command-center", "planning", "chat", "mailbox"];
-  const effectivePrimaryItems = (alphaUpdatesEnabled ? alphaPrimaryItems : primaryItems)
-    .filter((item) => destinationRegistry[item].isAvailable);
-  const effectiveOmittedItems = (alphaUpdatesEnabled
-    ? MOBILE_NAV_SELECTABLE_ITEMS.filter((item) => !alphaPrimaryItems.includes(item) && item !== "patchnode" && item !== "tasks")
-    : omittedItems)
+  const effectivePrimaryItems = alphaPrimaryItems.filter((item) => destinationRegistry[item].isAvailable);
+  const effectiveOmittedItems = MOBILE_NAV_SELECTABLE_ITEMS
+    .filter((item) => !alphaPrimaryItems.includes(item) && item !== "patchnode" && item !== "tasks")
     .filter((item) => destinationRegistry[item].isAvailable);
   const isMoreActive = effectiveOmittedItems.some((item) => destinationRegistry[item].isActive)
     || view === "graph"
@@ -567,7 +553,7 @@ export function MobileNavBar({
     const destination = destinationRegistry[item];
     const isPrimary = surface === "primary";
     const label = t(destination.labelKey, destination.fallback);
-    if (isPrimary) return <button key={item} type="button" className={`mobile-nav-tab${destination.isActive ? " mobile-nav-tab--active" : ""}`} data-testid={`mobile-nav-tab-${item}`} role={alphaUpdatesEnabled ? undefined : "tab"} aria-label={label} aria-current={alphaUpdatesEnabled && destination.isActive ? "page" : undefined} aria-selected={alphaUpdatesEnabled ? undefined : destination.isActive} onClick={() => destination.navigate("primary")}><span className="mobile-nav-tab-icon-wrapper">{destination.icon}{destination.indicator && <span className="status-dot status-dot--pending mobile-nav-chat-unread-dot" aria-label={destination.indicatorLabel} />}</span>{!alphaUpdatesEnabled && <span className="mobile-nav-tab-label">{label}</span>}{destination.badge && destination.badge > 0 ? <span className="mobile-nav-tab-badge" aria-label={destination.badgeLabel}>{formatCount(destination.badge)}</span> : null}{destination.alpha ? <span className="mobile-nav-tab-badge">{t("common.alpha", "Alpha")}</span> : null}</button>;
+    if (isPrimary) return <button key={item} type="button" className={`mobile-nav-tab${destination.isActive ? " mobile-nav-tab--active" : ""}`} data-testid={`mobile-nav-tab-${item}`} role={undefined} aria-label={label} aria-current={destination.isActive ? "page" : undefined} aria-selected={undefined} onClick={() => destination.navigate("primary")}><span className="mobile-nav-tab-icon-wrapper">{destination.icon}{destination.indicator && <span className="status-dot status-dot--pending mobile-nav-chat-unread-dot" aria-label={destination.indicatorLabel} />}</span>{destination.badge && destination.badge > 0 ? <span className="mobile-nav-tab-badge" aria-label={destination.badgeLabel}>{formatCount(destination.badge)}</span> : null}{destination.alpha ? <span className="mobile-nav-tab-badge">{t("common.alpha", "Alpha")}</span> : null}</button>;
     return <button key={item} type="button" className="mobile-more-item" data-testid={destination.moreTestId} onClick={() => destination.navigate("more")}><span className="mobile-more-item-icon-wrapper">{destination.icon}{destination.indicator && <span className="status-dot status-dot--pending mobile-more-item-icon-dot" aria-label={destination.indicatorLabel} />}</span><span>{label}</span>{destination.badge && destination.badge > 0 ? <span className="mobile-more-item-badge" aria-label={destination.badgeLabel}>{formatCount(destination.badge)}</span> : null}{destination.alpha ? <span className="mobile-more-item-badge">{t("common.alpha", "Alpha")}</span> : null}</button>;
   };
 
@@ -575,12 +561,12 @@ export function MobileNavBar({
     <>
       <nav
         ref={navRef}
-        className={`mobile-nav-bar${alphaUpdatesEnabled ? " mobile-nav-bar--alpha" : ""}${footerVisible ? " mobile-nav-bar--with-footer" : ""}${keyboardOpen ? " mobile-nav-bar--keyboard-open" : ""}`}
-        role={alphaUpdatesEnabled ? "navigation" : "tablist"}
+        className={`mobile-nav-bar mobile-nav-bar--alpha${footerVisible ? " mobile-nav-bar--with-footer" : ""}${keyboardOpen ? " mobile-nav-bar--keyboard-open" : ""}`}
+        role="navigation"
         aria-label={t("nav.primaryNavAriaLabel", "Primary navigation")}
       >
         {effectivePrimaryItems.map((item) => renderSelectableItem(item, "primary"))}
-        {!alphaUpdatesEnabled && <button
+        {!officialDesignEnabled && <button
           type="button"
           className={`mobile-nav-tab${view === "list" ? " mobile-nav-tab--active" : ""}`}
           data-testid="mobile-nav-tab-list"
@@ -592,7 +578,7 @@ export function MobileNavBar({
           <span className="mobile-nav-tab-label">{t("nav.list", "List")}</span>
         </button>}
 
-        {!alphaUpdatesEnabled && topLevelPrimaryPluginViews.map((entry) => {
+        {!officialDesignEnabled && topLevelPrimaryPluginViews.map((entry) => {
           const pluginTaskView = buildPluginTaskViewId(entry.pluginId, entry.view.viewId);
           const PluginIcon = getPluginDashboardViewNavIcon(entry);
           return (
@@ -613,7 +599,7 @@ export function MobileNavBar({
           );
         })}
 
-        {alphaUpdatesEnabled && (
+        {officialDesignEnabled && (
           <button
             ref={menuTriggerRef}
             className="alpha-mobile-menu-trigger"
@@ -633,7 +619,7 @@ export function MobileNavBar({
           </button>
         )}
 
-        {!alphaUpdatesEnabled && <button
+        {!officialDesignEnabled && <button
           type="button"
           className={`mobile-nav-tab${isMoreActive ? " mobile-nav-tab--active" : ""}`}
           data-testid="mobile-nav-tab-more"
@@ -659,25 +645,25 @@ export function MobileNavBar({
 
       {isMenuOpen && (
         <>
-          {!alphaUpdatesEnabled && <div
+          {!officialDesignEnabled && <div
             className="mobile-more-sheet-backdrop"
             onClick={() => dismissMore()}
           />}
           <div
             ref={(element) => {
               menuSurfaceRef.current = element;
-              sheetRef.current = alphaUpdatesEnabled ? null : element;
+              sheetRef.current = officialDesignEnabled ? null : element;
             }}
-            id={alphaUpdatesEnabled ? "alpha-mobile-navigation-popover" : undefined}
-            className={alphaUpdatesEnabled ? "alpha-mobile-navigation-popover" : `mobile-more-sheet${isSheetDragging ? " mobile-more-sheet--dragging" : ""}${hasSheetDragged ? " mobile-more-sheet--gesture-ready" : ""}`}
+            id={officialDesignEnabled ? "alpha-mobile-navigation-popover" : undefined}
+            className={officialDesignEnabled ? "alpha-mobile-navigation-popover" : `mobile-more-sheet${isSheetDragging ? " mobile-more-sheet--dragging" : ""}${hasSheetDragged ? " mobile-more-sheet--gesture-ready" : ""}`}
             role="menu"
             aria-label={t("nav.moreSheetTitle", "Navigate")}
-            style={alphaUpdatesEnabled ? undefined : { transform: `translateY(${dragOffset}px)` }}
-            onTouchStart={alphaUpdatesEnabled ? undefined : handleSheetTouchStart}
-            onTouchEnd={alphaUpdatesEnabled ? undefined : finishSheetDrag}
-            onTouchCancel={alphaUpdatesEnabled ? undefined : resetSheetDrag}
+            style={officialDesignEnabled ? undefined : { transform: `translateY(${dragOffset}px)` }}
+            onTouchStart={officialDesignEnabled ? undefined : handleSheetTouchStart}
+            onTouchEnd={officialDesignEnabled ? undefined : finishSheetDrag}
+            onTouchCancel={officialDesignEnabled ? undefined : resetSheetDrag}
           >
-            {!alphaUpdatesEnabled && <div className="mobile-more-sheet-handle" aria-hidden="true" />}
+            {!officialDesignEnabled && <div className="mobile-more-sheet-handle" aria-hidden="true" />}
             <div className="mobile-more-sheet-title">{t("nav.moreSheetTitle", "Navigate")}</div>
 
             {shellConnectionControl ? (
@@ -779,7 +765,7 @@ export function MobileNavBar({
 
 
 
-            {alphaUpdatesEnabled && (
+            {officialDesignEnabled && (
               <button type="button" className="mobile-more-item" data-testid="mobile-more-item-list" onClick={() => handleMoreAction(() => onChangeView("list"))}>
                 <List />
                 <span>{t("nav.list", "List")}</span>

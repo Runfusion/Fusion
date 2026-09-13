@@ -3958,7 +3958,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
 
 export function ChatView(props: ChatViewProps) {
   return (
-    <AlphaBoundary enabled={props.experimentalFeatures?.alphaUpdates === true}>
+    <AlphaBoundary>
       <ChatViewContent {...props} />
     </AlphaBoundary>
   );
