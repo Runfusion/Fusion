@@ -44,6 +44,8 @@ export interface FusionToolBridge {
   mcpServer: AcpMcpServer;
   dispose: () => Promise<void>;
   toolCount: number;
+  /** Names of the tools actually registered on this bridge (post-filter). */
+  toolNames: ReadonlyArray<string>;
 }
 
 export interface FusionToolBridgeOptions {
@@ -62,8 +64,9 @@ const FUSION_TOOL_CATEGORY: FusionCategory = "task_agent_mutation";
 
 export function toolsToMcpToolDefs(tools: ReadonlyArray<ToolLike> | undefined): McpToolDef[] {
   if (!Array.isArray(tools)) return [];
+  // FNXC:ClaudeAcp 2026-09-13-01:50: Never advertise a schema the bridge cannot execute.
   return tools
-    .filter((tool) => tool && typeof tool.name === "string" && tool.name.trim().length > 0 && !BUILT_IN_TOOL_NAMES.has(tool.name))
+    .filter((tool) => tool && typeof tool.name === "string" && tool.name.trim().length > 0 && !BUILT_IN_TOOL_NAMES.has(tool.name) && typeof tool.execute === "function")
     .map((tool) => ({
       name: tool.name,
       description: typeof tool.description === "string" ? tool.description : "",
@@ -258,6 +261,7 @@ export async function startFusionToolBridge(
 
   return {
     toolCount: defs.length,
+    toolNames: defs.map((tool) => tool.name),
     mcpServer: {
       name: "fusion-custom-tools",
       command: process.execPath,

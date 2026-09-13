@@ -35,12 +35,18 @@ function addFusionToolNamingGuidance(
 ): string {
   if (!bridgeActive) return prompt;
   const registered = new Set(registeredToolNames ?? []);
-  const names = [...new Set(prompt.match(/\bfn_[a-z0-9_]+\b/g) ?? [])].filter((name) =>
+  // FNXC:AcpToolNaming 2026-09-13-02:18: Match complete MCP-valid fn_* tokens, including casing and hyphens.
+  const names = [...new Set(prompt.match(/(?<![A-Za-z0-9_-])fn_[A-Za-z0-9_-]+(?![A-Za-z0-9_-])/g) ?? [])].filter((name) =>
     registered.has(name),
   );
   if (names.length === 0) return prompt;
-  const mappings = names.map((name) => `${name} → mcp__fusion_custom_tools__${name}`).join(", ");
-  return `${prompt}\n\nACP TOOL BRIDGE: ${mappings}. If you need to call a mapped tool, call the visible full MCP schema directly. Do not search for CLI, REST, source-code, or filesystem substitutes merely because the unprefixed alias is absent.`;
+  const mappings = names
+    .map(
+      (name) =>
+        `${name} is available through the "fusion-custom-tools" MCP server (schema commonly visible as mcp__fusion-custom-tools__${name})`,
+    )
+    .join("; ");
+  return `${prompt}\n\nACP TOOL BRIDGE: ${mappings}. If you need to call a mapped tool, call the schema this client actually lists for it. Do not search for CLI, REST, source-code, or filesystem substitutes merely because the unprefixed alias is absent.`;
 }
 
 export class AcpRuntimeAdapter implements AgentRuntime {

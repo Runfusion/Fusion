@@ -77,7 +77,12 @@ describe("AcpRuntimeAdapter (U3)", () => {
       connection: {},
       sessionId: "bridge-session",
       fusionToolBridgeActive: true,
-      fusionToolBridgeToolNames: ["fn_task_prompt_write", "fn_task_list"],
+      fusionToolBridgeToolNames: [
+        "fn_task_prompt_write",
+        "fn_task_list",
+        "fn_task_create-v2",
+        "fn_task_createV2",
+      ],
       resetTurn: vi.fn(),
     } as unknown as AcpSession;
 
@@ -87,7 +92,7 @@ describe("AcpRuntimeAdapter (U3)", () => {
       expect(blocks).toEqual(expect.arrayContaining([
         expect.objectContaining({
           type: "text",
-          text: expect.stringContaining("mcp__fusion_custom_tools__fn_task_prompt_write"),
+          text: expect.stringContaining("mcp__fusion-custom-tools__fn_task_prompt_write"),
         }),
       ]));
 
@@ -96,7 +101,7 @@ describe("AcpRuntimeAdapter (U3)", () => {
         "List with fn_task_list, then call fn_task_list again.",
       );
       const repeatedText = (promptSpy.mock.calls[1]?.[2]?.[0] as { text?: string })?.text ?? "";
-      expect(repeatedText.match(/mcp__fusion_custom_tools__fn_task_list/g)).toHaveLength(1);
+      expect(repeatedText.match(/mcp__fusion-custom-tools__fn_task_list/g)).toHaveLength(1);
 
       await adapter.promptWithFallback(session, "A bridged prompt without a Fusion tool name.");
       const bridgedPlainBlocks = promptSpy.mock.calls[2]?.[2] ?? [];
@@ -126,8 +131,9 @@ describe("AcpRuntimeAdapter (U3)", () => {
         "Call fn_task_list, but never call fn_task_create.",
       );
       const partialText = (promptSpy.mock.calls[4]?.[2]?.[0] as { text?: string })?.text ?? "";
-      expect(partialText).toContain("fn_task_list → mcp__fusion_custom_tools__fn_task_list");
-      expect(partialText).not.toContain("mcp__fusion_custom_tools__fn_task_create");
+      expect(partialText).toContain("fn_task_list is available through the \"fusion-custom-tools\" MCP server");
+      expect(partialText).toContain("schema commonly visible as mcp__fusion-custom-tools__fn_task_list");
+      expect(partialText).not.toContain("mcp__fusion-custom-tools__fn_task_create");
       // All mentioned names missing from the session → prompt stays unchanged.
       await adapter.promptWithFallback(
         { ...session, fusionToolBridgeToolNames: ["fn_other"] } as unknown as AcpSession,
@@ -142,8 +148,15 @@ describe("AcpRuntimeAdapter (U3)", () => {
         "Do not call fn_task_create in this step.",
       );
       const negatedText = (promptSpy.mock.calls[6]?.[2]?.[0] as { text?: string })?.text ?? "";
-      expect(negatedText).toContain("If you need to call a mapped tool, call the visible full MCP schema directly.");
+      expect(negatedText).toContain("If you need to call a mapped tool, call the schema this client actually lists for it.");
       expect(negatedText).not.toMatch(/^Do not call fn_task_create in this step\.\n\nACP TOOL BRIDGE: .+\. Call the visible/);
+      await adapter.promptWithFallback(
+        session,
+        "Call fn_task_create-v2 and fn_task_createV2.",
+      );
+      const extendedNameText = (promptSpy.mock.calls[7]?.[2]?.[0] as { text?: string })?.text ?? "";
+      expect(extendedNameText).toContain("mcp__fusion-custom-tools__fn_task_create-v2");
+      expect(extendedNameText).toContain("mcp__fusion-custom-tools__fn_task_createV2");
     } finally {
       promptSpy.mockRestore();
     }

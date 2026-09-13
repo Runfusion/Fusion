@@ -74,6 +74,34 @@ interface TurnAccum {
   text: string;
 }
 
+
+/**
+ * FNXC:GrokMcpToolNaming 2026-09-13-01:29:
+ * Grok Build qualifies MCP tools as `<server>__<tool>`, so bridge-backed
+ * sessions map each registered bare `fn_*` reference to the exact
+ * `fusion-custom-tools__fn_*` schema exposed by this client.
+ */
+function addFusionToolNamingGuidance(
+  prompt: string,
+  bridgeActive: boolean,
+  registeredToolNames?: ReadonlyArray<string>,
+): string {
+  if (!bridgeActive) return prompt;
+  const registered = new Set(registeredToolNames ?? []);
+  // FNXC:GrokMcpToolNaming 2026-09-13-02:18: Match complete MCP-valid fn_* tokens, including casing and hyphens.
+  const names = [...new Set(prompt.match(/(?<![A-Za-z0-9_-])fn_[A-Za-z0-9_-]+(?![A-Za-z0-9_-])/g) ?? [])].filter((name) =>
+    registered.has(name),
+  );
+  if (names.length === 0) return prompt;
+  const mappings = names
+    .map(
+      (name) =>
+        `${name} is available through the "fusion-custom-tools" MCP server (schema name fusion-custom-tools__${name})`,
+    )
+    .join("; ");
+  return `${prompt}\n\nACP TOOL BRIDGE: ${mappings}. If you need to call a mapped tool, call the schema this client actually lists for it. Do not search for CLI, REST, source-code, or filesystem substitutes merely because the unprefixed alias is absent.`;
+}
+
 interface SessionResources {
   toolBridge?: FusionToolBridge | null;
   toolBridgeFailure?: "mcp-schema-server-missing" | "bridge-start-failed";
@@ -391,7 +419,13 @@ export class GrokRuntimeAdapter implements AgentRuntime {
     }
 
     try {
-      const result = await acp!.promptWithFallback(session, prompt, options);
+      const bridge = (session as SessionWithExtras)[SESSION_RESOURCES]?.toolBridge ?? null;
+      const effectivePrompt = addFusionToolNamingGuidance(
+        prompt,
+        bridge !== null,
+        bridge?.toolNames,
+      );
+      const result = await acp!.promptWithFallback(session, effectivePrompt, options);
       const assistantText = getTurnAccum(grokSession).text;
       if (assistantText.length > 0) {
         appendMessage(grokSession, "assistant", assistantText);
