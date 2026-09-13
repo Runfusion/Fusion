@@ -87,9 +87,13 @@ export interface ArchivedTaskHistoryInspection {
   malformedColdEntryIds: string[];
 }
 
-/** Read every historical carrier without mutating either source.
-DELIBERATE-LITERAL: the `column: "archived"` query filter is intentional here — this function
-specifically reads the historical sentinel column to inspect archived task history. */
+/**
+ * Read every historical carrier without mutating either source.
+ *
+ * FNXC:TaskArchiveRestoration 2026-09-06-09:47:
+ * DELIBERATE-LITERAL: `archived` is the physical legacy sentinel being inspected for restoration;
+ * it is historical storage state, not a configurable live workflow lane.
+ */
 export async function inspectArchivedTaskHistory(store: TaskStore): Promise<ArchivedTaskHistoryInspection> {
   const layer = store.asyncLayer;
   if (!layer?.projectId?.trim()) throw new Error("Archive history inspection requires an exact project identity");
@@ -123,6 +127,11 @@ export async function inspectArchivedTaskHistory(store: TaskStore): Promise<Arch
   return { liveSentinels, coldEntries, malformedColdEntryIds };
 }
 
+/**
+ * FNXC:TaskArchiveRemoval 2026-09-06-00:46:
+ * DELIBERATE-LITERAL: `done` is only the degraded completion fallback after task-scoped workflow
+ * resolution fails or exposes no Complete lane. The resolved workflow role remains authoritative.
+ */
 async function resolveDoneColumn(store: TaskStore, taskId: string): Promise<Column> {
   try {
     const workflow = await resolveWorkflowIrForTask(store, taskId);
@@ -153,10 +162,9 @@ async function mirrorReintegratedTask(store: TaskStore, taskId: string): Promise
  * page nor the cold-storage opportunity forever. Failed rows yield after the caller's shared
  * starvation budget, then retry on a later traversal so transient repairs remain recoverable.
  *
- * DELIBERATE-LITERAL: the `archived` literals are intentional here — this pass specifically
- * operates on the historical sentinel column: the `column: "archived"` query filter reads live
- * archived rows, and the `live.column === "archived"` guards ensure the move predicate and
- * survivor counting only apply to rows still in the historical sentinel column.
+ * FNXC:TaskArchiveRemoval 2026-09-06-00:46:
+ * DELIBERATE-LITERAL: `archived` identifies the physical pre-reintegration sentinel queried and
+ * guarded by this migration pass. It is historical storage state, not a live workflow lane.
  */
 export async function reconcileArchivedTasksIntoDonePass(
   store: TaskStore,

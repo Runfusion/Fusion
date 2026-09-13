@@ -308,6 +308,11 @@ export async function moveTaskIfImpl(
   });
 }
 
+/**
+ * FNXC:TaskArchiveRemoval 2026-09-06-00:46:
+ * DELIBERATE-LITERAL: `archived` is the physical pre-reintegration historical sentinel. Handoff must
+ * reject it directly because live workflow metadata intentionally defines no archive role.
+ */
 export async function handoffToReviewImpl(store: TaskStore, taskId: string, opts: HandoffToReviewOptions): Promise<Task> {
     // FNXC:RuntimeTaskOrchestrationAsync 2026-06-24-14:20:
     // Backend-mode handoffToReview: delegates to moveTaskInternal which now

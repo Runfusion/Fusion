@@ -17,8 +17,6 @@ type TaskCardBridgeProps = Pick<
   | "addToast"
   | "globalPaused"
   | "onUpdateTask"
-  | "onArchiveTask"
-  | "onUnarchiveTask"
   | "onDeleteTask"
   | "onRetryTask"
   | "onOpenDetailWithTab"

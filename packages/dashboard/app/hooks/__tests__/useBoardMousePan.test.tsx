@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { createPortal } from "react-dom";
 import { fireEvent, render } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { useBoardMousePan } from "../useBoardMousePan";
@@ -11,6 +12,12 @@ function PanHarness({ enabled = true, onClick = vi.fn() }: { enabled?: boolean; 
       <p data-testid="empty-text">No tasks</p>
       <div data-testid="surface">Safe surface</div>
       <button type="button" data-testid="button">Button</button>
+      {createPortal(
+        <div onPointerDown={(event) => event.stopPropagation()}>
+          <button type="button" data-testid="portal-action">Portal action</button>
+        </div>,
+        document.body,
+      )}
       <input aria-label="Editable" data-testid="input" />
       <div contentEditable data-testid="contenteditable">Editable content</div>
       <div draggable data-testid="draggable">Draggable</div>
@@ -100,7 +107,7 @@ describe("useBoardMousePan", () => {
     expect(board.scrollLeft).toBe(160);
     expect(board).toHaveAttribute("data-panning", "true");
     pointerUp(getByTestId("card"));
-    fireEvent.click(getByTestId("card"));
+    fireEvent.click(getByTestId("card"), { detail: 1 });
     expect(onClick).not.toHaveBeenCalled();
 
     board.scrollLeft = 100;
@@ -109,10 +116,26 @@ describe("useBoardMousePan", () => {
     expect(setPointerCapture).toHaveBeenCalledWith(2);
     expect(board.scrollLeft).toBe(60);
     pointerUp(getByTestId("card-title"), 2);
-    fireEvent.click(getByTestId("card-title"));
+    fireEvent.click(getByTestId("card-title"), { detail: 1 });
     expect(onClick).not.toHaveBeenCalled();
 
     fireEvent.click(getByTestId("card-title"));
+    expect(onClick).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["keyboard", "mouse", "portal mouse"])("preserves later %s activation on a Board control after a pan without a click", (input) => {
+    const onClick = vi.fn();
+    const { getByTestId } = renderPanHarness(true, onClick);
+    const surface = getByTestId("surface");
+    const button = getByTestId(input === "portal mouse" ? "portal-action" : "card-button");
+    pointerDown(surface);
+    pointerMove(surface, 140);
+    pointerUp(surface);
+    if (input !== "keyboard") {
+      pointerDown(button, 100, 50, 2);
+      pointerUp(button, 2);
+    }
+    fireEvent.click(button, { detail: input === "keyboard" ? 0 : 1 });
     expect(onClick).toHaveBeenCalledTimes(1);
   });
 
@@ -253,7 +276,7 @@ describe("useBoardMousePan", () => {
     pointerDown(surface);
     pointerMove(surface, 140);
     pointerUp(surface);
-    fireEvent.click(surface);
+    fireEvent.click(surface, { detail: 1 });
     fireEvent.click(surface);
     expect(onClick).toHaveBeenCalledTimes(1);
 

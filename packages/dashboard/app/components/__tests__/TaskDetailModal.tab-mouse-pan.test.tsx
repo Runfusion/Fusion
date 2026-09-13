@@ -85,7 +85,7 @@ describe("Task Detail tab mouse pan", () => {
     expect(chat).not.toHaveClass("detail-tab-active");
     expect(setItem.mock.calls.some(([key]) => String(key).includes("kb-task-detail-tab-order"))).toBe(false);
 
-    fireEvent.click(chat);
+    fireEvent.click(chat, { detail: 1 });
     expect(screen.getByRole("button", { name: "Plan" })).toHaveClass("detail-tab-active");
     fireEvent.click(chat);
     expect(chat).toHaveClass("detail-tab-active");
@@ -101,7 +101,7 @@ describe("Task Detail tab mouse pan", () => {
     const activity = screen.getByRole("button", { name: "Activity" });
 
     pan(activity, scroller, 100, 40);
-    fireEvent.click(activity);
+    fireEvent.click(activity, { detail: 1 });
 
     expect(scroller.scrollLeft).toBe(160);
     expect(screen.getByRole("button", { name: "Plan" })).toHaveClass("detail-tab-active");
@@ -192,5 +192,8 @@ describe("Task Detail tab mouse pan", () => {
     expect(scroller.scrollLeft).toBe(160);
     expect(tabLabels()).toEqual(before);
     expect(screen.getByRole("button", { name: "Plan" })).toHaveClass("detail-tab-active");
+    const chat = screen.getByRole("button", { name: "Chat" });
+    fireEvent.click(chat, { detail: 0 });
+    expect(chat).toHaveClass("detail-tab-active");
   });
 });

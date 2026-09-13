@@ -1332,7 +1332,8 @@ describe("Board", () => {
 
       expect(screen.getByTestId("column-queue").getAttribute("data-has-new-task")).toBe("no");
       expect(screen.getByTestId("column-queue").getAttribute("data-has-quick-create")).toBe("no");
-      expect(screen.getByTestId("column-idea").getAttribute("data-has-new-task")).toBe("yes");
+      // FNXC:BoardCreation 2026-09-13-06:43: FN-367 made the native Alpha layout permanent; intake retains quick entry but no longer owns a full-dialog trigger on either viewport.
+      expect(screen.getByTestId("column-idea").getAttribute("data-has-new-task")).toBe("no");
       expect(screen.getByTestId("column-idea").getAttribute("data-has-quick-create")).toBe("yes");
     });
 
@@ -1739,15 +1740,16 @@ describe("Board", () => {
       expect(JSON.parse(intakeColumn.getAttribute("data-workflow-options") || "[]")).toEqual(["builtin:coding", "wf-custom"]);
     });
 
-    it("opens the full task dialog with the selected workflow context", async () => {
+    it("keeps selected-workflow quick entry without a full task dialog trigger", async () => {
       const onNewTask = vi.fn();
       enableFlag({ "FN-1": CUSTOM_WORKFLOW.id }, [DEFAULT_WORKFLOW, CUSTOM_WORKFLOW]);
       renderBoard({ tasks: [mkTask({ id: "FN-1", column: "intake" })], onNewTask });
 
       await selectWorkflow(CUSTOM_WORKFLOW.id);
-      fireEvent.click(screen.getByTestId("mock-new-task-intake"));
+      expect(screen.queryByTestId("mock-new-task-intake")).toBeNull();
+      expect(screen.getByTestId("mock-quick-create-intake")).toBeInTheDocument();
 
-      expect(onNewTask).toHaveBeenCalledWith(CUSTOM_WORKFLOW.id);
+      expect(onNewTask).not.toHaveBeenCalled();
     });
 
     it("keeps intake quick entry while omitting its full task button on mobile", async () => {
@@ -1786,15 +1788,16 @@ describe("Board", () => {
       expect(onQuickCreate).not.toHaveBeenCalledWith(expect.objectContaining({ workflowId: "__all_workflows__" }));
     });
 
-    it("opens the All workflows task dialog with its resolved real workflow context", async () => {
+    it("keeps All workflows quick entry without a full task dialog trigger", async () => {
       const onNewTask = vi.fn();
       enableFlag({}, [DEFAULT_WORKFLOW, CUSTOM_WORKFLOW]);
       renderBoard({ onNewTask });
 
       await selectWorkflow("__all_workflows__");
-      fireEvent.click(screen.getByTestId("mock-new-task-triage"));
+      expect(screen.queryByTestId("mock-new-task-triage")).toBeNull();
+      expect(screen.getByTestId("mock-quick-create-triage")).toBeInTheDocument();
 
-      expect(onNewTask).toHaveBeenCalledWith(DEFAULT_WORKFLOW.id);
+      expect(onNewTask).not.toHaveBeenCalled();
     });
 
     it("restores all-workflows after remount and then persists a real workflow selection", async () => {
@@ -2016,7 +2019,7 @@ describe("Board", () => {
       expect(selectedBoard).toHaveClass("is-mouse-panning");
       fireEvent.pointerUp(selectedCard, { pointerId: 2, pointerType: "mouse" });
       expect(selectedBoard).not.toHaveClass("is-mouse-panning");
-      fireEvent.click(selectedCard);
+      fireEvent.click(selectedCard, { detail: 1 });
       expect(onOpenDetail).toHaveBeenCalledTimes(1);
       expect(onMoveTask).not.toHaveBeenCalled();
       expect(screen.getByTestId("column-todo")).toHaveAttribute("data-tasks", expect.stringContaining("FN-1"));
@@ -2046,7 +2049,7 @@ describe("Board", () => {
       expect(aggregateBoard.scrollLeft).toBe(160);
       fireEvent.pointerUp(aggregateTitle, { pointerId: 4, pointerType: "mouse" });
       expect(aggregateBoard).not.toHaveClass("is-mouse-panning");
-      fireEvent.click(aggregateTitle);
+      fireEvent.click(aggregateTitle, { detail: 1 });
       expect(onOpenDetail).toHaveBeenCalledTimes(3);
       expect(onMoveTask).not.toHaveBeenCalled();
 

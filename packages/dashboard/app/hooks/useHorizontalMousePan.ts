@@ -21,6 +21,7 @@ type HorizontalMousePanSession = {
 
 export interface HorizontalMousePanBindings {
   isPanning: boolean;
+  onPointerDownCapture: (event: ReactPointerEvent<HTMLElement>) => void;
   onPointerDown: (event: ReactPointerEvent<HTMLElement>) => void;
   onPointerMove: (event: ReactPointerEvent<HTMLElement>) => void;
   onPointerUp: (event: ReactPointerEvent<HTMLElement>) => void;
@@ -76,6 +77,11 @@ export function useHorizontalMousePan(
     sessionRef.current = null;
     setIsPanning(false);
     if (clearClickGuard) didPanRef.current = false;
+  }, []);
+
+  const onPointerDownCapture = useCallback(() => {
+    // FNXC:HorizontalMousePan 2026-09-13-06:41: Clear orphaned click suppression before descendant or portal handlers can stop propagation, regardless of pan admission. Concurrent pointers must preserve the active gesture's guard.
+    if (!sessionRef.current) didPanRef.current = false;
   }, []);
 
   const onPointerDown = useCallback((event: ReactPointerEvent<HTMLElement>) => {
@@ -144,6 +150,8 @@ export function useHorizontalMousePan(
   const onClickCapture = useCallback((event: ReactMouseEvent<HTMLElement>) => {
     if (!enabled || !didPanRef.current) return;
     didPanRef.current = false;
+    // FNXC:HorizontalMousePan 2026-09-13-06:36: Keyboard and assistive activation have no mouse click count; never consume them as a drag's compatibility click.
+    if (event.detail === 0) return;
     event.preventDefault();
     event.stopPropagation();
   }, [enabled]);
@@ -158,6 +166,7 @@ export function useHorizontalMousePan(
 
   return {
     isPanning,
+    onPointerDownCapture,
     onPointerDown,
     onPointerMove,
     onPointerUp,
