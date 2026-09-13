@@ -3542,8 +3542,15 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
                     <section className="chat-session-section" data-testid={`chat-session-section-${group.id}`} key={group.id}>
                       <div className="chat-pinned-divider" data-testid={group.testId}>{group.label}</div>
                       {group.sessions.map((session) => {
-                  const isActive = activeSession?.id === session.id;
-                  const showUnreadDot = !isActive && isUnread("direct", session.id, session.lastMessageAt ?? session.updatedAt);
+                  const isSelected = activeSession?.id === session.id;
+                  /*
+                  FNXC:ChatWindows 2026-09-12-23:47:
+                  Chaque fenêtre visible du dock Alpha doit surligner sa propre ligne, indépendamment de l’unique sélection interne. Cet état appartient exclusivement au mode listOnly : une fenêtre minimisée ou absente n’est pas surlignée, et les hôtes Chat standard ignorent la map de fenêtres pour conserver leur sélection unique.
+                  */
+                  const windowState = listOnly && !showArchivedSessions ? openChatWindows?.get(session.id) : undefined;
+                  const isWindowOpen = windowState === "open";
+                  const isActive = listOnly ? false : isSelected;
+                  const showUnreadDot = !isSelected && isUnread("direct", session.id, session.lastMessageAt ?? session.updatedAt);
                   const sessionResolvedModel = resolveSessionProvider(
                     session,
                     agentsMap.get(session.agentId) ?? null,
@@ -3551,12 +3558,11 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
                   );
                   const sessionModelTag = formatModelTag(sessionResolvedModel?.provider, sessionResolvedModel?.modelId) ?? "Fusion";
                   const sessionTitle = session.title || t("chat.untitledSession", "Untitled");
-                  const windowState = !showArchivedSessions ? openChatWindows?.get(session.id) : undefined;
 
                   return (
                     <div
                       key={session.id}
-                      className={`chat-session-item${isActive ? " chat-session-item--active" : ""}`}
+                      className={`chat-session-item${isActive ? " chat-session-item--active" : ""}${isWindowOpen ? " chat-session-item--window-open" : ""}`}
                       onClick={() => handleSessionClick(session.id)}
                       onContextMenu={(e) => {
                         e.preventDefault();

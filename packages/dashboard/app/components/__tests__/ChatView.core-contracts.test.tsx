@@ -93,13 +93,94 @@ describe("ChatView popped-out conversation contract", () => {
     expect(document.querySelector(".chat-sidebar")).toBeNull();
   });
 
-  it("affiche l’état ouvert ou minimisé dans la liste Alpha", async () => {
-    setupMockChat({ activeSession: null, sessions: [activeSessionFixture], filteredSessions: [activeSessionFixture] });
-    const { rerender } = await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} listOnly openChatWindows={new Map([[activeSessionFixture.id, "open"]])} />);
-    expect(screen.getByTestId(`chat-session-window-state-${activeSessionFixture.id}`)).toHaveTextContent("Open");
+  it("surligne indépendamment toutes les fenêtres ouvertes dans la liste Alpha", async () => {
+    const second = { ...activeSessionFixture, id: "session-002", title: "Deuxième chat" };
+    const third = { ...activeSessionFixture, id: "session-003", title: "Troisième chat" };
+    const sessions = [activeSessionFixture, second, third];
+    setupMockChat({ activeSession: activeSessionFixture, sessions, filteredSessions: sessions });
+    const addToast = vi.fn();
+    const { rerender } = await renderWithAct(
+      <ChatView
+        projectId="proj-123"
+        addToast={addToast}
+        listOnly
+        openChatWindows={new Map([
+          [activeSessionFixture.id, "open"],
+          [second.id, "open"],
+        ])}
+      />,
+    );
 
-    rerender(<ChatView projectId="proj-123" addToast={vi.fn()} listOnly openChatWindows={new Map([[activeSessionFixture.id, "minimized"]])} />);
+    const firstRow = screen.getByTestId(`chat-session-${activeSessionFixture.id}`);
+    const secondRow = screen.getByTestId(`chat-session-${second.id}`);
+    const thirdRow = screen.getByTestId(`chat-session-${third.id}`);
+    expect(firstRow).toHaveClass("chat-session-item--window-open");
+    expect(secondRow).toHaveClass("chat-session-item--window-open");
+    expect(thirdRow).not.toHaveClass("chat-session-item--window-open");
+    expect(firstRow).not.toHaveClass("chat-session-item--active");
+    expect(screen.getByTestId(`chat-session-window-state-${activeSessionFixture.id}`)).toHaveTextContent("Open");
+    expect(screen.getByTestId(`chat-session-window-state-${second.id}`)).toHaveTextContent("Open");
+
+    rerender(
+      <ChatView
+        projectId="proj-123"
+        addToast={addToast}
+        listOnly
+        openChatWindows={new Map([
+          [activeSessionFixture.id, "minimized"],
+          [second.id, "open"],
+        ])}
+      />,
+    );
+    expect(firstRow).not.toHaveClass("chat-session-item--window-open");
+    expect(secondRow).toHaveClass("chat-session-item--window-open");
     expect(screen.getByTestId(`chat-session-window-state-${activeSessionFixture.id}`)).toHaveTextContent("Minimized");
+
+    rerender(<ChatView projectId="proj-123" addToast={addToast} listOnly openChatWindows={new Map()} />);
+    expect(firstRow).not.toHaveClass("chat-session-item--window-open");
+    expect(secondRow).not.toHaveClass("chat-session-item--window-open");
+    expect(screen.queryByTestId(`chat-session-window-state-${activeSessionFixture.id}`)).toBeNull();
+
+    rerender(<ChatView projectId="proj-123" addToast={addToast} listOnly />);
+    expect(firstRow).not.toHaveClass("chat-session-item--window-open");
+    expect(secondRow).not.toHaveClass("chat-session-item--window-open");
+  });
+
+  it.each([
+    { host: "desktop large", viewport: "desktop" as const, compactLayout: false, measuredWidth: 1200 },
+    { host: "compact", viewport: "desktop" as const, compactLayout: true, measuredWidth: 360 },
+    { host: "mobile", viewport: "mobile" as const, compactLayout: false, measuredWidth: 375 },
+  ])("conserve le surlignage de sélection dans l’hôte standard $host", async ({ viewport, compactLayout, measuredWidth }) => {
+    const viewportSpy = mockViewportMode(viewport);
+    const rectSpy = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
+      x: 0, y: 0, width: measuredWidth, height: 800, top: 0, right: measuredWidth, bottom: 800, left: 0, toJSON: () => ({}),
+    });
+    try {
+      const openButNotSelected = { ...activeSessionFixture, id: "session-002", title: "Chat en fenêtre" };
+      const sessions = [activeSessionFixture, openButNotSelected];
+      setupMockChat({ activeSession: activeSessionFixture, sessions, filteredSessions: sessions });
+      await renderWithAct(
+        <ChatView
+          projectId="proj-123"
+          addToast={vi.fn()}
+          compactLayout={compactLayout}
+          persistChatPreferences={false}
+          openChatWindows={new Map([[openButNotSelected.id, "open"]])}
+        />,
+      );
+
+      const selectedRow = screen.getByTestId(`chat-session-${activeSessionFixture.id}`);
+      const openButNotSelectedRow = screen.getByTestId(`chat-session-${openButNotSelected.id}`);
+      expect(selectedRow).toHaveClass("chat-session-item--active");
+      expect(selectedRow).not.toHaveClass("chat-session-item--window-open");
+      expect(openButNotSelectedRow).not.toHaveClass("chat-session-item--active");
+      expect(openButNotSelectedRow).not.toHaveClass("chat-session-item--window-open");
+      expect(screen.queryByTestId(`chat-session-window-state-${openButNotSelected.id}`)).toBeNull();
+    } finally {
+      rectSpy.mockRestore();
+      viewportSpy.mockRestore();
+      mockViewportMode("desktop");
+    }
   });
 
   it("opens the requested thread on desktop-wide, narrow floating, mobile, and compact hosts", async () => {

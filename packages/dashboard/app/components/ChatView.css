@@ -231,11 +231,13 @@ html[data-viewport-mode="tablet"] .chat-view--docked-list .chat-sidebar--docked 
   background: var(--card-hover);
 }
 
-.chat-session-item--active {
+.chat-session-item--active,
+.chat-session-item--window-open {
   background: color-mix(in srgb, var(--todo) 12%, transparent);
 }
 
-.chat-session-item--active:hover {
+.chat-session-item--active:hover,
+.chat-session-item--window-open:hover {
   background: color-mix(in srgb, var(--todo) 16%, transparent);
 }
 
