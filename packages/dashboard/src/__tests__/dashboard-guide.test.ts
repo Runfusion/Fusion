@@ -51,13 +51,24 @@ describe("dashboard guide coverage for lazy-loaded views", () => {
     expect(piBody).toContain("Settings → Plugins → Pi Extensions");
   });
 
-  it("documents the Alpha global task action and Quick Entry hold contract", () => {
+  it("documents the responsive Alpha Header and Quick Entry hold contract", () => {
     const guide = readDashboardGuide();
 
-    expect(guide).toContain("rightmost global Header action on Alpha desktop, tablet, and mobile");
+    expect(guide).toContain("New Task** is absent from both the Alpha desktop footer and Header");
+    expect(guide).toContain("tablet and mobile retain the rightmost compact Header action");
+    expect(guide).toContain("one non-wrapping row; long workflow names truncate before the Search icon moves");
     expect(guide).toContain("icon-only Save button");
     expect(guide).toContain("hold continuously for 1,200 ms");
     expect(guide).toContain("Non-Alpha Quick Entry retains its text Save button and separate Start action");
+  });
+
+  it("documents permanent Planning sessions off phone and compact phone navigation", () => {
+    const guide = readDashboardGuide();
+    const planningBody = getSectionBody(guide, "Planning Mode");
+
+    expect(planningBody).toContain("saved-session sidebar remains visible and resizable");
+    expect(planningBody).toContain("Phone layouts continue to use compact list/detail navigation");
+    expect(planningBody).toContain("Back** returns to it");
   });
 
   it("documents the selectable Liquid Glass web contract without claiming native parity", () => {

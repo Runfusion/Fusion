@@ -1266,6 +1266,8 @@
     "clearConversationFailed": "Failed to clear conversation",
     "closeQuickChat": "Close quick chat",
     "openInNewWindow": "Open in new window",
+    "windowOpen": "Open",
+    "windowMinimized": "Minimized",
     "conversationArchived": "Conversation archived",
     "conversationDeleted": "Conversation deleted",
     "conversationIdCopied": "Conversation ID copied",

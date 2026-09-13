@@ -1129,7 +1129,7 @@ export function MainContent(props: MainContentProps) {
         mergeStrategy={mergeStrategy}
         onOpenWorkflowEditor={openWorkflowEditorWithNav}
         onCreateWorkflow={openCreateWorkflowWithNav}
-        workflowControlsInHeader={sidebarActive || isMobile}
+        workflowControlsInHeader={sidebarActive || isMobile || experimentalFeatures?.alphaUpdates === true}
       />
     </PageErrorBoundary>
   );

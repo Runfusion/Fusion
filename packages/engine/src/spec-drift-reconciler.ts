@@ -32,8 +32,8 @@ re-armed at a fixed 1s, so ~1,082 tasks re-opened ~1,082 sessions every second i
 4,777 lock sessions in 17s). Backoff is exponential + jittered so a persistent outage decays instead of
 pinning the resource it is waiting on.
 */
-const RETRY_BASE_DELAY_MS = 1_000;
-const RETRY_MAX_DELAY_MS = 60_000;
+export const RETRY_BASE_DELAY_MS = 1_000;
+export const RETRY_MAX_DELAY_MS = 60_000;
 /** Max simultaneous reconciles, i.e. max simultaneous planning-lock sessions this component holds. */
 const DEFAULT_MAX_CONCURRENT_RECONCILES = 4;
 
@@ -83,12 +83,20 @@ export class SpecDriftReconciler {
   private readonly inFlightTaskIds = new Set<string>();
   private readonly retryAttempts = new Map<string, number>();
   private readonly maxConcurrent: number;
+  private readonly random: () => number;
 
   public constructor(
     private readonly repository: SpecDriftRepository,
-    options: { maxConcurrent?: number } = {},
+    options: { maxConcurrent?: number; random?: () => number } = {},
   ) {
     this.maxConcurrent = Math.max(1, options.maxConcurrent ?? DEFAULT_MAX_CONCURRENT_RECONCILES);
+    /*
+    FNXC:SpecDrift 2026-09-12-23:19:
+    Each retry is armed from its previous firing with jitter in [backoff/2, backoff), so absolute
+    fake-clock windows cannot prove its schedule. This seam pins draws and records real draws for
+    exact firing-instant assertions through the clamped ceiling without changing production jitter.
+    */
+    this.random = options.random ?? Math.random;
   }
 
   /**
@@ -179,7 +187,7 @@ export class SpecDriftReconciler {
     const attempt = (this.retryAttempts.get(taskId) ?? 0) + 1;
     this.retryAttempts.set(taskId, attempt);
     const backoff = Math.min(RETRY_MAX_DELAY_MS, RETRY_BASE_DELAY_MS * 2 ** (attempt - 1));
-    const delay = backoff / 2 + Math.random() * (backoff / 2);
+    const delay = backoff / 2 + this.random() * (backoff / 2);
     const timer = setTimeout(() => {
       this.retryTimers.delete(taskId);
       this.enqueue(taskId);

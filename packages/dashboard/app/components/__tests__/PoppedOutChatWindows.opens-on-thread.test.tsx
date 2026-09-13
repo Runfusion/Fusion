@@ -142,9 +142,11 @@ describe("PoppedOutChatWindows requested-thread arrival", () => {
     expect(screen.getByText("Requested thread")).toBeInTheDocument();
     expect(document.querySelector(".chat-view")).toHaveClass("chat-view--detail");
     expect(document.querySelector(".chat-view")?.classList.contains("chat-view--narrow")).toBe(narrow);
-    expect(document.querySelector(".chat-sidebar")).toHaveClass("chat-sidebar--hidden");
+    expect(document.querySelector(".chat-sidebar")).toBeNull();
     expect(document.querySelector(".chat-thread")).toBeInTheDocument();
-    expect(screen.getByTestId("chat-back-btn")).toBeInTheDocument();
+    expect(screen.queryByTestId("chat-back-btn")).toBeNull();
+    expect(screen.queryByTestId("chat-thread-title-switcher")).toBeNull();
+    expect(screen.queryByTestId("chat-new-btn")).toBeNull();
     expect(navigation.pushNav).not.toHaveBeenCalled();
   });
 
@@ -168,6 +170,7 @@ describe("PoppedOutChatWindows requested-thread arrival", () => {
     expect(document.querySelector(".chat-sidebar")).toHaveClass("chat-sidebar--hidden");
     expect(document.querySelector(".chat-thread")).toBeInTheDocument();
     expect(screen.getByTestId("chat-back-btn")).toBeInTheDocument();
+    expect(screen.getByTestId("chat-new-btn")).toBeInTheDocument();
     expect(navigation.pushNav).not.toHaveBeenCalled();
   });
 
@@ -179,27 +182,24 @@ describe("PoppedOutChatWindows requested-thread arrival", () => {
 
     expect(screen.getByText("Requested thread")).toBeInTheDocument();
     expect(document.querySelector(".chat-view")).toHaveClass("chat-view--detail");
-    expect(document.querySelector(".chat-sidebar")).toHaveClass("chat-sidebar--hidden");
+    expect(document.querySelector(".chat-sidebar")).toBeNull();
     expect(document.querySelector(".chat-thread")).toBeInTheDocument();
-    expect(screen.getByTestId("chat-back-btn")).toBeInTheDocument();
+    expect(screen.queryByTestId("chat-back-btn")).toBeNull();
+    expect(screen.queryByTestId("chat-thread-title-switcher")).toBeNull();
+    expect(screen.queryByTestId("chat-new-btn")).toBeNull();
     expect(navigation.pushNav).not.toHaveBeenCalled();
   });
 
-  it("uses a new focus nonce to reopen the same overlay after Back without pushing navigation", () => {
+  it("réutilise le même overlay lors d’un nouveau focus sans exposer de navigation", () => {
     fetchChatSessions.mockReturnValue(deferred<{ sessions: ReturnType<typeof session>[] }>().promise);
     const { rerender } = renderWindows([entry("requested-thread", 1)]);
     const overlay = screen.getByTestId("floating-window-overlay-chat-window-project-a-requested-thread");
 
-    fireEvent.click(screen.getByTestId("chat-back-btn"));
-    expect(screen.queryByTestId("chat-back-btn")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("chat-thread-header-identity")).not.toBeInTheDocument();
-
-    rerender(<PoppedOutChatWindows entries={[entry("requested-thread", 1)]} projectId="project-a" addToast={vi.fn()} onClose={vi.fn()} onOpenSessionInNewWindow={vi.fn()} />);
-    expect(screen.queryByTestId("chat-thread-header-identity")).not.toBeInTheDocument();
-
     rerender(<PoppedOutChatWindows entries={[entry("requested-thread", 2)]} projectId="project-a" addToast={vi.fn()} onClose={vi.fn()} onOpenSessionInNewWindow={vi.fn()} />);
     expect(screen.getByTestId("floating-window-overlay-chat-window-project-a-requested-thread")).toBe(overlay);
     expect(screen.getByText("Requested thread")).toBeInTheDocument();
+    expect(screen.queryByTestId("chat-back-btn")).toBeNull();
+    expect(screen.queryByTestId("chat-thread-title-switcher")).toBeNull();
     expect(navigation.pushNav).not.toHaveBeenCalled();
   });
 
@@ -215,7 +215,7 @@ describe("PoppedOutChatWindows requested-thread arrival", () => {
     });
 
     expect(screen.getAllByText("Requested thread").length).toBeGreaterThan(0);
-    expect(screen.queryByText("Older thread")).toBeInTheDocument();
+    expect(screen.queryByText("Older thread")).toBeNull();
     expect(navigation.pushNav).not.toHaveBeenCalled();
   });
 });

@@ -185,6 +185,76 @@ describe("overlap plan delta revalidation", () => {
     }
   });
 
+  /*
+  FNXC:OverlapWaitSynchronization 2026-09-12-20:30:
+  Settling a PRE-EXECUTION claim at pre-merge. Between the two the task commits its work and its spec may be
+  rewritten, so an APPROVE must still be recorded. Anchoring the publication compare-and-set on a recaptured
+  HEAD or a re-hashed live prompt discarded the verdict, failed the node with `superseded`, and left the card
+  in a stranded-completed review loop (FN-359/FN-362, measured 2026-09-12).
+  */
+  it("records an approval after the task committed work and rewrote its spec since the claim", async () => {
+    const worktree = mkdtempSync(join(tmpdir(), "fn-332-settle-"));
+    try {
+      execFileSync("git", ["init", "-b", "main"], { cwd: worktree });
+      execFileSync("git", ["config", "user.email", "fusion@example.test"], { cwd: worktree });
+      execFileSync("git", ["config", "user.name", "Fusion Test"], { cwd: worktree });
+      writeFileSync(join(worktree, "shared.ts"), "export const sharedApi = true;\n");
+      execFileSync("git", ["add", "shared.ts"], { cwd: worktree });
+      execFileSync("git", ["commit", "-m", "base"], { cwd: worktree });
+      const claimedHeadSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: worktree, encoding: "utf8" }).trim();
+      const claimedPrompt = "## Mission\nKeep sharedApi compatible.";
+      const claimedIdentity = {
+        taskLineageId: "lineage-settle",
+        planFingerprint: createHash("sha256").update(claimedPrompt).digest("hex"),
+        checkoutEpoch: "0", worktree, branch: "fusion/fn-settle", headSha: claimedHeadSha,
+        repository: ".", target: "main", nodeId: "execute", nodeInstanceId: "execute:1",
+      };
+
+      // The task then does exactly what it was dispatched to do: it commits, and its spec is rewritten.
+      writeFileSync(join(worktree, "shared.ts"), "export const sharedApi = 1;\n");
+      execFileSync("git", ["commit", "-am", "feat(FN-B): implement"], { cwd: worktree });
+      expect(execFileSync("git", ["rev-parse", "HEAD"], { cwd: worktree, encoding: "utf8" }).trim()).not.toBe(claimedHeadSha);
+      const live = {
+        ...task, lineageId: "lineage-settle", checkoutLeaseEpoch: 0, worktree, branch: "fusion/fn-settle",
+        prompt: `${claimedPrompt}\n\n## Progress\nStep 1 complete.`,
+      } as TaskDetail;
+
+      let current = {
+        projectId: "p", taskId: live.id, episodeId: "episode-settle", blockerTaskId: "FN-A",
+        observedAt: receipt.decidedAt, phase: "revalidation-pending", revision: 12, owner: "graph-owner",
+        attempt: 1, planFingerprint: claimedIdentity.planFingerprint,
+        observation: { executionIdentity: claimedIdentity }, receipt, updatedAt: receipt.decidedAt,
+      } as any;
+      const identityKeys = ["taskLineageId", "planFingerprint", "checkoutEpoch", "worktree", "branch", "headSha", "repository", "target", "nodeId", "nodeInstanceId"];
+      // Mirrors the durable store: publication must equal the identity the claim persisted.
+      const completeTaskOverlapWait = vi.fn(async (input: any) => {
+        if (!identityKeys.every((key) => input.executionIdentity?.[key] === current.observation.executionIdentity[key])) return null;
+        current = { ...current, phase: input.phase, receipt: input.receipt, revision: current.revision + 1 };
+        return current;
+      });
+
+      const outcome = await revalidatePendingOverlapWaitsAtGraphNode({
+        task: live,
+        store: {
+          listTaskOverlapWaits: vi.fn(async () => [current]),
+          claimTaskOverlapWait: vi.fn(),
+          completeTaskOverlapWait,
+          getTask: vi.fn(async () => live),
+        } as any,
+        nodeId: "execute",
+        review: vi.fn(async () => ({ success: true, verdict: "APPROVE" })),
+        repair: vi.fn(),
+      });
+
+      expect(outcome).toBe("approved");
+      expect(completeTaskOverlapWait).toHaveBeenCalledWith(expect.objectContaining({ phase: "ready", expectedRevision: 12 }));
+      expect(current.phase).toBe("ready");
+      expect(current.receipt.revalidationVerdict).toBe("APPROVE");
+    } finally {
+      rmSync(worktree, { recursive: true, force: true });
+    }
+  });
+
   it("rejects a verdict when plan or delivery identity changes during review", async () => {
     let read = 0;
     const review = vi.fn(async () => ({ verdict: "APPROVE" }));

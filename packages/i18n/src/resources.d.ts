@@ -1449,6 +1449,8 @@ export default interface Resources {
       "typeMessage": "Type a message...",
       "unreadMessages": "Unread messages",
       "untitledSession": "Untitled",
+      "windowMinimized": "Minimized",
+      "windowOpen": "Open",
       "workingStatus": "Working…",
       "you": "You"
     },

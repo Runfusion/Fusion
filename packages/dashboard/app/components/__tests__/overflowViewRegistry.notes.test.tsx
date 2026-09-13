@@ -4,8 +4,8 @@ import { findOverflowViewEntry, getVisibleOverflowViewEntries, isOverflowViewEnt
 import { readStoredRightDockView, RIGHT_DOCK_VIEW_STORAGE_KEY } from "../RightDock";
 
 vi.mock("../NotesView", () => ({
-  NotesView: ({ projectId, compact, controller }: { projectId?: string; compact?: boolean; controller?: unknown }) => (
-    <div data-testid="mock-notes-view" data-project-id={projectId} data-compact={String(compact)} data-controller={String(Boolean(controller))} />
+  NotesView: ({ projectId, compact, listOnly, controller, onOpenNote }: { projectId?: string; compact?: boolean; listOnly?: boolean; controller?: unknown; onOpenNote?: unknown }) => (
+    <div data-testid="mock-notes-view" data-project-id={projectId} data-compact={String(compact)} data-list-only={String(listOnly)} data-controller={String(Boolean(controller))} data-open-note={String(typeof onOpenNote === "function")} />
   ),
 }));
 
@@ -24,9 +24,11 @@ describe("overflowViewRegistry Notes entry", () => {
     expect(entry?.testId).toBe("right-dock-tab-notes");
     expect(isOverflowViewEntryExpandable(entry, options)).toBe(false);
     const controller = {} as never;
-    render(<>{entry?.render?.({ projectId: "project-notes", hostMode: "alpha-desktop", addToast: vi.fn(), notesController: controller })}</>);
+    render(<>{entry?.render?.({ projectId: "project-notes", hostMode: "alpha-desktop", addToast: vi.fn(), notesController: controller, onOpenNote: vi.fn() })}</>);
     expect(await screen.findByTestId("mock-notes-view")).toHaveAttribute("data-compact", "true");
+    expect(screen.getByTestId("mock-notes-view")).toHaveAttribute("data-list-only", "true");
     expect(screen.getByTestId("mock-notes-view")).toHaveAttribute("data-controller", "true");
+    expect(screen.getByTestId("mock-notes-view")).toHaveAttribute("data-open-note", "true");
   });
 
   it("rejette une ancienne sélection Notes dans les hôtes standard", () => {

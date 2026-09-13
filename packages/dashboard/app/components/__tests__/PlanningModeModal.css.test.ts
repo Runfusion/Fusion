@@ -1,9 +1,7 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { readAppFile } from "../../test/cssFixture";
 import { getMediaBlocks } from "./PlanningModeModal.test-helpers";
 
-const PLANNING_CSS_PATH = resolve(__dirname, "..", "PlanningModeModal.css");
 const TABLET_SUMMARY_ACTIONS_QUERY = "@media (min-width: 769px) and (max-width: 1024px)";
 const MOBILE_ACTIONS_QUERY = "@media (max-width: 768px)";
 const MOBILE_PLANNING_SHELL_QUERY = "@media (max-width: 768px), (max-height: 480px)";
@@ -11,7 +9,7 @@ const MOBILE_PLANNING_SHELL_QUERY = "@media (max-width: 768px), (max-height: 480
 const DESKTOP_PLANNING_WORKSPACE_QUERY = "@media (min-width: 769px)";
 
 function loadPlanningCss(): string {
-  return readFileSync(PLANNING_CSS_PATH, "utf-8");
+  return readAppFile("components/PlanningModeModal.css");
 }
 
 function findRule(css: string, selector: string): string | undefined {
@@ -96,6 +94,18 @@ describe("PlanningModeModal CSS responsive action contract", () => {
     expect(findRule(mobileCss, ".planning-question-pane .planning-question-scroll,\n  .planning-plan-pane .planning-plan-scroll")).toMatch(/padding\s*:\s*0\s*;/);
     expect(findRule(mobileCss, ".planning-question-pane .planning-question-panel")).toMatch(/border\s*:\s*none\s*;/);
     expect(findRule(mobileCss, ".planning-plan-pane .planning-plan-document")).toMatch(/padding\s*:\s*var\(--space-lg\)\s*;/);
+  });
+
+  it("keeps the session sidebar and detail together on tablet, desktop, and short non-phone shells", () => {
+    const css = loadPlanningCss();
+    const twoPaneCss = getMediaBlocks(css, DESKTOP_PLANNING_WORKSPACE_QUERY).join("\n");
+
+    expect(findRule(twoPaneCss, ".planning-modal-body--split")).toMatch(/flex-direction\s*:\s*row\s*;/);
+    expect(findRule(twoPaneCss, ".planning-modal-body--show-detail .planning-sidebar,\n  .planning-modal-body--show-list .planning-sidebar")).toMatch(/display\s*:\s*flex\s*;/);
+    expect(findRule(twoPaneCss, ".planning-modal-body--show-list .planning-detail")).toMatch(/display\s*:\s*flex\s*;/);
+
+    const tabletCss = getMediaBlocks(css, TABLET_SUMMARY_ACTIONS_QUERY).join("\n");
+    expect(findRule(tabletCss, ".planning-modal-body--show-list .planning-detail")).toBeUndefined();
   });
 
   it("keeps tablet and desktop planning content flush inside both panes with compact aligned action rows", () => {

@@ -1700,8 +1700,24 @@ Desktop Planning panes already own their framed surfaces, so their scroll conten
 
 FNXC:PlanningMode 2026-07-21-18:41:
 Tablet (769–1024) keeps the same two-pane shell as desktop but previously fell below the 1025px flush gate, so the right plan pane still stacked scroll padding + card chrome. Lower the gate to 769px so tablet inherits the flush pane treatment; phone (≤768) keeps its own mobile flush block.
+
+FNXC:PlanningSidebar 2026-09-12-05:41:
+Desktop and tablet keep the session sidebar, resize handle, and detail pane visible together even in a short viewport. These width-gated rules override the short-shell phone paint without removing compact internal form adaptations.
 */
 @media (min-width: 769px) {
+  .planning-modal-body--split {
+    flex-direction: row;
+  }
+
+  .planning-modal-body--show-detail .planning-sidebar,
+  .planning-modal-body--show-list .planning-sidebar {
+    display: flex;
+  }
+
+  .planning-modal-body--show-list .planning-detail {
+    display: flex;
+  }
+
   .planning-question-pane .planning-question-scroll,
   .planning-plan-pane .planning-plan-scroll {
     padding: 0;
@@ -2006,34 +2022,6 @@ plan actions, and a token-sized bottom inset keep all three controls inline with
 }
 
 @media (min-width: 769px) and (max-width: 1024px) {
-  /* FNXC:PlanningModeMobile 2026-07-20-10:30: tablet uses the same compact list destination as phone and short shells, so summary/compose detail cannot remain beside saved session rows. */
-  .planning-modal-body--show-list {
-    flex: 1;
-    min-height: 0;
-    overflow: hidden;
-  }
-
-  .planning-modal-body--show-list .planning-sidebar {
-    flex: 1 1 auto;
-    height: 100%;
-    min-height: 0;
-    max-height: 100%;
-  }
-
-  .planning-modal-body--show-list .planning-sidebar-list {
-    flex: 1 1 auto;
-    min-height: 0;
-    overflow-y: auto;
-  }
-
-  .planning-modal-body--show-list .planning-sidebar-footer {
-    flex-shrink: 0;
-  }
-
-  .planning-modal-body--show-list .planning-detail {
-    display: none;
-  }
-
   .planning-summary-actions {
     flex-wrap: wrap;
     align-items: flex-start;

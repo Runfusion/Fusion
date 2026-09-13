@@ -40,10 +40,40 @@ describe("AlphaDesktopActionBar", () => {
     expect(alphaDesktopActionBarCss).toMatch(/\.alpha-desktop-action-bar__capacity \.engine-control-menu > \.engine-control-menu__popover\.card\s*\{[^}]*inset-inline-start:\s*0;[^}]*inset-inline-end:\s*auto;[^}]*min-inline-size:\s*min\(24rem,\s*calc\(100vw - \(var\(--space-lg\) \* 2\)\)\);[^}]*max-inline-size:\s*calc\(100vw - \(var\(--space-lg\) \* 2\)\);/s);
   });
 
+  it("ouvre Plus au survol, conserve le trajet vers le menu et ferme à la sortie", () => {
+    render(<AlphaDesktopActionBar entries={entries()} activeId="board" tasks={[]} />);
+    const trigger = screen.getByTestId("alpha-desktop-nav-more");
+    fireEvent.pointerEnter(trigger);
+    const menu = screen.getByRole("menu");
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    fireEvent.pointerEnter(menu);
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+    fireEvent.pointerLeave(menu.parentElement!);
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  it("ouvre au focus ou au clic sans toggler, puis ferme avec Escape ou à la sortie du focus", () => {
+    render(<AlphaDesktopActionBar entries={entries()} activeId="board" tasks={[]} />);
+    const trigger = screen.getByTestId("alpha-desktop-nav-more");
+    fireEvent.focus(trigger);
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+    fireEvent.click(trigger);
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+    fireEvent.keyDown(trigger, { key: "Escape" });
+    expect(screen.queryByRole("menu")).toBeNull();
+    fireEvent.focus(trigger);
+    const item = screen.getByTestId("alpha-desktop-nav-automations");
+    fireEvent.blur(trigger, { relatedTarget: item });
+    fireEvent.focus(item);
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+    fireEvent.focusOut(item, { relatedTarget: null });
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+
   it("garde l’overflow ouvert quand la garde refuse puis le ferme après acceptation", async () => {
     const onChangeView = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
     render(<AlphaDesktopActionBar entries={entries(onChangeView)} activeId="board" tasks={[]} />);
-    fireEvent.click(screen.getByTestId("alpha-desktop-nav-more"));
+    fireEvent.pointerEnter(screen.getByTestId("alpha-desktop-nav-more"));
     fireEvent.click(screen.getByTestId("alpha-desktop-nav-automations"));
     await waitFor(() => expect(screen.getByRole("menu")).toBeInTheDocument());
     fireEvent.click(screen.getByTestId("alpha-desktop-nav-automations"));

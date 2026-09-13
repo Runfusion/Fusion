@@ -117,6 +117,26 @@ describe("Header", () => {
     expect(screen.getByText("Fusion")).toBeInTheDocument();
   });
 
+  it("keeps the desktop workflow slot immediately before Alpha search in one action cluster", () => {
+    const { container } = renderHeader({
+      view: "board",
+      alphaUpdatesEnabled: true,
+      leftSidebarNavActive: true,
+      onChangeView: vi.fn(),
+      searchQuery: "",
+      onSearchChange: vi.fn(),
+    }, "desktop");
+
+    const actions = container.querySelector(".header-actions");
+    const slot = screen.getByTestId("header-workflow-slot");
+    const search = screen.getByTestId("alpha-desktop-header-search-btn");
+    const children = Array.from(actions?.children ?? []);
+    expect(slot.parentElement).toBe(actions);
+    expect(search.parentElement).toBe(actions);
+    expect(children.indexOf(slot)).toBeLessThan(children.indexOf(search));
+    expect(slot).toBeEmptyDOMElement();
+  });
+
   it("opens Alpha desktop task navigation in a centered overlay without changing the board filter", () => {
     const onSearchChange = vi.fn();
     const onSelectSearchTask = vi.fn();
@@ -304,7 +324,16 @@ describe("Header", () => {
       expect(screen.queryByTestId("mobile-header-new-task")).toBeNull();
     });
 
-    it.each(["desktop", "tablet", "mobile"] as const)("renders one functional Alpha New Task action last at the %s tier", (tier) => {
+    it("omits the Alpha New Task action and its shell on desktop", () => {
+      const onNewTask = vi.fn();
+      const { container } = renderHeader({ alphaUpdatesEnabled: true, projectId: "project-1", onNewTask }, "desktop");
+      expect(screen.queryByTestId("mobile-header-new-task")).toBeNull();
+      expect(screen.queryByRole("button", { name: "New Task" })).toBeNull();
+      expect(container.querySelector(".header-actions")?.querySelector('[title="New Task"]')).toBeNull();
+      expect(onNewTask).not.toHaveBeenCalled();
+    });
+
+    it.each(["tablet", "mobile"] as const)("renders one functional Alpha New Task action last at the %s tier", (tier) => {
       const onNewTask = vi.fn();
       const { container } = renderHeader({ alphaUpdatesEnabled: true, projectId: "project-1", onNewTask }, tier);
       const action = screen.getByTestId("mobile-header-new-task");

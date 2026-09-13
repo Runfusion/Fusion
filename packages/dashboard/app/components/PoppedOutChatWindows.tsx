@@ -114,6 +114,7 @@ export function PoppedOutChatWindows({ entries, projectId, addToast, experimenta
           addToast={addToast}
           experimentalFeatures={experimentalFeatures}
           floating
+          dedicatedConversation
           active={!entry.minimized}
           findActive={!entry.minimized}
           initialDirectSession={entry.session}

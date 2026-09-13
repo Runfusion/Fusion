@@ -11,13 +11,14 @@ import { readStoredRightDockView, RIGHT_DOCK_VIEW_STORAGE_KEY } from "../RightDo
 import type { ChatViewProps } from "../ChatView";
 
 vi.mock("../ChatView", () => ({
-  ChatView: ({ projectId, addToast, floating, compactLayout, listOnly, onPopOut, onMaximize, onClose, onOpenSessionInNewWindow, experimentalFeatures }: ChatViewProps) => (
+  ChatView: ({ projectId, addToast, floating, compactLayout, listOnly, openChatWindows, onPopOut, onMaximize, onClose, onOpenSessionInNewWindow, experimentalFeatures }: ChatViewProps) => (
     <div
       data-testid="mock-chat-view"
       data-project-id={projectId}
       data-has-toast={String(typeof addToast === "function")}
       data-compact-layout={String(compactLayout === true)}
       data-list-only={String(listOnly === true)}
+      data-open-window-count={String(openChatWindows?.size ?? 0)}
       data-has-dock-chrome-props={String(Boolean(floating || onPopOut || onMaximize || onClose))}
       data-has-open-window={String(typeof onOpenSessionInNewWindow === "function")}
       data-alpha={String(experimentalFeatures?.alphaUpdates === true)}
@@ -32,6 +33,7 @@ const renderProps: OverflowViewRenderProps = {
   addToast: vi.fn(),
   onOpenSessionInNewWindow: vi.fn(),
   experimentalFeatures: { alphaUpdates: true },
+  openChatWindows: new Map([["session-1", "open" as const]]),
 };
 
 describe("overflowViewRegistry chat entry", () => {
@@ -83,6 +85,7 @@ describe("overflowViewRegistry chat entry", () => {
 
     const alphaDesktop = render(<>{chatEntry.render({ ...renderProps, hostMode: "alpha-desktop", surface: "dock", dockWidth: 900 })}</>);
     expect(await screen.findByTestId("mock-chat-view")).toHaveAttribute("data-list-only", "true");
+    expect(screen.getByTestId("mock-chat-view")).toHaveAttribute("data-open-window-count", "1");
     alphaDesktop.unmount();
 
     const wideDock = render(<>{chatEntry.render({ ...renderProps, surface: "dock", dockWidth: 900 })}</>);

@@ -53,8 +53,8 @@ function renderPlanning() {
 }
 
 /*
-FNXC:PlanningKeepAlive 2026-07-22-13:30:
-FN remount-churn fix R11 (internal-transition audit): Planning Mode's session-list mode and mobile list/detail flips are CSS-class transitions over one always-mounted detail pane — they must never unmount the interview pane or trigger a session reload. Re-selecting the already-active session from the list is an early-return visibility restore, not a loadSession round-trip. These tests lock that invariant on both desktop and mobile breakpoints.
+FNXC:PlanningKeepAlive 2026-09-12-05:41:
+Planning Mode keeps the desktop/tablet session list permanently beside the always-mounted detail pane, while mobile list/detail flips remain CSS-class transitions. Re-selecting the active session on either surface must preserve the interview and avoid another session load.
 */
 describe("PlanningModeModal internal transitions", () => {
   beforeEach(() => {
@@ -67,17 +67,15 @@ describe("PlanningModeModal internal transitions", () => {
     mockFetchAiSession.mockResolvedValue(awaitingQuestionSession);
   });
 
-  it("keeps the interview pane mounted across a session-list toggle round-trip without reloading", async () => {
+  it("keeps the desktop sidebar and interview mounted when re-selecting the active session", async () => {
     renderPlanning();
     expect(await screen.findByTestId("planning-question-text")).toHaveTextContent("What is the scope?");
+    const sidebar = screen.getByRole("complementary", { name: "Planning sessions" });
     const sessionLoads = mockFetchAiSession.mock.calls.length;
 
-    fireEvent.click(screen.getByRole("button", { name: "Back to sessions" }));
-    // List mode is a CSS-class flip: the interview pane stays mounted with its state.
-    expect(screen.getByTestId("planning-question-text")).toHaveTextContent("What is the scope?");
-
-    // Re-selecting the active session is an early-return visibility restore — no loadSession refetch.
+    expect(screen.queryByRole("button", { name: "Back to sessions" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /Kept-alive plan/ }));
+    expect(screen.getByRole("complementary", { name: "Planning sessions" })).toBe(sidebar);
     expect(screen.getByTestId("planning-question-text")).toHaveTextContent("What is the scope?");
     expect(mockFetchAiSession.mock.calls.length).toBe(sessionLoads);
   });

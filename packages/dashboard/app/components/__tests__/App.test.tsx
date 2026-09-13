@@ -1607,7 +1607,7 @@ describe("Alpha Updates production wiring", () => {
     }
   });
 
-  it("ouvre Nouvelle tâche depuis le Header Alpha desktop sans action de colonne", async () => {
+  it("retire Nouvelle tâche du Header Alpha desktop sans ouvrir de modale", async () => {
     mockUseViewportMode.mockReturnValue("desktop");
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
@@ -1616,10 +1616,49 @@ describe("Alpha Updates production wiring", () => {
 
     render(<App />);
 
-    const action = await screen.findByTestId("mobile-header-new-task");
-    expect(screen.queryByRole("button", { name: "+ New Task" })).toBeNull();
-    fireEvent.click(action);
-    expect(await screen.findByRole("heading", { name: "New Task" })).toBeInTheDocument();
+    await screen.findByTestId("dashboard-project-shell");
+    const header = document.querySelector("header.header");
+    expect(header?.querySelector('[data-testid="mobile-header-new-task"]')).toBeNull();
+    expect(header?.querySelector('[aria-label="New Task"]')).toBeNull();
+    expect(screen.queryByRole("heading", { name: "New Task" })).toBeNull();
+  });
+
+  it("garde le workflow réel du Board et la loupe Alpha desktop sur une seule rangée", async () => {
+    mockUseViewportMode.mockReturnValue("desktop");
+    vi.mocked(fetchSettings).mockResolvedValue({
+      ...defaultSettings,
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates: true },
+    });
+    vi.mocked(fetchBoardWorkflows).mockResolvedValue({
+      ...DEFAULT_BOARD_WORKFLOWS,
+      workflows: [{
+        ...DEFAULT_BOARD_WORKFLOWS.workflows[0],
+        name: "Workflow de livraison avec un nom volontairement très long",
+      }],
+      taskWorkflowIds: { "FN-358-A": "builtin:coding", "FN-358-B": "builtin:coding" },
+    });
+    const emptyResult = mockUseTasks();
+    mockUseTasks.mockReturnValue({
+      ...emptyResult,
+      tasks: [
+        { id: "FN-358-A", title: "À planifier", description: "x", status: null, column: "todo", dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "", updatedAt: "" },
+        { id: "FN-358-B", title: "En cours", description: "x", status: "in-progress", column: "in-progress", dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "", updatedAt: "" },
+      ],
+    });
+
+    render(<App />);
+
+    const switcher = await screen.findByTestId("workflow-switcher");
+    const search = screen.getByTestId("alpha-desktop-header-search-btn");
+    const actions = document.querySelector(".header-actions");
+    const slot = screen.getByTestId("header-workflow-slot");
+    await waitFor(() => expect(slot.contains(switcher)).toBe(true));
+    expect(switcher).toHaveTextContent("Workflow de livraison avec un nom volontairement très long");
+    expect(slot.parentElement).toBe(actions);
+    expect(search.parentElement).toBe(actions);
+    expect(Array.from(actions?.children ?? []).indexOf(slot)).toBeLessThan(Array.from(actions?.children ?? []).indexOf(search));
+    expect(document.querySelector(".board-workflow-view > .board-workflow-toolbar")).toBeNull();
+    expect(screen.queryByTestId("mobile-header-new-task")).toBeNull();
   });
 
   it("retire la réserve de contenu Alpha avec le clavier et les modales", async () => {
@@ -4797,9 +4836,9 @@ describe("App footer-safe project layout", () => {
 });
 
 describe("App node mode switching", () => {
+  // FNXC:AlphaDesktopWindows 2026-09-12-05:41: A dock selection now opens an independent dedicated note window, so it no longer transfers clean editor ownership into the later tablet page; the page-only transition remains the guard contract here.
   it.each([
     ["sans ouverture préalable du dock", false],
-    ["après une note propre dans le dock", true],
   ] as const)("protège un brouillon devenu sale sur la page tablette %s", async (_label, openCleanDockNote) => {
     const project2 = { ...DEFAULT_PROJECT, id: "proj_456", name: "Second Project", path: "/second" };
     mockProjectsState.projects = [{ ...DEFAULT_PROJECT }, project2];
@@ -4816,16 +4855,19 @@ describe("App node mode switching", () => {
     if (openCleanDockNote) {
       fireEvent.click(await screen.findByTestId("right-dock-tab-notes"));
       fireEvent.click(await within(screen.getByTestId("right-dock")).findByRole("button", { name: /Transition/ }));
-      await waitFor(() => expect(within(screen.getByTestId("right-dock")).getByLabelText("Note title")).toHaveValue("Transition"));
+      await waitFor(() => expect(screen.getByLabelText("Note title")).toHaveValue("Transition"));
     }
 
     mockUseViewportMode.mockReturnValue("tablet");
     view.rerender(<App />);
     fireEvent.click(await screen.findByTestId("sidebar-nav-notes"));
-    if (!openCleanDockNote) {
-      fireEvent.click(await screen.findByRole("button", { name: /Transition/ }));
-    }
-    const title = await screen.findByLabelText("Note title");
+    const notesPage = await waitFor(() => {
+      const candidate = document.querySelector<HTMLElement>(".notes-view:not(.notes-view--compact)");
+      expect(candidate).not.toBeNull();
+      return candidate!;
+    });
+    fireEvent.click(await within(notesPage).findByRole("button", { name: /Transition/ }));
+    const title = await within(notesPage).findByLabelText("Note title");
     await waitFor(() => expect(title).toHaveValue("Transition"));
     fireEvent.change(title, { target: { value: "Sale après transition" } });
     const projectChangesBeforeGuard = mockCurrentProjectState.setCurrentProject.mock.calls.length;

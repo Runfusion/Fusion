@@ -249,6 +249,18 @@ html[data-viewport-mode="tablet"] .chat-view--docked-list .chat-sidebar--docked 
   padding-right: calc((var(--space-md) * 2) + var(--space-sm));
 }
 
+/* FNXC:ChatWindows 2026-09-12-04:06: L’état textuel rend une fenêtre ouverte ou minimisée perceptible sans dépendre uniquement de la couleur de la ligne. */
+.chat-session-window-state {
+  display: inline-flex;
+  inline-size: max-content;
+  margin-block: var(--space-xs);
+  padding: var(--space-2xs) var(--space-xs);
+  border: var(--btn-border-width) solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+}
+
 .chat-session-preview {
   font-size: 12px;
   color: var(--text-muted);

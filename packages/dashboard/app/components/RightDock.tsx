@@ -240,7 +240,6 @@ export function RightDock({
     return null;
   }
 
-  const SelectedIcon = selectedEntry.icon;
   /* Programmatic task detail overlays whichever tool is selected; both back actions restore that tool. */
   const showingDockTask = Boolean(dockTask && dockTaskContent);
   const dockWidth = `${width}px`;
@@ -338,25 +337,27 @@ export function RightDock({
       </div>
       {open ? (
         <>
-          <div className="right-dock__header">
-            {showingDockTask ? (
-              /*
-              FNXC:RightDockTasks 2026-09-12-01:35:
-              Both task-detail back buttons clear only the temporary detail layer and reveal the previously selected tool without resurrecting a Tasks list.
-              */
-              <button
-                type="button"
-                className="btn-icon right-dock__header-back"
-                aria-label={closeDockTaskLabel}
-                title={closeDockTaskLabel}
-                data-testid="right-dock-header-back-task"
-                onClick={onCloseDockTask}
-              >
-                <ArrowLeft size={16} />
-              </button>
-            ) : <SelectedIcon size={16} />}
-            <div className="right-dock__title" role="heading" aria-level={3}>{showingDockTask ? t("rightDock.taskDetailTitle", "Task detail") : selectedEntry.label}</div>
-          </div>
+          {showingDockTask ? <div className="right-dock__header">
+            {/*
+            FNXC:RightDockTasks 2026-09-12-01:35:
+            Both task-detail back buttons clear only the temporary detail layer and reveal the previously selected tool without resurrecting a Tasks list.
+            */}
+            <button
+              type="button"
+              className="btn-icon right-dock__header-back"
+              aria-label={closeDockTaskLabel}
+              title={closeDockTaskLabel}
+              data-testid="right-dock-header-back-task"
+              onClick={onCloseDockTask}
+            >
+              <ArrowLeft size={16} />
+            </button>
+            <div className="right-dock__title" role="heading" aria-level={3}>{t("rightDock.taskDetailTitle", "Task detail")}</div>
+          </div> : null}
+          {/*
+          FNXC:AlphaDesktopRightDock 2026-09-12-04:06:
+          Les vues du dock possèdent leur propre titre; le shell supprime donc son header générique pour éviter les doublons. Le tabpanel conserve le label de l’onglet sélectionné, tandis que Task Detail garde son unique header temporaire et son action de retour.
+          */}
           <div className="right-dock__body" role="tabpanel" aria-label={showingDockTask ? t("rightDock.taskDetailTitle", "Task detail") : selectedEntry.label} data-testid="right-dock-body">
             {/*
             FNXC:RightDockFiles 2026-06-23-00:50:

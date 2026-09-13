@@ -2,6 +2,9 @@
 
 ## Essential rules
 
+<!-- FNXC:MissionCreationPolicy 2026-09-12-22:36: The operator prohibits autonomous mission creation by agents. -->
+- **Do not create missions unless the human operator explicitly requests a mission.** This applies to every agent, heartbeat, planner, and delegated task. Do not turn fixes, follow-ups, or existing tasks into missions, and do not create milestone/slice/feature hierarchies as a workaround. Existing missions are not authorization to create new ones.
+
 - **Lifecycle containment (FN-207/FN-217):** Automatic work advances through intake, hold, WIP, review, and completion. Only a revision may move a card backward: Plan Review `REVISE` may move WIP to hold, while Code Review, verification, or merge-fix `REVISE` may move review to WIP only with named pending remediation. Timeouts, retries, graph routing, cleanup, dependency recovery, contamination recovery, worktree recovery, and merge failure repair stay in the current lifecycle role. Automatic moves may never target intake or move backward out of terminal lanes.
 
 ### Standing Rule: Prefer `main` For Direct Work; Use Worktrees For Branches

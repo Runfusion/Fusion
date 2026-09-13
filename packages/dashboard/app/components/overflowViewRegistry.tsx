@@ -65,16 +65,7 @@ export interface OverflowViewRenderProps {
   experimentalFeatures?: OverflowViewFeatureState;
   /** Per-task resolved column traits, threaded from App via useRightDockController. */
   columnFlagsByTaskId?: ReadonlyMap<string, { complete?: boolean; countsTowardWip?: boolean; mergeBlocker?: boolean; humanReview?: boolean; intake?: boolean; hold?: boolean }>;
-  /*
-  FNXC:RightDockFiles 2026-06-22-15:00:
-  `surface` tells a registry render function which host it is mounting into so it can pick a deterministic layout instead of relying on a fragile CSS container query.
-  The compact right-dock body leaves this undefined ("dock"); the RightDockExpandModal sets `surface="expand"` so DockFilesView forces its LEFT|RIGHT two-pane layout regardless of measured container width.
-  */
   surface?: "dock" | "expand";
-  /*
-  FNXC:RightDockFiles 2026-06-23-00:50:
-  Measured outer width (px) of the compact right dock body host, threaded from RightDock so a registry render function can deterministically pick a wide layout from the actual dock size. Only set on the "dock" surface; the expand pop-out leaves it undefined (it already forces its wide layout via surface="expand").
-  */
   dockWidth?: number;
   addToast: (message: string, type?: ToastType) => void;
   settingsLoaded?: boolean;
@@ -86,6 +77,7 @@ export interface OverflowViewRenderProps {
   onOpenSettings?: (section?: string) => void;
   onOpenTaskDetail?: (taskId: string) => void;
   onOpenSessionInNewWindow?: (session: ChatSessionInfo) => void;
+  openChatWindows?: ReadonlyMap<string, "open" | "minimized">;
   /** Opens New Task with a reverted source task's original description. */
   onReviseTask?: (task: Task | TaskDetail) => void;
   onUpdateTask?: (id: string, updates: { title?: string; description?: string; dependencies?: string[]; dismissNearDuplicate?: boolean; githubTracking?: { enabled?: boolean } }) => Promise<Task>;
@@ -106,6 +98,7 @@ export interface OverflowViewRenderProps {
   onOpenGitManager?: () => void;
   onOpenSchedules?: () => void;
   notesController?: import("../hooks/useNotes").UseNotesController;
+  onOpenNote?: (note: import("@fusion/core").ProjectNoteSummary) => void;
   registerNotesGuard?: (guard: () => boolean | Promise<boolean>, onAccepted?: () => void) => () => void;
 }
 
@@ -127,11 +120,6 @@ export interface OverflowViewVisibilityOptions {
   pluginDashboardViews?: PluginDashboardViewEntry[];
 }
 
-/*
-FNXC:RightDockFiles 2026-06-23-00:50:
-When the dock body is at least this wide there is clearly room for the Files tree|viewer two-pane split, so the dock forces DockFilesView layout="two-pane" deterministically instead of relying on the unreliable @container dock-files query (its root content-box often measured under the breakpoint and kept the view stacked). Matched to the CSS @container dock-files (min-width: 640px) breakpoint; compared against the threaded outer dock width (the dock chrome padding is small relative to 640px of content, so 640 outer width safely implies enough body width for two panes).
-*/
-const RIGHT_DOCK_FILES_TWO_PANE_MIN_WIDTH = 640;
 /*
 FNXC:RightDockChat 2026-06-27-23:12:
 ChatView shares one full-pane list/detail flow across dock widths, so compact dock hosts retain the narrow-layout signal only for surrounding chat chrome. The expanded pop-out keeps the same navigation contract.
@@ -168,25 +156,7 @@ export const STATIC_OVERFLOW_VIEW_ENTRIES: readonly OverflowViewEntry[] = [
     label: "Files",
     icon: Folder,
     testId: "right-dock-tab-files",
-    /*
-    FNXC:RightDockFiles 2026-06-22-15:00:
-    Map the host surface to a deterministic DockFilesView layout. The expand pop-out gets `layout="two-pane"` so the tree+viewer render LEFT|RIGHT without depending on the @container query matching inside the modal body. The compact dock keeps `layout="auto"` (the container-query single-panel stack).
-
-    FNXC:RightDockFiles 2026-06-23-00:50:
-    Extend the deterministic approach to the DOCK itself: when the dock body is dragged wide (threaded `dockWidth` >= 640px) force the same LEFT|RIGHT two-pane split deterministically, NOT via the unreliable @container dock-files query (which kept the wide dock stacked because the root content-box measured under the breakpoint). Below the threshold the narrow dock keeps the single-panel stacked nav. The expand pop-out is always two-pane.
-    */
-    render: (props) => wrapOverflowView(
-      <DockFilesView
-        projectId={props.projectId}
-        openFile={props.openFile}
-        layout={
-          props.surface === "expand"
-          || (props.surface === "dock" && (props.dockWidth ?? 0) >= RIGHT_DOCK_FILES_TWO_PANE_MIN_WIDTH)
-            ? "two-pane"
-            : "auto"
-        }
-      />,
-    ),
+    render: (props) => wrapOverflowView(<DockFilesView projectId={props.projectId} openFile={props.openFile} />),
   },
   /*
   FNXC:Navigation 2026-06-27-00:00:
@@ -208,6 +178,7 @@ export const STATIC_OVERFLOW_VIEW_ENTRIES: readonly OverflowViewEntry[] = [
         addToast={props.addToast}
         experimentalFeatures={{ ...(props.experimentalFeatures ?? {}) }}
         onOpenSessionInNewWindow={props.onOpenSessionInNewWindow}
+        openChatWindows={props.openChatWindows}
         listOnly={props.hostMode === "alpha-desktop"}
         compactLayout={props.surface === "dock" && (props.dockWidth ?? RIGHT_DOCK_CHAT_COMPACT_MAX_WIDTH) <= RIGHT_DOCK_CHAT_COMPACT_MAX_WIDTH}
       />,
@@ -225,7 +196,7 @@ export const STATIC_OVERFLOW_VIEW_ENTRIES: readonly OverflowViewEntry[] = [
     isVisible: (options) => options.hostMode === "alpha-desktop",
     isExpandable: () => false,
     render: (props) => wrapOverflowView(
-      <NotesView projectId={props.projectId} addToast={props.addToast} controller={props.notesController} registerGuard={props.registerNotesGuard} compact />,
+      <NotesView projectId={props.projectId} addToast={props.addToast} controller={props.notesController} onOpenNote={props.onOpenNote} compact listOnly />,
     ),
   },
   {

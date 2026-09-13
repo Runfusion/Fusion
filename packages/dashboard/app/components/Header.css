@@ -106,21 +106,32 @@ non-notched devices, so this is a no-op there. Pair with viewport-fit=cover (ind
 .header-actions {
   display: flex;
   align-items: center;
+  flex-wrap: nowrap;
   gap: var(--space-sm);
   position: relative;
-  /* FNXC:DashboardHeader 2026-07-08-00:00: keep the compact action cluster at
-     its intrinsic size (never grow, never shrink below content) so it cannot
-     be squeezed off-row while the shrinking `.header-left` truncates instead. */
-  flex: 0 0 auto;
+  /*
+  FNXC:DashboardHeader 2026-09-12-05:41:
+  Desktop Board/List keeps the portaled workflow selector and following Search action in one row. Let the action cluster and workflow slot shrink while fixed-size buttons retain their width, so long workflow names and populated counts ellipsize before any control can wrap.
+  */
+  flex: 0 1 auto;
   min-width: 0;
+  max-width: 100%;
 }
 
 .header-workflow-slot {
   display: inline-flex;
   align-items: center;
   justify-content: flex-end;
+  flex: 1 1 auto;
+  flex-wrap: nowrap;
   gap: var(--space-xs);
   min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.header-actions > .btn-icon {
+  flex: 0 0 auto;
 }
 
 .header-workflow-slot:empty {
@@ -132,15 +143,32 @@ non-notched devices, so this is a no-op there. Pair with viewport-fit=cover (ind
   display: inline-flex;
   align-items: center;
   justify-content: flex-end;
+  flex: 1 1 auto;
+  flex-wrap: nowrap;
   gap: var(--space-xs);
+  width: 100%;
   min-width: 0;
+  max-width: 100%;
   padding: 0;
   border-bottom: 0;
   background: transparent;
 }
 
+.header-workflow-slot .board-workflow-selector,
+.header-workflow-slot .workflow-switcher {
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
 .header-workflow-slot .board-workflow-selector {
   margin-left: 0;
+}
+
+.header-workflow-slot .workflow-switcher-trigger {
+  width: 100%;
+  max-width: 100%;
 }
 
 @media (max-width: 768px) {

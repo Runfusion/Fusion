@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { UseNavigationHistoryResult } from "./useNavigationHistory";
 
 export type AlphaDesktopPilotView = "patchnode";
-export type AlphaDesktopGuardTarget = AlphaDesktopPilotView | "notes";
+export type AlphaDesktopGuardTarget = AlphaDesktopPilotView | "notes" | `note:${string}:${string}`;
 export type PilotCloseGuard = () => boolean | Promise<boolean>;
 export type PilotCloseAccepted = () => void;
 
@@ -22,7 +22,7 @@ interface UseAlphaDesktopViewWindowsOptions {
 
 /*
 FNXC:AlphaDesktopWindows 2026-09-11-19:35:
-Desktop Alpha keeps Board as the permanent main surface while History is the sole stable pilot window. Notes is inline in the right dock but registers with the same scope-exit guard registry, so its draft remains protected without retaining a second floating-window identity.
+Desktop Alpha keeps Board as the permanent main surface while History is the sole stable pilot window. Notes list is inline in the right dock, while every dedicated note window registers a project/note guard in the same scope-exit registry so all dirty drafts are confirmed independently before navigation or project changes.
 */
 export function useAlphaDesktopViewWindows({ enabled, projectId, navigation, showBoard, showNotesPage, notesDirty = false }: UseAlphaDesktopViewWindowsOptions) {
   const { pushNav, removeNav, promoteNav } = navigation;
@@ -66,6 +66,11 @@ export function useAlphaDesktopViewWindows({ enabled, projectId, navigation, sho
   const commitAcceptedClose = useCallback((id: AlphaDesktopGuardTarget) => {
     closeAcceptedCallbacksRef.current.get(id)?.();
   }, []);
+
+  const requestGuardedClose = useCallback((id: AlphaDesktopGuardTarget) => requestGuardVerdict(id).then((accepted) => {
+    if (accepted) commitAcceptedClose(id);
+    return accepted;
+  }), [commitAcceptedClose, requestGuardVerdict]);
 
   const requestClose = useCallback((id: AlphaDesktopPilotView, options?: { preserveHistoryPosition?: boolean }) => {
     const existing = pendingCloseRef.current.get(id);
@@ -157,8 +162,9 @@ export function useAlphaDesktopViewWindows({ enabled, projectId, navigation, sho
     open,
     activate,
     requestClose,
+    requestGuardedClose,
     requestCloseAll,
     registerGuard,
     clearGuard,
-  }), [activate, clearGuard, open, registerGuard, requestClose, requestCloseAll, windows]);
+  }), [activate, clearGuard, open, registerGuard, requestClose, requestGuardedClose, requestCloseAll, windows]);
 }

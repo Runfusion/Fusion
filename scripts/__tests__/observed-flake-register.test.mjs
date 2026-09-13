@@ -16,11 +16,18 @@ const agentsPath = resolve(rootDir, "AGENTS.md");
 const testingPath = resolve(rootDir, "docs/testing.md");
 
 function readRegisterEntries(register) {
-  const entries = [...register.matchAll(/- \*\*File:\*\* `([^`]+)`\n- \*\*Exact test:\*\* `([^`]+)`/g)].map(
-    ([, file, fullName]) => ({ file, fullName }),
-  );
+  /*
+  FNXC:TestFlakeRegister 2026-09-09-13:51:
+  Active entries must name live test files so the escalation surface cannot drift. Archived records
+  may deliberately retain the path of a deleted ratchet file as historical evidence, so validating
+  the full document would reject an intentional deletion.
+  */
+  const entries = readActiveRecordSections(register).flatMap(({ body }) =>
+    [...body.matchAll(/- \*\*File:\*\* `([^`]+)`\n- \*\*Exact test:\*\* `([^`]+)`/g)].map(
+      ([, file, fullName]) => ({ file, fullName }),
+    ));
 
-  assert.ok(entries.length > 0, "Expected the observed-flake register to name at least one test");
+  assert.ok(entries.length > 0, "Expected active observed-flake records to name at least one test");
   return entries;
 }
 
@@ -98,12 +105,27 @@ The register now records that evidence owner FN-9146 was archived on 2026-09-03 
 successor, so active records 1 and 2 are unowned pending their next sighting. The pinned status
 texts below track that archived-owner annotation; do not strip it without re-homing the records.
 
-FNXC:TestFlakeRegister 2026-09-09-10:31:
-Entry 14's quarantine reaches its 14-day deletion-ratchet deadline on 2026-09-12, now owned by
-rescue task FN-9283 under mission M-MTU4YAJI-0001-PAJK. The pinned status text below therefore
-carries the deadline and the named rescue owner so the approaching auto-deletion (44 passing
-tests of FN-6735 merge-node paused-abort coverage) cannot pass silently; update both together
-when the rescue resolves.
+FNXC:TestFlakeRegister 2026-09-09-13:51:
+FN-9283 closed entry 14 by deleting stale FN-6735 coverage that asserted FN-217-removed automatic
+review-to-WIP recovery. The active inventory must exclude the archived record, so a future quarantine
+is never mistaken for an unresolved deletion-ratchet obligation.
+
+FNXC:TestFlakeRegister 2026-09-10-19:28:
+Entry 14 closed 2026-09-09 when the deletion ratchet executed via commit 55912bd665, which
+removed the test file, the quarantine ledger entry, and the engine-reliability exclude in one
+commit. The register record now keeps its historical identity on relabeled File/Exact-test
+lines that no longer match the dangling-path scan (the file no longer exists to drift-check),
+states 3 active records, and names FN-9287 (depends on the still-in-review FN-9283) as the
+coverage-restoration owner.
+
+FNXC:TestFlakeRegister 2026-09-12-04:32:
+Entry 1 closed 2026-09-12: FN-9131's structural harness connection-budget fix (ae507afc37,
+merged 2026-08-16) resolved its reproduced project-identity timeout with loaded re-measurement
+green, and no sighting has occurred since. The status line now starts with "Closed", so the
+active list drops to entries 2 and 13 and the stated count drops to 2. Entry 1's record and
+its FN-9146 campaign table stay physically in the active section (readActiveRecordSections
+does not filter by status), so the campaign-evidence assertion below still reads entry 1 in
+place — keep it in expectedSubjectResults exactly like the closed-in-place entry 7.
 */
 test("observed-flake register active count, escalation state, and owners stay synchronized", () => {
   const register = readFileSync(registerPath, "utf8");
@@ -119,20 +141,12 @@ test("observed-flake register active count, escalation state, and owners stay sy
 
   assert.deepEqual(activeEntries, [
     {
-      heading: "1. Project identity returns no stored identity",
-      status: "Active reproduced-but-unattributed observation — evidence owner FN-9146 (archived 2026-09-03; record unowned pending next sighting).",
-    },
-    {
       heading: "2. Schema applier retains registered dependents",
       status: "Active first sighting — evidence owner FN-9146 (archived 2026-09-03; record unowned pending next sighting).",
     },
     {
       heading: "13. Handoff-to-review atomicity PostgreSQL setup hook",
       status: "Active first sighting — recorded 2026-08-23, unattributed.",
-    },
-    {
-      heading: "14. Merge-node paused-abort retry sequence",
-      status: "Quarantined 2026-08-29 after a second sequence-only sighting — rescue owner FN-9283 (mission M-MTU4YAJI-0001-PAJK), deletion-ratchet deadline 2026-09-12 (quarantinedAt + 14d).",
     },
   ]);
 });

@@ -1546,16 +1546,17 @@ describe("Board", () => {
       expect(screen.queryByTestId("board-workflow-collapse-toggle")).toBeNull();
     });
 
-    it("relocates workflow selector, edit, and create controls into the header slot", async () => {
+    it("relocates the real populated workflow selector into the header without a fallback toolbar", async () => {
       const onCreateWorkflow = vi.fn();
       const onOpenWorkflowEditor = vi.fn();
+      const longWorkflow = { ...CUSTOM_WORKFLOW, name: "Workflow with a deliberately long delivery name" };
       const headerSlot = document.createElement("div");
       headerSlot.id = "header-workflow-slot";
       headerSlot.className = "header-workflow-slot";
       document.body.appendChild(headerSlot);
       enableFlag(
         { "FN-1": "builtin:coding", "FN-2": "wf-custom" },
-        [DEFAULT_WORKFLOW, CUSTOM_WORKFLOW],
+        [DEFAULT_WORKFLOW, longWorkflow],
       );
       try {
         renderBoard({
@@ -1576,7 +1577,9 @@ describe("Board", () => {
         expect(screen.getByTestId("workflow-switcher-create")).toBeInTheDocument();
         fireEvent.click(screen.getByTestId("workflow-switcher-option-wf-custom"));
         await waitFor(() => expect(screen.getByTestId("column-intake")).toBeDefined());
+        expect(selector).toHaveTextContent(longWorkflow.name);
         expect(screen.queryByTestId("column-todo")).toBeNull();
+        expect(document.querySelectorAll(".board-workflow-toolbar")).toHaveLength(1);
         fireEvent.click(selector);
         fireEvent.click(screen.getByTestId("workflow-switcher-edit-wf-custom"));
         expect(onOpenWorkflowEditor).toHaveBeenCalledWith("wf-custom");
