@@ -2,7 +2,8 @@
 
 ## Essential rules
 
-<!-- FNXC:MissionCreationPolicy 2026-09-12-22:36: The operator prohibits autonomous mission creation by agents. -->
+<!-- FNXC:MissionCreationPolicy 2026-09-13-01:48: Agents should create tasks directly; missions are a rare, explicitly requested exception. -->
+- **Create tasks directly by default.** For fixes, follow-ups, and ordinary implementation work, check existing open tasks for duplicates, then create a task without creating a mission hierarchy. Use task dependencies when ordering work; do not require mission linkage for ordinary task intake.
 - **Do not create missions unless the human operator explicitly requests a mission.** This applies to every agent, heartbeat, planner, and delegated task. Do not turn fixes, follow-ups, or existing tasks into missions, and do not create milestone/slice/feature hierarchies as a workaround. Existing missions are not authorization to create new ones.
 
 - **Lifecycle containment (FN-207/FN-217):** Automatic work advances through intake, hold, WIP, review, and completion. Only a revision may move a card backward: Plan Review `REVISE` may move WIP to hold, while Code Review, verification, or merge-fix `REVISE` may move review to WIP only with named pending remediation. Timeouts, retries, graph routing, cleanup, dependency recovery, contamination recovery, worktree recovery, and merge failure repair stay in the current lifecycle role. Automatic moves may never target intake or move backward out of terminal lanes.
