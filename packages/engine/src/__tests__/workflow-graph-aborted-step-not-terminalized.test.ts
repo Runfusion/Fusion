@@ -254,7 +254,12 @@ describe("workflow graph aborted step result handling", () => {
 
     await executor.run(subject, settings, optionalGroupGraph());
 
-    expect(laterLease).toEqual({ scopeCurrent: true, persisted: true });
+    expect(laterLease).toMatchObject({
+      scopeCurrent: true,
+      persisted: true,
+      disposition: "applied",
+      persistedResult: expect.objectContaining({ status: "pending" }),
+    });
     const pendingResult = sink.record.mock.calls[0]?.[1] as WorkflowStepResult;
     const terminalFence = sink.record.mock.calls[1]?.[2] as {
       requireAttemptStartedAt?: string;

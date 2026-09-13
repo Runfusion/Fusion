@@ -11,7 +11,7 @@ import type {
   WorkflowStepResult,
   WorkflowStepNotRunReason,
 } from "@fusion/core";
-import { BUILTIN_CODING_WORKFLOW_IR, FAST_LANE_SKIP_VALUE, FAST_MODE_BYPASS_ACTOR, PLAN_REVIEW_GROUP_ID, WORKFLOW_STEP_NOT_RUN_REASONS, WorkflowIrError, computeWorkflowIrPin, getWorkflowExtensionRegistry, instanceNodeId, resolveFastLaneRoute, resolveMaxReworkCycles, isExperimentalFeatureEnabled, GRAPH_NATIVE_POST_MERGE_FLAG, isCompletionSummaryNode, classifyReviewLease, isWorkflowOptionalGroupEnabled, isPlanReviewSatisfied, parseNoOpCompletionMarker, requiresContentReviewProof } from "@fusion/core";
+import { BUILTIN_CODING_WORKFLOW_IR, FAST_LANE_SKIP_VALUE, FAST_MODE_BYPASS_ACTOR, PLAN_REVIEW_GROUP_ID, WORKFLOW_STEP_NOT_RUN_REASONS, WorkflowIrError, computeWorkflowIrPin, getWorkflowExtensionRegistry, instanceNodeId, resolveFastLaneRoute, resolveMaxReworkCycles, isExperimentalFeatureEnabled, GRAPH_NATIVE_POST_MERGE_FLAG, isCompletionSummaryNode, classifyReviewLease, isWorkflowOptionalGroupEnabled, isPlanReviewSatisfied, parseNoOpCompletionMarker, requiresContentReviewProof, resolveRequiredPreMergeStepIds } from "@fusion/core";
 import { isNonPlanDefectPlanReviewFailure } from "../errors/transient-error-detector.js";
 import { isSessionContentionError } from "../errors/transient-error-patterns.js";
 import { isRequiredArtifactReadFailedValue, parseRequiredArtifactMissingValue } from "../execution/required-workflow-artifacts.js";
@@ -192,6 +192,8 @@ export interface WorkflowStepResultPersistenceOutcome {
   scopeCurrent: boolean;
   /** True only when this invocation durably applied its result patch. */
   persisted: boolean;
+  disposition?: "applied" | "fence-refused" | "scope-superseded" | "aborted" | "no-writer" | "error";
+  persistedResult?: WorkflowStepResult;
 }
 
 export type WorkflowStepResultPersistenceResult =
@@ -1075,10 +1077,34 @@ export class WorkflowGraphExecutor {
             ? recoverPassedPlanReviewFromLatestLog(task)
             : undefined;
           if (repairedPlanReview) {
-            await this.recordOptionalGroupStepResult(task.id, repairedPlanReview);
-            context[`node:${node.id}:outcome`] = "success";
-            this.deps.logTaskEntry?.("[pre-merge] Workflow step already passed: Plan Review");
-            return await traverseChildren(node, { outcome: "success", value: "already-passed" });
+            const repairedPersistence = await this.recordOptionalGroupStepResult(task.id, repairedPlanReview);
+            /*
+             * FNXC:AuthoritativeGateResult 2026-09-12-23:22:
+             * Reconstruction has no lease to clean up, but it can still await a terminal sink while
+             * an operator cancels the run. Preserve the node-boundary abort contract instead of
+             * converting that interruption into a synthetic persistence failure.
+             */
+            if (this.isRunAborted()) {
+              context[`node:${node.id}:outcome`] = "failure";
+              const aborted = this.withEnginePauseAbortContext(node, { outcome: "failure", value: "aborted" });
+              Object.assign(context, aborted.contextPatch);
+              return aborted;
+            }
+            const repairedResult = repairedPersistence.persistedResult;
+            if (
+              repairedPersistence.scopeCurrent
+              && repairedPersistence.persisted
+              && repairedPersistence.disposition === "applied"
+              && repairedResult?.status === "passed"
+              && (repairedResult.verdict === "APPROVE" || repairedResult.verdict === "APPROVE_WITH_NOTES")
+            ) {
+              context[`node:${node.id}:outcome`] = "success";
+              this.deps.logTaskEntry?.("[pre-merge] Workflow step already passed: Plan Review");
+              return await traverseChildren(node, { outcome: "success", value: "already-passed" });
+            }
+            context[`node:${node.id}:outcome`] = "failure";
+            context[`node:${node.id}:value`] = "gate-persistence-unavailable";
+            return { outcome: "failure", value: "gate-persistence-unavailable" };
           }
           /*
            * FNXC:PlanReviewLease 2026-07-18-23:50:
@@ -1307,6 +1333,16 @@ export class WorkflowGraphExecutor {
             startedAt: stepStartedAt,
             completedAt: new Date().toISOString(),
           }, terminalFence);
+          if (this.isRunAborted()) {
+            await this.discardWorkflowStepLease(task.id, node.id, stepStartedAt);
+            context[`node:${node.id}:outcome`] = "failure";
+            const aborted = this.withEnginePauseAbortContext(node, {
+              outcome: "failure",
+              value: groupResult.value ?? "aborted",
+            });
+            Object.assign(context, aborted.contextPatch);
+            return aborted;
+          }
           const scopeCurrent = terminalPersistence.scopeCurrent;
           if (!scopeCurrent) {
             /* FNXC:RepositoryScope 2026-08-21-02:48: Optional-group Code Review cannot route an approval once its terminal scope CAS is superseded. */
@@ -1314,12 +1350,43 @@ export class WorkflowGraphExecutor {
             context[`node:${node.id}:value`] = "workspace-review-superseded";
             return { outcome: "failure", value: "workspace-review-superseded" };
           }
-          // `[pre-merge]`/`[post-merge]` terminal logs at parity with the legacy path
-          // (executor.ts runWorkflowSteps: "completed" / "requested revision" /
-          // "failed" + the advisory variant).
-          if (notRunReason && stepStatus === "skipped") {
+          const authoritativeResult = terminalPersistence.persistedResult;
+          const effectiveStepStatus = authoritativeResult?.status ?? stepStatus;
+          const effectiveVerdict = authoritativeResult ? authoritativeResult.verdict : verdict;
+          const requiredGate = verdictRequired || resolveRequiredPreMergeStepIds(ir, task.enabledWorkflowSteps, task).has(node.id);
+          const persistenceUnavailable = terminalPersistence.disposition !== "no-writer"
+            && terminalPersistence.disposition !== "aborted"
+            && !terminalPersistence.persisted;
+          /*
+           * FNXC:AuthoritativeGateResult 2026-09-12-23:37:
+           * A required gate's durable terminal status controls routing even when a stale adapter
+           * leaves APPROVE attached to a failed row. Only a durably passed result may advance.
+           */
+          const requiresAuthoritativeApproval = verdictRequired
+            || authoritativeResult?.verdictRequired === true
+            || this.workflowReviewKind(node) !== undefined;
+          /*
+           * FNXC:AuthoritativeGateResult 2026-09-13-05:59:
+           * A required review's durable row must carry an approval verdict. A passed status
+           * without APPROVE or APPROVE_WITH_NOTES is not mergeable evidence and cannot reuse
+           * the optimistic handler result to advance the graph.
+           */
+          const hasAuthoritativeApproval = effectiveVerdict === "APPROVE" || effectiveVerdict === "APPROVE_WITH_NOTES";
+          const authoritativeFailure = authoritativeResult !== undefined
+            // A durable REVISE is genuine reviewer evidence and must retain its authored remediation route.
+            && effectiveVerdict !== "REVISE"
+            && (authoritativeResult.status !== "passed" || (requiresAuthoritativeApproval && !hasAuthoritativeApproval));
+          if (requiredGate && (persistenceUnavailable || authoritativeFailure)) {
+            const value = persistenceUnavailable ? "gate-persistence-unavailable" : "gate-result-not-approved";
+            this.deps.logTaskEntry?.(`${logPrefix} Workflow step failed: ${groupName}`, authoritativeResult?.output ?? authoritativeResult?.notes ?? stepOutput);
+            context[`node:${node.id}:outcome`] = "failure";
+            context[`node:${node.id}:value`] = value;
+            return { outcome: "failure", value };
+          }
+          // `[pre-merge]`/`[post-merge]` terminal logs follow the durable row when one exists.
+          if (notRunReason && effectiveStepStatus === "skipped") {
             this.deps.logTaskEntry?.(`${logPrefix} Workflow step not executed: ${groupName}`, `${notRunReason}${stepOutput ? `\n${stepOutput}` : ""}`);
-          } else if (stepStatus === "passed") {
+          } else if (effectiveStepStatus === "passed") {
             /*
             FNXC:ReviewVerdictNotes 2026-08-28-21:23:
             Preserve the passed review rationale in the completion log detail. Both log-based Plan
@@ -1331,10 +1398,10 @@ export class WorkflowGraphExecutor {
             } else {
               this.deps.logTaskEntry?.(`${logPrefix} Workflow step completed: ${groupName}`);
             }
-          } else if (stepStatus === "advisory_failure") {
+          } else if (effectiveStepStatus === "advisory_failure") {
             this.deps.logTaskEntry?.(`${logPrefix} Workflow step requested revision: ${groupName}`, stepOutput);
             this.deps.logTaskEntry?.(`${logPrefix} Advisory workflow step failed: ${groupName}`);
-          } else if (verdict === "REVISE") {
+          } else if (effectiveVerdict === "REVISE") {
             this.deps.logTaskEntry?.(`${logPrefix} Workflow step requested revision: ${groupName}`, stepOutput);
           } else {
             this.deps.logTaskEntry?.(`${logPrefix} Workflow step failed: ${groupName}`, stepOutput);
@@ -1423,7 +1490,7 @@ export class WorkflowGraphExecutor {
           }
           const nonPlanDefectPlanReviewFailure =
             node.id === PLAN_REVIEW_GROUP_ID
-            && stepStatus === "failed"
+            && effectiveStepStatus === "failed"
             && (
               /*
               FNXC:PlanReviewOutputExclusivity 2026-09-06-01:01:
@@ -1431,10 +1498,10 @@ export class WorkflowGraphExecutor {
               never a plan defect. Hold it before route selection so malformed reviewer output can
               neither reach execution nor fabricate a REVISE-driven planning cycle.
               */
-              (verdictRequired && !verdict && !notRunReason)
+              (verdictRequired && !effectiveVerdict && !notRunReason)
               || isRequiredArtifactReadFailedValue(verdictRaw)
               || isNonPlanDefectPlanReviewFailure({
-                verdict,
+                verdict: effectiveVerdict,
                 errorMessage: stepOutput ?? stepNotes,
                 failureValue: verdictRaw,
               })
@@ -1448,10 +1515,10 @@ export class WorkflowGraphExecutor {
            */
           const shouldRequestPreMergeFix =
             stepPhase === "pre-merge"
-            && (stepStatus === "advisory_failure" || stepStatus === "failed")
-            && (verdict === "REVISE" || parseRequiredArtifactMissingValue(verdictRaw) !== null || (
+            && (effectiveStepStatus === "advisory_failure" || effectiveStepStatus === "failed")
+            && (effectiveVerdict === "REVISE" || parseRequiredArtifactMissingValue(verdictRaw) !== null || (
               node.id === PLAN_REVIEW_GROUP_ID
-              && stepStatus === "failed"
+              && effectiveStepStatus === "failed"
               && !nonPlanDefectPlanReviewFailure
             ));
           if (nonPlanDefectPlanReviewFailure) {
@@ -1476,8 +1543,8 @@ export class WorkflowGraphExecutor {
               stepName: groupName,
               feedback,
               phase: stepPhase,
-              status: stepStatus,
-              verdict: verdict ?? (node.id === PLAN_REVIEW_GROUP_ID ? "REVISE" : undefined),
+              status: effectiveStepStatus,
+              verdict: effectiveVerdict ?? (node.id === PLAN_REVIEW_GROUP_ID ? "REVISE" : undefined),
               ...(parseRequiredArtifactMissingValue(verdictRaw) ? { failureValue: verdictRaw } : {}),
               nodeId: node.id,
               ...(this.workflowReviewKind(node) ? { reviewKind: this.workflowReviewKind(node) } : {}),
@@ -1500,7 +1567,7 @@ export class WorkflowGraphExecutor {
              * the lifecycle policy. Older stored specs without that node keep the
              * compatibility scheduler here.
              */
-            const remediationRouteSource: WorkflowNodeResult = { outcome: "failure", value: result.value };
+            const remediationRouteSource: WorkflowNodeResult = { outcome: "failure", value: effectiveVerdict === "REVISE" ? "REVISE" : result.value };
             const explicitWorkflowRemediationRoute = (outgoingMap.get(node.id) ?? []).some((edge) => {
               if (!this.shouldTraverseEdge(edge, remediationRouteSource)) return false;
               const target = nodeMap.get(edge.to);
@@ -1516,7 +1583,9 @@ export class WorkflowGraphExecutor {
               return { outcome: "success", value: "pre-merge-optional-step-fix-scheduled" };
             }
           }
-          return await traverseChildren(node, result);
+          return await traverseChildren(node, effectiveVerdict === "REVISE"
+            ? { outcome: "failure", value: "REVISE" }
+            : result);
         }
 
         const workflowAction = node.config?.workflowAction;
@@ -1966,8 +2035,13 @@ export class WorkflowGraphExecutor {
     order against Reset's PostgreSQL transaction; updateWorkflowStepResultsFenced owns that enforcement.
     Return true on this refusal because false has the separate repository-scope-superseded meaning.
     */
-    if (this.isRunAborted()) return { scopeCurrent: true, persisted: false };
-    if (!this.deps.recordWorkflowStepResult) return { scopeCurrent: true, persisted: false };
+    /*
+    FNXC:AuthoritativeGateResult 2026-09-12-22:54:
+    The durable receipt is routing authority. Keep an absent sink byte-inert for in-memory callers,
+    but distinguish it from cancellation and wired persistence failures so required gates fail closed.
+    */
+    if (this.isRunAborted()) return { scopeCurrent: true, persisted: false, disposition: "aborted" };
+    if (!this.deps.recordWorkflowStepResult) return { scopeCurrent: true, persisted: false, disposition: "no-writer" };
     try {
       const outcome = await this.deps.recordWorkflowStepResult(taskId, result, {
         ...fence,
@@ -1977,14 +2051,22 @@ export class WorkflowGraphExecutor {
         ? outcome as Partial<WorkflowStepResultPersistenceOutcome>
         : undefined;
       if (typeof receipt?.scopeCurrent === "boolean" && typeof receipt.persisted === "boolean") {
-        return { scopeCurrent: receipt.scopeCurrent, persisted: receipt.persisted };
+        return {
+          scopeCurrent: receipt.scopeCurrent,
+          persisted: receipt.persisted,
+          disposition: receipt.disposition,
+          persistedResult: receipt.persistedResult,
+        };
       }
       // Legacy in-memory seams return void after mutating their record array. Preserve that contract
       // while production returns the explicit receipt required for predecessor-CAS admission.
-      return { scopeCurrent: outcome !== false, persisted: outcome !== false };
+      return {
+        scopeCurrent: outcome !== false,
+        persisted: outcome !== false,
+        disposition: outcome !== false ? "applied" : "scope-superseded",
+      };
     } catch {
-      // Result recording is additive — a sink failure must not affect the run.
-      return { scopeCurrent: true, persisted: false };
+      return { scopeCurrent: true, persisted: false, disposition: "error" };
     }
   }
 
@@ -2167,14 +2249,14 @@ export class WorkflowGraphExecutor {
           if (this.isAbortNodeResult(projected)) {
             return this.withEnginePauseAbortContext(node, projected);
           }
-          if (progressRecord && !await this.recordNodeProgressFinish(task.id, node, progressRecord, projected)) {
-            /*
-            FNXC:RepositoryScope 2026-08-21-02:48:
-            A terminal review record rejected by the scope-generation CAS cannot
-            traverse its APPROVE edge. Return an unavailable outcome instead.
-            */
-            return { outcome: "failure", value: "workspace-review-superseded" };
+          const terminalResult = progressRecord
+            ? await this.recordNodeProgressFinish(task.id, node, progressRecord, projected)
+            : undefined;
+          if (signal?.aborted) {
+            if (progressRecord) await this.discardWorkflowStepLease(task.id, node.id, progressRecord.result.startedAt!);
+            return this.withEnginePauseAbortContext(node, projected);
           }
+          if (terminalResult) return this.applyRequiredGatePersistence(node, task, workflow, projected, terminalResult);
           return projected;
         }
         if (!handler) {
@@ -2189,10 +2271,14 @@ export class WorkflowGraphExecutor {
         if (this.isAbortNodeResult(projected)) {
           return this.withEnginePauseAbortContext(node, projected);
         }
-        if (progressRecord && !await this.recordNodeProgressFinish(task.id, node, progressRecord, projected)) {
-          /* FNXC:RepositoryScope 2026-08-21-02:48: See the plugin-node path above; both graph dispatch routes share this edge fence. */
-          return { outcome: "failure", value: "workspace-review-superseded" };
+        const terminalResult = progressRecord
+          ? await this.recordNodeProgressFinish(task.id, node, progressRecord, projected)
+          : undefined;
+        if (signal?.aborted) {
+          if (progressRecord) await this.discardWorkflowStepLease(task.id, node.id, progressRecord.result.startedAt!);
+          return this.withEnginePauseAbortContext(node, projected);
         }
+        if (terminalResult) return this.applyRequiredGatePersistence(node, task, workflow, projected, terminalResult);
         return projected;
       } catch (error) {
         if (error instanceof WorkflowGraphSuspended) throw error;
@@ -2351,7 +2437,7 @@ export class WorkflowGraphExecutor {
     node: WorkflowIrNode,
     started: WorkflowNodeProgressLease | null,
     nodeResult: WorkflowNodeResult,
-  ): Promise<boolean> {
+  ): Promise<WorkflowStepResultPersistenceOutcome> {
     const contextPatch = nodeResult.contextPatch ?? {};
     const notRunReason = node.id === PLAN_REVIEW_GROUP_ID
       ? undefined
@@ -2384,6 +2470,11 @@ export class WorkflowGraphExecutor {
       && typeof contextPatch.reviewInputFingerprint === "string"
       ? contextPatch.reviewInputFingerprint
       : undefined;
+    const verdictRaw = typeof nodeResult.value === "string" ? nodeResult.value : undefined;
+    const verdict = verdictRaw === "APPROVE" || verdictRaw === "APPROVE_WITH_NOTES" || verdictRaw === "REVISE"
+      ? verdictRaw
+      : undefined;
+    const verdictRequired = contextPatch.verdictRequired === true;
     const reviewedCommitSha = this.workflowReviewKind(node) && typeof contextPatch.reviewedCommitSha === "string"
       ? contextPatch.reviewedCommitSha
       : undefined;
@@ -2417,6 +2508,8 @@ export class WorkflowGraphExecutor {
       status,
       ...(notRunReason && status === "skipped" ? { notRunReason } : {}),
       ...(this.workflowReviewKind(node) ? { reviewKind: this.workflowReviewKind(node) } : {}),
+      ...(verdictRequired ? { verdictRequired: true } : {}),
+      ...(verdict ? { verdict } : {}),
       ...(output !== undefined ? { output } : {}),
       ...(notes !== undefined ? { notes } : {}),
       ...(findings?.length ? { findings } : {}),
@@ -2436,7 +2529,58 @@ export class WorkflowGraphExecutor {
       const phase = started?.result.phase ?? (node.config?.phase === "post-merge" ? "post-merge" : "pre-merge");
       this.deps.logTaskEntry?.(`[${phase}] Workflow step not executed: ${this.workflowNodeProgressName(node)}`, `${notRunReason}${output ? `\n${output}` : ""}`);
     }
-    return recorded.scopeCurrent;
+    return recorded;
+  }
+
+  /*
+   * FNXC:AuthoritativeGateResult 2026-09-12-23:09:
+   * Standalone review nodes must route from the terminal persistence receipt, not their optimistic
+   * handler projection. A durable non-approval or failed terminal write holds a required gate in
+   * place without manufacturing a reviewer REVISE verdict.
+   */
+  private applyRequiredGatePersistence(
+    node: WorkflowIrNode,
+    task: TaskDetail,
+    workflow: WorkflowIr,
+    projected: WorkflowNodeResult,
+    persistence: WorkflowStepResultPersistenceOutcome,
+  ): WorkflowNodeResult {
+    if (!persistence.scopeCurrent) return { outcome: "failure", value: "workspace-review-superseded" };
+    const requiredGate = projected.contextPatch?.verdictRequired === true
+      || resolveRequiredPreMergeStepIds(workflow, task.enabledWorkflowSteps, task).has(node.id);
+    if (!requiredGate || persistence.disposition === "no-writer") return projected;
+    const unavailable = !persistence.persisted || persistence.disposition !== "applied";
+    const durableResult = persistence.persistedResult;
+    const reviewGate = this.workflowReviewKind(node) !== undefined;
+    /*
+     * FNXC:AuthoritativeGateResult 2026-09-12-23:22:
+     * A standalone review's handler projection is not approval evidence. Persist its verdict and
+     * require the durable row to carry APPROVE or APPROVE_WITH_NOTES before a required review may
+     * take a success edge, matching the merge door's review-verdict contract.
+     */
+    /*
+     * FNXC:AuthoritativeGateResult 2026-09-12-23:45:
+     * A persisted REVISE is authoritative reviewer feedback, not an infrastructure failure.
+     * Preserve its projected failure so the graph can take its authored remediation edge; only
+     * stale approvals and non-verdict terminal failures are held with the fixed gate value.
+     */
+    const nonApproving = durableResult !== undefined
+      && durableResult.verdict !== "REVISE"
+      && (
+        durableResult.status !== "passed"
+        || (reviewGate && durableResult.verdict !== "APPROVE" && durableResult.verdict !== "APPROVE_WITH_NOTES")
+      );
+    if (!unavailable && !nonApproving) return projected;
+    const value = unavailable ? "gate-persistence-unavailable" : "gate-result-not-approved";
+    return {
+      outcome: "failure",
+      value,
+      contextPatch: {
+        ...(projected.contextPatch ?? {}),
+        [`node:${node.id}:outcome`]: "failure",
+        [`node:${node.id}:value`]: value,
+      },
+    };
   }
 
   private async prepareNodeExecution(
