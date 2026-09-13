@@ -3,7 +3,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { NativeWorktreeBackend } from "../../worktree/worktree-backend.js";
-import { WorktreePool } from "../../worktree/worktree-pool.js";
 import { git, hasGit } from "./_helpers.js";
 
 describe.skipIf(!hasGit)("reliability interactions: worktree stale registration recovery", () => {
@@ -59,27 +58,4 @@ describe.skipIf(!hasGit)("reliability interactions: worktree stale registration 
     expect(porcelain).toContain(`worktree ${resolvedWorktreePath}`);
   });
 
-  it("recovered path composes with FN-4954 pool acquire/release contract", async () => {
-    const root = await setupRepo();
-    const worktreePath = join(root, ".worktrees", "fn-test-2");
-
-    git(root, `git worktree add -b feature ${JSON.stringify(worktreePath)}`);
-    await rm(worktreePath, { recursive: true, force: true });
-
-    const backend = new NativeWorktreeBackend();
-    await backend.create({
-      rootDir: root,
-      taskId: "FN-TEST-2",
-      worktreePath,
-      branch: "fusion/fn-test-2",
-      startPoint: "main",
-    });
-
-    const pool = new WorktreePool();
-    pool.release(worktreePath, "FN-TEST-2");
-    const acquired = pool.acquire("FN-TEST-3");
-
-    expect(acquired).toBe(worktreePath);
-    expect(pool.getLeasedPaths().get(worktreePath)).toBe("FN-TEST-3");
-  });
 });

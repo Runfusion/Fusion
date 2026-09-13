@@ -19,7 +19,7 @@ tags:
 
 # Observed suite-only flakes register
 
-This register has **4 active observation records** (entries 1, 2, 13, and 14): **2 active first sightings**, **1 reproduced-but-unattributed observation**, and **1 quarantined second sighting**. Entry 7 below is closed and retained for cross-reference only. It also has **1 merge-gate eviction record** (entry 6) and **8 archived closed records**. Only the active section drives quarantine and escalation decisions; the other sections preserve historical evidence.
+This register has **2 active observation records** (entries 2 and 13), both **active first sightings**. Entry 1 closed on 2026-09-12: FN-9131's structural harness connection-budget fix (merged 2026-08-16 as `ae507afc37`) resolved its reproduced timeout, and no sighting has occurred since the fix landed; the record stays in place below for its campaign evidence. Entries 7 and 14 below are closed and retained for cross-reference only. It also has **1 merge-gate eviction record** (entry 6) and **9 archived closed records**. Only the active section drives quarantine and escalation decisions; the other sections preserve historical evidence.
 
 <!--
 FNXC:TestFlakeRegister 2026-08-19-11:14:
@@ -36,11 +36,22 @@ pending-next-sighting state. The pinned validator assertions in
 scripts/__tests__/observed-flake-register.test.mjs were updated in the same change.
 -->
 
+<!--
+FNXC:TestFlakeRegister 2026-09-12-04:32:
+Entry 1's reproduced 15s project-identity timeout was structurally fixed by FN-9131 (queueing
+admission in the shared PostgreSQL harness connection budget, wait hoisted off the test budget,
+loaded 27-worker re-measurement green; merged 2026-08-16 as ae507afc37). No sighting in the
+~4 weeks since. Closing the record — leaving it active would name an archived owner and deny
+the landed fix, the same lie-about-ownership failure FN-9146's note fixed for FN-9146. The
+record stays physically in the active section because the pinned campaign-evidence test reads
+its per-run table in place, mirroring the entry 7 precedent.
+-->
+
 ## Active observation records
 
 ### 1. Project identity returns no stored identity
 
-- **Status:** Active reproduced-but-unattributed observation — evidence owner FN-9146 (archived 2026-09-03; record unowned pending next sighting).
+- **Status:** Closed 2026-09-12 — structurally resolved by FN-9131 (queueing admission in the shared PostgreSQL harness connection budget; merged 2026-08-16 as `ae507afc37`; loaded 27-worker re-measurement green). No sighting since the fix landed; a new sighting re-opens normal escalation.
 
 - **File:** `packages/core/src/__tests__/postgres/project-identity.test.ts`
 - **Exact test:** `project-identity async (PostgreSQL integration) > returns null when no identity is stored`
@@ -60,6 +71,8 @@ scripts/__tests__/observed-flake-register.test.mjs were updated in the same chan
 |---|---|
 | full core ×3, 6 workers | subject passed; unrelated settings-revision-attribution failure |
 | PostgreSQL directory, 12 workers | subject passed; unrelated satellite-store ordering failure |
+
+**Closed 2026-09-12 (FN-9131):** The reproduced subject is no longer active. FN-9131 diagnosed the mechanism behind the A02–A04 captures — the shared harness sized connections from constants and never asked the cluster how many backends exist or how many participants compete for them, so at 27 forks demand more than doubled `max_connections` and the first test in a file (`project-identity.test.ts:41:3`) consumed its whole 15s budget waiting — and shipped the structural fix in `packages/core/src/__test-utils__/pg-connection-budget.ts`: over-subscription became queueing (a participant that cannot be admitted waits holding zero backends, and admission exhaustion never throws into a test or hook), the first admission window moved to the shared per-worker setup module off the test budget, and the per-participant footprint shrank until the measured wait fit the R9 bound. The loaded acceptance — the exact 27-worker reproduction completing with the subject passing and no wall-time regression against the 177–203s pre-fix band, peak backends below `max_connections`, and the concurrent `pnpm test:gate` shape holding the same bound — is recorded done in FN-9131's step 6. The fix has been on main since 2026-08-16 with no further sighting of this identity in the register's own later updates (2026-09-03, 2026-09-10) or any task. Core PostgreSQL quarantine was never needed. A new sighting of this identity re-opens normal escalation from an unowned state.
 
 **Second sighting — reproduced 2026-08-16 (FN-9126):** A credential-free, sterile-environment PostgreSQL-directory pass at 27 workers reproduced the registered assertion as a timeout at `packages/core/src/__tests__/postgres/project-identity.test.ts:41:3` on `3c235ce275b626a73da4fe508ac76fd6f5fbd686`. The typed, executor-authored per-run evidence is durable in task FN-9126, document key `evidence`; it records the 100-connection server ceiling and all run counters without retaining runner output. This is an escalation, not a resolution: core-config quarantine remains policy-forbidden by the gate-policy assertion, so FN-9131 owns root-cause diagnosis and a structural fix.
 
@@ -225,27 +238,9 @@ This is the same mode already characterized by entry 6 and by entry 7's A02 lane
 Quarantine was not available as an alternative. Core PostgreSQL files cannot be quarantined inline — the gate-policy assertion requires `quarantinedCoreTests` to remain empty — and a merge-gate eviction of a transactional-invariant file is the owner-escalated decision described in the policy section below. The file carries only 4 tests, which is thin against the usual first-sighting coverage argument, but they are the atomicity invariant for handoff-to-review and one of just two files in the blocking PG lane; recording preserves that rather than trading it away over a single unreproduced cold-start abort. A **second sighting** follows normal escalation.
 
 
-### 14. Merge-node paused-abort retry sequence
-
-- **Status:** Quarantined 2026-08-29 after a second sequence-only sighting — rescue owner FN-9283 (mission M-MTU4YAJI-0001-PAJK), deletion-ratchet deadline 2026-09-12 (quarantinedAt + 14d).
-- **File:** `packages/engine/src/__tests__/reliability-interactions/merge-node-paused-abort-retryable.test.ts`
-- **Exact test:** `merge-node paused-abort retry classification (FN-6735) > re-enqueues benign paused merge graph failure at node %s without operator-action failure` (parameterized `it.each`; the observed case was `%s` = `merge`, plus 12 sibling sequence failures).
-- **Observed tree/SHA:** first sighting `f3e1e7d1f`; second sighting during FN-249 verification after `2ab621ac6`.
-- **Observed frequency:** Two file-sequence failures; the selected exact subject passed in isolation after each.
-
-| run | result |
-|---|---|
-| first file as `engine-reliability` | **13 failed / 44 passed**; paused-abort retry and implementation-incomplete sibling assertions missed their expected recovery writes |
-| first selected exact subject alone | passed (exit 0) |
-| second file as `engine-reliability` | **13 failed / 44 passed** with the same recovery-write misses |
-| second selected exact subject alone | passed (exit 0) |
-
-The failure remains sequence-only evidence, not an attribution to FN-249: its changed user-cancellation path is not enabled by this fixture, and the selected pre-existing engine-abort subject passes in isolation. Per the mandatory deletion ratchet, the second sighting is quarantined in `scripts/lib/test-quarantine.json` and the matching `engine-reliability` exclude; no timeout, retry, or assertion was changed. Rescue requires a root-cause fix that proves the file's recovery coverage is stable.
-
-
 ### Common shape and investigated result
 
-FN-9125 established that former entry 3 was not PostgreSQL-suite-adjacent: `plugin-runner.test.ts` used an in-memory mocked TaskStore and had no PostgreSQL/harness import. FN-9135 did not identify a root cause, but FN-9141's completed shuffled worker-reuse campaign reproduced and structurally fixed the logger mock-history fixture defect; the suite and its renamed-complete-lane dispatch coverage remain active. Entries 2 and 13 remain active, unreproduced PostgreSQL observations; entry 7 was closed on 2026-08-23 when the whole file was quarantined on a second sighting of a different test. FN-9146 completed the later A×4/B×3/C×3 campaign without the entry 2 or entry 13 exact identities failing. Entry 1 reproduced under FN-9126 and again under FN-9146's A02–A04 lanes, but remains unattributed rather than structurally fixed. The golden-template/advisory-lock lifecycle and schema-applier's inline baseline path are concrete architecture facts, not a demonstrated cause of these assertions. Core policy forbids inline PG quarantine: FN-9146's retained evidence for entries 1, 2, and 13 is durable, but FN-9146 was archived on 2026-09-03 without a named successor, so those records are presently unowned; the next sighting follows normal escalation from an unowned state. entry 7 was closed on 2026-08-23 (see above). No source or fan-out change is justified before a diagnostic names a causal lifecycle seam. Entry 13 is a further unreproduced instance of that same 15s setup-hook mode, narrowed to the capped four-fork gate lane on a cold cluster. Entry 6 instead records a merge-gate eviction after a loaded-lane setup-hook timeout; `FNXC:PgTestTemplateDb 2026-07-19-17:20` and `FNXC:PgTestWorkerCap 2026-07-18-18:00` are already-landed mitigations for that mode, not new diagnoses to re-open. The Planning Mode entries are separate frontend timing observations.
+FN-9125 established that former entry 3 was not PostgreSQL-suite-adjacent: `plugin-runner.test.ts` used an in-memory mocked TaskStore and had no PostgreSQL/harness import. FN-9135 did not identify a root cause, but FN-9141's completed shuffled worker-reuse campaign reproduced and structurally fixed the logger mock-history fixture defect; the suite and its renamed-complete-lane dispatch coverage remain active. Entries 2 and 13 remain active, unreproduced PostgreSQL observations; entry 7 was closed on 2026-08-23 when the whole file was quarantined on a second sighting of a different test; entry 14 was closed on 2026-09-09 after deterministic diagnosis showed its assertions encoded FN-217-removed lifecycle behavior (see the archived record below). FN-9146 completed the later A×4/B×3/C×3 campaign without the entry 2 or entry 13 exact identities failing. Entry 1 reproduced under FN-9126 and again under FN-9146's A02–A04 lanes, then FN-9131 attributed the mechanism (harness demand scales with fan-out against a fixed cluster supply; the first test in a file eats the 15s budget) and shipped the structural queueing-admission fix, closing the record on 2026-09-12. The golden-template/advisory-lock lifecycle and schema-applier's inline baseline path are concrete architecture facts, not a demonstrated cause of these assertions. Core policy forbids inline PG quarantine: FN-9146's retained evidence for entries 2 and 13 is durable, but FN-9146 was archived on 2026-09-03 without a named successor, so those records are presently unowned; the next sighting follows normal escalation from an unowned state. entry 7 was closed on 2026-08-23 (see above). No source or fan-out change is justified before a diagnostic names a causal lifecycle seam. Entry 13 is a further unreproduced instance of that same 15s setup-hook mode, narrowed to the capped four-fork gate lane on a cold cluster. Entry 6 instead records a merge-gate eviction after a loaded-lane setup-hook timeout; `FNXC:PgTestTemplateDb 2026-07-19-17:20` and `FNXC:PgTestWorkerCap 2026-07-18-18:00` are already-landed mitigations for that mode, not new diagnoses to re-open. The Planning Mode entries are separate frontend timing observations.
 
 
 
@@ -284,6 +279,35 @@ Source: [Runfusion/Fusion issue #2862](https://github.com/Runfusion/Fusion/issue
 ## Archive — closed records
 
 Archived records are historical evidence only and never authorize a quarantine decision.
+
+### 14. Merge-node paused-abort retry sequence
+
+- **Status:** Closed 2026-09-09 by FN-9283 — deleted after the deterministic stale-lifecycle-assertion diagnosis.
+- **File:** `packages/engine/src/__tests__/reliability-interactions/merge-node-paused-abort-retryable.test.ts`
+- **Exact test:** `merge-node paused-abort retry classification (FN-6735) > re-enqueues benign paused merge graph failure at node %s without operator-action failure` (parameterized `it.each`; the observed case was `%s` = `merge`, plus 12 sibling sequence failures).
+- **Observed tree/SHA:** first sighting `f3e1e7d1f`; second sighting during FN-249 verification after `2ab621ac6`.
+- **Observed frequency:** Two file-sequence failures; the selected exact subject passed in isolation after each.
+
+| run | result |
+|---|---|
+| first file as `engine-reliability` | **13 failed / 44 passed**; paused-abort retry and implementation-incomplete sibling assertions missed their expected recovery writes |
+| first selected exact subject alone | passed (exit 0) |
+| second file as `engine-reliability` | **13 failed / 44 passed** with the same recovery-write misses |
+| second selected exact subject alone | passed (exit 0) |
+
+The failure remains sequence-only evidence, not an attribution to FN-249: its changed user-cancellation path is not enabled by this fixture, and the selected pre-existing engine-abort subject passes in isolation. Per the mandatory deletion ratchet, the second sighting is quarantined in `scripts/lib/test-quarantine.json` and the matching `engine-reliability` exclude; no timeout, retry, or assertion was changed. Rescue requires a root-cause fix that proves the file's recovery coverage is stable.
+
+
+**Closed by deletion 2026-09-09 (FN-9283):** The required whole-file `engine-reliability` reproduction still produced **13 failed / 44 passed**, but the same current failed cases also failed when selected with `-t`. A temporary unique-task-id probe retained the same 13 failures, ruling out the suspected task-id-keyed process-state channel. The failure is deterministic stale coverage after FN-217: `route-graph-failure-to-execution-resume.ts` now refuses automatic review-to-WIP moves, and `handle-graph-failure.ts` preserves failed in-review merge parks. Rescuing the file would reintroduce forbidden lifecycle authority or weaken/delete assertions, so FN-9283 selected the deletion decision rule's forbidden-repair clause.
+
+The recorded failing shape was always the single whole-file `engine-reliability` run; the four-file command was only a derived neighbour probe and was never an observed reproduction. Deletion loses the file's direct FN-6735 matrix coverage for merge-seam node aliases, auto-merge pause-abort retry, manual-hold stale clearing, implementation-incomplete resume, and preserved active-worktree registration. The source-tree grep found no surviving test file that references FN-6735. Follow-up task **FN-9287 — Restore merge pause-abort recovery coverage** is the mandatory deterministic-coverage successor and depends on FN-9283. Its scope explicitly restores unit coverage over `is-retryable-benign-merge-pause-abort.ts` and `graph-failure-pure.ts` for merge-seam aliases, pause-abort retry, manual hold, implementation-incomplete routing, and active-worktree registration.
+
+| FN-9283 verification | result |
+|---|---|
+| whole file, engine-reliability | **13 failed / 44 passed** |
+| three selected current failures with `-t` | each failed in isolation |
+| unique-task-id whole-file diagnostic | **13 failed / 44 passed** |
+| four-file derived neighbour probe | subject 13 failed; unrelated sibling baseline failures also present |
 
 ### 3. Plugin runner complete-lane lifecycle hook
 
@@ -548,28 +572,16 @@ not mention the rescue — the evidence is in the test-file diff.
 
 ---
 
-## Entry: `spec-drift-reconciler` exponential-backoff case (quarantined 2026-09-09)
+## Entry: `spec-drift-reconciler` exponential-backoff case (rescued 2026-09-12, FN-9290)
 
-- **Status:** Quarantined 2026-09-09 after a second timer-driven sighting — FN-9272's selected engine test command observed three persistence attempts after the second 1-second fake-timer advance where the test expects two; no open rescue owner, deletion-ratchet deadline 2026-09-23 (quarantinedAt + 14d).
+- **Status:** Rescued and closed 2026-09-12 by FN-9290. The quarantine-ledger row and matching `engine-default` Vitest exclude were removed together with the root-cause fix.
 - **File:** `packages/engine/src/__tests__/spec-drift-reconciler.test.ts`
 - **Exact test:** `SpecDriftReconciler > backs a persistent outage off exponentially instead of re-firing every second`
-- **Observed tree/SHA:** `a97aa84a20`, full `@fusion/engine` suite run.
-- **Observed frequency:** once in a full-suite run; also failed once when run in the same command as `self-healing-pending-wedge-notification.test.ts`, and passes deterministically alone (10/10) and in other pairings.
-
-Verbatim observed failure context:
-
-```
-FAIL  |engine-default| src/__tests__/spec-drift-reconciler.test.ts > SpecDriftReconciler > backs a persistent outage off exponentially instead of re-firing every second
-```
-
-Both this and the quarantined `self-healing-pending-wedge-notification` case are timer-driven
-reconciler tests that fail only alongside other suites, which points at shared fake-timer or
-cross-file state rather than a product defect. No timeout was widened, no retry added, and no
-assertion relaxed. A SECOND sighting is an ordinary on-sight quarantine with no further discretion,
-per the standing rule in AGENTS.md. That second sighting occurred 2026-09-09 during FN-9272
-verification (a parser-only change that does not touch the reconciler), so the file is quarantined
-in `scripts/lib/test-quarantine.json` with the matching `engine-default` exclude under the deletion
-ratchet; rescue requires a root-cause fix proving the reconciler coverage is stable.
+- **Root cause:** The test advanced coarse absolute 1s/1s/2s windows even though retries chain jittered delays from the prior firing. With d1 in [500,1000) and d2 in [1000,2000), the third attempt lands before 2000ms when d1 + d2 < 2000: a 25% probability. Minimum jitter deterministically reproduced `expected 3 to be 2`; this was neither load-dependent nor a product scheduler race.
+- **Repair and coverage:** The reconciler now exposes its existing delay constants plus a default-identical random seam. The rescued test checks exact retry instants across eight gaps for four pinned draw sources, including two consecutive 60s-clamped ceiling gaps; a companion records arbitrary real `Math.random` draws and checks their exact schedule and ranges. Another companion keeps unrelated timeouts, an interval, microtasks, and promise chains active in every gap while checking no retry fires early. Additional tests cover success reset, duplicate retry-arm suppression, and `stop()` cancellation.
+- **Mutation evidence:** Flattening delay and removing the ceiling clamp both fail the pinned and unpinned-random schedule guards. Removing the success reset fails the reset guard, and removing the pending-timer duplicate-arm guard fails the duplicate-arm guard.
+- **Stability evidence:** 50 consecutive selected-file runs completed with zero failures, representing at least 50 independent asserted real-random samples rather than an assertion-free repetition loop.
+- **Policy evidence:** No timeout was widened, retry added, assertion relaxed, or test skipped. The shared-harness cross-check found no timer fixture imported by both this file and `self-healing-pending-wedge-notification`; that separate quarantine record remains unchanged.
 
 ---
 
