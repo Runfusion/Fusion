@@ -692,9 +692,22 @@ vi.mock("../../hooks/useNodes", () => ({
   })),
 }));
 
+interface MockMobileKeyboardState {
+  keyboardOverlap: number;
+  viewportHeight: number | null;
+  viewportOffsetTop: number;
+  keyboardOpen: boolean;
+  navigationViewport?: {
+    active: boolean;
+    keyboardOverlap: number;
+    viewportHeight: number | null;
+    viewportOffsetTop: number;
+  };
+}
+
 // Mock useMobileKeyboard for modal keyboard isolation tests (FN-3290).
 // Default: keyboard closed, matching real test-environment behavior.
-const mockUseMobileKeyboard = vi.fn(() => ({
+const mockUseMobileKeyboard = vi.fn((): MockMobileKeyboardState => ({
   keyboardOverlap: 0,
   viewportHeight: null,
   viewportOffsetTop: 0,
@@ -1803,7 +1816,7 @@ describe("official dashboard design production wiring", () => {
     expect(screen.queryByTestId("mobile-header-new-task")).toBeNull();
   });
 
-  it("retire la réserve de contenu Alpha avec le clavier et les modales", async () => {
+  it("conserve la pill et sa réserve avec le clavier mais les retire pour une modale", async () => {
     mockUseViewportMode.mockReturnValue("mobile");
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
@@ -1820,7 +1833,8 @@ describe("official dashboard design production wiring", () => {
     await screen.findByTestId("alpha-mobile-menu-trigger");
     expect(document.querySelector(".executor-status-bar")).toBeNull();
     expect(document.querySelector(".mobile-nav-bar")).toHaveClass("mobile-nav-bar--keyboard-open");
-    expect(screen.getByTestId("dashboard-project-shell").querySelector(".project-content")).not.toHaveClass("project-content--with-alpha-nav");
+    expect(document.querySelector(".mobile-nav-bar")).not.toHaveStyle({ pointerEvents: "none" });
+    expect(screen.getByTestId("dashboard-project-shell").querySelector(".project-content")).toHaveClass("project-content--with-alpha-nav");
     keyboardRender.unmount();
 
     mockUseMobileKeyboard.mockReturnValue({ keyboardOverlap: 0, viewportHeight: null, viewportOffsetTop: 0, keyboardOpen: false });
@@ -1834,10 +1848,79 @@ describe("official dashboard design production wiring", () => {
     modalRender.unmount();
   });
 
+  it("garde le popover détenu par App ouvert quand son focus referme le clavier", async () => {
+    mockUseViewportMode.mockReturnValue("mobile");
+    vi.mocked(fetchSettings).mockResolvedValue({
+      ...defaultSettings,
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures },
+    });
+
+    const view = render(<><textarea aria-label="Champ avant navigation" /><App /></>);
+    const field = screen.getByRole("textbox", { name: "Champ avant navigation" });
+    const trigger = await screen.findByTestId("alpha-mobile-menu-trigger");
+    field.focus();
+    expect(field).toHaveFocus();
+
+    mockUseMobileKeyboard.mockReturnValue({
+      keyboardOverlap: 250,
+      viewportHeight: 478,
+      viewportOffsetTop: 40,
+      keyboardOpen: true,
+    });
+    view.rerender(<><textarea aria-label="Champ avant navigation" /><App /></>);
+    await waitFor(() => expect(document.querySelector(".mobile-nav-bar")).toHaveClass("mobile-nav-bar--keyboard-open"));
+
+    fireEvent.click(trigger);
+    const popover = await screen.findByRole("menu", { name: "Navigate" });
+    await waitFor(() => expect(screen.getByTestId("mobile-more-item-terminal")).toHaveFocus());
+    expect(field).not.toHaveFocus();
+    expect(popover).toHaveStyle({ "--mobile-nav-viewport-offset-top": "40px" });
+
+    const keyboardLift = popover.style.getPropertyValue("--mobile-nav-keyboard-lift");
+    expect(keyboardLift).not.toBe("0px");
+    mockUseMobileKeyboard.mockReturnValue({
+      keyboardOverlap: 0,
+      viewportHeight: null,
+      viewportOffsetTop: 0,
+      keyboardOpen: false,
+      navigationViewport: {
+        active: true,
+        keyboardOverlap: 250,
+        viewportHeight: 478,
+        viewportOffsetTop: 40,
+      },
+    });
+    view.rerender(<><textarea aria-label="Champ avant navigation" /><App /></>);
+
+    await waitFor(() => expect(document.querySelector(".mobile-nav-bar")).toHaveClass("mobile-nav-bar--keyboard-open"));
+    expect(screen.getByRole("menu", { name: "Navigate" })).toBe(popover);
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    expect(popover).toHaveStyle({
+      "--mobile-nav-keyboard-lift": keyboardLift,
+      "--mobile-nav-viewport-offset-top": "40px",
+    });
+
+    mockUseMobileKeyboard.mockReturnValue({
+      keyboardOverlap: 0,
+      viewportHeight: null,
+      viewportOffsetTop: 0,
+      keyboardOpen: false,
+    });
+    view.rerender(<><textarea aria-label="Champ avant navigation" /><App /></>);
+
+    await waitFor(() => expect(document.querySelector(".mobile-nav-bar")).not.toHaveClass("mobile-nav-bar--keyboard-open"));
+    expect(screen.getByRole("menu", { name: "Navigate" })).toBe(popover);
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    expect(popover).toHaveStyle({
+      "--mobile-nav-keyboard-lift": "0px",
+      "--mobile-nav-viewport-offset-top": "0px",
+    });
+  });
+
   it.each([
     ["portrait", { width: 390, height: 844, systemOffset: 46 }],
     ["paysage", { width: 844, height: 390, systemOffset: 48 }],
-  ] as const)("superpose le drawer Command Center à la pill en %s, même quand le clavier la masque", async (_name, viewport) => {
+  ] as const)("superpose le drawer Command Center à la pill en %s, même quand le clavier est ouvert", async (_name, viewport) => {
     mockUseViewportMode.mockReturnValue("mobile");
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,

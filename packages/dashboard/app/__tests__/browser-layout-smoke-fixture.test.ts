@@ -7,7 +7,9 @@ import {
   buildQuickAddSaveFixtures,
   createProductionAppBoardScenarios,
   createAlphaDrawerProductionFixtureSource,
+  createMobilePillSmokeViewportMetrics,
   createSmokeHtml,
+  mobilePillGeometryMatches,
   prepareBrowserSmoke,
   QUICK_ADD_SAVE_FIXTURE_COUNT,
 } from "../../scripts/browser-layout-smoke.mjs";
@@ -110,7 +112,7 @@ describe("browser layout smoke fixture", () => {
       "alpha-drawer-terminal",
       "alpha-board-fixture",
       "alpha-board-production-root",
-      "alpha-pill",
+      "alpha-pill-production-root",
     ]) {
       expect(html).toContain(`data-smoke="${hook}"`);
     }
@@ -120,6 +122,7 @@ describe("browser layout smoke fixture", () => {
       "AlphaUsageDrawer",
       "AlphaMainContentDrawer",
       "MainViewKeepAlive",
+      "MobileNavBar",
       "TaskDetailModal",
     ]) {
       expect(productionSource).toContain(productionComponent);
@@ -128,6 +131,8 @@ describe("browser layout smoke fixture", () => {
     expect(productionSource).toContain('id: "smoke-chat-session"');
     expect(productionSource).toContain("function ProductionBoardFixture()");
     expect(productionSource).toContain("React.createElement(MainContent, boardProps)");
+    expect(productionSource).toContain("React.createElement(MobileNavBar");
+    expect(productionSource).toContain("__alphaPillProductionFixture");
     expect(productionSource).toContain('currentTasksPaginationError: boardState === "pagination-error"');
     expect(productionSource).toContain('nearDuplicateOf: "FN-DUPLICATE-A"');
     expect(productionSource).not.toContain("board.innerHTML");
@@ -142,7 +147,37 @@ describe("browser layout smoke fixture", () => {
     expect(html).toContain("terminal-modal-overlay");
     expect(html).toContain("project-content--with-alpha-nav");
     expect(html).not.toContain('data-smoke="alpha-board-column"');
-    expect(html).toContain("mobile-nav-bar--alpha");
+    expect(html).not.toContain('<nav class="mobile-nav-bar mobile-nav-bar--alpha"');
+  });
+
+  it("refuse toute pill masquée ou tout popover qui la recouvre", () => {
+    expect(createMobilePillSmokeViewportMetrics(400, true)).toEqual({
+      keyboardOpen: true,
+      keyboardOverlap: 160,
+      viewportHeight: 200,
+      viewportOffsetTop: 40,
+    });
+    expect(createMobilePillSmokeViewportMetrics(400, false)).toEqual({
+      keyboardOpen: false,
+      keyboardOverlap: 0,
+      viewportHeight: null,
+      viewportOffsetTop: 0,
+    });
+
+    const healthy = {
+      pill: { top: 720, bottom: 780 },
+      popover: { top: 120, bottom: 712 },
+      popoverLastItemReachable: true,
+      viewportHeight: 760,
+      viewportOffsetTop: 40,
+      documentOverflowX: 0,
+    };
+    expect(mobilePillGeometryMatches(healthy, 800)).toBe(true);
+    expect(mobilePillGeometryMatches({ ...healthy, pill: { top: 720, bottom: 820 } }, 800)).toBe(false);
+    expect(mobilePillGeometryMatches({ ...healthy, pill: { top: 38, bottom: 98 } }, 800)).toBe(false);
+    expect(mobilePillGeometryMatches({ ...healthy, popover: { top: 38, bottom: 712 } }, 800)).toBe(false);
+    expect(mobilePillGeometryMatches({ ...healthy, popover: { top: 120, bottom: 720 } }, 800)).toBe(false);
+    expect(mobilePillGeometryMatches({ ...healthy, popoverLastItemReachable: false }, 800)).toBe(false);
   });
 
   it.each(["skeleton", "empty", "populated", "duplicated", "pagination-error"])("valide la géométrie symétrique du board pour l’état %s", (state) => {

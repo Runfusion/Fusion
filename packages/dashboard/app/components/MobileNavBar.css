@@ -6,8 +6,13 @@
 /* Mobile nav height token - used by nav bar, executor status bar, and content padding */
 :root {
   --mobile-nav-height: 44px;
+  --mobile-nav-pill-height: var(--mobile-nav-height);
   --mobile-nav-floating-gap: 0px;
   --mobile-nav-alpha-system-offset: calc(var(--icb-bottom-offset, 0px) + max(env(safe-area-inset-bottom, 0px), var(--space-md)) + var(--standalone-bottom-gap));
+  --mobile-nav-keyboard-lift: 0px;
+  --mobile-nav-viewport-offset-top: 0px;
+  --mobile-nav-pill-bottom: calc(var(--mobile-nav-alpha-system-offset) + var(--mobile-nav-floating-gap) + var(--mobile-nav-keyboard-lift));
+  --mobile-nav-popover-bottom: calc(var(--mobile-nav-pill-bottom) + var(--mobile-nav-pill-height) + var(--space-xs));
 }
 
 .mobile-nav-bar {
@@ -59,16 +64,10 @@ Show the bottom tab bar only when JS mode is mobile. Width-only `@media (max-wid
     bottom: var(--icb-bottom-offset, 0px);
   }
 
-  /* When the on-screen keyboard is open, hide the nav outright instead of
-     pinning it to bottom:0 and trusting the keyboard to cover it. On iOS the
-     layout viewport does NOT shrink, so a bottom:0 bar stays on screen and
-     overlaps the composer that has lifted above the keyboard. Sliding it fully
-     off the bottom edge guarantees it's gone while typing. Safe for the
-     keyboard: the nav is a sibling of the chat input, not an ancestor, so the
-     transform does not establish a containing block over the focused field
-     (which is what would otherwise make iOS collapse the keyboard). */
-  .mobile-nav-bar.mobile-nav-bar--keyboard-open,
-  .mobile-nav-bar.mobile-nav-bar--with-footer.mobile-nav-bar--keyboard-open {
+  /* The legacy full-width bar remains hidden while typing. The official pill
+     overrides this rule with visual-viewport placement below. */
+  .mobile-nav-bar:not(.mobile-nav-bar--alpha).mobile-nav-bar--keyboard-open,
+  .mobile-nav-bar:not(.mobile-nav-bar--alpha).mobile-nav-bar--with-footer.mobile-nav-bar--keyboard-open {
     bottom: 0;
     transform: translateY(100%);
     pointer-events: none;
@@ -96,8 +95,8 @@ html[data-viewport-mode="mobile"] .mobile-nav-bar--with-footer {
   bottom: var(--icb-bottom-offset, 0px);
 }
 
-html[data-viewport-mode="mobile"] .mobile-nav-bar.mobile-nav-bar--keyboard-open,
-html[data-viewport-mode="mobile"] .mobile-nav-bar.mobile-nav-bar--with-footer.mobile-nav-bar--keyboard-open {
+html[data-viewport-mode="mobile"] .mobile-nav-bar:not(.mobile-nav-bar--alpha).mobile-nav-bar--keyboard-open,
+html[data-viewport-mode="mobile"] .mobile-nav-bar:not(.mobile-nav-bar--alpha).mobile-nav-bar--with-footer.mobile-nav-bar--keyboard-open {
   bottom: 0;
   transform: translateY(100%);
   pointer-events: none;
@@ -164,19 +163,21 @@ Wrap every tab icon in the same token-sized icon slot and keep unread/pending do
 /*
 FNXC:AlphaUpdates 2026-09-10-03:16:
 The Alpha pill stays visually overlaid but must never obscure the final content or system gesture area. Its four destinations remain the only tablist children and the trailing hamburger is an equally sized semantic sibling; the scroller reserves the measured pill border box plus its shared system placement exactly once.
+
+FNXC:MobilePillKeyboard 2026-09-13-09:10:
+The official mobile pill remains visible and interactive while an input owns the software keyboard. Its single runtime lift is the visual-viewport occlusion that still exists in the layout viewport; Android resizes-content therefore contributes zero while iOS contributes only the covered band.
 */
 .mobile-nav-bar--alpha {
   --mobile-nav-floating-gap: var(--space-sm);
   left: var(--space-md);
   right: calc(var(--icb-right-offset, 0px) + var(--space-md));
-  bottom: calc(var(--mobile-nav-alpha-system-offset) + var(--mobile-nav-floating-gap));
+  bottom: var(--mobile-nav-pill-bottom);
   min-height: auto;
   padding: var(--space-xs) var(--space-sm);
   border: var(--btn-border-width) solid var(--border);
   border-radius: var(--radius-xl);
-  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  background: var(--surface);
   box-shadow: var(--shadow-lg);
-  backdrop-filter: blur(var(--space-md));
 }
 
 @media (max-width: 768px) {
@@ -282,16 +283,19 @@ html:is([data-viewport-mode="tablet"], [data-viewport-mode="desktop"]) .project-
 /* === Alpha header popover / standard Mobile More Sheet === */
 
 /*
-FNXC:AlphaUpdates 2026-09-09-22:14:
-Alpha renders the canonical destination registry as a compact header-anchored menu with viewport and safe-area bounds. It deliberately shares item styling with the standard drawer but owns no backdrop, grab handle, drag transform, or bottom-sheet animation.
+FNXC:MobilePillPopover 2026-09-13-09:10:
+The official navigation menu uses the pill's measured top edge as its exclusive lower boundary. A token gap keeps the two surfaces visually distinct, while the safe top inset and scroll cap keep every destination reachable on short keyboard viewports without adding a backdrop.
+
+FNXC:MobilePillPopover 2026-09-13-10:32:
+The popover's upper bound is the shifted visual viewport top plus the device safe inset and token gap. Subtract the App-provided viewport offset from the actual height cap so an iOS keyboard transition cannot leave the first menu controls above the visible canvas.
 */
 .alpha-mobile-navigation-popover {
   position: fixed;
-  top: calc(var(--header-height) + env(safe-area-inset-top, 0px) + var(--space-xs));
+  bottom: var(--mobile-nav-popover-bottom);
   right: calc(var(--icb-right-offset, 0px) + var(--space-md));
   z-index: 91;
   width: min(calc(var(--space-2xl) * 8), calc(100vw - (var(--space-md) * 2) - var(--icb-right-offset, 0px)));
-  max-height: calc(100dvh - var(--header-height) - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - (var(--space-md) * 2));
+  max-height: calc(100dvh - var(--mobile-nav-popover-bottom) - var(--mobile-nav-viewport-offset-top) - env(safe-area-inset-top, 0px) - var(--space-md));
   overflow-y: auto;
   padding-block: var(--space-sm);
   background: var(--surface);

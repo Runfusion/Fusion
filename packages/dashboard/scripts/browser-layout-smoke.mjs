@@ -23,7 +23,36 @@ const screenshotPath = process.env.FUSION_BROWSER_SMOKE_SCREENSHOT;
 /*
 FNXC:BoardSafeGeometry 2026-09-12-17:34:
 Every Board data state and Alpha mode uses the same measurable contract: its border box ends at the shell-owned footer or pill boundary, each column has equal top and bottom spacing within one pixel, and the document never owns vertical overflow. Overflowing populated columns keep vertical scrolling inside the column and expose their last card rather than shortening the Board.
+
+FNXC:MobilePillBrowserSmoke 2026-09-13-10:32:
+Mobile pill checks use the reported visual viewport bounds rather than assuming its top is zero. Both the pill and the complete scrollable popover must remain inside a shifted iOS canvas while preserving their exclusive shared edge.
 */
+export function mobilePillGeometryMatches(layout, viewportHeight, tolerance = 1) {
+  const visualTop = typeof layout.viewportOffsetTop === "number" ? layout.viewportOffsetTop : 0;
+  const visualHeight = typeof layout.viewportHeight === "number" ? layout.viewportHeight : viewportHeight;
+  const visualBottom = visualTop + visualHeight;
+  return Boolean(layout.pill && layout.popover)
+    && layout.pill.top >= visualTop - tolerance
+    && layout.pill.bottom <= visualBottom + tolerance
+    && layout.popover.top >= visualTop - tolerance
+    && layout.popover.bottom < layout.pill.top
+    && layout.popoverLastItemReachable === true
+    && layout.documentOverflowX <= tolerance;
+}
+
+export function createMobilePillSmokeViewportMetrics(layoutViewportHeight, keyboardOpen) {
+  const viewportOffsetTop = keyboardOpen ? 40 : 0;
+  const keyboardOverlap = keyboardOpen ? 160 : 0;
+  return {
+    keyboardOpen,
+    keyboardOverlap,
+    viewportHeight: keyboardOpen
+      ? Math.max(1, layoutViewportHeight - keyboardOverlap - viewportOffsetTop)
+      : null,
+    viewportOffsetTop,
+  };
+}
+
 export function boardSafeGeometryMatches(layout, tolerance = 1) {
   const topGaps = layout.columnTops.map((top) => top - layout.boardTop);
   const bottomGaps = layout.columnBottoms.map((bottom) => layout.lowerBoundary - bottom);
@@ -436,13 +465,7 @@ export function createSmokeHtml(options = {}) {
           <div class="board-workflow-view" data-smoke="alpha-board-production-root"></div>
         </main>
       </div>
-      <nav class="mobile-nav-bar mobile-nav-bar--alpha" data-smoke="alpha-pill" aria-label="Alpha primary navigation">
-        <button class="mobile-nav-tab mobile-nav-tab--active" type="button">Dashboard</button>
-        <button class="mobile-nav-tab" type="button">Planning</button>
-        <button class="mobile-nav-tab" type="button">Chat</button>
-        <button class="mobile-nav-tab" type="button">Mailbox</button>
-        <button class="alpha-mobile-menu-trigger" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="alpha-mobile-navigation-popover">Menu</button>
-      </nav>
+      <div data-smoke="alpha-pill-production-root"></div>
       <footer class="executor-status-bar" data-smoke="alpha-footer">Executor status</footer>
     </section>`;
 
@@ -912,6 +935,7 @@ export function createAlphaDrawerProductionFixtureSource() {
     appModals: componentPath("components/AppModals.tsx"),
     mainContent: componentPath("components/dashboard/MainContent.tsx"),
     mainViewKeepAlive: componentPath("components/dashboard/MainViewKeepAlive.tsx"),
+    mobileNavBar: componentPath("components/MobileNavBar.tsx"),
     taskDetail: componentPath("components/TaskDetailModal.tsx"),
     chatView: componentPath("components/ChatView.tsx"),
     pluginHost: componentPath("plugins/PluginDashboardViewHost.tsx"),
@@ -933,6 +957,7 @@ export function createAlphaDrawerProductionFixtureSource() {
     import { AlphaUsageDrawer } from ${JSON.stringify(imports.appModals)};
     import { AlphaMainContentDrawer } from ${JSON.stringify(imports.mainContent)};
     import { MainViewKeepAlive } from ${JSON.stringify(imports.mainViewKeepAlive)};
+    import { MobileNavBar } from ${JSON.stringify(imports.mobileNavBar)};
     import { TaskDetailModal } from ${JSON.stringify(imports.taskDetail)};
     import { ChatView } from ${JSON.stringify(imports.chatView)};
     import { PluginDashboardViewHost } from ${JSON.stringify(imports.pluginHost)};
@@ -1021,6 +1046,43 @@ export function createAlphaDrawerProductionFixtureSource() {
       const [activeProvider, setActiveProvider] = useState("short");
       useEffect(() => { globalThis.__alphaDrawerProductionFixture = { open: setActiveProvider }; document.documentElement.dataset.alphaDrawerProductionReady = "true"; }, []);
       return React.createElement("div", { "data-smoke-provider": activeProvider }, React.createElement(ProductionProvider, { id: activeProvider }));
+    }
+
+    /*
+    FNXC:MobilePillBrowserSmoke 2026-09-13-09:10:
+    Browser geometry mounts the production MobileNavBar and opens its real popover. Synthetic pill markup cannot prove that keyboard metrics, measured height publication, focusable controls, and the shared boundary remain wired together.
+    */
+    function ProductionMobileNavFixture() {
+      const [state, setState] = useState({ keyboardOpen: false, keyboardOverlap: 0, viewportHeight: null, viewportOffsetTop: 0, menuOpen: false });
+      useEffect(() => {
+        globalThis.__alphaPillProductionFixture = {
+          configure(next) { flushSync(() => setState((current) => ({ ...current, ...next }))); },
+        };
+        document.documentElement.dataset.alphaPillProductionReady = "true";
+      }, []);
+      return React.createElement(MobileNavBar, {
+        view: "board",
+        onChangeView: noop,
+        footerVisible: false,
+        keyboardOpen: state.keyboardOpen,
+        keyboardMetrics: state,
+        alphaMenuOpen: state.menuOpen,
+        onAlphaMenuOpenChange: (menuOpen) => setState((current) => ({ ...current, menuOpen })),
+        onOpenSettings: noop,
+        onOpenActivityLog: noop,
+        onOpenMailbox: noop,
+        onOpenGitManager: noop,
+        onOpenWorkflowEditor: noop,
+        onOpenSchedules: noop,
+        onOpenScripts: noop,
+        onToggleTerminal: noop,
+        onOpenFiles: noop,
+        onOpenGitHubImport: noop,
+        onOpenPlanning: noop,
+        onOpenUsage: noop,
+        onViewAllProjects: noop,
+        projectId: project.id,
+      });
     }
 
     function ProductionBoardFixture() {
@@ -1112,6 +1174,7 @@ export function createAlphaDrawerProductionFixtureSource() {
     const providers = (child) => React.createElement(I18nextProvider, { i18n }, React.createElement(NavigationHistoryProvider, { value: navigation }, React.createElement(ConfirmDialogProvider, { skipConfirmations: true }, React.createElement(FileBrowserProvider, { openFile: noop }, child))));
     flushSync(() => createRoot(document.querySelector('[data-smoke="alpha-drawer-production-root"]')).render(providers(React.createElement(Fixture))));
     flushSync(() => createRoot(document.querySelector('[data-smoke="alpha-board-production-root"]')).render(providers(React.createElement(ProductionBoardFixture))));
+    flushSync(() => createRoot(document.querySelector('[data-smoke="alpha-pill-production-root"]')).render(providers(React.createElement(ProductionMobileNavFixture))));
   `;
 }
 async function buildAlphaDrawerProductionFixture() {
@@ -1873,20 +1936,19 @@ async function runSmokeChecks(page, pageUrl, browserWsUrl) {
   FNXC:AlphaBoardPillGeometry 2026-09-11-16:53:
   Blink measures the production MainContent → Board tree for loading, no-workflow, populated, duplicate, and pagination-error states. The fixture changes only transport/props and shell reservations; it never replaces Board output with synthetic columns or cards.
   */
-  const collectBoardLayout = (state, mode, systemOffset = 0) => evaluate(page, `(async () => {
+  const collectBoardLayout = (state, mode, systemOffset = 0, layoutViewportHeight = 0) => evaluate(page, `(async () => {
     const root = document.documentElement;
     const mode = ${JSON.stringify(String(mode))};
-    const keyboardOpen = mode === 'mobile-keyboard';
-    root.dataset.viewportMode = mode.startsWith('mobile') ? 'mobile' : mode;
+    const mobileMode = mode.startsWith('mobile');
+    const keyboardMetrics = ${JSON.stringify(createMobilePillSmokeViewportMetrics(layoutViewportHeight, String(mode) === "mobile-keyboard"))};
+    const { keyboardOpen, keyboardOverlap, viewportHeight, viewportOffsetTop } = keyboardMetrics;
+    root.dataset.viewportMode = mobileMode ? 'mobile' : mode;
     root.style.setProperty('--mobile-nav-alpha-system-offset', ${JSON.stringify(String(systemOffset))} + 'px');
     const fixture = document.querySelector('[data-smoke="alpha-board-fixture"]');
     fixture.hidden = false;
     const content = fixture.querySelector('.project-content');
-    content.className = mode === 'mobile' ? 'project-content project-content--with-alpha-nav' : keyboardOpen ? 'project-content' : 'project-content project-content--with-footer';
-    const pill = fixture.querySelector('[data-smoke="alpha-pill"]');
+    content.className = mobileMode ? 'project-content project-content--with-alpha-nav' : 'project-content project-content--with-footer';
     const footer = fixture.querySelector('[data-smoke="alpha-footer"]');
-    pill.className = 'mobile-nav-bar mobile-nav-bar--alpha';
-    pill.style.display = mode === 'mobile' ? '' : 'none';
     footer.style.display = mode === 'desktop' || mode === 'tablet' ? '' : 'none';
     const state = ${JSON.stringify(String(state))};
     const waitFor = async (read, label) => {
@@ -1898,6 +1960,15 @@ async function runSmokeChecks(page, pageUrl, browserWsUrl) {
       throw new Error('Timed out waiting for production Board ' + label);
     };
     const controller = await waitFor(() => globalThis.__alphaBoardProductionFixture, 'controller');
+    const pillController = await waitFor(() => globalThis.__alphaPillProductionFixture, 'pill controller');
+    pillController.configure({
+      keyboardOpen,
+      keyboardOverlap,
+      viewportHeight,
+      viewportOffsetTop,
+      menuOpen: mobileMode,
+    });
+    const pill = mobileMode ? await waitFor(() => fixture.querySelector('.mobile-nav-bar--alpha'), 'production pill') : null;
     controller.show(state);
     const board = await waitFor(() => {
       const candidate = fixture.querySelector('#board');
@@ -1909,14 +1980,10 @@ async function runSmokeChecks(page, pageUrl, browserWsUrl) {
     }, state);
     const nextFrame = () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     await nextFrame();
-    if (mode === 'mobile') {
-      const floatingGap = Number.parseFloat(getComputedStyle(pill).getPropertyValue('--mobile-nav-floating-gap')) || 0;
-      root.style.setProperty('--mobile-nav-height', Math.ceil(pill.getBoundingClientRect().height + floatingGap) + 'px');
-      await nextFrame();
-    } else {
-      root.style.setProperty('--mobile-nav-height', '0px');
-    }
-    const lowerBoundary = mode === 'mobile' ? pill.getBoundingClientRect().top : keyboardOpen ? window.innerHeight : footer.getBoundingClientRect().top;
+    if (mobileMode) await nextFrame();
+    else root.style.setProperty('--mobile-nav-height', '0px');
+    const popover = mobileMode ? await waitFor(() => fixture.querySelector('.alpha-mobile-navigation-popover'), 'production pill popover') : null;
+    const lowerBoundary = mobileMode ? pill.getBoundingClientRect().top : footer.getBoundingClientRect().top;
     const boardRect = board.getBoundingClientRect();
     const columns = [...board.querySelectorAll(':scope > .column, :scope > .board-workflows-skeleton__column')].map((column) => {
       const box = column.getBoundingClientRect();
@@ -1943,11 +2010,23 @@ async function runSmokeChecks(page, pageUrl, browserWsUrl) {
       documentScrollable: document.documentElement.scrollHeight > document.documentElement.clientHeight + 1,
       boardPaddingTop: Number.parseFloat(getComputedStyle(board).paddingTop),
       boardPaddingBottom: Number.parseFloat(getComputedStyle(board).paddingBottom),
-      controlOrder: [...pill.children].map((child) => child.className),
+      controlOrder: pill ? [...pill.children].map((child) => child.className) : [],
+      pill: pill ? rect(pill) : null,
+      popover: popover ? rect(popover) : null,
+      popoverLastItemReachable: popover ? (() => {
+        const items = [...popover.querySelectorAll('.mobile-more-item')];
+        if (items.length === 0) return false;
+        popover.scrollTop = popover.scrollHeight;
+        const popoverRect = popover.getBoundingClientRect();
+        const lastRect = items.at(-1).getBoundingClientRect();
+        return lastRect.bottom <= popoverRect.bottom + 1;
+      })() : null,
       productionBoard: board.id === 'board' && (state === 'skeleton' || state === 'empty' || board.querySelectorAll('.card').length > 0),
       paginationRetryVisible: state !== 'pagination-error' || Boolean(board.querySelector('.column-pagination-error button')),
       duplicateCardCount: state !== 'duplicated' ? 0 : board.querySelectorAll('.column-body .card').length,
       keyboardOpen,
+      viewportHeight,
+      viewportOffsetTop,
       documentOverflowX: document.documentElement.scrollWidth - window.innerWidth,
       fixtureOverflowY: fixture.scrollHeight - fixture.clientHeight,
     };
@@ -2035,19 +2114,23 @@ async function runSmokeChecks(page, pageUrl, browserWsUrl) {
     { name: "tablet footer", width: 768, height: 844, mode: "tablet", systemOffset: 0 },
     { name: "mobile pill", width: 390, height: 844, mode: "mobile", systemOffset: 24 },
     { name: "mobile landscape pill", width: 844, height: 390, mode: "mobile", systemOffset: 18 },
-    { name: "mobile keyboard viewport", width: 390, height: 400, mode: "mobile-keyboard", systemOffset: 0 },
+    { name: "mobile shifted keyboard viewport", width: 390, height: 400, mode: "mobile-keyboard", systemOffset: 0 },
   ]) {
     const mobile = mode.startsWith("mobile");
     await page.send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: mobile ? 2 : 1, mobile });
     for (const state of ["skeleton", "empty", "populated", "duplicated", "pagination-error"]) {
-      const layout = await collectBoardLayout(state, mode, systemOffset);
+      const layout = await collectBoardLayout(state, mode, systemOffset, height);
       assertSmokeResult(
         `Official Board ${state} fills the safe height above the ${name}`,
         boardSafeGeometryMatches(layout)
           && layout.productionBoard
           && layout.paginationRetryVisible
           && (state !== "duplicated" || layout.duplicateCardCount === 2)
-          && (mode !== "mobile" || (layout.controlOrder.length === 5 && layout.controlOrder.at(-1) === 'alpha-mobile-menu-trigger'))
+          && (!mobile || (
+            layout.controlOrder.length === 5
+            && layout.controlOrder.at(-1) === 'alpha-mobile-menu-trigger'
+            && mobilePillGeometryMatches(layout, height)
+          ))
           && (mode !== "mobile-keyboard" || layout.keyboardOpen)
           && layout.documentOverflowX <= 1
           && layout.fixtureOverflowY <= 1,

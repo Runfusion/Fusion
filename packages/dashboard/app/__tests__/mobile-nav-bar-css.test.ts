@@ -71,14 +71,16 @@ describe("mobile-nav-bar.css", () => {
     );
   });
 
-  it("keeps bottom-sheet animation for standard mode and gives Alpha a bounded popover", () => {
+  it("keeps bottom-sheet animation for standard mode and anchors the bounded popover above the pill", () => {
     expect(cssContent).toContain("@keyframes mobile-more-sheet-in");
     const popoverBlock = extractRuleBlock(cssContent, ".alpha-mobile-navigation-popover");
-    expect(popoverBlock).toContain("top: calc(var(--header-height)");
+    expect(popoverBlock).toContain("bottom: var(--mobile-nav-popover-bottom)");
     expect(popoverBlock).toContain("max-height: calc(100dvh");
+    expect(popoverBlock).toContain("var(--mobile-nav-viewport-offset-top)");
+    expect(popoverBlock).toContain("env(safe-area-inset-top, 0px)");
     expect(popoverBlock).toContain("overflow-y: auto");
     expect(popoverBlock).not.toContain("animation:");
-    expect(popoverBlock).not.toContain("bottom:");
+    expect(popoverBlock).not.toContain("top:");
   });
 
   it("uses safe-area inset for bottom spacing", () => {
@@ -91,10 +93,18 @@ describe("mobile-nav-bar.css", () => {
     const mobileAlphaContentBlock = extractRuleBlock(cssContent, 'html[data-viewport-mode="mobile"] .project-content--with-alpha-nav');
     const tabletAlphaContentBlock = extractRuleBlock(cssContent, 'html:is([data-viewport-mode="tablet"], [data-viewport-mode="desktop"]) .project-content--with-alpha-nav:not(.project-content--with-footer)');
     expect(alphaBlock).toContain("--mobile-nav-floating-gap: var(--space-sm)");
-    expect(alphaBlock).toContain("bottom: calc(var(--mobile-nav-alpha-system-offset) + var(--mobile-nav-floating-gap))");
+    expect(alphaBlock).toContain("bottom: var(--mobile-nav-pill-bottom)");
+    expect(cssContent).toContain("--mobile-nav-viewport-offset-top: 0px");
+    expect(cssContent).toContain("--mobile-nav-pill-bottom: calc(var(--mobile-nav-alpha-system-offset) + var(--mobile-nav-floating-gap) + var(--mobile-nav-keyboard-lift))");
+    expect(cssContent).toContain("--mobile-nav-popover-bottom: calc(var(--mobile-nav-pill-bottom) + var(--mobile-nav-pill-height) + var(--space-xs))");
     expect(alphaContentBlock).toContain("padding-bottom: calc(var(--mobile-nav-height) + var(--mobile-nav-alpha-system-offset))");
     expect(mobileAlphaContentBlock).toContain("padding-bottom: calc(var(--mobile-nav-height) + var(--mobile-nav-alpha-system-offset))");
     expect(tabletAlphaContentBlock).toContain("padding-bottom: 0");
+    const headerBlock = extractRuleBlock(cssContent, ".header");
+    expect(alphaBlock).toContain("background: var(--surface)");
+    expect(headerBlock).toContain("background: var(--surface)");
+    expect(alphaBlock).not.toContain("color-mix");
+    expect(alphaBlock).not.toContain("backdrop-filter");
 
     const publishedNavHeight = computePublishedMobileNavHeight({
       navOffsetHeight: 54,

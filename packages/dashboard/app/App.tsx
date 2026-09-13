@@ -232,15 +232,25 @@ export function useMobileBarKeyboardState({
   anyModalOpen: boolean;
   overlayOpen: boolean;
 }) {
-  const { keyboardOpen } = useMobileKeyboard({ enabled: isMobile, allowNonMobileViewport: isMobile });
+  const keyboardMetrics = useMobileKeyboard({ enabled: isMobile, allowNonMobileViewport: isMobile });
   const keyboardFocusPending = useKeyboardFocusPending(isMobile) || false;
+  const navigationViewport = keyboardMetrics.navigationViewport ?? {
+    active: keyboardMetrics.keyboardOpen,
+    keyboardOverlap: keyboardMetrics.keyboardOverlap,
+    viewportHeight: keyboardMetrics.viewportHeight,
+    viewportOffsetTop: keyboardMetrics.viewportOffsetTop,
+  };
   return {
-    keyboardOpen,
+    ...keyboardMetrics,
+    keyboardOverlap: navigationViewport.keyboardOverlap,
+    viewportHeight: navigationViewport.viewportHeight,
+    viewportOffsetTop: navigationViewport.viewportOffsetTop,
     keyboardFocusPending,
     ...computeMobileBarKeyboardFlags({
       isMobile,
-      keyboardOpen,
+      keyboardOpen: keyboardMetrics.keyboardOpen,
       keyboardFocusPending,
+      navigationViewportActive: navigationViewport.active,
       anyModalOpen,
       overlayOpen,
     }),
@@ -935,7 +945,14 @@ function AppInner() {
     setQuickChatOpen(true);
   }, []);
 
-  const { footerHidden, navKeyboardOpen, footerKeyboardOpen } = useMobileBarKeyboardState({
+  const {
+    footerHidden,
+    navKeyboardOpen,
+    footerKeyboardOpen,
+    keyboardOverlap,
+    viewportHeight,
+    viewportOffsetTop,
+  } = useMobileBarKeyboardState({
     isMobile,
     anyModalOpen: modalManager.anyModalOpen,
     overlayOpen: isMobile && quickChatOpen,
@@ -954,9 +971,10 @@ function AppInner() {
   // keyboard with no empty gap. This supersedes the earlier Android gate
   // (FN-5707), which kept the footer visible and left a ~80px dead band
   // where the off-screen nav bar's padding remained reserved.
-  // `footerKeyboardOpen` uses the same immediate focus/keyboard trigger as
-  // the nav bar. A footer that remains rendered over a modal must also drop
-  // its bottom reservation on both platforms to avoid a dead band.
+  // `footerKeyboardOpen` uses only the immediate focus/keyboard trigger. A
+  // footer that remains rendered over a modal must also drop its bottom
+  // reservation on both platforms to avoid a dead band; unlike the pill, it
+  // must not inherit the visual viewport's keyboard-dismissal tail.
   const mobileKeyboardOpen = footerHidden;
   const mobileNavKeyboardOpen = navKeyboardOpen;
   // App-level scroll lock for inline editing (TaskCard inline edit, etc.):
@@ -1200,10 +1218,13 @@ function AppInner() {
   /*
   FNXC:AlphaUpdates 2026-09-11-15:01:
   App remains the sole owner of the Alpha popover's accessible open state while MobileNavBar owns both its trailing pill trigger and canonical menu surface. Any shell boundary that removes the pill closes this transient menu; the legacy More drawer remains MobileNavBar-owned.
+
+  FNXC:MobilePillKeyboard 2026-09-13-10:32:
+  Keyboard transitions are no longer shell boundaries because the official pill remains mounted throughout them. Moving focus from a field into the opened menu closes the keyboard, so that metric change must update geometry without immediately dismissing the App-owned popover.
   */
   useEffect(() => {
     setAlphaMenuOpen(false);
-  }, [currentProject?.id, isMobile, mobileKeyboardOpen, modalManager.anyModalOpen, viewMode]);
+  }, [currentProject?.id, isMobile, modalManager.anyModalOpen, viewMode]);
   const rightDockActive = rightDockEnabled && !isMobile && projectShellPresent;
   const sidebarActive = leftSidebarNavEnabled && !isMobile && projectShellPresent && !alphaDesktopNavigationActive;
   const alphaDesktopWindows = useAlphaDesktopViewWindows({
@@ -2371,7 +2392,7 @@ function AppInner() {
           />
         )}
         <div
-          className={`project-content${shellFooterVisible && (!isMobile || !mobileKeyboardOpen) ? " project-content--with-footer" : ""}${isMobile && mobileNavVisible && !mobileKeyboardOpen && !modalManager.anyModalOpen ? " project-content--with-alpha-nav" : ""}`}
+          className={`project-content${shellFooterVisible && (!isMobile || !mobileKeyboardOpen) ? " project-content--with-footer" : ""}${isMobile && mobileNavVisible && !(modalManager.anyModalOpen || quickChatOpen) ? " project-content--with-alpha-nav" : ""}`}
         >
           <AppMainPanelTaskDetailComposition
             state={mainPanelTaskDetail}
@@ -2507,6 +2528,7 @@ function AppInner() {
         hidden={!mobileNavVisible}
         modalOpen={modalManager.anyModalOpen && !alphaSharedModalDrawerOpen}
         keyboardOpen={mobileNavKeyboardOpen}
+        keyboardMetrics={{ keyboardOverlap, viewportHeight, viewportOffsetTop }}
         alphaMenuOpen={alphaMenuOpen}
         onAlphaMenuOpenChange={setAlphaMenuOpen}
         onOpenSettings={openSettingsWithNav}

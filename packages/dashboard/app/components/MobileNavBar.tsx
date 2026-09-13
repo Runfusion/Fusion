@@ -1,5 +1,5 @@
 import "./MobileNavBar.css";
-import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import {
   Activity,
   Bot,
@@ -40,6 +40,7 @@ import type { PluginDashboardViewEntry, ScriptEntry } from "../api";
 import { useViewportMode } from "./Header";
 import { NavigationHistoryContext } from "../hooks/useNavigationHistory";
 import type { TaskView } from "../hooks/useViewState";
+import { getMobileKeyboardLayoutViewportHeight } from "../utils/mobileBarKeyboardFlags";
 import { buildPluginTaskViewId, isPluginViewId } from "../plugins/pluginViewRegistry";
 import { getPluginDashboardViewNavIcon } from "./pluginNavIcon";
 import { MOBILE_NAV_SELECTABLE_ITEMS, type MobileNavSelectableItem } from "../../../core/src/board/mobile-nav-primary-items";
@@ -78,6 +79,50 @@ export function computePublishedMobileNavHeight({
   return Math.max(44, Math.ceil(contentHeight));
 }
 
+export interface MobileNavKeyboardMetrics {
+  keyboardOverlap: number;
+  viewportHeight: number | null;
+  viewportOffsetTop: number;
+}
+
+export function computeMobileNavKeyboardLift({
+  keyboardOpen,
+  keyboardOverlap,
+  viewportHeight,
+  viewportOffsetTop,
+  layoutViewportHeight,
+}: MobileNavKeyboardMetrics & { keyboardOpen: boolean; layoutViewportHeight: number }): number {
+  if (!keyboardOpen || viewportHeight === null) return 0;
+  const visualOcclusion = Math.max(0, layoutViewportHeight - viewportOffsetTop - viewportHeight);
+  return keyboardOverlap > 0 ? Math.min(keyboardOverlap, visualOcclusion) : visualOcclusion;
+}
+
+/*
+FNXC:MobilePillPopover 2026-09-13-10:03:
+The official pill and popover are sibling fixed surfaces, so both receive the complete geometry declaration directly. A root-computed custom-property chain cannot consume a lift overridden only on one sibling; publishing the same local chain keeps their shared edge responsive to every keyboard sample.
+
+FNXC:MobilePillPopover 2026-09-13-10:32:
+A shifted iOS visual viewport moves both its visible top and bottom. Publish that live top offset on both fixed siblings so the popover's CSS height cap cannot place its first controls above the visible viewport while the pill remains correctly lifted above the keyboard.
+*/
+export interface MobileNavGeometryStyle extends CSSProperties {
+  "--mobile-nav-floating-gap": string;
+  "--mobile-nav-keyboard-lift": string;
+  "--mobile-nav-viewport-offset-top": string;
+  "--mobile-nav-pill-bottom": string;
+  "--mobile-nav-popover-bottom": string;
+}
+
+export function createMobileNavGeometryStyle(keyboardLift: number, viewportOffsetTop = 0): MobileNavGeometryStyle {
+  const visibleViewportTop = Number.isFinite(viewportOffsetTop) ? Math.max(0, viewportOffsetTop) : 0;
+  return {
+    "--mobile-nav-floating-gap": "var(--space-sm)",
+    "--mobile-nav-keyboard-lift": `${keyboardLift}px`,
+    "--mobile-nav-viewport-offset-top": `${visibleViewportTop}px`,
+    "--mobile-nav-pill-bottom": "calc(var(--mobile-nav-alpha-system-offset) + var(--mobile-nav-floating-gap) + var(--mobile-nav-keyboard-lift))",
+    "--mobile-nav-popover-bottom": "calc(var(--mobile-nav-pill-bottom) + var(--mobile-nav-pill-height) + var(--space-xs))",
+  };
+}
+
 export interface MobileNavBarProps {
   /** Current task view mode */
   view: TaskView;
@@ -94,6 +139,8 @@ export interface MobileNavBarProps {
   hidden?: boolean;
   /** Whether the on-screen mobile keyboard is open */
   keyboardOpen?: boolean;
+  /** Existing visual-viewport metrics used to lift the official pill without a second observer. */
+  keyboardMetrics?: MobileNavKeyboardMetrics;
   // Navigation handlers
   onOpenSettings?: () => void;
   onOpenActivityLog?: () => void;
@@ -171,6 +218,7 @@ export function MobileNavBar({
   modalOpen = false,
   hidden = false,
   keyboardOpen = false,
+  keyboardMetrics,
   onOpenSettings,
   onOpenActivityLog,
   mailboxUnreadCount = 0,
@@ -413,6 +461,7 @@ export function MobileNavBar({
     */
     if (hidden) {
       document.documentElement.style.removeProperty("--mobile-nav-height");
+      document.documentElement.style.removeProperty("--mobile-nav-pill-height");
       return;
     }
 
@@ -432,7 +481,9 @@ export function MobileNavBar({
         tabHeights,
         floatingGap,
       });
+      const pillHeight = Math.max(44, navEl.offsetHeight, ...tabHeights.filter((height) => Number.isFinite(height)));
       document.documentElement.style.setProperty("--mobile-nav-height", `${publishedHeight}px`);
+      document.documentElement.style.setProperty("--mobile-nav-pill-height", `${Math.ceil(pillHeight)}px`);
     };
 
     publishMeasuredHeight();
@@ -448,6 +499,7 @@ export function MobileNavBar({
     return () => {
       observer?.disconnect();
       document.documentElement.style.removeProperty("--mobile-nav-height");
+      document.documentElement.style.removeProperty("--mobile-nav-pill-height");
     };
   }, [hidden, modalOpen, mode]);
 
@@ -557,11 +609,24 @@ export function MobileNavBar({
     return <button key={item} type="button" className="mobile-more-item" data-testid={destination.moreTestId} onClick={() => destination.navigate("more")}><span className="mobile-more-item-icon-wrapper">{destination.icon}{destination.indicator && <span className="status-dot status-dot--pending mobile-more-item-icon-dot" aria-label={destination.indicatorLabel} />}</span><span>{label}</span>{destination.badge && destination.badge > 0 ? <span className="mobile-more-item-badge" aria-label={destination.badgeLabel}>{formatCount(destination.badge)}</span> : null}{destination.alpha ? <span className="mobile-more-item-badge">{t("common.alpha", "Alpha")}</span> : null}</button>;
   };
 
+  const keyboardLift = computeMobileNavKeyboardLift({
+    keyboardOpen,
+    keyboardOverlap: keyboardMetrics?.keyboardOverlap ?? 0,
+    viewportHeight: keyboardMetrics?.viewportHeight ?? null,
+    viewportOffsetTop: keyboardMetrics?.viewportOffsetTop ?? 0,
+    layoutViewportHeight: getMobileKeyboardLayoutViewportHeight(),
+  });
+  const mobileNavGeometryStyle = createMobileNavGeometryStyle(
+    keyboardLift,
+    keyboardMetrics?.viewportOffsetTop ?? 0,
+  );
+
   return (
     <>
       <nav
         ref={navRef}
         className={`mobile-nav-bar mobile-nav-bar--alpha${footerVisible ? " mobile-nav-bar--with-footer" : ""}${keyboardOpen ? " mobile-nav-bar--keyboard-open" : ""}`}
+        style={mobileNavGeometryStyle}
         role="navigation"
         aria-label={t("nav.primaryNavAriaLabel", "Primary navigation")}
       >
@@ -658,7 +723,7 @@ export function MobileNavBar({
             className={officialDesignEnabled ? "alpha-mobile-navigation-popover" : `mobile-more-sheet${isSheetDragging ? " mobile-more-sheet--dragging" : ""}${hasSheetDragged ? " mobile-more-sheet--gesture-ready" : ""}`}
             role="menu"
             aria-label={t("nav.moreSheetTitle", "Navigate")}
-            style={officialDesignEnabled ? undefined : { transform: `translateY(${dragOffset}px)` }}
+            style={officialDesignEnabled ? mobileNavGeometryStyle : { transform: `translateY(${dragOffset}px)` }}
             onTouchStart={officialDesignEnabled ? undefined : handleSheetTouchStart}
             onTouchEnd={officialDesignEnabled ? undefined : finishSheetDrag}
             onTouchCancel={officialDesignEnabled ? undefined : resetSheetDrag}
