@@ -1,6 +1,6 @@
 import { useRef, useState, type FocusEvent, type KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
-import { ChevronUp } from "lucide-react";
+import { ChevronUp, Terminal } from "lucide-react";
 import type { Task } from "@fusion/core";
 import type { ExecutorColumnFlags } from "../hooks/useExecutorStats";
 import { useExecutorStats } from "../hooks/useExecutorStats";
@@ -14,9 +14,10 @@ export interface AlphaDesktopActionBarProps {
   tasks: Task[];
   projectId?: string;
   columnFlagsByTaskId?: ReadonlyMap<string, ExecutorColumnFlags>;
+  onToggleTerminal?: () => void;
 }
 
-export function AlphaDesktopActionBar({ entries, activeId, tasks, projectId, columnFlagsByTaskId }: AlphaDesktopActionBarProps) {
+export function AlphaDesktopActionBar({ entries, activeId, tasks, projectId, columnFlagsByTaskId, onToggleTerminal }: AlphaDesktopActionBarProps) {
   /* FNXC:AlphaNavigation 2026-09-12-00:36: Alpha navigation labels, including its overflow trigger and landmark, must use the shared locale catalog rather than English-only literals. */
   const { t } = useTranslation("app");
   const [overflowOpen, setOverflowOpen] = useState(false);
@@ -51,8 +52,8 @@ export function AlphaDesktopActionBar({ entries, activeId, tasks, projectId, col
     </button>;
   };
   /*
-  FNXC:AlphaDesktopNavigation 2026-09-12-01:35:
-  Alpha desktop keeps capacity at the far left as a truthful running/max label, direct destinations in the middle, More immediately after them, and Settings isolated at the far right. New Task remains owned by the Header and other standard surfaces.
+  FNXC:AlphaDesktopNavigation 2026-09-13-02:40:
+  The wide Alpha footer shared by tablet and desktop keeps capacity at the far left, navigation in the middle, and its optional Terminal action immediately left of the single retained Settings action. Scripts remain on their existing owners, and omitting both right-side actions must leave no empty action-group shell.
   */
   return <nav className="alpha-desktop-action-bar" aria-label={t("nav.primaryNavAriaLabel", "Primary navigation")} data-testid="alpha-desktop-action-bar">
     <div className="alpha-desktop-action-bar__capacity"><EngineControlMenu projectId={projectId} triggerContent={<span data-testid="alpha-desktop-capacity-count">{capacityText}</span>} triggerLabel={capacityLabel} /></div>
@@ -69,6 +70,12 @@ export function AlphaDesktopActionBar({ entries, activeId, tasks, projectId, col
       <button type="button" className="alpha-desktop-action-bar__action" aria-label={t("header.moreViews", "More views")} aria-haspopup="menu" aria-expanded={overflowOpen} data-testid="alpha-desktop-nav-more" onClick={() => setOverflowOpen(true)}><ChevronUp aria-hidden="true" /><span>{t("nav.more", "More")}</span></button>
       {overflowOpen ? <div className="alpha-desktop-action-bar__menu" role="menu">{overflow.map((entry) => renderButton(entry, true))}</div> : null}
     </div> : null}</div>
-    <div className="alpha-desktop-action-bar__settings">{settings ? renderButton(settings) : null}</div>
+    {onToggleTerminal || settings ? <div className="alpha-desktop-action-bar__right">
+      {onToggleTerminal ? <button type="button" className="alpha-desktop-action-bar__action" aria-label={t("nav.terminal", "Terminal")} data-testid="alpha-desktop-nav-terminal" onClick={onToggleTerminal}>
+        <span className="alpha-desktop-action-bar__icon"><Terminal aria-hidden="true" /></span>
+        <span>{t("nav.terminal", "Terminal")}</span>
+      </button> : null}
+      {settings ? renderButton(settings) : null}
+    </div> : null}
   </nav>;
 }

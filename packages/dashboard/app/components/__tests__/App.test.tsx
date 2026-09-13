@@ -950,10 +950,8 @@ async function waitForAppShell(): Promise<void> {
     if (mockUseViewportMode() === "mobile") {
       expect(screen.getByTestId("mobile-nav-tab-command-center")).toBeTruthy();
       expect(screen.getByTestId("mobile-nav-tab-planning")).toBeTruthy();
-    } else if (mockUseViewportMode() === "desktop") {
-      expect(screen.getByTestId("alpha-desktop-action-bar")).toBeTruthy();
     } else {
-      expect(screen.getByTitle("Settings")).toBeTruthy();
+      expect(screen.getByTestId("alpha-desktop-action-bar")).toBeTruthy();
     }
   });
 }
@@ -1370,7 +1368,7 @@ describe("official dashboard design production wiring", () => {
     render(<App />);
 
     await waitFor(() => expect(screen.getByTestId("dashboard-project-shell")).toBeInTheDocument());
-    expect(Boolean(document.querySelector(".executor-status-bar"))).toBe(mode === "tablet");
+    expect(document.querySelector(".executor-status-bar")).toBeNull();
     const shell = screen.getByTestId("dashboard-project-shell");
     const content = shell.querySelector(".project-content");
     const sidebar = mode === "tablet" ? await screen.findByTestId("left-sidebar-nav") : null;
@@ -1381,9 +1379,9 @@ describe("official dashboard design production wiring", () => {
     });
     expect(content).toHaveClass("project-content--with-footer");
     expect(content).not.toHaveClass("project-content--with-alpha-nav", "project-content--with-mobile-nav");
+    expect(screen.getByTestId("alpha-desktop-action-bar")).toBeInTheDocument();
     if (mode === "desktop") {
       expect(sidebar).toBeNull();
-      expect(screen.getByTestId("alpha-desktop-action-bar")).toBeInTheDocument();
       expect(shell).not.toHaveClass("dashboard-project-shell--with-sidebar");
     } else {
       expect(sidebar).toHaveClass("left-sidebar-nav--with-footer");
@@ -1391,9 +1389,33 @@ describe("official dashboard design production wiring", () => {
     }
     expect(rightDock).toHaveClass("right-dock--with-footer");
     expect(shell).toHaveClass("dashboard-project-shell--with-right-dock");
-    if (mode === "tablet") expect(screen.getByTestId("executor-terminal-launcher-segment")).toBeInTheDocument();
-    else expect(screen.queryByTestId("executor-terminal-launcher-segment")).toBeNull();
+    expect(screen.queryByTestId("executor-terminal-launcher-segment")).toBeNull();
     expect(document.querySelector(".mobile-nav-bar")).toBeNull();
+  });
+
+  it.each(["tablet", "desktop"] as const)("ouvre et démonte Terminal depuis le footer large en mode %s", async (mode) => {
+    mockUseViewportMode.mockReturnValue(mode);
+    terminalLifecycle.reset();
+    localStorage.setItem("fusion:right-dock-open", "true");
+
+    render(<App />);
+
+    const terminal = await screen.findByTestId("alpha-desktop-nav-terminal");
+    expect(screen.queryByTestId("terminal-modal")).toBeNull();
+    expect(terminalLifecycle.mounts).toBe(0);
+    fireEvent.click(terminal);
+    expect(await screen.findByTestId("terminal-modal")).toHaveAttribute("data-footer-visible", "true");
+    expect(terminalLifecycle.mounts).toBe(1);
+    fireEvent.click(screen.getByTestId("terminal-close-btn"));
+    await waitFor(() => expect(screen.queryByTestId("terminal-modal")).toBeNull());
+    expect(terminalLifecycle.unmounts).toBe(1);
+
+    if (mode === "tablet") {
+      expect(screen.getByTestId("dashboard-project-shell")).toHaveClass("dashboard-project-shell--with-sidebar");
+      expect(await screen.findByTestId("left-sidebar-nav")).toBeInTheDocument();
+      expect(document.querySelector(".right-dock")).toBeInTheDocument();
+      expect(document.querySelector("[data-testid^='floating-window-overlay-']")).toBeNull();
+    }
   });
 
   it.each([
@@ -1414,8 +1436,9 @@ describe("official dashboard design production wiring", () => {
     expect(shell).toHaveClass("dashboard-project-shell--with-sidebar", "dashboard-project-shell--with-right-dock");
     expect(shell.querySelector(".project-content")).toHaveClass("project-content--with-footer");
     expect(await screen.findByTestId("left-sidebar-nav")).toHaveClass("left-sidebar-nav--with-footer");
-    expect(screen.getByTestId("executor-terminal-launcher-segment")).toBeInTheDocument();
-    expect(document.querySelector(".executor-status-bar")).not.toBeNull();
+    expect(screen.queryByTestId("executor-terminal-launcher-segment")).toBeNull();
+    expect(screen.getByTestId("alpha-desktop-action-bar")).toBeInTheDocument();
+    expect(document.querySelector(".executor-status-bar")).toBeNull();
     expect(document.querySelector(".mobile-nav-bar")).toBeNull();
 
     fireEvent.click(await screen.findByTestId("right-dock-tab-chat"));
@@ -1706,13 +1729,14 @@ describe("official dashboard design production wiring", () => {
     await waitForAppShell();
     const shell = screen.getByTestId("dashboard-project-shell");
     const content = shell.querySelector(".project-content");
-    expect(Boolean(document.querySelector(".executor-status-bar"))).toBe(mode === "tablet");
+    expect(document.querySelector(".executor-status-bar")).toBeNull();
     expect(content).toHaveClass(mode === "mobile" ? "project-content--with-alpha-nav" : "project-content--with-footer");
     if (mode === "mobile") {
       expect(document.querySelector(".mobile-nav-bar")).toHaveClass("mobile-nav-bar--alpha");
       expect(screen.queryByTestId("left-sidebar-nav")).toBeNull();
     } else if (mode === "tablet") {
       expect(await screen.findByTestId("left-sidebar-nav")).toHaveClass("left-sidebar-nav--with-footer");
+      expect(screen.getByTestId("alpha-desktop-action-bar")).toBeInTheDocument();
     } else {
       expect(screen.getByTestId("alpha-desktop-action-bar")).toBeInTheDocument();
       expect(screen.queryByTestId("left-sidebar-nav")).toBeNull();
@@ -4707,34 +4731,20 @@ describe("Script run flow", () => {
 describe("Script-to-terminal modal handoff", () => {
   beforeEach(() => {
     mockProjectsState.projects = [mockCurrentProjectState.currentProject!];
+    mockUseViewportMode.mockReturnValue("mobile");
   });
+
+  async function openScriptsModalFromMobileMenu() {
+    fireEvent.click(await screen.findByTestId("alpha-mobile-menu-trigger"));
+    fireEvent.click(screen.getByTestId("mobile-more-terminal-split-toggle"));
+    fireEvent.click(await screen.findByTestId("mobile-more-scripts-manage"));
+    await screen.findByTestId("scripts-modal");
+  }
 
   it("closes ScriptsModal and opens TerminalModal when Run is clicked", async () => {
     render(<App />);
 
-    // Wait for the app to fully render
-    await waitFor(() => {
-      expect(screen.getByTitle("Settings")).toBeTruthy();
-    });
-
-    // Open the Scripts modal via the quick-scripts dropdown "Manage Scripts..." button
-    const scriptsBtn = await screen.findByTestId("scripts-btn");
-    await act(async () => {
-      fireEvent.click(scriptsBtn);
-    });
-
-    // Wait for the dropdown menu to appear and click "Manage Scripts..."
-    await waitFor(() => {
-      expect(screen.getByTestId("quick-scripts-manage")).toBeTruthy();
-    });
-    await act(async () => {
-      fireEvent.click(screen.getByTestId("quick-scripts-manage"));
-    });
-
-    // Wait for the Scripts modal to open and load scripts
-    await waitFor(() => {
-      expect(screen.getByTestId("scripts-modal")).toBeTruthy();
-    });
+    await openScriptsModalFromMobileMenu();
 
     // Click the Run button on the "build" script
     await act(async () => {
@@ -4758,26 +4768,7 @@ describe("Script-to-terminal modal handoff", () => {
   it("allows reopening ScriptsModal after closing TerminalModal", async () => {
     render(<App />);
 
-    await waitFor(() => {
-      expect(screen.getByTitle("Settings")).toBeTruthy();
-    });
-
-    // Open the Scripts modal and run a script
-    const scriptsBtn = await screen.findByTestId("scripts-btn");
-    await act(async () => {
-      fireEvent.click(scriptsBtn);
-    });
-
-    await waitFor(() => {
-      expect(screen.getByTestId("quick-scripts-manage")).toBeTruthy();
-    });
-    await act(async () => {
-      fireEvent.click(screen.getByTestId("quick-scripts-manage"));
-    });
-
-    await waitFor(() => {
-      expect(screen.getByTestId("scripts-modal")).toBeTruthy();
-    });
+    await openScriptsModalFromMobileMenu();
 
     await act(async () => {
       fireEvent.click(screen.getByTestId("run-script-build"));
@@ -4799,47 +4790,14 @@ describe("Script-to-terminal modal handoff", () => {
       expect(screen.queryByTestId("terminal-modal")).toBeNull();
     });
 
-    // Reopen the Scripts modal
-    await act(async () => {
-      fireEvent.click(scriptsBtn);
-    });
-
-    await waitFor(() => {
-      expect(screen.getByTestId("quick-scripts-manage")).toBeTruthy();
-    });
-    await act(async () => {
-      fireEvent.click(screen.getByTestId("quick-scripts-manage"));
-    });
-
-    // Scripts modal should open again cleanly
-    await waitFor(() => {
-      expect(screen.getByTestId("scripts-modal")).toBeTruthy();
-    });
+    // Scripts modal should reopen cleanly from its unchanged mobile owner.
+    await openScriptsModalFromMobileMenu();
   });
 
   it("does not call runScript API — command is sent directly to terminal", async () => {
     render(<App />);
 
-    await waitFor(() => {
-      expect(screen.getByTitle("Settings")).toBeTruthy();
-    });
-
-    // Open the Scripts modal
-    const scriptsBtn = await screen.findByTestId("scripts-btn");
-    await act(async () => {
-      fireEvent.click(scriptsBtn);
-    });
-
-    await waitFor(() => {
-      expect(screen.getByTestId("quick-scripts-manage")).toBeTruthy();
-    });
-    await act(async () => {
-      fireEvent.click(screen.getByTestId("quick-scripts-manage"));
-    });
-
-    await waitFor(() => {
-      expect(screen.getByTestId("scripts-modal")).toBeTruthy();
-    });
+    await openScriptsModalFromMobileMenu();
 
     // Click Run on the "build" script
     await act(async () => {
@@ -4878,23 +4836,15 @@ describe("App footer-safe project layout", () => {
     expect(wrapper?.querySelector(".board")).toBeTruthy();
   });
 
-  it("opens the built-in file browser from the footer project directory link", async () => {
+  it("opens the built-in file browser from its unchanged mobile menu owner", async () => {
     localStorage.setItem("kb-dashboard-view-mode", "project");
     mockProjectsState.projects = [mockCurrentProjectState.currentProject];
+    mockUseViewportMode.mockReturnValue("mobile");
 
     render(<App />);
 
-    await waitFor(() => {
-      expect(screen.getByTestId("executor-project-path-toggle")).toBeTruthy();
-    });
-
-    fireEvent.click(screen.getByTestId("executor-project-path-toggle"));
-
-    await waitFor(() => {
-      expect(screen.getByTestId("executor-project-path-link")).toHaveTextContent("/test");
-    });
-
-    fireEvent.click(screen.getByTestId("executor-project-path-link"));
+    fireEvent.click(await screen.findByTestId("alpha-mobile-menu-trigger"));
+    fireEvent.click(screen.getByTestId("mobile-more-item-files"));
 
     await waitFor(() => {
       expect(screen.getByText("Files — Project")).toBeTruthy();
@@ -6432,21 +6382,9 @@ describe("terminal mount lifecycle (App mounts the terminal only while open)", (
     ).toEqual([]);
     expect(terminalLifecycle.mounts).toBe(0);
 
-    // Open the terminal through the Scripts -> Run path.
+    // Open the terminal through the wide footer's canonical action.
     await act(async () => {
-      fireEvent.click(await screen.findByTestId("scripts-btn"));
-    });
-    await waitFor(() => {
-      expect(screen.getByTestId("quick-scripts-manage")).toBeTruthy();
-    });
-    await act(async () => {
-      fireEvent.click(screen.getByTestId("quick-scripts-manage"));
-    });
-    await waitFor(() => {
-      expect(screen.getByTestId("scripts-modal")).toBeTruthy();
-    });
-    await act(async () => {
-      fireEvent.click(screen.getByTestId("run-script-build"));
+      fireEvent.click(await screen.findByTestId("alpha-desktop-nav-terminal"));
     });
     await waitFor(() => {
       expect(screen.getByTestId("terminal-modal")).toBeTruthy();

@@ -1,10 +1,10 @@
 /*
-FNXC:AlphaDesktopNavigation 2026-09-11-21:48:
-Desktop Alpha has one edge-to-edge footer instead of a floating navigation panel above ExecutorStatusBar. The shared executor-footer height remains the single shell reservation, and horizontal overflow preserves every labeled keyboard target on constrained desktop widths.
+FNXC:AlphaDesktopNavigation 2026-09-13-02:40:
+Tablet and desktop Alpha share one edge-to-edge footer instead of a floating navigation panel above ExecutorStatusBar. The shared executor-footer height remains the single shell reservation, and horizontal overflow preserves every labeled keyboard target on constrained wide layouts.
 */
 /*
 FNXC:AlphaDesktopNavigation 2026-09-11-23:41:
-The bar renders as a sibling of .dashboard-project-shell inside .dashboard-project-stack (App.tsx), and the stack does NOT declare --executor-footer-height. Only .dashboard-project-shell and .project-content--with-footer do, so the bar inherited the :root floor of 0px and sized itself to zero height: the whole desktop navigation footer was mounted, focusable in the a11y tree, and invisible, while alphaDesktopNavigationActive had already removed the left sidebar. Redeclare the token at this consumer exactly as .terminal-below-host--with-footer does for the same sibling-of-shell reason. The bar is desktop-only (viewportMode === "desktop"), so it takes the desktop 36px value and never the mobile touch-safe override.
+The bar renders as a sibling of .dashboard-project-shell inside .dashboard-project-stack (App.tsx), and the stack does NOT declare --executor-footer-height. Only .dashboard-project-shell and .project-content--with-footer do, so the bar otherwise inherits the :root floor of 0px and sizes itself to zero height. Redeclare the token at this consumer exactly as .terminal-below-host--with-footer does for the same sibling-of-shell reason; tablet and desktop use the shared non-mobile footer height while mobile keeps its separate pill.
 */
 .alpha-desktop-action-bar {
   --executor-footer-height: 36px;
@@ -20,7 +20,7 @@ The bar renders as a sibling of .dashboard-project-shell inside .dashboard-proje
   border-block-start: var(--btn-border-width) solid var(--border-color);
   background: var(--bg-secondary);
 }
-.alpha-desktop-action-bar__capacity, .alpha-desktop-action-bar__settings { display: flex; flex: 0 0 auto; align-items: stretch; }
+.alpha-desktop-action-bar__capacity, .alpha-desktop-action-bar__right { display: flex; flex: 0 0 auto; align-items: stretch; }
 .alpha-desktop-action-bar__center { display: flex; flex: 1 1 auto; min-inline-size: 0; justify-content: center; gap: var(--space-xs); }
 .alpha-desktop-action-bar__scroller { display: flex; justify-content: center; gap: var(--space-xs); overflow-x: auto; }
 .alpha-desktop-action-bar__capacity .engine-control-menu__trigger--text { block-size: 100%; min-inline-size: calc(var(--space-xl) * 2); border: 0; background: transparent; }
@@ -34,7 +34,7 @@ The capacity trigger sits against the footer's inline-start edge, so its shared 
   min-inline-size: min(24rem, calc(100vw - (var(--space-lg) * 2)));
   max-inline-size: calc(100vw - (var(--space-lg) * 2));
 }
-.alpha-desktop-action-bar__settings { margin-inline-start: auto; }
+.alpha-desktop-action-bar__right { margin-inline-start: auto; gap: var(--space-xs); }
 .alpha-desktop-action-bar__action { position: relative; display: inline-flex; flex: 0 0 auto; min-inline-size: calc(var(--space-xl) * 2); align-items: center; justify-content: center; gap: var(--space-xs); padding: var(--space-xs) var(--space-sm); border: 0; border-radius: var(--radius-md); color: var(--text-secondary); background: transparent; font: inherit; cursor: pointer; }
 .alpha-desktop-action-bar__action:hover, .alpha-desktop-action-bar__action--active { color: var(--accent); background: var(--bg-hover); }
 .alpha-desktop-action-bar__action:focus-visible { outline: none; box-shadow: var(--focus-ring-strong); }

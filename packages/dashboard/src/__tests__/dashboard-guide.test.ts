@@ -71,6 +71,15 @@ describe("dashboard guide coverage for lazy-loaded views", () => {
     expect(guide).toContain("Historical alphaUpdates values never select another layout");
   });
 
+  it("documents the shared tablet/desktop footer without broadening desktop-only behavior", () => {
+    const guide = readDashboardGuide();
+
+    expect(guide).toContain("official tablet and desktop design uses one full-width navigation footer instead of ExecutorStatusBar");
+    expect(guide).toContain("Terminal** sits immediately left of **Settings");
+    expect(guide).toContain("Tablet retains its sidebar, compact Header, standard right dock, ordinary page routing, and no Alpha desktop windows or guards");
+    expect(guide).toContain("continues to use More on mobile");
+  });
+
   it("documents the ascending single-column desktop More menu", () => {
     const guide = readDashboardGuide();
 

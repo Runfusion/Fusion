@@ -47,9 +47,50 @@ describe("AlphaDesktopActionBar", () => {
     expect(screen.queryByTestId("alpha-desktop-nav-new-task")).toBeNull();
     expect(screen.getByTestId("alpha-desktop-capacity-count")).toHaveTextContent("0 / 4");
     expect(screen.getByTestId("alpha-desktop-nav-settings")).toHaveAccessibleName("Settings");
+    expect(screen.queryByTestId("alpha-desktop-nav-terminal")).toBeNull();
+    expect(document.querySelector(".alpha-desktop-action-bar__right")).toContainElement(screen.getByTestId("alpha-desktop-nav-settings"));
     expect(screen.queryByTestId("alpha-desktop-nav-patchnode")).toBeNull();
     expect(screen.queryByTestId("alpha-desktop-nav-chat")).toBeNull();
     expect(screen.queryByTestId("alpha-desktop-nav-notes")).toBeNull();
+  });
+
+  it("place un unique Terminal immédiatement avant Settings et appelle son propriétaire", () => {
+    const onToggleTerminal = vi.fn();
+    const populatedEntries = entries();
+    const settings = populatedEntries.find((entry) => entry.id === "settings")!;
+    render(<AlphaDesktopActionBar entries={[...populatedEntries, settings]} activeId="board" tasks={[]} onToggleTerminal={onToggleTerminal} />);
+
+    const terminal = screen.getByTestId("alpha-desktop-nav-terminal");
+    const renderedSettings = screen.getByTestId("alpha-desktop-nav-settings");
+    expect(screen.getAllByTestId("alpha-desktop-nav-terminal")).toHaveLength(1);
+    expect(screen.getAllByTestId("alpha-desktop-nav-settings")).toHaveLength(1);
+    expect(terminal).toHaveAccessibleName("Terminal");
+    expect(renderedSettings).toHaveAccessibleName("Settings");
+    expect(terminal.nextElementSibling).toBe(renderedSettings);
+    fireEvent.click(terminal);
+    expect(onToggleTerminal).toHaveBeenCalledTimes(1);
+  });
+
+  it("omet Terminal et son shell quand le handler et Settings sont absents", () => {
+    render(<AlphaDesktopActionBar entries={entries().filter((entry) => entry.id !== "settings")} activeId="board" tasks={[]} />);
+    expect(screen.queryByTestId("alpha-desktop-nav-terminal")).toBeNull();
+    expect(screen.queryByTestId("alpha-desktop-nav-settings")).toBeNull();
+    expect(document.querySelector(".alpha-desktop-action-bar__right")).toBeNull();
+  });
+
+  it("conserve les actions droites hors du scroller avec une géométrie tokenisée", () => {
+    const longEntries = entries(vi.fn(), {
+      pluginDashboardViews: Array.from({ length: 30 }, (_, index) => ({
+        pluginId: `plugin-${index}`,
+        view: { viewId: "tool", label: `Plugin ${index}`, order: index },
+      })),
+    });
+    render(<AlphaDesktopActionBar entries={longEntries} activeId="board" tasks={[]} onToggleTerminal={vi.fn()} />);
+    const right = document.querySelector(".alpha-desktop-action-bar__right");
+    expect(right).toContainElement(screen.getByTestId("alpha-desktop-nav-terminal"));
+    expect(right).toContainElement(screen.getByTestId("alpha-desktop-nav-settings"));
+    expect(document.querySelector(".alpha-desktop-action-bar__scroller")).not.toContainElement(screen.getByTestId("alpha-desktop-nav-terminal"));
+    expect(alphaDesktopActionBarCss).toMatch(/\.alpha-desktop-action-bar__right\s*\{[^}]*gap:\s*var\(--space-xs\)/s);
   });
 
   it("affiche honnêtement une capacité entièrement utilisée et ouvre ses réglages dans le viewport", () => {

@@ -1185,11 +1185,12 @@ function AppInner() {
   const projectShellPresent = viewMode === "project" && !!currentProject;
   const alphaDesktopNavigationActive = viewportMode === "desktop" && projectShellPresent;
   /*
-  FNXC:AlphaDesktopNavigation 2026-09-11-21:48:
-  Desktop Alpha replaces ExecutorStatusBar with the full-width navigation footer. Tablet Alpha and every standard desktop retain ExecutorStatusBar, while the shared shell reservation remains active for whichever single footer owns the bottom edge.
+  FNXC:AlphaDesktopNavigation 2026-09-13-02:40:
+  Tablet and desktop share the wide Alpha footer, while alphaDesktopNavigationActive remains desktop-only and continues to own sidebar removal, pilot routing, windows, and guards. Mobile keeps its pill, and tablet keeps its compact Header, sidebar, standard right dock, and page routing; only the footer owner broadens here.
   */
-  const executorFooterVisible = projectShellPresent && !alphaDesktopNavigationActive && viewportMode !== "mobile";
-  const shellFooterVisible = executorFooterVisible || alphaDesktopNavigationActive;
+  const alphaWideFooterActive = viewportMode !== "mobile" && projectShellPresent;
+  const executorFooterVisible = projectShellPresent && !alphaWideFooterActive && viewportMode !== "mobile";
+  const shellFooterVisible = executorFooterVisible || alphaWideFooterActive;
   const mobileNavVisible = projectShellPresent;
   /*
   FNXC:AlphaMobileDrawer 2026-09-10-17:16:
@@ -2367,7 +2368,7 @@ function AppInner() {
             currentProject={currentProject}
             onSelectProject={handleSelectProject}
             onViewAllProjects={handleViewAllProjects}
-            footerVisible={executorFooterVisible}
+            footerVisible={shellFooterVisible}
           />
         )}
         <div
@@ -2445,7 +2446,7 @@ function AppInner() {
         </div>
         {rightDock.dock}
       </div>
-      {alphaDesktopNavigationActive ? <AlphaDesktopActionBar entries={alphaDesktopNavigationEntries} activeId={alphaDesktopActiveNavigationId} tasks={footerTasks} projectId={currentProject?.id} columnFlagsByTaskId={footerColumnFlagsByTaskId} /> : null}
+      {alphaWideFooterActive ? <AlphaDesktopActionBar entries={alphaDesktopNavigationEntries} activeId={alphaDesktopActiveNavigationId} tasks={footerTasks} projectId={currentProject?.id} columnFlagsByTaskId={footerColumnFlagsByTaskId} onToggleTerminal={toggleTerminalWithNav} /> : null}
       {alphaDesktopNavigationActive ? alphaDesktopWindows.windows.filter((entry) => entry.id === "patchnode").map((entry) => (
         <Suspense fallback={null} key={entry.id}>
           <PatchnodeView
