@@ -8028,6 +8028,10 @@
         "matches": "matches {{path}}"
       }
     },
+    "definition": {
+      "descriptionHeading": "Description",
+      "noDescription": "(no description)"
+    },
     "description": {
       "showLess": "Show less",
       "showMore": "Show more"
@@ -8243,6 +8247,18 @@
     },
     "progress": {
       "heading": "Progress",
+      "completedCount": "{{count}}/{{total}} completed",
+      "workflowOrigin": "Workflow gate",
+      "implementationOrigin": "Implementation",
+      "status": {
+        "done": "Completed",
+        "failed": "Failed",
+        "advisory": "Completed with feedback",
+        "notRun": "Not run",
+        "running": "In progress",
+        "skipped": "Skipped",
+        "pending": "Pending"
+      },
       "noSteps": "(no steps defined)",
       "stepCount_one": "{{count}}/{{total}} step",
       "stepCount_other": "{{count}}/{{total}} steps"
@@ -8346,6 +8362,7 @@
     "spec": {
       "aiReviseHeading": "Ask AI to Revise",
       "aiReviseHelp": "Provide feedback for the AI to improve this specification. The task will move to planning for replanning.",
+      "backToDefinition": "Back to definition",
       "editBtn": "Edit",
       "feedbackPlaceholder": "e.g., 'Add more details about error handling', 'Split this into smaller steps', 'Include tests for the API endpoints'...",
       "hintCancel": "to cancel",
@@ -8353,6 +8370,8 @@
       "loading": "Loading specification…",
       "noPrompt": "(no prompt)",
       "placeholder": "Enter task specification in Markdown...",
+      "promptFileName": "PROMPT.md",
+      "readPlanBtn": "Read plan",
       "requesting": "Requesting…",
       "requestRevisionBtn": "Request AI Revision",
       "revisionColumnError": "Cannot request revision: Task must be in 'triage', 'todo', 'in-progress', or 'in-review' column.",

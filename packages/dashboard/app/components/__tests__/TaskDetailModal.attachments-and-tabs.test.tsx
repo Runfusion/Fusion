@@ -684,12 +684,17 @@ describe("TaskDetailModal", () => {
       }
     });
 
-    it("Feed segment keeps action/outcome rendering intact", () => {
+    it("Feed segment keeps action/outcome rendering intact and shows only real run agents", () => {
       const { baseElement: container } = render(
         <TaskDetailModal
           task={makeTask({
             log: [
-              { timestamp: "2026-01-01T00:01:00Z", action: "Started work", outcome: "Step completed successfully" },
+              {
+                timestamp: "2026-01-01T00:01:00Z",
+                action: "Started work",
+                outcome: "Step completed successfully",
+                runContext: { agentId: "agent-executor" },
+              },
               { timestamp: "2026-01-01T00:00:00Z", action: "Created task" },
             ],
           })}
@@ -710,9 +715,12 @@ describe("TaskDetailModal", () => {
       expect(outcomes).toHaveLength(1);
       expect(Array.from(actions).map((entry) => entry.textContent)).toEqual(["Created task", "Started work"]);
       expect(outcomes[0].textContent).toBe("Step completed successfully");
+      expect(container.querySelectorAll(".detail-log-marker")).toHaveLength(2);
+      expect(container.querySelectorAll(".detail-log-agent")).toHaveLength(1);
+      expect(container.querySelector(".detail-log-agent")).toHaveTextContent("agent-executor");
     });
 
-    it("Activity timeline CSS keeps action/outcome high-contrast and timestamp secondary", () => {
+    it("Activity timeline CSS keeps action dominant and outcome/timestamps secondary", () => {
       const stylesCssText = readDashboardStylesSource();
       expect(stylesCssText).toContain(".detail-log-action");
 
@@ -722,8 +730,9 @@ describe("TaskDetailModal", () => {
       const timestampsRule = getCssRuleBlock(stylesCssText, ".detail-log-timestamps");
 
       expect(actionRule).toContain("color: var(--text);");
-      expect(outcomeRule).toContain("color: var(--text);");
-      expect(outcomeRule).toContain("background: var(--surface);");
+      expect(actionRule).toContain("font-weight: 600;");
+      expect(outcomeRule).toContain("color: var(--text-muted);");
+      expect(outcomeRule).toContain("background: var(--bg-secondary);");
       expect(timestampRule).toContain("color: var(--text-muted);");
       expect(timestampRule).not.toContain("color: var(--text);");
       expect(timestampsRule).toContain("flex-wrap: wrap;");
@@ -1321,6 +1330,8 @@ describe("TaskDetailModal", () => {
       expect(screen.getByRole("button", { name: "Plan" })).toHaveClass("detail-tab-active");
       expect(screen.getByRole("button", { name: "Activity" })).not.toHaveClass("detail-tab-active");
       expect(container.querySelector(".detail-section--chat")).toBeNull();
+      expect(screen.queryByText("Definition body unique text.")).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "Read plan" }));
       expect(screen.getByText("Definition body unique text.")).toBeInTheDocument();
       expect(screen.queryByText("GitHub tracking")).toBeNull();
       expect(screen.queryByRole("heading", { name: "Dependencies" })).toBeNull();

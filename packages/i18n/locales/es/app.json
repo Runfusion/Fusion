@@ -7984,6 +7984,10 @@
         "matches": ""
       }
     },
+    "definition": {
+      "descriptionHeading": "Descripción",
+      "noDescription": "(sin descripción)"
+    },
     "description": {
       "showLess": "Mostrar menos",
       "showMore": "Mostrar más"
@@ -8170,6 +8174,18 @@
     },
     "progress": {
       "heading": "Progreso",
+      "completedCount": "{{count}}/{{total}} completadas",
+      "workflowOrigin": "Control del flujo de trabajo",
+      "implementationOrigin": "Implementación",
+      "status": {
+        "done": "Completada",
+        "failed": "Fallida",
+        "advisory": "Completada con observaciones",
+        "notRun": "No ejecutada",
+        "running": "En curso",
+        "skipped": "Omitida",
+        "pending": "Pendiente"
+      },
       "noSteps": "(sin pasos definidos)",
       "stepCount_one": "",
       "stepCount_other": ""
@@ -8273,6 +8289,7 @@
     "spec": {
       "aiReviseHeading": "Pedir revisión a la IA",
       "aiReviseHelp": "Proporciona comentarios para que la IA mejore esta especificación. La tarea pasará a planificación.",
+      "backToDefinition": "Volver a la definición",
       "editBtn": "Editar",
       "feedbackPlaceholder": "p. ej., 'Añade más detalles sobre el manejo de errores', 'Divídelo en pasos más pequeños', 'Incluye pruebas para los endpoints de la API'...",
       "hintCancel": "para cancelar",
@@ -8280,6 +8297,8 @@
       "loading": "Cargando especificación…",
       "noPrompt": "(sin indicación)",
       "placeholder": "Ingresa la especificación de la tarea en Markdown...",
+      "promptFileName": "PROMPT.md",
+      "readPlanBtn": "Leer el plan",
       "requesting": "Solicitando…",
       "requestRevisionBtn": "Solicitar revisión de IA",
       "revisionColumnError": "No se puede solicitar revisión: la tarea debe estar en la columna 'triage', 'todo', 'in-progress' o 'in-review'.",

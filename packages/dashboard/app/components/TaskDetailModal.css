@@ -48,9 +48,18 @@ The gray top header band (task id + column badge) was over-padded. Trim its vert
   padding-block: var(--space-sm);
 }
 
+.detail-header-copy {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-inline-size: 0;
+  gap: var(--space-xs);
+}
+
 .detail-title-row {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: var(--space-sm);
 }
 
@@ -238,6 +247,11 @@ Summarize-as-title is an in-field affordance, not a separate full-width row: it 
   min-width: 0;
 }
 
+.detail-heading-row--header {
+  align-items: center;
+  margin-bottom: 0;
+}
+
 .detail-title-control {
   display: block;
   width: 100%;
@@ -287,6 +301,56 @@ Summarize-as-title is an in-field affordance, not a separate full-width row: it 
 .detail-summarize-title-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.detail-definition-description {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-md);
+}
+
+.detail-definition-description .markdown-body {
+  inline-size: 100%;
+  color: var(--text-muted);
+}
+
+.detail-definition-description .markdown-body > :first-child,
+.detail-section--plan-prompt .markdown-body > :first-child {
+  margin-block-start: 0;
+}
+
+.detail-definition-description .markdown-body > :last-child,
+.detail-section--plan-prompt .markdown-body > :last-child {
+  margin-block-end: 0;
+}
+
+.detail-read-plan,
+.detail-plan-back {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.detail-plan-document {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  min-inline-size: 0;
+}
+
+.detail-plan-document-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.detail-plan-back span {
+  font-family: var(--font-mono);
+}
+
+.detail-body--plan-document {
+  padding-block-start: var(--space-md);
 }
 
 /*
@@ -2553,8 +2617,8 @@ FNXC:TaskDetailTabs 2026-06-21-00:00:
 The mobile global `* { touch-action: pan-y; }` lock from FN-6365 prevents horizontal swipe gestures unless each known horizontal scroller opts back into pan-x.
 The overflowing task-detail tab strip must keep horizontal touch panning enabled so conditional and plugin tabs remain reachable on narrow touch viewports (FN-6864), matching the FN-6450 agent-detail tab precedent.
 
-FNXC:TaskDetailTabs 2026-06-22-18:00:
-Remove the divider between the tab selector and the detail area below. Keep the active-tab underline as the only local selection affordance.
+FNXC:TaskDetailTabs 2026-09-12-22:52:
+Task Detail destinations use a pill group on the shared tokenized surface. The selected pill is raised rather than underlined, while overflow, canonical ordering, keyboard focus, mouse drag, and native touch panning retain their existing behavior.
 
 FNXC:TaskDetailTabs 2026-06-25-16:55:
 Task-detail tabs must remain reachable as a one-row horizontal scroller on mobile across the Board modal and List embedded pane. The tab strip is the scroller, opts out of the global mobile pan-y lock with pan-x pan-y, and keeps tab children non-shrinking so conditional and plugin tabs overflow-scroll instead of clipping or compressing.
@@ -2568,9 +2632,9 @@ The tab strip is a fixed shell zone immediately below the canonical header, outs
 .detail-tabs {
   display: flex;
   flex: 0 0 auto;
-  gap: 0;
-  width: 100%;
-  max-inline-size: 100%;
+  gap: var(--space-xs);
+  width: calc(100% - (var(--modal-padding) * 2));
+  max-inline-size: calc(100% - (var(--modal-padding) * 2));
   min-width: 0;
   overflow-x: auto;
   overflow-y: hidden;
@@ -2578,25 +2642,28 @@ The tab strip is a fixed shell zone immediately below the canonical header, outs
   touch-action: pan-x pan-y;
   -webkit-overflow-scrolling: touch;
   scrollbar-width: thin;
-  margin: 0;
-  padding-inline: var(--modal-padding);
+  margin: var(--space-sm) var(--modal-padding);
+  padding: var(--space-xs);
+  border-radius: var(--radius-pill);
+  background: var(--bg-secondary);
 }
 
 .detail-tab {
   flex-shrink: 0;
   touch-action: pan-x pan-y;
   padding: var(--space-sm) var(--space-lg);
-  background: none;
+  background: transparent;
   border: none;
-  border-bottom: 2px solid transparent;
+  border-radius: var(--radius-pill);
   color: var(--text-muted);
   cursor: pointer;
-  font-size: 14px;
-  font-weight: 400;
+  font-size: var(--font-size-sm);
+  font-weight: 500;
   font-family: inherit;
   transition:
     color var(--transition-fast),
-    border-color var(--transition-fast);
+    background-color var(--transition-fast),
+    box-shadow var(--transition-fast);
 }
 
 .detail-tab:hover {
@@ -2605,12 +2672,12 @@ The tab strip is a fixed shell zone immediately below the canonical header, outs
 .detail-tab:focus-visible {
   box-shadow: var(--focus-ring-strong);
   outline: none;
-  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
 }
 
 .detail-tab-active {
-  border-bottom-color: var(--in-progress);
+  background: var(--surface);
   color: var(--text);
+  box-shadow: var(--shadow-sm);
   font-weight: 600;
 }
 
@@ -3504,15 +3571,22 @@ Alpha Task Detail is one shared, mobile-first surface in modal, drawer, main-pan
   padding: var(--alpha-density-3);
 }
 
+/*
+FNXC:TaskDetailStructure 2026-09-12-23:45:
+Les pills Alpha occupent l’espace intérieur disponible dans chaque hôte sans ajouter leurs marges à une largeur déjà égale à 100 %. Le scroller garde ainsi ses onglets hors du débordement de la fiche, y compris en split et dock étroits.
+*/
 [data-alpha-surface="true"] .detail-tabs {
   position: sticky;
   inset-block-start: 0;
   z-index: var(--z-sticky);
   gap: var(--alpha-density-1);
-  margin-block-end: var(--alpha-density-3);
-  padding-inline: var(--alpha-density-3);
-  background: transparent;
+  inline-size: calc(100% - (var(--alpha-density-3) * 2));
+  max-inline-size: calc(100% - (var(--alpha-density-3) * 2));
+  margin: var(--alpha-density-2) var(--alpha-density-3) var(--alpha-density-3);
+  padding: var(--alpha-density-1);
+  background: var(--alpha-neutral-surface-secondary);
   border: 0;
+  border-radius: var(--radius-pill);
   scrollbar-width: none;
 }
 
@@ -3524,8 +3598,7 @@ Alpha Task Detail is one shared, mobile-first surface in modal, drawer, main-pan
   min-block-size: var(--alpha-control-height);
   padding: var(--alpha-density-2) var(--alpha-density-3);
   border: 0;
-  border-block-end: var(--btn-border-width) solid transparent;
-  border-radius: 0;
+  border-radius: var(--radius-pill);
   background: transparent !important;
   color: var(--alpha-neutral-muted) !important;
   white-space: nowrap;
@@ -3537,9 +3610,9 @@ Alpha Task Detail is one shared, mobile-first surface in modal, drawer, main-pan
 }
 
 [data-alpha-surface="true"] .detail-tab-active {
-  border-block-end-color: var(--alpha-accent-background);
-  background: transparent !important;
+  background: var(--alpha-neutral-surface) !important;
   color: var(--alpha-neutral-foreground) !important;
+  box-shadow: var(--shadow-sm);
   font-weight: 600;
 }
 
@@ -3601,6 +3674,8 @@ Alpha Task Detail is one shared, mobile-first surface in modal, drawer, main-pan
   }
 
   [data-alpha-surface="true"] .detail-tabs {
+    inline-size: 100%;
+    max-inline-size: 100%;
     margin-inline: 0;
     border-inline: 0;
     border-radius: 0;

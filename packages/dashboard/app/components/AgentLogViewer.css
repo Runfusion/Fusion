@@ -16,8 +16,8 @@
   scrollbar-color: var(--border) transparent;
   scrollbar-width: thin;
   font-family: var(--font-mono);
-  font-size: 13px;
-  line-height: 1.5;
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
   color: var(--text);
   padding: var(--space-md);
   white-space: pre-wrap;
@@ -164,39 +164,40 @@ Keep each block full-width and float the role/timestamp badge as a sticky overla
   white-space: nowrap;
 }
 
-.agent-log-tool {
+/*
+FNXC:TaskDetailActivity 2026-09-12-23:26:
+Raw présente chaque groupe comme une carte lisible sans toucher aux regroupements, contrôles, détails, liens, métriques, pagination ou suivi automatique. Les variantes gardent les couleurs sémantiques existantes; stderr reste exclusivement lié à --color-error.
+*/
+.agent-log-entry-card {
   position: relative;
   width: 100%;
   box-sizing: border-box;
+  margin: 0 0 var(--space-sm);
+  padding: var(--space-md);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.agent-log-tool {
   color: var(--accent);
-  margin: var(--space-xs) 0;
-  padding: var(--space-xs) var(--space-sm);
-  border-left: var(--space-xs) solid var(--accent);
+  border-inline-start-color: var(--accent);
   background: var(--log-tool-bg);
 }
 
 .agent-log-tool-result {
-  position: relative;
-  width: 100%;
-  box-sizing: border-box;
   color: var(--color-success);
-  margin: calc(var(--space-xs) / 2) 0;
-  padding: var(--space-xs) var(--space-sm);
-  border-left: var(--space-xs) solid var(--color-success);
+  border-inline-start-color: var(--color-success);
   background: var(--log-success-bg);
-  font-size: 12px;
+  font-size: var(--font-size-xs);
 }
 
 .agent-log-tool-error {
-  position: relative;
-  width: 100%;
-  box-sizing: border-box;
   color: var(--color-error);
-  margin: calc(var(--space-xs) / 2) 0;
-  padding: var(--space-xs) var(--space-sm);
-  border-left: var(--space-xs) solid var(--color-error);
+  border-inline-start-color: var(--color-error);
   background: var(--log-error-bg);
-  font-size: 12px;
+  font-size: var(--font-size-xs);
 }
 
 .agent-log-tool-title {
@@ -303,15 +304,13 @@ Agent-log timing labels are metadata, not timestamps. Keep TTFT and duration com
 
 .agent-log-text {
   display: block;
-  position: relative;
-  width: 100%;
   color: var(--text);
 }
 
 .agent-log-thinking {
   display: block;
-  position: relative;
-  width: 100%;
+  border-inline-start-color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 8%, var(--surface));
   font-style: italic;
   color: var(--text);
 }
@@ -479,7 +478,14 @@ Agent-log timing labels are metadata, not timestamps. Keep TTFT and duration com
   }
 
   .agent-log-badge-row {
+    position: static;
     flex-wrap: wrap;
+    max-width: 100%;
+    margin-inline-start: 0;
     white-space: normal;
+  }
+
+  .agent-log-entry-card {
+    padding: var(--space-sm);
   }
 }

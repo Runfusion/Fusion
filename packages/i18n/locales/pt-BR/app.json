@@ -7994,6 +7994,10 @@
         "matches": ""
       }
     },
+    "definition": {
+      "descriptionHeading": "Descrição",
+      "noDescription": "(sem descrição)"
+    },
     "description": {
       "showLess": "Mostrar menos",
       "showMore": "Mostrar mais"
@@ -8209,6 +8213,18 @@
     },
     "progress": {
       "heading": "Progresso",
+      "completedCount": "{{count}}/{{total}} concluídas",
+      "workflowOrigin": "Etapa do fluxo de trabalho",
+      "implementationOrigin": "Implementação",
+      "status": {
+        "done": "Concluída",
+        "failed": "Falhou",
+        "advisory": "Concluída com observações",
+        "notRun": "Não executada",
+        "running": "Em andamento",
+        "skipped": "Ignorada",
+        "pending": "Pendente"
+      },
       "noSteps": "(nenhuma etapa definida)",
       "stepCount_one": "{{count}}/{{total}} etapa",
       "stepCount_other": "{{count}}/{{total}} etapas"
@@ -8312,6 +8328,7 @@
     "spec": {
       "aiReviseHeading": "Pedir à IA para revisar",
       "aiReviseHelp": "Forneça feedback para a IA melhorar esta especificação. A tarefa passará para planejamento para ser replanejada.",
+      "backToDefinition": "Voltar à definição",
       "editBtn": "Editar",
       "feedbackPlaceholder": "ex.: 'Adicione mais detalhes sobre o tratamento de erros', 'Divida isso em etapas menores', 'Inclua testes para os endpoints da API'...",
       "hintCancel": "para cancelar",
@@ -8319,6 +8336,8 @@
       "loading": "Carregando especificação…",
       "noPrompt": "(sem prompt)",
       "placeholder": "Insira a especificação da tarefa em Markdown...",
+      "promptFileName": "PROMPT.md",
+      "readPlanBtn": "Ler o plano",
       "requesting": "Solicitando…",
       "requestRevisionBtn": "Solicitar revisão da IA",
       "revisionColumnError": "Não é possível solicitar revisão: a tarefa deve estar na coluna 'triage', 'todo', 'in-progress' ou 'in-review'.",

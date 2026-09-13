@@ -71,6 +71,7 @@ The browser fixture drives the real Task Detail hosts through both chat surfaces
 const chatKind = params.get("chatKind") === "planner" ? "planner" : "activity";
 const chatState = params.get("chatState") ?? "empty";
 const showContextualFooter = params.get("footer") === "true";
+const structuredTaskDetail = params.get("structured") === "true";
 const taskDetailChatFirst = chatKind === "planner";
 if (params.has("reset")) localStorage.clear();
 
@@ -165,7 +166,7 @@ window.fetch = async (input) => {
         : pathname === "/api/tasks/done"
           ? { tasks: [], total: 0, hasMore: false, nextCursor: null }
       : url.includes(`/tasks/${fixtureTask.id}/prompt`)
-        ? { id: fixtureTask.id, prompt: "" }
+        ? { id: fixtureTask.id, prompt: fixtureTask.prompt }
         : pathname === `/api/tasks/${fixtureTask.id}`
           ? fixtureTask
           : pathname === "/api/tasks"
@@ -198,14 +199,27 @@ const fixtureTitle = titleMode === "fit"
     ? "A threshold title whose real host width crosses the two line clamp"
     : titleMode === "description" ? undefined : titleMode === "id" ? "" : "A browser measured task title that crosses the two line clamp threshold without changing the operator selected expanded state ".repeat(3);
 const fixtureDescription = titleMode === "description" ? "A browser measured description fallback that crosses the two line clamp threshold without changing the operator selected expanded state ".repeat(3) : titleMode === "id" ? "" : "Fixture description";
+/*
+FNXC:TaskDetailStructure 2026-09-12-23:26:
+La fixture Chromium des vrais hôtes contient une description, un PROMPT.md, des étapes de statuts variés et un Feed avec résultat et agent réel afin que les captures Définition, plan et Activity prouvent la hiérarchie livrée plutôt qu’une coquille vide.
+*/
 const fixtureTask = {
   id: titleMode === "id" ? "FN-8806" : "FN-TITLE-FLICKER",
   title: fixtureTitle,
   description: fixtureDescription,
   column: showContextualFooter ? "in-review" : "todo",
   status: "pending",
-  prompt: "",
-  steps: [],
+  prompt: structuredTaskDetail ? "# Delivery plan\n\n## Goal\n\nKeep the task detail structure readable in every host.\n\n## Verification\n\n- Inspect Definition\n- Open the full plan\n- Review Activity" : "",
+  steps: structuredTaskDetail ? [
+    { id: 1, name: "Inspect every task detail host", status: "done" },
+    { id: 2, name: "Open the full planning document", status: "in-progress" },
+    { id: 3, name: "Verify responsive activity logs", status: "pending" },
+  ] : [],
+  log: structuredTaskDetail ? [
+    { timestamp: "2026-09-12T22:30:00.000Z", action: "Started visual verification", outcome: "Desktop definition rendered", runContext: { agentId: "agent-executor" } },
+    { timestamp: "2026-09-12T22:35:00.000Z", action: "Opened the complete plan" },
+    { timestamp: "2026-09-12T22:40:00.000Z", action: "Checked Activity hierarchy", outcome: "Feed remains readable on mobile" },
+  ] : [],
   attachments: [],
   dependencies: [],
   createdAt: "2026-08-05T00:00:00.000Z",

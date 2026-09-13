@@ -73,7 +73,7 @@ describe("Task Detail canonical shell", () => {
     }
   });
 
-  it("attribue le titre à Définition et le compositeur au footer direct de Chat", () => {
+  it("conserve le titre dans l’en-tête partagé et le compositeur au footer direct de Chat", () => {
     const view = render(<TaskDetailContent {...sharedProps} embedded onRequestClose={noop} initialTab="planner-chat" />);
     const surface = view.container.querySelector<HTMLElement>(".task-detail-content")!;
     const content = screen.getByTestId("task-detail-tab-content");
@@ -84,11 +84,13 @@ describe("Task Detail canonical shell", () => {
     expect(content.querySelector(".task-planner-chat-composer")).toBeNull();
     expect(content.querySelector(".detail-heading-row")).toBeNull();
     expect(content.querySelector(".detail-body-content")).toBeNull();
+    expect(surface.querySelector(".modal-header .detail-heading-row h2")).toBeInTheDocument();
+    expect(surface.querySelectorAll(".detail-heading-row h2")).toHaveLength(1);
 
     fireEvent.click(screen.getByRole("button", { name: "Plan" }));
     expect(screen.queryByTestId("task-detail-chat-footer")).toBeNull();
-    expect(content.querySelector(".detail-heading-row h2")).toBeInTheDocument();
-    expect(surface.querySelectorAll(".detail-heading-row h2")).toHaveLength(1);
+    expect(content.querySelector(".detail-heading-row")).toBeNull();
+    expect(surface.querySelectorAll(".modal-header .detail-heading-row h2")).toHaveLength(1);
   });
 
   it("laisse Chat direct même lorsque Définition possède des données globales", () => {
@@ -129,6 +131,30 @@ describe("Task Detail canonical shell", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: "Feed" }));
     expect(screen.queryByTestId("task-detail-chat-footer")).toBeNull();
     expect(content.querySelector(".task-chat-composer")).toBeNull();
+  });
+
+  it("ouvre le plan intégral puis revient à Définition dans chaque hôte partagé", () => {
+    const task = makeTask({ title: "Titre partagé", description: "Description opérateur", prompt: "# Plan intégral\n\nContenu du plan." });
+    const hosts = [
+      <TaskDetailContent key="content" {...sharedProps} task={task} embedded onRequestClose={noop} />,
+      <MainPanelTaskDetailHost key="main" {...sharedProps} task={task} onNavigateToBoard={noop} />,
+      <ListSplitTaskDetailHost key="list" {...sharedProps} task={task} onClearSelection={noop} />,
+      <RightDockTaskDetailHost key="dock" {...sharedProps} task={task} onCloseDock={noop} />,
+      <AppTaskPopoutContent key="popout" {...sharedProps} task={task} onRemoveWindow={noop} />,
+    ];
+
+    for (const host of hosts) {
+      const view = render(host);
+      expect(screen.getByText("Description opérateur")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Read plan" }));
+      expectCanonicalShell(view.container, false, false);
+      expect(screen.getByTestId("task-detail-plan-full")).toHaveTextContent("Plan intégral");
+      expect(screen.queryByText("Description opérateur")).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "Back to definition" }));
+      expectCanonicalShell(view.container);
+      expect(screen.getByText("Description opérateur")).toBeInTheDocument();
+      view.unmount();
+    }
   });
 
   it("keeps the edit footer fixed as the final shell zone", () => {

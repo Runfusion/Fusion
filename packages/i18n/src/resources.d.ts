@@ -8212,6 +8212,10 @@ export default interface Resources {
       "debug": {
         "none": "No debug details available."
       },
+      "definition": {
+        "descriptionHeading": "Description",
+        "noDescription": "(no description)"
+      },
       "delete": {
         "actionClosed": "closed",
         "actionDeleted": "deleted",
@@ -8480,10 +8484,22 @@ export default interface Resources {
         "updated": "Priority updated to {{priority}}"
       },
       "progress": {
+        "completedCount": "{{count}}/{{total}} completed",
         "heading": "Progress",
+        "implementationOrigin": "Implementation",
         "noSteps": "(no steps defined)",
+        "status": {
+          "advisory": "Completed with feedback",
+          "done": "Completed",
+          "failed": "Failed",
+          "notRun": "Not run",
+          "pending": "Pending",
+          "running": "In progress",
+          "skipped": "Skipped"
+        },
         "stepCount_one": "{{count}}/{{total}} step",
-        "stepCount_other": "{{count}}/{{total}} steps"
+        "stepCount_other": "{{count}}/{{total}} steps",
+        "workflowOrigin": "Workflow gate"
       },
       "provenance": {
         "createdBy": "Created by",
@@ -8597,6 +8613,7 @@ export default interface Resources {
       "spec": {
         "aiReviseHeading": "Ask AI to Revise",
         "aiReviseHelp": "Provide feedback for the AI to improve this specification. The task will move to planning for replanning.",
+        "backToDefinition": "Back to definition",
         "editBtn": "Edit",
         "feedbackPlaceholder": "e.g., 'Add more details about error handling', 'Split this into smaller steps', 'Include tests for the API endpoints'...",
         "hintCancel": "to cancel",
@@ -8604,6 +8621,8 @@ export default interface Resources {
         "loading": "Loading specification…",
         "noPrompt": "(no prompt)",
         "placeholder": "Enter task specification in Markdown...",
+        "promptFileName": "PROMPT.md",
+        "readPlanBtn": "Read plan",
         "requestRevisionBtn": "Request AI Revision",
         "requesting": "Requesting…",
         "revisionColumnError": "Cannot request revision: Task must be in 'triage', 'todo', 'in-progress', or 'in-review' column.",

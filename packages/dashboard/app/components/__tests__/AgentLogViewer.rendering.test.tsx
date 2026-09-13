@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { AgentLogViewer } from "../AgentLogViewer";
@@ -7,6 +5,7 @@ import { FileBrowserProvider } from "../../context/FileBrowserContext";
 import { makeEntry, getScrollContainer } from "./AgentLogViewer.test-helpers";
 import "../../styles.css";
 import "../TaskDetailModal.css";
+import { readAppFile } from "../../test/cssFixture";
 
 // Mock lucide-react icons used by AgentLogViewer and ProviderIcon
 vi.mock("lucide-react", () => ({
@@ -174,6 +173,22 @@ describe("AgentLogViewer", () => {
     const toolDiv = container.querySelector(".agent-log-tool");
     expect(toolDiv).toBeTruthy();
     expect(toolDiv!.textContent).toContain("Read");
+  });
+
+  it("renders text, thinking, tool, result, and error groups as scannable semantic cards", () => {
+    const entries = [
+      makeEntry({ text: "Answer", type: "text", agent: "executor" }),
+      makeEntry({ text: "Reasoning", type: "thinking", agent: "executor" }),
+      makeEntry({ text: "Read", type: "tool", agent: "executor" }),
+      makeEntry({ text: "Read complete", type: "tool_result", agent: "executor" }),
+      makeEntry({ text: "Read failed", type: "tool_error", agent: "executor" }),
+    ];
+
+    const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
+
+    expect(container.querySelectorAll(".agent-log-entry-card")).toHaveLength(5);
+    expect(container.querySelector(".agent-log-thinking")).toHaveClass("agent-log-entry-card");
+    expect(container.querySelector(".agent-log-tool-error")).toHaveClass("agent-log-entry-card");
   });
 
   it("renders a mix of text and tool entries in chronological order", () => {
@@ -383,7 +398,7 @@ describe("AgentLogViewer", () => {
   });
 
   it("uses a tokenized visible preview clamp on desktop and mobile", () => {
-    const css = readFileSync(resolve(__dirname, "../AgentLogViewer.css"), "utf8");
+    const css = readAppFile("components/AgentLogViewer.css");
     const previewStart = css.indexOf(".agent-log-tool-detail-content--preview {");
     const previewRule = css.slice(previewStart, css.indexOf("}", previewStart) + 1);
     const mobileCss = css.slice(css.indexOf("@media (max-width: 768px)"));

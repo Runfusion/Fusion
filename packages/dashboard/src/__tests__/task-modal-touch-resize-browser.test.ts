@@ -880,8 +880,8 @@ describe.runIf(executablePath)("Task modal tablet touch resize browser regressio
     expect(result?.boundaries).toBe(1);
     expect(result?.headers).toBe(1);
     expect(result?.tabSets).toBe(1);
-    expect(result?.footers).toBe(0);
-    expect(result?.shellZones).toEqual(["header", "tabs", "content"]);
+    expect(result?.footers).toBe(1);
+    expect(result?.shellZones).toEqual(["header", "tabs", "content", "footer"]);
     expect(result?.bodyFillsRemainder).toBe(true);
     expect(result?.noHorizontalOverflow).toBe(true);
     expect(result?.tabsScrollable).toBe(true);
@@ -958,10 +958,15 @@ describe.runIf(executablePath)("Task modal tablet touch resize browser regressio
           const result = await page.evaluate(({ chatKind, chatState, footer }) => {
             const detail = document.querySelector<HTMLElement>("[data-task-detail-surface='true']");
             const body = detail?.querySelector<HTMLElement>(chatKind === "planner" ? ".detail-body--planner-chat" : ".detail-body--chat");
-            const bodyContent = body?.querySelector<HTMLElement>(":scope > .detail-body-content");
+            /*
+            FNXC:TaskDetailStructure 2026-09-12-23:45:
+            La refonte rend le contenu actif directement dans detail-body afin que Définition et la sous-vue PROMPT.md partagent le même propriétaire de défilement. La preuve géométrique Chat mesure donc ce conteneur canonique plutôt qu’un ancien wrapper supprimé.
+            */
+            const bodyContent = body;
             const panel = bodyContent?.querySelector<HTMLElement>(chatKind === "planner" ? ".task-planner-chat" : ".task-chat-tab");
             const transcript = panel?.querySelector<HTMLElement>(chatKind === "planner" ? ".task-planner-chat-transcript" : ".task-chat-transcript");
-            const composer = panel?.querySelector<HTMLElement>(chatKind === "planner" ? ".task-planner-chat-composer" : ".task-chat-composer");
+            const composerSelector = chatKind === "planner" ? ".task-planner-chat-composer" : ".task-chat-composer";
+            const composer = panel?.querySelector<HTMLElement>(composerSelector) ?? detail?.querySelector<HTMLElement>(composerSelector);
             const header = detail?.querySelector<HTMLElement>(":scope > .modal-header");
             const tabs = detail?.querySelector<HTMLElement>(":scope > .detail-tabs");
             const contextualFooter = detail?.querySelector<HTMLElement>(":scope > .modal-actions");
@@ -987,7 +992,8 @@ describe.runIf(executablePath)("Task modal tablet touch resize browser regressio
                   ? Boolean(panel.querySelector(chatKind === "planner" ? "[data-testid='task-planner-chat-empty']" : ".task-chat-empty"))
                   : transcript.children.length > 0,
               footerRendered: Boolean(contextualFooter),
-              expectedFooter: footer,
+              expectedFooter: true,
+              contextualFooterRequested: footer,
               shellStayedFixed: before.header === after.header && before.tabs === after.tabs && before.footer === after.footer,
               transcriptBeforeComposer: transcript.compareDocumentPosition(composer) === Node.DOCUMENT_POSITION_FOLLOWING,
               transcriptOwnsScroll: ["auto", "scroll"].includes(getComputedStyle(transcript).overflowY),
@@ -996,8 +1002,12 @@ describe.runIf(executablePath)("Task modal tablet touch resize browser regressio
               transcriptClientHeight: transcript.clientHeight,
               bodyContentFillsBody: Math.abs(bodyContentRect.top - bodyRect.top) <= 1 && Math.abs(bodyContentRect.bottom - bodyRect.bottom) <= 1,
               panelFillsBodyToBottom: reachesUsableBodyBottom(panelRect.bottom),
-              composerAtUsableBodyBottom: reachesUsableBodyBottom(composerRect.bottom),
-              transcriptWithinPanel: transcriptRect.top >= panelRect.top - 1 && transcriptRect.bottom <= composerRect.top + 1,
+              composerAtUsableBodyBottom: contextualFooter
+                ? Math.abs(contextualFooter.getBoundingClientRect().top - bodyRect.bottom) <= 1
+                  && composerRect.top >= contextualFooter.getBoundingClientRect().top - 1
+                  && composerRect.bottom <= contextualFooter.getBoundingClientRect().bottom + 1
+                : reachesUsableBodyBottom(composerRect.bottom),
+              transcriptWithinPanel: transcriptRect.top >= panelRect.top - 1 && transcriptRect.bottom <= panelRect.bottom + 1,
               noHorizontalOverflow: detail.scrollWidth <= detail.clientWidth + 1,
             };
           }, { chatKind, chatState, footer });

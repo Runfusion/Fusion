@@ -42,6 +42,11 @@ import type { Task } from "@fusion/core";
 
 setupTaskDetailModalHooks();
 
+function openFullPlan(): void {
+  const readPlan = screen.queryByRole("button", { name: "Read plan" });
+  if (readPlan) fireEvent.click(readPlan);
+}
+
 describe("TaskDetailModal", () => {
   /*
   FNXC:TaskDetailStateStability 2026-08-05-02:55:
@@ -80,6 +85,7 @@ describe("TaskDetailModal", () => {
     };
 
     const { rerender } = render(<TaskDetailModal {...props} task={queued} />);
+    openFullPlan();
     expect(document.querySelector(".detail-column-badge")).toHaveClass("badge-in-progress");
 
     rerender(<TaskDetailModal {...props} task={staleTodo} />);
@@ -189,6 +195,7 @@ describe("TaskDetailModal", () => {
     const slimTask = makeTask({ id: "FN-slim-prompt", prompt: undefined }) as Task;
 
     render(<TaskDetailContent embedded active initialTab="definition" task={slimTask} onDeleteTask={noopDelete} onMergeTask={noopMerge} onOpenDetail={noopOpenDetail} addToast={noop} />);
+    openFullPlan();
     await waitFor(() => expect(dashboardApi.fetchTaskPrompt).toHaveBeenCalledWith("FN-slim-prompt", undefined));
 
     await act(async () => {
@@ -436,11 +443,13 @@ describe("TaskDetailModal", () => {
     completed-summary surface retains the same FileBrowser contract.
     */
     await waitFor(() => expect(dashboardApi.fetchTaskPrompt).toHaveBeenCalledWith("FN-099", undefined));
+    openFullPlan();
     const promptLink = await screen.findByRole("button", { name: "packages/dashboard/app/App.tsx:12" });
     expect(screen.queryByRole("button", { name: "packages/dashboard/app/App.tsx:11" })).toBeNull();
     expect(promptLink.closest("code")?.querySelector("button.file-path-link")).toBe(promptLink);
     await userEvent.click(promptLink);
 
+    await userEvent.click(screen.getByRole("button", { name: "Back to definition" }));
     await userEvent.click(screen.getByRole("button", { name: "Summary" }));
     const summaryLink = screen.getByRole("button", { name: "packages/dashboard/app/App.tsx:25:3" });
     expect(summaryLink.closest("code")?.querySelector("button.file-path-link")).toBe(summaryLink);
@@ -476,7 +485,7 @@ describe("TaskDetailModal", () => {
       <FileBrowserProvider openFile={vi.fn()}>
         <TaskDetailModal
           initialTab="definition"
-          task={makeTask({ prompt })}
+          task={makeTask({ description: prompt })}
           onClose={noop}
 
           onDeleteTask={noopDelete}
@@ -1463,7 +1472,7 @@ describe("TaskDetailModal", () => {
   // FNXC:TaskDetailModal 2026-08-15-00:00 (slow-test trim): the markdown-body class shape,
   // heading stripping, and PROMPT.md-heading absence cases were three separate renders of the
   // same prompt-bearing props; merged into one render with all assertions intact.
-  it("strips the leading heading and renders prompt markdown without detail-prompt class or PROMPT.md heading", () => {
+  it("opens the complete prompt markdown with its heading and PROMPT.md back navigation", () => {
     render(
       <TaskDetailModal
         initialTab="definition"
@@ -1477,13 +1486,13 @@ describe("TaskDetailModal", () => {
       />,
     );
 
-    const markdownDiv = document.querySelector(".markdown-body");
-    expect(markdownDiv).toBeTruthy();
-    expect(markdownDiv!.classList.contains("detail-prompt")).toBe(false);
-    // The leading # heading should be stripped (modal has its own header)
-    expect(document.querySelector(".markdown-body h1")).toBeNull();
-    expect(document.querySelector("strong")?.textContent).toBe("bold");
-    expect(screen.queryByText("PROMPT.md")).toBeNull();
+    expect(screen.queryByText("bold")).toBeNull();
+    openFullPlan();
+    const markdownDiv = screen.getByTestId("task-detail-plan-full");
+    expect(markdownDiv.classList.contains("detail-prompt")).toBe(false);
+    expect(within(markdownDiv).getByRole("heading", { level: 1, name: "Hello" })).toBeInTheDocument();
+    expect(within(markdownDiv).getByText("bold")).toBeInTheDocument();
+    expect(screen.getByText("PROMPT.md")).toBeInTheDocument();
   });
 
   it("renders (no prompt) with detail-prompt class when prompt is absent", () => {
@@ -1500,6 +1509,7 @@ describe("TaskDetailModal", () => {
       />,
     );
 
+    openFullPlan();
     const fallback = screen.getByText("(no prompt)");
     expect(fallback).toBeTruthy();
     expect(fallback.classList.contains("detail-prompt")).toBe(true);
@@ -2403,14 +2413,14 @@ describe("TaskDetailModal", () => {
       expectNoStandaloneTitleToggle();
     });
 
-    it("keeps the editing title form unaffected by the read-only clamp", async () => {
+    it("keeps the canonical header title visible while editing", async () => {
       const longTitle = "Editable title ".repeat(25);
       renderDetail({ column: "todo", title: longTitle, description: "Editable description" });
 
       expect(await screen.findByRole("button", { name: "Expand task title" })).toBeInTheDocument();
       await userEvent.click(screen.getByRole("button", { name: "Edit task" }));
 
-      expect(document.querySelector("h2.detail-title")).toBeNull();
+      expect(document.querySelector(".modal-header h2.detail-title")).toBeInTheDocument();
       expectNoStandaloneTitleToggle();
       expect(screen.getByLabelText("Title")).toHaveValue(longTitle);
     });
@@ -2431,7 +2441,7 @@ describe("TaskDetailModal", () => {
       expectNoStandaloneTitleToggle();
     });
 
-    it("keeps the title out of expanded Activity and available in Definition", async () => {
+    it("keeps the canonical header title visible across expanded Activity and Definition", async () => {
       render(
         <TaskDetailContent
           task={makeTask({
@@ -2451,8 +2461,8 @@ describe("TaskDetailModal", () => {
       await userEvent.click(screen.getByRole("button", { name: "Expand activity to full modal" }));
 
       expect(document.querySelector(".task-detail-content--chat-expanded")).toBeInTheDocument();
-      expect(document.querySelector("h2.detail-title")).toBeNull();
-      expect(screen.queryByRole("button", { name: "Expand task title" })).toBeNull();
+      expect(document.querySelector(".modal-header h2.detail-title")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Expand task title" })).toBeInTheDocument();
 
       await userEvent.click(screen.getByRole("button", { name: "Plan" }));
       expect(document.querySelector("h2.detail-title")).toHaveClass("detail-title--collapsed");
@@ -2690,6 +2700,7 @@ describe("TaskDetailModal", () => {
       );
 
       await waitFor(() => expect(mockFetch).toHaveBeenCalledWith("FN-202-rejected", undefined));
+      openFullPlan();
       expect(screen.getByText("Last good prompt")).toBeInTheDocument();
       expect(mockFetch).toHaveBeenCalledTimes(1);
     });
@@ -2727,6 +2738,7 @@ describe("TaskDetailModal", () => {
 
         rerender(<TaskDetailContent {...props} active />);
         await act(async () => {});
+        openFullPlan();
         expect(mockFetch).toHaveBeenCalledTimes(1);
 
         await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
@@ -2775,6 +2787,7 @@ describe("TaskDetailModal", () => {
       rerender(<TaskDetailContent {...sharedProps} task={staleTask} active={false} />);
       rerender(<TaskDetailContent {...sharedProps} task={currentTask} active />);
       await waitFor(() => expect(mockFetch).toHaveBeenCalledWith("FN-current-detail", undefined));
+      openFullPlan();
 
       await act(async () => { resolveCurrentRequest({ id: "FN-current-detail", prompt: "# Current response" }); });
       expect(await screen.findByText("Current response")).toBeInTheDocument();
@@ -2818,9 +2831,10 @@ describe("TaskDetailModal", () => {
         />,
       );
 
+      openFullPlan();
       expect(screen.getByText("Loading specification…")).toBeDefined();
-      // Token stats now live in their own Stats tab — switch to it before
-      // asserting on token-loading text.
+      // Token stats now live in their own Stats tab — return before switching.
+      fireEvent.click(screen.getByRole("button", { name: "Back to definition" }));
       fireEvent.click(screen.getByRole("button", { name: "Stats" }));
       expect(screen.getByText("Execution Timing")).toBeInTheDocument();
       expect(screen.getByText("Execution Details")).toBeInTheDocument();
@@ -2894,7 +2908,8 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      // Initially shows loading
+      // Initially shows loading in the internal plan view.
+      openFullPlan();
       expect(screen.getByText("Loading specification…")).toBeDefined();
 
       // After fetch resolves, spec content appears
@@ -2907,6 +2922,7 @@ describe("TaskDetailModal", () => {
       expect(screen.queryByText("Loading specification…")).toBeNull();
 
       // Token stats live behind the Stats tab now.
+      fireEvent.click(screen.getByRole("button", { name: "Back to definition" }));
       fireEvent.click(screen.getByRole("button", { name: "Stats" }));
       expect(screen.queryByText("Loading token statistics…")).toBeNull();
       expect(screen.getByText("Execution Timing")).toBeInTheDocument();

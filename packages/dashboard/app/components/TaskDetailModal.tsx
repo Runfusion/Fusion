@@ -3,7 +3,7 @@ import "./TaskDetailModal.css";
 import React, { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import { Pencil, Bot, X, ChevronDown, ChevronRight, GitBranch, ArrowLeft, Loader2, AlertTriangle, Sparkles, Maximize2, Minimize2, Info, Copy, RotateCcw, Trash2, Pause, Play, RefreshCcw, MoreHorizontal } from "lucide-react";
+import { Pencil, Bot, X, ChevronDown, ChevronRight, GitBranch, ArrowLeft, Loader2, AlertTriangle, Sparkles, Maximize2, Minimize2, Info, Copy, RotateCcw, Trash2, Pause, Play, RefreshCcw, MoreHorizontal, FileText, Check } from "lucide-react";
 import { useViewportMode } from "../hooks/useViewportMode";
 import { AlphaMobileDrawer } from "./AlphaMobileDrawer";
 import { mergeTaskSnapshot } from "../hooks/useTasks";
@@ -96,7 +96,6 @@ import { getInReviewStallCopy, shouldShowInReviewStallBadge } from "../utils/inR
 import { getUnifiedTaskProgress } from "../utils/taskProgress";
 import { getStalePausedReviewCopy, shouldShowStalePausedReviewBadge } from "../utils/stalePausedReviewCopy";
 import { getTaskAgeStalenessCopy } from "../utils/taskAgeStalenessCopy";
-import { splitTaskPlanSummary } from "../utils/taskPlanSummary";
 import { decideTaskPromptRefresh } from "../utils/taskPromptRefresh";
 import { getPriorityLabel } from "../utils/priorityIndicator";
 import { hasPendingAutomaticRecovery } from "../utils/taskRecovery";
@@ -295,6 +294,25 @@ function getStepStatusColor(status: string): string {
     case "pending":
     default:
       return "var(--border)";
+  }
+}
+
+/*
+FNXC:TaskDetailProgress 2026-09-13-00:20:
+The Definition step list must localize completion counts, origins, and every implementation or workflow status so non-English dashboards never mix English fallback labels into task progress.
+*/
+function getStepStatusLabel(status: string, t: TFunction<"app">): string {
+  switch (status) {
+    case "done":
+    case "passed": return t("taskDetail.progress.status.done", "Completed");
+    case "failed": return t("taskDetail.progress.status.failed", "Failed");
+    case "advisory_failure": return t("taskDetail.progress.status.advisory", "Completed with feedback");
+    case "not_run": return t("taskDetail.progress.status.notRun", "Not run");
+    case "in-progress":
+    case "running": return t("taskDetail.progress.status.running", "In progress");
+    case "skipped": return t("taskDetail.progress.status.skipped", "Skipped");
+    case "pending":
+    default: return t("taskDetail.progress.status.pending", "Pending");
   }
 }
 
@@ -1147,7 +1165,6 @@ export function TaskDetailContent({
       });
     return () => { cancelled = true; };
   }, [active, activeTab, projectId, workingTask.id, workingTask.overlapBlockedBy]);
-  const planSummary = useMemo(() => splitTaskPlanSummary(workingTask.prompt || ""), [workingTask.prompt]);
   const handleCopyActivityLogs = useCallback(async () => {
     if (detailLoading || activityLog.length === 0) return;
     const copied = await copyTextToClipboard(serializeTaskActivityLogs(activityLog));
@@ -1830,9 +1847,9 @@ export function TaskDetailContent({
   const [gitlabTrackingExpanded, setGitlabTrackingExpanded] = useState(false);
   // FNXC:TaskDetailPlan 2026-07-04-00:00: Original prompt is collapsed by default (see render site below); operator must click the chevron toggle to reveal the markdown-rendered text.
   const [originalPromptExpanded, setOriginalPromptExpanded] = useState(false);
-  const [planDetailsExpanded, setPlanDetailsExpanded] = useState(false);
+  const [planDocumentOpen, setPlanDocumentOpen] = useState(false);
   useEffect(() => {
-    setPlanDetailsExpanded(false);
+    setPlanDocumentOpen(false);
   }, [workingTask.id]);
   const [githubTrackingExpanded, setGithubTrackingExpanded] = useState(false);
   const [githubRepoOverrideDraft, setGithubRepoOverrideDraft] = useState(task.githubTracking?.repoOverride ?? "");
@@ -5297,8 +5314,9 @@ export function TaskDetailContent({
         onDrop={handleDrop}
       >
       <div className="modal-header">
+          <div className="detail-header-copy">
           <div className="detail-title-row">
-            <span className="detail-id" id="task-detail-modal-title">{task.id}</span>
+            <span className="detail-id">{task.id}</span>
             {/*
             FNXC:WorkflowResolvedColumns 2026-07-27-15:35 (U10 / R8):
             The badge names the card's column in the card's OWN workflow vocabulary. `columnLabel`
@@ -5322,6 +5340,39 @@ export function TaskDetailContent({
                 {taskStatusBadgeLabel}
               </span>
             )}
+          </div>
+          {/*
+          FNXC:TaskDetailDefinition 2026-09-12-22:52:
+          Le titre est une identité permanente de la fiche et reste donc dans l’en-tête partagé des six hôtes. Son contrôle d’expansion et l’action de synthèse conservent leurs contrats existants sans être répétés dans la progression de Définition.
+          */}
+          <div className="detail-heading-row detail-heading-row--header">
+            <h2 id="task-detail-modal-title" className={`detail-title${descriptionExpanded ? "" : " detail-title--collapsed"}`}>
+              <span ref={titleRef} className="detail-title-measurement">{displayTitleText}</span>
+              {titleOverflows || descriptionExpanded ? (
+                <AlphaButton
+                  type="button"
+                  className="detail-title-control"
+                  aria-expanded={descriptionExpanded}
+                  aria-label={descriptionExpanded
+                    ? t("taskDetail.title.collapse", "Collapse task title")
+                    : t("taskDetail.title.expand", "Expand task title")}
+                  onClick={() => setDescriptionExpanded((expanded) => !expanded)}
+                />
+              ) : null}
+            </h2>
+            {showSummarizeTitleButton && (
+              <AlphaButton
+                type="button"
+                className="detail-summarize-title-btn"
+                onClick={() => void handleSummarizeTitle()}
+                disabled={isSummarizingTitle || isSaving}
+                data-testid="summarize-title-btn"
+              >
+                {isSummarizingTitle ? <Loader2 size={14} className="spinner" /> : <Sparkles size={14} />}
+                <span>{t("taskDetail.title.summarize", "Summarize")}</span>
+              </AlphaButton>
+            )}
+          </div>
           </div>
           <div className="modal-header-actions">
             {!isEditing && directHeaderActions.map((action) => (
@@ -5426,14 +5477,14 @@ export function TaskDetailContent({
             )}
           </div>
         </div>
-        {!isEditing && (
+        {!isEditing && !planDocumentOpen && (
           <TaskDetailTabStrip
             items={canonicalTabItems}
             activeId={activeTab}
             ariaLabel={t("taskDetail.tabs.label", "Task detail tabs")}
           />
         )}
-        <main className={`detail-body${activeTab === "chat" && activitySegment === "feed" && !isActivityExpanded && !isEditing ? " detail-body--feed" : ""}${activeTab === "chat" && activitySegment === "raw-logs" && !isEditing ? " detail-body--agent-log" : ""}${activeTab === "chat" && (activitySegment === "current" || isActivityExpanded) && !isEditing ? " detail-body--chat" : ""}${activeTab === "planner-chat" && !isEditing ? " detail-body--planner-chat" : ""}`} data-testid="task-detail-tab-content">
+        <main className={`detail-body${planDocumentOpen ? " detail-body--plan-document" : ""}${activeTab === "chat" && activitySegment === "feed" && !isActivityExpanded && !isEditing ? " detail-body--feed" : ""}${activeTab === "chat" && activitySegment === "raw-logs" && !isEditing ? " detail-body--agent-log" : ""}${activeTab === "chat" && (activitySegment === "current" || isActivityExpanded) && !isEditing ? " detail-body--chat" : ""}${activeTab === "planner-chat" && !isEditing ? " detail-body--planner-chat" : ""}`} data-testid="task-detail-tab-content">
           {isEditing ? (
             <div className="modal-edit-form">
               <TaskForm
@@ -5538,48 +5589,6 @@ export function TaskDetailContent({
             </div>
           ) : (
             <>
-              {activeTab === "definition" && (
-                <>
-                {/*
-                FNXC:TaskDetailShell 2026-09-12-02:34:
-                Le titre et sa synthèse appartiennent exclusivement au contenu Définition. Les autres destinations commencent directement par leur propre contenu, sans espace de titre global.
-                */}
-                <div className="detail-heading-row">
-                  {/*
-                  FNXC:TaskDetailTitle 2026-08-04-18:00:
-                  An overflowing task-detail title is its own sole expansion control. Keep the semantic button inside the h2 so pointer, touch, and keyboard activation share one accessible target; the separate Show more/Show less row must not return.
-                  */}
-                  <h2 className={`detail-title${descriptionExpanded ? "" : " detail-title--collapsed"}`}>
-                    <span ref={titleRef} className="detail-title-measurement">
-                      {displayTitleText}
-                    </span>
-                    {titleOverflows || descriptionExpanded ? (
-                      <AlphaButton
-                        type="button"
-                        className="detail-title-control"
-                        aria-expanded={descriptionExpanded}
-                        aria-label={descriptionExpanded
-                          ? t("taskDetail.title.collapse", "Collapse task title")
-                          : t("taskDetail.title.expand", "Expand task title")}
-                        onClick={() => setDescriptionExpanded((expanded) => !expanded)}
-                      />
-                    ) : null}
-                  </h2>
-                  {showSummarizeTitleButton && (
-                    <AlphaButton
-                      type="button"
-                      className="detail-summarize-title-btn"
-                      onClick={() => void handleSummarizeTitle()}
-                      disabled={isSummarizingTitle || isSaving}
-                      data-testid="summarize-title-btn"
-                    >
-                      {isSummarizingTitle ? <Loader2 size={14} className="spinner" /> : <Sparkles size={14} />}
-                      <span>{t("taskDetail.title.summarize", "Summarize")}</span>
-                    </AlphaButton>
-                  )}
-                </div>
-                </>
-              )}
               {activeTab === "definition" && customFieldDefs && customFieldDefs.length > 0 ? (
                 <TaskFieldsSection
                   fieldDefs={customFieldDefs}
@@ -5964,6 +5973,7 @@ export function TaskDetailContent({
                               className={`detail-log-entry${isHighlighted ? " detail-log-entry--stall-highlight" : ""}`}
                               data-stall-highlight={isHighlighted ? "true" : undefined}
                             >
+                              <span className="detail-log-marker" aria-hidden="true" />
                               <div className="detail-log-header">
                                 {/*
                                 FNXC:PreciseTaskLogTimestamps 2026-09-01-01:03:
@@ -5981,6 +5991,12 @@ export function TaskDetailContent({
                                   />
                                 </div>
                                 <span className="detail-log-action">{action}</span>
+                                {entry.runContext?.agentId ? (
+                                  <span className="detail-log-agent">
+                                    <Bot size={12} aria-hidden="true" />
+                                    {entry.runContext.agentId}
+                                  </span>
+                                ) : null}
                               </div>
                               {outcome && (
                                 <div className="detail-log-outcome">{outcome}</div>
@@ -6886,164 +6902,67 @@ export function TaskDetailContent({
             </>
           ) : (
           <>
-          <div className="detail-section detail-step-progress">
-            <h4>{t("taskDetail.progress.heading", "Progress")}</h4>
-            {unifiedProgress.total > 0 ? (
-              <div className="step-progress-wrapper">
-                <div className="step-progress-bar">
-                  {unifiedProgress.items.map((item) => (
-                    <div
-                      key={item.id}
-                      className={`step-progress-segment step-progress-segment--${item.status} step-progress-segment--source-${item.source}`}
-                      data-tooltip={`${item.name} (${item.source === "workflow" ? "workflow step · " : ""}${item.status})`}
-                      style={{ backgroundColor: getStepStatusColor(item.status) }}
-                    />
-                  ))}
-                </div>
-                <span className="step-progress-label">
-                  {t("taskDetail.progress.stepCount", { count: unifiedProgress.completed, total: unifiedProgress.total, defaultValue_one: "{{count}}/{{total}} step", defaultValue_other: "{{count}}/{{total}} steps" })}
-                </span>
-              </div>
-            ) : (
-              <div className="step-progress-empty">{t("taskDetail.progress.noSteps", "(no steps defined)")}</div>
-            )}
-          </div>
-          <div className="detail-section detail-section--plan-prompt">
-            {!isEditingSpec && (
-              <div className="detail-spec-edit-trigger">
-                {/**
-                 * FNXC:TaskDetailPlan 2026-06-30-00:00:
-                 * The Plan tab keeps the internal definition route for stable links, while exposing a direct PROMPT.md editor action so operators can comment on the executable task plan file without replacing the inline AI revision flow.
-                 *
-                 * FNXC:TaskDetailPlan 2026-06-30-00:00:
-                 * The Plan prompt surfaces must span the task-detail card body in modal and embedded renderings. Keep the scoped wrapper around markdown, no-prompt fallback, inline edit, and AI revision controls so width fixes do not alter unrelated detail sections.
-                 */}
-                {fileBrowser && (
-                  <AlphaButton
-                    className="btn btn-sm"
-                    onClick={openPromptFile}
-                    title={t("taskDetail.spec.openPromptTitle", "Open this task's PROMPT.md in the file editor")}
-                  >
-                    {t("taskDetail.spec.openPromptBtn", "Open PROMPT.md")}
-                  </AlphaButton>
-                )}
-                <AlphaButton className="btn btn-sm" onClick={enterSpecEditMode}>
-                  {t("taskDetail.spec.editBtn", "Edit")}
+          {planDocumentOpen ? (
+            <div className="detail-plan-document" data-testid="task-detail-plan-document">
+              {/*
+              FNXC:TaskDetailDefinition 2026-09-12-22:52:
+              Lire le plan ouvre le vrai PROMPT.md comme sous-vue interne de TaskDetailContent. Retour restaure Définition sans changer d’onglet ni perdre les actions du plan.
+              */}
+              <div className="detail-plan-document-header">
+                <AlphaButton type="button" className="btn btn-sm detail-plan-back" onClick={() => setPlanDocumentOpen(false)} aria-label={t("taskDetail.spec.backToDefinition", "Back to definition")}>
+                  <ArrowLeft size={16} aria-hidden="true" /><FileText size={14} aria-hidden="true" /><span>{t("taskDetail.spec.promptFileName", "PROMPT.md")}</span>
                 </AlphaButton>
               </div>
-            )}
-            {isEditingSpec ? (
-              <div className="spec-editor-edit-mode">
-                <AlphaTextArea
-                  className="spec-editor-textarea"
-                  value={specEditContent}
-                  onChange={(e) => setSpecEditContent(e.target.value)}
-                  onKeyDown={handleSpecTextareaKeyDown}
-                  disabled={isSavingSpec}
-                  placeholder={t("taskDetail.spec.placeholder", "Enter task specification in Markdown...")}
-                  rows={12}
-                />
-                <div className="spec-editor-actions-row">
-                  <AlphaButton
-                    className="btn btn-sm"
-                    onClick={exitSpecEditMode}
-                    disabled={isSavingSpec}
-                  >
-                    {t("common.cancel", "Cancel")}
-                  </AlphaButton>
-                  <AlphaButton
-                    className="btn btn-primary btn-sm"
-                    onClick={() => void handleSaveSpecFromEdit()}
-                    disabled={specEditContent === (workingTask.prompt || "") || isSavingSpec}
-                  >
-                    {isSavingSpec ? t("taskDetail.spec.saving", "Saving…") : t("common.save", "Save")}
-                  </AlphaButton>
-                </div>
-                <div className="spec-editor-hint">
-                  <kbd>Ctrl</kbd>+<kbd>Enter</kbd> {t("taskDetail.spec.hintSave", "to save")} · <kbd>Escape</kbd> {t("taskDetail.spec.hintCancel", "to cancel")}
-                </div>
-                {/* AI Revision Section */}
-                <div className="spec-editor-revision">
-                  <h4>{t("taskDetail.spec.aiReviseHeading", "Ask AI to Revise")}</h4>
-                  <p className="spec-editor-revision-help">
-                    {t("taskDetail.spec.aiReviseHelp", "Provide feedback for the AI to improve this specification. The task will move to planning for replanning.")}
-                  </p>
-                  <AlphaTextArea
-                    className="spec-editor-feedback"
-                    value={specFeedback}
-                    onChange={(e) => setSpecFeedback(e.target.value)}
-                    placeholder={t("taskDetail.spec.feedbackPlaceholder", "e.g., 'Add more details about error handling', 'Split this into smaller steps', 'Include tests for the API endpoints'...")}
-                    disabled={isRequestingRevision}
-                    rows={4}
-                    maxLength={MAX_TASK_MESSAGE_LENGTH}
-                  />
-                  <div className="spec-editor-revision-actions">
-                    <span className="spec-editor-char-count">
-                      {specFeedback.length}/{MAX_TASK_MESSAGE_LENGTH}
-                    </span>
-                    <AlphaButton
-                      className="btn btn-primary btn-sm"
-                      onClick={() => void handleRequestRevisionFromEdit()}
-                      disabled={!specFeedback.trim() || isRequestingRevision}
-                    >
-                      {isRequestingRevision ? t("taskDetail.spec.requesting", "Requesting…") : t("taskDetail.spec.requestRevisionBtn", "Request AI Revision")}
-                    </AlphaButton>
+              <div className="detail-section detail-section--plan-prompt">
+                {!isEditingSpec && <div className="detail-spec-edit-trigger">
+                  {fileBrowser && <AlphaButton className="btn btn-sm" onClick={openPromptFile} title={t("taskDetail.spec.openPromptTitle", "Open this task's PROMPT.md in the file editor")}>{t("taskDetail.spec.openPromptBtn", "Open PROMPT.md")}</AlphaButton>}
+                  <AlphaButton className="btn btn-sm" onClick={enterSpecEditMode}>{t("taskDetail.spec.editBtn", "Edit")}</AlphaButton>
+                </div>}
+                {isEditingSpec ? <div className="spec-editor-edit-mode">
+                  <AlphaTextArea className="spec-editor-textarea" value={specEditContent} onChange={(e) => setSpecEditContent(e.target.value)} onKeyDown={handleSpecTextareaKeyDown} disabled={isSavingSpec} placeholder={t("taskDetail.spec.placeholder", "Enter task specification in Markdown...")} rows={12} />
+                  <div className="spec-editor-actions-row">
+                    <AlphaButton className="btn btn-sm" onClick={exitSpecEditMode} disabled={isSavingSpec}>{t("common.cancel", "Cancel")}</AlphaButton>
+                    <AlphaButton className="btn btn-primary btn-sm" onClick={() => void handleSaveSpecFromEdit()} disabled={specEditContent === (workingTask.prompt || "") || isSavingSpec}>{isSavingSpec ? t("taskDetail.spec.saving", "Saving…") : t("common.save", "Save")}</AlphaButton>
                   </div>
-                </div>
+                  <div className="spec-editor-hint"><kbd>Ctrl</kbd>+<kbd>Enter</kbd> {t("taskDetail.spec.hintSave", "to save")} · <kbd>Escape</kbd> {t("taskDetail.spec.hintCancel", "to cancel")}</div>
+                  <div className="spec-editor-revision">
+                    <h4>{t("taskDetail.spec.aiReviseHeading", "Ask AI to Revise")}</h4>
+                    <p className="spec-editor-revision-help">{t("taskDetail.spec.aiReviseHelp", "Provide feedback for the AI to improve this specification. The task will move to planning for replanning.")}</p>
+                    <AlphaTextArea className="spec-editor-feedback" value={specFeedback} onChange={(e) => setSpecFeedback(e.target.value)} placeholder={t("taskDetail.spec.feedbackPlaceholder", "e.g., 'Add more details about error handling', 'Split this into smaller steps', 'Include tests for the API endpoints'...")} disabled={isRequestingRevision} rows={4} maxLength={MAX_TASK_MESSAGE_LENGTH} />
+                    <div className="spec-editor-revision-actions"><span className="spec-editor-char-count">{specFeedback.length}/{MAX_TASK_MESSAGE_LENGTH}</span><AlphaButton className="btn btn-primary btn-sm" onClick={() => void handleRequestRevisionFromEdit()} disabled={!specFeedback.trim() || isRequestingRevision}>{isRequestingRevision ? t("taskDetail.spec.requesting", "Requesting…") : t("taskDetail.spec.requestRevisionBtn", "Request AI Revision")}</AlphaButton></div>
+                  </div>
+                </div> : detailLoading ? <div className="spec-loading"><LoadingSpinner label={t("taskDetail.spec.loading", "Loading specification…")} /></div> : workingTask.prompt ? <div className="markdown-body" data-testid="task-detail-plan-full"><ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={sharedRehypePlugins} components={markdownLinkifyComponents}>{workingTask.prompt}</ReactMarkdown></div> : <div className="detail-prompt">{t("taskDetail.spec.noPrompt", "(no prompt)")}</div>}
               </div>
-            ) : detailLoading ? (
-              <div className="spec-loading"><LoadingSpinner label={t("taskDetail.spec.loading", "Loading specification…")} /></div>
-            ) : workingTask.prompt ? (
-              planSummary.hasSummary ? (
-                <>
-                  {/*
-                  FNXC:TaskDetailPlan 2026-08-27-10:22:
-                  Definition shows the product summary and Before → After first so operators can confirm
-                  intent at a glance. A plan without either summary heading stays fully visible, while
-                  remaining technical detail is available through this explicit disclosure.
-                  */}
-                  <div className="markdown-body" data-testid="task-detail-plan-summary">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={sharedRehypePlugins} components={markdownLinkifyComponents}>
-                      {planSummary.summaryMarkdown}
-                    </ReactMarkdown>
-                  </div>
-                  {planSummary.restMarkdown.trim() && (
-                    <>
-                      <AlphaButton
-                        type="button"
-                        className="btn btn-sm touch-target detail-plan-details-toggle"
-                        data-testid="task-detail-plan-details-toggle"
-                        aria-expanded={planDetailsExpanded}
-                        aria-controls={`${workingTask.id}-plan-details`}
-                        onClick={() => setPlanDetailsExpanded((expanded) => !expanded)}
-                      >
-                        <ChevronRight size={16} className={planDetailsExpanded ? "detail-source-chevron--expanded" : undefined} />
-                        {planDetailsExpanded
-                          ? t("taskDetail.spec.hideDetailsBtn", "Hide details")
-                          : t("taskDetail.spec.moreDetailsBtn", "See more details")}
-                      </AlphaButton>
-                      {planDetailsExpanded && (
-                        <div className="markdown-body" id={`${workingTask.id}-plan-details`} data-testid="task-detail-plan-details">
-                          <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={sharedRehypePlugins} components={markdownLinkifyComponents}>
-                            {planSummary.restMarkdown}
-                          </ReactMarkdown>
-                        </div>
-                      )}
-                    </>
-                  )}
-                </>
-              ) : (
-                <div className="markdown-body">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={sharedRehypePlugins} components={markdownLinkifyComponents}>
-                    {planSummary.restMarkdown}
-                  </ReactMarkdown>
-                </div>
-              )
-            ) : (
-              <div className="detail-prompt">{t("taskDetail.spec.noPrompt", "(no prompt)")}</div>
-            )}
-          </div>
-          </>
+            </div>
+          ) : (
+            <>
+              {/*
+              FNXC:TaskDetailDefinition 2026-09-12-22:52:
+              Définition présente d’abord la demande opérateur en Markdown sûr, puis une action explicite vers le plan complet et une liste accessible de toute la progression unifiée. Les étapes d’implémentation et de workflow conservent leur identité même si leurs noms se répètent.
+              */}
+              <section className="detail-section detail-definition-description" aria-labelledby={`${workingTask.id}-definition-description`}>
+                <h4 id={`${workingTask.id}-definition-description`}>{t("taskDetail.definition.descriptionHeading", "Description")}</h4>
+                {hasOriginalTaskPrompt ? <div className="markdown-body" data-testid="task-detail-definition-description"><ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={sharedRehypePlugins} components={markdownLinkifyComponents}>{originalTaskPrompt}</ReactMarkdown></div> : <div className="detail-empty-inline">{t("taskDetail.definition.noDescription", "(no description)")}</div>}
+                <AlphaButton type="button" className="btn btn-sm detail-read-plan" onClick={() => setPlanDocumentOpen(true)}><FileText size={14} aria-hidden="true" />{t("taskDetail.spec.readPlanBtn", "Read plan")}</AlphaButton>
+              </section>
+              <section className="detail-section detail-step-progress" aria-labelledby={`${workingTask.id}-progress-heading`}>
+                <div className="detail-progress-heading"><h4 id={`${workingTask.id}-progress-heading`}>{t("taskDetail.progress.heading", "Progress")}</h4><span className="step-progress-label">{t("taskDetail.progress.completedCount", "{{count}}/{{total}} completed", { count: unifiedProgress.completed, total: unifiedProgress.total })}</span></div>
+                {unifiedProgress.total > 0 ? <>
+                  <div className="step-progress-track" role="progressbar" aria-valuemin={0} aria-valuemax={unifiedProgress.total} aria-valuenow={unifiedProgress.completed}><span style={{ inlineSize: `${(unifiedProgress.completed / unifiedProgress.total) * 100}%` }} /></div>
+                  <ol className="detail-step-list">{unifiedProgress.items.map((item) => {
+                    const statusLabel = getStepStatusLabel(item.status, t as TFunction<"app">);
+                    const complete = item.status === "done";
+                    return <li key={item.id} className={`detail-step-item detail-step-item--${item.status}`}>
+                      <span className="detail-step-indicator" style={{ color: getStepStatusColor(item.status) }} aria-hidden="true">{complete ? <Check size={12} /> : <span className="status-dot" />}</span>
+                      <span className="detail-step-name">{item.name}</span>
+                      <span className="detail-step-origin">{item.source === "workflow" ? t("taskDetail.progress.workflowOrigin", "Workflow gate") : t("taskDetail.progress.implementationOrigin", "Implementation")}</span>
+                      <span className="detail-step-status">{statusLabel}</span>
+                    </li>;
+                  })}</ol>
+                </> : <div className="step-progress-empty">{t("taskDetail.progress.noSteps", "(no steps defined)")}</div>}
+              </section>
+            </>
+          )}          </>
           )}
           </>
           )}

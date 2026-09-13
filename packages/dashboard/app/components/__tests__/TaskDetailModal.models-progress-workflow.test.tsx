@@ -5,6 +5,8 @@ FN-7306 labels the stable internal `chat` tab as Activity and keeps it as the de
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, act, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import i18next from "../../i18n";
+import frApp from "../../../../i18n/locales/fr/app.json";
 import {
   makeTask,
   noop,
@@ -712,7 +714,7 @@ describe("TaskDetailModal", () => {
       expect(screen.getByText("(no steps defined)")).toBeTruthy();
     });
 
-    it("renders correct number of segments matching step count", () => {
+    it("renders one labeled list row per step", () => {
       const { container } = render(
         <TaskDetailModal
           initialTab="definition"
@@ -731,11 +733,14 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      const segments = document.querySelectorAll(".step-progress-segment");
-      expect(segments).toHaveLength(3);
+      const rows = document.querySelectorAll(".detail-step-item");
+      expect(rows).toHaveLength(3);
+      expect(screen.getByText("Step 1")).toBeInTheDocument();
+      expect(screen.getByText("Step 2")).toBeInTheDocument();
+      expect(screen.getByText("Step 3")).toBeInTheDocument();
     });
 
-    it("segments have correct status modifier classes", () => {
+    it("list rows have correct status modifier classes", () => {
       const { container } = render(
         <TaskDetailModal
           initialTab="definition"
@@ -755,14 +760,14 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      const segments = document.querySelectorAll(".step-progress-segment");
-      expect(segments[0].classList.contains("step-progress-segment--done")).toBe(true);
-      expect(segments[1].classList.contains("step-progress-segment--in-progress")).toBe(true);
-      expect(segments[2].classList.contains("step-progress-segment--pending")).toBe(true);
-      expect(segments[3].classList.contains("step-progress-segment--skipped")).toBe(true);
+      const rows = document.querySelectorAll(".detail-step-item");
+      expect(rows[0]).toHaveClass("detail-step-item--done");
+      expect(rows[1]).toHaveClass("detail-step-item--in-progress");
+      expect(rows[2]).toHaveClass("detail-step-item--pending");
+      expect(rows[3]).toHaveClass("detail-step-item--skipped");
     });
 
-    it("renders a segment for each ENABLED workflow step, not only implementation steps", () => {
+    it("renders a labeled row for each ENABLED workflow step, not only implementation steps", () => {
       // Regression: the detail Progress bar must include enabled optional workflow steps.
       const { container } = render(
         <TaskDetailModal
@@ -785,17 +790,52 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      const segments = document.querySelectorAll(".step-progress-segment");
-      // 2 impl steps + 2 enabled workflow steps = 4 segments.
-      expect(segments).toHaveLength(4);
-      const workflowSegments = document.querySelectorAll(".step-progress-segment--source-workflow");
-      expect(workflowSegments).toHaveLength(2);
-      // code-review ran (passed → unified "done"); browser-verification enabled-not-run (pending).
-      expect(segments[2].classList.contains("step-progress-segment--done")).toBe(true);
-      expect(segments[3].classList.contains("step-progress-segment--pending")).toBe(true);
+      const rows = document.querySelectorAll(".detail-step-item");
+      expect(rows).toHaveLength(4);
+      expect(screen.getAllByText("Workflow gate")).toHaveLength(2);
+      expect(rows[2]).toHaveClass("detail-step-item--done");
+      expect(rows[3]).toHaveClass("detail-step-item--pending");
     });
 
-    it("segments have correct inline background colors based on status", () => {
+    it("renders progress counts, origins, and statuses from a non-English catalog", async () => {
+      i18next.addResourceBundle("fr", "app", frApp, true, true);
+      await act(async () => {
+        await i18next.changeLanguage("fr");
+      });
+
+      const view = render(
+        <TaskDetailModal
+          initialTab="definition"
+          task={makeTask({
+            steps: [{ name: "Implémenter", status: "done" }],
+            enabledWorkflowSteps: ["code-review"],
+            workflowStepResults: [],
+          })}
+          onClose={noop}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      try {
+        expect(screen.getByText("1/2 terminées")).toBeInTheDocument();
+        expect(screen.getByText("Implémentation")).toBeInTheDocument();
+        expect(screen.getByText("Étape du workflow")).toBeInTheDocument();
+        expect(screen.getByText("Terminée")).toBeInTheDocument();
+        expect(screen.getByText("En attente")).toBeInTheDocument();
+        expect(screen.queryByText("Workflow gate")).not.toBeInTheDocument();
+      } finally {
+        view.unmount();
+        await act(async () => {
+          await i18next.changeLanguage("en");
+        });
+        i18next.removeResourceBundle("fr", "app");
+      }
+    });
+
+    it("indicators use semantic colors based on status", () => {
       const { container } = render(
         <TaskDetailModal
           initialTab="definition"
@@ -816,12 +856,12 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      const segments = document.querySelectorAll(".step-progress-segment");
-      expect((segments[0] as HTMLElement).style.backgroundColor).toBe("var(--color-success)");
-      expect((segments[1] as HTMLElement).style.backgroundColor).toBe("var(--in-progress)");
-      expect((segments[2] as HTMLElement).style.backgroundColor).toBe("var(--border)");
-      expect((segments[3] as HTMLElement).style.backgroundColor).toBe("var(--text-dim)");
-      expect((segments[4] as HTMLElement).style.backgroundColor).toBe("var(--border)");
+      const indicators = document.querySelectorAll<HTMLElement>(".detail-step-indicator");
+      expect(indicators[0].style.color).toBe("var(--color-success)");
+      expect(indicators[1].style.color).toBe("var(--in-progress)");
+      expect(indicators[2].style.color).toBe("var(--border)");
+      expect(indicators[3].style.color).toBe("var(--text-dim)");
+      expect(indicators[4].style.color).toBe("var(--border)");
     });
 
     it("displays singular completion label for one-step tasks", () => {
@@ -839,8 +879,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      expect(screen.getByText("1/1 step")).toBeTruthy();
-      expect(screen.queryByText("1/1 steps")).toBeNull();
+      expect(screen.getByText("1/1 completed")).toBeTruthy();
     });
 
     it("displays correct completion count", () => {
@@ -863,11 +902,10 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      expect(screen.getByText("2/4 steps")).toBeTruthy();
-      expect(screen.queryByText("2/4 step")).toBeNull();
+      expect(screen.getByText("2/4 completed")).toBeTruthy();
     });
 
-    it("has data-tooltip attribute with step name and status on each segment", () => {
+    it("shows visible names and accessible status text for every row", () => {
       const { container } = render(
         <TaskDetailModal
           initialTab="definition"
@@ -885,9 +923,11 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      const segments = document.querySelectorAll(".step-progress-segment");
-      expect(segments[0].getAttribute("data-tooltip")).toBe("Initialize project (done)");
-      expect(segments[1].getAttribute("data-tooltip")).toBe("Add tests (in-progress)");
+      const rows = document.querySelectorAll(".detail-step-item");
+      expect(rows[0]).toHaveTextContent("Initialize project");
+      expect(rows[0]).toHaveTextContent("Completed");
+      expect(rows[1]).toHaveTextContent("Add tests");
+      expect(rows[1]).toHaveTextContent("In progress");
     });
 
     it("step progress only renders in Definition tab, not in Raw Logs segment", () => {

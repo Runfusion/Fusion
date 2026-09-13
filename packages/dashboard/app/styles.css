@@ -2753,87 +2753,132 @@ Task cards reuse the compact badge chip dimensions for GitLab links, but stale G
 }
 
 /* === Step Progress === */
+/*
+FNXC:TaskDetailDefinition 2026-09-12-22:52:
+La progression de Définition est une liste lisible plutôt qu’une rangée de segments sans libellé. La barre résume l’avancement et chaque ligne conserve nom, origine et statut accessibles avec les couleurs sémantiques existantes.
+*/
 .detail-step-progress {
   margin-top: var(--space-lg);
 }
 
-.detail-step-progress h4 {
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--text-muted);
+.detail-progress-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-md);
   margin-bottom: var(--space-sm);
 }
 
-.step-progress-wrapper {
-  display: flex;
-  align-items: center;
-  gap: var(--space-md);
-}
-
-.step-progress-bar {
-  flex: 1;
-  display: flex;
-  gap: 2px;
-  height: 8px;
-}
-
-.step-progress-segment {
-  flex: 1;
-  height: 100%;
-  border-radius: 2px;
-  transition: filter 0.15s ease, transform 0.15s ease;
-  cursor: pointer;
-  position: relative;
-}
-
-.step-progress-segment:hover {
-  filter: brightness(1.2);
-  transform: scaleY(1.1);
-}
-
-.step-progress-segment[data-tooltip]:hover::after {
-  content: attr(data-tooltip);
-  position: absolute;
-  bottom: 100%;
-  left: 50%;
-  transform: translateX(-50%);
-  background: var(--surface);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: var(--space-xs) var(--space-sm);
-  font-size: 11px;
-  white-space: nowrap;
-  z-index: 10;
-  pointer-events: none;
-  margin-bottom: var(--space-xs);
-  box-shadow: 0 2px 8px color-mix(in srgb, var(--text) 20%, transparent);
-}
-
-.step-progress-label {
-  font-size: 0.6875rem;
-  font-weight: 600;
+.detail-step-progress h4,
+.detail-definition-description h4 {
+  margin: 0;
   color: var(--text-muted);
-  font-family: var(--font-mono);
-  flex-shrink: 0;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+}
+
+.step-progress-track {
+  block-size: var(--space-xs);
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: var(--bg-tertiary);
+}
+
+.step-progress-track > span {
+  display: block;
+  block-size: 100%;
+  border-radius: inherit;
+  background: var(--color-success);
+  transition: inline-size var(--transition-normal);
+}
+
+.detail-step-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  margin: var(--space-md) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.detail-step-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm);
+  border-radius: var(--radius-md);
+  color: var(--text);
+}
+
+.detail-step-item:is(:hover, :focus-within) {
+  background: var(--surface-hover);
+}
+
+.detail-step-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: var(--space-lg);
+  block-size: var(--space-lg);
+  border: var(--border-width) solid currentColor;
+  border-radius: var(--radius-sm);
+}
+
+.detail-step-indicator .status-dot {
+  background: currentColor;
+}
+
+.detail-step-name {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
+.detail-step-origin,
+.detail-step-status,
+.step-progress-label {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.detail-step-origin {
+  padding: calc(var(--space-xs) / 2) var(--space-sm);
+  border-radius: var(--radius-pill);
+  background: var(--bg-secondary);
+}
+
+.detail-step-status {
+  min-inline-size: max-content;
 }
 
 .step-progress-empty {
-  font-size: 13px;
   color: var(--text-dim);
-  opacity: 0.7;
+  font-size: var(--font-size-sm);
+}
+
+@media (max-width: 768px) {
+  .detail-step-item {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .detail-step-origin {
+    display: none;
+  }
 }
 
 /* === Activity Timeline === */
+/*
+FNXC:TaskDetailActivity 2026-09-12-22:52:
+Feed est une timeline de cartes scannables: action dominante, temps relatif puis précis, résultat séparé et agent uniquement lorsqu’un runContext.agentId réel existe. L’ordre newest-first, les doublons et le texte multiligne restent inchangés.
+*/
 .detail-activity {
-  margin-top: 20px;
+  margin-top: var(--space-lg);
 }
 
 .detail-activity-list {
   display: flex;
   flex-direction: column;
-  gap: 0;
+  gap: var(--space-sm);
 }
 
 .detail-log-truncated {
@@ -2846,68 +2891,116 @@ Task cards reuse the compact badge chip dimensions for GitLab links, but stale G
 }
 
 .detail-log-entry {
-  padding: 8px 0 8px 14px;
-  border-left: 2px solid var(--border);
   position: relative;
+  margin-inline-start: var(--space-sm);
+  padding: var(--space-md);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
 }
 
 .detail-log-entry::before {
   content: "";
   position: absolute;
-  left: -4px;
-  top: 13px;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--text-dim);
+  inset-block: calc(var(--space-md) * -1);
+  inset-inline-start: calc((var(--space-sm) + var(--btn-border-width)) * -1);
+  inline-size: var(--btn-border-width);
+  background: var(--border);
 }
 
-.detail-log-entry:first-child::before {
-  background: var(--todo);
+.detail-log-marker {
+  position: absolute;
+  inset-block-start: var(--space-lg);
+  inset-inline-start: calc((var(--space-md) + var(--btn-border-width)) * -1);
+  inline-size: var(--space-sm);
+  block-size: var(--space-sm);
+  border: var(--btn-border-width) solid var(--surface);
+  border-radius: var(--radius-pill);
+  background: var(--text-dim);
+  box-shadow: 0 0 0 var(--btn-border-width) var(--border);
+}
+
+.detail-log-entry:first-child .detail-log-marker {
+  background: var(--in-progress);
 }
 
 .detail-log-header {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--space-xs) var(--space-md);
 }
 
 .detail-log-timestamps {
   display: flex;
+  grid-column: 2;
+  grid-row: 1;
   flex-wrap: wrap;
   align-items: baseline;
+  justify-content: flex-end;
   gap: var(--space-xs);
 }
 
 .detail-log-timestamp {
-  font-size: 11px;
   color: var(--text-muted);
   font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
 }
 
 .detail-log-action {
-  font-size: 13px;
+  grid-column: 1;
+  grid-row: 1;
   color: var(--text);
-  line-height: 1.4;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  line-height: var(--line-height-normal);
+  overflow-wrap: anywhere;
+}
+
+.detail-log-agent {
+  display: inline-flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  gap: var(--space-xs);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
 }
 
 .detail-log-outcome {
-  margin-top: 6px;
+  margin-top: var(--space-sm);
   padding: var(--space-sm) var(--space-md);
-  background: var(--surface);
-  border-left: 3px solid var(--border);
-  border-radius: 0 var(--radius) var(--radius) 0;
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--text);
+  background: var(--bg-secondary);
+  border-inline-start: var(--space-xs) solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
   white-space: pre-wrap;
   word-break: break-word;
 }
 
 .detail-log-empty {
-  font-size: 13px;
+  padding: var(--space-md) 0;
   color: var(--text-dim);
-  padding: 12px 0;
+  font-size: var(--font-size-sm);
+}
+
+@media (max-width: 768px) {
+  .detail-log-header {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .detail-log-timestamps,
+  .detail-log-action {
+    grid-column: 1;
+  }
+
+  .detail-log-timestamps {
+    grid-row: 2;
+    justify-content: flex-start;
+  }
 }
 
 /*

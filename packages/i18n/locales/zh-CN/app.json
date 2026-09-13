@@ -7983,6 +7983,10 @@
         "matches": ""
       }
     },
+    "definition": {
+      "descriptionHeading": "描述",
+      "noDescription": "（无描述）"
+    },
     "description": {
       "showLess": "显示更少",
       "showMore": "显示更多"
@@ -8169,6 +8173,18 @@
     },
     "progress": {
       "heading": "进度",
+      "completedCount": "已完成 {{count}}/{{total}}",
+      "workflowOrigin": "工作流关卡",
+      "implementationOrigin": "实现",
+      "status": {
+        "done": "已完成",
+        "failed": "失败",
+        "advisory": "已完成（有反馈）",
+        "notRun": "未运行",
+        "running": "进行中",
+        "skipped": "已跳过",
+        "pending": "待处理"
+      },
       "noSteps": "（未定义步骤）",
       "stepCount_one": "",
       "stepCount_other": ""
@@ -8272,6 +8288,7 @@
     "spec": {
       "aiReviseHeading": "请 AI 修订",
       "aiReviseHelp": "提供反馈让 AI 改进此规范。任务将进入规划阶段重新规划。",
+      "backToDefinition": "返回定义",
       "editBtn": "编辑",
       "feedbackPlaceholder": "例如，'添加更多错误处理细节'、'拆分为更小步骤'、'添加 API 端点测试'...",
       "hintCancel": "取消",
@@ -8279,6 +8296,8 @@
       "loading": "正在加载规范…",
       "noPrompt": "（无提示词）",
       "placeholder": "以 Markdown 格式输入任务规范...",
+      "promptFileName": "PROMPT.md",
+      "readPlanBtn": "阅读计划",
       "requesting": "正在请求…",
       "requestRevisionBtn": "请求 AI 修订",
       "revisionColumnError": "无法请求修订：任务必须在 triage、todo、in-progress 或 in-review 列中。",

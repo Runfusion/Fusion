@@ -8002,6 +8002,10 @@
         "matches": ""
       }
     },
+    "definition": {
+      "descriptionHeading": "Description",
+      "noDescription": "(aucune description)"
+    },
     "description": {
       "showLess": "Afficher moins",
       "showMore": "Afficher plus"
@@ -8188,6 +8192,18 @@
     },
     "progress": {
       "heading": "Progression",
+      "completedCount": "{{count}}/{{total}} terminées",
+      "workflowOrigin": "Étape du workflow",
+      "implementationOrigin": "Implémentation",
+      "status": {
+        "done": "Terminée",
+        "failed": "Échouée",
+        "advisory": "Terminée avec remarques",
+        "notRun": "Non exécutée",
+        "running": "En cours",
+        "skipped": "Ignorée",
+        "pending": "En attente"
+      },
       "noSteps": "(aucune étape définie)",
       "stepCount_one": "",
       "stepCount_other": ""
@@ -8291,6 +8307,7 @@
     "spec": {
       "aiReviseHeading": "Demander une révision à l'IA",
       "aiReviseHelp": "Fournissez des commentaires pour que l'IA améliore cette spécification. La tâche passera en planification.",
+      "backToDefinition": "Retour à la définition",
       "editBtn": "Modifier",
       "feedbackPlaceholder": "p. ex., « Ajoutez plus de détails sur la gestion des erreurs », « Découpez en étapes plus petites »...",
       "hintCancel": "pour annuler",
@@ -8298,6 +8315,8 @@
       "loading": "Chargement de la spécification…",
       "noPrompt": "(aucune invite)",
       "placeholder": "Saisissez la spécification de la tâche en Markdown...",
+      "promptFileName": "PROMPT.md",
+      "readPlanBtn": "Lire le plan",
       "requesting": "Demande en cours…",
       "requestRevisionBtn": "Demander une révision IA",
       "revisionColumnError": "Impossible de demander une révision : la tâche doit être dans la colonne « triage », « todo », « in-progress » ou « in-review ».",

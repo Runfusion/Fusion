@@ -7983,6 +7983,10 @@
         "matches": ""
       }
     },
+    "definition": {
+      "descriptionHeading": "설명",
+      "noDescription": "(설명 없음)"
+    },
     "description": {
       "showLess": "간략히 보기",
       "showMore": "더 보기"
@@ -8169,6 +8173,18 @@
     },
     "progress": {
       "heading": "진행 상태",
+      "completedCount": "{{count}}/{{total}} 완료",
+      "workflowOrigin": "워크플로 게이트",
+      "implementationOrigin": "구현",
+      "status": {
+        "done": "완료",
+        "failed": "실패",
+        "advisory": "피드백과 함께 완료",
+        "notRun": "실행 안 함",
+        "running": "진행 중",
+        "skipped": "건너뜀",
+        "pending": "대기 중"
+      },
       "noSteps": "(정의된 단계 없음)",
       "stepCount_one": "",
       "stepCount_other": ""
@@ -8272,6 +8288,7 @@
     "spec": {
       "aiReviseHeading": "AI에 수정 요청",
       "aiReviseHelp": "AI가 이 명세를 개선할 수 있도록 피드백을 제공하세요. 작업이 재계획을 위해 계획 단계로 이동합니다.",
+      "backToDefinition": "정의로 돌아가기",
       "editBtn": "편집",
       "feedbackPlaceholder": "예: '오류 처리에 대한 세부 정보 추가', '더 작은 단계로 분할', 'API 엔드포인트 테스트 포함'...",
       "hintCancel": "취소",
@@ -8279,6 +8296,8 @@
       "loading": "명세 로드 중…",
       "noPrompt": "(프롬프트 없음)",
       "placeholder": "Markdown으로 작업 명세를 입력하세요...",
+      "promptFileName": "PROMPT.md",
+      "readPlanBtn": "계획 읽기",
       "requesting": "요청 중…",
       "requestRevisionBtn": "AI 수정 요청",
       "revisionColumnError": "수정 요청 불가: 작업이 'triage', 'todo', 'in-progress' 또는 'in-review' 컬럼에 있어야 합니다.",

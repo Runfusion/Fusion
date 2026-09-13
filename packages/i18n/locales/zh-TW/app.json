@@ -7983,6 +7983,10 @@
         "matches": ""
       }
     },
+    "definition": {
+      "descriptionHeading": "描述",
+      "noDescription": "（無描述）"
+    },
     "description": {
       "showLess": "顯示更少",
       "showMore": "顯示更多"
@@ -8169,6 +8173,18 @@
     },
     "progress": {
       "heading": "進度",
+      "completedCount": "已完成 {{count}}/{{total}}",
+      "workflowOrigin": "工作流程關卡",
+      "implementationOrigin": "實作",
+      "status": {
+        "done": "已完成",
+        "failed": "失敗",
+        "advisory": "已完成（有意見）",
+        "notRun": "未執行",
+        "running": "進行中",
+        "skipped": "已略過",
+        "pending": "待處理"
+      },
       "noSteps": "（未定義步驟）",
       "stepCount_one": "",
       "stepCount_other": ""
@@ -8272,6 +8288,7 @@
     "spec": {
       "aiReviseHeading": "請 AI 修訂",
       "aiReviseHelp": "提供反饋讓 AI 改善此規範。任務將進入規劃階段重新規劃。",
+      "backToDefinition": "返回定義",
       "editBtn": "編輯",
       "feedbackPlaceholder": "例如：「添加更多錯誤處理細節」、「拆分為更小步驟」、「添加 API 端點測試」...",
       "hintCancel": "取消",
@@ -8279,6 +8296,8 @@
       "loading": "正在載入規範…",
       "noPrompt": "（無提示詞）",
       "placeholder": "以 Markdown 格式輸入任務規範...",
+      "promptFileName": "PROMPT.md",
+      "readPlanBtn": "閱讀計畫",
       "requesting": "正在請求…",
       "requestRevisionBtn": "請求 AI 修訂",
       "revisionColumnError": "無法請求修訂：任務必須在「triage」、「todo」、「in-progress」或「in-review」欄中。",
