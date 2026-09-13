@@ -397,7 +397,8 @@ export const taskOverlapWaits = projectSchema.table("task_overlap_waits", {
 }, (t) => [
   primaryKey({ columns: [t.projectId, t.taskId, t.episodeId] }),
   foreignKey({ columns: [t.projectId, t.taskId], foreignColumns: [tasks.projectId, tasks.id], name: "fk_task_overlap_wait_owner" }).onUpdate("cascade").onDelete("cascade"),
-  check("ck_task_overlap_wait_phase", sql`${t.phase} IN ('observed','analyzing','freshness-pending','revalidation-pending','ready','delivered','cancelled')`),
+  // FNXC:OverlapWaitSynchronization 2026-09-13-05:10: `repair-required` is written by the delta revalidation node on REVISE; omitting it here raised on every revision instead of persisting one.
+  check("ck_task_overlap_wait_phase", sql`${t.phase} IN ('observed','analyzing','freshness-pending','revalidation-pending','repair-required','ready','delivered','cancelled')`),
   uniqueIndex("uq_task_overlap_wait_open_blocker").on(t.projectId, t.taskId, t.blockerTaskId).where(sql`${t.phase} NOT IN ('delivered', 'cancelled')`),
   index("idx_task_overlap_wait_unconsumed").on(t.projectId, t.taskId, t.observedAt).where(sql`${t.phase} NOT IN ('delivered', 'cancelled')`),
 ]);

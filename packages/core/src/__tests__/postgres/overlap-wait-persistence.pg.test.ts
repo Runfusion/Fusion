@@ -147,6 +147,30 @@ pgDescribe("overlap wait persistence", () => {
     })).resolves.toBeNull();
   });
 
+  /*
+  FNXC:OverlapWaitSynchronization 2026-09-13-05:10:
+  A delta REVISE persists `repair-required`. The 0075 phase CHECK omitted that value, so the write RAISED
+  inside the graph node: the failure surfaced as a bare "exception" with no message stored anywhere, the
+  episode stayed `revalidation-pending`, and each retry paid for the same AI review again until the
+  overseer parked the card (FN-372, measured 2026-09-13). Every declared phase is asserted, not just the
+  one that broke, so a future phase cannot ship without its constraint.
+  */
+  it.each(["freshness-pending", "revalidation-pending", "repair-required", "ready", "delivered"] as const)(
+    "persists the %s phase declared by OverlapWaitPhase",
+    async (phase) => {
+      const blocker = await h.store().createTask({ description: "holder" });
+      const waiting = await h.store().createTask({ description: "waiting" });
+      await h.store().transitionQueuedEpisode(waiting.id, overlap(blocker.id));
+      const observed = (await h.store().listTaskOverlapWaits(waiting.id))[0]!;
+      const claim = await h.store().claimTaskOverlapWait({ taskId: waiting.id, episodeId: observed.episodeId, expectedRevision: observed.revision, owner: "executor-1" });
+      const completed = await h.store().completeTaskOverlapWait({
+        taskId: waiting.id, episodeId: observed.episodeId, expectedRevision: claim!.revision, owner: "executor-1", phase,
+        receipt: { decision: "revalidate", freshness: "proven", commonFiles: [], deliveryProofs: [], decisionFingerprint: `phase-${phase}`, decidedAt: new Date().toISOString() },
+      });
+      expect(completed).toMatchObject({ phase });
+    },
+  );
+
   it("rejects completion when the claimed checkout epoch disappears from the durable task", async () => {
     const blocker = await h.store().createTask({ description: "holder" });
     const waiting = await h.store().createTask({ description: "waiting" });

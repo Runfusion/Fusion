@@ -119,6 +119,7 @@ import {
   PROJECT_NOTES_VERSION,
   OVERLAP_WAIT_SYNC_VERSION,
   WHITEBOARDS_SCHEMA_VERSION,
+  OVERLAP_WAIT_REPAIR_REQUIRED_PHASE_VERSION,
 } from "../../postgres/schema-applier.js";
 import { ProjectPartitionRekeyError, rekeyFallbackProjectPartition } from "../../postgres/migration-stamping.js";
 import type { PluginSchemaInitHook } from "../../postgres/plugin-schema-hook.js";
@@ -178,7 +179,9 @@ describe("schema-applier: immutable migration identities", () => {
     expect(PROJECT_NOTES_VERSION).toBe("0074");
     expect(OVERLAP_WAIT_SYNC_VERSION).toBe("0075");
     expect(WHITEBOARDS_SCHEMA_VERSION).toBe("0076");
-    expect(SCHEMA_BASELINE_VERSION).toBe("0076");
+    /* FNXC:OverlapWaitSynchronization 2026-09-13-05:10: 0077 widens the overlap-wait phase CHECK to accept `repair-required`. */
+    expect(OVERLAP_WAIT_REPAIR_REQUIRED_PHASE_VERSION).toBe("0077");
+    expect(SCHEMA_BASELINE_VERSION).toBe("0077");
   });
 
   it("keeps monitor and approval isolation assigned to version 0003", () => {
@@ -1929,6 +1932,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       PROJECT_NOTES_VERSION,
       OVERLAP_WAIT_SYNC_VERSION,
       WHITEBOARDS_SCHEMA_VERSION,
+      OVERLAP_WAIT_REPAIR_REQUIRED_PHASE_VERSION,
     ]);
     expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
   });
@@ -2031,6 +2035,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       PROJECT_NOTES_VERSION,
       OVERLAP_WAIT_SYNC_VERSION,
       WHITEBOARDS_SCHEMA_VERSION,
+      OVERLAP_WAIT_REPAIR_REQUIRED_PHASE_VERSION,
     ]);
   });
 
@@ -2266,6 +2271,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       PROJECT_NOTES_VERSION,
       OVERLAP_WAIT_SYNC_VERSION,
       WHITEBOARDS_SCHEMA_VERSION,
+      OVERLAP_WAIT_REPAIR_REQUIRED_PHASE_VERSION,
     ]);
   });
 
@@ -2382,6 +2388,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       PROJECT_NOTES_VERSION,
       OVERLAP_WAIT_SYNC_VERSION,
       WHITEBOARDS_SCHEMA_VERSION,
+      OVERLAP_WAIT_REPAIR_REQUIRED_PHASE_VERSION,
     ]);
   });
 
@@ -2498,6 +2505,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       PROJECT_NOTES_VERSION,
       OVERLAP_WAIT_SYNC_VERSION,
       WHITEBOARDS_SCHEMA_VERSION,
+      OVERLAP_WAIT_REPAIR_REQUIRED_PHASE_VERSION,
     ]);
   });
 });
