@@ -1,4 +1,5 @@
 import { useCallback, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import type { Task, TaskDetail } from "@fusion/core";
 import { mergeTaskSnapshot } from "../hooks/useTasks";
 import { useMainPanelTaskDetail } from "../hooks/useMainPanelTaskDetail";
@@ -91,11 +92,18 @@ export interface AppTaskPopoutWindowProps extends Omit<AppTaskPopoutContentProps
   persistGeometryKey: string;
 }
 
+/*
+FNXC:TaskDetailDefinition 2026-09-13-11:59:
+Le pop-out n’a pas de titre visible propre; il partage donc le nom accessible localisé de Task Detail avec la modale et le drawer plutôt que d’utiliser le titre retiré ou seulement l’identifiant de tâche.
+*/
 export function AppTaskPopoutWindow({ task, originTaskView, hidden, onRemoveWindow, persistGeometryKey, ...props }: AppTaskPopoutWindowProps) {
+  const { t } = useTranslation("app");
+  const accessibleName = t("taskDetail.accessibleName", "Task detail");
   return (
     <FloatingWindow
       windowKey={`task-detail-${task.id}-${originTaskView ?? "global"}`}
-      title={task.id}
+      title={accessibleName}
+      ariaLabel={accessibleName}
       hidden={hidden}
       onClose={onRemoveWindow}
       hideHeader

@@ -7871,6 +7871,7 @@
     "unavailable": "Cambios de archivo detallados no disponibles."
   },
   "taskDetail": {
+    "accessibleName": "Detalles de la tarea",
     "actions": {
       "menuBtn": "Acciones",
       "oversightHeading": "",

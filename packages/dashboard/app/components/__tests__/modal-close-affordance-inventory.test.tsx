@@ -140,6 +140,9 @@ const internalCloseLabelExemptions = [
 /*
 FNXC:ModalChromeTests 2026-09-12-00:04:
 The modal-close census guards executable JSX constructions rather than comments or import presence alone. Every true modal close owner uses the canonical primitive; exact inventories reserve manual X icons, text glyphs, and Close/Cancel labels for internal search, tag, banner, delete, edit, navigation, and Back actions so a new manual modal close fails the ratchet.
+
+FNXC:ModalChromeTests 2026-09-13-14:21:
+Canonical construction is insufficient when a host stylesheet can repaint or resize the shared button. Model Onboarding must leave all close-button chrome to ModalCloseButton; its stylesheet may arrange the header but cannot target `.modal-close` locally.
 */
 describe("modal close affordance inventory", () => {
   it("keeps the exact production consumer census on the canonical primitive", () => {
@@ -172,5 +175,15 @@ describe("modal close affordance inventory", () => {
     expect(manual).toEqual([
       expect.objectContaining({ file: "TaskDetailModal.tsx", construct: expect.stringContaining("task-detail-mobile-back") }),
     ]);
+  });
+
+  it("leaves host-specific close chrome to the canonical primitive", () => {
+    const modelOnboardingCss = readAppFile("components/ModelOnboardingModal.css")
+      .replace(/\/\*[\s\S]*?\*\//g, "");
+    const mailboxCss = readAppFile("components/MailboxModal.css")
+      .replace(/\/\*[\s\S]*?\*\//g, "");
+
+    expect(modelOnboardingCss).not.toMatch(/\.model-onboarding-header\s+\.modal-close\b/);
+    expect(mailboxCss).not.toMatch(/\.mailbox-modal\s+\.mailbox-header-actions\s+\.modal-close\s*\{/);
   });
 });

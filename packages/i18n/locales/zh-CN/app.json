@@ -7870,6 +7870,7 @@
     "unavailable": "详细文件更改不可用。"
   },
   "taskDetail": {
+    "accessibleName": "任务详情",
     "actions": {
       "menuBtn": "操作",
       "oversightHeading": "",

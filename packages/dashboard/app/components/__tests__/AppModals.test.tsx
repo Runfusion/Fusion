@@ -712,7 +712,10 @@ describe("AppModals", () => {
       expect(cardBadge?.className).not.toMatch(/queued-to-plan|planning/i);
       expect(desktopListBadge).toHaveTextContent(/in progress/i);
       expect(desktopListBadge).not.toHaveTextContent(/planning/i);
-      expect(document.querySelector("#task-detail-modal-title")).toHaveTextContent("FN-8798");
+      const detailHeader = document.querySelector(".task-detail-content > .modal-header");
+      expect(detailHeader).toHaveTextContent("FN-8798");
+      expect(detailHeader).not.toHaveTextContent("Revision task");
+      expect(detailHeader?.querySelector("h1, h2, h3, h4, h5, h6")).toBeNull();
       expect(screen.queryByTestId("task-detail-status-badge")).not.toBeInTheDocument();
     });
   });
@@ -791,7 +794,10 @@ describe("AppModals", () => {
         expect(cardBadge?.className).not.toMatch(/queued-to-plan|planning/i);
         expect(mobileListBadge).toHaveTextContent(/in progress/i);
         expect(mobileListBadge).not.toHaveTextContent(/planning/i);
-        expect(document.querySelector("#task-detail-modal-title")).toHaveTextContent("FN-8798");
+        const detailHeader = document.querySelector(".task-detail-content > .modal-header");
+        expect(detailHeader).toHaveTextContent("FN-8798");
+        expect(detailHeader).not.toHaveTextContent("Revision task");
+        expect(detailHeader?.querySelector("h1, h2, h3, h4, h5, h6")).toBeNull();
         expect(screen.queryByTestId("task-detail-status-badge")).not.toBeInTheDocument();
       });
     } finally {

@@ -8121,6 +8121,7 @@ export default interface Resources {
       "youMessage": "You message"
     },
     "taskDetail": {
+      "accessibleName": "Task detail",
       "actions": {
         "menuBtn": "Actions",
         "oversightHeading": "Oversight: {{state}}",

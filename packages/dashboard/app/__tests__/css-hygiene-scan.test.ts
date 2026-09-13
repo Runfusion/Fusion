@@ -154,12 +154,10 @@ describe("component CSS hygiene scan regressions", () => {
         ".wf-mobile-template-option:focus-visible",
       ],
       "TaskDetailModal.css": [
-        ".detail-summarize-title-btn:focus-visible",
         ".detail-provenance-link:focus-visible",
         ".detail-priority-select:focus-visible",
         ".detail-source-toggle:focus-visible",
         ".changed-files-back-button:focus-visible",
-        ".modal-edit-btn:focus-visible",
         ".detail-tab:focus-visible",
       ],
       "MobileWorkflowGraphView.css": [

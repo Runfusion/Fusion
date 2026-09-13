@@ -7889,6 +7889,7 @@
     "unavailable": "Modifications de fichiers détaillées non disponibles."
   },
   "taskDetail": {
+    "accessibleName": "Détails de la tâche",
     "actions": {
       "menuBtn": "Actions",
       "oversightHeading": "",

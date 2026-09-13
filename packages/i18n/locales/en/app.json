@@ -7915,6 +7915,7 @@
     "unavailable": "Detailed file changes unavailable."
   },
   "taskDetail": {
+    "accessibleName": "Task detail",
     "actions": {
       "menuBtn": "Actions",
       "oversightHeading": "Oversight: {{state}}",

@@ -7881,6 +7881,7 @@
     "unavailable": "Alterações de arquivo detalhadas indisponíveis."
   },
   "taskDetail": {
+    "accessibleName": "Detalhes da tarefa",
     "actions": {
       "menuBtn": "Ações",
       "oversightHeading": "",

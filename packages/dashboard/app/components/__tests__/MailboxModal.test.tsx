@@ -1445,7 +1445,7 @@ describe("MailboxModal", () => {
       expect(mailboxMobileSection).toMatch(/\.mailbox-modal \.mailbox-header-actions,\s*\.mailbox-view \.mailbox-header-actions\s*\{[^}]*gap:\s*var\(--space-sm\);[^}]*\}/);
       expect(mailboxMobileSection).toMatch(/\.mailbox-modal \.mailbox-header-actions \.btn,[^}]*\.mailbox-view \.mailbox-header-actions \.btn-icon\s*\{[^}]*min-height:\s*2\.25rem;[^}]*\}/);
       expect(mailboxMobileSection).toMatch(/\.mailbox-modal \.mailbox-header-actions \.btn-icon,[^}]*\.mailbox-view \.mailbox-header-actions \.btn-icon\s*\{[^}]*min-width:\s*2\.25rem;[^}]*display:\s*inline-flex;[^}]*\}/);
-      expect(mailboxMobileSection).toMatch(/\.mailbox-modal \.mailbox-header-actions \.modal-close\s*\{[^}]*padding:\s*0;[^}]*border-radius:\s*var\(--radius-sm\);[^}]*\}/);
+      expect(mailboxMobileSection).not.toMatch(/\.mailbox-modal \.mailbox-header-actions \.modal-close\s*\{/);
       expect(mailboxMobileSection).toContain("overflow-x: auto;");
       expect(mailboxMobileSection).toContain("-webkit-overflow-scrolling: touch;");
       expect(mailboxMobileSection).toContain("scrollbar-width: none;");

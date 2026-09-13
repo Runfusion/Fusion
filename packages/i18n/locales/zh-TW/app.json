@@ -7870,6 +7870,7 @@
     "unavailable": "詳細文件變更無法使用。"
   },
   "taskDetail": {
+    "accessibleName": "任務詳細資料",
     "actions": {
       "menuBtn": "操作",
       "oversightHeading": "",

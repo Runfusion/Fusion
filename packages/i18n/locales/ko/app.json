@@ -7870,6 +7870,7 @@
     "unavailable": "상세 파일 변경 사항을 사용할 수 없습니다."
   },
   "taskDetail": {
+    "accessibleName": "작업 상세 정보",
     "actions": {
       "menuBtn": "작업",
       "oversightHeading": "",

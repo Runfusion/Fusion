@@ -1428,25 +1428,6 @@ export function TaskDetailContent({
   }, [task.id]);
 
   const [highlightStallCode, setHighlightStallCode] = useState<string | null>(null);
-  const [descriptionExpanded, setDescriptionExpanded] = useState(false);
-  const [titleOverflows, setTitleOverflows] = useState(false);
-  const titleRef = useRef<HTMLSpanElement | null>(null);
-  const displayTitleText = task.title || task.description || task.id;
-
-  /*
-  FNXC:TaskDetailTitle 2026-08-05-18:48:
-  Browser layout proved that swapping bare heading text for the semantic title button can alter the
-  exact box whose overflow decides whether that button exists. Measure an always-present text span
-  with the collapsed two-line rules instead; the button is an out-of-flow accessible overlay and
-  cannot feed back into eligibility. Expansion remains an operator-owned state across modal,
-  full-panel, split-pane, right-dock, and floating-window hosts. Reset only for a new task or its
-  title/description/id fallback, never from a resize delivery. Kept-alive hidden pop-outs are not a
-  live layout authority: disconnect and fence their callbacks until their host is visible again.
-  */
-  useLayoutEffect(() => {
-    setDescriptionExpanded(false);
-    setTitleOverflows(false);
-  }, [displayTitleText, task.id]);
   const [attachments, setAttachments] = useState<TaskAttachment[]>(task.attachments || []);
   const [uploading, setUploading] = useState(false);
   const [dependencies, setDependencies] = useState<string[]>(() => [...new Set(task.dependencies || [])]);
@@ -1535,43 +1516,6 @@ export function TaskDetailContent({
     };
   }, [active, activeTab, projectId, promptRefreshLifecycleActive, task.id, requestTaskDetail, adoptAuthoritativeDetail]);
   const [prCreateOpen, setPrCreateOpen] = useState(false);
-
-  useLayoutEffect(() => {
-    // A kept-alive floating detail can be hidden while another view owns its layout. Its stale
-    // ResizeObserver delivery must not change eligibility before the host becomes visible again.
-    if (!active) return;
-
-    const titleElement = titleRef.current;
-    if (!titleElement) {
-      setTitleOverflows(false);
-      return;
-    }
-
-    // Expanded headings have natural height, so only the rendered collapsed layout is a valid
-    // overflow measurement. The user choice remains mounted while this observer is disconnected.
-    if (descriptionExpanded) return;
-
-    let cancelled = false;
-    const measureTitleOverflow = () => {
-      if (cancelled) return;
-      const overflows = titleElement.scrollHeight > titleElement.clientHeight + 1;
-      setTitleOverflows((previous) => previous === overflows ? previous : overflows);
-    };
-
-    measureTitleOverflow();
-
-    const resizeObserver = typeof ResizeObserver !== "undefined"
-      ? new ResizeObserver(measureTitleOverflow)
-      : null;
-    resizeObserver?.observe(titleElement);
-    window.addEventListener("resize", measureTitleOverflow);
-
-    return () => {
-      cancelled = true;
-      resizeObserver?.disconnect();
-      window.removeEventListener("resize", measureTitleOverflow);
-    };
-  }, [active, descriptionExpanded, displayTitleText, task.id]);
 
   /*
   FNXC:WorkflowBadges 2026-06-29-00:00:
@@ -4293,8 +4237,8 @@ export function TaskDetailContent({
   */
   const shouldShowBranchGroupCard = Boolean(task.branchContext?.groupId && !isActivityExpanded);
   /*
-  FNXC:TaskDetailPlannerChat 2026-07-01-00:00:
-  Maximized Planner Chat reserves vertical room for task identity and the planner conversation, so failed-task chrome is not mounted in that state. Normal detail, Activity expansion, and collapsed Planner Chat still surface task failures immediately.
+  FNXC:TaskDetailPlannerChat 2026-09-13-13:09:
+  Failure recovery chrome belongs to Definition and is never duplicated inside Activity or Planner Chat, whether those conversations are expanded or collapsed.
   */
   /*
   FNXC:TaskFailedBanner 2026-07-15-16:30:
@@ -4309,7 +4253,7 @@ export function TaskDetailContent({
   FNXC:TaskRecoveryVocabulary 2026-08-28-01:20:
   A scheduled automatic recovery must not hide the failed-task alert. Operators still need the pending-recovery explanation and an immediate, stage-aware Retry choice.
   */
-  const shouldShowTaskFailureAlert = Boolean(task.status === "failed" && !isPlannerChatExpanded);
+  const shouldShowTaskFailureAlert = task.status === "failed";
   const taskFailureReason = task.error?.trim() || t("taskDetail.error.genericFailureReason", "The task failed before it could complete.");
   const taskFailureToolDetail = useMemo(() => {
     const lastToolCompletion = agentLogEntries.findLast(
@@ -5313,10 +5257,14 @@ export function TaskDetailContent({
         onDragOver={handleDragOver}
         onDrop={handleDrop}
       >
-      <div className="modal-header">
+        {/*
+        FNXC:TaskDetailTitleRemoval 2026-09-13-11:59:
+        Every board, main-panel, list-split, right-dock, drawer, and pop-out host shares this title-free header. Keep the task ID, lifecycle badges, and actions here; the title remains editable only through the Definition form.
+        */}
+        <div className="modal-header">
           <div className="detail-header-copy">
-          <div className="detail-title-row">
-            <span className="detail-id">{task.id}</span>
+            <div className="detail-title-row">
+              <span className="detail-id">{task.id}</span>
             {/*
             FNXC:WorkflowResolvedColumns 2026-07-27-15:35 (U10 / R8):
             The badge names the card's column in the card's OWN workflow vocabulary. `columnLabel`
@@ -5332,47 +5280,15 @@ export function TaskDetailContent({
             timestamp-reconciled working snapshot, never the raw prop, so a late Todo board/detail
             payload cannot flash over a newer queued dependency or file-overlap state.
             */}
-            <span className={`detail-column-badge badge-${workingTask.column}`}>
-              {workflowColumnDisplayName ?? columnLabel(workingTask.column)}
-            </span>
-            {hasTaskStatusBadge(workingTask.status) && (
-              <span className="card-status-badge" data-testid="task-detail-status-badge">
-                {taskStatusBadgeLabel}
+              <span className={`detail-column-badge badge-${workingTask.column}`}>
+                {workflowColumnDisplayName ?? columnLabel(workingTask.column)}
               </span>
-            )}
-          </div>
-          {/*
-          FNXC:TaskDetailDefinition 2026-09-12-22:52:
-          Le titre est une identité permanente de la fiche et reste donc dans l’en-tête partagé des six hôtes. Son contrôle d’expansion et l’action de synthèse conservent leurs contrats existants sans être répétés dans la progression de Définition.
-          */}
-          <div className="detail-heading-row detail-heading-row--header">
-            <h2 id="task-detail-modal-title" className={`detail-title${descriptionExpanded ? "" : " detail-title--collapsed"}`}>
-              <span ref={titleRef} className="detail-title-measurement">{displayTitleText}</span>
-              {titleOverflows || descriptionExpanded ? (
-                <AlphaButton
-                  type="button"
-                  className="detail-title-control"
-                  aria-expanded={descriptionExpanded}
-                  aria-label={descriptionExpanded
-                    ? t("taskDetail.title.collapse", "Collapse task title")
-                    : t("taskDetail.title.expand", "Expand task title")}
-                  onClick={() => setDescriptionExpanded((expanded) => !expanded)}
-                />
-              ) : null}
-            </h2>
-            {showSummarizeTitleButton && (
-              <AlphaButton
-                type="button"
-                className="detail-summarize-title-btn"
-                onClick={() => void handleSummarizeTitle()}
-                disabled={isSummarizingTitle || isSaving}
-                data-testid="summarize-title-btn"
-              >
-                {isSummarizingTitle ? <Loader2 size={14} className="spinner" /> : <Sparkles size={14} />}
-                <span>{t("taskDetail.title.summarize", "Summarize")}</span>
-              </AlphaButton>
-            )}
-          </div>
+              {hasTaskStatusBadge(workingTask.status) && (
+                <span className="card-status-badge" data-testid="task-detail-status-badge">
+                  {taskStatusBadgeLabel}
+                </span>
+              )}
+            </div>
           </div>
           <div className="modal-header-actions">
             {!isEditing && directHeaderActions.map((action) => (
@@ -5416,7 +5332,7 @@ export function TaskDetailContent({
             )}
             {!isEditing && canEdit && (
               <AlphaButton
-                className="modal-edit-btn"
+                className="btn btn-icon btn-sm modal-edit-btn task-detail-header-action"
                 onClick={enterEditMode}
                 title={t("taskDetail.header.editTask", "Edit task")}
                 aria-label={t("taskDetail.header.editTask", "Edit task")}
@@ -5431,7 +5347,7 @@ export function TaskDetailContent({
             {onPopOut && (
               <AlphaButton
                 type="button"
-                className="modal-edit-btn"
+                className="btn btn-icon btn-sm modal-edit-btn task-detail-header-action"
                 onClick={() => onPopOut(task)}
                 title={t("taskDetail.header.popOut", "Pop out")}
                 aria-label={t("taskDetail.header.popOut", "Pop out")}
@@ -5447,7 +5363,7 @@ export function TaskDetailContent({
             {embedded && onBackToBoard && (
               <AlphaButton
                 type="button"
-                className="task-detail-header-back-btn"
+                className="btn btn-icon btn-sm task-detail-header-back-btn"
                 onClick={onBackToBoard}
               >
                 <ArrowLeft size={14} aria-hidden="true" />
@@ -6937,11 +6853,25 @@ export function TaskDetailContent({
           ) : (
             <>
               {/*
-              FNXC:TaskDetailDefinition 2026-09-12-22:52:
-              Définition présente d’abord la demande opérateur en Markdown sûr, puis une action explicite vers le plan complet et une liste accessible de toute la progression unifiée. Les étapes d’implémentation et de workflow conservent leur identité même si leurs noms se répètent.
+              FNXC:TaskDetailDefinition 2026-09-13-11:59:
+              La description est la présentation principale de Définition et le header partagé ne répète plus le titre. Le titre reste une donnée éditable dans TaskForm; sa synthèse demeure disponible près de la description lorsque ses préconditions sont remplies.
               */}
               <section className="detail-section detail-definition-description" aria-labelledby={`${workingTask.id}-definition-description`}>
-                <h4 id={`${workingTask.id}-definition-description`}>{t("taskDetail.definition.descriptionHeading", "Description")}</h4>
+                <div className="detail-source-header detail-definition-header">
+                  <h4 id={`${workingTask.id}-definition-description`}>{t("taskDetail.definition.descriptionHeading", "Description")}</h4>
+                  {showSummarizeTitleButton && (
+                    <AlphaButton
+                      type="button"
+                      className="btn btn-icon btn-sm detail-summarize-title-btn"
+                      onClick={() => void handleSummarizeTitle()}
+                      disabled={isSummarizingTitle || isSaving}
+                      data-testid="summarize-title-btn"
+                    >
+                      {isSummarizingTitle ? <Loader2 size={14} className="spinner" /> : <Sparkles size={14} />}
+                      <span>{t("taskDetail.title.summarize", "Summarize")}</span>
+                    </AlphaButton>
+                  )}
+                </div>
                 {hasOriginalTaskPrompt ? <div className="markdown-body" data-testid="task-detail-definition-description"><ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={sharedRehypePlugins} components={markdownLinkifyComponents}>{originalTaskPrompt}</ReactMarkdown></div> : <div className="detail-empty-inline">{t("taskDetail.definition.noDescription", "(no description)")}</div>}
                 <AlphaButton type="button" className="btn btn-sm detail-read-plan" onClick={() => setPlanDocumentOpen(true)}><FileText size={14} aria-hidden="true" />{t("taskDetail.spec.readPlanBtn", "Read plan")}</AlphaButton>
               </section>
@@ -7268,8 +7198,14 @@ export function TaskDetailContent({
   );
 }
 
+/*
+FNXC:TaskDetailDefinition 2026-09-13-11:59:
+La modale et le drawer conservent un nom accessible localisé même si leur header visuel ne contient plus le titre de la tâche. Le nom vient d’une chaîne stable et non d’un élément visuel susceptible d’être absent.
+*/
 export function TaskDetailModal({ onClose, alphaMobileDrawer = false, ...props }: TaskDetailModalProps) {
+  const { t } = useTranslation("app");
   const viewportMode = useViewportMode();
+  const accessibleName = t("taskDetail.accessibleName", "Task detail");
   const closeRequestedRef = useRef(false);
   useEffect(() => { closeRequestedRef.current = false; }, [props.task.id]);
   const requestClose = useCallback(() => {
@@ -7291,7 +7227,7 @@ export function TaskDetailModal({ onClose, alphaMobileDrawer = false, ...props }
     return (
       <AlphaMobileDrawer
         open
-        title="Task detail"
+        title={accessibleName}
         onClose={requestClose}
         testId="alpha-mobile-drawer-task-detail"
         contentOwnsHeader
@@ -7307,8 +7243,8 @@ export function TaskDetailModal({ onClose, alphaMobileDrawer = false, ...props }
   return (
     <FloatingWindow
       windowKey="task-detail"
-      title="Task detail"
-      ariaLabelledBy="task-detail-modal-title"
+      title={accessibleName}
+      ariaLabel={accessibleName}
       onClose={requestClose}
       modal
       hideHeader

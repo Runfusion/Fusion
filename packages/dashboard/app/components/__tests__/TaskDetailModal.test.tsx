@@ -1,9 +1,9 @@
 /*
-FNXC:TaskDetailTabs 2026-06-17-08:20:
-FN-7324 keeps the stable internal `chat` tab as Activity for explicit legacy links, but the omitted non-done default is now planner Chat. Tests that assert Definition-only sections must opt into `initialTab="details"` so they verify the intended surface instead of the Chat landing state.
+FNXC:TaskDetailTabs 2026-09-13-13:09:
+The stable internal `chat` tab remains Activity for legacy links, while the omitted non-done default is planner Chat. Tests for Description, failure recovery, branch groups, or other Definition-only content must select `initialTab="definition"`; `details` is the separate diagnostics destination.
 */
 import { afterEach, describe, it, expect, vi } from "vitest";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import React, { type ComponentProps } from "react";
 import userEvent from "@testing-library/user-event";
 import {
@@ -90,7 +90,7 @@ function renderSummarizeTitleModal(overrides: Parameters<typeof makeTask>[0] = {
 
   const result = render(
     <TaskDetailModal
-      initialTab="details"
+      initialTab="definition"
       task={task}
       onClose={noop}
       onDeleteTask={noopDelete}
@@ -373,9 +373,9 @@ describe("TaskDetailModal planner Chat tab", () => {
     expect(detail).not.toHaveClass("task-detail-content--chat-expanded");
   });
 
-  it("hides failed-task banner only while planner Chat is expanded and restores it on collapse", async () => {
+  it("keeps the failed-task alert in Definition while Planner Chat expands independently", async () => {
     const user = userEvent.setup();
-    const { container } = render(
+    render(
       <TaskDetailModal
         initialTab="planner-chat"
         taskDetailChatFirst
@@ -389,26 +389,24 @@ describe("TaskDetailModal planner Chat tab", () => {
     );
     const detail = document.querySelector(".task-detail-content");
 
-    expect(screen.getByText("Task Failed")).toBeInTheDocument();
-    expect(screen.getByText("Planner failed hard")).toBeInTheDocument();
-    expect(document.querySelector(".detail-error-alert")).toBeInTheDocument();
-
-    await user.click(screen.getByTestId("task-planner-chat-expand-toggle"));
-
-    expect(detail).toHaveClass("task-detail-content--planner-chat-expanded");
     expect(screen.queryByText("Task Failed")).not.toBeInTheDocument();
-    expect(screen.queryByText("Planner failed hard")).not.toBeInTheDocument();
     expect(document.querySelector(".detail-error-alert")).toBeNull();
 
     await user.click(screen.getByTestId("task-planner-chat-expand-toggle"));
+    expect(detail).toHaveClass("task-detail-content--planner-chat-expanded");
+    expect(screen.queryByText("Task Failed")).not.toBeInTheDocument();
 
+    await user.click(screen.getByTestId("task-planner-chat-expand-toggle"));
     expect(detail).not.toHaveClass("task-detail-content--planner-chat-expanded");
+    expect(screen.queryByText("Task Failed")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Plan" }));
     expect(screen.getByText("Task Failed")).toBeInTheDocument();
     expect(screen.getByText("Planner failed hard")).toBeInTheDocument();
     expect(document.querySelector(".detail-error-alert")).toBeInTheDocument();
   });
 
-  it("keeps failed-task banner visible while Activity is expanded", async () => {
+  it("keeps the failed-task alert scoped to Definition while Activity expands", async () => {
     const user = userEvent.setup();
     const { container } = render(
       <TaskDetailModal
@@ -424,13 +422,16 @@ describe("TaskDetailModal planner Chat tab", () => {
     );
     const detail = document.querySelector(".task-detail-content");
 
-    expect(screen.getByText("Task Failed")).toBeInTheDocument();
-    expect(screen.getByText("Activity failure stays visible")).toBeInTheDocument();
+    expect(screen.queryByText("Task Failed")).not.toBeInTheDocument();
 
     await user.click(screen.getByTestId("task-chat-expand-toggle"));
 
     expect(detail).toHaveClass("task-detail-content--chat-expanded");
     expect(detail).not.toHaveClass("task-detail-content--planner-chat-expanded");
+    expect(screen.queryByText("Task Failed")).not.toBeInTheDocument();
+    expect(document.querySelector(".detail-error-alert")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Plan" }));
     expect(screen.getByText("Task Failed")).toBeInTheDocument();
     expect(screen.getByText("Activity failure stays visible")).toBeInTheDocument();
     expect(document.querySelector(".detail-error-alert")).toBeInTheDocument();
@@ -440,7 +441,7 @@ describe("TaskDetailModal planner Chat tab", () => {
     const onRetryTask = vi.fn().mockResolvedValue(makeTask());
     const { container, rerender } = render(
       <TaskDetailModal
-        initialTab="planner-chat"
+        initialTab="definition"
         taskDetailChatFirst
         task={makeTask({ column: "todo" as any, status: "failed" })}
         onClose={noop}
@@ -460,7 +461,7 @@ describe("TaskDetailModal planner Chat tab", () => {
 
     rerender(
       <TaskDetailModal
-        initialTab="planner-chat"
+        initialTab="definition"
         taskDetailChatFirst
         task={makeTask({ column: "todo" as any, status: "in-progress", error: "Ignored because task is not failed" })}
         onClose={noop}
@@ -500,7 +501,7 @@ describe("TaskDetailModal planner Chat tab", () => {
 
     render(
       <TaskDetailModal
-        initialTab="planner-chat"
+        initialTab="definition"
         taskDetailChatFirst
         task={makeTask({ column: "todo" as any, status: "failed", error: "Workflow graph terminated with failure at node 'steps#0:step-execute'" })}
         onClose={noop}
@@ -554,7 +555,7 @@ describe("TaskDetailModal planner Chat tab", () => {
 
     render(
       <TaskDetailModal
-        initialTab="planner-chat"
+        initialTab="definition"
         taskDetailChatFirst
         task={makeTask({ column: "in-progress" as any, status: "failed", error: "Workflow graph terminated with failure at node 'unknown'" })}
         onClose={noop}
@@ -586,7 +587,7 @@ describe("TaskDetailModal planner Chat tab", () => {
 
     render(
       <TaskDetailModal
-        initialTab="planner-chat"
+        initialTab="definition"
         taskDetailChatFirst
         task={makeTask({ column: "in-progress" as any, status: "failed", error: "Workflow graph terminated with failure at node 'unknown'" })}
         onClose={noop}
@@ -597,6 +598,7 @@ describe("TaskDetailModal planner Chat tab", () => {
       />,
     );
 
+    expect(screen.getByText("Workflow graph terminated with failure at node 'unknown'")).toBeInTheDocument();
     expect(screen.queryByText("oldText was not unique")).not.toBeInTheDocument();
     expect(document.querySelector(".detail-error-detail")).toBeNull();
   });
@@ -665,7 +667,7 @@ describe("TaskDetailModal base-branch editor", () => {
 });
 
 describe("TaskDetailModal summarize title action", () => {
-  it("orders board detail header actions as edit, expand, then Back to board", () => {
+  it("orders board detail header actions as edit, pop-out, then Back to board", () => {
     const onBackToBoard = vi.fn();
     const onPopOut = vi.fn();
     renderSummarizeTitleModal(
@@ -679,15 +681,22 @@ describe("TaskDetailModal summarize title action", () => {
     const popOutButton = screen.getByTestId("task-detail-pop-out");
     const backButton = screen.getByRole("button", { name: /back to board/i });
 
-    // FNXC:TaskDetail 2026-06-22-18:32: Board task-detail action order is edit, expand/pop-out, then Back to board pinned far right.
+    // FNXC:TaskDetailDefinition 2026-09-13-11:59: Board Task Detail keeps edit, pop-out, then Back to board in the header while title summarization lives in Definition.
     expect(Array.from(actions!.children).slice(-3)).toEqual([editButton, popOutButton, backButton]);
+    for (const action of [editButton, popOutButton, backButton]) {
+      expect(action).toHaveClass("btn", "btn-icon", "btn-sm");
+    }
   });
 
-  it("renders when the task is editable and has a description", () => {
+  it("renders beside Description when the task is editable and has a description", () => {
     renderSummarizeTitleModal({ column: "todo" as any });
 
-    expect(screen.getByTestId("summarize-title-btn")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Summarize" })).toBeEnabled();
+    const button = screen.getByTestId("summarize-title-btn");
+    expect(button).toBeVisible();
+    expect(button).toBeEnabled();
+    expect(button).toHaveClass("btn", "btn-icon", "btn-sm", "detail-summarize-title-btn");
+    expect(button.closest(".detail-definition-header")).toBeInTheDocument();
+    expect(button.closest(".modal-header")).toBeNull();
   });
 
   it("hides while the task is in edit mode", async () => {
@@ -1404,12 +1413,13 @@ describe("TaskDetailModal Raw Logs agent loading", () => {
     await user.click(screen.getByRole("button", { name: "Activity" }));
     await selectActivityView(user, "raw-logs");
 
-    expect(screen.getByTestId("agent-log-viewer")).toBeInTheDocument();
+    const rawLogViewer = screen.getByTestId("agent-log-viewer");
+    expect(rawLogViewer).toBeInTheDocument();
     expect(screen.getByTestId("agent-log-summary")).toHaveTextContent("Showing 2 of 5 entries");
-    expect(screen.getByText("raw executor output")).toBeInTheDocument();
-    expect(screen.getByText("raw reviewer output")).toBeInTheDocument();
+    expect(within(rawLogViewer).getByText("raw executor output")).toBeInTheDocument();
+    expect(within(rawLogViewer).getByText("raw reviewer output")).toBeInTheDocument();
 
-    fireEvent.scroll(screen.getByTestId("agent-log-viewer").querySelector(".agent-log-viewer-scroll")!);
+    fireEvent.scroll(rawLogViewer.querySelector(".agent-log-viewer-scroll")!);
     expect(loadMore).toHaveBeenCalledTimes(1);
     expect(screen.queryByTestId("agent-log-load-more-button")).not.toBeInTheDocument();
 
@@ -1423,7 +1433,7 @@ describe("TaskDetailModal branch group surfacing", () => {
   function renderTaskWithBranchContext(id: string) {
     return (
       <TaskDetailModal
-        initialTab="details"
+        initialTab="definition"
         task={makeTask({ id, branchContext })}
         onClose={noop}
         onDeleteTask={noopDelete}
@@ -1466,7 +1476,7 @@ describe("TaskDetailModal branch group surfacing", () => {
     vi.mocked(fetchTaskDetail).mockResolvedValueOnce(makeTask({ id: "FN-landed", column: "done" as any }));
     render(
       <TaskDetailModal
-        initialTab="details"
+        initialTab="definition"
         task={makeTask({ id: "FN-6041", branchContext })}
         onClose={noop}
         onDeleteTask={noopDelete}

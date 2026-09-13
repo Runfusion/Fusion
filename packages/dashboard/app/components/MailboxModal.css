@@ -1060,6 +1060,10 @@ separate approvals Back button outside this header or non-mobile mailbox layouts
     gap: var(--space-sm);
   }
 
+  /*
+  FNXC:ModalChrome 2026-09-13-14:21:
+  Mailbox enlarges every mobile header action through the same minimum target but leaves close-button padding, radius, border, and paint to ModalCloseButton. This preserves one canonical close appearance while keeping the existing touch geometry uniform with adjacent actions.
+  */
   .mailbox-modal .mailbox-header-actions .btn,
   .mailbox-modal .mailbox-header-actions .btn-icon,
   .mailbox-modal .mailbox-header-actions .modal-close,
@@ -1075,11 +1079,6 @@ separate approvals Back button outside this header or non-mobile mailbox layouts
     display: inline-flex;
     align-items: center;
     justify-content: center;
-  }
-
-  .mailbox-modal .mailbox-header-actions .modal-close {
-    padding: 0;
-    border-radius: var(--radius-sm);
   }
 
   .mailbox-modal .mailbox-tabs {
