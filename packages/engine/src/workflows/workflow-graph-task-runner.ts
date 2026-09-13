@@ -325,7 +325,7 @@ export class WorkflowGraphTaskRunner {
         ? { stepReview: (t, c, cfg) => ((sideEffectsRan = true), invoked.push("step-review"), seams.stepReview!(t, c, cfg)) }
         : {}),
     };
-    const wrappedRunCustomNode: WorkflowCustomNodeRunner = (node, t, c) => {
+    const wrappedRunCustomNode: WorkflowCustomNodeRunner = (node, t, c, signal) => {
       if (!this.deps.primitives && isFastExecutionMode(t) && c["workflow:fast-lane-active"] === true) {
         /*
         FNXC:WorkflowFastMode 2026-07-01-00:00:
@@ -349,7 +349,19 @@ export class WorkflowGraphTaskRunner {
       }
       sideEffectsRan = true;
       invoked.push(node.id);
-      return this.deps.runCustomNode(node, t, c);
+      /*
+      FNXC:WorkflowStepTimeoutRetry 2026-09-13-15:57:
+      A split branch owns its local fail-fast signal while the task runner owns pause and hard-cancel
+      through the graph signal. Custom work inside a split must observe either cancellation source:
+      composing them prevents a retired review attempt from opening its one secondary session after
+      the graph is cancelled, without dropping sibling fail-fast cancellation.
+      */
+      const executionSignal = this.deps.signal && signal && this.deps.signal !== signal
+        ? AbortSignal.any([this.deps.signal, signal])
+        : signal ?? this.deps.signal;
+      return executionSignal
+        ? this.deps.runCustomNode(node, t, c, executionSignal)
+        : this.deps.runCustomNode(node, t, c);
     };
     const wrappedPrimitives = this.deps.primitives
       ? new Proxy(this.deps.primitives, {

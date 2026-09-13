@@ -226,11 +226,16 @@ export interface ForeachActiveContext {
  * Runs a custom (non-seam) prompt/script/gate node for a task — typically by
  * delegating to the WorkflowStep prompt-session/script machinery. Injected so
  * the graph layer stays engine-agnostic and unit-testable with fakes.
+ *
+ * FNXC:WorkflowStepTimeoutRetry 2026-09-13-15:25:
+ * The optional signal identifies the graph run that still owns session dispatch. Every custom-node
+ * adapter must forward it so cancellation can fence a timeout or malformed-output retry.
  */
 export type WorkflowCustomNodeRunner = (
   node: WorkflowIrNode,
   task: TaskDetail,
   context: Record<string, unknown>,
+  signal?: AbortSignal,
 ) => Promise<WorkflowNodeResult>;
 
 /*
@@ -361,7 +366,9 @@ export function createPromptLikeHandler(
     if (!runCustomNode) {
       throw new WorkflowIrError(`No custom-node runner registered for node: ${node.id}`);
     }
-    return runCustomNode(node, context.task, context.context);
+    return context.signal
+      ? runCustomNode(node, context.task, context.context, context.signal)
+      : runCustomNode(node, context.task, context.context);
   };
 }
 
@@ -491,7 +498,9 @@ export function createPrimitivePromptLikeHandler(
     if (!runCustomNode) {
       throw new WorkflowIrError(`No custom-node runner registered for node: ${node.id}`);
     }
-    return runCustomNode(node, context.task, context.context);
+    return context.signal
+      ? runCustomNode(node, context.task, context.context, context.signal)
+      : runCustomNode(node, context.task, context.context);
   };
 }
 

@@ -362,7 +362,9 @@ export async function runGraphCustomNode(
   columnBinding?: WorkflowColumnAgent,
   graphContext?: Record<string, unknown>,
   outputLanguage?: ResolvedTaskOutputLanguage,
+  graphSignal?: AbortSignal,
 ): Promise<WorkflowNodeResult> {
+    if (graphSignal?.aborted) return { outcome: "failure", value: "aborted" };
     const cfg = node.config ?? {};
     let live = await deps.store.getTask(nodeTask.id);
 
@@ -893,6 +895,7 @@ export async function runGraphCustomNode(
     const principalAgentId = typeof graphContext?.["workflow:principal-agent-id"] === "string"
       ? graphContext["workflow:principal-agent-id"]
       : undefined;
+    if (graphSignal?.aborted) return { outcome: "failure", value: "aborted" };
     let outcome: WorkflowStepOutcome;
     if (workspaceConfig && declaredReviewKind === "code") {
       /*
@@ -920,6 +923,14 @@ export async function runGraphCustomNode(
           repoRootDir: join(deps.rootDir, repoRelPath),
         }));
         let aggregate = await reviewWorkspacePerRepo(workspaceReviewTarget, async (repoWorktreePath): Promise<ReviewResult> => {
+          if (graphSignal?.aborted) {
+            return {
+              verdict: "UNAVAILABLE",
+              retryable: false,
+              review: "Workflow graph execution was cancelled before this repository review started.",
+              summary: "Unavailable: workflow graph execution was cancelled",
+            };
+          }
           const repoRelPath = workspaceConfig.repos.find(
             (repository) => workspaceReviewTarget.workspaceWorktrees?.[repository]?.worktreePath === repoWorktreePath,
           );
@@ -970,13 +981,23 @@ export async function runGraphCustomNode(
               unattended,
               principalAgentId,
               outputLanguage,
+              signal: graphSignal,
               sessionBoundary: reviewBoundary,
               ...(repoRelPath ? { dispatchLabel: repoRelPath } : {}),
               ...(repoDiffBaseCommitSha ? { diffBaseCommitSha: repoDiffBaseCommitSha } : {}),
             });
+          if (graphSignal?.aborted) {
+            return {
+              verdict: "UNAVAILABLE",
+              retryable: false,
+              review: "Workflow graph execution was cancelled during this repository review.",
+              summary: "Unavailable: workflow graph execution was cancelled",
+            };
+          }
           await acknowledgeCustomContext();
           return toWorkspaceRepoReviewResult(repoOutcome);
         }, { workspaceRepos: workspaceConfig.repos, workspaceRootDir: deps.rootDir, settings });
+        if (graphSignal?.aborted) return { outcome: "failure", value: "aborted" };
         /*
         FNXC:WorkspaceReviewEvidence 2026-08-29-12:17:
         FN-259 removes this graph branch's duplicate repositoryScope patch. Both workspace review
@@ -1034,11 +1055,15 @@ export async function runGraphCustomNode(
       }
     } else {
       const dispatchSingularStep = async (reviewInputFingerprint?: string): Promise<WorkflowStepOutcome> => {
+        if (graphSignal?.aborted) {
+          return { success: false, error: "workflow graph execution cancelled", failureValue: "aborted" };
+        }
         if (mode === "script") {
           if (overlapResumeContext) {
             await deps.store.logEntry(live.id, `Workflow script '${node.id}' received overlap synchronization context`, overlapResumeContext, deps.getRunContextFor(live.id));
           }
           const scriptOutcome = await deps.executeScriptWorkflowStep(live, step, worktreePath, settings, nodeEnv);
+          if (graphSignal?.aborted) return { success: false, error: "workflow graph execution cancelled", failureValue: "aborted" };
           await acknowledgeCustomContext();
           return reviewInputFingerprint === undefined
             ? scriptOutcome
@@ -1048,9 +1073,11 @@ export async function runGraphCustomNode(
           unattended,
           principalAgentId,
           outputLanguage,
+          signal: graphSignal,
           ...(nodeSessionBoundary ? { sessionBoundary: nodeSessionBoundary } : {}),
           ...(reviewInputFingerprint !== undefined ? { reviewInputFingerprint } : {}),
         });
+        if (graphSignal?.aborted) return { success: false, error: "workflow graph execution cancelled", failureValue: "aborted" };
         await acknowledgeCustomContext();
         return workflowOutcome;
       };
@@ -1079,6 +1106,7 @@ export async function runGraphCustomNode(
         outcome = await dispatchSingularStep();
       }
     }
+    if (graphSignal?.aborted) return { outcome: "failure", value: "aborted" };
     /*
      * FNXC:WorkflowReviewFindings 2026-08-05-06:29:
      * Script nodes retain their exit-code verdict semantics, but an explicitly classified review

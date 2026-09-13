@@ -490,6 +490,8 @@ Create-time optional-step controls appear in the quick-add action row and the **
 
 A workflow step is a reusable quality gate (AI prompt or script) that can be enabled on tasks. Each gate is an `optional-group` node in the workflow graph; the graph executor runs it and records the outcome onto the task. There is no separate workflow-step execution engine, no `workflow_steps` table, and no step CRUD surface — everything is graph-native.
 
+For prompt-mode steps, `workflowStepTimeoutMs` is a per-session-attempt budget. If the primary attempt times out, Fusion disposes and unregisters it before starting exactly one fresh secondary attempt: a distinct configured fallback model is preferred, or the same resolved provider/model and credential identity is retried when no distinct fallback exists. The attempts are sequential, so worst-case wall time can span two timeout budgets. Only the final aggregate outcome is persisted and routed through the graph; a second timeout or malformed secondary response remains a failed, merge-blocking gate with no fabricated approval or further retry.
+
 Common use cases:
 
 - Documentation review

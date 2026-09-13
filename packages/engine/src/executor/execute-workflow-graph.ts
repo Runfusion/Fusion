@@ -846,8 +846,8 @@ export async function executeWorkflowGraph(
         Custom prompt and review nodes can yield before their session begins. Bind the graph-start
         resolution here so a later task-description or settings edit cannot retarget their output.
         */
-        execute: (node, nodeTask, nodeSettings, columnBinding, context) =>
-          deps.runGraphCustomNode(node, nodeTask, nodeSettings, columnBinding, context, outputLanguage),
+        execute: (node, nodeTask, nodeSettings, columnBinding, context, signal) =>
+          deps.runGraphCustomNode(node, nodeTask, nodeSettings, columnBinding, context, outputLanguage, signal),
         resolveColumnBinding: resolveBindingForNode,
       });
       /*

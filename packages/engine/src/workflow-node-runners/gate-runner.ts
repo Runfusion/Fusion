@@ -40,7 +40,9 @@ export class GateNodeRunner implements WorkflowNodeRunner {
       if (!this.runCustomNode) {
         throw new WorkflowIrError(`No custom-node runner registered for node: ${node.id}`);
       }
-      return this.runCustomNode(node, context.task, context.context);
+      return context.signal
+        ? this.runCustomNode(node, context.task, context.context, context.signal)
+        : this.runCustomNode(node, context.task, context.context);
     }
 
     return { outcome: "success" as const };

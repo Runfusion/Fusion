@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "./executor-test-helpers.js";
 import { TaskExecutor } from "../executor.js";
 import {
@@ -18,11 +18,21 @@ type CapturedSession = {
   fallbackThinkingLevel?: string;
 };
 
-function captureSession(output: string | string[] = '{"verdict":"APPROVE","notes":"Reviewed the scoped work and found it correct."}'): { last?: CapturedSession } {
-  const holder: { last?: CapturedSession } = {};
+function captureSession(output: string | string[] = '{"verdict":"APPROVE","notes":"Reviewed the scoped work and found it correct."}'): {
+  last?: CapturedSession;
+  sessions: Array<{ dispose: ReturnType<typeof vi.fn> }>;
+  lifecycle: string[];
+} {
+  const holder: {
+    last?: CapturedSession;
+    sessions: Array<{ dispose: ReturnType<typeof vi.fn> }>;
+    lifecycle: string[];
+  } = { sessions: [], lifecycle: [] };
   let sessionCount = 0;
   mockedCreateFnAgent.mockImplementation(async (opts: any) => {
-    const response = Array.isArray(output) ? output[Math.min(sessionCount++, output.length - 1)]! : output;
+    const sessionIndex = sessionCount++;
+    const response = Array.isArray(output) ? output[Math.min(sessionIndex, output.length - 1)]! : output;
+    holder.lifecycle.push(`create:${sessionIndex}`);
     holder.last = {
       sessionPurpose: opts.sessionPurpose,
       defaultProvider: opts.defaultProvider,
@@ -41,6 +51,7 @@ function captureSession(output: string | string[] = '{"verdict":"APPROVE","notes
         return () => {};
       },
       prompt: vi.fn(async () => {
+        holder.lifecycle.push(`prompt:${sessionIndex}`);
         for (const fn of listeners) {
           fn({
             type: "message_update",
@@ -53,8 +64,11 @@ function captureSession(output: string | string[] = '{"verdict":"APPROVE","notes
           });
         }
       }),
-      dispose: vi.fn(),
+      dispose: vi.fn(() => {
+        holder.lifecycle.push(`dispose:${sessionIndex}`);
+      }),
     };
+    holder.sessions.push(session);
     return { session };
   });
   return holder;
@@ -120,7 +134,7 @@ async function runStepWithSettings(
   const executor = makeExecutor(store);
   const captured = captureSession(options.output);
 
-  await (executor as any).executeWorkflowStep(
+  const outcome = await (executor as any).executeWorkflowStep(
     baseTask(options.task),
     workflowStep(options.step),
     "/tmp/wt",
@@ -129,13 +143,102 @@ async function runStepWithSettings(
     options.stepOptions,
   );
 
-  return { ...captured.last, logCalls: store.logEntry.mock.calls };
+  return {
+    ...captured.last,
+    outcome,
+    sessions: captured.sessions,
+    lifecycle: captured.lifecycle,
+    logCalls: store.logEntry.mock.calls,
+  };
+}
+
+type ControlledSessionPlan =
+  | { kind: "pending" }
+  | { kind: "output"; output: string }
+  | { kind: "error"; error: Error };
+
+function installControlledSessions(plans: ControlledSessionPlan[]) {
+  const lifecycle: string[] = [];
+  const sessions: Array<{
+    dispose: ReturnType<typeof vi.fn>;
+    emit: (text: string) => void;
+  }> = [];
+  const promptStartedResolvers: Array<() => void> = [];
+  const promptStarted = plans.map(() => new Promise<void>((resolve) => promptStartedResolvers.push(resolve)));
+
+  mockedCreateFnAgent.mockImplementation(async (opts: any) => {
+    const index = sessions.length;
+    const plan = plans[index];
+    if (!plan) throw new Error(`Unexpected workflow-step session ${index + 1}`);
+    lifecycle.push(`create:${index}:${opts.defaultProvider}/${opts.defaultModelId}`);
+    const listeners: Array<(event: any) => void> = [];
+    const emit = (text: string) => {
+      for (const listener of listeners) {
+        listener({
+          type: "message_update",
+          assistantMessageEvent: { type: "text_delta", partial: text, contentIndex: 0, delta: text },
+        });
+      }
+    };
+    const session = {
+      state: {},
+      subscribe: vi.fn((listener: (event: any) => void) => {
+        listeners.push(listener);
+        return vi.fn();
+      }),
+      prompt: vi.fn(async () => {
+        lifecycle.push(`prompt:${index}`);
+        promptStartedResolvers[index]?.();
+        if (plan.kind === "pending") return new Promise<void>(() => undefined);
+        if (plan.kind === "error") throw plan.error;
+        emit(plan.output);
+      }),
+      dispose: vi.fn(() => {
+        lifecycle.push(`dispose:${index}`);
+      }),
+      emit,
+    };
+    sessions.push(session);
+    return { session };
+  });
+
+  return { lifecycle, promptStarted, sessions };
+}
+
+async function startControlledStep(
+  settings: Record<string, unknown>,
+  plans: ControlledSessionPlan[],
+  options: { task?: Record<string, unknown>; step?: Record<string, unknown> } = {},
+) {
+  const store = createMockStore();
+  store.getSettings.mockResolvedValue(settings);
+  const executor = makeExecutor(store);
+  const control = installControlledSessions(plans);
+  const outcome = (executor as any).executeWorkflowStep(
+    baseTask(options.task),
+    workflowStep(options.step),
+    "/tmp/wt",
+    settings,
+    undefined,
+  );
+  await control.promptStarted[0];
+  return { store, executor, control, outcome };
+}
+
+function loggedActions(store: ReturnType<typeof createMockStore>): string[] {
+  return store.logEntry.mock.calls
+    .map(([, action]) => action)
+    .filter((action): action is string => typeof action === "string");
 }
 
 describe("executor workflow-step model resolution", () => {
   beforeEach(() => {
     resetExecutorMocks();
     quietGit();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("uses the project execution lane instead of the global default when the step has no override", async () => {
@@ -473,6 +576,134 @@ describe("executor workflow-step model resolution", () => {
     ]);
   });
 
+  it.each([
+    ["absent fallback", {}],
+    ["blank fallback", { validatorFallbackProvider: "   ", validatorFallbackModelId: "   " }],
+    ["provider-only fallback", { validatorFallbackProvider: "fallback-provider" }],
+    ["model-only fallback", { validatorFallbackModelId: "fallback-model" }],
+    ["duplicate fallback", { validatorFallbackProvider: "primary-provider", validatorFallbackModelId: "primary-model" }],
+  ])("retries a primary timeout once in a fresh same-model session for %s", async (_label, fallbackSettings) => {
+    vi.useFakeTimers();
+    const run = await startControlledStep(
+      {
+        validatorProvider: "primary-provider",
+        validatorModelId: "primary-model",
+        workflowStepTimeoutMs: 60_000,
+        ...fallbackSettings,
+      },
+      [
+        { kind: "pending" },
+        { kind: "output", output: '{"verdict":"APPROVE","notes":"Fresh retry approved the review."}' },
+      ],
+      {
+        task: {
+          validatorModelProvider: "primary-provider",
+          validatorModelId: "primary-model",
+          validatorCredentialInstanceId: "primary-credential",
+        },
+        step: { name: "Code Review", optionalGroupId: "code-review", gateMode: "gate" },
+      },
+    );
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    await expect(run.outcome).resolves.toMatchObject({ success: true, verdict: "APPROVE" });
+
+    const creations = mockedCreateFnAgent.mock.calls.map(([options]) => ({
+      provider: options.defaultProvider,
+      modelId: options.defaultModelId,
+      credentialInstanceId: options.credentialInstanceId,
+    }));
+    expect(creations).toEqual([
+      { provider: "primary-provider", modelId: "primary-model", credentialInstanceId: "primary-credential" },
+      { provider: "primary-provider", modelId: "primary-model", credentialInstanceId: "primary-credential" },
+    ]);
+    expect(run.control.lifecycle.indexOf("dispose:0")).toBeLessThan(
+      run.control.lifecycle.indexOf("create:1:primary-provider/primary-model"),
+    );
+    expect(run.control.sessions[0]?.dispose).toHaveBeenCalledOnce();
+    expect(run.control.sessions[1]?.dispose).toHaveBeenCalledOnce();
+    expect((run.executor as any).activeWorkflowStepSessions.size).toBe(0);
+    expect(loggedActions(run.store)).toEqual(expect.arrayContaining([
+      "Workflow step 'Code Review' primary model timed out after 60s — aborting session",
+      "Workflow step 'Code Review' starting one fresh same-model retry after primary timeout — no distinct fallback model is configured",
+    ]));
+    expect(loggedActions(run.store).filter((action) => action.startsWith("Workflow step 'Code Review' using model:"))).toHaveLength(1);
+  });
+
+  it("prefers one distinct configured fallback after a primary timeout", async () => {
+    vi.useFakeTimers();
+    const run = await startControlledStep(
+      {
+        validatorProvider: "primary-provider",
+        validatorModelId: "primary-model",
+        validatorFallbackProvider: "fallback-provider",
+        validatorFallbackModelId: "fallback-model",
+        workflowStepTimeoutMs: 60_000,
+      },
+      [
+        { kind: "pending" },
+        { kind: "output", output: '{"verdict":"APPROVE","notes":"Configured fallback approved the review."}' },
+      ],
+      {
+        task: {
+          validatorModelProvider: "primary-provider",
+          validatorModelId: "primary-model",
+          validatorCredentialInstanceId: "primary-credential",
+        },
+        step: { name: "Code Review", optionalGroupId: "code-review", gateMode: "gate" },
+      },
+    );
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    await expect(run.outcome).resolves.toMatchObject({ success: true, verdict: "APPROVE" });
+
+    expect(mockedCreateFnAgent.mock.calls.map(([options]) => [
+      options.defaultProvider,
+      options.defaultModelId,
+      options.credentialInstanceId,
+    ])).toEqual([
+      ["primary-provider", "primary-model", "primary-credential"],
+      ["fallback-provider", "fallback-model", undefined],
+    ]);
+    expect(run.control.lifecycle.indexOf("dispose:0")).toBeLessThan(
+      run.control.lifecycle.indexOf("create:1:fallback-provider/fallback-model"),
+    );
+    expect(loggedActions(run.store)).toEqual(expect.arrayContaining([
+      "Workflow step 'Code Review' starting one configured validator fallback attempt after primary timeout",
+      "Workflow step 'Code Review' using model: mock-provider/mock-model (configured fallback after timeout)",
+    ]));
+  });
+
+  it("does not retry explicit REVISE verdicts or ordinary runtime errors", async () => {
+    const revise = await startControlledStep(
+      { validatorProvider: "primary-provider", validatorModelId: "primary-model" },
+      [{
+        kind: "output",
+        output: '{"verdict":"REVISE","notes":"Fix the defect.","findings":[{"id":"finding-1","title":"Defect","body":"Fix it","severity":"high"}]}',
+      }],
+      { step: { name: "Code Review", optionalGroupId: "code-review", gateMode: "gate" } },
+    );
+    await expect(revise.outcome).resolves.toMatchObject({ success: false, verdict: "REVISE", revisionRequested: true });
+    expect(mockedCreateFnAgent).toHaveBeenCalledTimes(1);
+    expect(loggedActions(revise.store).some((action) => action.includes("starting one"))).toBe(false);
+
+    resetExecutorMocks();
+    quietGit();
+    const failure = await startControlledStep(
+      { validatorProvider: "primary-provider", validatorModelId: "primary-model" },
+      [{ kind: "error", error: new Error("provider rejected the request") }],
+      { step: { name: "Code Review", optionalGroupId: "code-review", gateMode: "gate" } },
+    );
+    await expect(failure.outcome).resolves.toMatchObject({ success: false, error: "provider rejected the request" });
+    expect(mockedCreateFnAgent).toHaveBeenCalledTimes(1);
+    expect(failure.control.lifecycle).toEqual(expect.arrayContaining([
+      "create:0:primary-provider/primary-model",
+      "prompt:0",
+      "dispose:0",
+    ]));
+    expect(loggedActions(failure.store).some((action) => action.includes("starting one"))).toBe(false);
+  });
+
   it("deduplicates a same-model malformed-output self-retry and records its reason", async () => {
     const result = await runStepWithSettings(
       { validatorProvider: "openai", validatorModelId: "gpt-5.6" },
@@ -486,9 +717,12 @@ describe("executor workflow-step model resolution", () => {
       .map(([, action]) => action)
       .filter((action): action is string => typeof action === "string" && action.startsWith("Workflow step 'Code Review' using model:"));
     expect(modelMarkers).toHaveLength(1);
+    expect(mockedCreateFnAgent).toHaveBeenCalledTimes(2);
+    expect(result.lifecycle.indexOf("dispose:0")).toBeLessThan(result.lifecycle.indexOf("create:1"));
+    expect(result.sessions.every((session) => session.dispose.mock.calls.length === 1)).toBe(true);
     expect(result.logCalls).toContainEqual([
       "FN-MODEL-1",
-      "Workflow step 'Code Review' retrying the primary model after malformed output — no fallback model is configured",
+      "Workflow step 'Code Review' starting one fresh same-model retry after primary malformed output — no distinct fallback model is configured",
     ]);
   });
 
@@ -518,7 +752,12 @@ describe("executor workflow-step model resolution", () => {
     ]);
     expect(modelMarkers).toEqual([
       "Workflow step 'Code Review' using model: mock-provider/mock-model",
-      "Workflow step 'Code Review' using model: mock-provider/mock-model (fallback after timeout)",
+      "Workflow step 'Code Review' using model: mock-provider/mock-model (configured fallback after malformed output)",
+    ]);
+    expect(result.lifecycle.indexOf("dispose:0")).toBeLessThan(result.lifecycle.indexOf("create:1"));
+    expect(result.logCalls).toContainEqual([
+      "FN-MODEL-1",
+      "Workflow step 'Code Review' starting one configured validator fallback attempt after primary malformed output",
     ]);
   });
 
