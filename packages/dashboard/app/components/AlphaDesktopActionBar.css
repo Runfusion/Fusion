@@ -42,13 +42,21 @@ The capacity trigger sits against the footer's inline-start edge, so its shared 
 .alpha-desktop-action-bar__icon > svg { inline-size: var(--icon-size-md); block-size: var(--icon-size-md); }
 .alpha-desktop-action-bar__more { position: relative; display: flex; }
 /*
-FNXC:AlphaDesktopNavigation 2026-09-12-21:21:
-Le menu More du footer Alpha desktop doit se déployer au-dessus du trigger dans une seule colonne compacte. La hauteur bornée et le défilement vertical conservent l’accès à chaque destination lorsque la liste dynamique s’allonge.
+FNXC:AlphaDesktopNavigation 2026-09-13-04:10:
+Le menu More du footer Alpha partagé par tablette et ordinateur centre son panneau au-dessus du trigger. Le corridor transparent occupe exactement l’espacement tokenisé entre les deux surfaces afin que le pointeur reste dans le même périmètre pendant une traversée lente, sans modifier les autres navigations.
 */
+.alpha-desktop-action-bar__more::before {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  bottom: 100%;
+  block-size: var(--space-sm);
+}
 .alpha-desktop-action-bar__menu {
   position: absolute;
-  inset-inline-end: 0;
+  inset-inline-start: 50%;
   bottom: calc(100% + var(--space-sm));
+  transform: translateX(-50%);
   display: grid;
   grid-template-columns: 1fr;
   grid-auto-flow: row;

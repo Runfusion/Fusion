@@ -1350,7 +1350,7 @@ describe("official dashboard design production wiring", () => {
   it.each([
     ["tablet", "empty"],
     ["desktop", "populated"],
-  ] as const)("keeps one reserved footer in Alpha %s with %s tasks", async (mode, taskState) => {
+  ] as const)("monte le footer et ouvre More dans le vrai host Alpha %s avec des tâches %s", async (mode, taskState) => {
     mockUseViewportMode.mockReturnValue(mode);
     if (taskState === "populated") {
       const emptyResult = mockUseTasks();
@@ -1380,12 +1380,18 @@ describe("official dashboard design production wiring", () => {
     expect(content).toHaveClass("project-content--with-footer");
     expect(content).not.toHaveClass("project-content--with-alpha-nav", "project-content--with-mobile-nav");
     expect(screen.getByTestId("alpha-desktop-action-bar")).toBeInTheDocument();
+    const moreTrigger = screen.getByTestId("alpha-desktop-nav-more");
+    expect(moreTrigger).toHaveAttribute("aria-expanded", "false");
+    fireEvent.pointerEnter(moreTrigger);
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+    expect(moreTrigger).toHaveAttribute("aria-expanded", "true");
     if (mode === "desktop") {
       expect(sidebar).toBeNull();
       expect(shell).not.toHaveClass("dashboard-project-shell--with-sidebar");
     } else {
       expect(sidebar).toHaveClass("left-sidebar-nav--with-footer");
       expect(shell).toHaveClass("dashboard-project-shell--with-sidebar");
+      expect(document.querySelector("header.header")).toBeInTheDocument();
     }
     expect(rightDock).toHaveClass("right-dock--with-footer");
     expect(shell).toHaveClass("dashboard-project-shell--with-right-dock");

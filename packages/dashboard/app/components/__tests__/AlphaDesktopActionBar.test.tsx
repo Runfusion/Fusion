@@ -1,5 +1,5 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AlphaDesktopActionBar } from "../AlphaDesktopActionBar";
 import { useExecutorStats } from "../../hooks/useExecutorStats";
 import { buildDashboardNavigationEntries, type DashboardNavigationRegistryOptions } from "../dashboardNavigationEntries";
@@ -10,6 +10,7 @@ const headerCss = readAppFile("components/Header.css");
 const leftSidebarNavCss = readAppFile("components/LeftSidebarNav.css");
 const mobileNavBarCss = readAppFile("components/MobileNavBar.css");
 const overflowMenuRule = alphaDesktopActionBarCss.match(/\.alpha-desktop-action-bar__menu\s*\{([^}]*)\}/s)?.[1] ?? "";
+const overflowCorridorRule = alphaDesktopActionBarCss.match(/\.alpha-desktop-action-bar__more::before\s*\{([^}]*)\}/s)?.[1] ?? "";
 
 vi.mock("../../hooks/useExecutorStats", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../hooks/useExecutorStats")>();
@@ -27,7 +28,13 @@ function openOverflowMenu() {
 
 function expectAscendingSingleColumnGeometry(menu: HTMLElement) {
   expect(menu).toHaveClass("alpha-desktop-action-bar__menu");
+  expect(overflowMenuRule).toMatch(/inset-inline-start:\s*50%/);
+  expect(overflowMenuRule).toMatch(/transform:\s*translateX\(-50%\)/);
+  expect(overflowMenuRule).not.toMatch(/inset-inline-end:\s*0/);
   expect(overflowMenuRule).toMatch(/bottom:\s*calc\(100% \+ var\(--space-sm\)\)/);
+  expect(overflowCorridorRule).toMatch(/inset-inline:\s*0/);
+  expect(overflowCorridorRule).toMatch(/bottom:\s*100%/);
+  expect(overflowCorridorRule).toMatch(/block-size:\s*var\(--space-sm\)/);
   expect(overflowMenuRule).toMatch(/grid-template-columns:\s*1fr/);
   expect(overflowMenuRule).toMatch(/grid-auto-flow:\s*row/);
   expect(overflowMenuRule).toMatch(/max-block-size:\s*calc\(100vh - var\(--space-3xl\) \* 3\)/);
@@ -38,6 +45,10 @@ function expectAscendingSingleColumnGeometry(menu: HTMLElement) {
 describe("AlphaDesktopActionBar", () => {
   beforeEach(() => {
     vi.mocked(useExecutorStats).mockReturnValue({ stats: { runningTaskCount: 0, maxConcurrent: 4 } as never, loading: false, error: null, refresh: vi.fn() });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("affiche le footer principal sans les destinations du dock ou de Done", () => {
@@ -159,16 +170,35 @@ describe("AlphaDesktopActionBar", () => {
     }
   });
 
-  it("ouvre Plus au survol, conserve le trajet vers le menu et ferme à la sortie", () => {
+  it("conserve une traversée lente du gap puis ferme après une sortie complète", () => {
+    vi.useFakeTimers();
     render(<AlphaDesktopActionBar entries={entries()} activeId="board" tasks={[]} />);
     const trigger = screen.getByTestId("alpha-desktop-nav-more");
     fireEvent.pointerEnter(trigger);
     const menu = screen.getByRole("menu");
+    const perimeter = menu.parentElement!;
     expect(trigger).toHaveAttribute("aria-expanded", "true");
-    fireEvent.pointerEnter(menu);
+
+    fireEvent.pointerLeave(perimeter);
+    act(() => vi.advanceTimersByTime(100));
     expect(screen.getByRole("menu")).toBeInTheDocument();
-    fireEvent.pointerLeave(menu.parentElement!);
+    fireEvent.pointerEnter(menu);
+    act(() => vi.advanceTimersByTime(200));
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+
+    fireEvent.pointerLeave(perimeter);
+    act(() => vi.advanceTimersByTime(200));
     expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  it("annule le timer de fermeture au démontage", () => {
+    vi.useFakeTimers();
+    const view = render(<AlphaDesktopActionBar entries={entries()} activeId="board" tasks={[]} />);
+    fireEvent.pointerEnter(screen.getByTestId("alpha-desktop-nav-more"));
+    fireEvent.pointerLeave(screen.getByRole("menu").parentElement!);
+    expect(vi.getTimerCount()).toBe(1);
+    view.unmount();
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("ouvre au focus ou au clic sans toggler, puis ferme avec Escape ou à la sortie du focus", () => {

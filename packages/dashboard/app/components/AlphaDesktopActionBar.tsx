@@ -1,4 +1,4 @@
-import { useRef, useState, type FocusEvent, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FocusEvent, type KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { ChevronUp, Terminal } from "lucide-react";
 import type { Task } from "@fusion/core";
@@ -17,23 +17,47 @@ export interface AlphaDesktopActionBarProps {
   onToggleTerminal?: () => void;
 }
 
+const MORE_MENU_CLOSE_GRACE_MS = 150;
+
 export function AlphaDesktopActionBar({ entries, activeId, tasks, projectId, columnFlagsByTaskId, onToggleTerminal }: AlphaDesktopActionBarProps) {
   /* FNXC:AlphaNavigation 2026-09-12-00:36: Alpha navigation labels, including its overflow trigger and landmark, must use the shared locale catalog rather than English-only literals. */
   const { t } = useTranslation("app");
   const [overflowOpen, setOverflowOpen] = useState(false);
   const overflowRef = useRef<HTMLDivElement>(null);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { stats, loading, error } = useExecutorStats(tasks, projectId, columnFlagsByTaskId);
   /*
-  FNXC:AlphaDesktopNavigation 2026-09-12-04:06:
-  Le menu Plus du footer Alpha desktop est un seul périmètre trigger + menu : le survol ou le focus l’ouvre, une sortie complète du pointeur ou du focus le ferme, et Escape conserve une fermeture clavier explicite. Un clic sur le trigger ouvre sans toggler afin qu’une activation ne referme jamais un menu déjà ouvert au hover.
+  FNXC:AlphaDesktopNavigation 2026-09-13-04:10:
+  Le menu More du footer Alpha partagé par tablette et ordinateur forme un seul périmètre trigger + panneau. Une sortie du pointeur démarre une courte grâce annulable afin que les traversées lentes du corridor ne ferment pas le panneau; focus, Escape et sélection acceptée conservent leurs fermetures explicites.
   */
+  const cancelScheduledClose = useCallback(() => {
+    if (closeTimerRef.current === null) return;
+    clearTimeout(closeTimerRef.current);
+    closeTimerRef.current = null;
+  }, []);
+  const closeOverflow = useCallback(() => {
+    cancelScheduledClose();
+    setOverflowOpen(false);
+  }, [cancelScheduledClose]);
+  const openOverflow = useCallback(() => {
+    cancelScheduledClose();
+    setOverflowOpen(true);
+  }, [cancelScheduledClose]);
+  const scheduleOverflowClose = useCallback(() => {
+    cancelScheduledClose();
+    closeTimerRef.current = setTimeout(() => {
+      closeTimerRef.current = null;
+      setOverflowOpen(false);
+    }, MORE_MENU_CLOSE_GRACE_MS);
+  }, [cancelScheduledClose]);
+  useEffect(() => cancelScheduledClose, [cancelScheduledClose]);
   const closeAfterFocusLeaves = (event: FocusEvent<HTMLDivElement>) => {
-    if (!event.relatedTarget || !event.currentTarget.contains(event.relatedTarget as Node)) setOverflowOpen(false);
+    if (!event.relatedTarget || !event.currentTarget.contains(event.relatedTarget as Node)) closeOverflow();
   };
   const handleOverflowKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== "Escape") return;
     event.preventDefault();
-    setOverflowOpen(false);
+    closeOverflow();
   };
   const direct = entries.filter((entry) => entry.placement === "direct");
   const overflow = entries.filter((entry) => entry.placement === "overflow");
@@ -45,7 +69,7 @@ export function AlphaDesktopActionBar({ entries, activeId, tasks, projectId, col
     const active = entry.id === activeId;
     return <button key={entry.id} type="button" className={`alpha-desktop-action-bar__action${active ? " alpha-desktop-action-bar__action--active" : ""}`} aria-label={entry.label} aria-current={active && entry.kind === "main-page" ? "page" : undefined} data-testid={entry.testId} onClick={() => {
       const result = entry.onSelect?.();
-      if (inOverflow) void Promise.resolve(result).then((accepted) => { if (accepted !== false) setOverflowOpen(false); });
+      if (inOverflow) void Promise.resolve(result).then((accepted) => { if (accepted !== false) closeOverflow(); });
     }}>
       <span className="alpha-desktop-action-bar__icon"><Icon aria-hidden="true" />{entry.dot ? <span className={`status-dot status-dot--${entry.dot}`} /> : null}{entry.badge ? <span className="btn-badge">{entry.badge > 99 ? "99+" : entry.badge}</span> : null}</span>
       <span>{entry.label}</span>
@@ -61,13 +85,13 @@ export function AlphaDesktopActionBar({ entries, activeId, tasks, projectId, col
     {overflow.length ? <div
       ref={overflowRef}
       className="alpha-desktop-action-bar__more"
-      onPointerEnter={() => setOverflowOpen(true)}
-      onPointerLeave={() => setOverflowOpen(false)}
-      onFocusCapture={() => setOverflowOpen(true)}
+      onPointerEnter={openOverflow}
+      onPointerLeave={scheduleOverflowClose}
+      onFocusCapture={openOverflow}
       onBlurCapture={closeAfterFocusLeaves}
       onKeyDown={handleOverflowKeyDown}
     >
-      <button type="button" className="alpha-desktop-action-bar__action" aria-label={t("header.moreViews", "More views")} aria-haspopup="menu" aria-expanded={overflowOpen} data-testid="alpha-desktop-nav-more" onClick={() => setOverflowOpen(true)}><ChevronUp aria-hidden="true" /><span>{t("nav.more", "More")}</span></button>
+      <button type="button" className="alpha-desktop-action-bar__action" aria-label={t("header.moreViews", "More views")} aria-haspopup="menu" aria-expanded={overflowOpen} data-testid="alpha-desktop-nav-more" onClick={openOverflow}><ChevronUp aria-hidden="true" /><span>{t("nav.more", "More")}</span></button>
       {overflowOpen ? <div className="alpha-desktop-action-bar__menu" role="menu">{overflow.map((entry) => renderButton(entry, true))}</div> : null}
     </div> : null}</div>
     {onToggleTerminal || settings ? <div className="alpha-desktop-action-bar__right">
