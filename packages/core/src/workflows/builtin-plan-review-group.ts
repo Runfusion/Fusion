@@ -131,8 +131,8 @@ export function planReviewOptionalGroupNode(
       reworkRegion: true,
       maxReworkCycles: 3,
       /*
-       * FNXC:WorkflowRevisionBudget 2026-06-30-19:49:
-       * Built-in Plan Review/spec remediation is unbounded by default; workflow setting value `planReviewMaxRevisions` is the operator cap for read-only built-ins, while authored `maxRevisions` still lets custom/duplicated workflows encode their own budget.
+       * FNXC:WorkflowRevisionBudget 2026-09-13-04:34:
+       * The authored `"unbounded"` sentinel delegates built-in Plan Review to the shared finite safety backstop. Workflow settings and custom authored numeric values may impose a stricter cap.
        */
       maxRevisions: options.maxRevisions ?? "unbounded",
       template: {

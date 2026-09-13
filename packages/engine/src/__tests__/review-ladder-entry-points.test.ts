@@ -23,10 +23,8 @@ import { SelfHealingManager } from "../self-healing.js";
 import { EMPTY_REVIEW_DIFF_FINGERPRINT } from "../worktree/review-diff-fingerprint.js";
 
 /*
-FNXC:ReviewConvergenceEvidence 2026-08-22-16:29:
-FN-149 requires a graph-remediation budget exhaustion to enter the shared recovery requester,
-not park before the convergence ladder can select its next autonomous action. A zero budget remains
-an operator policy refusal and must not be converted into an automatic escalation.
+FNXC:ReviewConvergenceEvidence 2026-09-13-04:34:
+Graph and recovery entry points share the same finite review budget. Exhaustion may enter the common terminal router for visible parking, but it cannot schedule another autonomous remediation, reviewer, or arbitration action.
 */
 describe("FN-149 remediation graph ladder entry", () => {
   const live = {
@@ -78,7 +76,7 @@ describe("FN-149 remediation graph ladder entry", () => {
 
   it("admits a retryable workspace remediation graph failure without a singular worktree", async () => {
     const row = workspaceLive();
-    const subject = deps({ unbounded: true, max: Number.POSITIVE_INFINITY, attempts: 0 });
+    const subject = deps({ unbounded: true, max: 8, attempts: 0 });
 
     await expect(routeRetryableRemediationGraphFailureToPreMergeFix(subject, row, "code-review-remediation", "retry")).resolves.toBe(true);
 
@@ -129,12 +127,16 @@ describe("FN-149 remediation graph ladder entry", () => {
       sendTaskBackForFix,
     } as any, row.id, row, {
       phase: "pre-merge", status: "failed", verdict: "REVISE", nodeId: "code-review", stepName: "Code Review", feedback: "Fix it",
-    })).resolves.toBe(true);
-    expect(sendTaskBackForFix).toHaveBeenCalledOnce();
-    expect(row.reviewConvergenceStage).toBe(1);
+    })).resolves.toBe(false);
+    expect(sendTaskBackForFix).not.toHaveBeenCalled();
+    expect(row).toMatchObject({
+      reviewConvergenceStage: 3,
+      status: "awaiting-approval",
+      awaitingApprovalReason: "code-review-non-convergence",
+    });
   });
 
-  it("routes the finite Plan Review cap through the ladder before its human park", async () => {
+  it("parks a finite Plan Review cap without another ladder dispatch", async () => {
     const row = structuredClone(live);
     row.column = "todo";
     row.worktree = "/tmp/plan-review";
@@ -173,9 +175,9 @@ describe("FN-149 remediation graph ladder entry", () => {
       phase: "pre-merge", status: "failed", verdict: "REVISE", nodeId: "plan-review", stepName: "Plan Review", feedback: "Revise plan",
     })).resolves.toBe(true);
 
-    expect(sendTaskBackForFix).toHaveBeenCalledOnce();
-    expect(parkPlanReviewReplanCapExhausted).not.toHaveBeenCalled();
-    expect(row.reviewConvergenceStage).toBe(1);
+    expect(sendTaskBackForFix).not.toHaveBeenCalled();
+    expect(parkPlanReviewReplanCapExhausted).toHaveBeenCalledWith(row.id, "1", 1, "Revise plan");
+    expect(row.reviewConvergenceStage).toBeUndefined();
   });
 
   /*
@@ -219,7 +221,7 @@ describe("FN-149 remediation graph ladder entry", () => {
 
     expect(sendTaskBackForFix).not.toHaveBeenCalled();
     expect(claimedStages[0]).toBe(2);
-    expect(row).not.toHaveProperty("awaitingApprovalReason");
+    expect(row).toMatchObject({ status: "awaiting-approval", awaitingApprovalReason: "code-review-non-convergence" });
   });
 
   it("routes an unchanged inline Code Review through a distinct fallback after discarding an identical dedicated target", async () => {
@@ -259,7 +261,7 @@ describe("FN-149 remediation graph ladder entry", () => {
     expect(row).toMatchObject({ reviewConvergenceStage: 1, modelProvider: "fallback-provider", modelId: "fallback-model" });
   });
 
-  it("routes the unbounded Plan Review safety cap through the ladder before parking", async () => {
+  it("parks the unbounded Plan Review safety cap before another ladder dispatch", async () => {
     const row = structuredClone(live);
     row.column = "todo";
     row.worktree = "/tmp/plan-review";
@@ -290,8 +292,8 @@ describe("FN-149 remediation graph ladder entry", () => {
       phase: "pre-merge", status: "failed", verdict: "REVISE", nodeId: "plan-review", stepName: "Plan Review", feedback: "Revise plan",
     })).resolves.toBe(true);
 
-    expect(sendTaskBackForFix).toHaveBeenCalledOnce();
-    expect(parkPlanReviewReplanCapExhausted).not.toHaveBeenCalled();
+    expect(sendTaskBackForFix).not.toHaveBeenCalled();
+    expect(parkPlanReviewReplanCapExhausted).toHaveBeenCalledWith(row.id, "0", 0, "Revise plan");
   });
 
   it("makes the restart-recovery requester lifecycle-effective after budget exhaustion", async () => {
@@ -319,11 +321,14 @@ describe("FN-149 remediation graph ladder entry", () => {
       getRunContextFor: () => undefined,
       resolveFailedPreMergeWorkflowStepBudget: vi.fn(async () => ({ unbounded: false, max: 1, attempts: 1, label: "1", key: "code-review" })),
       sendTaskBackForFix,
-    } as any, row)).resolves.toBe(true);
+    } as any, row)).resolves.toBe(false);
 
-    expect(sendTaskBackForFix).toHaveBeenCalledOnce();
-    expect(row.reviewConvergenceStage).toBe(1);
-    expect(row).not.toHaveProperty("awaitingApprovalReason");
+    expect(sendTaskBackForFix).not.toHaveBeenCalled();
+    expect(row).toMatchObject({
+      reviewConvergenceStage: 3,
+      status: "awaiting-approval",
+      awaitingApprovalReason: "code-review-non-convergence",
+    });
   });
 
   it("routes an unchanged restart-recovery review through the distinct fallback candidate", async () => {
@@ -355,7 +360,7 @@ describe("FN-149 remediation graph ladder entry", () => {
 
     await expect(recoverFailedPreMergeWorkflowStep({
       store, getRunContextFor: () => undefined,
-      resolveFailedPreMergeWorkflowStepBudget: vi.fn(async () => ({ unbounded: true, max: Infinity, attempts: 4, label: "unbounded", key: "code-review" })),
+      resolveFailedPreMergeWorkflowStepBudget: vi.fn(async () => ({ unbounded: true, max: 8, attempts: 4, label: "unbounded (absolute cap 8)", key: "code-review" })),
       sendTaskBackForFix,
     } as any, row)).resolves.toBe(true);
 
@@ -386,7 +391,7 @@ describe("FN-149 remediation graph ladder entry", () => {
 
     await expect(recoverFailedPreMergeWorkflowStep({
       store, getRunContextFor: () => undefined,
-      resolveFailedPreMergeWorkflowStepBudget: vi.fn(async () => ({ unbounded: true, max: Infinity, attempts: 4, label: "unbounded", key: "code-review" })),
+      resolveFailedPreMergeWorkflowStepBudget: vi.fn(async () => ({ unbounded: true, max: 8, attempts: 4, label: "unbounded (absolute cap 8)", key: "code-review" })),
       sendTaskBackForFix,
     } as any, row)).resolves.toBe(false);
 
@@ -408,7 +413,7 @@ describe("FN-149 remediation graph ladder entry", () => {
     await expect(recoverFailedPreMergeWorkflowStep({
       store,
       getRunContextFor: () => undefined,
-      resolveFailedPreMergeWorkflowStepBudget: vi.fn(async () => ({ unbounded: true, max: Infinity, attempts: 0, label: "unbounded", key: "code-review" })),
+      resolveFailedPreMergeWorkflowStepBudget: vi.fn(async () => ({ unbounded: true, max: 8, attempts: 0, label: "unbounded (absolute cap 8)", key: "code-review" })),
       sendTaskBackForFix,
     } as any, row)).resolves.toBe(true);
 
@@ -453,7 +458,7 @@ describe("FN-149 remediation graph ladder entry", () => {
     await expect(recoverFailedPreMergeWorkflowStep({
       store,
       getRunContextFor: () => undefined,
-      resolveFailedPreMergeWorkflowStepBudget: vi.fn(async () => ({ unbounded: true, max: Infinity, attempts: 0, label: "unbounded", key: "code-review" })),
+      resolveFailedPreMergeWorkflowStepBudget: vi.fn(async () => ({ unbounded: true, max: 8, attempts: 0, label: "unbounded (absolute cap 8)", key: "code-review" })),
       sendTaskBackForFix: (...args: Parameters<typeof sendTaskBackForFix> extends [unknown, ...infer Rest] ? Rest : never) =>
         sendTaskBackForFix(sendBackDeps as never, ...args),
     } as any, row)).resolves.toBe(true);
@@ -468,7 +473,7 @@ describe("FN-149 remediation graph ladder entry", () => {
     expect(store.updateTask.mock.calls.every(([, patch]) => !("worktree" in patch))).toBe(true);
   });
 
-  it("uses the failing workspace checkout for a stage-one convergence bounce", async () => {
+  it("does not bounce a workspace checkout after budget exhaustion", async () => {
     const row = workspaceLive();
     const sendTaskBackForFix = vi.fn(async () => undefined);
     const store = {
@@ -494,10 +499,10 @@ describe("FN-149 remediation graph ladder entry", () => {
 
     await expect(routeReviewConvergenceLadder({ store, getRunContextFor: () => undefined, sendTaskBackForFix } as any, row.id, {
       kind: "budget-exhausted", workflowStepId: "code-review", stepName: "Code Review", feedback: "Fix it", findings: row.workflowStepResults[0].findings, attempt: 1, max: 1,
-    })).resolves.toBe("escalated");
+    })).resolves.toBe("human-escalated");
 
-    expect(sendTaskBackForFix.mock.calls[0]?.[1]).toBe("/tmp/mult-029/repo2");
-    expect(sendTaskBackForFix.mock.calls[0]?.[9]).toBe(false);
+    expect(sendTaskBackForFix).not.toHaveBeenCalled();
+    expect(row).toMatchObject({ status: "awaiting-approval", awaitingApprovalReason: "code-review-non-convergence" });
   });
 
   it("reaches workspace arbitration through the stage-two convergence rung", async () => {
@@ -856,7 +861,7 @@ describe("FN-225 definite empty review entry points", () => {
     await expect(recoverFailedPreMergeWorkflowStep({
       store, getRunContextFor: () => undefined,
       resolveFailedPreMergeWorkflowStepBudget: vi.fn(async () => ({
-        unbounded: true, max: Infinity, attempts: 0, label: "unbounded", key: "code-review",
+        unbounded: true, max: 8, attempts: 0, label: "unbounded (absolute cap 8)", key: "code-review",
       })),
       appendReviewRemediationSteps,
       sendTaskBackForFix,
@@ -875,7 +880,7 @@ describe("FN-225 definite empty review entry points", () => {
     await expect(recoverFailedPreMergeWorkflowStep({
       store, getRunContextFor: () => undefined,
       resolveFailedPreMergeWorkflowStepBudget: vi.fn(async () => ({
-        unbounded: true, max: Infinity, attempts: 0, label: "unbounded", key: "code-review",
+        unbounded: true, max: 8, attempts: 0, label: "unbounded (absolute cap 8)", key: "code-review",
       })),
       appendReviewRemediationSteps: vi.fn(async () => "released-no-actionable-findings"),
       sendTaskBackForFix,

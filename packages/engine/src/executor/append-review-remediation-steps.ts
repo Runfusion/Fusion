@@ -1,4 +1,5 @@
 import {
+  ABSOLUTE_MAX_AUTOMATIC_REVIEW_REVISIONS,
   buildStepLedgerReopenLog,
   DEFAULT_MAX_POST_REVIEW_FIXES,
   formatRemediationStepName,
@@ -150,7 +151,7 @@ export async function appendReviewRemediationStepsWithResolvedAccounting(
       revisionKey: optionalStepRevisionKey(info.nodeId, info.stepName),
       stepName: info.stepName,
       status: info.status,
-      maxRevisions: budget.unbounded ? "unbounded" : budget.max,
+      maxRevisions: budget.max,
       expectedWorkflowStepId: failed?.workflowStepId,
       expectedReviewEpisodeIdentity,
       ...(!failed ? { expectedTaskUpdatedAt: task.updatedAt } : {}),
@@ -260,6 +261,9 @@ export async function appendReviewRemediationSteps(
   appended = [];
   const publish = deps.store.publishReviewRemediationFenced?.bind(deps.store);
   const claim = options.attemptClaim;
+  const effectiveMaxRevisions = claim.maxRevisions === "unbounded"
+    ? ABSOLUTE_MAX_AUTOMATIC_REVIEW_REVISIONS
+    : Math.min(claim.maxRevisions, ABSOLUTE_MAX_AUTOMATIC_REVIEW_REVISIONS);
   const initialExpectedResult = (task.workflowStepResults ?? []).find((result) =>
     result.workflowStepId === (claim.expectedWorkflowStepId ?? info.nodeId)
     && result.status === "failed",
@@ -337,7 +341,7 @@ export async function appendReviewRemediationSteps(
         }
         return null;
       }
-      if (claim.maxRevisions !== "unbounded" && attemptCount >= claim.maxRevisions) {
+      if (attemptCount >= effectiveMaxRevisions) {
         budgetExhausted = true;
         appended = [];
         return null;
@@ -346,7 +350,7 @@ export async function appendReviewRemediationSteps(
       const nextPrompt = widenPromptFileScopeContent(current.prompt ?? prompt, remediationDeclaredFiles(appended));
       const attemptEntry = {
         timestamp: new Date().toISOString(),
-        action: `Review gate ${gate} requested named remediation (attempt ${attemptCount + 1}/${claim.maxRevisions})`,
+        action: `Review gate ${gate} requested named remediation (attempt ${attemptCount + 1}/${effectiveMaxRevisions})`,
         outcome: optionalStepRevisionLogOutcome(
           `Step: ${claim.stepName}\nStatus: ${claim.status}`,
           claim.revisionKey,

@@ -75,6 +75,9 @@ export {
 } from "./task-predicates.js";
 export {
   graphFailureErrorTexts,
+  graphFailureNodeErrorText,
+  formatGraphFailureDiagnostic,
+  MAX_VISIBLE_GRAPH_NODE_ERROR_LENGTH,
   recordedNodeValue,
   graphFailureValue,
   extractUnusableWorktreeGraphFailure,

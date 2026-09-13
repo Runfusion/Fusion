@@ -115,6 +115,8 @@ export {
 } from "./plugins/plugin-prompt-condition.js";
 export type { PromptConditionEvaluationResult } from "./plugins/plugin-prompt-condition.js";
 export { buildPreservedPlanRespecifyPatch, computePlanApprovalFingerprint, isPlanReviewSatisfied, resolvePlanApprovalRequired, supersedePlanReviewResults } from "./planner/plan-approval.js";
+export { PLAN_PREMISE_KINDS, parsePlanPremises } from "./planner/plan-premises.js";
+export type { PlanPremise, PlanPremiseKind, PlanPremisesParseResult } from "./planner/plan-premises.js";
 export { canonicalizePlan, createCurrentPlanEvidence, diffSpecLocks, isSpecLockActive, isUnavailablePlanLockError, PLAN_LOCK_UNAVAILABLE_DIAGNOSTIC, SPEC_LOCK_PARSER_VERSION, UnavailablePlanLockError } from "./planner/spec-lock.js";
 export { evaluateSpecDrift, hasPriorLockDivergence, isCurrentSpecDriftReport } from "./planner/drift-report.js";
 export type { CanonicalPlan, CanonicalPlanSection, CurrentPlanEvidence, SpecLock, SpecLockDiff, SpecLockSection } from "./planner/spec-lock.js";
@@ -281,6 +283,7 @@ export type {
 export {
   DEFAULT_MAX_REWORK_CYCLES,
   MAX_REWORK_CYCLES_CAP,
+  ABSOLUTE_MAX_AUTOMATIC_REVIEW_REVISIONS,
   resolveMaxReworkCycles,
   resolveOptionalStepRevisionBudget,
 } from "./workflows/workflow-ir-types.js";

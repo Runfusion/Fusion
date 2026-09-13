@@ -1026,6 +1026,17 @@ In this pnpm workspace, one dependency version can resolve to several peer-hashe
 - Use the canonical taxonomy in **What NOT to write** and **What TO keep unconditionally** when deciding trim vs keep.
 - See `docs/test-speed-audit-FN-5048.md` for the measured baseline offender list and optimization priorities.
 
+### Plan premise contract
+
+Every implementation PROMPT.md carries a short `## Plan Premises` section. Each bullet is exactly one JSON object from this closed grammar:
+
+- `{"kind":"file-exists","path":"project/relative/path"}`
+- `{"kind":"file-absent","path":"project/relative/path"}`
+- `{"kind":"text-present","path":"project/relative/path","literal":"exact text"}`
+- `{"kind":"text-absent","path":"project/relative/path","literal":"exact text"}`
+
+Choose one to a few facts that the implementation actually assumes and that can be disproved against the current main checkout. Paths must be relative, normalized, non-glob paths inside the project; text literals are exact, non-empty strings. Do not use prose, commands, regular expressions, JavaScript, goals, or restated steps. Parser tests cover all four kinds plus absent/empty sections, malformed JSON, extra keys, unknown kinds, traversal, absolute paths, globs, and command-shaped lines.
+
 ### Surface Enumeration checklist
 
 Copy this checklist into a bug-fix or UI-affordance add/remove task's `## Surface Enumeration` section and make the implementation tests prove the invariant across every checked surface. This checklist applies to bug-fix tasks and UI-affordance add/remove tasks that add, remove, or restructure icons, buttons, chevrons/arrows, toggles, badges, menu entries, or click targets. See `AGENTS.md` → **Standing Rule: Fix the Invariant, Not the Repro (FN-5893)** for the enforced planning/review contract.

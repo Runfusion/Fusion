@@ -196,7 +196,7 @@ describe("executor consecutive tool-failure retry (FN-7996)", () => {
     expect(store.updateTaskAtomic).toHaveBeenCalledWith(task.id, expect.any(Function), undefined);
     expect(task).toMatchObject({
       status: "failed",
-      error: "Workflow graph terminated with failure at node 'steps#0:step-execute'",
+      error: "Workflow graph terminated with failure at node 'steps#0:step-execute' (failure)",
     });
   });
 
@@ -318,12 +318,12 @@ describe("executor consecutive tool-failure retry (FN-7996)", () => {
     await (disabled.executor as any).handleGraphFailure(disabled.task, graphFailure());
     expect(disabled.store.claimNextToolFailureRetry).not.toHaveBeenCalled();
     expect(disabled.store.updateTaskAtomic).toHaveBeenCalled();
-    expect(disabled.task).toMatchObject({ status: "failed", error: "Workflow graph terminated with failure at node 'steps#0:step-execute'" });
+    expect(disabled.task).toMatchObject({ status: "failed", error: "Workflow graph terminated with failure at node 'steps#0:step-execute' (failure)" });
 
     const interleaved = makeHarness({ retries: 2, entries: [{ type: "tool_error" }, { type: "tool_result" }] });
     await (interleaved.executor as any).handleGraphFailure(interleaved.task, graphFailure());
     expect(interleaved.store.claimNextToolFailureRetry).not.toHaveBeenCalled();
     expect(interleaved.store.updateTaskAtomic).toHaveBeenCalled();
-    expect(interleaved.task).toMatchObject({ status: "failed", error: "Workflow graph terminated with failure at node 'steps#0:step-execute'" });
+    expect(interleaved.task).toMatchObject({ status: "failed", error: "Workflow graph terminated with failure at node 'steps#0:step-execute' (failure)" });
   });
 });

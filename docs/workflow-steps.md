@@ -4,11 +4,11 @@
 
 Workflow steps are reusable quality gates that run around task completion.
 
-## Overlap delta plan revalidation
+## Plan premises and overlap briefing
 
-A released file-scope wait can produce a graph-owned delta revalidation before the original node resumes. Its cache identity combines the approved plan with the exact predecessor deliveries and affected-file proof, so an ordinary Plan Review approval cannot satisfy it. The reviewer sees the approved plan, preserved progress, factual delivery references, and only the relevant delta; it must judge whether that delta invalidates an explicit promise rather than reviewing current implementation work.
+Every planned implementation declares a short `## Plan Premises` section of atomic file/text facts. Plan Review rejects absent, malformed, or non-verifiable facts. Before a planning/hold card first enters WIP, the release gate evaluates those facts against the current main checkout; a false or invalid fact requests the existing planning loop, while an unavailable read stays retryable and fail-closed.
 
-`APPROVE` preserves the plan, SpecLock, completed steps, checkout, and checkpoint. `REVISE` is accepted only when it names the invalidated promise and enters targeted repair without erasing valid history; unavailable, malformed, timed-out, or cancelled reviews remain retryable and consume no replan verdict. The graph retains the original real node and sole active task continuation throughout, and pause, human approval, capacity, and `autoMerge:false` controls remain authoritative.
+File-scope overlap serialization remains independent. After a predecessor lands, Fusion still proves checkout freshness and injects a factual overlap briefing into the resumed execution context, but it does not dispatch a synthetic reviewer or targeted plan-repair model. The plan-premise release gate is the only stale-plan admission authority.
 
 ## Workflow overview
 

@@ -1,6 +1,7 @@
 import "./executor-test-helpers.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  ABSOLUTE_MAX_AUTOMATIC_REVIEW_REVISIONS,
   getBuiltinWorkflow,
   hasOpenEquivalentRemediationStep,
   planRemediationPlacement,
@@ -151,6 +152,23 @@ describe("unbounded review remediation waves", () => {
     expect(Math.max(...(h.task.steps ?? []).map((step) => step.remediation?.wave ?? 0))).toBe(5);
     expect(h.task.log?.filter((entry) => entry.action.includes("requested named remediation"))).toHaveLength(5);
     expect(h.store.logEntry.mock.calls.flat().join("\n")).not.toContain("wave-exhausted");
+  });
+
+  it("parks unbounded Code Review at the absolute cap without an N+1 dispatch", async () => {
+    const h = harness();
+    for (let round = 1; round <= ABSOLUTE_MAX_AUTOMATIC_REVIEW_REVISIONS; round += 1) {
+      await expect(h.revise(`bounded-fingerprint-${round}`)).resolves.toBe(true);
+      h.finishPending();
+    }
+
+    await expect(h.revise("bounded-fingerprint-n-plus-one")).resolves.toBe(false);
+
+    expect(h.sendTaskBackForFix).toHaveBeenCalledTimes(ABSOLUTE_MAX_AUTOMATIC_REVIEW_REVISIONS);
+    expect(h.task).toMatchObject({
+      status: "awaiting-approval",
+      awaitingApprovalReason: "code-review-non-convergence",
+      reviewConvergenceStage: 3,
+    });
   });
 
   it("routes an identical review fingerprint to convergence without appending", async () => {

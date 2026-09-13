@@ -18,7 +18,13 @@
  * project-scoped remediation fence. The replay, ledger reopen marker, keyed attempt, and aggregate
  * increment are indivisible; an exhausted, superseded, or duplicate request changes none of them.
  */
-import { buildStepLedgerReopenLog, type RunMutationContext, type Task, type TaskStore } from "@fusion/core";
+import {
+  ABSOLUTE_MAX_AUTOMATIC_REVIEW_REVISIONS,
+  buildStepLedgerReopenLog,
+  type RunMutationContext,
+  type Task,
+  type TaskStore,
+} from "@fusion/core";
 import {
   countOptionalStepRevisionAttempts,
   hasReviewRemediationAttemptForEpisode,
@@ -74,6 +80,11 @@ export async function reopenLastStepForRevision(
     ?? (initialExpected ? reviewRemediationEpisodeIdentity(initialExpected) : undefined);
   const expectedColumn = accounting?.expectedColumn ?? _task.column;
   const expectedStatus = accounting?.expectedStatus ?? _task.status;
+  const effectiveMaxRevisions = accounting?.maxRevisions === "unbounded"
+    ? ABSOLUTE_MAX_AUTOMATIC_REVIEW_REVISIONS
+    : accounting
+      ? Math.min(accounting.maxRevisions, ABSOLUTE_MAX_AUTOMATIC_REVIEW_REVISIONS)
+      : undefined;
 
   const mutate = (current: Task) => {
     if (accounting) {
@@ -104,7 +115,7 @@ export async function reopenLastStepForRevision(
     }
     if (accounting) {
       const attempts = countOptionalStepRevisionAttempts(current, accounting.revisionKey, accounting.stepName);
-      if (accounting.maxRevisions !== "unbounded" && attempts >= accounting.maxRevisions) {
+      if (effectiveMaxRevisions !== undefined && attempts >= effectiveMaxRevisions) {
         refusal = "budget-exhausted";
         return null;
       }
@@ -118,7 +129,7 @@ export async function reopenLastStepForRevision(
       : 0;
     const attemptEntry = accounting ? {
       timestamp: new Date().toISOString(),
-      action: `Auto-reviving in-review task with failed pre-merge workflow step (attempt ${attemptCount + 1}/${accounting.maxRevisions})`,
+      action: `Auto-reviving in-review task with failed pre-merge workflow step (attempt ${attemptCount + 1}/${effectiveMaxRevisions})`,
       outcome: optionalStepRevisionLogOutcome(
         `Step: ${accounting.stepName}\nStatus: ${accounting.status}`,
         accounting.revisionKey,

@@ -177,9 +177,7 @@ export async function synchronizeOverlapWaitBeforeExecution(input: {
   const freshness = expectedShas.length ? "proven" : "not-required";
   previouslyFreshRepositories.add(repository);
   everyRepositoryFresh = [...requiredRepositories].every((required) => previouslyFreshRepositories.has(required));
-  const finalPhase = everyRepositoryFresh
-    ? analysis.decision === "revalidate" || work.some((episode) => episode.receipt?.decision === "revalidate") ? "revalidation-pending" : "ready"
-    : "freshness-pending";
+  const finalPhase = everyRepositoryFresh ? "ready" : "freshness-pending";
   await persist(claims, finalPhase, freshness);
   if (finalPhase === "ready") {
     void emitBoundedRunAudit(input.store as TaskStore, {
@@ -201,7 +199,7 @@ export async function synchronizeOverlapWaitBeforeExecution(input: {
   }
   return { analysis, context: buildOverlapResumeContext(analysis), episodeIds: claims.map((claim) => claim.episodeId) };
 
-  async function persist(claimed: TaskOverlapWait[], phase: "ready" | "freshness-pending" | "revalidation-pending", freshness: "proven" | "not-required" | "conflict" | "unavailable") {
+  async function persist(claimed: TaskOverlapWait[], phase: "ready" | "freshness-pending", freshness: "proven" | "not-required" | "conflict" | "unavailable") {
     await claimCurrentGeneration();
     for (const claim of claims) {
       const live = await input.store.getTask(input.task.id);
@@ -229,9 +227,9 @@ export async function synchronizeOverlapWaitBeforeExecution(input: {
         owner: input.owner,
         phase,
         receipt: {
-          decision: claim.receipt?.decision === "revalidate" || analysis.decision === "revalidate" || analysis.decision === "freshness-pending"
-            ? "revalidate"
-            : claim.receipt?.decision === "briefing" || analysis.decision === "briefing" ? "briefing" : "resume",
+          decision: claim.receipt?.decision === "briefing" || analysis.decision === "briefing" || analysis.decision === "freshness-pending"
+            ? "briefing"
+            : "resume",
           freshness: everyRepositoryFresh ? freshness : freshness === "conflict" ? "conflict" : "pending",
           commonFiles: [...new Set([...(claim.receipt?.commonFiles ?? []), ...analysis.commonFiles])],
           deliveryProofs: [

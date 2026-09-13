@@ -12,7 +12,6 @@ import { runGraphCustomNode } from "../executor/run-graph-custom-node.js";
 import { acquireTaskWorktree } from "../worktree/worktree-acquisition.js";
 import { synchronizeOverlapWaitBeforeExecution } from "../executor/overlap-resume-gate.js";
 import { WorkflowGraphExecutor } from "../workflows/workflow-graph-executor.js";
-import { revalidatePendingOverlapWaitsAtGraphNode } from "../workflows/overlap-plan-revalidation.js";
 import { createPlanningContinuationDispatcher, createRuntimeSelfHealingManager } from "../runtimes/in-process-runtime.js";
 import { finalizeMerged } from "../merge/merger-ai.js";
 
@@ -204,7 +203,7 @@ describe("overlap resume production chain", () => {
         if (await blockOuterDispatchWhenFileScopeLeaseHeld({ store: h.store, getRunContextFor: () => undefined }, candidate)) return;
         graphEntries++;
         const acquisition = await acquireTaskWorktree({ task: h.blocked, rootDir: repo.root, store: h.store, settings: { refreshWorktreeBaseBeforeExecution: true } as any, runInitCommand: false });
-        expect(h.episode).toMatchObject({ phase: "revalidation-pending", receipt: { decision: "revalidate", briefing: expect.stringContaining("FN-A") } });
+        expect(h.episode).toMatchObject({ phase: "ready", receipt: { decision: "briefing", briefing: expect.stringContaining("FN-A") } });
         const executeWorkflowStep = vi.fn(async (_live: Task, step: any) => { transportPrompt = step.prompt; return { success: true, output: "done" }; });
         const customDeps = {
           store: h.store, rootDir: repo.root, workspaceConfig: null, options: {}, graphUnattendedRuns: new Set(), getRunContextFor: () => undefined,
@@ -214,16 +213,6 @@ describe("overlap resume production chain", () => {
         } as any;
         const graph = new WorkflowGraphExecutor({
           handlers: { prompt: (node, context) => runGraphCustomNode(customDeps, node, context.task, {}, undefined, context) },
-          beforeNodeExecution: async (node) => {
-            const outcome = await revalidatePendingOverlapWaitsAtGraphNode({
-              task: h.blocked,
-              store: h.store,
-              nodeId: node.id,
-              review: async () => ({ success: true, verdict: "APPROVE" }),
-              repair: async () => false,
-            });
-            return outcome === "approved" || outcome === "not-required" ? undefined : { outcome: "failure", value: `overlap-plan-revalidation-${outcome}` };
-          },
         });
         const ir: WorkflowIr = { version: "v2", name: "overlap-production-chain", columns: [{ id: "todo", name: "Ready", traits: [] }], nodes: [{ id: "start", kind: "start" }, { id: "ordinary-custom-work", kind: "prompt", config: { prompt: "Continue implementation", toolMode: "coding" } }, { id: "end", kind: "end" }], edges: [{ from: "start", to: "ordinary-custom-work" }, { from: "ordinary-custom-work", to: "end" }] };
         await graph.run(h.blocked as any, { experimentalFeatures: { workflowGraphExecutor: true } }, ir);
@@ -266,7 +255,7 @@ describe("overlap resume production chain", () => {
     expect(readFileSync(join(repo.worktree, "shared.txt"), "utf8")).toContain("C1");
     expect(transportPrompt).toContain("Changed the shared contract");
     expect(transportPrompt).toContain("shared.txt");
-    expect(h.episode).toMatchObject({ phase: "delivered", receipt: { decision: "revalidate", freshness: "proven", revalidationVerdict: "APPROVE", contextDeliveredAt: expect.any(String) } });
+    expect(h.episode).toMatchObject({ phase: "delivered", receipt: { decision: "briefing", freshness: "proven", contextDeliveredAt: expect.any(String) } });
     expect(h.blocked.steps[0]?.status).toBe("done");
     manager.stop();
   });

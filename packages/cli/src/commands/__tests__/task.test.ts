@@ -129,6 +129,9 @@ vi.mock("@fusion/engine", () => ({
   aiMergeTask: vi.fn(),
   runAiMerge: vi.fn(),
   landWorkspaceTask: vi.fn(),
+  admitTaskToWip: vi.fn(),
+  isFirstPlanningToWipAdmission: vi.fn(() => false),
+  planTaskWorktreePath: vi.fn(),
   withWorkspaceMergeDispatchLease: vi.fn(async (_store: unknown, _taskId: string, body: (handle?: unknown) => unknown) => body(undefined)),
   clearOwnedMergeStamp: vi.fn().mockResolvedValue(false),
   reconcileUnownedStaleMergeStamp: vi.fn().mockResolvedValue(false),
@@ -270,7 +273,7 @@ import {
 import { GitHubClient, generatePrMetadata, isGitHubIssueAlreadyImported } from "@fusion/dashboard";
 import { createSession, submitResponse } from "@fusion/dashboard/planning";
 import { resolveProject, createLocalStore } from "../../project-context.js";
-import { aiMergeTask, runAiMerge, landWorkspaceTask, reconcileUnownedStaleMergeStamp, clearOwnedMergeStamp } from "@fusion/engine";
+import { admitTaskToWip, aiMergeTask, isFirstPlanningToWipAdmission, planTaskWorktreePath, runAiMerge, landWorkspaceTask, reconcileUnownedStaleMergeStamp, clearOwnedMergeStamp } from "@fusion/engine";
 
 const mockedExec = vi.mocked(exec);
 
@@ -291,6 +294,8 @@ function makeTask(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(isFirstPlanningToWipAdmission).mockReturnValue(false);
+  vi.mocked(admitTaskToWip).mockReset();
   vi.mocked(resolveProject).mockRejectedValue(new Error("No project context"));
   vi.mocked(runDeterministicDuplicateGuard).mockResolvedValue({
     action: "proceed",
@@ -1208,6 +1213,7 @@ describe("project-aware task command behavior", () => {
   });
 
   it("runTaskMove uses resolved project store when project name is provided", async () => {
+    const current = makeTask({ id: "FN-123", column: "review" });
     const mockMoveTask = vi.fn().mockResolvedValue(makeTask({ id: "FN-123", column: "done" }));
 
     vi.mocked(resolveProject).mockResolvedValue({
@@ -1215,7 +1221,11 @@ describe("project-aware task command behavior", () => {
       projectPath: "/test",
       projectName: "demo-project",
       isRegistered: true,
-      store: { moveTask: mockMoveTask } as unknown as TaskStore,
+      store: {
+        getTask: vi.fn().mockResolvedValue(current),
+        getTaskWorkflowSelection: vi.fn(() => undefined),
+        moveTask: mockMoveTask,
+      } as unknown as TaskStore,
     });
 
     await runTaskMove("FN-123", "done", "demo-project");
@@ -1224,6 +1234,105 @@ describe("project-aware task command behavior", () => {
     // FNXC:TaskMovement 2026-07-26-12:35: `fn task move` is a human board action and
     // must carry the user move source so user-move semantics (hard cancel) apply.
     expect(mockMoveTask).toHaveBeenCalledWith("FN-123", "done", { moveSource: "user" });
+  });
+
+  it("routes a legacy-named custom WIP column through premise admission", async () => {
+    const current = makeTask({ id: "FN-375-C", column: "planning" });
+    const moved = makeTask({ id: current.id, column: "review" });
+    const moveTask = vi.fn();
+    const store = {
+      getTask: vi.fn().mockResolvedValue(current),
+      getTaskWorkflowSelection: vi.fn(() => ({ workflowId: "custom-legacy-wip", stepIds: [] })),
+      getWorkflowDefinition: vi.fn().mockResolvedValue({
+        id: "custom-legacy-wip",
+        ir: {
+          version: "v2",
+          columns: [
+            { id: "planning", name: "Planning", traits: [{ trait: "hold", config: { release: "manual" } }] },
+            { id: "review", name: "Build", traits: [{ trait: "wip" }] },
+          ],
+          nodes: [],
+          edges: [],
+        },
+      }),
+      getSettings: vi.fn().mockResolvedValue({}),
+      getRootDir: vi.fn(() => "/test"),
+      moveTask,
+    };
+    vi.mocked(resolveProject).mockResolvedValue({
+      projectId: "proj_test", projectPath: "/test", projectName: "demo-project", isRegistered: true,
+      store: store as unknown as TaskStore,
+    });
+    vi.mocked(isFirstPlanningToWipAdmission).mockReturnValue(true);
+    vi.mocked(admitTaskToWip).mockResolvedValue({ released: true, task: moved } as never);
+
+    await runTaskMove(current.id, "review", "demo-project");
+
+    expect(admitTaskToWip).toHaveBeenCalledWith(
+      store,
+      expect.objectContaining({ now: expect.any(Function), allocateWorktree: expect.any(Function) }),
+      current,
+      "review",
+      expect.objectContaining({ version: "v2" }),
+      expect.objectContaining({ expectedColumn: "planning", moveSource: "user", workflowMoveSource: "cli-plan-premise-release" }),
+    );
+    expect(moveTask).not.toHaveBeenCalled();
+  });
+
+  it("fails closed before move or allocation when a selected workflow definition is unavailable", async () => {
+    const current = makeTask({ id: "FN-375-U", column: "planning" });
+    const moveTask = vi.fn();
+    const getSettings = vi.fn().mockResolvedValue({});
+    const store = {
+      getTask: vi.fn().mockResolvedValue(current),
+      getTaskWorkflowSelection: vi.fn(() => ({ workflowId: "custom-unavailable", stepIds: [] })),
+      getWorkflowDefinition: vi.fn().mockRejectedValue(new Error("temporary definition read failure")),
+      getSettings,
+      getRootDir: vi.fn(() => "/test"),
+      moveTask,
+    };
+    vi.mocked(resolveProject).mockResolvedValue({
+      projectId: "proj_test", projectPath: "/test", projectName: "demo-project", isRegistered: true,
+      store: store as unknown as TaskStore,
+    });
+
+    await expect(runTaskMove(current.id, "review", "demo-project")).rejects.toThrow(
+      "The task workflow is temporarily unavailable. Retry this move.",
+    );
+
+    expect(moveTask).not.toHaveBeenCalled();
+    expect(admitTaskToWip).not.toHaveBeenCalled();
+    expect(getSettings).not.toHaveBeenCalled();
+    expect(planTaskWorktreePath).not.toHaveBeenCalled();
+  });
+
+  it("does not raw-move when canonical premise admission rejects a stale plan", async () => {
+    const current = makeTask({ id: "FN-375-S", column: "specified" });
+    const moveTask = vi.fn();
+    const store = {
+      getTask: vi.fn().mockResolvedValue(current),
+      getTaskWorkflowSelection: vi.fn(() => undefined),
+      getWorkflowDefinition: vi.fn(),
+      getSettings: vi.fn().mockResolvedValue({}),
+      getRootDir: vi.fn(() => "/test"),
+      moveTask,
+    };
+    vi.mocked(resolveProject).mockResolvedValue({
+      projectId: "proj_test", projectPath: "/test", projectName: "demo-project", isRegistered: true,
+      store: store as unknown as TaskStore,
+    });
+    vi.mocked(isFirstPlanningToWipAdmission).mockReturnValue(true);
+    vi.mocked(admitTaskToWip).mockResolvedValue({
+      released: false,
+      task: current,
+      rejection: "plan-premise-stale",
+      detail: "Plan premise is no longer true",
+    } as never);
+
+    await expect(runTaskMove(current.id, "in-progress", "demo-project")).rejects.toThrow("Plan premise is no longer true");
+
+    expect(admitTaskToWip).toHaveBeenCalledOnce();
+    expect(moveTask).not.toHaveBeenCalled();
   });
 
   it("runTaskMove passes the user source through to the task-move disposer seam (hard cancel)", async () => {
@@ -1240,6 +1349,8 @@ describe("project-aware task command behavior", () => {
     const { disposeTaskBeforeMove, registerTaskMoveDisposer } = await import("@fusion/core");
     const disposer = vi.fn().mockResolvedValue(undefined);
     const fakeStore = {
+      getTask: vi.fn().mockResolvedValue(makeTask({ id: "FN-123", column: "in-progress" })),
+      getTaskWorkflowSelection: vi.fn(() => undefined),
       moveTask: vi.fn(
         async (id: string, column: string, options?: { moveSource?: "user" | "engine" | "scheduler" }) => {
           const task = makeTask({ id, column: "in-progress" });
@@ -1264,7 +1375,7 @@ describe("project-aware task command behavior", () => {
       store: fakeStore as unknown as TaskStore,
     });
 
-    await runTaskMove("FN-123", "in-progress", "demo-project");
+    await runTaskMove("FN-123", "done", "demo-project");
 
     expect(disposer).toHaveBeenCalledOnce();
     expect(disposer).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-123" }));

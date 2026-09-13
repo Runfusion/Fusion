@@ -2,11 +2,9 @@
  * FNXC:CodeOrganization 2026-08-03-09:50:
  * parkPlanReviewReplanCapExhausted peeled from TaskExecutor (U4).
  *
- * FNXC:PlanReviewReplanCap 2026-07-19-00:10:
- * U3 — the graph is the sole Plan Review owner (triage's out-of-graph gate and
- * its blockAfterPlanReviewRevise cap-park are deleted). Re-own the replan-cap
- * escalation here: when the plan-review replan budget (node `maxRevisions` /
- * `planReviewReplanCap` setting, or the unbounded-default hard cap) is exhausted,
+ * FNXC:PlanReviewReplanCap 2026-09-13-04:34:
+ * The graph is the sole Plan Review owner. When the lowest applicable limit from
+ * node `maxRevisions`, `planReviewReplanCap`, and the shared absolute backstop is exhausted,
  * park the task at `awaiting-approval` with reason `plan-review-replan-cap` so a
  * persistent planner/reviewer disagreement surfaces to a human instead of looping
  * forever or silently sitting in place. The reason string is special-cased by the

@@ -2,8 +2,8 @@
 FNXC:ReviewConvergence 2026-08-22-05:54:
 FN-149 requires an exhausted or unchanged review cycle to take one bounded AI remediation action before reaching its terminal rung. The atomic stage claim prevents concurrent graph and recovery paths from scheduling duplicate bounces.
 
-FNXC:ReviewConvergence 2026-08-28-07:48:
-An exhausted Code Review convergence cycle is advisory, not a human gate. Its terminal rung records and releases the feedback without mutating lifecycle state. A provably empty review input is a separate terminal carve-out: no content was reviewed, so there is no advisory position to release and no remediation or arbitration round can create one. The operator-authored Plan Review replan-cap hold remains the other lifecycle-mutating exception.
+FNXC:ReviewConvergence 2026-09-13-04:34:
+A review budget is a hard dispatch boundary: budget exhaustion skips every additional escalation or arbitration model call and parks visibly. Repeated unchanged feedback may use the bounded convergence ladder, but its terminal rung also parks rather than silently releasing the failed gate. A provably empty review input keeps its separate exact-result terminalization.
 */
 import type { Task, TaskStore, WorkflowReviewFinding } from "@fusion/core";
 import {
@@ -93,10 +93,8 @@ function resolveEscalationDecision(task: Task, settings: Awaited<ReturnType<type
 }
 
 /*
-FNXC:ReviewConvergence 2026-08-28-07:48:
-The task log may retain the compact convergence dossier after automatic routes are exhausted. It
-preserves advisory context for a non-blocking release and supports the separately operator-authored
-Plan Review cap without exposing reviewer prose in run-audit metadata.
+FNXC:ReviewConvergence 2026-09-13-04:34:
+The task log retains a bounded convergence dossier after automatic routes are exhausted. It preserves reviewer, implementer, and arbitration context for the visible operator hold without exposing reviewer prose in run-audit metadata.
 */
 function buildConvergenceDossier(task: Task, stop: ReviewConvergenceStop): string {
   const gate = task.workflowStepResults?.find((result) => result.workflowStepId === stop.workflowStepId);
@@ -172,9 +170,11 @@ export async function routeReviewConvergenceLadder(
     const cycles = current.reviewConvergenceEscalationCount ?? 0;
     const currentStage = current.reviewConvergenceStage ?? 0;
     escalationDecision = resolveEscalationDecision(current, currentSettings);
-    const nextStage = cycles >= REVIEW_CONVERGENCE_MAX_LADDER_CYCLES || currentStage >= 2
+    const nextStage = stop.kind === "budget-exhausted" || stop.kind === "plan-review-cap"
       ? 3
-      : currentStage === 1 ? 2 : 1;
+      : cycles >= REVIEW_CONVERGENCE_MAX_LADDER_CYCLES || currentStage >= 2
+        ? 3
+        : currentStage === 1 ? 2 : 1;
     /*
     FNXC:ReviewConvergence 2026-08-28-11:04:
     Candidate ordering is gated by usability, not the dedicated target's enabled bit: an enabled but
@@ -242,31 +242,27 @@ export async function routeReviewConvergenceLadder(
 
   if (claimedStage === 3) {
     const context = deps.getRunContextFor(taskId);
-    if (stop.kind !== "plan-review-cap") {
-      await deps.store.logEntry(
-        taskId,
-        "Review convergence exhausted — released as non-blocking",
-        buildConvergenceDossier(claimedTask, stop),
-        context,
-      );
-      return "released";
-    }
+    const isPlanReview = stop.kind === "plan-review-cap";
+    const awaitingApprovalReason = isPlanReview
+      ? "plan-review-replan-cap"
+      : "code-review-non-convergence";
     await deps.store.updateTask(taskId, {
       status: "awaiting-approval",
-      awaitingApprovalReason: "plan-review-replan-cap",
+      awaitingApprovalReason,
       error: null,
       nextRecoveryAt: null,
     }, context);
     await deps.store.logEntry(
       taskId,
-      "Plan Review replan cap exhausted — awaiting operator arbitration",
+      isPlanReview
+        ? "Plan Review replan cap exhausted — awaiting operator arbitration"
+        : "Review convergence exhausted — awaiting operator action",
       buildConvergenceDossier(claimedTask, stop),
       context,
     );
     /*
-    FNXC:ReviewConvergence 2026-08-22-06:51:
-    The operator-authored Plan Review cap remains observable without exposing reviewer prose in
-    telemetry. Emit only identifiers, counts, and fixed outcomes; the dossier remains task-log-only.
+    FNXC:ReviewConvergence 2026-09-13-04:34:
+    Every terminal workflow-review cap is observable without exposing reviewer prose in telemetry. Emit only identifiers, counts, and fixed outcomes; the bounded dossier remains task-log-only.
     */
     if (context) await emitBoundedRunAudit(deps.store, {
       taskId, agentId: context.agentId, runId: context.runId, domain: "database",
@@ -276,7 +272,7 @@ export async function routeReviewConvergenceLadder(
         stop: stop.kind,
         stage: 3,
         cycle: claimedTask.reviewConvergenceEscalationCount ?? 0,
-        awaitingApprovalReason: "plan-review-replan-cap",
+        awaitingApprovalReason,
         outcome: "awaiting-approval",
       },
     });
@@ -304,13 +300,19 @@ export async function routeReviewConvergenceLadder(
   if (stop.kind !== "plan-review-cap"
     && stepReopenPolicy === "none"
     && !hasPendingReviewRemediationWork(claimedTask, { stepReopenPolicy })) {
+    await deps.store.updateTask(taskId, {
+      status: "awaiting-approval",
+      awaitingApprovalReason: "code-review-non-convergence",
+      error: null,
+      nextRecoveryAt: null,
+    }, deps.getRunContextFor(taskId));
     await deps.store.logEntry(
       taskId,
-      "Review convergence released — no pending remediation work",
-      "This workflow requires named remediation before returning to implementation.",
+      "Review convergence stopped — no pending remediation work",
+      buildConvergenceDossier(claimedTask, stop),
       deps.getRunContextFor(taskId),
     );
-    return "released";
+    return "human-escalated";
   }
 
   let mode: "alternate-model" | "executor-remediation" | "replan";

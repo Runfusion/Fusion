@@ -3,6 +3,10 @@ import { getLatestFailedPreMergeReviewStep, type TaskDetail, type WorkflowIr } f
 
 import { WorkflowGraphExecutor, type WorkflowNodeHandler } from "../workflows/workflow-graph-executor.js";
 import { workflowStepMissingVerdictNotice } from "../executor/workflow-step-verdict.js";
+import {
+  graphFailureNodeErrorText,
+  MAX_VISIBLE_GRAPH_NODE_ERROR_LENGTH,
+} from "../executor/graph-failure-pure.js";
 
 /*
 FNXC:WorkflowStepResults 2026-07-07-00:00:
@@ -374,5 +378,45 @@ describe("workflow-graph-executor: non-verdict failure diagnostic (Runfusion/Fus
     expect(calls).not.toContain("after");
     const terminal = records.find((r) => r.workflowStepId === "code-review" && r.status === "failed");
     expect(terminal?.status).toBe("failed");
+  });
+});
+
+describe("failed-node diagnostic selection", () => {
+  it.each([
+    {
+      name: "direct parse node",
+      visitedNodeIds: ["earlier", "parse"],
+      context: { "node:earlier:error": "stale secret", "node:parse:error": " repair arm\n did not start " },
+      expected: "repair arm did not start",
+    },
+    {
+      name: "materialized optional group",
+      visitedNodeIds: ["code-review::review"],
+      context: { "node:other:error": "stale", "node:code-review:error": "group dispatch failed" },
+      expected: "group dispatch failed",
+    },
+    {
+      name: "materialized foreach",
+      visitedNodeIds: ["steps#2:step-execute"],
+      context: { "node:prior:error": "stale", "node:steps:error": "step executor crashed" },
+      expected: "step executor crashed",
+    },
+  ])("selects only the $name error", ({ visitedNodeIds, context, expected }) => {
+    expect(graphFailureNodeErrorText({ visitedNodeIds, context } as never)).toBe(expected);
+  });
+
+  it("keeps the generic fallback for empty text and bounds long diagnostics", () => {
+    expect(graphFailureNodeErrorText({
+      visitedNodeIds: ["parse"],
+      context: { "node:stale:error": "must not leak", "node:parse:error": "  \n " },
+    } as never)).toBeUndefined();
+
+    const visible = graphFailureNodeErrorText({
+      visitedNodeIds: ["parse"],
+      context: { "node:parse:error": `prefix-${"x".repeat(2_000)}-secret-tail` },
+    } as never);
+    expect(visible).toHaveLength(MAX_VISIBLE_GRAPH_NODE_ERROR_LENGTH);
+    expect(visible).toMatch(/^prefix-x+…$/);
+    expect(visible).not.toContain("secret-tail");
   });
 });

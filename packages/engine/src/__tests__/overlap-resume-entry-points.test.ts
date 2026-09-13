@@ -34,7 +34,7 @@ describe("overlap resume execution entry points", () => {
     const store = { listTaskOverlapWaits: async () => [
       { phase: "ready", receipt: { briefing: context } },
       { phase: "ready", receipt: { briefing: context } },
-      { phase: "revalidation-pending", receipt: { briefing: "not approved" } },
+      { phase: "analyzing", receipt: { briefing: "not ready" } },
     ] } as any;
     expect(await readOverlapResumeContext(store, task.id)).toBe(context);
   });

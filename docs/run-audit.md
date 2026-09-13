@@ -4,7 +4,7 @@ The run-audit catalogue for the S4 **Reliability, Durability & Observability** d
 
 ## Overlap wait release
 
-`task:overlap-wait-released` is emitted after the transactional overlap receipt becomes ready. Metadata is limited to task/predecessor IDs, episode/common-file counts, and fixed decision/freshness enums; paths, diffs, summaries, prompts, and remote URLs remain in the project-scoped receipt. Emission uses the engine bounded best-effort seam, so absent, throwing, rejecting, hanging, or late-settling sinks cannot alter synchronization, start work, or roll back the owner decision. The receipt plus deduplicated task-log row is the durable diagnostic authority; run-audit is not exactly-once and is never re-emitted by every recovery tick.
+`task:overlap-wait-released` is emitted after the transactional overlap receipt becomes ready. Metadata is limited to task/predecessor IDs, episode/common-file counts, and the fixed `resume`/`briefing` plus freshness enums; paths, diffs, summaries, prompts, and remote URLs remain in the project-scoped receipt. Emission uses the engine bounded best-effort seam, so absent, throwing, rejecting, hanging, or late-settling sinks cannot alter synchronization, validate a plan, start work, or roll back the owner decision. The stateless plan-premise release check and durable receipt—not audit—are authoritative; run-audit is not exactly-once and is never re-emitted by every recovery tick.
 
 ## Status / purpose
 

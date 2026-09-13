@@ -104,6 +104,7 @@ function task(over: Partial<Task> = {}): Task {
     description: "",
     column: "todo",
     status: null,
+    prompt: '# Planned\n\n## Plan Premises\n\n- {"kind":"file-exists","path":"package.json"}\n',
     dependencies: [],
     steps: [],
     currentStep: 0,
@@ -178,6 +179,7 @@ function releaseStore(tasks: Task[], onLockedRead?: (live: Task) => Task): TaskS
   const ir = releaseIr();
   return {
     getSettings: vi.fn(async () => ({ maxConcurrent: 2 })),
+    getRootDir: () => process.cwd(),
     listTasks: vi.fn(async () => tasks),
     getTask: vi.fn(async (id: string) => tasks.find((t) => t.id === id) ?? null),
     moveTaskIf: vi.fn(async (
@@ -192,6 +194,12 @@ function releaseStore(tasks: Task[], onLockedRead?: (live: Task) => Task): TaskS
       if (!(await predicate(live))) return { task: cur, moved: false };
       cur.column = column;
       return { task: cur, moved: true };
+    }),
+    updateTaskAtomic: vi.fn(async (id: string, mutate: (live: Task) => Partial<Task> | null | Promise<Partial<Task> | null>) => {
+      const cur = tasks.find((candidate) => candidate.id === id)!;
+      const patch = await mutate(cur);
+      if (patch) Object.assign(cur, patch);
+      return cur;
     }),
     logEntry: vi.fn(async () => undefined),
     recordRunAuditEvent: vi.fn(async () => undefined),

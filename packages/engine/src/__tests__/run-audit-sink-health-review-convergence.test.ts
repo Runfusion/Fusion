@@ -88,9 +88,8 @@ describe("FN-149 review convergence audit sink health", () => {
       getRunContextFor: () => ({ agentId: "reviewer", runId: "run-149" }),
     } as any, row.id, {
       kind: "repeat-unchanged", workflowStepId: "code-review", stepName: "Code Review", feedback: "same", attempt: 3,
-    })).resolves.toBe("released");
-    expect(row).not.toHaveProperty("awaitingApprovalReason");
-    expect(row).not.toHaveProperty("status");
+    })).resolves.toBe("human-escalated");
+    expect(row).toMatchObject({ status: "awaiting-approval", awaitingApprovalReason: "code-review-non-convergence" });
     expect(logEntry).toHaveBeenCalledOnce();
   });
 
@@ -124,7 +123,8 @@ describe("FN-149 review convergence audit sink health", () => {
         kind: "repeat-unchanged", workflowStepId: "code-review", stepName: "Code Review", feedback: "same", attempt: 3,
       });
       await vi.advanceTimersByTimeAsync(2_001);
-      await expect(outcome).resolves.toBe("released");
+      await expect(outcome).resolves.toBe("human-escalated");
+      expect(row).toMatchObject({ status: "awaiting-approval", awaitingApprovalReason: "code-review-non-convergence" });
       expect(logEntry).toHaveBeenCalledOnce();
       if (mode === "late-resolve") resolveSink?.();
       else rejectSink?.(new Error("late audit failure"));
@@ -236,7 +236,7 @@ describe("FN-149 review convergence audit sink health", () => {
     expect(row.workflowStepResults[0].findings?.[0]).toMatchObject({ disputeRationale: "The transaction already protects this.", disputedAt: expect.any(String) });
   });
 
-  it("releases Code Review at stage three without consulting a never-settling sink", async () => {
+  it("parks Code Review at stage three despite a never-settling sink", async () => {
     vi.useFakeTimers();
     const row = failedTask();
     const logEntry = vi.fn(async () => {});
@@ -257,8 +257,9 @@ describe("FN-149 review convergence audit sink health", () => {
       kind: "repeat-unchanged", workflowStepId: "code-review", stepName: "Code Review", feedback: "same", attempt: 3,
     });
     await vi.advanceTimersByTimeAsync(2_001);
-    await expect(outcome).resolves.toBe("released");
+    await expect(outcome).resolves.toBe("human-escalated");
+    expect(row).toMatchObject({ status: "awaiting-approval", awaitingApprovalReason: "code-review-non-convergence" });
     expect(logEntry).toHaveBeenCalledOnce();
-    expect(store.recordRunAuditEvent).not.toHaveBeenCalled();
+    expect(store.recordRunAuditEvent).toHaveBeenCalledOnce();
   });
 });

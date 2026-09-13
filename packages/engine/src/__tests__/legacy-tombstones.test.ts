@@ -32,6 +32,7 @@ const DELETED_FILES = [
   "packages/core/src/workflow-cutover.ts",
   "packages/engine/src/workflow-authoritative-driver.ts",
   "packages/engine/src/workflow-parity-observer.ts",
+  "packages/engine/src/workflows/overlap-plan-revalidation.ts",
   /*
   FNXC:WorkflowColumns 2026-07-27-10:25 (U2 / R9 — workflow-owned lifecycle):
   Two more pre-cutover modules. `workflow-columns-settings.ts` held
@@ -129,6 +130,9 @@ const DELETED_SYMBOLS: Array<{ symbol: string; why: string }> = [
   { symbol: "recoverInProgressLimbo", why: "WIP liveness is owned only by the in-place stuck-session detector" },
   { symbol: "recoverNoProgressNoTaskDoneFailures", why: "zero-progress recovery may wake in place but cannot requeue or terminalize" },
   { symbol: "checkStuckBudget", why: "stuck-session recovery is unbounded and cannot park work for a human" },
+  { symbol: "revalidatePendingOverlapWaitsAtGraphNode", why: "plan freshness is checked statelessly at WIP release, never by a graph-owned overlap reviewer" },
+  { symbol: "OVERLAP_DELTA_TARGETED_PLAN_REPAIR", why: "the deleted synthetic repair prompt created a second plan authority inside execution" },
+  { symbol: "overlap-plan-revalidation-", why: "the deleted pre-node review gate cannot suspend graph execution" },
 ];
 
 /** Strip block and line comments so an explanatory tombstone note is not read as a live reference. */

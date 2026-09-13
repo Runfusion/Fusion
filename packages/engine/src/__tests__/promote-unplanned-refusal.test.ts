@@ -47,6 +47,7 @@ function makeStore(
     id: "FN-1403",
     column: "todo",
     status: "needs-replan",
+    prompt: '# Planned\n\n## Plan Premises\n\n- {"kind":"file-exists","path":"package.json"}\n',
     ...taskOverrides,
   } as Task;
   const moveTaskIf = vi.fn(async (
@@ -67,7 +68,14 @@ function makeStore(
   const store = {
     task,
     getTask: async () => task,
+    getRootDir: () => process.cwd(),
     updateTask,
+    updateTaskAtomic: vi.fn(async (_id: string, mutate: (live: Task) => Partial<Task> | null | Promise<Partial<Task> | null>) => {
+      const patch = await mutate(task);
+      if (patch) Object.assign(task, patch);
+      return task;
+    }),
+    logEntry: vi.fn(async () => undefined),
     moveTaskIf,
     recordRunAuditEvent,
     checkAndRecordUnplannedExecutionBlock,

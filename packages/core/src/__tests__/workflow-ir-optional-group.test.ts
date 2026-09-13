@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { WorkflowIrError, parseWorkflowIr, serializeWorkflowIr } from "../workflows/workflow-ir.js";
-import { resolveOptionalStepRevisionBudget } from "../workflows/workflow-ir-types.js";
+import {
+  ABSOLUTE_MAX_AUTOMATIC_REVIEW_REVISIONS,
+  resolveOptionalStepRevisionBudget,
+} from "../workflows/workflow-ir-types.js";
 import type { WorkflowIrEdge, WorkflowIrNode, WorkflowIrV2 } from "../workflows/workflow-ir-types.js";
 
 /*
@@ -88,9 +91,17 @@ describe("optional-group validation", () => {
   it("resolves optional-step revision budgets from numeric, unbounded, and fallback states", () => {
     expect(resolveOptionalStepRevisionBudget(2, 3)).toEqual({ unbounded: false, max: 2 });
     expect(resolveOptionalStepRevisionBudget(0, 3)).toEqual({ unbounded: false, max: 0 });
-    expect(resolveOptionalStepRevisionBudget("unbounded", 3)).toEqual({ unbounded: true, max: Number.POSITIVE_INFINITY });
+    expect(resolveOptionalStepRevisionBudget("unbounded", 3)).toEqual({
+      unbounded: true,
+      max: ABSOLUTE_MAX_AUTOMATIC_REVIEW_REVISIONS,
+    });
+    expect(resolveOptionalStepRevisionBudget(ABSOLUTE_MAX_AUTOMATIC_REVIEW_REVISIONS + 4, 3)).toEqual({
+      unbounded: false,
+      max: ABSOLUTE_MAX_AUTOMATIC_REVIEW_REVISIONS,
+    });
     expect(resolveOptionalStepRevisionBudget(undefined, 3)).toEqual({ unbounded: false, max: 3 });
     expect(resolveOptionalStepRevisionBudget("sometimes", 3)).toEqual({ unbounded: false, max: 3 });
+    expect(resolveOptionalStepRevisionBudget(undefined, Number.POSITIVE_INFINITY)).toEqual({ unbounded: false, max: 0 });
   });
 
   it.each(["plan", "code"] as const)("rejects valid reviewKind in every optional-group template node as unsupported placement", (reviewKind) => {

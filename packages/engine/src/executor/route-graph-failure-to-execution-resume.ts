@@ -24,7 +24,7 @@ import { executorLog } from "../logger.js";
 import type { EngineRunContext } from "../util/run-audit.js";
 import { resolveTerminalColumnsFor } from "./lifecycle-columns.js";
 import { hasNonTerminalWorkflowSteps } from "./workflow-step-satisfaction.js";
-import { isMergeGraphFailure } from "./graph-failure-pure.js";
+import { formatGraphFailureDiagnostic, isMergeGraphFailure } from "./graph-failure-pure.js";
 import type { ResumeLanes } from "./resolve-resume-lanes.js";
 
 export type RouteGraphFailureToExecutionResumeDeps = {
@@ -49,6 +49,7 @@ export async function routeGraphFailureToExecutionResume(
   failedNode: string,
   failureValue: string | undefined,
   resumeLanesMemo?: { lanes?: ResumeLanes },
+  nodeError?: string,
 ): Promise<boolean> {
     /*
      * FNXC:WorkflowLifecycle 2026-06-29-11:08:
@@ -128,13 +129,13 @@ export async function routeGraphFailureToExecutionResume(
     */
     if (!resumeRouterLanes.wipDeclared) return false;
     if (live.column !== resumeRouterLanes.wip || !implementationIncompleteMergeFailure) {
-      const message = `Workflow graph failed at node '${failedNode}'${failureValue ? ` (${failureValue})` : ""} — automatic recovery cannot move '${live.column}' backward; card remains in place`;
+      const message = `${formatGraphFailureDiagnostic(failedNode, failureValue, nodeError, "Workflow graph failed")} — automatic recovery cannot move '${live.column}' backward; card remains in place`;
       executorLog.warn(`${live.id}: ${message}`);
       await deps.store.logEntry(live.id, message, undefined, deps.getRunContextFor(live.id));
       return false;
     }
 
-    const message = `Workflow graph failed at node '${failedNode}'${failureValue ? ` (${failureValue})` : ""} with incomplete work — resuming in place in '${live.column}'`;
+    const message = `${formatGraphFailureDiagnostic(failedNode, failureValue, nodeError, "Workflow graph failed")} with incomplete work — resuming in place in '${live.column}'`;
     executorLog.warn(`${live.id}: ${message}`);
     await deps.store.logEntry(live.id, message, undefined, deps.getRunContextFor(live.id));
     await deps.store.updateTask(live.id, { status: null, error: null }, deps.getRunContextFor(live.id));

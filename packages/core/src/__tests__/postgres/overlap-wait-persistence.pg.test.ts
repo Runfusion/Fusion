@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { sql } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, expect, it } from "vitest";
 import { createSharedPgTaskStoreTestHarness, pgDescribe, type SharedPgTaskStoreHarness } from "../../__test-utils__/pg-test-harness.js";
 
@@ -14,6 +16,31 @@ pgDescribe("overlap wait persistence", () => {
   beforeAll(h.beforeAll);
   afterAll(h.afterAll);
   afterEach(h.afterEach);
+
+  it("drains historical model-verdict phases idempotently without losing delivery proof", async () => {
+    const [firstBlocker, secondBlocker, waiting] = await Promise.all([
+      h.store().createTask({ description: "first holder" }),
+      h.store().createTask({ description: "second holder" }),
+      h.store().createTask({ description: "waiting" }),
+    ]);
+    await h.store().transitionQueuedEpisode(waiting.id, overlap(firstBlocker.id));
+    await h.store().transitionQueuedEpisode(waiting.id, overlap(secondBlocker.id));
+    const episodes = await h.store().listTaskOverlapWaits(waiting.id);
+    await h.layer().db.execute(sql`ALTER TABLE project.task_overlap_waits DROP CONSTRAINT ck_task_overlap_wait_phase`);
+    await h.layer().db.execute(sql`ALTER TABLE project.task_overlap_waits ADD CONSTRAINT ck_task_overlap_wait_phase CHECK (phase IN ('observed','analyzing','freshness-pending','revalidation-pending','repair-required','ready','delivered','cancelled'))`);
+    await h.layer().db.execute(sql`UPDATE project.task_overlap_waits SET phase = 'revalidation-pending', receipt = ${JSON.stringify({ decision: "revalidate", freshness: "proven", commonFiles: ["src/shared.ts"], deliveryProofs: [{ repository: ".", landedSha: "abc" }], decisionFingerprint: "old-1", briefing: "Use the delivered shared contract", revalidationVerdict: "REVISE", invalidatedPromise: "old promise", decidedAt: new Date().toISOString() })}::jsonb WHERE episode_id = ${episodes[0]!.episodeId}`);
+    await h.layer().db.execute(sql`UPDATE project.task_overlap_waits SET phase = 'repair-required', receipt = ${JSON.stringify({ decision: "revalidate", freshness: "proven", commonFiles: [], deliveryProofs: [{ repository: ".", landedSha: "def" }], decisionFingerprint: "old-2", revalidationVerdict: "REVISE", invalidatedPromise: "old promise", decidedAt: new Date().toISOString() })}::jsonb WHERE episode_id = ${episodes[1]!.episodeId}`);
+    const migration = await readFile(new URL("../../postgres/migrations/0078_fn_375_overlap_revalidation_drain.sql", import.meta.url), "utf8");
+    await h.layer().db.execute(sql.raw(migration));
+    await h.layer().db.execute(sql.raw(migration));
+
+    const drained = await h.store().listTaskOverlapWaits(waiting.id);
+    expect(drained).toHaveLength(2);
+    expect(drained.every((episode) => episode.phase === "ready")).toBe(true);
+    expect(drained.find((episode) => episode.episodeId === episodes[0]!.episodeId)?.receipt).toMatchObject({ decision: "briefing", deliveryProofs: [{ landedSha: "abc" }] });
+    expect(drained.find((episode) => episode.episodeId === episodes[1]!.episodeId)?.receipt).toMatchObject({ decision: "resume", deliveryProofs: [{ landedSha: "def" }] });
+    expect(JSON.stringify(drained)).not.toMatch(/revalidationVerdict|invalidatedPromise/);
+  });
 
   it("keeps one durable episode when an identical wait is republished and its marker clears", async () => {
     const blocker = await h.store().createTask({ description: "holder" });
@@ -101,9 +128,8 @@ pgDescribe("overlap wait persistence", () => {
 
   /*
   FNXC:OverlapWaitSynchronization 2026-09-12-17:20:
-  A claim must never erase the durable plan fingerprint. `revalidatePendingOverlapWaitsAtGraphNode` decides
-  whether a targeted repair produced a genuinely new plan by comparing against this column; a null-wipe on
-  claim made every repair look like a plan change.
+  A claim must never erase the durable plan fingerprint. Freshness publication compares the live plan
+  identity against this durable claim; a null-wipe would make a stale generation appear current.
   */
   it("preserves the durable plan fingerprint across a claim that supplies no identity", async () => {
     const blocker = await h.store().createTask({ description: "holder" });
@@ -149,13 +175,10 @@ pgDescribe("overlap wait persistence", () => {
 
   /*
   FNXC:OverlapWaitSynchronization 2026-09-13-05:10:
-  A delta REVISE persists `repair-required`. The 0075 phase CHECK omitted that value, so the write RAISED
-  inside the graph node: the failure surfaced as a bare "exception" with no message stored anywhere, the
-  episode stayed `revalidation-pending`, and each retry paid for the same AI review again until the
-  overseer parked the card (FN-372, measured 2026-09-13). Every declared phase is asserted, not just the
-  one that broke, so a future phase cannot ship without its constraint.
+  Runtime completion accepts only the remaining deterministic overlap phases; retired model-revalidation
+  phases are exercised by the historical-drain test above rather than submitted through the live contract.
   */
-  it.each(["freshness-pending", "revalidation-pending", "repair-required", "ready", "delivered"] as const)(
+  it.each(["freshness-pending", "ready", "delivered"] as const)(
     "persists the %s phase declared by OverlapWaitPhase",
     async (phase) => {
       const blocker = await h.store().createTask({ description: "holder" });
@@ -165,7 +188,7 @@ pgDescribe("overlap wait persistence", () => {
       const claim = await h.store().claimTaskOverlapWait({ taskId: waiting.id, episodeId: observed.episodeId, expectedRevision: observed.revision, owner: "executor-1" });
       const completed = await h.store().completeTaskOverlapWait({
         taskId: waiting.id, episodeId: observed.episodeId, expectedRevision: claim!.revision, owner: "executor-1", phase,
-        receipt: { decision: "revalidate", freshness: "proven", commonFiles: [], deliveryProofs: [], decisionFingerprint: `phase-${phase}`, decidedAt: new Date().toISOString() },
+        receipt: { decision: "resume", freshness: "proven", commonFiles: [], deliveryProofs: [], decisionFingerprint: `phase-${phase}`, decidedAt: new Date().toISOString() },
       });
       expect(completed).toMatchObject({ phase });
     },

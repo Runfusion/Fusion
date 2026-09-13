@@ -1129,6 +1129,8 @@ export { RemoteNodeRuntime, type RemoteNodeRuntimeConfig } from "./runtimes/remo
 // Hold/release sweep + manual promote (U6/U9). Exported so the dashboard
 // promote endpoint can release a manually-held card via the same authority.
 export {
+  admitTaskToWip,
+  isFirstPlanningToWipAdmission,
   promoteHeldTask,
   evaluateTaskReleaseGate,
   evaluateUnplannedForExecution,
@@ -1138,6 +1140,8 @@ export {
   type HoldReleaseDeps,
   type HoldReleaseResult,
   type SlotReservation,
+  type WipAdmissionResult,
+  type WipAdmissionRejection,
 } from "./execution/hold-release.js";
 export {
   resumeApprovedPlanReviewHandoff,

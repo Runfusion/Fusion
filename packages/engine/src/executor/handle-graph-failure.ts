@@ -41,7 +41,8 @@ import { MERGE_BOUNDARY_UNPROVEN_VALUE } from "../workflows/workflow-merge-nodes
 import { emitMergeBoundaryUnprovenParked } from "./emit-merge-boundary-unproven-audit.js";
 import { PAUSE_ABORT_PARK_ERROR_MARKER, PAUSE_ABORT_PARK_OPERATOR_MARKER } from "../self-healing.js";
 import {
-  graphFailureErrorTexts,
+  formatGraphFailureDiagnostic,
+  graphFailureNodeErrorText,
   graphFailureValue,
   graphRunReportedPendingReview,
   isMergeGraphFailure,
@@ -339,8 +340,10 @@ export async function handleGraphFailure(
        * freshly-created checkout or consume graph/provider retry budgets.
        */
       if (graphFailureValue(result) === BRANCH_WRITE_PROVENANCE_FAILURE_VALUE) {
-        const diagnostic = graphFailureErrorTexts(result).find((message) => message.includes("branchWriteOrigin is required when branch is provided"))
-          ?? "branchWriteOrigin is required when branch is provided";
+        const branchWriteNodeError = graphFailureNodeErrorText(result);
+        const diagnostic = branchWriteNodeError?.includes("branchWriteOrigin is required when branch is provided")
+          ? branchWriteNodeError
+          : "branchWriteOrigin is required when branch is provided";
         await deps.store.logEntry(task.id, diagnostic, undefined, deps.getRunContextFor(task.id));
         await deps.store.updateTask(task.id, { status: "failed", error: diagnostic }, deps.getRunContextFor(task.id));
         await deps.persistTokenUsage(task.id);
@@ -358,7 +361,7 @@ export async function handleGraphFailure(
       Git diagnostics remain actionable and provider retry accounting is untouched.
       */
       if (isWorkspacePreparationGraphFailure(result)) {
-        const diagnostic = graphFailureErrorTexts(result)[0]
+        const diagnostic = graphFailureNodeErrorText(result)
           ?? "Workspace repository preparation failed before a reviewer session started";
         /*
         FNXC:WorkspacePreparation 2026-08-21-19:52:
@@ -895,6 +898,7 @@ export async function handleGraphFailure(
       const failedNode = result.visitedNodeIds[result.visitedNodeIds.length - 1];
       const mergeGraphFailure = isMergeGraphFailure(failedNode);
       const failureValue = graphFailureValue(result);
+      const nodeError = graphFailureNodeErrorText(result);
       /*
       FNXC:DuplicateIntake 2026-08-01-19:24:
       Defense in depth for FN-8704: if a card slipped into WIP with PROMPT.md = only
@@ -1139,7 +1143,7 @@ export async function handleGraphFailure(
       if (await deps.routeRetryableRemediationGraphFailureToPreMergeFix(live, failedNode, failureValue)) {
         return;
       }
-      if (await deps.routeGraphFailureToExecutionResume(live, failedNode ?? "unknown", failureValue, resumeLanesMemo)) {
+      if (await deps.routeGraphFailureToExecutionResume(live, failedNode ?? "unknown", failureValue, resumeLanesMemo, nodeError)) {
         return;
       }
       /*
@@ -1344,7 +1348,7 @@ export async function handleGraphFailure(
           return;
         }
       }
-      const message = `Workflow graph terminated with failure at node '${failedNode ?? "unknown"}'`;
+      const message = formatGraphFailureDiagnostic(failedNode, failureValue, nodeError);
       const settings = await deps.store.getSettings();
       const maxToolFailureRetries = resolveMaxConsecutiveToolFailureRetries(settings);
       if (maxToolFailureRetries > 0 && isExecuteFamilyNode && !live.paused && !live.userPaused && !live.deletedAt && live.column === wipColumn) {

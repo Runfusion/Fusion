@@ -20,7 +20,7 @@ export interface OverlapDeliveryEvidence {
   noOp?: boolean;
   evidence: "merge-details" | "workspace-landing" | "git-recapture" | "unavailable";
 }
-export type OverlapResumeDecision = "resume" | "briefing" | "revalidate" | "freshness-pending";
+export type OverlapResumeDecision = "resume" | "briefing" | "freshness-pending";
 export interface OverlapResumeAnalysis {
   decision: OverlapResumeDecision;
   reason: "no-common-files" | "non-structural-overlap" | "structural-contract-change" | "contract-evidence-unavailable" | "delivery-evidence-unavailable";
@@ -138,8 +138,8 @@ export function analyzeOverlapResume(input: {
   let reason: OverlapResumeAnalysis["reason"];
   if (unknown) { decision = "freshness-pending"; reason = "delivery-evidence-unavailable"; }
   else if (commonFiles.length === 0) { decision = "resume"; reason = "no-common-files"; }
-  else if (anchors.length > 0) { decision = "revalidate"; reason = "structural-contract-change"; }
-  else if (common.some((change) => change.diff === undefined)) { decision = "revalidate"; reason = "contract-evidence-unavailable"; }
+  else if (anchors.length > 0) { decision = "briefing"; reason = "structural-contract-change"; }
+  else if (common.some((change) => change.diff === undefined)) { decision = "briefing"; reason = "contract-evidence-unavailable"; }
   else { decision = "briefing"; reason = "non-structural-overlap"; }
   const identity = JSON.stringify({ lineageId: input.task.lineageId ?? null, targets: [...targets].sort(), deliveries: input.deliveries, decision, commonFiles, anchors });
   return { decision, reason, commonFiles, deliveries: input.deliveries, decisionFingerprint: createHash("sha256").update(identity).digest("hex"), structuralAnchors: anchors };

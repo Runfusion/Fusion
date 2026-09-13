@@ -346,7 +346,7 @@ describe("FN-7863/FN-7926 dispatch-loop gate matches the workflow's own hold col
     );
     expect(task).toMatchObject({
       status: "failed",
-      error: "Workflow graph terminated with failure at node 'execute'",
+      error: "Workflow graph terminated with failure at node 'execute' (recoverable)",
     });
   });
 
@@ -467,7 +467,7 @@ describe("a resolved workflow is never given a column it does not declare", () =
     );
     expect(task).toMatchObject({
       status: "failed",
-      error: "Workflow graph terminated with failure at node 'steps#0:step-execute'",
+      error: "Workflow graph terminated with failure at node 'steps#0:step-execute' (failure)",
     });
   });
 });

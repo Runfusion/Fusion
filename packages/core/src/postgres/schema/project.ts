@@ -374,7 +374,7 @@ export const tasks = projectSchema.table("tasks", {
 /*
 FNXC:OverlapWaitSynchronization 2026-09-09-23:53:
 The display blocker is transient, but each observed predecessor edge remains project-scoped until
-freshness, delta analysis, optional revalidation, and context delivery have all been acknowledged.
+freshness, deterministic delta briefing, and context delivery have all been acknowledged.
 Only the waiting task is foreign-keyed; predecessor identity survives its archival or deletion.
 */
 export const taskOverlapWaits = projectSchema.table("task_overlap_waits", {
@@ -397,8 +397,8 @@ export const taskOverlapWaits = projectSchema.table("task_overlap_waits", {
 }, (t) => [
   primaryKey({ columns: [t.projectId, t.taskId, t.episodeId] }),
   foreignKey({ columns: [t.projectId, t.taskId], foreignColumns: [tasks.projectId, tasks.id], name: "fk_task_overlap_wait_owner" }).onUpdate("cascade").onDelete("cascade"),
-  // FNXC:OverlapWaitSynchronization 2026-09-13-05:10: `repair-required` is written by the delta revalidation node on REVISE; omitting it here raised on every revision instead of persisting one.
-  check("ck_task_overlap_wait_phase", sql`${t.phase} IN ('observed','analyzing','freshness-pending','revalidation-pending','repair-required','ready','delivered','cancelled')`),
+  // FNXC:OverlapWaitSynchronization 2026-09-13-05:10: runtime phases exclude the retired model-revalidation state machine after its historical rows drain to ready.
+  check("ck_task_overlap_wait_phase", sql`${t.phase} IN ('observed','analyzing','freshness-pending','ready','delivered','cancelled')`),
   uniqueIndex("uq_task_overlap_wait_open_blocker").on(t.projectId, t.taskId, t.blockerTaskId).where(sql`${t.phase} NOT IN ('delivered', 'cancelled')`),
   index("idx_task_overlap_wait_unconsumed").on(t.projectId, t.taskId, t.observedAt).where(sql`${t.phase} NOT IN ('delivered', 'cancelled')`),
 ]);

@@ -207,7 +207,8 @@ describe("runTaskShow / runTaskMove — mocked-store lock exhaustion, not-found,
   it("runTaskMove: bounded exhaustion across many fast lock retries fails clearly and closes the store", async () => {
     process.env.FUSION_CLI_LOCK_RETRY_MS = "500";
     const moveTask = vi.fn().mockRejectedValue(new Error("SQLITE_BUSY: database is locked"));
-    assignStore({ moveTask });
+    const getTask = vi.fn().mockResolvedValue({ id: "FN-10", column: "todo" });
+    assignStore({ getTask, getTaskWorkflowSelection: vi.fn(() => undefined), moveTask });
 
     vi.useFakeTimers();
     const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
@@ -244,8 +245,9 @@ describe("runTaskShow / runTaskMove — mocked-store lock exhaustion, not-found,
   });
 
   it("runTaskMove: a move-to-same-column no-op succeeds on the first attempt and closes the store", async () => {
-    const moveTask = vi.fn().mockResolvedValue({ id: "FN-5", column: "todo" });
-    assignStore({ moveTask });
+    const current = { id: "FN-5", column: "todo" };
+    const moveTask = vi.fn().mockResolvedValue(current);
+    assignStore({ getTask: vi.fn().mockResolvedValue(current), getTaskWorkflowSelection: vi.fn(() => undefined), moveTask });
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
     await mod.runTaskMove("FN-5", "todo");
