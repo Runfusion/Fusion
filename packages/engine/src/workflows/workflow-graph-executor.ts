@@ -473,6 +473,8 @@ export interface WorkflowGraphExecutorResult {
 }
 
 class WorkflowGraphSuspended extends Error {
+  public readonly admissionHoldContext: Record<string, unknown> = {};
+
   public constructor(public readonly suspension: NonNullable<WorkflowGraphExecutorResult["suspended"]>) {
     super(`Workflow suspended before node ${suspension.nodeId}`);
   }
@@ -1877,6 +1879,7 @@ export class WorkflowGraphExecutor {
       terminal = await walk(startNode.id);
     } catch (error) {
       if (!(error instanceof WorkflowGraphSuspended)) throw error;
+      Object.assign(context, error.admissionHoldContext);
       return {
         executed: true,
         outcome: "success",
@@ -2258,7 +2261,19 @@ export class WorkflowGraphExecutor {
         if (terminalResult) return this.applyRequiredGatePersistence(node, task, workflow, projected, terminalResult);
         return projected;
       } catch (error) {
-        if (error instanceof WorkflowGraphSuspended) throw error;
+        if (error instanceof WorkflowGraphSuspended) {
+          /*
+           * FNXC:WorkflowAdmission 2026-09-13-06:53:
+           * Loop and isolated foreach templates own cloned contexts. Carry only the suspended
+           * node's admission marker through the unwind; otherwise the outer executor sees a
+           * wait without its reason and leaves the continuation running until dead-lease recovery.
+           */
+          for (const suffix of ["principal-hold", "dependency-configuration-block"]) {
+            const key = `node:${error.suspension.nodeId}:${suffix}`;
+            if (typeof context[key] === "string") error.admissionHoldContext[key] = context[key];
+          }
+          throw error;
+        }
         if (signal?.aborted) {
           if (progressRecord) await this.discardWorkflowStepLease(task.id, node.id, progressRecord.result.startedAt!);
           return this.withEnginePauseAbortContext(node, { outcome: "failure", value: "aborted" });

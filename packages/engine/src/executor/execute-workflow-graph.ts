@@ -1166,9 +1166,7 @@ export async function executeWorkflowGraph(
         });
         return;
       }
-      const principalHoldReason = Object.values(result.context ?? {}).find((value): value is string =>
-        typeof value === "string" && value.startsWith("workflow-principal-"),
-      );
+      const principalHoldReason = workflowAdmissionHoldReason(result);
       /*
        * FNXC:WorkflowAgentRouting 2026-08-07-07:45:
        * Principal availability is a recoverable continuation hold, not a graph
@@ -1198,17 +1196,11 @@ export async function executeWorkflowGraph(
           }
           await deps.store.logEntry(task.id, `Workflow stage held — ${principalHoldReason}`).catch(() => undefined);
         }
-        if (
-          continuation
-          && typeof deps.store.transitionWorkflowWorkItem === "function"
-          && !directWorkflowPrincipalHeldWorkItemIds.has(continuation.id)
-        ) {
-          await deps.store.transitionWorkflowWorkItem(continuation.id, "held", {
-            leaseOwner: null,
-            leaseExpiresAt: null,
-            lastError: principalHoldReason,
-            blockedReason: principalHoldReason,
-          }).catch(() => undefined);
+        if (typeof deps.store.transitionWorkflowWorkItem === "function") {
+          await holdWorkflowAdmission(
+            deps.store, principalHoldReason, continuation?.id,
+            directWorkflowPrincipalWorkItemIds, directWorkflowPrincipalHeldWorkItemIds,
+          );
         }
         return;
       }
