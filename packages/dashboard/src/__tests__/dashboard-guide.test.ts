@@ -80,12 +80,20 @@ describe("dashboard guide coverage for lazy-loaded views", () => {
     expect(guide).toContain("continues to use More on mobile");
   });
 
+  it("documents direct file windows without removing the full Files browser", () => {
+    const guide = readDashboardGuide();
+
+    expect(guide).toContain("A window opened for that specific file shows only its editor, preview, loading state, or error");
+    expect(guide).toContain("it does not repeat the file list, sidebar resize separator, or narrow-layout **Back to file list** action");
+    expect(guide).toContain("Opening Files without selecting a file still opens the complete browser");
+  });
+
   it("documents the ascending single-column desktop More menu", () => {
     const guide = readDashboardGuide();
 
-    expect(guide).toContain("More** opens above its trigger as a compact single vertical column");
+    expect(guide).toContain("More** opens centered above its trigger as a compact single vertical column");
     expect(guide).toContain("one destination per row and vertical scrolling when the list grows beyond the viewport");
-    expect(guide).toContain("leaving the combined trigger-menu region closes it");
+    expect(guide).toContain("leaving the combined region still closes it");
   });
 
   it("documents official bottom-entering mobile drawers and Task Detail close ownership", () => {

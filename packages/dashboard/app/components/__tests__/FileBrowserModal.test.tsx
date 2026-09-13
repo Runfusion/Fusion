@@ -335,8 +335,8 @@ describe("FileBrowserModal", () => {
     expect(onSendSelectionToTask).toHaveBeenCalledWith(expect.stringContaining("Turn preview note into work."));
   });
 
-  it("opens with an initial file selected", async () => {
-    render(
+  it("opens a direct desktop file without mounting or loading a second browser", async () => {
+    const { rerender } = render(
       <FileBrowserModal
         initialWorkspace="project"
         initialFile="packages/dashboard/app/App.tsx"
@@ -346,14 +346,31 @@ describe("FileBrowserModal", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getAllByText("packages/dashboard/app/App.tsx").length).toBeGreaterThan(0);
+      expect(screen.getByLabelText("Editor for packages/dashboard/app/App.tsx")).toBeInTheDocument();
     });
 
-    expect(mockSetPath).toHaveBeenCalledWith("packages/dashboard/app");
+    expect(mockUseWorkspaceFileBrowser).toHaveBeenLastCalledWith("project", false, undefined);
     expect(mockUseWorkspaceFileEditor).toHaveBeenLastCalledWith("project", "packages/dashboard/app/App.tsx", true, undefined, true);
+    expect(document.querySelector(".file-browser-sidebar")).not.toBeInTheDocument();
+    expect(screen.queryByRole("separator", { name: "Resize sidebar" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Back to file list")).not.toBeInTheDocument();
+    expect(mockSetPath).not.toHaveBeenCalled();
+
+    rerender(
+      <FileBrowserModal
+        initialWorkspace="project"
+        initialFile="packages/dashboard/app/App.tsx"
+        isOpen={true}
+        onClose={mockOnClose}
+      />,
+    );
+
+    expect(screen.getByLabelText("Editor for packages/dashboard/app/App.tsx")).toBeInTheDocument();
+    expect(document.querySelector(".file-browser-sidebar")).not.toBeInTheDocument();
+    expect(mockUseWorkspaceFileBrowser).toHaveBeenLastCalledWith("project", false, undefined);
   });
 
-  it("opens root-level absolute initial files at filesystem root", async () => {
+  it("opens root-level absolute initial files without navigating a hidden browser", async () => {
     render(
       <FileBrowserModal
         initialWorkspace="project"
@@ -364,10 +381,11 @@ describe("FileBrowserModal", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getAllByText("/README.md").length).toBeGreaterThan(0);
+      expect(screen.getByLabelText("Editor for /README.md")).toBeInTheDocument();
     });
 
-    expect(mockSetPath).toHaveBeenCalledWith("/");
+    expect(mockSetPath).not.toHaveBeenCalled();
+    expect(mockUseWorkspaceFileBrowser).toHaveBeenLastCalledWith("project", false, undefined);
     expect(mockUseWorkspaceFileEditor).toHaveBeenLastCalledWith("project", "/README.md", true, undefined, true);
   });
 
@@ -419,7 +437,8 @@ describe("FileBrowserModal", () => {
     expect(screen.getByLabelText(`Editor for ${nestedFile}`)).toBeInTheDocument();
     expect(screen.getByText("Could not load App.tsx")).toBeInTheDocument();
     expect(document.querySelector(".file-browser-content.mobile")).toBeNull();
-    expect(mockSetPath).toHaveBeenCalledWith("packages/dashboard/app");
+    expect(document.querySelector(".file-browser-sidebar")).toBeNull();
+    expect(mockSetPath).not.toHaveBeenCalled();
     expect(mockOnWorkspaceChange).toHaveBeenCalledWith("FN-002");
   });
 
@@ -469,7 +488,8 @@ describe("FileBrowserModal", () => {
     });
     expect(screen.queryByText("Could not load App.tsx")).not.toBeInTheDocument();
     expect(document.querySelector(".cm-content")?.textContent).toContain("console.log('loaded from task worktree');");
-    expect(mockSetPath).toHaveBeenCalledWith("packages/dashboard/app");
+    expect(document.querySelector(".file-browser-sidebar")).toBeNull();
+    expect(mockSetPath).not.toHaveBeenCalled();
   });
 
   it("keeps mobile on the errored nested selected file after switching workspaces", async () => {
@@ -496,8 +516,9 @@ describe("FileBrowserModal", () => {
     );
 
     fireEvent(window, new Event("resize"));
-    await waitFor(() => expect(screen.getByLabelText("Back to file list")).toBeInTheDocument());
-    expect(screen.getByLabelText(`Editor for ${nestedFile}`)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByLabelText(`Editor for ${nestedFile}`)).toBeInTheDocument());
+    expect(screen.queryByLabelText("Back to file list")).not.toBeInTheDocument();
+    expect(document.querySelector(".file-browser-sidebar")).not.toBeInTheDocument();
     mockSetPath.mockClear();
 
     await user.click(screen.getByRole("button", { name: /kb/i }));
@@ -506,11 +527,11 @@ describe("FileBrowserModal", () => {
     await waitFor(() => {
       expect(mockUseWorkspaceFileEditor).toHaveBeenLastCalledWith("FN-002", nestedFile, true, undefined, true);
     });
-    expect(screen.getByLabelText("Back to file list")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Back to file list")).not.toBeInTheDocument();
     expect(screen.getByLabelText(`Editor for ${nestedFile}`)).toBeInTheDocument();
     expect(document.querySelector(".file-browser-content.mobile.active")).not.toBeNull();
-    expect(document.querySelector(".file-browser-sidebar.mobile.active")).toBeNull();
-    expect(mockSetPath).toHaveBeenCalledWith("packages/dashboard/app");
+    expect(document.querySelector(".file-browser-sidebar")).toBeNull();
+    expect(mockSetPath).not.toHaveBeenCalled();
     expect(mockOnWorkspaceChange).toHaveBeenCalledWith("FN-002");
   });
 
@@ -588,9 +609,11 @@ describe("FileBrowserModal", () => {
     fireEvent(window, new Event("resize"));
 
     await waitFor(() => {
-      expect(screen.getByLabelText("Back to file list")).toBeInTheDocument();
+      expect(screen.getByLabelText("Editor for README.md")).toBeInTheDocument();
     });
 
+    expect(screen.queryByLabelText("Back to file list")).not.toBeInTheDocument();
+    expect(document.querySelector(".file-browser-sidebar")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /toggle editor options/i })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /edit mode/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /preview mode/i })).toBeInTheDocument();
@@ -663,8 +686,8 @@ describe("FileBrowserModal", () => {
         expect(modal).not.toHaveClass("file-browser-modal--narrow");
       });
       expect(document.querySelector(".file-browser-content.mobile")).toBeNull();
-      expect(document.querySelector(".file-browser-sidebar.mobile")).toBeNull();
-      expect(screen.getByRole("separator", { name: "Resize sidebar" })).toBeInTheDocument();
+      expect(document.querySelector(".file-browser-sidebar")).toBeNull();
+      expect(screen.queryByRole("separator", { name: "Resize sidebar" })).not.toBeInTheDocument();
     } finally {
       globalThis.ResizeObserver = originalResizeObserver;
       window.ResizeObserver = originalWindowResizeObserver;
@@ -1190,7 +1213,10 @@ describe("FileBrowserModal", () => {
       expect(pdf).toHaveAttribute("src", expect.stringContaining(encodeURIComponent("docs/MANUAL.PDF")));
       expect(pdf).toHaveAttribute("src", expect.stringContaining("inline=1"));
       expect(pdf).toHaveAttribute("title", "Preview for docs/MANUAL.PDF");
-      expect(mockSetPath).toHaveBeenCalledWith("docs");
+      expect(mockUseWorkspaceFileBrowser).toHaveBeenLastCalledWith("project", false, undefined);
+      expect(mockSetPath).not.toHaveBeenCalled();
+      expect(document.querySelector(".file-browser-sidebar")).not.toBeInTheDocument();
+      expect(screen.queryByRole("separator", { name: "Resize sidebar" })).not.toBeInTheDocument();
       expect(mockUseWorkspaceFileEditor).toHaveBeenLastCalledWith("project", "docs/MANUAL.PDF", false, undefined, false);
     });
 

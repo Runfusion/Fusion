@@ -80,8 +80,9 @@ export function FileBrowserModal({
 }: FileBrowserModalProps) {
   const { t } = useTranslation("app");
   const { projectName, workspaces } = useWorkspaces(projectId);
+  const isDirectFileView = typeof initialFile === "string" && initialFile.trim().length > 0;
   const [currentWorkspace, setCurrentWorkspace] = useState(initialWorkspace);
-  const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const [selectedFile, setSelectedFile] = useState<string | null>(() => isDirectFileView ? initialFile : null);
   const modalRef = useRef<HTMLDivElement>(null);
   const [viewportMobile, setViewportMobile] = useState(false);
   const [modalWidth, setModalWidth] = useState<number | null>(null);
@@ -99,7 +100,7 @@ export function FileBrowserModal({
     loading: browserLoading,
     error: browserError,
     refresh,
-  } = useWorkspaceFileBrowser(currentWorkspace, true, projectId);
+  } = useWorkspaceFileBrowser(currentWorkspace, !isDirectFileView, projectId);
 
   const selectedPreviewKind = useMemo(() => getFilePreviewKind(selectedFile), [selectedFile]);
   const isPreviewOnlyFile = selectedPreviewKind !== null;
@@ -175,18 +176,21 @@ export function FileBrowserModal({
     }
   }, [isMobile, selectedFile]);
 
+  /*
+  FNXC:FileBrowser 2026-09-13-08:37:
+  Une ouverture générale de Files reste un navigateur à deux panneaux, tandis qu’un initialFile non vide désigne une vue directe consacrée au fichier. La vue directe ne charge ni ne monte une seconde arborescence et ne propose jamais de retour vers une liste absente, sur desktop comme sur mobile.
+  */
   useEffect(() => {
-    if (!initialFile) {
+    if (!isDirectFileView) {
       setSelectedFile(null);
       return;
     }
 
     setSelectedFile(initialFile);
-    setPath(getParentDirectory(initialFile));
     if (isMobile) {
       setMobileView("editor");
     }
-  }, [initialFile, isMobile, setPath]);
+  }, [initialFile, isDirectFileView, isMobile]);
 
   useEffect(() => {
     try {
@@ -246,14 +250,14 @@ export function FileBrowserModal({
   const previousWorkspaceRef = useRef(currentWorkspace);
   useEffect(() => {
     const workspaceChanged = previousWorkspaceRef.current !== currentWorkspace;
-    if (workspaceChanged && selectedFile) {
+    if (workspaceChanged && selectedFile && !isDirectFileView) {
       setPath(getParentDirectory(selectedFile));
       if (isMobile) {
         setMobileView("editor");
       }
     }
     previousWorkspaceRef.current = currentWorkspace;
-  }, [currentWorkspace, isMobile, selectedFile, setPath]);
+  }, [currentWorkspace, isDirectFileView, isMobile, selectedFile, setPath]);
 
   const handleWorkspaceSelect = useCallback((workspace: string) => {
     setCurrentWorkspace(workspace);
@@ -410,26 +414,28 @@ export function FileBrowserModal({
         </div>
 
         <div className="file-browser-body">
-          <div
-            className={`file-browser-sidebar ${isMobile ? "mobile" : ""} ${mobileView === "list" ? "active" : ""}`}
-            style={isMobile ? undefined : { width: `${sidebarWidth}px` }}
-          >
-            <FileBrowser
-              entries={entries}
-              currentPath={currentPath}
-              onSelectFile={handleSelectFile}
-              onNavigate={setPath}
-              loading={browserLoading}
-              error={browserError}
-              onRetry={refresh}
-              workspace={currentWorkspace}
-              onRefresh={refresh}
-              projectId={projectId}
-              showProjectFileControls={currentWorkspace === "project"}
-            />
-          </div>
+          {!isDirectFileView && (
+            <div
+              className={`file-browser-sidebar ${isMobile ? "mobile" : ""} ${mobileView === "list" ? "active" : ""}`}
+              style={isMobile ? undefined : { width: `${sidebarWidth}px` }}
+            >
+              <FileBrowser
+                entries={entries}
+                currentPath={currentPath}
+                onSelectFile={handleSelectFile}
+                onNavigate={setPath}
+                loading={browserLoading}
+                error={browserError}
+                onRetry={refresh}
+                workspace={currentWorkspace}
+                onRefresh={refresh}
+                projectId={projectId}
+                showProjectFileControls={currentWorkspace === "project"}
+              />
+            </div>
+          )}
 
-          {!isMobile && (
+          {!isDirectFileView && !isMobile && (
             <div
               className="file-browser-resize-handle"
               role="separator"
@@ -449,7 +455,7 @@ export function FileBrowserModal({
               <>
                 <div className="file-browser-toolbar">
                   <div className="file-browser-file-info">
-                    {isMobile && mobileView === "editor" && (
+                    {!isDirectFileView && isMobile && mobileView === "editor" && (
                       <button
                         className="file-browser-back-button"
                         onClick={handleBackToList}

@@ -20,6 +20,22 @@ vi.mock("../../hooks/useWorkspaceFileBrowser", () => ({
     setPath: vi.fn(),
   }),
 }));
+vi.mock("../../hooks/useWorkspaceFileEditor", () => ({
+  useWorkspaceFileEditor: (_workspace: string, file: string | null) => ({
+    content: file ? `Contenu de ${file}` : "",
+    setContent: vi.fn(),
+    originalContent: file ? `Contenu de ${file}` : "",
+    loading: false,
+    saving: false,
+    error: null,
+    save: vi.fn(),
+    hasChanges: false,
+    mtime: "2026-09-13T08:37:00Z",
+  }),
+}));
+vi.mock("../../hooks/useWorkspaces", () => ({
+  useWorkspaces: () => ({ projectName: "Fusion", workspaces: [], loading: false, error: null }),
+}));
 
 const files: FileNode[] = [
   { name: "readme.md", type: "file", size: 10, mtime: "2026-01-15T10:30:00Z" },
@@ -33,6 +49,7 @@ describe("DockFilesView", () => {
     browserState.loading = false;
     browserState.error = null;
     browserState.refresh.mockReset();
+    Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 1024 });
   });
 
   it.each(files)("délègue $name au modal partagé sans monter d’éditeur", (file) => {

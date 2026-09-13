@@ -17,7 +17,7 @@ import {
 import { AlphaPlanningDrawer, AlphaProjectsDrawer } from "./components/AlphaMobileDrawer";
 import { PoppedOutChatWindows, QuickChatWindow } from "./components/PoppedOutChatWindows";
 import { PoppedOutNoteWindows } from "./components/PoppedOutNoteWindows";
-import { AppModals } from "./components/AppModals";
+import { AppModals, openAppFileInBrowser } from "./components/AppModals";
 import { DashboardLoader, type DashboardLoaderStage } from "./components/DashboardLoader";
 import { TopProgressBar } from "./components/TopProgressBar";
 import { ExecutorStatusBar } from "./components/ExecutorStatusBar";
@@ -1678,8 +1678,7 @@ function AppInner() {
   });
 
   const openFileInBrowser = useCallback((path: string, opts?: { workspace?: string; line?: number; col?: number }) => {
-    modalManager.openFiles(opts?.workspace, path);
-    pushNav({ type: "modal", close: modalManager.closeFiles });
+    openAppFileInBrowser(modalManager, pushNav, path, opts);
   }, [modalManager, pushNav]);
 
   const openActivityLogWithNav = useCallback(() => {
