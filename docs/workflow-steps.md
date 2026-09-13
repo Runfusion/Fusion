@@ -10,6 +10,9 @@ A released file-scope wait can produce a graph-owned delta revalidation before t
 
 `APPROVE` preserves the plan, SpecLock, completed steps, checkout, and checkpoint. `REVISE` is accepted only when it names the invalidated promise and enters targeted repair without erasing valid history; unavailable, malformed, timed-out, or cancelled reviews remain retryable and consume no replan verdict. The graph retains the original real node and sole active task continuation throughout, and pause, human approval, capacity, and `autoMerge:false` controls remain authoritative.
 
+<!-- FNXC:WorkflowAdmission 2026-09-13-06:53: A failed admission must remain a visible wait, including when a template uses a private context. -->
+Storage or targeted-repair dispatch errors retain the pending overlap decision and suspend admission instead of consuming implementation-node exception retries. The suspended continuation and owned execution fences become held with their leases cleared. Hold reasons survive direct, foreach, and loop execution; a recorded REVISE still requires a repaired plan and fresh approval before normal work resumes.
+
 ## Workflow overview
 
 <!--

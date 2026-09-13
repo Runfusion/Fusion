@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { TaskDetail, WorkflowIr } from "@fusion/core";
 import { buildOverlapDeltaReviewPrompt, revalidatePendingOverlapWaitsAtGraphNode, runOverlapPlanRevalidation } from "../workflows/overlap-plan-revalidation.js";
 import { WorkflowGraphExecutor } from "../workflows/workflow-graph-executor.js";
+import { holdWorkflowAdmission, workflowAdmissionHoldReason } from "../executor/workflow-admission-hold.js";
 
 const task = { id: "FN-B", prompt: "## Mission\nKeep sharedApi compatible.", steps: [{ name: "Preflight", status: "done" }, { name: "Implement", status: "in-progress" }], currentStep: 1 } as any;
 const receipt = { decision: "revalidate" as const, freshness: "proven" as const, commonFiles: ["src/shared.ts"], deliveryProofs: [{ repository: ".", landedSha: "c1" }], decisionFingerprint: "delta-1", decidedAt: "2026-09-09T23:53:00.000Z" };
@@ -111,6 +112,78 @@ describe("overlap plan delta revalidation", () => {
     expect(review).toHaveBeenCalledTimes(2);
     expect(live.column).toBe("in-progress");
     expect(live.steps?.[0]?.status).toBe("done");
+  });
+
+  /*
+   * FNXC:OverlapWaitSynchronization 2026-09-13-06:53:
+   * Reproduce FN-9294's post-implementation admission at step-done. A repair dispatch exception
+   * must suspend once, retain the real REVISE, and release leases on top-level and template paths.
+   */
+  it.each(["direct", "foreach", "loop"] as const)("contains a throwing targeted repair at a %s terminal node", async (surface) => {
+    const live = { ...task, column: "in-progress" } as TaskDetail;
+    let current = {
+      projectId: "p", taskId: live.id, episodeId: "failed-repair", blockerTaskId: "FN-A",
+      phase: "revalidation-pending", revision: 3, owner: "owner", attempt: 1,
+      planFingerprint: createHash("sha256").update(live.prompt!).digest("hex"), receipt,
+    } as any;
+    const review = vi.fn(async () => ({ success: false, verdict: "REVISE" as const, notes: "Keep sharedApi compatible." }));
+    const repair = vi.fn(async () => { throw new Error("repair dispatch unavailable"); });
+    const store = {
+      listTaskOverlapWaits: vi.fn(async () => [current]),
+      getTask: vi.fn(async () => live),
+      completeTaskOverlapWait: vi.fn(async (input: any) => {
+        current = { ...current, ...input, revision: current.revision + 1 };
+        return current;
+      }),
+    };
+    const handler = vi.fn(async () => ({ outcome: "success" as const }));
+    const node = { id: "step-done", kind: "prompt" as const, config: { prompt: "Finish" } };
+    const entry = surface === "direct" ? node : {
+      id: "steps", kind: surface,
+      config: {
+        source: "task-steps", maxIterations: 1, exitWhen: { type: "output-contains", value: "DONE" },
+        template: { nodes: [node], edges: [] },
+      },
+    };
+    const ir = {
+      version: "v2", name: "terminal-admission", columns: [{ id: "in-progress", name: "Work", traits: [] }],
+      nodes: [{ id: "start", kind: "start" }, entry, { id: "end", kind: "end" }],
+      edges: [{ from: "start", to: entry.id }, { from: entry.id, to: "end" }],
+    } as WorkflowIr;
+    const graph = new WorkflowGraphExecutor({
+      handlers: { prompt: handler },
+      beforeNodeExecution: async (candidate) => {
+        if (candidate.id !== node.id) return;
+        const outcome = await revalidatePendingOverlapWaitsAtGraphNode({ task: live, store: store as any, nodeId: candidate.id, review, repair });
+        return outcome === "approved" || outcome === "not-required" ? undefined : { outcome: "failure", value: `overlap-plan-revalidation-${outcome}` };
+      },
+    });
+    const transitionWorkflowWorkItem = vi.fn().mockResolvedValue(undefined);
+    const result = await graph.run(live, { experimentalFeatures: { workflowGraphExecutor: true } }, ir);
+    expect(result.suspended).toMatchObject({ nodeId: "step-done" });
+    const reason = workflowAdmissionHoldReason({ disposition: result.suspended ? "suspended" : "failed", context: result.context });
+    expect(reason).toBe("overlap-plan-revalidation-unavailable");
+    await holdWorkflowAdmission({ transitionWorkflowWorkItem }, reason!, "continuation", new Set(), new Set());
+    expect(transitionWorkflowWorkItem).toHaveBeenCalledWith("continuation", "held", expect.objectContaining({ leaseOwner: null, leaseExpiresAt: null, blockedReason: reason }));
+    expect(review).toHaveBeenCalledOnce();
+    expect(repair).toHaveBeenCalledOnce();
+    expect(handler).not.toHaveBeenCalled();
+    expect(current.phase).toBe("repair-required");
+    expect(current.receipt.revalidationVerdict).toBe("REVISE");
+    expect(live.steps?.[0]?.status).toBe("done");
+    expect(live.column).toBe("in-progress");
+    const again = await graph.run(live, { experimentalFeatures: { workflowGraphExecutor: true } }, ir);
+    expect(again.suspended).toBeDefined();
+    expect(review).toHaveBeenCalledOnce();
+    expect(repair).toHaveBeenCalledOnce();
+  });
+
+  it("holds unavailable storage instead of spending node exception retries", async () => {
+    const unavailable = vi.fn(async () => { throw new Error("database unavailable"); });
+    const review = vi.fn();
+    await expect(revalidatePendingOverlapWaitsAtGraphNode({ task, nodeId: "step-done", store: { listTaskOverlapWaits: unavailable } as any, review, repair: vi.fn() })).resolves.toBe("unavailable");
+    expect(unavailable).toHaveBeenCalledOnce();
+    expect(review).not.toHaveBeenCalled();
   });
 
   it("reclaims a repaired plan with an exact durable execution identity before second approval", async () => {

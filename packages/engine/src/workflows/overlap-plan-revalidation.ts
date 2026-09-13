@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { promisify } from "node:util";
 import type { OverlapWaitReceipt, Task, TaskOverlapWait, TaskStore, WorkflowStep } from "@fusion/core";
 import type { WorkflowStepOutcome } from "../executor/workflow-step-verdict.js";
+import { executorLog } from "../logger.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -82,7 +83,7 @@ function currentDeltaIdentity(task: Pick<Task, "prompt">, receipt: OverlapWaitRe
  * persist APPROVE before dispatching that node, while REVISE and unavailable transports retain the
  * same continuation and never authorize ordinary work.
  */
-export async function revalidatePendingOverlapWaitsAtGraphNode(input: {
+interface OverlapGraphRevalidationInput {
   task: Task;
   store: Pick<TaskStore, "listTaskOverlapWaits" | "claimTaskOverlapWait" | "completeTaskOverlapWait" | "getTask">;
   nodeId: string;
@@ -90,7 +91,24 @@ export async function revalidatePendingOverlapWaitsAtGraphNode(input: {
   repair: (input: { episode: TaskOverlapWait; invalidatedPromise: string; feedback: string }) => Promise<boolean>;
   /** Internal fence: one graph admission may repair and revalidate once, never spin indefinitely. */
   allowInlineRepairRevalidation?: boolean;
-}): Promise<OverlapGraphRevalidationOutcome> {
+}
+
+/**
+ * FNXC:OverlapWaitSynchronization 2026-09-13-06:53:
+ * Storage and targeted-repair failures are unavailable admission, not implementation exceptions.
+ * Preserve any durable REVISE and return the typed hold without spending generic node retries or
+ * repeating the reviewer inside the same dispatch. Never manufacture approval after a failed write.
+ */
+export async function revalidatePendingOverlapWaitsAtGraphNode(input: OverlapGraphRevalidationInput): Promise<OverlapGraphRevalidationOutcome> {
+  try {
+    return await revalidateOverlapAdmission(input);
+  } catch (error) {
+    executorLog.warn(`[overlap-revalidation] ${input.task.id} at ${input.nodeId}: ${error instanceof Error ? error.message : String(error)}`);
+    return "unavailable";
+  }
+}
+
+async function revalidateOverlapAdmission(input: OverlapGraphRevalidationInput): Promise<OverlapGraphRevalidationOutcome> {
   if (typeof input.store.listTaskOverlapWaits !== "function") return "not-required";
   const pending = await input.store.listTaskOverlapWaits(input.task.id, { pendingOnly: true });
   if (!Array.isArray(pending)) return "not-required";
