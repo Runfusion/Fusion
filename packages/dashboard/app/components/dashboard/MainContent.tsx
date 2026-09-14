@@ -223,6 +223,13 @@ export function MainContentListView(props: AppMainPanelTaskDetailMainContentProp
         */
         workflowControlsInHeader={props.listHost !== "dock"}
         compact={props.listHost === "dock"}
+        /*
+        FNXC:ListInRightDock 2026-09-14-08:05:
+        Only ONE List instance may claim the shared header workflow slot. The dock host is never the active route, so
+        it declares itself inactive; ListView portals its selector solely from the active route host, which is what
+        kept the mobile header from showing the switcher twice.
+        */
+        active={props.listHost !== "dock"}
       />
     </PageErrorBoundary>
   );

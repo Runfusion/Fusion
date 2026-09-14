@@ -3266,6 +3266,16 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   }, [projectId, runningSummary, t, view]);
 
   const activeSessionTitle = planningSessions.find((session) => session.id === selectedSessionId)?.title ?? loadedSessionTitle;
+  /*
+  FNXC:PlanningTitle 2026-09-14-08:05:
+  The header shows a session name only while that session's interview is ON SCREEN. Leaving it — Back to sessions, or
+  any state that returns to the list — keeps selectedSessionId for resume, so the title kept showing the session the
+  operator had just left and the destination read as if it were still open.
+  */
+  const showsSessionIdentity = !showSessionList
+    && Boolean(selectedSessionId)
+    && Boolean(activeSessionTitle)
+    && (view.type === "question" || view.type === "loading" || view.type === "session_loading" || view.type === "error");
   const handleRenameSession = useCallback(async () => {
     const sessionId = selectedSessionId;
     const nextTitle = sessionTitleDraft.trim();
@@ -3542,7 +3552,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
                 onClick: handleBackToList,
                 className: "planning-session-back",
               } : undefined}
-              title={selectedSessionId && (view.type === "question" || view.type === "loading" || view.type === "session_loading" || view.type === "error") && activeSessionTitle && isRenamingSession ? (
+              title={showsSessionIdentity && isRenamingSession ? (
                 <input
                   className="input planning-session-title-input"
                   aria-label={t("planning.renameSession", "Rename session")}
@@ -3554,8 +3564,8 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
                 />
               ) : (
                 <>
-                  <span>{selectedSessionId && (view.type === "question" || view.type === "loading" || view.type === "session_loading" || view.type === "error") && activeSessionTitle ? activeSessionTitle : t("planning.title", "Planning Mode")}</span>
-                  {selectedSessionId && (view.type === "question" || view.type === "loading" || view.type === "session_loading" || view.type === "error") && activeSessionTitle ? <button type="button" className="btn-icon" aria-label={t("planning.renameSession", "Rename session")} onClick={() => { setSessionTitleDraft(activeSessionTitle); setIsRenamingSession(true); }}><Pencil /></button> : null}
+                  <span>{showsSessionIdentity ? activeSessionTitle : t("planning.title", "Planning Mode")}</span>
+                  {showsSessionIdentity ? <button type="button" className="btn-icon" aria-label={t("planning.renameSession", "Rename session")} onClick={() => { setSessionTitleDraft(activeSessionTitle ?? ""); setIsRenamingSession(true); }}><Pencil /></button> : null}
                 </>
               )}
               actions={(

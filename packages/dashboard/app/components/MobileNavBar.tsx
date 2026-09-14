@@ -442,6 +442,20 @@ export function MobileNavBar({
         || menuSurfaceRef.current?.contains(event.target as Node)
         || target?.closest(".alpha-mobile-menu-trigger")
       ) return;
+      /*
+      FNXC:MobileNav 2026-09-14-08:05:
+      Geometric fallback for the dismissal guard. On a phone the popover can re-anchor between touchstart and click
+      (URL-bar collapse moves the visual viewport), and DOM containment then reports a press on a menu entry as
+      "outside" — closing the menu with nothing behind it. A press whose coordinates fall inside the popover is a
+      press ON the menu whatever the DOM says, so it never dismisses.
+      */
+      const surface = menuSurfaceRef.current;
+      if (surface) {
+        const rect = surface.getBoundingClientRect();
+        const inside = event.clientX >= rect.left && event.clientX <= rect.right
+          && event.clientY >= rect.top && event.clientY <= rect.bottom;
+        if (inside) return;
+      }
       dismissMore();
     };
 
