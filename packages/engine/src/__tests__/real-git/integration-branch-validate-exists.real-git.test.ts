@@ -19,7 +19,6 @@ const describeIfGit = hasGit ? describe : describe.skip;
 const VALID_NAMES = [
   "master",
   "trunk",
-  "@",
   "@@",
   "a/@",
   "V1.0",
@@ -32,6 +31,15 @@ const VALID_NAMES = [
   "x9",
   "feature/long_name.with-dots",
 ];
+
+/**
+ * Valid per `git check-ref-format --branch`, but unusable as a BARE name: git's
+ * revision parser aliases bare `@` to HEAD, so worktree/checkout consumers fork
+ * from the current checkout while merge code updates refs/heads/@ — two different
+ * commits (Devin BUG-0001, round on c1367147). The resolver returns bare names,
+ * so the validator must reject `@` even though git accepts the refname itself.
+ */
+const GIT_VALID_BUT_UNUSABLE_BARE = ["@"];
 
 const INVALID_NAMES = [
   "HEAD", // reserved
@@ -100,6 +108,15 @@ describeIfGit("integration branch name validation (real git parity)", () => {
       expect(isUsableBranchName(name), `validator should reject ${JSON.stringify(name)}`).toBe(false);
       const created = spawnSync("git", ["branch", "--", name, head], { cwd: repo, stdio: "pipe" });
       expect(created.status, `git branch -- ${JSON.stringify(name)} should fail`).not.toBe(0);
+    }
+
+    for (const name of GIT_VALID_BUT_UNUSABLE_BARE) {
+      // git accepts the refname AND the branch creation — the validator still rejects
+      // it because BARE-name consumers (worktree/checkout revision parsing) would
+      // resolve `@` to the current checkout instead of refs/heads/@.
+      const formatStatus = spawnSync("git", ["check-ref-format", "--branch", name], { stdio: "pipe" }).status;
+      expect(formatStatus, `check-ref-format --branch should accept ${JSON.stringify(name)}`).toBe(0);
+      expect(isUsableBranchName(name), `validator should reject bare ${JSON.stringify(name)}`).toBe(false);
     }
   });
 

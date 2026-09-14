@@ -39,10 +39,11 @@ timeout, permissions, fatal) is an operational error, not evidence of absence. T
 environment, so only exit 1 is consumed as `false` and real failures propagate to the caller.
 */
 function isMissingRefExit(error: unknown): boolean {
-  // child_process reports numeric exit statuses via `code`; the ErrnoException typing
-  // widens it to string, so compare through an untyped view. Non-numeric codes (signals,
-  // ENOENT-style strings) never equal 1 and stay operational errors.
-  return (error as { code?: unknown } | null)?.code === 1;
+  // Promisified execFile reports the numeric exit status via `code`; execFileSync
+  // exposes it as `status`. Spawn failures (ENOENT), signals, and timeouts must
+  // remain operational errors rather than being treated as a missing ref.
+  const result = error as { code?: unknown; status?: unknown } | null;
+  return result?.code === 1 || result?.status === 1;
 }
 
 async function branchRefExists(rootDir: string, branch: string): Promise<boolean> {
@@ -104,6 +105,13 @@ export function isUsableBranchName(branch: string): boolean {
   if (branch.length === 0 || branch === "HEAD") {
     return false;
   }
+  // Bare `@` is a valid refname (git creates refs/heads/@ happily), but git's revision
+  // parser aliases a BARE `@` to HEAD — the current checkout. The resolver returns bare
+  // names to worktree/checkout consumers while merge code updates refs/heads/<name>,
+  // so the two paths would address different commits. Reject it despite check-ref-format.
+  if (branch === "@") {
+    return false;
+  }
   if (branch.startsWith("-") || branch.startsWith(".") || branch.startsWith("/")) {
     return false;
   }
@@ -123,14 +131,10 @@ export function isUsableBranchName(branch: string): boolean {
   if (branch.includes("..") || branch.includes("@{")) {
     return false;
   }
-  // "@" alone is a valid branch name; inside multi-component names a lone "@"
-  // component is not.
-  if (branch === "@") {
-    return true;
-  }
   // Per-component rules: no empty component (leading/trailing/double slash), no
-  // leading dot, no trailing dot, no .lock suffix. ("@" is valid as a whole name
-  // and as a component on git >= 2.30 — verified against git 2.55.)
+  // leading dot, no trailing dot, no .lock suffix. ("@" as a WHOLE name is rejected
+  // above because bare @ aliases HEAD; as a component ("a/@") it is valid on
+  // git >= 2.30 — verified against git 2.55.)
   for (const part of branch.split("/")) {
     if (part.length === 0) {
       return false;
@@ -522,7 +526,10 @@ export async function resolveIntegrationBranch(
   }
 
   const remotes = await listGitRemotes(rootDir);
-  const fallbackCandidate = fromOrigin.length > 0 ? fromOrigin : INTEGRATION_BRANCH_FALLBACK;
+  // Revalidate: the origin/HEAD rung may have rejected fromOrigin (unusable name) while
+  // a plumbing-created local ref for it still exists — the pure existence probe below
+  // would otherwise return a name git consumers misparse (Devin round on c1367147).
+  const fallbackCandidate = fromOrigin.length > 0 && isUsableBranchName(fromOrigin) ? fromOrigin : INTEGRATION_BRANCH_FALLBACK;
   if (await materializeLocalBranch(rootDir, fallbackCandidate)) {
     warnMaterializedBranch(rootDir, logger, fallbackCandidate);
     return fallbackCandidate;
@@ -599,7 +606,10 @@ export function resolveIntegrationBranchSync(
   }
 
   const remotes = listGitRemotesSync(rootDir);
-  const fallbackCandidate = fromOrigin.length > 0 ? fromOrigin : INTEGRATION_BRANCH_FALLBACK;
+  // Revalidate: the origin/HEAD rung may have rejected fromOrigin (unusable name) while
+  // a plumbing-created local ref for it still exists — the pure existence probe below
+  // would otherwise return a name git consumers misparse (Devin round on c1367147).
+  const fallbackCandidate = fromOrigin.length > 0 && isUsableBranchName(fromOrigin) ? fromOrigin : INTEGRATION_BRANCH_FALLBACK;
   if (materializeLocalBranchSync(rootDir, fallbackCandidate)) {
     warnMaterializedBranch(rootDir, logger, fallbackCandidate);
     return fallbackCandidate;

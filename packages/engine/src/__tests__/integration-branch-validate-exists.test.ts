@@ -316,6 +316,117 @@ describe("integration-branch resolver — settings branch existence guard", () =
     expect(branchCalls).toEqual([]);
   });
 
+  it("rejects bare @ from inference — git aliases bare @ to HEAD (async)", async () => {
+    // Devin BUG-0001 (round on c1367147): refs/heads/@ is a valid ref and git accepts
+    // its creation, but bare `@` in a revision context resolves to HEAD — the current
+    // checkout — not refs/heads/@. The resolver returns BARE names to worktree/checkout
+    // consumers, so `@` must fall through even though check-ref-format accepts it.
+    execMock.mockImplementation((command: string, _opts: object, cb: (error: Error | null, result: { stdout: string }) => void) => {
+      if (command.includes("symbolic-ref")) {
+        cb(null, { stdout: "" }); // no origin/HEAD, no checked-out HEAD
+        return {};
+      }
+      if (command.includes("for-each-ref")) {
+        cb(null, { stdout: command.includes("refs/heads/") ? "@\n" : "" }); // sole local branch
+        return {};
+      }
+      cb(null, { stdout: "" });
+      return {};
+    });
+    const branchCalls: string[][] = [];
+    execFileMock.mockImplementation(((_cmd: string, args: string[], _opts: unknown, cb: (error: Error | null) => void) => {
+      if (args[0] === "show-ref" && args[3] === "refs/heads/@") {
+        cb(null); // the ref exists — the BARE name is what must be rejected
+        return {};
+      }
+      if (args[0] === "branch") branchCalls.push(args);
+      cb(missingRefError());
+      return {};
+    }) as any);
+
+    await expect(resolveIntegrationBranch("/inference-at-guard", undefined)).rejects.toThrow(/could not establish/);
+    expect(branchCalls).toEqual([]);
+  });
+
+  it("rejects bare @ from inference — git aliases bare @ to HEAD (sync)", () => {
+    execSyncMock.mockImplementation((command: string, _opts: object) => {
+      const cmd = command as string;
+      if (cmd.includes("symbolic-ref")) return ""; // no origin/HEAD, no checked-out HEAD
+      if (cmd.includes("for-each-ref")) {
+        return cmd.includes("refs/heads/") ? "@\n" : ""; // sole local branch
+      }
+      return "";
+    });
+    const branchCalls: string[][] = [];
+    execFileSyncMock.mockImplementation((_cmd: string, args: string[]) => {
+      if (args[0] === "show-ref" && args[3] === "refs/heads/@") {
+        return ""; // exists — bare name unusable
+      }
+      if (args[0] === "branch") branchCalls.push(args);
+      throw missingRefError();
+    });
+
+    expect(() => resolveIntegrationBranchSync("/inference-at-guard-sync", {} as any)).toThrow(/could not establish/);
+    expect(branchCalls).toEqual([]);
+  });
+
+  it("revalidates the origin/HEAD candidate before the fallback probes reuse it (async)", async () => {
+    // Devin BUG-0002 (round on c1367147): the origin/HEAD rung validates fromOrigin,
+    // but the fallback ladder reused a REJECTED candidate (`-m`) as fallbackCandidate;
+    // a plumbing-created refs/heads/-m passes the pure existence probe and gets
+    // returned. The fallback must revalidate the name before probing/returning.
+    execMock.mockImplementation((command: string, _opts: object, cb: (error: Error | null, result: { stdout: string }) => void) => {
+      if (command.includes("symbolic-ref --short refs/remotes/origin/HEAD")) {
+        cb(null, { stdout: "origin/-m\n" }); // origin/HEAD names an unusable branch
+        return {};
+      }
+      if (command.includes("symbolic-ref")) {
+        cb(new Error("detached"), { stdout: "" }); // no checked-out HEAD
+        return {};
+      }
+      if (command.includes("for-each-ref")) {
+        cb(null, { stdout: "" }); // inference finds nothing
+        return {};
+      }
+      cb(null, { stdout: "origin\n" });
+      return {};
+    });
+    const branchCalls: string[][] = [];
+    execFileMock.mockImplementation(((_cmd: string, args: string[], _opts: unknown, cb: (error: Error | null) => void) => {
+      if (args[0] === "show-ref" && args[3] === "refs/heads/-m") {
+        cb(null); // poison: a plumbing-created local ref for the unusable name
+        return {};
+      }
+      if (args[0] === "branch") branchCalls.push(args);
+      cb(missingRefError()); // no origin/main, no refs/heads/main
+      return {};
+    }) as any);
+
+    await expect(resolveIntegrationBranch("/fallback-revalidation", undefined)).rejects.toThrow(/could not establish/);
+    expect(branchCalls).toEqual([]); // never materialize or return the rejected name
+  });
+
+  it("revalidates the origin/HEAD candidate before the fallback probes reuse it (sync)", () => {
+    execSyncMock.mockImplementation((command: string, _opts: object) => {
+      const cmd = command as string;
+      if (cmd.includes("refs/remotes/origin/HEAD")) return "origin/-m\n";
+      if (cmd.includes("symbolic-ref")) throw new Error("detached");
+      if (cmd.includes("for-each-ref")) return "";
+      return "";
+    });
+    const branchCalls: string[][] = [];
+    execFileSyncMock.mockImplementation((_cmd: string, args: string[]) => {
+      if (args[0] === "show-ref" && args[3] === "refs/heads/-m") {
+        return ""; // poison: plumbing-created local ref
+      }
+      if (args[0] === "branch") branchCalls.push(args);
+      throw missingRefError();
+    });
+
+    expect(() => resolveIntegrationBranchSync("/fallback-revalidation-sync", {} as any)).toThrow(/could not establish/);
+    expect(branchCalls).toEqual([]);
+  });
+
   it("skips a settings branch that does not exist locally or in origin, falling through to origin/HEAD", async () => {
     mockShowRef(["refs/heads/main"], "async");
     execMock.mockImplementation((command: string, _opts: object, cb: (error: Error | null, result: { stdout: string }) => void) => {
@@ -1130,6 +1241,23 @@ describe("integration-branch resolver — settings branch existence guard", () =
     expect(() =>
       resolveIntegrationBranchSync("/broken", { integrationBranch: "release", baseBranch: undefined } as any),
     ).toThrow(/not a git repository/);
+  });
+
+  it("treats execFileSync status 1 as a missing ref", () => {
+    execSyncMock.mockImplementation((command: string) => {
+      if (command.includes("symbolic-ref")) return "";
+      if (command.includes("for-each-ref")) return "";
+      return "";
+    });
+    execFileSyncMock.mockImplementation(() => {
+      const error = new Error("fatal: ref not found");
+      (error as NodeJS.ErrnoException & { status?: number }).status = 1;
+      throw error;
+    });
+
+    expect(() =>
+      resolveIntegrationBranchSync("/missing-status", { integrationBranch: "release", baseBranch: undefined } as any),
+    ).toThrow(/could not establish/);
   });
 
   it("verify helper honors the priority contract shared with core selection", () => {
