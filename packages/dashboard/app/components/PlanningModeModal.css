@@ -112,7 +112,16 @@ FNXC:StandardizedViewLayout 2026-09-14-05:58:
 Planning's header is a full-width bar over BOTH the session rail and the interview, exactly like Mailbox and Agents.
 It kept `border-bottom: none` from its modal past, so the title row bled into the panes below and the destination did
 not read as header-over-content the way every other collection does.
+
+The separator is declared on the LAYOUT, not on the modal wrapper: the embedded destination renders
+`.planning-modal-body > .view-header` and a rule scoped to the modal ancestor alone left the standalone/host cases
+without a bar.
 */
+.planning-modal-body > .view-header {
+  border-bottom: var(--btn-border-width) solid var(--border);
+  background: var(--surface);
+}
+
 .planning-modal--embedded .modal-header--embedded {
   box-sizing: border-box;
   align-items: center;
