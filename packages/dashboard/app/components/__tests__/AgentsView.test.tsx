@@ -374,17 +374,25 @@ describe("AgentsView", () => {
       });
     });
 
-    it("renders cross-pane overview above split layout", async () => {
+    it("hosts the overview trigger in the header and drops its content above the split layout", async () => {
       const { container } = renderView(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
-        expect(container.querySelector(".agents-overview-bar")).toBeTruthy();
         expect(container.querySelector(".agents-split-layout")).toBeTruthy();
       });
 
-      const overview = container.querySelector(".agents-overview-bar");
+      // The trigger is a header action, and the rail carries the agent collection alone.
+      const trigger = screen.getByTestId("agents-overview-toggle");
+      expect(container.querySelector(".view-header")?.contains(trigger)).toBe(true);
+      expect(container.querySelector("section.agents-overview-bar")).toBeNull();
+
+      fireEvent.click(trigger);
+
+      const overview = container.querySelector("section.agents-overview-bar");
       const splitLayout = container.querySelector(".agents-split-layout");
+      expect(overview).toBeTruthy();
       expect(overview?.nextElementSibling).toBe(splitLayout);
+      expect(overview?.querySelector("button.agents-overview-bar__toggle")).toBeNull();
       const sidebar = container.querySelector(".agents-split-sidebar");
       expect(sidebar).toBeTruthy();
       expect(sidebar?.querySelector(".agents-overview-bar")).toBeNull();

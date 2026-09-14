@@ -83,7 +83,9 @@ describe("standardized Planning and Missions layouts", () => {
     expect(screen.getByTestId("view-layout-content").closest(".view-layout")).toHaveAttribute("data-mobile-pane", "list");
   });
 
-  it("keeps an implicitly restored phone session on the list", async () => {
+  it("never implicitly restores a stored session when Planning is entered", async () => {
+    // Entering Planning selects nothing: a stored active session is not resumed, on phone or desktop.
+    // Only an explicit resume handoff (covered below) opens an interview.
     vi.mocked(viewport.useViewportMode).mockReturnValue("mobile");
     savePlanningActiveSession("session-implicit", "project-1");
     vi.mocked(api.fetchAiSession).mockResolvedValue({
@@ -97,7 +99,8 @@ describe("standardized Planning and Missions layouts", () => {
       result: JSON.stringify({ sessionId: "session-implicit", currentQuestion: null, summary: null }),
     } as never);
     renderPlanning();
-    await waitFor(() => expect(api.fetchAiSession).toHaveBeenCalledWith("session-implicit"));
+    await waitFor(() => expect(api.fetchAiSessions).toHaveBeenCalled());
+    expect(api.fetchAiSession).not.toHaveBeenCalledWith("session-implicit");
     expect(screen.getByTestId("view-layout-content").closest(".view-layout")).toHaveAttribute("data-mobile-pane", "list");
   });
 

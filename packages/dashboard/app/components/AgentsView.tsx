@@ -8,7 +8,7 @@ import { fetchAgents, updateAgent, updateAgentState, deleteAgent, startAgentRun,
 
 const AgentDetailView = lazy(() => import("./AgentDetailView").then((m) => ({ default: m.AgentDetailView })));
 import { AgentTokenStatsPanel } from "./AgentTokenStatsPanel";
-import { AgentsOverviewBar } from "./AgentsOverviewBar";
+import { AgentsOverviewBar, AgentsOverviewToggle } from "./AgentsOverviewBar";
 import { ViewHeader } from "./ViewHeader";
 import { ViewActionButton } from "./ViewActionButton";
 import { ViewSidebar } from "./ViewSidebar";
@@ -1465,6 +1465,16 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
         } : undefined}
         actions={
         <div className="agents-view-controls">
+          {/*
+          FNXC:StandardizedViewActions 2026-09-14-02:47:
+          Overview is a view-level disclosure, so its trigger sits with the other header actions. The rail keeps only the
+          agent collection and the expanded overview drops in as a sibling section beneath the header.
+          */}
+          <AgentsOverviewToggle
+            activeAgents={displayActiveAgents}
+            isOpen={isOverviewOpen}
+            onToggle={() => setIsOverviewOpen((open) => !open)}
+          />
           <div className="view-toggle">
             <button
               className={`view-toggle-btn${agentView === "list" ? " active" : ""}`}
@@ -1750,7 +1760,6 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
         activeAgents={displayActiveAgents}
         projectId={projectId}
         isOpen={isOverviewOpen}
-        onToggle={() => setIsOverviewOpen((open) => !open)}
         onSelectAgent={handleOverviewAgentSelect}
         onOpenTaskLogs={onOpenTaskLogs}
       />

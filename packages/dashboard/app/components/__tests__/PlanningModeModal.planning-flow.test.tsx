@@ -2170,7 +2170,7 @@ describe("PlanningModeModal sequential flow", () => {
   created a duplicate planning session while the first one was silently abandoned. The remount
   must instead restore the persisted active session.
   */
-  it("consumes the seeded initial plan on auto-start so a navigate-back remount restores the session instead of creating a duplicate", async () => {
+  it("consumes the seeded initial plan on auto-start so a navigate-back remount selects nothing and creates no duplicate", async () => {
     mockFetchAiSession.mockResolvedValue({
       ...base,
       id: "draft-1",
@@ -2199,12 +2199,14 @@ describe("PlanningModeModal sequential flow", () => {
     // Navigate away: the embedded Planning view unmounts entirely.
     first.unmount();
 
-    // Navigate back: the owner cleared the payload, so the remount takes the
-    // stored-active-session restore path.
+    // Navigate back: the owner cleared the payload, so the remount opens on the
+    // session list. Entering Planning never auto-selects an interview.
+    mockFetchAiSession.mockClear();
     render(<PlanningModeModal {...commonProps} />);
-    await waitFor(() => expect(mockFetchAiSession).toHaveBeenCalledWith("draft-1"));
+    await waitFor(() => expect(mockFetchAiSessions).toHaveBeenCalled());
+    expect(mockFetchAiSession).not.toHaveBeenCalledWith("draft-1");
 
-    // No second session was drafted or started by the remount.
+    // The anti-duplicate contract is unchanged: no second session is drafted or started.
     expect(mockCreatePlanningDraft).toHaveBeenCalledTimes(1);
     expect(mockStartPlanningStreaming).toHaveBeenCalledTimes(1);
   });

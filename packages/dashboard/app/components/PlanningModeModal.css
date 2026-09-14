@@ -1364,6 +1364,20 @@ margins so paragraphs and lists do not create unintended gaps.
   margin-left: auto;
 }
 
+/*
+FNXC:StandardizedViewActions 2026-09-14-02:47:
+History sits immediately left of the primary Next action rather than in the view header. The trigger owns the free
+space so the pair stays right-aligned as one cluster, and the primary drops its own auto margin so no gap opens
+between them.
+*/
+.planning-actions .planning-history-trigger {
+  margin-left: auto;
+}
+
+.planning-actions .planning-history-trigger + .planning-actions-primary {
+  margin-left: 0;
+}
+
 .planning-back-btn {
   display: inline-flex;
   align-items: center;

@@ -2,14 +2,13 @@ import "./WorkflowSwitcher.css";
 import { AlphaButton, AlphaListBox, AlphaListBoxItem, AlphaPopoverSurface } from "./alpha-ui";
 import { useAlphaSurface } from "../context/AlphaContext";
 
-import { ChevronDown, Pencil } from "lucide-react";
+import { ChevronDown, Pencil, Plus } from "lucide-react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import type { BoardWorkflowDefinition } from "../api";
 import { WorkflowIcon } from "./WorkflowIcon";
 import type { WorkflowStatusCounts } from "./workflowStatusCounts";
-import { ViewActionButton } from "./ViewActionButton";
 
 export interface WorkflowSwitcherAggregateOption {
   id: string;
@@ -87,7 +86,14 @@ function getWorkflowIconValue(workflow: WorkflowSwitcherAggregateOption | BoardW
  * Render Plan, Progress, and Review counts only while the dropdown is expanded; option rows keep their count text because the listbox is the comparison surface.
  *
  * FNXC:StandardizedViewActions 2026-09-13-21:43:
- * Workflow row editing remains contextual inside the listbox, while New workflow is a shared create action beside the selector so header hosts own it and the popover has no mutation footer.
+ * Workflow row editing remains contextual inside the listbox, and New workflow lives with it in a non-scrolling popover footer.
+ *
+ * FNXC:StandardizedViewActions 2026-09-14-02:47:
+ * FN-379 extracted New workflow into a sibling header action because "every creation entry uses the shared button".
+ * That was the rule applied without judgment: the selector already owns workflow lifecycle, so a second control beside
+ * it duplicates the affordance and pushes a mutation into a row meant for selection. Creation returns INSIDE the
+ * popover footer, where it stays reachable while a long workflow list scrolls. The shared creation contract applies to
+ * a view's primary resource action in its header — not to an action already scoped by its own picker.
  *
  * FNXC:WorkflowSwitcher 2026-06-21-00:00:
  * Opening the dropdown must refresh workflow count data because task-to-workflow assignments do not emit board-workflows invalidation events.
@@ -417,6 +423,19 @@ export function WorkflowSwitcher({ workflows, value, onChange, counts, aggregate
             })}
           </AlphaListBox>
         )}
+        {onCreateWorkflow ? (
+          <div className="workflow-switcher-footer">
+            <AlphaButton
+              type="button"
+              className="btn workflow-switcher-create"
+              data-testid="workflow-switcher-create"
+              onClick={handleCreateWorkflow}
+            >
+              <Plus aria-hidden="true" />
+              <span>{newWorkflowLabel}</span>
+            </AlphaButton>
+          </div>
+        ) : null}
       </AlphaPopoverSurface>,
       portalRoot,
     )
@@ -447,15 +466,6 @@ export function WorkflowSwitcher({ workflows, value, onChange, counts, aggregate
         </span>
         <ChevronDown size={14} className="workflow-switcher-chevron" aria-hidden="true" />
       </AlphaButton>
-      {onCreateWorkflow ? (
-        <ViewActionButton
-          kind="create"
-          className="workflow-switcher-create"
-          data-testid="workflow-switcher-create"
-          label={newWorkflowLabel}
-          onClick={handleCreateWorkflow}
-        />
-      ) : null}
       {dropdown}
     </div>
   );
