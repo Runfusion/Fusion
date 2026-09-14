@@ -107,53 +107,10 @@ describe("ListView active keep-alive gate", () => {
     expect(source).toContain("return active && workflowControlsInHeader && headerWorkflowSlot");
   });
 
-  it("runs the production mobile List Quick Entry as Alpha and starts only at the 500ms boundary", async () => {
-    const restoreViewport = mockViewport("mobile");
-    vi.useFakeTimers();
-    const onQuickCreate = vi.fn().mockResolvedValue(undefined);
-    const onMoveTask = vi.fn().mockResolvedValue({});
-    const view = render(<ListView {...listProps({ onQuickCreate, onMoveTask })} />);
-
-    try {
-      const composer = screen.getByTestId("quick-entry-box");
-      const save = screen.getByTestId("quick-entry-save");
-      expect(window.innerWidth).toBe(375);
-      expect(composer.closest('[data-alpha-surface="true"]')).not.toBeNull();
-      expect(save).toHaveClass("btn-icon", "quick-entry-alpha-save");
-      expect(save).toHaveAccessibleName("Save task; hold to start");
-      expect(save).toHaveStyle({ "--quick-entry-alpha-hold-duration": "500ms" });
-      expect(screen.queryByTestId("quick-entry-save-start")).toBeNull();
-
-      fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "List Alpha task" } });
-      fireEvent.pointerDown(save, { pointerId: 31, pointerType: "mouse", button: 0, isPrimary: true });
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(499);
-      });
-      fireEvent.pointerUp(save, { pointerId: 31, pointerType: "mouse" });
-      fireEvent.click(save);
-      await act(async () => Promise.resolve());
-
-      expect(onQuickCreate).not.toHaveBeenCalled();
-      expect(onMoveTask).not.toHaveBeenCalled();
-
-      fireEvent.pointerDown(save, { pointerId: 32, pointerType: "mouse", button: 0, isPrimary: true });
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(500);
-      });
-
-      expect(onQuickCreate).toHaveBeenCalledTimes(1);
-      expect(onQuickCreate).toHaveBeenCalledWith(expect.objectContaining({
-        description: "List Alpha task",
-        workflowId: "builtin:coding-ideas-v2",
-        column: "todo",
-      }));
-      expect(onMoveTask).not.toHaveBeenCalled();
-    } finally {
-      view.unmount();
-      vi.clearAllTimers();
-      restoreViewport();
-    }
-  });
+  /*
+  List no longer mounts a Quick Entry of its own, so the host-level composer case is deleted with the affordance.
+  The Alpha gesture contract itself stays covered by the QuickEntryBox suite, which mounts the real composer.
+  */
 
   it.each(["desktop", "mobile"] as const)("releases the header workflow slot while inactive on %s", async (mode) => {
     const restoreViewport = mockViewport(mode);

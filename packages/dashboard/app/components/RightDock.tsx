@@ -93,7 +93,7 @@ function persistRightDockWidth(width: number): void {
   }
 }
 
-function persistRightDockView(key: OverflowViewKey): void {
+export function persistRightDockViewSelection(key: OverflowViewKey): void {
   try {
     window.localStorage.setItem(RIGHT_DOCK_VIEW_STORAGE_KEY, key);
   } catch {
@@ -112,6 +112,14 @@ export interface RightDockProps {
   dockTask?: Task | TaskDetail | null;
   dockTaskContent?: ReactNode;
   onCloseDockTask?: () => void;
+  /*
+  FNXC:ListInRightDock 2026-09-14-04:42:
+  FN-382: the owner holds the selected tool so navigation can open one from outside the dock — a non-mobile request
+  for List selects it here instead of replacing the main view. The dock keeps every interaction; it no longer keeps
+  the state behind them.
+  */
+  selectedKey: OverflowViewKey;
+  onSelectKey: (key: OverflowViewKey) => void;
 }
 
 /*
@@ -138,10 +146,11 @@ export function RightDock({
   dockTask = null,
   dockTaskContent = null,
   onCloseDockTask,
+  selectedKey,
+  onSelectKey,
 }: RightDockProps) {
   const { t } = useTranslation("app");
   const entries = useMemo(() => getVisibleOverflowViewEntries(visibilityOptions), [visibilityOptions]);
-  const [selectedKey, setSelectedKey] = useState<OverflowViewKey>(() => readStoredRightDockView(visibilityOptions));
   const [width, setWidth] = useState(readStoredRightDockWidth);
   /*
   FNXC:Navigation 2026-06-22-09:00:
@@ -152,10 +161,9 @@ export function RightDock({
 
   useEffect(() => {
     if (!isOverflowViewKeyVisible(selectedKey, visibilityOptions) || !isInlineOverflowViewKey(selectedKey, visibilityOptions)) {
-      setSelectedKey("files");
-      persistRightDockView("files");
+      onSelectKey("files");
     }
-  }, [selectedKey, visibilityOptions]);
+  }, [onSelectKey, selectedKey, visibilityOptions]);
 
   const selectedEntry = (findOverflowViewEntry(selectedKey, visibilityOptions)?.render
     ? findOverflowViewEntry(selectedKey, visibilityOptions)
@@ -169,9 +177,8 @@ export function RightDock({
     }
     if (!entry?.render) return;
     /* FNXC:RightDockTasks 2026-09-12-01:35: Tool selection remains independent from the temporary task-detail layer; returning from detail reveals the newly selected tool. */
-    setSelectedKey(key);
-    persistRightDockView(key);
-  }, [renderProps, visibilityOptions]);
+    onSelectKey(key);
+  }, [onSelectKey, renderProps, visibilityOptions]);
 
   const handleResizeStart = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     event.preventDefault();

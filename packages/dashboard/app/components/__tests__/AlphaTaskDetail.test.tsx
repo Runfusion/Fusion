@@ -220,10 +220,10 @@ describe("homemade Alpha Task Detail", () => {
   });
 
   it("keeps every production host on the canonical shared Task Detail implementation", () => {
+    // FN-382: List no longer hosts task detail; a row delegates to whichever layer its host owns.
     const hostContracts = [
       ["components/AppModals.tsx", "<AppModalTaskDetailHost"],
       ["components/dashboard/MainContent.tsx", "<MainPanelTaskDetailHost"],
-      ["components/ListView.tsx", "<ListSplitTaskDetailHost"],
       ["components/useRightDockController.tsx", "<RightDockTaskDetailHost"],
       ["App.tsx", "<AppTaskPopoutWindows"],
     ] as const;
@@ -303,51 +303,7 @@ describe("homemade Alpha Task Detail", () => {
     expect(screen.queryByRole("dialog", { name: "Task detail" })).toBeNull();
   });
 
-  it("clears ListView's real persisted split selection after Close", async () => {
-    const user = userEvent.setup();
-    const previousWidth = window.innerWidth;
-    const previousMatchMedia = window.matchMedia;
-    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1200 });
-    Object.defineProperty(window, "matchMedia", {
-      configurable: true,
-      value: (query: string) => ({
-        matches: false,
-        media: query,
-        onchange: null,
-        addListener: noop,
-        removeListener: noop,
-        addEventListener: noop,
-        removeEventListener: noop,
-        dispatchEvent: () => false,
-      }),
-    });
-    vi.mocked(fetchBoardWorkflows).mockResolvedValueOnce({
-      flagEnabled: true,
-      defaultWorkflowId: "builtin:coding",
-      workflows: [{
-        id: "builtin:coding",
-        name: "Coding",
-        columns: [
-          { id: "triage", name: "Planning", flags: { intake: true } },
-          { id: "todo", name: "Todo", flags: { hold: true } },
-          { id: "in-progress", name: "In progress", flags: { countsTowardWip: true } },
-          { id: "in-review", name: "In review", flags: { review: true } },
-          { id: "done", name: "Done", flags: { complete: true } },
-        ],
-      }],
-      taskWorkflowIds: { [hostTask.id]: "builtin:coding" },
-    });
-    localStorage.setItem(scopedKey("kb-dashboard-list-selected-task", "host-project"), hostTask.id);
-    render(<AlphaProvider enabled><ListViewStateHost /></AlphaProvider>);
-
-    const splitDetail = await screen.findByTestId("list-split-detail-content");
-    expect(within(splitDetail).getAllByText(hostTask.id).length).toBeGreaterThan(0);
-    await user.click(screen.getByRole("button", { name: "Close" }));
-    expect(await screen.findByText("Select a task to view details")).toBeInTheDocument();
-    expect(localStorage.getItem(scopedKey("kb-dashboard-list-selected-task", "host-project"))).toBeNull();
-    Object.defineProperty(window, "matchMedia", { configurable: true, value: previousMatchMedia });
-    Object.defineProperty(window, "innerWidth", { configurable: true, value: previousWidth });
-  });
+  /* FN-382: List no longer owns a split selection to clear — a row delegates to the host's own detail layer. */
 
   it("removes the detail snapshot owned by useRightDockController after Close", async () => {
     const user = userEvent.setup();

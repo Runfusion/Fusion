@@ -53,7 +53,6 @@ import {
   getPlanningDescription,
   clearPlanningDescription,
   savePlanningActiveSession,
-  getPlanningActiveSession,
   clearPlanningActiveSession,
 } from "../hooks/modalPersistence";
 import { getRelativeTimeBucket } from "../utils/relativeTimeAgo";
@@ -2216,17 +2215,13 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     void loadSession(resumeSessionId);
   }, [isOpen, resumeSessionId]);
 
-  // Restore the persisted active interview for ordinary Planning navigation.
-  // Explicit resume props and seeded opens own their destination and must not
-  // be replaced by a prior session.
-  useEffect(() => {
-    if (!isOpen || resumeSessionId || initialPlanProp || selectedSessionId || hasAttemptedStoredResumeRef.current) return;
-    hasAttemptedStoredResumeRef.current = true;
-    const storedSessionId = getPlanningActiveSession(projectId);
-    if (!storedSessionId || dismissedResumeRef.current === storedSessionId) return;
-    setSelectedSessionId(storedSessionId);
-    void loadSession(storedSessionId);
-  }, [initialPlanProp, isOpen, projectId, resumeSessionId, selectedSessionId]);
+  /*
+  FNXC:PlanningSelection 2026-09-14-02:47:
+  Entering Planning selects NOTHING. The destination opens on its session list and the detail pane stays on its empty
+  state until a row is clicked, matching every other collection view. The persisted active session is still written
+  (explicit resume links and seeded opens rely on it) but it no longer auto-restores an interview the operator did not
+  ask for: landing mid-conversation hid the list and made the current session ambiguous.
+  */
 
   // Keep the focused interview durable before embedded Planning unmounts on a
   // main-content navigation change. Selection writes cover starts, sidebar
@@ -3271,6 +3266,16 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   }, [projectId, runningSummary, t, view]);
 
   const activeSessionTitle = planningSessions.find((session) => session.id === selectedSessionId)?.title ?? loadedSessionTitle;
+  /*
+  FNXC:PlanningTitle 2026-09-14-08:05:
+  The header shows a session name only while that session's interview is ON SCREEN. Leaving it — Back to sessions, or
+  any state that returns to the list — keeps selectedSessionId for resume, so the title kept showing the session the
+  operator had just left and the destination read as if it were still open.
+  */
+  const showsSessionIdentity = !showSessionList
+    && Boolean(selectedSessionId)
+    && Boolean(activeSessionTitle)
+    && (view.type === "question" || view.type === "loading" || view.type === "session_loading" || view.type === "error");
   const handleRenameSession = useCallback(async () => {
     const sessionId = selectedSessionId;
     const nextTitle = sessionTitleDraft.trim();
@@ -3296,6 +3301,31 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   FN-6886 keeps the existing Planning Mode workflow component but lets App mount it as an embedded main-content view. Embedded mode must not draw a full-screen overlay, close on backdrop clicks, lock mobile scrolling, or persist resizable modal dimensions.
   */
   if (!isOpen) return null;
+
+  /*
+  FNXC:StandardizedViewActions 2026-09-14-02:47:
+  One History control, rendered beside the primary action of whichever interview state owns the screen — left of Next
+  question during the interview, beside Retry in the error pane. It is deliberately not a header action: the header
+  carries the view identity and the single New session creation, and History acts on the running conversation.
+  */
+  const historyActionNode = selectedSessionId ? (
+    <ViewActionButton
+      ref={historyTriggerRef}
+      icon={History}
+      label={t("planning.history", "History")}
+      className={`planning-history-trigger${isHistoryOpen ? " active" : ""}`}
+      aria-expanded={isHistoryOpen}
+      aria-controls="planning-history-panel"
+      onClick={() => {
+        const nextOpen = !isHistoryOpen;
+        setIsHistoryOpen(nextOpen);
+        if (nextOpen) {
+          setShowSessionList(false);
+          if (isCompactInterview) setMobileShowDetail(true);
+        }
+      }}
+    />
+  ) : null;
 
   const renderPlanPane = (summary: PlanningSummary) => (
     <section id="planning-plan-panel" className="planning-plan-pane" data-testid="planning-plan-pane" aria-label={t("planning.currentPlan", "Current plan")}>
@@ -3522,7 +3552,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
                 onClick: handleBackToList,
                 className: "planning-session-back",
               } : undefined}
-              title={selectedSessionId && (view.type === "question" || view.type === "loading" || view.type === "session_loading" || view.type === "error") && activeSessionTitle && isRenamingSession ? (
+              title={showsSessionIdentity && isRenamingSession ? (
                 <input
                   className="input planning-session-title-input"
                   aria-label={t("planning.renameSession", "Rename session")}
@@ -3534,32 +3564,12 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
                 />
               ) : (
                 <>
-                  <span>{selectedSessionId && (view.type === "question" || view.type === "loading" || view.type === "session_loading" || view.type === "error") && activeSessionTitle ? activeSessionTitle : t("planning.title", "Planning Mode")}</span>
-                  {selectedSessionId && (view.type === "question" || view.type === "loading" || view.type === "session_loading" || view.type === "error") && activeSessionTitle ? <button type="button" className="btn-icon" aria-label={t("planning.renameSession", "Rename session")} onClick={() => { setSessionTitleDraft(activeSessionTitle); setIsRenamingSession(true); }}><Pencil /></button> : null}
+                  <span>{showsSessionIdentity ? activeSessionTitle : t("planning.title", "Planning Mode")}</span>
+                  {showsSessionIdentity ? <button type="button" className="btn-icon" aria-label={t("planning.renameSession", "Rename session")} onClick={() => { setSessionTitleDraft(activeSessionTitle ?? ""); setIsRenamingSession(true); }}><Pencil /></button> : null}
                 </>
               )}
               actions={(
-                <>
-                  <ViewActionButton kind="create" label={t("planning.newSession", "New session")} onClick={handleNewSession} />
-                  {selectedSessionId && (view.type === "question" || view.type === "loading" || view.type === "session_loading" || view.type === "error" || view.type === "plan_review" || view.type === "create_retry") ? (
-                    <ViewActionButton
-                      ref={historyTriggerRef}
-                      icon={History}
-                      label={t("planning.history", "History")}
-                      className={`planning-history-trigger${isHistoryOpen ? " active" : ""}`}
-                      aria-expanded={isHistoryOpen}
-                      aria-controls="planning-history-panel"
-                      onClick={() => {
-                        const nextOpen = !isHistoryOpen;
-                        setIsHistoryOpen(nextOpen);
-                        if (nextOpen) {
-                          setShowSessionList(false);
-                          if (isCompactInterview) setMobileShowDetail(true);
-                        }
-                      }}
-                    />
-                  ) : null}
-                </>
+                <ViewActionButton kind="create" label={t("planning.newSession", "New session")} onClick={handleNewSession} />
               )}
               onClose={isEmbedded ? undefined : handleClose}
               closeButtonProps={{ "aria-label": t("common.close", "Close") }}
@@ -3889,6 +3899,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
                   <div className="ai-error-icon">{WARNING_ICON}</div>
                   <div className="ai-error-message">{view.errorMessage}</div>
                   <div className="ai-error-actions">
+                    {historyActionNode}
                     <button className="btn btn-primary" onClick={() => void handleRetryFromError()} disabled={isRetrying}>
                       {isRetrying ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />}
                       <span className="icon-ml-6">{isRetrying ? t("planning.retrying", "Retrying...") : t("common.retry", "Retry")}</span>
@@ -3952,6 +3963,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
                     onSubmit={handleSubmitResponse}
                     showMobilePlanReview={isMobile && answeredQuestionCount >= 5}
                     onReviewPlan={() => setMobileWorkspaceTab("plan")}
+                    historyAction={historyActionNode}
                   />
                 </section>
               )}
@@ -4153,11 +4165,17 @@ interface QuestionFormProps {
   /** Changes only the parent-owned workspace tab; it must not submit this form. */
   onReviewPlan?: () => void;
   projectId?: string;
+  /*
+  FNXC:StandardizedViewActions 2026-09-14-02:47:
+  History is a control over the running interview, so it sits immediately left of the interview's primary Next action
+  rather than in the view header. The header keeps the view identity and the single New session creation.
+  */
+  historyAction?: ReactNode;
 }
 
 // FNXC:VoiceInput 2026-07-25-19:20: Export the real interview surface for dictation
 // contract tests instead of substituting a fixture that could drift from this textarea.
-export function QuestionForm({ question: rawQuestion, initialResponse, onSubmit, showMobilePlanReview = false, onReviewPlan, projectId }: QuestionFormProps) {
+export function QuestionForm({ question: rawQuestion, initialResponse, onSubmit, showMobilePlanReview = false, onReviewPlan, projectId, historyAction }: QuestionFormProps) {
   const { t } = useTranslation("app");
   const question = normalizeQuestionOptions(rawQuestion);
   const questionOptions = question.options ?? [];
@@ -4537,6 +4555,7 @@ export function QuestionForm({ question: rawQuestion, initialResponse, onSubmit,
       </div>
 
       <div className="planning-actions">
+        {historyAction}
         <button
           className="btn btn-primary planning-actions-primary"
           onClick={handleSubmit}

@@ -1051,10 +1051,6 @@ export function MailboxView({
       )}
       {activeTab === "inbox" && (
         <div className="mailbox-list" data-testid="mailbox-inbox-list">
-          <div className="mailbox-structural-filter" role="group" aria-label={t("mailbox.inboxFilter", "Inbox filter")}>
-            <button type="button" className="btn btn-sm btn-secondary" aria-pressed={structuralFilter === "all"} data-testid="mailbox-structural-filter-all" onClick={() => setStructuralFilter("all")}>{t("mailbox.all", "All")}</button>
-            <button type="button" className="btn btn-sm btn-secondary" aria-pressed={structuralFilter === "structural"} data-testid="mailbox-structural-filter-structural" onClick={() => setStructuralFilter("structural")}>{t("mailbox.reportsApprovals", "Reports & approvals")}</button>
-          </div>
           {isLoading && !inbox && <MailboxSkeleton />}
           {inbox && inbox.messages.length === 0 && (
             <div className="mailbox-empty" data-testid="mailbox-inbox-empty">
@@ -1131,22 +1127,6 @@ export function MailboxView({
 
       {activeTab === "approvals" && (
         <div className="mailbox-approvals" data-testid="mailbox-approvals">
-          <div className="mailbox-approval-filters" data-testid="mailbox-approval-filters">
-            <button
-              className={`btn btn-sm btn-secondary mailbox-agent-subtab ${approvalSubTab === "pending" ? "active" : ""}`}
-              onClick={() => { setApprovalSubTab("pending"); dismissApproval(); }}
-              data-testid="mailbox-approval-filter-pending"
-            >
-              {t("mailbox.pending", "Pending")}
-            </button>
-            <button
-              className={`btn btn-sm btn-secondary mailbox-agent-subtab ${approvalSubTab === "history" ? "active" : ""}`}
-              onClick={() => { setApprovalSubTab("history"); dismissApproval(); }}
-              data-testid="mailbox-approval-filter-history"
-            >
-              {t("mailbox.history", "History")}
-            </button>
-          </div>
           <div className="mailbox-list" data-testid="mailbox-approval-list">
             {approvals.length === 0 && !isLoading && (
               <div className="mailbox-empty" data-testid="mailbox-approval-empty">
@@ -1185,55 +1165,12 @@ export function MailboxView({
             </div>
           ) : (
             <>
-              <div className="mailbox-agents-header">
-                <div className="mailbox-agents-dropdown">
-                  <select
-                    className="message-composer-select mailbox-agent-select"
-                    value={selectedAgentId}
-                    onChange={(e) => handleAgentSelection(e.target.value)}
-                    data-testid="mailbox-agent-select"
-                  >
-                    <option value={ALL_AGENTS_MAILBOX_ID}>{t("mailbox.allAgents", "All agents")}</option>
-                    {agents.map((agent) => (
-                      <option key={agent.id} value={agent.id}>
-                        {agent.name || agent.id}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <button
-                  className="btn btn-sm btn-secondary mailbox-compose-btn"
-                  onClick={handleOpenCompose}
-                  data-testid="mailbox-compose-btn"
-                >
-                  <MessageSquare size={14} />
-                  <span>{t("mailbox.compose", "Compose")}</span>
-                </button>
-              </div>
-
-              {selectedAgentId && selectedAgentId !== ALL_AGENTS_MAILBOX_ID && (
-                <div className="mailbox-agent-subtabs" data-testid="mailbox-agent-subtabs">
-                  <button
-                    className={`btn btn-sm btn-secondary mailbox-agent-subtab ${agentSubTab === "inbox" ? "active" : ""}`}
-                    onClick={() => handleAgentSubTab("inbox")}
-                    data-testid="mailbox-agent-subtab-inbox"
-                  >
-                    <InboxIcon size={12} />
-                    <span>{t("mailbox.inbox", "Inbox")}</span>
-                    {agentMailbox && agentMailbox.unreadCount > 0 && (
-                      <span className="mailbox-tab-badge">{agentMailbox.unreadCount}</span>
-                    )}
-                  </button>
-                  <button
-                    className={`btn btn-sm btn-secondary mailbox-agent-subtab ${agentSubTab === "outbox" ? "active" : ""}`}
-                    onClick={() => handleAgentSubTab("outbox")}
-                    data-testid="mailbox-agent-subtab-outbox"
-                  >
-                    <Send size={12} />
-                    <span>{t("mailbox.outbox", "Outbox")}</span>
-                  </button>
-                </div>
-              )}
+              {/*
+              FNXC:StandardizedMailboxLayout 2026-09-14-03:31:
+              The Agents tab kept a local header inside the rail: an agent scope picker, Inbox/Outbox scope tabs and a
+              SECOND Compose button duplicating the header action. Scope selection is view-level, so all three now live
+              in the owning ViewHeader (see renderAgentScopeControls) and the rail carries the message list alone.
+              */}
               <div className="mailbox-agents-content">
                 {selectedAgentId === ALL_AGENTS_MAILBOX_ID && isLoading && !allAgentsMailbox && <MailboxSkeleton />}
                 {selectedAgentId === ALL_AGENTS_MAILBOX_ID && allAgentsMailbox && allAgentsMailbox.messages.length === 0 && (
@@ -1472,6 +1409,79 @@ export function MailboxView({
               <span className="mailbox-unread-badge" data-testid="mailbox-unread-badge">
                 {unreadCount}
               </span>
+            )}
+            {/*
+            FNXC:StandardizedMailboxLayout 2026-09-14-02:47:
+            Scope filters belong to the header, not to the collection rail. FN-379 moved Mailbox's chrome into the
+            shared header but left "All / Reports & approvals" and "Pending / History" inside the message list, so the
+            rail carried both the collection and its controls. The header owns view-level scope; the rail shows only
+            the resulting collection. Filters are hidden while the composer owns the header.
+            */}
+            {!showComposer && activeTab === "inbox" && (
+              <div className="mailbox-structural-filter" role="group" aria-label={t("mailbox.inboxFilter", "Inbox filter")}>
+                <button type="button" className="btn btn-sm btn-secondary" aria-pressed={structuralFilter === "all"} data-testid="mailbox-structural-filter-all" onClick={() => setStructuralFilter("all")}>{t("mailbox.all", "All")}</button>
+                <button type="button" className="btn btn-sm btn-secondary" aria-pressed={structuralFilter === "structural"} data-testid="mailbox-structural-filter-structural" onClick={() => setStructuralFilter("structural")}>{t("mailbox.reportsApprovals", "Reports & approvals")}</button>
+              </div>
+            )}
+            {!showComposer && activeTab === "agents" && agents.length > 0 && (
+              <div className="mailbox-agents-header" data-testid="mailbox-agent-scope">
+                <div className="mailbox-agents-dropdown">
+                  <select
+                    className="message-composer-select mailbox-agent-select"
+                    value={selectedAgentId}
+                    onChange={(e) => handleAgentSelection(e.target.value)}
+                    data-testid="mailbox-agent-select"
+                  >
+                    <option value={ALL_AGENTS_MAILBOX_ID}>{t("mailbox.allAgents", "All agents")}</option>
+                    {agents.map((agent) => (
+                      <option key={agent.id} value={agent.id}>
+                        {agent.name || agent.id}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {selectedAgentId && selectedAgentId !== ALL_AGENTS_MAILBOX_ID && (
+                  <div className="mailbox-agent-subtabs" data-testid="mailbox-agent-subtabs">
+                    <button
+                      className={`btn btn-sm btn-secondary mailbox-agent-subtab ${agentSubTab === "inbox" ? "active" : ""}`}
+                      onClick={() => handleAgentSubTab("inbox")}
+                      data-testid="mailbox-agent-subtab-inbox"
+                    >
+                      <InboxIcon size={12} />
+                      <span>{t("mailbox.inbox", "Inbox")}</span>
+                      {agentMailbox && agentMailbox.unreadCount > 0 && (
+                        <span className="mailbox-tab-badge">{agentMailbox.unreadCount}</span>
+                      )}
+                    </button>
+                    <button
+                      className={`btn btn-sm btn-secondary mailbox-agent-subtab ${agentSubTab === "outbox" ? "active" : ""}`}
+                      onClick={() => handleAgentSubTab("outbox")}
+                      data-testid="mailbox-agent-subtab-outbox"
+                    >
+                      <Send size={12} />
+                      <span>{t("mailbox.outbox", "Outbox")}</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+            {!showComposer && activeTab === "approvals" && (
+              <div className="mailbox-approval-filters" data-testid="mailbox-approval-filters">
+                <button
+                  className={`btn btn-sm btn-secondary mailbox-agent-subtab ${approvalSubTab === "pending" ? "active" : ""}`}
+                  onClick={() => { setApprovalSubTab("pending"); dismissApproval(); }}
+                  data-testid="mailbox-approval-filter-pending"
+                >
+                  {t("mailbox.pending", "Pending")}
+                </button>
+                <button
+                  className={`btn btn-sm btn-secondary mailbox-agent-subtab ${approvalSubTab === "history" ? "active" : ""}`}
+                  onClick={() => { setApprovalSubTab("history"); dismissApproval(); }}
+                  data-testid="mailbox-approval-filter-history"
+                >
+                  {t("mailbox.history", "History")}
+                </button>
+              </div>
             )}
             <ViewActionButton
               kind="create"

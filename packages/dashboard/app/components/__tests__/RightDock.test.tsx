@@ -2,8 +2,12 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import type { OverflowViewKey } from "../overflowViewRegistry";
+import { useCallback, useState } from "react";
 import {
   RightDock,
+  persistRightDockViewSelection,
+  readStoredRightDockView,
   RIGHT_DOCK_OPEN_STORAGE_KEY,
   RIGHT_DOCK_PINNED_STORAGE_KEY,
   RIGHT_DOCK_VIEW_STORAGE_KEY,
@@ -53,8 +57,30 @@ const renderProps = {
 
 const rightDockCss = readFileSync(resolve(__dirname, "../RightDock.css"), "utf8");
 
-function TestRightDock(props: Omit<RightDockProps, "pinned" | "onTogglePin"> & Partial<Pick<RightDockProps, "pinned" | "onTogglePin">>) {
-  return <RightDock pinned={false} onTogglePin={vi.fn()} {...props} />;
+/*
+FN-382: the selected tool is owned OUTSIDE the dock (useRightDockController) so navigation can open one from
+elsewhere. This harness mirrors that owner — initial value read from storage, persisted on change — so these tests
+exercise the real controlled contract rather than a second, dock-local source of truth.
+*/
+function TestRightDock(props: Omit<RightDockProps, "pinned" | "onTogglePin" | "selectedKey" | "onSelectKey"> & Partial<Pick<RightDockProps, "pinned" | "onTogglePin" | "selectedKey" | "onSelectKey">>) {
+  const { selectedKey: controlledKey, onSelectKey, visibilityOptions, ...rest } = props;
+  const [ownedKey, setOwnedKey] = useState<OverflowViewKey>(() => readStoredRightDockView(visibilityOptions ?? {}));
+  const selectedKey = controlledKey ?? ownedKey;
+  const handleSelect = useCallback((key: OverflowViewKey) => {
+    setOwnedKey(key);
+    persistRightDockViewSelection(key);
+    onSelectKey?.(key);
+  }, [onSelectKey]);
+  return (
+    <RightDock
+      pinned={false}
+      onTogglePin={vi.fn()}
+      visibilityOptions={visibilityOptions}
+      selectedKey={selectedKey}
+      onSelectKey={handleSelect}
+      {...rest}
+    />
+  );
 }
 
 /*

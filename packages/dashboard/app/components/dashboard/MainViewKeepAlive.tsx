@@ -190,7 +190,6 @@ function renderListSubtree(props: MainContentProps, active: boolean) {
     remoteData,
     tasks,
     currentProject,
-    moveTask,
     retryTask,
     onOpenChatWithPrefill,
     deleteTask,
@@ -201,13 +200,11 @@ function renderListSubtree(props: MainContentProps, active: boolean) {
     mergeTask,
     resetTask,
     duplicateTask,
-    ingestCreatedTasks,
     openDetailTask,
     popOutTaskDetail,
     addToast,
     globalPaused,
     openNewTaskWithNav,
-    handleBoardQuickCreate,
     openPlanningWithInitialPlanWithNav,
     availableModels,
     favoriteProviders,
@@ -222,10 +219,8 @@ function renderListSubtree(props: MainContentProps, active: boolean) {
     currentTasksProgressKey,
     retryCurrentTasksPagination,
     lastFetchTimeMs,
-    prAuthAvailable,
     autoMerge,
     openMobileTasksInPopup,
-    taskDetailChatFirst,
     mergeStrategy,
     openWorkflowEditorWithNav,
     openCreateWorkflowWithNav,
@@ -237,7 +232,6 @@ function renderListSubtree(props: MainContentProps, active: boolean) {
       <ListView
         tasks={isRemote && remoteData.tasks.length > 0 ? remoteData.tasks : tasks}
         projectId={currentProject?.id}
-        onMoveTask={moveTask}
         onRetryTask={retryTask}
         onOpenChatWithPrefill={onOpenChatWithPrefill}
         onDeleteTask={deleteTask}
@@ -248,13 +242,11 @@ function renderListSubtree(props: MainContentProps, active: boolean) {
         onMergeTask={mergeTask}
         onResetTask={resetTask}
         onDuplicateTask={duplicateTask}
-        onRefinementCreated={(task) => ingestCreatedTasks([task])}
         onOpenDetail={(task, options) => openDetailTask(task, undefined, options)}
         onPopOut={popOutTaskDetail}
         addToast={addToast}
         globalPaused={globalPaused}
         onNewTask={openNewTaskWithNav}
-        onQuickCreate={handleBoardQuickCreate}
         onPlanningMode={openPlanningWithInitialPlanWithNav}
         availableModels={availableModels}
         favoriteProviders={favoriteProviders}
@@ -269,10 +261,8 @@ function renderListSubtree(props: MainContentProps, active: boolean) {
         currentTasksProgressKey={isRemote ? undefined : currentTasksProgressKey}
         onRetryCurrentTasks={isRemote ? undefined : retryCurrentTasksPagination}
         lastFetchTimeMs={lastFetchTimeMs}
-        prAuthAvailable={prAuthAvailable}
         autoMerge={autoMerge}
         openMobileTasksInPopup={openMobileTasksInPopup}
-        taskDetailChatFirst={taskDetailChatFirst}
         mergeStrategy={mergeStrategy}
         onOpenWorkflowEditor={openWorkflowEditorWithNav}
         onCreateWorkflow={openCreateWorkflowWithNav}

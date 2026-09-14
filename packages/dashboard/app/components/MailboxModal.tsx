@@ -893,6 +893,61 @@ export function MailboxModal({
             )}
           </div>}
           actions={<div className="mailbox-header-actions">
+            {/*
+            FNXC:StandardizedMailboxLayout 2026-09-14-03:31:
+            The floating mailbox is a second full implementation of the same destination, so it carries the same
+            contract: scope controls belong to the header, the rail shows only the resulting collection. The inbox
+            scope filter and the Agents scope picker / Inbox-Outbox tabs move here, and the Agents pane's duplicate
+            Compose button is deleted — this header already owns the single creation action.
+            */}
+            {!showComposer && activeTab === "inbox" && (
+              <div className="mailbox-structural-filter" role="group" aria-label={t("mailbox.inboxFilter", "Inbox filter")}>
+                <button type="button" className="btn btn-sm btn-secondary" aria-pressed={structuralFilter === "all"} data-testid="mailbox-structural-filter-all" onClick={() => setStructuralFilter("all")}>{t("mailbox.all", "All")}</button>
+                <button type="button" className="btn btn-sm btn-secondary" aria-pressed={structuralFilter === "structural"} data-testid="mailbox-structural-filter-structural" onClick={() => setStructuralFilter("structural")}>{t("mailbox.reportsApprovals", "Reports & approvals")}</button>
+              </div>
+            )}
+            {!showComposer && activeTab === "agents" && agents.length > 0 && (
+              <div className="mailbox-agents-header" data-testid="mailbox-agent-scope">
+                <div className="mailbox-agents-dropdown">
+                  <select
+                    className="message-composer-select mailbox-agent-select"
+                    value={selectedAgentId}
+                    onChange={(e) => { consumeCurrentDeepLink(); setSelectedAgentId(e.target.value); setAgentSubTab("inbox"); setSelectedMessage(null); }}
+                    data-testid="mailbox-agent-select"
+                  >
+                    <option value={ALL_AGENTS_MAILBOX_ID}>{t("mailbox.allAgentsOption", "All agents")}</option>
+                    {agents.map((agent) => (
+                      <option key={agent.id} value={agent.id}>
+                        {agent.name || agent.id}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {selectedAgentId && selectedAgentId !== ALL_AGENTS_MAILBOX_ID && (
+                  <div className="mailbox-agent-subtabs" data-testid="mailbox-agent-subtabs">
+                    <button
+                      className={`btn btn-sm btn-secondary mailbox-agent-subtab ${agentSubTab === "inbox" ? "active" : ""}`}
+                      onClick={() => { consumeCurrentDeepLink(); setAgentSubTab("inbox"); setSelectedMessage(null); }}
+                      data-testid="mailbox-agent-subtab-inbox"
+                    >
+                      <InboxIcon size={12} />
+                      <span>{t("mailbox.inboxTab", "Inbox")}</span>
+                      {agentMailbox && agentMailbox.unreadCount > 0 && (
+                        <span className="mailbox-tab-badge">{agentMailbox.unreadCount}</span>
+                      )}
+                    </button>
+                    <button
+                      className={`btn btn-sm btn-secondary mailbox-agent-subtab ${agentSubTab === "outbox" ? "active" : ""}`}
+                      onClick={() => { consumeCurrentDeepLink(); setAgentSubTab("outbox"); setSelectedMessage(null); }}
+                      data-testid="mailbox-agent-subtab-outbox"
+                    >
+                      <Send size={12} />
+                      <span>{t("mailbox.outboxTab", "Outbox")}</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
             <ViewActionButton
               kind="create"
               icon={MessageSquare}
@@ -1167,10 +1222,6 @@ export function MailboxModal({
               )}
               {activeTab === "inbox" && (
                 <div className="mailbox-list" data-testid="mailbox-inbox-list">
-          <div className="mailbox-structural-filter" role="group" aria-label={t("mailbox.inboxFilter", "Inbox filter")}>
-            <button type="button" className="btn btn-sm btn-secondary" aria-pressed={structuralFilter === "all"} data-testid="mailbox-structural-filter-all" onClick={() => setStructuralFilter("all")}>{t("mailbox.all", "All")}</button>
-            <button type="button" className="btn btn-sm btn-secondary" aria-pressed={structuralFilter === "structural"} data-testid="mailbox-structural-filter-structural" onClick={() => setStructuralFilter("structural")}>{t("mailbox.reportsApprovals", "Reports & approvals")}</button>
-          </div>
                   {isLoading && !inbox && <MailboxSkeleton />}
                   {inbox && inbox.messages.length === 0 && (
                     <div className="mailbox-empty" data-testid="mailbox-inbox-empty">
@@ -1256,56 +1307,11 @@ export function MailboxModal({
                     </div>
                   ) : (
                     <>
-                      <div className="mailbox-agents-header">
-                        <div className="mailbox-agents-dropdown">
-                          <select
-                            className="message-composer-select mailbox-agent-select"
-                            value={selectedAgentId}
-                            onChange={(e) => { consumeCurrentDeepLink(); setSelectedAgentId(e.target.value); setAgentSubTab("inbox"); setSelectedMessage(null); }}
-                            data-testid="mailbox-agent-select"
-                          >
-                            <option value={ALL_AGENTS_MAILBOX_ID}>{t("mailbox.allAgentsOption", "All agents")}</option>
-                            {agents.map((agent) => (
-                              <option key={agent.id} value={agent.id}>
-                                {agent.name || agent.id}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                        <button
-                          className="btn btn-sm btn-secondary mailbox-compose-btn"
-                          onClick={handleOpenCompose}
-                          data-testid="mailbox-compose-btn"
-                        >
-                          <MessageSquare size={14} />
-                          <span>{t("mailbox.composeButton", "Compose")}</span>
-                        </button>
-                      </div>
-
-                      {/* Agent Sub-Tabs (Inbox/Outbox) */}
-                      {selectedAgentId && selectedAgentId !== ALL_AGENTS_MAILBOX_ID && (
-                        <div className="mailbox-agent-subtabs" data-testid="mailbox-agent-subtabs">
-                          <button
-                            className={`btn btn-sm btn-secondary mailbox-agent-subtab ${agentSubTab === "inbox" ? "active" : ""}`}
-                            onClick={() => { consumeCurrentDeepLink(); setAgentSubTab("inbox"); setSelectedMessage(null); }}
-                            data-testid="mailbox-agent-subtab-inbox"
-                          >
-                            <InboxIcon size={12} />
-                            <span>{t("mailbox.inboxTab", "Inbox")}</span>
-                            {agentMailbox && agentMailbox.unreadCount > 0 && (
-                              <span className="mailbox-tab-badge">{agentMailbox.unreadCount}</span>
-                            )}
-                          </button>
-                          <button
-                            className={`btn btn-sm btn-secondary mailbox-agent-subtab ${agentSubTab === "outbox" ? "active" : ""}`}
-                            onClick={() => { consumeCurrentDeepLink(); setAgentSubTab("outbox"); setSelectedMessage(null); }}
-                            data-testid="mailbox-agent-subtab-outbox"
-                          >
-                            <Send size={12} />
-                            <span>{t("mailbox.outboxTab", "Outbox")}</span>
-                          </button>
-                        </div>
-                      )}
+                      {/*
+                      FNXC:StandardizedMailboxLayout 2026-09-14-03:31:
+                      The agent scope picker, the Inbox/Outbox scope tabs and the duplicate Compose button used to sit
+                      here, inside the collection. They are header-owned now: this pane renders the message list only.
+                      */}
                       <div className="mailbox-agents-content">
                         {selectedAgentId === ALL_AGENTS_MAILBOX_ID && isLoading && !allAgentsMailbox && <MailboxSkeleton />}
                         {selectedAgentId === ALL_AGENTS_MAILBOX_ID && allAgentsMailbox && allAgentsMailbox.messages.length === 0 && (

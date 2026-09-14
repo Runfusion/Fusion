@@ -22,9 +22,9 @@ vi.mock("../../hooks/useNodes", () => ({ useNodes: () => ({ nodes: [], loading: 
 
 const duplicate = { id: "FN-existing", title: "Existing", description: "Existing task", column: "todo", score: 0.9 };
 
-function renderEntry({ enabled, singleLine = false }: { enabled?: boolean; singleLine?: boolean } = {}) {
+function renderEntry({ enabled }: { enabled?: boolean } = {}) {
   const onCreate = vi.fn().mockResolvedValue(undefined);
-  const entry = <QuickEntryBox addToast={vi.fn()} onCreate={onCreate} tasks={[]} singleLine={singleLine} defaultExpanded={false} />;
+  const entry = <QuickEntryBox addToast={vi.fn()} onCreate={onCreate} tasks={[]} defaultExpanded={false} />;
   render(enabled === undefined ? entry : <QuickAddSubmitOnEnterProvider enabled={enabled}>{entry}</QuickAddSubmitOnEnterProvider>);
   const textarea = screen.getByPlaceholderText("Add a task...") as HTMLTextAreaElement;
   fireEvent.change(textarea, { target: { value: "Task description" } });
@@ -44,8 +44,8 @@ afterEach(() => {
 });
 
 describe("QuickEntryBox submit-on-Enter preference", () => {
-  it.each([{ singleLine: false, host: "Board" }, { singleLine: true, host: "List" }])("submits on Enter by default in $host Quick Add", async ({ singleLine }) => {
-    const { onCreate, textarea } = renderEntry({ singleLine });
+  it("submits on Enter by default in the shared Board/List Quick Add", async () => {
+    const { onCreate, textarea } = renderEntry();
     const event = pressEnter(textarea);
     expect(event.defaultPrevented).toBe(true);
     await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
@@ -57,8 +57,8 @@ describe("QuickEntryBox submit-on-Enter preference", () => {
     await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
   });
 
-  it.each([{ singleLine: false, host: "Board" }, { singleLine: true, host: "List" }])("keeps plain Enter as a browser newline when disabled in $host Quick Add", ({ singleLine }) => {
-    const { onCreate, textarea } = renderEntry({ enabled: false, singleLine });
+  it("keeps plain Enter as a browser newline when disabled in the shared Board/List Quick Add", () => {
+    const { onCreate, textarea } = renderEntry({ enabled: false });
     const event = pressEnter(textarea);
     expect(event.defaultPrevented).toBe(false);
     // jsdom does not perform textarea's native default action, so model the browser newline after proving it was allowed.
@@ -74,7 +74,7 @@ describe("QuickEntryBox submit-on-Enter preference", () => {
   });
 
   it.each([{ enabled: true }, { enabled: false }])("keeps Shift+Enter non-submitting and does not expand the single-line textarea when preference is $enabled", ({ enabled }) => {
-    const { onCreate, textarea } = renderEntry({ enabled, singleLine: true });
+    const { onCreate, textarea } = renderEntry({ enabled });
     expect(textarea.closest(".quick-entry-box")?.className).not.toContain("expanded");
     expect(pressEnter(textarea, { shiftKey: true }).defaultPrevented).toBe(false);
     expect(onCreate).not.toHaveBeenCalled();

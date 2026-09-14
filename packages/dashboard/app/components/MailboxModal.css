@@ -663,8 +663,15 @@ than overflow the message column. Theme tokens only — no hard-coded colors.
   flex-wrap: wrap;
 }
 
-.mailbox-compose-btn {
-  flex-shrink: 0;
+/*
+FNXC:StandardizedMailboxLayout 2026-09-14-03:31:
+The Agents scope cluster (agent picker + Inbox/Outbox scope tabs) is hosted by the shared ViewHeader, so it drops the
+rail-era divider and vertical inset that separated it from the message list. The duplicate .mailbox-compose-btn rule
+is gone with the second Compose button it styled; the header owns the single creation action.
+*/
+.view-header .mailbox-agent-subtabs {
+  padding: 0;
+  border-bottom: none;
 }
 
 .mailbox-agent-select {

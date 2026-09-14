@@ -4,6 +4,7 @@ import {
   GitBranch,
   GitPullRequest,
   History,
+  List as ListIcon,
   Lock,
   MessageSquare,
   Monitor,
@@ -42,6 +43,7 @@ export type OverflowViewKey =
   | "git-manager"
   | "files"
   | "chat"
+  | "list"
   | "notes"
   | "devserver"
   | "secrets"
@@ -99,6 +101,13 @@ export interface OverflowViewRenderProps {
   notesController?: import("../hooks/useNotes").UseNotesController;
   onOpenNote?: (note: import("@fusion/core").ProjectNoteSummary) => void;
   registerNotesGuard?: (guard: () => boolean | Promise<boolean>, onAccepted?: () => void) => () => void;
+  /*
+  FNXC:ListInRightDock 2026-09-14-03:31:
+  FN-382: the dock renders the REAL List surface, supplied by its owner rather than rebuilt here. Threading a render
+  callback instead of ~35 task props keeps one wiring of tasks, handlers and Quick Entry, so the dock cannot drift
+  from the dedicated route. The tab is absent whenever the owner provides no renderer (phone hosts, tests).
+  */
+  renderListView?: () => ReactNode;
 }
 
 export interface OverflowViewEntry {
@@ -117,6 +126,8 @@ export interface OverflowViewVisibilityOptions {
   hostMode?: OverflowViewHostMode;
   showSkillsTab?: boolean;
   pluginDashboardViews?: PluginDashboardViewEntry[];
+  /** FN-382: true only where the host actually supplies the List surface, i.e. the non-mobile dock. */
+  listViewAvailable?: boolean;
 }
 
 /*
@@ -182,6 +193,21 @@ export const STATIC_OVERFLOW_VIEW_ENTRIES: readonly OverflowViewEntry[] = [
         compactLayout={props.surface === "dock" && (props.dockWidth ?? RIGHT_DOCK_CHAT_COMPACT_MAX_WIDTH) <= RIGHT_DOCK_CHAT_COMPACT_MAX_WIDTH}
       />,
     ),
+  },
+  /*
+  FNXC:ListInRightDock 2026-09-14-03:31:
+  FN-382: List is a dock tool on every non-mobile host, so tasks can be read and created over whatever page is open
+  instead of navigating to a dedicated route. It renders its owner's real List surface and is deliberately NOT
+  expandable: the expand modal would create a second List owner beside the dock one.
+  */
+  {
+    key: "list",
+    label: "List",
+    icon: ListIcon,
+    testId: "right-dock-tab-list",
+    isVisible: (options) => Boolean(options.listViewAvailable),
+    isExpandable: () => false,
+    render: (props) => (props.renderListView ? wrapOverflowView(props.renderListView()) : null),
   },
   /*
   FNXC:AlphaDesktopRightDock 2026-09-11-21:48:

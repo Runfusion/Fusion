@@ -88,24 +88,10 @@ smallest defined token, --space-xs (4px), instead of reintroducing --space-2xs.
 }
 
 /*
-FNXC:QuickEntry 2026-06-22-19:25:
-List view renders quick-add as a COMPACT single-line input so the box isn't tall.
-Clamp the textarea to exactly one line (min-height == max-height == one line), forbid auto-grow/manual resize, and scroll overflow instead of growing.
-Tighten container vertical padding so the overall box is just the one-line input height.
-Board/columns omit `.quick-entry--single-line`, keeping the tall 80px + auto-grow behavior.
+FNXC:QuickEntry 2026-09-14-03:31:
+The List-only one-line clamp rules are deleted with the prop they styled. List and Board render the same composer, so
+a host-specific compact textarea would reintroduce exactly the divergence this deletion closes.
 */
-.quick-entry--single-line {
-  padding-top: var(--space-xs);
-  padding-bottom: var(--space-xs);
-}
-
-.quick-entry-box.quick-entry--single-line .quick-entry-input,
-.quick-entry-box.quick-entry--single-line .quick-entry-input--expanded {
-  min-height: 36px;
-  max-height: 36px;
-  overflow-y: auto;
-  resize: none;
-}
 
 @media (max-width: 768px) {
   .quick-entry-input--expanded {

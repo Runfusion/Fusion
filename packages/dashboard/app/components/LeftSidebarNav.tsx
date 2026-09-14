@@ -15,7 +15,6 @@ import {
   Gauge,
   Lightbulb,
   LayoutGrid,
-  List,
   Mail,
   MessageSquare,
   PanelsTopLeft,
@@ -315,15 +314,11 @@ export function LeftSidebarNav({
       testId: "sidebar-nav-board",
       onSelect: () => onChangeView("board"),
     },
-    {
-      id: "list",
-      label: t("nav.list", getDashboardViewLabel("list")),
-      view: "list",
-      isActive: view === "list",
-      icon: List,
-      testId: "sidebar-nav-list",
-      onSelect: () => onChangeView("list"),
-    },
+    /*
+    FNXC:ListInRightDock 2026-09-14-04:42:
+    FN-382: List is a right-dock tool on every non-mobile host, so this rail no longer offers it as a page. The phone
+    navigation keeps both of its List producers.
+    */
     ...(graphPluginEntry ? [mapPluginEntry(graphPluginEntry)] : []),
     /*
     FNXC:Navigation 2026-06-23-01:30:

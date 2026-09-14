@@ -136,6 +136,7 @@ import { subscribeSse } from "./sse-bus";
 import { AuthTokenRecoveryPage } from "./components/AuthTokenRecoveryPage";
 import {
   AppMainPanelTaskDetailComposition,
+  MainContentListView,
   type AppMainPanelTaskDetailMainContentProps,
 } from "./components/dashboard/MainContent";
 import { PlanningKeepAlive } from "./components/dashboard/PlanningKeepAlive";
@@ -164,6 +165,7 @@ const EvalsView = lazy(() => import("./components/EvalsView").then((m) => ({ def
 const ChatView = lazy(() => import("./components/ChatView").then((m) => ({ default: m.ChatView })));
 
 const SkillsView = lazy(() => import("./components/SkillsView").then((m) => ({ default: m.SkillsView })));
+const SnippetsView = lazy(() => import("./components/SnippetsView").then((m) => ({ default: m.SnippetsView })));
 const MemoryView = lazy(() => import("./components/MemoryView").then((m) => ({ default: m.MemoryView })));
 const SecretsView = lazy(() => import("./components/SecretsView").then((m) => ({ default: m.SecretsView })));
 const CommandCenter = lazy(() => import("./components/command-center/CommandCenter").then((m) => ({ default: m.CommandCenter })));
@@ -208,6 +210,7 @@ function prefetchLazyViews() {
     void import("./components/ChatView");
 
     void import("./components/SkillsView");
+    void import("./components/SnippetsView");
     void import("./components/MemoryView");
     void import("./components/SecretsView");
     void import("./components/command-center/CommandCenter");
@@ -653,7 +656,17 @@ function AppInner() {
       pushNav({ type: "view", revert });
     }
   }, [handleChangeTaskView, taskView, pushNav]);
+  /*
+  FNXC:ListInRightDock 2026-09-14-04:42:
+  FN-382: on every non-mobile host List is a dock tool, not a page. An explicit request for it — sidebar, footer,
+  header toggle, a stored view or a `?view=list` deep link — selects the dock tool and opens the dock, leaving the
+  current destination on screen and writing no navigation entry. Phone hosts are untouched: they keep the dedicated
+  route, both nav producers and the drawer. When the dock is unavailable (no project shell, feature off) the ordinary
+  route still answers, so the destination can never become unreachable.
+  */
+  const listDockRouteRef = useRef<((newView: TaskView) => boolean) | null>(null);
   const handleTaskViewChange = useCallback((newView: TaskView) => {
+    if (listDockRouteRef.current?.(newView)) return;
     if (!alphaPilotRouterRef.current(newView)) commitTaskViewChange(newView);
   }, [commitTaskViewChange]);
 
@@ -1918,10 +1931,22 @@ function AppInner() {
       () => { if (notesDirtyRef.current) onAccepted?.(); },
     );
   }, [alphaDesktopWindows.registerGuard]);
+  /*
+  FNXC:ListInRightDock 2026-09-14-03:31:
+  FN-382: the dock renders the SAME List surface as the route, so it needs the main-content wiring that is assembled
+  further down this render. A ref keeps the callback identity stable for the memoized dock render props while always
+  reading the current props, and the dock body renders later in the same pass, so it never sees a stale snapshot.
+  */
+  const mainContentPropsRef = useRef<AppMainPanelTaskDetailMainContentProps | null>(null);
+  const renderDockListView = useCallback(
+    () => (mainContentPropsRef.current ? <MainContentListView {...mainContentPropsRef.current} listHost="dock" /> : null),
+    [],
+  );
+
   const { rightDock, windows: alphaDesktopRightDockWindows } = useAppAlphaDesktopRightDockComposition({
     projectId: currentProject?.id,
     owner: appRightDockWindows,
-    controllerInput: { active: rightDockActive, addToast, columnFlagsByTaskId: footerColumnFlagsByTaskId, settingsLoaded, researchReadinessVersion, goalAnchorId, tasks: boardSourceTasks, workflowSteps, subscribePluginEvents, openDetailTask: alphaMobileDrawerActive ? openTaskDetailInMainPanel : openDetailTask, notesController, registerNotesGuard: registerAlphaDesktopNotesGuard, openFileInBrowser, onUpdateTask: updateTask, onDeleteTask: deleteTask, onRevertTask: revertTask, onMergeTask: mergeTask, onRetryTask: retryTask, onOpenChatWithPrefill: openChatWithPrefill, onPauseTask: pauseTask, onUnpauseTask: unpauseTask, onBypassReview: bypassReview, onResetTask: resetTask, onDuplicateTask: duplicateTask, onTaskUpdated: (task: Task) => ingestCreatedTasks([task]), openSettings: (section?: string) => openSettingsWithNav(section as SectionId), onOpenUsage: openUsageWithNav, onOpenActivityLog: openActivityLogWithNav, onOpenGitHubImport: openGitHubImportWithNav, onOpenGitManager: openGitManagerWithNav, onOpenSchedules: openSchedulesWithNav, onSendSelectionToTask: modalManager.openNewTaskWithDescription, onCreateTaskFromInsight: handleInsightTaskCreate, onNavigateToMission: handleOpenMission, onTaskCreated: (task: Task) => ingestCreatedTasks([task]), prAuthAvailable, autoMerge, taskDetailChatFirst, visibilityOptions: { hostMode: alphaDesktopNavigationActive ? "alpha-desktop" : "standard", experimentalFeatures: { insights: insightsEnabled, memoryView: memoryEnabled, devServerView: devServerEnabled, researchView: researchEnabled, evalsView: evalsEnabled, goalsView: goalsEnabled }, showSkillsTab: skillsEnabled, pluginDashboardViews }, footerVisible: shellFooterVisible },
+    controllerInput: { active: rightDockActive, addToast, columnFlagsByTaskId: footerColumnFlagsByTaskId, settingsLoaded, researchReadinessVersion, goalAnchorId, tasks: boardSourceTasks, workflowSteps, subscribePluginEvents, openDetailTask: alphaMobileDrawerActive ? openTaskDetailInMainPanel : openDetailTask, notesController, registerNotesGuard: registerAlphaDesktopNotesGuard, openFileInBrowser, onUpdateTask: updateTask, onDeleteTask: deleteTask, onRevertTask: revertTask, onMergeTask: mergeTask, onRetryTask: retryTask, onOpenChatWithPrefill: openChatWithPrefill, onPauseTask: pauseTask, onUnpauseTask: unpauseTask, onBypassReview: bypassReview, onResetTask: resetTask, onDuplicateTask: duplicateTask, onTaskUpdated: (task: Task) => ingestCreatedTasks([task]), openSettings: (section?: string) => openSettingsWithNav(section as SectionId), onOpenUsage: openUsageWithNav, onOpenActivityLog: openActivityLogWithNav, onOpenGitHubImport: openGitHubImportWithNav, onOpenGitManager: openGitManagerWithNav, onOpenSchedules: openSchedulesWithNav, onSendSelectionToTask: modalManager.openNewTaskWithDescription, onCreateTaskFromInsight: handleInsightTaskCreate, onNavigateToMission: handleOpenMission, onTaskCreated: (task: Task) => ingestCreatedTasks([task]), prAuthAvailable, autoMerge, taskDetailChatFirst, renderListView: isMobile ? undefined : renderDockListView, visibilityOptions: { hostMode: alphaDesktopNavigationActive ? "alpha-desktop" : "standard", experimentalFeatures: { insights: insightsEnabled, memoryView: memoryEnabled, devServerView: devServerEnabled, researchView: researchEnabled, evalsView: evalsEnabled, goalsView: goalsEnabled }, showSkillsTab: skillsEnabled, pluginDashboardViews, listViewAvailable: !isMobile }, footerVisible: shellFooterVisible },
     chatWindowProps: { addToast, experimentalFeatures },
     noteWindowProps: {
       addToast,
@@ -1932,6 +1957,13 @@ function AppInner() {
       }),
     },
   });
+
+  listDockRouteRef.current = (newView: TaskView) => {
+    if (newView !== "list" || isMobile || !rightDockActive) return false;
+    rightDock.selectView("list");
+    if (!rightDock.open) rightDock.toggle();
+    return true;
+  };
 
   /*
   FNXC:OpenTasksInRightSidebar 2026-06-28-00:00:
@@ -2174,11 +2206,13 @@ function AppInner() {
     ResearchView,
     SecretsView,
     SkillsView,
+    SnippetsView,
     _AutomationsView,
     _ImportTasksView,
     _SettingsView,
     _WorkflowEditorView,
   };
+  mainContentPropsRef.current = mainContentProps;
 
   const showOnboardingResumeCard = !modalManager.modelOnboardingOpen && isOnboardingResumable();
   const showPostOnboardingRecommendations =

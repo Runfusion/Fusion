@@ -83,7 +83,9 @@ describe("standardized Planning and Missions layouts", () => {
     expect(screen.getByTestId("view-layout-content").closest(".view-layout")).toHaveAttribute("data-mobile-pane", "list");
   });
 
-  it("keeps an implicitly restored phone session on the list", async () => {
+  it("never implicitly restores a stored session when Planning is entered", async () => {
+    // Entering Planning selects nothing: a stored active session is not resumed, on phone or desktop.
+    // Only an explicit resume handoff (covered below) opens an interview.
     vi.mocked(viewport.useViewportMode).mockReturnValue("mobile");
     savePlanningActiveSession("session-implicit", "project-1");
     vi.mocked(api.fetchAiSession).mockResolvedValue({
@@ -97,8 +99,23 @@ describe("standardized Planning and Missions layouts", () => {
       result: JSON.stringify({ sessionId: "session-implicit", currentQuestion: null, summary: null }),
     } as never);
     renderPlanning();
-    await waitFor(() => expect(api.fetchAiSession).toHaveBeenCalledWith("session-implicit"));
+    await waitFor(() => expect(api.fetchAiSessions).toHaveBeenCalled());
+    expect(api.fetchAiSession).not.toHaveBeenCalledWith("session-implicit");
     expect(screen.getByTestId("view-layout-content").closest(".view-layout")).toHaveAttribute("data-mobile-pane", "list");
+  });
+
+  it("opens desktop Planning on the session rail with no interview panes", async () => {
+    // Nothing is selected on entry, so the content area shows the single intake pane:
+    // no question/plan workspace is mounted beside the rail.
+    savePlanningActiveSession("session-implicit", "project-1");
+    const { container } = renderPlanning();
+    await waitFor(() => expect(api.fetchAiSessions).toHaveBeenCalled());
+
+    expect(container.querySelector("[data-testid='planning-sidebar']")).toBeTruthy();
+    expect(container.querySelector("[data-testid='planning-workspace']")).toBeNull();
+    expect(container.querySelector("[data-testid='planning-question-pane']")).toBeNull();
+    expect(container.querySelector("[data-testid='planning-plan-pane']")).toBeNull();
+    expect(container.querySelector(".planning-initial")).toBeTruthy();
   });
 
   it("opens phone Planning detail for an explicit resume handoff and uses the shared back control", async () => {

@@ -31,6 +31,23 @@ Overview owns vertical scrolling when Active Agents exceeds the constrained Agen
   transition: background var(--transition-fast), border-color var(--transition-fast);
 }
 
+/*
+FNXC:StandardizedViewActions 2026-09-14-02:47:
+The trigger is hosted by the Agents header action cluster, so it sizes to its content there instead of spanning a
+full-width bar. On phones it keeps only its label so the header row stays on one line.
+*/
+.agents-view-controls .agents-overview-bar__toggle {
+  width: auto;
+  flex-shrink: 1;
+  min-inline-size: 0;
+}
+
+@media (max-width: 768px) {
+  .agents-view-controls .agents-overview-bar__meta {
+    display: none;
+  }
+}
+
 .agents-overview-bar__toggle:hover {
   background: var(--card-hover);
 }

@@ -267,6 +267,8 @@ export function MobileNavBar({
   } | null>(null);
   const dragOffsetRef = useRef(0);
   const menuSurfaceRef = useRef<HTMLDivElement | null>(null);
+  /* FN-382/MobileNav: holds the geometry in place for the whole open-menu gesture (see the freeze note below). */
+  const frozenGeometryRef = useRef<MobileNavGeometryStyle | null>(null);
   const menuTriggerRef = useRef<HTMLButtonElement | null>(null);
   const officialDesignEnabled = true;
   const isMenuOpen = alphaMenuOpen;
@@ -440,6 +442,20 @@ export function MobileNavBar({
         || menuSurfaceRef.current?.contains(event.target as Node)
         || target?.closest(".alpha-mobile-menu-trigger")
       ) return;
+      /*
+      FNXC:MobileNav 2026-09-14-08:05:
+      Geometric fallback for the dismissal guard. On a phone the popover can re-anchor between touchstart and click
+      (URL-bar collapse moves the visual viewport), and DOM containment then reports a press on a menu entry as
+      "outside" — closing the menu with nothing behind it. A press whose coordinates fall inside the popover is a
+      press ON the menu whatever the DOM says, so it never dismisses.
+      */
+      const surface = menuSurfaceRef.current;
+      if (surface) {
+        const rect = surface.getBoundingClientRect();
+        const inside = event.clientX >= rect.left && event.clientX <= rect.right
+          && event.clientY >= rect.top && event.clientY <= rect.bottom;
+        if (inside) return;
+      }
       dismissMore();
     };
 
@@ -616,10 +632,23 @@ export function MobileNavBar({
     viewportOffsetTop: keyboardMetrics?.viewportOffsetTop ?? 0,
     layoutViewportHeight: getMobileKeyboardLayoutViewportHeight(),
   });
-  const mobileNavGeometryStyle = createMobileNavGeometryStyle(
+  /*
+  FNXC:MobileNav 2026-09-14-07:48:
+  Freeze the navigation geometry while the popover is open. Its position and max-height are anchored to
+  --mobile-nav-viewport-offset-top and 100dvh, both of which MOVE on a phone as soon as the user scrolls: the browser
+  collapses its URL bar, visualViewport reports a new offset, and the popover re-anchors between touchstart and click.
+  The tap then lands outside the moved surface, the outside-pointerdown guard dismisses the menu, and the destination
+  never opens — which is why only entries reached AFTER scrolling were affected. Holding the last geometry while the
+  menu is open keeps the surface still for the whole gesture; it is released on close, so keyboard lift and safe-area
+  tracking resume untouched everywhere else.
+  */
+  const liveGeometryStyle = createMobileNavGeometryStyle(
     keyboardLift,
     keyboardMetrics?.viewportOffsetTop ?? 0,
   );
+  if (!isMenuOpen) frozenGeometryRef.current = null;
+  else if (!frozenGeometryRef.current) frozenGeometryRef.current = liveGeometryStyle;
+  const mobileNavGeometryStyle = frozenGeometryRef.current ?? liveGeometryStyle;
 
   return (
     <>
@@ -727,6 +756,16 @@ export function MobileNavBar({
             onTouchStart={officialDesignEnabled ? undefined : handleSheetTouchStart}
             onTouchEnd={officialDesignEnabled ? undefined : finishSheetDrag}
             onTouchCancel={officialDesignEnabled ? undefined : resetSheetDrag}
+            /*
+            FNXC:MobileNav 2026-09-14-07:02:
+            Selecting an entry that only becomes reachable AFTER scrolling did nothing. The sheet carries a transform
+            open animation, and any state change while it is scrolled can restart that animation: the surface shifts
+            under the finger between touchstart and click, so the tap lands on nothing. `--gesture-ready` already
+            neutralises the animation, but it was armed only by a DRAG, which a plain scroll never performs. Arming it
+            on first scroll settles the surface for every entry below the fold; the flag is idempotent so scrolling
+            does not re-render per event.
+            */
+            onScroll={officialDesignEnabled ? undefined : () => { if (!hasSheetDragged) setHasSheetDragged(true); }}
           >
             {!officialDesignEnabled && <div className="mobile-more-sheet-handle" aria-hidden="true" />}
             <div className="mobile-more-sheet-title">{t("nav.moreSheetTitle", "Navigate")}</div>
