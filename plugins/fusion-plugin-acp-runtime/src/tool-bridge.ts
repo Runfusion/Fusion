@@ -42,6 +42,8 @@ export interface FusionToolBridge {
   mcpServer: AcpMcpServerStdio;
   dispose: () => Promise<void>;
   toolCount: number;
+  /** Names of the tools actually registered on this bridge (post-filter). */
+  toolNames: ReadonlyArray<string>;
 }
 
 export function toolsToMcpToolDefs(tools: ReadonlyArray<ToolLike> | undefined): McpToolDef[] {
@@ -235,6 +237,7 @@ export async function startFusionToolBridge(tools: ReadonlyArray<ToolLike> | und
   let disposed = false;
   return {
     toolCount: defs.length,
+    toolNames: defs.map((tool) => tool.name),
     mcpServer: {
       name: "fusion-custom-tools",
       command: process.execPath,
