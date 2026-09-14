@@ -267,6 +267,8 @@ export function MobileNavBar({
   } | null>(null);
   const dragOffsetRef = useRef(0);
   const menuSurfaceRef = useRef<HTMLDivElement | null>(null);
+  /* FN-382/MobileNav: holds the geometry in place for the whole open-menu gesture (see the freeze note below). */
+  const frozenGeometryRef = useRef<MobileNavGeometryStyle | null>(null);
   const menuTriggerRef = useRef<HTMLButtonElement | null>(null);
   const officialDesignEnabled = true;
   const isMenuOpen = alphaMenuOpen;
@@ -616,10 +618,23 @@ export function MobileNavBar({
     viewportOffsetTop: keyboardMetrics?.viewportOffsetTop ?? 0,
     layoutViewportHeight: getMobileKeyboardLayoutViewportHeight(),
   });
-  const mobileNavGeometryStyle = createMobileNavGeometryStyle(
+  /*
+  FNXC:MobileNav 2026-09-14-07:48:
+  Freeze the navigation geometry while the popover is open. Its position and max-height are anchored to
+  --mobile-nav-viewport-offset-top and 100dvh, both of which MOVE on a phone as soon as the user scrolls: the browser
+  collapses its URL bar, visualViewport reports a new offset, and the popover re-anchors between touchstart and click.
+  The tap then lands outside the moved surface, the outside-pointerdown guard dismisses the menu, and the destination
+  never opens — which is why only entries reached AFTER scrolling were affected. Holding the last geometry while the
+  menu is open keeps the surface still for the whole gesture; it is released on close, so keyboard lift and safe-area
+  tracking resume untouched everywhere else.
+  */
+  const liveGeometryStyle = createMobileNavGeometryStyle(
     keyboardLift,
     keyboardMetrics?.viewportOffsetTop ?? 0,
   );
+  if (!isMenuOpen) frozenGeometryRef.current = null;
+  else if (!frozenGeometryRef.current) frozenGeometryRef.current = liveGeometryStyle;
+  const mobileNavGeometryStyle = frozenGeometryRef.current ?? liveGeometryStyle;
 
   return (
     <>
