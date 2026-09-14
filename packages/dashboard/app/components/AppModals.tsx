@@ -122,7 +122,6 @@ interface AppModalsProps {
     autoMerge: boolean;
     openTasksInRightSidebar: boolean;
     openMobileTasksInPopup: boolean;
-    taskPopupsBoardListOnly: boolean;
     showCostBadgeOnCards: boolean;
     taskDetailChatFirst: boolean;
     chatMessageLayout: ChatMessageLayout;
@@ -138,7 +137,6 @@ interface AppModalsProps {
     setChatMessageLayoutImmediate: (layout: ChatMessageLayout) => void;
     setOpenTasksInRightSidebarImmediate: (enabled: boolean) => void;
     setOpenMobileTasksInPopupImmediate: (enabled: boolean) => void;
-    setTaskPopupsBoardListOnlyImmediate: (enabled: boolean) => void;
     setShowCostBadgeOnCardsImmediate: (enabled: boolean) => void;
     setTaskDetailChatFirstImmediate: (enabled: boolean) => void;
     setMobileNavPrimaryItemsImmediate: (items: string[]) => void;
@@ -453,8 +451,6 @@ export function AppModals({
               onOpenTasksInRightSidebarChange={settings.setOpenTasksInRightSidebarImmediate}
               openMobileTasksInPopup={settings.openMobileTasksInPopup}
               onOpenMobileTasksInPopupChange={settings.setOpenMobileTasksInPopupImmediate}
-              taskPopupsBoardListOnly={settings.taskPopupsBoardListOnly}
-              onTaskPopupsBoardListOnlyChange={settings.setTaskPopupsBoardListOnlyImmediate}
               showCostBadgeOnCards={settings.showCostBadgeOnCards}
               onShowCostBadgeOnCardsChange={settings.setShowCostBadgeOnCardsImmediate}
               taskDetailChatFirst={settings.taskDetailChatFirst}

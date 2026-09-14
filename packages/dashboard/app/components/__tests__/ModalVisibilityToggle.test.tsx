@@ -245,6 +245,71 @@ describe("Dashboard window visibility toggle", () => {
     expect(localStorage.getItem("floating-window:production")).toBe(originalGeometry);
   });
 
+  /*
+  FNXC:DashboardWindowVisibility 2026-09-14-17:46:
+  FN-392 symptom: hide then show had to be purely visual. With two real modal windows mounted in one order and then
+  deliberately reordered by raising the first, a full hide/restore must return the SAME DOM nodes with the SAME z-index
+  values, invoke no close callback, and keep a child dialog above its parent. A real click afterwards must still raise,
+  which is what distinguishes "restore claims nothing" from "focus-to-front is broken".
+  */
+  it("restores two reordered modal windows as the same nodes, layers, and children", async () => {
+    const closeFirst = vi.fn();
+    const closeSecond = vi.fn();
+    const closeDialog = vi.fn();
+    render(
+      <ToggleHarness>
+        <FloatingWindow windowKey="first" title="First" modal onClose={closeFirst}>
+          <button type="button">first body</button>
+          <AlphaBoundary>
+            <AlphaDialog labelledBy="child-dialog-title" onClose={closeDialog}><h2 id="child-dialog-title">Child dialog</h2></AlphaDialog>
+          </AlphaBoundary>
+        </FloatingWindow>
+        <FloatingWindow windowKey="second" title="Second" modal onClose={closeSecond}>
+          <button type="button">second body</button>
+        </FloatingWindow>
+      </ToggleHarness>,
+    );
+
+    const toggle = await screen.findByTestId("dashboard-window-visibility-toggle");
+    const firstOverlay = screen.getByTestId("floating-window-overlay-first");
+    const secondOverlay = screen.getByTestId("floating-window-overlay-second");
+    const dialogOverlay = document.querySelector('[data-dashboard-window-surface="child-dialog-title"]') as HTMLElement;
+
+    // Second mounted last, so it starts on top; a real press on the first window deliberately inverts that order.
+    expect(Number(secondOverlay.style.zIndex)).toBeGreaterThan(Number(firstOverlay.style.zIndex));
+    fireEvent.pointerDown(screen.getByTestId("floating-window-first"));
+    await waitFor(() => expect(Number(firstOverlay.style.zIndex)).toBeGreaterThan(Number(secondOverlay.style.zIndex)));
+
+    // Interacting with the child dialog puts it back above its freshly raised parent.
+    fireEvent.pointerDown(screen.getByRole("heading", { name: "Child dialog" }));
+    await waitFor(() => expect(Number(dialogOverlay.style.zIndex)).toBeGreaterThan(Number(firstOverlay.style.zIndex)));
+    const layersBefore = [firstOverlay.style.zIndex, secondOverlay.style.zIndex, dialogOverlay.style.zIndex];
+
+    fireEvent.click(toggle);
+    await waitFor(() => expect(toggle).toHaveAttribute("aria-pressed", "true"));
+    expect(firstOverlay).toHaveAttribute("data-dashboard-window-globally-hidden", "true");
+    expect(secondOverlay).toHaveAttribute("data-dashboard-window-globally-hidden", "true");
+    expect(dialogOverlay).toHaveAttribute("data-dashboard-window-globally-hidden", "true");
+    expect(firstOverlay).toHaveAttribute("inert");
+    expect(firstOverlay).toHaveAttribute("aria-hidden", "true");
+
+    fireEvent.click(toggle);
+    await waitFor(() => expect(toggle).toHaveAttribute("aria-pressed", "false"));
+
+    expect(screen.getByTestId("floating-window-overlay-first")).toBe(firstOverlay);
+    expect(screen.getByTestId("floating-window-overlay-second")).toBe(secondOverlay);
+    expect(document.querySelector('[data-dashboard-window-surface="child-dialog-title"]')).toBe(dialogOverlay);
+    await waitFor(() => expect(firstOverlay).not.toHaveAttribute("data-dashboard-window-globally-hidden"));
+    expect([firstOverlay.style.zIndex, secondOverlay.style.zIndex, dialogOverlay.style.zIndex]).toEqual(layersBefore);
+    expect(closeFirst).not.toHaveBeenCalled();
+    expect(closeSecond).not.toHaveBeenCalled();
+    expect(closeDialog).not.toHaveBeenCalled();
+
+    // A real interaction after the restore still raises a window: only restoration focus is neutral.
+    fireEvent.pointerDown(screen.getByTestId("floating-window-second"));
+    await waitFor(() => expect(Number(secondOverlay.style.zIndex)).toBeGreaterThan(Number(layersBefore[0])));
+  });
+
   it("leaves the shared FloatingWindow usable without a provider", () => {
     const close = vi.fn();
     render(<FloatingWindow windowKey="standalone" title="Standalone" onClose={close}>body</FloatingWindow>);

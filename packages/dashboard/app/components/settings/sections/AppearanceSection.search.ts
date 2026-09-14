@@ -49,16 +49,6 @@ export const appearanceSearchEntries: SettingsSearchEntry[] = [
   },
   {
     sectionId: "appearance",
-    key: "taskPopupsBoardListOnly",
-    labelKey: "settings.appearance.taskPopupsBoardListOnly",
-    labelFallback: "Keep task popups on the view where they were opened",
-    helpKey: "settings.appearance.taskPopupsBoardListOnlyHelp",
-    helpFallback:
-      "When enabled, each open task-detail popup appears only on the view where it was opened. Switching views hides it without closing; returning restores it in the same position. Default: enabled.",
-    keywords: ["popup view attachment", "pin popup"],
-  },
-  {
-    sectionId: "appearance",
     key: "showCostBadgeOnCards",
     labelKey: "settings.appearance.showCostBadgeOnCards",
     labelFallback: "Show cost badges on task cards",

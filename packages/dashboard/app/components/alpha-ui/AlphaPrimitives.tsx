@@ -1,12 +1,15 @@
 import {
   cloneElement,
   forwardRef,
+  useCallback,
   useEffect,
   useRef,
   useState,
   type ButtonHTMLAttributes,
+  type CSSProperties,
   type HTMLAttributes,
   type KeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
   type ReactElement,
   type ReactNode,
   type RefObject,
@@ -16,7 +19,8 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { useAlphaSurface } from "../../context/AlphaContext";
-import { useDashboardWindowSurface } from "../../context/DashboardWindowManagerContext";
+import { useDashboardWindowSurface, useDashboardWindowFocusRestoring } from "../../context/DashboardWindowManagerContext";
+import { currentFloatingZ, nextFloatingZ } from "../floatingWindowStack";
 
 type AlphaButtonProps = ButtonHTMLAttributes<HTMLButtonElement>;
 type AlphaInputProps = InputHTMLAttributes<HTMLInputElement>;
@@ -197,10 +201,41 @@ function useEscape(onClose?: () => void, active = true) {
 /*
 FNXC:DashboardWindowVisibility 2026-09-14-10:52:
 Alpha dialog backdrops are first-class managed surfaces. Global hiding retains their trees but disables Escape and backdrop dismissal; popovers and collection surfaces remain intentionally outside the snapshot registry.
+
+FNXC:DialogStacking 2026-09-14-17:46:
+FN-392: a child dialog (Refine, Reset, New Chat, duplicate warning) is body-portaled, so a static CSS z-index put it
+UNDER the floating work window that opened it. Every shared dialog therefore claims the shared floating-utility layer
+on open, publishes it as its `stackOrder`, and applies it inline so it always dominates the task/chat band. The parent
+`FloatingWindow` raises itself from CAPTURE-phase pointer/focus handlers, which run before this bubble-phase handler in
+the same React event, so re-claiming here is what keeps the dialog above its parent after a real interaction. A focus
+claim is skipped while the window manager is restoring focus after a global hide, so hide/show never reorders anything.
 */
+function useAlphaDialogLayer(logicalId: string) {
+  const focusRestoring = useDashboardWindowFocusRestoring();
+  const [layer, setLayer] = useState(() => nextFloatingZ());
+  const windowSurface = useDashboardWindowSurface({ logicalId, group: "dialog", locallyVisible: true, stackOrder: layer });
+  const raise = useCallback(() => {
+    setLayer((current) => (current >= currentFloatingZ() ? current : nextFloatingZ()));
+  }, []);
+  const surfaceActive = windowSurface.surfaceActive;
+  const onPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!surfaceActive || event.isDefaultPrevented()) return;
+    raise();
+  }, [raise, surfaceActive]);
+  const onFocus = useCallback(() => {
+    if (!surfaceActive || focusRestoring()) return;
+    raise();
+  }, [focusRestoring, raise, surfaceActive]);
+  return { windowSurface, layer, onPointerDown, onFocus };
+}
+
+function portalDialog(dialog: ReactElement): ReactElement {
+  return typeof document === "undefined" ? dialog : createPortal(dialog, document.body) as unknown as ReactElement;
+}
+
 export function AlphaDialogBackdrop({ children, overlayClassName, labelledBy, onClose, overlayProps }: { children: ReactElement<HTMLAttributes<HTMLElement>>; overlayClassName?: string; labelledBy?: string; onClose?: () => void; overlayProps?: HTMLAttributes<HTMLDivElement> }) {
   const alpha = useAlphaSurface();
-  const windowSurface = useDashboardWindowSurface({ logicalId: labelledBy ?? "alpha-dialog", group: "dialog", locallyVisible: true });
+  const { windowSurface, layer, onPointerDown, onFocus } = useAlphaDialogLayer(labelledBy ?? "alpha-dialog");
   useEscape(onClose, windowSurface.surfaceActive);
   const dialog = (
     <div
@@ -208,11 +243,21 @@ export function AlphaDialogBackdrop({ children, overlayClassName, labelledBy, on
       ref={windowSurface.rootRef}
       className={overlayClassName}
       role="presentation"
+      style={{ ...(overlayProps?.style as CSSProperties | undefined), zIndex: layer }}
       aria-hidden={windowSurface.surfaceAttributes["aria-hidden"]}
       inert={windowSurface.surfaceAttributes.inert}
       data-dashboard-window-surface={windowSurface.surfaceAttributes["data-dashboard-window-surface"]}
       data-dashboard-window-globally-hidden={windowSurface.surfaceAttributes["data-dashboard-window-globally-hidden"]}
-      {...(alpha ? { "data-alpha-ui": "dialog-backdrop", "data-alpha-portal": "true" } : {})}
+      data-alpha-portal="true"
+      {...(alpha ? { "data-alpha-ui": "dialog-backdrop" } : {})}
+      onPointerDown={(event) => {
+        overlayProps?.onPointerDown?.(event);
+        onPointerDown(event);
+      }}
+      onFocus={(event) => {
+        overlayProps?.onFocus?.(event);
+        onFocus();
+      }}
       onMouseDown={(event) => {
         if (!windowSurface.surfaceActive) return;
         overlayProps?.onMouseDown?.(event);
@@ -222,23 +267,27 @@ export function AlphaDialogBackdrop({ children, overlayClassName, labelledBy, on
       {cloneElement(children, { role: "dialog", "aria-modal": true, "aria-labelledby": labelledBy ?? children.props["aria-labelledby"], ...(alpha ? { "data-alpha-ui": "dialog" } : {}) })}
     </div>
   );
-  return alpha && typeof document !== "undefined" ? createPortal(dialog, document.body) : dialog;
+  return portalDialog(dialog);
 }
 
 export function AlphaDialog({ children, className, overlayClassName, labelledBy, onClose }: { children: ReactNode; className?: string; overlayClassName?: string; labelledBy?: string; onClose?: () => void }) {
   const alpha = useAlphaSurface();
-  const windowSurface = useDashboardWindowSurface({ logicalId: labelledBy ?? "alpha-dialog", group: "dialog", locallyVisible: true });
+  const { windowSurface, layer, onPointerDown, onFocus } = useAlphaDialogLayer(labelledBy ?? "alpha-dialog");
   useEscape(onClose, windowSurface.surfaceActive);
   const dialog = (
     <div
       ref={windowSurface.rootRef}
       className={overlayClassName}
       role="presentation"
+      style={{ zIndex: layer }}
       aria-hidden={windowSurface.surfaceAttributes["aria-hidden"]}
       inert={windowSurface.surfaceAttributes.inert}
       data-dashboard-window-surface={windowSurface.surfaceAttributes["data-dashboard-window-surface"]}
       data-dashboard-window-globally-hidden={windowSurface.surfaceAttributes["data-dashboard-window-globally-hidden"]}
-      {...(alpha ? { "data-alpha-ui": "dialog-backdrop", "data-alpha-portal": "true" } : {})}
+      data-alpha-portal="true"
+      {...(alpha ? { "data-alpha-ui": "dialog-backdrop" } : {})}
+      onPointerDown={onPointerDown}
+      onFocus={onFocus}
       onMouseDown={(event) => {
         if (windowSurface.surfaceActive && event.target === event.currentTarget) onClose?.();
       }}
@@ -246,7 +295,7 @@ export function AlphaDialog({ children, className, overlayClassName, labelledBy,
       <div className={className} role="dialog" aria-modal="true" aria-labelledby={labelledBy} {...alphaMarker(alpha, "dialog")}>{children}</div>
     </div>
   );
-  return alpha && typeof document !== "undefined" ? createPortal(dialog, document.body) : dialog;
+  return portalDialog(dialog);
 }
 
 export function AlphaSpinner({ className, label }: { className?: string; label: string }) {

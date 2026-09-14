@@ -15,7 +15,6 @@ vi.mock("../../LanguageSelector", () => ({
 function renderAppearanceSection(formOverrides: Partial<Settings> = {}, onChatMessageLayoutChange = vi.fn()) {
   const onOpenTasksInRightSidebarChange = vi.fn();
   const onOpenMobileTasksInPopupChange = vi.fn();
-  const onTaskPopupsBoardListOnlyChange = vi.fn();
   const onShowCostBadgeOnCardsChange = vi.fn();
   const onTaskDetailChatFirstChange = vi.fn();
   let form: SettingsFormState = {
@@ -26,7 +25,6 @@ function renderAppearanceSection(formOverrides: Partial<Settings> = {}, onChatMe
     autoMerge: true,
     openTasksInRightSidebar: false,
     openMobileTasksInPopup: false,
-    taskPopupsBoardListOnly: true,
     showCostBadgeOnCards: false,
     taskDetailChatFirst: false,
     chatMessageLayout: "bubbles",
@@ -49,8 +47,6 @@ function renderAppearanceSection(formOverrides: Partial<Settings> = {}, onChatMe
       onOpenTasksInRightSidebarChange={onOpenTasksInRightSidebarChange}
       openMobileTasksInPopup={form.openMobileTasksInPopup}
       onOpenMobileTasksInPopupChange={onOpenMobileTasksInPopupChange}
-      taskPopupsBoardListOnly={form.taskPopupsBoardListOnly}
-      onTaskPopupsBoardListOnlyChange={onTaskPopupsBoardListOnlyChange}
       showCostBadgeOnCards={form.showCostBadgeOnCards}
       onShowCostBadgeOnCardsChange={onShowCostBadgeOnCardsChange}
       taskDetailChatFirst={form.taskDetailChatFirst}
@@ -65,7 +61,6 @@ function renderAppearanceSection(formOverrides: Partial<Settings> = {}, onChatMe
     getForm: () => form,
     onOpenTasksInRightSidebarChange,
     onOpenMobileTasksInPopupChange,
-    onTaskPopupsBoardListOnlyChange,
     onShowCostBadgeOnCardsChange,
     onTaskDetailChatFirstChange,
   };
@@ -106,13 +101,11 @@ describe("AppearanceSection", () => {
 
     fireEvent.click(screen.getByLabelText("Open tasks in the right sidebar"));
     fireEvent.click(screen.getByLabelText("Open tasks as popups"));
-    fireEvent.click(screen.getByLabelText("Keep task popups on the view where they were opened"));
     fireEvent.click(screen.getByLabelText("Show cost badges on task cards"));
     fireEvent.click(screen.getByLabelText("Open task details with Chat first"));
 
     expect(callbacks.onOpenTasksInRightSidebarChange).toHaveBeenCalledWith(true);
     expect(callbacks.onOpenMobileTasksInPopupChange).toHaveBeenCalledWith(true);
-    expect(callbacks.onTaskPopupsBoardListOnlyChange).toHaveBeenCalledWith(false);
     expect(callbacks.onShowCostBadgeOnCardsChange).toHaveBeenCalledWith(true);
     expect(callbacks.onTaskDetailChatFirstChange).toHaveBeenCalledWith(true);
   });
@@ -154,24 +147,20 @@ describe("AppearanceSection", () => {
     expect(screen.getByLabelText("Open tasks as popups")).toBeChecked();
   });
 
-  it("renders and updates the task popup view attachment checkbox", () => {
-    const { setForm, getForm } = renderAppearanceSection();
+  /*
+  FNXC:TaskWindowIdentity 2026-09-14-17:46:
+  FN-392: task windows are permanently project-scoped, so Appearance exposes no per-view scoping control — no row, no
+  label, no help copy, and no leftover click target — while its neighbouring toggles stay intact.
+  */
+  it("exposes no task popup view scoping control or leftover shell", () => {
+    renderAppearanceSection();
 
-    const checkbox = screen.getByLabelText("Keep task popups on the view where they were opened");
-    expect(checkbox).toBeChecked();
-    expect(screen.getByText(/appears only on the view where it was opened/)).toBeInTheDocument();
-    expect(screen.getByText(/returning restores it in the same position\. Default: enabled/)).toBeInTheDocument();
-
-    fireEvent.click(checkbox);
-
-    expect(setForm).toHaveBeenCalledTimes(1);
-    expect(getForm().taskPopupsBoardListOnly).toBe(false);
-  });
-
-  it("reflects the default enabled task popup view scoping value", () => {
-    renderAppearanceSection({ taskPopupsBoardListOnly: true });
-
-    expect(screen.getByLabelText("Keep task popups on the view where they were opened")).toBeChecked();
+    expect(screen.queryByLabelText("Keep task popups on the view where they were opened")).toBeNull();
+    expect(screen.queryByText(/appears only on the view where it was opened/)).toBeNull();
+    expect(screen.queryByText(/returning restores it in the same position/)).toBeNull();
+    expect(document.querySelector('[data-setting-key="taskPopupsBoardListOnly"]')).toBeNull();
+    expect(screen.getByLabelText("Open tasks as popups")).toBeInTheDocument();
+    expect(screen.getByLabelText("Show cost badges on task cards")).toBeInTheDocument();
   });
 
   it("renders and updates the cost badge checkbox", () => {

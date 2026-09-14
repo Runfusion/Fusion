@@ -3,7 +3,18 @@ import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { readAppFile } from "../../test/cssFixture";
+import {
+  makeTask,
+  noop,
+  noopDelete,
+  noopMerge,
+  noopOpenDetail,
+  setupTaskDetailModalHooks,
+} from "./TaskDetailModal.test-helpers";
 import { TaskResetDialog } from "../TaskResetDialog";
+import { TaskDetailModal } from "../TaskDetailModal";
+
+setupTaskDetailModalHooks();
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -141,6 +152,53 @@ describe("TaskResetDialog", () => {
 
     renderDialog({ initialDescription: "Updated request" });
     expect(screen.getByTestId("task-reset-description")).toHaveValue("Updated request");
+  });
+
+  /*
+  FNXC:DialogStacking 2026-09-14-17:46:
+  FN-392: Reset is the second consumer of the shared Alpha dialog primitive audited with Refine. Opened from its real
+  Actions-menu wiring inside a floating Task Detail window it must be body-portaled and strictly above that window,
+  on desktop and on the narrow presentation, otherwise the operator gets an invisible destructive confirmation.
+  */
+  it.each([
+    ["desktop", 1280],
+    ["mobile", 420],
+  ])("opens above its parent task window from the real header Reset action on %s", (_name, width) => {
+    const priorWidth = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: width });
+    try {
+      render(
+        <TaskDetailModal
+          task={makeTask({ id: "FN-392", column: "todo" })}
+          initialTab="definition"
+          onClose={noop}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          onResetTask={vi.fn().mockResolvedValue({ id: "FN-392" } as never)}
+          addToast={noop}
+        />,
+      );
+
+      fireEvent.click(screen.getByTestId("task-detail-header-action-reset"));
+
+      const dialog = screen.getByTestId("task-reset-dialog");
+      const overlay = dialog.closest("[data-dashboard-window-surface]") as HTMLElement;
+      expect(overlay.parentElement).toBe(document.body);
+      expect(overlay.getAttribute("data-alpha-portal")).toBe("true");
+
+      const parentWindow = screen.getByTestId("floating-window-overlay-task-detail");
+      const dialogLayer = Number.parseInt(overlay.style.zIndex, 10);
+      expect(dialogLayer).toBeGreaterThan(Number.parseInt(parentWindow.style.zIndex, 10));
+
+      const textarea = screen.getByTestId("task-reset-description");
+      fireEvent.pointerDown(textarea, { bubbles: true });
+      fireEvent.change(textarea, { target: { value: "corrected request" } });
+      expect(textarea).toHaveValue("corrected request");
+      expect(Number.parseInt(overlay.style.zIndex, 10)).toBeGreaterThan(Number.parseInt(parentWindow.style.zIndex, 10));
+    } finally {
+      Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: priorWidth });
+    }
   });
 
   it("keeps responsive CSS token-only apart from the canonical breakpoint", () => {

@@ -172,15 +172,16 @@ describe("App dashboard keyboard shortcuts", () => {
     const handlers = { closePoppedOutTask, closePoppedOutChat, closeTerminal };
 
     expect(closeTopmostDashboardPopupForShortcut({
+      /* FN-392: task windows are identified by task id alone, so Escape closes the most recent one by id. */
       poppedOutTaskEntries: [
-        { task: { id: "FN-1" }, originTaskView: "board" },
-        { task: { id: "FN-1" }, originTaskView: "planning" },
+        { task: { id: "FN-1" } },
+        { task: { id: "FN-2" } },
       ],
       poppedOutChatEntries: [{ projectId: "proj-1", session: { id: "chat-1" } }],
       terminalOpen: true,
       modalClosers: [[true, closePrimaryChat], [true, closeSettings]],
     } as never, handlers)).toBe(true);
-    expect(closePoppedOutTask).toHaveBeenCalledWith("FN-1", "planning");
+    expect(closePoppedOutTask).toHaveBeenCalledWith("FN-2");
     expect(closePoppedOutChat).not.toHaveBeenCalled();
 
     expect(closeTopmostDashboardPopupForShortcut({

@@ -2,7 +2,7 @@
 FNXC:ChatWindows 2026-09-14-11:35:
 Every detached Direct conversation owns one persistent FloatingWindow keyed by project/session. Reopening refreshes and raises that exact window; the global declarative registry now owns temporary hide/restore without chat-specific minimization.
 */
-import { Suspense } from "react";
+import { Suspense, type ComponentProps } from "react";
 import type { ChatSessionInfo } from "../hooks/useChat";
 import type { PoppedOutChatEntry } from "../hooks/usePoppedOutChats";
 import { ChatView } from "./ChatView";
@@ -15,9 +15,15 @@ export interface PoppedOutChatWindowsProps {
   experimentalFeatures?: Record<string, boolean>;
   onClose: (projectId: string, sessionId: string) => void;
   onOpenSessionInNewWindow: (session: ChatSessionInfo) => void;
+  /*
+  FNXC:ChatSurfaceUnification 2026-09-14-17:46:
+  FN-392: a detached conversation can hand its message to Mailbox like any other Chat host. Handing off closes only the
+  primary dock host; the emitting window and every other conversation stay mounted with their streams intact.
+  */
+  onSendAsReport?: ComponentProps<typeof ChatView>["onSendAsReport"];
 }
 
-export function PoppedOutChatWindows({ entries, projectId, addToast, experimentalFeatures, onClose, onOpenSessionInNewWindow }: PoppedOutChatWindowsProps) {
+export function PoppedOutChatWindows({ entries, projectId, addToast, experimentalFeatures, onClose, onOpenSessionInNewWindow, onSendAsReport }: PoppedOutChatWindowsProps) {
   /*
   FNXC:ChatWindows 2026-09-14-11:35:
   The first detached conversation owns cascade slot zero so its persisted base geometry is not given an invisible extra offset.
@@ -52,7 +58,10 @@ export function PoppedOutChatWindows({ entries, projectId, addToast, experimenta
           initialDirectSession={entry.session}
           initialDirectSessionNonce={entry.focusNonce}
           persistChatPreferences={false}
+          initialComposerDraft={entry.composerPrefill?.text}
+          initialComposerDraftNonce={entry.composerPrefill?.nonce}
           onOpenSessionInNewWindow={onOpenSessionInNewWindow}
+          onSendAsReport={onSendAsReport}
           onClose={() => onClose(entry.projectId, entry.session.id)}
         />
       </Suspense>

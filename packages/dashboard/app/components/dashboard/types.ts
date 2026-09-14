@@ -139,13 +139,11 @@ export interface MainContentProps {
   settingsLoaded: boolean;
   openTasksInRightSidebar: boolean;
   openMobileTasksInPopup: boolean;
-  taskPopupsBoardListOnly: boolean;
   showCostBadgeOnCards: boolean;
   taskDetailChatFirst: boolean;
   chatMessageLayout: "bubbles" | "full-width";
   setOpenTasksInRightSidebarImmediate: (enabled: boolean) => void;
   setOpenMobileTasksInPopupImmediate: (enabled: boolean) => void;
-  setTaskPopupsBoardListOnlyImmediate: (enabled: boolean) => void;
   setShowCostBadgeOnCardsImmediate: (enabled: boolean) => void;
   setTaskDetailChatFirstImmediate: (enabled: boolean) => void;
   setChatMessageLayoutImmediate: (layout: "bubbles" | "full-width") => void;

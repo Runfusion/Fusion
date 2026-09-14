@@ -288,7 +288,7 @@ export function getBoardTaskOpenRoute(options: {
 }
 
 export interface DashboardShortcutPopupState {
-  poppedOutTaskEntries: Array<Pick<PoppedOutTaskEntry, "task" | "originTaskView">>;
+  poppedOutTaskEntries: Array<Pick<PoppedOutTaskEntry, "task">>;
   poppedOutChatEntries: Array<Pick<PoppedOutChatEntry, "projectId" | "session">>;
   poppedOutNoteEntries?: Array<{ projectId: string; note: { id: string } }>;
   windowsGloballyHidden?: boolean;
@@ -297,39 +297,38 @@ export interface DashboardShortcutPopupState {
 }
 
 export interface DashboardShortcutPopupHandlers {
-  closePoppedOutTask: (taskId: string, originTaskView?: TaskView) => void;
+  closePoppedOutTask: (taskId: string) => void;
   closePoppedOutChat: (projectId: string, sessionId: string) => void;
   closePoppedOutNote?: (projectId: string, noteId: string) => void;
   closeTerminal: () => void;
 }
 
 /*
-FNXC:TaskPopupViewGating 2026-07-15-15:20:
-FN-8016 scopes every newly opened task popup to its exact dashboard origin, not only Board/List. Legacy entries without an origin predate this contract and deliberately remain visible on every view for backwards compatibility.
+FNXC:TaskWindowIdentity 2026-09-14-17:46:
+FN-392 removes per-view task-popup gating entirely. A task window is project-scoped, not view-scoped: it stays mounted
+and visible in every view of the active project, so no predicate or composite (task, view) identity key remains.
 */
-export function isTaskPopupVisibleForView(options: {
-  taskPopupsBoardListOnly: boolean;
-  taskView: TaskView;
-  originTaskView?: TaskView;
-}): boolean {
-  if (!options.taskPopupsBoardListOnly || options.originTaskView === undefined) return true;
-  return options.originTaskView === options.taskView;
-}
-
-export function taskPopupIdentityKey(taskId: string, originTaskView?: TaskView): string {
-  return `${taskId}:${originTaskView ?? "global"}`;
-}
 
 /*
 FNXC:ChatWindows 2026-09-14-11:35:
 App owns detached Chat and Notes windows for every wide shell. Conversation identities are project-scoped and deduplicated; the exposed Chat set records only an existing window because global visibility replaces chat-only minimization.
 */
-export function useAppAlphaDesktopRightDockWindows(projectId?: string) {
+export function useAppAlphaDesktopRightDockWindows(
+  projectId?: string,
+  /*
+  FNXC:ChatSurfaceUnification 2026-09-14-17:46:
+  FN-392: the dock's Chat list delegates conversation identity to this project-scoped owner. A pending external prefill
+  is claimed here so exactly the opened or created window receives it; an undefined project creates nothing at all.
+  */
+  consumePendingComposerPrefill?: () => string | undefined,
+) {
   const chats = usePoppedOutChats();
   const notes = usePoppedOutNotes();
   const openSessionInNewWindow = useCallback((session: import("./hooks/useChat").ChatSessionInfo) => {
-    if (projectId) chats.popOut(projectId, session);
-  }, [chats.popOut, projectId]);
+    if (!projectId) return;
+    const composerPrefill = consumePendingComposerPrefill?.();
+    chats.popOut(projectId, session, composerPrefill ? { composerPrefill } : undefined);
+  }, [chats.popOut, consumePendingComposerPrefill, projectId]);
   const openNoteInWindow = useCallback((note: import("@fusion/core").ProjectNoteSummary) => {
     if (projectId) notes.popOut(projectId, note);
   }, [notes.popOut, projectId]);
@@ -419,7 +418,7 @@ export function closeTopmostDashboardPopupForShortcut(
   if (state.windowsGloballyHidden) return false;
   const lastPoppedOutTask = state.poppedOutTaskEntries[state.poppedOutTaskEntries.length - 1];
   if (lastPoppedOutTask) {
-    handlers.closePoppedOutTask(lastPoppedOutTask.task.id, lastPoppedOutTask.originTaskView);
+    handlers.closePoppedOutTask(lastPoppedOutTask.task.id);
     return true;
   }
   const lastPoppedOutNote = state.poppedOutNoteEntries?.at(-1);
@@ -828,7 +827,7 @@ function AppInner() {
   FNXC:FloatingWindow 2026-07-15-15:20:
   FN-8016 identifies a popped-out task detail by task id plus origin view. The same task can therefore coexist in separate view-scoped FloatingWindows while re-opening it on one view refreshes only that entry.
   */
-  const poppedOutTasks = useAppPoppedOutTaskState({ taskView, isMobile, pushNav, removeNav });
+  const poppedOutTasks = useAppPoppedOutTaskState({ isMobile, pushNav, removeNav });
   const {
     entries: poppedOutTaskEntries,
     open: popOutTaskDetailForCurrentView,
@@ -836,7 +835,19 @@ function AppInner() {
     closeAll: closeAllPoppedOutTasks,
     clearNavigation: clearPoppedOutTaskNavigation,
   } = poppedOutTasks;
-  const appRightDockWindows = useAppAlphaDesktopRightDockWindows(currentProject?.id);
+  /*
+  FNXC:ChatSurfaceUnification 2026-09-14-17:46:
+  FN-392: on a wide host Chat is the dock LIST, which has no composer, so an external prefill is parked here and handed
+  to the single conversation the operator then opens or creates. The mobile Chat route keeps consuming the state value
+  directly. The pending text is consumed exactly once, so it never leaks into a second conversation.
+  */
+  const pendingChatComposerPrefillRef = useRef<string | undefined>(undefined);
+  const consumePendingChatComposerPrefill = useCallback(() => {
+    const pending = pendingChatComposerPrefillRef.current;
+    pendingChatComposerPrefillRef.current = undefined;
+    return pending;
+  }, []);
+  const appRightDockWindows = useAppAlphaDesktopRightDockWindows(currentProject?.id, consumePendingChatComposerPrefill);
   const {
     entries: poppedOutChatEntries,
     close: closePoppedOutChat,
@@ -916,11 +927,12 @@ function AppInner() {
   }, [currentProject?.id, planningViewActive]);
 
   /*
-  FNXC:GitHubImportChat 2026-09-14-11:35:
+  FNXC:GitHubImportChat 2026-09-14-17:46:
   Import and task/report actions seed the canonical Chat host at App scope, then route through the same responsive launcher as Header and sidebar navigation. No dedicated transient Chat owner exists.
   */
   const openChatWithPrefill = useCallback((text: string) => {
     setChatComposerPrefill({ text, nonce: Date.now() });
+    pendingChatComposerPrefillRef.current = text;
     handleTaskViewChange("chat");
   }, [handleTaskViewChange]);
 
@@ -971,9 +983,6 @@ function AppInner() {
     mailboxPendingApprovalCount,
     setMailboxUnreadCount,
   } = useMailboxUnread(currentProject?.id);
-  const { chatHasUnreadResponse } = useChatUnreadBadge(currentProject?.id, {
-    primaryHostActive: isMobile ? taskView === "chat" : chatSurfaceVisible,
-  });
   const { stashOrphanCount } = useStashOrphanCount(currentProject?.id);
   const [showGitHubStarPrompt, setShowGitHubStarPrompt] = useState(false);
   /*
@@ -1061,7 +1070,6 @@ function AppInner() {
     capacityRiskTodoThreshold,
     openTasksInRightSidebar,
     openMobileTasksInPopup,
-    taskPopupsBoardListOnly,
     showCostBadgeOnCards,
     modelPricingOverrides,
     taskDetailChatFirst,
@@ -1082,7 +1090,6 @@ function AppInner() {
     setChatMessageLayoutImmediate,
     setOpenTasksInRightSidebarImmediate,
     setOpenMobileTasksInPopupImmediate,
-    setTaskPopupsBoardListOnlyImmediate,
     setShowCostBadgeOnCardsImmediate,
     setTaskDetailChatFirstImmediate,
     setMobileNavPrimaryItemsImmediate,
@@ -1093,22 +1100,6 @@ function AppInner() {
   const [alphaMenuOpen, setAlphaMenuOpen] = useState(false);
   const [alphaProjectsDrawerOpen, setAlphaProjectsDrawerOpen] = useState(false);
 
-  const taskPopupsVisibleOnCurrentView = useCallback((originTaskView?: TaskView) => isTaskPopupVisibleForView({
-    taskPopupsBoardListOnly,
-    taskView,
-    originTaskView,
-  }), [taskPopupsBoardListOnly, taskView]);
-  /*
-  FNXC:TaskPopupViewGating 2026-07-15-15:20:
-  FN-8016 defaults popup rendering to the originating view for every dashboard surface. Entries without an origin are legacy snapshots and intentionally remain globally visible.
-
-  FNXC:TaskPopupViewGating 2026-07-22-13:15:
-  FN remount-churn fix R7: this memo no longer drives the render list (all entries render; off-view windows hide via FloatingWindow `hidden`). It remains the "currently visible" set consumed by the Escape/back-navigation shortcut handler below, which must only dismiss windows the user can actually see.
-  */
-  const visiblePoppedOutTaskEntries = useMemo(
-    () => poppedOutTaskEntries.filter((entry) => taskPopupsVisibleOnCurrentView(entry.originTaskView)),
-    [poppedOutTaskEntries, taskPopupsVisibleOnCurrentView],
-  );
 
   /*
   FNXC:RoadmapsNavigation 2026-07-19-12:00:
@@ -1596,7 +1587,7 @@ function AppInner() {
     */
     const closedHigherPrioritySurface = closeTopmostDashboardPopupForShortcut(
       {
-        poppedOutTaskEntries: visiblePoppedOutTaskEntries,
+        poppedOutTaskEntries,
         poppedOutChatEntries,
         poppedOutNoteEntries,
         windowsGloballyHidden: dashboardWindowVisibility?.hiddenSnapshotActive,
@@ -1637,7 +1628,7 @@ function AppInner() {
     */
     void alphaDesktopWindows.requestClose(pilotTopmost);
     return true;
-  }, [alphaDesktopWindows.requestClose, alphaDesktopWindows.requestGuardedClose, alphaDesktopWindows.topmost, closeDetailTaskWithNav, closePoppedOutChat, closePoppedOutTaskWithNav, closeTerminalWithNav, dashboardWindowVisibility?.hiddenSnapshotActive, modalManager, poppedOutChatEntries, poppedOutNoteEntries, visiblePoppedOutTaskEntries]);
+  }, [alphaDesktopWindows.requestClose, alphaDesktopWindows.requestGuardedClose, alphaDesktopWindows.topmost, closeDetailTaskWithNav, closePoppedOutChat, closePoppedOutTaskWithNav, closeTerminalWithNav, dashboardWindowVisibility?.hiddenSnapshotActive, modalManager, poppedOutChatEntries, poppedOutNoteEntries, poppedOutTaskEntries]);
 
   const openFilesWithNav = useCallback((workspace?: string, initialFile?: string | null) => {
     modalManager.openFiles(workspace, initialFile);
@@ -1913,8 +1904,8 @@ function AppInner() {
   const { rightDock, windows: alphaDesktopRightDockWindows } = useAppAlphaDesktopRightDockComposition({
     projectId: currentProject?.id,
     owner: appRightDockWindows,
-    controllerInput: { active: rightDockActive, addToast, columnFlagsByTaskId: footerColumnFlagsByTaskId, settingsLoaded, researchReadinessVersion, goalAnchorId, tasks: boardSourceTasks, workflowSteps, subscribePluginEvents, openDetailTask: alphaMobileDrawerActive ? openTaskDetailInMainPanel : openDetailTask, notesController, registerNotesGuard: registerAlphaDesktopNotesGuard, openFileInBrowser, onUpdateTask: updateTask, onDeleteTask: deleteTask, onRevertTask: revertTask, onMergeTask: mergeTask, onRetryTask: retryTask, onOpenChatWithPrefill: openChatWithPrefill, onPauseTask: pauseTask, onUnpauseTask: unpauseTask, onBypassReview: bypassReview, onResetTask: resetTask, onDuplicateTask: duplicateTask, onTaskUpdated: (task: Task) => ingestCreatedTasks([task]), openSettings: (section?: string) => openSettingsWithNav(section as SectionId), onOpenUsage: openUsageWithNav, onOpenActivityLog: openActivityLogWithNav, onOpenGitHubImport: openGitHubImportWithNav, onOpenGitManager: openGitManagerWithNav, onOpenSchedules: openSchedulesWithNav, onSendSelectionToTask: modalManager.openNewTaskWithDescription, onCreateTaskFromInsight: handleInsightTaskCreate, onNavigateToMission: handleOpenMission, onTaskCreated: (task: Task) => ingestCreatedTasks([task]), prAuthAvailable, autoMerge, taskDetailChatFirst, renderListView: isMobile ? undefined : renderDockListView, chatComposerPrefill, onSendAsReport: handleSendChatMessageAsReport, visibilityOptions: { hostMode: alphaDesktopNavigationActive ? "alpha-desktop" : "standard", experimentalFeatures: { insights: insightsEnabled, memoryView: memoryEnabled, devServerView: devServerEnabled, researchView: researchEnabled, evalsView: evalsEnabled, goalsView: goalsEnabled }, showSkillsTab: skillsEnabled, pluginDashboardViews, listViewAvailable: !isMobile }, footerVisible: shellFooterVisible },
-    chatWindowProps: { addToast, experimentalFeatures },
+    controllerInput: { active: rightDockActive, addToast, columnFlagsByTaskId: footerColumnFlagsByTaskId, settingsLoaded, researchReadinessVersion, goalAnchorId, tasks: boardSourceTasks, workflowSteps, subscribePluginEvents, openDetailTask: alphaMobileDrawerActive ? openTaskDetailInMainPanel : openDetailTask, notesController, registerNotesGuard: registerAlphaDesktopNotesGuard, openFileInBrowser, onUpdateTask: updateTask, onDeleteTask: deleteTask, onRevertTask: revertTask, onMergeTask: mergeTask, onRetryTask: retryTask, onOpenChatWithPrefill: openChatWithPrefill, onPauseTask: pauseTask, onUnpauseTask: unpauseTask, onBypassReview: bypassReview, onResetTask: resetTask, onDuplicateTask: duplicateTask, onTaskUpdated: (task: Task) => ingestCreatedTasks([task]), openSettings: (section?: string) => openSettingsWithNav(section as SectionId), onOpenUsage: openUsageWithNav, onOpenActivityLog: openActivityLogWithNav, onOpenGitHubImport: openGitHubImportWithNav, onOpenGitManager: openGitManagerWithNav, onOpenSchedules: openSchedulesWithNav, onSendSelectionToTask: modalManager.openNewTaskWithDescription, onCreateTaskFromInsight: handleInsightTaskCreate, onNavigateToMission: handleOpenMission, onTaskCreated: (task: Task) => ingestCreatedTasks([task]), prAuthAvailable, autoMerge, taskDetailChatFirst, renderListView: isMobile ? undefined : renderDockListView, onSendAsReport: handleSendChatMessageAsReport, visibilityOptions: { hostMode: alphaDesktopNavigationActive ? "alpha-desktop" : "standard", experimentalFeatures: { insights: insightsEnabled, memoryView: memoryEnabled, devServerView: devServerEnabled, researchView: researchEnabled, evalsView: evalsEnabled, goalsView: goalsEnabled }, showSkillsTab: skillsEnabled, pluginDashboardViews, listViewAvailable: !isMobile }, footerVisible: shellFooterVisible },
+    chatWindowProps: { addToast, experimentalFeatures, onSendAsReport: handleSendChatMessageAsReport },
     noteWindowProps: {
       addToast,
       onChanged: () => void notesController.loadList(notesController.search),
@@ -1925,36 +1916,56 @@ function AppInner() {
     },
   });
 
-  primaryChatWindowOpenRef.current = rightDock.expandedView === "chat";
-  closePrimaryChatWindowRef.current = () => rightDock.closeViewWindow("chat");
+  /*
+  FNXC:ChatSurfaceUnification 2026-09-14-17:46:
+  FN-392: the wide primary Chat host is the dock LIST again, not an expanded window. A wide Chat request therefore
+  selects the Chat tool and opens the dock in one operation, leaving the current destination on screen; the mobile route
+  is untouched. `primaryChatWindowOpen` now describes that dock list, so Escape and the Mailbox hand-off close only it
+  and never a detached conversation.
+  */
+  const chatDockHostOpen = rightDock.open && rightDock.selectedView === "chat";
+  primaryChatWindowOpenRef.current = chatDockHostOpen;
+  closePrimaryChatWindowRef.current = () => { if (chatDockHostOpen) rightDock.toggle(); };
+  const selectChatInDock = useCallback(() => {
+    rightDock.selectView("chat");
+    if (!rightDock.open) rightDock.toggle();
+  }, [rightDock]);
+  /*
+  FNXC:ChatSurfaceUnification 2026-09-14-17:46:
+  FN-392: the unread badge clears while the operator is actually looking at Chat. On a wide host that is the dock's
+  inline list (or any visible detached conversation); on mobile it remains the Chat route. The hook is resolved here
+  because the dock host state only exists after the dock composition above.
+  */
+  const { chatHasUnreadResponse } = useChatUnreadBadge(currentProject?.id, {
+    primaryHostActive: isMobile ? taskView === "chat" : (chatDockHostOpen || chatSurfaceVisible),
+  });
   chatWindowRouteRef.current = (newView: TaskView) => {
     if (newView !== "chat") return false;
     if (alphaMobileDrawerActive) {
-      rightDock.closeViewWindow("chat");
       if (taskView !== "chat") commitTaskViewChange("chat");
       return true;
     }
     if (!rightDockActive) return false;
-    rightDock.openViewWindow("chat");
+    selectChatInDock();
     if (taskView === "chat") handleChangeTaskView("board");
     return true;
   };
 
   /*
-  FNXC:ChatSurfaceUnification 2026-09-14-11:35:
-  Responsive handoff preserves the user's primary Chat intent while enforcing one host: wide routes become the registry-backed expanded window, and a wide Chat window becomes the mobile drawer. Project-scope cleanup remains controller-owned.
+  FNXC:ChatSurfaceUnification 2026-09-14-17:46:
+  Responsive handoff preserves the user's primary Chat intent while enforcing one host: a wide Chat route becomes the dock list, and a wide dock Chat selection becomes the mobile route. Project-scope cleanup remains controller-owned.
   */
   useEffect(() => {
-    if (alphaMobileDrawerActive && rightDock.expandedView === "chat") {
-      rightDock.closeViewWindow("chat");
+    if (alphaMobileDrawerActive && chatDockHostOpen) {
+      rightDock.toggle();
       if (taskView !== "chat") handleChangeTaskView("chat");
       return;
     }
     if (!alphaMobileDrawerActive && rightDockActive && taskView === "chat") {
-      rightDock.openViewWindow("chat");
+      selectChatInDock();
       handleChangeTaskView("board");
     }
-  }, [alphaMobileDrawerActive, handleChangeTaskView, rightDock, rightDockActive, taskView]);
+  }, [alphaMobileDrawerActive, chatDockHostOpen, handleChangeTaskView, rightDock, rightDockActive, selectChatInDock, taskView]);
 
   listDockRouteRef.current = (newView: TaskView) => {
     if (newView !== "list" || isMobile || !rightDockActive) return false;
@@ -2044,7 +2055,6 @@ function AppInner() {
     setChatMessageLayoutImmediate,
     setOpenTasksInRightSidebarImmediate,
     setOpenMobileTasksInPopupImmediate,
-    setTaskPopupsBoardListOnlyImmediate,
     setShowCostBadgeOnCardsImmediate,
     setTaskDetailChatFirstImmediate,
     setMobileNavPrimaryItemsImmediate,
@@ -2075,7 +2085,6 @@ function AppInner() {
     settingsLoaded,
     openTasksInRightSidebar,
     openMobileTasksInPopup,
-    taskPopupsBoardListOnly,
     showCostBadgeOnCards,
     taskDetailChatFirst,
     chatMessageLayout,
@@ -2609,13 +2618,15 @@ function AppInner() {
       FNXC:TaskPopupLayer 2026-09-14-11:35:
       Task-detail and Chat windows share the task-detail interaction stack, so pointer/focus raises whichever overlapping work surface the operator engages. Utility windows retain their higher independent band.
 
-      FNXC:TaskPopupViewGating 2026-07-22-13:15:
-      FN remount-churn fix R7 supersedes the FN-8016 remount behavior: ALL popped-out entries render, and off-origin-view windows are hidden via FloatingWindow's hidden contract (visibility-based, aria-hidden, effects suspended) instead of being filtered out of the render array. Returning to the origin view is an instant reveal of the live window — the embedded task detail, including an open terminal WebSocket, stays mounted. The `isTaskPopupVisibleForView` predicate and per-origin-view addressability are unchanged; `visiblePoppedOutTaskEntries` still feeds the Escape/nav-shortcut consumer. While hidden, `active={false}` closes the detail's SSE/EventSource channels (R8). Each FloatingWindow key includes its origin so identical task ids never collide across views.
+      FNXC:TaskWindowIdentity 2026-09-14-17:46:
+      FN-392: every entry renders one window keyed by task id, and a view change mutates nothing here. The embedded task
+      detail — including an open terminal WebSocket and any child dialog — stays mounted and visible as the operator
+      moves through Board, List, Planning, Agents, Settings, Chat, and plugin views. Only a global hide suspends its
+      reads; only a project change or the mobile drawer boundary closes it.
       */}
       <AppTaskPopoutWindows
         entries={poppedOutTaskEntries}
         liveTasks={tasks}
-        isVisible={taskPopupsVisibleOnCurrentView}
         onCloseTask={closePoppedOutTaskWithNav}
         persistGeometryKey={TASK_DETAIL_FLOATING_GEOMETRY_KEY}
         windowProps={{
@@ -2664,7 +2675,7 @@ function AppInner() {
         onOpenChatWithPrefill={openChatWithPrefill}
         taskOperations={{ moveTask, deleteTask, mergeTask, revertTask, retryTask, pauseTask, unpauseTask, bypassReview, resetTask, duplicateTask }}
         deepLink={{ handleDetailClose }}
-        settings={{ prAuthAvailable, autoMerge, openTasksInRightSidebar, openMobileTasksInPopup, taskPopupsBoardListOnly, showCostBadgeOnCards, taskDetailChatFirst, chatMessageLayout, themeMode, colorTheme, dashboardFontScalePct, shadcnCustomColors, resolvedThemeMode, setThemeMode, setColorTheme, setDashboardFontScalePct, setShadcnCustomColors, setChatMessageLayoutImmediate, setOpenTasksInRightSidebarImmediate, setOpenMobileTasksInPopupImmediate, setTaskPopupsBoardListOnlyImmediate, setShowCostBadgeOnCardsImmediate, setTaskDetailChatFirstImmediate, setMobileNavPrimaryItemsImmediate }}
+        settings={{ prAuthAvailable, autoMerge, openTasksInRightSidebar, openMobileTasksInPopup, showCostBadgeOnCards, taskDetailChatFirst, chatMessageLayout, themeMode, colorTheme, dashboardFontScalePct, shadcnCustomColors, resolvedThemeMode, setThemeMode, setColorTheme, setDashboardFontScalePct, setShadcnCustomColors, setChatMessageLayoutImmediate, setOpenTasksInRightSidebarImmediate, setOpenMobileTasksInPopupImmediate, setShowCostBadgeOnCardsImmediate, setTaskDetailChatFirstImmediate, setMobileNavPrimaryItemsImmediate }}
         onSettingsClose={handleSettingsCloseWithNav}
         onReopenOnboarding={reopenOnboardingWithNav}
         onOpenApprovals={(_approvalId) => handleTaskViewChange("mailbox")}

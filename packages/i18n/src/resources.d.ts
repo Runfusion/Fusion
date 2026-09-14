@@ -6078,8 +6078,6 @@ export default interface Resources {
         "showCostBadgeOnCardsHelp": "Default: disabled. When enabled, board cards show derived model cost next to execution time; unavailable pricing displays — and tasks without token usage show no badge.",
         "suppressTheLdquoNeedsYourInputRdquoBanner": "Suppress the “needs your input” banner that appears when AI sessions are awaiting input or have failed.",
         "taskDetailChatFirstHelp": "Off by default: task details list Activity first and omitted non-done opens land on Activity. Turn on to restore Chat-first order/default; explicit Chat links still work either way.",
-        "taskPopupsBoardListOnly": "Keep task popups on the view where they were opened",
-        "taskPopupsBoardListOnlyHelp": "When enabled, each open task-detail popup appears only on the view where it was opened. Switching views hides it without closing; returning restores it in the same position. Default: enabled.",
         "title": "Appearance"
       },
       "auth": {

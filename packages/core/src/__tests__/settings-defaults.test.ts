@@ -245,14 +245,15 @@ describe("settings defaults invariants", () => {
     });
   });
 
-  describe("taskPopupsBoardListOnly default", () => {
-    it("keeps taskPopupsBoardListOnly explicitly true in project defaults", () => {
-      expect(DEFAULT_PROJECT_SETTINGS.taskPopupsBoardListOnly).toBe(true);
-      expect("taskPopupsBoardListOnly" in DEFAULT_PROJECT_SETTINGS).toBe(true);
-      expect(PROJECT_SETTINGS_KEYS).toContain("taskPopupsBoardListOnly");
-    });
-
-    it("keeps taskPopupsBoardListOnly project-scoped only", () => {
+  /*
+  FNXC:TaskWindowIdentity 2026-09-14-17:46:
+  FN-392 removed the per-view task-popup setting. Its absence from the defaults is what makes a historical stored value
+  unknown to the save split, so it can never be re-applied or rewritten.
+  */
+  describe("removed taskPopupsBoardListOnly setting", () => {
+    it("declares the key in neither scope", () => {
+      expect("taskPopupsBoardListOnly" in DEFAULT_PROJECT_SETTINGS).toBe(false);
+      expect(PROJECT_SETTINGS_KEYS).not.toContain("taskPopupsBoardListOnly");
       expect("taskPopupsBoardListOnly" in DEFAULT_GLOBAL_SETTINGS).toBe(false);
       expect(GLOBAL_SETTINGS_KEYS).not.toContain("taskPopupsBoardListOnly");
     });

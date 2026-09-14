@@ -971,23 +971,20 @@ function expectBoardToBeInactive(): void {
   expect(board?.closest('[aria-hidden="true"]')).toBeTruthy();
 }
 
-describe("FN-8698 retained Board and List task popups", () => {
-  it.each([
-    ["desktop", "board", "list"],
-    ["desktop", "list", "board"],
-  ] as const)("opens %s %s then %s independently through real view affordances", async (viewport, firstView, secondView) => {
-    /*
-    FNXC:TaskPopupViewGating 2026-08-01-16:47:
-    FN-8698 requires the real Board and List callback chain to preserve the origin view in both
-    directions at desktop and phone breakpoints. A hook-only harness cannot catch a callback that
-    drops that origin or mobile's separate header navigation path, so this App-level regression
-    clicks each shipped card/row and view-switch affordance and closes each instance independently.
-    */
-    mockUseViewportMode.mockReturnValue(viewport);
+/*
+FNXC:TaskWindowIdentity 2026-09-14-17:46:
+FN-392 supersedes FN-8698's per-view popup identity: a task owns ONE window for the whole project. This App-level
+regression clicks the shipped Board card and List row affordances and the real view-switch controls, then proves the
+same window node stays visible across views, that reopening the task from the other view focuses it instead of adding
+a second window, and that one close removes it everywhere.
+*/
+describe("FN-392 task windows travel across Board and other views", () => {
+  it("keeps one window for a task opened from Board and reopened after navigating away", async () => {
+    mockUseViewportMode.mockReturnValue("desktop");
     const sharedTask = {
       id: "FN-8698",
       title: "Retained popup regression task",
-      description: "Verify Board and List popup identities remain independent.",
+      description: "Verify one task window survives view changes.",
       column: "todo",
       status: "todo",
       dependencies: [],
@@ -1000,7 +997,6 @@ describe("FN-8698 retained Board and List task popups", () => {
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
       openMobileTasksInPopup: true,
-      taskPopupsBoardListOnly: true,
     });
     mockUseTasks.mockImplementation(() => ({
       tasks: [sharedTask],
@@ -1023,49 +1019,27 @@ describe("FN-8698 retained Board and List task popups", () => {
     render(<App />);
     await waitForAppShell();
 
-    const taskSelector = (view: "board" | "list") => view === "board"
-      ? '.card[data-id="FN-8698"]'
-      : viewport === "mobile"
-        ? '.list-card[data-id="FN-8698"]'
-        : '.list-row[data-id="FN-8698"]';
-    const popupFor = (view: "board" | "list") => `floating-window-task-detail-FN-8698-${view}`;
-    const overlayFor = (view: "board" | "list") => `floating-window-overlay-task-detail-FN-8698-${view}`;
-    const showView = async (view: "board" | "list") => {
-      const navigationTestId = viewport === "mobile"
-        ? `mobile-nav-tab-${view === "board" ? "tasks" : "list"}`
-        : `alpha-desktop-nav-${view}`;
-      fireEvent.click(screen.getByTestId(navigationTestId));
-      await waitFor(() => expect(document.querySelector(taskSelector(view))).toBeTruthy());
-    };
+    const boardCard = '.card[data-id="FN-8698"]';
+    const popupTestId = "floating-window-task-detail-FN-8698";
+    const overlayTestId = "floating-window-overlay-task-detail-FN-8698";
 
-    if (firstView !== "board") await showView(firstView);
-    fireEvent.click(document.querySelector(taskSelector(firstView))!);
-    await waitFor(() => expect(screen.getByTestId(popupFor(firstView))).toBeTruthy());
+    fireEvent.click(document.querySelector(boardCard)!);
+    await waitFor(() => expect(screen.getByTestId(popupTestId)).toBeTruthy());
+    const taskWindow = screen.getByTestId(popupTestId);
 
-    await showView(secondView);
-    expect(screen.getByTestId(overlayFor(firstView))).toHaveAttribute("aria-hidden", "true");
-
-    fireEvent.click(document.querySelector(taskSelector(secondView))!);
-    await waitFor(() => expect(screen.getByTestId(popupFor(secondView))).toBeTruthy());
-    expect(screen.getByTestId(overlayFor(secondView))).not.toHaveAttribute("aria-hidden");
-    expect(screen.getByTestId(overlayFor(firstView))).toHaveAttribute("aria-hidden", "true");
-
-    if (viewport === "mobile") {
-      fireEvent.click(within(screen.getByTestId(popupFor(secondView))).getByRole("button", { name: "Close" }));
-    } else {
-      fireEvent.keyDown(document, { key: "Escape" });
+    for (const view of ["planning", "agents", "board"] as const) {
+      fireEvent.click(screen.getByTestId(`alpha-desktop-nav-${view}`));
+      expect(screen.getByTestId(popupTestId)).toBe(taskWindow);
+      expect(screen.getByTestId(overlayTestId)).not.toHaveAttribute("aria-hidden");
     }
-    await waitFor(() => expect(screen.queryByTestId(popupFor(secondView))).toBeNull());
-    expect(screen.getByTestId(popupFor(firstView))).toBeTruthy();
 
-    await showView(firstView);
-    await waitFor(() => expect(screen.getByTestId(overlayFor(firstView))).not.toHaveAttribute("aria-hidden"));
-    if (viewport === "mobile") {
-      fireEvent.click(within(screen.getByTestId(popupFor(firstView))).getByRole("button", { name: "Close" }));
-    } else {
-      fireEvent.keyDown(document, { key: "Escape" });
-    }
-    await waitFor(() => expect(screen.queryByTestId(popupFor(firstView))).toBeNull());
+    await waitFor(() => expect(document.querySelector(boardCard)).toBeTruthy());
+    fireEvent.click(document.querySelector(boardCard)!);
+    await waitFor(() => expect(screen.getAllByTestId(popupTestId)).toHaveLength(1));
+    expect(screen.getByTestId(popupTestId)).toBe(taskWindow);
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByTestId(popupTestId)).toBeNull());
   });
 });
 
@@ -1246,7 +1220,12 @@ beforeEach(() => {
 });
 
 describe("official dashboard design production wiring", () => {
-  it("opens Chat through the canonical wide registry window without a parallel page host", async () => {
+  /*
+  FNXC:ChatSurfaceUnification 2026-09-14-17:46:
+  FN-392: the wide primary Chat host is the dock's inline list again. Selecting it keeps the panel open with exactly one
+  Chat surface inside it, produces no expand modal and no parallel page host, and opens nothing detached by itself.
+  */
+  it("opens Chat as the inline dock list without an expanded or parallel page host", async () => {
     mockUseViewportMode.mockReturnValue("desktop");
     localStorage.setItem("fusion:right-dock-open", "true");
     vi.mocked(fetchSettings).mockResolvedValue({
@@ -1255,8 +1234,10 @@ describe("official dashboard design production wiring", () => {
     });
     render(<App />);
     fireEvent.click(await screen.findByTestId("right-dock-tab-chat"));
-    expect(await screen.findByTestId("right-dock-expand-modal")).toBeInTheDocument();
+    const dockBody = await screen.findByTestId("right-dock-body");
     expect(await screen.findAllByTestId("canonical-chat-host")).toHaveLength(1);
+    expect(within(dockBody).getByTestId("canonical-chat-host")).toBeInTheDocument();
+    expect(screen.queryByTestId("right-dock-expand-modal")).toBeNull();
     expect(screen.queryByTestId("chat-keep-alive")).toBeNull();
     expect(screen.queryByTestId("detached-chat-host")).toBeNull();
   });
@@ -1466,13 +1447,18 @@ describe("official dashboard design production wiring", () => {
     expect(within(dock).queryByTestId("right-dock-tab-notes")).toBeNull();
     fireEvent.click(await within(dock).findByTestId("right-dock-tab-chat"));
 
-    const expandedChat = await screen.findByTestId("right-dock-expand-modal");
-    expect(expandedChat.querySelectorAll(".chat-view")).toHaveLength(1);
-    expect(screen.queryByTestId("right-dock")).toBeNull();
-    fireEvent.click(await within(expandedChat).findByTestId(`chat-session-${appChatSession.id}`));
-    expect(await within(expandedChat).findByText("Bonjour")).toBeInTheDocument();
-    expect(expandedChat.querySelector(".chat-thread")).not.toBeNull();
-    expect(screen.queryByTestId(`floating-window-overlay-chat-window-${DEFAULT_PROJECT_ID}-${appChatSession.id}`)).toBeNull();
+    /*
+    FNXC:ChatSurfaceUnification 2026-09-14-17:46:
+    FN-392: the tablet dock keeps the Chat list inline; clicking a conversation opens its dedicated window instead of a
+    transcript inside the panel, and no expand modal is ever created for Chat.
+    */
+    const dockBody = await screen.findByTestId("right-dock-body");
+    expect(dockBody.querySelectorAll(".chat-view")).toHaveLength(1);
+    expect(screen.queryByTestId("right-dock-expand-modal")).toBeNull();
+    expect(screen.getByTestId("right-dock")).toBeInTheDocument();
+    fireEvent.click(await within(dockBody).findByTestId(`chat-session-${appChatSession.id}`));
+    expect(await screen.findByTestId(`floating-window-overlay-chat-window-${DEFAULT_PROJECT_ID}-${appChatSession.id}`)).toBeInTheDocument();
+    expect(within(dockBody).queryByTestId("chat-input")).toBeNull();
   });
 
   it("removes the Alpha footer and all footer reservations only on mobile", async () => {
@@ -2081,7 +2067,7 @@ describe("official dashboard design production wiring", () => {
     expect(screen.queryByTestId("mobile-nav-tab-tasks")).toBeNull();
   });
 
-  it("uses the canonical Chat window while retaining Notes inline", async () => {
+  it("keeps Chat and Notes as inline dock tools without an expanded owner", async () => {
     mockUseViewportMode.mockReturnValue("desktop");
     configureProductionAppChat();
     localStorage.setItem("fusion:right-dock-open", "true");
@@ -2100,13 +2086,18 @@ describe("official dashboard design production wiring", () => {
     expect(screen.queryByTestId("alpha-desktop-nav-chat")).toBeNull();
     expect(screen.queryByTestId("alpha-desktop-nav-notes")).toBeNull();
 
+    /*
+    FNXC:ChatSurfaceUnification 2026-09-14-17:46:
+    FN-392: Chat and Notes are peer inline dock tools. Selecting Chat keeps the dock mounted with one Chat surface in its
+    body and creates neither an expand affordance nor an expanded window.
+    */
     fireEvent.click(await screen.findByTestId("right-dock-tab-chat"));
-    const chatWindow = await screen.findByTestId("right-dock-expand-modal");
-    await waitFor(() => expect(chatWindow.querySelectorAll(".chat-view")).toHaveLength(1));
+    const dockBody = await screen.findByTestId("right-dock-body");
+    await waitFor(() => expect(dockBody.querySelectorAll(".chat-view")).toHaveLength(1));
     expect(document.querySelectorAll(".chat-view")).toHaveLength(1);
-    expect(screen.queryByTestId("right-dock")).toBeNull();
-    fireEvent.click(screen.getByTestId("floating-window-close-right-dock-chat"));
-    fireEvent.click(screen.getByTestId("header-right-dock-toggle"));
+    expect(screen.getByTestId("right-dock")).toBeInTheDocument();
+    expect(screen.queryByTestId("right-dock-expand-modal")).toBeNull();
+    expect(screen.queryByTestId("right-dock-expand")).toBeNull();
 
     fireEvent.click(await screen.findByTestId("right-dock-tab-notes"));
     expect(screen.queryByTestId("right-dock-expand")).toBeNull();
@@ -2907,7 +2898,8 @@ describe("App chat unread response indicator", () => {
     });
 
     fireEvent.click(screen.getByTestId("sidebar-nav-chat"));
-    expect(await screen.findByTestId("right-dock-expand-modal")).toBeInTheDocument();
+    // FN-392: the wide Chat destination is the dock's inline list, so the dock body is the surface that becomes visible.
+    expect(await screen.findByTestId("right-dock-body")).toBeInTheDocument();
 
     await waitFor(() => {
       expect(chatUnreadDot()).toBeNull();
@@ -4363,9 +4355,10 @@ describe("App view switching", () => {
   });
 
   /*
-  FNXC:ChatSurfaceUnification 2026-09-14-12:57:
-  A restored wide `chat` selection is consumed once into the canonical window, so the page selection settles on
-  Board while the launcher entry stays non-active. Ordinary page destinations remain project-scoped and restored.
+  FNXC:ChatSurfaceUnification 2026-09-14-17:46:
+  FN-392: a restored wide `chat` selection is consumed once into the dock's inline Chat list, so the page selection
+  settles on Board while the sidebar entry stays non-active. Ordinary page destinations remain project-scoped and
+  restored, and no expand modal is ever created for Chat.
   */
   it("project switch consumes a restored wide Chat selection and restores ordinary page views", async () => {
     const projectA = { id: "proj_a", name: "Project A", path: "/a", status: "active" as const, isolationMode: "in-process" as const, createdAt: "", updatedAt: "" };
@@ -4377,7 +4370,8 @@ describe("App view switching", () => {
     mockCurrentProjectState.currentProject = projectA;
 
     const view = render(<App />);
-    expect(await screen.findByTestId("right-dock-expand-modal")).toBeInTheDocument();
+    expect(await screen.findByTestId("right-dock-body")).toBeInTheDocument();
+    expect(screen.queryByTestId("right-dock-expand-modal")).toBeNull();
     expect(screen.getByTestId("fb-probe-chat")).toBeTruthy();
     expect(screen.getByTestId("sidebar-nav-chat").className).not.toContain("active");
     await waitFor(() => expect(localStorage.getItem("kb:proj_a:kb-dashboard-task-view")).toBe("board"));

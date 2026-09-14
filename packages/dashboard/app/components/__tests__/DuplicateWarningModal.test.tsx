@@ -61,6 +61,21 @@ describe("DuplicateWarningModal", () => {
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
 
+  /*
+  FNXC:DialogStacking 2026-09-14-17:46:
+  FN-392: the duplicate warning is a third consumer of the shared dialog primitive. It must portal to the document root
+  and carry a live layer rather than a static class z-index, so it dominates whatever window produced the duplicate.
+  */
+  it("portals to the document root with a live shared layer", () => {
+    render(<DuplicateWarningModal matches={matches} onOpen={vi.fn()} onProceed={vi.fn()} onCancel={vi.fn()} />);
+
+    const overlay = document.querySelector('[data-dashboard-window-surface="duplicate-warning-modal-title"]') as HTMLElement;
+    expect(overlay).toBeInstanceOf(HTMLElement);
+    expect(overlay.parentElement).toBe(document.body);
+    expect(overlay.getAttribute("data-alpha-portal")).toBe("true");
+    expect(Number.parseInt(overlay.style.zIndex, 10)).toBeGreaterThan(0);
+  });
+
   it("calls onCancel exactly once for one Escape press", () => {
     const onCancel = vi.fn();
     render(<DuplicateWarningModal matches={matches} onOpen={vi.fn()} onProceed={vi.fn()} onCancel={onCancel} />);

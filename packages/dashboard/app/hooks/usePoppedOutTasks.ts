@@ -1,24 +1,30 @@
 /*
 FNXC:FloatingWindow 2026-07-15-14:55:
-Popped-out task-detail windows are movable, resizable, non-blocking FloatingWindows. Each entry is a task snapshot; several can be open at once. Reopening the same task from the same origin refreshes its snapshot without collapsing an independently opened popup in another view. Extracted from AppInner.
+Popped-out task-detail windows are movable, resizable, non-blocking FloatingWindows. Each entry is a task snapshot; several can be open at once. Extracted from AppInner.
+
+FNXC:TaskWindowIdentity 2026-09-14-17:46:
+FN-392: a task has exactly ONE window per project, identified by its task id alone. The opening view is no longer part
+of that identity, because a window scoped to its origin view disappeared as soon as the operator navigated elsewhere
+and could silently duplicate the same task across views. Reopening a task from any view refreshes its snapshot and
+requested tab in place and advances `focusNonce`, so the existing window is raised rather than remounted.
 */
 
 import { useCallback, useMemo, useState } from "react";
 import type { Task, TaskDetail } from "@fusion/core";
-import type { TaskView } from "./useViewState";
 import type { DetailTaskTab } from "./useModalManager";
 
 export interface PoppedOutTaskEntry {
   task: Task | TaskDetail;
-  originTaskView?: TaskView;
   initialTab?: DetailTaskTab;
+  /** Increments on every open request for an already-open task so its window can reclaim the front. */
+  focusNonce: number;
 }
 
 export interface UsePoppedOutTasksResult {
   entries: PoppedOutTaskEntry[];
   tasks: Array<Task | TaskDetail>;
-  popOut: (task: Task | TaskDetail, originTaskView?: TaskView, initialTab?: DetailTaskTab) => void;
-  close: (taskId: string, originTaskView?: TaskView) => void;
+  popOut: (task: Task | TaskDetail, initialTab?: DetailTaskTab) => void;
+  close: (taskId: string) => void;
   /*
   FNXC:ProjectSwitchModalReset 2026-07-23-00:00:
   Popped-out task windows are task-detail surfaces for the active project. A project swap
@@ -33,32 +39,32 @@ export function usePoppedOutTasks(): UsePoppedOutTasksResult {
 
   /*
   FNXC:TaskPopupDeepTabs 2026-07-21-00:00:
-  FN-8478 requires board card deep-tab actions to keep the board visible when Open tasks as popups is enabled. Store the requested tab with the popup snapshot so reopening an existing task-and-view pair refreshes both its data and destination.
+  FN-8478 requires board card deep-tab actions to keep the board visible when Open tasks as popups is enabled. Store the requested tab with the popup snapshot so reopening an existing task refreshes both its data and destination.
   */
-  const popOut = useCallback((task: Task | TaskDetail, originTaskView?: TaskView, initialTab?: DetailTaskTab) => {
+  const popOut = useCallback((task: Task | TaskDetail, initialTab?: DetailTaskTab) => {
     setEntries((current) => {
-      const existingIndex = current.findIndex((entry) => entry.task.id === task.id && entry.originTaskView === originTaskView);
-      const entry = { task, originTaskView, ...(initialTab ? { initialTab } : {}) };
-      if (existingIndex === -1) return [...current, entry];
+      const existingIndex = current.findIndex((entry) => entry.task.id === task.id);
+      if (existingIndex === -1) return [...current, { task, ...(initialTab ? { initialTab } : {}), focusNonce: 1 }];
 
       const upgraded = [...current];
-      upgraded[existingIndex] = entry;
+      const previous = upgraded[existingIndex];
+      upgraded[existingIndex] = {
+        task,
+        ...(initialTab ? { initialTab } : previous.initialTab ? { initialTab: previous.initialTab } : {}),
+        focusNonce: previous.focusNonce + 1,
+      };
       return upgraded;
     });
   }, []);
 
-  const close = useCallback((taskId: string, originTaskView?: TaskView) => {
-    setEntries((current) => current.filter((entry) => entry.task.id !== taskId || entry.originTaskView !== originTaskView));
+  const close = useCallback((taskId: string) => {
+    setEntries((current) => current.filter((entry) => entry.task.id !== taskId));
   }, []);
 
   const closeAll = useCallback(() => {
     setEntries([]);
   }, []);
 
-  /*
-  FNXC:TaskPopupViewGating 2026-07-15-15:20:
-  FN-8016 scopes popup identity to task id plus opening view. Every new pop-out has an origin; undefined origins are retained only for legacy snapshots and remain globally visible for compatibility. Closing receives the same identity so a task open on two views stays independent.
-  */
   const tasks = useMemo(() => entries.map((entry) => entry.task), [entries]);
 
   return { entries, tasks, popOut, close, closeAll };

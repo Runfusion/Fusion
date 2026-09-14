@@ -80,7 +80,6 @@ export interface OverflowViewRenderProps {
   onOpenTaskDetail?: (taskId: string) => void;
   onOpenSessionInNewWindow?: (session: ChatSessionInfo) => void;
   openChatWindows?: ReadonlySet<string>;
-  chatComposerPrefill?: { text: string; nonce: number } | null;
   onSendAsReport?: (handoff: ChatReportHandoff) => void;
   /** Opens New Task with a reverted source task's original description. */
   onReviseTask?: (task: Task | TaskDetail) => void;
@@ -168,16 +167,20 @@ export const STATIC_OVERFLOW_VIEW_ENTRIES: readonly OverflowViewEntry[] = [
     render: (props) => wrapOverflowView(<DockFilesView projectId={props.projectId} openFile={props.openFile} />),
   },
   /*
-  FNXC:ChatSurfaceUnification 2026-09-14-11:35:
-  Chat is a launcher-only dock entry on every desktop/tablet shell, including Alpha. The registry's one real render function owns the expanded window; no inline dock Chat or parallel primary renderer may mount beside it.
+  FNXC:ChatSurfaceUnification 2026-09-14-17:46:
+  FN-392: Chat is the dock's compact conversation LIST on every wide host (standard and Alpha desktop), restoring the
+  behavior FN-390 replaced with an expanded window. It is deliberately inline and NOT expandable, exactly like Notes:
+  an expand modal would create a second Chat owner beside the dock list. Clicking or creating a conversation delegates
+  to the project-scoped window owner (`onOpenSessionInNewWindow`), so transcripts live in their dedicated windows and
+  the list stays in the panel. An external composer prefill is carried by the opened window, never injected into the
+  list itself.
   */
   {
     key: "chat",
     label: "Chat",
     icon: MessageSquare,
     testId: "right-dock-tab-chat",
-    isInline: () => false,
-    isExpandable: () => true,
+    isExpandable: () => false,
     render: (props) => wrapOverflowView(
       <ChatView
         projectId={props.projectId}
@@ -185,9 +188,9 @@ export const STATIC_OVERFLOW_VIEW_ENTRIES: readonly OverflowViewEntry[] = [
         experimentalFeatures={{ ...(props.experimentalFeatures ?? {}) }}
         onOpenSessionInNewWindow={props.onOpenSessionInNewWindow}
         openChatWindows={props.openChatWindows}
-        initialComposerDraft={props.chatComposerPrefill?.text}
-        initialComposerDraftNonce={props.chatComposerPrefill?.nonce}
         onSendAsReport={props.onSendAsReport}
+        compactLayout
+        listOnly
       />,
     ),
   },

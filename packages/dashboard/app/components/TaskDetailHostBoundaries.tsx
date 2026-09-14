@@ -8,6 +8,7 @@ import type { DetailTaskTab } from "../hooks/useModalManager";
 import type { NavEntry } from "../hooks/useNavigationHistory";
 import type { TaskView } from "../hooks/useViewState";
 import { FloatingWindow } from "./FloatingWindow";
+import { useDashboardWindowSurfaceActivity } from "../context/DashboardWindowManagerContext";
 import { TaskDetailContent, TaskDetailModal, type TaskDetailContentProps, type TaskDetailModalProps } from "./TaskDetailModal";
 
 export interface AppModalTaskDetailHostProps extends Omit<TaskDetailModalProps, "onClose"> {
@@ -81,30 +82,43 @@ export interface AppTaskPopoutContentProps extends Omit<TaskDetailContentProps, 
   onRemoveWindow: () => void;
 }
 
-export function AppTaskPopoutContent({ onRemoveWindow, ...props }: AppTaskPopoutContentProps) {
-  return <TaskDetailContent {...props} embedded onRequestClose={onRemoveWindow} />;
+/*
+FNXC:TaskWindowIdentity 2026-09-14-17:46:
+FN-392: a retained task window suspends its own reads from the GLOBAL visibility manager rather than from the current
+view. Navigating never marks the content inactive; only a global hide does, which keeps image pasting and detail
+polling paused exactly while the operator cannot see the window.
+*/
+export function AppTaskPopoutContent({ onRemoveWindow, active, ...props }: AppTaskPopoutContentProps) {
+  const surfaceActive = useDashboardWindowSurfaceActivity();
+  return <TaskDetailContent {...props} active={(active ?? true) && surfaceActive} embedded onRequestClose={onRemoveWindow} />;
 }
 
 export interface AppTaskPopoutWindowProps extends Omit<AppTaskPopoutContentProps, "onRemoveWindow"> {
-  originTaskView?: TaskView;
-  hidden: boolean;
   onRemoveWindow: () => void;
   persistGeometryKey: string;
+  /** Raises the existing window when its owner refreshes the entry in place. */
+  raiseToFrontSignal?: number;
 }
 
 /*
 FNXC:TaskDetailDefinition 2026-09-13-11:59:
 Le pop-out n’a pas de titre visible propre; il partage donc le nom accessible localisé de Task Detail avec la modale et le drawer plutôt que d’utiliser le titre retiré ou seulement l’identifiant de tâche.
 */
-export function AppTaskPopoutWindow({ task, originTaskView, hidden, onRemoveWindow, persistGeometryKey, ...props }: AppTaskPopoutWindowProps) {
+/*
+FNXC:TaskWindowIdentity 2026-09-14-17:46:
+FN-392: the window key, React key, and DOM identity are the task id alone, so one task owns one window that travels
+across every view of the project. Nothing here derives visibility from the current view: only the global visibility
+manager and the owner's own close path may hide or remove this window.
+*/
+export function AppTaskPopoutWindow({ task, onRemoveWindow, persistGeometryKey, raiseToFrontSignal, ...props }: AppTaskPopoutWindowProps) {
   const { t } = useTranslation("app");
   const accessibleName = t("taskDetail.accessibleName", "Task detail");
   return (
     <FloatingWindow
-      windowKey={`task-detail-${task.id}-${originTaskView ?? "global"}`}
+      windowKey={`task-detail-${task.id}`}
       title={accessibleName}
       ariaLabel={accessibleName}
-      hidden={hidden}
+      raiseToFrontSignal={raiseToFrontSignal}
       onClose={onRemoveWindow}
       hideHeader
       dragHandleSelector=".task-detail-content--embedded > .modal-header"
@@ -197,74 +211,75 @@ export function useAppMainPanelTaskDetailState({
 export interface AppTaskPopoutWindowsProps {
   entries: PoppedOutTaskEntry[];
   liveTasks: Array<Task | TaskDetail>;
-  isVisible: (originTaskView?: TaskView) => boolean;
-  onCloseTask: (taskId: string, originTaskView?: TaskView) => void;
+  onCloseTask: (taskId: string) => void;
   persistGeometryKey: string;
-  windowProps: Omit<AppTaskPopoutWindowProps, "task" | "originTaskView" | "initialTab" | "hidden" | "onRemoveWindow" | "persistGeometryKey">;
+  windowProps: Omit<AppTaskPopoutWindowProps, "task" | "initialTab" | "onRemoveWindow" | "persistGeometryKey" | "raiseToFrontSignal" | "active">;
 }
 
 /*
 FNXC:TaskDetailAlpha 2026-09-11-14:05:
-App's pop-out renderer must derive FloatingWindow dismissal from the same state owner that supplied each entry. Keeping entry identity, live snapshot merging, visibility, and close binding in this rendered composition prevents host tests from recreating a parallel callback.
+App's pop-out renderer must derive FloatingWindow dismissal from the same state owner that supplied each entry. Keeping entry identity, live snapshot merging, and close binding in this rendered composition prevents host tests from recreating a parallel callback.
+
+FNXC:TaskWindowIdentity 2026-09-14-17:46:
+FN-392: one entry renders one window keyed by task id, with no view-derived visibility. Activity comes from the global
+window manager through `AppTaskPopoutContent`, so a hidden window still suspends polling and pasting while a mere view
+change never interrupts its content, terminal, or local state.
 */
-export function AppTaskPopoutWindows({ entries, liveTasks, isVisible, onCloseTask, persistGeometryKey, windowProps }: AppTaskPopoutWindowsProps) {
-  return entries.map(({ task: snapshot, originTaskView, initialTab }) => {
+export function AppTaskPopoutWindows({ entries, liveTasks, onCloseTask, persistGeometryKey, windowProps }: AppTaskPopoutWindowsProps) {
+  return entries.map(({ task: snapshot, initialTab, focusNonce }) => {
     const current = liveTasks.find((candidate) => candidate.id === snapshot.id);
     const task = current ? mergeTaskSnapshot(snapshot, current) : snapshot;
-    const visible = isVisible(originTaskView);
     return (
       <AppTaskPopoutWindow
-        key={`${snapshot.id}:${originTaskView ?? "global"}`}
+        key={snapshot.id}
         {...windowProps}
         task={task}
-        originTaskView={originTaskView}
         initialTab={initialTab}
-        hidden={!visible}
-        active={visible}
+        raiseToFrontSignal={focusNonce}
         persistGeometryKey={persistGeometryKey}
-        onRemoveWindow={() => onCloseTask(snapshot.id, originTaskView)}
+        onRemoveWindow={() => onCloseTask(snapshot.id)}
       />
     );
   });
 }
 
 export interface AppPoppedOutTaskStateOptions extends AppTaskDetailNavigation {
-  taskView: TaskView;
   isMobile: boolean;
 }
 
 /*
 FNXC:TaskDetailAlpha 2026-09-11-13:46:
-App's pop-out boundary owns each window entry and its mobile navigation callback as one state machine. Closing from either FloatingWindow chrome or Task Detail removes the exact origin-scoped entry and consumes its navigation record.
+App's pop-out boundary owns each window entry and its mobile navigation callback as one state machine. Closing from either FloatingWindow chrome or Task Detail removes the entry and consumes its navigation record.
+
+FNXC:TaskWindowIdentity 2026-09-14-17:46:
+FN-392: navigation identity is the task id alone, so reopening the same task from a second view focuses the existing
+window and registers no second history callback. The current view no longer participates in identity at all.
 */
-export function useAppPoppedOutTaskState({ taskView, isMobile, pushNav, removeNav }: AppPoppedOutTaskStateOptions) {
+export function useAppPoppedOutTaskState({ isMobile, pushNav, removeNav }: AppPoppedOutTaskStateOptions) {
   const { entries, popOut, close: closeEntry, closeAll } = usePoppedOutTasks();
   const navCloseRef = useRef(new Map<string, () => void>());
-  const identity = (taskId: string, originTaskView?: TaskView) => `${taskId}:${originTaskView ?? "global"}`;
 
-  const close = useCallback((taskId: string, originTaskView?: TaskView) => {
-    const key = identity(taskId, originTaskView);
-    const closeFromHistory = navCloseRef.current.get(key);
+  const close = useCallback((taskId: string) => {
+    const closeFromHistory = navCloseRef.current.get(taskId);
     if (closeFromHistory) {
-      navCloseRef.current.delete(key);
+      navCloseRef.current.delete(taskId);
       removeNav(closeFromHistory);
     }
-    closeEntry(taskId, originTaskView);
+    closeEntry(taskId);
   }, [closeEntry, removeNav]);
 
   const open = useCallback((nextTask: Task | TaskDetail, initialTab?: DetailTaskTab) => {
-    const key = identity(nextTask.id, taskView);
-    const alreadyOpen = entries.some((entry) => entry.task.id === nextTask.id && entry.originTaskView === taskView);
+    const alreadyOpen = entries.some((entry) => entry.task.id === nextTask.id);
     if (isMobile && !alreadyOpen) {
       const closeFromHistory = () => {
-        navCloseRef.current.delete(key);
-        closeEntry(nextTask.id, taskView);
+        navCloseRef.current.delete(nextTask.id);
+        closeEntry(nextTask.id);
       };
-      navCloseRef.current.set(key, closeFromHistory);
+      navCloseRef.current.set(nextTask.id, closeFromHistory);
       pushNav({ type: "modal", close: closeFromHistory });
     }
-    popOut(nextTask, taskView, initialTab);
-  }, [closeEntry, entries, isMobile, popOut, pushNav, taskView]);
+    popOut(nextTask, initialTab);
+  }, [closeEntry, entries, isMobile, popOut, pushNav]);
 
   const clearNavigation = useCallback(() => navCloseRef.current.clear(), []);
 

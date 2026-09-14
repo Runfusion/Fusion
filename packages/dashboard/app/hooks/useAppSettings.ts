@@ -40,7 +40,6 @@ export interface UseAppSettingsResult {
   capacityRiskTodoThreshold: number;
   openTasksInRightSidebar: boolean;
   openMobileTasksInPopup: boolean;
-  taskPopupsBoardListOnly: boolean;
   showCostBadgeOnCards: boolean;
   modelPricingOverrides?: ModelPricingOverrides;
   taskDetailChatFirst: boolean;
@@ -66,7 +65,6 @@ export interface UseAppSettingsResult {
   setChatMessageLayoutImmediate: (layout: ChatMessageLayout) => void;
   setOpenTasksInRightSidebarImmediate: (enabled: boolean) => void;
   setOpenMobileTasksInPopupImmediate: (enabled: boolean) => void;
-  setTaskPopupsBoardListOnlyImmediate: (enabled: boolean) => void;
   setShowCostBadgeOnCardsImmediate: (enabled: boolean) => void;
   setTaskDetailChatFirstImmediate: (enabled: boolean) => void;
   setMobileNavPrimaryItemsImmediate: (items: string[]) => void;
@@ -103,7 +101,6 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
   FNXC:TaskPopupViewGating 2026-07-15-15:20:
   FN-8016 makes per-view popup scoping the default. Explicit persisted false remains the compatibility opt-out for globally shared popups; only an absent field falls back to true.
   */
-  const [taskPopupsBoardListOnly, setTaskPopupsBoardListOnly] = useState(true);
   const [showCostBadgeOnCards, setShowCostBadgeOnCards] = useState(false);
   const [modelPricingOverrides, setModelPricingOverrides] = useState<ModelPricingOverrides | undefined>(undefined);
   const [taskDetailChatFirst, setTaskDetailChatFirst] = useState(false);
@@ -185,7 +182,6 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
       setCapacityRiskTodoThreshold(settings.capacityRiskTodoThreshold ?? 20);
       setOpenTasksInRightSidebar(settings.openTasksInRightSidebar === true);
       setOpenMobileTasksInPopup(settings.openMobileTasksInPopup === true);
-      setTaskPopupsBoardListOnly(settings.taskPopupsBoardListOnly !== false);
       /*
       FNXC:TaskCardCostBadge 2026-07-11-12:15:
       The app shell exposes the default-off card cost badge setting to the board context only after settings hydration, preserving the no-badge default for upgraded projects.
@@ -316,10 +312,6 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     setOpenMobileTasksInPopup(enabled === true);
   }, []);
 
-  const setTaskPopupsBoardListOnlyImmediate = useCallback((enabled: boolean) => {
-    setTaskPopupsBoardListOnly(enabled === true);
-  }, []);
-
   const setShowCostBadgeOnCardsImmediate = useCallback((enabled: boolean) => {
     setShowCostBadgeOnCards(enabled === true);
   }, []);
@@ -356,7 +348,6 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     capacityRiskTodoThreshold,
     openTasksInRightSidebar,
     openMobileTasksInPopup,
-    taskPopupsBoardListOnly,
     showCostBadgeOnCards,
     modelPricingOverrides,
     taskDetailChatFirst,
@@ -382,7 +373,6 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     setChatMessageLayoutImmediate,
     setOpenTasksInRightSidebarImmediate,
     setOpenMobileTasksInPopupImmediate,
-    setTaskPopupsBoardListOnlyImmediate,
     setShowCostBadgeOnCardsImmediate,
     setTaskDetailChatFirstImmediate,
     setMobileNavPrimaryItemsImmediate,

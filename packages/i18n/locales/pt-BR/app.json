@@ -6659,8 +6659,6 @@
       "title": "Aparência",
       "openTasksInRightSidebarHelp": "Quando ativado, os cartões de tarefa do quadro abrem os detalhes na barra lateral direita quando ela estiver disponível; os estados mobile e de barra lateral oculta mantêm o painel de tarefa completo. Padrão: desativado.",
       "openMobileTasksInPopupHelp": "Quando ativado, cliques comuns em cartões de tarefa do quadro e na lista de Tarefas do dock direito abrem o popup de tarefa existente, mantendo o quadro ou a lista visível. Aberturas via deep-tab e outras formas de abertura de tarefa mantêm o comportamento atual. Padrão: desativado.",
-      "taskPopupsBoardListOnly": "Manter os popups de tarefa na visualização em que foram abertos",
-      "taskPopupsBoardListOnlyHelp": "Quando ativado, cada popup de detalhes de tarefa aberto aparece somente na visualização em que foi aberto. Trocar de visualização o oculta sem fechá-lo; voltar o restaura na mesma posição. Padrão: ativado.",
       "taskDetailChatFirstHelp": "Desativado por padrão: os detalhes da tarefa listam Atividade primeiro, e aberturas de tarefas não concluídas sem aba especificada caem em Atividade. Ative para restaurar a ordem/padrão com Chat primeiro; links diretos para o Chat continuam funcionando de qualquer forma.",
       "showCostBadgeOnCards": "Mostrar selos de custo nos cartões de tarefa",
       "showCostBadgeOnCardsHelp": "Padrão: desativado. Quando ativado, os cartões do quadro mostram o custo do modelo derivado ao lado do tempo de execução; quando o preço não está disponível, isso é indicado — e tarefas sem uso de tokens não mostram selo.",

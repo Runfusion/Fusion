@@ -105,7 +105,6 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   chatMessageLayout: "appearance.chatMessageLayoutHelp",
   openTasksInRightSidebar: "appearance.openTasksInRightSidebarHelp",
   openMobileTasksInPopup: "appearance.openMobileTasksInPopupHelp",
-  taskPopupsBoardListOnly: "appearance.taskPopupsBoardListOnlyHelp",
   showCostBadgeOnCards: "appearance.showCostBadgeOnCardsHelp",
   taskDetailChatFirst: "appearance.taskDetailChatFirstHelp",
   // AgentPermissionsSection

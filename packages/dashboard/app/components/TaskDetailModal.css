@@ -1505,6 +1505,11 @@ html[data-viewport-mode="mobile"] .task-detail-modal--mobile-transition {
   background: color-mix(in srgb, var(--color-error) 8%, transparent);
 }
 
+/*
+FNXC:DialogStacking 2026-09-14-17:46:
+FN-392: the Refine overlay is body-portaled, so a static z-index put it under the floating Task Detail window that
+opened it. The shared Alpha dialog primitive now supplies the live layer inline; this rule keeps only its presentation.
+*/
 .detail-refine-overlay {
   position: fixed;
   inset: 0;
@@ -1512,7 +1517,6 @@ html[data-viewport-mode="mobile"] .task-detail-modal--mobile-transition {
   align-items: center;
   justify-content: center;
   background: color-mix(in srgb, var(--bg) 70%, transparent);
-  z-index: 100;
 }
 
 .detail-refine-modal {

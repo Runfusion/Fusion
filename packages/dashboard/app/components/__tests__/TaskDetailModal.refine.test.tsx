@@ -58,7 +58,7 @@ const openRefineFromActionsMenuTouch = () => {
 };
 
 const expectRefineComposerOpen = () => {
-  expect(screen.getByText("Refine", { selector: "h3" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { level: 3, name: "Refine" })).toBeInTheDocument();
   expect(screen.getByPlaceholderText("Enter your feedback here...")).toBeInTheDocument();
 };
 
@@ -67,6 +67,10 @@ const refineOverlay = () => {
   expect(overlay).toBeInstanceOf(HTMLElement);
   return overlay as HTMLElement;
 };
+
+const parentWindowOverlay = () => screen.getByTestId("floating-window-overlay-task-detail");
+
+const layerOf = (element: HTMLElement) => Number.parseInt(element.style.zIndex, 10);
 
 /*
 FNXC:TaskDetailRefine 2026-07-12-00:00:
@@ -84,6 +88,41 @@ describe("TaskDetailModal refine modal dismissal invariant", () => {
     openRefineFromActionsMenu();
 
     expectRefineComposerOpen();
+  });
+
+  /*
+  FNXC:DialogStacking 2026-09-14-17:46:
+  FN-392 symptom: Refine opened from a task window was painted UNDER that window, so the operator saw no composer. The
+  dialog must be body-portaled and hold a strictly higher layer than its parent window, before and after real pointer
+  and keyboard interaction inside the composer, on desktop and on the mobile/drawer presentation.
+  */
+  it.each([
+    ["desktop", 1280],
+    ["mobile", 420],
+  ])("paints the refine dialog above its parent task window on %s and keeps it there after typing", (_name, width) => {
+    const priorWidth = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: width });
+    try {
+      renderDoneTaskDetail({ column: "done" });
+      openRefineFromActionsMenu();
+      expectRefineComposerOpen();
+
+      const overlay = refineOverlay();
+      expect(overlay.parentElement).toBe(document.body);
+      expect(overlay.getAttribute("data-alpha-portal")).toBe("true");
+      expect(layerOf(overlay)).toBeGreaterThan(layerOf(parentWindowOverlay()));
+
+      const textarea = screen.getByPlaceholderText("Enter your feedback here...");
+      fireEvent.pointerDown(textarea, { bubbles: true });
+      fireEvent.focus(textarea, { bubbles: true });
+      fireEvent.change(textarea, { target: { value: "more tests please" } });
+
+      expect((textarea as HTMLTextAreaElement).value).toBe("more tests please");
+      expectRefineComposerOpen();
+      expect(layerOf(refineOverlay())).toBeGreaterThan(layerOf(parentWindowOverlay()));
+    } finally {
+      Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: priorWidth });
+    }
   });
 
   it("keeps the in-review refine dialog open through mobile touch activation and Android compatibility mouse events", () => {

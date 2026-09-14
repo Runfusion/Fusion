@@ -656,8 +656,6 @@ interface SettingsModalProps {
   onOpenTasksInRightSidebarChange?: (enabled: boolean) => void;
   openMobileTasksInPopup?: boolean;
   onOpenMobileTasksInPopupChange?: (enabled: boolean) => void;
-  taskPopupsBoardListOnly?: boolean;
-  onTaskPopupsBoardListOnlyChange?: (enabled: boolean) => void;
   showCostBadgeOnCards?: boolean;
   onShowCostBadgeOnCardsChange?: (enabled: boolean) => void;
   taskDetailChatFirst?: boolean;
@@ -932,8 +930,6 @@ export function SettingsModal({
   onOpenTasksInRightSidebarChange,
   openMobileTasksInPopup,
   onOpenMobileTasksInPopupChange,
-  taskPopupsBoardListOnly,
-  onTaskPopupsBoardListOnlyChange,
   showCostBadgeOnCards,
   onShowCostBadgeOnCardsChange,
   taskDetailChatFirst,
@@ -1017,7 +1013,6 @@ export function SettingsModal({
     showWorktreeGrouping: false,
     openTasksInRightSidebar: false,
     openMobileTasksInPopup: false,
-    taskPopupsBoardListOnly: true,
     showCostBadgeOnCards: false,
     taskDetailChatFirst: false,
     chatMessageLayout: "bubbles",
@@ -4211,8 +4206,6 @@ export function SettingsModal({
             onOpenTasksInRightSidebarChange={onOpenTasksInRightSidebarChange}
             openMobileTasksInPopup={openMobileTasksInPopup}
             onOpenMobileTasksInPopupChange={onOpenMobileTasksInPopupChange}
-            taskPopupsBoardListOnly={taskPopupsBoardListOnly}
-            onTaskPopupsBoardListOnlyChange={onTaskPopupsBoardListOnlyChange}
             showCostBadgeOnCards={showCostBadgeOnCards}
             onShowCostBadgeOnCardsChange={onShowCostBadgeOnCardsChange}
             taskDetailChatFirst={taskDetailChatFirst}

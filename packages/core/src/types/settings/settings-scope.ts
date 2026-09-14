@@ -1469,13 +1469,12 @@ export interface ProjectSettings {
    * This project-scoped setting is default-off so board navigation is unchanged until operators opt in. When enabled, it applies to board-card clicks on every viewport with no deep initial tab and reuses the existing task pop-out/FloatingWindow path; the popup route takes precedence over right-dock routing for those ordinary clicks while all non-board task-open paths remain governed by their existing settings and handlers.
    */
   openMobileTasksInPopup?: boolean;
-  /**
-   * When true, open task-detail popups render only on the view where they were opened. Default: true.
-   *
-   * FNXC:TaskPopupViewGating 2026-07-15-15:20:
-   * FN-8016 removed the Board/List restriction so every dashboard view can own task-detail FloatingWindows. This project-scoped setting defaults on; explicit false retains legacy globally shared popups. Scoped popup state is preserved across view switches and returning restores the same persisted position.
-   */
-  taskPopupsBoardListOnly?: boolean;
+  /*
+  FNXC:TaskWindowIdentity 2026-09-14-17:46:
+  FN-392 removes `taskPopupsBoardListOnly`. Task-detail windows are permanently project-scoped: one window per task,
+  available in every view of the active project. A historical stored value is simply unknown to the schema — it is
+  neither applied nor rewritten, and no migration touches it.
+  */
   /**
    * FNXC:TaskCardCostBadge 2026-07-11-12:15:
    * Default-off project setting that lets operators opt board cards into showing derived read-time task cost next to the execution-time badge. Missing/false preserves existing card density and no badge shell renders unless a task has positive token usage.

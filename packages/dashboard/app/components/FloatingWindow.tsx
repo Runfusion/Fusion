@@ -23,6 +23,7 @@ import { ViewLayoutContent, ViewLayoutHeader } from "./ViewLayout";
 import {
   DashboardWindowSurfaceActivityProvider,
   useDashboardWindowBounds,
+  useDashboardWindowFocusRestoring,
   useDashboardWindowSurface,
   type DashboardWindowBounds,
   type DashboardWindowSurfaceGroup,
@@ -505,6 +506,17 @@ export function FloatingWindow({
   }, [claimFrontZ, readCurrentZ]);
 
   /*
+  FNXC:DashboardWindowVisibility 2026-09-14-17:46:
+  FN-392: focus-to-front is suspended while the window manager restores focus after a global hide, so a restoration
+  focus never rewrites the stack. A genuine pointer press, or a focus the operator causes afterwards, still raises.
+  */
+  const focusRestoring = useDashboardWindowFocusRestoring();
+  const bringToFrontOnFocus = useCallback(() => {
+    if (focusRestoring()) return;
+    bringToFront();
+  }, [bringToFront, focusRestoring]);
+
+  /*
   FNXC:FloatingWindow 2026-08-23-03:33:
   FN-169 needs a third re-raise path for owners that refresh a mounted entry in place: such a
   window neither remounts nor transitions from hidden to visible. An omitted signal preserves
@@ -814,11 +826,25 @@ export function FloatingWindow({
   a real backdrop and keyboard focus boundary; utility windows retain the historical click-through
   behavior by default so this does not change existing multi-window surfaces.
   */
+  /*
+  FNXC:DashboardWindowVisibility 2026-09-14-17:46:
+  FN-392: a global hide/restore must be purely presentational. The modal focus boundary therefore skips BOTH halves of
+  its focus round-trip across that transition: it does not restore prior focus when the manager hid it (the manager
+  captured and owns that focus), and it does not re-autofocus its panel on restore. Re-running the autofocus made every
+  restored modal window claim a fresh layer through `onFocusCapture`, which is exactly how restore reordered windows.
+  A local hide, an ordinary mount, and any later real interaction keep their existing behavior.
+  */
+  const restoringFromGlobalHideRef = useRef(false);
   useEffect(() => {
-    if (!effectiveModal || effectiveHidden || typeof document === "undefined") return;
+    if (!effectiveModal || effectiveHidden || typeof document === "undefined") {
+      if (globallyHiddenRef.current) restoringFromGlobalHideRef.current = true;
+      return;
+    }
+    const skipAutoFocus = restoringFromGlobalHideRef.current;
+    restoringFromGlobalHideRef.current = false;
     const panel = panelRef.current;
     const priorFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    panel?.focus();
+    if (!skipAutoFocus) panel?.focus();
     const onKeyDown = (event: KeyboardEvent) => {
       /*
       FNXC:AlphaMobileDrawer 2026-09-11-02:01:
@@ -840,7 +866,10 @@ export function FloatingWindow({
       else if (!event.shiftKey && index === focusable.length - 1) { event.preventDefault(); focusable[0]?.focus(); }
     };
     document.addEventListener("keydown", onKeyDown);
-    return () => { document.removeEventListener("keydown", onKeyDown); priorFocus?.focus(); };
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      if (!globallyHiddenRef.current) priorFocus?.focus();
+    };
   }, [effectiveHidden, effectiveModal, onClose]);
 
   const panelStyle = {
@@ -896,7 +925,7 @@ export function FloatingWindow({
         onPointerUp={alphaMobileDrawer ? dismissHandleProps.onPointerUp : undefined}
         onPointerCancel={alphaMobileDrawer ? dismissHandleProps.onPointerCancel : undefined}
         onLostPointerCapture={alphaMobileDrawer ? dismissHandleProps.onLostPointerCapture : undefined}
-        onFocusCapture={windowSurface.surfaceActive ? bringToFront : undefined}
+        onFocusCapture={windowSurface.surfaceActive ? bringToFrontOnFocus : undefined}
         tabIndex={effectiveModal ? -1 : undefined}
       >
         {/*

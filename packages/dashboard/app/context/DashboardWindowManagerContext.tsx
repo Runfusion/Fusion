@@ -75,6 +75,12 @@ interface DashboardWindowManagerValue {
   visibleSurfaceCount: number;
   toggleControlRef: RefCallback<HTMLButtonElement>;
   resetScope: (scopeKey: string | null | undefined) => void;
+  /*
+  FNXC:DashboardWindowVisibility 2026-09-14-17:46:
+  FN-392: restoring a global hide re-runs each surface's own focus effects. Window and dialog surfaces consult this
+  closure so a restoration focus never claims a new stack layer; a later real pointer or focus interaction still does.
+  */
+  isFocusRestoring: () => boolean;
 }
 
 const DashboardWindowManagerContext = createContext<DashboardWindowManagerValue | null>(null);
@@ -180,6 +186,7 @@ export function DashboardWindowManagerProvider({ children }: DashboardWindowMana
   const observerRef = useRef<ResizeObserver | null>(null);
   const measureFrameRef = useRef<number | null>(null);
   const focusCleanupRef = useRef<(() => void) | null>(null);
+  const focusRestoringRef = useRef(false);
   const [availableBounds, setAvailableBounds] = useState<DashboardWindowBounds>(viewportBounds);
   const [surfaceRevision, setSurfaceRevision] = useState(0);
   const [hiddenTokens, setHiddenTokens] = useState<ReadonlySet<DashboardWindowSurfaceToken>>(EMPTY_HIDDEN_TOKENS);
@@ -235,7 +242,12 @@ export function DashboardWindowManagerProvider({ children }: DashboardWindowMana
     };
   }, [measure, scheduleMeasure]);
 
-  useEffect(() => () => focusCleanupRef.current?.(), []);
+  useEffect(() => () => {
+    focusCleanupRef.current?.();
+    focusRestoringRef.current = false;
+  }, []);
+
+  const isFocusRestoring = useCallback(() => focusRestoringRef.current, []);
 
   useEffect(() => {
     if (hiddenTokens.size === 0) return;
@@ -266,26 +278,37 @@ export function DashboardWindowManagerProvider({ children }: DashboardWindowMana
 
   const restoreFocus = useCallback((capturedTokens: ReadonlySet<DashboardWindowSurfaceToken>) => {
     focusCleanupRef.current?.();
+    /*
+    FNXC:DashboardWindowVisibility 2026-09-14-17:46:
+    FN-392: the restoration fence opens synchronously, before the revealing render commits, and closes only after the
+    focus attempt settles — success or failure. Every focus handler that would otherwise claim a stack layer runs
+    inside this window, so restore is purely presentational and preserves the exact pre-hide order.
+    */
+    focusRestoringRef.current = true;
     focusCleanupRef.current = scheduleAfterPaint(() => {
       focusCleanupRef.current = null;
-      const prior = focusedBeforeHideRef.current;
-      focusedBeforeHideRef.current = null;
-      if (prior && isFocusable(prior)) {
-        const belongsToRestoredSurface = [...capturedTokens].some((token) => {
-          const surface = surfacesRef.current.get(token);
-          return Boolean(surface?.root?.contains(prior) && surface.locallyVisible);
-        });
-        if (belongsToRestoredSurface) {
-          prior.focus();
-          return;
+      try {
+        const prior = focusedBeforeHideRef.current;
+        focusedBeforeHideRef.current = null;
+        if (prior && isFocusable(prior)) {
+          const belongsToRestoredSurface = [...capturedTokens].some((token) => {
+            const surface = surfacesRef.current.get(token);
+            return Boolean(surface?.root?.contains(prior) && surface.locallyVisible);
+          });
+          if (belongsToRestoredSurface) {
+            prior.focus();
+            return;
+          }
         }
+        const topmost = [...capturedTokens]
+          .map((token) => surfacesRef.current.get(token))
+          .filter((surface): surface is DashboardWindowSurfaceRecord => Boolean(surface?.root && surface.locallyVisible))
+          .sort((a, b) => b.stackOrder - a.stackOrder)[0];
+        if (topmost?.root && focusFirstAvailable(topmost.root)) return;
+        toggleControlElementRef.current?.focus();
+      } finally {
+        focusRestoringRef.current = false;
       }
-      const topmost = [...capturedTokens]
-        .map((token) => surfacesRef.current.get(token))
-        .filter((surface): surface is DashboardWindowSurfaceRecord => Boolean(surface?.root && surface.locallyVisible))
-        .sort((a, b) => b.stackOrder - a.stackOrder)[0];
-      if (topmost?.root && focusFirstAvailable(topmost.root)) return;
-      toggleControlElementRef.current?.focus();
     });
   }, []);
 
@@ -355,6 +378,9 @@ export function DashboardWindowManagerProvider({ children }: DashboardWindowMana
     scopeKeyRef.current = scopeKey;
     hiddenSnapshotRef.current = null;
     focusedBeforeHideRef.current = null;
+    focusCleanupRef.current?.();
+    focusCleanupRef.current = null;
+    focusRestoringRef.current = false;
     setHiddenTokens(EMPTY_HIDDEN_TOKENS);
   }, []);
 
@@ -392,11 +418,13 @@ export function DashboardWindowManagerProvider({ children }: DashboardWindowMana
     visibleSurfaceCount,
     toggleControlRef,
     resetScope,
+    isFocusRestoring,
   }), [
     availableBounds,
     footerRef,
     headerRef,
     hiddenSnapshotActive,
+    isFocusRestoring,
     isGroupVisible,
     isSurfaceHidden,
     removeSurface,
@@ -466,6 +494,17 @@ export function useDashboardWindowLandmark(kind: DashboardWindowLandmark): RefCa
   if (kind === "header") return manager.headerRef;
   if (kind === "footer") return manager.footerRef;
   return manager.rightDockRef;
+}
+
+const NEVER_RESTORING = () => false;
+
+/*
+FNXC:DashboardWindowVisibility 2026-09-14-17:46:
+FN-392: shared read access to the restoration fence. Outside a provider nothing is ever restoring, so standalone hosts
+and tests keep their ordinary focus-to-front behavior.
+*/
+export function useDashboardWindowFocusRestoring(): () => boolean {
+  return useContext(DashboardWindowManagerContext)?.isFocusRestoring ?? NEVER_RESTORING;
 }
 
 export function useDashboardWindowManagerScope(scopeKey: string | null | undefined): void {

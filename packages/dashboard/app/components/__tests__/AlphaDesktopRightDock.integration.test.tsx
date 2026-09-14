@@ -142,8 +142,10 @@ function AppCompositionHarness({
 }
 
 /*
-FNXC:ChatSurfaceUnification 2026-09-14-11:35:
-This integration exercises the real registry launcher, canonical expanded Chat, and App-owned detached conversations together. Alpha and standard wide hosts share the same window path; existing conversation identities remain project-scoped without a chat-only presentation state.
+FNXC:ChatSurfaceUnification 2026-09-14-17:46:
+FN-392: this integration exercises the real registry entry, the INLINE dock Chat list, and App-owned detached
+conversations together. Alpha and standard wide hosts share the same path: the list stays in the panel, no expand modal
+is ever produced for Chat, and conversation identities remain project-scoped.
 */
 describe("App Alpha desktop right-dock window ownership", () => {
   beforeEach(() => {
@@ -179,8 +181,9 @@ describe("App Alpha desktop right-dock window ownership", () => {
 
     expect(screen.queryByTestId(`chat-session-${existing.id}`)).toBeNull();
     fireEvent.click(screen.getByTestId("right-dock-tab-chat"));
-    expect(await screen.findByTestId("right-dock-expand-modal")).toBeInTheDocument();
+    expect(screen.queryByTestId("right-dock-expand-modal")).toBeNull();
     const firstRow = await screen.findByTestId(`chat-session-${existing.id}`);
+    expect(screen.getByTestId("right-dock-body")).toContainElement(firstRow);
     const secondRow = screen.getByTestId(`chat-session-${second.id}`);
     const thirdRow = screen.getByTestId(`chat-session-${third.id}`);
     expect(screen.queryByTestId(`chat-session-window-state-${existing.id}`)).toBeNull();
@@ -242,8 +245,7 @@ describe("App Alpha desktop right-dock window ownership", () => {
     expect(await screen.findByTestId("floating-window-chat-window-project-a-same-id")).toBeInTheDocument();
 
     view.rerender(<IntegrationProviders><AppCompositionHarness projectId="project-b" /></IntegrationProviders>);
-    await waitFor(() => expect(screen.queryByTestId("right-dock-expand-modal")).toBeNull());
-    fireEvent.click(screen.getByTestId("integration-toggle-dock"));
+    expect(screen.queryByTestId("right-dock-expand-modal")).toBeNull();
     fireEvent.click(screen.getByTestId("right-dock-tab-chat"));
     expect(await screen.findByText("Projet B")).toBeInTheDocument();
     expect(screen.queryByTestId("floating-window-chat-window-project-a-same-id")).toBeNull();
@@ -252,19 +254,22 @@ describe("App Alpha desktop right-dock window ownership", () => {
     expect(await screen.findByTestId("floating-window-chat-window-project-b-same-id")).toBeInTheDocument();
   });
 
-  it("routes the standard wide host through the same canonical expanded window", async () => {
+  it("routes the standard wide host through the same inline list and dedicated windows", async () => {
     const existing = session("chat-standard", "project-a", "Conversation standard", "2026-09-12T01:00:00.000Z");
     api.fetchChatSessions.mockResolvedValue({ sessions: [existing] });
     localStorage.setItem(RIGHT_DOCK_VIEW_STORAGE_KEY, "chat");
     render(<IntegrationProviders><AppCompositionHarness projectId="project-a" hostMode="standard" /></IntegrationProviders>);
 
     fireEvent.click(screen.getByTestId("right-dock-tab-chat"));
-    expect(await screen.findByTestId("right-dock-expand-modal")).toBeInTheDocument();
+    expect(screen.queryByTestId("right-dock-expand-modal")).toBeNull();
     const row = await screen.findByTestId(`chat-session-${existing.id}`);
+    expect(screen.getByTestId("right-dock-body")).toContainElement(row);
+
+    // A plain click on a row opens the dedicated window instead of a transcript inside the panel.
     fireEvent.click(row);
-    await waitFor(() => expect(row).toHaveClass("chat-session-item--active"));
-    expect(await screen.findByTestId("chat-input")).toBeInTheDocument();
-    expect(screen.queryByTestId(`floating-window-chat-window-project-a-${existing.id}`)).toBeNull();
+    expect(await screen.findByTestId(`floating-window-chat-window-project-a-${existing.id}`)).toBeInTheDocument();
+    await waitFor(() => expect(row).toHaveClass("chat-session-item--window-open"));
+    expect(within(screen.getByTestId("right-dock-body")).queryByTestId("chat-input")).toBeNull();
   });
 
   it("synchronizes creation, events, deduplication, and open identity in the current project", async () => {

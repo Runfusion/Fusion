@@ -89,6 +89,8 @@ The dock rail is registry-sourced. Chat is a launcher button rather than an inli
 */
 const toolTabIds = [
   "right-dock-tab-files",
+  // FNXC:ChatSurfaceUnification 2026-09-14-17:46: FN-392 restores Chat as an inline dock tool tab, in registry order.
+  "right-dock-tab-chat",
   "right-dock-tab-activity-log",
   "right-dock-tab-git-manager",
   "right-dock-tab-devserver",
@@ -483,7 +485,7 @@ describe("RightDock", () => {
     expect(screen.queryByTestId("right-dock-tab-tasks")).toBeNull();
     expect(screen.getByTestId("right-dock-tab-files")).toHaveAttribute("aria-label", "Files");
     expect(screen.getByTestId("right-dock-tab-chat")).toHaveAttribute("aria-label", "Chat");
-    expect(screen.getByTestId("right-dock-tab-chat")).not.toHaveAttribute("role", "tab");
+    expect(screen.getByTestId("right-dock-tab-chat")).toHaveAttribute("role", "tab");
     expect(screen.getByTestId("right-dock-tab-activity-log")).toHaveAttribute("aria-label", "Activity Log");
     expect(screen.getByTestId("right-dock-tab-git-manager")).toHaveAttribute("aria-label", "Git Manager");
     expect(screen.getByTestId("right-dock-tab-devserver")).toHaveAttribute("aria-label", "Dev Server");
@@ -503,6 +505,7 @@ describe("RightDock", () => {
     render(<TestRightDock open={true} renderProps={renderProps} />);
     expect(screen.getAllByRole("tab").map((tab) => tab.getAttribute("data-testid"))).toEqual([
       "right-dock-tab-files",
+      "right-dock-tab-chat",
       "right-dock-tab-activity-log",
       "right-dock-tab-git-manager",
       "right-dock-tab-secrets",
@@ -523,21 +526,30 @@ describe("RightDock", () => {
     expect(screen.getByTestId("right-dock-body")).toBeInTheDocument();
   });
 
-  it("launches the same Chat expansion in Alpha and standard hosts without restoring Chat inline", () => {
+  /*
+  FNXC:ChatSurfaceUnification 2026-09-14-17:46:
+  FN-392 symptom: clicking Chat in the dock opened a large expanded window instead of keeping the conversation list in
+  the panel. Chat must select inline in both wide hosts, expose no Expand affordance, request no expansion, and produce
+  no expand modal even when one is requested programmatically for that key.
+  */
+  it("selects Chat inline in Alpha and standard hosts with no expansion affordance", () => {
     window.localStorage.setItem(RIGHT_DOCK_VIEW_STORAGE_KEY, "chat");
     const onExpand = vi.fn();
     const { rerender } = render(<TestRightDock open renderProps={{ ...renderProps, hostMode: "alpha-desktop" }} visibilityOptions={{ hostMode: "alpha-desktop" }} onExpand={onExpand} />);
-    expect(screen.getByTestId("right-dock-tab-chat")).not.toHaveAttribute("aria-selected");
-    expect(screen.getByRole("tabpanel", { name: "Files" })).toBeInTheDocument();
     fireEvent.click(screen.getByTestId("right-dock-tab-chat"));
-    expect(onExpand).toHaveBeenLastCalledWith("chat");
+    expect(screen.getByTestId("right-dock-tab-chat")).toHaveAttribute("aria-selected", "true");
+    expect(screen.queryByTestId("right-dock-expand")).toBeNull();
+    expect(onExpand).not.toHaveBeenCalled();
+    expect(screen.getByTestId("right-dock-body")).toBeInTheDocument();
 
     rerender(<TestRightDock open renderProps={{ ...renderProps, hostMode: "standard" }} visibilityOptions={{ hostMode: "standard" }} onExpand={onExpand} />);
     fireEvent.click(screen.getByTestId("right-dock-tab-chat"));
-    expect(onExpand).toHaveBeenCalledTimes(2);
+    expect(screen.getByTestId("right-dock-tab-chat")).toHaveAttribute("aria-selected", "true");
+    expect(screen.queryByTestId("right-dock-expand")).toBeNull();
+    expect(onExpand).not.toHaveBeenCalled();
 
     const modal = render(<RightDockExpandModal viewKey="chat" renderProps={{ ...renderProps, hostMode: "alpha-desktop" }} visibilityOptions={{ hostMode: "alpha-desktop" }} onClose={vi.fn()} />);
-    expect(screen.getByTestId("right-dock-expand-modal")).toBeInTheDocument();
+    expect(screen.queryByTestId("right-dock-expand-modal")).toBeNull();
     modal.unmount();
   });
 

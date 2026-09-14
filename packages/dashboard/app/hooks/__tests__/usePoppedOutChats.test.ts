@@ -39,6 +39,29 @@ describe("usePoppedOutChats", () => {
     ]);
   });
 
+  /*
+  FNXC:ChatSurfaceUnification 2026-09-14-17:46:
+  FN-392: an external prefill belongs to the single conversation its request opened or created. Opening another
+  conversation must not carry it, and an ordinary reopen must not re-seed the composer over a draft being typed.
+  */
+  it("attaches an external composer prefill to only the requested conversation", () => {
+    const { result } = renderHook(() => usePoppedOutChats());
+    act(() => result.current.popOut("project-a", session("a"), { composerPrefill: "Analyse cette issue" }));
+    act(() => result.current.popOut("project-a", session("b")));
+
+    expect(result.current.entries[0].composerPrefill).toEqual({ text: "Analyse cette issue", nonce: 1 });
+    expect(result.current.entries[1].composerPrefill).toBeUndefined();
+
+    // A plain reopen keeps the same prefill nonce, so the window does not re-seed over the operator's draft.
+    act(() => result.current.popOut("project-a", session("a", "refreshed")));
+    expect(result.current.entries[0]).toMatchObject({ focusNonce: 2, composerPrefill: { text: "Analyse cette issue", nonce: 1 } });
+
+    // A new request carrying text does re-seed, with an advanced nonce.
+    act(() => result.current.popOut("project-a", session("a"), { composerPrefill: "Autre lien" }));
+    expect(result.current.entries[0].composerPrefill).toEqual({ text: "Autre lien", nonce: 2 });
+    expect(result.current.entries[1].composerPrefill).toBeUndefined();
+  });
+
   it("closes precisely, reuses the released cascade slot, and closes all", () => {
     const { result } = renderHook(() => usePoppedOutChats());
     act(() => result.current.popOut("project-a", session("same")));

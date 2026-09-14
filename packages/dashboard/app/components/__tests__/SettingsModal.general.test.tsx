@@ -270,7 +270,6 @@ describe("SettingsModal", () => {
     const callbacks = {
       onOpenTasksInRightSidebarChange: vi.fn(),
       onOpenMobileTasksInPopupChange: vi.fn(),
-      onTaskPopupsBoardListOnlyChange: vi.fn(),
       onShowCostBadgeOnCardsChange: vi.fn(),
       onTaskDetailChatFirstChange: vi.fn(),
     };
@@ -279,13 +278,13 @@ describe("SettingsModal", () => {
 
     fireEvent.click(screen.getByLabelText("Open tasks in the right sidebar"));
     fireEvent.click(screen.getByLabelText("Open tasks as popups"));
-    fireEvent.click(screen.getByLabelText("Keep task popups on the view where they were opened"));
     fireEvent.click(screen.getByLabelText("Show cost badges on task cards"));
+    // FN-392: the per-view task popup scoping control is gone from the modal's Appearance section.
+    expect(screen.queryByLabelText("Keep task popups on the view where they were opened")).toBeNull();
     fireEvent.click(screen.getByLabelText("Open task details with Chat first"));
 
     expect(callbacks.onOpenTasksInRightSidebarChange).toHaveBeenCalledWith(true);
     expect(callbacks.onOpenMobileTasksInPopupChange).toHaveBeenCalledWith(true);
-    expect(callbacks.onTaskPopupsBoardListOnlyChange).toHaveBeenCalledWith(true);
     expect(callbacks.onShowCostBadgeOnCardsChange).toHaveBeenCalledWith(true);
     expect(callbacks.onTaskDetailChatFirstChange).toHaveBeenCalledWith(true);
 

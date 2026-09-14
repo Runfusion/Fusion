@@ -68,7 +68,6 @@ describe("useAppSettings", () => {
       result.current.setChatMessageLayoutImmediate("full-width");
       result.current.setOpenTasksInRightSidebarImmediate(true);
       result.current.setOpenMobileTasksInPopupImmediate(true);
-      result.current.setTaskPopupsBoardListOnlyImmediate(false);
       result.current.setShowCostBadgeOnCardsImmediate(true);
       result.current.setTaskDetailChatFirstImmediate(true);
     });
@@ -76,7 +75,6 @@ describe("useAppSettings", () => {
     expect(result.current.chatMessageLayout).toBe("full-width");
     expect(result.current.openTasksInRightSidebar).toBe(true);
     expect(result.current.openMobileTasksInPopup).toBe(true);
-    expect(result.current.taskPopupsBoardListOnly).toBe(false);
     expect(result.current.showCostBadgeOnCards).toBe(true);
     expect(result.current.taskDetailChatFirst).toBe(true);
     expect(mockFetchSettings).toHaveBeenCalledTimes(settingsFetchesBefore);
@@ -86,7 +84,6 @@ describe("useAppSettings", () => {
       result.current.setChatMessageLayoutImmediate("bubbles");
       result.current.setOpenTasksInRightSidebarImmediate(false);
       result.current.setOpenMobileTasksInPopupImmediate(false);
-      result.current.setTaskPopupsBoardListOnlyImmediate(true);
       result.current.setShowCostBadgeOnCardsImmediate(false);
       result.current.setTaskDetailChatFirstImmediate(false);
     });
@@ -94,7 +91,6 @@ describe("useAppSettings", () => {
     expect(result.current.chatMessageLayout).toBe("bubbles");
     expect(result.current.openTasksInRightSidebar).toBe(false);
     expect(result.current.openMobileTasksInPopup).toBe(false);
-    expect(result.current.taskPopupsBoardListOnly).toBe(true);
     expect(result.current.showCostBadgeOnCards).toBe(false);
     expect(result.current.taskDetailChatFirst).toBe(false);
     expect(mockFetchSettings).toHaveBeenCalledTimes(settingsFetchesBefore);
@@ -133,19 +129,22 @@ describe("useAppSettings", () => {
     expect(result.current.chatMessageLayout).toBe("bubbles");
   });
 
-  it("defaults omitted task popup scoping to enabled during hydration", async () => {
+  /*
+  FNXC:TaskWindowIdentity 2026-09-14-17:46:
+  FN-392: a historical `taskPopupsBoardListOnly` value — absent, true, or false — hydrates without being exposed or
+  applied. The hook publishes no such state and no setter, so no surface can read or rewrite it.
+  */
+  it.each([
+    ["absent", {}],
+    ["true", { taskPopupsBoardListOnly: true }],
+    ["false", { taskPopupsBoardListOnly: false }],
+  ])("ignores a historical %s task popup scoping value during hydration", async (_label, stored) => {
+    mockFetchSettings.mockResolvedValueOnce(stored as never);
     const { result } = renderHook(() => useAppSettings("proj_123"));
 
     await waitFor(() => expect(result.current.settingsLoaded).toBe(true));
-    expect(result.current.taskPopupsBoardListOnly).toBe(true);
-  });
-
-  it("preserves an explicit false task popup scoping opt-out during hydration", async () => {
-    mockFetchSettings.mockResolvedValueOnce({ taskPopupsBoardListOnly: false } as never);
-    const { result } = renderHook(() => useAppSettings("proj_123"));
-
-    await waitFor(() => expect(result.current.settingsLoaded).toBe(true));
-    expect(result.current.taskPopupsBoardListOnly).toBe(false);
+    expect(result.current).not.toHaveProperty("taskPopupsBoardListOnly");
+    expect(result.current).not.toHaveProperty("setTaskPopupsBoardListOnlyImmediate");
   });
 
   it("loads settings state from API", async () => {

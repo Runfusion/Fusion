@@ -35,7 +35,6 @@ export interface RightDockControllerInput {
   openDetailTask: (task: Task | TaskDetail, initialTab?: DetailTaskTab) => void;
   onOpenSessionInNewWindow?: (session: ChatSessionInfo) => void;
   openChatWindows?: ReadonlySet<string>;
-  chatComposerPrefill?: { text: string; nonce: number } | null;
   onSendAsReport?: (handoff: ChatReportHandoff) => void;
   /** Optional first-render expanded owner for restored/deep-linked wide destinations. */
   initialExpandedView?: OverflowViewKey;
@@ -86,6 +85,12 @@ export interface RightDockController {
   closeDockTask: () => void;
   /** FN-382: select a dock tool from outside the dock (non-mobile List navigation). */
   selectView: (key: OverflowViewKey) => void;
+  /*
+  FNXC:ChatSurfaceUnification 2026-09-14-17:46:
+  FN-392: the selected tool is readable so App can tell whether the dock is currently the primary Chat host, which is
+  what its Escape ordering and Mailbox hand-off close.
+  */
+  selectedView: OverflowViewKey;
   /** Opens or focuses one registry-backed expanded window without creating a duplicate. */
   openViewWindow: (key: OverflowViewKey) => void;
   /** Closes only the matching expanded owner; omitted key closes whichever owner is active. */
@@ -266,7 +271,6 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
     onOpenDetail: input.openDetailTask,
     onOpenSessionInNewWindow: input.onOpenSessionInNewWindow,
     openChatWindows: input.openChatWindows,
-    chatComposerPrefill: input.chatComposerPrefill,
     onSendAsReport: input.onSendAsReport,
     notesController: input.notesController,
     onOpenNote: input.onOpenNote,
@@ -321,6 +325,7 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
     openTaskInDock,
     closeDockTask,
     selectView,
+    selectedView: selectedKey,
     openViewWindow,
     closeViewWindow,
     expandedView: expandedViewState?.key ?? null,

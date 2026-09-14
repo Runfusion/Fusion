@@ -9,7 +9,8 @@ import {
 } from "../../context/DashboardWindowManagerContext";
 import { DashboardWindowVisibilityToggle } from "../DashboardWindowVisibilityToggle";
 import { PoppedOutChatWindows } from "../PoppedOutChatWindows";
-import { RightDockExpandModal } from "../RightDockExpandModal";
+import { RightDock } from "../RightDock";
+import { usePoppedOutChats } from "../../hooks/usePoppedOutChats";
 import type { OverflowViewRenderProps } from "../overflowViewRegistry";
 import type { ChatSessionInfo } from "../../hooks/useChat";
 import {
@@ -60,21 +61,43 @@ function renderProps(overrides: Partial<OverflowViewRenderProps> = {}): Overflow
 }
 
 /*
-FNXC:ChatSurfaceUnification 2026-09-14-12:57:
-One Chat window is launched from the right dock on every wide shell; detached conversations are independent
-windows that the global manager may hide without unmounting them. These regressions mount the production
-window host, the detached windows, and the shared visibility control together, because the invariant is about
-their interaction: one primary host, retained detached state, suspended reads while hidden, and an Escape
-owner that ignores globally hidden surfaces.
+FNXC:ChatSurfaceUnification 2026-09-14-17:46:
+FN-392: the wide primary Chat host is the right dock's compact conversation LIST, and every conversation lives in its
+own detached window. These regressions mount the production dock, the production window owner, the detached windows,
+and the shared visibility control together, because the invariant is about their interaction: the list stays in the
+panel, a click or creation opens exactly one dedicated window, an external prefill reaches only that window, closing
+the primary host leaves detached conversations mounted, and a global hide suspends reads without unmounting anything.
 */
+function DockChatHost({
+  open,
+  onSelectKey = vi.fn(),
+  props,
+}: {
+  open: boolean;
+  onSelectKey?: (key: "chat") => void;
+  props: OverflowViewRenderProps;
+}) {
+  return (
+    <RightDock
+      selectedKey="chat"
+      onSelectKey={onSelectKey as never}
+      open={open}
+      renderProps={props}
+      visibilityOptions={{}}
+      footerVisible={false}
+      pinned={false}
+      onTogglePin={vi.fn()}
+      onExpand={vi.fn()}
+    />
+  );
+}
+
 function UnifiedHostHarness({
   detached = [],
-  prefill,
   onSendAsReport,
   onClosePrimary,
 }: {
   detached?: ReturnType<typeof detachedEntry>[];
-  prefill?: { text: string; nonce: number };
   onSendAsReport?: (content: string) => void;
   onClosePrimary?: () => void;
 }) {
@@ -82,26 +105,63 @@ function UnifiedHostHarness({
   return (
     <DashboardWindowManagerProvider>
       <DashboardWindowManagerScope scopeKey="project-a" />
-      <RightDockExpandModal
-        viewKey={primaryOpen ? "chat" : null}
-        renderProps={renderProps({
-          chatComposerPrefill: prefill ?? null,
+      <DockChatHost
+        open={primaryOpen}
+        props={renderProps({
           onSendAsReport,
           openChatWindows: new Set(detached.map((entry) => entry.session.id)),
         })}
-        onClose={() => {
+      />
+      <button
+        type="button"
+        data-testid="close-primary-chat-host"
+        onClick={() => {
           setPrimaryOpen(false);
           onClosePrimary?.();
         }}
-      />
+      >
+        close dock
+      </button>
       <PoppedOutChatWindows
         entries={detached}
         projectId="project-a"
         addToast={vi.fn()}
         onClose={vi.fn()}
         onOpenSessionInNewWindow={vi.fn()}
+        onSendAsReport={onSendAsReport as never}
       />
       <footer><DashboardWindowVisibilityToggle /></footer>
+    </DashboardWindowManagerProvider>
+  );
+}
+
+/** Production wiring: the dock list delegates conversation identity to the real project-scoped window owner. */
+function DockToWindowHarness({ pendingPrefill }: { pendingPrefill?: string }) {
+  const chats = usePoppedOutChats();
+  const pendingRef = useState(() => ({ current: pendingPrefill }))[0];
+  const openSessionInNewWindow = (session: ChatSessionInfo) => {
+    const composerPrefill = pendingRef.current;
+    pendingRef.current = undefined;
+    chats.popOut("project-a", session, composerPrefill ? { composerPrefill } : undefined);
+  };
+  return (
+    <DashboardWindowManagerProvider>
+      <DashboardWindowManagerScope scopeKey="project-a" />
+      <DockChatHost
+        open
+        props={renderProps({
+          onOpenSessionInNewWindow: openSessionInNewWindow,
+          openChatWindows: new Set(chats.entries.map((entry) => entry.session.id)),
+        })}
+      />
+      <PoppedOutChatWindows
+        entries={chats.entries}
+        projectId="project-a"
+        addToast={vi.fn()}
+        onClose={chats.close}
+        onOpenSessionInNewWindow={openSessionInNewWindow}
+      />
+      <output data-testid="open-window-count">{chats.entries.length}</output>
     </DashboardWindowManagerProvider>
   );
 }
@@ -146,15 +206,18 @@ function EscapeOwnershipHarness({ detached }: { detached: ReturnType<typeof deta
   );
 }
 
-function primaryChatWindow() {
-  return screen.getByTestId("right-dock-expand-modal");
+function primaryChatHost() {
+  return screen.getByTestId("right-dock-body");
 }
 
-async function openCanonicalThread(session: ChatSessionInfo = activeSessionFixture) {
-  const primary = primaryChatWindow();
-  await waitFor(() => expect(primary.querySelectorAll(".chat-view")).toHaveLength(1));
-  fireEvent.click(await within(primary).findByTestId(`chat-session-${session.id}`));
-  return within(primary).findByTestId("chat-input");
+function detachedWindow(session: ChatSessionInfo) {
+  return screen.getByTestId(`floating-window-chat-window-project-a-${session.id}`);
+}
+
+async function clickDockSession(session: ChatSessionInfo = activeSessionFixture) {
+  const host = primaryChatHost();
+  await waitFor(() => expect(host.querySelectorAll(".chat-view")).toHaveLength(1));
+  fireEvent.click(await within(host).findByTestId(`chat-session-${session.id}`));
 }
 
 describe("unified Chat host routing", () => {
@@ -176,8 +239,17 @@ describe("unified Chat host routing", () => {
       if (this.dataset.testid === "dashboard-window-visibility-placeholder") {
         return { left: 1200, top: 764, right: 1280, bottom: 800, width: 80, height: 36, x: 1200, y: 764, toJSON() {} };
       }
+      /*
+      FN-392: the dock is a measured shell landmark, so jsdom's zero rect would collapse the available window area and
+      flatten the cascade this suite asserts. Give it a realistic right-edge rectangle.
+      */
+      if (this.dataset.testid === "right-dock") {
+        return { left: 1500, top: 0, right: 1600, bottom: 900, width: 100, height: 900, x: 1500, y: 0, toJSON() {} };
+      }
       return originalGetBoundingClientRect.call(this);
     });
+    Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 1600 });
+    Object.defineProperty(window, "innerHeight", { configurable: true, writable: true, value: 900 });
     setupMockRooms();
     setupMockChat({
       activeSession: activeSessionFixture,
@@ -194,13 +266,35 @@ describe("unified Chat host routing", () => {
     document.getElementById("dashboard-window-toggle-root")?.remove();
   });
 
-  it("renders exactly one canonical Chat host that receives the composer prefill", async () => {
-    render(<UnifiedHostHarness prefill={{ text: "Analyse cette issue", nonce: 4 }} />);
+  it("keeps the conversation list in the dock and opens one dedicated window per conversation", async () => {
+    render(<DockToWindowHarness />);
 
-    const composer = await openCanonicalThread();
-    expect(document.querySelectorAll(".chat-view")).toHaveLength(1);
-    expect(composer).toHaveValue("Analyse cette issue");
-    expect(screen.queryByTestId("chat-modal-close")).toBeNull();
+    await clickDockSession();
+    await waitFor(() => expect(screen.getByTestId("open-window-count")).toHaveTextContent("1"));
+    const first = detachedWindow(activeSessionFixture);
+    expect(primaryChatHost().querySelectorAll(".chat-view")).toHaveLength(1);
+    expect(screen.queryByTestId("right-dock-expand-modal")).toBeNull();
+
+    // Reopening the same conversation focuses the same window instead of duplicating it.
+    await clickDockSession();
+    expect(screen.getByTestId("open-window-count")).toHaveTextContent("1");
+    expect(detachedWindow(activeSessionFixture)).toBe(first);
+
+    await clickDockSession(secondSessionFixture);
+    await waitFor(() => expect(screen.getByTestId("open-window-count")).toHaveTextContent("2"));
+    expect(detachedWindow(secondSessionFixture)).toBeInTheDocument();
+  });
+
+  it("hands an external composer prefill to the conversation that request opened, never to the dock list", async () => {
+    render(<DockToWindowHarness pendingPrefill="Analyse cette issue" />);
+
+    // The list-only dock host owns no composer at all, so the prefill can only land in the opened window.
+    expect(within(primaryChatHost()).queryByTestId("chat-input")).toBeNull();
+
+    await clickDockSession();
+    const firstComposer = await within(detachedWindow(activeSessionFixture)).findByTestId("chat-input");
+    await waitFor(() => expect(firstComposer).toHaveValue("Analyse cette issue"));
+    expect(within(primaryChatHost()).queryByTestId("chat-input")).toBeNull();
   });
 
   it("keeps several detached conversations beside the canonical host without any minimized state", async () => {
@@ -212,35 +306,36 @@ describe("unified Chat host routing", () => {
     expect(document.querySelectorAll('[data-testid^="floating-window-chat-window-"]')).toHaveLength(2);
     expect(document.querySelector("[data-minimized]")).toBeNull();
     expect(screen.queryByRole("button", { name: /minimi/i })).toBeNull();
-    await waitFor(() => expect(primaryChatWindow().querySelectorAll(".chat-view")).toHaveLength(1));
+    await waitFor(() => expect(primaryChatHost().querySelectorAll(".chat-view")).toHaveLength(1));
   });
 
   it("closes only the canonical host when a message is handed off as a report", async () => {
     const onClosePrimary = vi.fn();
     render(<UnifiedHostHarness detached={[detachedEntry(secondSessionFixture, 0)]} onSendAsReport={vi.fn()} onClosePrimary={onClosePrimary} />);
 
-    await waitFor(() => expect(primaryChatWindow().querySelectorAll(".chat-view")).toHaveLength(1));
-    fireEvent.click(screen.getByTestId("right-dock-expand-close"));
+    await waitFor(() => expect(primaryChatHost().querySelectorAll(".chat-view")).toHaveLength(1));
+    fireEvent.click(screen.getByTestId("close-primary-chat-host"));
 
-    await waitFor(() => expect(screen.queryByTestId("right-dock-expand-modal")).toBeNull());
+    await waitFor(() => expect(screen.queryByTestId("right-dock-body")).toBeNull());
     expect(onClosePrimary).toHaveBeenCalledTimes(1);
     expect(screen.getByTestId(`floating-window-chat-window-project-a-${secondSessionFixture.id}`)).toBeInTheDocument();
   });
 
   it("retains hidden Chat windows while suspending their reads, and resumes on restore", async () => {
-    render(<UnifiedHostHarness detached={[detachedEntry(secondSessionFixture, 0)]} />);
-    const composer = await openCanonicalThread();
-    const primary = primaryChatWindow();
+    render(<UnifiedHostHarness detached={[detachedEntry(activeSessionFixture, 0), detachedEntry(secondSessionFixture, 1)]} />);
+    const conversation = await screen.findByTestId(`floating-window-chat-window-project-a-${activeSessionFixture.id}`);
+    const composer = await within(conversation).findByTestId("chat-input");
     await waitFor(() => expect(markRead).toHaveBeenCalled());
     fireEvent.change(composer, { target: { value: "Brouillon conservé" } });
     markRead.mockClear();
 
     fireEvent.click(await screen.findByTestId("dashboard-window-visibility-toggle"));
 
-    await waitFor(() => expect(primary).toHaveAttribute("data-dashboard-window-globally-hidden", "true"));
-    expect(primary).toBeInTheDocument();
-    expect(primary.querySelectorAll(".chat-view")).toHaveLength(1);
-    expect(within(primary).getByTestId("chat-input")).toHaveValue("Brouillon conservé");
+    const overlay = screen.getByTestId(`floating-window-overlay-chat-window-project-a-${activeSessionFixture.id}`);
+    await waitFor(() => expect(overlay).toHaveAttribute("data-dashboard-window-globally-hidden", "true"));
+    expect(conversation).toBeInTheDocument();
+    expect(conversation.querySelectorAll(".chat-view")).toHaveLength(1);
+    expect(within(conversation).getByTestId("chat-input")).toHaveValue("Brouillon conservé");
     expect(screen.getByTestId(`floating-window-overlay-chat-window-project-a-${secondSessionFixture.id}`)).toHaveAttribute("data-dashboard-window-globally-hidden", "true");
 
     setupMockChat({
@@ -256,7 +351,7 @@ describe("unified Chat host routing", () => {
     expect(markRead).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByTestId("dashboard-window-visibility-toggle"));
-    await waitFor(() => expect(primaryChatWindow()).not.toHaveAttribute("data-dashboard-window-globally-hidden"));
+    await waitFor(() => expect(overlay).not.toHaveAttribute("data-dashboard-window-globally-hidden"));
     await waitFor(() => expect(markRead).toHaveBeenCalled());
   });
 
@@ -282,12 +377,14 @@ describe("unified Chat host routing", () => {
     expect(screen.getByTestId("escape-closed")).toHaveTextContent(`project-a:${activeSessionFixture.id}`);
   });
 
-  it("exposes no Quick Chat launcher, window, or minimize affordance in any Chat host", async () => {
+  it("exposes no Quick Chat launcher, expanded Chat window, or minimize affordance in any Chat host", async () => {
     render(<UnifiedHostHarness detached={[detachedEntry(secondSessionFixture, 0)]} />);
-    await waitFor(() => expect(primaryChatWindow().querySelectorAll(".chat-view")).toHaveLength(1));
+    await waitFor(() => expect(primaryChatHost().querySelectorAll(".chat-view")).toHaveLength(1));
 
     expect(document.querySelector(".quick-chat, .quick-chat-fab, [data-testid^='quick-chat']")).toBeNull();
     expect(screen.queryByTestId("floating-window-chat")).toBeNull();
+    expect(screen.queryByTestId("right-dock-expand-modal")).toBeNull();
+    expect(screen.queryByTestId("right-dock-expand")).toBeNull();
     expect(screen.queryByLabelText(/quick chat/i)).toBeNull();
   });
 });

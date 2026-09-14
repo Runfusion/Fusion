@@ -152,7 +152,6 @@ function mainContentProps(overrides: Partial<MainContentProps> = {}): MainConten
     settingsLoaded: true,
     openTasksInRightSidebar: false,
     openMobileTasksInPopup: false,
-    taskPopupsBoardListOnly: true,
     showCostBadgeOnCards: false,
     taskDetailChatFirst: false,
     chatMessageLayout: "bubbles",
@@ -279,7 +278,6 @@ describe("MainContent graph task pop-out wiring", () => {
       setChatMessageLayoutImmediate: vi.fn(),
       setOpenTasksInRightSidebarImmediate: vi.fn(),
       setOpenMobileTasksInPopupImmediate: vi.fn(),
-      setTaskPopupsBoardListOnlyImmediate: vi.fn(),
       setShowCostBadgeOnCardsImmediate: vi.fn(),
       setTaskDetailChatFirstImmediate: vi.fn(),
     };
@@ -289,7 +287,6 @@ describe("MainContent graph task pop-out wiring", () => {
       chatMessageLayout: "full-width",
       openTasksInRightSidebar: true,
       openMobileTasksInPopup: true,
-      taskPopupsBoardListOnly: false,
       showCostBadgeOnCards: true,
       taskDetailChatFirst: true,
       ...setters,
@@ -301,22 +298,22 @@ describe("MainContent graph task pop-out wiring", () => {
       chatMessageLayout: "full-width",
       openTasksInRightSidebar: true,
       openMobileTasksInPopup: true,
-      taskPopupsBoardListOnly: false,
       showCostBadgeOnCards: true,
       taskDetailChatFirst: true,
     });
+    // FN-392: the per-view task popup setting is gone, so embedded Settings receives neither value nor callback.
+    expect(embeddedSettingsProps).not.toHaveProperty("taskPopupsBoardListOnly");
+    expect(embeddedSettingsProps).not.toHaveProperty("onTaskPopupsBoardListOnlyChange");
 
     (embeddedSettingsProps?.onChatMessageLayoutChange as (value: "bubbles" | "full-width") => void)("bubbles");
     (embeddedSettingsProps?.onOpenTasksInRightSidebarChange as (value: boolean) => void)(false);
     (embeddedSettingsProps?.onOpenMobileTasksInPopupChange as (value: boolean) => void)(false);
-    (embeddedSettingsProps?.onTaskPopupsBoardListOnlyChange as (value: boolean) => void)(true);
     (embeddedSettingsProps?.onShowCostBadgeOnCardsChange as (value: boolean) => void)(false);
     (embeddedSettingsProps?.onTaskDetailChatFirstChange as (value: boolean) => void)(false);
 
     expect(setters.setChatMessageLayoutImmediate).toHaveBeenCalledWith("bubbles");
     expect(setters.setOpenTasksInRightSidebarImmediate).toHaveBeenCalledWith(false);
     expect(setters.setOpenMobileTasksInPopupImmediate).toHaveBeenCalledWith(false);
-    expect(setters.setTaskPopupsBoardListOnlyImmediate).toHaveBeenCalledWith(true);
     expect(setters.setShowCostBadgeOnCardsImmediate).toHaveBeenCalledWith(false);
     expect(setters.setTaskDetailChatFirstImmediate).toHaveBeenCalledWith(false);
   });

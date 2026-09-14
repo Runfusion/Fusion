@@ -12,11 +12,22 @@ export interface PoppedOutChatEntry {
   focusNonce: number;
   /** Stable per-project cascade slot used to visibly separate stacked chat windows. */
   cascadeSlot: number;
+  /*
+  FNXC:ChatSurfaceUnification 2026-09-14-17:46:
+  FN-392: an external composer prefill (task hand-off, GitHub import, card action) belongs to the ONE conversation the
+  request opened or created, never to every open conversation. Its nonce advances only when a request actually carries
+  new text, so an ordinary reopen never overwrites a draft the operator is typing.
+  */
+  composerPrefill?: { text: string; nonce: number };
+}
+
+export interface PoppedOutChatOpenOptions {
+  composerPrefill?: string;
 }
 
 export interface UsePoppedOutChatsResult {
   entries: PoppedOutChatEntry[];
-  popOut: (projectId: string, session: ChatSessionInfo) => void;
+  popOut: (projectId: string, session: ChatSessionInfo, options?: PoppedOutChatOpenOptions) => void;
   close: (projectId: string, sessionId: string) => void;
   closeAll: () => void;
 }
@@ -24,7 +35,7 @@ export interface UsePoppedOutChatsResult {
 export function usePoppedOutChats(): UsePoppedOutChatsResult {
   const [entries, setEntries] = useState<PoppedOutChatEntry[]>([]);
 
-  const popOut = useCallback((projectId: string, session: ChatSessionInfo) => {
+  const popOut = useCallback((projectId: string, session: ChatSessionInfo, options?: PoppedOutChatOpenOptions) => {
     setEntries((current) => {
       const index = current.findIndex((entry) => entry.projectId === projectId && entry.session.id === session.id);
       /*
@@ -35,7 +46,13 @@ export function usePoppedOutChats(): UsePoppedOutChatsResult {
       if (index === -1) {
         const occupiedSlots = new Set(current.filter((entry) => entry.projectId === projectId).map((entry) => entry.cascadeSlot));
         const cascadeSlot = Array.from({ length: current.length + 1 }, (_, slot) => slot).find((slot) => !occupiedSlots.has(slot)) ?? current.length;
-        return [...current, { projectId, session, focusNonce: 1, cascadeSlot }];
+        return [...current, {
+          projectId,
+          session,
+          focusNonce: 1,
+          cascadeSlot,
+          ...(options?.composerPrefill ? { composerPrefill: { text: options.composerPrefill, nonce: 1 } } : {}),
+        }];
       }
       const refreshed = [...current];
       const previous = refreshed[index];
@@ -44,6 +61,9 @@ export function usePoppedOutChats(): UsePoppedOutChatsResult {
         session,
         focusNonce: previous.focusNonce + 1,
         cascadeSlot: previous.cascadeSlot,
+        composerPrefill: options?.composerPrefill
+          ? { text: options.composerPrefill, nonce: (previous.composerPrefill?.nonce ?? 0) + 1 }
+          : previous.composerPrefill,
       };
       return refreshed;
     });

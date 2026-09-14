@@ -22,8 +22,6 @@ export interface AppearanceSectionProps extends SectionBaseProps {
     onOpenTasksInRightSidebarChange?: (enabled: boolean) => void;
     openMobileTasksInPopup?: boolean;
     onOpenMobileTasksInPopupChange?: (enabled: boolean) => void;
-    taskPopupsBoardListOnly?: boolean;
-    onTaskPopupsBoardListOnlyChange?: (enabled: boolean) => void;
     showCostBadgeOnCards?: boolean;
     onShowCostBadgeOnCardsChange?: (enabled: boolean) => void;
     taskDetailChatFirst?: boolean;
@@ -39,7 +37,7 @@ Rows render through the shared settings primitives rather than hand-rolled `form
 FNXC:SettingsScope 2026-07-15-17:35:
 Scope badges are per-row because this section genuinely mixes authority levels: theme, color, and font scale are global (DEFAULT_GLOBAL_SETTINGS), while every task-presentation toggle below is project-scoped (DEFAULT_PROJECT_SETTINGS). The nav labels the whole section "global", which is true only of the theme controls, so the badges are what tell an operator which of these travels between projects.
 */
-export function AppearanceSection({ form, setForm, themeMode, colorTheme, dashboardFontScalePct, shadcnCustomColors = {}, resolvedThemeMode, onThemeModeChange, onColorThemeChange, onDashboardFontScaleChange, onShadcnCustomColorsChange, chatMessageLayout = "bubbles", onChatMessageLayoutChange, openTasksInRightSidebar, onOpenTasksInRightSidebarChange, openMobileTasksInPopup, onOpenMobileTasksInPopupChange, taskPopupsBoardListOnly, onTaskPopupsBoardListOnlyChange, showCostBadgeOnCards, onShowCostBadgeOnCardsChange, taskDetailChatFirst, onTaskDetailChatFirstChange, sessionBannersHidden, setSessionBannersHidden, }: AppearanceSectionProps) {
+export function AppearanceSection({ form, setForm, themeMode, colorTheme, dashboardFontScalePct, shadcnCustomColors = {}, resolvedThemeMode, onThemeModeChange, onColorThemeChange, onDashboardFontScaleChange, onShadcnCustomColorsChange, chatMessageLayout = "bubbles", onChatMessageLayoutChange, openTasksInRightSidebar, onOpenTasksInRightSidebarChange, openMobileTasksInPopup, onOpenMobileTasksInPopupChange, showCostBadgeOnCards, onShowCostBadgeOnCardsChange, taskDetailChatFirst, onTaskDetailChatFirstChange, sessionBannersHidden, setSessionBannersHidden, }: AppearanceSectionProps) {
     const { t } = useTranslation("app");
     return (<>
       <h4 className="settings-section-heading">{t("settings.appearance.title", "Appearance")}</h4>
@@ -102,21 +100,6 @@ export function AppearanceSection({ form, setForm, themeMode, colorTheme, dashbo
           const enabled = v === true;
           setForm((f) => ({ ...f, openMobileTasksInPopup: enabled }));
           onOpenMobileTasksInPopupChange?.(enabled);
-        }}
-      />
-      {/* FNXC:TaskPopupViewGating 2026-07-15-15:20: FN-8016 scopes task popups to their opening dashboard view by default. Operators may explicitly disable it for legacy globally shared popups; hidden scoped entries retain geometry and reopen on return. */}
-      <SettingsToggleRow
-        descriptor={{
-          key: "taskPopupsBoardListOnly",
-          label: t("settings.appearance.taskPopupsBoardListOnly", "Keep task popups on the view where they were opened"),
-          help: t("settings.appearance.taskPopupsBoardListOnlyHelp", "When enabled, each open task-detail popup appears only on the view where it was opened. Switching views hides it without closing; returning restores it in the same position. Default: enabled."),
-          scope: "project",
-        }}
-        value={form.taskPopupsBoardListOnly ?? taskPopupsBoardListOnly === true}
-        onChange={(v) => {
-          const enabled = v === true;
-          setForm((f) => ({ ...f, taskPopupsBoardListOnly: enabled }));
-          onTaskPopupsBoardListOnlyChange?.(enabled);
         }}
       />
       {/* FNXC:TaskCardCostBadge 2026-07-11-12:15: This project setting is opt-in because board cards are already dense; when enabled, only tasks with recorded positive token usage render a read-time derived spend badge. */}

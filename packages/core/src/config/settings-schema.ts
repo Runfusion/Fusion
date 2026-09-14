@@ -644,10 +644,10 @@ export const DEFAULT_PROJECT_SETTINGS = {
   */
   openMobileTasksInPopup: false,
   /*
-  FNXC:TaskPopupViewGating 2026-07-15-15:20:
-  FN-8016 defaults task-detail popups to their opening view on every dashboard surface. Explicit false retains globally shared popup behavior for operators who need it; hidden popups preserve snapshots and shared persisted geometry.
+  FNXC:TaskWindowIdentity 2026-09-14-17:46:
+  FN-392 removed `taskPopupsBoardListOnly`: task windows are permanently project-scoped, so the key is absent from the
+  project defaults and therefore from PROJECT_SETTINGS_KEYS. A historical stored value is ignored and never rewritten.
   */
-  taskPopupsBoardListOnly: true,
   /*
   FNXC:TaskCardCostBadge 2026-07-11-12:15:
   Default off preserves existing board-card density. When true, the dashboard may render a read-time derived cost badge only for tasks with positive token usage; unavailable pricing remains the guess-free “—” sentinel.

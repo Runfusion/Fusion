@@ -263,7 +263,6 @@ export function MainContent(props: MainContentProps) {
   setChatMessageLayoutImmediate,
   setOpenTasksInRightSidebarImmediate,
   setOpenMobileTasksInPopupImmediate,
-  setTaskPopupsBoardListOnlyImmediate,
   setShowCostBadgeOnCardsImmediate,
   setTaskDetailChatFirstImmediate,
   setMobileNavPrimaryItemsImmediate,
@@ -292,7 +291,6 @@ export function MainContent(props: MainContentProps) {
   settingsLoaded,
   openTasksInRightSidebar,
   openMobileTasksInPopup,
-  taskPopupsBoardListOnly,
   showCostBadgeOnCards,
   taskDetailChatFirst,
   chatMessageLayout,
@@ -581,8 +579,6 @@ export function MainContent(props: MainContentProps) {
             onOpenTasksInRightSidebarChange={setOpenTasksInRightSidebarImmediate}
             openMobileTasksInPopup={openMobileTasksInPopup}
             onOpenMobileTasksInPopupChange={setOpenMobileTasksInPopupImmediate}
-            taskPopupsBoardListOnly={taskPopupsBoardListOnly}
-            onTaskPopupsBoardListOnlyChange={setTaskPopupsBoardListOnlyImmediate}
             showCostBadgeOnCards={showCostBadgeOnCards}
             onShowCostBadgeOnCardsChange={setShowCostBadgeOnCardsImmediate}
             taskDetailChatFirst={taskDetailChatFirst}
