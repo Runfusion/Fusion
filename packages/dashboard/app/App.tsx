@@ -1939,7 +1939,7 @@ function AppInner() {
   */
   const mainContentPropsRef = useRef<AppMainPanelTaskDetailMainContentProps | null>(null);
   const renderDockListView = useCallback(
-    () => (mainContentPropsRef.current ? <MainContentListView {...mainContentPropsRef.current} /> : null),
+    () => (mainContentPropsRef.current ? <MainContentListView {...mainContentPropsRef.current} listHost="dock" /> : null),
     [],
   );
 

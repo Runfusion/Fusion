@@ -146,7 +146,7 @@ FN-382: the List surface is defined ONCE here and mounted by two hosts — the m
 fallback route) and the non-mobile right dock. Extracting it keeps a single wiring of tasks, handlers, workflow
 controls and Quick Entry, so reading or creating a task from the dock cannot drift from the dedicated view.
 */
-export function MainContentListView(props: AppMainPanelTaskDetailMainContentProps) {
+export function MainContentListView(props: AppMainPanelTaskDetailMainContentProps & { listHost?: "route" | "dock" }) {
   const {
     tasks,
     isRemote,
@@ -225,7 +225,13 @@ export function MainContentListView(props: AppMainPanelTaskDetailMainContentProp
         mergeStrategy={mergeStrategy}
         onOpenWorkflowEditor={openWorkflowEditorWithNav}
         onCreateWorkflow={openCreateWorkflowWithNav}
-        workflowControlsInHeader={true}
+        /*
+        FNXC:ListInRightDock 2026-09-14-05:12:
+        Only the ROUTE host portals its workflow selector into the shared header slot. The dock host renders its own
+        inline, otherwise the current destination and the dock would both publish a switcher into that slot and the
+        header would carry two identical controls.
+        */
+        workflowControlsInHeader={props.listHost !== "dock"}
       />
     </PageErrorBoundary>
   );
